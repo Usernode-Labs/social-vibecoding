@@ -50,6 +50,22 @@ test('B7: Try it always, Approve when their Yes counts, Change something; one fi
   }
 });
 
+test('B4: a ready card names the change, from the description the build wrote', () => {
+  assert.equal(dm.changeSummaryLine('Adds a weekly reminder email every Friday'), 'Adds a weekly reminder email every Friday');
+  // The build's credit line goes: the card is already in that person's chat.
+  assert.equal(dm.changeSummaryLine('Adds a weekly reminder email every Friday.\n\nAsked for by @maya'), 'Adds a weekly reminder email every Friday.');
+  // Multi-line text flattens to one line.
+  assert.equal(dm.changeSummaryLine('Adds a weekly reminder\nemail every   Friday'), 'Adds a weekly reminder email every Friday');
+  const long = 'Tracks which soups the household liked, which ones nobody finished, and what to buy for the next batch of stock before the market run.';
+  const said = dm.changeSummaryLine(long);
+  assert.ok(said.endsWith('…'), `clipped: ${said}`);
+  assert.ok(said.length <= 121, `about one line: ${said.length}`);
+  assert.ok(long.startsWith(said.slice(0, -1)), 'cut at a word boundary, not mid-word');
+  for (const nothing of ['', '   ', null, undefined, '\n\nAsked for by @maya\n']) {
+    assert.equal(dm.changeSummaryLine(nothing), null);
+  }
+});
+
 test('B7: the card, drawn in every state', () => {
   const { ReadyCardView, readyTitle, waitingLine, isReadyMessage } = loadTsx('frontend/src/features/messages/bot-ready.tsx');
   const actions = dm.readyActions({ sessionId: 9, epoch: 2, approve: true });
@@ -66,6 +82,24 @@ test('B7: the card, drawn in every state', () => {
   assert.match(open, /class="messages-bot-primary" data-bot-ready-action="approve"><span>Approve<\/span>/);
   assert.match(open, /data-bot-ready-action="change"><span>Change something<\/span>/);
   assert.ok(!/Waiting for approval/.test(open), 'a project of one waits on nobody else');
+  // The change's own summary, under the title and before "You asked" — and
+  // absent from a card that carries neither a description nor a spec title.
+  const withSummary = renderToHtml(createElement(ReadyCardView, {
+    meta: { ...meta, ready: { ...meta.ready, summary: 'Adds a weekly reminder email every Friday' } }, state: 'open', actions,
+  }));
+  assert.match(withSummary, /data-bot-ready-summary="">Adds a weekly reminder email every Friday</);
+  assert.ok(
+    withSummary.indexOf('data-bot-ready-title') < withSummary.indexOf('data-bot-ready-summary')
+      && withSummary.indexOf('data-bot-ready-summary') < withSummary.indexOf('You asked:'),
+    'under the title, before "You asked"',
+  );
+  const withBroken = renderToHtml(createElement(ReadyCardView, {
+    meta: { ...meta, ready: { ...meta.ready, summary: 'Adds a weekly reminder email every Friday', broken: ['Tapping “mark as done” ticks it off'] } },
+    state: 'open',
+    actions,
+  }));
+  assert.match(withBroken, /data-bot-ready-summary/, 'said on a card that is not everything working yet, too');
+  assert.ok(!/data-bot-ready-summary/.test(open), 'a card without the description has no line');
   assert.match(draw({ state: 'approved', actions: [] }), /You approved it\. It’s going live\./);
   assert.match(draw({ state: 'approved', actions: [], meta: { ...meta, ready: { ...meta.ready, last: false } } }), /You approved it\.</);
   const stale = draw({ state: 'stale', actions: actions.slice(0, 1) });
@@ -281,5 +315,34 @@ test('B7: who approves, who is told, and the card, against the full PostgreSQL s
     assert.deepEqual(sent.meta.actions.map((a) => a.id), ['try', 'change'], 'no Approve for a Yes that does not count');
     assert.match(sent.content, /It goes live once it's approved\.$/);
     assert.deepEqual((await told(id)).map((r) => r.username), ['ada']);
+  });
+
+  await t.test('the card names the change: the build\'s description, else the spec title, else nothing', async () => {
+    const say = async (sessionId, description) => pool.query(
+      `INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', 'Built it.', $2)`,
+      [sessionId, JSON.stringify({ ...(description ? { proposalDescription: description } : {}) })],
+    );
+    // The latest system row's proposalDescription, credit line stripped and clipped.
+    const described = await project('soup-log', 'Soup Log', { members: [maya] });
+    const describedId = await change(described, maya, 8);
+    await say(describedId, 'Tracks which soups the household liked, which ones nobody finished, and what to buy for the next batch of stock before the market run.\n\nAsked for by @maya');
+    await dm.noteChangeReady(pool, describedId, { bot: homeroomBot, domain: 'app.example.test' });
+    const describedCard = await card(maya.id, describedId);
+    assert.match(describedCard.meta.ready.summary, /^Tracks which soups the household liked/);
+    assert.ok(describedCard.meta.ready.summary.endsWith('…'), 'clipped to one line');
+    assert.ok(!/Asked for by/.test(describedCard.meta.ready.summary), 'the credit line is not on the card');
+
+    // No description row: the spec's "# " title instead.
+    const titled = await project('pantry', 'Pantry', { members: [maya] });
+    const titledId = await change(titled, maya, 9);
+    await pool.query('UPDATE chat_sessions SET spec_md = $2 WHERE id = $1', [titledId, '# Add a weekly reminder\n\nThe body of the spec.']);
+    await dm.noteChangeReady(pool, titledId, { bot: homeroomBot, domain: 'app.example.test' });
+    assert.equal((await card(maya.id, titledId)).meta.ready.summary, 'Add a weekly reminder');
+
+    // Neither: the card goes out without the line, as it did before.
+    const bare = await project('bare-shelf', 'Bare Shelf', { members: [maya] });
+    const bareId = await change(bare, maya, 10);
+    await dm.noteChangeReady(pool, bareId, { bot: homeroomBot, domain: 'app.example.test' });
+    assert.equal((await card(maya.id, bareId)).meta.ready.summary, undefined);
   });
 });

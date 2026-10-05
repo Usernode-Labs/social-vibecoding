@@ -830,6 +830,18 @@ function askedLine(text, max = 120) {
   return `${(space > max * 0.6 ? cut.slice(0, space) : cut).replace(/[\s,.;:]+$/, '')}…`;
 }
 
+/**
+ * Pure (B4): what the change is, on its ready card: the description the build
+ * wrote for its proposal, as one line of about `max` characters, cut at a
+ * word. The trailing "Asked for by @user" credit (creditedDescription,
+ * homeroom-bot-live.js) goes first — on the card addressed to that person it
+ * is noise. Null for nothing left.
+ */
+function changeSummaryLine(text, max = 120) {
+  const withoutCredit = String(text || '').replace(/\s*Asked for by @\S+\s*$/i, '');
+  return askedLine(withoutCredit, max);
+}
+
 function requestLine({ appName, issueNumber, issueTitle, firstVersion }) {
   if (firstVersion) return `**${appName}**, its first version`;
   return `**${appName}** · request #${issueNumber}${issueTitle ? `: ${clip(issueTitle, 140)}` : ''}`;
@@ -1160,6 +1172,9 @@ async function relayIssuePost({
         ...(dm.card.more ? { more: Number(dm.card.more) } : {}),
         // What its shots show not working (noteChangeReady), said on the card.
         ...(brokenWords(dm.card.broken).length ? { broken: brokenWords(dm.card.broken) } : {}),
+        // What the change is, from the description the build wrote
+        // (noteChangeReady): clipped at the source, so only the guard here.
+        ...(dm.card.summary ? { summary: dm.card.summary } : {}),
       },
       sessionId: Number(dm.sessionId),
       epoch: Number(dm.epoch) || 0,
@@ -1605,6 +1620,26 @@ async function noteChangeReady(pool, sessionId, deps = {}) {
     const waiting = approval
       ? await usernamesOf(pool, await needsYesFrom(pool, approval, { except: requester?.userId ? [requester.userId] : [] }))
       : [];
+    // What the change is, said on its card: the description the build wrote
+    // for its proposal (the latest system completion row carrying one, read
+    // back the way pr-metadata.js reads it), else the spec's "# " title.
+    // Best-effort, guarded apart from the send: a lookup that fails leaves
+    // the card to go out without the line.
+    const summaryRow = await pool.query(
+      `SELECT (SELECT m.metadata->>'proposalDescription'
+                 FROM chat_session_messages m
+                WHERE m.session_id = cs.id
+                  AND m.role = 'system'
+                  AND m.metadata->>'proposalDescription' IS NOT NULL
+                ORDER BY m.id DESC LIMIT 1) AS description,
+              cs.spec_md
+         FROM chat_sessions cs
+        WHERE cs.id = $1`,
+      [id],
+    ).catch(() => null);
+    const read = summaryRow?.rows[0];
+    const summary = changeSummaryLine(read?.description)
+      || changeSummaryLine(require('./homeroom-bot-live').specTitle(read?.spec_md));
     const told = await relayIssuePost({
       pool, ws: deps.ws || null, app: { id: run.id, slug: run.slug, name: run.name }, issueNumber: Number(run.issue_number),
       kind: 'proposal', runId: Number(run.run_id), bot, ready: true, key: readyKey(id, state.epoch),
@@ -1618,6 +1653,8 @@ async function noteChangeReady(pool, sessionId, deps = {}) {
           more: Math.max(waiting.length - 3, 0),
           // What its shots show not working, said on the card.
           ...(broken.length ? { broken } : {}),
+          // What the change is, from the description the build wrote.
+          ...(summary ? { summary } : {}),
         },
       },
     });
@@ -3049,6 +3086,7 @@ module.exports = {
   momentOf,
   notificationDetail,
   askedLine,
+  changeSummaryLine,
   hasOthers,
   TYPICAL_BUILD_MINUTES,
   typicalMinutes,

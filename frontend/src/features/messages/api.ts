@@ -169,12 +169,17 @@ export function normalizeBotMeta(input: unknown): { homeroomBot: HomeroomBotMeta
   const broken = readyRow && typeof readyRow === 'object'
     ? array(pick(record(readyRow), 'broken')).filter((b): b is string => typeof b === 'string' && !!b.trim()).slice(0, 3)
     : [];
+  // What the change is: the description the build wrote, clipped at the source.
+  const summary = readyRow && typeof readyRow === 'object'
+    ? text(pick(record(readyRow), 'summary')) || undefined
+    : undefined;
   const ready = readyRow && typeof readyRow === 'object' ? {
     group: pick(record(readyRow), 'group') === true,
     last: pick(record(readyRow), 'last') === true,
     waitingOn: array(pick(record(readyRow), 'waitingOn')).filter((u): u is string => typeof u === 'string' && !!u).slice(0, 3),
     more: Math.max(Number(pick(record(readyRow), 'more')) || 0, 0),
     ...(broken.length ? { broken } : {}),
+    ...(summary ? { summary } : {}),
   } : null;
   return {
     homeroomBot: {

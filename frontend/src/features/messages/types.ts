@@ -91,6 +91,8 @@ export interface HomeroomBotReady {
    * noteChangeReady). The card then says so instead of "ready to try".
    */
   broken?: string[];
+  /** What the change is: the description the build wrote, clipped (homeroom-bot-dm.js noteChangeReady). */
+  summary?: string;
 }
 
 /** B6: one of a plan's choices, or one of two questions: the suggested answer first. */
