@@ -467,6 +467,12 @@ export interface TopicBody {
   issues?: IssueLink[];
   /** #2431 — on an ISSUE's page, the change that closed it or is on it. */
   addressedBy?: IssueProposalRef | null;
+  /**
+   * On a CHANGE's page, the change it went live inside: an open change a
+   * merged one was built on is marked merged as included in it
+   * (services/included-changes.js, `AppView._includedInView`).
+   */
+  includedIn?: IssueProposalRef | null;
   /** Open issues already loaded for this app; the picker filters them locally. */
   issueOptions?: IssueLink[];
   /** The proposal owner/full platform admin may change issue associations. */

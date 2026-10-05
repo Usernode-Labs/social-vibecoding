@@ -4811,10 +4811,13 @@ const AppView = {
     const dep = item.deployment_state;
     const settled = (dep === 'pending' || dep === 'deploying') ? 'Going live'
       : (dep === 'failed' || dep === 'stalled') ? 'Not live yet' : 'Live';
+    // A change that went live inside another one says which
+    // (services/included-changes.js): "Live, included in #8".
+    const included = AppView._includedInWords(item);
     const status = underway
       ? (item.shared_at ? 'Visible to the group' : 'Not shared yet')
       : item.status === 'promoted' ? AppView._waitingWords(item)
-        : ({ merging: 'Going live', merged: settled, closed: 'Closed' }[item.status]
+        : ({ merging: 'Going live', merged: included ? `${settled}, ${included}` : settled, closed: 'Closed' }[item.status]
         || String(item.status || ''));
     const age = item.created_at ? AppView._agePart(item.created_at) : null;
     // First-session run-through, 4 Oct 2026: a flatmate's first look at the
@@ -4843,6 +4846,34 @@ const AppView = {
       verb: underway ? 'started' : (item.source === 'imported' ? 'imported' : (bot ? 'made' : 'proposed')),
       provenance: bits.length ? bits.join(' · ') : null,
       tint: Number(item.id) % 2 ? 'a' : 'b',
+    };
+  },
+
+  // ── A change that went live inside another one ─────────────────────
+  // services/included-changes.js: an open change whose head was one of a
+  // merged change's commits went live with it, and is marked merged with
+  // `included_in_session_id` naming the change that carried it. The words
+  // ("included in #8") ride on the eyebrow and the steps' headline, and the
+  // hero names the carrying change with a link to its page, as an issue
+  // page names the change that closed it (_issueProposalRefView).
+  _includedInWords(item) {
+    if (!item || !item.included_in_session_id) return null;
+    const n = parseInt(item.included_in_pr_number, 10) || 0;
+    return n ? `included in #${n}` : 'included in another change';
+  },
+  _includedInView(item) {
+    if (!item || item.status !== 'merged' || !item.included_in_session_id) return null;
+    const id = parseInt(item.included_in_session_id, 10) || 0;
+    if (!id) return null;
+    const slug = (AppView.appData && AppView.appData.slug) || App.currentApp;
+    const n = parseInt(item.included_in_pr_number, 10) || 0;
+    return {
+      heading: 'Went live as part of',
+      state: 'merged',
+      sessionId: id,
+      label: n ? `#${n}` : 'Change',
+      title: item.included_in_pr_title || (n ? `Pull request #${n}` : `Change ${id}`),
+      href: `#app/${slug}/dev/proposals/${id}`,
     };
   },
 
@@ -4939,8 +4970,9 @@ const AppView = {
     for (const r of rows) out.push(noteStep(r));
 
     const merged = item.status === 'merged';
+    const included = merged ? AppView._includedInWords(item) : null;
     return {
-      headline: req ? req.headline : (merged ? 'Live' : 'Where it stands'),
+      headline: req ? req.headline : (merged ? (included ? `Live, ${included}` : 'Live') : 'Where it stands'),
       detail: req ? (req.detail || null) : null,
       done: req ? req.done : null,
       total: req ? req.total : null,
@@ -5222,6 +5254,7 @@ const AppView = {
     const busy = AppView._changeActions.get(Number(item.id));
     const rows = body.details.ledger;
     body.changeId = item.id;
+    body.includedIn = AppView._includedInView(item);
     if (item.preview_placeholder) {
       body.note = 'This is a display-only sample. To try editing a description, open "[Preview sample] Your editable change" in your sessions.';
     }
@@ -13593,7 +13626,9 @@ const AppView = {
     }
     if (isMerged && !ro) {
       // Undo opens a revert PR, which then needs its own merge vote.
-      if (!pr.revert_of_session_id && !pr.revert_session_id) {
+      // A change that went live inside another one has no merge of its own
+      // to undo (the server refuses it too): undoing the carrying change is.
+      if (!pr.revert_of_session_id && !pr.revert_session_id && !pr.included_in_session_id) {
         items.push({
           label: 'Undo',
           icon: 'undo',

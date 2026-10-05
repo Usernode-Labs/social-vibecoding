@@ -153,6 +153,47 @@ test('a merged change reads Live in the eyebrow and the pill, and the pill is qu
   assert.equal(av._topicHeroView('proposal', { ...PR, status: 'merging' }).status, 'Going live');
 });
 
+// Flat 4B Chores, 5 Oct 2026: the first version (PR 3) was up for a vote
+// when the bot built a fix on its branch (PR 8), and PR 8 merged with PR 3's
+// commit in it. PR 3 is marked merged as included in PR 8
+// (services/included-changes.js), and its page says where it went live: the
+// eyebrow and the steps' headline name the change, the hero links to it, and
+// nothing asks for a vote or offers to undo a merge it never had.
+test('a change that went live inside another one says so and links to it', () => {
+  const av = context();
+  const included = {
+    ...PR, status: 'merged', merged_at: '2026-10-05T12:00:00Z', mergeRequirements: undefined,
+    merge_commit_sha: 'c'.repeat(40), included_in_session_id: 6288,
+    included_in_pr_number: 8, included_in_pr_title: 'Fix mark as done in Jordan’s first version',
+  };
+  const { v, page, details } = render(av, included);
+  assert.equal(v.body.hero.status, 'Live, included in #8');
+  assert.match(page, /<span class="dev-ws-eyebrow dev-topic-hero-eyebrow">Change · Live, included in #8<\/span>/);
+  assert.equal(v.body.steps.headline, 'Live, included in #8');
+  assert.match(details, /Live, included in #8/);
+  assert.deepEqual(plain(v.body.includedIn), {
+    heading: 'Went live as part of', state: 'merged', sessionId: 6288, label: '#8',
+    title: 'Fix mark as done in Jordan’s first version', href: '#app/example/dev/proposals/6288',
+  });
+  const box = page.slice(page.indexOf('data-topic-part="included-in"'));
+  assert.ok(page.includes('aria-label="The change this one went live in"'));
+  assert.match(box, /<h4 class="dev-topic-h">Went live as part of<\/h4>/);
+  assert.match(box, /href="#app\/example\/dev\/proposals\/6288"[^>]*data-included-in="6288"/);
+  assert.match(box, />#8<\/span><span[^>]*>Fix mark as done in Jordan’s first version<\/span>/);
+  // No vote, and the rollout words still lead.
+  assert.doesNotMatch(page, /data-vote-choice|Waiting for approval/);
+  assert.equal(av._topicHeroView('proposal', { ...included, deployment_kind: 'child', deployment_state: 'pending' }).status,
+    'Going live, included in #8');
+  // A change that merged on its own says nothing of the kind.
+  const own = render(av, { ...included, included_in_session_id: null, included_in_pr_number: null, included_in_pr_title: null });
+  assert.equal(own.v.body.hero.status, 'Live');
+  assert.equal(own.v.body.includedIn, null);
+  assert.ok(!own.page.includes('data-included-in'));
+  // A carrying change without a pull request number is still named.
+  assert.equal(av._topicHeroView('proposal', { ...included, included_in_pr_number: null }).status,
+    'Live, included in another change');
+});
+
 // First-session run-through, 4 Oct 2026. An invited flatmate tapped "Ready
 // to try" and read, top to bottom: "homeroom_bot · proposed 35m ago", a
 // "Closes #1" tag, "Thank homeroom_bot", and then the first version's spec:
