@@ -11970,3 +11970,40 @@ BEGIN
       CHECK (invite_note IS NULL OR char_length(invite_note) BETWEEN 1 AND 280);
   END IF;
 END $$;
+
+-- The small-change tag, watch only (services/small-change.js): for each
+-- proposal head a checks run settles on, whether the change is clearly small
+-- and undoable (a fix, a wording or look change, a small optional addition).
+-- Read only by platform admins (GET /api/admin/small-change-tags) while the
+-- team watches how it behaves; nothing about votes, merges, checks or cards
+-- reads it. One row per (session, head): the unique key is the tagger's
+-- cache, and only an 'unavailable' row (no key, a GitHub or model failure)
+-- is ever replaced. `vetoes` lists the rule-based reasons that ruled a head
+-- out before any model call, in services/small-change.js VETOES order;
+-- `reason` is the model's one plain sentence. Private because it hangs off
+-- chat_sessions, which is.
+CREATE TABLE IF NOT EXISTS small_change_tags (
+  id             SERIAL PRIMARY KEY,
+  session_id     INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  app_id         INTEGER REFERENCES apps(id) ON DELETE CASCADE,
+  head_sha       VARCHAR(40) NOT NULL,
+  verdict        VARCHAR(16) NOT NULL,
+  kind           VARCHAR(16),
+  reason         TEXT,
+  vetoes         JSONB NOT NULL DEFAULT '[]'::jsonb,
+  files_changed  INTEGER,
+  lines_changed  INTEGER,
+  model          VARCHAR(255),
+  cost_usd       NUMERIC(18,8),
+  duration_ms    INTEGER,
+  error          VARCHAR(64),
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT small_change_tags_session_head UNIQUE (session_id, head_sha),
+  CONSTRAINT small_change_tags_verdict_check
+    CHECK (verdict IN ('small', 'not_small', 'vetoed', 'unavailable')),
+  CONSTRAINT small_change_tags_kind_check
+    CHECK (kind IS NULL OR kind IN ('fix', 'wording', 'look', 'addition'))
+);
+CREATE INDEX IF NOT EXISTS small_change_tags_created_idx
+  ON small_change_tags (created_at DESC, id DESC);
+COMMENT ON TABLE small_change_tags IS 'staging:private';

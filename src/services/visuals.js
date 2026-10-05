@@ -33,6 +33,7 @@ const appManifest = require('./app-manifest');
 const checkHistory = require('./check-history');
 const unitSuite = require('./unit-suite');
 const contentReview = require('./content-review');
+const smallChange = require('./small-change');
 const assetRouteCheck = require('./asset-route-check');
 const renderHealth = require('./render-health');
 const checkRuns = require('./check-runs');
@@ -3011,6 +3012,14 @@ async function settleCaptureRun(config, pool, run) {
     pool, sessionId: session.id, appId: app.id, repoOwner, repoName, commitHash,
   }).catch(() => null);
   if (contentOutcome) extraRows.push(contentOutcome.row);
+  // The small-change tag, watch only: a row for admins, never a check row,
+  // so it is not awaited and nothing below reads it. Cached per head like
+  // the review above. Never rejects.
+  if (!shotsOnly) {
+    void smallChange.maybeTagSmallChange({
+      config, pool, sessionId: session.id, appId: app.id, repoOwner, repoName, commitHash,
+    });
+  }
   // Render health: the platform's own reading of every checked page — a
   // stylesheet that failed or came back empty, a page that shows nothing —
   // which no dapp.json setting can opt out of. Built from the same frames

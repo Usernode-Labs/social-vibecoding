@@ -85,6 +85,12 @@
       "description": "The Content rules check on every proposal (#2722): a model reads the proposal's diff against the conventions' Content rules section. off: no row. advisory (default): a flag shows on the checks but does not stop the merge. blocking: a flag fails the checks, so the proposal cannot merge until the content is fixed. Fails open on any error."
     },
     {
+      "key": "SMALL_CHANGE_TAG_MODE",
+      "group": "Platform",
+      "default": "on",
+      "description": "The small-change tag, watch only: for each proposal head, rule-based vetoes and then one GLM 5.3 Flash call on the Homeroom bot's OpenRouter key decide whether the change is clearly small and undoable. Admins read the results at /api/admin/small-change-tags. Nothing about votes, merges, checks or cards depends on it. on (default): tag every head a checks run settles on. off: do nothing."
+    },
+    {
       "key": "LOG_LEVEL",
       "group": "Platform",
       "default": "INFO",
