@@ -366,6 +366,82 @@ test('the maker\'s tour ends in Homeroom bot\'s chat when it builds for them, an
   assert.match(index, /else if \(screen === 'bot' && conversationId\) window\.location\.hash = `#messages\/\$\{conversationId\}`;/);
 });
 
+// 5 October 2026 (Evan, on his phone): 7 of 7 cut the bot's messages out of
+// the dim and left the conversation's header ("Homeroom bot AI · <Project>
+// needs you", the clock and ⋯) under it, and the newest card began part-way
+// down, with bullets and no "Here's my plan for …". He read it as the chat
+// missing its header.
+test('the maker\'s last step shows the chat with Homeroom bot whole: its header with its messages, the newest card from its top', () => {
+  const { makerSteps, BOT_CHAT_HEADER, BOT_CHAT_MESSAGES } = loadTsx(`${DIR}/tour-steps.ts`);
+  const steps = makerSteps({ slug: 'film', name: 'Friday Film Crew', conversationId: 12 });
+  const chat = steps[6];
+  assert.equal(chat.title, 'Your chat with Homeroom bot');
+  assert.equal(BOT_CHAT_HEADER, '.messages-thread-direct > .messages-thread-header');
+  assert.equal(BOT_CHAT_MESSAGES, '.messages-thread-direct > .messages-thread-scroll');
+  // One cut-out round both (index.tsx targetBox draws a selector list as one box).
+  assert.deepEqual(chat.target.split(',').map((s) => s.trim()), [BOT_CHAT_HEADER, BOT_CHAT_MESSAGES]);
+  assert.deepEqual(chat.newestFromTop, { scroller: BOT_CHAT_MESSAGES, rows: 'article.messages-message' });
+  assert.equal(chat.place, 'bottom');
+  assert.equal(chat.text, 'It shows how the build is going here, and messages you when it\'s ready to try. Ask it for changes any time.');
+  // The other steps are as they were, and only this one moves a transcript.
+  assert.deepEqual(steps.slice(0, 6).map((s) => s.target), [
+    '.app-card[data-slug="film"]', '#app-content', '#back-btn', '#platform-tab-workshop', '#app-content', '#platform-tab-messages',
+  ]);
+  assert.deepEqual(steps.map((s) => !!s.newestFromTop), [false, false, false, false, false, false, true]);
+  // The Messages screen draws what it names: a direct conversation's section,
+  // whose first child is its header (none when embedded in a hub, which the
+  // bot's chat never is), its scroller, and an <article> per message.
+  const messages = read('frontend/src/features/messages/index.tsx');
+  assert.match(messages, /const kind = snap\.active\?\.kind \|\| 'direct';/);
+  assert.match(messages, /<section className=\{`flex messages-thread-pane platform-kb-column dc-lift dc-lift-session messages-thread-\$\{kind\}[^`]*`\}[^>]*>\s*\{embedded \? null : <ThreadHeader \/>\}/);
+  assert.match(messages, /function ThreadHeader\(\) \{[\s\S]*?return \(\s*<header className="messages-thread-header">/);
+  assert.match(messages, /<div ref=\{scroller\} className="messages-thread-scroll platform-safe-scroll" aria-live="polite">/);
+  assert.match(read('frontend/src/features/messages/message-row.tsx'),
+    /<article id=\{`messages-message-\$\{message\.id\}`\} data-message-id=\{message\.id\} className=\{`messages-message group /);
+});
+
+test('the newest card is shown from its top: scrolled back just far enough, never forward', () => {
+  const { scrollBackFor, showNewestFromTop } = loadTsx(`${DIR}/index.tsx`);
+  assert.equal(scrollBackFor(120, 60), 68, 'its first line above the transcript: back to 8px under its top');
+  assert.equal(scrollBackFor(120, 128), 0);
+  assert.equal(scrollBackFor(120, 400), 0, 'lower down is in view: never forward');
+  assert.equal(scrollBackFor(120, 119.5), 9, 'whole pixels, rounded up');
+
+  const box = (top, height = 40) => ({ getBoundingClientRect: () => ({ top, height }) });
+  const transcript = ({ top = 120, height = 500, scrollTop = 900, rows = [] } = {}) => {
+    const el = { scrollTop, ...box(top, height), querySelectorAll: (sel) => { el.asked = sel; return rows; } };
+    return el;
+  };
+  const rootOf = (...scrollers) => ({ querySelectorAll: (sel) => { rootOf.asked = sel; return scrollers; } });
+  const spec = { scroller: '.messages-thread-direct > .messages-thread-scroll', rows: 'article.messages-message' };
+
+  // The plan card, newest and taller than the space: its top 60px above.
+  const hidden = transcript({ height: 0, rows: [box(-400)] });
+  const shown = transcript({ rows: [box(-300), box(60, 700)] });
+  assert.equal(showNewestFromTop(spec, rootOf(hidden, shown)), true);
+  assert.equal(rootOf.asked, spec.scroller);
+  assert.equal(shown.asked, spec.rows);
+  assert.equal(shown.scrollTop, 900 - 68, 'the visible transcript, not one drawn nowhere');
+  assert.equal(hidden.scrollTop, 900);
+  // Already from its top, a short newest message, nothing loaded yet, or no
+  // transcript at all: nothing moves.
+  const fits = transcript({ rows: [box(130)] });
+  assert.equal(showNewestFromTop(spec, rootOf(fits)), false);
+  assert.equal(fits.scrollTop, 900);
+  assert.equal(showNewestFromTop(spec, rootOf(transcript({ rows: [box(520)] }))), false);
+  assert.equal(showNewestFromTop(spec, rootOf(transcript())), false);
+  assert.equal(showNewestFromTop(spec, rootOf()), false);
+  // Never past the transcript's start.
+  const near = transcript({ scrollTop: 20, rows: [box(-200, 900)] });
+  assert.equal(showNewestFromTop(spec, rootOf(near)), true);
+  assert.equal(near.scrollTop, 0);
+
+  // Each frame, before the cut-out is measured, so the ring is drawn round
+  // what it shows, and it holds when the rows arrive after the step lands.
+  const src = read(`${DIR}/index.tsx`);
+  assert.match(src, /const reveal = stepRef\.current\.newestFromTop;\s+if \(reveal\) showNewestFromTop\(reveal\);\s+const b = targetBox\(stepRef\.current\.target\);/);
+});
+
 test('the admin Journey page says which first session answered the join screen', () => {
   assert.match(read('src/services/journey.js'),
     /note: seen\.join_answer \? `not asked: \$\{seen\.join_answer\}` : 'not asked', weak: true/);
