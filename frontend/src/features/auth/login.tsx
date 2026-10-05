@@ -74,7 +74,9 @@ import {
   legacy,
   NativeLoginPreparationError,
   type NativeLoginFailureDetails,
+  passwordSignIn,
   sessionMintFailureMessage,
+  takeReleaseLink,
   useAuthScreensPatch,
   USERNAME_PUBLIC_NOTE,
   USERNAME_RULE,
@@ -290,7 +292,9 @@ const QUIET_BUTTON_WAITING =
 
 type AutoSendRecord = { email: string; sentAt: number };
 
-function readAutoSend(): AutoSendRecord | null {
+// Shared with the sign-in sheet (./sign-in-sheet.tsx), which opens the same
+// link over the story: one record per tab, whichever of the two sent it.
+export function readAutoSend(): AutoSendRecord | null {
   try {
     const raw = sessionStorage.getItem(AUTO_SEND_KEY);
     if (!raw) return null;
@@ -305,7 +309,7 @@ function readAutoSend(): AutoSendRecord | null {
   }
 }
 
-function writeAutoSend(email: string) {
+export function writeAutoSend(email: string) {
   try {
     sessionStorage.setItem(AUTO_SEND_KEY, JSON.stringify({ email, sentAt: Date.now() }));
   } catch {
@@ -333,10 +337,16 @@ function currentShot(): string | null {
  * `more_token` is already an unguessable capability delivered to that address,
  * and `/api/public/waitlist/more/:token` already resolves it and already
  * returns the email, so nothing new is minted or exposed.
+ *
+ * AuthScreens.enter() takes the mail's query off the address as it lands,
+ * so the token is usually the one it kept (takeReleaseLink): this screen
+ * only gets it when the story is switched off and the landing hands the
+ * link on (./landing.tsx). The query is still read first, for a `?t=` that
+ * arrives some other way.
  */
 function inviteTokenFromQuery(): string | null {
   try {
-    const t = new URLSearchParams(location.search).get('t');
+    const t = new URLSearchParams(location.search).get('t') || takeReleaseLink()?.token || null;
     return t && /^[A-Za-z0-9_-]{8,128}$/.test(t) ? t : null;
   } catch {
     return null;
@@ -347,7 +357,7 @@ function inviteTokenFromQuery(): string | null {
  * Resolve an invite token to its address. Null on anything unexpected: a
  * prefill is a convenience, and the screen is perfectly usable without it.
  */
-async function inviteEmailFromToken(token: string): Promise<string | null> {
+export async function inviteEmailFromToken(token: string): Promise<string | null> {
   try {
     const res = await fetch(`/api/public/waitlist/more/${encodeURIComponent(token)}`);
     if (!res.ok) return null;
@@ -764,25 +774,14 @@ export function LoginScreen() {
     setLoginError(null);
     setLoginDetails(null);
     if (blockedOffline(setLoginError)) return;
-    try {
-      const res = await fetchSessionMint('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          username: username.current?.value.trim() || '',
-          password: password.current?.value || '',
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setLoginError(data.error || 'Login failed');
-        return;
-      }
-      await finishLogin();
-    } catch (error) {
-      setLoginError(sessionMintFailureMessage(error));
-      setLoginDetails(error instanceof NativeLoginPreparationError ? error.details : null);
+    // The same exchange the sign-in sheet's password step sends (shared.ts).
+    const result = await passwordSignIn(username.current?.value.trim() || '', password.current?.value || '');
+    if (!result.ok) {
+      setLoginError(result.error);
+      setLoginDetails(result.details);
+      return;
     }
+    await finishLogin();
   }, [clearConfirmation, finishLogin]);
 
   // ── Email-code sign-in (the #signup route) ───────────────────────────

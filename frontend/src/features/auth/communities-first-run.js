@@ -17,7 +17,9 @@
 // While the story landing is on (`App.user.storyFirstSession`), the step is
 // the first session's "What do you want to make?" instead (../first-session):
 // the question a new account made from the story's own sheet is asked, put
-// to every new account however it signed in.
+// to every new account however it signed in. When nothing has to come first
+// (no username to choose, no invite to follow) it opens in the same tick as
+// the signed-in shell (firstSessionNow), not after a beat of Home.
 //
 // ── What it shows ──────────────────────────────────────────────────────
 //
@@ -98,6 +100,62 @@
       if (CommunitiesFirstRun._answered) return false;
       return !!(window.App && window.App.user
         && window.App.user.needsCommunitiesChoice === true);
+    },
+
+    // Does signing in with `user` lead straight to its first session, "What
+    // do you want to make?", with nothing to come before it? While the
+    // story landing is on, an account still due this step is asked that
+    // instead (see maybePrompt), and when no username has to be chosen
+    // first and no invite is bringing it in, it is asked AT ONCE: opened in
+    // the same tick the shell starts, so nothing of Home shows before it.
+    // The story's sign-in sheet asks the same question before it signs in
+    // (firstSessionNext in ./shared.ts), so it can hand off to that screen.
+    firstSessionNow(user) {
+      return !!(user && typeof user === 'object'
+        && user.hasPlatformAccess !== false
+        && user.needsCommunitiesChoice === true
+        && user.storyFirstSession === true
+        && user.needsUsernameChoice !== true
+        && !CommunitiesFirstRun._onInvitePath());
+    },
+
+    _onInvitePath() {
+      const app = window.App;
+      return !!(app && typeof app._inviteTokenFromPath === 'function'
+        && app._inviteTokenFromPath(location.pathname));
+    },
+
+    // The first session, opened in this tick: the island draws it before
+    // the browser paints the shell it was signed in to, and the start is
+    // recorded behind it the way the later branch below records it.
+    _startFirstSessionNow() {
+      const firstSession = window.UsernodeReact && window.UsernodeReact.firstSession;
+      if (!firstSession || typeof firstSession.make !== 'function') return false;
+      // An invite already being followed is waited for below.
+      if (window.App._inviteFollow) return false;
+      if (!CommunitiesFirstRun.firstSessionNow(window.App.user)) return false;
+      CommunitiesFirstRun._answered = true;
+      window.App.user.needsCommunitiesChoice = false;
+      firstSession.make();
+      CommunitiesFirstRun._recordFirstSession();
+      CommunitiesFirstRun._resolve();
+      return true;
+    },
+
+    // POST /api/me/first-session/started for an account that signed in
+    // some other way than the story's own sheet, so this step is not asked
+    // again and Journey can tell the two apart.
+    async _recordFirstSession() {
+      try {
+        await fetch('/api/me/first-session/started', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ via: 'sign_in' }),
+        });
+      } catch (err) {
+        console.warn('[communities-first-run] first session start not recorded:', err);
+      }
     },
 
     // Has THIS document shown the real join screen (never the ?shot=
@@ -192,6 +250,10 @@
         CommunitiesFirstRun._resolve();
         return;
       }
+
+      // Before anything is awaited: from `sv:authed` this still runs inside
+      // the authed boot, ahead of the first paint of Home.
+      if (CommunitiesFirstRun._startFirstSessionNow()) return;
 
       await CommunitiesFirstRun._afterEarlierSteps();
       // A ghost-click window after the sheet before it, the same one the

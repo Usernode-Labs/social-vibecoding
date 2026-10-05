@@ -15,6 +15,13 @@
  * button.
  *
  * "Look around first" is the quiet way out: Home, with nothing asked.
+ *
+ * It ARRIVES rather than appears: the screen's ground is the wallpaper
+ * from its first frame, the same one the signed-out story and the sign-in
+ * sheet's leaving cover paint over the same box (../auth/sign-in-sheet.tsx),
+ * and what stands on it rises into place a frame later. Transform and
+ * opacity only, no delay, so a busy main thread cannot hold it back on iOS;
+ * with reduced motion it is simply there.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -39,6 +46,9 @@ export type Made = {
 const FIELD = 'px-4 pt-3 pb-2 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800';
 const LABEL = 'block text-[13px] text-zinc-500 dark:text-zinc-400';
 const INPUT = 'w-full border-0 bg-transparent px-0 py-1 text-[17px] text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none';
+// Where the bar and the form start, and where they settle (see the header).
+const ARRIVING = 'translate-y-6 opacity-0 transition-[transform,opacity] duration-300 ease-out motion-reduce:transition-none';
+const ARRIVED = 'translate-y-0 opacity-100 transition-[transform,opacity] duration-300 ease-out motion-reduce:transition-none';
 
 export function MakeScreen({ who, onMade, onLookAround }: {
   who: string;
@@ -52,6 +62,13 @@ export function MakeScreen({ who, onMade, onLookAround }: {
   const [error, setError] = useState<string | null>(null);
   const briefRef = useRef<HTMLTextAreaElement>(null);
   useEffect(() => { briefRef.current?.focus(); }, []);
+  // One frame on the wallpaper alone, so the rise has a start.
+  const [arrived, setArrived] = useState(false);
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => setArrived(true));
+    return () => cancelAnimationFrame(raf);
+  }, []);
+  const motion = arrived ? ARRIVED : ARRIVING;
 
   const pick = useCallback((e: Example) => {
     setPicked(e);
@@ -110,11 +127,11 @@ export function MakeScreen({ who, onMade, onLookAround }: {
       className="fixed inset-0 z-[9000] flex flex-col overflow-y-auto text-zinc-900 dark:text-zinc-100"
       style={{ background: 'var(--home-wallpaper, #f4f2e4)' }}
     >
-      <div className="flex h-[52px] shrink-0 items-center justify-center pt-[env(safe-area-inset-top)]">
+      <div className={`flex h-[52px] shrink-0 items-center justify-center pt-[env(safe-area-inset-top)] ${motion}`}>
         <Wordmark className="h-6 w-auto text-[color:var(--brand-ink)]" />
       </div>
       <form
-        className="mx-auto flex w-full max-w-sm grow flex-col px-4 pb-[max(34px,env(safe-area-inset-bottom))]"
+        className={`mx-auto flex w-full max-w-sm grow flex-col px-4 pb-[max(34px,env(safe-area-inset-bottom))] ${motion}`}
         onSubmit={(e) => { e.preventDefault(); void make(); }}
       >
         <div className="text-center">
