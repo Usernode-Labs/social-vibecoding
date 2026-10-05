@@ -99,10 +99,11 @@ export type MessageKind = 'message' | 'system' | 'vote' | 'spec_share';
 /**
  * B9: a request's chip on its message (homeroom-bot-chat.js setStatus).
  * `fixing`: a fix asked for on one of the bot's changes still waiting for
- * approval, until that change is ready again.
+ * approval, until that change is ready again. `waiting_first_version`: a
+ * request held until the project's first version is live.
  */
 export interface BotRequestChip {
-  status: 'reading' | 'building' | 'ready' | 'live' | 'fixing';
+  status: 'reading' | 'building' | 'ready' | 'live' | 'fixing' | 'waiting_first_version';
   issueNumber: number | null;
   sessionId: number | null;
 }
@@ -113,8 +114,8 @@ export interface BotRequestChip {
  * `waitingOn` and `youApprove` say who still has to approve a built change.
  */
 export interface BotRequestState {
-  stage: 'reading' | 'waiting' | 'building' | 'question' | 'checking' | 'proposed' | 'approved' | 'live'
-    | 'closed' | 'person' | 'stopped' | 'fixing' | 'asked' | 'answered';
+  stage: 'waiting_first_version' | 'reading' | 'waiting' | 'building' | 'question' | 'checking' | 'proposed' | 'approved'
+    | 'live' | 'closed' | 'person' | 'stopped' | 'fixing' | 'asked' | 'answered';
   sessionId?: number;
   youApprove?: boolean;
   waitingOn?: string[];

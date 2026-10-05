@@ -24,16 +24,25 @@ import type { BotRequestCard, BotRequestChip, BotRequestState } from './transcri
  * or what stopped it. A fix asked on one of the bot's changes still waiting
  * for approval (`revise`) says it goes into that change, and follows it the
  * same way. Its chip, Fixing, is everybody's: the fix was asked in public.
+ *
+ * A request filed while its project's first version is not live waits for
+ * it (`waiting_first_version`, homeroom-bot.js firstVersionHolds): the card
+ * says so in the DM's words, and the chip says Waiting, never Reading.
  */
 
 const CHIP_CLASS = 'inline-flex items-center gap-1 rounded-full bg-[color:var(--brand-tint)] px-2.5 py-0.5 text-[0.8125rem] font-semibold text-[color:var(--brand-ink)]';
 
-const CHIP_WORDS: Record<Exclude<BotRequestChip['status'], 'ready'>, { glyph: string; word: string }> = {
+// `said`, when the chip's one word needs more for a screen reader.
+const CHIP_WORDS: Record<Exclude<BotRequestChip['status'], 'ready'>, { glyph: string; word: string; said?: string }> = {
   reading: { glyph: '👀', word: 'Reading' },
   building: { glyph: '🔨', word: 'Building' },
   live: { glyph: '✅', word: 'Live' },
   fixing: { glyph: '🔧', word: 'Fixing' },
+  waiting_first_version: { glyph: '⏳', word: 'Waiting', said: 'Waiting for the first version' },
 };
+
+/** What a request held for its project's first version waits for (the DM card's words). */
+export const FIRST_VERSION_WAIT_LINE = 'Waiting for the first version to go live. I’ll start on this as soon as it does.';
 
 export function BotStatusChip({ chip, mine = false, onTry, onProgress }: {
   chip: BotRequestChip;
@@ -56,8 +65,8 @@ export function BotStatusChip({ chip, mine = false, onTry, onProgress }: {
       </button>
     );
   }
-  const { glyph, word } = CHIP_WORDS[chip.status];
-  const label = `Homeroom bot: ${word}`;
+  const { glyph, word, said } = CHIP_WORDS[chip.status];
+  const label = `Homeroom bot: ${said || word}`;
   return mine ? (
     <button type="button" className={CHIP_CLASS} data-bot-request={chip.status} aria-label={label} onClick={() => onProgress?.()}>
       <span aria-hidden="true">{glyph}</span>
@@ -95,6 +104,7 @@ export function approvalWords(state?: BotRequestState): string {
 function filedWords(card: BotRequestCard, stays: string): string {
   const title = card.title || 'your request';
   switch (card.state?.stage) {
+    case 'waiting_first_version': return `Got it: ${title}. ${FIRST_VERSION_WAIT_LINE}${stays}`;
     case 'waiting': return `Got it: ${title}. Waiting for a free builder.${stays}`;
     case 'building': return `Building it now: ${title}.${stays}`;
     case 'question': return 'I have a question about this. It’s in our chat.';
@@ -174,7 +184,7 @@ export interface BotRequestCardActions {
 }
 
 // The stages a request's card offers See progress at: it is still going.
-const GOING = new Set(['reading', 'waiting', 'building', 'checking']);
+const GOING = new Set(['waiting_first_version', 'reading', 'waiting', 'building', 'checking']);
 
 export function BotRequestCardView({ card, actions = {} }: { card: BotRequestCard; actions?: BotRequestCardActions }) {
   const buttons: Array<{ key: string; label: string; primary?: boolean; act?: () => void }> = [];
