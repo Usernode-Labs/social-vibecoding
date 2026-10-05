@@ -761,6 +761,13 @@ const Notifications = {
     if ((key === 'friend_accept' || key === 'friend_decline') && item.kind === 'friend_request') {
       return Notifications._answerFriendRequest(item, key === 'friend_accept');
     }
+    // #3227: the kudos row's button opens the Kudos leaderboard, where the
+    // change it thanks is ranked; the row itself still opens the change.
+    if (key === 'kudos_board' && item.kind === 'kudos') {
+      Notifications._dismissSheetForNav();
+      window.location.hash = '#leaderboard/prs';
+      return true;
+    }
     const sessionId = Number(item.sessionId);
     if (key === 'still_yes' && Number.isFinite(sessionId) && sessionId > 0
         && window.AppView && typeof AppView.castVote === 'function') {
@@ -2284,12 +2291,21 @@ function rowView(n) {
 
   const prLabel = n.prTitle || null;
 
+  // #3227: a first kudos arrived with nothing saying what it was. The note
+  // under the subject says it in one breath: a thank-you, that it stays,
+  // and where it counts. The weekly allowance is read from the budget the
+  // Kudos badge already fetched (the leaderboard subtitle does the same, so
+  // the two never quote different numbers); the button opens the board.
   if (n.kind === 'kudos') {
+    const limit = (typeof window !== 'undefined' && window.Kudos?.Budget?.state?.limit) || 20;
     return {
       ...base,
       icon: '\u{1F44F}',
       by: n.sourceUsername || null,
       ...headline('Kudos', prLabel || 'your change'),
+      note: `A thank-you from another member. Kudos you get don't expire; `
+        + `they count on the Kudos leaderboard. Everyone has ${limit} a week to give.`,
+      actions: [{ key: 'kudos_board', label: 'Leaderboard' }],
     };
   }
 

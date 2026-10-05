@@ -402,3 +402,53 @@ test('a push test has clear account-level copy without inventing a completed ses
   assert.equal(row.appLine, '');
   assert.match(row.segments[0].v, /You requested a push notification test/);
 });
+
+// #3227: a kudos arrived with nothing saying what kudos are. The row keeps
+// its three lines (kind, the change, who) and adds a note that says it: a
+// thank-you, that it stays, where it counts, and the weekly allowance read
+// from the same budget the leaderboard's subtitle reads. Its one button opens
+// the Kudos leaderboard; the row itself still opens the change.
+test('a kudos row says what kudos are and offers the leaderboard', async () => {
+  const view = (await load())({ ...ROW, kind: 'kudos', prTitle: 'Fix the bell badge' });
+  assert.equal(view.label, 'Kudos');
+  assert.equal(view.by, 'ada');
+  assert.match(view.note, /^A thank-you from another member\./);
+  assert.match(view.note, /don't expire/);
+  assert.match(view.note, /Kudos leaderboard/);
+  assert.match(view.note, /Everyone has 20 a week to give\.$/, 'the server default when no budget is loaded');
+  assert.deepEqual(view.actions, [{ key: 'kudos_board', label: 'Leaderboard' }]);
+
+  globalThis.window.Kudos = { Budget: { state: { limit: 30 } } };
+  try {
+    const raised = (await load())({ ...ROW, kind: 'kudos', prTitle: 'Fix the bell badge' });
+    assert.match(raised.note, /Everyone has 30 a week to give\./, 'a raised allowance is quoted, not a stale 20');
+  } finally {
+    delete globalThis.window.Kudos;
+  }
+
+  // No other kind grows a note.
+  assert.equal((await load())({ ...ROW, kind: 'pr_proposed', prTitle: 'x' }).note, undefined);
+
+  // The sheet draws the note under the subject, wrapping rather than
+  // truncating: a cut-off explanation explains nothing.
+  assert.match(SHEET, /\{view\.note \? \(\s*<span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0\.5">/);
+});
+
+test('the kudos row button opens the Kudos leaderboard', async () => {
+  await load();
+  const N = globalThis.window.Notifications;
+  const saved = { items: N.items, dismiss: N._dismissSheetForNav, location: globalThis.window.location };
+  let dismissed = 0;
+  N.items = [{ ...ROW, id: 77, kind: 'kudos', prTitle: 'Fix the bell badge', sessionId: 5 }];
+  N._dismissSheetForNav = () => { dismissed += 1; };
+  globalThis.window.location = { hash: '' };
+  try {
+    assert.equal(await N._onRowAction(77, 'kudos_board'), true);
+    assert.equal(globalThis.window.location.hash, '#leaderboard/prs');
+    assert.equal(dismissed, 1, 'the sheet closes before the screen changes');
+  } finally {
+    N.items = saved.items;
+    N._dismissSheetForNav = saved.dismiss;
+    globalThis.window.location = saved.location;
+  }
+});

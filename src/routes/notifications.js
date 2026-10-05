@@ -192,6 +192,19 @@ function stagingMockNotifications() {
       branchName: 'dev/mockuser-1700000000001',
       prNumber: null, headlessIssueNumber: null,
     },
+    // #3227: a kudos row, so a preview shows the line that says what kudos
+    // are and the button to the Kudos leaderboard. Its session id matches no
+    // row, so opening it lands where any missing proposal does.
+    {
+      ...base,
+      id: 990213, kind: 'kudos',
+      createdAt: new Date(now - 90 * 60 * 1000).toISOString(),
+      sourceUsername: 'mockfriend',
+      sessionId: 990113,
+      sessionTitle: '[Mock] A change somebody thanked you for',
+      prTitle: '[Mock] A change somebody thanked you for',
+      prNumber: 9903, headlessIssueNumber: null,
+    },
     // An ALREADY-READ row. The drawer lists unread notifications and parks the
     // read ones behind "See N older notifications", so without one of these a
     // staging preview has nothing behind that button — it does not render at
