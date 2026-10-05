@@ -50,6 +50,12 @@ test('every Journey route has a labelled demo payload with the real shape', asyn
     const keys = Object.keys(body).filter((k) => k !== 'demo').sort();
     assert.deepEqual(keys, Object.keys(pinned[key]).sort(), `${key}: same top-level keys as the real payload`);
   }
+  // The first mile's onboard column: Getting started as x of n per person,
+  // no card for the one stuck before the join screen, nothing without an
+  // account.
+  const mile = await (await fetch(`${base}/api/admin/journey/first-mile?admitted=2026-10-05&demo=1`)).json();
+  assert.deepEqual(mile.people.map((p) => p.onboard && (p.onboard.shown ? `${p.onboard.done}/${p.onboard.total}` : 'no card')),
+    ['3/5', '1/5', 'no card', null]);
   const loops = await (await fetch(`${base}/api/admin/journey/loops?demo=1`)).json();
   assert.deepEqual(loops.change.atStep.hear_back, { status: 'coming' }, 'Hear back is coming in the demo too');
 
