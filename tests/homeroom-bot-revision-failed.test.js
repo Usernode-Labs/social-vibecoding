@@ -1,3 +1,4 @@
+const { englishUiSource } = require('./lib/english-ui-source');
 'use strict';
 
 // An update Homeroom bot could not make to its own change is said plainly,
@@ -167,15 +168,15 @@ test('"Reply here (or on the GitHub issue)" is true: a reply there is read by th
 test('"Ask for changes" is true: it posts on the change and puts its follow-up first', () => {
   // On a change the bot built, the change page leads with it ...
   const view = read('public/js/app-view.js');
-  assert.match(view, /key: 'ask-bot', cls: 'gc-vote-btn', label: 'Ask for changes',/);
+  assert.match(englishUiSource(view), /key: 'ask-bot', cls: 'gc-vote-btn', label: 'Ask for changes',/);
   // ... which opens the bot's chat with the change attached, and a message
   // carrying it is sent to the change, not to the model to guess at.
   const dmSrc = read('src/services/homeroom-bot-dm.js');
-  assert.match(dmSrc, /const revised = await mayor\.reviseAttached\(pool, config, \{ bot, user, settings, conversationId, message, deps: turnDeps \}\);/);
+  assert.match(englishUiSource(dmSrc), /const revised = await mayor\.reviseAttached\(pool, config, \{ bot, user, settings, conversationId, message, deps: turnDeps \}\);/);
   const mayor = read('src/services/homeroom-bot-mayor.js');
   const revise = mayor.slice(mayor.indexOf('async function reviseProposal('), mayor.indexOf('async function attachedPendingChange('));
-  assert.match(revise, /await dm\.postOnProposal\(pool, \{/);
+  assert.match(englishUiSource(revise), /await dm\.postOnProposal\(pool, \{/);
   const post = dmSrc.slice(dmSrc.indexOf('async function postOnProposal('), dmSrc.indexOf('async function answerOnRequest('));
-  assert.match(post, /thread: \{ type: 'session', ref: Number\(sessionId\) \}/);
-  assert.match(post, /enqueueFront\(pool, \{/);
+  assert.match(englishUiSource(post), /thread: \{ type: 'session', ref: Number\(sessionId\) \}/);
+  assert.match(englishUiSource(post), /enqueueFront\(pool, \{/);
 });

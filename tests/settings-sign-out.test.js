@@ -1,3 +1,4 @@
+const { englishUiSource } = require('./lib/english-ui-source');
 'use strict';
 // 5 October 2026, iOS Safari, a test account signing out: Settings' button
 // said "Log out" while every way in says "Sign in", and searching Settings
@@ -16,14 +17,14 @@ const NAV = 'frontend/src/features/settings/settings-nav.tsx';
 
 test('Settings and the waiting room say Sign out, on the same buttons', () => {
   const settings = read('frontend/src/features/settings/index.tsx');
-  assert.match(settings, /id="settings-logout"[\s\S]{0,400}?>\s*Sign out\s*<\/button>/);
+  assert.match(englishUiSource(settings), /id="settings-logout"[\s\S]{0,400}?>\s*Sign out\s*<\/button>/);
   const waiting = read('frontend/src/features/auth/waiting.tsx');
-  assert.match(waiting, /id="waiting-logout"[\s\S]{0,300}?>\s*Sign out\s*<\/button>/);
+  assert.match(englishUiSource(waiting), /id="waiting-logout"[\s\S]{0,300}?>\s*Sign out\s*<\/button>/);
   for (const [name, src] of [['settings', settings], ['waiting', waiting]]) {
-    assert.doesNotMatch(src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\{\/\*[\s\S]*?\*\/\}/g, ''), />\s*Log out\s*</, `${name}: no "Log out" left on a button`);
+    assert.doesNotMatch(englishUiSource(src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\{\/\*[\s\S]*?\*\/\}/g, '')), />\s*Log out\s*</, `${name}: no "Log out" left on a button`);
   }
   // What it says when it fails was already "sign out".
-  assert.match(read('frontend/src/features/settings/settings.js'), /'Could not sign out\. Check your connection and try again\.'/);
+  assert.match(englishUiSource(read('frontend/src/features/settings/settings.js')), /'Could not sign out\. Check your connection and try again\.'/);
 });
 
 test('the declared check that reads the button\'s words reads Sign out; the selectors are unchanged', () => {
@@ -74,7 +75,10 @@ function find(node, test, out = []) {
   if (!node || typeof node !== 'object') return out;
   if (Array.isArray(node)) { node.forEach((n) => find(n, test, out)); return out; }
   if (node.props && test(node)) out.push(node);
-  if (node.props) find(node.props.children, test, out);
+  if (node.props) {
+    find(node.props.children, test, out);
+    if (node.props.element) find(node.props.element, test, out);
+  }
   return out;
 }
 
@@ -88,7 +92,7 @@ test('searching Settings for Sign out (or Log out) finds it, and choosing it pre
     assert.equal(find(mobile, noMatch).length, 0, 'not "No settings match"');
     const hit = find(desktop, (n) => n.props['data-settings-sign-out'] !== undefined)[0];
     assert.ok(hit, `${query}: and in the sidebar`);
-    assert.match(hit.props.className, /text-red-700/, 'in the button\'s own red');
+    assert.match(englishUiSource(hit.props.className), /text-red-700/, 'in the button\'s own red');
   }
   // "sign" also finds Password (sign in), first; Sign out comes after the pages.
   const { mobile } = menuWith('sign');
@@ -102,10 +106,10 @@ test('searching Settings for Sign out (or Log out) finds it, and choosing it pre
   // Choosing it presses #settings-logout, whose handler settings.js binds:
   // no second way of signing out.
   const src = read(NAV);
-  assert.match(src, /function signOut\(setQuery: \(q: string\) => void\) \{\s*setQuery\(''\);\s*\(document\.getElementById\('settings-logout'\) as HTMLButtonElement \| null\)\?\.click\(\);\s*\}/);
-  assert.match(src, /\} else if \(e\.key === 'Enter' && signOutHit\) \{\s*\/\/[^\n]*\n\s*e\.preventDefault\(\);\s*signOut\(setQuery\);/,
+  assert.match(englishUiSource(src), /function signOut\(setQuery: \(q: string\) => void\) \{\s*setQuery\(''\);\s*\(document\.getElementById\('settings-logout'\) as HTMLButtonElement \| null\)\?\.click\(\);\s*\}/);
+  assert.match(englishUiSource(src), /\} else if \(e\.key === 'Enter' && signOutHit\) \{\s*\/\/[^\n]*\n\s*e\.preventDefault\(\);\s*signOut\(setQuery\);/,
     'Enter presses it when it is the only hit; a page still comes first');
-  assert.match(src, /if \(e\.key === 'Enter' && hits\[0\]\)/);
+  assert.match(englishUiSource(src), /if \(e\.key === 'Enter' && hits\[0\]\)/);
 });
 
 test('the prerendered hosts are unchanged: empty until settings.js publishes', () => {

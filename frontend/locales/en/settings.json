@@ -847,5 +847,7 @@
   "message_97b0560280ed": "current",
   "message_a03f2386ae06": "stale",
   "message_3d6df245178e": "connecting",
-  "message_4183b7793fd2": "verification"
+  "message_4183b7793fd2": "verification",
+  "sign_out_button": "Sign out",
+  "merged_48f0d3d397d4": "Sign out"
 }

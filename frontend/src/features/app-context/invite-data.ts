@@ -1,3 +1,4 @@
+import { t as tr } from "../../lib/i18n/runtime";
 /**
  * What the invite pane (./invite-pane.tsx) shows, read BEFORE the sheet goes
  * up, so the sheet goes up once, at the height it ends at.
@@ -101,7 +102,7 @@ export function prepareInvite(slug: string): Promise<InviteOutcome> {
   settled = null;
   const promise: Promise<InviteOutcome> = readInviteState(slug, true).then(
     (state) => ({ slug, state, error: null }),
-    (err) => ({ slug, state: null, error: (err as Error)?.message || 'Something went wrong. Try again.' }),
+    (err) => ({ slug, state: null, error: (err as Error)?.message || tr("apps:merged_4def98c89240") }),
   ).then((outcome) => {
     if (opening && opening.promise === promise) {
       opening = null;

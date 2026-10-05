@@ -154,7 +154,7 @@ export function InviteSkeleton({ label, canShare }: { label: string; canShare: b
       </div>
       {/* The pulse is opacity alone, on the compositor, and still under
           reduced motion. */}
-      <SkeletonGroup label={catalogText("apps:making_your_link_cb9ae30b")} className="motion-reduce:animate-none">
+      <SkeletonGroup label={catalogText("apps:making_your_link_status")} className="motion-reduce:animate-none">
         <div className="px-5 pt-3">
           <div className={inputVariants()}>
             <SkeletonLine shape="line" className="w-3/4" />

@@ -1,4 +1,5 @@
 'use strict';
+const { withLanguage } = require('./lib/platform-language');
 
 // An invite link opened in a browser whose session ended on the server
 // (first-session run-through, 2026-10-05). The browser had been signed in as
@@ -69,7 +70,7 @@ function harness({ routes, snapshotBoot = true, session = memoryStorage(), confi
   const asked = [];
   const local = memoryStorage();
   const location = makeLocation(`https://homeroom.test${INVITE}`);
-  const context = vm.createContext({
+  const context = vm.createContext(withLanguage({
     location,
     history: {
       pushState() {},
@@ -102,7 +103,7 @@ function harness({ routes, snapshotBoot = true, session = memoryStorage(), confi
       if (!route) throw new Error(`unexpected fetch ${p}`);
       return route();
     },
-  });
+  }));
   context.window = context;
   vm.runInContext(appSource, context);
   const { App } = context;

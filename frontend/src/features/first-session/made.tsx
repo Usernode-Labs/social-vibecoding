@@ -336,7 +336,7 @@ export function InviteSheet({ made, me, making = true, onClose, onSent }: {
             {/* Named on screen, in the label style of "What they'll get" above
                 and the make screen's fields (make.tsx LABEL): unlabelled, the
                 note read as part of the card rather than something to write. */}
-            <label htmlFor="first-session-note" className="block pb-1 text-[13px] text-zinc-500 dark:text-zinc-400"><Message id="auth:your_note_5331e47d" /></label>
+            <label htmlFor="first-session-note" className="block pb-1 text-[13px] text-zinc-500 dark:text-zinc-400"><Message id="core:note_d8da2c49" /></label>
             <Localized element={<textarea
               id="first-session-note"
               rows={2}

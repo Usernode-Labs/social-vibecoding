@@ -345,16 +345,18 @@ export function DevPlusMenu({
             {/* B8: Suggest an improvement leads (it goes to Homeroom bot,
                 or to the group as a request); building it yourself is
                 second. */}
-            <Localized element={<PlusRow title={catalogText("workshop:suggest_an_improvement")}
+            <Localized element={<PlusRow
               data-plus="issue"
+              title={catalogText("workshop:suggest_an_improvement")}
               icon={<LightBulbIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
 
-              sub="Report a problem or idea without building it yourself"
+              sub={tr("workshop:merged_4d912ca586fa")}
             />} messages={{"title":"workshop:suggest_an_improvement"}} />
-            <Localized element={<PlusRow title={catalogText("workshop:build_it_yourself_72369f88")}
+            <Localized element={<PlusRow
               data-plus="new-change"
               icon={<PencilSparklesIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-              sub="With a coding agent, then ask for approval"
+              title={catalogText("workshop:build_it_yourself_72369f88")}
+              sub={tr("workshop:merged_3025de259d79")}
               onClick={() => { callAppView('_closePlusMenu'); void Improve.startSession(); }}
             />} messages={{"title":"workshop:build_it_yourself_72369f88"}} />
             {canCollaborate ? (
@@ -375,7 +377,7 @@ export function DevPlusMenu({
               <Localized element={<PlusRow title={catalogText("workshop:make_it_private_6aeba826")}
                 data-plus="make-private"
                 icon={<LockIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-                sub="Only invited people can open and build it. Code stays public on GitHub."
+                sub={tr("workshop:merged_37593a2773aa")}
                 // It renders after the menu was wired (once the community
                 // read answers), so it closes the menu itself.
                 onClick={() => { callAppView('_closePlusMenu'); onMakePrivate(); }}
@@ -386,12 +388,12 @@ export function DevPlusMenu({
               || window.AppView?.appData?.delete_block === 'shared') ? <Localized element={<PlusRow title={catalogText("workshop:app_settings_d43fb8a9")}
               data-plus="app-settings"
               icon={<KeyIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-              sub="Manage who can use and build this app"
+              sub={tr("workshop:merged_a22c66e20ee2")}
             />} messages={{"title":"workshop:app_settings_d43fb8a9"}} /> : null}
             {canManageIllustration ? <Localized element={<PlusRow title={catalogText("workshop:featured_illustration_2ad772c7")}
               data-plus="featured-illustration"
               icon={<PencilSquareIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-              sub="Preview and adjust the Discover card image"
+              sub={tr("workshop:merged_0fd42059833d")}
               onClick={() => setEditingIllustration(true)}
             />} messages={{"title":"workshop:featured_illustration_2ad772c7"}} /> : null}
             {showsMembers ? (
@@ -400,13 +402,13 @@ export function DevPlusMenu({
                   <Localized element={<PlusRow title={catalogText("workshop:proposal_approvals_47c05975")}
                     data-plus="members"
                     icon={<UserGroupIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-                    sub="Who approves proposals and how many approvals are needed"
+                    sub={tr("workshop:merged_d3052fff5a0f")}
                   />} messages={{"title":"workshop:proposal_approvals_47c05975"}} />
                 ) : (
                   <Localized element={<PlusRow title={catalogText("workshop:members_approvals_7988f96b")}
                     data-plus="members"
                     icon={<UserGroupIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-                    sub="Manage collaborators, app admins and proposal approvals"
+                    sub={tr("workshop:merged_64035d331986")}
                   />} messages={{"title":"workshop:members_approvals_7988f96b"}} />
                 )}
               </>
@@ -414,7 +416,7 @@ export function DevPlusMenu({
             <Localized element={<PlusRow title={catalogText("workshop:app_display_name_4258ff17")}
               data-plus="rename"
               icon={<PencilSquareIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-              sub="Renames are proposals, applied once voted in"
+              sub={tr("workshop:merged_59a22acd2e28")}
               dividerCls={showsMembers ? PLUS_ROW_DIVIDER_CLS : ''}
             />} messages={{"title":"workshop:app_display_name_4258ff17"}} />
             <LocalizedDynamic element={<PlusRow
@@ -458,7 +460,7 @@ export function DevPlusMenu({
           <Localized element={<PlusRow title={catalogText("workshop:remix_f84ed437")}
             data-plus="fork"
             icon={<AppWindowIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-            sub="Make your own copy"
+            sub={tr("workshop:merged_82bb5bb897a2")}
             dividerCls={readOnly ? '' : PLUS_ROW_DIVIDER_CLS}
           />} messages={{"title":"workshop:remix_f84ed437"}} />
         )}

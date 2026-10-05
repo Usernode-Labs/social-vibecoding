@@ -30,6 +30,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 const { withStateRead } = require('./lib/agent-session-state-read');
+const { englishUiSource } = require('./lib/english-ui-source');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -256,15 +257,16 @@ test('the sheet draws Agent chats after mount only, and only when the store says
 // ── 3. The other doors ─────────────────────────────────────────────────
 
 test('a newcomer still has every other door to building it themselves', () => {
-  const row = read('frontend/src/features/dev-board/actions-row.tsx');
+  const readUi = rel => englishUiSource(read(rel));
+  const row = readUi('frontend/src/features/dev-board/actions-row.tsx');
   assert.match(row, /data-plus="new-change"[\s\S]{0,300}title="Build it yourself"[\s\S]{0,200}Improve\.startSession\(\)/, 'the hub\'s ⋯');
-  const view = read('public/js/app-view.js');
+  const view = readUi('public/js/app-view.js');
   assert.match(view, /label: 'Build it yourself',\s*title: 'Start an agent session on this request',\s*act: \{ fn: 'chooseIssueWork', args: \[n\] \}/, 'a request\'s own');
-  assert.match(read('frontend/src/features/messages/index.tsx'),
+  assert.match(readUi('frontend/src/features/messages/index.tsx'),
     /\{ key: 'agent', label: 'Build it yourself', hint: 'Plan and build a change with a coding agent' \}/, 'Messages\' new chat');
   // The tour no longer points a newcomer at the menu's row.
-  assert.doesNotMatch(read('frontend/src/features/home/tour/tour-steps.ts'), /tap Build it yourself/);
+  assert.doesNotMatch(readUi('frontend/src/features/home/tour/tour-steps.ts'), /tap Build it yourself/);
   // Nor do the Workshop's notes: they name the hub's ⋯.
-  const workshop = read('frontend/src/features/dev-board/workshop/workshop.tsx');
+  const workshop = readUi('frontend/src/features/dev-board/workshop/workshop.tsx');
   assert.doesNotMatch(workshop, /Build it yourself in the Homeroom menu|Start a new change in the Homeroom menu/);
 });

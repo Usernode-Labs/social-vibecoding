@@ -1,3 +1,5 @@
+import { Message, LocalizedDynamic, LocalizedValue } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
 import { useState } from 'react';
 
 import { BellIcon } from '@/components/ui/icons';
@@ -28,9 +30,9 @@ export type NotifyMeState = 'offer' | 'asking' | 'granted' | 'denied' | 'here';
 
 /** What the card says once the tap is answered. */
 export const NOTIFY_ME_LINES: Record<Exclude<NotifyMeState, 'offer' | 'asking'>, string> = {
-  granted: 'I’ll send you a notification when it’s ready.',
-  denied: 'Notifications are off for Homeroom, so I’ll message you here when it’s ready.',
-  here: 'I’ll message you here when it’s ready.',
+  get granted() { return tr("community:merged_ec25fb591739"); },
+  get denied() { return tr("community:merged_1b6adda412b2"); },
+  get here() { return tr("community:merged_be68ae5803c2"); },
 };
 
 const CHOSEN_KEY = 'usernode:notify-me-chosen';
@@ -109,7 +111,7 @@ export function NotifyMe({ userId }: { userId: number | null | undefined }) {
 
   if (state === 'offer' || state === 'asking') {
     return (
-      <div className="messages-bot-answers" role="group" aria-label="Notifications">
+      <LocalizedDynamic element={<div className="messages-bot-answers" role="group" aria-label={tr("community:merged_788011833a5a")}>
         <button
           type="button"
           className="messages-bot-secondary"
@@ -118,15 +120,15 @@ export function NotifyMe({ userId }: { userId: number | null | undefined }) {
           onClick={() => { void tap(); }}
         >
           <BellIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
-          <span>Notify me when it’s ready</span>
+          <span><Message id="community:merged_58224176ff92" /></span>
         </button>
-      </div>
+      </div>} resolve={() => ({"aria-label": tr("community:merged_788011833a5a")})} />
     );
   }
   const host = window as unknown as NotifyMeHost;
   return (
     <div data-bot-notify-me={state}>
-      <p className="messages-bot-answered" role="status">{NOTIFY_ME_LINES[state]}</p>
+      <p className="messages-bot-answered" role="status"><LocalizedValue render={() => NOTIFY_ME_LINES[state]} /></p>
       {settings ? (
         <div className="mt-2 messages-bot-answers">
           <button
@@ -134,8 +136,7 @@ export function NotifyMe({ userId }: { userId: number | null | undefined }) {
             className="messages-bot-secondary"
             onClick={() => { void host.usernode?.openNotificationSettings?.()?.catch?.(() => {}); }}
           >
-            Turn on notifications
-          </button>
+            <Message id="community:merged_92dfd3632bae" /></button>
         </div>
       ) : null}
     </div>

@@ -165,12 +165,15 @@ const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one :
  * people than there are, and then says how many there are.
  */
 function whoApproves(required: number, of: number, kind: 'approver' | 'member'): string {
-  const k = kind === 'approver' ? 'approvers' : 'members';
-  if (required < of) return tr(`workshop:who_${k}_some_of`, { required, of });
-  if (required > of) return tr(`workshop:who_${k}_more_than_${of === 1 ? 'one' : 'several'}`, { required, of });
-  if (of === 1) return tr(`workshop:who_${k}_only_one`);
-  if (of === 2) return tr(`workshop:who_${k}_both`);
-  return tr(`workshop:who_${k}_all`, { of });
+  const approver = kind === 'approver';
+  if (required < of) return tr(approver ? 'workshop:who_approvers_some_of' : 'workshop:who_members_some_of', { required, of });
+  if (required > of) {
+    if (of === 1) return tr(approver ? 'workshop:who_approvers_more_than_one' : 'workshop:who_members_more_than_one', { required, of });
+    return tr(approver ? 'workshop:who_approvers_more_than_several' : 'workshop:who_members_more_than_several', { required, of });
+  }
+  if (of === 1) return tr(approver ? 'workshop:who_approvers_only_one' : 'workshop:who_members_only_one');
+  if (of === 2) return tr(approver ? 'workshop:who_approvers_both' : 'workshop:who_members_both');
+  return tr(approver ? 'workshop:who_approvers_all' : 'workshop:who_members_all', { of });
 }
 
 /**

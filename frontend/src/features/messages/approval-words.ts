@@ -1,3 +1,4 @@
+import { t as tr } from "../../lib/i18n/runtime";
 /*
  * Who a change Homeroom bot built still needs approval from, in words. One
  * wording for both places that say it: the ready card in a person's chat
@@ -41,24 +42,23 @@ export function countOf(value: unknown): number | null {
 /** Pure: "a", "a and b", "a, b and c". */
 export function andWords(items: string[]): string {
   if (items.length <= 1) return items.join('');
-  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+  return tr("community:merged_f4780f76354c", { value1: items.slice(0, -1).join(', '), value2: items[items.length - 1] });
 }
 
 /** Pure: "a", "a or b", "a, b or c". */
 export function orWords(items: string[]): string {
   if (items.length <= 1) return items.join('');
-  return `${items.slice(0, -1).join(', ')} or ${items[items.length - 1]}`;
+  return tr("community:merged_2e95cd47e935", { value1: items.slice(0, -1).join(', '), value2: items[items.length - 1] });
 }
 
 /** Pure: "one approval", "2 approvals", or with `again` "one more approval", "2 more approvals". */
 export function approvalsWords(count: number, again = false): string {
-  const more = again ? ' more' : '';
-  return count === 1 ? `one${more} approval` : `${count}${more} approvals`;
+  return tr(again ? "community:approval_more" : "community:approval_count", { count });
 }
 
 /** Pure: whoever is named, then the rest as "2 others" (with "or") or "2 more" (with "and"). */
 function people(names: string[], more: number, joiner: 'and' | 'or'): string {
-  const rest = joiner === 'or' ? `${more} ${more === 1 ? 'other' : 'others'}` : `${more} more`;
+  const rest = tr(joiner === "or" ? "community:approval_others" : "community:approval_people_more", { count: more });
   const all = [...names, ...(more ? [rest] : [])];
   return joiner === 'or' ? orWords(all) : andWords(all);
 }
@@ -72,15 +72,15 @@ function people(names: string[], more: number, joiner: 'and' | 'or'): string {
 export function waitingWords(need: ApprovalNeed): string | null {
   const missing = countOf(need.missing);
   if (missing === 0) return null;
-  const named = [...(need.you ? ['you'] : []), ...(need.names || []).map((name) => `@${name}`)];
+  const named = [...(need.you ? [tr("community:merged_bb0347a468d9")] : []), ...(need.names || []).map((name) => `@${name}`)];
   const more = Math.max(Math.floor(Number(need.more) || 0), 0);
   const listed = named.length + more;
   if (!listed) return null;
   if (missing !== null && missing < listed) {
     const needed = countOf(need.needed);
-    return `Needs ${approvalsWords(missing, needed !== null && missing < needed)} from ${people(named, more, 'or')}`;
+    return tr("community:merged_95851eb1e3dd", { value1: approvalsWords(missing, needed !== null && missing < needed), value2: people(named, more, 'or') });
   }
-  return `Waiting for approval from ${people(named, more, 'and')}`;
+  return tr("community:merged_5424ba7c0199", { value1: people(named, more, 'and') });
 }
 
 /**
@@ -93,8 +93,8 @@ export function afterYesWords({ missing, names, more = 0 }: { missing: number; n
   const named = names.map((name) => `@${name}`);
   const listed = named.length + more;
   if (named.length && listed === missing) {
-    return `when ${people(named, more, 'and')} ${missing === 1 ? 'approves' : 'approve'} too`;
+    return tr("community:approval_when_people", { count: missing, value1: people(named, more, "and") });
   }
-  if (named.length && listed > missing) return `after ${approvalsWords(missing, true)} from ${people(named, more, 'or')}`;
-  return missing === 1 ? 'when one more person approves' : `when ${missing} more people approve`;
+  if (named.length && listed > missing) return tr("community:merged_fd8ea6e5449e", { value1: approvalsWords(missing, true), value2: people(named, more, 'or') });
+  return tr("community:approval_when_more", { count: missing });
 }

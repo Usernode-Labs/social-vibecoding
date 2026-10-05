@@ -2762,7 +2762,7 @@ function rowView(n) {
     const label = n.kind === 'collab_invite'
       ? (n.detail === 'join' ? globalThis.PlatformI18n.t("community:invited_you_to_join_title") : globalThis.PlatformI18n.t("community:invited_you_to_build_with_them_aade4739"))
       : n.kind === 'collab_invite_accepted'
-        ? globalThis.PlatformI18n.t("community:accepted_your_invite_c2ffd2e0")
+        ? globalThis.PlatformI18n.t("community:joined_through_your_invite_value1_5a6fee92", { value1: "" })
         : n.kind === 'approver_invite'
           ? globalThis.PlatformI18n.t("community:asked_you_to_help_approve_changes_e6164b0a")
           : globalThis.PlatformI18n.t("community:can_approve_changes_now_c60f3ce2");

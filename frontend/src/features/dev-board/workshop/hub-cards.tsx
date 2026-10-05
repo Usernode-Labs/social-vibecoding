@@ -396,7 +396,7 @@ export function FirstVersionCard({ slug, data }: { slug: string; data: Community
         ) : null}
         <span className="dev-ws-hub-door-text">
           <span className="dev-ws-head">
-            <span className="dev-ws-head-title">First version</span>
+            <span className="dev-ws-head-title"><Message id="workshop:merged_50ee9f04064f" /></span>
           </span>
           <span className="dev-ws-hub-needs-first">
             <span className="dev-ws-hub-needs-title" data-ws-first-version-step="">{step}</span>
@@ -414,16 +414,14 @@ export function FirstVersionCard({ slug, data }: { slug: string; data: Community
           data-ws-first-version-chat=""
           onClick={chat}
         >
-          Go to chat
-        </Button>
+          <Message id="workshop:merged_435760070a20" /></Button>
       ) : fv.ready && fv.session_id ? (
         <a
           href={`#app/${encodeURIComponent(slug)}/dev/proposals/${fv.session_id}`}
           className="dev-ws-hub-open un-touch-target self-start"
           data-ws-first-version-change=""
         >
-          See the change
-          <ChevronRightIcon className="w-3.5 h-3.5" aria-hidden="true" />
+          <Message id="workshop:merged_2e983b2e3f6b" /><ChevronRightIcon className="w-3.5 h-3.5" aria-hidden="true" />
         </a>
       ) : null}
     </section>

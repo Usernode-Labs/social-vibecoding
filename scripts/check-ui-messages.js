@@ -69,6 +69,11 @@ function scanFile(file, source, catalogs) {
     return false;
   }
   function visit(node) {
+    if (ts.isTemplateExpression(node) && (translationKey(node)
+        || (catalogs && /^[a-z]+:[a-z][a-z0-9_.]*$/.test(node.head.text) && Object.hasOwn(catalogs, node.head.text.split(':')[0])))) {
+      const { line } = tree.getLineAndCharacterOfPosition(node.getStart(tree));
+      findings.push({ file, line: line + 1, text: node.getText(tree), kind: 'computed message key; use complete literal keys' });
+    }
     if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) htmlText(node, node.text);
     if (ts.isTemplateExpression(node)) htmlText(node, node.head.text + node.templateSpans.map(span => '0' + span.literal.text).join(''));
 
@@ -86,7 +91,7 @@ function scanFile(file, source, catalogs) {
     if (ts.isJsxExpression(node) && node.expression && ts.isJsxElement(node.parent)) {
       values(node.expression, 'JSX text expression');
     }
-    if (ts.isJsxAttribute(node) && textProperty(node.name.getText(tree))) {
+    if (ts.isJsxAttribute(node) && (textProperty(node.name.getText(tree)) || node.name.getText(tree) === 'sub')) {
       const value = node.initializer && (ts.isJsxExpression(node.initializer) ? node.initializer.expression : node.initializer);
       values(value, 'UI attribute');
     }

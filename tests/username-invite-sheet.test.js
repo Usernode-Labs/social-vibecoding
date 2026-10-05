@@ -1,4 +1,5 @@
 'use strict';
+const { withLanguage } = require('./lib/platform-language');
 
 // The two ends of an invite by @username, on screen.
 //
@@ -157,7 +158,7 @@ function loadNotifications({ welcome } = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   sandbox.agoStamp = agoStamp;
   vm.runInContext(NOTIF_SRC, sandbox);
   const N = sandbox.Notifications;

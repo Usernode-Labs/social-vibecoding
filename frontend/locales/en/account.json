@@ -311,5 +311,7 @@
   "budget_byok_daily": "Your {{limit}} daily allowance is used up. AI turns are now billed to the Anthropic key you saved in Settings.",
   "budget_exhausted_daily": "You have used all {{limit}} of today’s AI allowance.",
   "budget_used_daily": "{{spent}} of your {{limit}} daily AI allowance used ({{remaining}} left).",
-  "budget_extra_byok": "A further {{amount}} today was billed to your own Anthropic key and does not count against the allowance."
+  "budget_extra_byok": "A further {{amount}} today was billed to your own Anthropic key and does not count against the allowance.",
+  "you_have_not_suggested_an_improvement_yet": "You have not suggested an improvement yet.",
+  "suggest_an_improvement_button": "Suggest an improvement"
 }

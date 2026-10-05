@@ -1,3 +1,4 @@
+const { englishUiSource } = require('./lib/english-ui-source');
 'use strict';
 
 // Signing in as one flow: the story, the sign-in sheet over it, then "What
@@ -241,19 +242,19 @@ test('the password step sends the sign-in screen\'s exchange, and says what it r
 
 test('the password step is the sheet\'s: the link opens it, and Forgot password still reaches the reset', () => {
   const src = read(SHEET);
-  assert.match(src, /type Step = 'choose' \| 'email' \| 'code' \| 'account' \| 'username' \| 'password';/);
-  assert.match(src, /data-sign-in-sheet-password=""\s+onClick=\{\(e\) => \{ e\.preventDefault\(\); setError\(null\); setDetails\(null\); setStep\('password'\); \}\}/);
-  assert.match(src, /<label htmlFor="sign-in-sheet-identifier" className=\{LABEL\}>Username or email<\/label>/);
-  assert.match(src, /<PasswordInput ref=\{currentPasswordField\} id="sign-in-sheet-current-password" name="password" required autoComplete="current-password"/);
-  assert.match(src, /<a href="#login\/forgot" onClick=\{\(\) => \{ if \(followInvite\) rememberInviteJoin\(\); onClose\(\); \}\} className=\{QUIET\}>Forgot password\?<\/a>/);
+  assert.match(englishUiSource(src), /type Step = 'choose' \| 'email' \| 'code' \| 'account' \| 'username' \| 'password';/);
+  assert.match(englishUiSource(src), /data-sign-in-sheet-password=""\s+onClick=\{\(e\) => \{ e\.preventDefault\(\); setError\(null\); setDetails\(null\); setStep\('password'\); \}\}/);
+  assert.match(englishUiSource(src), /<label htmlFor="sign-in-sheet-identifier" className=\{LABEL\}>Username or email<\/label>/);
+  assert.match(englishUiSource(src), /<PasswordInput ref=\{currentPasswordField\} id="sign-in-sheet-current-password" name="password" required autoComplete="current-password"/);
+  assert.match(englishUiSource(src), /<a href="#login\/forgot" onClick=\{\(\) => \{ if \(followInvite\) rememberInviteJoin\(\); onClose\(\); \}\} className=\{QUIET\}>Forgot password\?<\/a>/);
   // Join pressed on an invite, then a password: the shell follows the link
   // without asking a second time, as it did from the sign-in screen.
-  assert.match(src, /if \(followInvite\) rememberInviteJoin\(\);\s+await finish\('existing'\);/);
+  assert.match(englishUiSource(src), /if \(followInvite\) rememberInviteJoin\(\);\s+await finish\('existing'\);/);
   // A right code for a password account moves to this step with the address.
-  assert.match(src, /identifierPrefill\.current = email;\s+setStep\('password'\);/);
+  assert.match(englishUiSource(src), /identifierPrefill\.current = email;\s+setStep\('password'\);/);
   // A session the shell cannot confirm says so in the sheet, as on the screen.
-  assert.match(src, /<SessionConfirmationNotice completion=\{completion\} \/>/);
-  assert.match(src, /<NativeLoginDetailsLink details=\{details\} \/>/);
+  assert.match(englishUiSource(src), /<SessionConfirmationNotice completion=\{completion\} \/>/);
+  assert.match(englishUiSource(src), /<NativeLoginDetailsLink details=\{details\} \/>/);
 });
 
 test('each way into the sheet says only what is true for it', () => {
@@ -265,17 +266,17 @@ test('each way into the sheet says only what is true for it', () => {
     open: true, title, intro, from, onClose() {}, primaryClass: 'pill',
   }));
   const signin = render('signin', 'Sign in', 'Welcome back. We\'ll email you a code.');
-  assert.match(signin, /Welcome back/);
-  assert.doesNotMatch(signin, /New to Homeroom|This makes your account|Already have an account/);
-  assert.match(signin, /<p[^>]*><a href="#login" data-sign-in-sheet-password=""[^>]*>Sign in with a password<\/a><\/p>/,
+  assert.match(englishUiSource(signin), /Welcome back/);
+  assert.doesNotMatch(englishUiSource(signin), /New to Homeroom|This makes your account|Already have an account/);
+  assert.match(englishUiSource(signin), /<p[^>]*><a href="#login" data-sign-in-sheet-password=""[^>]*>Sign in with a password<\/a><\/p>/,
     'Sign in: the link alone');
   const start = render('story', 'Make your account', 'With your email. It takes a minute.');
-  assert.match(start, /Already have an account\? <a[^>]*>Sign in with a password<\/a>/);
-  assert.doesNotMatch(start, /New to Homeroom/);
+  assert.match(englishUiSource(start), /Already have an account\? <a[^>]*>Sign in with a password<\/a>/);
+  assert.doesNotMatch(englishUiSource(start), /New to Homeroom/);
   const join = render('invite', 'Join Sunday Run Club', 'Sign in or make an account with your email. It takes a minute.');
-  assert.match(join, /New to Homeroom\? This makes your account\. <a[^>]*>Sign in with a password<\/a>/);
+  assert.match(englishUiSource(join), /New to Homeroom\? This makes your account\. <a[^>]*>Sign in with a password<\/a>/);
   // Nothing the story's two sheets say is a dash.
-  for (const html of [signin, start, join]) assert.doesNotMatch(html, /—/);
+  for (const html of [signin, start, join]) assert.doesNotMatch(englishUiSource(html), /—/);
 });
 
 // ─── the way out to the make screen ─────────────────────────────────────

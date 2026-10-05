@@ -1,3 +1,5 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
 /**
  * "How challenges work": the explainer at the top of the Challenges tab
  * (first-session run-through, 5 October 2026, item 17). A newcomer opened
@@ -54,15 +56,15 @@ import { GroupedList, ListRow } from '@/components/ui/grouped-list';
 import { IconTile } from '@/components/ui/icon-tile';
 import { ArrowPathIcon, CheckIcon, TrophyIcon, XIcon } from '@/components/ui/icons';
 
-export const INTRO_TITLE = 'How challenges work';
+export const INTRO_TITLE = () => tr("apps:merged_3f30e05942f0");
 
 export const INTRO_ROWS = [
-  { key: 'counts', title: 'Do it, and it counts', subtitle: 'Complete challenges.' },
-  { key: 'points', title: 'Earn points', subtitle: 'Each card shows what it earns. Points add up in standings.' },
+  { key: 'counts', get title() { return tr("apps:merged_8841bc82e63f"); }, get subtitle() { return tr("apps:merged_49d6eb8edfd0"); } },
+  { key: 'points', get title() { return tr("apps:merged_c800e3465ccc"); }, get subtitle() { return tr("apps:merged_842cf5735699"); } },
   {
     key: 'weekly',
-    title: 'New ones each week',
-    subtitle: 'This week starts again on Monday. Always open has no deadline.',
+    get title() { return tr("apps:merged_bf41f5da91ca"); },
+    get subtitle() { return tr("apps:merged_f9e7147ce15d"); },
   },
 ] as const;
 
@@ -119,24 +121,25 @@ export interface ChallengesIntroViewProps {
 }
 
 export function ChallengesIntroView({ closed, onClose, onOpen, closeRef, linkRef }: ChallengesIntroViewProps): ReactNode {
+  useUiLanguage();
   if (closed) {
     return (
       <button ref={linkRef} type="button" className={LINK} data-challenges-intro="closed" onClick={onOpen}>
-        {INTRO_TITLE}
+        {INTRO_TITLE()}
       </button>
     );
   }
   return (
-    <section aria-label={INTRO_TITLE} className="mb-4" data-challenges-intro="open">
+    <section aria-label={INTRO_TITLE()} className="mb-4" data-challenges-intro="open">
       <GroupedList tone="plane" className="mx-0">
         <div className={HEAD}>
-          <div className={TITLE}>{INTRO_TITLE}</div>
+          <div className={TITLE}>{INTRO_TITLE()}</div>
           <button
             ref={closeRef}
             type="button"
             className={CLOSE}
-            aria-label={`Close ${INTRO_TITLE}`}
-            title="Close"
+            aria-label={tr("apps:merged_39f97a2f3052", { value1: INTRO_TITLE() })}
+            title={tr("apps:merged_7d9eb7acb13e")}
             data-challenges-intro-close=""
             onClick={onClose}
           >

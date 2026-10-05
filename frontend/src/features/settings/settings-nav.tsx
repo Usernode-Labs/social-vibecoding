@@ -1,3 +1,4 @@
+import { Message } from "../../lib/i18n/react";
 import { useMessages as useUiLanguage } from "../../lib/i18n/react";
 import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
 import { t as tr } from "../../lib/i18n/runtime";
@@ -311,8 +312,7 @@ export function SettingsNavDesktop() {
           ))}
           {signOutHit ? (
             <button type="button" data-settings-sign-out="" className={SIGN_OUT_HIT_ROW} onClick={() => signOut(setQuery)}>
-              Sign out
-            </button>
+              <Message id="settings:merged_48f0d3d397d4" /></button>
           ) : null}
           {hits.length || signOutHit ? null : (
             <NoMatch query={query} className="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400" />
@@ -372,7 +372,7 @@ export function SettingsMobileMenu() {
                   data-settings-sign-out=""
                   className={MENU_ROW}
                   titleClassName={SIGN_OUT_TITLE}
-                  title="Sign out"
+                  title={tr("settings:merged_48f0d3d397d4")}
                   chevron={false}
                   onClick={() => signOut(setQuery)}
                 />

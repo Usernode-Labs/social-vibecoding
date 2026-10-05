@@ -184,9 +184,9 @@ function NonPodiumChip({ toggle }: { toggle: NonPodiumToggle | null }): ReactNod
         className={`px-3 py-1 text-xs font-medium rounded-full border ${on}`}
         onClick={() => controller()?._toggleNonPodium()}
       >
-        {toggle.count == null
-          ? 'Show non-podium users'
-          : `Show non-podium users (${toggle.count})`}
+        <LocalizedValue render={() => (toggle.count == null
+          ? tr("apps:merged_fb954981445c")
+          : tr("apps:merged_f541d86a416c", { value1: toggle.count }))} />
       </button>
     </div>
   );
@@ -386,7 +386,7 @@ function Body({ view }: { view: BodyView | null }): ReactNode {
         <ChallengeLine line={view.challengeLine} />
         <Disclaimer text={view.disclaimer} />
         <NonPodiumChip toggle={view.nonPodiumToggle} />
-        <p className={HINT} data-tc-lb-empty="">Everyone with a score on this board is excluded from the ranking.</p>
+        <p className={HINT} data-tc-lb-empty=""><Message id="apps:merged_61dd23c819d4" /></p>
       </>
     );
   }

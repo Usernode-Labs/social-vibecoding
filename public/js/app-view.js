@@ -3063,7 +3063,7 @@ const AppView = {
 
   /** While a pending record waits for the server's word, the screen says only this. */
   _firstVersionCheckingView() {
-    return { dot: null, message: 'Opening…', detail: null, action: null };
+    return { dot: null, get message() { return globalThis.PlatformI18n.t("core:merged_c926c2c50e65"); }, detail: null, action: null };
   },
 
   /**
@@ -3203,11 +3203,11 @@ const AppView = {
       ? AppView._firstVersionApprovalSeen(appData, fv.approval) : null;
     const view = {
       dot: null,
-      message: `The first version of ${appData.name || slug} is ready to try`,
+      get message() { return globalThis.PlatformI18n.t("core:merged_4d65280d1e38", { value1: appData.name || slug }); },
       detail: null,
       lines,
       secondary: appData.status === 'running'
-        ? { key: 'starter', label: 'Show the starter for now', slug }
+        ? { key: 'starter', get label() { return globalThis.PlatformI18n.t("core:merged_f33c29002d44"); }, slug }
         : null,
     };
     if (!approval) {
@@ -3215,13 +3215,13 @@ const AppView = {
       return {
         ...view,
         action: fv.mine
-          ? { key: 'botChat', label: 'Open my chat with Homeroom bot', slug,
+          ? { key: 'botChat', get label() { return globalThis.PlatformI18n.t("core:merged_fbd1d3790090"); }, slug,
             conversationId: Number.isInteger(fv.conversationId) ? fv.conversationId : null }
           : null,
       };
     }
-    const tryIt = { key: 'tryChange', label: 'Try it', slug, sessionId: approval.sessionId };
-    const change = { key: 'seeChange', label: 'See the change', slug, sessionId: approval.sessionId };
+    const tryIt = { key: 'tryChange', get label() { return globalThis.PlatformI18n.t("core:merged_fe6951113784"); }, slug, sessionId: approval.sessionId };
+    const change = { key: 'seeChange', get label() { return globalThis.PlatformI18n.t("core:merged_2e983b2e3f6b"); }, slug, sessionId: approval.sessionId };
     if (approval.mustApprove) {
       lines.push('Waiting for your approval.');
       return { ...view, action: tryIt, alt: change };
@@ -5230,11 +5230,11 @@ const AppView = {
     const slug = (AppView.appData && AppView.appData.slug) || App.currentApp;
     const n = parseInt(item.included_in_pr_number, 10) || 0;
     return {
-      heading: 'Went live as part of',
+      get heading() { return globalThis.PlatformI18n.t("core:merged_8e32225ea418"); },
       state: 'merged',
       sessionId: id,
-      label: n ? `#${n}` : 'Change',
-      title: item.included_in_pr_title || (n ? `Pull request #${n}` : `Change ${id}`),
+      label: n ? `#${n}` : globalThis.PlatformI18n.t("core:merged_c0bf75bd78bf"),
+      title: item.included_in_pr_title || (n ? globalThis.PlatformI18n.t("core:merged_acad28457754", { value1: n }) : globalThis.PlatformI18n.t("core:merged_2c7346eb4667", { value1: id })),
       href: `#app/${slug}/dev/proposals/${id}`,
     };
   },
@@ -20445,8 +20445,8 @@ const AppView = {
       if (failed(claim)) {
         return `<li data-shots-story="${attr(claim.id || '')}" data-shots-shot-status="failed" class="shots-claim">
           <span class="shots-claim-n">${n}</span>
-          <div class="min-w-0 flex-1"><div class="flex items-start justify-between gap-3"><strong class="text-sm leading-snug">${esc(claim.claim || '')}</strong><span class="dev-badge bg-red-500/10 text-red-700 dark:text-red-400">Didn\u2019t work</span></div>
-          <p class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">${esc(result.reason || 'The shots agent tried this on the after build, and the app broke.')}</p></div>
+          <div class="min-w-0 flex-1"><div class="flex items-start justify-between gap-3"><strong class="text-sm leading-snug">${esc(claim.claim || '')}</strong><span class="dev-badge bg-red-500/10 text-red-700 dark:text-red-400">${globalThis.PlatformI18n.htmlText("core:merged_ddf710fe8175")}</span></div>
+          <p class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">${esc(result.reason || globalThis.PlatformI18n.t("core:merged_020957b917e2"))}</p></div>
         </li>`;
       }
       if (skipped(claim)) {
@@ -22771,7 +22771,7 @@ const AppView = {
         pending.src = next;
         const frame = staging.frame();
         if (frame && frame.src) {
-          AppView._setStagingLoader(true, { title: 'Loading the preview…', sub: '' });
+          AppView._setStagingLoader(true, { get title() { return globalThis.PlatformI18n.t("core:merged_b737abb40cf6"); }, sub: '' });
           AppView._watchStagingIframeLoad(frame, loadId, null);
           staging.setSrc(next);
         }

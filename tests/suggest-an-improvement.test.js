@@ -1,3 +1,4 @@
+const { englishUiSource } = require('./lib/english-ui-source');
 'use strict';
 
 // "Ask for a change" is "Suggest an improvement" (first-session run-through,
@@ -60,25 +61,25 @@ test('no user-facing copy says "Ask for a change" any more', () => {
 });
 
 test('every door to filing a request says Suggest an improvement', () => {
-  assert.match(read('frontend/src/features/improve/actions.tsx'),
+  assert.match(englishUiSource(read('frontend/src/features/improve/actions.tsx')),
     /id="improve-row-feedback"\s+label="Suggest an improvement"/, 'the Homeroom menu\'s one button');
-  assert.match(read('frontend/src/features/dialogs/feedback.tsx'),
+  assert.match(englishUiSource(read('frontend/src/features/dialogs/feedback.tsx')),
     /<h2 className="text-lg font-bold">\s*Suggest an improvement\s*<\/h2>/, 'the dialog it opens, from every way in');
-  assert.match(read('frontend/src/features/dialogs/feedback-controller.js'),
+  assert.match(englishUiSource(read('frontend/src/features/dialogs/feedback-controller.js')),
     /Reopen Suggest an improvement to finish it\./, 'the rescued-draft toast names it');
   const row = read('frontend/src/features/dev-board/actions-row.tsx');
-  assert.match(row, /data-plus="issue"[\s\S]{0,200}title="Suggest an improvement"/, 'the hub\'s ⋯ leads with it');
-  assert.match(row, /'Suggest an improvement, import a PR or manage this app'/, 'and the ⋯ says so to a screen reader');
+  assert.match(englishUiSource(row), /data-plus="issue"[\s\S]{0,200}title="Suggest an improvement"/, 'the hub\'s ⋯ leads with it');
+  assert.match(englishUiSource(row), /'Suggest an improvement, import a PR or manage this app'/, 'and the ⋯ says so to a screen reader');
   const mine = read('frontend/src/features/profile/my-proposals.tsx');
-  assert.match(mine, /data-profile-work-ask=""[\s\S]{0,200}>\s*Suggest an improvement\s*<\/Button>/, 'Your requests ends on it');
-  assert.match(mine, /requests: 'You have not suggested an improvement yet\.'/, 'and says so when it is empty');
-  assert.match(read('frontend/src/features/home/tour/tour-steps.ts'),
+  assert.match(englishUiSource(mine), /data-profile-work-ask=""[\s\S]{0,200}>\s*Suggest an improvement\s*<\/Button>/, 'Your requests ends on it');
+  assert.match(englishUiSource(mine), /requests: 'You have not suggested an improvement yet\.'/, 'and says so when it is empty');
+  assert.match(englishUiSource(read('frontend/src/features/home/tour/tour-steps.ts')),
     /id: 'menu-actions',\s*title: 'Suggest an improvement',/, 'the tour names the button by its words');
-  assert.match(read('frontend/src/features/messages/index.tsx'),
+  assert.match(englishUiSource(read('frontend/src/features/messages/index.tsx')),
     /hint: 'Make an app or suggest an improvement'/, 'Messages\' new-chat menu');
-  assert.match(read('frontend/src/features/dev-board/workshop/hub-cards.tsx'),
-    /\{' to suggest an improvement\.'\}/, 'the hub\'s Your work, with nothing in progress');
-  assert.match(read('src/services/homeroom-bot-dm.js'),
+  assert.match(englishUiSource(read('frontend/src/features/dev-board/workshop/hub-cards.tsx')),
+    /Nothing in progress\. Press <span[^>]*>⋯<\/span> to suggest an improvement\./, 'the hub\'s Your work, with nothing in progress');
+  assert.match(englishUiSource(read('src/services/homeroom-bot-dm.js')),
     /tell me here or tap Suggest an improvement on its page\./, 'the bot\'s hello to somebody who joined');
 });
 
@@ -95,6 +96,6 @@ test('a new app\'s starter page and README send its maker to Suggest an improvem
 test('Ask for changes on a built change is a different action, and keeps its words', () => {
   // It revises a change Homeroom bot already built (the viewer's chat with
   // the change attached), where Suggest an improvement files a new request.
-  assert.match(read('public/js/app-view.js'), /key: 'ask-bot', cls: 'gc-vote-btn', label: 'Ask for changes',/);
-  assert.match(read('src/services/homeroom-bot-dm.js'), /open it below and tap Ask for changes\./);
+  assert.match(englishUiSource(read('public/js/app-view.js')), /key: 'ask-bot', cls: 'gc-vote-btn', label: 'Ask for changes',/);
+  assert.match(englishUiSource(read('src/services/homeroom-bot-dm.js')), /open it below and tap Ask for changes\./);
 });

@@ -533,7 +533,13 @@ function EmptyNote({ filtered, loadFailed, underStartHere = false, onHub = false
   onHub?: boolean;
 }): ReactNode {
   const { readOnly, canCollaborate } = useDevActions();
-  const emptyKey = `workshop:board_empty_press_menu_${onHub ? 'hub' : 'page'}_${canCollaborate ? 'import' : 'suggest'}_${underStartHere ? 'end' : 'build'}`;
+  const emptyKey = onHub
+    ? (canCollaborate
+      ? (underStartHere ? 'workshop:board_empty_press_menu_hub_import_end' : 'workshop:board_empty_press_menu_hub_import_build')
+      : (underStartHere ? 'workshop:board_empty_press_menu_hub_suggest_end' : 'workshop:board_empty_press_menu_hub_suggest_build'))
+    : (canCollaborate
+      ? (underStartHere ? 'workshop:board_empty_press_menu_page_import_end' : 'workshop:board_empty_press_menu_page_import_build')
+      : (underStartHere ? 'workshop:board_empty_press_menu_page_suggest_end' : 'workshop:board_empty_press_menu_page_suggest_build'));
 
   return (
     <div className="text-xs text-zinc-500 dark:text-zinc-400 mb-2" data-ws-empty="">
@@ -2006,7 +2012,7 @@ function DoneItem({ total, acted, left, leftVotes, onDone, onBack, doneLabel }: 
           label={`${done}/${total}`}
           title={done === total ? tr("workshop:all_value1_open_changes_voted_on", { value1: total }) : tr("workshop:value1_of_value2_open_changes_voted_on", { value1: done, value2: total })}
           arcClassName={done === total ? 'stroke-emerald-500' : undefined}
-        />} resolve={() => ({ "title": done === total ? tr("workshop:all_value1_open_proposals_voted_on_7f051d1d", { value1: total }) : tr("workshop:value1_of_value2_open_proposals_voted_on_27ee31ca", { value1: done, value2: total }) })} />
+        />} resolve={() => ({ "title": done === total ? tr("workshop:all_value1_open_changes_voted_on", { value1: total }) : tr("workshop:value1_of_value2_open_changes_voted_on", { value1: done, value2: total }) })} />
       ) : null}
       <p className="dev-ws-needs-done-line">{line}</p>
       <p className="dev-ws-needs-done-sub">{parts.join(' ')}</p>

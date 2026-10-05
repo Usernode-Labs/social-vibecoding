@@ -242,7 +242,7 @@ export function WaitingScreen() {
               id="waiting-logout"
               className="flex h-11 w-full items-center justify-center rounded-full bg-white text-[16px] font-semibold text-zinc-900 shadow-sm hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 transition-colors"
               onClick={onLogout}
-            ><Message id="auth:log_out_49616145" /></button>
+            ><Message id="settings:sign_out_button" /></button>
           </div>
         </div>
       </div>

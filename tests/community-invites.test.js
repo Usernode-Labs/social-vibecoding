@@ -431,7 +431,7 @@ test(`the preview reads like the page: who made it, their note, the project's pi
   assert.match(routes.previewTags({ ...live, building: true, project: { ...live.project, name: 'Run Tracker' }, communityName: 'Sunday Run Club' }, null),
     /og:title" content="Maya is making this for Sunday Run Club"/);
   // The signed-in confirm says the same.
-  assert.match(englishUiSource(read('public/js/app.js')), /\? `\$\{standing\.inviterName\} \$\{standing\.building \? 'is making' : 'made'\} it and invited you\.`/);
+  assert.match(englishUiSource(read('public/js/app.js')), /standing\.building \? `\$\{standing\.inviterName\} is making it and invited you\.` : `\$\{standing\.inviterName\} made it and invited you\.`/);
 });
 
 test('the picture is served only through a live link, and only an after-shot of a merged change', () => {

@@ -1,5 +1,5 @@
 import { t as tr } from "../../lib/i18n/runtime";
-import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
+import { Message, Localized, useMessages as useUiLanguage, message as catalogText } from "../../lib/i18n/react";
 import { waitingWords } from '../messages/approval-words';
 import type { BotRequestCard, BotRequestChip, BotRequestState } from './transcript-store';
 
@@ -77,6 +77,7 @@ export function BotStatusChip({ chip, mine = false, onTry, onProgress }: {
   /** The requester's own chip opens their progress card in the bot's chat. */
   onProgress?: () => void;
 }) {
+  useUiLanguage('workshop');
   if (chip.status === 'ready') {
     return (
       <button
@@ -227,6 +228,7 @@ export interface BotRequestCardActions {
 const GOING = new Set(['waiting_first_version', 'reading', 'waiting', 'building', 'checking']);
 
 export function BotRequestCardView({ card, actions = {} }: { card: BotRequestCard; actions?: BotRequestCardActions }) {
+  useUiLanguage('workshop');
   const buttons: Array<{ key: string; label: string; primary?: boolean; act?: () => void }> = [];
   const stage = card.state?.stage;
   const change = card.state?.sessionId || card.sessionId || null;

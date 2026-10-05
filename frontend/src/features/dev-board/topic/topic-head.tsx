@@ -544,7 +544,7 @@ function SummaryMore({ m }: { m: NonNullable<TopicBody['summaryMore']> }): React
         if (m.id != null) call('_setSummaryMoreOpen', m.id, e.currentTarget.open);
       }}
     >
-      <summary className="dev-topic-details-summary">How it’s built</summary>
+      <summary className="dev-topic-details-summary"><Message id="workshop:merged_42ee1d1bf264" /></summary>
       {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
       <Html className="dev-issue-body dev-topic-details-body" html={m.html} />
     </details>
@@ -732,7 +732,7 @@ function AddressedBy({ r }: { r: IssueProposalRef }): ReactNode {
  */
 function IncludedIn({ r }: { r: IssueProposalRef }): ReactNode {
   return (
-    <aside className="dev-change-issues" aria-label="The change this one went live in" data-topic-part="included-in">
+    <LocalizedDynamic element={<aside className="dev-change-issues" aria-label={tr("workshop:merged_d9fa293ef6e3")} data-topic-part="included-in">
       <h4 className="dev-topic-h">{r.heading}</h4>
       <div className="mt-2">
         <a
@@ -745,7 +745,7 @@ function IncludedIn({ r }: { r: IssueProposalRef }): ReactNode {
           }}
         ><IssueIdentity label={r.label} title={r.title} /><RefChevron /></a>
       </div>
-    </aside>
+    </aside>} resolve={() => ({"aria-label": tr("workshop:merged_d9fa293ef6e3")})} />
   );
 }
 

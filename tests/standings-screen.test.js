@@ -848,10 +848,10 @@ test('#3887: a board whose every scorer is excluded reads as the filter working,
   // The TSX spell of that state: the chip, then the sentence, and the
   // sentence carries the same data-tc-lb-empty contract the noentries hint
   // does — the declared check accepts "table or this hint".
-  assert.match(standingsTsx, /id="tc-lb-non-podium-toggle"/, 'the chip has its id');
-  assert.match(standingsTsx, /aria-pressed=\{toggle\.on\}/, 'and publishes its on-state');
-  assert.match(standingsTsx, /Everyone with a score on this board is excluded from the ranking\./);
-  assert.match(standingsTsx,
+  assert.match(englishUiSource(standingsTsx), /id="tc-lb-non-podium-toggle"/, 'the chip has its id');
+  assert.match(englishUiSource(standingsTsx), /aria-pressed=\{toggle\.on\}/, 'and publishes its on-state');
+  assert.match(englishUiSource(standingsTsx), /Everyone with a score on this board is excluded from the ranking\./);
+  assert.match(englishUiSource(standingsTsx),
     /state === 'allexcluded'[\s\S]{0,600}?data-tc-lb-empty/,
     'the all-excluded hint keeps the declared-check contract');
 });

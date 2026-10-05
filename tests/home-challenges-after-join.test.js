@@ -23,6 +23,7 @@
 //
 // Run with: node --test tests/home-challenges-after-join.test.js
 'use strict';
+const { withLanguage } = require('./lib/platform-language');
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -121,10 +122,10 @@ function makeHome({ joinOk = true, holdPanels = false } = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   installPanelsStore(sandbox);
-  vm.runInContext(`${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);
-  vm.runInContext(`${PANELS_SRC}\n;globalThis.__HP = HomePanels;`, sandbox);
+  vm.runInContext(`${HOME_SRC}\n;globalThis.__Home = Home;`, withLanguage(sandbox));
+  vm.runInContext(`${PANELS_SRC}\n;globalThis.__HP = HomePanels;`, withLanguage(sandbox));
   const Home = sandbox.__Home;
   const HP = sandbox.__HP;
   // The launcher's own paint and catalog load are not under test: count them.

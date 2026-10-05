@@ -1,3 +1,5 @@
+import { LocalizedValue } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
 /**
  * The first session's sketch: a featured card of the idea, the way an app
  * store features an app, while Homeroom bot makes the real thing
@@ -52,11 +54,11 @@ export type CardStage = 'sketching' | 'making' | 'ready' | 'idea' | 'plain';
 
 /** The pill's words for each stage ('' for none). */
 export function pillLabel(stage: CardStage): string {
-  if (stage === 'sketching') return 'Sketching the idea';
-  if (stage === 'ready') return 'Ready to try';
-  if (stage === 'idea') return 'Not built yet';
+  if (stage === 'sketching') return tr("auth:merged_f8514a0d144b");
+  if (stage === 'ready') return tr("auth:merged_5eff2e7bbcbb");
+  if (stage === 'idea') return tr("auth:merged_45ecacee6d98");
   if (stage === 'plain') return '';
-  return 'Being made';
+  return tr("auth:merged_0bbd09f250bd");
 }
 
 /** Under construction: the stripes and the pill's pulse. */
@@ -211,7 +213,7 @@ export function FeaturedCard({ name, colorKey, emoji, card, stage, titleId, head
         {stage === 'plain' ? null : (
           <span data-featured-card-stage={stage} className="absolute left-3 top-3 inline-flex items-center gap-1.5 rounded-full bg-black/45 px-2.5 py-1 text-[12px] font-semibold leading-4 text-white">
             {underway(stage) ? <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-white motion-safe:animate-pulse" /> : null}
-            {pillLabel(stage)}
+            <LocalizedValue render={() => pillLabel(stage)} />
           </span>
         )}
       </div>
@@ -285,7 +287,7 @@ export function SketchCard({ made, sketch, line, note, busy, botBuilds, built }:
   const stage: CardStage = !card ? 'sketching' : built ? 'ready' : botBuilds ? 'making' : 'idea';
   return (
     <div data-first-session-sketch={card ? 'ready' : sketch.state} className="mt-4">
-      {card ? null : <p role="status" className="sr-only">{`Sketching ${made.name} from your description…`}</p>}
+      {card ? null : <p role="status" className="sr-only"><LocalizedValue render={() => (tr("auth:merged_b86a752c7e4b", { value1: made.name }))} /></p>}
       <FeaturedCard
         name={made.name}
         colorKey={made.slug}

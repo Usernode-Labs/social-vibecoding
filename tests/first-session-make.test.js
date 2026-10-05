@@ -181,7 +181,7 @@ test('"Make it" looks pale only while making: a press with an answer missing goe
   for (const line of ['Say what it should do first.', 'Give it a name to make it. You can change it later.']) {
     assert.doesNotMatch(englishUiSource(line), /\u2014/, 'no em dash');
   }
-  const src = read(`${DIR}/make.tsx`);
+  const src = englishUiSource(read(`${DIR}/make.tsx`));
   assert.match(englishUiSource(src), /disabled=\{busy\}/, 'never disabled for a missing answer');
   assert.doesNotMatch(englishUiSource(src), /disabled=\{!valid/);
   // (preventScroll since 5 Oct 2026: the keyboard surface reveals the field, with Make it.)
@@ -198,7 +198,7 @@ test('"Make it" looks pale only while making: a press with an answer missing goe
 });
 
 test('the description and the name are one sequence: Return says next and goes on, then makes it', () => {
-  const src = read(`${DIR}/make.tsx`);
+  const src = englishUiSource(read(`${DIR}/make.tsx`));
   const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: '', onMade() {}, onLookAround() {} });
   // In the one form, the description first and the name straight after it.
   const form = html.slice(html.indexOf('<form'), html.indexOf('</form>'));
@@ -215,7 +215,7 @@ test('the description and the name are one sequence: Return says next and goes o
 });
 
 test('with the keyboard up nothing scrolls under the status bar: the bar stays, the form scrolls under it, inside the visible band', () => {
-  const src = read(`${DIR}/make.tsx`);
+  const src = englishUiSource(read(`${DIR}/make.tsx`));
   const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Jordan', onMade() {}, onLookAround() {} });
   const root = /<div role="dialog"[^>]*>/.exec(html)[0];
   assert.match(englishUiSource(root), /class="platform-kb-surface fixed inset-0 z-\[9000\] flex flex-col /);
@@ -248,7 +248,7 @@ test('with the keyboard up nothing scrolls under the status bar: the bar stays, 
 // Evan, 5 Oct 2026: a chosen example stayed chosen after he started writing
 // his own description over it.
 test('typing their own words into "What should it do?" lets go of the example; the name it filled stays theirs', () => {
-  const src = read(`${DIR}/make.tsx`);
+  const src = englishUiSource(read(`${DIR}/make.tsx`));
   // The description's onChange drops the example the moment its text is not
   // the example's own.
   assert.match(englishUiSource(src), /onChange=\{\(e\) => \{\s+const next = e\.target\.value;\s+setBrief\(next\);\s+\/\/[^\n]*\n\s+if \(picked && next !== picked\.brief\) setPicked\(null\);/);
@@ -285,7 +285,10 @@ test('typing their own words into "What should it do?" lets go of the example; t
     if (!node || typeof node !== 'object') return out;
     if (Array.isArray(node)) { node.forEach((n) => find(n, test, out)); return out; }
     if (node.props && test(node)) out.push(node);
-    if (node.props) find(node.props.children, test, out);
+    if (node.props) {
+      find(node.props.children, test, out);
+      if (node.props.element) find(node.props.element, test, out);
+    }
     return out;
   };
   const chips = (tree) => find(tree, (n) => n.props['data-first-session-example'] !== undefined);

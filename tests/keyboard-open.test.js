@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require('./lib/english-ui-source');
 // First-session run, 4 October 2026, the iOS Homeroom app, Messages, the
 // Homeroom bot's conversation at 402pt wide:
 //
@@ -539,7 +540,7 @@ function openingTagAt(src, at, label) {
 }
 
 function openingTag(file, anchor) {
-  const src = read(file);
+  const src = englishUiSource(read(file));
   const at = src.indexOf(anchor);
   assert.ok(at >= 0, `${file}: ${anchor} is missing`);
   return openingTagAt(src, at, `${file}: ${anchor}`);
@@ -599,7 +600,7 @@ test('every button labelled Send in the shell keeps focus (a new composer is cau
   });
   let seen = 0;
   for (const file of walk('frontend/src')) {
-    const src = read(file);
+    const src = englishUiSource(read(file));
     for (let at = src.indexOf('aria-label="Send'); at >= 0; at = src.indexOf('aria-label="Send', at + 1)) {
       const tag = openingTagAt(src, at, file);
       seen += 1;

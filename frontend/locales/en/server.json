@@ -568,5 +568,6 @@
   "error_fd77fd28f7dbd0a9": "Updating a proposal is disabled in a staging preview.",
   "error_fe26a9b5f7e36e63": "Reload Homeroom to load staking data directly on this device.",
   "error_fea3384c16e4e52d": "locale must be a BCP-47 language tag (e.g. \"id\", \"pt-BR\")",
-  "error_ff5e0e8540475740": "Invalid assignee"
+  "error_ff5e0e8540475740": "Invalid assignee",
+  "error_875e66d1cad8c3f7": "This change went live as part of another change. Undo that change instead."
 }

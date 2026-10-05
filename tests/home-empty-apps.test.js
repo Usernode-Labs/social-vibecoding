@@ -77,8 +77,8 @@ test('it names the tile that follows it by the tile\'s own label, and the sectio
   // in an empty launcher (home.js: "Present for EVERY account"), so the
   // sentence can always point at it; it must say what the tile says.
   const { CREATE_TILE_LABEL } = loadTsx('frontend/src/features/home/create-tile.tsx');
-  assert.equal(CREATE_TILE_LABEL, 'New project');
-  assert.ok(SENTENCE.includes(`Make one with ${CREATE_TILE_LABEL},`), SENTENCE);
+  assert.equal(CREATE_TILE_LABEL(), 'New project');
+  assert.ok(SENTENCE.includes(`Make one with ${CREATE_TILE_LABEL()},`), SENTENCE);
   assert.match(SENTENCE, /find one in the Discover section\.$/);
   assert.ok(!/—/.test(SENTENCE), 'no em dash in the copy');
   const home = read('frontend/src/features/home/home.js');

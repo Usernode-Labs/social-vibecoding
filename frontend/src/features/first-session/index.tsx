@@ -519,11 +519,12 @@ export function Tour({ info, steps, onEnd }: { info: FirstSessionInfo; steps: To
  * screen. Held empty (WelcomeHeld) while the invite's standing is read.
  */
 function WelcomeFrame({ children, held = false }: { children: React.ReactNode; held?: boolean }) {
+  useUiLanguage();
   return (
     <div
       role="dialog"
       aria-labelledby={held ? undefined : 'first-session-title'}
-      aria-label={held ? 'Opening your invite' : undefined}
+      aria-label={held ? tr("auth:merged_251d92cabf5b") : undefined}
       data-first-session-welcome={held ? 'held' : ''}
       className="fixed inset-0 z-[9000] flex flex-col overflow-y-auto text-zinc-900 dark:text-zinc-100"
       style={{ background: 'var(--home-wallpaper, #f4f2e4)' }}
@@ -542,17 +543,18 @@ function WelcomeFrame({ children, held = false }: { children: React.ReactNode; h
 export function WelcomeHeld() {
   return (
     <WelcomeFrame held>
-      <SkeletonGroup label="Opening your invite" className="flex flex-col items-center">
+      <LocalizedDynamic element={<SkeletonGroup label={tr("auth:merged_251d92cabf5b")} className="flex flex-col items-center">
         <Skeleton shape="block" className="mt-4 h-12 w-56 rounded-full" />
         <Skeleton className="mt-5 w-28" />
         <Skeleton shape="block" className="mt-4 h-8 w-64" />
         <Skeleton shape="muted" className="mt-4 w-56" />
-      </SkeletonGroup>
+      </SkeletonGroup>} resolve={() => ({"label": tr("auth:merged_251d92cabf5b")})} />
     </WelcomeFrame>
   );
 }
 
 export function YoureIn({ info, onGo }: { info: FirstSessionInfo; onGo: (firstVersion: FirstVersionStage) => void }) {
+  useUiLanguage();
   const user = legacy().App?.user;
   const who = user?.displayName || user?.username || '';
   const existing = !info.newAccount;

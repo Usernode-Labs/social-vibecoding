@@ -153,7 +153,7 @@ const text = (html) => html.replace(/<[^>]+>/g, '\n').split('\n').map((s) => s.t
 
 test('the card says Evan\'s words, in order', () => {
   const { INTRO_TITLE, INTRO_ROWS } = loadTsx(INTRO);
-  assert.equal(INTRO_TITLE, 'How challenges work');
+  assert.equal(INTRO_TITLE(), 'How challenges work');
   assert.deepEqual(INTRO_ROWS.map((r) => [r.title, r.subtitle]), [
     ['Do it, and it counts', 'Complete challenges.'],
     ['Earn points', 'Each card shows what it earns. Points add up in standings.'],

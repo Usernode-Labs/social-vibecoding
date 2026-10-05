@@ -12,6 +12,9 @@ bridge; this does not reload their frames or translate their content.
 1. Add the complete English message to `en/<namespace>.json`. Use a stable,
    descriptive key. Keep sentences whole; do not concatenate translated verbs,
    plural suffixes, or word fragments. Pass names and user content as values.
+   Use complete message IDs in code, including conditional branches. Do not
+   construct IDs by interpolating strings: the build must be able to check
+   every possible ID against the catalogs.
 2. Add its translation to **every** other language. Each entry is
    `{ "text": "…", "source": "<SHA-256 of the exact English message>" }`.
    Update text and digest together when English changes. Do not refresh a

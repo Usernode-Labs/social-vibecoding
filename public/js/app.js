@@ -4285,7 +4285,7 @@ const App = {
         // Only the link's own answer says what is wrong with it: 200 with its
         // state, or 404 for one that never existed. A 500 or a 429 is a read
         // that did not land, and the link may be fine.
-        if (status !== 200 && status !== 404) { toast('Could not open that invite link. Try again.', true); return; }
+        if (status !== 200 && status !== 404) { toast(globalThis.PlatformI18n.t("core:merged_ea0e29657a17"), true); return; }
         if (standing.mine === 'joined' && standing.slug) {
           joinedHere = true;
           // Joined by the sign-in that brought them here (within the last

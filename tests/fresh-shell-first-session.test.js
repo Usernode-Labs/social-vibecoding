@@ -1,3 +1,4 @@
+const { withLanguage } = require('./lib/platform-language');
 // A first session runs on the live build, not on yesterday's cached one.
 //
 // ── What happened ──────────────────────────────────────────────────────
@@ -151,7 +152,7 @@ function harness({
     },
   };
   ctx.window = { AuthScreens: { _current: route } };
-  vm.createContext(ctx);
+  vm.createContext(withLanguage(ctx));
 
   const App = Object.assign({
     user: null,
@@ -578,7 +579,7 @@ function loginHarness({ moveResult = false, search = '', user = { id: 7, hasPlat
     },
   };
   sandbox.window = sandbox;
-  vm.runInNewContext(authScreensJs, sandbox);
+  vm.runInNewContext(authScreensJs, withLanguage(sandbox));
   return { auth: sandbox.AuthScreens, order, location };
 }
 
@@ -641,11 +642,12 @@ function loadAuthShared(window, fetchImpl) {
     fetch: fetchImpl,
     console: { warn() {} },
     require(specifier) {
+      if (specifier === '../../lib/i18n/runtime') return withLanguage(sandbox).PlatformI18n;
       if (specifier === '../../lib/legacy-dom') return { useIsomorphicLayoutEffect() {} };
       throw new Error(`unexpected auth shared import: ${specifier}`);
     },
   };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(compiled, sandbox);
   return module.exports;
 }

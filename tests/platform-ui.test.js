@@ -1,3 +1,4 @@
+const { englishUiSource } = require('./lib/english-ui-source');
 const { withLanguage } = require("./lib/platform-language");
 // PlatformUI (public/js/platform-ui.js) — the platform frontend's single
 // seam over the hosted usernode-native kit. These tests pin two contracts:
@@ -498,7 +499,7 @@ test('the Improve row is retired; what it led to is in the menu', () => {
   // agent session (first-session run-through, 5 Oct 2026): not prerendered.
   assert.ok(!INDEX.includes('id="app-menu-sessions"') && !INDEX.includes('id="improve-row-new-session"'),
     'Agent chats is not in the prerender');
-  assert.match(read('frontend/src/features/app-context/app-context-sheet.tsx'),
+  assert.match(englishUiSource(read('frontend/src/features/app-context/app-context-sheet.tsx')),
     /<div id="app-menu-sessions">\s*<div className=\{SECTION\}>Agent chats<\/div>\s*\{readOnly \? null : \(\s*<button\s+id="improve-row-new-session"/,
     'Build it yourself leads the Agent chats section');
   assert.ok(!/\bhidden\b/.test(band[0].slice(0, band[0].indexOf('>'))),

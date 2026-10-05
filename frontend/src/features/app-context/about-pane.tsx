@@ -637,7 +637,7 @@ export function AboutPane({ label }: { label: string }): ReactNode {
             <Localized element={<ActionRow
               id="app-about-fork"
               icon={<Glyph d={GLYPHS.fork} />} label={catalogText("apps:remix_f84ed437")}
-              sub="Make your own copy"
+              sub={tr("apps:merged_82bb5bb897a2")}
               onClick={() => afterDismiss(() => forkItem.run())}
             />} messages={{"label":"apps:remix_f84ed437"}} />
           ) : null}

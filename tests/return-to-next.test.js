@@ -1,3 +1,4 @@
+const { englishUiSource } = require('./lib/english-ui-source');
 'use strict';
 
 // Return moves to the next field, and the last field submits (request #3907).
@@ -407,9 +408,9 @@ test('OpenRouter: Return in the key tests and saves it; in the filter it goes on
 test('wallet Send: the address goes on to the amount, and the amount sends', () => {
   const src = read('frontend/src/features/header/wallet-sheet-body.tsx');
   const form = src.slice(src.indexOf('function SendForm('), src.indexOf('// ── the body'));
-  assert.match(form, /onKeyDown=\{returnKeyHandler\(\{ submit: \(\) => \{ if \(!sending\) void submit\(\); \} \}\)\}/);
-  assert.match(form, /aria-label="Recipient address"[\s\S]{0,80}enterKeyHint="next"/);
-  assert.match(form, /aria-label="Amount" inputMode="numeric" enterKeyHint="send"/);
+  assert.match(englishUiSource(form), /onKeyDown=\{returnKeyHandler\(\{ submit: \(\) => \{ if \(!sending\) void submit\(\); \} \}\)\}/);
+  assert.match(englishUiSource(form), /aria-label="Recipient address"[\s\S]{0,80}enterKeyHint="next"/);
+  assert.match(englishUiSource(form), /aria-label="Amount" inputMode="numeric" enterKeyHint="send"/);
 });
 
 test('Email & recovery: the address goes on to the password when one is asked for; the last field sends', () => {

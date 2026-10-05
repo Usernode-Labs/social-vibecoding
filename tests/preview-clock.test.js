@@ -1,4 +1,5 @@
 'use strict';
+const { withLanguage } = require('./lib/platform-language');
 
 // A staging preview shown as of a chosen moment (src/services/preview-clock.js).
 //
@@ -295,7 +296,7 @@ async function makeShell({ react = true, fetch = async () => ({ ok: true, json: 
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   if (react) sandbox.UsernodeReact = { staging: bridgeMod.stagingBridge };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${read('public/js/app-view.js')}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView.appData = { slug: 'bins-1a2b3c', self_hosted: false };

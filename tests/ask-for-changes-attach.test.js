@@ -28,6 +28,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { loadTsx } = require('./lib/render-tsx');
+const { englishUiSource } = require('./lib/english-ui-source');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
@@ -70,7 +71,7 @@ test('openBot attaches a complete change directly, and leaves anything less to t
 });
 
 test('the composer takes the attached change: its chip, its prompt, the caret, and only the reference is sent', () => {
-  const composer = read('frontend/src/features/messages/composer.tsx');
+  const composer = englishUiSource(read('frontend/src/features/messages/composer.tsx'));
   assert.match(composer, /window\.addEventListener\('usernode:messages-attach', attachPending\);/);
   assert.match(composer, /const pending = takePendingAttach\(conversationId\);/);
   assert.match(composer, /setObject\(pending\.object\); setPrompt\(pending\.placeholder\); setFocusWanted\(true\);/);
@@ -119,7 +120,7 @@ test('the Share item dialog opens on the app it came from, the viewer\'s own pro
   assert.equal(prefilledAppId(apps, { appSlug: 'nowhere' }), null);
   assert.equal(prefilledAppId([], { appId: 9 }), 9, 'an id is kept while the list loads');
   assert.equal(prefilledAppId(apps, null), null);
-  const dialog = read('frontend/src/features/messages/share-dialog.tsx');
+  const dialog = englishUiSource(read('frontend/src/features/messages/share-dialog.tsx'));
   assert.match(dialog, /<optgroup label="Your projects">/);
   assert.match(dialog, /<optgroup label="Other projects">/);
   assert.match(dialog, /setAppId\(prefilledAppId\(apps, reference\)\);/);

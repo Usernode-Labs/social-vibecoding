@@ -1,4 +1,5 @@
 'use strict';
+const { withLanguage } = require('./lib/platform-language');
 const { englishUiSource } = require("./lib/english-ui-source");
 
 // "You're in" and the first-session tour after an invite
@@ -372,15 +373,25 @@ test('a link answers the join screen for the person it brings in', () => {
 });
 
 test("You're in tells a new account what Homeroom is, and an existing one only where it is", () => {
-  const src = read(`${DIR}/index.tsx`);
-  assert.match(englishUiSource(src), /'On Homeroom, communities make apps together\.'/);
-  assert.match(englishUiSource(src), /`Someone makes an app for their group\. \$\{maker\} \$\{made\} this one\.`/);
-  // Nothing is made yet while its first version is on its way.
-  assert.match(englishUiSource(src), /const made = info\.building \? 'is making' : 'made';/);
-  assert.match(englishUiSource(src), /`\$\{maker \? `\$\{maker\} \$\{made\} it for the group\.` : 'It is the group\\'s own app\.'\} Have a look, then say hi\.`/);
-  assert.match(englishUiSource(read('public/js/app.js')), /building: !!standing\.building,/);
-  assert.match(englishUiSource(src), /existing \? `Welcome to \$\{info\.name\}\.`/);
-  assert.match(englishUiSource(src), /\{`Go to \$\{info\.name\}`\}/);
+  const saved = global.window;
+  global.window = { App: { user: { username: 'priya' } } };
+  try {
+    const { YoureIn } = loadTsx(`${DIR}/index.tsx`);
+    const draw = (newAccount, building) => renderToHtml(createElement(YoureIn, {
+      info: { slug: 'page-turners', name: 'Page Turners', inviterName: 'Alex', inviterMadeIt: true, newAccount, building }, onGo() {},
+    }));
+    for (const building of [true, false]) {
+      const made = building ? 'is making' : 'made';
+      const fresh = draw(true, building);
+      assert.ok(fresh.includes('On Homeroom, communities make apps together.'));
+      assert.ok(fresh.includes(`Someone makes an app for their group. Alex ${made} this one.`));
+      const existing = draw(false, building);
+      assert.ok(existing.includes('Welcome to Page Turners.'));
+      assert.ok(existing.includes(`Alex ${made} it for the group. Have a look, then say hi.`));
+      assert.ok(existing.includes('Go to Page Turners'));
+      assert.doesNotMatch(existing, /How it works/);
+    }
+  } finally { global.window = saved; }
 });
 
 // ── First-session run-through, 5 October 2026 ──────────────────────────
@@ -517,7 +528,7 @@ function followHarness({ fromLanding = true, pressed = false, standing }) {
       welcome(info) { events.push(`welcome:${info.slug}`); return true; },
     },
   };
-  const App = vm.runInNewContext(`({ ${methods} })`, sandbox);
+  const App = vm.runInNewContext(`({ ${methods} })`, withLanguage(sandbox));
   Object.assign(App, {
     _markNavigationVia() {},
     _rootUrl: () => '/',

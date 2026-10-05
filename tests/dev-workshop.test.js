@@ -2487,7 +2487,10 @@ test('#2172: one card past the last item is the summary, and it is the screen wh
   assert.match(englishUiSource(empty), /dev-ws-needs-done-line">You’re all caught up\.</);
   assert.match(englishUiSource(empty), /Every change you can vote on has your answer, and every open request has somebody on it\./);
   // Plain words (#3861 follow-up, 5 Oct 2026 run): the end card says changes, as the cards above it do.
-  assert.match(englishUiSource(WORKSHOP), /You voted on \$\{plural\(acted, 'change', 'changes'\)\} this time\./);
+  assert.match(read('frontend/src/features/dev-board/workshop/workshop.tsx'), /tr\("workshop:you_voted_on_changes_this_time", \{ count: acted \}\)/);
+  const words = loadTsx('frontend/src/lib/i18n/runtime.ts');
+  assert.equal(words.t('workshop:you_voted_on_changes_this_time', { count: 1 }), 'You voted on 1 change this time.');
+  assert.equal(words.t('workshop:you_voted_on_changes_this_time', { count: 2 }), 'You voted on 2 changes this time.');
   assert.ok(!/open proposals voted on|Every proposal you can vote on|'proposal', 'proposals'\) this time/.test(WORKSHOP), 'no proposal wording left on the end card');
   assert.ok(!empty.includes('data-ws-done-back'), 'nothing to go back to');
   assert.ok(!empty.includes('data-ws-rail'), 'and no rail');
@@ -3572,7 +3575,8 @@ test('bug g: the empty-board note says what the ⋯ holds, and sends "make one y
   });
   // Both notes are one component, so the two tabs cannot drift apart, and the
   // banner's condition is written once, for the banner and the note alike.
-  assert.equal((WORKSHOPEnglish.match(/Nothing on the board yet\. Press /g) || []).length, 1);
+  assert.equal((WORKSHOP.match(/function EmptyNote\(/g) || []).length, 1);
+  assert.equal((WORKSHOP.match(/<RichMessage id=\{emptyKey\}/g) || []).length, 1);
   assert.match(englishUiSource(WORKSHOPEnglish), /\{startHere \? <StartHereBanner \/> : null\}/);
   assert.match(englishUiSource(WORKSHOPEnglish), /<EmptyNote\s+filtered=\{!!v\.emptyNote\.filtered\}\s+loadFailed=\{v\.emptyNote\.loadFailed\}\s+underStartHere=\{startHere\}\s+onHub\s*\/>/);
 });
