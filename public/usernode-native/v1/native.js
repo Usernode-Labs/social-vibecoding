@@ -4866,11 +4866,56 @@
    *    opts.column names that column: its fields outside scrollEl take the
    *    same interception, with no reveal (the column's padding is what
    *    places them) and the caret at the end of any draft.
+   *  - And the column RIDES the keys (fixed shell, keys covering the page:
+   *    the Homeroom app once its web view stops resizing, an installed
+   *    app). The keyboard's height arrives about 50ms into its ~300ms
+   *    rise, all at once, so the column's padding snapped the composer and
+   *    the transcript to the top of where the keys would end while they
+   *    were 40% of the way up; on the way down the tab bar's band came back
+   *    in the blur while the padding eased out in 150ms, so the composer
+   *    hopped up 16pt and then outran the keys. A step of the scroller's
+   *    foot that big, this soon after a focus or a blur, is taken back and
+   *    played out on the column's padding along the keys' own curve (an
+   *    ease-out cubic over 300ms, measured), from where the keys already
+   *    are. Padding, not a transform: the transcript keeps following its
+   *    newest line on every frame of it (its own resize observer), so the
+   *    composer and the messages move as one.
    * ──────────────────────────────────────────────────────────────────── */
 
   var KB_TAP_SLOP = 8; // px of touchmove that turns a tap into a drag
   var KB_SETTLE_MS = 120; // quiet period after the last visualViewport event
   var KB_FOCUS_FALLBACK_MS = 250; // reveal anyway if no vv event follows a focus
+  var KB_RIDE_MS = 300; // the keys' rise and fall (iPhone simulator, iOS 26: ~300ms)
+  var KB_RIDE_MIN = 100; // px: only a keyboard-sized step of the column rides
+  var KB_RIDE_WINDOW_MS = 1000; // a step this soon after a focus or a blur is the keys'
+  // How far up the keys already are when a rise is reported, at most. In
+  // the Homeroom app's web view the visual viewport learns the keyboard's
+  // height ~90ms into its rise, with the keys ~84% of the way up (iPhone
+  // simulator, 5 Oct 2026); time since the focus overstates that, since the
+  // keys only start ~100ms after it. Safari reports near the start.
+  var KB_RIDE_OPEN_HEAD = 0.45;
+  var KB_RIDE_STEPS = 12; // keyframes sampled along the curve
+
+  // The keys' curve, measured frame by frame: 12% of the way at 28ms, 58%
+  // at 75ms, 90% at 158ms, 98% at 225ms of a 300ms move.
+  function kbEase(x) {
+    var t = Math.max(0, Math.min(1, x));
+    return 1 - Math.pow(1 - t, 3);
+  }
+
+  // The column's padding-bottom keyframes for a ride: the scroller's foot
+  // moved by `delta` px (down is positive) to land on `finalPad`; the keys
+  // are `x0` of the way through their move. Pure, for the tests.
+  function kbRideFrames(finalPad, delta, x0, steps) {
+    var n = steps || KB_RIDE_STEPS;
+    var frames = [];
+    for (var i = 0; i <= n; i++) {
+      var x = x0 + (1 - x0) * (i / n);
+      var pad = Math.max(0, finalPad + delta * (1 - kbEase(x)));
+      frames.push({ paddingBottom: Math.round(pad * 10) / 10 + 'px', offset: i / n });
+    }
+    return frames;
+  }
 
   // attachKeyboardAvoidance(scrollEl, { topEl?, margin? = 8, fields?, column? }) —
   // scrollEl is the app's content scroller (the fixed-shell inner pane);
@@ -4911,6 +4956,75 @@
     var fallbackTimer = null;
     var settleTimer = null;
     var suppressFocusin = null; // field being focused by the interception path
+
+    // The ride (see the header): the scroller's layout foot last seen, when
+    // a field last took or let go of the keys, and the running animation.
+    var rideAnim = null;
+    var lastFoot = null;
+    var keysMovedAt = -Infinity;
+    var RideObserver = typeof window.ResizeObserver === 'function' ? window.ResizeObserver : null;
+    var rides = !!column && !!RideObserver && typeof column.animate === 'function';
+    var priorTransition = rides ? column.style.transition : '';
+
+    function clock() {
+      return window.performance && typeof window.performance.now === 'function' ? window.performance.now() : Date.now();
+    }
+    function footOf() { return scrollEl.offsetTop + scrollEl.offsetHeight; }
+    function inFixedShell() {
+      try {
+        return getComputedStyle(document.documentElement).overflowY === 'hidden'
+          || getComputedStyle(document.body).overflowY === 'hidden';
+      } catch (e) { return false; }
+    }
+    // A focus or a blur in the column: the keys are about to move. A ride
+    // in flight stops where it is, so the next step starts from what is on
+    // screen rather than from where it was headed.
+    function onKeysMove() {
+      keysMovedAt = clock();
+      if (!rideAnim) return;
+      lastFoot = footOf();
+      var anim = rideAnim;
+      rideAnim = null;
+      anim.onfinish = anim.oncancel = null;
+      try { anim.cancel(); } catch (e) { /* ignore */ }
+    }
+    function onColumnResize() {
+      if (rideAnim) return; // our own padding, frame by frame
+      var foot = footOf();
+      var before = lastFoot;
+      lastFoot = foot;
+      if (before == null) return;
+      var delta = foot - before;
+      if (Math.abs(delta) < KB_RIDE_MIN || prefersReducedMotion || !inFixedShell()) return;
+      var since = clock() - keysMovedAt;
+      if (!(since >= 0 && since < KB_RIDE_WINDOW_MS)) return;
+      // Down (the keys going): they started with the blur. Up: see
+      // KB_RIDE_OPEN_HEAD.
+      var x0 = Math.min(delta > 0 ? 0.9 : KB_RIDE_OPEN_HEAD, since / KB_RIDE_MS);
+      var finalPad = 0;
+      try { finalPad = parseFloat(getComputedStyle(column).paddingBottom) || 0; } catch (e) { /* 0 */ }
+      try {
+        rideAnim = column.animate(kbRideFrames(finalPad, delta, x0), {
+          duration: Math.round(KB_RIDE_MS * (1 - x0)),
+          easing: 'linear',
+        });
+      } catch (e) { rideAnim = null; return; }
+      rideAnim.onfinish = rideAnim.oncancel = function () {
+        rideAnim = null;
+        lastFoot = footOf();
+      };
+    }
+    var rideObserver = null;
+    if (rides) {
+      // The kit's padding transition would outrank the animation (a running
+      // transition sits above animations in the cascade); the ride is it.
+      column.style.transition = 'none';
+      lastFoot = footOf();
+      rideObserver = new RideObserver(onColumnResize);
+      rideObserver.observe(scrollEl);
+      column.addEventListener('focusin', onKeysMove);
+      column.addEventListener('focusout', onKeysMove);
+    }
 
     function kbUp() {
       return document.documentElement.classList.contains('un-kb');
@@ -5106,6 +5220,13 @@
         clearPending();
         touch = null;
         scrollEl.classList.remove('un-kb-avoid');
+        if (rides) {
+          if (rideObserver) rideObserver.disconnect();
+          column.removeEventListener('focusin', onKeysMove);
+          column.removeEventListener('focusout', onKeysMove);
+          if (rideAnim) { var anim = rideAnim; rideAnim = null; anim.onfinish = anim.oncancel = null; try { anim.cancel(); } catch (e) { /* ignore */ } }
+          column.style.transition = priorTransition;
+        }
       },
     };
   }
