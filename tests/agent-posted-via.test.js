@@ -1,4 +1,6 @@
 'use strict';
+const { withLanguage } = require("./lib/platform-language");
+
 
 // #2236: a note a coding agent posts on a person's behalf through the
 // Homeroom MCP connector is marked `posted_via = 'agent'`, and every surface
@@ -270,7 +272,7 @@ function loadGroupChat() {
     console, setTimeout, clearTimeout, setInterval, clearInterval, Date, Math, JSON,
   };
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${gcJs}\nglobalThis.__M = { GroupChat };`, sandbox);
   return sandbox.__M.GroupChat;
 }

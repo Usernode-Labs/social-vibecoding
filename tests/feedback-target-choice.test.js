@@ -1,3 +1,5 @@
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
 // Frontend tests for issue #2707: when Send Feedback has more than one
 // destination to offer, the person picks one — the dialog does not pick
 // for them.
@@ -102,7 +104,7 @@ test('the hint ships empty, hidden and adjacent to the row it is about', () => {
 
 test('the copy lives in exactly one place', () => {
   assert.equal(
-    CONTROLLER_TEXT.split(HINT).length - 1,
+    englishUiSource(CONTROLLER_TEXT).split(HINT).length - 1,
     1,
     `"${HINT}" is written once, as CHOOSE_TARGET_HINT`
   );
@@ -314,7 +316,7 @@ function makeHarness({ appData = null, sessionDraft = null } = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(FEEDBACK_SRC, sandbox);
   sandbox.init();
 
@@ -619,9 +621,9 @@ test('the dialog is headed Ask for a change from every way in', () => {
   // ⋯, "Send feedback" otherwise). Since the UI overhaul it is "Ask for a
   // change" everywhere, so the heading is the markup's own and the
   // controller no longer writes it.
-  const tsx = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/dialogs/feedback.tsx'), 'utf8');
-  assert.match(tsx, /<h2 className="text-lg font-bold">\s*Ask for a change\s*<\/h2>\s*<p[^>]*>\s*Members can see it, vote on it and pick it up\.\s*<\/p>/);
-  assert.doesNotMatch(CONTROLLER_TEXT, /heading\.textContent|'Send feedback'/);
+  const tsx = englishUiSource(fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/dialogs/feedback.tsx'), 'utf8'));
+  assert.match(englishUiSource(tsx), /<h2 className="text-lg font-bold">\s*Ask for a change\s*<\/h2>\s*<p[^>]*>\s*Members can see it, vote on it and pick it up\.\s*<\/p>/);
+  assert.doesNotMatch(englishUiSource(CONTROLLER_TEXT), /heading\.textContent|'Send feedback'/);
   const h = makeHarness({ appData: OPEN_APP });
   assert.doesNotThrow(() => h.sandbox.Feedback._open({ fromDev: true, intent: 'issue' }),
     'the hub ⋯ still passes intent, which changes nothing');
@@ -664,11 +666,11 @@ test('the title hint fits a phone-width field, and the resting heading is senten
   // 300px field at 390px wide, so it read "... edit as you lik". The hint
   // only has to say the title is written for you; that it can be changed is
   // what a text field already says.
-  const tsx = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/dialogs/feedback.tsx'), 'utf8');
+  const tsx = englishUiSource(fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/dialogs/feedback.tsx'), 'utf8'));
   const hint = /id="feedback-title"[\s\S]{0,120}?placeholder="([^"]*)"/.exec(tsx);
   assert.ok(hint, 'the title field carries a hint');
   assert.equal(hint[1], 'Suggested as you type');
   assert.ok(hint[1].length <= 24, 'short enough for the narrowest supported phone');
-  assert.match(tsx, /<h2 className="text-lg font-bold">\s*Ask for a change\s*<\/h2>/,
+  assert.match(englishUiSource(tsx), /<h2 className="text-lg font-bold">\s*Ask for a change\s*<\/h2>/,
     'the heading is sentence case');
 });

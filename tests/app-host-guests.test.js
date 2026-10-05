@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Guests at a public app's own address (P15): people with no Homeroom
 // account may look around every public app, read-only; every write needs
 // an account and asks for one.
@@ -465,7 +466,7 @@ async function runBridge(file, { inIframe = false, cookie = '', responses = {} }
   };
   window.window = window;
   const sandbox = { window, document, location, URL, Promise, setImmediate };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`(function (_inIframe, _hasNativeChannel) {\n${guestBlock(file)}\n})(${inIframe}, false);`, sandbox);
   const host = () => body.children.find((c) => c.id === '__un-guest') || null;
   const parts = () => {

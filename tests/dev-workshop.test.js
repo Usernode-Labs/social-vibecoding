@@ -1,3 +1,5 @@
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
 // The Workshop — the Dev screen's lander, which replaced the Activity feed.
 //
 // What is pinned here, and why each would fail silently if it drifted:
@@ -52,20 +54,20 @@ const { tokenize } = require('./helpers/html-tokens');
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 const APP_VIEW_SRC = read('public/js/app-view.js');
-const WORKSHOP = read('frontend/src/features/dev-board/workshop/workshop.tsx');
+const WORKSHOP = englishUiSource(read('frontend/src/features/dev-board/workshop/workshop.tsx'));
 // The scroller the rail sticks inside: it carries `.platform-safe-scroll`,
 // which is what reserves the home-indicator strip the gap must NOT re-add.
-const BOARD_FRAME = read('frontend/src/features/dev-board/board-frame.tsx');
+const BOARD_FRAME = englishUiSource(read('frontend/src/features/dev-board/board-frame.tsx'));
 // The shell tree, for the out-of-frost portal host the fixed rail needs.
-const SHELL = read('frontend/src/Shell.tsx');
+const SHELL = englishUiSource(read('frontend/src/Shell.tsx'));
 // The row, the open sheet and the fold between them: shared with the Board's columns.
-const FOLD = read('frontend/src/features/dev-board/card/fold.tsx');
-const CARD_TSX = read('frontend/src/features/dev-board/card/dev-card.tsx');
+const FOLD = englishUiSource(read('frontend/src/features/dev-board/card/fold.tsx'));
+const CARD_TSX = englishUiSource(read('frontend/src/features/dev-board/card/dev-card.tsx'));
 const CSS = read('public/css/app.css');
-const SHEET_TSX = read('frontend/src/features/app-context/app-context-sheet.tsx');
+const SHEET_TSX = englishUiSource(read('frontend/src/features/app-context/app-context-sheet.tsx'));
 // The toolbar, which renders the shared filter strip's host inside this pane,
 // and the "+" that closes the tab strip.
-const ACTIONS_ROW = read('frontend/src/features/dev-board/actions-row.tsx');
+const ACTIONS_ROW = englishUiSource(read('frontend/src/features/dev-board/actions-row.tsx'));
 const dapp = JSON.parse(read('dapp.json'));
 
 // The "+" and the Workshop's two empty-state notes read the toolbar's props
@@ -127,7 +129,7 @@ function makeAppView(over) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView.appData = { slug: 'demo-app', can_collaborate: true };
@@ -836,13 +838,13 @@ test('the since list files each row under the week it moved in, and opens down t
   // What is new further back is counted on the control that reaches it.
   assert.equal(sinceNewFurther(list, 1), 1, 'last week\'s one new row, behind Show an earlier week');
   assert.equal(sinceNewFurther(list, 2), 0);
-  assert.match(WORKSHOP, /const newFurther = sinceNewFurther\(weeks, weeksOpen\);/);
-  assert.match(WORKSHOP, /\{newFurther \? <span className="dev-ws-since-more-new">\{` · \$\{newFurther\} new`\}<\/span> : null\}/);
+  assert.match(englishUiSource(WORKSHOP), /const newFurther = sinceNewFurther\(weeks, weeksOpen\);/);
+  assert.match(englishUiSource(WORKSHOP), /\{newFurther \? <span className="dev-ws-since-more-new">\{` · \$\{newFurther\} new`\}<\/span> : null\}/);
 
   // Show an earlier week steps back a week; Clear folds it all back and moves the line.
-  assert.match(WORKSHOP, /onClick=\{\(\) => setSinceExtra\(sinceExtra \+ 1\)\}/);
-  assert.match(WORKSHOP, /disabled=\{weeksOpen >= weeks\.length\}/, 'spent, not gone, at the far end');
-  assert.match(WORKSHOP, /setSinceExtra\(0\);\s*setSinceMore\(\{\}\);/);
+  assert.match(englishUiSource(WORKSHOP), /onClick=\{\(\) => setSinceExtra\(sinceExtra \+ 1\)\}/);
+  assert.match(englishUiSource(WORKSHOP), /disabled=\{weeksOpen >= weeks\.length\}/, 'spent, not gone, at the far end');
+  assert.match(englishUiSource(WORKSHOP), /setSinceExtra\(0\);\s*setSinceMore\(\{\}\);/);
 });
 
 test('a week unfolded before the digest lands stays unfolded when the digest re-keys it', () => {
@@ -909,19 +911,19 @@ test('#3293: the weeks go back, one at a time, to the project’s start', async 
   assert.equal(dash.firstWeek, monday - 6 * WEEK);
 
   const third = weekBlock(plain(dash.weeks[2]));
-  assert.match(third, /<span class="dev-ws-card-dates">Aug 31 – Sep 6<\/span>/, 'an older week is its dates');
-  assert.match(third, /<span class="dev-ws-since-week-n">7 landed<\/span>/, 'with its figure');
-  assert.match(third, /Dark mode; Keyboard voting; Mobile layout; and 4 more\./, 'and what landed in it');
+  assert.match(englishUiSource(third), /<span class="dev-ws-card-dates">Aug 31 – Sep 6<\/span>/, 'an older week is its dates');
+  assert.match(englishUiSource(third), /<span class="dev-ws-since-week-n">7 landed<\/span>/, 'with its figure');
+  assert.match(englishUiSource(third), /Dark mode; Keyboard voting; Mobile layout; and 4 more\./, 'and what landed in it');
 
   // A first visit opens on the live week, with the rest a press away each.
   const html = workshopHtml(AppView, 'workshop');
   assert.equal([...html.matchAll(/data-ws-since-week="/g)].length, 1);
-  assert.match(html, /data-ws-since-more="">/, 'live while there is more');
+  assert.match(englishUiSource(html), /data-ws-since-more="">/, 'live while there is more');
   assert.ok(!html.includes('data-ws-week-start'), 'with no floor drawn mid-list');
   // THE BEGINNING, SAID, once the list is walked to its end, and only then;
   // without `firstWeek` it claims no beginning, only the list's reach.
-  assert.match(WORKSHOP, /weeks\.length && weeksOpen >= weeks\.length && firstWeek \? \(\s*<p className="dev-ws-week-note" data-ws-week-start="">\s*\{`This project started the week of \$\{weekDate\(firstWeek\)\}\.`\}/);
-  assert.match(WORKSHOP, /weeks\.length && weeksOpen >= weeks\.length && !firstWeek && sinceExtra > 0 \? \(\s*<p className="dev-ws-week-note" data-ws-week-end="">That is as far back as the list goes\.<\/p>/);
+  assert.match(englishUiSource(WORKSHOP), /weeks\.length && weeksOpen >= weeks\.length && firstWeek \? \(\s*<p className="dev-ws-week-note" data-ws-week-start="">\s*\{`This project started the week of \$\{weekDate\(firstWeek\)\}\.`\}/);
+  assert.match(englishUiSource(WORKSHOP), /weeks\.length && weeksOpen >= weeks\.length && !firstWeek && sinceExtra > 0 \? \(\s*<p className="dev-ws-week-note" data-ws-week-end="">That is as far back as the list goes\.<\/p>/);
 
   // A cache written before the counts existed carries none, and the week
   // draws its line alone rather than a zero.
@@ -1959,9 +1961,9 @@ test('Open card goes to the item\u2019s page, from the Workshop as from the Boar
     'the in-place builder is retired, not left with no caller');
 
   const unfolded = FOLD.slice(FOLD.indexOf('export function UnfoldedRow'), FOLD.indexOf('export function voteSpecs'));
-  assert.match(unfolded, /actionEnd=\{placement \? openBtn : undefined\}/, 'the band seat, on both surfaces');
-  assert.match(unfolded, /detail: placement = 'actions',/, 'and it is the default, so the Workshop passes nothing');
-  assert.match(unfolded, /const openBtn = placement && href\s*\? <a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>Open card<\/a>/,
+  assert.match(englishUiSource(unfolded), /actionEnd=\{placement \? openBtn : undefined\}/, 'the band seat, on both surfaces');
+  assert.match(englishUiSource(unfolded), /detail: placement = 'actions',/, 'and it is the default, so the Workshop passes nothing');
+  assert.match(englishUiSource(unfolded), /const openBtn = placement && href\s*\? <a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>Open card<\/a>/,
     'one anchor, one label');
   assert.ok(!/TopicBodySections|readAppView|useState/.test(unfolded),
     'nothing left that built or held an in-place body');
@@ -2389,12 +2391,12 @@ test('#2172: one card past the last item is the summary, and it is the screen wh
   assert.ok(scroll, 'the scroller');
   const slots = scroll[0].match(/<section class="dev-ws-item[^"]*" data-ws-item="([^"]+)"/g);
   assert.equal(slots.length, 6, 'five items and the end card');
-  assert.match(slots[5], /class="dev-ws-item dev-ws-needs-done" data-ws-item="done"/, 'and the end card is LAST');
-  assert.match(html, /data-ws-item="done" data-ws-kind="done" data-ws-done-acted="0" data-ws-done-left="5"/,
+  assert.match(englishUiSource(slots[5]), /class="dev-ws-item dev-ws-needs-done" data-ws-item="done"/, 'and the end card is LAST');
+  assert.match(englishUiSource(html), /data-ws-item="done" data-ws-kind="done" data-ws-done-acted="0" data-ws-done-left="5"/,
     'it says how many this pass answered and how many it passed over');
   // The counter and the progress line count the decisions only: the end card
   // is where you are once they are behind you, not a sixth decision.
-  assert.match(html, /class="dev-ws-item-of">1 \/ 5</);
+  assert.match(englishUiSource(html), /class="dev-ws-item-of">1 \/ 5</);
   assert.ok(!/class="dev-ws-item-of">6 \//.test(html), 'the end card has no counter');
   // Nothing answered yet and five passed over: the headline says "for now",
   // the line under it says what was skipped, and there is a way back to it
@@ -2405,28 +2407,28 @@ test('#2172: one card past the last item is the summary, and it is the screen wh
   // "5 are still waiting on you above" sat under a Needs you count that had
   // just dropped by five. It says what the reader did, and that the items
   // are still there to change their mind about.
-  assert.match(html, /dev-ws-needs-done-line">That’s it for now\.</);
-  assert.match(html, /dev-ws-needs-done-sub">You skipped 5\. They stay above if you change your mind\.</);
-  assert.match(html, /dev-ws-done-cta"[^>]*>See what changed this week</, 'the way back to the lander');
-  assert.match(html, /dev-ws-done-back" data-ws-done-back=""[^>]*>Back to the first one you skipped</, 'and back up the feed');
+  assert.match(englishUiSource(html), /dev-ws-needs-done-line">That’s it for now\.</);
+  assert.match(englishUiSource(html), /dev-ws-needs-done-sub">You skipped 5\. They stay above if you change your mind\.</);
+  assert.match(englishUiSource(html), /dev-ws-done-cta"[^>]*>See what changed this week</, 'the way back to the lander');
+  assert.match(englishUiSource(html), /dev-ws-done-back" data-ws-done-back=""[^>]*>Back to the first one you skipped</, 'and back up the feed');
   // The ring states where the viewer stands against everything they could
   // vote on: three promoted, none answered.
-  assert.match(html, /dev-ws-done-ring[\s\S]*?aria-label="0 of 3 open proposals voted on"/);
+  assert.match(englishUiSource(html), /dev-ws-done-ring[\s\S]*?aria-label="0 of 3 open proposals voted on"/);
   // THE RAIL ON THE END CARD is the move pair alone, so the way back up stays
   // where the thumb learned it is and the stage keeps its width on a wide
   // window; the item rail is drawn only for an item.
-  assert.match(WORKSHOP, /<aside className="dev-ws-rail dev-ws-rail-end" data-ws-rail="" aria-label="The end of the feed">\s*\{moveRow\}/);
-  assert.match(WORKSHOP, /const row = i < n \? items\[i\] : null;/, 'index n is the end card, with no row');
-  assert.match(WORKSHOP, /const idx = key === END_KEY \? items\.length : items\.findIndex/,
+  assert.match(englishUiSource(WORKSHOP), /<aside className="dev-ws-rail dev-ws-rail-end" data-ws-rail="" aria-label="The end of the feed">\s*\{moveRow\}/);
+  assert.match(englishUiSource(WORKSHOP), /const row = i < n \? items\[i\] : null;/, 'index n is the end card, with no row');
+  assert.match(englishUiSource(WORKSHOP), /const idx = key === END_KEY \? items\.length : items\.findIndex/,
     'a reader on the end card stays on it when rows arrive or leave above');
-  assert.match(WORKSHOP, /const c = Math\.min\(Math\.max\(idx, 0\), items\.length\);/, 'a swipe can land on it');
+  assert.match(englishUiSource(WORKSHOP), /const c = Math\.min\(Math\.max\(idx, 0\), items\.length\);/, 'a swipe can land on it');
   // The way the check reaches it: the route opens ON the end card, instantly.
-  assert.match(WORKSHOP, /\.get\('shot'\) === 'needs-end'/);
-  assert.match(WORKSHOP, /const \[endOnOpen\] = useState\(wantsEnd\);/, 'read once, at mount');
-  assert.match(WORKSHOP, /useRef<string \| null>\(endOnOpen \? END_KEY : null\)/);
+  assert.match(englishUiSource(WORKSHOP), /\.get\('shot'\) === 'needs-end'/);
+  assert.match(englishUiSource(WORKSHOP), /const \[endOnOpen\] = useState\(wantsEnd\);/, 'read once, at mount');
+  assert.match(englishUiSource(WORKSHOP), /useRef<string \| null>\(endOnOpen \? END_KEY : null\)/);
   const check = dapp.tests.find((t) => /shot=needs-end/.test(t.path));
   assert.ok(check, 'a declared check rides that route');
-  assert.match(check.expectSelector, /\[data-ws-kind="vote"\] ~ \[data-ws-item="done"\]\[data-ws-kind="done"\]/,
+  assert.match(englishUiSource(check.expectSelector), /\[data-ws-kind="vote"\] ~ \[data-ws-item="done"\]\[data-ws-kind="done"\]/,
     'and walks past a vote item to the end card');
   // The copy: no em dashes, and each class the card emits has a rule.
   const card = /<section class="dev-ws-item dev-ws-needs-done"[\s\S]*?<\/section>/.exec(html)[0];
@@ -2442,8 +2444,8 @@ test('#2172: one card past the last item is the summary, and it is the screen wh
   const empty = workshopHtml(AppView, 'needs');
   const only = empty.match(/ data-ws-item="/g) || [];
   assert.equal(only.length, 1, 'the end card alone');
-  assert.match(empty, /dev-ws-needs-done-line">You’re all caught up\.</);
-  assert.match(empty, /Every proposal you can vote on has your answer, and every open request has somebody on it\./);
+  assert.match(englishUiSource(empty), /dev-ws-needs-done-line">You’re all caught up\.</);
+  assert.match(englishUiSource(empty), /Every proposal you can vote on has your answer, and every open request has somebody on it\./);
   assert.ok(!empty.includes('data-ws-done-back'), 'nothing to go back to');
   assert.ok(!empty.includes('data-ws-rail'), 'and no rail');
 });
@@ -2460,23 +2462,23 @@ test('the footnote says what is actually happening to the grouping', () => {
   });
   AppView._workshopThemes = cat({ pending: true });
   let html = workshopHtml(AppView, 'all');
-  assert.match(html, /drafting categories…/, 'pending on the grouping says so in the eyebrow');
-  assert.match(html, /Categories are being drafted from the board now\./);
+  assert.match(englishUiSource(html), /drafting categories…/, 'pending on the grouping says so in the eyebrow');
+  assert.match(englishUiSource(html), /Categories are being drafted from the board now\./);
   assert.ok(!html.includes('regrouping…'), 'and does not claim a regroup of categories that do not exist yet');
 
   AppView._workshopThemes = cat({ lastError: 'boom' });
   html = workshopHtml(AppView, 'all');
-  assert.match(html, /The last attempt to draft categories failed \(boom\)\./);
+  assert.match(englishUiSource(html), /The last attempt to draft categories failed \(boom\)\./);
 
   AppView._workshopThemes = cat({});
   html = workshopHtml(AppView, 'all');
-  assert.match(html, /No AI model is configured, so items are grouped by the categories the group has voted for\./);
+  assert.match(englishUiSource(html), /No AI model is configured, so items are grouped by the categories the group has voted for\./);
   assert.ok(!html.includes('drafted once an AI model is available'), 'the misleading copy is gone');
 
   AppView._workshopThemes = themes([{ id: 't', name: 'Theming', description: 'd', saying: 's', items: ['issue:12'] }],
     { pending: true, pendingStage: 'placement', coverage: { total: 4, placed: 1, unplaced: 0, pending: 3 } });
   html = workshopHtml(AppView, 'all');
-  assert.match(html, /placing new cards…/, 'pending placement on real categories says so');
+  assert.match(englishUiSource(html), /placing new cards…/, 'pending placement on real categories says so');
   // The stamp has to sit inside `relStamp`'s relative window for that copy to
   // be the copy under test at all. Pinned here so a fixture that drifts out of
   // it fails as "the fixture went stale" rather than as a grouping bug — which
@@ -2485,25 +2487,25 @@ test('the footnote says what is actually happening to the grouping', () => {
   const stamp = Date.parse(themes([], {}).discoveredAt);
   assert.ok(Date.now() - stamp < REL_FLOOR_MS,
     'the fixture stamp is relative to now, not a wall-clock date that ages out');
-  assert.match(APP_VIEW_SRC, /const REL_FLOOR_MS = 7 \* 24 \* 60 \* 60 \* 1000;/,
+  assert.match(englishUiSource(APP_VIEW_SRC), /const REL_FLOOR_MS = 7 \* 24 \* 60 \* 60 \* 1000;/,
     'and that window is still seven days where relStamp defines it');
-  assert.match(html, /Categories were drafted \d+[hd] ago and are re-drafted daily, or sooner when a tenth of the board changes\./);
-  assert.match(html, /3 new cards are being placed\./);
+  assert.match(englishUiSource(html), /Categories were drafted \d+[hd] ago and are re-drafted daily, or sooner when a tenth of the board changes\./);
+  assert.match(englishUiSource(html), /3 new cards are being placed\./);
   // The name is preceded by the theme's glyph now (#1787); the pin is still
   // on the COPY, which is what these four states are about.
-  assert.match(html, /<div class="dev-ws-theme-name">(?:<span class="dev-ws-theme-icon[^>]*>[^<]*<\/span>)?Being placed<\/div>/);
+  assert.match(englishUiSource(html), /<div class="dev-ws-theme-name">(?:<span class="dev-ws-theme-icon[^>]*>[^<]*<\/span>)?Being placed<\/div>/);
   // The row's marker: the pseudo-theme is folded on a plain paint, so the
   // marker is pinned at the source, on the folded row.
-  assert.match(FOLD, /\{row\.placing \? <span className="dev-ws-placing"[^>]*>placing…<\/span> : null\}/);
-  assert.match(CSS, /\.dev-ws-placing \{/);
+  assert.match(englishUiSource(FOLD), /\{row\.placing \? <span className="dev-ws-placing"[^>]*>placing…<\/span> : null\}/);
+  assert.match(englishUiSource(CSS), /\.dev-ws-placing \{/);
 
   AppView._workshopThemes = themes([{ id: 't', name: 'Theming', description: 'd', saying: 's', items: ['issue:12'] }],
     { pending: true, pendingStage: 'discovery', unplaced: ['issue:13', 'session:34', 'session:78'], coverage: { total: 4, placed: 1, unplaced: 3, pending: 0 }, lastError: 'placement: boom' });
   html = workshopHtml(AppView, 'all');
-  assert.match(html, /re-drafting categories…/, 'a pending discovery on real categories is a re-draft');
-  assert.match(html, /3 cards did not fit a category and wait for the next draft\./);
-  assert.match(html, /The last attempt failed \(placement: boom\); it is retried shortly\./);
-  assert.match(html, /<div class="dev-ws-theme-name">(?:<span class="dev-ws-theme-icon[^>]*>[^<]*<\/span>)?Not yet grouped<\/div>/);
+  assert.match(englishUiSource(html), /re-drafting categories…/, 'a pending discovery on real categories is a re-draft');
+  assert.match(englishUiSource(html), /3 cards did not fit a category and wait for the next draft\./);
+  assert.match(englishUiSource(html), /The last attempt failed \(placement: boom\); it is retried shortly\./);
+  assert.match(englishUiSource(html), /<div class="dev-ws-theme-name">(?:<span class="dev-ws-theme-icon[^>]*>[^<]*<\/span>)?Not yet grouped<\/div>/);
   assert.ok(!html.includes('dev-ws-placing'), 'declined cards wear no marker');
 });
 
@@ -2725,13 +2727,13 @@ test('workshop replaced feed as a mode, and the retired names resolve onto it', 
 });
 
 test('the Workshop is a menu row, and an anchor at its route (#2761)', () => {
-  assert.match(SHEET_TSX, /id="app-menu-row-workshop"\s+dataContextRow="workshop"/);
-  assert.match(SHEET_TSX, /href=\{slug \? `#app\/\$\{encodeURIComponent\(slug\)\}\/workshop` : '#'\}/);
+  assert.match(englishUiSource(SHEET_TSX), /id="app-menu-row-workshop"\s+dataContextRow="workshop"/);
+  assert.match(englishUiSource(SHEET_TSX), /href=\{slug \? `#app\/\$\{encodeURIComponent\(slug\)\}\/workshop` : '#'\}/);
   assert.ok(!SHEET_TSX.includes('data-context-row="activity"'), 'the Activity segment retired');
   assert.ok(!/data-context-row="board"|dataContextRow="board"/.test(SHEET_TSX),
     'and the Board segment after it — the Workshop and the kanban are one '
     + 'screen in two layouts, so the layout is not a destination in the menu');
-  assert.match(SHEET_TSX, /label="Go to community"/);
+  assert.match(englishUiSource(SHEET_TSX), /label="Go to community"/);
 });
 
 test('the declared checks cover the lander, its strips and an unfolded row', () => {
@@ -3398,13 +3400,13 @@ test('the tabs are a band in the community\'s colour, not the old pill: nothing 
   // sliding marker, and then no tabs at all. #852 brings back four (Hub,
   // Discussion, Needs you, Workshop) as a band under the coloured header,
   // with an underline rather than a marker; All items is the Workshop's page.
-  assert.doesNotMatch(WORKSHOP, /useTabMarker|data-ws-tab-marker|role="tablist" aria-label="Workshop sections"/);
-  assert.match(WORKSHOP, /<ProjectBand\s+tab=\{tab\}\s+owed=\{owed\}/);
-  assert.match(WORKSHOP, /<div className="dev-ws-tabs dev-ws-pagebar" data-ws-pagebar="">/,
+  assert.doesNotMatch(englishUiSource(WORKSHOP), /useTabMarker|data-ws-tab-marker|role="tablist" aria-label="Workshop sections"/);
+  assert.match(englishUiSource(WORKSHOP), /<ProjectBand\s+tab=\{tab\}\s+owed=\{owed\}/);
+  assert.match(englishUiSource(WORKSHOP), /<div className="dev-ws-tabs dev-ws-pagebar" data-ws-pagebar="">/,
     'All items\' back bar keeps the strip\'s box');
-  const band = read('frontend/src/features/dev-board/workshop/project-band.tsx');
-  assert.match(band, /className="dev-ws-tabs dev-ws-band"/, 'and so does the band');
-  assert.match(band, /<div className="dev-ws-tabtrack" role="tablist" aria-label="Project"/);
+  const band = englishUiSource(read('frontend/src/features/dev-board/workshop/project-band.tsx'));
+  assert.match(englishUiSource(band), /className="dev-ws-tabs dev-ws-band"/, 'and so does the band');
+  assert.match(englishUiSource(band), /<div className="dev-ws-tabtrack" role="tablist" aria-label="Project"/);
 });
 
 test('#2915: declared checks open the Workshop page and the hub with a search on', () => {
@@ -3446,14 +3448,15 @@ test('an empty board still gets the All items pane, and the note names the ⋯ a
 });
 
 test('bug g: the empty-board note says what the ⋯ holds, and sends "make one yourself" to Start a new change', () => {
+  const WORKSHOPEnglish = englishUiSource(WORKSHOP);
   // The second half: "Press + to propose a change or file an issue". The "+"
   // has had no propose row since New change moved to Improve (#1490) and
   // then to the Homeroom menu's New change button — an owner decision
   // (#2740 review) this does not undo. So the note names the "+"'s real rows
   // and the button that starts a change, by the name the header gives the
   // menu (the mark's aria-label, "Homeroom menu").
-  const MARK = read('frontend/src/features/header/platform-mark.tsx');
-  assert.match(MARK, /aria-label="Homeroom menu"/, 'the menu is called what the note calls it');
+  const MARK = englishUiSource(read('frontend/src/features/header/platform-mark.tsx'));
+  assert.match(englishUiSource(MARK), /aria-label="Homeroom menu"/, 'the menu is called what the note calls it');
   const empty = (over) => {
     const AppView = makeAppView();
     seed(AppView);
@@ -3472,10 +3475,10 @@ test('bug g: the empty-board note says what the ⋯ holds, and sends "make one y
   // where the ⋯ is, since it is the hub's.
   const fresh = empty();
   const all = workshopHtml(fresh, 'all');
-  assert.doesNotMatch(all, /propose a change/, 'no promise of a propose row the "+" does not have');
-  assert.match(all, NOTE(` on the hub to ask for a change${START}`), "a writer's note: the ⋯ asks for a change");
+  assert.doesNotMatch(englishUiSource(all), /propose a change/, 'no promise of a propose row the "+" does not have');
+  assert.match(englishUiSource(all), NOTE(` on the hub to ask for a change${START}`), "a writer's note: the ⋯ asks for a change");
   withDevActions({ canCollaborate: true }, () => {
-    assert.match(workshopHtml(fresh, 'all'), NOTE(` on the hub to ask for a change or import a PR${START}`),
+    assert.match(englishUiSource(workshopHtml(fresh, 'all')), NOTE(` on the hub to ask for a change or import a PR${START}`),
       "a collaborator's ⋯ also imports a PR, so the note says so");
   });
 
@@ -3483,39 +3486,39 @@ test('bug g: the empty-board note says what the ⋯ holds, and sends "make one y
   // with its own New change, so the note stops at the "+" rather than sending
   // the reader to a menu for the button just above it.
   const status = workshopHtml(fresh, 'status');
-  assert.match(status, /data-ws-start-here-btn=""[^>]*>Start a new change</, 'the banner offers Start a new change');
-  assert.match(status, NOTE(' to ask for a change\\.'), 'and the note under it names the ⋯ alone');
-  assert.doesNotMatch(status, /propose a change/);
+  assert.match(englishUiSource(status), /data-ws-start-here-btn=""[^>]*>Start a new change</, 'the banner offers Start a new change');
+  assert.match(englishUiSource(status), NOTE(' to ask for a change\\.'), 'and the note under it names the ⋯ alone');
+  assert.doesNotMatch(englishUiSource(status), /propose a change/);
   // ...and "What you are working on", on the Workshop tab beside it, states
   // the fact alone too: the board has no open item to pick up, and New
   // change is the banner's.
-  assert.match(workshopHtml(fresh, 'workshop'), /data-ws-mine-empty="">You have no work going on\.<\/p>/);
+  assert.match(englishUiSource(workshopHtml(fresh, 'workshop')), /data-ws-mine-empty="">You have no work going on\.<\/p>/);
   // With no banner — an app with a history the page has not loaded rows for —
   // the status tab's note says the whole thing too.
   const finished = empty({ _mergedTotal: 3 });
   const bare = workshopHtml(finished, 'status');
-  assert.ok(!bare.includes('data-ws-start-here'), 'no banner on an app that has shipped');
-  assert.match(bare, NOTE(` to ask for a change${START}`));
+  assert.ok(!englishUiSource(bare).includes('data-ws-start-here'), 'no banner on an app that has shipped');
+  assert.match(englishUiSource(bare), NOTE(` to ask for a change${START}`));
 
   // A read-only viewer's "+" holds Fork alone and their menu has no New
   // change, so there is nothing to press: the note states the fact.
   withDevActions({ readOnly: true }, () => {
     for (const html of [workshopHtml(fresh, 'all'), workshopHtml(fresh, 'status'), workshopHtml(finished, 'status')]) {
-      assert.match(html, /data-ws-empty=""[^>]*>Nothing on the board yet\.<\/div>/, 'the read-only note');
-      assert.doesNotMatch(html, /Homeroom menu/, 'and no door the reader cannot open');
+      assert.match(englishUiSource(html), /data-ws-empty=""[^>]*>Nothing on the board yet\.<\/div>/, 'the read-only note');
+      assert.doesNotMatch(englishUiSource(html), /Homeroom menu/, 'and no door the reader cannot open');
     }
   });
   // Both notes are one component, so the two tabs cannot drift apart, and the
   // banner's condition is written once, for the banner and the note alike.
-  assert.equal((WORKSHOP.match(/'Nothing on the board yet\. Press '/g) || []).length, 1);
-  assert.match(WORKSHOP, /\{startHere \? <StartHereBanner \/> : null\}/);
-  assert.match(WORKSHOP, /<EmptyNote\s+filtered=\{!!v\.emptyNote\.filtered\}\s+loadFailed=\{v\.emptyNote\.loadFailed\}\s+underStartHere=\{startHere\}\s+onHub\s*\/>/);
+  assert.equal((WORKSHOPEnglish.match(/Nothing on the board yet\. Press /g) || []).length, 1);
+  assert.match(englishUiSource(WORKSHOPEnglish), /\{startHere \? <StartHereBanner \/> : null\}/);
+  assert.match(englishUiSource(WORKSHOPEnglish), /<EmptyNote\s+filtered=\{!!v\.emptyNote\.filtered\}\s+loadFailed=\{v\.emptyNote\.loadFailed\}\s+underStartHere=\{startHere\}\s+onHub\s*\/>/);
 });
 
 test('exactly one surface draws the toolbar, so its ids stay unique', () => {
   // #dev-actions, #dev-plus-btn and #dev-plus-menu are ids. Two copies on
   // screen would break _wirePlusMenu, which looks both up by getElementById.
-  const FRAME = read('frontend/src/features/dev-board/board-frame.tsx');
+  const FRAME = englishUiSource(read('frontend/src/features/dev-board/board-frame.tsx'));
   assert.match(FRAME, /mode === 'workshop' \? null : \(\s*<DevActionsRow/,
     'the frame draws none on the Workshop');
   assert.match(WORKSHOP, /<DevActionsRow/, 'and the Workshop draws its own');
@@ -3525,7 +3528,7 @@ test('exactly one surface draws the toolbar, so its ids stay unique', () => {
   assert.match(WORKSHOP, /<DevActionsRow[^>]*withPlus=\{false\}/, 'the pane-head row carries no "+"');
   assert.equal((WORKSHOP.match(/<DevPlusMenu\b/g) || []).length, 1, 'the strip draws the one "+"');
   // Neither file spells the markup itself any more.
-  const ACTIONS = read('frontend/src/features/dev-board/actions-row.tsx');
+  const ACTIONS = englishUiSource(read('frontend/src/features/dev-board/actions-row.tsx'));
   assert.match(ACTIONS, /id="dev-actions"/, 'the markup has one home');
   assert.ok(!FRAME.includes('id="dev-actions"'), 'not the frame');
   assert.ok(!WORKSHOP.includes('id="dev-actions"'), 'and not the Workshop');
@@ -3976,7 +3979,7 @@ test('the filter host asks to be filled, because the repaint that fills it runs 
   // micro task" — an effect body is inside that commit, passive or not.
   // Checked both ways in a browser on a development React build: from the
   // effect body it fires, from the microtask it does not.
-  assert.match(read('frontend/src/lib/legacy-portals.tsx'), /function commit\(\): void \{\s*flushSync\(publish\);/,
+  assert.match(englishUiSource(read('frontend/src/lib/legacy-portals.tsx')), /function commit\(\): void \{\s*flushSync\(publish\);/,
     'the synchronous publish the mount goes through');
   assert.ok(!/useLayoutEffect/.test(ACTIONS_ROW), 'and the effect is passive, not a layout one');
   // Cancelled on unmount, so a row torn down inside the same tick does not
@@ -4485,21 +4488,21 @@ test('the sheets move, stop above the keyboard, and More opens the card page', (
   // needs the element kept for the animation's length: `leaving` holds the
   // kind, `[data-ws-leaving]` marks it, and a timer drops it — instantly
   // where motion is unwelcome, because app.css runs no animation there.
-  assert.match(WORKSHOP, /const \[leaving, setLeaving\] = useState<SheetKind \| null>\(null\);/);
+  assert.match(englishUiSource(WORKSHOP), /const \[leaving, setLeaving\] = useState<SheetKind \| null>\(null\);/);
   // Never on the end card, which has no item for a sheet to be about (#2172).
-  assert.match(WORKSHOP, /const shown = row \? \(sheet \|\| leaving\) : null;/);
-  assert.match(WORKSHOP, /window\.matchMedia\('\(prefers-reduced-motion: reduce\)'\)\.matches/);
-  assert.match(CSS, /\.dev-ws-sheet-modal\[data-ws-leaving\] > \.dev-ws-sheet-card \{\s*animation-name: var\(--ws-sheet-out\)/);
-  assert.match(CSS, /@keyframes dev-ws-sheet-up \{ from \{ transform: translateY\(100%\); \}/);
+  assert.match(englishUiSource(WORKSHOP), /const shown = row \? \(sheet \|\| leaving\) : null;/);
+  assert.match(englishUiSource(WORKSHOP), /window\.matchMedia\('\(prefers-reduced-motion: reduce\)'\)\.matches/);
+  assert.match(englishUiSource(CSS), /\.dev-ws-sheet-modal\[data-ws-leaving\] > \.dev-ws-sheet-card \{\s*animation-name: var\(--ws-sheet-out\)/);
+  assert.match(englishUiSource(CSS), /@keyframes dev-ws-sheet-up \{ from \{ transform: translateY\(100%\); \}/);
   // A leaving sheet lets taps and focus through: its scrim and buttons stay
   // mounted for the leave, and would swallow the next tap. Not motion-gated.
-  assert.match(CSS, /\n\.dev-ws-sheet-modal\[data-ws-leaving\] \{ pointer-events: none; \}/);
-  assert.match(WORKSHOP, /const leavingAttr = !sheet && leaving \? \{ 'data-ws-leaving': '', inert: true \} : \{\};/);
+  assert.match(englishUiSource(CSS), /\n\.dev-ws-sheet-modal\[data-ws-leaving\] \{ pointer-events: none; \}/);
+  assert.match(englishUiSource(WORKSHOP), /const leavingAttr = !sheet && leaving \? \{ 'data-ws-leaving': '', inert: true \} : \{\};/);
   // A panel slides in from the side it lives on; a popover pops. Same rule,
   // different names, set where the panel and the popover are declared.
   const wide = /@media \(min-width: 700px\) \{([\s\S]*?)\n\}/.exec(CSS)[1];
-  assert.match(wide, /--ws-sheet-in: dev-ws-panel-in; --ws-sheet-out: dev-ws-panel-out;/);
-  assert.match(wide, /--ws-sheet-in: dev-ws-pop-in; --ws-sheet-out: dev-ws-pop-out;/);
+  assert.match(englishUiSource(wide), /--ws-sheet-in: dev-ws-panel-in; --ws-sheet-out: dev-ws-panel-out;/);
+  assert.match(englishUiSource(wide), /--ws-sheet-in: dev-ws-pop-in; --ws-sheet-out: dev-ws-pop-out;/);
   // THE KEYBOARD. Fixed elements are laid out against the layout viewport,
   // which the on-screen keyboard does not shrink, so the card's floor — and
   // the field on it — sat under the keys. The floor lifts by the inset, only
@@ -4512,28 +4515,28 @@ test('the sheets move, stop above the keyboard, and More opens the card page', (
   // goes negative. A private copy is the thing to prevent, not to pin, so the
   // assertion is now that the screen takes the kit's published inset and does
   // NOT do its own arithmetic.
-  assert.doesNotMatch(WORKSHOP, /window\.innerHeight\s*-\s*vv\.height/,
+  assert.doesNotMatch(englishUiSource(WORKSHOP), /window\.innerHeight\s*-\s*vv\.height/,
     'the workshop sheet must not re-derive the keyboard: read --un-kb-inset');
-  assert.match(WORKSHOP, /classList\.contains\('un-kb'\)/);
-  assert.match(WORKSHOP, /\}, \[sheet, wide\]\);/);
-  assert.match(CSS, /\.dev-ws-sheet-modal \{\s*position: fixed; inset: 0; z-index: 30;[\s\S]*?bottom: var\(--un-kb-inset, 0px\);/);
-  assert.match(CSS, /\.dev-ws-needs\[data-ws-kb\] \.dev-ws-sheet-card \{ max-height: 100%; \}/);
-  assert.match(CSS, /padding: 8px 16px calc\(12px \+ var\(--platform-safe-bottom, 0px\)\);/,
+  assert.match(englishUiSource(WORKSHOP), /classList\.contains\('un-kb'\)/);
+  assert.match(englishUiSource(WORKSHOP), /\}, \[sheet, wide\]\);/);
+  assert.match(englishUiSource(CSS), /\.dev-ws-sheet-modal \{\s*position: fixed; inset: 0; z-index: 30;[\s\S]*?bottom: var\(--un-kb-inset, 0px\);/);
+  assert.match(englishUiSource(CSS), /\.dev-ws-needs\[data-ws-kb\] \.dev-ws-sheet-card \{ max-height: 100%; \}/);
+  assert.match(englishUiSource(CSS), /padding: 8px 16px calc\(12px \+ var\(--platform-safe-bottom, 0px\)\);/,
     'and the floor clears the home indicator');
   // OPEN CARD. The item is the whole screen, so the card's own page is a row
   // under More; the href rides on the trigger and app-view.js reads it.
-  assert.match(WORKSHOP, /data-card-menu-open=\{cardHref \|\| undefined\}/);
+  assert.match(englishUiSource(WORKSHOP), /data-card-menu-open=\{cardHref \|\| undefined\}/);
   // #3488: the row's own project, on the Communities screen's feed.
-  assert.match(WORKSHOP, /const cardHref = row \? openHref\(rowSlug\(row, slug\), row\.card\) : null;/);
+  assert.match(englishUiSource(WORKSHOP), /const cardHref = row \? openHref\(rowSlug\(row, slug\), row\.card\) : null;/);
   const appView = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8');
-  assert.match(appView, /trigger\.dataset\.cardMenuOpen/);
+  assert.match(englishUiSource(appView), /trigger\.dataset\.cardMenuOpen/);
   // The row is part of the ONE descriptor list every reader of the menu
   // uses, so a row's index means the same thing in the menu that opened and
   // in the refreshed one under it — prepending it in only the opener once
   // sent the first row's click to the wrong descriptor on a desktop.
-  assert.match(appView, /_cardMenuItems\(key, own\)/);
-  assert.match(appView, /_cardMenuItems\(open\.key, open\.own\)/);
-  assert.match(appView, /label: 'Open card',/);
+  assert.match(englishUiSource(appView), /_cardMenuItems\(key, own\)/);
+  assert.match(englishUiSource(appView), /_cardMenuItems\(open\.key, open\.own\)/);
+  assert.match(englishUiSource(appView), /label: 'Open card',/);
 });
 
 test('the lander fills its scroller without a percentage in the floor', () => {
@@ -4596,7 +4599,7 @@ test('the growing tabs keep the tab-bar clearance at the foot of the scroller (#
   // Needs you is left bounded — it is the tab the chain exists for.
   assert.doesNotMatch(CSS, /#dev-body:has\(> #dev-workshop\) \{[^}]*flex-shrink: 0/);
   // And the scroller still carries the clearance this relies on.
-  const frame = read('frontend/src/features/dev-board/board-frame.tsx');
+  const frame = englishUiSource(read('frontend/src/features/dev-board/board-frame.tsx'));
   assert.match(frame, /id="dev-forum-scroll"\s+className="[^"]*\bplatform-safe-scroll\b/);
 });
 
@@ -4639,91 +4642,92 @@ test('the ask box is a sheet on a phone and a panel on a wide window', () => {
 });
 
 test('the feed answers on the Vote sheet and moves by swipe, arrows or keys', () => {
+  const WORKSHOPEnglish = englishUiSource(WORKSHOP);
   // THE ANSWERS ARE ON THE SHEET. The rail's Vote control opens the question
   // and records nothing by itself — a thumbs-up on a rail reads as "like",
   // and a queue answered by reflex is answered carelessly. Yes and No sit
   // together on the sheet with the tally, and Cancel closes it. #3613: they
   // are the card's own VotePicker, inline — the switch, the line for the
   // group under it and the send — not two buttons followed by a prompt card.
-  assert.ok(!/data-ws-answer-btn="skip"/.test(WORKSHOP), 'skip is gone from the answers');
-  assert.ok(!/dev-ws-answer-skip/.test(WORKSHOP), 'and so is its button');
-  assert.match(WORKSHOP, /data-ws-rail-btn="vote"[\s\S]{0,400}?onClick=\{\(\) => toggleSheet\('vote'\)\}/, 'Vote opens the sheet');
-  assert.match(WORKSHOP, /<NeedsVoteForm[\s\S]{0,400}?onCancel=\{closeSheet\}\s*onSend=\{submitVote\}/, 'the sheet holds the vote form');
-  assert.match(WORKSHOP, /data-ws-vote-form=""[\s\S]{0,120}?<VotePicker[\s\S]{0,900}?withLine/, 'which is the card\'s picker, with its line box');
-  assert.ok(!/data-ws-answer-btn="(yes|no)"/.test(WORKSHOP), 'the bare Yes/No pair is gone');
-  assert.match(WORKSHOP, /answer\(voteSide, undefined, voteTrimmed \|\| null\)/, 'the sheet sends its line, so castVote does not ask again');
-  assert.match(WORKSHOP, /const opts = reason === undefined \? \{ onSend \} : \{ onSend, reason \};/, 'only the swipe leaves the line to castVote');
+  assert.ok(!/data-ws-answer-btn="skip"/.test(WORKSHOPEnglish), 'skip is gone from the answers');
+  assert.ok(!/dev-ws-answer-skip/.test(WORKSHOPEnglish), 'and so is its button');
+  assert.match(englishUiSource(WORKSHOPEnglish), /data-ws-rail-btn="vote"[\s\S]{0,400}?onClick=\{\(\) => toggleSheet\('vote'\)\}/, 'Vote opens the sheet');
+  assert.match(englishUiSource(WORKSHOPEnglish), /<NeedsVoteForm[\s\S]{0,400}?onCancel=\{closeSheet\}\s*onSend=\{submitVote\}/, 'the sheet holds the vote form');
+  assert.match(englishUiSource(WORKSHOPEnglish), /data-ws-vote-form=""[\s\S]{0,120}?<VotePicker[\s\S]{0,900}?withLine/, 'which is the card\'s picker, with its line box');
+  assert.ok(!/data-ws-answer-btn="(yes|no)"/.test(WORKSHOPEnglish), 'the bare Yes/No pair is gone');
+  assert.match(englishUiSource(WORKSHOPEnglish), /answer\(voteSide, undefined, voteTrimmed \|\| null\)/, 'the sheet sends its line, so castVote does not ask again');
+  assert.match(englishUiSource(WORKSHOPEnglish), /const opts = reason === undefined \? \{ onSend \} : \{ onSend, reason \};/, 'only the swipe leaves the line to castVote');
   // NOTHING ADVANCES ON ITS OWN. The deck used to jump half a second after a
   // vote, which in a feed reads as the card vanishing under the press: the
   // row is pinned in place with its confirmation until you move on.
-  assert.ok(!/window\.setTimeout\(\(\) => setAt\(i \+ 1\)/.test(WORKSHOP), 'no auto-advance');
+  assert.ok(!/window\.setTimeout\(\(\) => setAt\(i \+ 1\)/.test(WORKSHOPEnglish), 'no auto-advance');
   // #3052: at the index of the item answered, which a swipe names (`at`
   // defaults to `i`, the item in view, for a press or a key).
-  assert.match(WORKSHOP, /pinsRef\.current\.set\(row\.key, \{ row, index: at \}\);/, 'the answered row is pinned');
+  assert.match(englishUiSource(WORKSHOPEnglish), /pinsRef\.current\.set\(row\.key, \{ row, index: at \}\);/, 'the answered row is pinned');
   // AND STAYS PINNED. The pins used to be dropped once the next card had
   // settled, which removed the voted row from ABOVE the one in view: every
   // index after it moved, the counter re-numbered, the index-keyed tint
   // flipped, and the scroll correction — a `scrollTop` assignment under the
   // scroller's `scroll-behavior: smooth` — animated the card back into place.
   // That was "the card I just arrived on resets a second later".
-  assert.ok(!/dropPins|settleRef/.test(WORKSHOP), 'no pin is dropped on a move');
-  assert.match(WORKSHOP, /const tintRef = useRef<Map<string, 'a' \| 'b'>>\(new Map\(\)\);/,
+  assert.ok(!/dropPins|settleRef/.test(WORKSHOPEnglish), 'no pin is dropped on a move');
+  assert.match(englishUiSource(WORKSHOPEnglish), /const tintRef = useRef<Map<string, 'a' \| 'b'>>\(new Map\(\)\);/,
     'a row\'s tint is decided once, from where it first stood');
-  assert.match(WORKSHOP, /tint=\{tints\[k\]\}/);
-  assert.match(WORKSHOP, /tint = prev === 'a' \? 'b' : 'a'; seen\.set\(r\.key, tint\);/,
+  assert.match(englishUiSource(WORKSHOPEnglish), /tint=\{tints\[k\]\}/);
+  assert.match(englishUiSource(WORKSHOPEnglish), /tint = prev === 'a' \? 'b' : 'a'; seen\.set\(r\.key, tint\);/,
     'a row seen for the first time takes the opposite of the row above it');
-  assert.ok(!/data-ws-tint=\{index % 2/.test(WORKSHOP), 'and never from the index of the moment');
-  assert.match(WORKSHOP, /el\.style\.scrollBehavior = 'auto';\s*el\.scrollTop = idx \* el\.clientHeight;\s*el\.style\.scrollBehavior = '';/,
+  assert.ok(!/data-ws-tint=\{index % 2/.test(WORKSHOPEnglish), 'and never from the index of the moment');
+  assert.match(englishUiSource(WORKSHOPEnglish), /el\.style\.scrollBehavior = 'auto';\s*el\.scrollTop = idx \* el\.clientHeight;\s*el\.style\.scrollBehavior = '';/,
     'a position correction is instant, whatever the scroller\'s own behaviour');
-  assert.match(WORKSHOP, /Voted \$\{voted\} · \$\{wide \? 'press ↓ or scroll' : 'swipe up'\} for the next/,
+  assert.match(englishUiSource(WORKSHOPEnglish), /Voted \$\{voted\} · \$\{wide \? 'press ↓ or scroll' : 'swipe up'\} for the next/,
     'and the eyebrow becomes the confirmation');
   // THE ARROWS: icon buttons with a NAME, since a chevron alone has none,
   // disabled at the ends rather than wrapping. Hidden on a phone, where the
   // swipe is the move; on a wide window they do what the wheel does.
-  assert.match(WORKSHOP, /<div className="dev-ws-move" data-ws-move-row="">/);
+  assert.match(englishUiSource(WORKSHOPEnglish), /<div className="dev-ws-move" data-ws-move-row="">/);
   for (const [dir, guard, name] of [
     ['prev', /disabled=\{i <= 0\}/, /aria-label="Previous"/],
     // `n`, not `n - 1`: the end card is the last slot (#2172).
     ['next', /disabled=\{i >= n\}/, /aria-label="Next"/],
   ]) {
-    const btn = new RegExp(`data-ws-move="${dir}"[\\s\\S]{0,240}?</button>`).exec(WORKSHOP);
+    const btn = new RegExp(`data-ws-move="${dir}"[\\s\\S]{0,240}?</button>`).exec(WORKSHOPEnglish);
     assert.ok(btn, `the ${dir} control exists`);
-    assert.match(btn[0], guard, `${dir} is disabled at its end rather than wrapping`);
-    assert.match(btn[0], name, `${dir} is named`);
+    assert.match(englishUiSource(btn[0]), guard, `${dir} is disabled at its end rather than wrapping`);
+    assert.match(englishUiSource(btn[0]), name, `${dir} is named`);
   }
-  assert.match(CSS, /\.dev-ws-move \{ display: none; \}/, 'no arrows on a phone');
+  assert.match(englishUiSource(CSS), /\.dev-ws-move \{ display: none; \}/, 'no arrows on a phone');
   // The count rides each item's own top line beside its eyebrow: it answers
   // "where am I" for the thing in front of you.
-  assert.match(WORKSHOP, /className="dev-ws-item-of">\{`\$\{index \+ 1\} \/ \$\{count\}`\}/);
+  assert.match(englishUiSource(WORKSHOPEnglish), /className="dev-ws-item-of">\{`\$\{index \+ 1\} \/ \$\{count\}`\}/);
   // #3517: AND ON A PHONE, THE WAY BACK beside it. The arrows above are a
   // wide window's, so a phone had only the swipe down, which nothing on the
   // card mentioned (and which the refresh gesture used to take: see
   // platform-ui.test.js). A named button, from the second item on, handed
   // down only below the breakpoint, stable so the memo()'d items skip a
   // render, and going back by the same `go` the keys and arrows use.
-  const prev = /\{onPrev && index > 0 \? \(\s*<button[^>]*data-ws-item-prev=""[^>]*>/.exec(WORKSHOP);
+  const prev = /\{onPrev && index > 0 \? \(\s*<button[^>]*data-ws-item-prev=""[^>]*>/.exec(WORKSHOPEnglish);
   assert.ok(prev, 'the item draws its Previous from the second item on, when handed one');
-  assert.match(prev[0], /aria-label="Previous item"/, 'a chevron alone has no name');
-  assert.match(prev[0], /onClick=\{onPrev\}/);
-  assert.match(WORKSHOP, /onPrev=\{wide \? undefined : prevItem\}/, 'a phone only: a wide window has the arrows');
-  assert.match(WORKSHOP, /const prevItem = useCallback\(\(\) => goRef\.current\(-1\), \[\]\);/);
+  assert.match(englishUiSource(prev[0]), /aria-label="Previous item"/, 'a chevron alone has no name');
+  assert.match(englishUiSource(prev[0]), /onClick=\{onPrev\}/);
+  assert.match(englishUiSource(WORKSHOPEnglish), /onPrev=\{wide \? undefined : prevItem\}/, 'a phone only: a wide window has the arrows');
+  assert.match(englishUiSource(WORKSHOPEnglish), /const prevItem = useCallback\(\(\) => goRef\.current\(-1\), \[\]\);/);
   // Held to the counter's line, so the title does not move between the
   // first item (no button) and the rest.
-  assert.match(CSS, /\.dev-ws-item-prev \{[^}]*width: 26px; height: 26px; margin: -3px -4px -3px auto;/);
+  assert.match(englishUiSource(CSS), /\.dev-ws-item-prev \{[^}]*width: 26px; height: 26px; margin: -3px -4px -3px auto;/);
   // THE KEYS, every one also a button on the rail, ignored while a field has
   // focus, and listed only where a keyboard is likely (app.css hides the
   // legend on a phone).
-  assert.match(WORKSHOP, /if \(t && \(t\.tagName === 'INPUT' \|\| t\.tagName === 'TEXTAREA'/, 'typing is typing');
+  assert.match(englishUiSource(WORKSHOPEnglish), /if \(t && \(t\.tagName === 'INPUT' \|\| t\.tagName === 'TEXTAREA'/, 'typing is typing');
   for (const key of ["'ArrowDown'", "'ArrowUp'", "'v' || k === 'V'", "'a' || k === 'A'", "'c' || k === 'C'", "'t' || k === 'T'", "'m' || k === 'M'", "'Escape'"]) {
-    assert.ok(WORKSHOP.includes(`k === ${key}`), `${key} is bound`);
+    assert.ok(WORKSHOPEnglish.includes(`k === ${key}`), `${key} is bound`);
   }
-  assert.match(CSS, /\.dev-ws-keys \{ display: none; \}/, 'the legend is off on a phone');
+  assert.match(englishUiSource(CSS), /\.dev-ws-keys \{ display: none; \}/, 'the legend is off on a phone');
   // NO WRAP, and no reordering: the ends are the ends, the counter says
   // which one you are at, and you walk back yourself.
   // `n`, the end card's slot, is the last a press reaches (#2172).
-  assert.match(WORKSHOP, /const idx = Math\.min\(Math\.max\(i \+ delta, 0\), n\);/);
-  assert.ok(!/setSkipped/.test(WORKSHOP), 'the re-queue went with the button it belonged to');
-  assert.match(WORKSHOP, /const live = rows\.filter\(\(r\): r is QueueRow => r\.t === 'card'\);/,
+  assert.match(englishUiSource(WORKSHOPEnglish), /const idx = Math\.min\(Math\.max\(i \+ delta, 0\), n\);/);
+  assert.ok(!/setSkipped/.test(WORKSHOPEnglish), 'the re-queue went with the button it belonged to');
+  assert.match(englishUiSource(WORKSHOPEnglish), /const live = rows\.filter\(\(r\): r is QueueRow => r\.t === 'card'\);/,
     'the feed keeps the order it was published in');
 });
 
@@ -4943,13 +4947,13 @@ test('the read-only demo check names the pane its proposal is actually on', () =
   walk(dapp);
   assert.equal(found.length, 1, 'exactly one check asserts the seeded proposal');
   const p = found[0].path;
-  assert.match(p, /[?&]ws=all(&|$)/, 'the tab, since the lander opens on Current status');
-  assert.match(p, /[?&]group=stage(&|$)/, 'the pane that lists item titles');
-  assert.match(p, /[?&]col=inreview(&|$)/, 'the column a promoted proposal buckets into');
+  assert.match(englishUiSource(p), /[?&]ws=all(&|$)/, 'the tab, since the lander opens on Current status');
+  assert.match(englishUiSource(p), /[?&]group=stage(&|$)/, 'the pane that lists item titles');
+  assert.match(englishUiSource(p), /[?&]col=inreview(&|$)/, 'the column a promoted proposal buckets into');
   // The bucketing this leans on, pinned here so moving `promoted` to another
   // column fails locally rather than as a red check on somebody's proposal.
-  assert.match(APP_VIEW_SRC, /key: 'inreview', title: 'Waiting for approval'/);
-  assert.match(APP_VIEW_SRC, /rows: cardRows\(\s*kInReview,\s*\(x\) => \(x\.kind === 'proposal'/);
+  assert.match(englishUiSource(APP_VIEW_SRC), /key: 'inreview', title: 'Waiting for approval'/);
+  assert.match(englishUiSource(APP_VIEW_SRC), /rows: cardRows\(\s*kInReview,\s*\(x\) => \(x\.kind === 'proposal'/);
 });
 
 // ── #2176: the tiles count calendar weeks ────────────────────────────
@@ -5316,17 +5320,17 @@ test('the Needs-you card is marked voted only once the server has the vote (QA 2
   assert.ok(then > 0, 'the answer waits on castVote\'s outcome');
   const marks = body.indexOf('setAnswered(');
   assert.ok(marks > then, 'and the card is marked only inside it');
-  assert.match(body.slice(then), /if \(ok === true\) \{\s*setAnswered\(/, 'only on a vote that landed');
-  assert.match(body, /pinsRef\.current\.delete\(key\)/, 'a cancelled or failed vote drops the pin this press added');
-  assert.match(body, /\{ onSend \}/, 'the rail says "Sending…" from the moment the vote is committed');
-  assert.match(body, /if \(sendingRef\.current\.has\(key\)\) return;/, 'one vote per card in flight');
-  assert.match(WORKSHOP, /sending\[row\.key\] \? 'Sending…' : 'Vote'/);
+  assert.match(englishUiSource(body.slice(then)), /if \(ok === true\) \{\s*setAnswered\(/, 'only on a vote that landed');
+  assert.match(englishUiSource(body), /pinsRef\.current\.delete\(key\)/, 'a cancelled or failed vote drops the pin this press added');
+  assert.match(englishUiSource(body), /\{ onSend \}/, 'the rail says "Sending…" from the moment the vote is committed');
+  assert.match(englishUiSource(body), /if \(sendingRef\.current\.has\(key\)\) return;/, 'one vote per card in flight');
+  assert.match(englishUiSource(WORKSHOP), /sending\[row\.key\] \? 'Sending…' : 'Vote'/);
   // castVote's side of the contract.
   const view = read('public/js/app-view.js');
   const cast = view.slice(view.indexOf('  async castVote(sessionId, vote'));
   const castBody = cast.slice(0, cast.indexOf('\n  },\n'));
-  assert.match(castBody, /if \(reason === false\) \{\s*AppView\._voteInFlight\.delete\(key\);\s*return false;/);
-  assert.match(castBody, /return true;/);
+  assert.match(englishUiSource(castBody), /if \(reason === false\) \{\s*AppView\._voteInFlight\.delete\(key\);\s*return false;/);
+  assert.match(englishUiSource(castBody), /return true;/);
 });
 
 test('#3052: on a phone a card the viewer can vote on takes the swipe; an issue or a pairless row does not', () => {
@@ -5407,7 +5411,7 @@ test('the Workshop keeps no swatch of its own — it imports the one the threads
   assert.equal(swatchFor('ada'), swatchFor('ada'));
   assert.ok(['#5b7553', '#c0532f', '#6fb3a8', '#4a6fa5', '#8a5a83', '#b08344'].includes(swatchFor('ada')),
     'and the colour comes from the shared six');
-  assert.match(read('frontend/src/features/dev-board/card/feed-thread.tsx'),
+  assert.match(englishUiSource(read('frontend/src/features/dev-board/card/feed-thread.tsx')),
     /import \{ swatchFor \} from '\.\.\/\.\.\/messages\/format';/,
     'the sheet reads the same module — that is what makes the two match');
 });

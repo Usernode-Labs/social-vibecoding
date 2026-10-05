@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // The four-band dev card (public/js/app-view.js + public/css/app.css).
 //
 // Every card on the dev board is now the same shape, top to bottom:
@@ -90,7 +91,7 @@ function makeAppView() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView._proposalsCtx = { majority: 2 };

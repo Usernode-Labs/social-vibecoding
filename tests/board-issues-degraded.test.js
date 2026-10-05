@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #2261: a degraded answer from GET /github-issues must not empty the board.
 //
 // AppView._fetchDevData stores that answer as _ghIssues, and _bucketDevItems
@@ -62,7 +63,7 @@ function fixture() {
     },
   };
   sandbox.window = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${source}\nglobalThis.subject = AppView;`, sandbox);
   const av = sandbox.subject;
   av.appData = { slug: 'demo', repo_url: 'https://github.com/o/r' };

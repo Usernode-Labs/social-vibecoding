@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -28,7 +29,7 @@ function setup(fetch) {
     window:{App:{navigateHome(){s.home=true;s.order.push('navigateHome');}},Home:{load(){}},PlatformUI:{toast(){}}},
     order:[],
   };
-  vm.createContext(s); vm.runInContext(`${handler('load')}\n${handler('proposeAccess')}\n${handler('remove')}`,s);
+  vm.createContext(withLanguage(s)); vm.runInContext(`${handler('load')}\n${handler('proposeAccess')}\n${handler('remove')}`,s);
   s.submit=()=>s.remove({preventDefault(){}}); return s;
 }
 const ok = (app) => ({ok:true,json:async()=>({app})});
@@ -36,7 +37,7 @@ const deferred = () => {let resolve;const promise=new Promise(r=>resolve=r);retu
 
 const modesSource = source.match(/const ACCESS_MODES:[\s\S]*?= (\[[\s\S]*?\n\]);\n\nfunction currentAccessMode/);
 assert.ok(modesSource, 'access mode table is readable');
-const ACCESS_MODES = vm.runInNewContext(`(${modesSource[1]})`);
+const ACCESS_MODES = vm.runInNewContext(`(${modesSource[1]})`, withLanguage());
 
 test('the three access modes map only to the valid build/view combinations',()=>{
   const values=Object.fromEntries(ACCESS_MODES.map((mode)=>[mode.id,[mode.collabVisibility,mode.viewVisibility]]));
@@ -107,7 +108,7 @@ test('a blocked app (core or shared) never makes a request',async()=>{
 });
 test('the blocked notice names the reason the server gave (#2161)',()=>{
   const start=source.indexOf('function blockedCopy(');const end=source.indexOf('\n}',start)+2;
-  const ctx={};vm.createContext(ctx);vm.runInContext(source.slice(start,end).replace(': AppSettings',''),ctx);
+  const ctx={};vm.createContext(withLanguage(ctx));vm.runInContext(source.slice(start,end).replace(': AppSettings',''),ctx);
   assert.match(ctx.blockedCopy({delete_block:'core'}),/core platform app/);
   assert.match(ctx.blockedCopy({delete_block:'shared',contributor_count:2}),/1 other contributor,/);
   assert.match(ctx.blockedCopy({delete_block:'shared',contributor_count:4}),/3 other contributors,/);

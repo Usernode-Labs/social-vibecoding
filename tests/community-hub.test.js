@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // A project's page is its community's HUB beside its WORKSHOP, and the
 // channels live on the hubs rather than in Messages:
@@ -58,17 +59,17 @@ const community = (over = {}) => ({
 });
 
 test('the bar reads Home, Discover, Messages, Communities, you — Messages in the middle', () => {
-  const order = [...TABS.matchAll(/\{ key: '([a-z]+)' as const, label: '([A-Za-z]+)'/g)].map((m) => [m[1], m[2]]);
+  const order = [...englishUiSource(TABS).matchAll(/\{ key: '([a-z]+)' as const, label: '([A-Za-z]+)'/g)].map((m) => [m[1], m[2]]);
   assert.deepEqual(order.map((o) => o[0]), ['discover', 'messages', 'workshop', 'me'],
     'after Home, whose entry is written across lines');
   assert.deepEqual(order.find((o) => o[0] === 'workshop'), ['workshop', 'Communities'],
     'the key stays `workshop`; the word is Communities');
-  assert.match(TABS, /key: 'workshop' as const, label: 'Communities', href: '#communities', Icon: UserGroupIcon/);
+  assert.match(englishUiSource(TABS), /key: 'workshop' as const, label: 'Communities', href: '#communities', Icon: UserGroupIcon/);
   // The channels' count rides the Communities tab, the conversations' the
   // Messages tab, and the Messages store writes both.
-  assert.match(TABS, /key === 'workshop' \? \(\s*<TabBadge count=\{communities\} id="platform-tabs-badge-communities"/);
-  assert.match(STORE, /messages: state\.conversations\s*\.filter\(\(item\) => item\.kind !== 'channel' && item\.unreadCount > 0\)\.length,/);
-  assert.match(STORE, /communities: state\.conversations\.filter\(\(item\) => item\.kind === 'channel' && item\.unreadCount > 0\)\.length\s*\+ state\.discussions\.filter\(\(item\) => item\.section !== 'more' && \(item\.unreadCount \|\| 0\) > 0\)\.length,/);
+  assert.match(englishUiSource(TABS), /key === 'workshop' \? \(\s*<TabBadge count=\{communities\} id="platform-tabs-badge-communities"/);
+  assert.match(englishUiSource(STORE), /messages: state\.conversations\s*\.filter\(\(item\) => item\.kind !== 'channel' && item\.unreadCount > 0\)\.length,/);
+  assert.match(englishUiSource(STORE), /communities: state\.conversations\.filter\(\(item\) => item\.kind === 'channel' && item\.unreadCount > 0\)\.length\s*\+ state\.discussions\.filter\(\(item\) => item\.section !== 'more' && \(item\.unreadCount \|\| 0\) > 0\)\.length,/);
 });
 
 test('a project page is four tabs, Hub, Discussion, Needs you and Workshop, with All items the Workshop\'s page (#852)', () => {
@@ -80,9 +81,9 @@ test('a project page is four tabs, Hub, Discussion, Needs you and Workshop, with
   assert.equal(pageParent('all'), 'workshop', 'All items goes back to the Workshop');
   assert.deepEqual(['needs', 'workshop', 'all', 'discussion'].map(pageTitle), ['Needs you', 'Workshop', 'All items', 'Discussion']);
   // The band on every page; All items adds its way back under it.
-  assert.match(LANDER, /const pageBar = tab === 'all' \? \(/);
-  assert.match(LANDER, /<PageBack\s+label="Workshop"\s+title=\{pageTitle\(tab\)\}\s+onBack=\{\(\) => openTab\(pageParent\(tab\)\)\}/);
-  assert.match(LANDER, /\{band\}\s*\{pageBar\}/);
+  assert.match(englishUiSource(LANDER), /const pageBar = tab === 'all' \? \(/);
+  assert.match(englishUiSource(LANDER), /<PageBack\s+label="Workshop"\s+title=\{pageTitle\(tab\)\}\s+onBack=\{\(\) => openTab\(pageParent\(tab\)\)\}/);
+  assert.match(englishUiSource(LANDER), /\{band\}\s*\{pageBar\}/);
   // The hub's order, as agreed: the hero (who is here, what it is, what you
   // can do, the fortnight), what landed since your last visit, Needs you (a
   // quiet line when no vote is owed, #3408), the discussion's last two
@@ -93,39 +94,39 @@ test('a project page is four tabs, Hub, Discussion, Needs you and Workshop, with
   const order = ['<CommunityCard', '<SinceSummaryCard', '<NeedsCard', '<ChannelCard', '<ShareItCard', '<YourWorkCard'].map((x) => hub.indexOf(x));
   assert.ok(order.every((n) => n >= 0), `all six on the hub: ${JSON.stringify(order)}`);
   assert.deepEqual([...order].sort((a, b) => a - b), order, 'hero, summary, Needs you, discussion, Share it, your work');
-  assert.doesNotMatch(hub, /data-ws-start-change/, 'no Start a new change at its foot');
-  assert.match(hub, /\{owesVote\(v\.queue\)\s*\? <NeedsCard [^\n]*\n\s*: <NothingToVote queue=\{v\.queue\} onOpen=\{\(\) => openTab\('needs'\)\} \/>\}/,
+  assert.doesNotMatch(englishUiSource(hub), /data-ws-start-change/, 'no Start a new change at its foot');
+  assert.match(englishUiSource(hub), /\{owesVote\(v\.queue\)\s*\? <NeedsCard [^\n]*\n\s*: <NothingToVote queue=\{v\.queue\} onOpen=\{\(\) => openTab\('needs'\)\} \/>\}/,
     'Needs you only while a vote is owed; one quiet line in its place otherwise (#3408)');
-  assert.match(hub, /<SinceSummaryCard slug=\{slug\} since=\{v\.since \? v\.since\.baseline : 0\} onMore=\{\(\) => openTab\('workshop'\)\} \/>/,
+  assert.match(englishUiSource(hub), /<SinceSummaryCard slug=\{slug\} since=\{v\.since \? v\.since\.baseline : 0\} onMore=\{\(\) => openTab\('workshop'\)\} \/>/,
     'the summary card\'s Week by week is the Workshop tab');
-  assert.match(hub, /<ChannelCard slug=\{slug\} name=\{app\.name \|\| slug\} data=\{community\} compact onOpen=\{\(\) => openTab\('discussion'\)\} \/>/,
+  assert.match(englishUiSource(hub), /<ChannelCard slug=\{slug\} name=\{app\.name \|\| slug\} data=\{community\} compact onOpen=\{\(\) => openTab\('discussion'\)\} \/>/,
     'the discussion is a preview whose Open is the Discussion tab');
-  assert.match(hub, /\{v\.mine && \(v\.mine\.rows\.length \|\| v\.mine\.viewer\) \? \(\s*<YourWorkCard/,
+  assert.match(englishUiSource(hub), /\{v\.mine && \(v\.mine\.rows\.length \|\| v\.mine\.viewer\) \? \(\s*<YourWorkCard/,
     'your work for any signed-in viewer, with work or without (#3489)');
-  assert.doesNotMatch(hub, /<WorkshopDoor|dev-ws-hub-side|data-ws-since=""/, 'no Workshop door, no second column, and the since list is the Workshop\'s');
-  assert.doesNotMatch(read('public/css/app.css'), /dev-ws-hub-side/);
+  assert.doesNotMatch(englishUiSource(hub), /<WorkshopDoor|dev-ws-hub-side|data-ws-since=""/, 'no Workshop door, no second column, and the since list is the Workshop\'s');
+  assert.doesNotMatch(englishUiSource(read('public/css/app.css')), /dev-ws-hub-side/);
   // Discussion is the channel whole.
-  assert.match(LANDER, /\{tab === 'discussion' \? \(\s*<ProjectDiscussion slug=\{slug\}/);
+  assert.match(englishUiSource(LANDER), /\{tab === 'discussion' \? \(\s*<ProjectDiscussion slug=\{slug\}/);
   // The Workshop tab: the approval rules, your work (its first three, #852
   // review), All items with See all, then the since list by week.
   const ws = LANDER.slice(LANDER.indexOf("{tab === 'workshop' ? ("), LANDER.indexOf("{tab === 'needs' ? ("));
   const w = (x) => ws.indexOf(x);
   assert.ok(w('data-ws-mine=""') < w('data-ws-dashboard=""') && w('data-ws-dashboard=""') < w('data-ws-since=""'),
     'your work, All items, then what changed');
-  assert.match(ws, /v\.mine\.rows\.slice\(0, mineAll \? undefined : WORKSHOP_WORK_FIRST\)/, 'your work shows its first rows');
+  assert.match(englishUiSource(ws), /v\.mine\.rows\.slice\(0, mineAll \? undefined : WORKSHOP_WORK_FIRST\)/, 'your work shows its first rows');
   assert.equal(loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx').WORKSHOP_WORK_FIRST, 3);
-  assert.match(ws, /data-ws-mine-more=""[\s\S]{0,160}onClick=\{\(\) => setMineAll\(!mineAll\)\}/, 'and the rest behind Show N more');
-  assert.match(ws, /<span className="dev-ws-head-title">All items<\/span>\s*<button[\s\S]*?data-ws-all-open=""\s*onClick=\{\(\) => openTab\('all'\)\}/);
+  assert.match(englishUiSource(ws), /data-ws-mine-more=""[\s\S]{0,160}onClick=\{\(\) => setMineAll\(!mineAll\)\}/, 'and the rest behind Show N more');
+  assert.match(englishUiSource(ws), /<span className="dev-ws-head-title">All items<\/span>\s*<button[\s\S]*?data-ws-all-open=""\s*onClick=\{\(\) => openTab\('all'\)\}/);
   // The approval rules are the Workshop page's head (#3528): the page's foot
   // for a round (#3487), and not the head of All items, where they sat before.
   assert.ok(w('<ApprovalRules') >= 0 && w('<ApprovalRules') < w('<WorkshopNotices') && w('<ApprovalRules') < w('data-ws-mine=""'),
     'the approval rules open the Workshop page');
-  assert.match(ws, /<>\s*\{\/\*[\s\S]*?\*\/\}\s*\{slug \? <ApprovalRules slug=\{slug\} \/> : null\}/, 'as its first section');
+  assert.match(englishUiSource(ws), /<>\s*\{\/\*[\s\S]*?\*\/\}\s*\{slug \? <ApprovalRules slug=\{slug\} \/> : null\}/, 'as its first section');
   assert.equal(ws.split('<ApprovalRules').length - 1, 1, 'and only there');
   const all = LANDER.slice(LANDER.indexOf("{tab === 'all' ? ("));
   assert.ok(!all.slice(0, all.indexOf('data-ws-pane=""')).includes('<ApprovalRules'), 'and All items no longer leads with them');
   // `?ws=discussion` is a deep link like the others.
-  assert.match(read('public/js/app-view.js'), /WORKSHOP_TABS: \['status', 'discussion', 'workshop', 'needs', 'all'\],/);
+  assert.match(englishUiSource(read('public/js/app-view.js')), /WORKSHOP_TABS: \['status', 'discussion', 'workshop', 'needs', 'all'\],/);
 });
 
 test('the hub\'s channel card shows the last messages, what is new, and the way in', () => {

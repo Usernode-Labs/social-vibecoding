@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -31,7 +32,7 @@ function senderHarness({ loading = false, standalone = false } = {}) {
     constructor(callback) { this.callback = callback; this.targets = []; observers.push(this); }
     observe(target, options) { assert.ok(target); this.targets.push({ target, options }); }
   }
-  vm.runInNewContext(sender, { window, document, MutationObserver, setTimeout(fn) { timers.push(fn); } });
+  vm.runInNewContext(sender, withLanguage({ window, document, MutationObserver, setTimeout(fn) { timers.push(fn); } }));
   return { reports, timers, observers, events, html, body, document,
     reads: () => reads, flush() { while (timers.length) timers.shift()(); } };
 }
@@ -100,7 +101,7 @@ function hostHarness() {
     } },
     document: { getElementById(id) { return frames[id] || null; } },
   };
-  vm.runInNewContext(appView, context);
+  vm.runInNewContext(appView, withLanguage(context));
   return { frames, colors, host: context.window.AppView,
     send(id, color) { context.window.AppView.handleBackgroundBridgeMessage({
       source: frames[id]?.contentWindow || {}, data: { __usernode_background: 'changed', color },

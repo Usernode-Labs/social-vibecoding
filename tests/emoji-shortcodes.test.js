@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // `:shortcode` emoji autocomplete — the pure half, shared by both composers.
 //
 // features/message-actions/emoji-shortcodes.ts decides what `:th` means: which
@@ -197,24 +198,24 @@ test('the Messages composer: its own listbox, and its keys run before Enter-to-s
   const composer = read('frontend/src/features/messages/composer.tsx');
   // The menu is the mention menu's box, headed with the query, over a listbox
   // named for screen readers.
-  assert.match(composer, /className="messages-mention-menu messages-emoji-menu"/);
-  assert.match(composer, /Emoji matching <span className="messages-emoji-menu-query">:\{emoji\.query\}<\/span>/);
-  assert.match(composer, /role="listbox" aria-label="Emoji"/);
-  assert.match(composer, /role="option" aria-selected=\{i === emojiActive\}/);
+  assert.match(englishUiSource(composer), /className="messages-mention-menu messages-emoji-menu"/);
+  assert.match(englishUiSource(composer), /Emoji matching <span className="messages-emoji-menu-query">:\{emoji\.query\}<\/span>/);
+  assert.match(englishUiSource(composer), /role="listbox" aria-label="Emoji"/);
+  assert.match(englishUiSource(composer), /role="option" aria-selected=\{i === emojiActive\}/);
   // A press keeps the textarea focused, like the mention rows.
-  assert.match(composer, /data-emoji-option=\{item\.shortcode\} onMouseDown=\{\(event\) => event\.preventDefault\(\)\} onClick=\{\(\) => insertEmoji\(item\.emoji\)\}/);
+  assert.match(englishUiSource(composer), /data-emoji-option=\{item\.shortcode\} onMouseDown=\{\(event\) => event\.preventDefault\(\)\} onClick=\{\(\) => insertEmoji\(item\.emoji\)\}/);
   // The menu's keys come first: with it open, Enter inserts and never sends.
   // The @ and # list's keys (QA 2026-09-24 Q13) come next, and never meet
   // these: the emoji menu opens only while neither of those lists shows.
-  assert.match(composer, /onKeyDown=\{\(event\) => \{ if \(onEmojiKeyDown\(event\)\) return; if \(suggestionKeys\(event\)\) return; if \(event\.key === 'Enter' && !event\.shiftKey/);
+  assert.match(englishUiSource(composer), /onKeyDown=\{\(event\) => \{ if \(onEmojiKeyDown\(event\)\) return; if \(suggestionKeys\(event\)\) return; if \(event\.key === 'Enter' && !event\.shiftKey/);
   const handler = composer.slice(composer.indexOf('function onEmojiKeyDown('), composer.indexOf('function onComposerChange('));
   for (const key of ['ArrowDown', 'ArrowUp', 'Enter', 'Tab', 'Escape']) {
     assert.ok(handler.includes(`'${key}'`), `${key} is the menu's while it is open`);
   }
-  assert.match(handler, /\(emojiActive \+ step \+ count\) % count/, 'the arrows wrap');
-  assert.match(handler, /event\.preventDefault\(\);\s*event\.stopPropagation\(\);\s*return true;/);
+  assert.match(englishUiSource(handler), /\(emojiActive \+ step \+ count\) % count/, 'the arrows wrap');
+  assert.match(englishUiSource(handler), /event\.preventDefault\(\);\s*event\.stopPropagation\(\);\s*return true;/);
   // Only a typed colon converts a complete code.
-  assert.match(composer, /\(event\.nativeEvent as InputEvent\)\.data === ':' \? completedShortcodeAt\(/);
+  assert.match(englishUiSource(composer), /\(event\.nativeEvent as InputEvent\)\.data === ':' \? completedShortcodeAt\(/);
   // One menu at a time: the `@` and `#` menus win a tie.
-  assert.match(composer, /const emojiOpen = !!emoji && emoji\.key !== emojiDismissed && !mention\?\.length && !channelMatches\?\.length;/);
+  assert.match(englishUiSource(composer), /const emojiOpen = !!emoji && emoji\.key !== emojiDismissed && !mention\?\.length && !channelMatches\?\.length;/);
 });

@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // #2442: the App settings dialog joins the dialog language it sits in.
 //
 // Three slots were off, all of them in frontend/src/features/dialogs/app-settings.tsx:
@@ -25,7 +26,7 @@ const path = require('node:path');
 
 const root = path.join(__dirname, '..');
 const REL = 'frontend/src/features/dialogs/app-settings.tsx';
-const src = fs.readFileSync(path.join(root, REL), 'utf8');
+const src = englishUiSource(fs.readFileSync(path.join(root, REL), 'utf8'));
 
 // The element that carries `anchor`, from the '<' that opens it to the '>'
 // that ends its opening tag. Anchoring on the element rather than on a byte

@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #3027: "I want to send two photos — one before saving and one after saving —
 // but I can only send one." The Send feedback dialog now holds up to three
 // images. Each one is its own removable thumbnail, uploads on its own, and
@@ -154,7 +155,7 @@ function makeHarness({ offline = false, uploadPlan = null, prepareFile = null, f
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(FEEDBACK_SRC, sandbox);
   sandbox.init();
   sandbox.App.currentApp = null;

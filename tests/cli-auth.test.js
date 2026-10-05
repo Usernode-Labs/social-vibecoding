@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -218,8 +219,8 @@ test('approval shell consumes a one-click fragment without leaking it in navigat
   assert.doesNotMatch(script, /window\.location\.search/);
   assert.match(script, /window\.history\.replaceState\(null, '', '\/cli\/authorize'\)/);
   assert.ok(
-    script.indexOf("window.history.replaceState(null, '', '/cli/authorize')")
-      < script.indexOf('/api/cli/device/approval?user_code='),
+    englishUiSource(script).indexOf("window.history.replaceState(null, '', '/cli/authorize')")
+      < englishUiSource(script).indexOf('/api/cli/device/approval?user_code='),
     'the launch fragment must leave browser history before request lookup'
   );
   assert.match(script, /sessionStorage/);
@@ -247,7 +248,7 @@ test('Settings exposes only the hint-based CLI credential list and revocation AP
     /if \(!reset && this\._cliTokensLoading\) return;[\s\S]*if \(reset\) \{[\s\S]*this\._cliTokenLoadId \+= 1;/,
     'an authoritative reset must supersede an in-flight pagination request'
   );
-  assert.doesNotMatch(script, /access_token|token_hash/);
+  assert.doesNotMatch(script, /(?:\.|[\'\"])(?:access_token|token_hash)(?:[\'\"]|\b)/);
 });
 
 // ── #907: the agent:local scope ────────────────────────────────────────────

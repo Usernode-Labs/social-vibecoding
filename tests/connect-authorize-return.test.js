@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Signing in from the MCP consent page must come back to the consent page.
 //
 // The bug this pins: the consent page used to bounce an anonymous visitor to
@@ -83,7 +84,7 @@ function loadAuthScreens(search) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(AUTH_SRC, sandbox);
   return { AuthScreens: sandbox.AuthScreens, location, sandbox };
 }
@@ -365,7 +366,7 @@ function runConsentPage(status) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(CONNECT_SRC, sandbox);
   return new Promise((resolve) => {
     setTimeout(() => resolve({ location, els, message: el('entry-message').textContent }), 10);

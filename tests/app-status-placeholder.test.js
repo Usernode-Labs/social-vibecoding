@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // The App tab's five placeholder states: what `renderAppTab` publishes when
 // there is no running app to frame, and what draws it.
 //
@@ -50,7 +51,7 @@ function makeAppView({ fetchImpl, setTimeoutImpl = setTimeout, clearTimeoutImpl 
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   return { AppView: sandbox.__AppView, opened, sandbox };
 }

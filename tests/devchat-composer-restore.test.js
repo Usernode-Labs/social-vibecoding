@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #370: the dev-chat composer must not lose the user's typed text when a
 // send is rejected at the token/spend cap (HTTP 429) or any other non-ok
 // response. On those paths sendMessage now puts the message back into
@@ -111,7 +112,7 @@ function makeHarness() {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
 
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   const DevChat = sandbox.__DevChat;
 

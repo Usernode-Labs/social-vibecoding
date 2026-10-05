@@ -1,3 +1,5 @@
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
 // Card action contract (app-view.js) — the CARD-AS-POINTER budget.
 //
 // #404 routed every action through one flat .gc-card-actions row and
@@ -68,7 +70,7 @@ function makeAppView(userId, opts) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView._proposalsCtx = { majority: 1 };
@@ -780,7 +782,7 @@ test('B8: a change Homeroom bot built is recognised by its author', () => {
   assert.equal(AppView._botBuilt({ username: 'homeroom_bot' }), true);
   assert.equal(AppView._botBuilt({ username: 'ada' }), false);
   const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8');
-  assert.match(src, /key: 'ask-bot', cls: 'gc-vote-btn', label: 'Ask for changes',/);
-  assert.match(src, /if \(proposal && !botBuilt && AppView\._showExplorePill\(item\) && !AppView\.readOnly\)/,
+  assert.match(englishUiSource(src), /key: 'ask-bot', cls: 'gc-vote-btn', label: 'Ask for changes',/);
+  assert.match(englishUiSource(src), /if \(proposal && !botBuilt && AppView\._showExplorePill\(item\) && !AppView\.readOnly\)/,
     'its band drops the explore pill; the ⋯ keeps Explore in a coding agent');
 });

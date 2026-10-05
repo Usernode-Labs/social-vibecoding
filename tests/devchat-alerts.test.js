@@ -1,3 +1,5 @@
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
 // Tests for the #138 dev-chat completion alerts (chime + OS notification).
 //
 // Two layers:
@@ -79,7 +81,7 @@ function makeNotifEnv() {
     createElement: () => ({ set textContent(v) { this._t = v; }, get innerHTML() { return this._t || ''; } }),
   };
   sandbox.agoStamp = agoStamp;
-  vm.runInNewContext(NOTIF_SRC, sandbox);
+  vm.runInNewContext(NOTIF_SRC, withLanguage(sandbox));
   return { Notifications: sandbox.window.Notifications, elements, sandbox };
 }
 
@@ -136,7 +138,7 @@ function makeEnv({
   sandbox.Notification.permission = permission;
   sandbox.Notification.requestPermission = () => { calls.permissionRequests += 1; return Promise.resolve(permission); };
 
-  vm.runInNewContext(DEV_ALERTS_SRC, sandbox);
+  vm.runInNewContext(DEV_ALERTS_SRC, withLanguage(sandbox));
   return { DevAlerts: sandbox.window.DevAlerts, calls, store, sandbox };
 }
 
@@ -309,12 +311,12 @@ test('settings.js runs a ticking countdown for the test-alert button', () => {
   const src = fs.readFileSync(
     path.join(__dirname, '..', 'frontend', 'src', 'features', 'settings', 'settings.js'), 'utf8');
   // A real interval that rewrites the status text each second, plus cleanup.
-  assert.match(src, /setInterval\(/);
-  assert.match(src, /_clearAlertsTestCountdown/);
-  assert.match(src, /Alert in \$\{remaining\}s/);
+  assert.match(englishUiSource(src), /setInterval\(/);
+  assert.match(englishUiSource(src), /_clearAlertsTestCountdown/);
+  assert.match(englishUiSource(src), /Alert in \$\{remaining\}s/);
   // Cleared on modal close so a countdown can't outlive the panel.
   const close = src.slice(src.indexOf('close() {'), src.indexOf('close() {') + 300);
-  assert.match(close, /_clearAlertsTestCountdown\(\)/);
+  assert.match(englishUiSource(close), /_clearAlertsTestCountdown\(\)/);
 });
 
 test('settings.js wires the toggle and the test-alert button', () => {
@@ -504,7 +506,7 @@ test('settings reports queue outcomes and never turns a countdown into a deliver
       _clearAlertsTestCountdown() {},
     };
     sandbox.window = sandbox;
-    vm.runInNewContext(src.slice(start, end), sandbox);
+    vm.runInNewContext(src.slice(start, end), withLanguage(sandbox));
     await handler();
     if (tick) for (let i = 0; i < 10; i += 1) tick();
     assert.match(status.textContent, expected);

@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // "Link GitHub" in the hand-off walkthrough goes to GitHub itself (#2679,
 // #2680).
 //
@@ -90,7 +91,7 @@ async function makeDevChat({ native = false, bridge = null, published = true } =
       openExternal: async (url) => { opened.push(url); return true; },
     };
   }
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   const DevChat = sandbox.__DevChat;
   DevChat._resetDevFlow(7);

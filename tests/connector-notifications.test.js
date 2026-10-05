@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // #1405 — telling a connector user what their agent did, and what it wants.
 //
 // A coding agent driving the connector can work for a long time, and the Claude
@@ -272,12 +273,12 @@ test('both kinds ride the developer-sessions push category', () => {
 });
 
 test('the drawer renders both, and its waiting row uses the same safe wording', () => {
-  assert.match(FE_SRC, /n\.kind === 'connector_submitted'/);
-  assert.match(FE_SRC, /n\.kind === 'agent_awaiting_input'/);
+  assert.match(englishUiSource(FE_SRC), /n\.kind === 'connector_submitted'/);
+  assert.match(englishUiSource(FE_SRC), /n\.kind === 'agent_awaiting_input'/);
   const block = FE_SRC.slice(FE_SRC.indexOf("n.kind === 'agent_awaiting_input'"));
   const row = block.slice(0, block.indexOf('#161'));
-  assert.match(row, /asked you something/i);
-  assert.doesNotMatch(row, /is waiting (on|for) you/i,
+  assert.match(englishUiSource(row), /asked you something/i);
+  assert.doesNotMatch(englishUiSource(row), /is waiting (on|for) you/i,
     'the row and the push must not disagree about what is being claimed');
 });
 

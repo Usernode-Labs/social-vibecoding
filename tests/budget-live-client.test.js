@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #2598: the client half of the live weekly meter.
 //
 // The server pushes `budget_updated` every time a model call's cost lands
@@ -59,7 +60,7 @@ function devChat({ search = '' } = {}) {
   sandbox.window = sandbox;
   sandbox.addEventListener = () => {};
   sandbox.Settings = { state: {} };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   const file = path.join(root, 'frontend/src/features/dev-chat/dev-chat.js');
   vm.runInContext(fs.readFileSync(file, 'utf8') + '\n;this.chat = DevChat;', sandbox);
   requests = 0; // whatever the module did on load is not what is under test
@@ -149,7 +150,7 @@ async function loadCredit() {
   if (!g.CreditOptions) {
     const sandbox = { module: { exports: {} }, window: {}, console };
     sandbox.globalThis = sandbox;
-    vm.createContext(sandbox);
+    vm.createContext(withLanguage(sandbox));
     vm.runInContext(CREDIT_OPTIONS_SRC, sandbox);
     g.CreditOptions = sandbox.module.exports;
     g.window.CreditOptions = g.CreditOptions;

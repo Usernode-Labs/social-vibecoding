@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // A challenge CTA that points INSIDE the shell is a route, not a new tab
 // (#2893).
 //
@@ -50,7 +51,7 @@ function loadModule(origin = ORIGIN) {
   };
   sandbox.window.window = sandbox.window;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(CHALLENGES_SRC, sandbox, { filename: 'topochain-challenges.js' });
   return sandbox.window.TopochainChallenges;
 }

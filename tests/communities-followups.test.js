@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // Follow-ups to the communities hub (#3269, #3270, #3271; #3268 alongside):
 //
@@ -61,30 +62,30 @@ test('#3270, #3488: the feed\'s rows are a project\'s own Needs you rows, each c
 
 test('#3488: one feed for both Needs you screens, addressed per row', () => {
   const src = read('frontend/src/features/workshop/needs-reel.tsx');
-  assert.match(src, /import \{ NeedsFeed \} from '\.\.\/dev-board\/workshop\/workshop';/);
-  assert.match(src, /<NeedsFeed\s+rows=\{rows\}[\s\S]*?doneLabel="Back to your communities"\s+renderApp=\{ReelApp\}/);
-  assert.match(src, /callAppView\('_cardMenuInit'\);/, 'the ⋯ works when this screen is the first opened');
+  assert.match(englishUiSource(src), /import \{ NeedsFeed \} from '\.\.\/dev-board\/workshop\/workshop';/);
+  assert.match(englishUiSource(src), /<NeedsFeed\s+rows=\{rows\}[\s\S]*?doneLabel="Back to your communities"\s+renderApp=\{ReelApp\}/);
+  assert.match(englishUiSource(src), /callAppView\('_cardMenuInit'\);/, 'the ⋯ works when this screen is the first opened');
   const lander = read('frontend/src/features/dev-board/workshop/workshop.tsx');
-  assert.match(lander, /export function NeedsFeed\(/);
+  assert.match(englishUiSource(lander), /export function NeedsFeed\(/);
   // Every address the feed builds is the ROW's project on this screen.
-  assert.match(lander, /function rowSlug\(row: QueueRow, slug: string\): string \{\n\s*return row\.app && row\.app\.slug \? row\.app\.slug : slug;/);
-  assert.match(lander, /const cardHref = row \? openHref\(rowSlug\(row, slug\), row\.card\) : null;/);
-  assert.match(lander, /\/api\/apps\/\$\{encodeURIComponent\(rowSlug\(row, slug\)\)\}\/workshop\/ask\/thread/);
-  assert.match(lander, /\/api\/apps\/\$\{encodeURIComponent\(rowSlug\(sending, slug\)\)\}\/workshop\/ask`/,
+  assert.match(englishUiSource(lander), /function rowSlug\(row: QueueRow, slug: string\): string \{\n\s*return row\.app && row\.app\.slug \? row\.app\.slug : slug;/);
+  assert.match(englishUiSource(lander), /const cardHref = row \? openHref\(rowSlug\(row, slug\), row\.card\) : null;/);
+  assert.match(englishUiSource(lander), /\/api\/apps\/\$\{encodeURIComponent\(rowSlug\(row, slug\)\)\}\/workshop\/ask\/thread/);
+  assert.match(englishUiSource(lander), /\/api\/apps\/\$\{encodeURIComponent\(rowSlug\(sending, slug\)\)\}\/workshop\/ask`/,
     'an answer is asked of the project the row was in when it was sent');
-  assert.match(lander, /<FeedThread slug=\{rowSlug\(row, slug\)\}/);
+  assert.match(englishUiSource(lander), /<FeedThread slug=\{rowSlug\(row, slug\)\}/);
   // The keys answer only while the feed is on screen: it stays mounted under
   // a hidden screen, where V then Y would cast a vote nobody saw.
-  assert.match(lander, /const feed = scrollRef\.current;\n\s*if \(!feed \|\| !feed\.offsetParent\) return;\n\s*const k = e\.key;/);
+  assert.match(englishUiSource(lander), /const feed = scrollRef\.current;\n\s*if \(!feed \|\| !feed\.offsetParent\) return;\n\s*const k = e\.key;/);
   // A group decision's vote sheet opens its page instead of two dead buttons.
-  assert.match(lander, /\{row\.yes \|\| row\.no \|\| !cardHref \? \([\s\S]*?<a className="dev-ws-answer-btn dev-ws-answer-open" data-ws-answer-open="" href=\{cardHref\}>Open to decide<\/a>/);
+  assert.match(englishUiSource(lander), /\{row\.yes \|\| row\.no \|\| !cardHref \? \([\s\S]*?<a className="dev-ws-answer-btn dev-ws-answer-open" data-ws-answer-open="" href=\{cardHref\}>Open to decide<\/a>/);
   const css = read('public/css/app.css');
   // The box keeps its floor and its column; its HEIGHT moved out of this rule
   // in #3516 (the phone's comes from the screen's clearance, the desktop's
   // from its own rule) — see the #3516 test below.
-  assert.match(css, /\.workshop-needs-feed \{[^}]*min-height: 360px;[^}]*display: flex; flex-direction: column;/);
-  assert.match(css, /\.workshop-needs-feed \.dev-ws-keys \{ right: 102px; \}/, 'the legend clears the rail');
-  assert.doesNotMatch(css, /\.workshop-reel-card|\.workshop-reel-yes|\.workshop-reel-decide/, 'the old cards\' rules went with them');
+  assert.match(englishUiSource(css), /\.workshop-needs-feed \{[^}]*min-height: 360px;[^}]*display: flex; flex-direction: column;/);
+  assert.match(englishUiSource(css), /\.workshop-needs-feed \.dev-ws-keys \{ right: 102px; \}/, 'the legend clears the rail');
+  assert.doesNotMatch(englishUiSource(css), /\.workshop-reel-card|\.workshop-reel-yes|\.workshop-reel-decide/, 'the old cards\' rules went with them');
 });
 
 test('#3516: on a phone the Communities feed ends where the screen\'s clearance begins', () => {

@@ -1,4 +1,6 @@
 'use strict';
+const { withLanguage } = require("./lib/platform-language");
+
 
 // The ✕ in a running app's strip returns to the page the app was opened from.
 //
@@ -145,7 +147,7 @@ function router(start, opts = {}) {
   let App = null;
   const h = makeHistory(start, { ...opts, onTopTraversal: () => App._routeFromHash() });
   const noop = () => undefined;
-  const context = vm.createContext({
+  const context = vm.createContext(withLanguage({
     location: h.location, history: h.history, URL, URLSearchParams, console, setTimeout, clearTimeout,
     document: {
       title: '',
@@ -165,7 +167,7 @@ function router(start, opts = {}) {
         o?.after?.();
       },
     }, { get: (t, k) => (k in t ? t[k] : noop) }),
-  });
+  }));
   if (opts.navigationApi !== false) context.navigation = h.navigation;
   context.window = context;
   vm.runInContext(APP_JS, context);

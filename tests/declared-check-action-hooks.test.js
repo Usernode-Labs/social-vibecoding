@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // dapp.json's declared checks reach two Dev-board action pills BY NAME.
 //
 // Both assert the same kind of thing — that a particular action is offered in
@@ -57,7 +58,7 @@ function makeAppView() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView._proposalsCtx = { majority: 1 };

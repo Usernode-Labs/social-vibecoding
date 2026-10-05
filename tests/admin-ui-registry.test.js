@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // test:changed: always (frontend and public/js, for stock palettes and AdminUI misuse; scripts/test-changed.js)
 // tests/admin-ui-registry.test.js — static analysis: every AdminUI.<key>
 // reference across the admin modules resolves to a key defined in the
@@ -26,7 +27,7 @@ function loadRegistry() {
   const m = src.match(/export const AdminUI = Object\.freeze\(\{[\s\S]*?\n\}\);/);
   assert.ok(m, 'admin-console.js defines export const AdminUI = Object.freeze({ ... });');
   const sandbox = {};
-  vm.runInNewContext(m[0].replace(/^export const/, 'var'), sandbox);
+  vm.runInNewContext(m[0].replace(/^export const/, 'var'), withLanguage(sandbox));
   return sandbox.AdminUI;
 }
 

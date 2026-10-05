@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // The community card on a project's Workshop page
 // (frontend/src/features/dev-board/workshop/community-card.tsx): who the
@@ -63,31 +64,31 @@ test('before the read the hero draws only what needs none: Open app and the ⋯'
 test('the channel is a hub card at its old address; Join asks under its button and joins through offerJoin', () => {
   const src = read(CARD);
   const hub = read('frontend/src/features/dev-board/workshop/hub-cards.tsx');
-  assert.doesNotMatch(src, /#messages\/app\//, 'the hero no longer carries a channel row');
-  assert.match(hub, /const href = channel\.href \|\| `#messages\/app\/\$\{encodeURIComponent\(slug\)\}`;/,
+  assert.doesNotMatch(englishUiSource(src), /#messages\/app\//, 'the hero no longer carries a channel row');
+  assert.match(englishUiSource(hub), /const href = channel\.href \|\| `#messages\/app\/\$\{encodeURIComponent\(slug\)\}`;/,
     'the hub\'s channel card opens the same room, at the same address');
-  assert.match(src, /await offerJoin\(\{ code: 'join_required', app: \{ slug, name: name \|\| data\.name \|\| slug \} \}\)/,
+  assert.match(englishUiSource(src), /await offerJoin\(\{ code: 'join_required', app: \{ slug, name: name \|\| data\.name \|\| slug \} \}\)/,
     'the button asks the question every refusal asks, through the same function');
-  assert.match(src, /registerJoinAnchor\(slug, \{/,
+  assert.match(englishUiSource(src), /registerJoinAnchor\(slug, \{/,
     'and while it shows, the hero is where that question is asked');
-  assert.match(src, /getClientRects\(\)\.length > 0/,
+  assert.match(englishUiSource(src), /getClientRects\(\)\.length > 0/,
     'but only while it is actually on screen');
-  assert.match(src, /className="dev-ws-join-pop"[\s\S]*className="dev-ws-ask-q"[\s\S]*className="dev-ws-vote-sub"[\s\S]*dev-ws-answer-btn dev-ws-answer-join[\s\S]*className="dev-ws-vote-later"/,
+  assert.match(englishUiSource(src), /className="dev-ws-join-pop"[\s\S]*className="dev-ws-ask-q"[\s\S]*className="dev-ws-vote-sub"[\s\S]*dev-ws-answer-btn dev-ws-answer-join[\s\S]*className="dev-ws-vote-later"/,
     'the popup wears the vote popover\'s question, line, answer and "later"');
   const css = read('public/css/app.css');
-  assert.match(css, /\.dev-ws-join-pop \{\s*position: absolute; top: calc\(100% \+ 12px\)/,
+  assert.match(englishUiSource(css), /\.dev-ws-join-pop \{\s*position: absolute; top: calc\(100% \+ 12px\)/,
     'it hangs from the button');
-  assert.match(css, /\.dev-ws-hero \.dev-ws-hero-member \.dev-ws-join-pop \{ left: auto; right: -6px; \}/,
+  assert.match(englishUiSource(css), /\.dev-ws-hero \.dev-ws-hero-member \.dev-ws-join-pop \{ left: auto; right: -6px; \}/,
     'from its right edge in the hero, where Join ends the actions row (#852)');
-  assert.match(src, /home\.setMembership\(slug, false\)/, 'Joined leaves through the same call Discover makes');
-  assert.match(src, /data-ws-community-leave=""[\s\S]*Joined/, 'Joined is the leave control, as on Discover');
-  assert.match(src, /\) : data\.is_creator \? null : \(/, 'the creator is never offered Leave');
+  assert.match(englishUiSource(src), /home\.setMembership\(slug, false\)/, 'Joined leaves through the same call Discover makes');
+  assert.match(englishUiSource(src), /data-ws-community-leave=""[\s\S]*Joined/, 'Joined is the leave control, as on Discover');
+  assert.match(englishUiSource(src), /\) : data\.is_creator \? null : \(/, 'the creator is never offered Leave');
   // #3362: Invite is invite LINKS, which any member can make
   // (services/community-invites.js); Members & approvals stays the ⋯'s, behind
   // its own gate.
-  assert.match(src, /\{data\.is_member && !solo \? \(\s*<Button[\s\S]{0,160}data-ws-community-invite=""/,
+  assert.match(englishUiSource(src), /\{data\.is_member && !solo \? \(\s*<Button[\s\S]{0,160}data-ws-community-invite=""/,
     'Invite is offered to members');
-  assert.doesNotMatch(src, /_plusMenuShowsMembers/, 'not by the members dialog\'s gate');
+  assert.doesNotMatch(englishUiSource(src), /_plusMenuShowsMembers/, 'not by the members dialog\'s gate');
 });
 
 test('the hero leads the hub, above what needs you and its discussion; who is here is the hero\'s (#3268)', () => {

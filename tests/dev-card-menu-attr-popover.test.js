@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // "Change assignee…" in a dev card's ⋯ menu did nothing on desktop.
 //
 // The row was wired, the handler ran, the popover was created and appended —
@@ -160,7 +161,7 @@ function makeAppView() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   const doc = mkDoc(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;

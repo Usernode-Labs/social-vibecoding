@@ -1,3 +1,5 @@
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
 // The Dev board's, the launcher's and the topic view's LOADING states.
 //
 // ── The bug these exist for ────────────────────────────────────────────
@@ -62,7 +64,7 @@ function makeAppView(over) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   return sandbox.__AppView;
 }
@@ -283,12 +285,13 @@ test('EVERY feed view model carries `loading`, because the store merges', () => 
 // ── "nothing to load YET" is not "the load failed" ─────────────────────
 
 test('_loadDevData distinguishes not-ready from failed, and the feed respects it', async () => {
+  const APP_VIEW_SRCEnglish = englishUiSource(APP_VIEW_SRC);
   const AppView = makeAppView();
   AppView.appData = null;
   assert.equal(await AppView._loadDevData(), null,
     'no app record yet → null, not false');
 
-  const code = APP_VIEW_SRC.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+  const code = APP_VIEW_SRCEnglish.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
   const fn = code.slice(code.indexOf('async _loadDevFeed('),
     code.indexOf('_repaintDevBody() {', code.indexOf('async _loadDevFeed(')));
   const nullGuard = fn.indexOf('if (ok === null) return;');

@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #1944: the coding-run card's toggle and its log panel's scrolling.
 //
 // QA reported the "Claude Code" detail box's toggle button and scrolling as
@@ -159,7 +160,7 @@ function loadDevChat() {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   sandbox.window.addEventListener = noop;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${DEV_CHAT}\n;globalThis.__DevChat = DevChat;`, sandbox);
   return { DevChat: sandbox.__DevChat, sandbox };
 }

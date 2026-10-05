@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // `#dc-composer-bar` — the dev chat's whole composer, as a React island.
 //
 // The bar looked like six independent controls and was really one state. Six
@@ -73,7 +74,7 @@ function makeDevChat(over = {}) {
   sandbox.globalThis = sandbox;
   sandbox.addEventListener = () => {};
   sandbox.UsernodeReact = { devChat: t.bridge };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${DEV_CHAT_SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   const DevChat = sandbox.__DevChat;
   DevChat.currentSession = { id: 7, status: 'active' };

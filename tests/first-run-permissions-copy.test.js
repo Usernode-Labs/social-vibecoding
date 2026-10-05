@@ -1,3 +1,5 @@
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
 // Platform-accurate permission copy (iOS wording fix) — the first-run
 // "Set up your device" sheet and the Settings → Homeroom app permission
 // rows must describe what each OS actually prompts for:
@@ -100,7 +102,7 @@ async function showFirstRunSheet(permissions) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(nativeChromeSource, sandbox);
   await sandbox.NativeChrome.maybeShowFirstRunPermissions();
   if (permissions.platform === 'ios') {
@@ -144,14 +146,15 @@ test('Android first-run sheet keeps the exact-alarm + battery copy', async () =>
 });
 
 test('settings device-permissions section is platform-accurate', () => {
-  assert.ok(!settingsJs.includes('Alarm permissions'),
+  const settingsJsEnglish = englishUiSource(settingsJs);
+  assert.ok(!settingsJsEnglish.includes('Alarm permissions'),
     'settings.js must not label the iOS row "Alarm permissions"');
-  assert.match(settingsJs, /isAndroid \? 'Exact alarms' : 'Notifications'/,
+  assert.match(settingsJsEnglish, /isAndroid \? 'Exact alarms' : 'Notifications'/,
     'the row label switches to Notifications on iOS');
   // The section description must be platform-gated too: the
   // block-production pitch is Android-only, iOS explains notifications.
   const desc = /isAndroid\s*\n?\s*\? 'Block production needs the app to wake your device at exact slot times\.'\s*\n?\s*: '[^']*[Nn]otif[^']*'/;
-  assert.match(settingsJs, desc,
+  assert.match(settingsJsEnglish, desc,
     'the section description is gated on isAndroid');
 });
 

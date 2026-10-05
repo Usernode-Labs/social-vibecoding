@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // Semantic colour tokens for the dev board (public/css/app.css).
 //
 // The board's status vocabulary used to hard-code hexes per badge helper,
@@ -21,8 +22,8 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 
-const CSS = fs.readFileSync(
-  path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');
+const CSS = englishUiSource(fs.readFileSync(
+  path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8'));
 
 // The :root block and the FIRST .dark block (the palette override).
 function blockAfter(marker) {
@@ -66,8 +67,8 @@ test('"Checks passing" no longer inherits the violet Merged colour', () => {
   // other, and both resolve to the OK token rather than a hex.
   assert.match(CSS, /\.gc-checks-passing-badge \{[^}]*color: var\(--state-ok\)/);
   assert.match(CSS, /\.gc-merged-badge \{[^}]*color: var\(--state-ok\)/);
-  const FE = fs.readFileSync(
-    path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8');
+  const FE = englishUiSource(fs.readFileSync(
+    path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8'));
   assert.match(FE, /gc-checks-passing-badge[^>]*>✓ Checks passing/,
     'the passing badge uses its own class');
 });
@@ -89,8 +90,8 @@ test('checks FAILING reads blocked, not the advisory amber', () => {
   // the genuinely-advisory console warning.
   assert.match(CSS, /\.gc-blocked-badge \{[^}]*color: var\(--state-blocked\)/);
   assert.match(CSS, /\.gc-warning-badge \{[^}]*color: var\(--state-attention\)/);
-  const FE = fs.readFileSync(
-    path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8');
+  const FE = englishUiSource(fs.readFileSync(
+    path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8'));
   assert.match(FE, /gc-blocked-badge[^>]*>⚠ \$\{escapeHtml\(label\)\}/,
     'checksBadgeHtml renders the failing state as blocked');
 });
@@ -104,8 +105,8 @@ test('the in-flight merge stages read PROGRESS, freeing amber for warnings', () 
   // dead CSS for a badge nothing paints is the same debt as a dead helper.
   assert.doesNotMatch(CSS, /\.gc-behind-badge/);
   assert.doesNotMatch(CSS, /\.gc-resolving-badge/);
-  const FE = fs.readFileSync(
-    path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8');
+  const FE = englishUiSource(fs.readFileSync(
+    path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8'));
   for (const dead of ['resolvingBadgeHtml()', 'behindBadgeHtml(pr)', 'conflictFailedBadgeHtml()']) {
     assert.ok(!FE.includes(dead), `${dead} has no renderer left`);
   }

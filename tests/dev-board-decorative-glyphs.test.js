@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // #2479: the dev board draws six glyphs that carry no information a reader
 // needs — two chevrons that mean "this row opens", a caret that duplicates
@@ -65,7 +66,7 @@ test('both edit pencils are hidden, and their buttons keep their labels', () => 
   for (const [key, label] of [[F.card, 'Edit title'], [F.head, 'Edit request']]) {
     const src = read(key);
     assert.match(openingTag(src, 'PencilSquareIcon'), /aria-hidden="true"/);
-    assert.ok(src.includes(`aria-label="${label}"`), `${key}: button keeps its name`);
+    assert.ok(englishUiSource(src).includes(`aria-label="${label}"`), `${key}: button keeps its name`);
   }
 });
 

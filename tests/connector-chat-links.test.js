@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // The "set it up in Claude / ChatGPT" links in Settings → Connectors (#1607).
 //
 // The two product walkthroughs under the connector URL are six and seven
@@ -48,7 +49,7 @@ test('#2370: the guided chat is offered INSIDE its route, not beside the routes'
   // products twice, with nothing saying one was a chat that talks you through
   // it and the other the written steps. The overview asks WHICH app; the
   // opened row answers HOW, guided chat first.
-  const at = (needle) => { const i = tsx.indexOf(needle); assert.ok(i > 0, `${needle} exists`); return i; };
+  const at = (needle) => { const i = englishUiSource(tsx).indexOf(needle); assert.ok(i > 0, `${needle} exists`); return i; };
   const claudeRow = at('<Disclosure title="Claude.ai"');
   const chatgptRow = at('<Disclosure title="ChatGPT"');
   const codexRow = at('id="connector-setup-codex"');
@@ -58,7 +59,7 @@ test('#2370: the guided chat is offered INSIDE its route, not beside the routes'
   assert.ok(chatgptRow < chatgptLink && chatgptLink < codexRow, 'ChatGPT\'s link is inside the ChatGPT row');
   assert.ok(claudeLink < at('<ClaudeSetupSteps />'),
     'and it comes before the written steps');
-  assert.doesNotMatch(tsx.replace(/\/\*[\s\S]*?\*\//g, ''), /Set it up in (Claude|ChatGPT)/,
+  assert.doesNotMatch(englishUiSource(tsx.replace(/\/\*[\s\S]*?\*\//g, '')), /Set it up in (Claude|ChatGPT)/,
     'the old labels are gone from the markup');
 });
 
@@ -84,11 +85,11 @@ test('#1607: the prompt carries the two facts people get wrong, and nothing secr
 
   // Dynamic client registration: without this, people go hunting for a client
   // ID and secret that do not exist. It is step 4 of the Claude walkthrough.
-  assert.match(prompt, /dynamic client registration/);
+  assert.match(englishUiSource(prompt), /dynamic client registration/);
   // The exact name. Claude Code builds its permission rules from what the
   // human types, and one account typed `Uesrnode`, silently missing every
   // rule the platform ships (#1218).
-  assert.match(prompt, /"homeroom"/);
+  assert.match(englishUiSource(prompt), /"homeroom"/);
 
   // Nothing sensitive may travel in a query string. Rather than scanning for
   // sensitive-sounding WORDS — the prompt legitimately says "no client ID or
@@ -110,15 +111,15 @@ test('#1607: the written walkthroughs stay, because a chat cannot click a settin
   // row rather than the old <h4>. It is a slightly stronger check than before:
   // the hint states the step COUNT, so a walkthrough quietly losing steps now
   // fails here too. Whether the route starts open was never the point.
-  assert.match(tsx, /6 steps &middot; also sets up Claude Code/);
-  assert.match(tsx, /7 steps &middot; needs Developer mode/);
+  assert.match(englishUiSource(tsx), /6 steps &middot; also sets up Claude Code/);
+  assert.match(englishUiSource(tsx), /7 steps &middot; needs Developer mode/);
   // #2706: still complete, still authoritative, one module further out —
   // and the pane still renders both, which is what the counts above are a
   // promise about. tests/connector-setup-shared.test.js holds the counts
   // themselves to the module.
   const steps = read(STEPS_TSX);
-  assert.match(tsx, /<ClaudeSetupSteps \/>/);
-  assert.match(tsx, /<ChatgptSetupSteps \/>/);
-  assert.match(steps, /Turn on Developer mode\./);
-  assert.match(steps, /Paste your MCP server URL\./);
+  assert.match(englishUiSource(tsx), /<ClaudeSetupSteps \/>/);
+  assert.match(englishUiSource(tsx), /<ChatgptSetupSteps \/>/);
+  assert.match(englishUiSource(steps), /Turn on Developer mode\./);
+  assert.match(englishUiSource(steps), /Paste your MCP server URL\./);
 });

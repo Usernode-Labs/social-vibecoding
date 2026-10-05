@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // The first-run "Set up your device" trigger on iOS, and what is left of the
 // iOS sheet.
 //
@@ -129,7 +130,7 @@ function boot(opts) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(nativeChromeSource, sandbox);
   return { sandbox, sheets, stored };
 }

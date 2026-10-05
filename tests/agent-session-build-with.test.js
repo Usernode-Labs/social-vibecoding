@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // The agent-session composer's "Build with" (#3078, #3079, #3080).
 //
@@ -28,10 +29,10 @@ const panel = read('frontend/src/features/agent-session/index.tsx');
 test('#3080: attaching is a paperclip named "Attach photos or files"', () => {
   const composer = panel.slice(panel.indexOf('function Composer('), panel.indexOf('// ── The changes drawer'));
   const attach = composer.slice(composer.lastIndexOf('<button', composer.indexOf('data-agent-session-attach')), composer.indexOf('</button>', composer.indexOf('data-agent-session-attach')));
-  assert.match(attach, /aria-label="Attach photos or files"/);
-  assert.match(attach, /<PaperclipIcon className="h-5 w-5" aria-hidden="true" \/>/);
-  assert.doesNotMatch(attach, /PlusIcon|<svg/, 'the kit\'s glyph, not a "+" and not a raw <svg>');
-  assert.match(read('frontend/@/components/ui/icons.tsx'), /export const PaperclipIcon = stroked\(/);
+  assert.match(englishUiSource(attach), /aria-label="Attach photos or files"/);
+  assert.match(englishUiSource(attach), /<PaperclipIcon className="h-5 w-5" aria-hidden="true" \/>/);
+  assert.doesNotMatch(englishUiSource(attach), /PlusIcon|<svg/, 'the kit\'s glyph, not a "+" and not a raw <svg>');
+  assert.match(englishUiSource(read('frontend/@/components/ui/icons.tsx')), /export const PaperclipIcon = stroked\(/);
 });
 
 test('#3079: the pill says the thinking level after the model, muted, centred, on one baseline', () => {
@@ -68,8 +69,8 @@ test('#3078: Build with is a tablist of Homeroom, Claude Code and Codex', () => 
     handoff: createElement('p', null, 'HANDOFF-TAB'),
   }));
   const home = draw('homeroom');
-  assert.match(home, />Build with<\/h2>/);
-  assert.match(home, /role="tablist" aria-label="Build with"/);
+  assert.match(englishUiSource(home), />Build with<\/h2>/);
+  assert.match(englishUiSource(home), /role="tablist" aria-label="Build with"/);
   const tabs = [...home.matchAll(/<button type="button" role="tab" id="agent-session-build-tab-([a-z-]+)" aria-selected="(true|false)" aria-controls="agent-session-build-panel" tabindex="(0|-1)"[^>]*>([^<]+)<\/button>/g)]
     .map((m) => [m[1], m[2], m[3], m[4]]);
   assert.deepEqual(tabs, [
@@ -77,20 +78,20 @@ test('#3078: Build with is a tablist of Homeroom, Claude Code and Codex', () => 
     ['claude-code', 'false', '-1', 'Claude Code'],
     ['codex', 'false', '-1', 'Codex'],
   ], 'one tab in the Tab order: the selected one');
-  assert.match(home, /role="tabpanel" id="agent-session-build-panel" aria-labelledby="agent-session-build-tab-homeroom"[^>]*>.*HOMEROOM-TAB/);
-  assert.doesNotMatch(home, /HANDOFF-TAB/);
+  assert.match(englishUiSource(home), /role="tabpanel" id="agent-session-build-panel" aria-labelledby="agent-session-build-tab-homeroom"[^>]*>.*HOMEROOM-TAB/);
+  assert.doesNotMatch(englishUiSource(home), /HANDOFF-TAB/);
 
   const codex = draw('codex');
-  assert.match(codex, /aria-selected="true" aria-controls="agent-session-build-panel" tabindex="0"[^>]*>Codex</);
-  assert.match(codex, /aria-labelledby="agent-session-build-tab-codex"[^>]*>.*HANDOFF-TAB/);
+  assert.match(englishUiSource(codex), /aria-selected="true" aria-controls="agent-session-build-panel" tabindex="0"[^>]*>Codex</);
+  assert.match(englishUiSource(codex), /aria-labelledby="agent-session-build-tab-codex"[^>]*>.*HANDOFF-TAB/);
 
   // Keyboard: the arrows, Home and End move the selection and the focus.
   const src = read('frontend/src/features/agent-session/composer-parts.tsx');
-  assert.match(src, /event\.key === 'ArrowRight' \? \(at \+ 1\) % BUILD_TABS\.length/);
-  assert.match(src, /event\.key === 'ArrowLeft' \? \(at \+ BUILD_TABS\.length - 1\) % BUILD_TABS\.length/);
-  assert.match(src, /event\.key === 'Home' \? 0/);
-  assert.match(src, /event\.key === 'End' \? BUILD_TABS\.length - 1/);
-  assert.match(src, /aria-label="Build with"\s+className=\{desktop/, 'the sheet is named for what it is now');
+  assert.match(englishUiSource(src), /event\.key === 'ArrowRight' \? \(at \+ 1\) % BUILD_TABS\.length/);
+  assert.match(englishUiSource(src), /event\.key === 'ArrowLeft' \? \(at \+ BUILD_TABS\.length - 1\) % BUILD_TABS\.length/);
+  assert.match(englishUiSource(src), /event\.key === 'Home' \? 0/);
+  assert.match(englishUiSource(src), /event\.key === 'End' \? BUILD_TABS\.length - 1/);
+  assert.match(englishUiSource(src), /aria-label="Build with"\s+className=\{desktop/, 'the sheet is named for what it is now');
 });
 
 test('#3078: the Homeroom tab says who builds it and lists the models once, under "Model"', () => {

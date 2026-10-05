@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // The `featured_illustration` governance kind (#2086).
 //
 // A featured-illustration change is a proposal now, modelled on the rename
@@ -387,7 +388,7 @@ function makeAppView({ user = { id: 1, username: 'me' } } = {}) {
     location: { search: '', hash: '', href: 'http://localhost/' }, URLSearchParams,
   };
   sandbox.window = sandbox; sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView.appData = { slug: 'demo-app', can_collaborate: true };

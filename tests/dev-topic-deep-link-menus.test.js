@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #1324 — a topic page opened by DIRECT URL must be as interactive as one
 // reached by tapping a card.
 //
@@ -86,7 +87,7 @@ function makeSandbox() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   return { AppView: sandbox.__AppView, sandbox, listeners, titles };
 }

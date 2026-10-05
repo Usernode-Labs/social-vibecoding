@@ -1,3 +1,5 @@
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
 // The Board's columns fold their cards (#1787).
 //
 // The four kanban columns drew every card at full size — head, meta line,
@@ -59,7 +61,7 @@ function makeAppView({ search = '' } = {}) {
     location: { search, hash: '', href: `http://localhost/${search}` }, URLSearchParams,
   };
   sandbox.window = sandbox; sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView.appData = { slug: 'demo-app', can_collaborate: true };
@@ -181,19 +183,19 @@ test('the view carries what the open card needs, and reads ?cards=open per build
 test('the column owns which card is open, one per column, through the shared fold', () => {
   // State in the component, not the view model: the WS-driven republishes
   // that repaint the board must not fold what somebody has open.
-  assert.match(KANBAN, /const \[openKey, setOpenKey\] = useState<string \| null>\(null\);/);
-  assert.match(KANBAN, /open: unfolded \|\| openKey === row\.key,/);
-  assert.match(KANBAN, /onToggle: \(\) => setOpenKey\(\(k\) => \(k === row\.key \? null : row\.key\)\),/);
-  assert.match(KANBAN, /slug=\{v\.slug \|\| ''\}/);
-  assert.match(KANBAN, /unfolded=\{!!v\.unfolded\}/);
-  assert.match(KANBAN, /detail: 'actions',/, 'the Board seats Open card in the action band');
-  assert.match(KANBAN, /sessionLink: false,/, 'and draws no session line under a column card');
-  assert.match(LIST_ROWS, /detail=\{fold\.detail\} sessionLink=\{fold\.sessionLink\}/);
+  assert.match(englishUiSource(KANBAN), /const \[openKey, setOpenKey\] = useState<string \| null>\(null\);/);
+  assert.match(englishUiSource(KANBAN), /open: unfolded \|\| openKey === row\.key,/);
+  assert.match(englishUiSource(KANBAN), /onToggle: \(\) => setOpenKey\(\(k\) => \(k === row\.key \? null : row\.key\)\),/);
+  assert.match(englishUiSource(KANBAN), /slug=\{v\.slug \|\| ''\}/);
+  assert.match(englishUiSource(KANBAN), /unfolded=\{!!v\.unfolded\}/);
+  assert.match(englishUiSource(KANBAN), /detail: 'actions',/, 'the Board seats Open card in the action band');
+  assert.match(englishUiSource(KANBAN), /sessionLink: false,/, 'and draws no session line under a column card');
+  assert.match(englishUiSource(LIST_ROWS), /detail=\{fold\.detail\} sessionLink=\{fold\.sessionLink\}/);
   // #1884 round two: "Open card" LEADS to the item's page on both surfaces,
   // so there is no mode to pass and no branch to take — one anchor, one
   // label, whichever screen the card was reached from.
   assert.ok(!/OpenMode|expand[?:]/.test(FOLD), 'no open mode left to choose');
-  assert.match(FOLD, /const openBtn = placement && href\s*\? <a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>Open card<\/a>\s*: undefined;/);
+  assert.match(englishUiSource(FOLD), /const openBtn = placement && href\s*\? <a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>Open card<\/a>\s*: undefined;/);
   // #1886: no page link under the sheet any more — the Workshop's pill is
   // the page link once the card is open. The one line the sheet still draws
   // is #1887's, on a card about the viewer's OWN session: the session is a
@@ -202,31 +204,31 @@ test('the column owns which card is open, one per column, through the shared fol
   assert.ok(!/>Open on its own page/.test(FOLD), 'no "Open on its own page" line under the sheet');
   assert.ok(!/href=\{href\} className="dev-ws-link"/.test(FOLD), 'the page href rides no link under the sheet');
   assert.equal(count(FOLD, /dev-ws-sheet-actions/g), 1, 'one line under the sheet, and it is the session\u2019s');
-  assert.match(FOLD, /\{session && sessionLink \? \((?:\s*\/\/[^\n]*)*\s*<div className="dev-ws-sheet-actions">\s*<a href=\{session\} className="dev-ws-link" data-ws-open-session=\{row\.key\}>Open session ›<\/a>\s*<\/div>\s*\) : null\}/,
+  assert.match(englishUiSource(FOLD), /\{session && sessionLink \? \((?:\s*\/\/[^\n]*)*\s*<div className="dev-ws-sheet-actions">\s*<a href=\{session\} className="dev-ws-link" data-ws-open-session=\{row\.key\}>Open session ›<\/a>\s*<\/div>\s*\) : null\}/,
     'the session link, on the Workshop, and nothing beside it');
   const unfolded = FOLD.slice(FOLD.indexOf('export function UnfoldedRow'), FOLD.indexOf('export function voteSpecs'));
   assert.ok(!/\{'Open page ›'\}|'Close card' : 'Open card'/.test(unfolded),
     'and no second step: the pill is the page link on its first tap');
-  assert.match(FOLD, /detail: placement = 'actions',/, 'and the Workshop, passing nothing, gets the same seat');
-  assert.match(FOLD, /<DevCard model=\{card\} actionEnd=\{placement \? openBtn : undefined\} headEnd=\{<FoldMark open onClick=\{onFold\} \/>\} \/>/);
+  assert.match(englishUiSource(FOLD), /detail: placement = 'actions',/, 'and the Workshop, passing nothing, gets the same seat');
+  assert.match(englishUiSource(FOLD), /<DevCard model=\{card\} actionEnd=\{placement \? openBtn : undefined\} headEnd=\{<FoldMark open onClick=\{onFold\} \/>\} \/>/);
   // The seat itself: DevCard renders `actionEnd` after its own pills and
   // before the hamburger and Preview, and the fold measurement counts all
   // three as fixed children (no data-fold).
   const CARD = read('frontend/src/features/dev-board/card/dev-card.tsx');
-  assert.match(CARD, /const hasActions = bandPrimary\.length > 0 \|\| !!actionEnd \|\| !!menuTrigger \|\| !!bandPreview;/);
-  assert.match(CARD, /\{actionEnd\}\s*\{bandPreview\}\s*\{menuTrigger\}\s*<\/div>/);
-  assert.match(CARD, /if \(k\.dataset\.fold \|\| k === host\) continue;\s*used \+= k\.offsetWidth/, 'a child without data-fold is counted as used width (the kudos host apart: its pill is measured through it)');
+  assert.match(englishUiSource(CARD), /const hasActions = bandPrimary\.length > 0 \|\| !!actionEnd \|\| !!menuTrigger \|\| !!bandPreview;/);
+  assert.match(englishUiSource(CARD), /\{actionEnd\}\s*\{bandPreview\}\s*\{menuTrigger\}\s*<\/div>/);
+  assert.match(englishUiSource(CARD), /if \(k\.dataset\.fold \|\| k === host\) continue;\s*used \+= k\.offsetWidth/, 'a child without data-fold is counted as used width (the kudos host apart: its pill is measured through it)');
   // A merged card's kudos slot is legacy-filled after every publish; a fold
   // happens between publishes, so the column re-runs the filler.
-  assert.match(KANBAN, /const host = hostRef\.current;\s*if \(!host\) return;\s*callAppView\('_fillKudosHosts', host\);/);
+  assert.match(englishUiSource(KANBAN), /const host = hostRef\.current;\s*if \(!host\) return;\s*callAppView\('_fillKudosHosts', host\);/);
   // The row renderer hands a card to the fold when it is given one, and
   // draws the plain card otherwise.
-  assert.match(LIST_ROWS, /<CardRowView row=\{row\} slug=\{fold\.slug\} canPost=\{fold\.canPost\} open=\{fold\.open\} onToggle=\{fold\.onToggle\} detail=\{fold\.detail\} sessionLink=\{fold\.sessionLink\} \/>/);
-  assert.match(LIST_ROWS, /: <DevCard model=\{row\.card\} \/>/);
+  assert.match(englishUiSource(LIST_ROWS), /<CardRowView row=\{row\} slug=\{fold\.slug\} canPost=\{fold\.canPost\} open=\{fold\.open\} onToggle=\{fold\.onToggle\} detail=\{fold\.detail\} sessionLink=\{fold\.sessionLink\} \/>/);
+  assert.match(englishUiSource(LIST_ROWS), /: <DevCard model=\{row\.card\} \/>/);
   // And the Workshop draws its rows from the SAME module — no second copy.
   // (`openHref` rides the same import since the Needs-you feed: its item title
   // links to the card's own page by the fold's rule, not a second one.)
-  assert.match(WORKSHOP, /import \{ CardRowView, callAppView, openHref \} from '\.\.\/card\/fold';/);
+  assert.match(englishUiSource(WORKSHOP), /import \{ CardRowView, callAppView, openHref \} from '\.\.\/card\/fold';/);
   for (const fn of ['function FoldedRow', 'function UnfoldedRow', 'function CardRowView', 'function RowBand']) {
     assert.ok(FOLD.includes(fn), `${fn} lives in fold.tsx`);
     assert.ok(!WORKSHOP.includes(fn), `${fn} is not also in workshop.tsx`);

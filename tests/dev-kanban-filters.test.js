@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Kanban filter bar (#482): AppView._devCardMatches() is the pure per-card
 // predicate behind the board's filter controls (text search, priority,
 // person, "needs my vote"). It takes (kind, item, filters) with kind ∈
@@ -61,7 +62,7 @@ function makeCtx(over) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   return sandbox;
 }

@@ -1,4 +1,6 @@
 'use strict';
+const { withLanguage } = require("./lib/platform-language");
+
 
 // A check run that overlapped a platform rollout and came back red is run
 // again, not held against the author.
@@ -405,7 +407,7 @@ function stagingRow(id) {
   }
   const ctx = { module: {}, console, connectionExhaustionMessage: () => '', ROLLOUT_RETRY_DETAIL };
   ctx.globalThis = ctx;
-  vm.createContext(ctx);
+  vm.createContext(withLanguage(ctx));
   vm.runInContext(`${src.slice(start, end)}\n;globalThis.__rows = stagingMockProposals;`, ctx);
   return JSON.parse(JSON.stringify(ctx.__rows('me').find((r) => r.id === id) || null));
 }
@@ -436,7 +438,7 @@ function makeAppView() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext([
     read('public/js/merge-status.js'),
     read('public/js/session-transcript.js'),

@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // The Dev screen's three body-mounted modals, end to end: the view model
 // public/js/app-view.js builds, and the markup
 // frontend/src/features/dev-board/modals/ renders from it.
@@ -97,7 +98,7 @@ function makeAppView(opts) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   return { AppView: sandbox.__AppView, published, sandbox };
 }

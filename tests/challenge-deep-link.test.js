@@ -1,3 +1,5 @@
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
 // Completed-challenge deep link (#982):
 // #leaderboard/challenges/<eventId>/<challengeId>.
 //
@@ -130,7 +132,7 @@ function loadPane({ challenges, eventId = null }) {
   // vm sees only half the pair.
   sandbox.TopochainEventContext = context;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(CHALLENGES_SRC, sandbox, { filename: 'topochain-challenges.js' });
 
   const pane = sandbox.window.TopochainChallenges;
@@ -939,7 +941,7 @@ const LEADERBOARD_TITLES = (() => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'public/js/app.js'), 'utf8');
   const at = src.indexOf('  LEADERBOARD_TITLES: {');
   assert.ok(at > 0, 'App.LEADERBOARD_TITLES went missing');
-  const body = src.slice(at, src.indexOf('  },', at));
+  const body = englishUiSource('const table = {\n' + src.slice(at, src.indexOf('  },', at)) + '\n}};');
   const out = {};
   for (const [, k, v] of body.matchAll(/(\w+): '([^']+)'/g)) out[k] = v;
   assert.ok(Object.keys(out).length >= 3, 'the table parsed empty');

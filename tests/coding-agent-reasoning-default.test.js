@@ -1,4 +1,6 @@
 'use strict';
+const { withLanguage } = require("./lib/platform-language");
+
 
 // #2600 — the default reasoning effort for an OpenRouter CODING turn.
 //
@@ -235,7 +237,7 @@ function settingsHarness(codingAgentPayload) {
     }
     return elements.get(id);
   };
-  const context = vm.createContext({
+  const context = vm.createContext(withLanguage({
     window: {},
     document: {
       addEventListener() {},
@@ -252,7 +254,7 @@ function settingsHarness(codingAgentPayload) {
         : { configured: false, managedProvisioning: {} }),
     }),
     setTimeout, clearTimeout, setInterval, clearInterval, console,
-  });
+  }));
   context.window.window = context.window;
   context.window.document = context.document;
   vm.runInContext(

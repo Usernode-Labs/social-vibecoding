@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // The board card's action band: the kudos slot gives way, never Open card,
 // Preview or ⋯ (dev-card.tsx useFoldedActions, kudos.js, app-view.js,
@@ -30,8 +31,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx } = require('./lib/render-tsx');
 
-const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
-const CARD = read('frontend/src/features/dev-board/card/dev-card.tsx');
+const read = (p) => englishUiSource(fs.readFileSync(path.join(__dirname, '..', p), 'utf8'));
+const CARD = englishUiSource(read('frontend/src/features/dev-board/card/dev-card.tsx'));
 const CSS = read('public/css/app.css');
 const APP = read('public/js/app-view.js');
 const KUDOS = read('frontend/src/features/leaderboard/kudos.js');
@@ -111,20 +112,23 @@ test('a folded slot rides the menu hand-off after the folded pills', () => {
 // ── 3. The ⋯ row ──────────────────────────────────────────────────────
 
 test('app-view.js keeps a kudos spec in the folded list and draws it through the slot\'s own button', () => {
-  assert.match(APP, /specs\.filter\(\(a\) => a && \(\(a\.act && a\.act\.fn\) \|\| a\.kudos != null\)\)/);
-  assert.match(APP, /_foldedMenuItem\(a\) \{\s*if \(a\.kudos != null\) return AppView\._kudosMenuItem\(a\.kudos\);/);
+  assert.match(englishUiSource(APP), /specs\.filter\(\(a\) => a && \(\(a\.act && a\.act\.fn\) \|\| a\.kudos != null\)\)/);
+  assert.match(englishUiSource(APP), /_foldedMenuItem\(a\) \{\s*if \(a\.kudos != null\) return AppView\._kudosMenuItem\(a\.kudos\);/);
   const item = APP.slice(APP.indexOf('  _kudosMenuItem(id) {'), APP.indexOf('  _foldedMenuItem(a) {'));
-  assert.match(item, /document\.querySelector\(`\[data-kudos-host="\$\{id\}"\]`\)/, 'the slot, by its host');
-  assert.match(item, /host\.querySelector\('\[data-kudos-action="give"\]'\)/);
-  assert.match(item, /label: label \? label\.textContent\.trim\(\) : \(retract \? 'Retract kudos' : 'Give kudos'\),/,
+  assert.match(englishUiSource(item), /document\.querySelector\(`\[data-kudos-host="\$\{id\}"\]`\)/, 'the slot, by its host');
+  assert.match(englishUiSource(item), /host\.querySelector\('\[data-kudos-action="give"\]'\)/);
+  assert.match(englishUiSource(item), /label: label \? label\.textContent\.trim\(\) : \(retract \? 'Retract kudos' : 'Give kudos'\),/,
     'the slot\'s own line when it has one; the count pill\'s two verbs otherwise');
-  assert.match(item, /icon: 'kudos',/);
-  assert.match(item, /act: \(\) => \{ if \(btn && !btn\.disabled\) btn\.click\(\); \},/, 'Kudos keeps every rule it has: the click is the slot\'s');
+  assert.match(englishUiSource(item), /icon: 'kudos',/);
+  assert.match(englishUiSource(item), /act: \(\) => \{ if \(btn && !btn\.disabled\) btn\.click\(\); \},/, 'Kudos keeps every rule it has: the click is the slot\'s');
 });
 
 test('kudos.js: the line\'s tail is its own span and the whole line is the button\'s name', () => {
-  assert.match(KUDOS, /<span class="dev-thanks-label">Thank \$\{escapeHtml\(thanks\)\}<span class="dev-thanks-tail"> for putting this up<\/span><\/span>/);
-  assert.match(KUDOS, /\$\{thanks \? ` aria-label="\$\{escapeAttr\(line\)\}" title="\$\{escapeAttr\(line\)\}"` : tipAttr\}/);
+  const KUDOSEnglish = englishUiSource(KUDOS);
+  assert.match(fs.readFileSync(path.join(__dirname, '../frontend/src/features/leaderboard/kudos.js'), 'utf8'), /PlatformI18n\.htmlText\("core:thank_value0_2680114a", \{ value0: thanks \}\)/,
+    'the name is escaped by the HTML translation adapter');
+  assert.match(englishUiSource(KUDOSEnglish), /<span class="dev-thanks-label">Thank \$\{thanks\}<span class="dev-thanks-tail"> for putting this up<\/span><\/span>/);
+  assert.match(englishUiSource(KUDOSEnglish), /\$\{thanks \? ` aria-label="\$\{escapeAttr\(line\)\}" title="\$\{escapeAttr\(line\)\}"` : tipAttr\}/);
 });
 
 // ── 4. The styles ─────────────────────────────────────────────────────

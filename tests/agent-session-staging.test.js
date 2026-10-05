@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // A change's staging build in an agent session (#2779 follow-up).
 //
@@ -82,10 +83,10 @@ test('why checks were skipped is one sentence, the same fallback the panel and t
   for (const none of [null, undefined, '', '   ']) assert.equal(skippedChecksReason(none), fallback);
   assert.ok(skippedChecksReason('x'.repeat(1000)).length < 360, 'capped as the panel caps it');
   // The panel's note and the status pill's tooltip carry the same fallback.
-  assert.ok(read('public/js/merge-status.js').includes(`'${fallback}'`), 'merge-status.js 6b');
+  assert.ok(englishUiSource(read('public/js/merge-status.js')).includes(`'${fallback}'`), 'merge-status.js 6b');
   const appView = read('public/js/app-view.js');
-  assert.ok(appView.includes(": 'there was nothing to test';")
-    && appView.includes('`Checks were skipped: ${reason}. It can still go live.`'), 'AppView._checksStatusNotes');
+  assert.ok(englishUiSource(appView).includes(": 'there was nothing to test';")
+    && englishUiSource(appView).includes('`Checks were skipped: ${reason}. It can still go live.`'), 'AppView._checksStatusNotes');
 });
 
 test('the card: its actions for each state, and nothing on a superseded one', () => {

@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Add-challenge form: the template picker fills the whole form (#1063).
 //
 // WHAT THIS PINS. The picker used to be a bare id-selector: an admin chose a
@@ -455,7 +456,7 @@ function loadRouter() {
     },
   };
   sandbox.window = { document: sandbox.document, addEventListener() {}, removeEventListener() {} };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(ADMIN_UI_SRC, sandbox, { filename: 'admin-console.js#AdminUI' });
   vm.runInContext(TOKENS_SRC, sandbox, { filename: 'topochain/tokens.ts' });
   vm.runInContext(API_SRC, sandbox, { filename: 'topochain/api.ts' });

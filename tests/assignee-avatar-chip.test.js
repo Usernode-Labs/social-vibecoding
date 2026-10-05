@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #489: the assignee chip's initial-avatar. An assigned task renders a
 // coloured initial-avatar + escaped @username; an unassigned task renders the
 // muted placeholder avatar + "Unassigned" text while staying an interactive
@@ -61,7 +62,7 @@ function makeAppView() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   return sandbox.__AppView;
 }

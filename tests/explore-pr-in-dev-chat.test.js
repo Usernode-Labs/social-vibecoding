@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #827: "Ask AI" (a private read-only advisor panel) was replaced by
 // "✨ Explore in dev chat" — the card pill opens a conversation with an
 // editable message about the PR pre-filled in the composer and NEVER sent.
@@ -87,7 +88,7 @@ function makeHarness(options = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView.appData = { slug: 'test-app' };

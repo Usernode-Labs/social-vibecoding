@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // The platform's light/dark theme, forwarded into the app frame (#3257).
 //
 // `prefers-color-scheme` inside a cross-origin frame follows the OS, not the
@@ -50,7 +51,7 @@ function runBridge({ search = '', standalone = false } = {}) {
     Date,
     String,
   };
-  vm.runInNewContext(BLOCK, context);
+  vm.runInNewContext(BLOCK, withLanguage(context));
   const deliver = (data, source = parent) => listeners.forEach((fn) => fn({ data, source }));
   return { win, parent, posted, events, listeners, deliver };
 }

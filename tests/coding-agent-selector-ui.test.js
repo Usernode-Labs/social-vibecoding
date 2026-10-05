@@ -1,4 +1,7 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
+
 
 // Browser contract for the session-pinned Claude/Codex selector. The dialog
 // itself is DOM-heavy, so these tests exercise the two consequential seams:
@@ -65,7 +68,7 @@ function makeHarness() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   return {
     DevChat: sandbox.__DevChat,
@@ -125,6 +128,7 @@ test('OpenRouter picker labels and ordering surface favorites, recommendations, 
 });
 
 test('an OpenRouter task opens on favorites without replacing an uncommon current model', () => {
+  const SRCEnglish = englishUiSource(SRC);
   const h = makeHarness();
   const models = [
     { id: 'deepseek/default', isFavorite: true },
@@ -142,9 +146,9 @@ test('an OpenRouter task opens on favorites without replacing an uncommon curren
     'opening the picker preserves a current non-favorite selection',
   );
   assert.equal(h.DevChat._openRouterFavoritesOnlyByDefault(models, 'missing'), false);
-  assert.match(SRC, /id="dc-agent-choice-model-search"/);
-  assert.match(SRC, /id="dc-agent-choice-favorites-only"/);
-  assert.match(SRC, /Platform recommendations start in Favorites/);
+  assert.match(SRCEnglish, /id="dc-agent-choice-model-search"/);
+  assert.match(SRCEnglish, /id="dc-agent-choice-favorites-only"/);
+  assert.match(SRCEnglish, /Platform recommendations start in Favorites/);
 });
 
 test('the simplified proposal picker ships through a fresh shell cache', () => {

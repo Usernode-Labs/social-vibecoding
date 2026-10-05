@@ -1,3 +1,5 @@
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
 // #920: Ctrl/Cmd+Enter in the dev-chat composer follows whichever action
 // is actually offered.
 //
@@ -150,7 +152,7 @@ function makeHarness(storage = new Map()) {
   sandbox.globalThis = sandbox;
   sandbox.UsernodeReact = { devChat: composer.bridge };
 
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   const DevChat = sandbox.__DevChat;
 
@@ -361,19 +363,19 @@ test('the one circle names the action the keystroke currently performs', () => {
 });
 
 test('the circle advertises the shortcut in each of its two live states', () => {
-  const src = fs.readFileSync(
+  const src = englishUiSource(fs.readFileSync(
     path.join(__dirname, '../frontend/src/features/dev-chat/composer.tsx'), 'utf8'
-  );
+  ));
   // The two spellings the retired hint line carried, now the titles of the
   // one control that performs them. Both must name the keystroke — the
   // tooltip is the only place it is written down.
   const send = /const SEND_TITLE\s*=\s*'([^']+)'/.exec(src);
   const save = /const SAVE_TITLE\s*\n?\s*=\s*'([^']+)'/.exec(src);
   assert.ok(send && save, 'both titles are declared');
-  assert.match(send[1], /Ctrl\+Enter/);
-  assert.match(save[1], /Ctrl\+Enter/);
-  assert.match(src, /title=\{SEND_TITLE\}/, 'the send shape wears its title');
-  assert.match(src, /title=\{SAVE_TITLE\}/, 'the save shape wears its title');
+  assert.match(englishUiSource(send[1]), /Ctrl\+Enter/);
+  assert.match(englishUiSource(save[1]), /Ctrl\+Enter/);
+  assert.match(englishUiSource(src), /title=\{SEND_TITLE\}/, 'the send shape wears its title');
+  assert.match(englishUiSource(src), /title=\{SAVE_TITLE\(\)\}/, 'the save shape wears its title');
 });
 
 // ── The real keydown wiring ────────────────────────────────────────────

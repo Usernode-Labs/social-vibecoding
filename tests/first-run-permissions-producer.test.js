@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // The first-run "Set up your device" sheet is the ONLY place the app asks
 // for device permissions: the Android app no longer covers SV with a native
 // permission screen. So the sheet has to decide, from the user's status and
@@ -134,7 +135,7 @@ function load({ permissions, wallet, staking, bpRequested = true, stored = {},
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(nativeChromeSource, sandbox);
   return { NativeChrome: sandbox.NativeChrome, sheets, dismissed, calls, stored };
 }

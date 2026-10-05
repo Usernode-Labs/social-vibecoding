@@ -1,3 +1,5 @@
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
 // #439 front-end: AppView.ensureStaging opens the "spinning back up" loader
 // and, when the server says `rebuilding`, parks a pending marker that the
 // staging_ready / staging_failed WS path (onStagingRebuildResult) resolves —
@@ -89,7 +91,7 @@ function makeAppView(fetchImpl, { stubSwap = true, uiTelemetry = null } = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView.appData = { slug: 'usernode-2d5619', self_hosted: true };
@@ -720,11 +722,11 @@ test('the preview bar says Back, not Back to session, and its title is not set i
     path.join(__dirname, '..', 'frontend', 'src', 'features', 'staging', 'staging-overlay.tsx'), 'utf8');
   const back = overlay.match(/<button\s+id="staging-back"[\s\S]*?<\/button>/);
   assert.ok(back, '#staging-back keeps its id');
-  assert.match(back[0], /<ChevronLeftIcon className="w-4 h-4" \/>\s*Back\s*<\/button>/);
-  assert.doesNotMatch(back[0], /Back to session/);
+  assert.match(englishUiSource(back[0]), /<ChevronLeftIcon className="w-4 h-4" \/>\s*Back\s*<\/button>/);
+  assert.doesNotMatch(englishUiSource(back[0]), /Back to session/);
   const label = overlay.match(/<span id="staging-url-label" className="([^"]*)"/);
   assert.ok(label, '#staging-url-label keeps its id');
-  assert.doesNotMatch(label[1], /font-mono/, 'a name, not an address');
+  assert.doesNotMatch(englishUiSource(label[1]), /font-mono/, 'a name, not an address');
   // Nothing hands the bar a raw address any more.
-  assert.doesNotMatch(SRC, /setUrlLabel\((?:resolved|'https?:)/);
+  assert.doesNotMatch(englishUiSource(SRC), /setUrlLabel\((?:resolved|'https?:)/);
 });

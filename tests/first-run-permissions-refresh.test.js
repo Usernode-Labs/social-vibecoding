@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // The first-run "Set up your device" sheet must never ask for a permission
 // the device already has. Its first snapshot can be stale: every Android
 // grant happens on a system settings page or dialog. So while the sheet is open it re-reads
@@ -120,7 +121,7 @@ async function openAndroidSheet(initialPermissions) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(nativeChromeSource, sandbox);
   await sandbox.NativeChrome.maybeShowFirstRunPermissions();
   assert.equal(sheets.length, 1, 'the first-run sheet was shown once');

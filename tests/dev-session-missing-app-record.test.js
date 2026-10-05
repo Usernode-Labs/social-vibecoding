@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #2879 — "Blank page": Home → the Homeroom menu → New change landed on
 // /app/<self>/dev/sessions/new with the header naming Homeroom, Messages lit,
 // and nothing at all beneath them.
@@ -120,7 +121,7 @@ function makeHarness(recordAnswers) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(VIEW_SRC, sandbox);
   const AppView = sandbox.window.AppView;
   // Everything AppView.open does after the record lands is beside the point

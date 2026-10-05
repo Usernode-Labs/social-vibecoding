@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // The first session for somebody who arrives on their own: the signed-out
 // story (frontend/src/features/auth/story.tsx), its switch
@@ -96,19 +97,19 @@ test('the route records which way the first session was reached', async () => {
 test('the landing: the story in place of the pitch unless switched off, for nobody signed in and no invite', () => {
   const landing = read('frontend/src/features/auth/landing.tsx');
   // The default, so it is drawn before the options arrive, and when they fail.
-  assert.match(landing, /const storyOn = waitlistPayload\?\.story_landing !== false && !onInvitePath && !session;/);
-  assert.match(landing, /useState\(\s+\(\) => typeof location !== 'undefined' && !!inviteTokenFrom\(location\.pathname\),\s+\);/);
-  assert.match(landing, /const pitchHidden = madeForYou \|\| storyOn \|\| invitePending;/);
-  assert.match(landing, /<Story primaryClass=\{PRIMARY_PILL\} onStart=\{\(\) => setSheet\('start'\)\} onSignIn=\{\(\) => setSheet\('signin'\)\} \/>/);
+  assert.match(englishUiSource(landing), /const storyOn = waitlistPayload\?\.story_landing !== false && !onInvitePath && !session;/);
+  assert.match(englishUiSource(landing), /useState\(\s+\(\) => typeof location !== 'undefined' && !!inviteTokenFrom\(location\.pathname\),\s+\);/);
+  assert.match(englishUiSource(landing), /const pitchHidden = madeForYou \|\| storyOn \|\| invitePending;/);
+  assert.match(englishUiSource(landing), /<Story primaryClass=\{PRIMARY_PILL\} onStart=\{\(\) => setSheet\('start'\)\} onSignIn=\{\(\) => setSheet\('signin'\)\} \/>/);
   // A new account from its sheet is asked what to make, not which communities to join.
-  assert.match(landing, /sessionStorage\.setItem\('usernode:first-session:make', '1'\)/);
-  assert.match(landing, /fetch\('\/api\/me\/first-session\/started', \{ method: 'POST', credentials: 'same-origin' \}\)/);
+  assert.match(englishUiSource(landing), /sessionStorage\.setItem\('usernode:first-session:make', '1'\)/);
+  assert.match(englishUiSource(landing), /fetch\('\/api\/me\/first-session\/started', \{ method: 'POST', credentials: 'same-origin' \}\)/);
   const story = read('frontend/src/features/auth/story.tsx');
   for (const words of ['On Homeroom, communities make apps together.', 'Anyone using an app can change it. Your group decides what goes in.', 'What groups make', 'Get started', 'Already have an account? ']) {
-    assert.ok(story.includes(words), words);
+    assert.ok(englishUiSource(story).includes(words), words);
   }
   // No waitlist ask and no "learn more" link on it.
-  assert.doesNotMatch(story, /Join the waitlist|Learn more about Homeroom/i);
+  assert.doesNotMatch(englishUiSource(story), /Join the waitlist|Learn more about Homeroom/i);
 });
 
 test('three examples, the same on the story and the make screen, each a whole starting point', () => {
@@ -124,13 +125,13 @@ test('three examples, the same on the story and the make screen, each a whole st
 
 test('"Make it" makes a private community through the dialog\'s own route', () => {
   const make = read(`${DIR}/make.tsx`);
-  assert.match(make, /fetch\('\/api\/apps', \{/);
-  assert.match(make, /audience: 'invited',\s+brief: brief\.trim\(\),/);
-  assert.match(make, /from: 'first-session',/);
-  assert.match(make, /export const BRIEF_MIN = 10;/);
-  assert.match(read('frontend/src/features/dialogs/create-app.tsx'), /BRIEF_MIN = 10/);
+  assert.match(englishUiSource(make), /fetch\('\/api\/apps', \{/);
+  assert.match(englishUiSource(make), /audience: 'invited',\s+brief: brief\.trim\(\),/);
+  assert.match(englishUiSource(make), /from: 'first-session',/);
+  assert.match(englishUiSource(make), /export const BRIEF_MIN = 10;/);
+  assert.match(englishUiSource(read('frontend/src/features/dialogs/create-app.tsx')), /BRIEF_MIN = 10/);
   for (const words of ['What do you want to make?', 'What should it do?', 'What should we call it?', 'It\'s your group\'s name too. You can change it later.', 'Look around first']) {
-    assert.ok(make.includes(words), words);
+    assert.ok(englishUiSource(make).includes(words), words);
   }
 });
 
@@ -141,16 +142,16 @@ test('after Make it: the build\'s step, then one invite, and the second button s
   assert.equal(made.buildLine(null, 'creating'), 'Setting it up…');
   assert.equal(made.buildLine(null, 'running'), 'Homeroom bot builds it from your description.');
   const src = read(`${DIR}/made.tsx`);
-  assert.match(src, /\{sent \? 'Go to the Homeroom app' : 'Invite people later'\}/);
+  assert.match(englishUiSource(src), /\{sent \? 'Go to the Homeroom app' : 'Invite people later'\}/);
   // The link outlives a week, and the note is said to be the first message.
-  assert.match(src, /body: JSON\.stringify\(\{ days: LINK_DAYS, maxUses: LINK_USES, note: note\.trim\(\) \|\| null \}\)/);
+  assert.match(englishUiSource(src), /body: JSON\.stringify\(\{ days: LINK_DAYS, maxUses: LINK_USES, note: note\.trim\(\) \|\| null \}\)/);
   // WP-D: until it is turned off, for anyone it reaches (0 is no limit).
-  assert.match(src, /const LINK_DAYS = 0;\s+const LINK_USES = 0;/);
+  assert.match(englishUiSource(src), /const LINK_DAYS = 0;\s+const LINK_USES = 0;/);
   assert.equal(require('../src/services/community-invites').NO_LIMIT, 0);
-  assert.match(src, /Anyone with the link can join, until you turn it off\./);
-  assert.match(src, /setRule\(data\.joiningRule\)/);
-  assert.match(src, /Your note is also your first message in the group chat\./);
-  assert.match(src, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(made\.slug\)\}\/messages`/);
+  assert.match(englishUiSource(src), /Anyone with the link can join, until you turn it off\./);
+  assert.match(englishUiSource(src), /setRule\(data\.joiningRule\)/);
+  assert.match(englishUiSource(src), /Your note is also your first message in the group chat\./);
+  assert.match(englishUiSource(src), /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(made\.slug\)\}\/messages`/);
   const invites = require('../src/services/community-invites');
   assert.equal(invites.LIMITS.maxDays, 30);
   assert.equal(invites.LIMITS.maxUses, 100);

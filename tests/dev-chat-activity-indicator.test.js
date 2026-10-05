@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #990: the trailing activity indicator ("thinking" dots) in dev chat.
 //
 // The old indicator was a node appended once per turn and removed by the
@@ -97,7 +98,7 @@ function makeDevChat() {
   sandbox.globalThis = sandbox;
   sandbox.window.addEventListener = () => {};
   sandbox.UsernodeReact = { devChat: t.bridge };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   const DevChat = sandbox.__DevChat;
   DevChat.renderMarkdown = (t) => String(t || '');

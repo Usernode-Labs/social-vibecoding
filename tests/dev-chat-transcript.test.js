@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #dc-messages — the dev chat's transcript, as a React island.
 //
 // This was `renderMessages`: one 560-line `container.innerHTML = …` and, on
@@ -89,7 +90,7 @@ function makeDevChat(over = {}) {
   sandbox.globalThis = sandbox;
   sandbox.window.addEventListener = () => {};
   sandbox.UsernodeReact = { devChat: t.bridge };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SUMMARY_SRC}\n${DEV_CHAT_SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   const DevChat = sandbox.__DevChat;
   DevChat.renderMarkdown = (s) => `<p>${String(s || '')}</p>`;

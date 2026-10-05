@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // Issue #1611: the create flow shows the viewer's current app-slot quota.
 //
 // The quota is capacity, not a timed allowance: apps with status `error` do
@@ -12,7 +13,7 @@ const express = require('express');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+const read = (rel) => englishUiSource(fs.readFileSync(path.join(__dirname, '..', rel), 'utf8'));
 
 const poolMod = require('../src/db/pool');
 let appQuotaUsed = 0;
@@ -120,19 +121,19 @@ test('the create dialog loads and renders the quota without reset copy', () => {
   const source = read('frontend/src/features/dialogs/create-app.tsx');
   const shared = read('frontend/src/features/dialogs/app-allowance.tsx');
   const store = read('frontend/src/features/dialogs/app-allowance-store.js');
-  assert.match(store, /fetcher\('\/api\/me\/app-allowance'/,
+  assert.match(englishUiSource(store), /fetcher\('\/api\/me\/app-allowance'/,
     'the dialog reads the independent current allowance endpoint');
-  assert.match(source, /id="create-app-quota"/);
-  assert.match(shared, /`\$\{quota\.used\} of \$\{quota\.limit\} app/);
+  assert.match(englishUiSource(source), /id="create-app-quota"/);
+  assert.match(englishUiSource(shared), /`\$\{quota\.used\} of \$\{quota\.limit\} app/);
   // Next is also dimmed until its step is answered (the create dialog's
   // rework); the quota still dims it on its own.
-  assert.match(source, /id="create-next"[\s\S]{0,200}disabled=\{quotaBlocksCreation \|\| !stepAnswered\}/,
+  assert.match(englishUiSource(source), /id="create-next"[\s\S]{0,200}disabled=\{quotaBlocksCreation \|\| !stepAnswered\}/,
     'the visible at-limit dialog must not offer a submit the server will refuse');
-  assert.match(source, /disabledStyle="block"/,
+  assert.match(englishUiSource(source), /disabledStyle="block"/,
     'the disabled submit must look unavailable, not only reject clicks');
 
   const quotaCopy = shared.slice(shared.indexOf('export function quotaHeadline'));
-  assert.doesNotMatch(quotaCopy, /reset/i,
+  assert.doesNotMatch(englishUiSource(quotaCopy), /reset/i,
     'app slots have no timed reset, so the quota copy must not claim one');
 });
 

@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Challenge group parity: Home's Challenges block and the Challenges tab (S10).
 //
 // WHAT THIS PINS. Home's block shows the tab's list, so the two surfaces must
@@ -46,7 +47,7 @@ function loadTab() {
   };
   sandbox.window.window = sandbox.window;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(TAB_SRC, sandbox, { filename: 'topochain-challenges.js' });
   return sandbox.window.TopochainChallenges;
 }
@@ -65,7 +66,7 @@ function loadHome() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   installPanelsStore(sandbox);
   vm.runInContext(`${PANELS_SRC}\n;globalThis.__HP = HomePanels;`, sandbox, { filename: 'home-panels.js' });
   return sandbox.__HP;

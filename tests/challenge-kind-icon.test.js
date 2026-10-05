@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #1914 — every challenge card wears its kind's icon, on BOTH surfaces.
 //
 // Home's block has drawn one since the kind icon landed: its panel query
@@ -74,7 +75,7 @@ function loadPane() {
   };
   sandbox.window.window = sandbox.window;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(src, sandbox, { filename: 'topochain-challenges.js' });
   const pane = sandbox.window.TopochainChallenges;
   pane._mine = new Map();

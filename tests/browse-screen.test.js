@@ -1,3 +1,5 @@
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
 // The #apps browse-all-apps screen (frontend/src/features/apps/browse.js) —
 // the directory half of the home-screen split.
 //
@@ -167,7 +169,7 @@ function makeBrowse(opts = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   // The shared card builders first: home.js delegates to window.AppCard and
   // browse.js calls them as bare identifiers (its import is stripped above).
   installAppCard(sandbox);
@@ -565,7 +567,7 @@ test("the screen's <option> list is a faithful copy of Browse.SORTS", () => {
   // browse-screen.tsx cannot read the controller: window.Browse does not
   // exist in the SSG prerender pass, so it carries its own copy of the five
   // labels. This is the guard that keeps the copy honest.
-  const src = read('frontend/src/features/apps/browse-screen.tsx');
+  const src = englishUiSource(read('frontend/src/features/apps/browse-screen.tsx'));
   const block = src.match(/const SORT_OPTIONS[\s\S]*?\n\];/);
   assert.ok(block, 'SORT_OPTIONS is still declared in browse-screen.tsx');
   const copied = [...block[0].matchAll(/\{\s*key:\s*'([^']+)',\s*label:\s*'([^']+)'\s*\}/g)]
@@ -587,7 +589,7 @@ test("the chip row is a faithful copy of Browse.FILTERS, in the prototype's orde
   assert.deepEqual(Array.from(Browse.FILTERS, (f) => f.label), ['All', 'Featured', 'Joined', 'New']);
   // Same reason SORT_OPTIONS is a copy: window.Browse does not exist in the
   // SSG pass, so the chips carry their own labels.
-  const src = read('frontend/src/features/apps/browse-screen.tsx');
+  const src = englishUiSource(read('frontend/src/features/apps/browse-screen.tsx'));
   const block = src.match(/const FILTER_CHIPS[\s\S]*?\n\];/);
   assert.ok(block, 'FILTER_CHIPS is still declared in browse-screen.tsx');
   const copied = [...block[0].matchAll(/\{\s*key:\s*'([^']+)',\s*label:\s*'([^']+)'\s*\}/g)]
@@ -722,7 +724,7 @@ test('the chips prerender with All pressed, from the store\'s initial value', ()
   assert.match(bar, /id="browse-filter-chips" role="group" aria-label="Filter apps"/);
   assert.match(INDEX, /id="browse-list"[^>]*data-filter="all"/);
   // The language's own filter chip, not a hand-rolled one.
-  assert.match(read('frontend/src/features/apps/browse-screen.tsx'), /from '@\/components\/ui\/chip'/);
+  assert.match(englishUiSource(read('frontend/src/features/apps/browse-screen.tsx')), /from '@\/components\/ui\/chip'/);
 });
 
 // ── Search covers EVERY visible app (home's is scoped to yours) ────
@@ -1128,9 +1130,9 @@ test('the page describes a Share row only when there is a link to share', () => 
   Browse.showDetail('down');
   assert.equal(state.detail.canShare, false);
   // …and the component leads the action card with it, as its own button.
-  const detailSrc = read('frontend/src/features/apps/browse-detail.tsx');
-  assert.match(detailSrc, /\{view\.actions\.length \|\| view\.canShare \? \(/);
-  assert.match(detailSrc, /id="browse-detail-share"[\s\S]{0,600}title="Share"[\s\S]{0,120}onClick=\{\(\) => controller\(\)\?\.shareDetailApp\(view\.app\)\}/);
+  const detailSrc = englishUiSource(read('frontend/src/features/apps/browse-detail.tsx'));
+  assert.match(englishUiSource(detailSrc), /\{view\.actions\.length \|\| view\.canShare \? \(/);
+  assert.match(englishUiSource(detailSrc), /id="browse-detail-share"[\s\S]{0,600}title="Share"[\s\S]{0,120}onClick=\{\(\) => controller\(\)\?\.shareDetailApp\(view\.app\)\}/);
   assert.ok(detailSrc.indexOf('id="browse-detail-share"') < detailSrc.indexOf('view.actions.map('),
     'Share comes first, as in the prototype\'s More list');
 });
@@ -1327,10 +1329,10 @@ test('a deep link to a missing app renders the not-available state', async () =>
   await flush();
   assert.equal(state.detail.state, 'missing');
   // The copy and its escape-hatch anchor are browse-detail.tsx's.
-  const tsx = read('frontend/src/features/apps/browse-detail.tsx');
-  assert.match(tsx, /isn&rsquo;t available/);
-  assert.match(tsx, /id="browse-detail-back"/);
-  assert.match(tsx, /Back to all apps/);
+  const tsx = englishUiSource(read('frontend/src/features/apps/browse-detail.tsx'));
+  assert.match(englishUiSource(tsx), /isn’t available/);
+  assert.match(englishUiSource(tsx), /id="browse-detail-back"/);
+  assert.match(englishUiSource(tsx), /Back to all apps/);
 });
 
 test('syncFrom drops to the list when the open app is deleted away', () => {
@@ -1414,7 +1416,7 @@ test('_load failure renders an inline error, never throws', async () => {
   assert.equal(state.error, true);
   assert.equal(state.rows.length, 0, 'and the stale list is cleared');
   // #1899: drawn as the shared error card with a Retry, not a red line.
-  assert.match(read('frontend/src/features/apps/browse-screen.tsx'), /<AppsLoadError[\s\S]*?title="Couldn't load the app directory"[\s\S]*?onRetry=\{\(\) => browse\(\)\?\._load\?\.\(\)\}/);
+  assert.match(englishUiSource(read('frontend/src/features/apps/browse-screen.tsx')), /<AppsLoadError[\s\S]*?title="Couldn't load the app directory"[\s\S]*?onRetry=\{\(\) => browse\(\)\?\._load\?\.\(\)\}/);
 });
 
 test('open seeds first paint from Home._apps, then refetches', async () => {
@@ -1671,7 +1673,7 @@ test('browse.js is a bundle module the #browse-screen island imports', () => {
   // also what plants the store and publishes the controller for the legacy
   // callers — the same seam profile and notifications landed on.
   assert.match(
-    read('frontend/src/features/apps/browse-screen.tsx'),
+    englishUiSource(read('frontend/src/features/apps/browse-screen.tsx')),
     /from '\.\/mount'/,
     'the island must import the mount — nothing else pulls the module in'
   );
@@ -1690,7 +1692,7 @@ test('browse.js is a bundle module the #browse-screen island imports', () => {
   assert.doesNotMatch(BROWSE_SRC, /Home\.iconTileFor|Home\.renderAppPillsHtml/);
   assert.doesNotMatch(BROWSE_SRC, /iconTileFor|renderAppPillsHtml/,
     'the string builders belong to the surfaces that are still legacy');
-  assert.match(read('frontend/src/features/apps/browse-list.tsx'),
+  assert.match(englishUiSource(read('frontend/src/features/apps/browse-list.tsx')),
     /from '\.\/app-card-view'/);
 });
 
@@ -1698,16 +1700,16 @@ test('#1553: the row button names what it acts on, like every other surface', ()
   // "Add" alone did not say add to WHAT (#1553); the pill is Join now
   // (communities), and "Join" alone would not say join WHAT for someone not
   // reading the row. The accessible name and the title spell out the app.
-  const listSrc = read('frontend/src/features/apps/browse-list.tsx');
+  const listSrc = englishUiSource(read('frontend/src/features/apps/browse-list.tsx'));
   // QA 2026-09-24 Q10: a long pill squeezed the app's name to ten characters
   // on desktop and to nothing at 1024, so the visible label stays one short
   // word and the rest rides the accessible name and the title.
-  assert.match(listSrc, /'Joined' : 'Join'/);
-  assert.match(listSrc, /aria-label=\{view\.added \? undefined : `Join \$\{view\.name\}`\}/);
-  assert.match(listSrc, /title=\{view\.addTitle\}/);
-  assert.match(listSrc, /<PlusIcon /);
+  assert.match(englishUiSource(listSrc), /'Joined' : 'Join'/);
+  assert.match(englishUiSource(listSrc), /aria-label=\{view\.added \? undefined : `Join \$\{view\.name\}`\}/);
+  assert.match(englishUiSource(listSrc), /title=\{view\.addTitle\}/);
+  assert.match(englishUiSource(listSrc), /<PlusIcon /);
   // The state label stays short: the row it sits on already says which app.
-  assert.match(listSrc, /view\.added \? 'Joined'/);
+  assert.match(englishUiSource(listSrc), /view\.added \? 'Joined'/);
 });
 
 // ── app.js routing ───────────────────────────────────────────────
@@ -1722,20 +1724,20 @@ test('#apps and #apps/<slug> both route to navigateToBrowse', () => {
 });
 
 test('navigateToBrowse / _exitBrowse follow the screen pattern', () => {
-  assert.match(APP_SRC, /navigateToBrowse\(slug\) \{/);
-  assert.match(APP_SRC, /_exitBrowse\(\) \{/);
+  assert.match(englishUiSource(APP_SRC), /navigateToBrowse\(slug\) \{/);
+  assert.match(englishUiSource(APP_SRC), /_exitBrowse\(\) \{/);
   const nav = APP_SRC.slice(
     APP_SRC.indexOf('navigateToBrowse(slug) {'),
     APP_SRC.indexOf('_exitBrowse() {')
   );
-  assert.match(nav, /setHeaderTitle\('All apps'\)/);
-  assert.match(nav, /App\._inBrowse = true/);
-  assert.match(nav, /Browse\.open\(slug \|\| null, \{ chrome: false \}\)/);
-  assert.match(nav, /App\._showOnlyScreen\('browse-screen'\)/);
+  assert.match(englishUiSource(nav), /setHeaderTitle\('All apps'\)/);
+  assert.match(englishUiSource(nav), /App\._inBrowse = true/);
+  assert.match(englishUiSource(nav), /Browse\.open\(slug \|\| null, \{ chrome: false \}\)/);
+  assert.match(englishUiSource(nav), /App\._showOnlyScreen\('browse-screen'\)/);
   // Already mounted -> an in-screen LEVEL change, not a screen entry:
   // re-running the swap would replay the entry animation on a drill-in.
-  assert.match(nav, /App\._inBrowse && window\.Browse\?\.isOpen\?\.\(\)/);
-  assert.match(nav, /Browse\.route\(slug \|\| null\)/);
+  assert.match(englishUiSource(nav), /App\._inBrowse && window\.Browse\?\.isOpen\?\.\(\)/);
+  assert.match(englishUiSource(nav), /Browse\.route\(slug \|\| null\)/);
   // #979: the entry's visible mutations live inside the transition
   // callback, so the outgoing page is snapshotted as it looked. Browse's
   // own level chrome is deferred with it.
@@ -1744,7 +1746,7 @@ test('navigateToBrowse / _exitBrowse follow the screen pattern', () => {
     assert.ok(!preTransition.includes(forbidden),
       `no ${forbidden} before the transition (it would land in the outgoing snapshot)`);
   }
-  assert.match(nav, /Browse\.syncChrome\(\)/,
+  assert.match(englishUiSource(nav), /Browse\.syncChrome\(\)/,
     'the deferred level chrome is applied inside the callback');
   // Leaving the screen is state-only now — the back chevron is handed back
   // by the next screen's _showOnlyScreen.
@@ -1754,7 +1756,7 @@ test('navigateToBrowse / _exitBrowse follow the screen pattern', () => {
     '_exitBrowse no longer touches the back icon (#979)');
   assert.ok(!exitBody.includes('classList'),
     '_exitBrowse no longer hides the screen (#979)');
-  assert.match(exitBody, /Browse\.close\(\)/);
+  assert.match(englishUiSource(exitBody), /Browse\.close\(\)/);
 });
 
 test('the header back button consults Browse.handleBack', () => {
@@ -1972,7 +1974,7 @@ test('contributors: empty and error states each carry their own copy', () => {
   assert.match(empty.note, /No contributors yet/);
   assert.equal(empty.rows.length, 0);
   // The card itself is unconditional in browse-detail.tsx — kept, not hidden.
-  assert.match(read('frontend/src/features/apps/browse-detail.tsx'),
+  assert.match(englishUiSource(read('frontend/src/features/apps/browse-detail.tsx')),
     /id="browse-detail-contributors"/);
 
   const errored = Browse.contributorsView({ state: 'error', items: [], total: 0 }, {});
@@ -1990,7 +1992,7 @@ test('contributors: a hostile username stays DATA all the way to the renderer', 
   assert.equal(view.rows[0].who, '"><img src=x>&', 'passed through verbatim');
   assert.equal(view.rows[0].initial, '"');
   assert.doesNotMatch(BROWSE_SRC, /\.innerHTML\s*=/, 'this module writes no markup at all');
-  const tsx = read('frontend/src/features/apps/browse-detail.tsx');
+  const tsx = englishUiSource(read('frontend/src/features/apps/browse-detail.tsx'));
   const contribRow = tsx.slice(tsx.indexOf('function ContributorRow'));
   assert.doesNotMatch(contribRow.slice(0, 1200), /dangerouslySetInnerHTML/);
 });
@@ -2016,7 +2018,7 @@ test('the detail page mounts the contributors card BELOW the action rows', async
   assert.equal(state.detail.contributors.rows[0].who, 'alice');
   // The ORDER is browse-detail.tsx's: the action rows stay above, so the
   // page's primary navigation is not pushed down.
-  const tsx = read('frontend/src/features/apps/browse-detail.tsx');
+  const tsx = englishUiSource(read('frontend/src/features/apps/browse-detail.tsx'));
   const ready2 = tsx.slice(tsx.indexOf('function Ready('));
   assert.ok(ready2.indexOf('browse-detail-open') < ready2.indexOf('view.actions.map'));
   assert.ok(ready2.indexOf('view.actions.map') < ready2.indexOf('<Contributors'));

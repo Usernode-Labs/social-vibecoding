@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // "Get a ping when your app is ready?" (#12, decision D10).
 //
 // The Homeroom iOS app used to ask for the notification permission on the
@@ -168,7 +169,7 @@ function boot(opts = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(nativeChromeSource, sandbox);
   sandbox.NativeChrome._FIRST_RUN_RECHECK_MS = 1;
   return {

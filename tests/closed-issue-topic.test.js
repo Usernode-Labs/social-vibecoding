@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #2365: a closed issue still opens from the proposals that link it.
 //
 // _ghIssues holds OPEN issues only, so `#app/<slug>/dev/issues/<n>` for the
@@ -51,7 +52,7 @@ function makeAppView({ fetchImpl } = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView.appData = { slug: 'demo' };

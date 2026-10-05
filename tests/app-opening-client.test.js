@@ -1,4 +1,6 @@
 'use strict';
+const { withLanguage } = require("./lib/platform-language");
+
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -176,7 +178,7 @@ test('App-tab transitions emit once while Dev, self-hosted and rerenders stay qu
     renderAppTab() {},
     async renderDevView() {},
   }, { get: (target, key) => key in target ? target[key] : () => {} });
-  const context = vm.createContext({
+  const context = vm.createContext(withLanguage({
     console,
     location: new URL('https://homeroom.test/app/coffee'),
     history: { pushState() {}, replaceState() {} },
@@ -196,7 +198,7 @@ test('App-tab transitions emit once while Dev, self-hosted and rerenders stay qu
       },
     },
     Improve: { setTab() {} },
-  });
+  }));
   context.window = context;
   vm.runInContext(source, context);
   const App = context.App;

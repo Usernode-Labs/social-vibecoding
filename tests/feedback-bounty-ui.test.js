@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // Send Feedback dialog — the "Put a kudos on this" row (#964, #2586).
 //
 // The contract that's easy to break later:
@@ -85,22 +86,22 @@ test('the checkbox ships unchecked in the markup', () => {
 // ── Open / reset behaviour ───────────────────────────────────────────
 
 test('the row is repainted from the live Kudos budget, not a literal', () => {
-  assert.match(feedbackJs, /const resetBountyRow = \(\) => \{/);
-  assert.match(feedbackJs, /window\.Kudos\?\.Budget\?\.state/);
+  assert.match(englishUiSource(feedbackJs), /const resetBountyRow = \(\) => \{/);
+  assert.match(englishUiSource(feedbackJs), /window\.Kudos\?\.Budget\?\.state/);
   // Both copy variants interpolate the server's numbers.
-  assert.match(feedbackJs, /\$\{remaining\} of \$\{limit\} left this week/);
-  assert.match(feedbackJs, /You've used all \$\{limit\} kudos this week/);
+  assert.match(englishUiSource(feedbackJs), /\$\{remaining\} of \$\{limit\} left this week/);
+  assert.match(englishUiSource(feedbackJs), /You've used all \$\{limit\} kudos this week/);
   // #3230: the reset in the viewer's own clock, the UTC instant on hover.
-  assert.match(feedbackJs, /RT \? RT\.resetWhen\('weekly'\) : 'Monday 00:00 UTC'/);
-  assert.match(feedbackJs, /bountyNote\.title = RT\.resetUtc\('weekly'\)/);
+  assert.match(englishUiSource(feedbackJs), /RT \? RT\.resetWhen\('weekly'\) : 'Monday 00:00 UTC'/);
+  assert.match(englishUiSource(feedbackJs), /bountyNote\.title = RT\.resetUtc\('weekly'\)/);
   // #1582: and the cost is stated in every state the box can be ticked in —
   // including the one where the budget fetch failed and there is no figure.
   const note = feedbackJs.slice(
     feedbackJs.indexOf('if (remaining === null) bountyNote'),
     feedbackJs.indexOf("bountyRow.classList.remove('hidden')"),
   );
-  assert.match(note, /remaining === null\) bountyNote\.textContent = 'Costs 1 kudos'/);
-  assert.match(note, /`Costs 1 kudos\. \$\{remaining\} of \$\{limit\} left this week`/);
+  assert.match(englishUiSource(note), /remaining === null\) bountyNote\.textContent = 'Costs 1 kudos'/);
+  assert.match(englishUiSource(note), /`Costs 1 kudos\. \$\{remaining\} of \$\{limit\} left this week`/);
 });
 
 test('resetBountyRow unchecks the box and disables it at zero remaining', () => {
@@ -164,11 +165,11 @@ test('the confirmation reports the bounty outcome and refreshes the meter', () =
     feedbackJs.indexOf('const submitFeedback = async () => {'),
     feedbackJs.indexOf('Feedback._open = (opts = {}) => {')
   );
-  assert.match(submit, /Pledged 1 kudos as a bounty/);
-  assert.match(submit, /\$\{data\.bounty\.remaining\} left this week/);
-  assert.match(submit, /Couldn't add the bounty/);
+  assert.match(englishUiSource(submit), /Pledged 1 kudos as a bounty/);
+  assert.match(englishUiSource(submit), /\$\{data\.bounty\.remaining\} left this week/);
+  assert.match(englishUiSource(submit), /Couldn't add the bounty/);
   // The drawer meter must show the number the user just spent down to.
-  assert.match(submit, /data\.bounty\.placed[\s\S]{0,400}Kudos\?\.Budget\?\.refresh/);
+  assert.match(englishUiSource(submit), /data\.bounty\.placed[\s\S]{0,400}Kudos\?\.Budget\?\.refresh/);
 });
 
 // ── Screenshot deep links ────────────────────────────────────────────
@@ -244,15 +245,15 @@ test('both shot checks survive the manifest reader', () => {
 // ── The 5 → 20 sweep ─────────────────────────────────────────────────
 
 test('the Kudos-tab subtitle reads the cap from the budget', () => {
-  assert.doesNotMatch(lbJs, /'5 kudos per week/);
-  assert.match(lbJs, /window\.Kudos\?\.Budget\?\.state\?\.limit \|\| 20/);
-  assert.match(lbJs, /kudos per week, resets \$\{/);
-  assert.match(lbJs, /window\.ResetTime\.resetWhen\('weekly'\) : 'Monday 00:00 UTC'/,
+  assert.doesNotMatch(englishUiSource(lbJs), /'5 kudos per week/);
+  assert.match(englishUiSource(lbJs), /window\.Kudos\?\.Budget\?\.state\?\.limit \|\| 20/);
+  assert.match(englishUiSource(lbJs), /kudos per week, resets \$\{/);
+  assert.match(englishUiSource(lbJs), /window\.ResetTime\.resetWhen\('weekly'\) : 'Monday 00:00 UTC'/,
     '#3230: in the viewer\u2019s own clock where ResetTime is loaded');
   // The newcomer's word (first-session run-through, 4 Oct 2026): a change,
   // not a PR.
-  assert.match(lbJs, /Give them to changes you appreciate\./);
-  assert.doesNotMatch(lbJs, /PRs you appreciate/);
+  assert.match(englishUiSource(lbJs), /Give them to changes you appreciate\./);
+  assert.doesNotMatch(englishUiSource(lbJs), /PRs you appreciate/);
 });
 
 test('a Dev-screen pledge also refreshes the drawer kudos meter', () => {

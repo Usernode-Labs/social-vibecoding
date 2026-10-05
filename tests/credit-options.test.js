@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // Out-of-credits routes — the ways to keep building when the daily AI
 // allowance is spent (three, or four where the #1049 Claude Code / Codex
 // hand-offs are available).
@@ -362,8 +363,9 @@ test('the dev chat renders the refusal as a card, not as prose', () => {
 });
 
 test('the Generate-proposal path shows the card instead of a bare toast', () => {
+  const APP_VIEW_SRCEnglish = englishUiSource(APP_VIEW_SRC);
   assert.match(
-    APP_VIEW_SRC,
+    APP_VIEW_SRCEnglish,
     /data\.code === 'budget_exceeded'[\s\S]{0,200}_showCreditOptionsModal/,
     'a budget refusal opens the three-route modal'
   );

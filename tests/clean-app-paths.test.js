@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Clean, immediately-shareable app routes.
 //
 // Run with: node --test tests/clean-app-paths.test.js
@@ -74,7 +75,7 @@ function loadApp(initial = {}) {
     addEventListener() {},
     AppView,
   };
-  const context = vm.createContext({
+  const context = vm.createContext(withLanguage({
     window, document, location, history, AppView,
     PlatformUI: {
       transition(fn) { calls.push(['transition']); fn(); },
@@ -83,7 +84,7 @@ function loadApp(initial = {}) {
     URL, URLSearchParams, AbortController,
     localStorage: { getItem() { return null; }, setItem() {}, removeItem() {} },
     navigator: {}, console, setTimeout, clearTimeout, fetch: async () => ({ ok: false }),
-  });
+  }));
   vm.runInContext(appSource, context);
   const App = window.App;
   App._departingScreen = () => element;

@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // GET /api/budget?demo=1 — the staging hook that makes the out-of-credits
 // state reviewable.
 //
@@ -193,17 +194,18 @@ test('the fixture makes the WEEKLY cap the binding one', () => {
 });
 
 test('the client forwards either demo spelling, and only those two', () => {
-  const reader = DEV_CHAT_SRC.slice(
-    DEV_CHAT_SRC.indexOf('_budgetDemoValue()'),
-    DEV_CHAT_SRC.indexOf('_budgetDemo()', DEV_CHAT_SRC.indexOf('_budgetDemoValue()'))
+  const DEV_CHAT_SRCEnglish = englishUiSource(DEV_CHAT_SRC);
+  const reader = DEV_CHAT_SRCEnglish.slice(
+    DEV_CHAT_SRCEnglish.indexOf('_budgetDemoValue()'),
+    DEV_CHAT_SRCEnglish.indexOf('_budgetDemo()', DEV_CHAT_SRCEnglish.indexOf('_budgetDemoValue()'))
   );
   assert.match(reader, /\(v === '1' \|\| v === 'weekly-out'\) \? v : null/,
     'an arbitrary ?demo= value is not forwarded');
   // The window-aware copy on the injected card, so the reviewed card names
   // the same boundary as the banner beside it.
-  const inject = DEV_CHAT_SRC.slice(
-    DEV_CHAT_SRC.indexOf('_maybeInjectDemoCreditsCard()'),
-    DEV_CHAT_SRC.indexOf('_globalBudgetOut()')
+  const inject = DEV_CHAT_SRCEnglish.slice(
+    DEV_CHAT_SRCEnglish.indexOf('_maybeInjectDemoCreditsCard()'),
+    DEV_CHAT_SRCEnglish.indexOf('_globalBudgetOut()')
   );
   assert.match(inject, /Weekly limit reached \(\$50\.00\)\. Resets Monday 00:00 UTC\./);
   assert.doesNotMatch(inject, /Daily limit reached/,

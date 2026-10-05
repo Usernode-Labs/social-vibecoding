@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // #3407: A CHANNEL LEADS WITH ITS WAY BACK TO ITS HUB.
 //
@@ -45,13 +46,13 @@ function fn(src, name) {
 
 test('one disc: the Workshop\'s page head and the channels draw the same button', () => {
   const button = fn(BACK, 'PageBackButton');
-  assert.match(button, /className="dev-ws-page-back un-touch-target"/);
-  assert.match(button, /aria-label=\{`Back to \$\{label\}`\}/);
-  assert.match(button, /<ChevronLeftIcon className="dev-ws-page-back-glyph" aria-hidden="true" \/>/);
-  assert.match(fn(BACK, 'PageBack'), /<PageBackButton label=\{label\} onBack=\{onBack\} data-ws-page-back="" \/>/);
-  assert.match(WORKSHOP, /import \{ PageBack \} from '\.\/page-back';/);
-  assert.doesNotMatch(WORKSHOP, /function PageBack\(/, 'defined once, in page-back.tsx');
-  assert.match(SCREEN, /import \{ PageBackButton \} from '\.\.\/dev-board\/workshop\/page-back';/);
+  assert.match(englishUiSource(button), /className="dev-ws-page-back un-touch-target"/);
+  assert.match(englishUiSource(button), /aria-label=\{`Back to \$\{label\}`\}/);
+  assert.match(englishUiSource(button), /<ChevronLeftIcon className="dev-ws-page-back-glyph" aria-hidden="true" \/>/);
+  assert.match(englishUiSource(fn(BACK, 'PageBack')), /<PageBackButton label=\{label\} onBack=\{onBack\} data-ws-page-back="" \/>/);
+  assert.match(englishUiSource(WORKSHOP), /import \{ PageBack \} from '\.\/page-back';/);
+  assert.doesNotMatch(englishUiSource(WORKSHOP), /function PageBack\(/, 'defined once, in page-back.tsx');
+  assert.match(englishUiSource(SCREEN), /import \{ PageBackButton \} from '\.\.\/dev-board\/workshop\/page-back';/);
 });
 
 test('a project\'s channel leads its header with the way back to its hub', () => {

@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Start work on a request (#609, #2779).
 //
 // #609 made "Create proposal" prefill its kickoff message instead of sending
@@ -74,7 +75,7 @@ function makeHarness({ controller = true } = {}) {
   }
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView.appData = { slug: 'test-app' };

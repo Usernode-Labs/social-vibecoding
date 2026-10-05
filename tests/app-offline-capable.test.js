@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // The bridge's offline-capability announcement (#487 follow-up).
 //
 // The shell cannot see into an app's origin, so while offline it used to
@@ -51,7 +52,7 @@ function run({ controller = null, topLevel = false, noSw = false } = {}) {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   sandbox.window.parent = topLevel ? sandbox : parent;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(extractBlock(fs.readFileSync(versioned, 'utf8')), sandbox);
   return {
     // The message objects are built inside the vm and carry that realm's

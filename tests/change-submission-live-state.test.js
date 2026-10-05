@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -31,7 +32,7 @@ function fixture(current = session()) {
     response: async () => ({ ok: true, json: async () => ({ ok: true, prNumber: 987, prUrl: 'https://github.com/example/app/pull/987', prTitle: 'Ready change' }) }),
   };
   c.window = c;
-  vm.createContext(c);
+  vm.createContext(withLanguage(c));
   for (const file of ['public/js/merge-status.js', 'public/js/app-view.js']) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), c);
   }

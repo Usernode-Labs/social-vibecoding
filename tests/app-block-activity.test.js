@@ -1,4 +1,6 @@
 'use strict';
+const { withLanguage } = require("./lib/platform-language");
+
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -24,7 +26,7 @@ function harness() {
     discardSlug(slug) { activityCalls.push({ method: 'discardSlug', slug }); },
     clearAccount() { activityCalls.push({ method: 'clearAccount' }); },
   };
-  const context = vm.createContext({
+  const context = vm.createContext(withLanguage({
     App: {
       _runningApp: { slug: 'example' }, currentApp: 'example', currentTab: 'app',
       user: { id: 7 }, _sessionFromSnapshot: false,
@@ -38,7 +40,7 @@ function harness() {
       addEventListener() {}, removeEventListener(name) { removed.push(name); },
     },
     async fetch(url, options) { requests.push({ url, body: JSON.parse(options.body) }); },
-  });
+  }));
   context.window = context;
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../public/js/app-view.js'), 'utf8'), context);
   const view = context.AppView;

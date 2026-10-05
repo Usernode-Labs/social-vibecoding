@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // The create dialog is steps that UNFOLD in one card (#1911), not one page of
 // every choice. Since the rework (drawn and agreed as a clickable mock first)
 // it asks seven questions, each a step of its own:
@@ -81,39 +82,39 @@ test('the steps a set of answers walks: five for Just me, six for a public commu
 
 test('a row selects, and Next beside Cancel moves on once the step is answered', () => {
   const answered = SRC.slice(SRC.indexOf('function answered(which: Step)'), SRC.indexOf('const stepAnswered'));
-  assert.match(answered, /case 'who': return audience != null;/);
-  assert.match(answered, /case 'invite': return people\.length > 0;/);
-  assert.match(answered, /case 'kind': return kind != null;/);
+  assert.match(englishUiSource(answered), /case 'who': return audience != null;/);
+  assert.match(englishUiSource(answered), /case 'invite': return people\.length > 0;/);
+  assert.match(englishUiSource(answered), /case 'kind': return kind != null;/);
   // #3521: from a template is answered once a starter is picked.
-  assert.match(answered, /case 'start': return mode != null && \(mode !== 'import' \|\| importState === 'ok'\) && \(mode !== 'template' \|\| template != null\);/);
+  assert.match(englishUiSource(answered), /case 'start': return mode != null && \(mode !== 'import' \|\| importState === 'ok'\) && \(mode !== 'template' \|\| template != null\);/);
   // The name, and what it should do (BRIEF_MIN or more) unless importing.
-  assert.match(answered, /case 'details': return name\.trim\(\)\.length > 0 && \(importing \|\| brief\.trim\(\)\.length >= BRIEF_MIN\);/);
-  assert.match(answered, /case 'about': return describe\.trim\(\)\.length > 0;/);
+  assert.match(englishUiSource(answered), /case 'details': return name\.trim\(\)\.length > 0 && \(importing \|\| brief\.trim\(\)\.length >= BRIEF_MIN\);/);
+  assert.match(englishUiSource(answered), /case 'about': return describe\.trim\(\)\.length > 0;/);
   // An import whose repo sets the rule is told so, not asked.
-  assert.match(answered, /case 'approve': return repoGov != null \|\| \(approvers != null && \(approvers !== 'invited' \|\| approvals != null\)\);/);
+  assert.match(englishUiSource(answered), /case 'approve': return repoGov != null \|\| \(approvers != null && \(approvers !== 'invited' \|\| approvals != null\)\);/);
   // On its own step a row only selects; a collapsed row reopens its step.
-  assert.match(SRC, /function chooseAudience\(next: Audience\) \{\s*setError\(''\);\s*if \(step !== 'who'\) \{ setStep\('who'\); return; \}\s*setAudience\(next\);\s*\}/);
-  assert.match(SRC, /function chooseKind\(next: Kind\) \{\s*setError\(''\);\s*if \(step !== 'kind'\) \{ setStep\('kind'\); return; \}\s*setKind\(next\);\s*\}/);
+  assert.match(englishUiSource(SRC), /function chooseAudience\(next: Audience\) \{\s*setError\(''\);\s*if \(step !== 'who'\) \{ setStep\('who'\); return; \}\s*setAudience\(next\);\s*\}/);
+  assert.match(englishUiSource(SRC), /function chooseKind\(next: Kind\) \{\s*setError\(''\);\s*if \(step !== 'kind'\) \{ setStep\('kind'\); return; \}\s*setKind\(next\);\s*\}/);
   // How to start collapses too, so its rows (and a picked starter) reopen it.
-  assert.match(SRC, /function chooseStart\(next: Mode\) \{\s*setError\(''\);\s*if \(step !== 'start'\) \{ setStep\('start'\); return; \}/);
-  assert.match(SRC, /function chooseTemplate\(next: TemplateId\) \{\s*setError\(''\);\s*if \(step !== 'start'\) \{ setStep\('start'\); return; \}\s*setTemplate\(next\);\s*\}/);
+  assert.match(englishUiSource(SRC), /function chooseStart\(next: Mode\) \{\s*setError\(''\);\s*if \(step !== 'start'\) \{ setStep\('start'\); return; \}/);
+  assert.match(englishUiSource(SRC), /function chooseTemplate\(next: TemplateId\) \{\s*setError\(''\);\s*if \(step !== 'start'\) \{ setStep\('start'\); return; \}\s*setTemplate\(next\);\s*\}/);
   // Next walks the list, and only when answered.
   const next = SRC.slice(SRC.indexOf('function next() {'), SRC.indexOf('/** One entry point'));
-  assert.match(next, /if \(!stepAnswered\) \{/);
-  assert.match(next, /const to = steps\[steps\.indexOf\(step\) \+ 1\];/);
-  assert.match(next, /Give your project a name\./);
-  assert.match(next, /Say what it should do, in a sentence or two\./);
+  assert.match(englishUiSource(next), /if \(!stepAnswered\) \{/);
+  assert.match(englishUiSource(next), /const to = steps\[steps\.indexOf\(step\) \+ 1\];/);
+  assert.match(englishUiSource(next), /Give your project a name\./);
+  assert.match(englishUiSource(next), /Say what it should do, in a sentence or two\./);
   // Arriving at the one-line step suggests it.
-  assert.match(next, /if \(to === 'about'\) void suggestDescription\(false\);/);
+  assert.match(englishUiSource(next), /if \(to === 'about'\) void suggestDescription\(false\);/);
   // Both footer buttons wait for the answer.
   const footer = SRC.slice(SRC.indexOf('id="create-cancel"'));
   assert.ok(footer.indexOf('id="create-next"') > 0 && footer.indexOf('id="create-next"') < footer.indexOf('id="create-submit"'),
     'Cancel, then Next, then Create');
-  assert.match(footer, /id="create-next"[\s\S]{0,200}disabled=\{quotaBlocksCreation \|\| !stepAnswered\}/);
-  assert.match(footer, /id="create-submit"[\s\S]{0,220}disabled=\{quotaBlocksCreation \|\| submitting \|\| !stepAnswered\}/);
+  assert.match(englishUiSource(footer), /id="create-next"[\s\S]{0,200}disabled=\{quotaBlocksCreation \|\| !stepAnswered\}/);
+  assert.match(englishUiSource(footer), /id="create-submit"[\s\S]{0,220}disabled=\{quotaBlocksCreation \|\| submitting \|\| !stepAnswered\}/);
   // Enter before the last step advances; only the last step creates.
-  assert.match(SRC, /if \(!isLast\) \{\s*next\(\);\s*return;\s*\}/);
-  assert.doesNotMatch(SRC, /id="create-back"/, 'no Back: the earlier steps stay on screen');
+  assert.match(englishUiSource(SRC), /if \(!isLast\) \{\s*next\(\);\s*return;\s*\}/);
+  assert.doesNotMatch(englishUiSource(SRC), /id="create-back"/, 'no Back: the earlier steps stay on screen');
 });
 
 test('the wire body: who it is for, the people and addresses, and what an import leaves to its repo', () => {
@@ -147,21 +148,22 @@ test('the wire body: who it is for, the people and addresses, and what an import
   assert.equal(createBody({ ...imp, repo: {}, template: 'game-2d' }).template, undefined);
   assert.equal(createBody({ ...base, mode: 'template', audience: 'solo', template: null }).template, undefined);
   const submit = SRC.slice(SRC.indexOf('async function submit(event: FormEvent) {'), SRC.indexOf('  const stepIndex'));
-  assert.match(submit, /const body = createBody\(\{/);
+  assert.match(englishUiSource(submit), /const body = createBody\(\{/);
   // What it should do goes from everyone now, and an import, which never
   // showed the one-line step, sends no line from the dialog.
-  assert.match(submit, /name: trimmed,\s*brief,\s*description,/);
-  assert.doesNotMatch(SRC, /brief: botBuild \?/);
-  assert.match(submit, /const description = importing \? '' : \(describeRef\.current\?\.value \|\| ''\);/);
-  assert.match(submit, /if \(brief\.trim\(\)\.length < BRIEF_MIN\) return setError\('Say what it should do, in a sentence or two\.'\);/);
-  assert.match(submit, /if \(!description\.trim\(\)\) return setError\('Say what it is in one line\.'\);/);
-  assert.match(submit, /invitees: people,/);
-  assert.match(submit, /repo,\s*template,\s*\}\);/);
-  assert.match(submit, /await postCreateApp\(body\)/);
-  assert.match(SRC, /body: JSON\.stringify\(body\)/);
+  assert.match(englishUiSource(submit), /name: trimmed,\s*brief,\s*description,/);
+  assert.doesNotMatch(englishUiSource(SRC), /brief: botBuild \?/);
+  assert.match(englishUiSource(submit), /const description = importing \? '' : \(describeRef\.current\?\.value \|\| ''\);/);
+  assert.match(englishUiSource(submit), /if \(brief\.trim\(\)\.length < BRIEF_MIN\) return setError\('Say what it should do, in a sentence or two\.'\);/);
+  assert.match(englishUiSource(submit), /if \(!description\.trim\(\)\) return setError\('Say what it is in one line\.'\);/);
+  assert.match(englishUiSource(submit), /invitees: people,/);
+  assert.match(englishUiSource(submit), /repo,\s*template,\s*\}\);/);
+  assert.match(englishUiSource(submit), /await postCreateApp\(body\)/);
+  assert.match(englishUiSource(SRC), /body: JSON\.stringify\(body\)/);
 });
 
 test('an import names each answer its repo’s dapp.json replaces, and only answers given', () => {
+  const SRCEnglish = englishUiSource(SRC);
   const { repoOverrides, repoRule } = mod();
   const answers = { name: 'Book club', description: 'Read together', audience: 'invited', approvers: 'anyone', approvals: null };
   const repo = {
@@ -200,19 +202,19 @@ test('an import names each answer its repo’s dapp.json replaces, and only answ
   assert.equal(repoRule(repo, 'solo'), null, 'Just me has no approval step');
   assert.equal(repoRule({}, 'open'), null);
   assert.equal(repoRule(null, 'open'), null);
-  assert.match(SRC, /const repoGov = checked \? repoRule\(repo, audience\) : null;/);
-  assert.match(SRC, /\{repoGov \? \(\s*<p className=\{CAPTION\} data-repo-rule="">\{`This repo’s dapp\.json already sets it: \$\{repoGov\}\.`\}<\/p>/);
+  assert.match(englishUiSource(SRCEnglish), /const repoGov = checked \? repoRule\(repo, audience\) : null;/);
+  assert.match(englishUiSource(SRCEnglish), /\{repoGov \? \(\s*<p className=\{CAPTION\} data-repo-rule="">\{`This repo’s dapp\.json already sets it: \$\{repoGov\}\.`\}<\/p>/);
   // The check fills the name step with the repo's own name, unless one was typed.
-  const check = SRC.slice(SRC.indexOf('async function check() {'), SRC.indexOf('async function submit('));
-  assert.match(check, /if \(repoName && !\(nameRef\.current\?\.value \|\| ''\)\.trim\(\)\) \{\s*if \(nameRef\.current\) nameRef\.current\.value = repoName;\s*setName\(repoName\);/);
+  const check = SRCEnglish.slice(SRCEnglish.indexOf('async function check() {'), SRCEnglish.indexOf('async function submit('));
+  assert.match(englishUiSource(check), /if \(repoName && !\(nameRef\.current\?\.value \|\| ''\)\.trim\(\)\) \{\s*if \(nameRef\.current\) nameRef\.current\.value = repoName;\s*setName\(repoName\);/);
   // The notice, and what the card says for app.css.
-  assert.match(SRC, /This repo already sets some of this/);
-  assert.match(SRC, /You chose: \$\{o\.yours\}/);
-  assert.match(SRC, /Nothing in this repo’s dapp\.json changes your answers\. They’re written into it when it’s imported\./);
-  assert.match(SRC, /Couldn’t read this repo’s dapp\.json\./);
-  assert.match(SRC, /'data-repo-sets': repoSets\.join\(' '\)/);
-  assert.match(SRC, /const repoSets = \[\.\.\.overrides\.map\(\(o\) => o\.key\), \.\.\.\(repoGov && !overrides\.some\(\(o\) => o\.key === 'gov'\) \? \['gov'\] : \[\]\)\];/);
-  assert.match(SRC, /setRepo\(manifest && typeof manifest === 'object' \? manifest : \{\}\);\s*setRepoUnread\(manifest === null\);/);
+  assert.match(englishUiSource(SRCEnglish), /This repo already sets some of this/);
+  assert.match(englishUiSource(SRCEnglish), /You chose: \$\{o\.yours\}/);
+  assert.match(englishUiSource(SRCEnglish), /Nothing in this repo’s dapp\.json changes your answers\. They’re written into it when it’s imported\./);
+  assert.match(englishUiSource(SRCEnglish), /Couldn’t read this repo’s dapp\.json\./);
+  assert.match(englishUiSource(SRCEnglish), /'data-repo-sets': repoSets\.join\(' '\)/);
+  assert.match(englishUiSource(SRCEnglish), /const repoSets = \[\.\.\.overrides\.map\(\(o\) => o\.key\), \.\.\.\(repoGov && !overrides\.some\(\(o\) => o\.key === 'gov'\) \? \['gov'\] : \[\]\)\];/);
+  assert.match(englishUiSource(SRCEnglish), /setRepo\(manifest && typeof manifest === 'object' \? manifest : \{\}\);\s*setRepoUnread\(manifest === null\);/);
 });
 
 test('who it is for says who can open it, and that its code is public on GitHub either way', () => {
@@ -233,17 +235,18 @@ test('what it should do is asked of everyone, grows with its text, and says who 
   assert.equal(briefCaption(true), 'Homeroom bot builds the first version from this.');
   assert.equal(briefCaption(false), 'This becomes the project’s first request.');
   const details = SRC.slice(SRC.indexOf('data-create-step="details"'), SRC.indexOf('data-create-step="about"'));
-  assert.doesNotMatch(details, /\{botBuild \? \(/, 'not only for somebody the bot builds for');
-  assert.match(details, /<label htmlFor="app-brief" className=\{LABEL\}>\s*What should it do\?\s*<\/label>/, 'a label that fits one line on a phone');
-  assert.match(details, /id="app-brief"\s+ref=\{briefRef\}\s+name="brief"\s+rows=\{3\}\s+maxLength=\{BRIEF_MAX\}/);
-  assert.match(details, /className=\{BRIEF_FIELD\}/);
-  assert.match(SRC, /const BRIEF_FIELD = 'resize-none overflow-y-auto max-h-60 leading-\[22px\]';/, 'grows to a ceiling, then scrolls');
-  assert.match(details, /\{briefCaption\(botBuild\)\}/, 'one caption under the field');
+  assert.doesNotMatch(englishUiSource(details), /\{botBuild \? \(/, 'not only for somebody the bot builds for');
+  assert.match(englishUiSource(details), /<label htmlFor="app-brief" className=\{LABEL\}>\s*What should it do\?\s*<\/label>/, 'a label that fits one line on a phone');
+  assert.match(englishUiSource(details), /id="app-brief"\s+ref=\{briefRef\}\s+name="brief"\s+rows=\{3\}\s+maxLength=\{BRIEF_MAX\}/);
+  assert.match(englishUiSource(details), /className=\{BRIEF_FIELD\}/);
+  assert.match(englishUiSource(SRC), /const BRIEF_FIELD = 'resize-none overflow-y-auto max-h-60 leading-\[22px\]';/, 'grows to a ceiling, then scrolls');
+  assert.match(englishUiSource(details), /\{briefCaption\(botBuild\)\}/, 'one caption under the field');
   // Measured only while its step shows: a folded field measures 0.
-  assert.match(SRC, /const el = briefRef\.current;\s*if \(!el \|\| step !== 'details'\) return;\s*el\.style\.height = 'auto';\s*if \(el\.scrollHeight > 0\) el\.style\.height = `\$\{el\.scrollHeight\}px`;\s*\}, \[brief, step\]\);/);
+  assert.match(englishUiSource(SRC), /const el = briefRef\.current;\s*if \(!el \|\| step !== 'details'\) return;\s*el\.style\.height = 'auto';\s*if \(el\.scrollHeight > 0\) el\.style\.height = `\$\{el\.scrollHeight\}px`;\s*\}, \[brief, step\]\);/);
 });
 
 test('the one-line description is a step of its own, suggested on arrival, and only re-suggested when it is still ours to change', () => {
+  const SRCEnglish = englishUiSource(SRC);
   const { firstSentence, DESCRIPTION_MAX } = mod();
   const server = require('../src/services/homeroom-bot-dm');
   for (const text of [
@@ -254,39 +257,39 @@ test('the one-line description is a step of its own, suggested on arrival, and o
   ]) {
     assert.equal(firstSentence(text, DESCRIPTION_MAX), server.firstSentence(text, DESCRIPTION_MAX), 'the client falls back the way the server does');
   }
-  const about = SRC.slice(SRC.indexOf('data-create-step="about"'), SRC.indexOf('data-create-step="approve"'));
-  assert.match(about, /\$\{numberOf\('about'\)\}\. Short description/);
-  assert.match(about, /id="app-description"/);
-  assert.match(about, /What is it\?/);
-  assert.doesNotMatch(about, /\(optional\)/, 'required now');
-  assert.match(about, /\{suggesting \? 'Suggesting…' : \(suggestNote \|\| 'One line people see on its page and in Discover\.'\)\}/);
-  assert.match(about, /onClick=\{\(\) => \{ void suggestDescription\(true\); \}\}[\s\S]{0,40}Suggest again/);
-  assert.match(about, /suggestion\.current\.edited = value\.trim\(\) !== '';/, 'a line the person writes is theirs');
-  const fn = SRC.slice(SRC.indexOf('async function suggestDescription(force: boolean) {'), SRC.indexOf('  const stepIndex'));
-  assert.match(fn, /if \(!force && \(mine\.edited \|\| mine\.from === text\)\) return;/, 'only when it changed and is not theirs');
-  assert.match(fn, /fetch\('\/api\/apps\/suggest-description', \{/);
-  assert.match(fn, /line = \(line \|\| firstSentence\(text, DESCRIPTION_MAX\)\)\.slice\(0, DESCRIPTION_MAX\);/, 'the first sentence when no suggestion comes back');
-  assert.match(fn, /if \(suggestion\.current\.seq !== seq\) return;/, 'a late answer is dropped');
-  assert.match(fn, /if \(suggestion\.current\.edited\) return;/, 'a line typed while it was on its way wins');
+  const about = SRCEnglish.slice(SRCEnglish.indexOf('data-create-step="about"'), SRCEnglish.indexOf('data-create-step="approve"'));
+  assert.match(englishUiSource(about), /\$\{numberOf\('about'\)\}\. Short description/);
+  assert.match(englishUiSource(about), /id="app-description"/);
+  assert.match(englishUiSource(about), /What is it\?/);
+  assert.doesNotMatch(englishUiSource(about), /\(optional\)/, 'required now');
+  assert.match(englishUiSource(about), /\{suggesting \? 'Suggesting…' : \(suggestNote \|\| 'One line people see on its page and in Discover\.'\)\}/);
+  assert.match(englishUiSource(about), /onClick=\{\(\) => \{ void suggestDescription\(true\); \}\}[\s\S]{0,40}Suggest again/);
+  assert.match(englishUiSource(about), /suggestion\.current\.edited = value\.trim\(\) !== '';/, 'a line the person writes is theirs');
+  const fn = SRCEnglish.slice(SRCEnglish.indexOf('async function suggestDescription(force: boolean) {'), SRCEnglish.indexOf('  const stepIndex'));
+  assert.match(englishUiSource(fn), /if \(!force && \(mine\.edited \|\| mine\.from === text\)\) return;/, 'only when it changed and is not theirs');
+  assert.match(englishUiSource(fn), /fetch\('\/api\/apps\/suggest-description', \{/);
+  assert.match(englishUiSource(fn), /line = \(line \|\| firstSentence\(text, DESCRIPTION_MAX\)\)\.slice\(0, DESCRIPTION_MAX\);/, 'the first sentence when no suggestion comes back');
+  assert.match(englishUiSource(fn), /if \(suggestion\.current\.seq !== seq\) return;/, 'a late answer is dropped');
+  assert.match(englishUiSource(fn), /if \(suggestion\.current\.edited\) return;/, 'a line typed while it was on its way wins');
 });
 
 test('the invite step: one row per person, suggestions from the user search, an email marked Will invite', () => {
   const rows = SRC.slice(SRC.indexOf('function InviteRows('), SRC.indexOf('/* ── The repo notice'));
-  assert.match(SRC, /fetch\(`\/api\/users\/search\?scope=messages&q=\$\{encodeURIComponent\(q\)\}`/,
+  assert.match(englishUiSource(SRC), /fetch\(`\/api\/users\/search\?scope=messages&q=\$\{encodeURIComponent\(q\)\}`/,
     'friends first, without you or anyone blocked');
-  assert.match(rows, /id="create-invite-block"/);
-  assert.match(rows, /id="create-invitees"/);
-  assert.match(rows, /placeholder="@username or email"/);
-  assert.match(rows, /Will invite/);
-  assert.match(rows, /Add another person/);
-  assert.match(rows, /No one on Homeroom is called @\$\{name\}\. Check the spelling, or invite them by email\./);
-  assert.match(rows, /That email is already on the list\./);
-  assert.match(rows, /onMouseDown=\{\(e\) => \{ e\.preventDefault\(\); add\(/, 'a pick lands before the blur folds the list');
-  assert.match(rows, /disabled=\{full\}/, `no more than the server takes`);
-  assert.match(SRC, /export const MAX_INVITEES = 20;/);
+  assert.match(englishUiSource(rows), /id="create-invite-block"/);
+  assert.match(englishUiSource(rows), /id="create-invitees"/);
+  assert.match(englishUiSource(rows), /placeholder="@username or email"/);
+  assert.match(englishUiSource(rows), /Will invite/);
+  assert.match(englishUiSource(rows), /Add another person/);
+  assert.match(englishUiSource(rows), /No one on Homeroom is called @\$\{name\}\. Check the spelling, or invite them by email\./);
+  assert.match(englishUiSource(rows), /That email is already on the list\./);
+  assert.match(englishUiSource(rows), /onMouseDown=\{\(e\) => \{ e\.preventDefault\(\); add\(/, 'a pick lands before the blur folds the list');
+  assert.match(englishUiSource(rows), /disabled=\{full\}/, `no more than the server takes`);
+  assert.match(englishUiSource(SRC), /export const MAX_INVITEES = 20;/);
   // No focus is moved onto "Add another person" after adding somebody: that
   // drew a stray focus ring in the mock.
-  assert.doesNotMatch(rows, /add[\s\S]{0,80}\.focus\(\)[\s\S]{0,40}create-invitee-add/);
+  assert.doesNotMatch(englishUiSource(rows), /add[\s\S]{0,80}\.focus\(\)[\s\S]{0,40}create-invitee-add/);
   const { EMAIL_RE } = mod();
   assert.ok(EMAIL_RE.test('sam@example.com'));
   assert.ok(!EMAIL_RE.test('sam@example'));
@@ -294,41 +297,42 @@ test('the invite step: one row per person, suggestions from the user search, an 
 });
 
 test('the kind step and how to start: rows, with what is not ready yet dimmed and saying Soon', () => {
-  const kind = SRC.slice(SRC.indexOf('data-create-step="kind"'), SRC.indexOf('data-create-step="start"'));
-  assert.match(kind, /data-kind-pill="app"/);
-  assert.match(kind, /Something you build and use together\./);
-  assert.match(kind, /data-kind-pill="doc" aria-disabled="true"/);
-  assert.match(kind, /Pages you write and edit together\./);
-  assert.match(kind, /data-kind-pill="video" aria-disabled="true"/);
-  assert.match(kind, /A video you make together, from script to cut\./);
+  const SRCEnglish = englishUiSource(SRC);
+  const kind = SRCEnglish.slice(SRCEnglish.indexOf('data-create-step="kind"'), SRCEnglish.indexOf('data-create-step="start"'));
+  assert.match(englishUiSource(kind), /data-kind-pill="app"/);
+  assert.match(englishUiSource(kind), /Something you build and use together\./);
+  assert.match(englishUiSource(kind), /data-kind-pill="doc" aria-disabled="true"/);
+  assert.match(englishUiSource(kind), /Pages you write and edit together\./);
+  assert.match(englishUiSource(kind), /data-kind-pill="video" aria-disabled="true"/);
+  assert.match(englishUiSource(kind), /A video you make together, from script to cut\./);
   // How to start comes straight after what you are making, before the name.
   const order = ['who', 'invite', 'kind', 'start', 'details', 'about', 'approve']
-    .map((step) => SRC.indexOf(`data-create-step="${step}"`));
+    .map((step) => SRCEnglish.indexOf(`data-create-step="${step}"`));
   assert.deepEqual([...order].sort((x, y) => x - y), order, 'the sections in the order the steps unfold');
-  const start = SRC.slice(SRC.indexOf('data-create-step="start"'), SRC.indexOf('data-create-step="details"'));
+  const start = SRCEnglish.slice(SRCEnglish.indexOf('data-create-step="start"'), SRCEnglish.indexOf('data-create-step="details"'));
   assert.ok(start.indexOf('data-mode-pill="new"') < start.indexOf('data-mode-pill="template"')
     && start.indexOf('data-mode-pill="template"') < start.indexOf('data-mode-pill="import"')
     && start.indexOf('data-mode-pill="import"') < start.indexOf('id="create-import-block"'),
     'scratch, template, repo, then the repo check under them');
-  assert.match(start, /Start from scratch/);
-  assert.match(start, /Start from a template/);
-  assert.match(start, /Import a GitHub repo/);
+  assert.match(englishUiSource(start), /Start from scratch/);
+  assert.match(englishUiSource(start), /Start from a template/);
+  assert.match(englishUiSource(start), /Import a GitHub repo/);
   // #3521: the template row is a choice now, not a dimmed Soon, and its
   // starters render under it only once it is chosen, so nothing about them
   // is in the prerendered document.
-  assert.match(start, /data-mode-pill="template"\s+aria-pressed=\{mode === 'template'\}\s+className=\{CHOICE\}\s+onClick=\{\(\) => chooseStart\('template'\)\}/);
-  assert.doesNotMatch(start, /data-mode-pill="template" aria-disabled/);
+  assert.match(englishUiSource(start), /data-mode-pill="template"\s+aria-pressed=\{mode === 'template'\}\s+className=\{CHOICE\}\s+onClick=\{\(\) => chooseStart\('template'\)\}/);
+  assert.doesNotMatch(englishUiSource(start), /data-mode-pill="template" aria-disabled/);
   assert.ok(start.indexOf('data-mode-pill="template"') < start.indexOf('id="create-template-block"')
     && start.indexOf('id="create-template-block"') < start.indexOf('data-mode-pill="import"'),
     'the starters open directly under their row');
-  assert.match(start, /\{mode === 'template' \? \(\s*<div id="create-template-block"/);
-  assert.match(start, /data-template-pill=\{choice\.key\}\s+aria-pressed=\{template === choice\.key\}/);
+  assert.match(englishUiSource(start), /\{mode === 'template' \? \(\s*<div id="create-template-block"/);
+  assert.match(englishUiSource(start), /data-template-pill=\{choice\.key\}\s+aria-pressed=\{template === choice\.key\}/);
   // Each way to start says "Change" once the step has collapsed to it.
   assert.equal((start.match(/<span className=\{CHOICE_CHANGE\}>Change<\/span>/g) || []).length, 3);
-  assert.match(SRC, /const \[template, setTemplate\] = useState<TemplateId \| null>\(null\);/, 'nothing picked on arrival');
-  assert.match(SRC, /\{`\$\{numberOf\('start'\)\}\. How do you want to start\?`\}/);
-  assert.match(SRC, />\s*A majority\s*</, '"Most of them" reads "A majority"');
-  assert.doesNotMatch(SRC, /Most of them/);
+  assert.match(englishUiSource(SRCEnglish), /const \[template, setTemplate\] = useState<TemplateId \| null>\(null\);/, 'nothing picked on arrival');
+  assert.match(englishUiSource(SRCEnglish), /\{`\$\{numberOf\('start'\)\}\. How do you want to start\?`\}/);
+  assert.match(englishUiSource(SRCEnglish), />\s*A majority\s*</, '"Most of them" reads "A majority"');
+  assert.doesNotMatch(englishUiSource(SRCEnglish), /Most of them/);
 });
 
 test('app.css unfolds the steps in place, keeps each step to the answers it belongs to, and shapes the footer', () => {
@@ -370,19 +374,19 @@ test('#24 (D8): a question\'s rows end in a selection marker, not a chevron, bec
   // set the answer. What changed is the mark at each row's edge.
   const who = SRC.slice(SRC.indexOf('data-create-step="who"'), SRC.indexOf('data-create-step="invite"'));
   const kind = SRC.slice(SRC.indexOf('data-create-step="kind"'), SRC.indexOf('data-create-step="start"'));
-  assert.match(who, /<ChoiceMarker chosen=\{audience === choice\.key\} \/>\s*<span className=\{CHOICE_CHANGE\}>Change<\/span>/);
-  assert.match(kind, /<ChoiceMarker chosen=\{kind === 'app'\} \/>\s*<span className=\{CHOICE_CHANGE\}>Change<\/span>/);
-  assert.doesNotMatch(SRC, /ChevronRightIcon|create-choice-chevron/, 'no chevron left on a row that only selects');
+  assert.match(englishUiSource(who), /<ChoiceMarker chosen=\{audience === choice\.key\} \/>\s*<span className=\{CHOICE_CHANGE\}>Change<\/span>/);
+  assert.match(englishUiSource(kind), /<ChoiceMarker chosen=\{kind === 'app'\} \/>\s*<span className=\{CHOICE_CHANGE\}>Change<\/span>/);
+  assert.doesNotMatch(englishUiSource(SRC), /ChevronRightIcon|create-choice-chevron/, 'no chevron left on a row that only selects');
   // The marker is a ring, and the chosen row's carries the shell's own check
   // (an existing glyph, not one drawn here).
-  assert.match(SRC, /import \{[^}]*\bCheckIcon\b[^}]*\} from '@\/components\/ui\/icons';/);
+  assert.match(englishUiSource(SRC), /import \{[^}]*\bCheckIcon\b[^}]*\} from '@\/components\/ui\/icons';/);
   const marker = SRC.slice(SRC.indexOf('function ChoiceMarker('), SRC.indexOf('/* The small numbered heading'));
-  assert.match(marker, /<span className=\{CHOICE_MARKER\} aria-hidden="true">\s*\{chosen \? <CheckIcon className="h-3\.5 w-3\.5" strokeWidth="3" \/> : null\}/);
-  assert.doesNotMatch(marker, /<svg|<path/, 'no hand-drawn glyph');
-  assert.match(SRC, /const CHOICE_MARKER = 'create-choice-marker [^']*rounded-full ring-\[1\.5px\] ring-inset ring-current[^']*';/);
+  assert.match(englishUiSource(marker), /<span className=\{CHOICE_MARKER\} aria-hidden="true">\s*\{chosen \? <CheckIcon className="h-3\.5 w-3\.5" strokeWidth="3" \/> : null\}/);
+  assert.doesNotMatch(englishUiSource(marker), /<svg|<path/, 'no hand-drawn glyph');
+  assert.match(englishUiSource(SRC), /const CHOICE_MARKER = 'create-choice-marker [^']*rounded-full ring-\[1\.5px\] ring-inset ring-current[^']*';/);
   // The chosen ring fills with the row's ink and its check takes the accent.
-  assert.match(CSS, /#create-card :is\(\.create-who-pill, \.create-kind-row\)\[aria-pressed="true"\] > \.create-choice-marker \{\s*background-color: currentColor;\s*opacity: 1;\s*\}/);
-  assert.match(CSS, /#create-card :is\(\.create-who-pill, \.create-kind-row\)\[aria-pressed="true"\] > \.create-choice-marker > svg \{\s*color: #0a6ee0;/);
+  assert.match(englishUiSource(CSS), /#create-card :is\(\.create-who-pill, \.create-kind-row\)\[aria-pressed="true"\] > \.create-choice-marker \{\s*background-color: currentColor;\s*opacity: 1;\s*\}/);
+  assert.match(englishUiSource(CSS), /#create-card :is\(\.create-who-pill, \.create-kind-row\)\[aria-pressed="true"\] > \.create-choice-marker > svg \{\s*color: #0a6ee0;/);
   // And in the prerendered document: four rows with a marker (three
   // audiences and App), none chosen yet, and no chevron among them.
   const html = shellMarkup();
@@ -477,15 +481,15 @@ test('Create sends one request at a time and shows it is busy', () => {
   const guard = submit.indexOf('if (submittingRef.current) return;');
   assert.ok(guard > 0, 'the handler has its own in-flight guard');
   assert.ok(guard < submit.indexOf('await postCreateApp(body)'), 'claimed before the request');
-  assert.match(submit, /if \(submittingRef\.current\) return;\s*submittingRef\.current = true;\s*setSubmitting\(true\);\s*try \{/);
-  assert.match(submit, /\} finally \{\s*submittingRef\.current = false;\s*setSubmitting\(false\);\s*\}/);
+  assert.match(englishUiSource(submit), /if \(submittingRef\.current\) return;\s*submittingRef\.current = true;\s*setSubmitting\(true\);\s*try \{/);
+  assert.match(englishUiSource(submit), /\} finally \{\s*submittingRef\.current = false;\s*setSubmitting\(false\);\s*\}/);
   assert.equal((submit.match(/postCreateApp\(/g) || []).length, 1);
   assert.equal((SRC.match(/fetch\('\/api\/apps'/g) || []).length, 1);
   const button = SRC.slice(SRC.indexOf('id="create-submit"'), SRC.indexOf('</Button>', SRC.indexOf('id="create-submit"')));
-  assert.match(button, /aria-busy=\{submitting \|\| undefined\}/, 'no aria-busy in the prerender');
-  assert.match(button, /\{submitting \? <SpinnerArcIcon /);
-  assert.match(button, /\(importing \? 'Importing…' : 'Creating…'\)/);
-  assert.match(SRC, /const \[submitting, setSubmitting\] = useState\(false\);/, 'starts idle, as prerendered');
+  assert.match(englishUiSource(button), /aria-busy=\{submitting \|\| undefined\}/, 'no aria-busy in the prerender');
+  assert.match(englishUiSource(button), /\{submitting \? <SpinnerArcIcon /);
+  assert.match(englishUiSource(button), /\(importing \? 'Importing…' : 'Creating…'\)/);
+  assert.match(englishUiSource(SRC), /const \[submitting, setSubmitting\] = useState\(false\);/, 'starts idle, as prerendered');
 });
 
 test('the prerendered Create button is idle', () => {

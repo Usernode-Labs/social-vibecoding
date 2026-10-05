@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // A left swipe archives an agent session from the Homeroom menu (#3515).
 //
@@ -29,7 +30,7 @@ const path = require('node:path');
 const { loadTsx } = require('./lib/render-tsx');
 
 const ROOT = path.join(__dirname, '..');
-const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
+const read = (f) => englishUiSource(fs.readFileSync(path.join(ROOT, f), 'utf8'));
 
 const STORE = 'frontend/src/features/agent-session/store.ts';
 const SHEET = 'frontend/src/features/app-context/app-context-sheet.tsx';
@@ -141,12 +142,12 @@ test('#3515: the ⋯ and the swipe share one confirm, so the two cannot drift ap
   const store = read(STORE);
   assert.equal((store.match(/title: 'Archive this session\?'/g) || []).length, 1, 'the question is written once');
   const current = store.slice(store.indexOf('export async function archiveCurrentSession('), store.indexOf('export async function archiveListedSession('));
-  assert.match(current, /const ok = await confirmArchive\(\);/);
+  assert.match(englishUiSource(current), /const ok = await confirmArchive\(\);/);
   const listedFn = store.slice(store.indexOf('export async function archiveListedSession('), store.indexOf('export async function unarchiveCurrentSession('));
-  assert.match(listedFn, /confirmArchive\(\)/);
-  assert.match(listedFn, /api\.archiveSession\(id\)/);
-  assert.match(listedFn, /sessions: current\.sessions\.filter\(\(s\) => s\.id !== id\)/);
-  assert.match(listedFn, /\.\.\.\(current\.id === id \? \{ session \} : \{\}\)/,
+  assert.match(englishUiSource(listedFn), /confirmArchive\(\)/);
+  assert.match(englishUiSource(listedFn), /api\.archiveSession\(id\)/);
+  assert.match(englishUiSource(listedFn), /sessions: current\.sessions\.filter\(\(s\) => s\.id !== id\)/);
+  assert.match(englishUiSource(listedFn), /\.\.\.\(current\.id === id \? \{ session \} : \{\}\)/,
     'the conversation on screen, if it is this one, takes the archived session, read-only with Unarchive');
 });
 
@@ -154,16 +155,16 @@ test('#3515: each Agent sessions row wears the kit\'s swipe, on touch only, with
   const sheet = read(SHEET);
   const row = sheet.slice(sheet.indexOf('function SessionRow('), sheet.indexOf('export function AppsSwitcherSheet('));
   assert.ok(row.length > 0, 'SessionRow sits between MenuRow and the sheet');
-  assert.match(row, /if \(!el \|\| !ui\?\.isTouch\(\) \|\| !ui\.swipeActions\) return undefined;/,
+  assert.match(englishUiSource(row), /if \(!el \|\| !ui\?\.isTouch\(\) \|\| !ui\.swipeActions\) return undefined;/,
     'a phone\'s gesture: no swipe for a mouse, and none without the kit');
-  assert.match(row, /ui\.swipeActions\(el, \{\s*actions: \[\{\s*label: 'Archive',\s*destructive: true,/,
+  assert.match(englishUiSource(row), /ui\.swipeActions\(el, \{\s*actions: \[\{\s*label: 'Archive',\s*destructive: true,/,
     'the ⋯\'s word, and the full swipe commits it');
-  assert.match(row, /archiveListedSession\(row\.sessionId\)\.then\(\(archived\) => \{\s*if \(!archived\) setRound\(\(n\) => n \+ 1\);/,
+  assert.match(englishUiSource(row), /archiveListedSession\(row\.sessionId\)\.then\(\(archived\) => \{\s*if \(!archived\) setRound\(\(n\) => n \+ 1\);/,
     'a Cancel or a refusal renders the row again');
-  assert.match(row, /return \(\) => swipe\.detach\(\);\s*\}, \[row\.sessionId, round\]\);/, 'detached when the row goes');
-  assert.doesNotMatch(row, /label: 'Delete'/, 'nothing deletes an agent session');
+  assert.match(englishUiSource(row), /return \(\) => swipe\.detach\(\);\s*\}, \[row\.sessionId, round\]\);/, 'detached when the row goes');
+  assert.doesNotMatch(englishUiSource(row), /label: 'Delete'/, 'nothing deletes an agent session');
   // Wired after mount, from an effect: the rows are not in the prerender.
-  assert.match(row, /useEffect\(\(\) => \{\s*const el = rowRef\.current;/);
+  assert.match(englishUiSource(row), /useEffect\(\(\) => \{\s*const el = rowRef\.current;/);
 });
 
 test('#3515: the kit wraps the row inside a React-owned slot, keyed for the row\'s return, and the <a> keeps its id and key', () => {

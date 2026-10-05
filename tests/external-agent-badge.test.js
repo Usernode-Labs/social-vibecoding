@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #967: the "Built with Claude Code / Codex" provenance chip.
 //
 // A proposal that came in through the hosted MCP connector was written by
@@ -59,7 +60,7 @@ function makeAppView(userId) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${MERGE_STATUS_SRC}\n${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView._proposalsCtx = { majority: 1 };

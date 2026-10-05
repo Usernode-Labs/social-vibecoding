@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // Full-page admin & moderation console (#818) — the second slice behind
 // the #588 header icon: the "Coming soon" placeholder is replaced by a
 // hash-routed #admin screen rendered by frontend/src/features/admin/admin-console.js.
@@ -81,9 +82,9 @@ test('navigateToAdminConsole re-checks isAdmin and bails home for non-admins', (
 });
 
 test('the admin screen ships hidden in the shell like its siblings', () => {
-  const main = html.match(/<main id="admin-screen"[^>]*>/);
+  const main = html.match(/<main\b[^>]*\bid="admin-screen"[^>]*>/);
   assert.ok(main, 'index.html carries #admin-screen');
-  assert.match(main[0], /class="hidden /, 'ships hidden — revealed only by navigation');
+  assert.match(englishUiSource(main[0]), /class="hidden /, 'ships hidden — revealed only by navigation');
   assert.ok(html.includes('id="admin-root"'), 'the module renders into #admin-root');
   // #1082 chunk E: the console's ten modules arrive with the React bundle now,
   // not as a <script src="/js/admin-console.js"> tag. The chassis they used to
@@ -97,7 +98,7 @@ test('the admin screen ships hidden in the shell like its siblings', () => {
   const banner = html.match(/<div id="admin-view-only-banner"[^>]*>/);
   assert.ok(banner && /class="hidden /.test(banner[0]),
     'the view-only banner ships hidden — AdminConsole._renderShell reveals it');
-  assert.match(html, /<div id="admin-section-content" class="pb-8"><\/div>/,
+  assert.match(englishUiSource(html), /<div id="admin-section-content" class="pb-8"><\/div>/,
     'the section host ships EMPTY: sections render into it from the module');
 });
 
@@ -336,7 +337,7 @@ test('every section module exposes destroy(), and switches call it first', () =>
 // and sees ONLY them. Everything else, including bare #admin, still bounces.
 test('the two formerly-public sections stay reachable for non-admins', () => {
   for (const key of ['status', 'node']) {
-    assert.match(consoleJs, new RegExp(`key: '${key}'[^}]*public: true`),
+    assert.match(englishUiSource(consoleJs), new RegExp(`key: '${key}'[^}]*public: true`),
       `section '${key}' is flagged public`);
   }
   // Only those two — counted inside the SECTIONS literal, so the
@@ -347,18 +348,18 @@ test('the two formerly-public sections stay reachable for non-admins', () => {
   );
   assert.equal((sectionBlock.match(/public: true/g) || []).length, 2,
     'exactly two sections are public');
-  assert.match(consoleJs, /_visibleSections\(\)\s*\{/, 'the menu filters by visibility');
-  assert.match(consoleJs, /filter\(\(s\) => s\.public\)/,
+  assert.match(englishUiSource(consoleJs), /_visibleSections\(\)\s*\{/, 'the menu filters by visibility');
+  assert.match(englishUiSource(consoleJs), /filter\(\(s\) => s\.public\)/,
     'public mode narrows the menu to the public sections');
 
   const fn = appJs.slice(appJs.indexOf('  navigateToAdminConsole('));
   const head = fn.slice(0, 900);
-  assert.match(appJs, /ADMIN_PUBLIC_SECTIONS: \['status', 'node'\]/,
+  assert.match(englishUiSource(appJs), /ADMIN_PUBLIC_SECTIONS: \['status', 'node'\]/,
     'app.js pins the public section list');
-  assert.match(head, /if \(!isAdmin && !publicMode\)/,
+  assert.match(englishUiSource(head), /if \(!isAdmin && !publicMode\)/,
     'a non-admin on any non-public section still bails');
-  assert.match(head, /App\.navigateHome\(\)/, 'and lands on home');
-  assert.match(fn.slice(0, 4000), /publicMode \? 'Platform status' : 'Admin & moderation'/,
+  assert.match(englishUiSource(head), /App\.navigateHome\(\)/, 'and lands on home');
+  assert.match(englishUiSource(fn.slice(0, 4000)), /publicMode \? 'Platform status' : 'Admin & moderation'/,
     'public mode retitles the header');
 });
 

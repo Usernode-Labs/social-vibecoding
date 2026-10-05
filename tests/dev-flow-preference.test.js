@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // The saved build-flow preference (#1049).
 //
 // "Remember my choice" on the dev-chat flow picker, and the same dropdown in
@@ -28,7 +29,7 @@ const express = require('express');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+const read = (rel) => englishUiSource(fs.readFileSync(path.join(__dirname, '..', rel), 'utf8'));
 
 // Stub the pool BEFORE requiring the routes. `storedFlow` is what the
 // /api/auth/me user lookup reports back, so the round-trip can be exercised
@@ -227,7 +228,7 @@ test('Settings offers the same preference as a dropdown', () => {
   // The block is markup now, its three ids are declared in
   // tests/shell-id-inventory.test.js's ADDED_IDS with that reason, and the
   // module keeps exactly what it keeps for every other control on the screen.
-  const pane = read('frontend/src/features/settings/sections/connectors.tsx');
+  const pane = englishUiSource(read('frontend/src/features/settings/sections/connectors.tsx'));
   assert.match(pane, /id="dev-flow-pref-section"/);
   assert.match(pane, /id="settings-dev-flow"/);
   assert.match(pane, /data-settings-section="connectors"/,
@@ -329,11 +330,11 @@ test('the ⋯ menu leads with its asks and names its settings group', () => {
   // beside it, under "Add to the board". The hub's ⋯ leads with that row as
   // "Ask for a change", and the first group needs no heading: it is the
   // menu's first, and "Settings & rules" says where the rest begins.
-  const frame = read('frontend/src/features/dev-board/actions-row.tsx');
-  assert.doesNotMatch(frame, /label="Add to the board"/);
-  assert.ok(frame.indexOf('data-plus="issue"') < frame.indexOf('data-plus="import-pr"')
-    && frame.indexOf('data-plus="import-pr"') < frame.indexOf('groupKey="settings"'));
-  assert.match(frame, /label="Settings &amp; rules"[\s\S]{0,80}groupKey="settings"[\s\S]{0,40}divider/);
+  const frame = englishUiSource(read('frontend/src/features/dev-board/actions-row.tsx'));
+  assert.doesNotMatch(englishUiSource(frame), /label="Add to the board"/);
+  assert.ok(englishUiSource(frame).indexOf('data-plus="issue"') < englishUiSource(frame).indexOf('data-plus="import-pr"')
+    && englishUiSource(frame).indexOf('data-plus="import-pr"') < englishUiSource(frame).indexOf('groupKey="settings"'));
+  assert.match(englishUiSource(frame), /label="Settings & rules"[\s\S]{0,80}groupKey="settings"[\s\S]{0,40}divider/);
   // A heading must not be a <button>: _wirePlusMenu collects
   // `button[data-plus]` for the touch action sheet, and a heading that
   // matched would arrive there as a tappable row that does nothing.
@@ -342,9 +343,9 @@ test('the ⋯ menu leads with its asks and names its settings group', () => {
   // Slice from the RETURN, not the signature: the destructured props' type
   // annotation closes with a `}` in column 0, which is not the function's end.
   const fn = frame.slice(fnStart, frame.indexOf('\n}\n', frame.indexOf('return (', fnStart)));
-  assert.match(fn, /<div\s+data-plus-group=/, 'headings render as a div');
-  assert.ok(!fn.includes('data-plus="'), 'a heading carries no data-plus');
+  assert.match(englishUiSource(fn), /<div\s+data-plus-group=/, 'headings render as a div');
+  assert.ok(!englishUiSource(fn).includes('data-plus="'), 'a heading carries no data-plus');
   // The touch sheet renders them too, since it has no heading primitive.
-  assert.match(appView, /button\[data-plus\], \[data-plus-group\]/,
+  assert.match(englishUiSource(appView), /button\[data-plus\], \[data-plus-group\]/,
     'the action sheet walks headings and rows together, in DOM order');
 });

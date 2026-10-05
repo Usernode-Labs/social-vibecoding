@@ -1,4 +1,7 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
+
 
 // Live, honest proposal status (#1715): the parts that can be pinned without
 // a browser.
@@ -333,7 +336,7 @@ function makeAppView() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${MERGE_STATUS_SRC}\n${SESSION_TRANSCRIPT_SRC}\n${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView._proposalsCtx = { majority: 3, activeUsers: 5, locked: false };
@@ -800,7 +803,7 @@ test('#2170: every ?demo=1 mock with a verdict carries the kept shape; a run in 
   }
   const ctx = { module: {}, console, connectionExhaustionMessage: () => '', ROLLOUT_RETRY_DETAIL: '' };
   ctx.globalThis = ctx;
-  vm.createContext(ctx);
+  vm.createContext(withLanguage(ctx));
   vm.runInContext(`${src.slice(start, end)}\n;globalThis.__rows = stagingMockProposals;`, ctx);
   const rows = JSON.parse(JSON.stringify(ctx.__rows('me')));
   const byId = (id) => rows.find((r) => r.id === id);
@@ -933,12 +936,13 @@ test('an integration supersedes a check run rather than queueing behind it', () 
 });
 
 test('the board card and the running badge carry the live count', () => {
+  const APP_VIEW_SRCEnglish = englishUiSource(APP_VIEW_SRC);
   const AppView = makeAppView();
   const badge = AppView.checksBadgeHtml({ status: 'promoted', check_state: 'pending', checks_progress: { ran: 12, passed: 12, failed: 0, expected: 523 } });
   assert.match(badge, /Checks running…\s12\/523</);
   const quiet = AppView.checksBadgeHtml({ status: 'promoted', check_state: 'pending', checks_progress: null });
   assert.match(quiet, /Checks running…</, 'no count before the first frame');
-  const src = APP_VIEW_SRC;
+  const src = APP_VIEW_SRCEnglish;
   assert.match(src, /label: p\.check_state === 'pending' \? `Checks running…\$\{count\}` : 'Checks starting…',/);
 });
 

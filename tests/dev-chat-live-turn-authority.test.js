@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #2599: one source of truth for "a turn is live" in the dev chat.
 //
 // An OpenRouter run's state drifted from the UI in three ways the report
@@ -133,7 +134,7 @@ function makeHarness({ transcript = false } = {}) {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   sandbox.UsernodeReact = { devChat: transcript ? t.bridge : composer.bridge };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SUMMARY_SRC}\n${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   const DevChat = sandbox.__DevChat;
   DevChat.refreshBudget = () => {};

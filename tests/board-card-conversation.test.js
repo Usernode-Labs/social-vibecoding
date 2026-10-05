@@ -1,3 +1,5 @@
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
 // One card, one set of controls, on every view (#1884).
 //
 // The Workshop's rows carried the item's conversation — the recent GitHub
@@ -71,7 +73,7 @@ function makeAppView({ search = '' } = {}) {
     location: { search, hash: '', href: `http://localhost/${search}` }, URLSearchParams,
   };
   sandbox.window = sandbox; sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView.appData = { slug: 'demo-app', can_collaborate: true };
@@ -264,11 +266,11 @@ test('the three controls #1884 names are the same three on every surface', () =>
   // which screen drew the card.
   assert.ok(!/OpenMode|expand[?:]|'inline'/.test(FOLD),
     'no open mode: "Open card" is the item\u2019s page, whichever surface drew it');
-  assert.match(FOLD, /const openBtn = placement && href\s*\? <a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>Open card<\/a>/);
+  assert.match(englishUiSource(FOLD), /const openBtn = placement && href\s*\? <a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>Open card<\/a>/);
   // The reply box and the comment tail are the ROW's to carry, and both
   // surfaces build rows through the one helper (asserted above).
-  assert.match(FOLD, /\{row\.commentsFor != null \? \(/);
-  assert.match(FOLD, /\{row\.thread && slug \? \(/);
+  assert.match(englishUiSource(FOLD), /\{row\.commentsFor != null \? \(/);
+  assert.match(englishUiSource(FOLD), /\{row\.thread && slug \? \(/);
   // The one thing still keyed on the surface, and it is not one of the
   // three: #1887's session line, which the Board has no rule to style.
   const surfaceProps = FOLD.match(/^\s*sessionLink\??[:=]/gm) || [];
@@ -276,7 +278,7 @@ test('the three controls #1884 names are the same three on every surface', () =>
   // And it is the only one: the open row takes the row, the slug, whether
   // the viewer may post, where the pill sits, that line, and how to fold.
   const sig = FOLD.slice(FOLD.indexOf('export function UnfoldedRow'));
-  assert.match(sig.slice(0, sig.indexOf('): ReactNode {')),
+  assert.match(englishUiSource(sig.slice(0, sig.indexOf('): ReactNode {'))),
     /row, slug, canPost, detail: placement = 'actions', sessionLink = true, onFold,/,
     'nothing else in the signature decides behaviour per surface');
 });

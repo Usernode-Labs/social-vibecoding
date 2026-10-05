@@ -1,4 +1,6 @@
 'use strict';
+const { withLanguage } = require("./lib/platform-language");
+
 
 // The dev chat on a phone: what made a streaming turn stutter and typing lag,
 // and the fix for each. An emulated-iPhone audit (the same one #3104 ran on
@@ -144,7 +146,7 @@ function loadDevChat({ raf = null, markdown = true, els = {} } = {}) {
       publishStream: (s) => { counts.publishStream += 1; published.stream = s; },
     },
   };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${STREAMING_SRC}\n${DEV_CHAT_SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   const DevChat = sandbox.__DevChat;
   // The neighbours `renderMessages` wires after its publish; not under test.

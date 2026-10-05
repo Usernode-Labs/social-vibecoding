@@ -1,4 +1,6 @@
 'use strict';
+const { withLanguage } = require("./lib/platform-language");
+
 
 // Exercise the actual router, directory lifecycle, and header click handler
 // together. Testing Browse.handleBack alone misses a hidden directory claiming
@@ -50,14 +52,14 @@ function harness() {
     // #2902: Home retires the frame (kept loaded, hidden) — off screen either way.
     _retireAppFrame() { frameMounted = false; },
   };
-  const context = vm.createContext({
+  const context = vm.createContext(withLanguage({
     location, history, URL, URLSearchParams, console,
     document: { title: '', getElementById: element, querySelector: () => null, addEventListener() {} },
     addEventListener() {}, localStorage: { getItem: () => null },
     PlatformUI: { transition(fn, opts) { fn(); opts?.after?.(); } },
     Home: { load() {}, publishImproveTarget() {}, _apps: [] },
     AppView,
-  });
+  }));
   context.window = context;
   vm.runInContext(read('public/js/app.js'), context);
   vm.runInContext(read('frontend/src/features/apps/browse.js'), context);

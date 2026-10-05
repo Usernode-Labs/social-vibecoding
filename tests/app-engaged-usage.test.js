@@ -1,4 +1,6 @@
 'use strict';
+const { withLanguage } = require("./lib/platform-language");
+
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -349,7 +351,7 @@ test('the embedded bridge only forwards trusted input after a parent probe', () 
       listeners.set(name, list);
     },
   };
-  vm.runInNewContext(source.slice(begin, end), { window, Date });
+  vm.runInNewContext(source.slice(begin, end), withLanguage({ window, Date }));
   const emit = (name, event) => (listeners.get(name) || []).forEach((fn) => fn(event));
   emit('pointerdown', { isTrusted: true });
   assert.equal(posts.length, 0, 'input before the shell probe is ignored');

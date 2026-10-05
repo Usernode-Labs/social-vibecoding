@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // The agent session's session and change controls (#2779 follow-up): what
 // the dev chat's session had around the conversation.
@@ -61,7 +62,7 @@ test('the walkthrough is the dev chat\'s: its steps over the server\'s status', 
     }, 'codex');
     assert.equal(ready[2].state, 'current');
     assert.deepEqual(ready[2].actions.map((a) => a.action), ['copy', 'open-agent']);
-    assert.match(ready[2].detail, /lands as an update to it/);
+    assert.match(englishUiSource(ready[2].detail), /lands as an update to it/);
     assert.deepEqual(api.handoffSteps({ available: false, reason: 'no_repository' }, 'codex'), [], 'unavailable: its note, not steps');
 
     // The tab's compact checks are those steps, and "Homeroom connected" is
@@ -94,21 +95,21 @@ test('the walkthrough is the dev chat\'s: its steps over the server\'s status', 
     delete globalThis.window;
   }
   const dialog = read('frontend/src/features/agent-session/handoff.tsx');
-  assert.match(dialog, /api\.handoffStatus\(target\.slug, target\.change \? \{ id: target\.change\.id, kind: target\.change\.kind \} : null\)/);
-  assert.match(read('frontend/src/features/agent-session/api.ts'), /\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/dev-flow\/status/);
-  assert.match(dialog, /<ClaudeSetupSteps \/>/, 'Connect Homeroom shows the connector steps in place');
-  assert.match(read('frontend/src/features/agent-session/api.ts'), /query\.set\('specFrom', String\(change\.id\)\);/,
+  assert.match(englishUiSource(dialog), /api\.handoffStatus\(target\.slug, target\.change \? \{ id: target\.change\.id, kind: target\.change\.kind \} : null\)/);
+  assert.match(englishUiSource(read('frontend/src/features/agent-session/api.ts')), /\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/dev-flow\/status/);
+  assert.match(englishUiSource(dialog), /<ClaudeSetupSteps \/>/, 'Connect Homeroom shows the connector steps in place');
+  assert.match(englishUiSource(read('frontend/src/features/agent-session/api.ts')), /query\.set\('specFrom', String\(change\.id\)\);/,
     'the instructions are asked to carry this change\'s spec (the server checks it is the viewer\'s)');
   // One button: copy inside the click, then the agent opens in a new tab.
-  assert.match(dialog, /href=\{AGENT_URL\[agent\]\}\s+target="_blank"\s+rel="noopener noreferrer"\s+data-agent-session-handoff-action="copy-open"\s+onClick=\{copyAndOpen\}/);
-  assert.match(dialog, /\{`Copy instructions and open \$\{label\}`\}/);
-  assert.match(dialog, />Paste into the new session\. It starts building straight away\.</);
-  assert.match(dialog, /Handed over with the instructions/);
-  assert.match(dialog, /`This chat's spec: "\$\{active\.title\}"`/);
+  assert.match(englishUiSource(dialog), /href=\{AGENT_URL\[agent\]\}\s+target="_blank"\s+rel="noopener noreferrer"\s+data-agent-session-handoff-action="copy-open"\s+onClick=\{copyAndOpen\}/);
+  assert.match(englishUiSource(dialog), /\{`Copy instructions and open \$\{label\}`\}/);
+  assert.match(englishUiSource(dialog), />Paste into the new session\. It starts building straight away\.</);
+  assert.match(englishUiSource(dialog), /Handed over with the instructions/);
+  assert.match(englishUiSource(dialog), /`This chat's spec: "\$\{active\.title\}"`/);
   // The copy fallback: the instructions, open, for copying by hand.
-  assert.match(dialog, /<details [^>]*open=\{manual\}>/);
-  assert.match(dialog, /Could not copy\. Copy the instructions below by hand/);
-  assert.doesNotMatch(dialog, /export function (HandoffDialog|VenuePicker)|<dialog/, 'no second dialog');
+  assert.match(englishUiSource(dialog), /<details [^>]*open=\{manual\}>/);
+  assert.match(englishUiSource(dialog), /Could not copy\. Copy the instructions below by hand/);
+  assert.doesNotMatch(englishUiSource(dialog), /export function (HandoffDialog|VenuePicker)|<dialog/, 'no second dialog');
 });
 
 test('out of credits: a card with credit-options.js\'s copy, the web hand-offs first, no developer routes', () => {
@@ -242,34 +243,34 @@ test('the card\'s checks open the dialog and a failing run offers Re-run; the ba
   const failing = renderToHtml(createElement(api.PreviewCardView, {
     item, change: change({ checkState: 'failing', checkFailing: 2 }), wide: true, action: null, busy: false,
   }));
-  assert.match(failing, /<button[^>]*data-agent-session-checks="failing"[^>]*>[\s\S]*?2 checks failing<\/button>/, 'the line is the way to the list');
-  assert.match(failing, /data-agent-session-preview-recheck="true">Re-run checks</);
-  assert.match(failing, /data-agent-session-preview-open="true">Open preview<\/button><a[^>]*data-agent-session-preview-change/,
+  assert.match(englishUiSource(failing), /<button[^>]*data-agent-session-checks="failing"[^>]*>[\s\S]*?2 checks failing<\/button>/, 'the line is the way to the list');
+  assert.match(englishUiSource(failing), /data-agent-session-preview-recheck="true">Re-run checks</);
+  assert.match(englishUiSource(failing), /data-agent-session-preview-open="true">Open preview<\/button><a[^>]*data-agent-session-preview-change/,
     'Open preview and Open draft proposal stay side by side (the declared check)');
   const passing = renderToHtml(createElement(api.PreviewCardView, {
     item, change: change({ checkState: 'passing' }), wide: true, action: null, busy: false,
   }));
-  assert.doesNotMatch(passing, /Re-run checks/, 'nothing to re-run on a green change');
+  assert.doesNotMatch(englishUiSource(passing), /Re-run checks/, 'nothing to re-run on a green change');
   const running = renderToHtml(createElement(api.PreviewCardView, {
     item, change: change({ checkState: 'failing', checkFailing: 1 }), wide: true, action: 'recheck', busy: true,
   }));
-  assert.match(running, />Re-running…</);
+  assert.match(englishUiSource(running), />Re-running…</);
 
   const panel = read('frontend/src/features/agent-session/index.tsx');
-  assert.doesNotMatch(panel, /VenuePicker|data-agent-session-venue|HandoffDialog/, '#3078: Build left the bar');
+  assert.doesNotMatch(englishUiSource(panel), /VenuePicker|data-agent-session-venue|HandoffDialog/, '#3078: Build left the bar');
   // The pills and Changes stay siblings: #2779's declared drawer check reads
   // the bar as focus ~ change pill ~ Changes. Since #3577 they are siblings in
   // the bar's one pill row (tests/agent-session-phone.test.js).
-  assert.match(panel, /data-agent-session-change-pill[\s\S]*?<\/span>\s*<\/span>\s*<button\s+type="button"\s+data-agent-session-changes-button/);
+  assert.match(englishUiSource(panel), /data-agent-session-change-pill[\s\S]*?<\/span>\s*<\/span>\s*<button\s+type="button"\s+data-agent-session-changes-button/);
   // The composer's sheet is Build with; the credits card's rows open it on their tab.
-  assert.match(panel, /<BuildSheetBody\s+tab=\{buildTab\}/);
-  assert.match(panel, /handoff=\{buildTab === 'homeroom' \? null : <HandoffPanel agent=\{buildTab\} onClose=\{closeSheet\} \/>\}/);
-  assert.match(panel, /if \(!snapshot\.handoff\) return;\s*openSheet\(snapshot\.handoff\);\s*closeHandoff\(\);/);
-  assert.match(panel, /\{ label: 'Rename…'/);
-  assert.match(panel, /label: 'Archive',[\s\S]*?destructive: true/);
-  assert.match(panel, /\{ label: 'Unarchive'/);
-  assert.match(panel, /\{snapshot\.credits \? <CreditsCard refusal=\{snapshot\.credits\} \/> : null\}/);
-  assert.match(panel, /useStoreState<AiBudgetState>\(aiBudgetStore\)/, 'the header\'s own meter, kept live by budget_updated');
-  assert.match(panel, /This session is archived\. Unarchive it to keep going\./);
-  assert.match(panel, /window\.AppView\?\.openSessionChecks\?\.\(item\.changeId\)/);
+  assert.match(englishUiSource(panel), /<BuildSheetBody\s+tab=\{buildTab\}/);
+  assert.match(englishUiSource(panel), /handoff=\{buildTab === 'homeroom' \? null : <HandoffPanel agent=\{buildTab\} onClose=\{closeSheet\} \/>\}/);
+  assert.match(englishUiSource(panel), /if \(!snapshot\.handoff\) return;\s*openSheet\(snapshot\.handoff\);\s*closeHandoff\(\);/);
+  assert.match(englishUiSource(panel), /\{ label: 'Rename…'/);
+  assert.match(englishUiSource(panel), /label: 'Archive',[\s\S]*?destructive: true/);
+  assert.match(englishUiSource(panel), /\{ label: 'Unarchive'/);
+  assert.match(englishUiSource(panel), /\{snapshot\.credits \? <CreditsCard refusal=\{snapshot\.credits\} \/> : null\}/);
+  assert.match(englishUiSource(panel), /useStoreState<AiBudgetState>\(aiBudgetStore\)/, 'the header\'s own meter, kept live by budget_updated');
+  assert.match(englishUiSource(panel), /This session is archived\. Unarchive it to keep going\./);
+  assert.match(englishUiSource(panel), /window\.AppView\?\.openSessionChecks\?\.\(item\.changeId\)/);
 });

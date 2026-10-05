@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // The hub's details and the loose ends around it (communities, after #3261):
 //
@@ -23,11 +24,11 @@ const path = require('node:path');
 const { createElement, loadTsx, renderToHtml } = require('./lib/render-tsx');
 
 const ROOT = path.join(__dirname, '..');
-const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+const read = (rel) => englishUiSource(fs.readFileSync(path.join(ROOT, rel), 'utf8'));
 const HUB = 'frontend/src/features/dev-board/workshop/hub-cards.tsx';
 const CARD = 'frontend/src/features/dev-board/workshop/community-card.tsx';
 const CARD_SRC = read(CARD);
-const LANDER = read('frontend/src/features/dev-board/workshop/workshop.tsx');
+const LANDER = englishUiSource(read('frontend/src/features/dev-board/workshop/workshop.tsx'));
 const CSS = read('public/css/app.css');
 
 const community = (over = {}) => ({
@@ -185,12 +186,12 @@ test('the channel card\'s composer sends to the room and re-reads the hub', () =
 });
 
 test('a person who has not joined sees "Recently" over the same rows', () => {
-  assert.match(LANDER, /const outsider = !!community && !community\.is_member;/);
+  assert.match(englishUiSource(LANDER), /const outsider = !!community && !community\.is_member;/);
   // A first visit, with no last visit to be since, reads "Recently" too.
-  assert.match(LANDER, /<span className="dev-ws-since-label">\{v\.since && !outsider \? 'Since your last visit' : 'Recently'\}<\/span>/);
+  assert.match(englishUiSource(LANDER), /<span className="dev-ws-since-label">\{v\.since && !outsider \? 'Since your last visit' : 'Recently'\}<\/span>/);
   // The rows and Clear are the same for everyone (declared checks select on
   // Clear on Homeroom's page); only the heading's words change.
-  assert.doesNotMatch(LANDER, /outsider \? null/);
+  assert.doesNotMatch(englishUiSource(LANDER), /outsider \? null/);
 });
 
 test('Make it public is the hero\'s, Make it private is the ⋯\'s, and both are a proposal', () => {
@@ -202,21 +203,21 @@ test('Make it public is the hero\'s, Make it private is the ⋯\'s, and both are
 
   // One proposal for both directions.
   const propose = CARD_SRC.slice(CARD_SRC.indexOf('export async function proposeAudience('), CARD_SRC.indexOf('export const MAKE_PRIVATE_LINE'));
-  assert.match(propose, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/visibility-pr`/);
-  assert.match(propose, /to === 'private'\s*\? \{ collabVisibility: 'private', viewVisibility: 'private' \}\s*: \{ collabVisibility: 'public', viewVisibility: 'public' \}/,
+  assert.match(englishUiSource(propose), /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/visibility-pr`/);
+  assert.match(englishUiSource(propose), /to === 'private'\s*\? \{ collabVisibility: 'private', viewVisibility: 'private' \}\s*: \{ collabVisibility: 'public', viewVisibility: 'public' \}/,
     'a public community is public to use and to build; a private community is private to both, as the create dialog maps them');
-  assert.match(propose, /if \(!res\.ok && res\.status !== 409\)/, 'one already up is not an error: the hero shows it');
+  assert.match(englishUiSource(propose), /if \(!res\.ok && res\.status !== 409\)/, 'one already up is not an error: the hero shows it');
 
   // MAKE IT PUBLIC (it was "Open it up"): a button, on a private community's
   // hero and a just-yours project's Share it card, asking under itself.
   const pub = CARD_SRC.slice(CARD_SRC.indexOf('function MakePublic('), CARD_SRC.indexOf('export function canMakePrivate('));
-  assert.match(pub, />\s*Make it public\s*</);
-  assert.match(pub, /await proposeAudience\(slug, 'public'\);/);
-  assert.match(pub, /Members vote on this first, and it applies once it merges\./, 'it says it is a proposal, not a switch');
-  assert.doesNotMatch(CARD_SRC, /Open it up'|>Open it up<|opening it up/i, 'the old words are gone from what is drawn');
-  assert.match(CARD_SRC, /\{data\.can_manage && !data\.audience_change && data\.audience === 'invited' \? \(\s*<MakePublic /);
-  assert.match(CARD_SRC, /\{canOpenUp \? \(\s*<MakePublic /);
-  assert.match(CARD_SRC, /or make it public so anyone can join\./);
+  assert.match(englishUiSource(pub), />\s*Make it public\s*</);
+  assert.match(englishUiSource(pub), /await proposeAudience\(slug, 'public'\);/);
+  assert.match(englishUiSource(pub), /Members vote on this first, and it applies once it merges\./, 'it says it is a proposal, not a switch');
+  assert.doesNotMatch(englishUiSource(CARD_SRC), /Open it up'|>Open it up<|opening it up/i, 'the old words are gone from what is drawn');
+  assert.match(englishUiSource(CARD_SRC), /\{data\.can_manage && !data\.audience_change && data\.audience === 'invited' \? \(\s*<MakePublic /);
+  assert.match(englishUiSource(CARD_SRC), /\{canOpenUp \? \(\s*<MakePublic /);
+  assert.match(englishUiSource(CARD_SRC), /or make it public so anyone can join\./);
 
   // MAKE IT PRIVATE: not a hero button, a row of the ⋯, for a public
   // community, to whoever may open the proposal, while none is up.
@@ -226,26 +227,26 @@ test('Make it public is the hero\'s, Make it private is the ⋯\'s, and both are
   assert.equal(canMakePrivate({ audience: 'open', can_manage: true, audience_change: { session_id: 4 } }), false);
   assert.equal(canMakePrivate(null), false);
   const priv = CARD_SRC.slice(CARD_SRC.indexOf('export async function confirmMakePrivate('), CARD_SRC.indexOf('function MakePublic('));
-  assert.match(priv, /ui\.confirm\(\{\s*title: `Make \$\{name\} a private community\?`,\s*message: MAKE_PRIVATE_LINE,\s*confirmLabel: 'Propose making it private',/);
-  assert.match(priv, /if \(!ok\) return;\s*try \{\s*await proposeAudience\(slug, 'private'\);/);
-  assert.match(priv, /await reloadCommunity\(slug\);/, 'and the hero shows it up for a vote');
-  const menu = read('frontend/src/features/dev-board/actions-row.tsx');
-  assert.match(menu, /\{onMakePrivate \? \(\s*<PlusRow\s+data-plus="make-private"[\s\S]{0,120}title="Make it private"[\s\S]{0,300}onClick=\{\(\) => \{ callAppView\('_closePlusMenu'\); onMakePrivate\(\); \}\}/);
-  assert.ok(menu.indexOf('data-plus="make-private"') > menu.indexOf('label="Settings &amp; rules"'), 'the first of Settings & rules');
+  assert.match(englishUiSource(priv), /ui\.confirm\(\{\s*title: `Make \$\{name\} a private community\?`,\s*message: MAKE_PRIVATE_LINE\(\),\s*confirmLabel: 'Propose making it private',/);
+  assert.match(englishUiSource(priv), /if \(!ok\) return;\s*try \{\s*await proposeAudience\(slug, 'private'\);/);
+  assert.match(englishUiSource(priv), /await reloadCommunity\(slug\);/, 'and the hero shows it up for a vote');
+  const menu = englishUiSource(read('frontend/src/features/dev-board/actions-row.tsx'));
+  assert.match(englishUiSource(menu), /\{onMakePrivate \? \(\s*<PlusRow title="Make it private"\s+data-plus="make-private"[\s\S]{0,480}onClick=\{\(\) => \{ callAppView\('_closePlusMenu'\); onMakePrivate\(\); \}\}/);
+  assert.ok(englishUiSource(menu).indexOf('data-plus="make-private"') > englishUiSource(menu).indexOf('label="Settings &amp; rules"'), 'the first of Settings & rules');
   // Private decides who can OPEN it. Every repository is public on GitHub
   // (services/github.js createRepo), so both say the code stays public.
-  assert.equal(MAKE_PRIVATE_LINE, 'Only people who are invited can open it and build it. '
+  assert.equal(MAKE_PRIVATE_LINE(), 'Only people who are invited can open it and build it. '
     + 'Its code stays public on GitHub. Members vote on this first, and it applies once it merges.');
-  assert.match(menu, /data-plus="make-private"[\s\S]{0,200}sub="Only invited people can open and build it\. Code stays public on GitHub\."/);
-  assert.match(read('frontend/src/features/dev-board/workshop/workshop.tsx'), /onMakePrivate=\{canMakePrivate\(community\)\s*\? \(\) => \{ void confirmMakePrivate\(slug, app\.name \|\| community\?\.name \|\| slug\); \}\s*: null\}/);
+  assert.match(englishUiSource(menu), /data-plus="make-private"[\s\S]{0,200}sub="Only invited people can open and build it\. Code stays public on GitHub\."/);
+  assert.match(englishUiSource(read('frontend/src/features/dev-board/workshop/workshop.tsx')), /onMakePrivate=\{canMakePrivate\(community\)\s*\? \(\) => \{ void confirmMakePrivate\(slug, app\.name \|\| community\?\.name \|\| slug\); \}\s*: null\}/);
   // The row appears once the read answers, after the menu was wired, so it
   // closes the menu through the close the wiring publishes.
-  assert.match(read('public/js/app-view.js'), /AppView\._closePlusMenu = close;/);
-  assert.match(CARD_SRC, /href=\{`#app\/\$\{encodeURIComponent\(slug\)\}\/dev\/proposals\/\$\{data\.audience_change\.session_id\}`\}/);
+  assert.match(englishUiSource(read('public/js/app-view.js')), /AppView\._closePlusMenu = close;/);
+  assert.match(englishUiSource(CARD_SRC), /href=\{`#app\/\$\{encodeURIComponent\(slug\)\}\/dev\/proposals\/\$\{data\.audience_change\.session_id\}`\}/);
   // The server offers it to exactly whom POST /visibility-pr accepts.
   const route = read('src/routes/apps.js');
-  assert.match(route, /const canManage = !app\.self_hosted && !!app\.repo_url\s*&& await appAdmins\.canManageApp\(pool, app, req\.user\);/);
-  assert.match(route, /await renamePr\.findVisibilityPr\(pool, app\.id\)/);
+  assert.match(englishUiSource(route), /const canManage = !app\.self_hosted && !!app\.repo_url\s*&& await appAdmins\.canManageApp\(pool, app, req\.user\);/);
+  assert.match(englishUiSource(route), /await renamePr\.findVisibilityPr\(pool, app\.id\)/);
 });
 
 test('a Mayor card refused for membership offers Join, then asks the Mayor to try again', () => {
@@ -262,21 +263,21 @@ test('a Mayor card refused for membership offers Join, then asks the Mayor to tr
   assert.equal(transcript.joinFor(action('failed', { ok: false, code: 'no_access', structured: { code: 'no_access' } })), null);
   assert.equal(transcript.cardView(card, new Map([['a1', action('done', failed.result)]])).join, null, 'only a failed card asks');
 
-  const screen = read('frontend/src/features/agent-session/index.tsx');
+  const screen = englishUiSource(read('frontend/src/features/agent-session/index.tsx'));
   const join = screen.slice(screen.indexOf('function JoinToRetry('), screen.indexOf('function Card('));
-  assert.match(join, /home\.setMembership\(join\.slug, true, undefined, \{ name: join\.name \}\)/, 'the one join path');
-  assert.match(join, /void sendAgentMessage\(`I joined \$\{join\.name\}\. Please try "\$\{card\.title\}" again\.`\);/);
-  assert.match(screen, /\{card\.status === 'failed' && card\.join \? \(\s*<JoinToRetry card=\{card\} join=\{card\.join\} \/>/);
+  assert.match(englishUiSource(join), /home\.setMembership\(join\.slug, true, undefined, \{ name: join\.name \}\)/, 'the one join path');
+  assert.match(englishUiSource(join), /void sendAgentMessage\(`I joined \$\{join\.name\}\. Please try "\$\{card\.title\}" again\.`\);/);
+  assert.match(englishUiSource(screen), /\{card\.status === 'failed' && card\.join \? \(\s*<JoinToRetry card=\{card\} join=\{card\.join\} \/>/);
   // No prose from the Mayor under the Join button: the card asks.
   const routes = read('src/routes/agent-sessions.js');
-  assert.match(routes, /const joinRequired = outcome && outcome\.result && outcome\.result\.code === 'join_required';\s*const followUp = joinRequired \? null : await startFollowUp\(/);
+  assert.match(englishUiSource(routes), /const joinRequired = outcome && outcome\.result && outcome\.result\.code === 'join_required';\s*const followUp = joinRequired \? null : await startFollowUp\(/);
 });
 
 test('a Homeroom line kept in #general, as the root of somebody\'s thread, is drawn as Homeroom\'s', () => {
   const conv = read('src/services/conversations.js');
   assert.match(conv, /username: system \? 'Homeroom' : \(row\.sender_username \|\| 'Deleted user'\),/);
   assert.match(conv.slice(conv.indexOf('async function countUnread(')), /AND m\.msg_type = 'message'/);
-  const rows = read('frontend/src/features/messages/index.tsx');
+  const rows = englishUiSource(read('frontend/src/features/messages/index.tsx'));
   assert.match(rows, /&& !previous\.system && !message\.system/, 'an event never joins the row above it');
   assert.match(CSS, /\.messages-message-system \.messages-message-author \{ color: var\(--text-muted\); \}/);
 });
@@ -293,7 +294,7 @@ test('the Communities screen has no toggle: Needs you is a row that opens a page
   // page's strip. The UI overhaul made the list the page and Needs you a
   // row at its top ("3 votes waiting on you"), which opens the feed with a
   // way back; the strip and its CSS went with the tabs.
-  const screen = read('frontend/src/features/workshop/index.tsx');
+  const screen = englishUiSource(read('frontend/src/features/workshop/index.tsx'));
   assert.doesNotMatch(screen, /SECTION_TAB_ACTIVE|<TabsList|workshop-scope-tab/);
   assert.doesNotMatch(CSS, /\.workshop-scope-tabs? \{/);
   assert.match(screen, /<ListRow\s+as="button"\s+data-workshop-needs-open=""/);
@@ -302,7 +303,7 @@ test('the Communities screen has no toggle: Needs you is a row that opens a page
 });
 
 test('Home\'s Browse all links carry the accent, not the header\'s periwinkle', () => {
-  const ui = read('frontend/src/features/home/panels/ui.tsx');
+  const ui = englishUiSource(read('frontend/src/features/home/panels/ui.tsx'));
   for (const cls of ['home-panel-browse', 'home-panel-lb-browse']) {
     const tag = ui.slice(ui.indexOf(`className="${cls} `), ui.indexOf('"', ui.indexOf(`className="${cls} `) + 12));
     assert.match(tag, /text-\[color:var\(--accent\)\]/, `${cls} is the accent`);

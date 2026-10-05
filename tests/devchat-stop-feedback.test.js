@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #889: clicking Stop in dev chat used to acknowledge itself with nothing
 // at all — the red Stop button stayed red (there is no `:disabled` rule for
 // `.dc-send-btn`, so `disabled = true` was invisible), the "Claude Code is
@@ -138,7 +139,7 @@ function makeHarness() {
   sandbox.globalThis = sandbox;
   sandbox.UsernodeReact = { devChat: composer.bridge };
 
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   const DevChat = sandbox.__DevChat;
 

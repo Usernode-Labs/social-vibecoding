@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // `#dc-session-header` — the dev chat's top strip, converted.
 //
 // It is the one row that survives every swap below it: the launchpad replaces
@@ -88,7 +89,7 @@ function makeDevChat(over = {}) {
       publishSessionHeader: (state) => published.push({ mounted: false, state }),
     },
   };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(
     `${VENUES_SRC}\n${MERGE_STATUS_SRC}\n${DEV_CHAT_SRC}\n;globalThis.__DevChat = DevChat;`,
     sandbox

@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // The agent session's composer and live turn (#2779 follow-up): what the dev
 // chat's composer had that the conversation with the Mayor lacked.
@@ -297,24 +298,24 @@ test('the composer keeps what was typed per conversation, and the drafts list of
   const { SavedDrafts } = loadTsx('tests/fixtures/agent-session-api.ts');
   const drafts = [{ id: 'd1', text: 'make it blue', savedAt: null }, { id: 'd2', text: 'and bigger', savedAt: null }];
   const busy = renderToHtml(createElement(SavedDrafts, { drafts, busy: true, onSend() {}, onEdit() {} }));
-  assert.match(busy, /data-agent-session-drafts="2"/);
-  assert.match(busy, />Saved drafts \(2\)</);
-  assert.match(busy, /on all your devices/);
-  assert.match(busy, /sending unlocks when the agent finishes/);
+  assert.match(englishUiSource(busy), /data-agent-session-drafts="2"/);
+  assert.match(englishUiSource(busy), />Saved drafts \(2\)</);
+  assert.match(englishUiSource(busy), /on all your devices/);
+  assert.match(englishUiSource(busy), /sending unlocks when the agent finishes/);
   assert.equal((busy.match(/aria-label="Send this draft"[^>]*disabled=""/g) || []).length, 2, 'no send mid-turn');
   const idle = renderToHtml(createElement(SavedDrafts, { drafts, busy: false, onSend() {}, onEdit() {} }));
-  assert.doesNotMatch(idle, /disabled=""/);
-  assert.match(idle, /aria-label="Edit this draft"/);
-  assert.match(idle, /aria-label="Delete this draft"/);
+  assert.doesNotMatch(englishUiSource(idle), /disabled=""/);
+  assert.match(englishUiSource(idle), /aria-label="Edit this draft"/);
+  assert.match(englishUiSource(idle), /aria-label="Delete this draft"/);
   assert.equal(renderToHtml(createElement(SavedDrafts, { drafts: [], busy: false, onSend() {}, onEdit() {} })), '', 'no drafts, no row');
 
   const panel = read('frontend/src/features/agent-session/index.tsx');
-  assert.match(panel, /data-agent-session-send="save"[\s\S]*?aria-label="Save as draft"/, 'the one button turns into Save');
-  assert.match(panel, /const saving = running && !snapshot\.stopping && !!value\.trim\(\);/,
+  assert.match(englishUiSource(panel), /data-agent-session-send="save"[\s\S]*?aria-label="Save as draft"/, 'the one button turns into Save');
+  assert.match(englishUiSource(panel), /const saving = running && !snapshot\.stopping && !!value\.trim\(\);/,
     'Save only with something typed, and never while stopping: Stop fills the box under its own click');
-  assert.match(panel, /key="save"\s+type="submit"/, 'Save and Stop are different buttons, so a type flip never lands on one click');
-  assert.match(panel, /if \(running\) \{\s*if \(saveComposerDraft\(text\)\) update\(''\);\s*return;\s*\}/, 'Enter mid-turn parks, never sends');
-  assert.match(panel, /The agent is working\. Type your next message and save it for later\./);
+  assert.match(englishUiSource(panel), /key="save"\s+type="submit"/, 'Save and Stop are different buttons, so a type flip never lands on one click');
+  assert.match(englishUiSource(panel), /if \(running\) \{\s*if \(saveComposerDraft\(text\)\) update\(''\);\s*return;\s*\}/, 'Enter mid-turn parks, never sends');
+  assert.match(englishUiSource(panel), /The agent is working\. Type your next message and save it for later\./);
 });
 
 // ── 4. What a typical change costs ─────────────────────────────────────
@@ -409,20 +410,20 @@ test('a reply says what it cost, and a turn that did not finish offers to try ag
 
 test('the outline is the card\'s in every engine; the Mayor at work is three dots; the tab says Thinking', () => {
   const css = read('public/css/app.css');
-  assert.match(css, /form\.agent-session-composer:focus-within \{\s*border-color: var\(--accent\);\s*box-shadow: [^;]*0 0 0 1px var\(--accent\);/,
+  assert.match(englishUiSource(css), /form\.agent-session-composer:focus-within \{\s*border-color: var\(--accent\);\s*box-shadow: [^;]*0 0 0 1px var\(--accent\);/,
     'the ring on the whole card, over the dark theme\'s border utility too');
-  assert.match(css, /\.agent-session-composer \.agent-session-composer-input \{\s*outline: none;\s*-webkit-appearance: none;\s*appearance: none;\s*box-shadow: none;\s*-webkit-tap-highlight-color: transparent;/,
+  assert.match(englishUiSource(css), /\.agent-session-composer \.agent-session-composer-input \{\s*outline: none;\s*-webkit-appearance: none;\s*appearance: none;\s*box-shadow: none;\s*-webkit-tap-highlight-color: transparent;/,
     'two classes outrank preflight\'s :-moz-focusring, and WebKit draws no inner box');
-  assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\s*\.agent-session-typing-dot \{ animation: none;/);
+  assert.match(englishUiSource(css), /@media \(prefers-reduced-motion: reduce\) \{\s*\.agent-session-typing-dot \{ animation: none;/);
 
   const panel = read('frontend/src/features/agent-session/index.tsx');
-  assert.match(panel, /className="agent-session-composer flex flex-col/);
-  assert.match(panel, /className="agent-session-composer-input /);
-  assert.doesNotMatch(panel, /rounded-2xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700/, 'the full-width bubble is gone');
-  assert.match(panel, /<TypingDots \/>/);
-  assert.match(panel, /<span className="sr-only">The agent is thinking<\/span>/, 'said to a screen reader when the dots say it alone');
+  assert.match(englishUiSource(panel), /className="agent-session-composer flex flex-col/);
+  assert.match(englishUiSource(panel), /className="agent-session-composer-input /);
+  assert.doesNotMatch(englishUiSource(panel), /rounded-2xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700/, 'the full-width bubble is gone');
+  assert.match(englishUiSource(panel), /<TypingDots \/>/);
+  assert.match(englishUiSource(panel), /<span className="sr-only">The agent is thinking<\/span>/, 'said to a screen reader when the dots say it alone');
 
   const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
-  assert.match(devChat, /\|\| \(DevChat\._agentSessionThinking \? 'thinking' : null\)/, 'one title writer, one marker');
-  assert.match(read('frontend/src/features/agent-session/store.ts'), /window\.DevChat\?\.setAgentSessionThinking\?\.\(thinking\)/);
+  assert.match(englishUiSource(devChat), /\|\| \(DevChat\._agentSessionThinking \? 'thinking' : null\)/, 'one title writer, one marker');
+  assert.match(englishUiSource(read('frontend/src/features/agent-session/store.ts')), /window\.DevChat\?\.setAgentSessionThinking\?\.\(thinking\)/);
 });

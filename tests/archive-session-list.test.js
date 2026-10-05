@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Regression guard for the "Archive button disappeared on cold proposals"
 // fix. The Archive button must be gated on a dedicated archivable
 // predicate (status active/promoted/paused) — NOT on the same condition as
@@ -36,7 +37,7 @@ const SRC = fs.readFileSync(
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 
 let api = null;
-const mod = () => (api || (api = loadTsx('tests/fixtures/dev-session-list-api.ts')));
+const mod = () => (api || (api = loadTsx('tests/fixtures/dev-session-list-api.ts', { stubs: { 'react-i18next': { useTranslation: () => ({ t: globalThis.PlatformI18n.t }) } } })));
 
 // Captures what `renderSessionList` publishes for the #dc-session-list host.
 function makeHarness() {
@@ -71,7 +72,7 @@ function makeHarness() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   const DevChat = sandbox.__DevChat;
   // AppView is referenced by the row actions; the builder itself only reads
@@ -210,7 +211,8 @@ test('#2989: Enter and Space on the row open the session; keys from a child do n
   const m = mod();
   const list = m.SessionListView({ rows: [ROW] });
   const rowEl = list.props.children[0];
-  const div = rowEl.type(rowEl.props);
+  let div = rowEl.type(rowEl.props);
+  while (typeof div.type === 'function' && /^(?:Localized|LocalizedDynamic)$/.test(div.type.name)) div = div.type(div.props);
   const opened = [];
   const prev = globalThis.window;
   globalThis.window = { DevChat: { openSessionFromList: (id) => { opened.push(id); } } };

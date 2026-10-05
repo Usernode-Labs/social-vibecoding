@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // The card overflow (⋯) menu — app-view.js _cardMenuTriggerHtml /
 // _toggleCardMenu / the per-card-type descriptor builders.
 //
@@ -66,7 +67,7 @@ function makeAppView(opts) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${MERGE_STATUS_SRC}\n${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView._proposalsCtx = { majority: o.majority != null ? o.majority : 3 };

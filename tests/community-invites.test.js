@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // Invite links, without a database (tests/community-invites-postgres.test.js
 // runs the SQL): the rules that are pure, the page's link preview, and the
@@ -12,7 +13,7 @@ const path = require('node:path');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 
 const ROOT = path.join(__dirname, '..');
-const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+const read = (rel) => englishUiSource(fs.readFileSync(path.join(ROOT, rel), 'utf8'));
 const invites = require('../src/services/community-invites');
 const routes = require('../src/routes/community-invites');
 
@@ -268,16 +269,16 @@ test('signing UP from an invite page follows the link server-side; signing IN is
 
 test('the shell: signed out it is the landing, remembered for after sign-in; signed in it is a confirm', () => {
   const app = read('public/js/app.js');
-  assert.match(app, /const inviteToken = rawHash \? null : App\._inviteTokenFromPath\(location\.pathname\);/);
-  assert.match(app, /AuthScreens\.rememberDeepLink\(location\.pathname\);\s+AuthScreens\.show\('landing'\);/);
-  assert.match(app, /if \(App\.user\.hasPlatformAccess !== false\) \{\s+App\._followInvite\(inviteToken\);/);
-  assert.match(app, /confirmLabel: 'Join',\s+cancelLabel: 'Not now',/);
+  assert.match(englishUiSource(app), /const inviteToken = rawHash \? null : App\._inviteTokenFromPath\(location\.pathname\);/);
+  assert.match(englishUiSource(app), /AuthScreens\.rememberDeepLink\(location\.pathname\);\s+AuthScreens\.show\('landing'\);/);
+  assert.match(englishUiSource(app), /if \(App\.user\.hasPlatformAccess !== false\) \{\s+App\._followInvite\(inviteToken\);/);
+  assert.match(englishUiSource(app), /confirmLabel: 'Join',\s+cancelLabel: 'Not now',/);
   const screens = read('public/js/auth-screens.js');
-  assert.match(screens, /if \(\/\^\\\/invite\\\/\[A-Za-z0-9_-\]\{22\}\$\/\.test\(value\)\) return value;/, 'a deep link back to it');
-  assert.match(screens, /if \(invite\) AuthScreens\._waitingInvite = invite\[1\];/, 'kept for the waiting room');
+  assert.match(englishUiSource(screens), /if \(\/\^\\\/invite\\\/\[A-Za-z0-9_-\]\{22\}\$\/\.test\(value\)\) return value;/, 'a deep link back to it');
+  assert.match(englishUiSource(screens), /if \(invite\) AuthScreens\._waitingInvite = invite\[1\];/, 'kept for the waiting room');
   const waiting = read('frontend/src/features/auth/waiting.tsx');
-  assert.match(waiting, /fetch\(`\/api\/invite-links\/by-token\/\$\{encodeURIComponent\(token\)\}\/redeem`/);
-  assert.match(waiting, /fetch\('\/api\/invite-links\/queued'/);
+  assert.match(englishUiSource(waiting), /fetch\(`\/api\/invite-links\/by-token\/\$\{encodeURIComponent\(token\)\}\/redeem`/);
+  assert.match(englishUiSource(waiting), /fetch\('\/api\/invite-links\/queued'/);
 });
 
 test('the words: the landing card, the invite pane', () => {
@@ -325,10 +326,10 @@ test('the words: the landing card, the invite pane', () => {
   assert.equal(pane.linkDetail({ ...forever, uses: 4 }, now), '4 joined · no end date');
   assert.equal(pane.linkDetail({ ...fresh, maxUses: null, uses: 2 }, now), '2 joined · 7 days left');
   const paneSrc = read('frontend/src/features/app-context/invite-pane.tsx');
-  assert.match(paneSrc, /const DAY_CHOICES = \[1, 7, 30, NO_LIMIT\];/);
-  assert.match(paneSrc, /'Until you turn it off'/);
-  assert.match(paneSrc, /'Anyone with the link'/);
-  assert.match(paneSrc, /\{state\.joiningRule\}/);
+  assert.match(englishUiSource(paneSrc), /const DAY_CHOICES = \[1, 7, 30, NO_LIMIT\];/);
+  assert.match(englishUiSource(paneSrc), /'Until you turn it off'/);
+  assert.match(englishUiSource(paneSrc), /'Anyone with the link'/);
+  assert.match(englishUiSource(paneSrc), /\{state\.joiningRule\}/);
   assert.equal(pane.newcomerLine(null), 'Someone new to Homeroom joins the waitlist first, and this project when they are let in.');
   assert.equal(pane.newcomerLine(2), 'You can let 2 people new to Homeroom skip the waitlist.');
 
@@ -336,13 +337,13 @@ test('the words: the landing card, the invite pane', () => {
   // the hub's Invite (and a just-yours project's Share it card), beside the
   // people it adds.
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
-  assert.doesNotMatch(sheet, /id="app-menu-row-invite"/);
+  assert.doesNotMatch(englishUiSource(sheet), /id="app-menu-row-invite"/);
   const hubCard = read('frontend/src/features/dev-board/workshop/community-card.tsx');
-  assert.match(hubCard, /export function openInviteLinks\(\): void \{[\s\S]*?ctx\.open\?\.\(\);\s*ctx\.showInvite\?\.\(\);/);
-  assert.match(hubCard, /data-ws-community-invite=""[\s\S]{0,120}onClick=\{openInviteLinks\}/);
-  assert.match(hubCard, /data-ws-share-invite=""[\s\S]{0,60}onClick=\{openInviteLinks\}/);
-  assert.match(sheet, /view === 'invite' \? \(\s+<InvitePane slug=\{slug \|\| null\} label=\{appLabel\} \/>/);
-  assert.match(read('frontend/src/features/app-context/app-context-controller.js'), /showInvite\(\) \{\s+appContextStore\.set\(\{ view: 'invite' \}\);/);
+  assert.match(englishUiSource(hubCard), /export function openInviteLinks\(\): void \{[\s\S]*?ctx\.open\?\.\(\);\s*ctx\.showInvite\?\.\(\);/);
+  assert.match(englishUiSource(hubCard), /data-ws-community-invite=""[\s\S]{0,120}onClick=\{openInviteLinks\}/);
+  assert.match(englishUiSource(hubCard), /data-ws-share-invite=""[\s\S]{0,60}onClick=\{openInviteLinks\}/);
+  assert.match(englishUiSource(sheet), /view === 'invite' \? \(\s+<InvitePane slug=\{slug \|\| null\} label=\{appLabel\} \/>/);
+  assert.match(englishUiSource(read('frontend/src/features/app-context/app-context-controller.js')), /showInvite\(\) \{\s+appContextStore\.set\(\{ view: 'invite' \}\);/);
 });
 
 test(`a link carries its maker's note: plain text, one paragraph, at most 280 characters`, () => {
@@ -401,19 +402,19 @@ test(`the preview reads like the page: who made it, their note, the project's pi
 
 test('the picture is served only through a live link, and only an after-shot of a merged change', () => {
   const src = read('src/services/community-invites.js');
-  assert.match(src, /WHERE s\.app_id = \$1 AND s\.merged_at IS NOT NULL AND s\.shots_state = 'verified'\s+AND a\.side = 'head' AND a\.media = 'png'/);
-  assert.match(src, /async function pictureBytes\(pool, token\) \{\s+const invite = await loadInvite\(pool, token\);\s+if \(deadReason\(invite\)\) return null;/);
+  assert.match(englishUiSource(src), /WHERE s\.app_id = \$1 AND s\.merged_at IS NOT NULL AND s\.shots_state = 'verified'\s+AND a\.side = 'head' AND a\.media = 'png'/);
+  assert.match(englishUiSource(src), /async function pictureBytes\(pool, token\) \{\s+const invite = await loadInvite\(pool, token\);\s+if \(deadReason\(invite\)\) return null;/);
   const route = read('src/routes/community-invites.js');
-  assert.match(route, /router\.get\('\/api\/public\/invites\/:token\/picture', invitePreviewLimiter,/);
-  assert.match(route, /'X-Content-Type-Options': 'nosniff',/);
+  assert.match(englishUiSource(route), /router\.get\('\/api\/public\/invites\/:token\/picture', invitePreviewLimiter,/);
+  assert.match(englishUiSource(route), /'X-Content-Type-Options': 'nosniff',/);
   // WP-D: the sketch a project still being built shows, through a live link,
   // sandboxed like the project's own sketch page.
-  assert.match(route, /router\.get\('\/api\/public\/invites\/:token\/sketch\.html', invitePreviewLimiter,/);
-  assert.match(route, /'Content-Security-Policy': require\('\.\.\/services\/app-sketch'\)\.SKETCH_CSP,/);
-  assert.match(src, /async function sketchPage\(pool, token, \{ theme = null \} = \{\}\) \{\s+const invite = await loadInvite\(pool, token\);\s+if \(deadReason\(invite\)\) return null;/);
+  assert.match(englishUiSource(route), /router\.get\('\/api\/public\/invites\/:token\/sketch\.html', invitePreviewLimiter,/);
+  assert.match(englishUiSource(route), /'Content-Security-Policy': require\('\.\.\/services\/app-sketch'\)\.SKETCH_CSP,/);
+  assert.match(englishUiSource(src), /async function sketchPage\(pool, token, \{ theme = null \} = \{\}\) \{\s+const invite = await loadInvite\(pool, token\);\s+if \(deadReason\(invite\)\) return null;/);
   const card = read('frontend/src/features/auth/invite-card.tsx');
-  assert.match(card, /<iframe\s+title=\{`A sketch of \$\{project\.name\}`\}\s+src=\{`\$\{picture\.url\}\?theme=/);
-  assert.match(card, /sandbox=""/);
+  assert.match(englishUiSource(card), /<iframe\s+title=\{`A sketch of \$\{project\.name\}`\}\s+src=\{`\$\{picture\.url\}\?theme=/);
+  assert.match(englishUiSource(card), /sandbox=""/);
 });
 
 test(`a live link's landing is "Made for you"; the pitch stays in the document, hidden`, () => {

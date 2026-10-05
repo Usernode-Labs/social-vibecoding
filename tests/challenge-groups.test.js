@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Challenge group headers (ITERATION 03, "Groups count themselves").
 //
 // WHAT THIS PINS. A season that gates on setup, or whose challenges carry the
@@ -63,7 +64,7 @@ function loadPane({ challenges = [], eventId = 10, event = null, onboarding = nu
   };
   sandbox.window.window = sandbox.window;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(SRC, sandbox, { filename: 'topochain-challenges.js' });
 
   const pane = sandbox.window.TopochainChallenges;

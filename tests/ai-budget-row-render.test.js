@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // The AI-credit row's four states, end to end: the view model
 // features/header/ai-credit.js publishes and the markup
 // features/header/ai-budget.tsx renders from it.
@@ -47,7 +48,7 @@ async function loadCredit() {
   if (!g.CreditOptions) {
     const sandbox = { module: { exports: {} }, window: {}, console };
     sandbox.globalThis = sandbox;
-    vm.createContext(sandbox);
+    vm.createContext(withLanguage(sandbox));
     vm.runInContext(CREDIT_OPTIONS_SRC, sandbox);
     g.CreditOptions = sandbox.module.exports;
     g.window.CreditOptions = g.CreditOptions;
@@ -251,8 +252,8 @@ test('the daily row is untouched: still "daily", still local-time-aware', async 
 // The window words live in ONE place each, for the same reason the reset
 // sentence does: a second copy is a second thing to forget.
 test('the window wording is derived from capWindow, never retyped per state', () => {
-  assert.match(CREDIT_SRC, /var windowAdj = weeklyWindow \? 'weekly' : 'daily';/);
-  assert.match(CREDIT_SRC, /var windowWhen = weeklyWindow \? 'this week’s' : 'today’s';/);
+  assert.match(CREDIT_SRC, /weeklyWindow \? 'account:budget_byok_weekly' : 'account:budget_byok_daily'/);
+  assert.match(CREDIT_SRC, /weeklyWindow \? 'account:budget_exhausted_weekly' : 'account:budget_exhausted_daily'/);
   assert.ok(!/weekly allowance is used up|of this week’s AI allowance/.test(
     CREDIT_OPTIONS_SRC), 'the tooltip copy has one home, and it is ai-credit.js');
   // And the reset sentence drops the "at" for a weekday boundary: in the
@@ -260,5 +261,5 @@ test('the window wording is derived from capWindow, never retyped per state', ()
   // where it is absent.
   assert.match(CREDIT_OPTIONS_SRC, /var weekly = s\.capWindow === 'weekly';/);
   assert.match(CREDIT_OPTIONS_SRC, /RT\.resetWhen\(weekly \? 'weekly' : 'daily'/);
-  assert.match(CREDIT_OPTIONS_SRC, /weekly\s*\n?\s*\? 'Free credits reset ' \+ resetLabel/);
+  assert.match(CREDIT_OPTIONS_SRC, /weekly[\s\S]{0,100}free_credits_reset/);
 });

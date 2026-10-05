@@ -1,4 +1,6 @@
 'use strict';
+const { withLanguage } = require("./lib/platform-language");
+
 
 // #3653: EVERY DISCUSSION PAGE IS ITS COMMUNITY'S DISCUSSION TAB.
 //
@@ -150,7 +152,7 @@ function router(start, { platform = null, launchRecords = false, channels = {} }
   const calls = [];
   const noop = () => undefined;
   const elements = new Map();
-  const context = vm.createContext({
+  const context = vm.createContext(withLanguage({
     location, history, URL, URLSearchParams, console, setTimeout, clearTimeout,
     document: {
       title: '',
@@ -167,7 +169,7 @@ function router(start, { platform = null, launchRecords = false, channels = {} }
     PlatformUI: new Proxy({
       transition(fn, o) { fn(); o?.after?.(); },
     }, { get: (t, k) => (k in t ? t[k] : noop) }),
-  });
+  }));
   context.window = context;
   vm.runInContext(APP_JS, context);
   const App = context.App;

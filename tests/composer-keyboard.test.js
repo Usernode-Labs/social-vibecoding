@@ -1,4 +1,6 @@
 'use strict';
+const { withLanguage } = require("./lib/platform-language");
+
 // #3571: "Clicking the message field on mobile Safari to reply to a message
 // sends the message box off screen as the keyboard comes up."
 //
@@ -115,7 +117,7 @@ function kitHarness({ scrollY = PAN, overflowY = 'hidden', platform = 'ios' } = 
     innerHeight: VV_HEIGHT,
   };
   const doc = { activeElement: null, documentElement: { classList: { contains: () => true } }, body: {} };
-  const ctx = vm.createContext({
+  const ctx = vm.createContext(withLanguage({
     window: win,
     document: doc,
     console,
@@ -128,7 +130,7 @@ function kitHarness({ scrollY = PAN, overflowY = 'hidden', platform = 'ios' } = 
     getComputedStyle: () => ({ overflowY }),
     setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
     clearTimeout: (id) => { if (timers[id - 1]) timers[id - 1].fn = () => {}; },
-  });
+  }));
   vm.runInContext(NATIVE_JS.slice(start, end), ctx);
   const handle = ctx.attachKeyboardAvoidance(scrollEl, {});
   return { win, vvListeners, timers, scrolledTo, classes, handle };

@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // Agent sessions on a phone (#3016), and what the green dot on the Homeroom
 // mark means (#3015).
@@ -26,7 +27,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx, createElement, renderToHtml } = require('./lib/render-tsx');
 
-const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+const read = (rel) => englishUiSource(fs.readFileSync(path.join(__dirname, '..', rel), 'utf8'));
 const panel = read('frontend/src/features/agent-session/index.tsx');
 
 test('#3016: the panel cannot outgrow the screen, and the bar\'s pill row cannot widen it', () => {
@@ -49,7 +50,8 @@ test('#3016: the panel cannot outgrow the screen, and the bar\'s pill row cannot
 // around the title. The pills are one row that never wraps now, and the two
 // that NAME things give way, in order, instead of the row breaking.
 test('#3577: the session bar\'s pills are one row that never wraps; the naming pills give way, the controls do not', () => {
-  const bar = panel.slice(panel.indexOf('function SessionBar('), panel.indexOf('function SessionMenu('));
+  const panelEnglish = englishUiSource(panel);
+  const bar = panelEnglish.slice(panelEnglish.indexOf('function SessionBar('), panelEnglish.indexOf('function SessionMenu('));
   const classOf = (attr) => {
     const m = bar.match(new RegExp(`${attr}\\s+className=(?:"([^"]*)"|\\{\`([^\`]*)\`\\})`));
     assert.ok(m, `${attr} has a className`);
@@ -58,9 +60,9 @@ test('#3577: the session bar\'s pills are one row that never wraps; the naming p
 
   // The bar is a block: the Messages pane's title is its own line, and the
   // pills are one flex row under it that cannot wrap.
-  assert.match(bar, /<div className="border-b border-zinc-200 px-4 py-2 dark:border-zinc-800" data-agent-session-bar>/);
-  assert.doesNotMatch(bar, /flex-wrap/, 'nothing in the bar wraps any more');
-  assert.match(bar, /\{embedded \? \(\s*<div className="mb-2 min-w-0">/, 'the pane\'s title sits above the pills');
+  assert.match(englishUiSource(bar), /<div className="border-b border-zinc-200 px-4 py-2 dark:border-zinc-800" data-agent-session-bar>/);
+  assert.doesNotMatch(englishUiSource(bar), /flex-wrap/, 'nothing in the bar wraps any more');
+  assert.match(englishUiSource(bar), /\{embedded \? \(\s*<div className="mb-2 min-w-0">/, 'the pane\'s title sits above the pills');
   const row = bar.match(/<div className="([^"]*)" data-agent-session-pills>/);
   assert.ok(row, 'the pills have a row of their own');
   for (const cls of ['flex', 'min-w-0', 'flex-nowrap', 'items-center', '[container-type:inline-size]']) {
@@ -84,7 +86,7 @@ test('#3577: the session bar\'s pills are one row that never wraps; the naming p
   for (const cls of ['basis-0', 'grow', 'max-w-fit', 'min-w-[2.75rem]', 'whitespace-nowrap']) {
     assert.ok(focus.includes(cls), `focus pill: ${cls}`);
   }
-  assert.match(bar, /<span className="min-w-0 max-w-\[7rem\] truncate">\{about\?\.focusApp\?\.name \|\| 'Any app'\}<\/span>/,
+  assert.match(englishUiSource(bar), /<span className="min-w-0 max-w-\[7rem\] truncate">\{about\?\.focusApp\?\.name \|\| 'Any app'\}<\/span>/,
     'its name truncates; the pill\'s old 10rem cap, less its mark');
 
   // The change pill: no grow, a floor, a truncating label; the PR number
@@ -92,16 +94,16 @@ test('#3577: the session bar\'s pills are one row that never wraps; the naming p
   const change = classOf('data-agent-session-change-pill');
   assert.ok(change.includes('min-w-[3.5rem]') && change.includes('whitespace-nowrap'));
   assert.ok(!change.includes('grow') && !change.includes('shrink-0'), 'it gives way only after the focus pill');
-  assert.match(bar, /title=\{changeText\}/);
+  assert.match(englishUiSource(bar), /title=\{changeText\}/);
   // B10d: the pill says where the change stands, with no pull request number.
-  assert.doesNotMatch(bar, /PR #\$\{active\.prNumber\}/);
+  assert.doesNotMatch(englishUiSource(bar), /PR #\$\{active\.prNumber\}/);
 
   // The controls hold their width.
   assert.ok(classOf('data-agent-session-changes-button').includes('shrink-0'));
-  assert.match(panel, /data-agent-session-menu\s+className="inline-flex h-7 w-7 shrink-0 /);
+  assert.match(englishUiSource(panelEnglish), /data-agent-session-menu\s+className="inline-flex h-7 w-7 shrink-0 /);
   // Open app keeps its mark and drops its words in a narrow row.
-  assert.match(panel, /<span className="truncate \[@container\(max-width:32rem\)\]:hidden">Open app<\/span>/);
-  assert.match(panel, /aria-label="Open app"/, 'and keeps its name when the words are hidden');
+  assert.match(englishUiSource(panelEnglish), /<span className="truncate \[@container\(max-width:32rem\)\]:hidden">Open app<\/span>/);
+  assert.match(englishUiSource(panelEnglish), /aria-label="Open app"/, 'and keeps its name when the words are hidden');
 });
 
 test('#3577: rendered, Open app keeps its accessible name and narrows its padding in a narrow row', () => {
@@ -121,9 +123,9 @@ test('#3016: an empty message box is sized to its hint, measured without an inpu
 
 test('#3015: the mark says what its green dot means on hover, and keeps its name', () => {
   const mark = read('frontend/src/features/header/platform-mark.tsx');
-  assert.match(mark, /const WORKING_TITLE = 'One of your changes is building';/);
-  assert.match(mark, /title=\{working \? WORKING_TITLE : undefined\}/, 'only while the dot is showing');
-  assert.match(mark, /aria-label="Homeroom menu"/, 'the name the empty board\'s note uses is unchanged');
+  assert.match(englishUiSource(mark), /const WORKING_TITLE = 'One of your changes is building';/);
+  assert.match(englishUiSource(mark), /title=\{working \? WORKING_TITLE\(\) : undefined\}/, 'only while the dot is showing');
+  assert.match(englishUiSource(mark), /aria-label="Homeroom menu"/, 'the name the empty board\'s note uses is unchanged');
 });
 
 test('#3075: the menu no longer says it in words; the mark\'s own spinner stays', () => {

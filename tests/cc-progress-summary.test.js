@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // Tests for the Claude Code progress indicator helpers (#50).
 //
 // Two layers:
@@ -349,24 +350,26 @@ test('index.html loads cc-progress-summary.js before the dev chat reads it', () 
 });
 
 test('the client actually calls the helpers (not dead code)', () => {
+  const devChatSrcEnglish = englishUiSource(devChatSrc);
+  const transcriptSrcEnglish = englishUiSource(transcriptSrc);
   // The three formatters are split across the two halves of the transcript's
   // seam now. dev-chat.js RESOLVES what cannot be derived from a clock — the
   // progress summary, and a finished step's frozen "(took …)" — into the row
   // model; the row itself re-derives its ticking text from `nowStore`, so the
   // two per-second formatters are called in the component.
-  assert.ok(/summarizeCcProgress\(/.test(devChatSrc), 'dev-chat.js must call summarizeCcProgress');
-  assert.ok(/typeof formatElapsed === 'function' \? formatElapsed : null/.test(devChatSrc),
+  assert.ok(/summarizeCcProgress\(/.test(devChatSrcEnglish), 'dev-chat.js must call summarizeCcProgress');
+  assert.ok(/typeof formatElapsed === 'function' \? formatElapsed : null/.test(devChatSrcEnglish),
     'dev-chat.js must call formatElapsed for a SETTLED step');
-  assert.ok(/\(took \$\{fmtEl\(/.test(devChatSrc),
+  assert.ok(/\(took \$\{fmtEl\(/.test(devChatSrcEnglish),
     "a settled step's frozen label must be composed in the model, not per tick");
-  assert.ok(/formatElapsed/.test(transcriptSrc), 'a LIVE row must re-derive its elapsed label');
-  assert.ok(/formatCountdown\(/.test(transcriptSrc), 'the row must call formatCountdown (#359)');
-  assert.ok(/data-elapsed-since/.test(transcriptSrc), 'the row must render the elapsed-ticker anchor');
-  assert.ok(/data-countdown-to/.test(transcriptSrc), 'the row must render the count-down anchor (#359)');
+  assert.ok(/formatElapsed/.test(transcriptSrcEnglish), 'a LIVE row must re-derive its elapsed label');
+  assert.ok(/formatCountdown\(/.test(transcriptSrcEnglish), 'the row must call formatCountdown (#359)');
+  assert.ok(/data-elapsed-since/.test(transcriptSrcEnglish), 'the row must render the elapsed-ticker anchor');
+  assert.ok(/data-countdown-to/.test(transcriptSrcEnglish), 'the row must render the count-down anchor (#359)');
   // And the heartbeat still decides whether to run at all by asking the DOM
   // whether this render left anything that ticks — which is why the anchors
   // stay in the markup rather than living only in the model.
-  assert.match(devChatSrc, /#dc-messages \[data-elapsed-since\]/,
+  assert.match(devChatSrcEnglish, /#dc-messages \[data-elapsed-since\]/,
     'the 1s heartbeat must still gate itself on a live anchor');
 });
 

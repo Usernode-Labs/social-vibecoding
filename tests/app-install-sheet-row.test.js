@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // "Add to Home Screen" for one app (#1508), and where it lives (#2320).
 //
 // Per-app home-screen install has three parts: the manifest and the page
@@ -155,7 +156,7 @@ function makeHomeEnv(installHost) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   installAppCard(sandbox);
   installGridStore(sandbox);
   vm.runInContext(`${LAYOUT_SRC}\n${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);

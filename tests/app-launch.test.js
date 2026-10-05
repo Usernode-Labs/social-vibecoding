@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Eager app launch (#931).
 //
 // Tapping an app used to animate in an EMPTY #app-view and pop the app in
@@ -249,7 +250,7 @@ function makeAppView({ fetchImpl, apps = [RUNNING], offline = false, reduceMotio
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   return { AppView, dom, clock, fetches, sandbox };

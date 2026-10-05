@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #613/#617: AppView._applyManualOrder() is the pure overlay that re-sorts
 // one already-bucketed kanban column against a saved manual order. Cards
 // ABSENT from the stored order come first, in their derived order (they
@@ -45,7 +46,7 @@ function makeAppView() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   return sandbox.__AppView;
 }

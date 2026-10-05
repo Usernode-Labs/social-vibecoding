@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Tests for the #381 console-error warning on the proposal card
 // (app-view.js consoleWarningBadgeHtml + _renderProposalCard render slot +
 // _consoleCheckDetailHtml). The amber "⚠ Console errors" badge must render
@@ -51,7 +52,7 @@ function makeAppView(userId) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${MERGE_STATUS_SRC}\n${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView._proposalsCtx = { majority: 1 };

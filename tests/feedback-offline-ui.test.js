@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // The Send Feedback dialog's offline behaviour, as wiring (#1054).
 //
 // This behaviour was an 800-line block inside `App.bindEvents`. #1078 chunk I
@@ -27,15 +28,15 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+const read = (...p) => englishUiSource(fs.readFileSync(path.join(ROOT, ...p), 'utf8'));
 
 const appJs = read('public', 'js', 'app.js');
 const feedbackJs = read('frontend', 'src', 'features', 'dialogs', 'feedback-controller.js');
 const queueJs = read('public', 'js', 'feedback-queue.js');
 const indexHtml = read('public', 'index.html');
-const shellTsx = read('frontend', 'src', 'Shell.tsx');
-const headerTsx = read('frontend', 'src', 'features', 'header', 'platform-header.tsx');
-const markTsx = read('frontend', 'src', 'features', 'header', 'platform-mark.tsx');
+const shellTsx = englishUiSource(read('frontend', 'src', 'Shell.tsx'));
+const headerTsx = englishUiSource(read('frontend', 'src', 'features', 'header', 'platform-header.tsx'));
+const markTsx = englishUiSource(read('frontend', 'src', 'features', 'header', 'platform-mark.tsx'));
 const swJs = read('public', 'sw.js');
 const dapp = JSON.parse(read('dapp.json'));
 
@@ -77,19 +78,20 @@ test('a known-offline submit never spends a doomed round trip', () => {
 });
 
 test('the saved confirmation reads as success, and consumes the draft', () => {
-  const saveForLater = feedbackJs.slice(
-    feedbackJs.indexOf('const saveForLater = async (body)'),
-    feedbackJs.indexOf('// Keep the dialog honest while it is open'),
+  const feedbackJsEnglish = englishUiSource(feedbackJs);
+  const saveForLater = feedbackJsEnglish.slice(
+    feedbackJsEnglish.indexOf('const saveForLater = async (body)'),
+    feedbackJsEnglish.indexOf('// Keep the dialog honest while it is open'),
   );
-  assert.match(saveForLater, /Saved on this device. We'll send it as soon as you're back online\./);
-  assert.match(saveForLater, /text-emerald-400/, 'the same green a filed issue gets');
+  assert.match(englishUiSource(saveForLater), /Saved on this device. We'll send it as soon as you're back online\./);
+  assert.match(englishUiSource(saveForLater), /text-emerald-400/, 'the same green a filed issue gets');
   // Same cleanup as a successful submit: the draft is gone, the dialog locks
   // and closes on the shared 1500 ms grace window.
-  assert.match(saveForLater, /feedbackText\.value = '';/);
-  assert.match(saveForLater, /resetScreenshotState\(\);/);
-  assert.match(saveForLater, /feedback-cancel'\)\.click\(\), 1500/);
+  assert.match(englishUiSource(saveForLater), /feedbackText\.value = '';/);
+  assert.match(englishUiSource(saveForLater), /resetScreenshotState\(\);/);
+  assert.match(englishUiSource(saveForLater), /feedback-cancel'\)\.click\(\), 1500/);
   // And a probe, so a connection that quietly returned sends it in seconds.
-  assert.match(saveForLater, /window\.Offline\?\.nudge\?\.\(\)/);
+  assert.match(englishUiSource(saveForLater), /window\.Offline\?\.nudge\?\.\(\)/);
 });
 
 test('a refused save is explained instead of silently dropped', () => {
@@ -100,13 +102,13 @@ test('a refused save is explained instead of silently dropped', () => {
 });
 
 test('the dialog states the offline situation on open, in the words dapp.json checks', () => {
-  assert.match(openModal, /refreshQueueState\(\);/);
+  assert.match(englishUiSource(openModal), /refreshQueueState\(\);/);
   // dapp.json /?shot=feedback-offline matches this sentence.
-  assert.match(feedbackJs, /saved on this device and sent automatically/);
+  assert.match(englishUiSource(feedbackJs), /saved on this device and sent automatically/);
   // dapp.json /?shot=feedback-queued matches this one (singular form).
-  assert.match(feedbackJs, /1 message saved on this device is waiting to send/);
+  assert.match(englishUiSource(feedbackJs), /1 message saved on this device is waiting to send/);
   // The button says what it will do.
-  assert.match(feedbackJs, /feedbackBtn\.textContent = isOfflineNow\(\) \? 'Save for later' : 'Post request'/);
+  assert.match(englishUiSource(feedbackJs), /feedbackBtn\.textContent = isOfflineNow\(\) \? 'Save for later' : 'Post request'/);
 });
 
 test('the dialog repaints when connectivity changes under it', () => {
@@ -117,42 +119,43 @@ test('the dialog repaints when connectivity changes under it', () => {
 });
 
 test('a permanently-refused message is handed back with the words intact', () => {
-  assert.match(openModal, /FeedbackQueue\.takeFailed\(\)/);
-  assert.match(openModal, /feedbackText\.value = p\.description \|\| '';/);
-  assert.match(openModal, /This message couldn't be sent/);
+  assert.match(englishUiSource(openModal), /FeedbackQueue\.takeFailed\(\)/);
+  assert.match(englishUiSource(openModal), /feedbackText\.value = p\.description \|\| '';/);
+  assert.match(englishUiSource(openModal), /This message couldn't be sent/);
   // Live text always wins — a returned draft must not overwrite typing.
-  assert.match(openModal, /if \(feedbackText\.readOnly \|\| feedbackText\.value\.trim\(\)\) return;/);
+  assert.match(englishUiSource(openModal), /if \(feedbackText\.readOnly \|\| feedbackText\.value\.trim\(\)\) return;/);
 });
 
 test('a captured screenshot survives a failed upload', () => {
+  const feedbackJsEnglish = englishUiSource(feedbackJs);
   // The bug: resetScreenshotState() on a network failure threw the capture
   // away at the exact moment it could not be re-taken cheaply.
   // #3027: per image now — each thumbnail keeps its own bytes.
-  const uploadCatch = feedbackJs.slice(
-    feedbackJs.indexOf("shot.stateEl.textContent = 'Uploading…';"),
-    feedbackJs.indexOf('const waitForHiddenDialogPaint'),
+  const uploadCatch = feedbackJsEnglish.slice(
+    feedbackJsEnglish.indexOf("shot.stateEl.textContent = 'Uploading…';"),
+    feedbackJsEnglish.indexOf('const waitForHiddenDialogPaint'),
   );
   const networkCatch = uploadCatch.slice(uploadCatch.indexOf('} catch {'));
-  assert.doesNotMatch(networkCatch, /resetScreenshotState\(\)|removeScreenshot\(shot\)/, 'the blob must be kept for the outbox');
-  assert.match(networkCatch, /Saved with your feedback. It'll upload when you're back online/);
-  assert.match(feedbackJs, /const shot = \{ blob, objectUrl: URL\.createObjectURL\(blob\), id: null, uploading: true \};/);
+  assert.doesNotMatch(englishUiSource(networkCatch), /resetScreenshotState\(\)|removeScreenshot\(shot\)/, 'the blob must be kept for the outbox');
+  assert.match(englishUiSource(networkCatch), /Saved with your feedback. It'll upload when you're back online/);
+  assert.match(englishUiSource(feedbackJsEnglish), /const shot = \{ blob, objectUrl: URL\.createObjectURL\(blob\), id: null, uploading: true \};/);
   // Cleared with the rest of the attachment state, and re-uploaded before an
   // online submit so the promise on screen stays true.
-  assert.match(feedbackJs, /for \(const shot of screenshots\.slice\(\)\) discardScreenshot\(shot\);/);
-  assert.match(submitFeedback, /if \(shot\.id \|\| !shot\.blob \|\| isOfflineNow\(\)\) continue;/);
+  assert.match(englishUiSource(feedbackJsEnglish), /for \(const shot of screenshots\.slice\(\)\) discardScreenshot\(shot\);/);
+  assert.match(englishUiSource(submitFeedback), /if \(shot\.id \|\| !shot\.blob \|\| isOfflineNow\(\)\) continue;/);
 });
 
 test('the outbox is armed once, and flushed when a session exists', () => {
-  assert.match(feedbackJs, /window\.FeedbackQueue\.init\(\{/);
-  assert.match(feedbackJs, /onFlushed: \(res\) => \{/);
+  assert.match(englishUiSource(feedbackJs), /window\.FeedbackQueue\.init\(\{/);
+  assert.match(englishUiSource(feedbackJs), /onFlushed: \(res\) => \{/);
   // A flush that filed something says so — the user wrote it long ago.
-  assert.match(feedbackJs, /Your saved feedback has been sent\./);
+  assert.match(englishUiSource(feedbackJs), /Your saved feedback has been sent\./);
   // And the Dev screen's Open Issues panel refreshes, exactly as a live
   // submit refreshes it.
   const flushed = feedbackJs.slice(feedbackJs.indexOf('onFlushed: (res) => {'), feedbackJs.indexOf('const submitFeedback'));
-  assert.match(flushed, /AppView\.refreshDevData\('issue'\)/);
+  assert.match(englishUiSource(flushed), /AppView\.refreshDevData\('issue'\)/);
   // /api/feedback is session-gated, so the boot flush waits for enterAuthed.
-  assert.match(appJs, /if \(window\.FeedbackQueue\) FeedbackQueue\.flush\('signin'\);/);
+  assert.match(englishUiSource(appJs), /if \(window\.FeedbackQueue\) FeedbackQueue\.flush\('signin'\);/);
 });
 
 test('a stale count read cannot paint over a newer one', () => {
@@ -256,17 +259,20 @@ test('the module keeps its Node-testable export guard and touches no window at l
 });
 
 test('the two screenshot deep links exist and are display-only', () => {
+  const appJsEnglish = englishUiSource(appJs);
+  const queueJsEnglish = englishUiSource(queueJs);
+  const feedbackJsEnglish = englishUiSource(feedbackJs);
   // The method body, not its call site in enterAuthed.
-  const shot = appJs.slice(appJs.indexOf('_applyFeedbackShot() {'), appJs.indexOf('renderAdminButton() {'));
+  const shot = appJsEnglish.slice(appJsEnglish.indexOf('_applyFeedbackShot() {'), appJsEnglish.indexOf('renderAdminButton() {'));
   assert.ok(shot.length > 200, 'located _applyFeedbackShot');
-  assert.match(shot, /shot !== 'feedback-offline' && shot !== 'feedback-queued'/);
-  assert.match(shot, /window\.Offline\?\.forceOffline\(\)/, 'the offline state has to be pinned to be photographable');
-  assert.match(shot, /seedDisplayOnly/);
+  assert.match(englishUiSource(shot), /shot !== 'feedback-offline' && shot !== 'feedback-queued'/);
+  assert.match(englishUiSource(shot), /window\.Offline\?\.forceOffline\(\)/, 'the offline state has to be pinned to be photographable');
+  assert.match(englishUiSource(shot), /seedDisplayOnly/);
   // seedDisplayOnly swaps in the in-memory adapter AND disables flushing, so
   // a screenshot link can neither write to the device nor file an issue.
-  assert.match(queueJs, /seedDisplayOnly\(entries\) \{/);
-  const seed = queueJs.slice(queueJs.indexOf('seedDisplayOnly(entries) {'));
-  assert.match(seed.slice(0, 900), /flushDisabled = true;/);
+  assert.match(englishUiSource(queueJsEnglish), /seedDisplayOnly\(entries\) \{/);
+  const seed = queueJsEnglish.slice(queueJsEnglish.indexOf('seedDisplayOnly(entries) {'));
+  assert.match(englishUiSource(seed.slice(0, 900)), /flushDisabled = true;/);
 
   const paths = dapp.tests.map((t) => t.path);
   assert.ok(paths.includes('/?shot=feedback-offline'), 'dapp.json checks the offline dialog');
@@ -274,8 +280,8 @@ test('the two screenshot deep links exist and are display-only', () => {
   for (const check of dapp.tests.filter((t) => String(t.path).startsWith('/?shot=feedback-'))) {
     if (!check.expectText) continue;
     assert.ok(
-      feedbackJs.includes(check.expectText)
-        || read('frontend', 'src', 'features', 'dialogs', 'feedback.tsx').includes(check.expectText),
+      feedbackJsEnglish.includes(check.expectText)
+        || englishUiSource(read('frontend', 'src', 'features', 'dialogs', 'feedback.tsx')).includes(check.expectText),
       `dapp.json expects "${check.expectText}" but it is absent from the feedback controller and markup`,
     );
   }
@@ -283,20 +289,20 @@ test('the two screenshot deep links exist and are display-only', () => {
 
 test('the failed-capture deep link is reviewable and display-only (#1284)', () => {
   const shot = appJs.slice(appJs.indexOf('_applyFeedbackShot() {'), appJs.indexOf('renderAdminButton() {'));
-  assert.match(shot, /shot !== 'feedback-capture-failed'/, 'the new state joins the same guard');
-  assert.match(shot, /const captureFailed = shot === 'feedback-capture-failed'/);
+  assert.match(englishUiSource(shot), /shot !== 'feedback-capture-failed'/, 'the new state joins the same guard');
+  assert.match(englishUiSource(shot), /const captureFailed = shot === 'feedback-capture-failed'/);
   // Seeded words, then the controller's REAL capture round trip with a
   // capture that throws the way the native bridge does — so the photograph
   // shows the shipping notice and the retained draft, not a mock of them.
-  assert.match(shot, /The board scrolls back to the top when I drag a card\./);
-  assert.match(shot, /App\._simulateFeedbackCaptureFailure\?\.\(\)/);
+  assert.match(englishUiSource(shot), /The board scrolls back to the top when I drag a card\./);
+  assert.match(englishUiSource(shot), /App\._simulateFeedbackCaptureFailure\?\.\(\)/);
   // Display-only: nothing typed (an input event would start the title LLM),
   // no bridge call, and the stash skips ?shot= routes so a synthetic draft
   // cannot follow the reviewer into a real session.
   assert.ok(!shot.includes("dispatchEvent(new Event('input'"),
     'the seeded description is assigned, not typed');
   const inject = feedbackJs.slice(feedbackJs.indexOf('App._simulateFeedbackCaptureFailure'));
-  assert.match(inject, /err\.code = 'capture_failed'/);
+  assert.match(englishUiSource(inject), /err\.code = 'capture_failed'/);
   assert.ok(!/usernode\.captureScreenshot/.test(inject), 'the injected failure calls no bridge');
 
   const paths = dapp.tests.map((t) => t.path);
@@ -309,7 +315,7 @@ test('the failed-capture deep link is reviewable and display-only (#1284)', () =
   // because the kit lifts the card OUT of #feedback-modal when it presents
   // it — the same reason the offline checks above key off `body.is-offline`.
   for (const check of checks) {
-    assert.match(check.expectSelector, /^body:has\(#feedback-modal:not\(\.hidden\)\) /,
+    assert.match(englishUiSource(check.expectSelector), /^body:has\(#feedback-modal:not\(\.hidden\)\) /,
       'the card is not a descendant of the root once the kit has adopted it');
   }
   assert.ok(checks.some((c) => /#feedback-status:not\(\.hidden\)$/.test(c.expectSelector)));

@@ -1,4 +1,7 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
+
 
 // Retrying a failed check before believing it.
 //
@@ -142,7 +145,7 @@ test('the row keeps its reason when it only passed because of a retry', () => {
     location: { search: '', hash: '' }, URLSearchParams,
   };
   sandbox.window = sandbox; sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(
     `${read('public/js/merge-status.js')}\n${read('public/js/session-transcript.js')}\n`
     + `${read('public/js/app-view.js')}\n;globalThis.__AppView = AppView;`, sandbox);
@@ -159,8 +162,8 @@ test('the row keeps its reason when it only passed because of a retry', () => {
     }],
   });
   assert.equal(v.passes[0].keepReason, true, 'a green row that hid a failure would be a lie of omission');
-  assert.match(v.passes[0].reason, /then passed when re-run/);
+  assert.match(englishUiSource(v.passes[0].reason), /then passed when re-run/);
   const tsx = read('frontend/src/features/dev-board/topic/topic-head.tsx');
-  assert.match(tsx, /if \(r\.pass && !r\.keepReason\) \{/, 'and the renderer draws it');
-  assert.match(tsx, /'Passed on retry' : 'Why it failed'/, 'behind the same door a failure gets, saying so');
+  assert.match(englishUiSource(tsx), /if \(r\.pass && !r\.keepReason\) \{/, 'and the renderer draws it');
+  assert.match(englishUiSource(tsx), /'Passed on retry' : 'Why it failed'/, 'behind the same door a failure gets, saying so');
 });

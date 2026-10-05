@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // The app chip's sheet is the APP's menu, and About is its second pane
 // (#2718).
@@ -133,23 +134,23 @@ test('the Workshop row says what it owes you, and stays silent when it cannot', 
   // the figure came with it. The number is a count badge and the words are
   // its accessible name.
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
-  assert.match(sheet, /id="app-menu-row-workshop"[\s\S]{0,400}trailing=\{owed \?/,
+  assert.match(englishUiSource(sheet), /id="app-menu-row-workshop"[\s\S]{0,400}trailing=\{owed \?/,
     'the badge is the Workshop row\'s trailing figure');
-  assert.match(sheet, /id="app-menu-workshop-owed"/);
-  assert.match(sheet, /aria-label=\{`\$\{owed\} to vote`\}/);
+  assert.match(englishUiSource(sheet), /id="app-menu-workshop-owed"/);
+  assert.match(englishUiSource(sheet), /aria-label=\{`\$\{owed\} to vote`\}/);
 
   // ONE SOURCE, TWO READERS: /api/workshop/counts is the Workshop tab's own
   // endpoint, so this is the same figure that screen shows on the same app's
   // row rather than a second count computed a second way.
-  assert.match(sheet, /fetch\(`\/api\/workshop\/counts\$\{demo\}`\)/);
+  assert.match(englishUiSource(sheet), /fetch\(`\/api\/workshop\/counts\$\{demo\}`\)/);
   const at = sheet.indexOf("if (!open || !slug)");
   const effect = sheet.slice(at, sheet.indexOf('}, [open, slug]);', at));
   assert.ok(at > 0, 'it loads on open, keyed to the app in context');
 
   // FAILURE IS SILENCE. A menu row that works is worth more than a count, so
   // an offline or refused request leaves the row exactly as it was.
-  assert.match(effect, /catch \{/);
-  assert.match(effect, /typeof n === 'number' && n > 0/,
+  assert.match(englishUiSource(effect), /catch \{/);
+  assert.match(englishUiSource(effect), /typeof n === 'number' && n > 0/,
     'zero is silence too — "0 to vote" is a row shouting that it has nothing');
 
   // Nothing during render, so the prerender ships no figure and hydration has

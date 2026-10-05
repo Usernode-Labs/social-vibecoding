@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // #2478 — the board's "+" announces itself.
 //
@@ -96,7 +97,7 @@ test('nothing outside React writes aria-label to #dev-plus-btn', () => {
   // co-owns this node. It may write aria-expanded — a DIFFERENT attribute,
   // which is fine — but a second writer of aria-label would be a torn
   // attribute, and AGENTS.md forbids it.
-  const view = fs.readFileSync(path.join(ROOT, 'public', 'js', 'app-view.js'), 'utf8');
+  const view = englishUiSource(fs.readFileSync(path.join(ROOT, 'public', 'js', 'app-view.js'), 'utf8'));
   const wire = view.slice(view.indexOf('_wirePlusMenu(content) {'));
   assert.ok(wire.startsWith('_wirePlusMenu(content) {'), 'found _wirePlusMenu');
   const body = wire.slice(0, wire.indexOf('\n  _', 1));
@@ -174,7 +175,7 @@ function tsxFiles(dir, out = []) {
 function popupTriggers() {
   const found = [];
   for (const file of tsxFiles(BOARD)) {
-    const src = fs.readFileSync(file, 'utf8');
+    const src = englishUiSource(fs.readFileSync(file, 'utf8'));
     const rel = path.relative(ROOT, file);
     for (let at = src.indexOf('aria-haspopup'); at !== -1; at = src.indexOf('aria-haspopup', at + 1)) {
       let open = at;

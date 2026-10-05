@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // #1218 — the connector's permission surface.
 //
 // Every hosted-connector call used to raise its own permission prompt,
@@ -87,9 +88,9 @@ test('the misspelling from the report is not ours', () => {
 test('the connect flow recommends the canonical name where it is typed', () => {
   // The Name field is the only place that string is decided, so this is
   // where it has to be said — not in a doc nobody opens mid-dialog.
-  assert.match(CONNECTORS_TSX, /Add custom connector/);
-  assert.match(CONNECTORS_TSX, /Name it exactly/);
-  assert.match(CONNECTORS_TSX, new RegExp(`<code[^>]*>${constants.SERVER_NAME}</code>`));
+  assert.match(englishUiSource(CONNECTORS_TSX), /Add custom connector/);
+  assert.match(englishUiSource(CONNECTORS_TSX), /Name it exactly/);
+  assert.match(englishUiSource(CONNECTORS_TSX), new RegExp(`<code[^>]*>${constants.SERVER_NAME}</code>`));
 });
 
 // ── 2. The shipped allow rules ─────────────────────────────────────────
@@ -396,12 +397,12 @@ test('Settings → Connectors offers the rules for a personal settings file', ()
   // The scaffolded file fixes one repo. The user's own settings file is the
   // only thing that fixes every repo, including ones Homeroom never made — so
   // the block has to be somewhere they can copy it from.
-  assert.match(CONNECTORS_TSX, /Stop the permission prompts/);
-  assert.match(CONNECTORS_TSX, /~\/\.claude\/settings\.json/);
-  assert.match(CONNECTORS_TSX, /id="connector-allow-rules"/);
-  assert.match(CONNECTORS_TSX, /id="connector-allow-rules-copy"/);
+  assert.match(englishUiSource(CONNECTORS_TSX), /Stop the permission prompts/);
+  assert.match(englishUiSource(CONNECTORS_TSX), /~\/\.claude\/settings\.json/);
+  assert.match(englishUiSource(CONNECTORS_TSX), /id="connector-allow-rules"/);
+  assert.match(englishUiSource(CONNECTORS_TSX), /id="connector-allow-rules-copy"/);
   // And it says what is NOT covered, so nobody reads it as "approve nothing".
-  assert.match(CONNECTORS_TSX, /still asks every time/);
+  assert.match(englishUiSource(CONNECTORS_TSX), /still asks every time/);
 });
 
 test('the panel splits into the three surfaces the answer differs between', () => {
@@ -411,7 +412,7 @@ test('the panel splits into the three surfaces the answer differs between', () =
   // the wrong file is worse than naming none — the user follows it, is still
   // prompted, and concludes the feature does not work.
   for (const id of ['connector-case-cc-local', 'connector-case-cc-web', 'connector-case-chat']) {
-    assert.match(CONNECTORS_TSX, new RegExp(`id="${id}"`), `${id} is one of the three cases`);
+    assert.match(englishUiSource(CONNECTORS_TSX), new RegExp(`id="${id}"`), `${id} is one of the three cases`);
   }
   // The web case names the per-repo file and says why the personal one is not
   // in that container.
@@ -419,13 +420,13 @@ test('the panel splits into the three surfaces the answer differs between', () =
     CONNECTORS_TSX.indexOf('id="connector-case-cc-web"'),
     CONNECTORS_TSX.indexOf('id="connector-case-chat"')
   );
-  assert.match(web, /fresh container/i);
-  assert.match(web, /\.claude\/settings\.json/);
-  assert.match(web, /id="connector-repo-allow-rules"/);
+  assert.match(englishUiSource(web), /fresh container/i);
+  assert.match(englishUiSource(web), /\.claude\/settings\.json/);
+  assert.match(englishUiSource(web), /id="connector-repo-allow-rules"/);
   // And the chat case says there is nothing to do, rather than leaving a
   // Claude.ai user to copy a file format that has no effect there.
   const chat = CONNECTORS_TSX.slice(CONNECTORS_TSX.indexOf('id="connector-case-chat"'));
-  assert.match(chat, /Nothing to do/i);
+  assert.match(englishUiSource(chat), /Nothing to do/i);
 });
 
 test('the copied block is byte-for-byte the shipped allowlist, in BOTH places', () => {
@@ -468,45 +469,45 @@ test('the panel says why Homeroom cannot just do this for the user', () => {
   // could have spared them — and the honest answer is also reassuring, since
   // "a connector cannot write your permission files" is exactly what stops
   // the NEXT connector granting itself whatever it likes.
-  assert.match(CONNECTORS_TSX, /Homeroom cannot switch this on for you/);
-  assert.match(CONNECTORS_TSX, /a connector has no way to write either/);
-  assert.match(CONNECTORS_TSX, /one-time thing/);
+  assert.match(englishUiSource(CONNECTORS_TSX), /Homeroom cannot switch this on for you/);
+  assert.match(englishUiSource(CONNECTORS_TSX), /a connector has no way to write either/);
+  assert.match(englishUiSource(CONNECTORS_TSX), /one-time thing/);
 });
 
 test('a user whose connector has some other name has a field, not a paragraph', () => {
   // The hint tells the MODEL to substitute the server segment. This is the
   // same fix for the person reading the page, who has the one piece of
   // information the platform does not: what their tools are actually called.
-  assert.match(CONNECTORS_TSX, /id="connector-name-spelling"/);
-  assert.match(CONNECTORS_TSX, /Connector registered under a different name\?/);
+  assert.match(englishUiSource(CONNECTORS_TSX), /id="connector-name-spelling"/);
+  assert.match(englishUiSource(CONNECTORS_TSX), /Connector registered under a different name\?/);
   // It tells them where to look, and names both spellings that need no fix.
   const field = CONNECTORS_TSX.slice(CONNECTORS_TSX.indexOf('connector-name-spelling'));
-  assert.match(field, new RegExp(`mcp__${constants.SERVER_NAME}__whoami`));
-  assert.match(field, /both blocks above are rewritten/);
+  assert.match(englishUiSource(field), new RegExp(`mcp__${constants.SERVER_NAME}__whoami`));
+  assert.match(englishUiSource(field), /both blocks above are rewritten/);
   // Every spelling the shipped block covers is named as one that needs no
   // fix — a user on the pre-rename name must not be told to retype it.
   for (const name of constants.ALLOW_RULE_SERVER_NAMES) {
-    assert.match(field, new RegExp(`>${name}</code>`), `${name} is named as already covered`);
+    assert.match(englishUiSource(field), new RegExp(`>${name}</code>`), `${name} is named as already covered`);
   }
 
   // And it is wired: the field rewrites the two rendered blocks in place, so
   // the copy button they already have picks up the corrected rules.
-  assert.match(SETTINGS_JS, /_wireConnectorNameSpelling\(\)/);
+  assert.match(englishUiSource(SETTINGS_JS), /_wireConnectorNameSpelling\(\)/);
   const handler = SETTINGS_JS.slice(SETTINGS_JS.indexOf('_wireConnectorNameSpelling() {'));
-  assert.match(handler, /connector-allow-rules/);
-  assert.match(handler, /connector-repo-allow-rules/);
+  assert.match(englishUiSource(handler), /connector-allow-rules/);
+  assert.match(englishUiSource(handler), /connector-repo-allow-rules/);
   // Derived from the rendered block rather than from a second copy of the
   // rule list — the same reason the panel interpolates one constant.
-  assert.match(handler, /JSON\.parse\(canonical\)/);
+  assert.match(englishUiSource(handler), /JSON\.parse\(canonical\)/);
   // A server segment is a bare name; anything that could break the JSON or
   // smuggle a glob into it is dropped rather than rendered.
-  assert.match(handler, /replace\(\/\[\^A-Za-z0-9\.-\]\/g, ''\)/);
+  assert.match(englishUiSource(handler), /replace\(\/\[\^A-Za-z0-9\.-\]\/g, ''\)/);
   // And typing back a name the shipped block already covers puts that block
   // back, rather than leaving a rewritten copy narrowed to one spelling. The
   // covered set is derived from the rendered block for the same reason the
   // suffixes are: a second copy of the name list here is what would drift.
-  assert.match(handler, /covered\.has\(name\.toLowerCase\(\)\)/);
-  assert.match(handler, /allow\.map\(\(rule\) => rule\.split\('__'\)\[1\]\.toLowerCase\(\)\)/);
+  assert.match(englishUiSource(handler), /covered\.has\(name\.toLowerCase\(\)\)/);
+  assert.match(englishUiSource(handler), /allow\.map\(\(rule\) => rule\.split\('__'\)\[1\]\.toLowerCase\(\)\)/);
 });
 
 test('both copy buttons copy their own block', () => {
@@ -543,17 +544,17 @@ test('each allow-rules block names the file it is for, above the block', () => {
   // The two blocks are byte-identical, so the destination file is the only
   // thing that distinguishes them — it is rendered, not just described in the
   // paragraph above.
-  assert.match(CONNECTORS_TSX,
+  assert.match(englishUiSource(CONNECTORS_TSX),
     /<span className="font-mono[^"]*">~\/\.claude\/settings\.json<\/span>/);
-  assert.match(CONNECTORS_TSX,
+  assert.match(englishUiSource(CONNECTORS_TSX),
     /<span className="font-mono[^"]*">\.claude\/settings\.json<\/span>/);
   // And the copy buttons step down off the violet fill, which #connector-url-copy
   // (the section's real primary action) keeps.
   for (const id of ['connector-allow-rules-copy', 'connector-repo-allow-rules-copy']) {
     const btn = CONNECTORS_TSX.match(new RegExp(`id="${id}"[\\s\\S]{0,700}?</Button>`));
     assert.ok(btn, `#${id} is a Button`);
-    assert.match(btn[0], /variant="outline"/, `#${id} is the neutral bordered control`);
-    assert.match(btn[0], /min-h-\[44px\] sm:min-h-\[36px\]/,
+    assert.match(englishUiSource(btn[0]), /variant="outline"/, `#${id} is the neutral bordered control`);
+    assert.match(englishUiSource(btn[0]), /min-h-\[44px\] sm:min-h-\[36px\]/,
       `#${id} keeps a 44px tap target on a phone`);
   }
 });
@@ -563,8 +564,8 @@ test('every copy button is distinguishable to a screen reader', () => {
   // byte-identical JSON (#1290). #1892 added two more for the Codex CLI
   // blocks, so the count is read off the markup rather than assumed: one
   // `<id>-copy` button, one distinct label, each.
-  const buttons = (CONNECTORS_TSX.match(/id="[a-z-]+-copy"/g) || []);
-  const labels = (CONNECTORS_TSX.match(/aria-label="Copy[^"]*"/g) || []);
+  const buttons = (englishUiSource(CONNECTORS_TSX).match(/id="[a-z-]+-copy"/g) || []);
+  const labels = (englishUiSource(CONNECTORS_TSX).match(/aria-label="Copy[^"]*"/g) || []);
   assert.ok(buttons.length >= 3, 'the connector URL and both allow-rule blocks are still here');
   assert.equal(labels.length, buttons.length, 'every copy button carries an aria-label');
   assert.equal(new Set(labels).size, buttons.length,
@@ -575,16 +576,16 @@ test('copying reports the destination, and reports failure honestly', () => {
   const settingsJs = read('frontend/src/features/settings/settings.js');
   // The label swap alone cannot say WHICH file you copied for, and on a phone
   // the thumb is over it — so the toast names the destination.
-  assert.match(settingsJs, /Copied\. Paste it into ~\/\.claude\/settings\.json/);
-  assert.match(settingsJs, /Copied\. Commit it as \.claude\/settings\.json in your app repo/);
+  assert.match(englishUiSource(settingsJs), /Copied\. Paste it into ~\/\.claude\/settings\.json/);
+  assert.match(englishUiSource(settingsJs), /Copied\. Commit it as \.claude\/settings\.json in your app repo/);
   // #2370: the field is labelled "MCP server URL" — the words Claude, ChatGPT
   // and Codex use for the box it gets pasted into — and the toast agrees.
-  assert.match(settingsJs, /MCP server URL copied/);
+  assert.match(englishUiSource(settingsJs), /MCP server URL copied/);
   // The URL button used to write 'Copied' even when writeText had rejected.
-  assert.match(settingsJs, /'Copy failed'/);
-  assert.match(settingsJs, /\{ error: true \}/);
+  assert.match(englishUiSource(settingsJs), /'Copy failed'/);
+  assert.match(englishUiSource(settingsJs), /\{ error: true \}/);
   // A second press must not cut the first press's confirmation short.
-  assert.match(settingsJs, /clearTimeout\(resetTimer\)/);
+  assert.match(englishUiSource(settingsJs), /clearTimeout\(resetTimer\)/);
 });
 
 test('the scaffolded README points at the personal settings file too', () => {

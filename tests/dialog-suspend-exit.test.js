@@ -433,6 +433,10 @@ function* elementsOf(node) {
     for (const child of node) yield* elementsOf(child);
     return;
   }
+  if (typeof node.type === 'function' && /^(?:Localized|LocalizedDynamic)$/.test(node.type.name)) {
+    yield* elementsOf(node.type(node.props));
+    return;
+  }
   yield node;
   yield* elementsOf(node.props?.children);
 }
@@ -471,7 +475,10 @@ function mountForkDialog(t, { reply }) {
     stubs: {
       // The shell primitives call forwardRef at module load; nothing renders
       // them here, so the render function itself stands in.
-      react: { ...fake.React, forwardRef: (render) => render },
+      react: {
+        ...fake.React, forwardRef: (render) => render,
+        cloneElement: (element, props) => ({ ...element, props: { ...element.props, ...props } }),
+      },
       'react/jsx-runtime': jsxRuntime,
       './create-progress': { CreateProgress },
       './app-allowance': { AppAllowance() {}, useAppAllowance: () => ({ blocked: false }) },

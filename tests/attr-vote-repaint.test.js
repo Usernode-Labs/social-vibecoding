@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #608: priority/assignee votes must repaint EVERY card surface, not just
 // the feed. _refreshAttrCards used to touch only #dev-feed /
 // #gc-thread-head / #gc-merged, so in the board view (which mounts
@@ -66,7 +67,7 @@ function makeSandbox() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   return { AppView: sandbox.__AppView, sandbox };
 }

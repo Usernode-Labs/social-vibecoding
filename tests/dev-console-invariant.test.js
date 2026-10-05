@@ -16,9 +16,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 
-const { DevConsoleStore } = require(
-  path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-console', 'store.ts'),
-);
+const { loadTsx } = require('./lib/render-tsx');
+const { DevConsoleStore } = loadTsx('frontend/src/features/dev-console/store.ts');
 
 // A fresh receiver per test. The module also exports a singleton and installs
 // it as window.DevConsole in a browser, but the class is what the behaviour

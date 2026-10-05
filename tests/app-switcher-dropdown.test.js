@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // The Homeroom menu is a POPOVER under the mark on desktop (#2784).
 //
 // #apps-switcher-sheet is one always-mounted element with three
@@ -401,10 +402,10 @@ test('the Workshop is a row in the menu, not a toggle (#2761)', () => {
   // the App segment — the parked app on the bar (#2762) is the way back.
   assert.ok(!/AppViewTabs|view-tabs/.test(SHEET.replace(/\{\/\*[\s\S]*?\*\/\}/g, '')),
     'the strip is not rendered here any more');
-  assert.match(SHEET, /id="app-menu-row-workshop"[\s\S]{0,200}label="Go to community"/,
+  assert.match(englishUiSource(SHEET), /id="app-menu-row-workshop"[\s\S]{0,200}label="Go to community"/,
     'the row that replaced it');
   // The strip's Workshop segment carried the vote count; it rides the row now.
-  assert.match(SHEET, /id="app-menu-workshop-owed"/);
+  assert.match(englishUiSource(SHEET), /id="app-menu-workshop-owed"/);
   assert.ok(!/In this app/.test(SHEET.replace(/\{\/\*[\s\S]*?\*\/\}/g, '')),
     'and no caption left behind — comments explaining a move are fine, '
     + 'rendered text is not');

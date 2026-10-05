@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // `#dc-spec-viewer` — the shared-spec reader, as a React island.
 //
 // It was the last CONTROLLER host on the dev chat's screen: when `#dc-view`
@@ -97,7 +98,7 @@ function makeDevChat(over = {}) {
       publishRunner: noop,
     },
   };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${DEV_CHAT_SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   const DevChat = sandbox.__DevChat;
   DevChat.currentSession = { id: 7, status: 'active' };

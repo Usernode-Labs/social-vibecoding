@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // The first session's sketch (src/services/app-sketch.js): a new project's
 // main screen, drawn from its description in about half a minute, shown on
@@ -102,20 +103,20 @@ test('a reply is used only when it has a design and something to look at', () =>
 });
 
 test('the page is served sandboxed, with no script and no network, and framed only by Homeroom', () => {
-  assert.match(sketch.SKETCH_CSP, /^sandbox;/, 'a sandbox with nothing allowed: no script, an opaque origin');
-  assert.match(sketch.SKETCH_CSP, /default-src 'none'/);
-  assert.match(sketch.SKETCH_CSP, /style-src 'unsafe-inline'/);
-  assert.match(sketch.SKETCH_CSP, /frame-ancestors 'self'/);
+  assert.match(englishUiSource(sketch.SKETCH_CSP), /^sandbox;/, 'a sandbox with nothing allowed: no script, an opaque origin');
+  assert.match(englishUiSource(sketch.SKETCH_CSP), /default-src 'none'/);
+  assert.match(englishUiSource(sketch.SKETCH_CSP), /style-src 'unsafe-inline'/);
+  assert.match(englishUiSource(sketch.SKETCH_CSP), /frame-ancestors 'self'/);
   const routes = read('src/routes/apps.js');
-  assert.match(routes, /router\.get\('\/api\/apps\/:slug\/sketch\.html'/);
-  assert.match(routes, /'Content-Security-Policy': appSketch\.SKETCH_CSP,/);
-  assert.match(routes, /'X-Content-Type-Options': 'nosniff',/);
+  assert.match(englishUiSource(routes), /router\.get\('\/api\/apps\/:slug\/sketch\.html'/);
+  assert.match(englishUiSource(routes), /'Content-Security-Policy': appSketch\.SKETCH_CSP,/);
+  assert.match(englishUiSource(routes), /'X-Content-Type-Options': 'nosniff',/);
   const made = read('frontend/src/features/first-session/made.tsx');
-  assert.match(made, /<iframe\s+title=\{`A sketch of \$\{made\.name\}`\}\s+src=\{`\/api\/apps\/\$\{encodeURIComponent\(made\.slug\)\}\/sketch\.html\?theme=/);
-  assert.match(made, /sandbox=""/, 'framed with nothing allowed');
+  assert.match(englishUiSource(made), /<iframe\s+title=\{`A sketch of \$\{made\.name\}`\}\s+src=\{`\/api\/apps\/\$\{encodeURIComponent\(made\.slug\)\}\/sketch\.html\?theme=/);
+  assert.match(englishUiSource(made), /sandbox=""/, 'framed with nothing allowed');
   const doc = sketch.sketchDocument({ name: 'A <b>name</b>', design: DESIGN, html: HTML, theme: 'dark' });
-  assert.match(doc, /<title>A &lt;b&gt;name&lt;\/b&gt;: a sketch<\/title>/);
-  assert.doesNotMatch(doc, /<script|<link|https?:\/\//);
+  assert.match(englishUiSource(doc), /<title>A &lt;b&gt;name&lt;\/b&gt;: a sketch<\/title>/);
+  assert.doesNotMatch(englishUiSource(doc), /<script|<link|https?:\/\//);
 });
 
 // ── 2. One vocabulary ────────────────────────────────────────────────────

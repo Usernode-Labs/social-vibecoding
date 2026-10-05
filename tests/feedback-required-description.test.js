@@ -1,3 +1,5 @@
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
 // Frontend tests for issue #1603: an empty description must SAY it is
 // required, both before you type and when you submit anyway.
 //
@@ -122,7 +124,7 @@ test('the empty-description branch is the FIRST thing submit does', () => {
 });
 
 test('the copy lives in exactly one place', () => {
-  const hits = CONTROLLER_TEXT.split(MESSAGE).length - 1;
+  const hits = englishUiSource(CONTROLLER_TEXT).split(MESSAGE).length - 1;
   assert.equal(hits, 1, `"${MESSAGE}" is written once, in showDescriptionError`);
 });
 
@@ -292,7 +294,7 @@ function makeHarness() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(FEEDBACK_SRC, sandbox);
   sandbox.init();
 

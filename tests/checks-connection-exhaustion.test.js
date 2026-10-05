@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Connection exhaustion is 'error', not 'failing' (#1771).
 //
 // A preview whose queries throw because the SHARED Postgres has no
@@ -273,7 +274,7 @@ function makeAppView() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext([
     read('public/js/merge-status.js'),
     read('public/js/session-transcript.js'),

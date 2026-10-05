@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #814: mobile kanban tabs. Below 640px the Dev board renders ONE column at
 // a time behind a tab strip instead of scrolling sideways.
 //
@@ -78,7 +79,7 @@ function makeCtx(over) {
   if (o.search !== undefined) sandbox.location = { search: o.search };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   return sandbox;
 }

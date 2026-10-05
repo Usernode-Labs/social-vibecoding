@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // The four strips between the dev chat's session header and its panes.
 //
 // They did not convert together because they are similar — the sync banner is
@@ -79,7 +80,7 @@ function makeDevChat(over = {}) {
       publishBanners: (state) => published.push({ mounted: false, state }),
     },
   };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${CREDIT_OPTIONS_SRC}\n${DEV_CHAT_SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   const DevChat = sandbox.__DevChat;
   Object.assign(DevChat, over);

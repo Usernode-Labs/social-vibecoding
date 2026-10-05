@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // The filter bar over SESSION cards (app-view.js _devCardMatches's 'session'
 // kind, _kanbanView's In-progress pass, _sessionFilterNoteRow).
 //
@@ -51,7 +52,7 @@ function makeAppView() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${MERGE_STATUS_SRC}\n${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView._proposalsCtx = { majority: 1 };

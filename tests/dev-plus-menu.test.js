@@ -1,3 +1,5 @@
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
 // Frontend tests for issue #645: the Dev "+" menu absorbs the hamburger
 // drawer's "Members & visibility" entry, and the intermediate "App
 // settings" sub-page is dissolved into direct "App display name" /
@@ -88,7 +90,7 @@ function makeViewHarness(els = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(VIEW_SRC, sandbox);
   return sandbox.window.AppView;
 }
@@ -111,10 +113,10 @@ function makeViewHarness(els = {}) {
 //
 // The seam between the two — that renderDevView computes the predicate and the
 // component consumes it — is asserted once, explicitly, below.
-const FRAME_SRC = fs.readFileSync(
+const FRAME_SRC = englishUiSource(fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-board', 'actions-row.tsx'),
   'utf8'
-);
+));
 
 // The `showsMembers ? … : null` block, so a test can assert on the members row
 // without matching text that happens to appear elsewhere in the file.
@@ -163,20 +165,21 @@ test('the members item is gated on the predicate, and only on the predicate', ()
 });
 
 test('the members item keeps both label pairs, branched on self_hosted', () => {
+  const VIEW_SRCEnglish = englishUiSource(VIEW_SRC);
   const { whenSelfHosted, otherwise } = selfHostedBranch(membersBlock());
-  assert.ok(whenSelfHosted.includes('Proposal approvals'), 'self-app label is Proposal approvals');
+  assert.ok(englishUiSource(whenSelfHosted).includes('Proposal approvals'), 'self-app label is Proposal approvals');
   assert.ok(
-    whenSelfHosted.includes('Who approves proposals and how many approvals are needed'),
+    englishUiSource(whenSelfHosted).includes('Who approves proposals and how many approvals are needed'),
     'self-app sublabel unchanged'
   );
-  assert.ok(!whenSelfHosted.includes('Members &amp; approvals'),
+  assert.ok(!englishUiSource(whenSelfHosted).includes('Members & approvals'),
     'self-app does not use the Members label');
-  assert.ok(otherwise.includes('Members &amp; approvals'), 'other apps keep the Members label');
-  assert.ok(otherwise.includes('Manage collaborators, app admins and proposal approvals'),
+  assert.ok(englishUiSource(otherwise).includes('Members & approvals'), 'other apps keep the Members label');
+  assert.ok(englishUiSource(otherwise).includes('Manage collaborators, app admins and proposal approvals'),
     'other apps describe the remaining member and approval controls');
   // The prop feeding that branch is appData.self_hosted, read in the module.
   assert.match(
-    VIEW_SRC,
+    englishUiSource(VIEW_SRCEnglish),
     /selfHosted:\s*!!AppView\.appData\?\.self_hosted/,
     'renderDevView passes appData.self_hosted as the selfHosted prop'
   );
@@ -221,20 +224,20 @@ test('_plusMenuShowsMembers mirrors the old drawer-row predicate', () => {
 // ── the App settings nesting is gone; rename/secrets are direct items ────
 
 test('"+" menu has direct rename and secrets items, no App settings entry', () => {
-  assert.ok(!FRAME_SRC.includes('data-plus="settings"'), 'nested App settings entry removed');
-  assert.ok(FRAME_SRC.includes('data-plus="rename"'), 'rename item present');
-  assert.ok(FRAME_SRC.includes('App display name'), 'rename label present');
-  assert.ok(FRAME_SRC.includes('data-plus="secrets"'), 'secrets item present');
-  assert.ok(FRAME_SRC.includes('id="dc-secrets-state"'),
+  assert.ok(!englishUiSource(FRAME_SRC).includes('data-plus="settings"'), 'nested App settings entry removed');
+  assert.ok(englishUiSource(FRAME_SRC).includes('data-plus="rename"'), 'rename item present');
+  assert.ok(englishUiSource(FRAME_SRC).includes('App display name'), 'rename label present');
+  assert.ok(englishUiSource(FRAME_SRC).includes('data-plus="secrets"'), 'secrets item present');
+  assert.ok(englishUiSource(FRAME_SRC).includes('id="dc-secrets-state"'),
     'secrets item carries the missing-required state slot for refreshDevChatSecretsState');
   // Fork stays last in the menu.
-  assert.ok(FRAME_SRC.indexOf('data-plus="secrets"') < FRAME_SRC.indexOf('data-plus="fork"'),
+  assert.ok(englishUiSource(FRAME_SRC).indexOf('data-plus="secrets"') < englishUiSource(FRAME_SRC).indexOf('data-plus="fork"'),
     'fork renders after secrets');
   // The slot is an EMPTY leaf: refreshDevChatSecretsState writes its
   // textContent, so React must not render a text child there or a re-render
   // would clobber it.
   assert.match(
-    FRAME_SRC,
+    englishUiSource(FRAME_SRC),
     /id="dc-secrets-state"[\s\S]{0,140}?><\/span>/,
     'the secrets-state slot renders empty for the module to fill'
   );
@@ -249,13 +252,13 @@ test('read-only viewers get only Fork in the "+" menu', () => {
   );
   const gated = FRAME_SRC.slice(start, end);
   for (const item of ['issue', 'import-pr', 'members', 'rename', 'secrets']) {
-    assert.ok(gated.includes(`data-plus="${item}"`), `${item} item is inside the readOnly gate`);
+    assert.ok(englishUiSource(gated).includes(`data-plus="${item}"`), `${item} item is inside the readOnly gate`);
   }
-  assert.ok(!gated.includes('data-plus="fork"'), 'fork is NOT inside the readOnly gate');
-  assert.ok(FRAME_SRC.slice(end).includes('data-plus="fork"'), 'fork item still present');
+  assert.ok(!englishUiSource(gated).includes('data-plus="fork"'), 'fork is NOT inside the readOnly gate');
+  assert.ok(englishUiSource(FRAME_SRC.slice(end)).includes('data-plus="fork"'), 'fork item still present');
   // Read-only also swaps the "+" button's tooltip and, on the self-app,
   // hides the button outright.
-  assert.ok(FRAME_SRC.includes("? 'Remix: make your own copy'"), 'read-only tooltip names the one row it opens');
+  assert.ok(englishUiSource(FRAME_SRC).includes("? 'Remix: make your own copy'"), 'read-only tooltip names the one row it opens');
   // Tolerant of layout classes before the gate: #1440 added `ml-auto` here
   // and broke a version of this that pinned the exact string, and the "+"
   // moving to the end of the Workshop's tab strip swapped the Tailwind
@@ -263,12 +266,12 @@ test('read-only viewers get only Fork in the "+" menu', () => {
   // test protects is the readOnly && selfHosted gate on the "+"'s wrapper,
   // not the classes beside it.
   assert.match(
-    FRAME_SRC,
+    englishUiSource(FRAME_SRC),
     /className=\{`dev-ws-plus[^`$]*\$\{readOnly && selfHosted \? 'hidden' : ''\}`\}/,
     'the "+" button is hidden for a read-only viewer of the self-app'
   );
   assert.match(
-    VIEW_SRC,
+    englishUiSource(VIEW_SRC),
     /readOnly:\s*!!AppView\.readOnly/,
     'renderDevView passes AppView.readOnly as the readOnly prop'
   );
@@ -288,7 +291,7 @@ test('old dev/settings deep links normalize to the dev card list', () => {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(APP_SRC, sandbox);
   const App = sandbox.window.App;
   // Field-by-field (the vm realm's Object.prototype differs, so

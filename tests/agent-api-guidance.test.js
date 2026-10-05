@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -220,9 +221,9 @@ test('authorization and token-management copy covers all configured coding agent
   const authorizeJs = fs.readFileSync(path.join(root, 'public/js/cli-authorize.js'), 'utf8');
   const settings = shellMarkup();
   for (const source of [authorize, authorizeJs, settings]) {
-    assert.match(source, /Codex/);
-    assert.match(source, /Claude Code/);
-    assert.match(source, /OpenCode/);
+    assert.match(englishUiSource(source), /Codex/);
+    assert.match(englishUiSource(source), /Claude Code/);
+    assert.match(englishUiSource(source), /OpenCode/);
   }
-  assert.match(settings, /CLI &amp; coding-agent access/);
+  assert.match(englishUiSource(settings), /CLI &amp; coding-agent access/);
 });

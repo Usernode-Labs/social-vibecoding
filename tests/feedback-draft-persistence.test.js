@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Frontend tests for issue #2796: closing Send Feedback is not throwing the
 // words away. The backdrop, Cancel, the back gesture and a reload all keep
 // the title and description; only a send clears them.
@@ -138,7 +139,7 @@ function makeHarness({
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(FEEDBACK_SRC, sandbox);
   sandbox.init();
   sandbox.App.currentApp = appData ? 'example-app' : null;

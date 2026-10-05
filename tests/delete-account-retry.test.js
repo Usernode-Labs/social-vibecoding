@@ -52,6 +52,7 @@ function walk(node, out = { elements: [], text: [] }) {
   if (node == null || typeof node === 'boolean') return out;
   if (typeof node === 'string' || typeof node === 'number') { out.text.push(String(node)); return out; }
   if (Array.isArray(node)) { node.forEach((n) => walk(n, out)); return out; }
+  if (typeof node.type === 'function' && /^(?:Message|RichMessage|Localized|LocalizedDynamic|LocalizedValue)$/.test(node.type.name)) return walk(node.type(node.props), out);
   if (node.props) {
     out.elements.push(node);
     walk(node.props.children, out);

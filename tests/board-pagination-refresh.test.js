@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -48,7 +49,7 @@ function fixture(rows = Array.from({ length: 100 }, (_, i) => row(i + 1))) {
     },
   };
   sandbox.window = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${source}\nglobalThis.subject = AppView;`, sandbox);
   const av = sandbox.subject;
   av.appData = { slug: 'demo' };

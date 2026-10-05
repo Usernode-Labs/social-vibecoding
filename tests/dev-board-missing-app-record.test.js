@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // The #2879 case on the Workshop board: with no app record, a Workshop that
 // said Loading forever.
 //
@@ -125,7 +126,7 @@ function makeHarness(recordAnswers) {
       unmountAll: () => {},
     },
   };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(VIEW_SRC, sandbox);
   const AppView = sandbox.window.AppView;
   // Everything outside the record question is beside the point here; keep it

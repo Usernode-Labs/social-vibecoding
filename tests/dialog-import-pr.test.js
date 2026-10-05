@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // The Import-a-PR dialog, after #1078 chunk I made it a stateful island.
 //
 // Everything asserted here used to be asserted by driving
@@ -81,17 +82,17 @@ test('one row per candidate, with the renderer doing the escaping', () => {
 // is built from refs/pull/<N>/head and the code is an outside contributor's —
 // so the picker says so BEFORE the import, not after.
 test('the fork label is per-row and never renders blank', () => {
-  const at = SRC.indexOf('{c.fromFork ? (');
+  const at = englishUiSource(SRC).indexOf('{c.fromFork ? (');
   assert.ok(at > 0, 'the label is gated on the candidate’s own fromFork flag');
-  const label = SRC.slice(at, SRC.indexOf(') : null}', at));
-  assert.match(label, /from a fork/, 'the caution is the point');
-  assert.match(label, /String\(c\.headRepo \|\| 'unknown fork'\)/,
+  const label = SRC.slice(at, englishUiSource(SRC).indexOf(') : null}', at));
+  assert.match(englishUiSource(label), /from a fork/, 'the caution is the point');
+  assert.match(englishUiSource(label), /String\(c\.headRepo \|\| 'unknown fork'\)/,
     'missing metadata reads as unknown, not empty');
   // It sits inside the row's own <span>, after the number/title line — so it
   // can only ever belong to the row it labels.
-  assert.ok(SRC.indexOf('#{num} · ') < at, 'the label follows its own PR number');
-  assert.ok(at < SRC.indexOf('{c.htmlUrl ? ('), '…and precedes that row’s GitHub link');
-  assert.equal((SRC.match(/from a fork: /g) || []).length, 1,
+  assert.ok(englishUiSource(SRC).indexOf('#{num} · ') < at, 'the label follows its own PR number');
+  assert.ok(at < englishUiSource(SRC).indexOf('{c.htmlUrl ? ('), '…and precedes that row’s GitHub link');
+  assert.equal((englishUiSource(SRC).match(/from a fork: /g) || []).length, 1,
     'exactly one fork label in the component, rendered per fork-headed row');
 });
 
@@ -99,14 +100,14 @@ test('the empty and GitHub-off responses are distinct list states', () => {
   const load = fnBody('loadCandidates');
   // A 404 means GitHub isn't configured for this app — a state the user can't
   // act on is worse than a plain sentence saying so.
-  assert.match(load, /if \(!ok\) \{[\s\S]*GitHub isn’t configured for this app/,
+  assert.match(englishUiSource(load), /if \(!ok\) \{[\s\S]*GitHub isn’t configured for this app/,
     'non-OK renders the GitHub-off note');
-  assert.match(load, /rows\.length === 0[\s\S]*No open pull requests are available/,
+  assert.match(englishUiSource(load), /rows\.length === 0[\s\S]*No open pull requests are available/,
     'an empty candidate list renders the empty note');
-  assert.match(load, /kind: 'error', text: 'Couldn’t load pull requests/,
+  assert.match(englishUiSource(load), /kind: 'error', text: 'Couldn’t load pull requests/,
     'a thrown fetch is its own state, not an empty list');
-  assert.match(SRC, /list\.kind === 'note' \? \([\s\S]*NOTE_CLASS/, 'notes render in the note style');
-  assert.match(SRC, /list\.kind === 'error' \? \([\s\S]*ERROR_CLASS/, 'errors render in the error style');
+  assert.match(englishUiSource(SRC), /list\.kind === 'note' \? \([\s\S]*NOTE_CLASS/, 'notes render in the note style');
+  assert.match(englishUiSource(SRC), /list\.kind === 'error' \? \([\s\S]*ERROR_CLASS/, 'errors render in the error style');
 });
 
 test('the list only fetches once the dialog is open', () => {
@@ -126,22 +127,22 @@ test('the list only fetches once the dialog is open', () => {
 
 test('the freeze covers the list, both buttons and the progress row', () => {
   // Cancel is DISABLED rather than hidden so the footer doesn’t reflow.
-  assert.match(SRC, /id="import-pr-cancel"[\s\S]{0,400}disabled=\{busy\}/, 'cancel frozen while busy');
-  assert.match(SRC, /id="import-pr-submit"[\s\S]{0,400}disabled=\{busy \|\| selected == null\}/,
+  assert.match(englishUiSource(SRC), /id="import-pr-cancel"[\s\S]{0,400}disabled=\{busy\}/, 'cancel frozen while busy');
+  assert.match(englishUiSource(SRC), /id="import-pr-submit"[\s\S]{0,400}disabled=\{busy \|\| selected == null\}/,
     'submit frozen while busy, and until a PR is picked');
-  assert.match(SRC, /busy\s*\?\s*'max-h-80[^']*pointer-events-none opacity-50'/,
+  assert.match(englishUiSource(SRC), /busy\s*\?\s*'max-h-80[^']*pointer-events-none opacity-50'/,
     'the list is inert and dimmed mid-import');
-  assert.match(SRC, /useHiddenClass\(progressRef, !busy\)/, 'the progress row follows busy');
-  assert.match(SRC, /useHiddenClass\(slowRef, !slow\)/, 'and the slow line follows its own state');
-  assert.match(SRC, /\{busy \? 'Importing…' : 'Import'\}/, 'the submit label says what is happening');
+  assert.match(englishUiSource(SRC), /useHiddenClass\(progressRef, !busy\)/, 'the progress row follows busy');
+  assert.match(englishUiSource(SRC), /useHiddenClass\(slowRef, !slow\)/, 'and the slow line follows its own state');
+  assert.match(englishUiSource(SRC), /\{busy \? 'Importing…' : 'Import'\}/, 'the submit label says what is happening');
 
   const freeze = fnBody('setImportBusy');
-  assert.match(freeze, /Importing PR #\$\{prNumber\}: checking it on GitHub/, 'progress names the PR');
-  assert.match(freeze, /clearTimeout\(slowTimer\.current\)/, 'every call clears the slow timer first');
-  assert.match(freeze, /if \(!on\) return;/, 'unfreezing never arms a new one');
-  assert.match(freeze, /setTimeout\(\(\) => \{[\s\S]*setSlow\(true\);[\s\S]*\}, 8000\)/,
+  assert.match(englishUiSource(freeze), /Importing PR #\$\{prNumber\}: checking it on GitHub/, 'progress names the PR');
+  assert.match(englishUiSource(freeze), /clearTimeout\(slowTimer\.current\)/, 'every call clears the slow timer first');
+  assert.match(englishUiSource(freeze), /if \(!on\) return;/, 'unfreezing never arms a new one');
+  assert.match(englishUiSource(freeze), /setTimeout\(\(\) => \{[\s\S]*setSlow\(true\);[\s\S]*\}, 8000\)/,
     '~8s before a slow GitHub reads as "still working"');
-  assert.match(SRC, /if \(slowTimer\.current\) clearTimeout\(slowTimer\.current\)/,
+  assert.match(englishUiSource(SRC), /if \(slowTimer\.current\) clearTimeout\(slowTimer\.current\)/,
     'and unmount clears it too');
 });
 
@@ -149,10 +150,10 @@ test('a dismiss mid-import is refused and a second submit is ignored', () => {
   // The veto is the dialog's, so the backdrop, the Cancel button and a
   // kit-initiated Escape all respect it from one place — where the legacy
   // code repeated the check in closeImportPrModal AND the backdrop listener.
-  assert.match(SRC, /canClose: \(\) => !busyRef\.current/, 'busy vetoes every close path');
+  assert.match(englishUiSource(SRC), /canClose: \(\) => !busyRef\.current/, 'busy vetoes every close path');
   const submit = fnBody('submit');
-  assert.match(submit, /if \(busy\) return;/, 'a second submit mid-flight is a no-op');
-  assert.match(submit, /if \(pr == null\) return setError\('Pick a pull request to import\.'\)/,
+  assert.match(englishUiSource(submit), /if \(busy\) return;/, 'a second submit mid-flight is a no-op');
+  assert.match(englishUiSource(submit), /if \(pr == null\) return setError\('Pick a pull request to import\.'\)/,
     'no selection submits nothing and says why');
 });
 
@@ -185,11 +186,11 @@ test('each failure names its own cause instead of "Import failed (HTTP N)"', () 
     SRC.indexOf('export function ImportPrDialog('),
   );
   // The server's own 404/409 strings are already user-grade, so they win.
-  assert.match(map, /if \(serverError\) return serverError;/, 'a server message wins');
-  assert.match(map, /status === 404[\s\S]{0,120}wasn’t found on GitHub/, '404 without a message');
-  assert.match(map, /status === 409[\s\S]{0,120}can’t be imported right now/, '409 without a message');
-  assert.match(map, /status === 503[\s\S]{0,120}platform is restarting/, '503 is the drain guard');
-  assert.match(map, /return 'Something went wrong importing this PR\. Please try again\.'/,
+  assert.match(englishUiSource(map), /if \(serverError\) return serverError;/, 'a server message wins');
+  assert.match(englishUiSource(map), /status === 404[\s\S]{0,120}wasn’t found on GitHub/, '404 without a message');
+  assert.match(englishUiSource(map), /status === 409[\s\S]{0,120}can’t be imported right now/, '409 without a message');
+  assert.match(englishUiSource(map), /status === 503[\s\S]{0,120}platform is restarting/, '503 is the drain guard');
+  assert.match(englishUiSource(map), /return 'Something went wrong importing this PR\. Please try again\.'/,
     'anything else still says something actionable');
 });
 
@@ -211,9 +212,9 @@ test('a failed import keeps the dialog open, unfrozen, with the message inline',
 test('a network error surfaces without navigating', () => {
   const submit = fnBody('submit');
   const net = submit.slice(submit.indexOf('} catch {'));
-  assert.match(net, /setImportBusy\(false\)/, 'unfrozen');
-  assert.match(net, /setError\('Network error. Please try again\.'\)/, 'named for what it was');
-  assert.match(net, /return;/, 'and nothing is navigated to');
+  assert.match(englishUiSource(net), /setImportBusy\(false\)/, 'unfrozen');
+  assert.match(englishUiSource(net), /setError\('Network error. Please try again\.'\)/, 'named for what it was');
+  assert.match(englishUiSource(net), /return;/, 'and nothing is navigated to');
 });
 
 // The import succeeded server-side even if the navigation blew up, so the
@@ -221,10 +222,10 @@ test('a network error surfaces without navigating', () => {
 test('a throwing navigation still closes the dialog and toasts', () => {
   const submit = fnBody('submit');
   const tail = submit.slice(submit.indexOf('setImportBusy(false);\n    try {'));
-  assert.match(tail, /PlatformUI\?\.toast\?\.\(/, 'the user is told');
-  assert.match(tail, /PR #\$\{pr\} was imported/, 'by PR number');
+  assert.match(englishUiSource(tail), /PlatformUI\?\.toast\?\.\(/, 'the user is told');
+  assert.match(englishUiSource(tail), /PR #\$\{pr\} was imported/, 'by PR number');
   // #866: and told that the Preview button isn't there yet — the staging
   // build takes minutes.
-  assert.match(tail, /Its preview is being built now/, 'with the preview expectation set');
+  assert.match(englishUiSource(tail), /Its preview is being built now/, 'with the preview expectation set');
   assert.ok(tail.indexOf('dialog.close()') > tail.indexOf('toast'), 'the dialog closes either way');
 });

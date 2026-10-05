@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #788: UI-string tests for how an "explicit approval" proposal renders
 // — the amber chip, the SUPPRESSED merge countdown, the retained
 // rejection countdown, the help-text clause, and the hidden Admin-merge
@@ -45,7 +46,7 @@ function makeAppView(opts = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${MERGE_STATUS_SRC}\n${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView._proposalsCtx = Object.assign(
@@ -204,7 +205,7 @@ test('_votingHelpText: an unflagged row is completely unchanged', () => {
 test('MergeStatus.lifecycle: a flagged in-vote row keeps its state + gains the flag', () => {
   const sandbox = { console };
   sandbox.window = sandbox; sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${MERGE_STATUS_SRC};globalThis.__MS = MergeStatus;`, sandbox);
   const MS = sandbox.__MS;
 
@@ -337,7 +338,7 @@ const serverCopy = require('../src/services/explicit-approval');
 test('the browser copy says exactly what the server says, for every reason', () => {
   const sandbox = { console };
   sandbox.window = sandbox; sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${MERGE_STATUS_SRC};globalThis.__MS = MergeStatus;`, sandbox);
   const MS = sandbox.__MS;
   for (const reason of [...serverCopy.REASONS, null, 'not-a-reason']) {
@@ -441,7 +442,7 @@ test('the requirement row: "A Yes from another member", with the reason as its l
 test('MergeStatus.lifecycle: votes in, no other member yet, is its own state', () => {
   const sandbox = { console };
   sandbox.window = sandbox; sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${MERGE_STATUS_SRC};globalThis.__MS = MergeStatus;`, sandbox);
   const MS = sandbox.__MS;
   const row = {

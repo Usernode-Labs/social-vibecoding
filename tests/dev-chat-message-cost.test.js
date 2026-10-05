@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #1375: the amount beside a Dev-chat model is one reply's cost in dollars,
 // while the lower-right meter is today's cumulative spend. Both live usage
 // events and reloaded DB rows arrive in fractional cents, under different
@@ -80,7 +81,7 @@ function makeDevChat() {
   sandbox.globalThis = sandbox;
   sandbox.window.addEventListener = () => {};
   sandbox.UsernodeReact = { devChat: t.bridge };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
 
   const DevChat = sandbox.__DevChat;

@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // What the nine dialogs DO, now that they own it (#1078 chunk I).
 //
 // tests/dialog-components.test.js pins the shape of the seam — who renders
@@ -362,9 +363,9 @@ test('create: mode, import check and POST /api/apps all moved', () => {
   const src = dialog('create-app.tsx');
   // Every answer starts empty since the rework; close puts the start
   // answer back to none, and a new answer there starts the check over.
-  assert.match(src, /applyMode\(null\)/);
-  assert.match(src, /\/api\/github\/verify-access\?url=/, 'the import URL check moved with it');
-  assert.match(src, /fetch\('\/api\/apps', \{/, 'the create POST moved with it');
+  assert.match(englishUiSource(src), /applyMode\(null\)/);
+  assert.match(englishUiSource(src), /\/api\/github\/verify-access\?url=/, 'the import URL check moved with it');
+  assert.match(englishUiSource(src), /fetch\('\/api\/apps', \{/, 'the create POST moved with it');
   // A successful create/import no longer closes the dialog. #1418 covered
   // the async build with a toast over a CLOSED dialog, because the tile's
   // small "Spinning up…" was easy to miss; the dialog now stays open and
@@ -372,39 +373,39 @@ test('create: mode, import check and POST /api/apps all moved', () => {
   // create-progress.tsx, tests/create-progress-view.test.js). The toast
   // survives only on the path that has nothing to report on — a 201 with
   // no slug to follow.
-  assert.match(src, /watchCreation\(slug\)/, 'the success path starts following the build');
-  assert.match(src, /setCreated\(\{ slug/, 'and swaps the card to the progress view');
-  assert.match(src, /if \(!slug\) \{/, 'a 201 we cannot follow falls back to the old close+toast');
-  assert.match(src, /window\.PlatformUI\?\.toast\?\.\(/, 'that fallback still raises the toast');
-  assert.match(src, /being imported/, 'import mode gets the imported wording');
-  assert.match(src, /being created/, 'new mode gets the created wording');
+  assert.match(englishUiSource(src), /watchCreation\(slug\)/, 'the success path starts following the build');
+  assert.match(englishUiSource(src), /setCreated\(\{ slug/, 'and swaps the card to the progress view');
+  assert.match(englishUiSource(src), /if \(!slug\) \{/, 'a 201 we cannot follow falls back to the old close+toast');
+  assert.match(englishUiSource(src), /window\.PlatformUI\?\.toast\?\.\(/, 'that fallback still raises the toast');
+  assert.match(englishUiSource(src), /being imported/, 'import mode gets the imported wording');
+  assert.match(englishUiSource(src), /being created/, 'new mode gets the created wording');
   // The progress subtree must never reach the prerendered document — its
   // ids are not in tests/baselines/shell-markup.json and its markup is
   // not in dapp.json's declared selectors. `created` starting null
   // is what guarantees that.
-  assert.match(src, /useState<\{ slug: string; name: string \} \| null>\(null\)/,
+  assert.match(englishUiSource(src), /useState<\{ slug: string; name: string \} \| null>\(null\)/,
     'the progress view is gated on state that starts null');
   // #3683: the progress card's button closes the dialog AND navigates, so the
   // close is a navigating one: a plain close queues a history.back() that
   // lands after the new address and undoes it (tests/dialog-suspend-exit.test.js
   // runs the hook). Both destinations, the bot's DM and the Workshop.
-  assert.match(src, /dialog\.closeForNavigation\(\);\s*openMessages\(chat\);/,
+  assert.match(englishUiSource(src), /dialog\.closeForNavigation\(\);\s*openMessages\(chat\);/,
     'opening the Homeroom bot DM does not spend the record under its own address');
-  assert.match(src, /dialog\.closeForNavigation\(\);\s*\(window\.App\?\.navigateToApp/,
+  assert.match(englishUiSource(src), /dialog\.closeForNavigation\(\);\s*\(window\.App\?\.navigateToApp/,
     'nor does opening the new project');
-  assert.doesNotMatch(src, /dialog\.close\(\);\s*(?:openMessages|\(window\.App\?\.navigateToApp)/);
+  assert.doesNotMatch(englishUiSource(src), /dialog\.close\(\);\s*(?:openMessages|\(window\.App\?\.navigateToApp)/);
   // "Set secrets" too: the secrets dialog pushes its own back-button record
   // as it opens, and a plain close's queued back() would land on that record
   // and close it again. (tests/dialog-suspend-exit.test.js runs the fork
   // dialog's twin of this card.)
   const setSecrets = src.slice(src.indexOf('onSetSecrets={() => {'), src.indexOf('onRetry={() => {'));
-  assert.match(setSecrets, /dialog\.closeForNavigation\(\);[\s\S]*window\.Secrets\?\.open/,
+  assert.match(englishUiSource(setSecrets), /dialog\.closeForNavigation\(\);[\s\S]*window\.Secrets\?\.open/,
     'opening the secrets dialog does not spend the record under its own');
-  assert.doesNotMatch(setSecrets, /dialog\.close\(\);/);
+  assert.doesNotMatch(englishUiSource(setSecrets), /dialog\.close\(\);/);
   // Close resets the form, so a half-finished import is never inherited.
-  assert.match(src, /formRef\.current\?\.reset\(\)/);
+  assert.match(englishUiSource(src), /formRef\.current\?\.reset\(\)/);
   // The home screen's "+" still opens it by name.
-  assert.match(APP, /window\.UsernodeReact\?\.dialogs\?\.create\?\.open\(\)/);
+  assert.match(englishUiSource(APP), /window\.UsernodeReact\?\.dialogs\?\.create\?\.open\(\)/);
 });
 
 test('rename: prefills the current name and PUTs to /rename', () => {
@@ -419,17 +420,17 @@ test('rename: prefills the current name and PUTs to /rename', () => {
 
 test('fork: takes its source from the open payload, POSTs to /fork', () => {
   const src = dialog('fork-app.tsx');
-  assert.match(src, /useDialog<ForkSource>\('fork'/);
-  assert.match(src, /\(remix\)`/, 'the "<name> (remix)" default is suggested');
-  assert.match(src, /\/fork`/);
+  assert.match(englishUiSource(src), /useDialog<ForkSource>\('fork'/);
+  assert.match(englishUiSource(src), /\(remix\)`/, 'the "<name> (remix)" default is suggested');
+  assert.match(englishUiSource(src), /\/fork`/);
   // #1549: the 201 only starts the asynchronous copy. Keep the dialog open
   // on the same progress report as create/import so a real failure reason is
   // visible and a successful fork can be opened directly.
-  assert.match(src, /watchCreation\(slug\)/, 'the fork starts following its own slug');
-  assert.match(src, /setForked\(\{ slug/, 'the form swaps to the progress view');
-  assert.match(src, /mode="fork"/, 'the shared view uses fork-specific wording');
-  assert.match(src, /fetchCreationProgress\(creatingSlug/, 'a dropped websocket is recovered by polling');
-  assert.match(src, /if \(!slug\) \{/, 'only a malformed 201 falls back to close+toast');
+  assert.match(englishUiSource(src), /watchCreation\(slug\)/, 'the fork starts following its own slug');
+  assert.match(englishUiSource(src), /setForked\(\{ slug/, 'the form swaps to the progress view');
+  assert.match(englishUiSource(src), /mode="fork"/, 'the shared view uses fork-specific wording');
+  assert.match(englishUiSource(src), /fetchCreationProgress\(creatingSlug/, 'a dropped websocket is recovered by polling');
+  assert.match(englishUiSource(src), /if \(!slug\) \{/, 'only a malformed 201 falls back to close+toast');
   // _forkSource was a field on AppView; the payload replaces it. (The name
   // survives in app-view.js only in the comment that records the move.)
   assert.ok(!/^\s*_forkSource:/m.test(APP_VIEW),

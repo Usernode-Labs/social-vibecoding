@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #2241 — "New change" creates nothing until you send.
 //
 // Clicking New change used to POST /api/apps/:slug/sessions before a single
@@ -93,7 +94,7 @@ function loadApp() {
     _getViewMode() { return 'workshop'; },
   };
   const window = { location, history, addEventListener() {}, AppView };
-  const context = vm.createContext({
+  const context = vm.createContext(withLanguage({
     window, document, location, history, AppView,
     PlatformUI: { transition(fn) { fn(); }, pullToRefresh() {} },
     URL, URLSearchParams, AbortController,
@@ -101,7 +102,7 @@ function loadApp() {
     navigator: {}, console, setTimeout, clearTimeout,
     fetch: async () => ({ ok: false }),
     DevChat: { NEW_SESSION_REF: 'new', currentSession: null },
-  });
+  }));
   vm.runInContext(APP_SRC, context);
   const App = window.App;
   App._departingScreen = () => element;
@@ -149,7 +150,7 @@ function loadAppView() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView.appData = { slug: 'recipe-box' };
@@ -238,7 +239,7 @@ function makeDevChat() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(BUILD_VENUES_SRC, sandbox);
   vm.runInContext(LAUNCHPAD_SRC, sandbox);
   vm.runInContext(`${DEV_CHAT_SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);

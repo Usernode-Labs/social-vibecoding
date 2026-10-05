@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // #463: budget-exhaustion 429s must be distinguishable from rate-limit
 // 429s so the client can show "you're out of free credits — add your own
 // API key" instead of "Rate limit reached".
@@ -15,7 +16,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
+const read = (p) => englishUiSource(fs.readFileSync(path.join(__dirname, '..', p), 'utf8'));
 
 const TAGGED_429 =
   /res\.status\(429\)\.json\(\{\s*error: billing\.error,\s*code: 'budget_exceeded',/g;

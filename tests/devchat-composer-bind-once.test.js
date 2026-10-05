@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #2397: "on a dev session chat, often after sending the message the input
 // box doesn't clear".
 //
@@ -75,7 +76,7 @@ function makeHarness() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   const DevChat = sandbox.__DevChat;
   for (const name of CALLED) DevChat[name] = () => {};

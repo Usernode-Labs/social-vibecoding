@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // #3365: an app's icon opens the app, wherever it is drawn.
 const test = require('node:test');
@@ -11,10 +12,10 @@ const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 const VIEW = read('frontend/src/features/apps/app-card-view.tsx');
 
 test('the icon link goes where Open goes, with a label and a pointer', () => {
-  assert.match(VIEW, /export function appOpenHref\(slug: string\): string \{\s*return `\/app\/\$\{encodeURIComponent\(slug\)\}`;/);
-  assert.match(VIEW, /const label = `Open \$\{name \|\| slug\}`;/);
-  assert.match(VIEW, /app-icon-link cursor-pointer/);
-  assert.match(VIEW, /win\.App\.openAppTab\(slug, 'app'\)/);
+  assert.match(englishUiSource(VIEW), /export function appOpenHref\(slug: string\): string \{\s*return `\/app\/\$\{encodeURIComponent\(slug\)\}`;/);
+  assert.match(englishUiSource(VIEW), /const label = `Open \$\{name \|\| slug\}`;/);
+  assert.match(englishUiSource(VIEW), /app-icon-link cursor-pointer/);
+  assert.match(englishUiSource(VIEW), /win\.App\.openAppTab\(slug, 'app'\)/);
 });
 
 test('a tap on the icon is never also the card\'s', () => {

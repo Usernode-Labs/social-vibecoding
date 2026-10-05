@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // `#dc-view` — the dev chat's whole screen, as a React island.
 //
 // This was the LAST string in dev-chat.js: `renderChatView` assigned
@@ -118,7 +119,7 @@ function makeDevChat(over = {}) {
       publishQuickReplies: noop, publishRunner: noop,
     },
   };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${DEV_CHAT_SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   const DevChat = sandbox.__DevChat;
   DevChat.currentSession = { id: 7, status: 'active' };

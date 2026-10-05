@@ -1,4 +1,6 @@
 'use strict';
+const { withLanguage } = require("./lib/platform-language");
+
 
 // #3620: "fix back button navigation -- eg if i click community, then change
 // the tab to workshop, back should go back to hub, not home."
@@ -239,7 +241,7 @@ test('the router reads the entry\'s tab BEFORE it routes and shows it after, and
     _showHistoryWorkshopTab: (s, t) => calls.push(`show:${s}:${t}`),
     _stampArrivedWorkshopTab: () => calls.push('stamp'),
   };
-  const ctx = vm.createContext({ location: { hash: '' }, AppView: fakeView });
+  const ctx = vm.createContext(withLanguage({ location: { hash: '' }, AppView: fakeView }));
   ctx.calls = calls;
   const App = vm.runInContext(`const App = { _currentRoute: '', _previousRoute: null,
     restoreFromHash() { calls.push('route'); }, _applyRouteShots() { calls.push('shots'); },
@@ -292,12 +294,12 @@ function stepBackHarness({ current, below, sameDocument = true, navigationApi = 
   if (below) entries.push({ url: new URL(below, ORIGIN).href, index: 0, sameDocument, key: 'a' });
   entries.push({ url: new URL(current, ORIGIN).href, index: entries.length, sameDocument: true, key: 'b' });
   const cur = new URL(current, ORIGIN);
-  const ctx = vm.createContext({
+  const ctx = vm.createContext(withLanguage({
     URL,
     location: { origin: ORIGIN, search: cur.search, pathname: cur.pathname, hash: cur.hash },
     history: { back: () => backs.push('back') },
     window: {},
-  });
+  }));
   if (navigationApi) {
     ctx.window.navigation = {
       entries: () => entries,
@@ -375,7 +377,7 @@ function loadLeaderboard({ isRestoring = false, open = true, hash = '#leaderboar
     fetch: async () => ({ ok: true, json: async () => ({ items: [] }) }),
   };
   ctx.window = ctx;
-  vm.createContext(ctx);
+  vm.createContext(withLanguage(ctx));
   vm.runInContext(`${LEADERBOARD.replace(/^export .*$/gm, '')}\n;globalThis.__lb = Leaderboard;`, ctx);
   const Leaderboard = ctx.__lb;
   Leaderboard._open = open;

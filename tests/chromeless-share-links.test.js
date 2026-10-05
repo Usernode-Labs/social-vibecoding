@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // Tests for the chromeless share-link flow (/app/<slug>/full).
 //
 // Direct visits to an app's own subdomain used to dead-end on the app
@@ -220,28 +221,28 @@ test('app.js screen identity handles both clean paths and legacy hashes', () => 
 
 test('app.js setChromeless toggles the header and the pill', () => {
   const src = read('public/js/app.js');
-  const pill = read('frontend/src/features/header/chromeless-pill.tsx');
-  const header = read('frontend/src/features/header/platform-header.tsx');
+  const pill = englishUiSource(read('frontend/src/features/header/chromeless-pill.tsx'));
+  const header = englishUiSource(read('frontend/src/features/header/platform-header.tsx'));
   // #1079 chunk B: #platform-header is a React island and the pill is a
   // component beside it, so setChromeless PUBLISHES both flags through the
   // shell's visibility store instead of writing the DOM — a classList toggle
   // from outside React is exactly what that store exists to replace. The two
   // subscribers produce the same DOM the imperative version did.
-  assert.ok(src.includes("App.Visibility.publish('platform-header', !enable)"),
+  assert.ok(englishUiSource(src).includes("App.Visibility.publish('platform-header', !enable)"),
     'the header hide must go through the visibility store');
-  assert.ok(src.includes("App.Visibility.publish('chromeless-pill', enable)"),
+  assert.ok(englishUiSource(src).includes("App.Visibility.publish('chromeless-pill', enable)"),
     'and so must the pill');
-  assert.ok(header.includes("useVisibility('platform-header', true)"),
+  assert.ok(englishUiSource(header).includes("useVisibility('platform-header', true)"),
     'the header island subscribes, defaulting to the visible markup it ships');
-  assert.ok(header.includes('useHiddenClass(headerRef, !visible)'),
+  assert.ok(englishUiSource(header).includes('useHiddenClass(headerRef, !visible)'),
     'and applies it imperatively — PlatformUI.attachScreenFx writes to this '
     + 'element, so a rendered className would clobber the kit');
-  assert.ok(pill.includes("useVisibility('chromeless-pill', false)"),
+  assert.ok(englishUiSource(pill).includes("useVisibility('chromeless-pill', false)"),
     'the pill subscribes, defaulting to absent — the shipped markup has none');
   // The App/Dev switch needs no line of its own: it lives inside
   // #platform-header now (it used to be the separate #app-tabs bar), so
   // hiding the header hides it too.
-  assert.ok(!src.includes("document.getElementById('app-tabs')"),
+  assert.ok(!englishUiSource(src).includes("document.getElementById('app-tabs')"),
     'setChromeless still reaches for the deleted tab bar');
   // #970: the bottom safe-area inset needs no line of its own EITHER any
   // more. It used to: #app-view carried `un-safe-bottom` for every surface,
@@ -249,24 +250,24 @@ test('app.js setChromeless toggles the header and the pill', () => {
   // is now surface-dependent (`data-app-surface`, set by
   // AppView._setSurface) and chromeless always lands on the app surface,
   // which reserves nothing. Re-adding the toggle would double-manage it.
-  assert.ok(!src.includes("classList.toggle('un-safe-bottom'"),
+  assert.ok(!englishUiSource(src).includes("classList.toggle('un-safe-bottom'"),
     'setChromeless must not hand-manage the bottom inset any more (#970)');
   // Hiding/showing the header changes #app-view's rect, so the per-frame
   // insets forwarded into the app have to be recomputed.
-  assert.ok(src.includes('AppView.scheduleSafeAreaBroadcast()'),
+  assert.ok(englishUiSource(src).includes('AppView.scheduleSafeAreaBroadcast()'),
     'toggling chromeless must re-broadcast the frame safe-area insets');
   // The pill renders nothing at all until the flag flips — that is what keeps
   // the prerendered markup and the first hydrating render identical.
-  assert.ok(pill.includes('if (!chromeless) return null;'));
-  assert.ok(pill.includes("id=\"chromeless-pill\""));
-  assert.ok(pill.includes("aria-label=\"Open this app on Homeroom\""));
+  assert.ok(englishUiSource(pill).includes('if (!chromeless) return null;'));
+  assert.ok(englishUiSource(pill).includes("id=\"chromeless-pill\""));
+  assert.ok(englishUiSource(pill).includes("aria-label=\"Open this app on Homeroom\""));
   // The pill's exit target is the regular App-tab view, which clears the
   // mode via restoreFromHash. The slug is read at CLICK time, so the pill
   // survives app-to-app navigation without a remount.
-  assert.ok(pill.includes('const slug = window.App?.currentApp;'));
-  assert.ok(pill.includes("window.App?.openAppTab?.(slug, 'app');"));
+  assert.ok(englishUiSource(pill).includes('const slug = window.App?.currentApp;'));
+  assert.ok(englishUiSource(pill).includes("window.App?.openAppTab?.(slug, 'app');"));
   const openAppTab = src.slice(src.indexOf('openAppTab(slug, tab, opts) {'));
-  assert.match(openAppTab.slice(0, 700), /App\.setChromeless\(false\)/,
+  assert.match(englishUiSource(openAppTab.slice(0, 700)), /App\.setChromeless\(false\)/,
     'the ordinary App target clears chromeless mode before serializing its URL');
 });
 

@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -47,7 +48,7 @@ function harness({ response = { firstFeedback: moment }, ok = true } = {}) {
     },
   };
   sandbox.window = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(source, sandbox);
   sandbox.init();
   el('feedback-modal').classList.add('hidden');

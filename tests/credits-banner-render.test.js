@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #463: the credits-exhausted banner + the meter's exhausted styling.
 // Guards the show-condition contract:
 //   - free allowance spent AND no BYOK key → banner + the $spent/$limit
@@ -76,7 +77,7 @@ function makeDevChat({ hasApiKey = false } = {}) {
       publishAttachStrip: () => {},
     },
   };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   // credit-options.js owns the banner's CTA row (and the same routes the
   // in-chat card and the Generate-proposal modal render). index.html loads
   // it before dev-chat.js, so the sandbox does too — and build-venues.js

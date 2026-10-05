@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // EVERY Claude Code disclosure renders COLLAPSED by default.
 //
 // #647 is where this started: it found that inherited history — two 60-215
@@ -107,7 +108,7 @@ function makeDevChat() {
   sandbox.globalThis = sandbox;
   sandbox.window.addEventListener = () => {};
   sandbox.UsernodeReact = { devChat: t.bridge };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SUMMARY_SRC}\n${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   const DevChat = sandbox.__DevChat;
   DevChat.renderMarkdown = (t) => String(t || '');

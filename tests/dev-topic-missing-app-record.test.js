@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // The #2879 case on a Workshop TOPIC page (an issue or a change opened at
 // /app/<slug>/dev/issues/<n> or /dev/proposals/<id>): with no app record for
 // the app on screen, the page did not say so.
@@ -142,7 +143,7 @@ function makeHarness(recordAnswers) {
       unmountAll: () => {},
     },
   };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(VIEW_SRC, sandbox);
   const AppView = sandbox.window.AppView;
   AppView.refreshToken = async () => {};

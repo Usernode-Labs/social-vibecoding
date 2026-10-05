@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #1187: the assignee picker is a toggle — clicking the name you already
 // voted for withdraws that vote (unassign) instead of re-casting it. Before
 // this, once you'd picked someone there was no way to clear the assignment
@@ -109,7 +110,7 @@ function makeSandbox() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   return { AppView: sandbox.__AppView, sandbox };
 }

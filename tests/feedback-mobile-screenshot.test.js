@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -10,24 +11,24 @@ const controller = read('frontend/src/features/dialogs/feedback-controller.js');
 const dialog = read('frontend/src/features/dialogs/feedback.tsx');
 
 test('feedback offers native capture and a Photos fallback', () => {
-  assert.match(dialog, /id="feedback-screenshot-picker-btn"/);
-  assert.match(dialog, /Choose from Photos/);
-  assert.match(dialog, /id="feedback-screenshot-input"/);
-  assert.match(dialog, /accept="image\/png,image\/jpeg"/);
-  assert.match(controller, /capabilities\.includes\('captureScreenshot'\)/);
-  assert.match(controller, /window\.usernode\.captureScreenshot\(\)/);
-  assert.match(controller, /screenshotTools\.prepareFile\(file\)/);
+  assert.match(englishUiSource(dialog), /id="feedback-screenshot-picker-btn"/);
+  assert.match(englishUiSource(dialog), /Choose from Photos/);
+  assert.match(englishUiSource(dialog), /id="feedback-screenshot-input"/);
+  assert.match(englishUiSource(dialog), /accept="image\/png,image\/jpeg"/);
+  assert.match(englishUiSource(controller), /capabilities\.includes\('captureScreenshot'\)/);
+  assert.match(englishUiSource(controller), /window\.usernode\.captureScreenshot\(\)/);
+  assert.match(englishUiSource(controller), /screenshotTools\.prepareFile\(file\)/);
 });
 
 test('all image sources converge on the existing attachment path', () => {
-  assert.match(controller, /const attachScreenshotBlob = async \(blob\) =>/);
+  assert.match(englishUiSource(controller), /const attachScreenshotBlob = async \(blob\) =>/);
   assert.equal(
     (controller.match(/await attachScreenshotBlob\(blob\)/g) || []).length,
     2,
     'capture and picker should share preview, upload, and offline handling'
   );
-  assert.match(controller, /ScreenshotSelect/);
-  assert.match(controller, /Saved with your feedback/);
+  assert.match(englishUiSource(controller), /ScreenshotSelect/);
+  assert.match(englishUiSource(controller), /Saved with your feedback/);
 });
 
 test('mobile screenshot controls keep 48px tap targets', () => {
@@ -85,15 +86,16 @@ test('a dismissal that lands mid-capture does not clear the draft', () => {
 });
 
 test('every capture failure says the feedback itself is safe', () => {
+  const controllerEnglish = englishUiSource(controller);
   // The screenshot is retakeable; the paragraph the user just typed is not.
-  const round = controller.slice(
-    controller.indexOf('const runCapture = async'),
-    controller.indexOf("screenshotBtn.addEventListener('click'"),
+  const round = controllerEnglish.slice(
+    controllerEnglish.indexOf('const runCapture = async'),
+    controllerEnglish.indexOf("screenshotBtn.addEventListener('click'"),
   );
   const notices = round.match(/showFeedbackNotice\([^;]*\);/g) || [];
   assert.ok(notices.length >= 5, `every capture failure branch should be found: ${notices.length}`);
   for (const notice of notices) {
-    assert.match(notice, /your feedback is safe/i, `capture notice should reassure: ${notice}`);
+    assert.match(englishUiSource(notice), /your feedback is safe/i, `capture notice should reassure: ${notice}`);
   }
   // And one of them says it in the exact words dapp.json's check looks for.
   assert.ok(round.includes('your feedback is safe'),

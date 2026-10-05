@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // The composite status pill (app-view.js statusPillState / statusPillHtml /
 // blockReasons).
 //
@@ -74,7 +75,7 @@ function makeAppView(opts) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${MERGE_STATUS_SRC}\n${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView._proposalsCtx = { majority: o.majority != null ? o.majority : 3 };
@@ -813,7 +814,7 @@ function stagingRows() {
   }
   const ctx = { module: {}, console, connectionExhaustionMessage: () => '', ROLLOUT_RETRY_DETAIL: '' };
   ctx.globalThis = ctx;
-  vm.createContext(ctx);
+  vm.createContext(withLanguage(ctx));
   vm.runInContext(`${src.slice(start, end)}\n;globalThis.__rows = stagingMockProposals;`, ctx);
   // What /promoted actually serves: every row passes through readIntegration
   // on the way out (routes/votes.js), which is what turns the flat

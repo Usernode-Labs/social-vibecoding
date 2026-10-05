@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // The block-production challenge's page says which step THIS viewer is on
 // (#2493).
 //
@@ -53,7 +54,7 @@ function loadModule(win = {}) {
   };
   sandbox.window.window = sandbox.window;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(CHALLENGES_SRC, sandbox, { filename: 'topochain-challenges.js' });
   return { TC: sandbox.window.TopochainChallenges, sandbox };
 }

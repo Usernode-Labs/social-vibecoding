@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // The board's "+" menu is shaped like the app chip's menu (#1615).
 //
 // Two lists of destinations hang off the same header, and they were drawn as
@@ -25,11 +26,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
-const FRAME = fs.readFileSync(
-  path.join(ROOT, 'frontend/src/features/dev-board/actions-row.tsx'), 'utf8');
-const APP_VIEW = fs.readFileSync(path.join(ROOT, 'public/js/app-view.js'), 'utf8');
-const CHIP_SHEET = fs.readFileSync(
-  path.join(ROOT, 'frontend/src/features/app-context/app-context-sheet.tsx'), 'utf8');
+const FRAME = englishUiSource(fs.readFileSync(
+  path.join(ROOT, 'frontend/src/features/dev-board/actions-row.tsx'), 'utf8'));
+const APP_VIEW = englishUiSource(fs.readFileSync(path.join(ROOT, 'public/js/app-view.js'), 'utf8'));
+const CHIP_SHEET = englishUiSource(fs.readFileSync(
+  path.join(ROOT, 'frontend/src/features/app-context/app-context-sheet.tsx'), 'utf8'));
 
 test('the row shell borrows the chip menu’s geometry', () => {
   const shell = FRAME.match(/const PLUS_ROW_CLS =[\s\S]*?';/)[0];
@@ -64,20 +65,22 @@ test('every action row has a glyph, and every glyph is decoration', () => {
 });
 
 test('the subtitles survive: this is not the chip menu’s one-line row', () => {
-  const menu = FRAME.slice(FRAME.indexOf('id="dev-plus-menu"'));
-  assert.match(menu, /Renames are proposals, applied once voted in/);
-  assert.match(menu, /Report a problem or idea without building it yourself/);
-  assert.match(menu, /Your computer &middot; your own tools\. You have already built it/);
-  assert.match(menu, /title="Remix"\s+sub="Make your own copy"/);
-  assert.match(FRAME, /const PLUS_SUB_CLS = 'block text-xs/);
+  const FRAMEEnglish = englishUiSource(FRAME);
+  const menu = FRAMEEnglish.slice(FRAMEEnglish.indexOf('id="dev-plus-menu"'));
+  assert.match(englishUiSource(menu), /Renames are proposals, applied once voted in/);
+  assert.match(englishUiSource(menu), /Report a problem or idea without building it yourself/);
+  assert.match(englishUiSource(menu), /Your computer · your own tools\. You have already built it/);
+  assert.match(englishUiSource(menu), /title="Remix"[\s\S]{0,240}sub="Make your own copy"/);
+  assert.match(englishUiSource(FRAMEEnglish), /const PLUS_SUB_CLS = 'block text-xs/);
 });
 
 test('App settings is an access surface for app managers, not only deleters (#2304)', () => {
-  const settings = FRAME.slice(FRAME.indexOf('data-plus="app-settings"') - 300);
-  assert.match(settings.slice(0, 700), /appData\?\.can_manage && !selfHosted/);
-  assert.match(settings.slice(0, 900), /Manage who can use and build this app/);
-  assert.match(FRAME, /title="Members &amp; approvals"/);
-  assert.doesNotMatch(FRAME, /title="Members &amp; visibility"/);
+  const FRAMEEnglish = englishUiSource(FRAME);
+  const settings = FRAMEEnglish.slice(FRAMEEnglish.indexOf('data-plus="app-settings"') - 300);
+  assert.match(englishUiSource(settings.slice(0, 700)), /appData\?\.can_manage && !selfHosted/);
+  assert.match(englishUiSource(settings.slice(0, 900)), /Manage who can use and build this app/);
+  assert.match(englishUiSource(FRAMEEnglish), /title="Members & approvals"/);
+  assert.doesNotMatch(englishUiSource(FRAMEEnglish), /title="Members &amp; visibility"/);
 });
 
 test('the touch action sheet reads the title by name, not by position', () => {

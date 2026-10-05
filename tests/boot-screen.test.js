@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Which screen a cold document SHOWS, before the router has decided.
 //
 // ── The lie this replaces ──────────────────────────────────────────────
@@ -48,7 +49,7 @@ function bootScreenFor() {
   assert.ok(at > -1, 'App._bootScreenFor not found');
   const src = APP.slice(at, APP.indexOf('\n};', at) + 3);
   const sandbox = { App: {} };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(src, sandbox);
   return sandbox.App._bootScreenFor;
 }

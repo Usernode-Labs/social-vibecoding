@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #798: saved draft messages in the dev-chat composer.
 //
 // While a turn is running the composer stays typable and the save icon
@@ -182,7 +183,7 @@ function makeHarness(storage = new Map(), net = {}) {
   sandbox.globalThis = sandbox;
   sandbox.UsernodeReact = { devChat: composer.bridge };
 
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   const DevChat = sandbox.__DevChat;
 

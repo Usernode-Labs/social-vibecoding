@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // "Position your photo" (#3525): a chosen profile photo opens a step where
 // the viewer drags and zooms it inside the circle, and accepts or cancels,
@@ -244,11 +245,11 @@ test('a pick opens the step; nothing is staged until Use photo', () => {
 
 test('the step checks and measures the file before it opens, and only over an open editor', () => {
   const fn = PROFILE.slice(PROFILE.indexOf('  async beginAvatarCrop('), PROFILE.indexOf('  async acceptAvatarCrop('));
-  assert.match(fn, /Profile\._checkAvatarType\(file\);/);
-  assert.match(fn, /Profile\._decodeImage\(file\)/);
-  assert.match(fn, /That image could not be read\./);
-  assert.match(fn, /if \(!profileStore\.get\(\)\.sheetOpen\) return;/);
-  assert.match(fn, /cropSource: \{ url: URL\.createObjectURL\(file\), width, height \}/);
+  assert.match(englishUiSource(fn), /Profile\._checkAvatarType\(file\);/);
+  assert.match(englishUiSource(fn), /Profile\._decodeImage\(file\)/);
+  assert.match(englishUiSource(fn), /That image could not be read\./);
+  assert.match(englishUiSource(fn), /if \(!profileStore\.get\(\)\.sheetOpen\) return;/);
+  assert.match(englishUiSource(fn), /cropSource: \{ url: URL\.createObjectURL\(file\), width, height \}/);
 });
 
 test('Back cancels the step and leaves the editor open', () => {
@@ -318,11 +319,11 @@ test('the frame keeps a drag from scrolling the modal, and joins the gesture arb
 });
 
 test('it is reachable and named for a keyboard and a screen reader', () => {
-  assert.match(DIALOG, /tabIndex=\{0\}\s*\/\/[^\n]*\n(\s*\/\/[^\n]*\n)*\s*role="application"/);
-  assert.match(DIALOG, /aria-label="Photo position\. Drag to move the photo, or use the arrow keys\. Plus and minus zoom\."/);
-  assert.match(DIALOG, /onKeyDown=\{onKeyDown\}/);
-  assert.match(DIALOG, /aria-label="Zoom"/);
-  assert.match(DIALOG, /shell\.setAttribute\('aria-labelledby', 'profile-photo-crop-title'\)/);
+  assert.match(englishUiSource(DIALOG), /tabIndex=\{0\}\s*\/\/[^\n]*\n(\s*\/\/[^\n]*\n)*\s*role="application"/);
+  assert.match(englishUiSource(DIALOG), /aria-label="Photo position\. Drag to move the photo, or use the arrow keys\. Plus and minus zoom\."/);
+  assert.match(englishUiSource(DIALOG), /onKeyDown=\{onKeyDown\}/);
+  assert.match(englishUiSource(DIALOG), /aria-label="Zoom"/);
+  assert.match(englishUiSource(DIALOG), /shell\.setAttribute\('aria-labelledby', 'profile-photo-crop-title'\)/);
 });
 
 test('it renders the photo at its opening square, with Use photo and Cancel', () => {

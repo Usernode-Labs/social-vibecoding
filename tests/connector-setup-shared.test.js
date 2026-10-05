@@ -1,3 +1,5 @@
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
 // The connector walkthrough is taught on TWO screens now, from one source
 // (#2706).
 //
@@ -75,15 +77,15 @@ test('the shared steps point at nothing that exists on only one of the screens',
   // sentence pointed at nothing. The reason is in the step now; Settings
   // keeps the disclosure for what a step should not carry.
   const prose = stripComments(STEPS);
-  assert.doesNotMatch(prose, /under these steps/);
-  assert.doesNotMatch(prose, /Stop the permission prompts|connector-case-|Name it homeroom/);
+  assert.doesNotMatch(englishUiSource(prose), /under these steps/);
+  assert.doesNotMatch(englishUiSource(prose), /Stop the permission prompts|connector-case-|Name it homeroom/);
   // The one thing a step may point at is the value each caller renders
   // above it, and both callers do render it.
-  assert.match(STEPS, /the MCP server URL above/);
-  assert.match(INLINE, /<ConnectorUrl url=\{url\} \/>/);
-  assert.match(SETTINGS_SECTION, /id="connector-url"/);
+  assert.match(englishUiSource(STEPS), /the MCP server URL above/);
+  assert.match(englishUiSource(INLINE), /<ConnectorUrl url=\{url\} \/>/);
+  assert.match(englishUiSource(SETTINGS_SECTION), /id="connector-url"/);
   // And the fact the cross-reference was carrying survived the move.
-  assert.match(STEPS, /Claude Code builds its permission rules/);
+  assert.match(englishUiSource(STEPS), /Claude Code builds its permission rules/);
 });
 
 test('Settings keeps its route, and everything that is only on it', () => {
@@ -177,7 +179,7 @@ function makeDevChat({ venue = 'web-claude-code' } = {}) {
   sandbox.App = { user: { id: 7, externalFlowsAvailable: true, devFlowPreference: null }, currentApp: 'x' };
   sandbox.PlatformUI = { toast() {}, hasKit: () => false, menu: () => Promise.resolve(null) };
   sandbox.UsernodeReact = {};
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${DEV_CHAT}\n;globalThis.__DevChat = DevChat;`, sandbox);
   const DevChat = sandbox.__DevChat;
   DevChat._resetDevFlow(7);

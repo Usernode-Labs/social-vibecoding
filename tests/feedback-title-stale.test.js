@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Frontend tests for issue #732: an early submit must not file the
 // feedback issue with a title that was auto-generated from a PARTIAL
 // description. submitFeedback() now sends body.title only when the user
@@ -135,7 +136,7 @@ function makeHarness({ previewTitle = 'Partial Title' } = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(FEEDBACK_SRC, sandbox);
   sandbox.init();
 

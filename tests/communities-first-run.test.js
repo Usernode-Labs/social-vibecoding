@@ -1,4 +1,7 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
+
 
 // A new account's first run on the client (communities, stages 4 and 5):
 // the join screen that follows the username and terms steps, the Getting
@@ -18,14 +21,14 @@ const ROOT = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 
 const GATE = read('frontend/src/features/auth/communities-first-run.js');
-const MAIN = read('frontend/src/main.tsx');
+const MAIN = englishUiSource(read('frontend/src/main.tsx'));
 const AUTH = read('src/routes/auth.js');
 const SIGNUP = read('src/services/email-signup.js');
 const SCHEMA = read('src/db/schema.sql');
-const CARD_SRC = read('frontend/src/features/home/getting-started.tsx');
-const HOME_SRC = read('frontend/src/features/home/index.tsx');
+const CARD_SRC = englishUiSource(read('frontend/src/features/home/getting-started.tsx'));
+const HOME_SRC = englishUiSource(read('frontend/src/features/home/index.tsx'));
 const HOME_JS = read('frontend/src/features/home/home.js');
-const GRID_SRC = read('frontend/src/features/home/app-grid.tsx');
+const GRID_SRC = englishUiSource(read('frontend/src/features/home/app-grid.tsx'));
 const DAPP = JSON.parse(read('dapp.json'));
 
 // ── who is asked ───────────────────────────────────────────────────────
@@ -81,7 +84,7 @@ test('the join screen comes after the username and terms steps, and before Home 
   // screen is due or was shown here (the tour no longer waits on it: it
   // starts from the card, #3240).
   assert.match(GATE, /window\.CommunitiesFirstRun = CommunitiesFirstRun;/);
-  assert.match(read('frontend/src/features/home/tour/index.tsx'),
+  assert.match(englishUiSource(read('frontend/src/features/home/tour/index.tsx')),
     /\(window as unknown as \{ CommunitiesFirstRun\?: FirstRunGate \}\)\.CommunitiesFirstRun;/);
 });
 
@@ -95,41 +98,41 @@ test('it never lands on a capture route, and has one screenshot state of its own
 });
 
 test('one filled button that says what it will do, and a quiet Skip for now', () => {
-  assert.match(GATE, /PlatformUI\.modal\(\{ contentEl: panel, dismissible: false \}\)/);
-  assert.match(GATE, /ticked === 0 \? 'Pick at least one'/);
-  assert.match(GATE, /`Join \$\{n\} \$\{n === 1 \? 'community' : 'communities'\}`/);
+  assert.match(englishUiSource(GATE), /PlatformUI\.modal\(\{ contentEl: panel, dismissible: false \}\)/);
+  assert.match(englishUiSource(GATE), /ticked === 0 \? 'Pick at least one'/);
+  assert.match(englishUiSource(GATE), /`Join \$\{n\} communities`/);
   // D1 (first-session test, 2026-10-03): keeping Homeroom is not a join. The
   // account is already in it, and it never ticks "Join a community" on the
   // card, so the button counts only the other ticks ("Continue" for Homeroom
   // alone), and the toast after it only what was really joined.
-  assert.match(GATE, /const platform = new Set\(list\.filter\(\(c\) => c\.self_hosted\)\.map\(\(c\) => c\.slug\)\);/);
-  assert.match(GATE, /const joins = \(slugs\) => slugs\.filter\(\(slug\) => !platform\.has\(slug\)\)\.length;/);
-  assert.match(GATE, /const ticked = picked\.size;\s*\n\s*const n = joins\(\[\.\.\.picked\]\);/);
-  assert.match(GATE, /save\.textContent = ticked === 0 \? 'Pick at least one'\s*\n\s*: n === 0 \? 'Continue'\s*\n\s*: `Join \$\{n\}/);
-  assert.match(GATE, /save\.setAttribute\('data-picked', String\(ticked\)\);/, 'what is ticked, Homeroom included');
-  assert.match(GATE, /const n = joins\(body\.joined \|\| \[\]\);\s*\n\s*if \(n && window\.PlatformUI\) \{\s*\n\s*PlatformUI\.toast\(`You joined \$\{n\}/);
-  assert.doesNotMatch(GATE, /\(body\.joined \|\| \[\]\)\.length/, 'never the raw count, which has Homeroom in it');
+  assert.match(englishUiSource(GATE), /const platform = new Set\(list\.filter\(\(c\) => c\.self_hosted\)\.map\(\(c\) => c\.slug\)\);/);
+  assert.match(englishUiSource(GATE), /const joins = \(slugs\) => slugs\.filter\(\(slug\) => !platform\.has\(slug\)\)\.length;/);
+  assert.match(englishUiSource(GATE), /const ticked = picked\.size;\s*\n\s*const n = joins\(\[\.\.\.picked\]\);/);
+  assert.match(englishUiSource(GATE), /save\.textContent = ticked === 0 \? 'Pick at least one'\s*\n\s*: n === 0 \? 'Continue'\s*\n\s*: `Join \$\{n\}/);
+  assert.match(englishUiSource(GATE), /save\.setAttribute\('data-picked', String\(ticked\)\);/, 'what is ticked, Homeroom included');
+  assert.match(englishUiSource(GATE), /const n = joins\(body\.joined \|\| \[\]\);\s*\n\s*if \(n && window\.PlatformUI\) \{\s*\n\s*PlatformUI\.toast\(`You joined \$\{n\}/);
+  assert.doesNotMatch(englishUiSource(GATE), /\(body\.joined \|\| \[\]\)\.length/, 'never the raw count, which has Homeroom in it');
   // A welcome and what the place is, then the question.
-  assert.ok(GATE.indexOf("'Welcome to Homeroom!'") > 0);
-  assert.match(GATE, /'Homeroom is a place where communities build the apps they use together\.'/);
-  assert.ok(GATE.indexOf("'Welcome to Homeroom!'") < GATE.indexOf("'What communities do you want to join?'"));
-  assert.match(GATE, /'You can join or leave any time from Discover, and start your own private or public community once you are in\.'/);
+  assert.ok(englishUiSource(GATE).indexOf("'Welcome to Homeroom!'") > 0);
+  assert.match(englishUiSource(GATE), /'Homeroom is a place where communities build the apps they use together\.'/);
+  assert.ok(englishUiSource(GATE).indexOf("'Welcome to Homeroom!'") < englishUiSource(GATE).indexOf("'What communities do you want to join?'"));
+  assert.match(englishUiSource(GATE), /'You can join or leave any time from Discover, and start your own private or public community once you are in\.'/);
   // A row with no description of its own is just its name: no empty line.
-  assert.match(GATE, /if \(c\.detail\) \{\s*\n\s*text\.appendChild\(el\('div', 'mt-0\.5 line-clamp-2/);
+  assert.match(englishUiSource(GATE), /if \(c\.detail\) \{\s*\n\s*text\.appendChild\(el\('div', 'mt-0\.5 line-clamp-2/);
   // In the screen's order, so the first one ticked is the card's.
-  assert.match(GATE, /join: list\.map\(\(c\) => c\.slug\)\.filter\(\(s\) => picked\.has\(s\)\)/);
+  assert.match(englishUiSource(GATE), /join: list\.map\(\(c\) => c\.slug\)\.filter\(\(s\) => picked\.has\(s\)\)/);
   // Skip is an answer: it posts `{ skip: true }` through the same path.
-  assert.match(GATE, /'Skip for now'\);\s*\n\s*skip\.type = 'button';\s*\n\s*skip\.setAttribute\('data-join-communities-skip', ''\);/);
-  assert.match(GATE, /skip\.addEventListener\('click', \(\) => \{ void answer\(\{ skip: true \}\); \}\);/);
+  assert.match(englishUiSource(GATE), /'Skip for now'\);\s*\n\s*skip\.type = 'button';\s*\n\s*skip\.setAttribute\('data-join-communities-skip', ''\);/);
+  assert.match(englishUiSource(GATE), /skip\.addEventListener\('click', \(\) => \{ void answer\(\{ skip: true \}\); \}\);/);
   // Both in the screen's foot since #3563 (the test below), Skip after Join.
-  assert.ok(GATE.indexOf("foot.appendChild(save);") < GATE.indexOf("foot.appendChild(skip);"),
+  assert.ok(englishUiSource(GATE).indexOf("foot.appendChild(save);") < englishUiSource(GATE).indexOf("foot.appendChild(skip);"),
     'under the Join button, not beside it');
   // Home re-reads its pins and the card appears.
-  assert.match(GATE, /new CustomEvent\('sv:communities-joined'/);
-  assert.match(GATE, /window\.App\.user\.showGettingStarted = true;/);
-  const code = GATE.split('\n').filter((line) => !/^\s*\/\//.test(line)).join('\n');
-  assert.doesNotMatch(code, /console\.error/, 'a console error on any route fails proposal checks');
-  assert.doesNotMatch(code, /—/, 'no em dash in the copy');
+  assert.match(englishUiSource(GATE), /new CustomEvent\('sv:communities-joined'/);
+  assert.match(englishUiSource(GATE), /window\.App\.user\.showGettingStarted = true;/);
+  const code = englishUiSource(GATE).split('\n').filter((line) => !/^\s*\/\//.test(line)).join('\n');
+  assert.doesNotMatch(englishUiSource(code), /console\.error/, 'a console error on any route fails proposal checks');
+  assert.doesNotMatch(englishUiSource(code), /—/, 'no em dash in the copy');
 });
 
 // #3563: on a short screen (Safari with its bars showing, a 667px or 568px
@@ -138,35 +141,36 @@ test('one filled button that says what it will do, and a quiet Skip for now', ()
 // the swipe meant for the card. The screen is a body that scrolls and a foot
 // that does not, inside a card laid out as a column.
 test('Join and Skip stay on screen however short it is: the body scrolls, the foot does not', () => {
+  const GATEEnglish = englishUiSource(GATE);
   // The body holds the welcome, the question, the rows and the line under
   // them, and is the one thing that scrolls, down to a floor.
-  assert.match(GATE, /const panel = el\('div', 'flex min-h-0 flex-col px-4 pb-5'\);/);
-  assert.match(GATE, /const scroller = el\('div', 'min-h-\[7\.5rem\] overflow-y-auto overscroll-y-contain'\);/);
-  assert.ok(GATE.indexOf('panel.appendChild(scroller);') < GATE.indexOf('panel.appendChild(foot);'),
+  assert.match(englishUiSource(GATEEnglish), /const panel = el\('div', 'flex min-h-0 flex-col px-4 pb-5'\);/);
+  assert.match(englishUiSource(GATEEnglish), /const scroller = el\('div', 'min-h-\[7\.5rem\] overflow-y-auto overscroll-y-contain'\);/);
+  assert.ok(GATEEnglish.indexOf('panel.appendChild(scroller);') < GATEEnglish.indexOf('panel.appendChild(foot);'),
     'the foot is under the body');
   for (const part of ["'Welcome to Homeroom!'", 'scroller.appendChild(group);', "'You can join or leave any time"]) {
-    const at = GATE.indexOf(part);
-    assert.ok(at > 0 && GATE.lastIndexOf('scroller.appendChild(', at) > GATE.lastIndexOf('foot.appendChild(', at),
+    const at = GATEEnglish.indexOf(part);
+    assert.ok(at > 0 && GATEEnglish.lastIndexOf('scroller.appendChild(', at) > GATEEnglish.lastIndexOf('foot.appendChild(', at),
       `${part} is in the body`);
   }
   // The rows are not a scroller of their own any more.
-  const group = GATE.match(/const group = el\('div', '([^']*)'\);/)[1];
-  assert.doesNotMatch(group, /overflow|max-h/);
-  assert.match(group, /^rounded-\[20px\] shadow-\[inset_0_0_0_1px_var\(--app-sheet-line\)\]/);
+  const group = GATEEnglish.match(/const group = el\('div', '([^']*)'\);/)[1];
+  assert.doesNotMatch(englishUiSource(group), /overflow|max-h/);
+  assert.match(englishUiSource(group), /^rounded-\[20px\] shadow-\[inset_0_0_0_1px_var\(--app-sheet-line\)\]/);
   // The foot: the error line, Join, Skip, and never shrinks.
-  assert.match(GATE, /const foot = el\('div',\s*\n\s*'shrink-0 border-t border-transparent data-\[more\]:border-\[color:var\(--app-sheet-line\)\]'\);/);
-  assert.match(GATE, /foot\.appendChild\(status\);[\s\S]*foot\.appendChild\(save\);[\s\S]*foot\.appendChild\(skip\);/);
+  assert.match(englishUiSource(GATEEnglish), /const foot = el\('div',\s*\n\s*'shrink-0 border-t border-transparent data-\[more\]:border-\[color:var\(--app-sheet-line\)\]'\);/);
+  assert.match(englishUiSource(GATEEnglish), /foot\.appendChild\(status\);[\s\S]*foot\.appendChild\(save\);[\s\S]*foot\.appendChild\(skip\);/);
   // The kit's card is a column, so the body can be told what is left. Only
   // the modal: the fallback sheet scrolls by itself.
-  const modal = GATE.slice(GATE.indexOf("sheet = PlatformUI.modal({ contentEl: panel, dismissible: false });"),
-    GATE.indexOf("if (!sheet && window.PlatformUI && typeof PlatformUI.sheet === 'function')"));
-  assert.match(modal, /sheet\.el\.style\.display = 'flex';\s*\n\s*sheet\.el\.style\.flexDirection = 'column';/);
+  const modal = GATEEnglish.slice(GATEEnglish.indexOf("sheet = PlatformUI.modal({ contentEl: panel, dismissible: false });"),
+    GATEEnglish.indexOf("if (!sheet && window.PlatformUI && typeof PlatformUI.sheet === 'function')"));
+  assert.match(englishUiSource(modal), /sheet\.el\.style\.display = 'flex';\s*\n\s*sheet\.el\.style\.flexDirection = 'column';/);
   // The hairline over the foot: on while there is more body below it,
   // re-read on scroll and on resize, and the watcher goes with the screen.
-  assert.match(GATE, /foot\.toggleAttribute\('data-more',\s*\n\s*scroller\.scrollHeight - scroller\.clientHeight - scroller\.scrollTop > 1\);/);
-  assert.match(GATE, /scroller\.addEventListener\('scroll', edge, \{ passive: true \}\);/);
-  assert.match(GATE, /watch = new ResizeObserver\(edge\);\s*\n\s*watch\.observe\(scroller\);/);
-  assert.match(GATE, /CommunitiesFirstRun\._answered = true;\s*\n\s*if \(watch\) watch\.disconnect\(\);/);
+  assert.match(englishUiSource(GATEEnglish), /foot\.toggleAttribute\('data-more',\s*\n\s*scroller\.scrollHeight - scroller\.clientHeight - scroller\.scrollTop > 1\);/);
+  assert.match(englishUiSource(GATEEnglish), /scroller\.addEventListener\('scroll', edge, \{ passive: true \}\);/);
+  assert.match(englishUiSource(GATEEnglish), /watch = new ResizeObserver\(edge\);\s*\n\s*watch\.observe\(scroller\);/);
+  assert.match(englishUiSource(GATEEnglish), /CommunitiesFirstRun\._answered = true;\s*\n\s*if \(watch\) watch\.disconnect\(\);/);
 });
 
 // ── the Getting started card ───────────────────────────────────────────
@@ -229,10 +233,10 @@ test('the card counts steps and points, says what finishing unlocks, and closes 
   assert.equal(card.nextStepId(card.SHOT_MODELS['getting-started-look']), 'challenge-43');
   assert.equal(card.nextStepId(card.SHOT_MODELS['getting-started-done']), null);
   // Close: only the done state draws it, and only off a fixture does it post.
-  assert.match(CARD_SRC, /<Header title="Getting started" model=\{model\} onClose=\{null\} \/>/);
-  assert.match(CARD_SRC, /<Header title="You’re all set" model=\{model\} onClose=\{onClose\} celebrate \/>/);
-  assert.match(CARD_SRC, /if \(!isShot\(shot\(\)\)\) void post\('\/api\/me\/getting-started\/close'\);/);
-  assert.doesNotMatch(CARD_SRC, /getting-started\/seen|seenKeyFor/, 'no recorded visits any more');
+  assert.match(englishUiSource(CARD_SRC), /<Header title="Getting started" model=\{model\} onClose=\{null\} \/>/);
+  assert.match(englishUiSource(CARD_SRC), /<Header title="You’re all set" model=\{model\} onClose=\{onClose\} celebrate \/>/);
+  assert.match(englishUiSource(CARD_SRC), /if \(!isShot\(shot\(\)\)\) void post\('\/api\/me\/getting-started\/close'\);/);
+  assert.doesNotMatch(englishUiSource(CARD_SRC), /getting-started\/seen|seenKeyFor/, 'no recorded visits any more');
   // The fixtures: just joined (1 of 5, Join ticked, the tour next), three in,
   // and all set. The first is the declared check's.
   assert.deepEqual(card.SHOT_MODEL.steps.map((s) => [s.kind, s.done]),
@@ -265,7 +269,7 @@ test('the card counts steps and points, says what finishing unlocks, and closes 
       assert.notEqual(card.stepView(s, m).detail, 'Join a community first.', `${name}: ${s.id}`);
     }
   }
-  assert.doesNotMatch(CARD_SRC.replace(/\/\*[\s\S]*?\*\//g, ''), /—/);
+  assert.doesNotMatch(englishUiSource(CARD_SRC.replace(/\/\*[\s\S]*?\*\//g, '')), /—/);
 });
 
 // evan, 2026-10-01: every step not done has a button, which goes where its
@@ -335,9 +339,9 @@ test('every step not done has a button, a verb and an arrow, about the default a
     ['Find an app on Discover and tell its builders what would make it better.', 'Discover',
       'Find an app on Discover', 'Find an app on Discover', true, discover]);
   // And the lock reads `needs_join` alone: "no app" never drew it again.
-  assert.match(CARD_SRC, /if \(model\.needs_join === true\) return \{ detail: 'Join a community first\.', button: null \};/);
+  assert.match(englishUiSource(CARD_SRC), /if \(model\.needs_join === true\) return \{ detail: 'Join a community first\.', button: null \};/);
   assert.equal((CARD_SRC.match(/'Join a community first\.'/g) || []).length, 1, 'one place draws the lock');
-  assert.doesNotMatch(CARD_SRC, /if \(!app\) return \{ detail: 'Join a community first\.'/);
+  assert.doesNotMatch(englishUiSource(CARD_SRC), /if \(!app\) return \{ detail: 'Join a community first\.'/);
   // A step whose measure is none of these: its own call-to-action.
   assert.deepEqual(view(step('other', { href: '#leaderboard/challenges/7/9', cta: 'Connect X' }), here),
     ['Its own task.', 'Connect X', 'Connect X', 'Connect X', true, { to: 'hash', href: '#leaderboard/challenges/7/9' }]);
@@ -345,14 +349,14 @@ test('every step not done has a button, a verb and an arrow, about the default a
   // A done step says its own task and has no button.
   assert.deepEqual(view(step('try', { done: true }), here), ['Its own task.', null]);
   // The row is not a button (a button cannot hold one); the button is.
-  assert.doesNotMatch(CARD_SRC, /as="button"/);
-  assert.match(CARD_SRC, /trailing=\{view\.button \? <StepButton/);
+  assert.doesNotMatch(englishUiSource(CARD_SRC), /as="button"/);
+  assert.match(englishUiSource(CARD_SRC), /trailing=\{view\.button \? <StepButton/);
 });
 
 test('the step buttons look like buttons: the next one filled, the rest outlined, 36px', () => {
   const html = renderComponent('frontend/src/features/home/getting-started.tsx', 'GettingStarted');
   assert.ok(html.includes('class="hidden'), 'the prerender stays an empty hidden section');
-  const BUTTON = read('frontend/@/components/ui/button.tsx');
+  const BUTTON = englishUiSource(read('frontend/@/components/ui/button.tsx'));
   // The two looks, as complete literals in the primitive's table.
   assert.match(BUTTON, /step: 'rounded-\[10px\] bg-violet-600 hover:bg-violet-500 shadow-\[0_1px_2px_rgba\(0,0,0,0\.22\),inset_0_-2px_0_rgba\(0,0,0,0\.16\)\] active:translate-y-px',/);
   assert.match(BUTTON, /stepOutline: 'rounded-\[10px\] bg-\[color:var\(--dc-sheet-solid\)\] hover:bg-violet-50 dark:hover:bg-violet-950 shadow-\[0_1px_2px_rgba\(0,0,0,0\.08\)\] ring-\[1\.5px\] ring-inset ring-violet-600 dark:ring-violet-400 active:translate-y-px',/);
@@ -382,34 +386,35 @@ test('Look opens the Workshop, then tells the server; Suggest opens the app, the
 });
 
 test('the card draws the type and colour rules: 15 over 13, the lit tint on the next step, reward amber and earned green', () => {
+  const CARD_SRCEnglish = englishUiSource(CARD_SRC);
   // The next row sits on `--lit-tint`, where you are; the accent ring marks it.
-  assert.match(CARD_SRC, /const NEXT_ROW = 'bg-\[var\(--lit-tint\)\]';/);
-  assert.match(CARD_SRC, /rounded-full border-2 border-violet-600 dark:border-violet-400/);
+  assert.match(englishUiSource(CARD_SRCEnglish), /const NEXT_ROW = 'bg-\[var\(--lit-tint\)\]';/);
+  assert.match(englishUiSource(CARD_SRCEnglish), /rounded-full border-2 border-violet-600 dark:border-violet-400/);
   // The challenge cards' reward amber and earned green, verbatim, on a line
   // of their own under the step's words.
-  assert.match(CARD_SRC, /'mt-1 block text-\[0\.8125rem\] font-semibold leading-\[1\.125rem\] text-amber-800 dark:text-amber-300'/);
-  assert.match(CARD_SRC, /'mt-1 block text-\[0\.8125rem\] font-semibold leading-\[1\.125rem\] text-emerald-700 dark:text-emerald-400'/);
+  assert.match(englishUiSource(CARD_SRCEnglish), /'mt-1 block text-\[0\.8125rem\] font-semibold leading-\[1\.125rem\] text-amber-800 dark:text-amber-300'/);
+  assert.match(englishUiSource(CARD_SRCEnglish), /'mt-1 block text-\[0\.8125rem\] font-semibold leading-\[1\.125rem\] text-emerald-700 dark:text-emerald-400'/);
   // The done state is the count alone (version D, 2026-10-01): one 15/650
   // line with an open lock, and no list of names under it.
-  assert.match(CARD_SRC, /text-\[0\.9375rem\] font-\[650\] leading-5 text-zinc-900 dark:text-zinc-100"\s*\n\s*data-getting-started-unlocked=/);
-  assert.match(CARD_SRC, /<LockOpenIcon className="h-4 w-4" \/>/);
-  assert.doesNotMatch(CARD_SRC, /unlocks\.names/, 'the done card names no challenges');
+  assert.match(englishUiSource(CARD_SRCEnglish), /text-\[0\.9375rem\] font-\[650\] leading-5 text-zinc-900 dark:text-zinc-100"\s*\n\s*data-getting-started-unlocked=/);
+  assert.match(englishUiSource(CARD_SRCEnglish), /<LockOpenIcon className="h-4 w-4" \/>/);
+  assert.doesNotMatch(englishUiSource(CARD_SRCEnglish), /unlocks\.names/, 'the done card names no challenges');
   // Its points read as won: "+1,500 pts" in the earned green.
-  assert.match(CARD_SRC, /<span className="font-semibold text-emerald-700 dark:text-emerald-400">\{`\+\$\{pts\(earned\)\}`\}<\/span>\s*\n\s*\{' earned'\}/);
+  assert.match(englishUiSource(CARD_SRCEnglish), /<span className="font-semibold text-emerald-700 dark:text-emerald-400">\{`\+\$\{pts\(earned\)\}`\}<\/span>\s+earned/);
   // Rows come from ListRow (15/650 over 13), and the card is the plane card.
-  assert.match(CARD_SRC, /<GroupedList\s*\n\s*tone="plane"/);
-  assert.doesNotMatch(CARD_SRC, /\b(gray|indigo)-\d/);
+  assert.match(englishUiSource(CARD_SRCEnglish), /<GroupedList\s*\n\s*tone="plane"/);
+  assert.doesNotMatch(englishUiSource(CARD_SRCEnglish), /\b(gray|indigo)-\d/);
 });
 
 // ── the tile mark (stage 4) ────────────────────────────────────────────
 
 test('a Home tile says where it lives: people for a private community, a lock for just you, nothing for a public one', () => {
-  assert.match(HOME_JS,
+  assert.match(englishUiSource(HOME_JS),
     /audience: app\.audience === 'invited' \|\| app\.audience === 'solo' \? app\.audience : 'open',/);
-  assert.match(GRID_SRC, /\{app\.audience !== 'open' \? \(/);
-  assert.match(GRID_SRC, /data-stage=\{app\.audience\}/);
-  assert.match(GRID_SRC, /\? <UserGroupIcon className="w-3 h-3" aria-hidden="true" \/>\s*\n\s*: <LockIcon className="w-3 h-3" aria-hidden="true" \/>/);
-  assert.match(GRID_SRC, /title=\{app\.audience === 'invited' \? 'Private community' : 'Just you'\}/);
+  assert.match(englishUiSource(GRID_SRC), /\{app\.audience !== 'open' \? \(/);
+  assert.match(englishUiSource(GRID_SRC), /data-stage=\{app\.audience\}/);
+  assert.match(englishUiSource(GRID_SRC), /\? <UserGroupIcon className="w-3 h-3" aria-hidden="true" \/>\s*\n\s*: <LockIcon className="w-3 h-3" aria-hidden="true" \/>/);
+  assert.match(englishUiSource(GRID_SRC), /title=\{app\.audience === 'invited' \? 'Private community' : 'Just you'\}/);
 });
 
 // ── declared checks ────────────────────────────────────────────────────
@@ -453,7 +458,7 @@ test('an admin can reset an account\'s first run, from the user menu', () => {
   assert.doesNotMatch(fn, /community_members|app_favorites|user_terms_consents|username =/,
     'memberships, Home tiles, terms and the username stay');
   // Beside Reset password in the row's ⋯ menu, behind a confirm.
-  const USERS = read('frontend/src/features/admin/admin-users.tsx');
+  const USERS = englishUiSource(read('frontend/src/features/admin/admin-users.tsx'));
   assert.ok(USERS.indexOf('Reset password</button>') < USERS.indexOf('Reset first run</button>'));
   assert.match(USERS, /className="admin-reset-first-run-btn /);
   assert.match(USERS, /fetch\(`\/api\/admin\/users\/\$\{user\.id\}\/reset-first-run`, \{ method: 'POST' \}\)/);
@@ -461,7 +466,7 @@ test('an admin can reset an account\'s first run, from the user menu', () => {
 });
 
 test('a join screen shown in this browser forgets its "done", so the card offers the tour again', () => {
-  const TOUR = read('frontend/src/features/home/tour/index.tsx');
+  const TOUR = englishUiSource(read('frontend/src/features/home/tour/index.tsx'));
   // The gate says so, and never for the ?shot= fixture.
   assert.match(GATE, /shownHere\(\) \{\s*\n\s*return CommunitiesFirstRun\._shownHere === true;/);
   assert.match(GATE, /if \(!\(opts && opts\.demo\)\) CommunitiesFirstRun\._shownHere = true;/);
@@ -482,20 +487,20 @@ test('the card offers the tour as its first row, with a Start button until it is
   const fn = svc.slice(svc.indexOf('async function gettingStarted('), svc.indexOf('/**\n * An admin\'s "Reset first run"'));
   // Only for a new account (2026-10-01) that has answered the join screen;
   // the rule is spelled once, for the card and for the Vote step's visit.
-  assert.match(svc, /SELECT communities_onboarded_at, getting_started_closed_at, getting_started_gate,\s*\n\s*tour_done_at/);
-  assert.match(svc, /return !!\(u && u\.getting_started_gate && u\.communities_onboarded_at && !u\.getting_started_closed_at\);/);
-  assert.match(fn, /const \{ rows: userRows \} = await pool\.query\(CARD_SQL, \[userId\]\);[\s\S]{0,80}const show = cardShows\(u\);/);
-  assert.match(fn, /const steps = \[\{[\s\S]*?id: 'tour',\s*kind: 'tour',\s*action: 'tour',\s*title: TOUR_STEP\.title,\s*detail: TOUR_STEP\.detail,\s*done: tourDone,\s*href: null,/);
-  assert.match(svc, /title: 'Take the 1-minute tour',\s*\n\s*detail: 'See how Homeroom works\.',/);
+  assert.match(englishUiSource(svc), /SELECT communities_onboarded_at, getting_started_closed_at, getting_started_gate,\s*\n\s*tour_done_at/);
+  assert.match(englishUiSource(svc), /return !!\(u && u\.getting_started_gate && u\.communities_onboarded_at && !u\.getting_started_closed_at\);/);
+  assert.match(englishUiSource(fn), /const \{ rows: userRows \} = await pool\.query\(CARD_SQL, \[userId\]\);[\s\S]{0,80}const show = cardShows\(u\);/);
+  assert.match(englishUiSource(fn), /const steps = \[\{[\s\S]*?id: 'tour',\s*kind: 'tour',\s*action: 'tour',\s*title: TOUR_STEP\.title,\s*detail: TOUR_STEP\.detail,\s*done: tourDone,\s*href: null,/);
+  assert.match(englishUiSource(svc), /title: 'Take the 1-minute tour',\s*\n\s*detail: 'See how Homeroom works\.',/);
   // Client: a row that is not a button, holding one until the tour is done;
   // pressed, it asks for the tour the way Settings' Replay does, and the
   // tour's own write reloads the card, which ticks the row.
-  assert.match(CARD_SRC, /case 'tour':\s*return \{\s*detail: step\.detail,\s*button: \{ short: 'Start', long: 'Take the tour', aria: 'Start the tour'/);
-  assert.match(CARD_SRC, /if \(step\.done\) return \{ detail: step\.detail, button: null \};/);
-  assert.match(CARD_SRC, /chevron=\{false\}/);
-  assert.match(CARD_SRC, /\.\.\.\(step\.action === 'tour' \? \{ 'data-getting-started-tour-start': '' \} : \{\}\)/);
-  assert.match(CARD_SRC, /case 'tour':\s*requestTour\(\);\s*return;/);
-  assert.match(CARD_SRC, /document\.addEventListener\(TOUR_DONE_EVENT, onChange\);/);
+  assert.match(englishUiSource(CARD_SRC), /case 'tour':\s*return \{\s*detail: step\.detail,\s*button: \{ short: 'Start', long: 'Take the tour', aria: 'Start the tour'/);
+  assert.match(englishUiSource(CARD_SRC), /if \(step\.done\) return \{ detail: step\.detail, button: null \};/);
+  assert.match(englishUiSource(CARD_SRC), /chevron=\{false\}/);
+  assert.match(englishUiSource(CARD_SRC), /\.\.\.\(step\.action === 'tour' \? \{ 'data-getting-started-tour-start': '' \} : \{\}\)/);
+  assert.match(englishUiSource(CARD_SRC), /case 'tour':\s*requestTour\(\);\s*return;/);
+  assert.match(englishUiSource(CARD_SRC), /document\.addEventListener\(TOUR_DONE_EVENT, onChange\);/);
 });
 
 // A browser that has signed in before boots from the session snapshot, and
@@ -516,7 +521,7 @@ test('the join screen is re-offered once a snapshot boot confirms the session', 
   assert.match(GATE, /for \(let i = 0; terms && \(terms\._inFlight \|\| terms\._presented\) && i < 2400; i \+= 1\) \{/);
   // The tour looks again once the screen is answered, which on this path is
   // after its first look, and forgets this browser's "done" then.
-  const TOUR = read('frontend/src/features/home/tour/index.tsx');
+  const TOUR = englishUiSource(read('frontend/src/features/home/tour/index.tsx'));
   assert.match(TOUR, /document\.addEventListener\('sv:communities-joined', forget\);/);
   // And the card reads the confirmed session's showGettingStarted.
   assert.match(CARD_SRC, /document\.addEventListener\('sv:session', onChange\);/);
@@ -564,7 +569,7 @@ function loadGate() {
     addEventListener() {},
   };
   const window = { document };
-  vm.runInNewContext(GATE, { window, document, console, URLSearchParams, location: { search: '' } });
+  vm.runInNewContext(GATE, withLanguage({ window, document, console, URLSearchParams, location: { search: '' } }));
   const el = (tag, cls, text) => {
     const n = node(tag);
     if (cls) n.className = cls;
@@ -575,6 +580,7 @@ function loadGate() {
 }
 
 test('each row ends in its member count, before the tick', () => {
+  const GATEEnglish = englishUiSource(GATE);
   const { gate, el } = loadGate();
   // Short enough to sit beside the tick, rounded down so it never claims a
   // member the community does not have.
@@ -584,9 +590,9 @@ test('each row ends in its member count, before the tick', () => {
 
   const row = gate._members({ member_count: 1284 }, el);
   assert.equal(row.attrs['data-join-community-members'], '1284');
-  assert.match(row.className, /\bshrink-0\b/, 'the name truncates, never the count');
-  assert.match(row.className, /\btabular-nums\b/);
-  assert.match(row.className, /\btext-zinc-500 dark:text-zinc-400\b/, 'the secondary ink, as under the name');
+  assert.match(englishUiSource(row.className), /\bshrink-0\b/, 'the name truncates, never the count');
+  assert.match(englishUiSource(row.className), /\btabular-nums\b/);
+  assert.match(englishUiSource(row.className), /\btext-zinc-500 dark:text-zinc-400\b/, 'the secondary ink, as under the name');
   const [svg, figure, spoken] = row.children;
   assert.equal(svg.tag, 'svg');
   assert.equal(svg.attrs['aria-hidden'], 'true');
@@ -603,15 +609,15 @@ test('each row ends in its member count, before the tick', () => {
   }
 
   // The glyph is the shell's own UserGroupIcon, path for path.
-  const icons = read('frontend/@/components/ui/icons.tsx');
+  const icons = englishUiSource(read('frontend/@/components/ui/icons.tsx'));
   const group = icons.match(/export const UserGroupIcon = stroked\(\s*'UserGroupIcon',\s*'([^']+)'/)[1];
   assert.equal(svg.children[0].attrs.d, group);
 
   // Between the text and the tick, and only when there is one.
-  assert.match(GATE, /row\.appendChild\(text\);\s*\n\s*if \(members\) row\.appendChild\(members\);\s*\n\s*row\.appendChild\(tick\);/);
+  assert.match(englishUiSource(GATEEnglish), /row\.appendChild\(text\);\s*\n\s*if \(members\) row\.appendChild\(members\);\s*\n\s*row\.appendChild\(tick\);/);
   // The server already sends it, and the screenshot fixture shows it.
-  assert.match(read('src/services/onboarding.js'), /member_count: Number\(row\.member_count\) \|\| 0,/);
-  const fixture = GATE.slice(GATE.indexOf('const SHOT_LIST = ['), GATE.indexOf('];', GATE.indexOf('const SHOT_LIST = [')));
+  assert.match(englishUiSource(read('src/services/onboarding.js')), /member_count: Number\(row\.member_count\) \|\| 0,/);
+  const fixture = GATEEnglish.slice(GATEEnglish.indexOf('const SHOT_LIST = ['), GATEEnglish.indexOf('];', GATEEnglish.indexOf('const SHOT_LIST = [')));
   assert.equal((fixture.match(/slug: '/g) || []).length, (fixture.match(/member_count: \d+/g) || []).length,
     'every fixture row has a count');
 });

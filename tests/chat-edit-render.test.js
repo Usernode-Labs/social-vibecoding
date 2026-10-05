@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Client rendering tests for multi-line messages + the "edited" marker,
 // plus a source-level check that the history route SELECTs edited_at.
 //
@@ -58,7 +59,7 @@ function loadGroupChat() {
     Date, Math, JSON,
   };
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(
     src + '\nglobalThis.__M = { GroupChat, renderWithMentions, escapeHtml };',
     sandbox

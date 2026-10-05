@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Tests for the proposal-card Withdraw control (app-view.js
 // _renderProposalCard / _renderGovCard). A proposer-only Withdraw button
 // must render on your OWN live (status:'promoted') proposals, beside
@@ -47,7 +48,7 @@ function makeAppView(userId, opts) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView._proposalsCtx = { majority: 1 };
@@ -199,7 +200,7 @@ function makeTopicHarness(viewerId) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView._proposalsCtx = { majority: 1 };

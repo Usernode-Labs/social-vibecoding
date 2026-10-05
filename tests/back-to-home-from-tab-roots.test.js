@@ -1,4 +1,6 @@
 'use strict';
+const { withLanguage } = require("./lib/platform-language");
+
 
 // QA 2026-09-24 Q1: Back from Messages or the Workshop to "/" left two
 // screens stacked.
@@ -79,7 +81,7 @@ function router() {
   const tabs = [];
   const noop = () => undefined;
   const elements = new Map();
-  const context = vm.createContext({
+  const context = vm.createContext(withLanguage({
     location, history, URL, URLSearchParams, console, setTimeout, clearTimeout,
     document: {
       title: '',
@@ -95,7 +97,7 @@ function router() {
     PlatformUI: new Proxy({
       transition(fn, o) { fn(); o?.after?.(); },
     }, { get: (t, k) => (k in t ? t[k] : noop) }),
-  });
+  }));
   context.window = context;
   vm.runInContext(APP_JS, context);
   App = context.App;

@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // `App.handleAppStatusUpdate` must forward every app_status message to
 // the create dialog's progress store.
 //
@@ -71,7 +72,7 @@ function makeApp({ bridge = true } = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__App = App;`, sandbox);
   return { App: sandbox.__App, appView, pending, published, renders: () => renders };
 }

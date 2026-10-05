@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // The card colour a featured illustration is saved with.
 //
 // A Discover card has always worn one of five theme tints, picked by hashing
@@ -132,27 +133,27 @@ test('the Discover card renders the saved colour, the legacy one, and the defaul
 test('the editor offers the twelve tones, staged, and no arbitrary colour', () => {
   const editor = read('frontend/src/features/apps/featured-illustration-editor.tsx');
   // One palette, read from the shared vocabulary rather than re-listed here.
-  assert.match(editor, /import \{ TONES, cardTintClass, toneLabel \} from '\.\.\/home\/panels\/ui'/);
+  assert.match(englishUiSource(editor), /import \{ TONES, cardTintClass, toneLabel \} from '\.\.\/home\/panels\/ui'/);
   assert.ok(!/#[0-9a-fA-F]{6}|type="color"/.test(editor), 'no hex field and no arbitrary colour input');
   // A radiogroup, so the swatches are one control to a screen reader, and each
   // is labelled by the colour's own name rather than its position.
-  assert.match(editor, /role="radiogroup" aria-label="Card colour"/);
-  assert.match(editor, /TONES\.map\(tone => \{/);
-  assert.match(editor, /aria-label=\{toneLabel\(tone\)\}/);
+  assert.match(englishUiSource(editor), /role="radiogroup" aria-label="Card colour"/);
+  assert.match(englishUiSource(editor), /TONES\.map\(tone => \{/);
+  assert.match(englishUiSource(editor), /aria-label=\{toneLabel\(tone\)\}/);
   // Selection is the stored value itself, so an illustration carrying a legacy
   // tint marks no swatch rather than marking a tone it is not wearing.
-  assert.match(editor, /const chosen = art\.tint === tone;/);
+  assert.match(englishUiSource(editor), /const chosen = art\.tint === tone;/);
   // Staged: the picker only ever calls setArt, and the single fetch that
   // writes is save(). Nothing here can persist before Save, so Cancel is
   // still "writes nothing".
-  assert.match(editor, /onClick=\{\(\) => setArt\(\{ \.\.\.art, tint: tone \}\)\}/);
+  assert.match(englishUiSource(editor), /onClick=\{\(\) => setArt\(\{ \.\.\.art, tint: tone \}\)\}/);
   assert.equal((editor.match(/await fetch\(/g) || []).length, 1);
   // Omitted when unset, which is what leaves the app on the slug hash.
-  assert.match(editor, /\.\.\.\(art\.tint \? \{ tint: art\.tint \} : null\)/);
+  assert.match(englishUiSource(editor), /\.\.\.\(art\.tint \? \{ tint: art\.tint \} : null\)/);
   // Reset position replaces the frame only, and replacing the image keeps the
   // colour that was picked to sit with the artwork.
-  assert.match(editor, /setArt\(\{ \.\.\.art, \.\.\.DEFAULT_FRAME \}\)/);
-  assert.match(editor, /a \? \{ \.\.\.a, url \} : \{ url, \.\.\.DEFAULT_FRAME, tint: null \}/);
+  assert.match(englishUiSource(editor), /setArt\(\{ \.\.\.art, \.\.\.DEFAULT_FRAME \}\)/);
+  assert.match(englishUiSource(editor), /a \? \{ \.\.\.a, url \} : \{ url, \.\.\.DEFAULT_FRAME, tint: null \}/);
 });
 
 test('dark harmonic colours are computed from tone 50 with readable shared text', () => {

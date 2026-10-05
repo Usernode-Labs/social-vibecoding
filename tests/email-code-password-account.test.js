@@ -1,3 +1,4 @@
+const { englishUiSource } = require("./lib/english-ui-source");
 // Email sign-in for an account that already has a password (#1586).
 //
 // Reported as one sentence: "Sign in with email doesn't work if I have
@@ -22,7 +23,7 @@ const path = require('node:path');
 
 const { interiorHtmlFor } = require('./lib/lazy-interiors');
 
-const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+const read = (rel) => englishUiSource(fs.readFileSync(path.join(__dirname, '..', rel), 'utf8'));
 
 const LOGIN_TSX = 'frontend/src/features/auth/login.tsx';
 const SERVICE = 'src/services/email-signup.js';
@@ -33,13 +34,13 @@ const ROUTES = 'src/routes/auth.js';
 test('the refusal copy the screen falls back to matches the one the server sends', () => {
   const server = /^const PASSWORD_REQUIRED_MESSAGE =\n\s*'([^']+)';$/m.exec(read(SERVICE));
   assert.ok(server, 'the service names its refusal message');
-  const client = /^const PASSWORD_ACCOUNT_MSG =\n\s*'([^']+)';$/m.exec(read(LOGIN_TSX));
+  const client = /^const PASSWORD_ACCOUNT_MSG =\s*'([^']+)';$/m.exec(read(LOGIN_TSX));
   assert.ok(client, 'the screen names its fallback');
   assert.equal(client[1], server[1],
     'a real refusal and the ?shot= state must read identically');
   // The rule for user-facing strings, on the copy this change adds.
   for (const line of [server[1], client[1]]) {
-    assert.doesNotMatch(line, /—|&mdash;|&#8212;/, 'no em dash in user-facing copy');
+    assert.doesNotMatch(englishUiSource(line), /—|&mdash;|&#8212;/, 'no em dash in user-facing copy');
   }
 });
 
@@ -52,15 +53,15 @@ test('a refused-but-correct code lands on the password form, address carried ove
   const body = handler[0];
 
   // Both refusals route the same way: they are not mistyped codes.
-  assert.match(body, /data\.code === 'password_required' \|\| data\.code === 'admin_password_required'/);
-  assert.match(body, /showLoginBaseView\(\);/,
+  assert.match(englishUiSource(body), /data\.code === 'password_required' \|\| data\.code === 'admin_password_required'/);
+  assert.match(englishUiSource(body), /showLoginBaseView\(\);/,
     'the code step is left for the form that can actually succeed');
-  assert.match(body, /username\.current\.value = st\.otpEmail \|\| ''/,
+  assert.match(englishUiSource(body), /username\.current\.value = st\.otpEmail \|\| ''/,
     'the address just typed is prefilled, not asked for twice');
-  assert.match(body, /setLoginError\(data\.error \|\| PASSWORD_ACCOUNT_MSG\)/,
+  assert.match(englishUiSource(body), /setLoginError\(data\.error \|\| PASSWORD_ACCOUNT_MSG\(\)\)/,
     'the explanation is shown on the form it applies to');
   // The branch must be taken BEFORE the generic "invalid or expired" message.
-  assert.ok(body.indexOf('admin_password_required') < body.indexOf('Invalid or expired code.'));
+  assert.ok(englishUiSource(body).indexOf('admin_password_required') < englishUiSource(body).indexOf('Invalid or expired code.'));
 });
 
 test('a code that signs you straight in finishes the login instead of asking for a password', () => {

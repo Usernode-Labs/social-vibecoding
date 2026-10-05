@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // Kanban view-mode: AppView._bucketDevItems() sorts the cached dev data
 // into the four lifecycle columns shown on the board:
 //
@@ -58,7 +59,7 @@ function makeCtx(over) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   return sandbox;
 }

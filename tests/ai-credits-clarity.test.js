@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #593: the daily AI allowance, stated clearly instead of cryptically.
 //
 // Three things shipped and each one is a silent regression if it drifts:
@@ -229,7 +230,7 @@ function makeDevChat({ hasApiKey = false, search = '' } = {}) {
       publishAttachStrip: () => {},
     },
   };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(fs.readFileSync(path.join(root, 'public/js/build-venues.js'), 'utf8'), sandbox);
   vm.runInContext(fs.readFileSync(path.join(root, 'public/js/credit-options.js'), 'utf8'), sandbox);
   vm.runInContext(`${DEV_CHAT_SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);

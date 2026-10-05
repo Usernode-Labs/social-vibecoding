@@ -1,4 +1,5 @@
 'use strict';
+const { englishUiSource } = require("./lib/english-ui-source");
 
 // THE STOP PAIR: a stop that is not landing, and a stop that landed.
 //
@@ -104,9 +105,9 @@ test('the chips say what landed, and never invent a count', () => {
   // Pinned against the shipped implementation, not just against itself.
   const at = DEV_CHAT.indexOf('_stopLandingChips(landing) {');
   const body = DEV_CHAT.slice(at, DEV_CHAT.indexOf('\n  },', at));
-  assert.match(body, /if \(!s\.sha\) return \['nothing committed'\];/);
-  assert.match(body, /s\.commits == null\n\s+\? 'changes committed'/);
-  assert.match(body, /s\.pushOk \? 'pushed' : 'not pushed'/);
+  assert.match(englishUiSource(body), /if \(!s\.sha\) return \['nothing committed'\];/);
+  assert.match(englishUiSource(body), /s\.commits == null\n\s+\? 'changes committed'/);
+  assert.match(englishUiSource(body), /s\.pushOk \? 'pushed' : 'not pushed'/);
 
   assert.deepEqual(chips({ sha: null, commits: 0 }), ['nothing committed']);
   assert.deepEqual(chips({ sha: '7c41ab90', commits: 1, pushOk: false }),

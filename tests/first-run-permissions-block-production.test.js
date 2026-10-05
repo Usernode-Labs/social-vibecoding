@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #2960: do not ask for unrestricted background usage until the user has
 // enabled block production.
 //
@@ -114,7 +115,7 @@ function boot(opts) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(nativeChromeSource, sandbox);
   return {
     NativeChrome: sandbox.NativeChrome,

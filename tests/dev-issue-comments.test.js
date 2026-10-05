@@ -1,3 +1,5 @@
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
 // `#dev-issue-comments` — the GitHub thread under an issue's topic card.
 //
 // ── Why this file is new ──────────────────────────────────────────────
@@ -171,14 +173,14 @@ test('#3490: Homeroom bot\'s spec comment splits into its sentence and the spec'
   const fn = code.match(/\n {2}_botSpecOf\(c\) \{([\s\S]*?)\n {2}\},/);
   assert.ok(fn, '_botSpecOf() found');
   const AppView = { _isBotCommentAuthor: (a) => a === 'usernode-bot' };
-  const botSpecOf = (c) => vm.runInNewContext(`(function (c) {${fn[1]}})(c)`, { AppView, c });
+  const botSpecOf = (c) => vm.runInNewContext(`(function (c) {${fn[1]}})(c)`, withLanguage({ AppView, c }));
   // Exactly what the bot writes (services/homeroom-bot-live.js), not a copy.
   const live = require('../src/services/homeroom-bot-live');
   const body = live.specCommentText('# Fix the banner\n\n## User-facing changes\n\nIt blends in.\n\n## Design\n\nOne card.');
   const got = botSpecOf({ author: 'usernode-bot', body });
   assert.equal(got.title, 'Fix the banner');
-  assert.match(got.lead, /^Homeroom bot wrote a spec for this request and is building it now\./);
-  assert.doesNotMatch(got.lead, /details|summary/, 'the markers are gone, not shown as text');
+  assert.match(englishUiSource(got.lead), /^Homeroom bot wrote a spec for this request and is building it now\./);
+  assert.doesNotMatch(englishUiSource(got.lead), /details|summary/, 'the markers are gone, not shown as text');
   assert.equal(got.body, '## User-facing changes\n\nIt blends in.\n\n## Design\n\nOne card.');
   assert.equal(botSpecOf({ author: 'ada', body }), null, 'a person\'s comment stays as they wrote it');
   assert.equal(botSpecOf({ author: 'usernode-bot', body: 'Thanks for the report.' }), null);
@@ -186,11 +188,11 @@ test('#3490: Homeroom bot\'s spec comment splits into its sentence and the spec'
   // Both renderers use it: the request page's thread renders the spec as a
   // spec (paragraph semantics), and the Workshop row's preview names it.
   const view = code.match(/_issueCommentsView\(comments, truncated, htmlUrl\) \{([\s\S]*?)\n {2}\},/)[1];
-  assert.match(view, /DevChat\.renderMarkdown\(str, \{ breaks: false \}\)/);
-  assert.match(view, /bodyHtml: renderMd\(spec \? spec\.lead : \(c\.body \|\| ''\)\),\n\s*spec: spec \? \{ title: spec\.title, html: renderSpec\(spec\.body\) \} : null,/);
+  assert.match(englishUiSource(view), /DevChat\.renderMarkdown\(str, \{ breaks: false \}\)/);
+  assert.match(englishUiSource(view), /bodyHtml: renderMd\(spec \? spec\.lead : \(c\.body \|\| ''\)\),\n\s*spec: spec \? \{ title: spec\.title, html: renderSpec\(spec\.body\) \} : null,/);
   const feed = code.match(/_feedCommentsHtml\(comments\) \{([\s\S]*?)\n {2}\},/)[1];
-  assert.match(feed, /const spec = AppView\._botSpecOf\(c\);/);
-  assert.match(feed, /escapeHtml\(spec\.title \? `The spec: \$\{spec\.title\}` : 'The spec'\)/);
+  assert.match(englishUiSource(feed), /const spec = AppView\._botSpecOf\(c\);/);
+  assert.match(englishUiSource(feed), /escapeHtml\(spec\.title \? `The spec: \$\{spec\.title\}` : 'The spec'\)/);
 });
 
 test('#3693: a spec the comments route clipped is still a spec, not raw markers', () => {
@@ -202,7 +204,7 @@ test('#3693: a spec the comments route clipped is still a spec, not raw markers'
   const fn = code.match(/\n {2}_botSpecOf\(c\) \{([\s\S]*?)\n {2}\},/);
   assert.ok(fn, '_botSpecOf() found');
   const AppView = { _isBotCommentAuthor: (a) => a === 'usernode-bot' };
-  const botSpecOf = (c) => vm.runInNewContext(`(function (c) {${fn[1]}})(c)`, { AppView, c });
+  const botSpecOf = (c) => vm.runInNewContext(`(function (c) {${fn[1]}})(c)`, withLanguage({ AppView, c }));
   const live = require('../src/services/homeroom-bot-live');
   const github = require('../src/services/github');
   const spec = [

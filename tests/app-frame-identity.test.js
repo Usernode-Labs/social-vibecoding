@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #1085 chunk H, step 2 — THE CORE DELIVERABLE.
 //
 // `#app-iframe` holds SOMEONE ELSE'S RUNNING APPLICATION. Every other element in
@@ -378,7 +379,7 @@ async function makeHarness({ offline = false, offlineReady = false } = {}) {
       'usernode:offline-ready', JSON.stringify({ [SLUG]: Date.now() }),
     );
   }
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView.appData = { ...record, self_hosted: false };

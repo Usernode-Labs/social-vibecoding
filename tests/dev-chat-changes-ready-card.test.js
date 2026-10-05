@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // #361: the "Changes ready" card (dc-pr-card) + "Submit for review" button
 // must render whenever a turn produced a reviewable commit — driven by the
 // staging-independent `changesReady` marker — NOT only when a staging
@@ -91,7 +92,7 @@ function makeDevChat() {
   sandbox.globalThis = sandbox;
   sandbox.window.addEventListener = () => {};
   sandbox.UsernodeReact = { devChat: t.bridge };
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../public/js/app-view.js'), 'utf8') + '\n;globalThis.AppView = AppView;', sandbox);
   sandbox.AppView._renderTopicHead = () => {};
   sandbox.AppView._loadDevData = async () => {};

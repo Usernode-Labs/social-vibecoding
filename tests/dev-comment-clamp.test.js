@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // "Show more" on a long comment (#2556), on all three surfaces that draw one.
 //
 // ── Why one file for three surfaces ────────────────────────────────────
@@ -201,7 +202,7 @@ function makeAppView(globals) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView.appData = { slug: 'demo-app', can_collaborate: true };

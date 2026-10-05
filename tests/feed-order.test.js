@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // The Feed's ORDER: strictly most-recent-activity-first, across every kind of
 // card at once.
 //
@@ -57,7 +58,7 @@ function makeAppView() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   // \_feedItems reads these; default to empty so each test sets only what it needs.

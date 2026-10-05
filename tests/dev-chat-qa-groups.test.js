@@ -1,3 +1,4 @@
+const { withLanguage } = require("./lib/platform-language");
 // The quick-check step could not be completed: `_qaCurrentGroups` was called
 // in five places and defined in none (#1601).
 //
@@ -62,7 +63,7 @@ function loadDevChat() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   vm.runInContext(`${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   const DevChat = sandbox.__DevChat;
   // The four answer stores are reset by the send path (see `_qaSelection = {}`

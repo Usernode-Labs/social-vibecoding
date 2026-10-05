@@ -1,3 +1,5 @@
+const { englishUiSource } = require("./lib/english-ui-source");
+const { withLanguage } = require("./lib/platform-language");
 // #695: UI-string tests for the approver-vs-advisory vote rendering on
 // invited-approver apps. The headline tally everywhere must be the
 // QUALIFYING (approver-only) count, with the non-approver surplus rendered
@@ -45,7 +47,7 @@ function makeSandbox(opts = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
+  vm.createContext(withLanguage(sandbox));
   return sandbox;
 }
 
@@ -74,10 +76,10 @@ test('voteCountPill: invited at-least row — approver-only pill + advisory chip
     qualified_yes_count: 0, qualified_no_count: 0,
     approval_policy: 'invited', approvals_required: 1, votes_required: 1,
   }, 3);
-  assert.match(pill, /0 of 1 approval/);
-  assert.match(pill, /gc-vote-advisory/);
-  assert.match(pill, /\+2 advisory/);
-  assert.match(pill, /don't count toward merging/);
+  assert.match(englishUiSource(pill), /0 of 1 approval/);
+  assert.match(englishUiSource(pill), /gc-vote-advisory/);
+  assert.match(englishUiSource(pill), /\+2 advisory/);
+  assert.match(englishUiSource(pill), /don(?:'|&#39;)t count toward merging/);
 });
 
 test('voteCountPill: invited default-clock row — qualified headline + advisory chip', () => {
