@@ -736,6 +736,10 @@ const Browse = {
       demo: isDemo,
       openable: !isDemo,
       added: isAdded,
+      // #3966: the row's bookmark reads the same favourited flag the detail
+      // page's "Add to Shortcuts" button writes. A joined app is pinned too
+      // (the membership write pins), so a joined row already reads saved.
+      saved: !!app.is_favorited,
       addTitle: isAdded ? `Joined. Tap to leave ${app.name || app.slug}` : `Join ${app.name || app.slug}`,
     };
   },
@@ -821,6 +825,18 @@ const Browse = {
   toggleRowAdded(view) {
     if (!view || !view.slug) return;
     Home.setMembership(view.slug, !view.added, () => Browse.render());
+  },
+
+  // #3966: the row's bookmark. Saved means the same thing the detail page's
+  // "Add to Shortcuts" button does (the Home shortcut), so it delegates to
+  // Home.toggleAdded rather than re-implementing the write: the optimistic
+  // flip, the toast, the leave offer after an unpin and the revert on
+  // failure are all already there. `onChange` repaints THIS list, which sits
+  // outside Home's own paint. Demo rows no-op inside toggleAdded (their
+  // slugs have no database row).
+  toggleRowSaved(view) {
+    if (!view || !view.slug) return;
+    return Home.toggleAdded(view.slug, !view.saved, () => Browse.render());
   },
 
   // Screenshot-state deep link (?shot=browse-detail): the detail page is

@@ -32,7 +32,8 @@ test('#1940: the provider and PR link show directly at every width — no Detail
 test('Discover keeps the full app name, metadata and explicit add/remove action in one row', () => {
   const row = { app: {}, slug: 'long-app', name: 'A very long community application name',
     meta: '11 users · Updated recently', status: 'Running', statusDot: 'bg-emerald-500',
-    openable: true, demo: false, added: false, addTitle: 'Join A very long community application name' };
+    openable: true, demo: false, added: false, saved: false,
+    addTitle: 'Join A very long community application name' };
   const render = added => renderToHtml(createElement(BrowseRows, { rows: [{ ...row, added }] }));
   const html = render(false);
   for (const hook of ['browse-row-content', 'browse-row-title', 'browse-row-meta', 'browse-row-name']) assert.ok(html.includes(hook));
@@ -50,7 +51,8 @@ test('the title reflow is phone-only and scoped to Discover and the Dev session 
   const css = read('public/css/app.css');
   assert.match(css, /@media \(max-width: 639px\) \{\s*\.browse-row\.browse-row \{\s*display: grid;/);
   assert.match(css, /\.browse-row \.browse-row-title \{ grid-column: 2 \/ 4; grid-row: 1;/);
-  assert.match(css, /\.browse-row > \.browse-add-btn \{ grid-column: 3; grid-row: 2; min-height: 44px;/);
+  assert.match(css, /\.browse-row > \.browse-save-btn \{ grid-column: 3; grid-row: 2; min-height: 44px;/);
+  assert.match(css, /\.browse-row > \.browse-add-btn \{ grid-column: 4; grid-row: 2; min-height: 44px;/);
   assert.match(css, /@media \(max-width: 639px\) \{\s*#dc-session-header > \.dc-session-title \{\s*white-space: normal;\s*overflow-wrap: anywhere;/);
   assert.match(css, /-webkit-line-clamp: 2;/, 'very long session names do not consume the chat');
 });
@@ -74,7 +76,8 @@ test('Discover names may take two lines in the boxes, and every meta line ellips
   assert.match(block, /@media \(min-width: 640px\) \{\s*\.browse-row \.browse-row-title \{ white-space: normal; \}/);
   assert.match(block, /\.browse-row \.browse-row-name \{\s*display: -webkit-box;\s*-webkit-box-orient: vertical;\s*-webkit-line-clamp: 2;/);
   const row = { app: { directory: { label: 'Reviewed working' } }, slug: 's', name: 'N', meta: '0 users · Updated 1d ago',
-    status: 'Running', statusDot: 'bg-emerald-500', openable: true, demo: false, added: false, addTitle: 'Add to Your apps' };
+    status: 'Running', statusDot: 'bg-emerald-500', openable: true, demo: false, added: false, saved: false,
+    addTitle: 'Add to Your apps' };
   const html = renderToHtml(createElement(BrowseRows, { rows: [row] }));
   assert.match(html, /<span class="block truncate text-xs[^"]*">Reviewed working<\/span>/);
   assert.match(html, /<span class="block truncate">0 users · Updated 1d ago<\/span>/);

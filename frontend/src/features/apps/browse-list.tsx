@@ -25,7 +25,7 @@
 import { useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 
-import { CheckIcon, PlusIcon } from '@/components/ui/icons';
+import { BookmarkIcon, BookmarkSolidIcon, CheckIcon, PlusIcon } from '@/components/ui/icons';
 import { ListRow, SectionHeader } from '@/components/ui/grouped-list';
 import { Button } from '@/components/ui/button';
 import { AppIconContent, AppIconLink, AppPills, appIconKind, hasAppPills } from './app-card-view';
@@ -41,6 +41,8 @@ type RowView = {
   demo: boolean;
   openable: boolean;
   added: boolean;
+  /** #3966: the Home shortcut flag (is_favorited). Saved rows show the solid bookmark. */
+  saved: boolean;
   addTitle: string;
 };
 
@@ -64,6 +66,13 @@ const ADD_ON = 'border-transparent bg-transparent text-zinc-600 dark:text-zinc-3
 // draws (see the `neutral` variant in @/components/ui/button.tsx).
 const ADD_OFF = 'border-transparent bg-zinc-100 dark:bg-zinc-800 text-zinc-900 '
   + 'dark:text-zinc-100 hover:bg-zinc-200 dark:hover:bg-zinc-700';
+// #3966: the row's save control, beside the Join pill. Quiet zinc ink (the
+// pill's own tone), no filled background in either state: the glyph alone
+// marks the state, outline unsaved and solid saved, the save idiom Messages
+// and group chat already use. The state is done, so it takes no fill, and
+// the row keeps ONE pill.
+const SAVE_BTN = 'browse-save-btn shrink-0 inline-flex items-center justify-center rounded-full '
+  + 'p-1.5 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors';
 
 /**
  * The review label a Discover row shows (#3911). The API's `directory.label`
@@ -113,12 +122,12 @@ function Row({ view, headingSays }: {
     const nav = (window as any).NavLink;
     const hrefFor = (e: MouseEvent) => {
       const view = latest.current;
-      if ((e.target as Element)?.closest?.('.browse-add-btn, .app-icon-link')) return null;
+      if ((e.target as Element)?.closest?.('.browse-add-btn, .browse-save-btn, .app-icon-link')) return null;
       return controller()?.rowHref(view) ?? null;
     };
     const activate = (e: MouseEvent) => {
       const view = latest.current;
-      if ((e.target as Element)?.closest?.('.browse-add-btn, .app-icon-link')) return;
+      if ((e.target as Element)?.closest?.('.browse-add-btn, .browse-save-btn, .app-icon-link')) return;
       controller()?.openRow(view);
     };
     if (nav) nav.wireModified(node, hrefFor, activate);
@@ -188,6 +197,24 @@ function Row({ view, headingSays }: {
       )}
       trailing={(
         <>
+      {/* #3966: the save control, a quiet secondary beside the row's one
+          primary (Join). No `type`, same reason as the pill below. */}
+      <button
+        className={SAVE_BTN}
+        data-slug={view.slug}
+        data-saved={String(view.saved)}
+        aria-pressed={view.saved}
+        aria-label={view.saved ? `Remove ${view.name} from your saved apps` : `Save ${view.name}`}
+        title={view.saved ? `Remove ${view.name} from your saved apps` : `Save ${view.name}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          controller()?.toggleRowSaved(view);
+        }}
+      >
+        {view.saved
+          ? <BookmarkSolidIcon className="w-3.5 h-3.5" aria-hidden="true" />
+          : <BookmarkIcon className="w-3.5 h-3.5" strokeWidth="1.5" aria-hidden="true" />}
+      </button>
       {/* No `type` — the hand-written row shipped a bare <button>, and it sits
           in no form, so the default submit type is inert either way. */}
       <button

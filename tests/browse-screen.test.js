@@ -781,6 +781,11 @@ test('rowView: an app-store row — icon, name, meta, Join state', () => {
   assert.equal(fresh.addTitle, 'Join Fresh App');
   assert.equal(rowFor(state, 'mine').added, true);
   assert.match(rowFor(state, 'mine').addTitle, /Tap to leave My App/);
+  // #3966: the row's bookmark reads the payload's favourited flag, pure data
+  // like `added` — outline unsaved, solid saved, and a joined app (which is
+  // pinned too) reads saved without any extra step.
+  assert.equal(fresh.saved, false);
+  assert.equal(rowFor(state, 'mine').saved, true);
   // The "…" menu is gone from this screen — the detail page absorbed it.
   assert.doesNotMatch(BROWSE_SRC, /card-menu-btn/);
   assert.doesNotMatch(BROWSE_SRC, /card-add-btn/, 'the corner badge is a real button now');
@@ -1512,6 +1517,61 @@ test('toggleAdded reverts the optimistic flip when the write fails', async () =>
   assert.equal(fresh.is_favorited, false, 'reverted');
   assert.equal(reloaded, 1, 'and re-synced with server truth');
   assert.ok(nodes);
+});
+
+// ── Save / unsave from the row bookmark (#3966) ──────────────────────
+
+test('toggleRowSaved delegates to toggleAdded: POST { favorited: true }, and the flags flip', async () => {
+  const { Browse, Home, fetchCalls } = makeBrowse();
+  const fresh = app({ slug: 'fresh', name: 'Fresh App' });
+  Home._apps = [fresh];
+  Browse._apps = [fresh];
+  let rendered = 0;
+  const render = Browse.render;
+  Browse.render = () => { rendered += 1; render.call(Browse); };
+  Browse.toggleRowSaved(Browse.rowView(fresh));
+  assert.equal(fresh.is_favorited, true, 'optimistic: saved before the write lands');
+  assert.equal(rendered, 1, "the Discover list repaints through the onChange callback");
+  await flush();
+  assert.deepEqual(fetchCalls[0], {
+    url: '/api/apps/fresh/favorite', method: 'POST', body: { favorited: true },
+  });
+});
+
+test('toggleRowSaved unsaves: POST { favorited: false }', async () => {
+  const { Browse, Home, fetchCalls } = makeBrowse();
+  const mine = app({ slug: 'mine', name: 'Mine', is_favorited: true });
+  Home._apps = [mine];
+  Browse._apps = [mine];
+  Browse.toggleRowSaved(Browse.rowView(mine));
+  assert.equal(mine.is_favorited, false, 'optimistic: unsaved before the write lands');
+  await flush();
+  assert.deepEqual(fetchCalls[0], {
+    url: '/api/apps/mine/favorite', method: 'POST', body: { favorited: false },
+  });
+});
+
+test('toggleRowSaved reverts the flip and repaints when the write fails', async () => {
+  const { Browse, Home } = makeBrowse({ fetchOk: false });
+  const fresh = app({ slug: 'fresh' });
+  Home._apps = [fresh];
+  Browse._apps = [fresh];
+  let rendered = 0;
+  Browse.render = () => { rendered += 1; };
+  let reloaded = 0;
+  Home.load = async () => { reloaded += 1; };
+  await Browse.toggleRowSaved(Browse.rowView(fresh));
+  assert.equal(fresh.is_favorited, false, 'reverted');
+  assert.equal(reloaded, 1, 're-synced with server truth');
+  assert.equal(rendered, 2, 'painted the save, then painted it back out');
+});
+
+test('toggleRowSaved ignores a staging demo row (its slug has no DB row)', async () => {
+  const { Browse, fetchCalls } = makeBrowse();
+  Browse._apps = [app({ slug: 'staging-demo-featured', demo: true })];
+  Browse.toggleRowSaved(Browse.rowView(Browse._apps[0]));
+  await flush();
+  assert.equal(fetchCalls.length, 0, 'a POST would 404');
 });
 
 // ── Join / Leave (Home.setMembership — Discover's pill, communities) ──

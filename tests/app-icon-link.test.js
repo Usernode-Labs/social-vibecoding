@@ -22,9 +22,11 @@ test('a tap on the icon is never also the card\'s', () => {
   // Inside another link or button the tile is a focusable role="link" span,
   // since an anchor inside an anchor is invalid markup.
   assert.match(VIEW, /if \(nested\) \{[\s\S]*?role="link"\s+tabIndex=\{0\}/);
-  // The Discover row is wired natively, so it skips taps on the tile itself.
+  // The Discover row is wired natively, so it skips taps on the tile itself
+  // (and, since #3966, on the row's save bookmark and Join pill alike).
   const list = read('frontend/src/features/apps/browse-list.tsx');
-  assert.equal((list.match(/closest\?\.\('\.browse-add-btn, \.app-icon-link'\)/g) || []).length, 2);
+  assert.equal(
+    (list.match(/closest\?\.\('\.browse-add-btn, \.browse-save-btn, \.app-icon-link'\)/g) || []).length, 2);
 });
 
 // The project hub's hero drew one until #852; the community's tile is the
