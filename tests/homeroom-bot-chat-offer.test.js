@@ -55,10 +55,10 @@ test('WP-C: the reads behind offers are budgeted per person and per hour', () =>
 
 test('WP-C: an unaddressed message is read as an idea, not as something said to the bot', () => {
   const llm = read('src/services/llm.js');
-  assert.match(llm, /async function readChatAsk\(\{ text, appName = null, toBot = true, apiKey, telemetryContext \}\)/);
+  assert.match(llm, /async function readChatAsk\(\{ text, appName = null, toBot = true, changes = \[\], apiKey, telemetryContext \}\)/);
   assert.match(llm, /'Somebody new to the group wrote this'/);
   const schema = read('src/db/schema.sql');
-  assert.match(schema, /CHECK \(kind IN \('filed', 'group', 'unsure', 'question', 'dismissed', 'offer'\)\)/);
+  assert.match(schema, /CHECK \(kind IN \('filed', 'group', 'unsure', 'question', 'dismissed', 'offer', 'revise'\)\)/);
   // The invited person's tour says the bot does this, now that it does.
   assert.match(read('frontend/src/features/first-session/tour-steps.ts'),
     /Homeroom bot offers to suggest an idea to the group in your name, and the group decides what goes in\./);

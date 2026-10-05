@@ -1,4 +1,4 @@
-import type { BotRequestCard, BotRequestChip } from './transcript-store';
+import type { BotRequestCard, BotRequestChip, BotRequestState } from './transcript-store';
 
 /*
  * B9: a request asked of Homeroom bot in a project's chat, on the message
@@ -17,6 +17,13 @@ import type { BotRequestCard, BotRequestChip } from './transcript-store';
  * this": what was taken from it and how long it usually takes, or the
  * question it asks first. It is read from their own requests, never from the
  * room's messages, so nobody else's transcript can hold it.
+ *
+ * The card follows its request (`state`, read from the platform's records
+ * each time the card is: homeroom-bot-chat.js cardsOf): building, built and
+ * testing, built and waiting for approval (from whom, with Try it), live,
+ * or what stopped it. A fix asked on one of the bot's changes still waiting
+ * for approval (`revise`) says it goes into that change, and follows it the
+ * same way. Its chip, Fixing, is everybody's: the fix was asked in public.
  */
 
 const CHIP_CLASS = 'inline-flex items-center gap-1 rounded-full bg-[color:var(--brand-tint)] px-2.5 py-0.5 text-[0.8125rem] font-semibold text-[color:var(--brand-ink)]';
@@ -25,6 +32,7 @@ const CHIP_WORDS: Record<Exclude<BotRequestChip['status'], 'ready'>, { glyph: st
   reading: { glyph: '👀', word: 'Reading' },
   building: { glyph: '🔨', word: 'Building' },
   live: { glyph: '✅', word: 'Live' },
+  fixing: { glyph: '🔧', word: 'Fixing' },
 };
 
 export function BotStatusChip({ chip, mine = false, onTry, onProgress }: {
@@ -66,12 +74,76 @@ export function BotStatusChip({ chip, mine = false, onTry, onProgress }: {
 /** WP-C: under somebody's first request on a project. */
 export const STAYS_LINE = 'It stays in the project’s requests with your name on it.';
 
+/** Pure: "a", "a and b", "a, b and c". */
+function listWords(items: string[]): string {
+  if (items.length <= 1) return items.join('');
+  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+}
+
+/**
+ * Pure: who a built change still waits on, as the DM's ready card says it
+ * (../messages/bot-ready.tsx waitingLine): "Waiting for approval from you
+ * and @jordan."
+ */
+export function approvalWords(state?: BotRequestState): string {
+  const who = [...(state?.youApprove ? ['you'] : []), ...(state?.waitingOn || []).map((name) => `@${name}`)];
+  if (state?.more) who.push(`${state.more} more`);
+  return who.length ? `Waiting for approval from ${listWords(who)}.` : 'Waiting for approval.';
+}
+
+/** Pure: a request the bot builds, where it stands. */
+function filedWords(card: BotRequestCard, stays: string): string {
+  const title = card.title || 'your request';
+  switch (card.state?.stage) {
+    case 'waiting': return `Got it: ${title}. Waiting for a free builder.${stays}`;
+    case 'building': return `Building it now: ${title}.${stays}`;
+    case 'question': return 'I have a question about this. It’s in our chat.';
+    case 'checking': return `Built: ${title}. Testing it now.`;
+    case 'proposed': return `Built: ${title}. ${approvalWords(card.state)}`;
+    case 'approved': return `Approved: ${title}. It’s going live.`;
+    case 'live': return `Live: ${title}.`;
+    case 'closed': return `Closed: ${title}. It won’t go live.`;
+    case 'person': return 'I left this for the group to decide.';
+    case 'stopped': return 'I couldn’t finish this. Our chat says why.';
+    default:
+      return `Got it: ${title}.${card.typicalMinutes ? ` Usually about ${card.typicalMinutes} minutes.` : ''}${stays}`;
+  }
+}
+
+/** Pure: the change a fix went to: "the first version", or its name. */
+function changeName(card: BotRequestCard): string {
+  if (card.firstVersion) return 'the first version';
+  return card.title ? `“${card.title}”` : 'that change';
+}
+
+/** Pure: a fix sent to one of the bot's changes, where it stands. */
+function reviseWords(card: BotRequestCard): string {
+  const it = changeName(card);
+  const It = it.charAt(0).toUpperCase() + it.slice(1);
+  switch (card.state?.stage) {
+    case 'checking': return `Updated ${it}. Testing it now.`;
+    case 'proposed': return `Updated ${it}. ${approvalWords(card.state)}`;
+    case 'asked': return `I have a question about your fix. It’s in the discussion of ${it}.`;
+    case 'answered': return `I answered you in the discussion of ${it}.`;
+    case 'person': return `I left your fix to ${it} for the group to decide.`;
+    case 'approved': return `${It} was approved. It’s going live.`;
+    case 'live': return `${It} is live.`;
+    case 'closed': return `${It} was closed. It won’t go live.`;
+    case 'stopped': return `I couldn’t finish fixing ${it}.`;
+    default: return `Got it. I’ll fix that in ${it} before it goes live.`;
+  }
+}
+
 /** Pure: what a card says. */
 export function cardWords(card: BotRequestCard): string {
   const stays = card.first ? ` ${STAYS_LINE}` : '';
   switch (card.kind) {
     case 'filed':
-      return `Got it: ${card.title || 'your request'}.${card.typicalMinutes ? ` Usually about ${card.typicalMinutes} minutes.` : ''}${stays}`;
+      return filedWords(card, stays);
+    case 'revise':
+      return reviseWords(card);
+    case 'revise_refused':
+      return `I couldn’t change ${changeName(card)} just now. You can say what you want in its discussion.`;
     case 'group':
       return `Filed as a request for the group: ${card.title || 'your request'}.${stays}`;
     case 'offer':
@@ -95,11 +167,32 @@ export interface BotRequestCardActions {
   onFile?: () => void;
   onDismiss?: () => void;
   onOpenChat?: () => void;
+  /** Its change's preview, once it is built. */
+  onTry?: (sessionId: number) => void;
+  /** The change a fix went to: its page and its discussion. */
+  onChange?: (sessionId: number) => void;
 }
+
+// The stages a request's card offers See progress at: it is still going.
+const GOING = new Set(['reading', 'waiting', 'building', 'checking']);
 
 export function BotRequestCardView({ card, actions = {} }: { card: BotRequestCard; actions?: BotRequestCardActions }) {
   const buttons: Array<{ key: string; label: string; primary?: boolean; act?: () => void }> = [];
-  if (card.kind === 'filed') buttons.push({ key: 'progress', label: 'See progress', act: actions.onProgress });
+  const stage = card.state?.stage;
+  const change = card.state?.sessionId || card.sessionId || null;
+  const tryIt = { key: 'try', label: 'Try it', primary: true, act: () => { if (change) actions.onTry?.(change); } };
+  const seeChange = { key: 'change', label: 'See change', act: () => { if (change) actions.onChange?.(change); } };
+  if (card.kind === 'filed') {
+    if (stage === 'proposed' && change) buttons.push(tryIt);
+    else if (stage === 'question' || stage === 'stopped') buttons.push({ key: 'chat', label: 'Open chat', act: actions.onOpenChat });
+    else if ((stage === 'closed' || stage === 'person') && card.issueNumber) {
+      buttons.push({ key: 'request', label: 'See request', act: () => actions.onRequest?.(card.issueNumber as number) });
+    } else if (!stage || GOING.has(stage)) buttons.push({ key: 'progress', label: 'See progress', act: actions.onProgress });
+  }
+  if ((card.kind === 'revise' || card.kind === 'revise_refused') && change && stage !== 'live' && stage !== 'approved') {
+    if (stage === 'proposed') buttons.push(tryIt);
+    buttons.push(seeChange);
+  }
   if (card.kind === 'group' && card.issueNumber) buttons.push({ key: 'request', label: 'See request', act: () => actions.onRequest?.(card.issueNumber as number) });
   if (card.kind === 'unsure') {
     buttons.push({ key: 'file', label: 'File it', primary: true, act: actions.onFile });

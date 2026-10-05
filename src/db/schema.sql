@@ -9978,7 +9978,9 @@ CREATE INDEX IF NOT EXISTS homeroom_bot_runs_awaiting_go_idx
 -- (GET /api/apps/:slug/my-bot-requests), never from chat_messages. `kind`:
 -- filed (the bot builds it), group (filed for the group, where the bot does
 -- not build), unsure (asks the person first), question (pointed at the
--- bot's own chat), dismissed (they said not now).
+-- bot's own chat), dismissed (they said not now), revise (a fix asked for
+-- on one of the bot's own changes still waiting for approval, sent to that
+-- change rather than filed as a new request).
 CREATE TABLE IF NOT EXISTS chat_bot_requests (
   chat_message_id INTEGER PRIMARY KEY REFERENCES chat_messages(id) ON DELETE CASCADE,
   app_id          INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
@@ -9988,24 +9990,29 @@ CREATE TABLE IF NOT EXISTS chat_bot_requests (
   title           TEXT,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT chat_bot_requests_kind_check CHECK (kind IN ('filed', 'group', 'unsure', 'question', 'dismissed', 'offer'))
+  CONSTRAINT chat_bot_requests_kind_check CHECK (kind IN ('filed', 'group', 'unsure', 'question', 'dismissed', 'offer', 'revise'))
 );
 -- WP-C: 'offer', a newcomer's message that reads as an idea, offered to them
--- as a request (homeroom-bot-chat.js maybeOffer). A table made before it has
--- the five-kind check; widen it once.
+-- as a request (homeroom-bot-chat.js maybeOffer). Fix in place (5 October):
+-- 'revise', a mention asking to fix one of the bot's own changes before it
+-- goes live (homeroom-bot-chat.js reviseFromMessage). A table made before
+-- either has a narrower check; widen it once.
 DO $$
 BEGIN
   IF EXISTS (
     SELECT 1 FROM pg_constraint
      WHERE conrelid = 'chat_bot_requests'::regclass
        AND conname = 'chat_bot_requests_kind_check'
-       AND pg_get_constraintdef(oid) NOT LIKE '%offer%'
+       AND pg_get_constraintdef(oid) NOT LIKE '%revise%'
   ) THEN
     ALTER TABLE chat_bot_requests DROP CONSTRAINT chat_bot_requests_kind_check;
     ALTER TABLE chat_bot_requests ADD CONSTRAINT chat_bot_requests_kind_check
-      CHECK (kind IN ('filed', 'group', 'unsure', 'question', 'dismissed', 'offer'));
+      CHECK (kind IN ('filed', 'group', 'unsure', 'question', 'dismissed', 'offer', 'revise'));
   END IF;
 END $$;
+-- The change a 'revise' row asked about: its card and its chip follow that
+-- change (its discussion, its revision, approval, live), not a new request.
+ALTER TABLE chat_bot_requests ADD COLUMN IF NOT EXISTS session_id INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_chat_bot_requests_requester
   ON chat_bot_requests(requester_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_chat_bot_requests_issue
