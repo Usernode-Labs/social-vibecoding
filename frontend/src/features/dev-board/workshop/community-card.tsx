@@ -127,20 +127,50 @@ export type CommunityPayload = {
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 /**
- * The approval rule as one sentence. Exported and pure so the wording is
- * tested against the three regimes governance.js knows.
+ * Who has to say yes, out of how many: "2 of the 12 active members", "both
+ * active members", "the only approver". A count dapp.json set can name more
+ * people than there are, and then says how many there are.
+ */
+function whoApproves(required: number, of: number, one: string, many: string): string {
+  if (required < of) return `${required} of the ${of} ${many}`;
+  if (required > of) return `${plural(required, one, many)} (there ${of === 1 ? 'is' : 'are'} ${of})`;
+  if (of === 1) return `the only ${one}`;
+  if (of === 2) return `both ${many}`;
+  return `all ${of} ${many}`;
+}
+
+/**
+ * The approval rule as one sentence, in the words the rest of the page
+ * uses: a change "goes live", people "approve" it. Exported and pure so the
+ * wording is tested against the three regimes governance.js knows:
+ *
+ *   - members vote (the default): the eased threshold over the active
+ *     members, or the quiet path, which needs one Yes and no objection
+ *     (active-users.js lazyWindowMs) and so cannot apply when one Yes is
+ *     already the threshold;
+ *   - invited approvers: the same math over the approvers alone;
+ *   - at least N (dapp.json's approvals_required, either policy): N
+ *     approvals and no clock at all.
+ *
+ * First-session run-through, 5 Oct 2026: "Members vote: a change merges at
+ * 2 yes votes (2 active members), or unopposed after a wait" was the
+ * sentence a newcomer met here.
  */
 export function approvalLine(approval: CommunityPayload['approval'] | null | undefined): string {
   if (!approval) return '';
   const required = Math.max(1, Number(approval.required) || 1);
   const electorate = Math.max(1, Number(approval.electorate) || 1);
+  const fixed = approval.approvals_required != null;
+  const quiet = !fixed && required > 1;
   if (approval.policy === 'invited') {
-    return `Approvers decide: ${plural(required, 'yes vote', 'yes votes')} from ${plural(electorate, 'approver', 'approvers')} to merge a change.`;
+    const who = whoApproves(required, electorate, 'approver', 'approvers');
+    return `A change goes live when ${who} ${required === 1 ? 'says' : 'say'} yes${quiet ? ', or after a wait if one says yes and nobody says no' : ''}.`;
   }
-  if (approval.approvals_required != null) {
-    return `A change needs ${plural(required, 'yes vote', 'yes votes')} from members to merge.`;
+  if (fixed) {
+    return `A change goes live once ${plural(required, 'member approves', 'members approve')} it.`;
   }
-  return `Members vote: a change merges at ${plural(required, 'yes vote', 'yes votes')} (${plural(electorate, 'active member', 'active members')}), or unopposed after a wait.`;
+  const who = whoApproves(required, electorate, 'active member', 'active members');
+  return `A change goes live when ${who} ${required === 1 ? 'approves' : 'approve'} it${quiet ? ', or after a wait if one approves and nobody objects' : ''}.`;
 }
 
 /** "Public community · 12 members"; "Just you" alone, because there is one. */
@@ -875,8 +905,8 @@ export function ShareItCard({ slug, name }: { slug: string; name?: string }) {
  * HOW A CHANGE GETS IN, on the Workshop page: the approval rule, read from
  * the server rather than restated here (GET /api/apps/:slug/community,
  * `approval`), as the headline number an unopposed change needs. It is a
- * headline and it says so ("to merge", not "exactly") because opposition
- * raises it and the quiet-week path can merge below it
+ * headline, not the whole gate: opposition raises it, and the line names
+ * the quiet path that can put a change live below it
  * (services/active-users.js). It was the hero's last line; it sits with the
  * work it governs now. Nothing until the shared read has answered.
  */
@@ -889,7 +919,10 @@ export function ApprovalRules({ slug }: { slug: string }) {
         <span className="dev-ws-head-title">Approval rules</span>
       </div>
       <p className="dev-ws-rules-line" data-ws-community-rule="">{approvalLine(data.approval)}</p>
-      <p className="dev-ws-rules-sub">Changing a rule is a proposal too, applied once it is voted in.</p>
+      {/* A change to these rules changes a protected dapp.json block
+          (explicit-approval.js): it keeps the rule above but never goes
+          live after a wait, so "the same way" would not be true of it. */}
+      <p className="dev-ws-rules-sub">Changing these rules is a change too, and it goes live only once it is approved.</p>
     </section>
   );
 }

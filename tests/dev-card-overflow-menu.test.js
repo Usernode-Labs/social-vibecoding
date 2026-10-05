@@ -373,6 +373,10 @@ test('merged proposal: Undo, and never twice over a revert', () => {
   assert.ok(!menuLabels(AppView, mergedCardHtml(AppView, 
     merged({ revert_session_id: 9, revert_pr_number: 900 }), 3))
     .some((l) => /^Undo$/.test(l)));
+  // A change that went live inside another one has no merge of its own to
+  // undo (services/included-changes.js; the server refuses it too).
+  assert.ok(!menuLabels(AppView, mergedCardHtml(AppView, merged({ included_in_session_id: 6288 }), 3))
+    .some((l) => /^Undo$/.test(l)));
 });
 
 test('merged proposal: completed-task attributes stay editable for collaborators', () => {

@@ -45,6 +45,24 @@
  * than when the host finally reports the taller page. A hop from one field
  * to another keeps the keyboard, so `relatedTarget` decides.
  *
+ * ── Except under a finger: then it waits for the click ───────────────
+ *
+ * Production run, 5 Oct 2026, the iOS app, a project's Discussion: with the
+ * keyboard up, a tap on the group chat's Send closed the keyboard and sent
+ * nothing. The tap's mousedown blurred the field, the class came off in that
+ * blur, the bar and the strip came back, and the composer fell by the
+ * keyboard's height before the click was dispatched, so the click landed on
+ * nothing. Every composer's Send now keeps the field focused through the
+ * press (`onMouseDown` prevents the default, as Messages' always did). This
+ * is the net under every other button pressed with the keyboard up: a blur
+ * during a press (a touch or pointer down in the last PRESS_WINDOW_MS,
+ * counting its release, that has not yet ended in a click or a cancel) leaves
+ * the class on until that click has been dispatched, or CLICK_WAIT_MS at the
+ * most, and then reads the page again, so focus that moved to another field
+ * keeps it. The keyboard's Done (the ✓ above the keys) is no press in the
+ * page, and a tap on empty space ends in its click in the same moment, so
+ * the bars still come back with the keys there.
+ *
  * Whether a focused element can be holding the keyboard is the kit's own
  * classifier (`unNative.physics.keyboardCanBeUp`), read at call time, so
  * this and `un-kb` never disagree about what a text field is.
@@ -57,6 +75,11 @@ export const KB_OPEN_CLASS = 'platform-kb-open';
 export const PHONE_QUERY = '(max-width: 767px) and (pointer: coarse)';
 /** How much shorter than at rest the page must be to be the keyboard (px). */
 export const KB_SHRINK_MIN = 150;
+/** A press this recent (its touch, or its release) may still be on its way
+ *  to a click (ms). */
+export const PRESS_WINDOW_MS = 500;
+/** The longest a blur during a press keeps the class on for its click (ms). */
+export const CLICK_WAIT_MS = 350;
 
 type FocusTarget = {
   tagName?: string;
@@ -152,7 +175,11 @@ type DocLike = {
     clientHeight?: number;
     classList: Pick<DOMTokenList, 'toggle'>;
   };
-  addEventListener(type: string, fn: (event: { relatedTarget?: unknown }) => void, capture?: boolean): void;
+  addEventListener(
+    type: string,
+    fn: (event: { relatedTarget?: unknown }) => void,
+    options?: boolean | { capture?: boolean; passive?: boolean },
+  ): void;
 };
 type WinLike = {
   innerHeight?: number;
@@ -161,19 +188,47 @@ type WinLike = {
   matchMedia?: (query: string) => { matches: boolean };
   addEventListener(type: string, fn: () => void, options?: unknown): void;
   unNative?: KitLike;
+  setTimeout?: (fn: () => void, ms: number) => unknown;
+  clearTimeout?: (id: unknown) => void;
+  performance?: { now(): number } | null;
 };
 
 /**
  * Keep `platform-kb-open` on <html> current. Re-reads on every resize of the
  * window or the visual viewport (the keyboard's own reports, and the app's
  * web view being resized) and on focus moving in; clears on a blur to
- * nowhere. Writes only on a change. Returns the apply step, for tests.
+ * nowhere, or, when the blur came from a press, once that press's click has
+ * been dispatched. Writes only on a change. Returns the apply step, for tests.
  */
 export function initKeyboardOpen(doc: DocLike, win: WinLike): () => void {
   let restWidth = -1;
   let resting = 0;
   let open = false;
   const root = doc.documentElement;
+
+  const now = () => {
+    try {
+      const t = win.performance?.now?.();
+      if (typeof t === 'number' && Number.isFinite(t)) return t;
+    } catch { /* fall through */ }
+    return Date.now();
+  };
+  const later = (fn: () => void, ms: number): unknown => (
+    typeof win.setTimeout === 'function' ? win.setTimeout(fn, ms) : setTimeout(fn, ms)
+  );
+  const cancel = (id: unknown) => {
+    if (typeof win.clearTimeout === 'function') win.clearTimeout(id);
+    else clearTimeout(id as ReturnType<typeof setTimeout>);
+  };
+
+  // The press in flight: when it last moved (down, or up), and whether it
+  // has ended in its click or a cancel. Touch and pointer events both report
+  // one touch, so the second of each pair just restates the first.
+  let press: { at: number; done: boolean } | null = null;
+  // A clear held back for a press's click. `apply` writes no false while it
+  // is held; `settle` lets go and reads the page again.
+  let held: unknown = null;
+  let holding = false;
 
   const write = (next: boolean) => {
     if (next === open) return;
@@ -206,25 +261,64 @@ export function initKeyboardOpen(doc: DocLike, win: WinLike): () => void {
 
   const apply = () => {
     const height = measure();
-    write(keyboardOpen({
+    const next = keyboardOpen({
       phone: phone(),
       focused: canHoldKeyboard(doc.activeElement as FocusTarget, win.unNative, doc.body, root),
       height,
       resting,
-    }));
+    });
+    // The keys going down resize the page too; under a press, the bars still
+    // wait for its click.
+    if (!next && holding) return;
+    write(next);
+  };
+
+  const settle = () => {
+    if (!holding) return;
+    holding = false;
+    cancel(held);
+    held = null;
+    apply();
+  };
+
+  const pressing = () => !!press && !press.done && now() - press.at <= PRESS_WINDOW_MS;
+  const onPress = () => { press = { at: now(), done: false }; };
+  const onRelease = () => { if (press && !press.done) press.at = now(); };
+  // The press ends in its click, or in a cancel (a scroll took it), which
+  // has no click coming. The click is heard in capture, before its own
+  // handlers, so the settle is queued to run after the whole dispatch, the
+  // form's submit included.
+  const onEnd = () => {
+    if (press) press.done = true;
+    if (holding) later(settle, 0);
   };
 
   // A hop to another field keeps the keyboard, and its focusin re-reads;
   // during the focusout itself the document has no active element yet.
   const onFocusOut = (event: { relatedTarget?: unknown }) => {
     if (canHoldKeyboard(event.relatedTarget as FocusTarget, win.unNative, doc.body, root)) return;
+    if (open && pressing()) {
+      if (!holding) {
+        holding = true;
+        held = later(settle, CLICK_WAIT_MS);
+      }
+      return;
+    }
     write(false);
   };
 
+  const quiet = { capture: true, passive: true };
   win.addEventListener('resize', apply, { passive: true });
   win.visualViewport?.addEventListener('resize', apply, { passive: true });
   doc.addEventListener('focusin', apply, true);
   doc.addEventListener('focusout', onFocusOut, true);
+  doc.addEventListener('pointerdown', onPress, quiet);
+  doc.addEventListener('touchstart', onPress, quiet);
+  doc.addEventListener('pointerup', onRelease, quiet);
+  doc.addEventListener('touchend', onRelease, quiet);
+  doc.addEventListener('pointercancel', onEnd, quiet);
+  doc.addEventListener('touchcancel', onEnd, quiet);
+  doc.addEventListener('click', onEnd, true);
   apply();
   return apply;
 }

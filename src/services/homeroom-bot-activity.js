@@ -118,6 +118,10 @@ function proposalHref(slug, sessionId) {
 
 // ── Starting a card ──
 
+// What a request filed or queued while its project's first version is not
+// live says it waits for (cardText).
+const FIRST_VERSION_WAIT_WORDS = 'Waiting for the first version to go live. I\'ll start on this as soon as it does.';
+
 /**
  * Pure: a card's words, for whatever does not draw the card itself. A card
  * `joined` to work already under way (catchUpCards) lands at the end of the
@@ -127,14 +131,19 @@ function proposalHref(slug, sessionId) {
  * moved under a plan by Build it (`go`, cardUnderPlan) says it is building.
  */
 function cardText({ appName, issueNumber, issueTitle, firstVersion }, dm, {
-  joined = false, filed = false, queued = false, lowAllowance = false, go = false,
+  joined = false, filed = false, queued = false, lowAllowance = false, waitsForFirstVersion = false, go = false,
 } = {}) {
   const line = dm.requestLine({ appName, issueNumber, issueTitle, firstVersion });
   if (go) return `${line}\n\nBuilding ${firstVersion ? 'the first version' : 'this'} now. This card updates as I go.`;
   // The one place the weekly limit is mentioned before it is reached: under
   // a fifth of the week's building time left (dm.allowanceLow).
   const low = lowAllowance ? '\n\nYou\'re close to this week\'s building time.' : '';
-  if (filed) return `${line}\n\nFiled. This card follows it from here.${low}`;
+  // 2026-10-05: nothing else on a project starts while its first version is
+  // not live (homeroom-bot.js FIRST_VERSION_PENDING_SQL), so a request filed
+  // or queued then says what it waits for, once, here.
+  const waits = waitsForFirstVersion && (filed || queued) ? FIRST_VERSION_WAIT_WORDS : null;
+  if (filed) return `${line}\n\nFiled. ${waits || 'This card follows it from here.'}${low}`;
+  if (waits) return `${line}\n\n${waits}${low}`;
   // Started when the request is queued, before anything has begun on it
   // (homeroom-bot.js refreshApp): waiting is said, not left silent.
   if (queued) return `${line}\n\nWaiting for a free builder. This card follows it from here.${low}`;
@@ -158,7 +167,7 @@ function jobCardKey(jobKey) {
  */
 async function sendCard(pool, {
   app, issueNumber, requester, bot, key, startedAt = null, filed = false, queued = false, lowAllowance = false, dm,
-  hello = null, lookAt = null, go = false,
+  hello = null, lookAt = null, go = false, waitsForFirstVersion = false,
 }) {
   const context = {
     appName: app.name || app.slug,
@@ -166,7 +175,7 @@ async function sendCard(pool, {
     issueTitle: requester.issueTitle || null,
     firstVersion: !!requester.firstVersion,
   };
-  const words = cardText(context, dm, { joined: !!startedAt, filed, queued, lowAllowance, go });
+  const words = cardText(context, dm, { joined: !!startedAt, filed, queued, lowAllowance, waitsForFirstVersion, go });
   return dm.sendDm(pool, {
     bot,
     userId: requester.userId,
@@ -192,6 +201,22 @@ async function sendCard(pool, {
     // #3707: news about a request they started in the DM points back at it.
     replyToId: await dm.requestStart(pool, { userId: requester.userId, appId: app.id, issueNumber }),
   });
+}
+
+/**
+ * Whether request `issueNumber` on `app` waits for the project's first
+ * version to go live (homeroom-bot.js firstVersionHolds). Never throws: a
+ * read that fails says nothing of it.
+ */
+async function waitsForFirstVersion(pool, app, issueNumber, deps) {
+  try {
+    const botSvc = settingsModule(deps);
+    if (typeof botSvc.firstVersionHolds !== 'function' || typeof botSvc.heldForFirstVersion !== 'function') return false;
+    const holds = await botSvc.firstVersionHolds(pool, [app.id]);
+    return botSvc.heldForFirstVersion(holds, { appId: app.id, issueNumber });
+  } catch {
+    return false;
+  }
 }
 
 /** B5: whether somebody other than `userId` made `app`. Never throws. */
@@ -278,13 +303,20 @@ async function startCard(pool, { app, issueNumber, requester, bot, jobKey, setti
     const hello = typeof dm.claimHello === 'function' && await madeBySomebodyElse(pool, app, requester.userId)
       && await dm.claimHello(pool, { userId: requester.userId, botId: bot.id, kind: 'member' })
       ? dm.memberHello(app.name || app.slug) : null;
+    // 2026-10-05: a request filed or queued while the project's first
+    // version is not live waits for it, and its card says so.
+    const waits = (filed || queued) && !requester.firstVersion
+      ? await waitsForFirstVersion(pool, app, n, deps) : false;
     const sent = await sendCard(pool, {
       app, issueNumber: n, requester, bot, key: jobCardKey(jobKey), filed, queued, lowAllowance, dm, hello,
+      waitsForFirstVersion: waits,
     });
     if (hello) await dm.noteHelloSent(pool, requester.userId, sent?.messageId);
     if (!sent?.messageId || sent.duplicate) return sent || null;
     await recordCard(pool, sent, { userId: requester.userId, appId: app.id, issueNumber: n });
-    log.info('homeroom-bot-activity', 'Started an activity card', { app: app.slug, issueNumber: n, userId: requester.userId, filed, queued });
+    log.info('homeroom-bot-activity', 'Started an activity card', {
+      app: app.slug, issueNumber: n, userId: requester.userId, filed, queued, ...(waits ? { waitsForFirstVersion: true } : {}),
+    });
     return sent;
   } catch (err) {
     log.warn('homeroom-bot-activity', 'Could not start an activity card', {
@@ -550,13 +582,17 @@ const OUTCOME_LABELS = Object.freeze({
   answer: 'Answered on the change',
   revise: 'Updated the change',
 });
+// A change waiting for approval is built, not done: "Done" over "Built it.
+// Waiting for approval" read as finished to the person still asked to
+// approve it (4 October). Done is for what came to an end well.
 const OUTCOME_TONES = Object.freeze({
-  proposed: 'done', live: 'done', answer: 'done', revise: 'done',
+  live: 'done', answer: 'done', revise: 'done',
+  proposed: 'built',
   question: 'you', blocked: 'you', empty: 'you',
   person: 'ended', held: 'ended', closed: 'ended',
   build_failed: 'trouble', failed: 'trouble', stopped: 'trouble',
 });
-const TONE_WORDS = Object.freeze({ done: 'Done', you: 'Needs you', ended: 'Ended', trouble: 'Didn\'t finish' });
+const TONE_WORDS = Object.freeze({ done: 'Done', built: 'Built', you: 'Needs you', ended: 'Ended', trouble: 'Didn\'t finish' });
 
 /** Pure: a card (cardOf) as the person reads it, in one line, or null. */
 function cardWords(card) {
@@ -867,6 +903,7 @@ module.exports = {
   DEMO_CARD_KEYS,
   DEMO_UNDER_WAY,
   cardText,
+  FIRST_VERSION_WAIT_WORDS,
   jobCardKey,
   requestCard,
   continueCard,

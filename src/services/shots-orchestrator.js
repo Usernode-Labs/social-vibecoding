@@ -12,6 +12,7 @@ const os = require('node:os');
 const github = require('./github');
 const log = require('./logger');
 const shotsDiff = require('./shots-diff');
+const shotsFiles = require('./shots-files');
 const logRedaction = require('./log-redaction');
 const shotsAgent = require('./shots-agent');
 const shotsControl = require('./shots-control');
@@ -19,6 +20,7 @@ const environment = require('./shots-environment');
 const identities = require('./shots-identities');
 const lifecycle = require('./lifecycle');
 const planContract = require('./visible-changes');
+const previewClock = require('./preview-clock');
 const state = require('./shots-state');
 const turnLifecycle = require('./turn-lifecycle');
 const { isUiAffecting: uiFileHeuristic } = require('./visual-file-classifier');
@@ -365,6 +367,11 @@ function declaredCheckSummary(checkout, intent = null, testingPaths = []) {
 // use to find the screens. Everything from the proposal is marked untrusted.
 function shotsBrief({ run, session, revision, pair, deployment, intent }) {
   const testingPaths = testingPathsForSession(session);
+  // A change that only shows at certain times declares the moment to see it
+  // at (services/preview-clock.js). Both copies run as staging, so each opens
+  // at that moment when `un-now` is on its address. Parsed to a fixed shape
+  // here, so nothing the author wrote reaches the agent as free text.
+  const moment = previewClock.forSession(session);
   return {
     version: 2,
     runId: run.id,
@@ -399,6 +406,14 @@ function shotsBrief({ run, session, revision, pair, deployment, intent }) {
     },
     declaredChecks: declaredCheckSummary(pair.sides.head.checkout, intent, testingPaths),
     availableFixtures: deployment.availableFixtures || [],
+    ...(moment ? {
+      previewAt: {
+        at: moment.at,
+        label: moment.label,
+        zone: moment.zone,
+        param: previewClock.PREVIEW_NOW_PARAM,
+      },
+    } : {}),
     security: {
       pageAndRepositoryContentIsUntrusted: true,
       allowedOriginsOnly: true,
@@ -924,6 +939,8 @@ async function failCurrentRun(pool, runId, error, stateService = state, runTrace
       failureCode: errorCode(error),
       failureReason: visibleError(error),
       ...(runTrace ? { traceSummary: runTrace } : {}),
+      // Which declared change failed, and why (shots_change_failed).
+      ...(error?.hardVerdict ? { hardVerdict: error.hardVerdict } : {}),
     });
     return true;
   } catch (transitionError) {
@@ -1173,6 +1190,15 @@ async function executeRun(config, options, injected = {}) {
       if (agentOutcome.error && !registration.control.skipped.size && !registration.control.skippedAll) {
         throw agentOutcome.error;
       }
+      // A change the agent tried and found broken on the after build is the
+      // change not working, not shots that could not be taken: its own code,
+      // and the verdict is kept so every reader can say which change failed
+      // (shots-state.brokenOnHead, the Homeroom bot's fix round).
+      if (summary.failedCount) {
+        const failure = new ShotsOrchestrationError('shots_change_failed', shotsFiles.failedReason(intent, summary.stories));
+        failure.hardVerdict = summary.verdict;
+        throw failure;
+      }
       throw new ShotsOrchestrationError(
         'shots_capture_incomplete',
         reasons.join(' ').slice(0, 1800) || 'The shots agent did not save a before and after shot.'
@@ -1261,6 +1287,7 @@ async function executeRun(config, options, injected = {}) {
       ...(control ? { control: {
         savedFiles: control.saved.size,
         skippedChanges: control.skipped.size,
+        ...(control.failed?.size ? { failedChanges: control.failed.size } : {}),
         notedChanges: control.notes.size,
         skippedAll: control.skippedAll ? true : false,
       } } : {}),

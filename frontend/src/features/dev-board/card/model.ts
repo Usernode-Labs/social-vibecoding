@@ -546,6 +546,11 @@ export interface DevWorkshopView {
   mine: {
     /** A signed-in viewer, who can have work (a guest has none to have none of). */
     viewer?: boolean;
+    /**
+     * Homeroom bot builds requests here for this viewer (AppView._botDoor),
+     * so the empty strip points at asking for a change.
+     */
+    bot?: boolean;
     count: number;
     shown: number;
     rows: ListRow[];

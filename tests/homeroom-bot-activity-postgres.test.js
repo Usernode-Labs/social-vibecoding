@@ -453,6 +453,14 @@ test('the Homeroom bot DM\'s activity cards: one per piece of work, read from it
       const cards = (page.messages || page).filter((m) => m.metadata?.homeroomBot?.kind === 'activity')
         .sort((a, b) => a.id - b.id);
       assert.deepEqual(cards.map((m) => m.metadata.homeroomBot.issueNumber), [9, 14], 'two cards, the one going newest, once');
+      // #3870: and a change ready to try, saying what the change is, once,
+      // before the cards, so the one being built stays the newest.
+      const readyCards = (page.messages || page).filter((m) => m.metadata?.homeroomBot?.kind === 'proposal');
+      assert.equal(readyCards.length, 1);
+      const readyMeta = readyCards[0].metadata.homeroomBot;
+      assert.equal(readyMeta.changeTitle, 'Staging demo: a calmer colour for finished items');
+      assert.deepEqual(readyMeta.actions.map((a) => a.id), ['try', 'approve', 'change']);
+      assert.ok(readyCards[0].id < cards[0].id, 'older than the activity cards');
       const demo = await activity.demoCards(pool, viewer);
       const going = demo.cards.find((c) => c.state === 'working');
       const ended = demo.cards.find((c) => c.state === 'done');

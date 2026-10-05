@@ -46,6 +46,8 @@ export interface HomeroomBotMeta {
   live?: boolean;
   /** B4: an activity card's request, in the words its person asked for it. */
   askedText?: string;
+  /** #3870: a ready card's change, by its own title (its proposal's). */
+  changeTitle?: string;
   /** B5: the bot's hello, which leads the card it introduces. */
   hello?: string;
   /**
@@ -78,11 +80,42 @@ export interface HomeroomBotMeta {
    * follows the request now. This one is no longer drawn.
    */
   movedTo?: number;
+  /** B7: once its person approved it, what happens next (services/homeroom-bot-dm.js goesLiveAfterYes). */
+  goesLive?: HomeroomBotGoesLive;
 }
 
 export interface HomeroomBotReady {
   group: boolean;
   last: boolean;
+  waitingOn: string[];
+  more: number;
+  /**
+   * How many more approvals it needed when the card was sent (0 when it had
+   * them), and how many it needs in all (homeroom-bot-dm.js approvalState).
+   * With fewer needed than the people listed, the card says how many and
+   * that any of them will do (./approval-words.ts). Absent on older cards.
+   */
+  missing?: number;
+  needed?: number;
+  /**
+   * What does not work yet: the declared changes its before & after shots
+   * showed failing, after the bot's own fix round (homeroom-bot-dm.js
+   * noteChangeReady). The card then says so instead of "ready to try".
+   */
+  broken?: string[];
+}
+
+/**
+ * B7: what happens next to a change its person approved. `soon`: nothing
+ * more is needed, it goes live in a minute or two. Otherwise it needs
+ * `missing` more Yes votes (0 when only its clock runs), from `waitingOn`
+ * (up to three names) and `more` others, and `at` is when it goes live
+ * anyway if nobody objects, when a clock runs on it.
+ */
+export interface HomeroomBotGoesLive {
+  soon: boolean;
+  at: string | null;
+  missing: number;
   waitingOn: string[];
   more: number;
 }
@@ -241,6 +274,15 @@ export interface SharedObjectReference {
   sessionId?: number;
   proposalId?: number;
   version?: number;
+}
+
+/**
+ * An item staged on the composer: its reference, and the title the page that
+ * staged it knew, shown on the chip until the server's reading of it comes.
+ * The title is never sent: the server reads the live one.
+ */
+export interface StagedObject extends SharedObjectReference {
+  title?: string | null;
 }
 
 /**

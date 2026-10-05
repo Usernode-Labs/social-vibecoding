@@ -3,8 +3,9 @@
  * do with it.
  *
  *   what      The project, being built: its tile and name, Homeroom bot's
- *             step from GET /api/apps/:slug (`first_version`, "Step 2 of 7:
- *             Read the description"), read again every ten seconds.
+ *             step from GET /api/apps/:slug (`app.first_version`, "Step 2 of
+ *             7: Read the description"), read again every ten seconds,
+ *             past the service worker's cache (madeAppOf, madeAppUrl).
  *   plan      B6: once the bot has read the description it waits for its
  *             plan's Build it (`first_version.plan`) and builds nothing
  *             until then. The plan is drawn first, under "Needs you", as
@@ -17,7 +18,8 @@
  *             says so and "Invite people later" becomes "Go to the
  *             Homeroom app". Either starts the tour (./index.tsx). While
  *             it is out, the project's community is read again, and the
- *             line says who has joined (joinedLine).
+ *             line says who has joined (joinedLine), and to whom an invite
+ *             by username went (sentLines).
  *
  * The sheet is the first invite, not the project's full invite pane
  * (features/app-context/invite-pane.tsx, with live links and their limits,
@@ -25,10 +27,20 @@
  * then Share link; a username sits behind one button. The link it makes
  * works until it is turned off, for anyone it reaches (WP-D) — the project
  * is the gift, so the link should outlive a week. Under it, one line on what
- * joining means, from the project's real rule (GET .../invite-links
- * `joiningRule`). The first note shared is also
+ * joining means, from the project's real rule and the people in it (GET
+ * .../invite-links `joiningRule`), read again once an invite by username has
+ * gone, so it counts them. The first note shared is also
  * the maker's first message in the group's chat (the sheet says so), so the
  * people it brings find it waiting there.
+ *
+ * First-session run-through, 5 October 2026 (Page Turners): an invite by
+ * username closed the sheet with nothing said (the line under it said who
+ * had joined, not that it went), and the note was back to the default the
+ * next time the sheet opened. Now Send keeps the sheet up and says where it
+ * went (sentLine), or in plain words why not (inviteError); the invite
+ * carries the note, as a link does, for the invite the person accepts
+ * (features/notifications); and the note is kept per project on this device
+ * (noteKey), else read back from the maker's own newest link.
  *
  *   sketch    A sketch of its main screen (services/app-sketch.js), drawn
  *             from the description in about half a minute: "Sketching…" from
@@ -72,6 +84,30 @@ type FirstVersion = {
   /** B6: the plan waiting for Build it, for its creator (GET /api/apps/:slug). */
   plan?: Partial<WaitingPlan> | null;
 } | null;
+
+/**
+ * The project's record as GET /api/apps/:slug answers it, which is `{ app }`:
+ * its first version (null while the bot builds nothing) and its status. Null
+ * for an answer without a record. Page Turners, 5 October 2026: the made
+ * screen read `first_version` off the answer itself, never found one, and
+ * so never drew the plan its maker waited 18 minutes on.
+ */
+export function madeAppOf(body: unknown): { firstVersion: FirstVersion; status: string | null } | null {
+  const app = body && typeof body === 'object' ? (body as { app?: unknown }).app : null;
+  if (!app || typeof app !== 'object') return null;
+  const { first_version: firstVersion, status } = app as { first_version?: FirstVersion; status?: unknown };
+  return { firstVersion: firstVersion || null, status: typeof status === 'string' ? status : null };
+}
+
+/**
+ * The made screen's read of the project, every ten seconds. Tagged and
+ * no-store, as the App tab's recheck is (AppView._recheckFirstVersion): the
+ * service worker answers a plain GET /api/apps/:slug from its boot cache
+ * first, and a poll is asking what is true now.
+ */
+export function madeAppUrl(slug: string): string {
+  return `/api/apps/${encodeURIComponent(slug)}?status_recheck=1&manifest=summary`;
+}
 
 /**
  * The plan waiting for Build it, or null: read the way the App tab's
@@ -228,13 +264,54 @@ const LINK_USES = 0;
 /** The note, posted once per project as the maker's first chat message. */
 const postedKey = (slug: string) => `usernode:first-session:note-posted:${slug}`;
 
-function InviteSheet({ made, me, onClose, onSent }: {
+/** The maker's last note for a project, kept on this device. */
+export const noteKey = (slug: string) => `usernode:first-session:note:${slug}`;
+
+/** The note they last wrote for `slug`, or null when there is none kept. */
+export function keptNote(slug: string): string | null {
+  try { return localStorage.getItem(noteKey(slug)); } catch { return null; }
+}
+
+function keepNote(slug: string, note: string): void {
+  try { localStorage.setItem(noteKey(slug), note); } catch { /* kept for this sheet only */ }
+}
+
+/** The note the sheet opens with: the one kept, else the example's, else the default. */
+export function openingNote(slug: string, example: string | null | undefined): string {
+  const kept = keptNote(slug);
+  return kept !== null ? kept : (example || NOTE_DEFAULT);
+}
+
+/** The newest note on the maker's own live links (GET .../invite-links `links`), or null. */
+export function linkNote(links: unknown): string | null {
+  if (!Array.isArray(links)) return null;
+  const mine = links.find((l) => l && typeof l === 'object' && (l as { mine?: boolean }).mine
+    && typeof (l as { note?: unknown }).note === 'string' && (l as { note: string }).note);
+  return mine ? (mine as { note: string }).note : null;
+}
+
+/** After Send: where the invite went, and where they will find it. */
+export function sentLine(handle: string): string {
+  return `Invite sent to @${handle}. They'll find it in their notifications.`;
+}
+
+/** Why an invite by username did not go, in the sheet's words (routes/collaborators.js `code`). */
+export function inviteError(code: string | null | undefined, handle: string, name: string, fallback?: string | null): string {
+  if (code === 'unknown_user') return `No one on Homeroom is called @${handle}. Check the spelling and try again.`;
+  if (code === 'already_member') return `@${handle} is already in ${name}.`;
+  if (code === 'already_invited') return `@${handle} already has an invite to ${name}.`;
+  if (code === 'self') return `That's you. You're already in ${name}.`;
+  return fallback || 'Could not send the invite. Try again.';
+}
+
+export function InviteSheet({ made, me, onClose, onSent }: {
   made: Made;
   me: string;
   onClose: () => void;
-  onSent: (to: string | null) => void;
+  /** Something went out: `to` is the username, and `close` whether the sheet goes. */
+  onSent: (to: string | null, close: boolean) => void;
 }) {
-  const [note, setNote] = useState(made.example?.note || NOTE_DEFAULT);
+  const [note, setNote] = useState(() => openingNote(made.slug, made.example?.note));
   const [byName, setByName] = useState(false);
   const [username, setUsername] = useState('');
   const [busy, setBusy] = useState(false);
@@ -243,16 +320,21 @@ function InviteSheet({ made, me, onClose, onSent }: {
   const [shown, setShown] = useState(false);
   const [rule, setRule] = useState<string | null>(null);
   const linkRef = useRef<string | null>(null);
+  // Whether the note in the box is theirs from this device (kept, or typed
+  // here); until it is, a note on one of their own links replaces it.
+  const ownNote = useRef(keptNote(made.slug) !== null);
   useEffect(() => { const r = requestAnimationFrame(() => setShown(true)); return () => cancelAnimationFrame(r); }, []);
-  // WP-D: what joining means here, said from the project's real rule.
-  useEffect(() => {
-    let live = true;
-    fetch(`/api/apps/${encodeURIComponent(made.slug)}/invite-links`, { credentials: 'same-origin' })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => { if (live && typeof data?.joiningRule === 'string') setRule(data.joiningRule); })
-      .catch(() => {});
-    return () => { live = false; };
-  }, [made.slug]);
+  // WP-D: what joining means here, said from the project's real rule and
+  // the people in it; read again after an invite by username, which counts.
+  const readRule = useCallback((first: boolean) => fetch(`/api/apps/${encodeURIComponent(made.slug)}/invite-links`, { credentials: 'same-origin' })
+    .then((r) => (r.ok ? r.json() : null))
+    .then((data) => {
+      if (typeof data?.joiningRule === 'string') setRule(data.joiningRule);
+      const fromLink = first && !ownNote.current ? linkNote(data?.links) : null;
+      if (fromLink) setNote(fromLink);
+    })
+    .catch(() => {}), [made.slug]);
+  useEffect(() => { void readRule(true); }, [readRule]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', onKey);
@@ -305,8 +387,9 @@ function InviteSheet({ made, me, onClose, onSent }: {
         await navigator.clipboard.writeText(note.trim() ? `${note.trim()} ${url}` : url);
         setStatus('Link copied. Paste it in your group chat.');
       }
+      keepNote(made.slug, note);
       await postNote();
-      onSent(null);
+      onSent(null, true);
     } catch {
       setError('Could not share the link. Try again.');
     } finally {
@@ -314,6 +397,8 @@ function InviteSheet({ made, me, onClose, onSent }: {
     }
   }, [busy, link, me, made.name, note, postNote, onSent]);
 
+  // An invite by username carries the note, and the sheet stays up to say
+  // where it went: another can follow, and the rule line counts it.
   const sendToUsername = useCallback(async () => {
     const handle = username.trim().replace(/^@/, '');
     if (!handle || busy) return;
@@ -323,19 +408,23 @@ function InviteSheet({ made, me, onClose, onSent }: {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
-        body: JSON.stringify({ username: handle }),
+        body: JSON.stringify({ username: handle, note: note.trim() || null }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) { setError(data.error || 'Could not invite them.'); return; }
+      if (!res.ok) { setError(inviteError(data.code, data.username || handle, made.name, data.error)); return; }
+      const sentTo = typeof data.username === 'string' && data.username ? data.username : handle;
+      keepNote(made.slug, note);
       await postNote();
       setUsername('');
-      onSent(`@${handle}`);
+      setStatus(sentLine(sentTo));
+      onSent(`@${sentTo}`, false);
+      void readRule(false);
     } catch {
-      setError('Network error');
+      setError('Could not send the invite. Try again.');
     } finally {
       setBusy(false);
     }
-  }, [username, busy, made.slug, postNote, onSent]);
+  }, [username, busy, made.slug, made.name, note, postNote, onSent, readRule]);
 
   const tile = made.emoji || made.name.slice(0, 1);
   return (
@@ -370,7 +459,7 @@ function InviteSheet({ made, me, onClose, onSent }: {
               rows={2}
               maxLength={280}
               value={note}
-              onChange={(e) => setNote(e.target.value)}
+              onChange={(e) => { ownNote.current = true; setNote(e.target.value); keepNote(made.slug, e.target.value); }}
               placeholder="Add a note (optional)"
               className="w-full resize-none border-0 bg-transparent p-0 text-[16px] leading-snug placeholder-zinc-500 focus:outline-none"
             />
@@ -386,14 +475,18 @@ function InviteSheet({ made, me, onClose, onSent }: {
               <input
                 autoFocus
                 value={username}
-                onChange={(e) => setUsername(e.target.value)}
+                onChange={(e) => { setUsername(e.target.value); setError(null); }}
                 placeholder="@username"
+                aria-label="Their username"
+                aria-invalid={error ? true : undefined}
+                aria-describedby={error ? 'first-session-invite-error' : undefined}
                 autoCapitalize="none"
                 autoCorrect="off"
                 spellCheck={false}
                 className="h-11 min-w-0 flex-1 rounded-full border-0 bg-white px-4 text-[16px] placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 dark:bg-zinc-800"
               />
-              <Button type="submit" disabled={busy || !username.trim()} variant="pillAccent" size="pill" ink="solid" className="disabled:opacity-60">Send</Button>
+              {/* The username keeps focus through the press (lib/keyboard-open.ts). */}
+              <Button type="submit" disabled={busy || !username.trim()} variant="pillAccent" size="pill" ink="solid" className="disabled:opacity-60" onMouseDown={(event) => event.preventDefault()}>Send</Button>
             </form>
           ) : (
             <button type="button" onClick={() => setByName(true)} className="flex h-11 w-full items-center justify-center rounded-full bg-white text-[16px] font-semibold text-zinc-900 shadow-sm hover:bg-zinc-50 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700">
@@ -401,8 +494,8 @@ function InviteSheet({ made, me, onClose, onSent }: {
             </button>
           )}
         </div>
-        {status ? <p className="mt-3 text-center text-[14px] text-emerald-700 dark:text-emerald-400">{status}</p> : null}
-        {error ? <p role="alert" className="mt-3 text-center text-[14px] text-red-600 dark:text-red-400">{error}</p> : null}
+        {status ? <p role="status" data-first-session-invite-status="" className="mt-3 text-center text-[14px] text-emerald-700 dark:text-emerald-400">{status}</p> : null}
+        {error ? <p id="first-session-invite-error" role="alert" className="mt-3 text-center text-[14px] text-red-600 dark:text-red-400">{error}</p> : null}
         <p className="mt-3 text-center text-[13px] text-zinc-500 dark:text-zinc-400">Anyone with the link can join, until you turn it off.</p>
         {rule ? <p data-first-session-rule="" className="mt-1 text-center text-[13px] text-zinc-500 dark:text-zinc-400">{rule}</p> : null}
       </div>
@@ -463,6 +556,17 @@ type CommunityMember = { username?: string; display_name?: string | null; source
 type Community = { member_count?: number; members?: CommunityMember[] } | null;
 
 /**
+ * The made screen's lines once an invite is out: who has joined (joinedLine),
+ * and the invite by username last sent, which stays said beside it. Before
+ * anyone joins, "✓ Invite sent", to whom when it went by username.
+ */
+export function sentLines(joined: string | null, sentTo: string | null): string[] {
+  const sent = `✓ Invite sent${sentTo ? ` to ${sentTo}` : ''}.`;
+  if (!joined) return [sent];
+  return sentTo ? [joined, sent] : [joined];
+}
+
+/**
  * Who has joined since the invite went out, from GET /api/apps/:slug/community
  * (`members` is the newest few, the maker first as 'creator'; `member_count`
  * is everyone): "✓ Sam joined.", "✓ Sam and Alex joined.", "✓ 3 people
@@ -519,9 +623,12 @@ export function MadeScreen({ made, me, onContinue, onChangePlan }: {
 
   useEffect(() => {
     let live = true;
-    const read = () => fetch(`/api/apps/${encodeURIComponent(made.slug)}`, { credentials: 'same-origin' })
+    const read = () => fetch(madeAppUrl(made.slug), { credentials: 'same-origin', cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : null))
-      .then((app) => { if (live && app) { setFv(app.first_version || null); setAppStatus(app.status || null); } })
+      .then((body) => {
+        const app = madeAppOf(body);
+        if (live && app) { setFv(app.firstVersion); setAppStatus(app.status); }
+      })
       .catch(() => {});
     readRef.current = read;
     read();
@@ -595,11 +702,11 @@ export function MadeScreen({ made, me, onContinue, onChangePlan }: {
         <div className="mt-6">
           <p className="text-[17px] font-semibold">{`Invite people to ${made.name}`}</p>
           <p className="mt-0.5 text-[14px] leading-snug text-zinc-500 dark:text-zinc-400">They can follow along and chat with you while it's built.</p>
-          {sent ? (
-            <p data-first-session-sent={joined ? 'joined' : ''} className="mt-2 text-[14px] font-semibold text-emerald-700 dark:text-emerald-400">
-              {joined || `✓ Invite sent${sentTo ? ` to ${sentTo}` : ''}.`}
+          {sent ? sentLines(joined, sentTo).map((line, i) => (
+            <p key={line} data-first-session-sent={joined && i === 0 ? 'joined' : ''} className={`${i ? 'mt-0.5' : 'mt-2'} text-[14px] font-semibold text-emerald-700 dark:text-emerald-400`}>
+              {line}
             </p>
-          ) : null}
+          )) : null}
         </div>
         <div className="grow" />
         <div className="mt-6 flex flex-col gap-2.5">
@@ -621,7 +728,7 @@ export function MadeScreen({ made, me, onContinue, onChangePlan }: {
           made={made}
           me={me}
           onClose={() => setInviting(false)}
-          onSent={(to) => { setSent(true); if (to) setSentTo(to); setInviting(false); }}
+          onSent={(to, close) => { setSent(true); if (to) setSentTo(to); if (close) setInviting(false); }}
         />
       ) : null}
     </div>

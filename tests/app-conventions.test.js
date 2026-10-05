@@ -133,6 +133,46 @@ test('conventions doc tells apps where "everyone in the group" comes from', () =
   assert.match(doc, /endpoints and `\/members` \(see "Members"\)/);
 });
 
+// On 5 October 2026 a group was asked to approve a Thursday-evening bins
+// reminder nobody could see: Try it opened on a Monday and the shots could
+// not show it. The section tells a builder to read "now" through the
+// platform, say when the change shows, and declare the moment to see it at
+// (services/preview-clock.js parses the declaration).
+test('conventions doc has a "Time-dependent features" section with the preview clock contract', () => {
+  const doc = getAppConventions();
+  assert.match(doc, /^## Time-dependent features$/m);
+  const section = doc.slice(doc.indexOf('## Time-dependent features'));
+  const body = section.slice(0, section.indexOf('\n## ', 1));
+  assert.match(body, /`usernode\.now\(\)`/);
+  assert.match(body, /`req\.now`/);
+  assert.match(body, /req\.headers\['x-usernode-now'\] \|\| req\.query\['un-now'\]/);
+  // The snippet is the scaffold's own helper, so an older app adds exactly
+  // what a new one ships with.
+  const { getTemplateFiles } = require('../src/services/template');
+  const server = getTemplateFiles('Bins', 'bins-1a2b3c', 'postgres://x').find((f) => f.path === 'server.js').content;
+  const helper = server.slice(server.indexOf('const IS_STAGING'), server.indexOf('\n}\n', server.indexOf('function requestNow')) + 2);
+  assert.ok(helper.length > 100 && body.replace(/\n {5}/g, '\n').includes(helper), 'the doc carries the scaffold helper verbatim');
+  assert.match(body, /IS_STAGING \?/, 'the server reads it only on staging');
+  assert.match(body, /\*\*Production ignores it entirely\.\*\*/);
+  assert.match(body, /\*\*Say when it shows\*\*/);
+  assert.match(body, /<!-- usernode:preview-at 2026-10-08T19:00 Europe\/London -->/);
+  assert.match(body, /Showing it as on Thursday 8 Oct, 7 pm/);
+  assert.match(body, /`testingSteps`/);
+  assert.match(body, /\?un-now=2026-10-08T18:00:00Z/);
+  assert.doesNotMatch(body, /—/, 'no em dashes');
+  // The declaration the doc teaches is the one the platform parses.
+  const clock = require('../src/services/preview-clock');
+  assert.equal(clock.declaredMoment(body).label, 'Thursday 8 Oct, 7 pm');
+  // And the hosted build turn's TESTING block guidance points at it. (The
+  // local and Codex backends keep their reviewed inline block byte for byte,
+  // tests/prompt-file-transport.test.js; they read this section in the
+  // conventions they are given.)
+  const { buildCodingAgentBuildGuidance } = require('../src/routes/sessions');
+  const hosted = buildCodingAgentBuildGuidance({ authoritativeSystemContext: true }).testingGuidance;
+  assert.match(hosted, /<!-- usernode:preview-at 2026-10-08T19:00 Europe\/London -->/);
+  assert.match(hosted, /"Time-dependent features" in the system instructions/);
+});
+
 test('the server-side directory section covers staging previews (#1213)', () => {
   const doc = getAppConventions();
   // Retitled from "(production)" — previews can reach the directory now.

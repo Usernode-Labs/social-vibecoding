@@ -293,6 +293,30 @@ test('ensure-staging returns {ready,url} when the preview is live', async () => 
   } finally { await srv.close(); loaded.restore(); }
 });
 
+test('a change that declares a preview moment is answered with it, on both routes', async () => {
+  // services/preview-clock.js: a time-dependent change (a Thursday-evening
+  // reminder) names the moment its preview should open at, and Try it opens
+  // there. The answer carries it; one without a declaration is unchanged
+  // (the deepEqual cases around this one).
+  const declared = {
+    ...OWNED_ACTIVE, status: 'promoted',
+    testing_md: '<!-- usernode:preview-at 2026-10-08T19:00 Europe/London -->\n1. Open the rota.',
+  };
+  const loaded = loadSessions({ pool: makePool(declared), needsRebuild: false, rebuild: async () => 'built' });
+  const srv = await startServer(loaded);
+  try {
+    const expected = {
+      status: 'ready', url: 'https://stg.example', verified: true, checksRunning: false,
+      appName: 'My App',
+      previewAt: { at: '2026-10-08T18:00:00.000Z', label: 'Thursday 8 Oct, 7 pm', zone: 'Europe/London' },
+    };
+    const ensured = await fetch(`${srv.baseUrl}/api/sessions/42/ensure-staging`, { method: 'POST' });
+    assert.deepEqual(await ensured.json(), expected);
+    const status = await fetch(`${srv.baseUrl}/api/sessions/42/preview-status`);
+    assert.deepEqual(await status.json(), expected, 'a read-only reviewer sees it at the same moment');
+  } finally { await srv.close(); loaded.restore(); }
+});
+
 test('#2328 preview-status gives read-only reviewers the same verified readiness answer', async () => {
   const promoted = { ...OWNED_ACTIVE, status: 'promoted' };
   const loaded = loadSessions({

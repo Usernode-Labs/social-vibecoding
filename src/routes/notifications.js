@@ -6,6 +6,7 @@ const notifications = require('../services/notifications');
 const messageBookmarks = require('../services/message-bookmarks');
 const mobilePushPreferences = require('../services/mobile-push-preferences');
 const notificationPreferences = require('../services/notification-preferences');
+const groupChannelNotify = require('../services/group-channel-notify');
 const log = require('../services/logger');
 const appAccess = require('../services/app-access');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
@@ -190,6 +191,19 @@ function stagingMockNotifications() {
       sessionTitle: null, prTitle: null,
       branchName: 'dev/mockuser-1700000000001',
       prNumber: null, headlessIssueNumber: null,
+    },
+    // #3227: a kudos row, so a preview shows the line that says what kudos
+    // are and the button to the Kudos leaderboard. Its session id matches no
+    // row, so opening it lands where any missing proposal does.
+    {
+      ...base,
+      id: 990213, kind: 'kudos',
+      createdAt: new Date(now - 90 * 60 * 1000).toISOString(),
+      sourceUsername: 'mockfriend',
+      sessionId: 990113,
+      sessionTitle: '[Mock] A change somebody thanked you for',
+      prTitle: '[Mock] A change somebody thanked you for',
+      prNumber: 9903, headlessIssueNumber: null,
     },
     // An ALREADY-READ row. The drawer lists unread notifications and parks the
     // read ones behind "See N older notifications", so without one of these a
@@ -400,11 +414,13 @@ function notificationsRoutes(config) {
       const app = await resolveApp(req.params.slug, req.user);
       if (!app) return res.status(404).json({ error: 'App not found' });
       const overrides = await notificationPreferences.readOverrides(pool, req.user.id, app.id);
+      const smallGroup = await groupChannelNotify.isSmallGroup(pool, app.id);
       return res.json({
         app: { id: app.id, slug: app.slug, name: app.name },
         categories: notificationPreferences.serializeAppCategories({
           ...overrides,
           isAdmin: app.isAdmin,
+          smallGroup,
         }),
       });
     } catch (err) {
@@ -422,9 +438,12 @@ function notificationsRoutes(config) {
 
       // The allowed set is computed from THIS user's admin status, so a
       // non-admin posting `app_health` is refused rather than quietly
-      // storing a preference for something they will never be sent.
+      // storing a preference for something they will never be sent. The
+      // same for a small group's "Every message in the discussion" on a
+      // project that is not one (services/group-channel-notify.js).
+      const smallGroup = await groupChannelNotify.isSmallGroup(pool, app.id);
       const allowedKeys = notificationPreferences.APP_CATEGORY_DEFINITIONS
-        .filter((category) => !category.adminOnly || app.isAdmin)
+        .filter((category) => notificationPreferences.offeredOn(category, { isAdmin: app.isAdmin, smallGroup }))
         .map((category) => category.key);
       const { details, values } = notificationPreferences.validatePreferencePatch(
         req.body, { allowedKeys }
@@ -441,6 +460,7 @@ function notificationsRoutes(config) {
         categories: notificationPreferences.serializeAppCategories({
           ...overrides,
           isAdmin: app.isAdmin,
+          smallGroup,
         }),
       });
     } catch (err) {

@@ -342,20 +342,47 @@ test('invite links against a real PostgreSQL', async (t) => {
 
     await t.test('WP-D: what joining means, said from the project\'s real rule', async () => {
       const governance = require('../src/services/governance');
+      // The default rule is said for the vote's own headcount
+      // (active-users.js getActiveUserStats), which reads tables this scratch
+      // schema does not carry: it is stood in for here, and read for real in
+      // tests/username-invite-join-postgres.test.js. The invites still
+      // waiting are counted from app_collaborators, which is here.
+      const votes = require('../src/services/active-users');
+      const realStats = votes.getActiveUserStats;
+      let active = 1;
+      votes.getActiveUserStats = async () => ({ active, majority: Math.floor(active / 2) + 1 });
       const rule = async (patch = {}) => {
         await pool.query(`UPDATE apps SET approver_policy = $1, approvals_required = $2, locked = $3 WHERE id = 1`,
           [patch.policy || 'anyone', patch.n ?? null, !!patch.locked]);
         governance.invalidateGovernance(1);
         return invites.joiningRule(pool, { ...(await app('arena')), locked: !!patch.locked });
       };
-      assert.equal(await rule(), 'With one other person using it, a change goes live when you both say yes, '
-        + 'or 3 days after one of you says yes if the other doesn\'t answer.');
-      assert.equal(await rule({ locked: true }), 'With one other person using it, a change goes live when you both say yes, '
-        + 'or 3 days after one of you says yes if the other doesn\'t answer. An admin has to say yes too.');
-      assert.equal(await rule({ n: 2 }), 'A change goes live once it has 2 yes votes.');
-      assert.equal(await rule({ n: 1, policy: 'invited' }), 'A change goes live once it has a yes from its approvers.');
-      assert.equal(await rule({ policy: 'invited' }), 'A change goes live once its approvers back it.');
-      await rule();
+      try {
+        assert.equal(await rule(), 'With one other person using it, a change goes live when you both say yes, '
+          + 'or 3 days after one of you says yes if the other doesn\'t answer.');
+        assert.equal(await rule({ locked: true }), 'With one other person using it, a change goes live when you both say yes, '
+          + 'or 3 days after one of you says yes if the other doesn\'t answer. An admin has to say yes too.');
+        assert.equal(await rule({ n: 2 }), 'A change goes live once it has 2 yes votes.');
+        assert.equal(await rule({ n: 1, policy: 'invited' }), 'A change goes live once it has a yes from its approvers.');
+        assert.equal(await rule({ policy: 'invited' }), 'A change goes live once its approvers back it.');
+        // First-session run-through, 5 October 2026: the people in it, and
+        // the invites by username still waiting, are counted.
+        active = 2;
+        assert.equal(await rule(), 'With one other person using it, a change goes live when you both say yes, '
+          + 'or 3 days after one of you says yes if the other doesn\'t answer.', 'two: the one other person is in it');
+        await pool.query("INSERT INTO app_collaborators (app_id, user_id, status, invited_by) VALUES (1, 4, 'invited', 1)");
+        assert.equal(await rule(), 'With 3 people in it, counting 1 invited, a change goes live when 2 of you say yes, '
+          + 'or 3 days after the first yes if nobody says no.');
+        await pool.query('DELETE FROM app_collaborators WHERE app_id = 1 AND user_id = 4');
+        active = 6;
+        assert.equal(await rule(), 'With 6 people using it, a change goes live when 3 of you say yes, '
+          + 'or 5 days after the first yes if nobody says no.');
+        assert.equal(await rule({ locked: true }), 'With 6 people using it, a change goes live when 3 of you say yes, '
+          + 'or 5 days after the first yes if nobody says no. An admin has to say yes too.');
+      } finally {
+        votes.getActiveUserStats = realStats;
+        await rule();
+      }
     });
 
     await t.test('THE TREE, on by default: only a release by hand has skips, and invites do not chain', async () => {

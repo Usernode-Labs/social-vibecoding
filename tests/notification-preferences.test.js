@@ -37,12 +37,14 @@ test('every gated kind is also push-eligible, or the two could disagree', () => 
   assert.deepEqual(missing, []);
 });
 
-test('the nine app categories are the ones that were agreed', () => {
+test('the ten app categories are the ones that were agreed', () => {
   // #1688 adds two: the re-confirm ask after a proposal you backed gets a
   // new version, and the weekly "this week on <app>" card. B7 adds the
-  // first: a change you can approve is ready to try, on by default.
+  // first: a change you can approve is ready to try, on by default. A small
+  // private group's "Every message in the discussion" sits beside the
+  // replies (services/group-channel-notify.js).
   assert.deepEqual([...prefs.APP_CATEGORY_KEYS], [
-    'changes_ready', 'new_proposals', 'new_issues', 'proposal_status',
+    'changes_ready', 'new_proposals', 'new_issues', 'proposal_status', 'channel_messages',
     'thread_replies', 'proposal_votes', 'revision_recheck', 'weekly_digest', 'app_health',
   ]);
 });

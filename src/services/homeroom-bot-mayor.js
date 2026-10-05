@@ -229,11 +229,17 @@ function clip(value, max) {
 // with one, or with any bracketed note of the same shape, loses it.
 const LEADING_NOTE_RE = /^\s*\[(?:about|re|homeroom)\b[^\]\n]{0,200}\]\s*/i;
 
-/** Pure: a reply's words as they are sent: no leading bracketed note. */
+// The platform's copy has no em dashes (tests/no-em-dash-in-copy.test.js),
+// and the prompt says so, but the model still writes "Sorry about that \u2014
+// that sounds like a bug". A dash with a space on each side is a pause
+// between two clauses, which a comma carries as well; nothing else is touched.
+const SPACED_EM_DASH_RE = /[ \t\u00a0]+\u2014[ \t\u00a0]+/g;
+
+/** Pure: a reply's words as they are sent: no leading bracketed note, and no spaced em dash. */
 function cleanReply(text) {
   let out = String(text ?? '');
   for (let i = 0; i < 3 && LEADING_NOTE_RE.test(out); i += 1) out = out.replace(LEADING_NOTE_RE, '');
-  return out.trim();
+  return out.replace(SPACED_EM_DASH_RE, ', ').trim();
 }
 
 function dmModule(deps) { return deps.dmSvc || require('./homeroom-bot-dm'); }
@@ -299,6 +305,10 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '  it, and you follow up on it next, as on any reply there: you change the proposal (its votes are cleared) or',
     '  ask them one question. Say so. When it is not clear what they want changed, or which proposal, ask them, or',
     '  offer it ("Want me to change the proposal to ...?"), and call revise_proposal once they say yes.',
+    '- A proposal of yours they attached to their message (the conversation says so, with its proposal id) is the one',
+    '  they are writing about. While it is waiting for approval, a problem they report with it, or anything they want',
+    '  different in it, is a change to that proposal: call revise_proposal with its proposal id. Never offer a new',
+    '  request for something that proposal should fix: it is not live yet.',
     '- Offer to file a new request on one of their projects when they ask you to build or change something that',
     '  is not one of your open proposals (offer_request). Nothing is filed until they tap File it under your',
     '  message. Use their own words. You never file anything yourself, and never write that something was filed:',
@@ -347,6 +357,7 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '  as cards: they are the links. Write a link in the text only when a tool returned it, exactly as returned.',
     '  Call things "request", "proposal" and the project by its name.',
     '- Keep a reply under 120 words unless they ask for detail.',
+    '- Never write an em dash. Use a comma, a colon or a full stop instead.',
     '- From this chat you cannot build, merge, vote, close requests or change settings, or change anybody else\'s',
     '  proposal. Changes happen through requests and their proposals, and to your own proposals through',
     '  revise_proposal. Everything you can do is listed above: never say you cannot do one of those things.',
@@ -428,7 +439,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'revise_proposal',
-      description: 'They clearly asked you to change one of YOUR OWN proposals that is up for a vote (one you built for a request). This sends the change to that proposal the way a reply in its discussion does: their message is posted there, word for word, under their name, with the change as you understood it, and you follow up on it next: you change the proposal (its votes are cleared) or ask them one question. Call it only when they clearly asked for the change, or said yes when you offered it; when what they want, or which proposal, is unclear, ask instead. The result says what was sent and queued, or why nothing was. One per turn.',
+      description: 'They clearly asked you to change one of YOUR OWN proposals that is up for a vote (one you built for a request), or reported a problem with one they attached to their message. This sends the change to that proposal the way a reply in its discussion does: their message is posted there, word for word, under their name, with the change as you understood it, and you follow up on it next: you change the proposal (its votes are cleared) or ask them one question. Call it only when they clearly asked for the change, or said yes when you offered it; when what they want, or which proposal, is unclear, ask instead. The result says what was sent and queued, or why nothing was. One per turn.',
       parameters: {
         type: 'object',
         properties: {
@@ -1103,7 +1114,7 @@ function imagePart(picture) {
  * again on every round of a turn, so older pictures stay a line. A message
  * moderation hid shows no files at all, as it shows none to people.
  */
-async function historyMessages(pool, { conversationId, botId, upToId, imageInput = false, takeImages = null, cardsOf = null }) {
+async function historyMessages(pool, { conversationId, botId, upToId, imageInput = false, takeImages = null, cardsOf = null, viewer = null }) {
   const { rows } = await pool.query(
     `SELECT id, sender_id, content, metadata, moderation_hidden_at FROM conversation_messages
       WHERE conversation_id = $1 AND id <= $2 AND deleted_at IS NULL AND thread_root_id IS NULL
@@ -1145,6 +1156,8 @@ async function historyMessages(pool, { conversationId, botId, upToId, imageInput
       log.warn('homeroom-bot-mayor', 'Could not read the activity cards for the history', { conversationId, err: err.message });
     }
   }
+  // What they attached as cards, read through their own access.
+  const sharedLines = await sharedItemLines(pool, { viewer, botId, messageIds: theirs });
   const shown = new Map();
   if (kept.length) {
     const { rows: data } = await pool.query(
@@ -1184,10 +1197,76 @@ async function historyMessages(pool, { conversationId, botId, upToId, imageInput
     });
     const card = fromBot && kind === 'activity' ? cardNow.get(Number(m.id)) : null;
     if (card) lines.push(`[Homeroom: this activity card now reads "${card}".]`);
+    if (!fromBot && !m.moderation_hidden_at) lines.push(...(sharedLines.get(Number(m.id)) || []));
     const text = [`${about}${clip(m.content, 2000)}`, ...lines].filter(Boolean).join('\n') || '(attachment)';
     const role = fromBot ? 'assistant' : 'user';
     return parts.length ? { role, content: [{ type: 'text', text }, ...parts] } : { role, content: text };
   });
+}
+
+// The most attached items the history names, newest messages' first.
+const MAX_SHARED_LINES = 8;
+
+/**
+ * The cards a person attached to their messages (Messages' shared items:
+ * the change page's Ask for changes attaches its change), as lines the model
+ * reads under each message, by message id. The model never saw them, so a
+ * problem reported on a change still waiting for approval read as a bug in
+ * the live app and was offered as a new request (5 October). A change of the
+ * bot's own that is up for a vote says so, with the proposal id
+ * revise_proposal takes. Each is read through `viewer`'s own access, as the
+ * card is drawn for them. Never throws: the history is read without them.
+ */
+async function sharedItemLines(pool, { viewer, botId, messageIds }) {
+  const out = new Map();
+  if (!viewer?.id || !messageIds?.length) return out;
+  try {
+    const { rows } = await pool.query(
+      `SELECT o.message_id, o.object_type, o.app_id, o.object_ref, o.object_version,
+              cs.user_id AS session_user_id, cs.status AS session_status, cs.is_headless
+         FROM conversation_message_objects o
+         LEFT JOIN chat_sessions cs
+           ON o.object_type = 'code_proposal' AND cs.id = o.object_ref AND cs.app_id = o.app_id
+        WHERE o.message_id = ANY($1::int[])
+        ORDER BY o.message_id DESC, o.position, o.id
+        LIMIT $2`,
+      [messageIds, MAX_SHARED_LINES],
+    );
+    const sharedObjects = require('./shared-objects');
+    for (const row of rows) {
+      const line = await sharedItemLine(pool, { viewer, botId, row, sharedObjects });
+      if (!line) continue;
+      const id = Number(row.message_id);
+      out.set(id, [...(out.get(id) || []), line]);
+    }
+  } catch (err) {
+    log.warn('homeroom-bot-mayor', 'Could not read what was attached in a DM\'s history', { err: err.message });
+  }
+  return out;
+}
+
+/** One attached item, as the model reads it, or null for one it need not. */
+async function sharedItemLine(pool, { viewer, botId, row, sharedObjects }) {
+  if (row.object_type === 'code_proposal') {
+    const card = await sharedObjects.hydrateOne(pool, viewer, row);
+    if (!card?.available) return '[Homeroom: they attached a change they cannot see any more.]';
+    const named = `"${clip(card.title, 160)}" on ${clip(card.subtitle, 120)} (proposal ${Number(row.object_ref)})${card.state ? `, ${card.state}` : ''}`;
+    const pending = Number(row.session_user_id) === Number(botId) && row.session_status === 'promoted' && !row.is_headless;
+    return pending
+      ? `[Homeroom: they attached your own change ${named}. It is not live yet: what they say is wrong with it, or want different in it, goes to that change with revise_proposal (proposal ${Number(row.object_ref)}), never into a new request.]`
+      : `[Homeroom: they attached the change ${named}.]`;
+  }
+  if (row.object_type === 'github_issue' || row.object_type === 'app') {
+    // A request's title is a read of its issue: its number and project say enough.
+    const app = await sharedObjects.hydrateOne(pool, viewer, {
+      object_type: 'app', app_id: row.app_id, object_ref: row.app_id, object_version: null,
+    });
+    if (!app?.available) return null;
+    return row.object_type === 'app'
+      ? `[Homeroom: they attached the project ${clip(app.title, 120)}.]`
+      : `[Homeroom: they attached request #${Number(row.object_ref)} on ${clip(app.title, 120)}.]`;
+  }
+  return null;
 }
 
 // A tool message carries text only, so the pictures a round's lookups
@@ -1870,6 +1949,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
         history = await historyMessages(pool, {
           conversationId, botId: bot.id, upToId: message.id, imageInput, takeImages,
           cardsOf: () => activityModule(deps).cardsFor(pool, { user, settings, config }),
+          viewer: user,
         });
       } catch (err) {
         t.failures.push(`context:history:${codeOf(err)}`);
@@ -2251,8 +2331,8 @@ async function settleOffer(pool, config, {
     return ack('I couldn\'t file it: you need to be a member of that project first. You can join it from its page.');
   }
   try {
-    // B4: what they asked for, in their words: the message the offer answered.
-    const askedText = await askedFor(pool, action, user.id);
+    // B4: what they asked for: the request as it is filed (askedFor).
+    const askedText = askedFor(action);
     const filed = await fileRequest(pool, config, {
       user, app, title: action.title, details: action.details, settings, deps, askedText,
     });
@@ -2295,19 +2375,17 @@ async function settleOffer(pool, config, {
 }
 
 /**
- * B4: the words a request offered in the DM was asked for in: the person's
- * own message the offer answered, while it is still there. Null otherwise.
+ * Pure (B4): what a request offered in the DM asked for, which its activity
+ * card leads with ("You asked: ..."): the request as it is filed, its details
+ * (what they asked for, in their words, offer_request's contract) or else its
+ * title. It used to be the person's message the offer answered, and an offer
+ * made after "Want me to?" answers "Yes please": the card read "You asked:
+ * Yes please" (5 October). Null for nothing.
  */
-async function askedFor(pool, action, userId) {
-  if (!action?.message_id) return null;
-  const { rows } = await pool.query(
-    `SELECT q.content FROM conversation_messages o
-       JOIN conversation_messages q ON q.id = o.reply_to_id AND q.sender_id = $2 AND q.deleted_at IS NULL
-      WHERE o.id = $1`,
-    [action.message_id, userId],
-  ).catch(() => ({ rows: [] }));
-  const text = String(rows[0]?.content || '').trim();
-  return text || null;
+function askedFor(action) {
+  const details = String(action?.details || '').trim();
+  const title = String(action?.title || '').trim();
+  return details || title || null;
 }
 
 /**
@@ -2717,6 +2795,106 @@ async function reviseProposal(pool, ctx, args) {
   };
 }
 
+/**
+ * The change a person's message carries that the bot can still revise: one
+ * of its own proposals, up for a vote (not merged or merging, not closed),
+ * attached to the message as a card. The change page's Ask for changes
+ * attaches it. Resolves { id, appId } or null.
+ */
+async function attachedPendingChange(pool, { botId, messageId }) {
+  const { rows } = await pool.query(
+    `SELECT cs.id, cs.app_id
+       FROM conversation_message_objects o
+       JOIN chat_sessions cs ON cs.id = o.object_ref AND cs.app_id = o.app_id
+      WHERE o.message_id = $1 AND o.object_type = 'code_proposal'
+        AND cs.user_id = $2 AND cs.status = 'promoted' AND cs.is_headless = FALSE
+      ORDER BY o.position, o.id
+      LIMIT 1`,
+    [messageId, botId],
+  );
+  return rows[0] ? { id: Number(rows[0].id), appId: Number(rows[0].app_id) } : null;
+}
+
+/**
+ * Pure: what happens next, once a message is sent to the change it carries.
+ * `queued` is reviseProposal's: true when its follow-up is first in the
+ * queue, false while one runs now, null when it waits for the next look.
+ */
+function revisingLine({ title, projectName, queued }) {
+  const lead = `Got it. I'll fix that in ${title ? `"${clip(title, 120)}"` : 'this change'} before it goes live`;
+  const when = queued === true ? '. I\'m on it next, and'
+    : queued === false ? ', right after what I\'m doing on it now.'
+      : `, when I next look at ${projectName || 'the project'}.`;
+  return queued === true
+    ? `${lead}${when} your message is in the change's discussion.`
+    : `${lead}${when} Your message is in the change's discussion.`;
+}
+
+// A question about the change ("what does this do?") is the model's to
+// answer from its records, with the card in front of it (sharedItemLines),
+// not a follow-up's to build on. "Can you ...?" and "Could it ...?" ask for
+// something, and "Why ...?" is how a problem is often put: those go to the
+// change.
+const QUESTION_RE = /^(?:what|when|how|who|where|which|is|are|was|were|does|do|did|has|have|will)\b[^\n]*\?\s*$/i;
+
+/** Pure: whether a message reads as a question rather than something to change. */
+function looksLikeQuestion(text) {
+  return QUESTION_RE.test(String(text || '').trim());
+}
+
+/**
+ * A message to the bot that carries one of its own changes still waiting
+ * for approval (the change page's Ask for changes) is about that change: a
+ * problem reported on it is fixed in it before it goes live, never filed as
+ * a new request. It goes the way a reply to the change's ready card
+ * (Change something) and a revise_proposal call go, with every gate
+ * reviseProposal holds (who may ask, the bot working there, its revisions
+ * and the weekly allowance): posted in the change's discussion as theirs,
+ * and its follow-up first in the queue, which changes it, asks one question
+ * or answers. The bot says what happens next in one line, with the change's
+ * card. Decided here, not by the model, whose history never showed the card
+ * and which offered a new request instead (5 October). Resolves what was
+ * sent, or null when this is not such a message or a gate refused, and the
+ * model reads it (with the card, sharedItemLines) as any other.
+ */
+async function reviseAttached(pool, config, { bot, user, settings, conversationId, message, deps = {} }) {
+  const text = String(message?.content || '').trim();
+  if (!bot?.id || !user?.id || !message?.id || text.split(/\s+/).filter(Boolean).length < 2) return null;
+  if (looksLikeQuestion(text)) return null;
+  let change = null;
+  try {
+    change = await attachedPendingChange(pool, { botId: bot.id, messageId: message.id });
+  } catch (err) {
+    log.warn('homeroom-bot-mayor', 'Could not read the change a DM message carries', { messageId: message.id, err: err.message });
+    return null;
+  }
+  if (!change) return null;
+  return serialize(user.id, async () => {
+    const ctx = { bot, user, settings, config, deps, userText: text, cards: [], revised: false, conversationId };
+    let result;
+    try {
+      result = await reviseProposal(pool, ctx, { proposal: change.id, change: text });
+    } catch (err) {
+      log.warn('homeroom-bot-mayor', 'Could not send a DM message to the change it carries', { sessionId: change.id, err: err.message });
+      return null;
+    }
+    if (!result?.ok) {
+      log.info('homeroom-bot-mayor', 'A DM message carried a change it could not be sent to', { sessionId: change.id, error: result?.error });
+      return null;
+    }
+    log.info('homeroom-bot-mayor', 'Sent a DM message to the change it carries', { sessionId: change.id, userId: user.id });
+    return dmModule(deps).sendDm(pool, {
+      bot, userId: user.id, replyToId: message.id, idempotencyKey: `hrbot-revise-${message.id}`, moment: 'reply',
+      content: revisingLine({
+        title: result.proposal?.title, projectName: result.proposal?.projectName,
+        queued: /^At the front/.test(result.queued || '') ? true : /right now/.test(result.queued || '') ? false : null,
+      }),
+      objects: ctx.cards,
+      metadata: { kind: 'chat' },
+    });
+  });
+}
+
 // ── Withdrawing one of its own proposals (#11, WP3) ──
 
 // A proposal it may withdraw: up for a vote, or built and left unproposed
@@ -3087,6 +3265,11 @@ module.exports = {
   platformRules,
   revisionText,
   reviseProposal,
+  reviseAttached,
+  revisingLine,
+  looksLikeQuestion,
+  attachedPendingChange,
+  askedFor,
   systemPrompt,
   RETRY_OUTPUT_TOKENS,
   RETRYABLE_MODEL_ERRORS,

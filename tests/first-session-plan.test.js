@@ -45,6 +45,33 @@ test('a plan waits for Build it when first_version carries one, read as the App 
   assert.match(view, /const plan = mine && fv\.plan && Array\.isArray\(fv\.plan\.bullets\) && fv\.plan\.bullets\.length\s+&& Number\.isInteger\(fv\.plan\.actionId\) \? fv\.plan : null;/);
 });
 
+test('the made screen reads the project under `app`, past the service worker\'s cache', () => {
+  // Page Turners, 5 October 2026: GET /api/apps/:slug answers `{ app }`, and
+  // the made screen read `first_version` off the answer itself, so its plan
+  // and its step never showed (tests/first-session-made-plan-postgres.test.js
+  // runs it against the real route).
+  const { madeAppOf, madeAppUrl, waitingPlan } = loadTsx(`${DIR}/made.tsx`);
+  const fv = { step: 3, of: 7, stepName: 'Write a plan', ready: false, plan: PLAN };
+  assert.deepEqual(madeAppOf({ app: { status: 'running', first_version: fv } }), { firstVersion: fv, status: 'running' });
+  assert.deepEqual(waitingPlan(madeAppOf({ app: { first_version: fv } }).firstVersion), PLAN);
+  assert.deepEqual(madeAppOf({ app: { status: 'creating' } }), { firstVersion: null, status: 'creating' });
+  assert.equal(madeAppOf({ first_version: fv, status: 'running' }), null, 'a bare record is not the route\'s answer');
+  assert.equal(madeAppOf(null), null);
+  assert.equal(madeAppOf({ error: 'App not found' }), null);
+  // A poll asks what is true now: the tagged URL the App tab's recheck uses,
+  // which the service worker never answers from its boot cache.
+  assert.equal(madeAppUrl('page turners'), '/api/apps/page%20turners?status_recheck=1&manifest=summary');
+  const { classifyRequest } = require('../public/sw.js');
+  const origin = 'https://onhomeroom.test';
+  assert.equal(classifyRequest('GET', `${origin}${madeAppUrl('page-turners')}`, 'application/json', 'cors', origin), 'bypass');
+  assert.equal(classifyRequest('GET', `${origin}/api/apps/page-turners`, 'application/json', 'cors', origin), 'api',
+    'the plain read is the boot lane\'s, served from cache first');
+  const src = read(`${DIR}/made.tsx`);
+  assert.match(src, /fetch\(madeAppUrl\(made\.slug\), \{ credentials: 'same-origin', cache: 'no-store' \}\)/);
+  assert.match(src, /const app = madeAppOf\(body\);\s+if \(live && app\) \{ setFv\(app\.firstVersion\); setAppStatus\(app\.status\); \}/);
+  assert.ok(!/setFv\(app\.first_version/.test(src), 'never the top of the answer');
+});
+
 test('the plan is drawn under "Needs you", as the chat\'s own card, with what Build it does', () => {
   const { PlanSection, PLAN_LABEL, planNote } = loadTsx(`${DIR}/made.tsx`);
   assert.equal(PLAN_LABEL, 'Needs you');
@@ -128,11 +155,19 @@ test('the invite line says who joined, once somebody has', () => {
   // `members` is the newest eight; the count is everyone.
   assert.equal(joinedLine({ member_count: 12, members: [maker, { username: 'a' }] }), '✓ 11 people joined.');
   const src = read(`${DIR}/made.tsx`);
-  // Read only while an invite is out, and in place of "Invite sent" once somebody joined.
+  // Read only while an invite is out, and in place of "Invite sent" once
+  // somebody joined, except an invite by username, which stays said beside
+  // it (first-session run-through, 5 October 2026: priya had joined, so the
+  // line never said the invite to @mo went).
   assert.match(src, /const community = useCommunity\(made\.slug, sent\);/);
   assert.match(src, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/community`, \{ credentials: 'same-origin' \}\)/);
   assert.match(src, /if \(!on\) return undefined;/);
-  assert.match(src, /\{joined \|\| `✓ Invite sent\$\{sentTo \? ` to \$\{sentTo\}` : ''\}\.`\}/);
+  const { sentLines } = loadTsx(`${DIR}/made.tsx`);
+  assert.deepEqual(sentLines(null, null), ['✓ Invite sent.']);
+  assert.deepEqual(sentLines(null, '@mo'), ['✓ Invite sent to @mo.']);
+  assert.deepEqual(sentLines('✓ priya joined.', null), ['✓ priya joined.']);
+  assert.deepEqual(sentLines('✓ priya joined.', '@mo'), ['✓ priya joined.', '✓ Invite sent to @mo.']);
+  assert.match(src, /\{sent \? sentLines\(joined, sentTo\)\.map\(/);
   // The route says who is in it: newest first after the maker, and how many.
   const route = read('src/routes/apps.js');
   assert.match(route, /router\.get\('\/api\/apps\/:slug\/community',/);

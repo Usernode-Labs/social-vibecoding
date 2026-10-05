@@ -8,6 +8,7 @@ import type {
   HomeroomBotActivityOutcome,
   HomeroomBotJob,
   HomeroomBotAction,
+  HomeroomBotGoesLive,
   HomeroomBotMeta,
   HomeroomBotPastJob,
   HomeroomBotPhase,
@@ -22,8 +23,9 @@ import type {
   ThreadRootRef,
   UserSearchResult,
 } from './types';
+import { countOf } from './approval-words';
 import type { HomeroomLink } from './homeroom-links';
-import { plainText } from './plain-text';
+import { botRowPreview, plainText } from './plain-text';
 
 const MAX_ID = 2_147_483_647;
 
@@ -146,6 +148,26 @@ function normalizePlan(input: unknown): HomeroomBotPlan | null {
 }
 
 /**
+ * B7: what happens next to a change its person approved, from a ready
+ * card's metadata or the vote's own answer (services/homeroom-bot-dm.js
+ * goesLiveAfterYes), or null for anything else.
+ */
+export function normalizeGoesLive(input: unknown): HomeroomBotGoesLive | null {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+  const row = record(input);
+  if (pick(row, 'soon') === true) return { soon: true, at: null, missing: 0, waitingOn: [], more: 0 };
+  if (pick(row, 'soon') !== false) return null;
+  const at = text(pick(row, 'at'));
+  return {
+    soon: false,
+    at: at && Number.isFinite(Date.parse(at)) ? at : null,
+    missing: Math.max(Math.floor(Number(pick(row, 'missing')) || 0), 0),
+    waitingOn: array(pick(row, 'waitingOn')).filter((u): u is string => typeof u === 'string' && !!u).slice(0, 3),
+    more: Math.max(Math.floor(Number(pick(row, 'more')) || 0), 0),
+  };
+}
+
+/**
  * #3624: the Homeroom bot's structured part of a message (services/
  * conversations.js publicMetadata), field by field like everything else
  * here: its question, the answers to tap and their state. Null for any
@@ -165,12 +187,23 @@ export function normalizeBotMeta(input: unknown): { homeroomBot: HomeroomBotMeta
   const questions = normalizePlanQuestions(pick(bot, 'questions'));
   const choices = array(pick(bot, 'choices')).filter((c): c is string => typeof c === 'string').slice(0, 2);
   const readyRow = pick(bot, 'ready');
+  // What does not work yet, when its before & after shots showed a change failing.
+  const broken = readyRow && typeof readyRow === 'object'
+    ? array(pick(record(readyRow), 'broken')).filter((b): b is string => typeof b === 'string' && !!b.trim()).slice(0, 3)
+    : [];
+  // How many more approvals it needed, and in all, when it was sent: absent on older cards.
+  const missing = readyRow && typeof readyRow === 'object' ? countOf(pick(record(readyRow), 'missing')) : null;
+  const needed = readyRow && typeof readyRow === 'object' ? countOf(pick(record(readyRow), 'needed')) : null;
   const ready = readyRow && typeof readyRow === 'object' ? {
     group: pick(record(readyRow), 'group') === true,
     last: pick(record(readyRow), 'last') === true,
     waitingOn: array(pick(record(readyRow), 'waitingOn')).filter((u): u is string => typeof u === 'string' && !!u).slice(0, 3),
     more: Math.max(Number(pick(record(readyRow), 'more')) || 0, 0),
+    ...(missing !== null ? { missing } : {}),
+    ...(needed !== null ? { needed } : {}),
+    ...(broken.length ? { broken } : {}),
   } : null;
+  const goesLive = normalizeGoesLive(pick(bot, 'goesLive'));
   return {
     homeroomBot: {
       kind,
@@ -190,6 +223,7 @@ export function normalizeBotMeta(input: unknown): { homeroomBot: HomeroomBotMeta
       chosen: optional('chosen'),
       startedAt: optional('startedAt'),
       askedText: optional('askedText'),
+      changeTitle: optional('changeTitle'),
       hello: optional('hello'),
       ...(pick(bot, 'live') === true ? { live: true } : {}),
       // B6: a plan, or two questions at once, and how its buttons went.
@@ -206,6 +240,7 @@ export function normalizeBotMeta(input: unknown): { homeroomBot: HomeroomBotMeta
       ...(pick(bot, 'updated') === true ? { updated: true } : {}),
       // B6: a card Build it moved under its plan.
       ...(strictId(pick(bot, 'movedTo')) ? { movedTo: strictId(pick(bot, 'movedTo'))! } : {}),
+      ...(goesLive ? { goesLive } : {}),
     },
   };
 }
@@ -370,6 +405,8 @@ export function normalizeConversation(input: unknown): ConversationDetail {
     || (kind === 'direct' ? peer?.username || members.find((member) => member.status === 'member')?.username : '')
     || 'Conversation';
   const canSendValue = pick(row, 'canSend', 'can_send');
+  const homeroomBot = kind === 'direct' && pick(row, 'homeroomBot') === true;
+  const summary = plainText(text(pick(row, 'latestSummary', 'latest_summary', 'preview')) || latestMessage?.content || '');
   return {
     id,
     kind,
@@ -385,8 +422,9 @@ export function normalizeConversation(input: unknown): ConversationDetail {
     peer,
     latestMessage,
     // One line of plain text: the row is a preview, not the message, and a
-    // bot message's `**Project**` should not show its asterisks.
-    latestSummary: plainText(text(pick(row, 'latestSummary', 'latest_summary', 'preview')) || latestMessage?.content || ''),
+    // bot message's `**Project**` should not show its asterisks. The
+    // Homeroom bot's row leaves out the request's number (botRowPreview).
+    latestSummary: homeroomBot ? botRowPreview(summary) : summary,
     lastActivityAt: dateText(pick(row, 'lastActivityAt', 'last_activity_at', 'updatedAt', 'updated_at', 'createdAt', 'created_at')),
     unreadCount: Number(pick(row, 'unreadCount', 'unread_count')) || 0,
     awaitingAcceptance: kind === 'direct' && pick(row, 'awaitingAcceptance', 'awaiting_acceptance') === true,
@@ -395,7 +433,7 @@ export function normalizeConversation(input: unknown): ConversationDetail {
     canManage: bool(pick(row, 'canManage', 'can_manage'), text(pick(row, 'myRole', 'my_role', 'role')) === 'owner'),
     archived: bool(pick(row, 'archived')) || text(pick(row, 'status')) === 'archived',
     channelKey: kind === 'channel' ? text(pick(row, 'channelKey', 'channel_key')) || null : null,
-    ...(kind === 'direct' && pick(row, 'homeroomBot') === true ? { homeroomBot: true } : {}),
+    ...(homeroomBot ? { homeroomBot: true } : {}),
   };
 }
 
@@ -622,11 +660,19 @@ export async function searchUsers(query: string): Promise<UserSearchResult[]> {
   return array(pick(data, 'users')).map(normalizeUser).filter((user) => user.id);
 }
 
-export async function listApps(): Promise<Array<{ id: number; slug: string; name: string }>> {
+/**
+ * The apps the viewer can see, for the Share item dialog. `mine` is a
+ * project they are in (its community, or building it), which the dialog
+ * lists first.
+ */
+export async function listApps(): Promise<Array<{ id: number; slug: string; name: string; mine: boolean }>> {
   const data = record(await request<unknown>('/api/apps'));
   return array(pick(data, 'apps')).map((item) => {
     const row = record(item);
-    return { id: strictId(row.id) || 0, slug: text(row.slug), name: text(row.name, text(row.slug)) };
+    return {
+      id: strictId(row.id) || 0, slug: text(row.slug), name: text(row.name, text(row.slug)),
+      mine: row.is_member === true || row.is_collaborator === true,
+    };
   }).filter((app) => app.id && app.slug);
 }
 
@@ -713,7 +759,11 @@ export async function setMessageSaved(
  * page's vote is. `stale` when that version was replaced (a 409 that says
  * so), with the version it is at now.
  */
-export async function approveChange(sessionId: number, epoch: number | null): Promise<{ ok: boolean; stale: boolean; epoch: number | null; error: string | null }> {
+export async function approveChange(sessionId: number, epoch: number | null): Promise<{
+  ok: boolean; stale: boolean; epoch: number | null; error: string | null;
+  /** B7: what happens next, when the Yes settled a ready card of theirs. */
+  goesLive?: HomeroomBotGoesLive | null;
+}> {
   let response: Response;
   try {
     response = await fetch(`/api/sessions/${sessionId}/vote`, {
@@ -726,7 +776,7 @@ export async function approveChange(sessionId: number, epoch: number | null): Pr
     return { ok: false, stale: false, epoch: null, error: 'Couldn’t reach Homeroom. Try again.' };
   }
   const data = record(await response.json().catch(() => ({})));
-  if (response.ok) return { ok: true, stale: false, epoch, error: null };
+  if (response.ok) return { ok: true, stale: false, epoch, error: null, goesLive: normalizeGoesLive(pick(data, 'goesLive')) };
   const stale = response.status === 409 && pick(data, 'headChanged') === true;
   const next = Number.isInteger(pick(data, 'approvalEpoch')) ? Number(pick(data, 'approvalEpoch')) : null;
   return { ok: false, stale, epoch: next, error: stale ? null : (text(pick(data, 'message')) || text(pick(data, 'error')) || 'Couldn’t approve it just now.') };

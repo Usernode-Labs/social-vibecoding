@@ -455,6 +455,50 @@ test('nothing saved and a change skipped fails as incomplete with the skip reaso
   assert.equal(fixture.calls.cleaned, 1, 'the builds are torn down after a failed run too');
 });
 
+test('a change the agent tried and found broken fails the run as not working, keeping which change failed', async () => {
+  const fixture = setup({
+    dispatch: async (options) => {
+      controlFor(options).skipChange({
+        change: 'invite-suggestions', outcome: 'failed',
+        reason: 'Typing "ma" on the after build answered a 500 from GET /api/users?q=ma, twice.',
+      });
+      return { backend: 'claude_code', threadId: 'shots-thread' };
+    },
+  });
+  await assert.rejects(execute(fixture), { code: 'shots_change_failed' });
+  assert.deepEqual(fixture.transitions.map((entry) => entry.next), ['provisioning', 'exploring', 'failed']);
+  const failed = fixture.transitions.at(-1).patch;
+  assert.equal(failed.failureCode, 'shots_change_failed', 'not shots_capture_incomplete: the change does not work');
+  assert.match(failed.failureReason, /^Tried "Typing a username shows suggestions beside the invite action\." on the after build, and it did not work\. Typing "ma"/);
+  assert.deepEqual(failed.hardVerdict.stories, [{
+    id: 'invite-suggestions', status: 'failed',
+    reason: 'Typing "ma" on the after build answered a 500 from GET /api/users?q=ma, twice.',
+  }], 'kept, so the change page and the Homeroom bot can say which change failed');
+  assert.equal(failed.hardVerdict.passed, false);
+  assert.deepEqual(failed.traceSummary.control, { savedFiles: 0, skippedChanges: 1, failedChanges: 1, notedChanges: 0, skippedAll: false });
+  assert.equal(fixture.calls.stored, 0);
+});
+
+test('one change ready and another failed still publishes, with the failure in the verdict', async () => {
+  const fixture = setup({
+    storeArtifacts: async () => {},
+    dispatch: async (options) => {
+      const control = controlFor(options);
+      saveStills(control, 'invite-suggestions');
+      control.skipChange({ change: 'invite-empty', outcome: 'failed', reason: 'Searching answered a 500.' });
+      return { backend: 'claude_code', threadId: 'shots-thread' };
+    },
+  });
+  fixture.run.intent = twoChangeIntent();
+  const result = await execute(fixture);
+  assert.equal(result.state, 'verified');
+  const verdict = fixture.transitions.find((entry) => entry.next === 'reviewing').patch.hardVerdict;
+  assert.deepEqual(verdict.stories, [
+    { id: 'invite-suggestions', status: 'ready', files: 2 },
+    { id: 'invite-empty', status: 'failed', reason: 'Searching answered a 500.' },
+  ]);
+});
+
 test('skipping every change at once fails with the one shared reason', async () => {
   const fixture = setup({
     dispatch: async (options) => {
@@ -779,6 +823,37 @@ test('the brief names the declared changes, both addresses and revisions, and no
     });
     assert.doesNotMatch(JSON.stringify(brief),
       /secret\.jwt|fixture-session-secret|fixture-db-password|evidence_(?:base|head)_db|sha256:(?:base|head)/);
+    assert.equal('previewAt' in brief, false, 'no declared moment, no previewAt');
+  } finally {
+    fs.rmSync(checkout, { recursive: true, force: true });
+  }
+});
+
+test('a declared preview moment reaches the brief in a fixed shape, so both copies open at it', () => {
+  // services/preview-clock.js: a Thursday-evening reminder cannot show on a
+  // Sunday copy. The author declares the moment in its testing guidance; the
+  // brief hands the agent the parsed instant, label and query parameter, and
+  // never the author's free text in its place.
+  const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-preview-at-'));
+  try {
+    fs.writeFileSync(path.join(checkout, 'dapp.json'), JSON.stringify({ tests: [] }));
+    const brief = orchestrator.shotsBrief({
+      run: { id: RUN_ID },
+      session: {
+        pr_title: 'Bins reminder',
+        testing_md: '<!-- usernode:preview-at 2026-10-08T19:00 Europe/London -->\n1. Open the rota.',
+      },
+      revision: {
+        baseSha: BASE, headSha: HEAD, files: ['public/app.js'], filesComplete: true,
+        diffSummary: { text: '', fileCount: 1, truncated: false },
+      },
+      pair: { sides: { base: {}, head: { checkout } } },
+      deployment: { origins: { base: 'http://base.internal', head: 'http://head.internal' } },
+      intent: contract.parseIntent(fixtures.intent()),
+    });
+    assert.deepEqual(brief.previewAt, {
+      at: '2026-10-08T18:00:00.000Z', label: 'Thursday 8 Oct, 7 pm', zone: 'Europe/London', param: 'un-now',
+    });
   } finally {
     fs.rmSync(checkout, { recursive: true, force: true });
   }

@@ -581,10 +581,14 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
       // #3624 stage 2: a question, and a request it offers to file. #3707:
       // the offer answers the viewer's ask, between them, and quotes it.
       // B6: a new project's plan and a request with two questions. #3736:
+      // #3870: a change ready to try, saying what it is, just before them,
       // then two activity cards (tests/homeroom-bot-activity-postgres.test.js).
-      assert.equal(messages.length, 7, 'one question, one ask, one offer, a plan, two questions and two cards, not one per visit');
-      const [question, ask, offer, plan, two, ...cards] = [...messages].sort((a, b) => a.id - b.id);
+      assert.equal(messages.length, 8, 'one question, one ask, one offer, a plan, two questions, a ready card and two cards, not one per visit');
+      const [question, ask, offer, plan, two, ready, ...cards] = [...messages].sort((a, b) => a.id - b.id);
       assert.deepEqual(cards.map((m) => m.metadata.homeroomBot.kind), ['activity', 'activity']);
+      assert.equal(ready.metadata.homeroomBot.kind, 'proposal');
+      assert.equal(ready.metadata.homeroomBot.changeTitle, 'Staging demo: a calmer colour for finished items');
+      assert.match(ready.content, /^\*\*Staging demo app\*\* · request #11: Staging demo, grey out finished items\n\nIt's ready to try\./);
       assert.equal(plan.metadata.homeroomBot.kind, 'plan');
       assert.equal(plan.metadata.homeroomBot.status, 'open');
       assert.equal(plan.metadata.homeroomBot.plan.bullets.length, 3);

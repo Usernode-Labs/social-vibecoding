@@ -146,6 +146,30 @@ const OBJECT_LABELS: Record<SharedObjectCard['type'], string> = {
   hub: 'Community hub', discussion: 'Discussion',
 };
 
+/**
+ * The composer's chip for an item waiting to be sent, read the way the card
+ * it becomes reads: what it is, its title, its project and where it is
+ * ("Change · Show whose turn each chore is · Flat 4B Chores · waiting for
+ * approval"). `card` is the server's reading of it for this viewer
+ * (api.resolveLinkCards, the same hydration a sent card gets); until it
+ * comes, or when it cannot, the title the page that staged it knew. Never the
+ * project's short name, and never "Proposal" and an id.
+ */
+export function pendingObjectLabel(
+  object: { type: SharedObjectCard['type']; title?: string | null; issueNumber?: number; proposalId?: number; version?: number },
+  card?: SharedObjectCard | null,
+): string {
+  const kind = OBJECT_LABELS[object.type] || 'Item';
+  if (card && card.available && card.title) {
+    const project = card.subtitle && card.subtitle !== card.title ? card.subtitle : null;
+    const state = object.type === 'app' ? null : card.state;
+    return [kind, card.title, project, state].filter(Boolean).join(' · ');
+  }
+  const number = object.type === 'issue' ? object.issueNumber : object.type === 'governance' ? object.proposalId : null;
+  const named = object.title || (number ? `#${number}` : (object.type === 'spec' && object.version ? `v${object.version}` : null));
+  return [kind, named].filter(Boolean).join(' · ');
+}
+
 // The glyph tile a card leads with: the app's diamond for an app and its
 // community, the `#` a channel is named with for a discussion, the section
 // sign for a spec, and the number sign for everything that has one.

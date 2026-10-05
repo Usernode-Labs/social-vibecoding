@@ -66,7 +66,7 @@ const {
   loadOnboarding, visibleChallenges, challengeCategory, resolveProgress, loadEventBlocks,
   isLocked, gateSummary, COUNTS_THIS_WEEK_SQL,
 } = require('../../services/topochain/challenge-onboarding');
-const { loadCadence, intervalMinutes } = require('../../services/topochain/challenge-scorer');
+const { loadRuleFacts, intervalMinutes } = require('../../services/topochain/challenge-scorer');
 const events = require('../../services/events');
 const seasonHistory = require('../../services/topochain/season-history');
 
@@ -792,7 +792,10 @@ function topochainPublicRoutes(config) {
       // with nothing saying why, and people redid what they had finished.
       // The admin route had these two times; the card had neither. Not per
       // viewer — the schedule is the challenge's — so one read for the list.
-      const cadence = await loadCadence(pool, id, visible, { defaultMinutes: intervalMinutes(config) });
+      // The same read says what the rule counts (#3253, #3248), so the page
+      // can say that a proposal counts once it is put to the vote, and that
+      // a counted measure stops paying at its target.
+      const { cadence, countedBy } = await loadRuleFacts(pool, id, visible, { defaultMinutes: intervalMinutes(config) });
 
       const data = visible
         .map((r) => {
@@ -804,6 +807,11 @@ function topochainPublicRoutes(config) {
           item.scoring = counted
             ? { interval_minutes: counted.intervalMinutes, last_scored_at: iso(counted.lastScoredAt) }
             : null;
+          // `{ measure, target }` — a MEASURES key and, for a measure that
+          // counts, the number past which nothing more is credited — for a
+          // challenge a rule scores right now, else null; always present.
+          const by = countedBy.get(Number(item.id));
+          item.counted_by = by ? { measure: by.measure, target: by.target } : null;
           const category = challengeCategory(item.id, item.activity_type.category, onboarding);
           item.activity_type.category = category;
           item.card_preview.label = (category || '').toUpperCase();

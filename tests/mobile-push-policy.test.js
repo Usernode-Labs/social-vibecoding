@@ -183,7 +183,10 @@ test('each kind renders its own title and body from send-time context', () => {
       'Open the request to see what needs attention'],
     ['vote_digest', { ...CONTEXT, detail: '3' },
       '3 changes are waiting for your approval',
-      'Open Dev to review them'],
+      'See them under Needs you in Communities'],
+    ['vote_digest', { ...CONTEXT, detail: '1' },
+      '1 change is waiting for your approval',
+      'Open it to try it and approve it'],
     ['check_failed', CONTEXT,
       'Testing found a problem with "Fix login redirect loop" · MyPage',
       'It needs a fix before it can go live'],
@@ -325,7 +328,7 @@ test('missing context degrades to the generic notification, never a throw', () =
   );
   assert.deepEqual(
     buildMessage({ ...INPUT, kind: 'vote_digest', context: {} }).notification,
-    { title: 'Changes are waiting for your approval', body: 'Open Dev to review them' }
+    { title: 'Changes are waiting for your approval', body: 'See them under Needs you in Communities' }
   );
 });
 

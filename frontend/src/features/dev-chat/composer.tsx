@@ -15,7 +15,7 @@
  * of `renderChatView`, re-bound on every render because the element was new.
  */
 
-import { type ChangeEvent, type ReactNode } from 'react';
+import { type ChangeEvent, type MouseEvent, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -91,6 +91,11 @@ function SendButton({ send }: { send: ComposerState['send'] }): ReactNode {
   // `rounded-lg` from the cva table beats an app.css `border-radius` at equal
   // specificity. That is exactly what shipped a rounded SQUARE the first time
   // this was built.
+  //
+  // Whatever it is wearing, a press on it never takes focus from the field:
+  // the blur would drop the keyboard, the tab bar and the Resume strip would
+  // come back (lib/keyboard-open.ts), the composer would fall by the
+  // keyboard's height and the click would land on nothing.
   const common = {
     type: 'submit' as const,
     id: 'dc-send-btn',
@@ -98,6 +103,7 @@ function SendButton({ send }: { send: ComposerState['send'] }): ReactNode {
     variant: 'roundedFull' as const,
     size: 'icon' as const,
     ink: 'none' as const,
+    onMouseDown: (event: MouseEvent<HTMLButtonElement>) => event.preventDefault(),
   };
   if (send.kind === 'stopping') {
     return (
@@ -177,6 +183,7 @@ function SavedDrafts({ rows, busy }: { rows: SavedDraftView[]; busy: boolean }):
                   type="button" className="dc-draft-btn dc-draft-send"
                   data-draft-action="send" aria-label="Send this draft"
                   disabled={busy} title={sendTitle}
+                  onMouseDown={(event) => event.preventDefault()}
                 >
                   <DraftSendIcon width={14} height={14} aria-hidden="true" />
                 </button>

@@ -677,6 +677,10 @@ const App = {
     App.loadVersion();
     if (window.AuthScreens) AuthScreens.enter();
     App._drainLogoutNotice();
+    // A signed-out document behind the live build moves to it before a
+    // sign-in starts on it (see _moveToLiveShell). Not awaited: the landing
+    // paints now and the answer arrives behind it.
+    App._moveToLiveShell('signed-out');
   },
 
   // Read-and-remove the one-shot sign-out advisory (#1524). Runs after the
@@ -849,10 +853,15 @@ const App = {
   _applyFirstVersionShot() {
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
-    // B6: `?shot=first-version-plan`, the same screen while its plan waits for Build it.
-    if (shot !== 'first-version' && shot !== 'first-version-plan') return;
+    // B6: `?shot=first-version-plan`, the same screen while its plan waits for
+    // Build it. `-ready` and `-approved`: built and up for approval, as a
+    // member who still has to approve it and as one who has.
+    const variants = {
+      'first-version': false, 'first-version-plan': 'plan', 'first-version-ready': 'ready', 'first-version-approved': 'approved',
+    };
+    if (!Object.prototype.hasOwnProperty.call(variants, shot)) return;
     try {
-      if (typeof AppView !== 'undefined') AppView.showFirstVersionShot(shot === 'first-version-plan');
+      if (typeof AppView !== 'undefined') AppView.showFirstVersionShot(variants[shot]);
     } catch (err) { /* ignore */ }
   },
 
@@ -1930,6 +1939,216 @@ const App = {
         App._shellAutoReloadSha = null;
         return false;
       }
+    }
+    App._shellReloadStarted = sha;
+    location.reload();
+    return true;
+  },
+
+  // ── A first session runs on the live build ──────────────────────────
+  //
+  // The production run-through of 5 Oct 2026: the Homeroom app had last been
+  // opened twelve hours and several deploys earlier, so its cold launch lost
+  // the 200ms navigation race in public/sw.js, as designed, and ran the
+  // cached build. A brand-new account then signed in on it and got every old
+  // first screen: the sign-in page without its terms line, the blocking
+  // terms dialog, the old Home, and no "What do you want to make?". A force
+  // quit later the same account got the new flow.
+  //
+  // One deploy behind for one load is the accepted cost of that deadline, and
+  // for somebody already signed in it still is: the drawer's row and the
+  // pull-to-refresh upgrade are the recovery, and nothing here touches them.
+  // Two moments are different, because what is on screen then decides what a
+  // new account is asked and records what it agreed to:
+  //
+  //   'signed-out'  the story landing (which is also an invite's page before
+  //                 Join, and holds the sign-in sheet) and the sign-in page.
+  //                 A document that is behind moves to the live build as
+  //                 soon as it knows, unless somebody has started typing on
+  //                 it (an address or a password half typed is not wiped by
+  //                 a reload they did not ask for) or a sign-in has begun
+  //                 here (noteSignInBegun): a request in flight is never cut
+  //                 off. Either way the 'signed-in' move below still runs.
+  //   'signed-in'   a sign-in or sign-up has just succeeded (finishLogin, or
+  //                 the waiting room letting somebody in). The move happens
+  //                 before the signed-in shell starts, so no first-run screen
+  //                 (terms, make, join, tour) is drawn by the old build. The
+  //                 session cookie, the invite link's cookie and this tab's
+  //                 sessionStorage (`usernode:first-session:make`,
+  //                 `usernode:invite-join`) all survive the reload.
+  //
+  // It asks the server itself rather than reading loadVersion's answer.
+  // /api/version is an ordinary API read, so on a cold launch slower than
+  // API_TIMEOUT_MS the worker answers it from its cache, with the previous
+  // visit's sha: the OLD one, which matches the old document. The first
+  // answer said "current" and nothing moved, which is how #1669's boot-time
+  // switch (loadVersion) missed exactly this launch. `cache: 'no-store'`
+  // skips the worker (sw.js: "Explicit session confirmation must reach the
+  // server") as well as the HTTP cache.
+  //
+  // The move is the one the drawer's button makes: the build pulled into the
+  // shell cache first (_ensureShellPrefetch), then a reload, so it lands on
+  // the new build whichever way the navigation race goes. At most one forced
+  // reload per build per tab, on the same sessionStorage latch as #1669's
+  // switch, so the two can never take turns reloading.
+  FRESH_SHELL_CHECK_TIMEOUT_MS: 5000,
+  // How long a move waits for the build to come down. A signed-out screen
+  // that has been up longer than this is no longer "before they can type",
+  // and a sign-in holds its busy button for it; either way the 'signed-in'
+  // move, or the drawer's row, is still there afterwards.
+  FRESH_SHELL_WAIT_MS: 10_000,
+  _signInBegun: false,
+
+  /**
+   * A sign-in has begun on this page: a credential exchange is about to go
+   * out (features/auth/shared.ts: the guard every exchange runs first, and
+   * every session mint), or a provider's trip came back to finish one. The
+   * 'signed-out' move stands down for the rest of this document; the sign-in
+   * finishes here, and the 'signed-in' move follows it.
+   */
+  noteSignInBegun() {
+    App._signInBegun = true;
+  },
+
+  /**
+   * Should this document move itself onto the live build now? Pure: every
+   * input is passed in, so the whole rule is one table. 'upgrade', or the
+   * reason it stays.
+   */
+  freshShellVerdict(input) {
+    const {
+      moment, documentSha, live, controlled, embedded, signedIn, signInBegun, typed, route,
+      latched,
+    } = input || {};
+    // The top window owns the build, as it owns the version poll.
+    if (embedded) return 'side-panel';
+    // No worker: the document came from the network, so it IS the live build.
+    if (!controlled) return 'uncontrolled';
+    // A checkout or a staging preview carries no build to be behind with.
+    if (!documentSha) return 'unstamped';
+    if (!live || !live.sha || live.sha === 'dev') return 'unknown';
+    // Mid-rollout the answer can come from either pod: loadVersion's rule.
+    if (live.deploying) return 'deploying';
+    if (live.sha === documentSha) return 'current';
+    if (latched === live.sha) return 'latched';
+    if (moment === 'signed-in') return 'upgrade';
+    if (moment !== 'signed-out') return 'moment';
+    if (signedIn) return 'signed-in';
+    if (signInBegun) return 'sign-in-begun';
+    // Somebody is typing: their text outranks the move, which the sign-in
+    // they are typing toward makes anyway ('signed-in').
+    if (typed) return 'typed';
+    // The screens with nothing to lose. Not the waitlist's survey, a password
+    // reset or an activation code: those hold answers or a token mid-way.
+    if (!['landing', 'login', 'signup'].includes(route)) return 'route';
+    return 'upgrade';
+  },
+
+  /**
+   * The build the server runs right now, asked past the worker's cache and
+   * the HTTP cache alike: `{ sha, deploying }`, or null when it cannot be
+   * known in time. Null at once, with no request, for a document that cannot
+   * be behind (no worker, no build stamp, the side panel).
+   */
+  async _askLiveBuild() {
+    let timer = null;
+    try {
+      if (App.embeddedPanel || !App.loadedPlatformSha) return null;
+      if (!(navigator.serviceWorker && navigator.serviceWorker.controller)) return null;
+      const abort = typeof AbortController === 'function' ? new AbortController() : null;
+      if (abort) timer = setTimeout(() => abort.abort(), App.FRESH_SHELL_CHECK_TIMEOUT_MS);
+      const res = await fetch('/api/version', {
+        cache: 'no-store',
+        credentials: 'same-origin',
+        signal: abort ? abort.signal : undefined,
+      });
+      if (!res.ok) return null;
+      const info = await res.json();
+      if (!info || typeof info.sha !== 'string') return null;
+      return { sha: info.sha, deploying: !!(info.deployProgress && info.deployProgress.deploying) };
+    } catch {
+      return null;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  },
+
+  _freshShellInputs(moment, live) {
+    let latched = null;
+    try { latched = sessionStorage.getItem(App.SHELL_AUTO_RELOAD_KEY); } catch { latched = null; }
+    let controlled = false;
+    try { controlled = !!(navigator.serviceWorker && navigator.serviceWorker.controller); } catch { /* none */ }
+    const screens = typeof window !== 'undefined' ? window.AuthScreens : null;
+    return {
+      moment,
+      documentSha: App.loadedPlatformSha,
+      live,
+      controlled,
+      embedded: !!App.embeddedPanel,
+      signedIn: !!App.user,
+      signInBegun: !!App._signInBegun,
+      // Only the signed-out move asks: the 'signed-in' one runs from
+      // finishLogin, after the fields have done their job.
+      typed: moment === 'signed-out' ? App._hasUnsavedShellInput() : false,
+      route: screens ? screens._current : null,
+      latched,
+    };
+  },
+
+  /**
+   * Move onto the live build when freshShellVerdict says so. Resolves false
+   * when this document stays as it is. Once it reloads it never resolves, so
+   * a caller that awaits it (finishLogin's busy button, the waiting room's
+   * release) holds still until the page goes.
+   *
+   * `live` is an _askLiveBuild() already in flight, so a sign-in can ask
+   * alongside its own session check instead of after it.
+   */
+  async _moveToLiveShell(moment, live) {
+    try {
+      if (App._shellReloadStarted) return new Promise(() => {});
+      // Screenshot states stay where they were asked to be.
+      try {
+        if (new URLSearchParams(location.search).get('shot')) return false;
+      } catch { /* no address to read */ }
+      const answer = await (live || App._askLiveBuild());
+      if (App.freshShellVerdict(App._freshShellInputs(moment, answer)) !== 'upgrade') return false;
+      const sha = answer.sha;
+      // A sign-in is a moment of its own: a download that failed earlier in
+      // this document is asked for once more. The worker has usually staged
+      // the build behind the navigation by now, so the answer is quick.
+      if (moment === 'signed-in' && App.shellUpdate && App.shellUpdate.sha === sha
+          && App.shellUpdate.state === 'failed') {
+        App.shellUpdate = null;
+      }
+      const state = await new Promise((resolve) => {
+        App._ensureShellPrefetch(sha).then(resolve, () => resolve('failed'));
+        setTimeout(() => resolve('slow'), App.FRESH_SHELL_WAIT_MS);
+      });
+      // #1669's switch may have taken the same download to its own reload.
+      if (App._shellReloadStarted) return new Promise(() => {});
+      // Reloading before the cache holds the build serves the old one back.
+      if (state !== 'ready') return false;
+      // The download took a moment. Ask again: is the screen still one with
+      // nothing to lose, has nobody typed on it, and has nobody started
+      // signing in on it?
+      if (App.freshShellVerdict(App._freshShellInputs(moment, answer)) !== 'upgrade') return false;
+      if (!App._reloadOntoLiveShell(sha)) return false;
+      return new Promise(() => {});
+    } catch {
+      return false;
+    }
+  },
+
+  /** One forced reload per build per tab, on #1669's latch. */
+  _reloadOntoLiveShell(sha) {
+    if (App._shellReloadStarted) return true;
+    try {
+      if (sessionStorage.getItem(App.SHELL_AUTO_RELOAD_KEY) === sha) return false;
+      sessionStorage.setItem(App.SHELL_AUTO_RELOAD_KEY, sha);
+    } catch {
+      // Without a cross-reload latch nothing proves this will not loop.
+      return false;
     }
     App._shellReloadStarted = sha;
     location.reload();
@@ -3632,8 +3851,13 @@ const App = {
     // is showing (the burst's home refresh): an unconditional Home.load()
     // here pulled the whole app list, 670 KB, onto a Workshop nobody had
     // left.
-    if (data.merged && App.currentApp === data.appSlug && App.currentTab === 'app') {
-      AppView.renderAppTab();
+    if (App.currentApp === data.appSlug) {
+      // A first version waiting on its approval is read again past every
+      // cache, now on its App tab and before the next paint anywhere else: a
+      // vote on its project, or the merge, is what changes that screen, and
+      // a render alone repaints the record on hand.
+      const rereading = AppView.recheckFirstVersionNow?.();
+      if (!rereading && data.merged && App.currentTab === 'app') AppView.renderAppTab();
     }
   },
 
@@ -3923,12 +4147,53 @@ const App = {
     return m ? m[1] : null;
   },
 
+  // An invite's own read answered 401 to a shell that thinks it is signed in:
+  // the session it was painted for has ended on the server (expired, signed
+  // out elsewhere, a password reset, the account removed), and the shell
+  // only learned so from this read, as when the service worker answered
+  // /api/auth/me from its cached copy. That is not the link's fault, so it is
+  // never told as one. Drop what the ended session left on this device and
+  // load the invite's address again, which boots signed out onto the link's
+  // own page: its card and Join (first-session run-through, 2026-10-05).
+  //
+  // Once per address a minute. A reload that comes back signed in on the same
+  // stale answer says plainly what happened instead of reloading again, and
+  // so does a browser with no session storage to remember the first try in.
+  _INVITE_SESSION_ENDED_KEY: 'usernode:invite-session-ended',
+  _inviteSessionEnded(address) {
+    let reload = false;
+    try {
+      const prev = JSON.parse(sessionStorage.getItem(App._INVITE_SESSION_ENDED_KEY) || 'null');
+      const recent = !!prev && prev.address === address && Date.now() - Number(prev.at) < 60 * 1000;
+      sessionStorage.setItem(App._INVITE_SESSION_ENDED_KEY, JSON.stringify({ address, at: Date.now() }));
+      reload = !recent;
+    } catch (_) { /* nowhere to note the try: do not risk a reload loop */ }
+    App._dropCachedSession();
+    App._sessionFromSnapshot = false;
+    App._publishBootSession({ signedOut: true });
+    if (!reload) {
+      if (window.PlatformUI && PlatformUI.toast) {
+        PlatformUI.toast('You are signed out. Sign in again to join.', { error: true });
+      }
+      return;
+    }
+    try { history.replaceState(null, '', address); } catch (_) {}
+    location.reload();
+  },
+
   // Follow an invite link as a signed-in account with platform access
   // (services/community-invites.js). Home first, with the invite address
   // replaced so Back or a reload does not ask again; then, if the link is
   // live and the viewer is not in the project yet, one confirm naming it and
   // who invited them. In it — just now, or already — opens its hub. A dead
   // link says why, once.
+  //
+  // A shell painted from the session snapshot has not heard yet whether that
+  // session is alive, and the address is left alone until it has: when
+  // _reconcileSession finds it over, it reloads onto this same address, which
+  // boots signed out onto the invite's own page. Replacing the address first
+  // sent that reload to "/", and the link's 401 was told as "That invite link
+  // does not work." over the ended session's cached Home (2026-10-05).
   async _followInvite(token) {
     App._markNavigationVia?.('handed');
     // The first-run join step waits for this (frontend/src/features/auth/
@@ -3938,6 +4203,26 @@ const App = {
     let settle = () => {};
     App._inviteFollow = new Promise((resolve) => { settle = resolve; });
     try {
+      const address = `${location.pathname}${location.search || ''}`;
+      // Asked at once, beside the session check, so a live session waits on
+      // no extra round trip for its confirm. Read (and a failure told) below.
+      const standingRead = Promise.resolve()
+        .then(() => fetch(`/api/invite-links/by-token/${encodeURIComponent(token)}`, { credentials: 'same-origin' }))
+        .then(async (res) => ({ status: res.status, standing: await res.json().catch(() => ({})) }));
+      standingRead.catch(() => {});
+      if (App._sessionFromSnapshot) {
+        // Bounded: a reconcile that settles nothing (it reloads for another
+        // account) must not hold the follow for good. Past it, the link's own
+        // 401 below still catches an ended session.
+        let timer = null;
+        const outcome = await Promise.race([
+          App.bootSession(),
+          new Promise((resolve) => { timer = setTimeout(() => resolve(null), App.BOOT_SESSION_TIMEOUT_MS * 3); }),
+        ]);
+        clearTimeout(timer);
+        // _reconcileSession is reloading onto the invite address.
+        if (outcome && outcome.signedOut) return;
+      }
       try { history.replaceState(null, '', App._rootUrl('')); } catch (_) {}
       App.restoreFromHash();
       const toast = (msg, error) => {
@@ -3973,8 +4258,13 @@ const App = {
         });
       };
       try {
-        const res = await fetch(`/api/invite-links/by-token/${encodeURIComponent(token)}`, { credentials: 'same-origin' });
-        const standing = await res.json().catch(() => ({}));
+        const { status, standing } = await standingRead;
+        // 401 is the viewer's session, not the link.
+        if (status === 401) { App._inviteSessionEnded(address); return; }
+        // Only the link's own answer says what is wrong with it: 200 with its
+        // state, or 404 for one that never existed. A 500 or a 429 is a read
+        // that did not land, and the link may be fine.
+        if (status !== 200 && status !== 404) { toast('Could not open that invite link. Try again.', true); return; }
         if (standing.mine === 'joined' && standing.slug) {
           joinedHere = true;
           // Joined by the sign-in that brought them here (within the last
@@ -4015,6 +4305,7 @@ const App = {
         const joined = await fetch(`/api/invite-links/by-token/${encodeURIComponent(token)}/redeem`, {
           method: 'POST', credentials: 'same-origin',
         });
+        if (joined.status === 401) { App._inviteSessionEnded(address); return; }
         const result = await joined.json().catch(() => ({}));
         if (!joined.ok || !result.ok) { toast(DEAD[result.reason] || 'Could not join. Try again.', true); return; }
         joinedHere = true;

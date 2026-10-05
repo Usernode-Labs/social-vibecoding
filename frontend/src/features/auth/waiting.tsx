@@ -86,6 +86,10 @@ export function WaitingScreen() {
         const targetUrl = typeof host?.deepLinkUrl === 'function'
           ? host.deepLinkUrl(target) : '/' + target;
         history.replaceState(null, '', targetUrl);
+        // Let in on a build that is behind the live one: move to it before
+        // the signed-in shell starts, so the first-run screens are the live
+        // build's (App._moveToLiveShell). Never resolves once it reloads.
+        await w.App?._moveToLiveShell?.('signed-in');
         fx(() => {
           (host?.hideAll as undefined | (() => void))?.();
           w.App?.enterAuthed?.(user);

@@ -67,12 +67,18 @@ export const ACTIVITY_OUTCOME_LABELS: Record<HomeroomBotActivityOutcome, string>
   revise: 'Updated the change',
 };
 
-export type ActivityTone = 'done' | 'you' | 'ended' | 'trouble';
+export type ActivityTone = 'done' | 'built' | 'you' | 'ended' | 'trouble';
 type Tone = ActivityTone;
 
-/** How each ending reads at a glance: finished well, waiting on the viewer, ended, or went wrong. */
+/**
+ * How each ending reads at a glance: finished well, built and waiting for
+ * approval, waiting on the viewer, ended, or went wrong. A change waiting for
+ * approval is Built, never Done: "Done" over "Built it. Waiting for approval"
+ * read as finished to the person still asked to approve it (4 October).
+ */
 export const ACTIVITY_OUTCOME_TONES: Record<HomeroomBotActivityOutcome, Tone> = {
-  proposed: 'done', live: 'done', answer: 'done', revise: 'done',
+  live: 'done', answer: 'done', revise: 'done',
+  proposed: 'built',
   question: 'you', blocked: 'you', empty: 'you',
   person: 'ended', held: 'ended', closed: 'ended',
   build_failed: 'trouble', failed: 'trouble', stopped: 'trouble',
@@ -80,6 +86,7 @@ export const ACTIVITY_OUTCOME_TONES: Record<HomeroomBotActivityOutcome, Tone> = 
 
 export const TONE_WORDS: Record<Tone, string> = {
   done: 'Done',
+  built: 'Built',
   you: 'Needs you',
   ended: 'Ended',
   trouble: 'Didn’t finish',
@@ -91,6 +98,7 @@ export const TONE_WORDS: Record<Tone, string> = {
 // reads source text.
 const TONE_TILES: Record<Tone, string> = {
   done: 'h-[38px] w-[38px] rounded-full bg-[color:var(--brand-tint)] text-[color:var(--brand-ink)] dark:bg-[color:var(--brand-tint)] dark:text-[color:var(--brand-ink)]',
+  built: 'h-[38px] w-[38px] rounded-full bg-[color:var(--brand-tint)] text-[color:var(--brand-ink)] dark:bg-[color:var(--brand-tint)] dark:text-[color:var(--brand-ink)]',
   you: 'h-[38px] w-[38px] rounded-full bg-[color:var(--brand-tint)] text-[color:var(--brand-ink)] dark:bg-[color:var(--brand-tint)] dark:text-[color:var(--brand-ink)]',
   ended: 'h-[38px] w-[38px] rounded-full',
   trouble: 'h-[38px] w-[38px] rounded-full bg-red-500/10 text-red-700 dark:bg-red-500/15 dark:text-red-400',
@@ -98,7 +106,7 @@ const TONE_TILES: Record<Tone, string> = {
 const PLAIN_TILE = 'h-[38px] w-[38px] rounded-full';
 
 function ToneIcon({ tone }: { tone: Tone }) {
-  if (tone === 'done') return <CheckIcon aria-hidden="true" />;
+  if (tone === 'done' || tone === 'built') return <CheckIcon aria-hidden="true" />;
   if (tone === 'you') return <ChatIcon aria-hidden="true" />;
   if (tone === 'trouble') return <WarningTriangleIcon aria-hidden="true" />;
   return <InfoCircleIcon aria-hidden="true" />;

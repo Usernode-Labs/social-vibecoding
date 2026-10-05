@@ -389,6 +389,12 @@
       // sitting there ready for the next offline boot to paint.
       try { window.App?.clearSessionSnapshot?.(); } catch (_) {}
 
+      // Asked alongside the session check below rather than after it: is
+      // this page behind the live build (App._moveToLiveShell)? Nothing to
+      // ask when the sign-in returns to another document.
+      const liveShell = !returnTo && typeof App !== 'undefined'
+        && typeof App._askLiveBuild === 'function' ? App._askLiveBuild() : null;
+
       let stage = 'session-check';
       let status = null;
       let timedOut = false;
@@ -422,12 +428,22 @@
         if (user.hasPlatformAccess === false) {
           // Gated account: the waiting room takes over (enterAuthed
           // routes there); keep the deep link pending for the release.
+          // The waiting room moves to the live build when it lets them in
+          // (features/auth/waiting.tsx), before the signed-in shell starts.
           fx(() => App.enterAuthed(user), 'push');
           return null;
         }
 
         const target = AuthScreens._pendingHash || '';
         history.replaceState(null, '', AuthScreens.deepLinkUrl(target));
+        // Signed in on a build that is behind the live one: move to it now,
+        // before the signed-in shell starts, so no first-run screen is drawn
+        // by the old build. The reload lands on the address just restored.
+        // It never resolves once it reloads, so the sign-in stays busy until
+        // the page goes.
+        if (typeof App !== 'undefined' && typeof App._moveToLiveShell === 'function') {
+          await App._moveToLiveShell('signed-in', liveShell);
+        }
         fx(() => {
           App.enterAuthed(user);
         }, 'pop');

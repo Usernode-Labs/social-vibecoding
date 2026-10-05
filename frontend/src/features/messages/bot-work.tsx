@@ -134,17 +134,24 @@ function resetBotWork(): void {
 
 // ── Words ────────────────────────────────────────────────────────────────
 
+/*
+ * The words below are the person's, never the platform's: a change, waiting
+ * for approval, live. "proposed Flat 4B Chores" in the header after a first
+ * version was ready (4 October) is what this rule is for, and
+ * tests/homeroom-bot-tray.test.js holds every line here to it.
+ */
+
 /** What a tile of Now says the bot is doing when the server sends no words of its own. */
 export const PHASE_LABELS: Record<HomeroomBotPhase, string> = {
   looking: 'looking at it',
   building: 'building',
-  following_up: 'following up on its proposal',
+  following_up: 'following up on its change',
   setting_up: 'getting the project ready',
   // #3734: one per step services/homeroom-bot-tray.js draws an in-flight
   // stage of the bot's progress as.
   queued: 'waiting its turn in my queue',
-  follow_up_queued: 'waiting its turn to follow up on its proposal',
-  merging: 'merging its approved proposal',
+  follow_up_queued: 'waiting its turn to follow up on its change',
+  merging: 'making the approved change live',
 };
 
 /** The same, as the header's status line says it after the request's name. */
@@ -155,15 +162,20 @@ export const SHORT_PHASES: Record<HomeroomBotPhase, string> = {
   setting_up: 'setting up',
   queued: 'in my queue',
   follow_up_queued: 'queued to follow up',
-  merging: 'merging',
+  merging: 'going live',
 };
 
-/** The last thing the bot did, as the status line says it when nothing else is going on. */
+/**
+ * The last thing the bot did, as the status line says it when nothing else
+ * is going on: the same ending its activity card names
+ * (ACTIVITY_OUTCOME_LABELS, and the server's copy in
+ * services/homeroom-bot-activity.js), with the request's name in it.
+ */
 export const LAST_WORDS: Record<HomeroomBotActivityOutcome, (name: string) => string> = {
   question: (name) => `asked you about ${name}`,
-  proposed: (name) => `proposed ${name}`,
+  proposed: (name) => `${name} waiting for approval`,
   live: (name) => `${name} went live`,
-  closed: (name) => `${name}’s proposal was closed`,
+  closed: (name) => `the change for ${name} was closed`,
   blocked: (name) => `couldn’t build ${name} as written`,
   build_failed: (name) => `couldn’t finish building ${name}`,
   person: (name) => `left ${name} to the group`,
@@ -172,7 +184,7 @@ export const LAST_WORDS: Record<HomeroomBotActivityOutcome, (name: string) => st
   held: (name) => `held ${name} back for now`,
   stopped: (name) => `stopped on ${name}`,
   answer: (name) => `answered on ${name}`,
-  revise: (name) => `changed ${name}’s proposal`,
+  revise: (name) => `updated the change for ${name}`,
 };
 
 function capitalized(text: string): string {

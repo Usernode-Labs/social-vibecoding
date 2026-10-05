@@ -22,6 +22,10 @@
 // 'platform_limit' tells full admins a server-wide cap (MAX_APPS,
 // MAX_GLOBAL_SESSIONS) is nearly or completely used; `detail` carries the
 // cap, level and figures (services/platform-limit-alerts.js).
+// 'channel_message' is a person's message in the discussion of a private
+// project of 8 people or fewer, to the rest of its people: one row per
+// discussion that folds later messages into a count in `detail`
+// (services/group-channel-notify.js, which writes and clears it).
 
 const log = require('./logger');
 const usernames = require('./usernames');
@@ -1008,13 +1012,16 @@ async function createAppDeletedNotifications(pool, { appName, appSlug, actorId, 
   return rows;
 }
 
-async function createCollabInviteNotification(pool, { appId, recipientId, inviterId }) {
+// `detail` is 'join' when the invite is to join the project (a private one,
+// where being invited in is how you join it) rather than to build it
+// (services/collab-invites.js); NULL otherwise, as on every row before it.
+async function createCollabInviteNotification(pool, { appId, recipientId, inviterId, detail = null }) {
   if (!recipientId || !appId) return [];
   const { rows } = await pool.query(
-    `INSERT INTO notifications (user_id, app_id, source_user_id, kind)
-     VALUES ($1, $2, $3, 'collab_invite')
-     RETURNING id, user_id, app_id, chat_message_id, source_user_id, kind, created_at`,
-    [recipientId, appId, inviterId || null]
+    `INSERT INTO notifications (user_id, app_id, source_user_id, kind, detail)
+     VALUES ($1, $2, $3, 'collab_invite', $4)
+     RETURNING id, user_id, app_id, chat_message_id, source_user_id, kind, detail, created_at`,
+    [recipientId, appId, inviterId || null, detail || null]
   );
   return rows;
 }
@@ -1068,18 +1075,29 @@ async function createApproverInviteAcceptedNotification(pool, { appId, recipient
 // whether the invite was already accepted/declined in another tab.
 // Each row carries `kind: 'collab' | 'approver'` so the drawer wires
 // the right accept/decline endpoints and copy.
+//
+// A collaborator invite also says what an invite link's page says
+// (services/community-invites.js preview): whether it is an invitation to
+// JOIN the project (`joins`: a private one, where being invited in is how
+// you join; services/collab-invites.js) or only to build it, the inviter's
+// note, and how many people are in it. An approver invite has none of them.
 async function listPendingInvites(pool, userId) {
   if (!userId) return [];
   const { rows } = await pool.query(
     `SELECT 'collab' AS kind, ac.app_id, a.slug AS app_slug, a.name AS app_name,
-            ac.created_at, inv.username AS invited_by
+            ac.created_at, inv.username AS invited_by,
+            (a.view_visibility IS DISTINCT FROM 'public') AS joins,
+            ac.invite_note AS note,
+            (SELECT COUNT(*)::int FROM community_members m
+              WHERE m.community_id = a.community_id) AS member_count
        FROM app_collaborators ac
        JOIN apps a ON a.id = ac.app_id
        LEFT JOIN users inv ON inv.id = ac.invited_by
       WHERE ac.user_id = $1 AND ac.status = 'invited'
      UNION ALL
      SELECT 'approver' AS kind, ap.app_id, a.slug AS app_slug, a.name AS app_name,
-            ap.created_at, inv.username AS invited_by
+            ap.created_at, inv.username AS invited_by,
+            FALSE AS joins, NULL::text AS note, NULL::int AS member_count
        FROM app_approvers ap
        JOIN apps a ON a.id = ap.app_id
        LEFT JOIN users inv ON inv.id = ap.invited_by
@@ -1094,6 +1112,9 @@ async function listPendingInvites(pool, userId) {
     appName: r.app_name,
     invitedBy: r.invited_by,
     createdAt: r.created_at,
+    joins: !!r.joins,
+    note: r.note || null,
+    memberCount: r.member_count == null ? null : Number(r.member_count),
   }));
 }
 
@@ -1460,7 +1481,9 @@ async function markRead(pool, userId, { id, all = false, kinds = null, excludeKi
 // address of its own (#2387).
 const APP_CHAT_MESSAGE_KINDS = new Set(['mention', 'reply', 'reaction', 'thread_reply',
   // WP-E: somebody your invite brought said hi; it opens on what they said.
-  'first_message']);
+  'first_message',
+  // A small group's discussion: it opens on the newest message it counts.
+  'channel_message']);
 
 // Where an app-chat message notification opens, in the client's Messages
 // addresses: a reply-thread message opens its thread

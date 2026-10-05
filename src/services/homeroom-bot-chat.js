@@ -36,6 +36,43 @@
 // per person per project, never on a message a few words long, and the reads
 // behind them are budgeted per person and per hour. The first request
 // somebody files says, once, that it stays on the project with their name.
+//
+// Fix in place (5 October): a mention asking to fix something the bot built
+// that is still waiting for approval (a project's first version, most often)
+// changes THAT change instead of filing a new request, which the bot would
+// have built from the app's main as one more competing version. Which change
+// is decided without the model where the message says so (a link to it, a
+// reply to a message that carries it, "the first version" when one of them
+// is, or its title word for word); otherwise the read is offered the bot's
+// pending changes by id beside filing (llm.readChatAsk `changes`), and may
+// answer "revise" naming one. The fix goes through the DM's own
+// revise_proposal (homeroom-bot-mayor.js reviseProposal), every gate
+// included: the words are posted in that change's discussion, under the
+// person's name, and the bot's follow-up on it is queued first. The row is
+// 'revise' (with the change in `session_id`), the chip on the message says
+// Fixing for everybody in the room until the change is ready again, and the
+// card says "Got it. I'll fix that in the first version before it goes live."
+//
+// The card follows its request. What it says is read from the platform's own
+// records whenever it is asked for (cardsOf: the request's newest run, as the
+// DM's activity card reads it, homeroom-bot-activity.js outcomeOf; the bot's
+// change for it, its checks and who still has to approve it), never written
+// as the work moves on. Every moment that moves a chip pushes the requester
+// their cards again, and the chat reads them again while one is still going.
+// The same read puts a chip right that a missed moment left behind.
+//
+// Held for the first version (5 October, Page Turners): while a project's
+// first version is not live, nothing else on it starts (homeroom-bot.js
+// FIRST_VERSION_PENDING_SQL). A request filed then waits in the queue, and
+// its DM card said so while the chat said "Usually about 10 minutes" and
+// Reading. Now such a request is at its own stage, waiting_first_version,
+// decided by the bot's own rule (firstVersionHolds, heldForFirstVersion) for
+// a request queued and not started: its card says it waits for the first
+// version, as the DM does, and its chip says Waiting from the moment it is
+// filed. When the first version merges, the loop is woken for what waited
+// and picks the request up; that moment (noteRequestStatus 'reading')
+// pushes the card and moves the chip on, and a read of the cards after the
+// hold ends puts back a Waiting chip no moment moved (chipFor).
 
 const log = require('./logger');
 
@@ -74,7 +111,36 @@ function takeOfferRead(userId, now = Date.now(), budget = offerReads) {
 }
 
 // What the chip on a message can say. `stopped` takes the chip away.
-const STATUSES = new Set(['reading', 'building', 'ready', 'live']);
+// `fixing`: a fix asked for on one of the bot's changes waiting for approval.
+// `waiting_first_version`: a request held until the project's first version
+// is live (stageOf).
+const STATUSES = new Set(['reading', 'building', 'ready', 'live', 'fixing', 'waiting_first_version']);
+
+// Fix in place: a link to one of a project's changes, in either spelling the
+// router reads (`/app/<slug>/dev/proposals/12`, `#app/<slug>/dev/proposals/12`).
+const PROPOSAL_LINK_RE = /(?:^|[/#])app\/([a-z0-9][a-z0-9-]{0,254})\/dev\/proposals\/([1-9]\d{0,9})(?!\d)/gi;
+const FIRST_VERSION_RE = /\bfirst\s+version\b/i;
+// The most of the bot's pending changes the read is offered.
+const MAX_OFFERED_CHANGES = 5;
+// A change's checks that leave it ready to try (homeroom-bot-dm.js READY_CHECKS).
+const READY_CHECKS = new Set(['passing', 'skipped']);
+// The most cards one read works out who still has to approve for.
+const MAX_APPROVAL_READS = 10;
+
+// What a card says about where its request stands (cardsOf). A request:
+// waiting_first_version (queued, held until the project's first version is
+// live), reading (waiting for or being read), waiting (ready, waiting for a
+// free builder), building, question (the bot asked one, in its chat), checking
+// (built, its checks running), proposed (built, waiting for approval),
+// approved (approved, going live), live, closed, person (left to the group),
+// stopped (it did not finish). A fix: fixing (posted, the bot's follow-up
+// queued or running), then checking, proposed, approved, live, or asked /
+// answered / person / stopped when the follow-up ended without a change.
+const CARD_STAGES = Object.freeze([
+  'waiting_first_version',
+  'reading', 'waiting', 'building', 'question', 'checking', 'proposed', 'approved', 'live', 'closed', 'person', 'stopped',
+  'fixing', 'asked', 'answered',
+]);
 
 function dmModule(deps) { return deps.dm || require('./homeroom-bot-dm'); }
 function botModule(deps) { return deps.botSvc || require('./homeroom-bot'); }
@@ -160,17 +226,27 @@ async function filingFor(pool, { app, user, deps = {} }) {
   return { builds: false, settings };
 }
 
-/** The card under a request's message, for its requester alone. Pure. */
-function cardOf(row, { builds = true, typicalMinutes = null, first = false } = {}) {
+/**
+ * The card under a request's message, for its requester alone. Pure.
+ * `state` is where its request stands now (cardsOf), for a request the bot
+ * builds or a fix.
+ */
+function cardOf(row, { builds = true, typicalMinutes = null, first = false, state = null, firstVersion = false } = {}) {
+  const group = builds === false && row.kind === 'filed';
   return {
     messageId: Number(row.chat_message_id),
     kind: row.kind,
     title: row.title || null,
     issueNumber: row.issue_number == null ? null : Number(row.issue_number),
     ...(row.kind === 'filed' && Number.isFinite(typicalMinutes) ? { typicalMinutes } : {}),
-    ...(builds === false && row.kind === 'filed' ? { kind: 'group' } : {}),
+    ...(group ? { kind: 'group' } : {}),
     // WP-C: their first request on the project, which says it stays.
-    ...(first && row.issue_number != null ? { first: true } : {}),
+    ...(first && row.issue_number != null && row.kind !== 'revise' ? { first: true } : {}),
+    // Fix in place: the change a fix was asked on, and whether it is the
+    // project's first version (the card says so rather than its title).
+    ...(row.session_id != null ? { sessionId: Number(row.session_id) } : {}),
+    ...(firstVersion ? { firstVersion: true } : {}),
+    ...(state && !group ? { state } : {}),
   };
 }
 
@@ -194,7 +270,7 @@ function pushCard(userId, appSlug, card, deps = {}) {
 
 /**
  * Set the chip on a request's message for everybody in its room
- * (`status`: reading, building, ready, live; anything else takes it away).
+ * (`status`: one of STATUSES; anything else takes it away).
  * The status survives an edit (the edit path keeps metadata). Never throws.
  */
 async function setStatus(pool, { appId, messageId, issueNumber, status, sessionId = null, deps = {} }) {
@@ -224,22 +300,329 @@ async function setStatus(pool, { appId, messageId, issueNumber, status, sessionI
  * to `status` (reading when the bot starts on it, building, ready with its
  * change, live; `stopped` takes the chip away). Called by the bot wherever
  * those moments happen; a request not asked in a chat is nothing here.
- * Never throws.
+ * Fix in place: a fix asked on the request's change ('revise') wears the
+ * chip its change's records give it (cardsOf), not the moment's, but for
+ * Live, which waits for the app to answer. Either way the requester's card
+ * follows. Never throws.
  */
 async function noteRequestStatus(pool, { appId, issueNumber, status, sessionId = null, deps = {} }) {
   try {
     const { rows } = await pool.query(
-      `SELECT chat_message_id FROM chat_bot_requests
-        WHERE app_id = $1 AND issue_number = $2 AND kind = 'filed'`,
+      `SELECT r.*, a.slug AS app_slug FROM chat_bot_requests r JOIN apps a ON a.id = r.app_id
+        WHERE r.app_id = $1 AND r.issue_number = $2 AND r.kind IN ('filed', 'revise')`,
       [appId, issueNumber],
     );
     for (const row of rows) {
-      await setStatus(pool, { appId, messageId: row.chat_message_id, issueNumber, status, sessionId, deps });
+      if (row.kind !== 'filed' && status !== 'live') continue;
+      await setStatus(pool, {
+        appId, messageId: row.chat_message_id, issueNumber, status,
+        sessionId: row.kind === 'revise' ? row.session_id : sessionId, deps,
+      });
     }
+    await followCards(pool, { rows, deps });
     return rows.length;
   } catch (err) {
     log.warn('homeroom-bot-chat', 'Could not move a chat request\'s status', { appId, issueNumber, status, err: err.message });
     return 0;
+  }
+}
+
+// ── Where a request stands, for its card (and its chip) ──
+
+/**
+ * What the records say about each of `rows` (filed or revise, with a
+ * number): the request's newest live run since it was asked (as the DM's
+ * activity card reads one; a fix reads only its change's own turns), the
+ * bot's change for it (a fix's own), whether it waits in the queue (and
+ * whether that wait is for the project's first version: `held_first_version`,
+ * heldFirstVersion), whether it is a first version, and the chip its message
+ * wears. By message id.
+ */
+async function stateRows(pool, rows, { botId = null, deps = {} } = {}) {
+  const ids = rows
+    .filter((row) => row.issue_number != null && (row.kind === 'filed' || row.kind === 'revise'))
+    .map((row) => Number(row.chat_message_id));
+  if (!ids.length) return new Map();
+  const { RESTARTED_BUILD_NOTE } = require('./homeroom-bot');
+  const { rows: found } = await pool.query(
+    `SELECT r.chat_message_id, r.kind, r.issue_number, r.app_id, m.metadata->'botRequest' AS chip,
+            (q.id IS NOT NULL) AS queued,
+            (q.id IS NOT NULL AND q.started_at IS NULL) AS queue_waiting, q.reason AS queue_reason,
+            (COALESCE(rq.first_version, FALSE) OR fv.app_id IS NOT NULL) AS first_version,
+            iss.status AS issue_status,
+            run.id AS run_id, run.verdict, run.build_ok, run.build_error, run.cap_suppressed,
+            run.proposal_session_id, run.live_build_waiting_at AS build_waiting_at, bs.status AS build_status,
+            COALESCE(rs.id, fs.id) AS session_id, COALESCE(rs.status, fs.status) AS session_status,
+            COALESCE(rs.check_state, fs.check_state) AS check_state
+       FROM chat_bot_requests r
+       JOIN chat_messages m ON m.id = r.chat_message_id
+       LEFT JOIN homeroom_bot_queue q ON q.app_id = r.app_id AND q.issue_number = r.issue_number
+       LEFT JOIN homeroom_bot_requesters rq ON rq.app_id = r.app_id AND rq.issue_number = r.issue_number
+       LEFT JOIN homeroom_bot_first_versions fv ON fv.app_id = r.app_id AND fv.issue_number = r.issue_number
+       LEFT JOIN LATERAL (
+         SELECT i.status FROM issues i
+          WHERE i.app_id = r.app_id AND i.github_issue_number = r.issue_number
+          ORDER BY i.id DESC LIMIT 1
+       ) iss ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT x.id, x.verdict, x.build_ok, x.build_error, x.cap_suppressed, x.proposal_session_id,
+                x.live_build_waiting_at, x.build_session_id
+           FROM homeroom_bot_runs x
+          WHERE x.app_id = r.app_id AND x.issue_number = r.issue_number AND x.mode = 'live'
+            AND x.created_at >= r.created_at
+            AND (r.kind <> 'revise' OR x.proposal_session_id = r.session_id)
+            AND NOT (x.build_ok IS FALSE AND right(COALESCE(x.build_error, ''), char_length($3::text)) = $3::text)
+          ORDER BY x.id DESC LIMIT 1
+       ) run ON TRUE
+       LEFT JOIN chat_sessions bs ON bs.id = run.build_session_id
+       LEFT JOIN chat_sessions rs ON r.kind = 'revise' AND rs.id = r.session_id
+       LEFT JOIN LATERAL (
+         SELECT s.id, s.status, s.check_state FROM chat_sessions s
+          WHERE r.kind = 'filed' AND s.app_id = r.app_id AND s.user_id = $2 AND s.is_headless = FALSE
+            AND r.issue_number = ANY(s.linked_issues)
+          ORDER BY (s.status IN ('promoted', 'merging', 'merged')) DESC, s.id DESC
+          LIMIT 1
+       ) fs ON TRUE
+      WHERE r.chat_message_id = ANY($1::int[])`,
+    [ids, Number(botId) || 0, RESTARTED_BUILD_NOTE],
+  );
+  await heldFirstVersion(pool, found, { deps });
+  return new Map(found.map((row) => [Number(row.chat_message_id), row]));
+}
+
+/**
+ * Mark each of stateRows' `found` rows a request (not a fix) that waits in
+ * the queue, not started, while its project's first version is not live:
+ * `held_first_version`. The bot's own rule decides, as its read lane does
+ * (homeroom-bot.js firstVersionHolds, heldForFirstVersion): never the first
+ * version's own request, nor an admin's Run now. A request with the bot's
+ * change already up (a follow-up, which is not held) is read as that change
+ * before this is (stageOf). A read that fails holds nothing: the card says
+ * what it said before.
+ */
+async function heldFirstVersion(pool, found, { deps = {} } = {}) {
+  const waiting = found.filter((row) => row.kind === 'filed' && row.queue_waiting);
+  if (!waiting.length) return;
+  const given = botModule(deps);
+  const bot = typeof given.firstVersionHolds === 'function' && typeof given.heldForFirstVersion === 'function'
+    ? given : require('./homeroom-bot');
+  let holds;
+  try {
+    holds = await bot.firstVersionHolds(pool, waiting.map((row) => Number(row.app_id)));
+  } catch (err) {
+    log.warn('homeroom-bot-chat', 'Could not read whether a first version holds chat requests', { err: err.message });
+    return;
+  }
+  for (const row of waiting) {
+    row.held_first_version = bot.heldForFirstVersion(holds, {
+      appId: row.app_id, issueNumber: row.issue_number, firstVersion: !!row.first_version, reason: row.queue_reason || null,
+    });
+  }
+}
+
+/**
+ * Pure: where one request (or fix) stands, from its stateRows row: one of
+ * CARD_STAGES. A merged change is live once its chip says so (the app
+ * answered after the merge: homeroom-bot-dm.js liveAfterMerge), approved
+ * until then. A request held for its project's first version
+ * (`held_first_version`, stateRows) waits for it, whatever it came to
+ * before it was queued again.
+ */
+function stageOf(row, { activity = null } = {}) {
+  const status = row.session_status || null;
+  if (status === 'merged') return row.chip?.status === 'live' ? 'live' : 'approved';
+  if (status === 'merging') return 'approved';
+  if (status === 'closed' || status === 'archived') return 'closed';
+  const ready = status === 'promoted' && READY_CHECKS.has(row.check_state);
+  if (row.kind === 'revise') {
+    // Not up for approval any more, and not approved: nothing to change.
+    if (status !== 'promoted') return 'stopped';
+    // Its follow-up waits or runs (again, when somebody wrote since).
+    if (!row.run_id || row.queued) return 'fixing';
+    if (row.verdict === 'revise') return ready ? 'proposed' : 'checking';
+    if (row.verdict === 'question') return 'asked';
+    if (row.verdict === 'answer') return 'answered';
+    if (row.verdict === 'person') return 'person';
+    return 'stopped';
+  }
+  if (status === 'promoted') return ready ? 'proposed' : 'checking';
+  if (status === 'active' || status === 'paused') return 'building';
+  if (String(row.issue_status || '') === 'closed') return 'closed';
+  if (row.held_first_version) return 'waiting_first_version';
+  if (!row.run_id) return 'reading';
+  const a = activity || require('./homeroom-bot-activity');
+  // Its run's own change, if it has one, was read above as the request's.
+  const run = { ...row, proposal_session_id: null };
+  const outcome = a.outcomeOf(run);
+  if (!outcome) {
+    if (a.buildUnderWay(run)) return row.build_waiting_at && row.build_status == null ? 'waiting' : 'building';
+    return row.verdict === 'ready' ? 'building' : 'reading';
+  }
+  switch (outcome) {
+    case 'question': return row.queued ? 'reading' : 'question';
+    case 'held': return 'waiting';
+    case 'proposed': case 'answer': case 'revise': return 'checking';
+    case 'person': return row.queued ? 'reading' : 'person';
+    default: return row.queued ? 'reading' : 'stopped';
+  }
+}
+
+/**
+ * Pure: the chip a request's message should wear for `stage`, when its
+ * records settle it: Try it once its change is ready, none once it ended
+ * without one, Fixing while a fix waits, Waiting while it is held for the
+ * project's first version. `undefined` leaves the chip the moments gave it
+ * (reading, building, and Live, which only the app's answer after a merge
+ * says). `have`, the chip it wears now: a Waiting chip whose hold ended
+ * before a moment moved it on (the loop not free yet, or a pick-up that
+ * says nothing) becomes the one the request would wear, and a Reading chip
+ * whose request is being built, or is past it, says Building. The
+ * production run-through of 5 Oct 2026 saw the chip in the project's chat
+ * say Reading for the whole build while the requester's own card said
+ * "Building it now": the moment that moves it was missed, and nothing put
+ * it right. A chip never moves back to Reading from here.
+ */
+function chipFor(row, stage, have = null) {
+  const issueNumber = Number(row.issue_number);
+  const sessionId = row.session_id != null ? Number(row.session_id) : null;
+  if (stage === 'proposed' && sessionId) return { issueNumber, status: 'ready', sessionId };
+  if (['closed', 'stopped', 'person', 'asked', 'answered'].includes(stage)) return null;
+  if (stage === 'fixing' && row.kind === 'revise') return { issueNumber, status: 'fixing', ...(sessionId ? { sessionId } : {}) };
+  if (stage === 'waiting_first_version') return { issueNumber, status: 'waiting_first_version' };
+  if (have?.status === 'waiting_first_version' && ['reading', 'waiting', 'question'].includes(stage)) {
+    return { issueNumber, status: 'reading' };
+  }
+  if (['waiting_first_version', 'reading'].includes(have?.status) && ['building', 'checking', 'approved'].includes(stage)) {
+    return { issueNumber, status: 'building' };
+  }
+  return undefined;
+}
+
+/** Pure: whether a chip already says what `want` says. */
+function sameChip(have, want) {
+  if (!have || !want) return !have && !want;
+  return have.status === want.status && Number(have.sessionId || 0) === Number(want.sessionId || 0)
+    && Number(have.issueNumber || 0) === Number(want.issueNumber || 0);
+}
+
+/**
+ * Who still has to approve change `sessionId`, for `viewer`'s card: the same
+ * reading as the DM's ready card (homeroom-bot-dm.js approvalState,
+ * needsYesFrom). { youApprove, waitingOn, more, missing, needed }: `missing`
+ * is how many more approvals it needs (0 once it has them) and `needed` how
+ * many in all, so a change that needs two of three people says any of them
+ * will do (frontend/src/features/messages/approval-words.ts). A public
+ * community names nobody: everybody there could vote.
+ */
+async function approvalOf(pool, { sessionId, viewer, deps = {} }) {
+  const dm = dmModule(deps);
+  const state = await dm.approvalState(pool, { sessionId, userId: viewer.id });
+  if (!state) return null;
+  const open = state.audience === 'open' && state.gov?.approverPolicy !== 'invited';
+  // Nobody is waited on once it has the approvals it needs.
+  const ids = state.missing === 0 ? [] : await dm.needsYesFrom(pool, state, { except: [viewer.id] });
+  const { rows } = ids.length
+    ? await pool.query('SELECT username FROM users WHERE id = ANY($1::int[]) ORDER BY username', [ids])
+    : { rows: [] };
+  const names = rows.map((r) => r.username).filter(Boolean);
+  return {
+    youApprove: !open && !!(state.counts && !state.already),
+    waitingOn: names.slice(0, 3),
+    more: Math.max(names.length - 3, 0),
+    missing: state.missing,
+    needed: state.needed,
+  };
+}
+
+/**
+ * The cards of `rows` (one person's, on one project), each with where its
+ * request stands now. `reconcile` also puts right a chip a missed moment
+ * left behind (chipFor), for everybody in the room. Never throws for a
+ * record it cannot read: that card says what it said before.
+ */
+async function cardsOf(pool, { appId, user, rows, builds = true, typical = true, deps = {}, reconcile = false }) {
+  const followed = rows.filter((row) => row.issue_number != null && (row.kind === 'filed' || row.kind === 'revise'));
+  let states = new Map();
+  if (followed.length) {
+    try {
+      const bot = await dmModule(deps).botAccount(pool);
+      states = await stateRows(pool, followed, { botId: bot?.id || null, deps });
+    } catch (err) {
+      log.warn('homeroom-bot-chat', 'Could not read where chat requests stand', { appId, err: err.message });
+    }
+  }
+  const stages = new Map();
+  for (const [id, state] of states) stages.set(id, stageOf(state, { activity: deps.activity || null }));
+  const stageOfRow = (row) => stages.get(Number(row.chat_message_id)) || null;
+  const typicalMinutes = typical && rows.some((row) => row.kind === 'filed' && (stageOfRow(row) || 'reading') === 'reading')
+    ? await dmModule(deps).typicalMinutes(pool).catch(() => null) : null;
+  const first = rows.some((row) => row.issue_number != null && row.kind !== 'revise')
+    ? await firstRequestOf(pool, appId, user.id).catch(() => null) : null;
+  const approvals = new Map();
+  for (const row of rows.filter((r) => stageOfRow(r) === 'proposed').slice(0, MAX_APPROVAL_READS)) {
+    const state = states.get(Number(row.chat_message_id));
+    if (!state?.session_id) continue;
+    const approval = await approvalOf(pool, { sessionId: state.session_id, viewer: user, deps }).catch((err) => {
+      log.warn('homeroom-bot-chat', 'Could not read who approves a change (card without names)', { sessionId: state.session_id, err: err.message });
+      return null;
+    });
+    if (approval) approvals.set(Number(row.chat_message_id), approval);
+  }
+  if (reconcile) {
+    for (const row of followed) {
+      const state = states.get(Number(row.chat_message_id));
+      const stage = stageOfRow(row);
+      if (!state || !stage) continue;
+      const want = chipFor({ ...row, session_id: state.session_id ?? row.session_id }, stage, state.chip);
+      if (want === undefined || sameChip(state.chip, want)) continue;
+      await setStatus(pool, {
+        appId, messageId: row.chat_message_id, issueNumber: row.issue_number,
+        status: want ? want.status : 'stopped', sessionId: want?.sessionId || null, deps,
+      });
+    }
+  }
+  return rows.map((row) => {
+    const id = Number(row.chat_message_id);
+    const stateRow = states.get(id);
+    const stage = stageOfRow(row);
+    const sessionId = stateRow?.session_id ?? row.session_id ?? null;
+    const state = stage ? {
+      stage,
+      ...(sessionId ? { sessionId: Number(sessionId) } : {}),
+      ...(approvals.get(id) || {}),
+    } : null;
+    return cardOf(row, {
+      builds: row.kind === 'group' ? false : builds,
+      // Held for the first version, nobody knows how long it waits.
+      typicalMinutes: stage === 'waiting_first_version' ? null : typicalMinutes,
+      first: first != null && Number(row.issue_number) === first,
+      state,
+      firstVersion: !!stateRow?.first_version,
+    });
+  });
+}
+
+/**
+ * Push every requester of `rows` (chat_bot_requests rows of one request,
+ * with `app_slug`) their cards again, as they stand now, and put their
+ * chips right. Never throws.
+ */
+async function followCards(pool, { rows, deps = {} }) {
+  const byPerson = new Map();
+  for (const row of rows) {
+    const key = Number(row.requester_id);
+    if (!byPerson.has(key)) byPerson.set(key, []);
+    byPerson.get(key).push(row);
+  }
+  for (const [userId, theirs] of byPerson) {
+    try {
+      const cards = await cardsOf(pool, {
+        appId: theirs[0].app_id, user: { id: userId }, rows: theirs, deps, reconcile: true,
+      });
+      for (const card of cards) pushCard(userId, theirs[0].app_slug, card, deps);
+    } catch (err) {
+      log.warn('homeroom-bot-chat', 'Could not bring a chat request\'s card up to date', { userId, err: err.message });
+    }
   }
 }
 
@@ -248,20 +631,23 @@ async function noteRequestStatus(pool, { appId, issueNumber, status, sessionId =
  * and an edit or a second mention files nothing more. Resolves the row as
  * it stands.
  */
-async function record(pool, { messageId, appId, userId, kind, issueNumber = null, title = null, replace = false }) {
-  const params = [messageId, appId, userId, kind, issueNumber, title ? String(title).slice(0, 300) : null];
+async function record(pool, {
+  messageId, appId, userId, kind, issueNumber = null, title = null, sessionId = null, replace = false,
+}) {
+  const params = [messageId, appId, userId, kind, issueNumber, title ? String(title).slice(0, 300) : null, sessionId];
   const { rows } = replace
     ? await pool.query(
-      `INSERT INTO chat_bot_requests (chat_message_id, app_id, requester_id, kind, issue_number, title)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO chat_bot_requests (chat_message_id, app_id, requester_id, kind, issue_number, title, session_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (chat_message_id) DO UPDATE
-         SET kind = EXCLUDED.kind, issue_number = EXCLUDED.issue_number, title = EXCLUDED.title, updated_at = NOW()
+         SET kind = EXCLUDED.kind, issue_number = EXCLUDED.issue_number, title = EXCLUDED.title,
+             session_id = EXCLUDED.session_id, updated_at = NOW()
        RETURNING *`,
       params,
     )
     : await pool.query(
-      `INSERT INTO chat_bot_requests (chat_message_id, app_id, requester_id, kind, issue_number, title)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO chat_bot_requests (chat_message_id, app_id, requester_id, kind, issue_number, title, session_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (chat_message_id) DO NOTHING
        RETURNING *`,
       params,
@@ -294,8 +680,12 @@ async function fileMessage(pool, config, { app, user, messageId, words, title, h
     messageId, appId: app.id, userId: user.id, kind: here.builds ? 'filed' : 'group',
     issueNumber: filed.issueNumber, title, replace: true,
   });
+  // Where it stands as it is filed: held for the project's first version
+  // (stageOf), its card and its chip say so from the start, never Reading.
+  const [card] = await cardsOf(pool, { appId: app.id, user, rows: [row], builds: here.builds, typical: here.builds, deps });
   if (here.builds) {
-    await setStatus(pool, { appId: app.id, messageId, issueNumber: filed.issueNumber, status: 'reading', deps });
+    const status = card?.state?.stage === 'waiting_first_version' ? 'waiting_first_version' : 'reading';
+    await setStatus(pool, { appId: app.id, messageId, issueNumber: filed.issueNumber, status, deps });
     if (filed.queueId) {
       const bot = await dmModule(deps).botAccount(pool);
       if (bot) {
@@ -310,12 +700,170 @@ async function fileMessage(pool, config, { app, user, messageId, words, title, h
       }
     }
   }
-  const typicalMinutes = here.builds ? await dmModule(deps).typicalMinutes(pool).catch(() => null) : null;
-  const first = await firstRequestOf(pool, app.id, user.id).catch(() => null);
   log.info('homeroom-bot-chat', 'Filed a request asked for in a project\'s chat', {
     app: app.slug, issueNumber: filed.issueNumber, userId: user.id, builds: here.builds,
+    ...(card?.state?.stage === 'waiting_first_version' ? { waitsForFirstVersion: true } : {}),
   });
-  return cardOf(row, { builds: here.builds, typicalMinutes, first: first === Number(filed.issueNumber) });
+  return card;
+}
+
+// ── Fix in place: a mention asking to fix one of the bot's pending changes ──
+
+/**
+ * The bot's own changes on a project that are up for approval and not live
+ * yet, newest first, one per request (its newest): { id, issueNumber,
+ * title, firstVersion }.
+ */
+async function pendingChanges(pool, { appId, botId }) {
+  if (!botId) return [];
+  const { rows } = await pool.query(
+    `SELECT * FROM (
+       SELECT DISTINCT ON (cs.linked_issues[1]) cs.id, cs.linked_issues[1] AS issue_number,
+              COALESCE(cs.session_title, cs.pr_title, q.issue_title) AS title,
+              (COALESCE(q.first_version, FALSE) OR fv.app_id IS NOT NULL) AS first_version
+         FROM chat_sessions cs
+         LEFT JOIN homeroom_bot_requesters q ON q.app_id = cs.app_id AND q.issue_number = cs.linked_issues[1]
+         LEFT JOIN homeroom_bot_first_versions fv ON fv.app_id = cs.app_id AND fv.issue_number = cs.linked_issues[1]
+        WHERE cs.app_id = $1 AND cs.user_id = $2 AND cs.status = 'promoted' AND cs.is_headless = FALSE
+          AND cardinality(cs.linked_issues) > 0
+        ORDER BY cs.linked_issues[1], cs.id DESC
+     ) pending
+     ORDER BY id DESC
+     LIMIT 10`,
+    [appId, botId],
+  );
+  return rows.map((r) => ({
+    id: Number(r.id), issueNumber: Number(r.issue_number), title: r.title || null, firstVersion: !!r.first_version,
+  }));
+}
+
+/**
+ * What the message `messageId` replies to names: changes (the vote card the
+ * bot's posts carry, a shared spec, a chip's Try it, a fix asked there) and
+ * requests (a chip's, one asked there). { sessionIds, issueNumbers }.
+ */
+async function quotedRefs(pool, { appId, messageId }) {
+  const { rows } = await pool.query(
+    `SELECT q.metadata, r.issue_number, r.session_id
+       FROM chat_messages m
+       JOIN chat_messages q ON q.app_id = m.app_id
+        AND q.id = CASE WHEN m.metadata->'quote'->>'refMsgId' ~ '^[0-9]{1,9}$'
+                        THEN (m.metadata->'quote'->>'refMsgId')::int END
+       LEFT JOIN chat_bot_requests r ON r.chat_message_id = q.id
+      WHERE m.id = $1 AND m.app_id = $2 AND q.deleted_at IS NULL`,
+    [messageId, appId],
+  );
+  const row = rows[0];
+  if (!row) return { sessionIds: [], issueNumbers: [] };
+  const meta = row.metadata || {};
+  const ids = (list) => [...new Set(list.map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+  return {
+    sessionIds: ids([meta.vote?.sessionId, meta.specShare?.sessionId, meta.botRequest?.sessionId, row.session_id]),
+    issueNumbers: ids([meta.botRequest?.issueNumber, row.issue_number]),
+  };
+}
+
+/** Pure: words as compared with a title: lower case, letters and digits. */
+function plainWords(text) {
+  return String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+/**
+ * Pure: the pending change (pendingChanges) a message asks about when it
+ * says so itself, or null for the read to decide. In order: a link to one of
+ * them in its words; the message it replies to; "the first version" when one
+ * of them is the project's first version; or its title, word for word, when
+ * exactly one title is in the words. { change, why }.
+ */
+function pickChange({ words, changes = [], slug = null, quoted = null }) {
+  if (!changes.length) return null;
+  const byId = (id) => changes.find((c) => c.id === Number(id)) || null;
+  for (const m of String(words || '').matchAll(PROPOSAL_LINK_RE)) {
+    if (slug && m[1].toLowerCase() !== String(slug).toLowerCase()) continue;
+    const hit = byId(m[2]);
+    if (hit) return { change: hit, why: 'link' };
+  }
+  for (const id of quoted?.sessionIds || []) {
+    const hit = byId(id);
+    if (hit) return { change: hit, why: 'reply' };
+  }
+  for (const n of quoted?.issueNumbers || []) {
+    const hit = changes.find((c) => c.issueNumber === Number(n));
+    if (hit) return { change: hit, why: 'reply' };
+  }
+  if (FIRST_VERSION_RE.test(String(words || ''))) {
+    const firsts = changes.filter((c) => c.firstVersion);
+    if (firsts.length === 1) return { change: firsts[0], why: 'first_version' };
+  }
+  const said = ` ${plainWords(words)} `;
+  const named = changes.filter((c) => {
+    const title = plainWords(c.title);
+    return title.split(' ').length >= 2 && said.includes(` ${title} `);
+  });
+  return named.length === 1 ? { change: named[0], why: 'title' } : null;
+}
+
+/** Pure: the pending changes as the read is offered them, by id ("c1", ...). */
+function offeredChanges(changes) {
+  return changes.slice(0, MAX_OFFERED_CHANGES).map((c, i) => ({ id: `c${i + 1}`, title: c.title, firstVersion: !!c.firstVersion }));
+}
+
+/**
+ * Send one message's words to the bot's pending change `change`, through the
+ * DM's own revise_proposal (homeroom-bot-mayor.js reviseProposal) with all of
+ * its gates: posted in the change's discussion under their name, and the
+ * bot's follow-up on it queued first. The message wears Fixing for everybody
+ * in the room. Resolves { card }; a gate that refused resolves
+ * { refused, card } with the card that says so, and nothing is recorded.
+ */
+async function reviseFromMessage(pool, config, { app, user, messageId, words, title, change, here, deps = {} }) {
+  const bot = await dmModule(deps).botAccount(pool);
+  if (!bot) throw new Error('no_bot_account');
+  const ctx = {
+    user, bot, config, settings: here.settings, userText: words, cards: [],
+    // The mayor names the DM module dmSvc.
+    deps: { ...deps, ...(deps.dm ? { dmSvc: deps.dm } : {}) },
+  };
+  const done = await mayorModule(deps).reviseProposal(pool, ctx, { proposal: change.id, change: title || words });
+  if (!done?.ok) {
+    log.info('homeroom-bot-chat', 'A fix asked for in a chat was refused', {
+      app: app.slug, sessionId: change.id, userId: user.id, why: done?.error || null,
+    });
+    return {
+      refused: true,
+      card: {
+        messageId: Number(messageId), kind: 'revise_refused', title: change.title || null, issueNumber: change.issueNumber,
+        sessionId: change.id, ...(change.firstVersion ? { firstVersion: true } : {}),
+      },
+    };
+  }
+  const row = await record(pool, {
+    messageId, appId: app.id, userId: user.id, kind: 'revise', issueNumber: change.issueNumber,
+    title: change.title, sessionId: change.id, replace: true,
+  });
+  await setStatus(pool, { appId: app.id, messageId, issueNumber: change.issueNumber, status: 'fixing', sessionId: change.id, deps });
+  log.info('homeroom-bot-chat', 'Sent a fix asked for in a project\'s chat to the bot\'s change', {
+    app: app.slug, sessionId: change.id, issueNumber: change.issueNumber, userId: user.id,
+  });
+  const [card] = await cardsOf(pool, { appId: app.id, user, rows: [row], deps });
+  return { card };
+}
+
+/**
+ * The bot's pending changes on `app` a message may be asking about, and the
+ * one it names itself (pickChange), when the bot builds here. Never throws.
+ */
+async function changesAsked(pool, { app, messageId, words, deps = {} }) {
+  try {
+    const bot = await dmModule(deps).botAccount(pool);
+    const changes = await pendingChanges(pool, { appId: app.id, botId: bot?.id || null });
+    if (!changes.length) return { changes, picked: null };
+    const quoted = await quotedRefs(pool, { appId: app.id, messageId }).catch(() => null);
+    return { changes, picked: pickChange({ words, changes, slug: app.slug, quoted }) };
+  } catch (err) {
+    log.warn('homeroom-bot-chat', 'Could not read the bot\'s pending changes (filing as before)', { app: app.slug, err: err.message });
+    return { changes: [], picked: null };
+  }
 }
 
 /**
@@ -333,7 +881,8 @@ async function askFromMessage(pool, config, { app, user, messageId, content, cho
     : await botFor(pool, { app, user, deps });
   if (!here) return { ok: false, status: 403, error: 'Homeroom bot is not on for you yet.', code: 'not_enabled' };
   if (already && (already.issue_number != null || !chosen)) {
-    return { ok: true, card: cardOf(already, { builds: here.builds }), already: true };
+    const [card] = await cardsOf(pool, { appId: app.id, user, rows: [already], builds: here.builds, typical: here.builds, deps });
+    return { ok: true, card, already: true };
   }
   const words = askedWords(content);
   if (!words) return { ok: false, status: 400, error: 'There is nothing in the message to ask for.', code: 'empty' };
@@ -345,11 +894,24 @@ async function askFromMessage(pool, config, { app, user, messageId, content, cho
   let kind = 'change';
   // WP-C: File it / Suggest it keeps the title the card already showed.
   let title = chosen && already?.title ? already.title : null;
+  // Fix in place: the bot's pending change this message asks to fix, if any.
+  let target = null;
   if (!chosen) {
+    const asked = here.builds ? await changesAsked(pool, { app, messageId, words, deps }) : { changes: [], picked: null };
+    const offered = offeredChanges(asked.changes);
     try {
-      const read = await (deps.readAsk || require('./llm').readChatAsk)({ text: words, appName: app.name || app.slug });
+      const read = await (deps.readAsk || require('./llm').readChatAsk)({
+        text: words, appName: app.name || app.slug, ...(offered.length ? { changes: offered } : {}),
+      });
       kind = read?.kind || 'unsure';
       title = read?.title || null;
+      // A change it names itself is that change, whichever the read thought;
+      // otherwise the one the read named, of those it was offered.
+      if (kind === 'revise' || (kind === 'change' && asked.picked)) {
+        const named = offered.findIndex((o) => o.id === read?.change);
+        target = asked.picked?.change || (named >= 0 ? asked.changes[named] : null);
+        kind = target ? 'revise' : 'change';
+      }
     } catch (err) {
       // No read: ask them, rather than file something they may not have meant.
       log.warn('homeroom-bot-chat', 'Could not read a message to Homeroom bot (asking first)', { app: app.slug, err: err.message });
@@ -363,6 +925,20 @@ async function askFromMessage(pool, config, { app, user, messageId, content, cho
     const card = cardOf(row || { chat_message_id: messageId, kind, title: null, issue_number: null });
     pushCard(user.id, app.slug, card, deps);
     return { ok: true, card };
+  }
+  if (kind === 'revise' && target) {
+    try {
+      const out = await reviseFromMessage(pool, config, { app, user, messageId, words, title, change: target, here, deps });
+      pushCard(user.id, app.slug, out.card, deps);
+      return out.refused
+        ? { ok: false, status: 409, error: 'I couldn\'t change it just now.', code: 'revise_refused', card: out.card }
+        : { ok: true, card: out.card };
+    } catch (err) {
+      log.warn('homeroom-bot-chat', 'Could not send a fix asked for in a chat', { app: app.slug, userId: user.id, err: err.message });
+      const card = { messageId: Number(messageId), kind: 'failed', title: null, issueNumber: null };
+      pushCard(user.id, app.slug, card, deps);
+      return { ok: false, status: 502, error: 'I couldn\'t send it just now. Try again in a minute.', code: 'revise_failed', card };
+    }
   }
   try {
     const card = await fileMessage(pool, config, {
@@ -491,16 +1067,15 @@ async function myRequests(pool, { app, user, deps = {} }) {
       ORDER BY chat_message_id DESC LIMIT 100`,
     [app.id, user.id],
   );
-  const typicalMinutes = here?.builds ? await dmModule(deps).typicalMinutes(pool).catch(() => null) : null;
-  const first = rows.some((row) => row.issue_number != null)
-    ? await firstRequestOf(pool, app.id, user.id).catch(() => null) : null;
+  // Each says where its request stands now, and a chip a missed moment
+  // left behind is put right for the room.
+  const cards = await cardsOf(pool, {
+    appId: app.id, user, rows, builds: true, typical: !!here?.builds, deps, reconcile: true,
+  });
   return {
     bot: !!here,
     builds: !!here?.builds,
-    cards: rows.map((row) => cardOf(row, {
-      builds: row.kind === 'group' ? false : true, typicalMinutes,
-      first: first != null && Number(row.issue_number) === first,
-    })),
+    cards,
   };
 }
 
@@ -524,6 +1099,16 @@ module.exports = {
   fallbackTitle,
   botFor,
   cardOf,
+  approvalOf,
+  CARD_STAGES,
+  stageOf,
+  chipFor,
+  cardsOf,
+  pendingChanges,
+  quotedRefs,
+  pickChange,
+  offeredChanges,
+  reviseFromMessage,
   setStatus,
   noteRequestStatus,
   noteChatMessage,

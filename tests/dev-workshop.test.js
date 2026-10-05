@@ -1518,7 +1518,7 @@ test('#1934: the rest of the unclaimed issues are the rest of the deck', () => {
   // in the DOM), votes first. The question itself is on the Vote sheet,
   // which opens on a press; at rest an item says what kind of thing it is.
   const needs = workshopHtml(AppView, 'needs');
-  assert.match(needs, /data-ws-item="vote:[^"]+" data-ws-kind="vote"[\s\S]*?Proposal · needs your vote/, 'the first item is a vote');
+  assert.match(needs, /data-ws-item="vote:[^"]+" data-ws-kind="vote"[\s\S]*?Change · Waiting for your approval/, 'the first item is a vote');
   assert.match(needs, /data-ws-kind="claim"[\s\S]*?>Request</, 'the claims follow');
   assert.ok(!needs.includes('data-ws-ask-q'), 'the question is on the sheet, not on the item');
   assert.ok(!needs.includes('data-ws-next-more'), 'the vertical reveal is long retired');
@@ -2008,7 +2008,7 @@ test('the vote badge is a ring AND the count in words, and cannot be closed', ()
   // once, on the end card, which is the only place it is news.
   assert.ok(!html.includes('dev-ws-vote-ring'), 'no ring');
   assert.ok(!/proposals? needs? your vote</.test(html), 'no debt in words');
-  assert.match(html, /class="dev-ws-eyebrow">Proposal · needs your vote</, 'the kind, per item');
+  assert.match(html, /class="dev-ws-eyebrow">Change · Waiting for your approval</, 'the kind, per item, in the change page\'s words');
   assert.match(html, /class="dev-ws-item-of">1 \/ \d+</, 'and the place in the feed');
   assert.ok(!html.includes('dev-ws-needs-count'), 'the strip-head pair is retired');
   assert.ok(!CSS.includes('.dev-ws-needs-count {'), 'and so is its rule');
@@ -2025,8 +2025,35 @@ test('an item names its kind; no sentence counts what is owed', () => {
   const AppView = makeAppView();
   seed(AppView);
   const html = workshopHtml(AppView, 'needs');
-  assert.match(html, /class="dev-ws-eyebrow">Proposal · needs your vote</);
+  assert.match(html, /class="dev-ws-eyebrow">Change · Waiting for your approval</);
   assert.ok(!/1 proposal needs your vote</.test(html), 'the sentence that counted the debt is gone');
+  assert.ok(!/needs your vote</.test(html), 'nor the old eyebrow');
+});
+
+test('a Needs-you item reads as its change page: "Homeroom bot · made", and the count in words', () => {
+  // First-session run-through, 5 Oct 2026: a flatmate's Needs you read
+  // "homeroom_bot · proposed 29m ago" over "0 of 2 yes", while the change's
+  // own page said "Homeroom bot · made 29m ago" (#3854).
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._proposals[0].username = 'homeroom_bot';
+  const html = workshopHtml(AppView, 'needs');
+  const by = /<p class="dev-ws-item-by">[\s\S]*?<\/p>/.exec(html);
+  assert.ok(by, 'the item has its by-line');
+  assert.match(by[0], /aria-hidden="true">H<\/span><span><b>Homeroom bot<\/b> · made /, 'the bot by its name, and what it did');
+  assert.doesNotMatch(by[0], /homeroom_bot|proposed/, 'not its account, not "proposed"');
+  // The count against the threshold, in the words an at-least-N pill uses
+  // on the change page ("1 of 2 approvals"), and no bare "1/2" beside it.
+  const facts = /<button type="button" class="dev-ws-item-facts"[^>]*>([\s\S]*?)<\/button>/.exec(html);
+  assert.ok(facts, 'the facts line');
+  assert.match(facts[1], />1 of \d+ approvals?</);
+  assert.doesNotMatch(facts[1], / yes<|\d\/\d|\d \/ \d/, 'no "1 of 2 yes", no bare fraction');
+
+  // A person's change keeps their name and "proposed", as its page does.
+  const People = makeAppView();
+  seed(People);
+  const theirs = workshopHtml(People, 'needs');
+  assert.match(theirs, /<b>carol<\/b> · proposed /);
 });
 
 test('the viewer\u2019s own work in flight leads the lander', () => {
@@ -2411,7 +2438,7 @@ test('#2172: one card past the last item is the summary, and it is the screen wh
   assert.match(html, /dev-ws-done-back" data-ws-done-back=""[^>]*>Back to the first one you skipped</, 'and back up the feed');
   // The ring states where the viewer stands against everything they could
   // vote on: three promoted, none answered.
-  assert.match(html, /dev-ws-done-ring[\s\S]*?aria-label="0 of 3 open proposals voted on"/);
+  assert.match(html, /dev-ws-done-ring[\s\S]*?aria-label="0 of 3 open changes voted on"/);
   // THE RAIL ON THE END CARD is the move pair alone, so the way back up stays
   // where the thumb learned it is and the stage keeps its width on a wide
   // window; the item rail is drawn only for an item.
@@ -2443,7 +2470,10 @@ test('#2172: one card past the last item is the summary, and it is the screen wh
   const only = empty.match(/ data-ws-item="/g) || [];
   assert.equal(only.length, 1, 'the end card alone');
   assert.match(empty, /dev-ws-needs-done-line">You’re all caught up\.</);
-  assert.match(empty, /Every proposal you can vote on has your answer, and every open request has somebody on it\./);
+  assert.match(empty, /Every change you can vote on has your answer, and every open request has somebody on it\./);
+  // Plain words (#3861 follow-up, 5 Oct 2026 run): the end card says changes, as the cards above it do.
+  assert.match(WORKSHOP, /You voted on \$\{plural\(acted, 'change', 'changes'\)\} this time\./);
+  assert.ok(!/open proposals voted on|Every proposal you can vote on|'proposal', 'proposals'\) this time/.test(WORKSHOP), 'no proposal wording left on the end card');
   assert.ok(!empty.includes('data-ws-done-back'), 'nothing to go back to');
   assert.ok(!empty.includes('data-ws-rail'), 'and no rail');
 });
@@ -4516,8 +4546,11 @@ test('the sheets move, stop above the keyboard, and More opens the card page', (
     'the workshop sheet must not re-derive the keyboard: read --un-kb-inset');
   assert.match(WORKSHOP, /classList\.contains\('un-kb'\)/);
   assert.match(WORKSHOP, /\}, \[sheet, wide\]\);/);
-  assert.match(CSS, /\.dev-ws-sheet-modal \{\s*position: fixed; inset: 0; z-index: 30;[\s\S]*?bottom: var\(--un-kb-inset, 0px\);/);
-  assert.match(CSS, /\.dev-ws-needs\[data-ws-kb\] \.dev-ws-sheet-card \{ max-height: 100%; \}/);
+  assert.match(CSS, /\.dev-ws-sheet-modal \{\s*position: fixed; inset: 0; z-index: 40;[\s\S]*?bottom: var\(--un-kb-inset, 0px\);/);
+  // Keys up: the card takes the strip above them, short of the status bar,
+  // and drops the home-indicator clearance the keys now cover
+  // (tests/needs-sheet-above-bars.test.js has the why).
+  assert.match(CSS, /\.dev-ws-needs\[data-ws-kb\] \.dev-ws-sheet-card \{ max-height: calc\(100% - var\(--platform-safe-top, 0px\)\); padding-bottom: 12px; \}/);
   assert.match(CSS, /padding: 8px 16px calc\(12px \+ var\(--platform-safe-bottom, 0px\)\);/,
     'and the floor clears the home indicator');
   // OPEN CARD. The item is the whole screen, so the card's own page is a row
@@ -4996,9 +5029,11 @@ test('#2182: "What you are working on" stays on screen with nothing in it, and s
   // BUG g: the note sent the viewer to "start something from the + button",
   // and the "+" has no propose row — starting a change is the Homeroom
   // menu's New change (an owner decision, #2740 review). It names that door
-  // now, by the name the header gives the menu.
-  assert.match(html, /data-ws-lane="mine"><p class="[^"]*" data-ws-mine-empty="">You have no work going on\. Pick up an open item in All items, or use Start a new change in the Homeroom menu\.<\/p>/,
+  // now, by the name the menu gives it: Build it yourself since B8.
+  assert.equal(v.mine.bot, false, 'Homeroom bot does not build here');
+  assert.match(html, /data-ws-lane="mine"><p class="[^"]*" data-ws-mine-empty="">You have no work going on\. Pick up an open item in All items, or use Build it yourself in the Homeroom menu\.<\/p>/,
     'with the note in the lane');
+  assert.doesNotMatch(html, /Start a new change in the Homeroom menu/, 'not the row\'s old name');
   assert.doesNotMatch(html, /start something from the \+ button/, 'and not the door that cannot open');
   // A read-only viewer has neither door (no New change, no board writes), so
   // the note states the fact and offers nothing to press.
@@ -5009,6 +5044,19 @@ test('#2182: "What you are working on" stays on screen with nothing in it, and s
   });
   assert.ok(!html.includes('data-ws-mine-more'), 'and no more-of-yours button');
   assert.ok(html.indexOf('data-ws-mine=""') < html.indexOf('data-ws-dashboard'), 'in its place, leading the Workshop page');
+  // First-session run-through, 5 Oct 2026: where Homeroom bot builds for
+  // this viewer (the request pages' door, AppView._botDoor), the way in is
+  // asking it, not the developer path.
+  AppView._ghIssuesMeta = { ...(AppView._ghIssuesMeta || {}), homeroomBot: { typicalMinutes: 8 } };
+  assert.equal(AppView._workshopView().mine.bot, true);
+  const bot = workshopHtml(AppView, 'workshop');
+  assert.match(bot, /data-ws-mine-empty="">You have no work going on\. To change something, tell Homeroom bot, or use Ask for a change in the Homeroom menu\.<\/p>/,
+    'the bot\'s project points at asking for a change');
+  assert.doesNotMatch(bot, /Pick up an open item|Build it yourself in the Homeroom menu/, 'and not at building it');
+  withDevActions({ readOnly: true }, () => {
+    assert.match(workshopHtml(AppView, 'workshop'), /data-ws-mine-empty="">You have no work going on\.<\/p>/,
+      'a read-only viewer is still told the fact alone');
+  });
   // The declared check reaches this state through ?shot=mine-empty, whatever
   // the demo seeded for the viewer.
   const Seeded = makeAppView();

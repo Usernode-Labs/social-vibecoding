@@ -6531,6 +6531,68 @@
   })();
   /* __USERNODE_THEME_END__ */
 
+  // =====================================================================
+  //  Public API: preview clock (usernode.now) - additive within v1
+  // =====================================================================
+  //
+  // A staging preview can be shown as of a chosen moment, so a change that
+  // only shows at certain times (an evening-before reminder, a weekly rota,
+  // a deadline) can be seen before anyone votes on it. When a change
+  // declares a moment, the platform opens its preview with `?un-now=<ISO
+  // instant>` on the frame URL (src/services/preview-clock.js). This block
+  // turns that into:
+  //
+  //   1. `usernode.now()`: a Date. The real time, or on a preview opened at
+  //      a moment, that moment plus the time since the page loaded, so
+  //      clocks on the page still tick.
+  //   2. `usernode.previewNow`: the moment the page was opened at, as an ISO
+  //      string, or null. When it is set, the page sends `usernode.now()`
+  //      to its own server as the `x-usernode-now` header, and the server
+  //      reads it into `req.now` only when USERNODE_ENV is "staging".
+  //
+  // PRODUCTION IGNORES IT. A production app is served over https at one
+  // clean label under the apps domain (`<slug>.<apps domain>`), the same
+  // test the platform link below uses, and on such a page `un-now` is never
+  // read. A preview (`<slug>--s<id>`), the before & after copies and a
+  // local run (plain http) honour it. The platform only ever adds it to a
+  // preview's address. Only a full ISO instant with a zone (Z or +hh:mm) is
+  // taken.
+  /* __USERNODE_CLOCK_BEGIN__ */
+  (function () {
+    var INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/;
+
+    function productionHost() {
+      try {
+        if (window.location.protocol !== "https:") return false;
+        var host = String(window.location.hostname || "").toLowerCase();
+        var dot = host.indexOf(".");
+        if (dot <= 0) return false;
+        if (host.slice(0, dot).indexOf("--") !== -1) return false;
+        // `<slug>.localhost` and other single-label parents are dev hosts.
+        return host.slice(dot + 1).indexOf(".") !== -1;
+      } catch (_) {
+        return true;
+      }
+    }
+
+    var offset = 0;
+    var seeded = null;
+    try {
+      var raw = new URLSearchParams(window.location.search).get("un-now");
+      var at = raw && INSTANT.test(raw) ? Date.parse(raw) : NaN;
+      if (isFinite(at) && !productionHost()) {
+        seeded = new Date(at).toISOString();
+        offset = at - Date.now();
+      }
+    } catch (_) {}
+
+    window.usernode.previewNow = seeded;
+    window.usernode.now = function () {
+      return new Date(Date.now() + offset);
+    };
+  })();
+  /* __USERNODE_CLOCK_END__ */
+
   // #1581: iOS paints the embedding iframe's background behind a rubber-band
   // scroll, not the child document's html background. Publish the document's
   // solid ground so the host can paint that surface too. This is automatic:

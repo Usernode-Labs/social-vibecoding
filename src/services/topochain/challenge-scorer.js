@@ -988,12 +988,16 @@ const CADENCE_RULES_SQL = `
 `;
 
 // `rows` are the list's own joined challenge rows (challenge columns bare,
-// template columns `t_`), which carry every field skipReason reads. Returns a
-// Map of challenge id -> { intervalMinutes, lastScoredAt }, holding only the
-// challenges something counts. Asks Postgres nothing when the schedule is off
-// (a default of 0 runs no rule at all) or the list is empty.
-async function loadCadence(pool, eventId, rows, { defaultMinutes, now = Date.now() } = {}) {
-  const out = new Map();
+// template columns `t_`), which carry every field skipReason reads. Returns
+// two Maps keyed by challenge id, each holding only the challenges something
+// counts: `cadence` -> { intervalMinutes, lastScoredAt } (rules.cadenceOf),
+// and `countedBy` -> { measure, target } (rules.countedByOf). Asks Postgres
+// nothing when the schedule is off (a default of 0 runs no rule at all) or
+// the list is empty.
+async function loadRuleFacts(pool, eventId, rows, { defaultMinutes, now = Date.now() } = {}) {
+  const cadence = new Map();
+  const countedBy = new Map();
+  const out = { cadence, countedBy };
   if (!(Number(defaultMinutes) > 0) || !rows || !rows.length) return out;
   const templateIds = [...new Set(rows.map((r) => r.challenge_template_id)
     .filter((v) => v != null).map(Number))];
@@ -1015,10 +1019,18 @@ async function loadCadence(pool, eventId, rows, { defaultMinutes, now = Date.now
         intervalMinutes: r.interval_minutes,
         lastScoredAt: r.last_scored_at,
       }));
-    const cadence = rules.cadenceOf(bound, { ...row, event_starts_at, event_ends_at }, { now, defaultMinutes });
-    if (cadence) out.set(Number(row.id), cadence);
+    const at = { ...row, event_starts_at, event_ends_at };
+    const c = rules.cadenceOf(bound, at, { now, defaultMinutes });
+    if (c) cadence.set(Number(row.id), c);
+    const by = rules.countedByOf(bound, at, { now, defaultMinutes });
+    if (by) countedBy.set(Number(row.id), by);
   }
   return out;
+}
+
+// The cadence half alone: Map of challenge id -> { intervalMinutes, lastScoredAt }.
+async function loadCadence(pool, eventId, rows, opts = {}) {
+  return (await loadRuleFacts(pool, eventId, rows, opts)).cadence;
 }
 
 // When this process last looked at the standings. In memory, and per process,
@@ -1293,6 +1305,7 @@ module.exports = {
   loadCredited,
   dueRuleIds,
   loadCadence,
+  loadRuleFacts,
   intervalMinutes,
   aggregateHours,
   MAX_CREDITS_PER_RUN,

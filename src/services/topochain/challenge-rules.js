@@ -638,6 +638,26 @@ function cadenceOf(ruleList, row, { now = Date.now(), defaultMinutes } = {}) {
   return { intervalMinutes: minutes, lastScoredAt: last };
 }
 
+// What a participant's page says about how a challenge is counted (#3253,
+// #3248): the measure of the rule that scores it right now, and, for a
+// measure that counts, the target past which nothing more is credited (the
+// `already >= target` cap in planCredits). Unlike cadenceOf it does not wait
+// for a first run: what counts is known before anything has been counted.
+// Only a rule the scheduler would run (skipReason null, a schedule) speaks,
+// so a page never explains a rule that is not going to score it. The first
+// such rule wins; `measure` is always a MEASURES key, never free text.
+//
+// null when nothing scores it.
+function countedByOf(ruleList, row, { now = Date.now(), defaultMinutes } = {}) {
+  for (const rule of ruleList || []) {
+    if (skipReason(rule, row, { now })) continue;
+    if (effectiveInterval(rule, defaultMinutes) == null) continue;
+    const spec = MEASURES[rule.measure];
+    return { measure: rule.measure, target: spec.counted ? effectiveTarget(rule, row) : null };
+  }
+  return null;
+}
+
 // The order one run takes its rules in. Two things ride on it:
 //
 //   Cheap before expensive. A graded rule can spend most of a minute on
@@ -682,5 +702,6 @@ module.exports = {
   isDue,
   nextDueAt,
   cadenceOf,
+  countedByOf,
   runOrder,
 };

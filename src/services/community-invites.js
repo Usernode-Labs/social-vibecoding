@@ -333,29 +333,64 @@ function inDays(ms) {
 /**
  * WP-D: the one line on what joining means for the people a link brings,
  * said from the project's real rule (services/governance.js, and the default
- * gate's numbers in active-users.js), never written out by hand: with one
- * other person using it, who has to say yes, and what happens when only one
- * of them does. Small on purpose: information, not a warning. `app` carries
- * id and locked. Never throws; null when the rule cannot be read.
+ * gate's numbers in active-users.js), never written out by hand. Small on
+ * purpose: information, not a warning. Pure; joiningRule reads its inputs.
+ *
+ * Under the default rule it is said for the people it counts: `people`, the
+ * vote's own denominator (active-users.js getActiveUserStats: who uses it,
+ * floored at two once it is a group), plus `invited`, the invites by
+ * username still waiting, who count once they accept. Until anybody else is
+ * in it, the maker and the first person they bring: "With one other person
+ * using it". First-session run-through, 5 October 2026: that sentence was
+ * all it ever said, with a second member in and a third invited.
+ */
+function joiningRuleText({ approvalsRequired = null, approverPolicy = 'anyone', locked = false, people = 1, invited = 0 } = {}) {
+  const votes = require('./active-users');
+  const admin = locked ? ' An admin has to say yes too.' : '';
+  if (approvalsRequired != null) {
+    const n = approvalsRequired;
+    const whose = approverPolicy === 'invited' ? ' from its approvers' : '';
+    return `A change goes live once it has ${n === 1 ? 'a yes' : `${n} yes votes`}${whose}.${admin}`;
+  }
+  if (approverPolicy === 'invited') return `A change goes live once its approvers back it.${admin}`;
+  const waiting = Math.max(0, parseInt(invited, 10) || 0);
+  const total = Math.max(2, (parseInt(people, 10) || 0) + waiting);
+  const required = votes.requiredVotes(total, 0);
+  const lazy = votes.lazyWindowMs(total, 1, 0);
+  if (total === 2) {
+    if (required <= 1) return `With one other person using it, a change goes live when either of you says yes.${admin}`;
+    const wait = lazy == null ? '' : `, or ${inDays(lazy)} after one of you says yes if the other doesn't answer`;
+    return `With one other person using it, a change goes live when you both say yes${wait}.${admin}`;
+  }
+  const headcount = waiting ? `${total} people in it, counting ${waiting} invited` : `${total} people using it`;
+  const who = required <= 1 ? 'one of you says' : `${required} of you say`;
+  const wait = lazy == null ? '' : `, or ${inDays(lazy)} after the first yes if nobody says no`;
+  return `With ${headcount}, a change goes live when ${who} yes${wait}.${admin}`;
+}
+
+/**
+ * joiningRuleText for `app` (carrying id and locked), with its rule and its
+ * headcount read. Never throws; null when the rule cannot be read.
  */
 async function joiningRule(pool, app) {
   try {
     const governance = require('./governance');
-    const votes = require('./active-users');
     const gov = await governance.getGovernance(pool, app.id);
-    const admin = app.locked ? ' An admin has to say yes too.' : '';
-    if (gov.approvalsRequired != null) {
-      const n = gov.approvalsRequired;
-      const whose = gov.approverPolicy === 'invited' ? ' from its approvers' : '';
-      return `A change goes live once it has ${n === 1 ? 'a yes' : `${n} yes votes`}${whose}.${admin}`;
+    let people = 1;
+    let invited = 0;
+    if (gov.approvalsRequired == null && gov.approverPolicy !== 'invited') {
+      const votes = require('./active-users');
+      const [stats, { rows }] = await Promise.all([
+        votes.getActiveUserStats(pool, app.id),
+        pool.query(
+          `SELECT COUNT(*)::int AS n FROM app_collaborators WHERE app_id = $1 AND status = 'invited'`,
+          [app.id]
+        ),
+      ]);
+      people = stats.active;
+      invited = rows[0]?.n || 0;
     }
-    if (gov.approverPolicy === 'invited') return `A change goes live once its approvers back it.${admin}`;
-    // Two people using it: the maker and the first person the link brings.
-    const required = votes.requiredVotes(2, 0);
-    if (required <= 1) return `With one other person using it, a change goes live when either of you says yes.${admin}`;
-    const lazy = votes.lazyWindowMs(2, 1, 0);
-    const wait = lazy == null ? '' : `, or ${inDays(lazy)} after one of you says yes if the other doesn't answer`;
-    return `With one other person using it, a change goes live when you both say yes${wait}.${admin}`;
+    return joiningRuleText({ ...gov, locked: !!app.locked, people, invited });
   } catch (err) {
     log.warn('invites', 'Could not read the joining rule', { appId: app?.id, err: err.message });
     return null;
@@ -853,6 +888,7 @@ module.exports = {
   pictureBytes,
   sketchPage,
   joiningRule,
+  joiningRuleText,
   NO_LIMIT,
   MAX_LIVE_PER_MAKER,
   TOKEN_RE,

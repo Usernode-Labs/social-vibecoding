@@ -5277,6 +5277,9 @@ INSERT INTO mobile_push_kind_categories (kind, category, default_enabled) VALUES
   ('conversation_reaction', 'messages', TRUE),
   -- #2387: a reply in a conversation thread you started or replied in.
   ('conversation_thread_reply', 'messages', TRUE),
+  -- A person's message in a small private group's discussion
+  -- (services/group-channel-notify.js): the group's chat, so Messages.
+  ('channel_message', 'messages', TRUE),
   -- WP-E: the Homeroom bot's moments about something you asked it for
   -- (services/homeroom-bot-dm.js BUILD_KINDS), so turning Messages off does
   -- not silence "it's ready to try".
@@ -5316,6 +5319,8 @@ DELETE FROM mobile_push_kind_categories
    'friend_request', 'friend_accept',
    -- #2387.
    'conversation_thread_reply',
+   -- A small private group's discussion.
+   'channel_message',
    -- #3181.
    'session_stalled',
    -- Server-wide limit alerts for full admins.
@@ -9973,7 +9978,9 @@ CREATE INDEX IF NOT EXISTS homeroom_bot_runs_awaiting_go_idx
 -- (GET /api/apps/:slug/my-bot-requests), never from chat_messages. `kind`:
 -- filed (the bot builds it), group (filed for the group, where the bot does
 -- not build), unsure (asks the person first), question (pointed at the
--- bot's own chat), dismissed (they said not now).
+-- bot's own chat), dismissed (they said not now), revise (a fix asked for
+-- on one of the bot's own changes still waiting for approval, sent to that
+-- change rather than filed as a new request).
 CREATE TABLE IF NOT EXISTS chat_bot_requests (
   chat_message_id INTEGER PRIMARY KEY REFERENCES chat_messages(id) ON DELETE CASCADE,
   app_id          INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
@@ -9983,24 +9990,29 @@ CREATE TABLE IF NOT EXISTS chat_bot_requests (
   title           TEXT,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT chat_bot_requests_kind_check CHECK (kind IN ('filed', 'group', 'unsure', 'question', 'dismissed', 'offer'))
+  CONSTRAINT chat_bot_requests_kind_check CHECK (kind IN ('filed', 'group', 'unsure', 'question', 'dismissed', 'offer', 'revise'))
 );
 -- WP-C: 'offer', a newcomer's message that reads as an idea, offered to them
--- as a request (homeroom-bot-chat.js maybeOffer). A table made before it has
--- the five-kind check; widen it once.
+-- as a request (homeroom-bot-chat.js maybeOffer). Fix in place (5 October):
+-- 'revise', a mention asking to fix one of the bot's own changes before it
+-- goes live (homeroom-bot-chat.js reviseFromMessage). A table made before
+-- either has a narrower check; widen it once.
 DO $$
 BEGIN
   IF EXISTS (
     SELECT 1 FROM pg_constraint
      WHERE conrelid = 'chat_bot_requests'::regclass
        AND conname = 'chat_bot_requests_kind_check'
-       AND pg_get_constraintdef(oid) NOT LIKE '%offer%'
+       AND pg_get_constraintdef(oid) NOT LIKE '%revise%'
   ) THEN
     ALTER TABLE chat_bot_requests DROP CONSTRAINT chat_bot_requests_kind_check;
     ALTER TABLE chat_bot_requests ADD CONSTRAINT chat_bot_requests_kind_check
-      CHECK (kind IN ('filed', 'group', 'unsure', 'question', 'dismissed', 'offer'));
+      CHECK (kind IN ('filed', 'group', 'unsure', 'question', 'dismissed', 'offer', 'revise'));
   END IF;
 END $$;
+-- The change a 'revise' row asked about: its card and its chip follow that
+-- change (its discussion, its revision, approval, live), not a new request.
+ALTER TABLE chat_bot_requests ADD COLUMN IF NOT EXISTS session_id INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_chat_bot_requests_requester
   ON chat_bot_requests(requester_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_chat_bot_requests_issue
@@ -11882,3 +11894,36 @@ CREATE INDEX IF NOT EXISTS edge_grant_redemptions_expiry_idx
 -- app host at once. This index is that lookup.
 CREATE INDEX IF NOT EXISTS sessions_token_sha256_idx
   ON sessions (encode(sha256(token::bytea), 'hex'));
+
+-- A change that went live inside another one (services/included-changes.js):
+-- when a change merges, an open change whose head commit is one of the
+-- merged pull request's own commits was built on, so its work is live too.
+-- It is marked merged with the merge it went live in (merged_at and
+-- merge_commit_sha are that merge's), and this names the change that
+-- carried it, so its page says "Live, included in #8" and nothing asks for
+-- its vote. NULL for every change that merged on its own. ON DELETE SET
+-- NULL: deleting the carrying change leaves this one merged.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS included_in_session_id INTEGER
+  REFERENCES chat_sessions(id) ON DELETE SET NULL;
+
+-- The inviter's note with an invite by @username (the first session's
+-- invite sheet, frontend/src/features/first-session/made.tsx, and
+-- POST /api/apps/:slug/invites): their own words, shown on the invite the
+-- person accepts, as a link's note is on the page it opens
+-- (community_invites.note). Plain text, at most 280 characters; NULL when
+-- they left none. services/collab-invites.js sendInvite is the one writer,
+-- through community-invites.js cleanNote. Kept once the invite is accepted,
+-- like invited_by.
+ALTER TABLE app_collaborators ADD COLUMN IF NOT EXISTS invite_note TEXT;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'app_collaborators'::regclass
+       AND conname = 'app_collaborators_invite_note_length'
+  ) THEN
+    ALTER TABLE app_collaborators
+      ADD CONSTRAINT app_collaborators_invite_note_length
+      CHECK (invite_note IS NULL OR char_length(invite_note) BETWEEN 1 AND 280);
+  END IF;
+END $$;

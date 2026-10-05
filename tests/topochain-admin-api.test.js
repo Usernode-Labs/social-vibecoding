@@ -571,19 +571,45 @@ function filterUsersIndex(sql, params) {
 }
 
 // user-activities index: same "detect which optional clauses are present,
-// then consume params in the route's own push order" trick.
+// then consume params in the route's own push order" trick. The search
+// clause is appended last and its digit form ALSO contains `ua.user_id = $`
+// (inside its own OR), so the fixed user_id filter is detected by position —
+// it must sit before the search clause's `su.email ILIKE` marker to count.
 function filterActivitiesIndex(sql, params) {
   let idx = 0;
   let seasonEventId = null;
   let userId = null;
   let activityType = null;
+  let searchPattern = null;
+  let searchUserId = null;
+  const posSearch = sql.indexOf('su.email ILIKE');
   if (sql.includes('ua.season_event_id = $')) { seasonEventId = params[idx]; idx += 1; }
-  if (sql.includes('ua.user_id = $')) { userId = params[idx]; idx += 1; }
+  const posUser = sql.indexOf('ua.user_id = $');
+  if (posUser >= 0 && (posSearch < 0 || posUser < posSearch)) { userId = params[idx]; idx += 1; }
   if (sql.includes('ua.activity_type = $')) { activityType = params[idx]; idx += 1; }
+  if (posSearch >= 0) {
+    searchPattern = params[idx]; idx += 1;
+    // The digit form binds the bare user id right after the ILIKE pattern.
+    if (sql.slice(posSearch).includes('ua.user_id = $')) { searchUserId = params[idx]; idx += 1; }
+  }
+
+  // The route escapes LIKE metacharacters; undo the escapes so the in-memory
+  // match behaves like the SQL (a literal % or _ in the term).
+  const searchNeedle = searchPattern
+    ? searchPattern.replace(/^%|%$/g, '').replace(/\\(.)/g, '$1').toLowerCase()
+    : null;
+  const searchMatches = (a) => {
+    if (searchUserId != null && a.user_id === searchUserId) return true;
+    if (searchNeedle == null) return false;
+    const u = db.users.find((x) => x.id === a.user_id) || {};
+    return ['email', 'display_name', 'username', 'telegram', 'discord']
+      .some((col) => String(u[col] || '').toLowerCase().includes(searchNeedle));
+  };
 
   let rows = db.userActivities.filter((a) => (!seasonEventId || a.season_event_id === seasonEventId)
     && (!userId || a.user_id === userId)
-    && (!activityType || a.activity_type === activityType));
+    && (!activityType || a.activity_type === activityType)
+    && (!searchPattern || searchMatches(a)));
   rows = rows.slice().sort((a, b) => new Date(b.activity_at) - new Date(a.activity_at) || b.id - a.id);
   if (sql.includes('LIMIT')) {
     const limit = params[idx];
@@ -1440,6 +1466,113 @@ test('user-activities: import accepts challenge_id per row, runs in a transactio
     assert.equal(db.userActivities.length, 1);
     assert.ok(queryLog.includes('BEGIN'));
     assert.ok(queryLog.includes('COMMIT'));
+  } finally { server.close(); }
+});
+
+// ── ?search= narrowing ──────────────────────────────────────────────────
+//
+// The mock pool reproduces the clause matching in filterActivitiesIndex
+// above; these tests pin the ROUTE's contract: which identity columns match,
+// that an all-digit term also matches the bare user id, that search ANDs
+// with the other filters, and that LIKE metacharacters in the term match
+// literally (the route escapes them).
+function seedSearchFixtures() {
+  seedActivityFixtures();
+  db.users.push(
+    { id: 10, email: 'anna@example.com', display_name: 'Anna', username: 'anna', telegram: null, discord: null },
+    { id: 11, email: 'jo@example.com', display_name: 'Joanne', username: 'jo_h', telegram: null, discord: null },
+    { id: 12, email: '50pct@example.com', display_name: 'Fifty percent fan', username: 'fifty', telegram: null, discord: null }
+  );
+  db.userActivities.push(
+    { id: 2001, user_id: 10, season_event_id: 1, activity_type: 'onchain_tx', points: 5, activity_at: T(-5), challenge_id: 500, added_by: null, source: 'admin_ui' },
+    { id: 2002, user_id: 11, season_event_id: 1, activity_type: 'bug_report', points: 5, activity_at: T(-4), challenge_id: 500, added_by: null, source: 'admin_ui' },
+    { id: 2003, user_id: 12, season_event_id: 2, activity_type: 'onchain_tx', points: 5, activity_at: T(-3), challenge_id: 501, added_by: null, source: 'admin_ui' }
+  );
+}
+
+async function listActivities(base, query) {
+  const res = await fetch(`${base}/api/v4/admin/user-activities?${query}`);
+  assert.equal(res.status, 200);
+  return (await res.json());
+}
+
+test('user-activities: search matches display name, email and username case-insensitively as a substring', async () => {
+  seedSearchFixtures();
+  const { server, base } = await listen(buildSubApp(userActivitiesAdminRoutes));
+  try {
+    let body = await listActivities(base, 'search=anna');
+    assert.equal(body.data.length, 1);
+    assert.equal(body.data[0].user_id, 10);
+    assert.equal(body.meta.total, 1);
+
+    body = await listActivities(base, 'search=JOANNE');
+    assert.equal(body.data.length, 1);
+    assert.equal(body.data[0].user_id, 11);
+
+    body = await listActivities(base, 'search=ANNA@EXAMPLE');
+    assert.equal(body.data.length, 1);
+    assert.equal(body.data[0].user_id, 10);
+
+    body = await listActivities(base, 'search=jo_h');
+    assert.equal(body.data.length, 1);
+    assert.equal(body.data[0].user_id, 11);
+
+    body = await listActivities(base, 'search=nobody');
+    assert.equal(body.data.length, 0);
+    assert.equal(body.meta.total, 0);
+  } finally { server.close(); }
+});
+
+test('user-activities: an all-digit search also matches the bare user id', async () => {
+  seedSearchFixtures();
+  const { server, base } = await listen(buildSubApp(userActivitiesAdminRoutes));
+  try {
+    // "12" appears in none of user 12's identity columns — the id is what
+    // finds them. "10" likewise (anna@example.com has no "10").
+    for (const term of ['12', '10']) {
+      const body = await listActivities(base, `search=${term}`);
+      assert.equal(body.data.length, 1, `search=${term}`);
+      assert.equal(body.data[0].user_id, Number(term));
+    }
+  } finally { server.close(); }
+});
+
+test('user-activities: search ANDs with the other filters rather than replacing them', async () => {
+  seedSearchFixtures();
+  const { server, base } = await listen(buildSubApp(userActivitiesAdminRoutes));
+  try {
+    let body = await listActivities(base, 'search=50pct&season_event_id=2');
+    assert.equal(body.data.length, 1);
+    assert.equal(body.data[0].id, 2003);
+
+    body = await listActivities(base, 'search=50pct&season_event_id=1');
+    assert.equal(body.data.length, 0);
+
+    // The fixed ?user_id= filter still works alongside a search term.
+    body = await listActivities(base, 'search=anna&user_id=11');
+    assert.equal(body.data.length, 0);
+    body = await listActivities(base, 'search=anna&user_id=10');
+    assert.equal(body.data.length, 1);
+  } finally { server.close(); }
+});
+
+test('user-activities: LIKE metacharacters in the search term match literally', async () => {
+  seedSearchFixtures();
+  const { server, base } = await listen(buildSubApp(userActivitiesAdminRoutes));
+  try {
+    // "50%" unescaped as a LIKE pattern would match '50pct@example.com'
+    // (any string containing "50" followed by anything); escaped, it only
+    // matches a literal "50%", which no fixture column has.
+    let body = await listActivities(base, 'search=50%25');
+    assert.equal(body.data.length, 0);
+
+    // "_" unescaped would match any single character ("f_fty" → "fifty");
+    // escaped, it only matches a literal underscore.
+    body = await listActivities(base, 'search=f_fty');
+    assert.equal(body.data.length, 0);
+
+    body = await listActivities(base, 'search=fifty');
+    assert.equal(body.data.length, 1);
   } finally { server.close(); }
 });
 

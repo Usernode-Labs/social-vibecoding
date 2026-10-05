@@ -2636,7 +2636,7 @@
       "name": "The Workshop tab leads with the approval rules, which All items no longer leads with (#3487, #3528)",
       "path": "/?demo=1&ws=workshop#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"workshop\"] > .dev-ws-tabbody > [data-ws-approval-rules]:first-child > [data-ws-community-rule]",
-      "expectText": "to merge"
+      "expectText": "A change goes live"
     },
     {
       "name": "Kanban cards show the assignee initial-avatar",
