@@ -3056,7 +3056,12 @@ async function submitWork(deps, params) {
 // dead push must never turn a successful submission into an error. Every
 // failure here is a warning and nothing more.
 async function notifyConnectorSubmitted(pool, { userId, appId, sessionId, detail }) {
-  if (!userId || !sessionId) return;
+  // #3893: sessionId is optional. The platform's answer to a share or an
+  // import normally carries it, but `callPlatform` returns `body: null` when
+  // the loopback response does not parse as JSON — and the guard used to
+  // swallow the whole notification on that path, silently. A submission
+  // without the reference still landed; the owner is still told.
+  if (!userId) return;
   try {
     const notifications = require('./notifications');
     const created = await notifications.createConnectorSubmittedNotification(pool, {

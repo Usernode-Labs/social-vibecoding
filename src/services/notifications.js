@@ -644,14 +644,19 @@ async function createSessionStalledNotification(pool, { userId, appId, sessionId
 // detail, so sharing repeatedly onto the same card — which #1347 deliberately
 // allows — notifies once, while a later submit of that same card still does.
 async function createConnectorSubmittedNotification(pool, { userId, appId, sessionId, detail }) {
-  if (!userId || !sessionId) return [];
+  // #3893: only the user is required. A sessionless submission (the
+  // platform's answer carried no sessionId) still notifies, and its dedupe
+  // below uses IS NOT DISTINCT FROM so "no session" is its own bucket — for a
+  // present session that predicate is byte-for-byte equality, and for a NULL
+  // one it keeps repeated sessionless submissions from stacking unread rows.
+  if (!userId) return [];
   const kindDetail = (detail || 'submitted').slice(0, 32);
   const { rows } = await pool.query(
     `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail)
      SELECT $1, $2, $3, NULL, 'connector_submitted', $4::varchar
       WHERE NOT EXISTS (
         SELECT 1 FROM notifications n
-        WHERE n.user_id = $1 AND n.session_id = $3
+        WHERE n.user_id = $1 AND n.session_id IS NOT DISTINCT FROM $3
           AND n.kind = 'connector_submitted' AND n.detail IS NOT DISTINCT FROM $4
           AND n.read_at IS NULL
       )

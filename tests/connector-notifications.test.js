@@ -26,9 +26,11 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 
 const waits = require('../src/services/connector-input-waits');
 const pushPolicy = require('../src/services/mobile-push-policy');
+const notifications = require('../src/services/notifications');
 
 // The copy is exercised through buildMessage, the exported entry point, rather
 // than the internal builder — so these also prove the kind clears the
@@ -119,6 +121,139 @@ test('a failed notification never fails a submission that already landed', () =>
   assert.match(helper[0], /log\.warn/);
   assert.doesNotMatch(helper[0], /throw/,
     'the work is on GitHub by now — a dead push must not turn that into an error');
+});
+
+test('a submission without a session reference still notifies the owner', async () => {
+  // #3893. The helper's old guard skipped the whole notification whenever the
+  // platform's answer to the share or the import carried no sessionId — and
+  // callPlatform answers `body: null` when a loopback response does not parse
+  // as JSON, so a landed submission could be silent. The creator must still
+  // issue the INSERT, with the missing reference riding through as NULL.
+  const queries = [];
+  const pool = fakePool([
+    ['INSERT INTO notifications', (params) => {
+      assert.equal(params[0], 5, 'the owner');
+      assert.equal(params[1], 7, 'the app the task named');
+      assert.equal(params[2], null, 'no session reference — null rides through');
+      assert.equal(params[3], 'submitted', 'the destination is unchanged');
+      return [{ id: 12, user_id: 5, app_id: 7, session_id: null, kind: 'connector_submitted', detail: 'submitted' }];
+    }],
+  ], queries);
+  const created = await notifications.createConnectorSubmittedNotification(pool, {
+    userId: 5, appId: 7, sessionId: null, detail: 'submitted',
+  });
+  assert.equal(created.length, 1);
+  assert.equal(created[0].id, 12);
+  assert.ok(queries.some((q) => q.sql.includes('INSERT INTO notifications')),
+    'the INSERT went out — a missing session no longer early-returns');
+});
+
+test('unread sessionless rows collapse into one, per destination', () => {
+  // SQL `=` never matches NULL, so under the old dedupe a sessionless insert
+  // matched nothing and every such submission stacked another unread row.
+  // IS NOT DISTINCT FROM makes "no session" its own bucket — and for a
+  // present session it is byte-for-byte equality, so the per-session dedupe
+  // is untouched.
+  const fn = NOTIF_SRC.match(
+    /async function createConnectorSubmittedNotification[\s\S]*?\n\}/
+  );
+  assert.ok(fn, 'the creator exists');
+  assert.match(fn[0], /n\.session_id IS NOT DISTINCT FROM \$3/,
+    'a NULL session dedupes against other unread NULL-session rows');
+  assert.match(fn[0], /n\.detail IS NOT DISTINCT FROM \$4/,
+    'the destination clause is unchanged');
+});
+
+test('the notify guard requires only the owner, and the call sites still pass the answer', () => {
+  const helper = TASKS_SRC.match(/async function notifyConnectorSubmitted[\s\S]*?\n\}/);
+  assert.ok(helper, 'the helper exists');
+  assert.match(helper[0], /if \(!userId\) return;/,
+    'a sessionless submission still notifies');
+  // Both call sites read the session id off the platform's own answer,
+  // whatever it carried:
+  assert.match(TASKS_SRC, /const sessionId = shared\.body && shared\.body\.sessionId;/);
+  assert.match(TASKS_SRC, /const sessionId = imported\.body && imported\.body\.sessionId;/);
+});
+
+test('a sessionless row still hydrates and pushes', () => {
+  // hydrateAndPush LEFT-JOINs chat_sessions, so a NULL session_id hydrates
+  // rather than being filtered — the restored row reaches the bell and, via
+  // the push policy, the phone like any other.
+  const fn = NOTIF_SRC.match(/async function hydrateAndPush[\s\S]*?\n\}/);
+  assert.ok(fn, 'hydrateAndPush exists');
+  assert.match(fn[0], /LEFT JOIN chat_sessions cs ON cs\.id = n\.session_id/,
+    'a NULL-session row hydrates instead of being dropped');
+});
+
+// #3893: the dedupe clause changed, so it is pinned against the FULL schema
+// in a throwaway database through the real creator — a text match cannot tell
+// `IS NOT DISTINCT FROM` from the behaviour it replaces. Skips without pg or
+// PostgreSQL, like every *-postgres suite.
+test('a sessionless submission notifies once and does not stack, against the real schema', { timeout: 120000 }, async (t) => {
+  let Pool;
+  try { ({ Pool } = require('pg')); } catch { return t.skip('pg is not installed'); }
+  const DSN = process.env.TEST_DATABASE_URL
+    || process.env.DATABASE_URL
+    || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
+  const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 3000 });
+  try { await admin.query('SELECT 1'); } catch (err) {
+    await admin.end();
+    if (process.env.TEST_DATABASE_URL) throw err;
+    return t.skip(`PostgreSQL unavailable: ${err.message}`);
+  }
+  const name = `connector_notif_${crypto.randomBytes(6).toString('hex')}`;
+  await admin.query(`CREATE DATABASE ${name}`);
+  const url = new URL(DSN);
+  url.pathname = `/${name}`;
+  const pool = new Pool({ connectionString: String(url), max: 2 });
+  t.after(async () => {
+    await pool.end();
+    await admin.query(`DROP DATABASE ${name}`);
+    await admin.end();
+  });
+  await pool.query(fs.readFileSync(path.join(__dirname, '..', 'src/db/schema.sql'), 'utf8'));
+
+  const owner = (await pool.query(
+    `INSERT INTO users (username, password) VALUES ('connector_owner', 'x') RETURNING id`
+  )).rows[0].id;
+  const app = (await pool.query(
+    `INSERT INTO apps (slug, name, created_by) VALUES ('connector-notify-check', 'Notify check', $1) RETURNING id`,
+    [owner]
+  )).rows[0].id;
+  const session = (await pool.query(
+    `INSERT INTO chat_sessions (user_id, app_id) VALUES ($1, $2) RETURNING id`,
+    [owner, app]
+  )).rows[0].id;
+
+  const create = (sessionId, detail) => notifications.createConnectorSubmittedNotification(pool, {
+    userId: owner, appId: app, sessionId, detail,
+  });
+
+  // A sessionless submission notifies…
+  const first = await create(null, 'submitted');
+  assert.equal(first.length, 1);
+  assert.equal(first[0].session_id, null);
+  assert.equal(first[0].detail, 'submitted');
+  // …once while unread…
+  assert.equal((await create(null, 'submitted')).length, 0,
+    'unread sessionless rows do not stack');
+  // …with its own bucket per destination…
+  assert.equal((await create(null, 'shared')).length, 1,
+    'the other destination is its own unread row');
+  // …and again once the row has been read.
+  await pool.query(
+    `UPDATE notifications SET read_at = now() WHERE user_id = $1 AND detail = 'submitted'`,
+    [owner]);
+  assert.equal((await create(null, 'submitted')).length, 1,
+    'a read row clears the way — the next submission notifies again');
+
+  // A present session dedupes as it always did: one unread row per session
+  // and destination.
+  const firstSessioned = await create(session, 'submitted');
+  assert.equal(firstSessioned.length, 1);
+  assert.equal(firstSessioned[0].session_id, session);
+  assert.equal((await create(session, 'submitted')).length, 0,
+    'the per-session unread dedupe is unchanged');
 });
 
 // ── PATH B: arming, and the delay ──────────────────────────────────────
