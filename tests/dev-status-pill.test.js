@@ -489,6 +489,43 @@ test('explicit approval is a lock glyph inside the pill, not a chip', () => {
   assert.doesNotMatch(html, /gc-vote-explicit/, 'no separate chip any more');
 });
 
+test('a row still waiting on the member floor says Needs approval on its face (#3934)', () => {
+  const AppView = makeAppView();
+  // The tally can read done ("1 of 1 approval") while the change still waits
+  // for a Yes from someone other than its author — a glance at the board saw
+  // only the green tally, and the fact lived in the lock glyph's tooltip and
+  // the ⋯ details. The tag is the same fact, on the face.
+  const flagged = PR({
+    requires_explicit_approval: true, needs_other_member_yes: true,
+    other_member_yes_count: 0, check_state: 'passing',
+  });
+  const tag = AppView.statusTagSpecs(flagged, {}).find((t) => t.key === 'tag-needs-approval');
+  assert.ok(tag, 'the tag exists');
+  assert.equal(tag.label, 'Needs approval');
+  assert.match(tag.cls, /amber/, 'worth knowing, not a red blocker');
+  assert.match(tag.title, /needs a Yes from another member/, 'the lock wording, reused');
+  assert.equal(tag.data['data-status-tag'], 'needs-approval', 'addressable by name');
+  assert.ok(tag.meta, 'rides the meta line beside the other tags');
+
+  // It lifts the moment the floor is met, never shows where it does not
+  // apply, and stays off a settled row.
+  for (const [over, why] of [
+    [{ other_member_yes_count: 1 }, 'someone other than the author has said Yes'],
+    [{ needs_other_member_yes: false }, 'the community has one member, so there is no floor'],
+    [{ requires_explicit_approval: false }, 'not a flagged row'],
+    [{ status: 'merged' }, 'a merged row is settled'],
+  ]) {
+    const row = PR({ requires_explicit_approval: true, needs_other_member_yes: true,
+      other_member_yes_count: 0, check_state: 'passing', ...over });
+    assert.equal(AppView.statusTagSpecs(row, {}).find((t) => t.key === 'tag-needs-approval'),
+      undefined, `absent: ${why}`);
+  }
+
+  // The pill is untouched: the lock glyph still explains it there.
+  const pill = AppView.statusPillState(flagged);
+  assert.ok(pill.lock, 'the pill keeps its lock glyph');
+});
+
 test('multiple reasons: every one is its own tag, and none of them is the bar', () => {
   const AppView = makeAppView();
   const pr = PR({

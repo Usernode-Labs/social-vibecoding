@@ -19547,6 +19547,21 @@ const AppView = {
           data: { 'data-status-tag': r.key },
         });
       }
+      // #3934: a flagged row still waiting on the member floor. Its tally
+      // can read done ("1 of 1 approval") while the change is really waiting
+      // for a Yes from someone other than its author — the fact the pill's
+      // lock glyph explains only on hover, and the ⋯ details under it. Amber,
+      // not red: nothing is broken, somebody just has to say Yes. The same
+      // predicate the pill's approvals tier uses decides it, so the tag and
+      // the lock can never disagree, and it lifts itself the moment the
+      // floor is met.
+      if (AppView._awaitingOtherMember(p)) {
+        out.push({
+          t: 'chip', key: 'tag-needs-approval', cls: AppView.STATUS_TAG_CLS.soft,
+          label: 'Needs approval', title: AppView._lockTitle(p), meta: true,
+          data: { 'data-status-tag': 'needs-approval' },
+        });
+      }
     }
     // A deferred run is `pending` with nothing running: the preview was built
     // for reviewers and the tests wait for a head that merges cleanly
