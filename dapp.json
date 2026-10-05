@@ -2853,9 +2853,9 @@
       "expectSelector": "#gc-thread-head:has([data-issue-title='900008']):has([data-issue-body-edit='900008'])"
     },
     {
-      "name": "Issue topic links its attached-screenshot preview to the full-size image (#2349)",
+      "name": "Issue topic screenshots link to the full-size file and open in the in-app viewer, body and discussion (#2349, #3908)",
       "path": "/?demo=1#app/usernode-2d5619/dev/issues/900010",
-      "expectSelector": ".dc-inline-img-link[href][target=\"_blank\"] > .dc-inline-img",
+      "expectSelector": "#gc-thread-head:has(.dev-topic-gh-thread[data-image-viewer-scope] .dc-inline-img-link > [alt=\"Screenshot from a phone\"]) .dev-topic-about[data-image-viewer-scope] .dc-inline-img-link[href][target=\"_blank\"] > .dc-inline-img",
       "expectText": "[Mock] issue with an attached screenshot"
     },
     {
