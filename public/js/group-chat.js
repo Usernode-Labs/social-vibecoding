@@ -3490,6 +3490,7 @@ const GroupChat = {
         title,
         version,
         content: data.spec.content || '(empty spec)',
+        html: data.spec.content_html || null,
         builtAt: data.spec.built_at,
         prNumber: data.spec.pr_number,
       });
@@ -3509,7 +3510,7 @@ const GroupChat = {
   // is multi-KB markdown full of quotes and newlines.
   _specPanelRaw: null,
 
-  _showSpecPanel({ title, version, content, builtAt, prNumber, isError, canCopy = true }) {
+  _showSpecPanel({ title, version, content, html = null, builtAt, prNumber, isError, canCopy = true }) {
     // Populates the side-panel slot rendered inside the group-chat
     // tab body (see app-view.js renderGroupChatTab). The same panel
     // markup serves both responsive layouts — CSS switches between
@@ -3567,11 +3568,20 @@ const GroupChat = {
     // cannot acquire markup by accident. See the _specShareView comment
     // for why this is a bare `DevChat` reference behind a `typeof` guard
     // rather than `window.DevChat` (const-declared globals don't attach).
+    // #3699: a version written as HTML renders from its own document, with
+    // the dev chat viewer's two tabs (frontend/src/lib/spec-html.ts);
+    // `content`, its markdown copy, is still what Copy markdown takes.
+    const specHtml = !isError && html && window.UsernodeReact && window.UsernodeReact.specHtml;
+    const doc = specHtml && typeof specHtml.render === 'function'
+      ? specHtml.render(String(html), { key: `gc-${version == null ? 'x' : version}` })
+      : null;
     const body = isError
       ? { kind: 'error', text: String(content == null ? '' : content) }
-      : (typeof DevChat !== 'undefined' && DevChat.renderMarkdown
-        ? { kind: 'markdown', html: DevChat.renderMarkdown(content) }
-        : { kind: 'error', text: String(content == null ? '' : content) });
+      : doc
+        ? { kind: 'spec', ...doc }
+        : (typeof DevChat !== 'undefined' && DevChat.renderMarkdown
+          ? { kind: 'markdown', html: DevChat.renderMarkdown(content) }
+          : { kind: 'error', text: String(content == null ? '' : content) });
 
     GroupChat._react()?.mountSpecPanel?.(panel);
     GroupChat._react()?.publishSpecPanel?.({
@@ -3806,6 +3816,7 @@ const GroupChat = {
         title: previewTitle,
         version,
         content: data.spec.content || '(empty spec)',
+        html: data.spec.content_html || null,
         builtAt: data.spec.built_at,
         prNumber: data.spec.pr_number,
       });

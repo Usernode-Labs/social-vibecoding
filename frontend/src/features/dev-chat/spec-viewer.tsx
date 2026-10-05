@@ -41,6 +41,7 @@ import {
   type RefObject,
 } from 'react';
 
+import { useSpecFrames } from '../../lib/spec-html';
 import { useStoreState } from '../../lib/use-store-state';
 import {
   specViewerStore,
@@ -97,7 +98,10 @@ function MarkdownBody(
   { html, className, role }: { html: string; className: string; role?: string },
 ): ReactNode {
   const wrapper = useMemo(() => ({ __html: html }), [html]);
-  return <div className={className} role={role} dangerouslySetInnerHTML={wrapper} />;
+  // #3699: an HTML spec's before/after screens are frames scaled to fit.
+  const ref = useRef<HTMLDivElement>(null);
+  useSpecFrames(ref, html);
+  return <div ref={ref} className={className} role={role} dangerouslySetInnerHTML={wrapper} />;
 }
 
 function TabButton({ tab, active, label }: {

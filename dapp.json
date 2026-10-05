@@ -1646,6 +1646,12 @@
       "expectText": "Staging demo shared spec"
     },
     {
+      "name": "An HTML spec opens on its before and after screens in the spec panel",
+      "path": "/?shot=spec-viewer#app/usernode-2d5619/dev/sessions/900831",
+      "expectSelector": "#dc-spec-viewer .shots-viewer-spec .shots-stage",
+      "expectText": "Staging demo HTML spec"
+    },
+    {
       "name": "The code-landed breadcrumb offers Propose, not \"Try that again\"",
       "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/900822",
       "expectSelector": "#dc-quick-replies.dc-quick-replies-active .dc-quick-pill",
