@@ -17046,6 +17046,10 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 .dev-ws-hub-open .dev-ws-filter-dot { margin: 0 2px; }
 /* Your work's "Show N more" turns its caret over once it reads "Show less". */
 .dev-ws-hub-work-more { margin-top: 2px; }
+/* First version (hub-cards.tsx FirstVersionCard): the step as the ring the
+   bot's activity cards lead with, then the card's heading and its 15/13
+   pair, laid across like a door but not one. */
+.dev-ws-hub-first-row { display: flex; align-items: center; gap: 12px; min-width: 0; }
 
 /* ── What landed since you were last here (since-summary-card.tsx) ─────
    The hub's first card: the window as the heading, and at the far end Week

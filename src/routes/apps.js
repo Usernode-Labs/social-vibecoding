@@ -243,6 +243,47 @@ const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 // Catalog samples are stored rows; all app APIs use the same identity.
 const stagingApps = require('../services/staging-apps');
 
+/**
+ * The first version Homeroom bot is building, as a project's hub says it
+ * (GET /api/apps/:slug/community `first_version`): the same state the App
+ * tab and the made screen read (homeroom-bot-dm.js firstVersionState, the
+ * steps of homeroom-bot-progress.js FIRST_VERSION_STEPS), cut to what the
+ * hub draws. Pure.
+ *
+ *   step, of, step_name  "Step 4 of 7: Build it", the step's name exactly
+ *                        as firstVersionState names it for this viewer, so
+ *                        the hub says what the App tab and the made screen
+ *                        say
+ *   ready                built and up for approval: ready to try
+ *   mine                 whose description it is: the viewer's
+ *   creator              whose description it is, by username
+ *   waits_on             'plan' (its plan waits for their Build it) or
+ *                        'question' (it asked them something), for the
+ *                        person whose description it is and nobody else
+ *   conversation_id      their DM with the bot, for theirs alone
+ *   session_id           the change, once it is ready to try
+ *
+ * No build time. Evan, 5 Oct 2026: no average build time for a first
+ * version, which plans first and waits on its maker's answer.
+ */
+function hubFirstVersion(state, viewerId) {
+  if (!state) return null;
+  const mine = viewerId != null && Number(state.userId) === Number(viewerId);
+  const ready = !!state.ready;
+  const sessionId = ready && state.approval ? Number(state.approval.sessionId) : null;
+  return {
+    step: Number.isInteger(state.step) ? state.step : null,
+    of: Number.isInteger(state.of) ? state.of : null,
+    step_name: state.stepName || null,
+    ready,
+    mine,
+    creator: state.creator || null,
+    waits_on: mine && !ready ? (state.plan ? 'plan' : state.question ? 'question' : null) : null,
+    conversation_id: mine ? (Number(state.conversationId) || null) : null,
+    session_id: Number.isInteger(sessionId) && sessionId > 0 ? sessionId : null,
+  };
+}
+
 // SELF-HOSTING.md sub-step 2k: helper for the import-flow guards.
 // Compares a parsed {owner, repo} against config.platformRepoUrl,
 // case-insensitively. Returns false on any malformed input — the caller
@@ -3402,12 +3443,43 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       const required = gov.approvalsRequired != null
         ? gov.approvalsRequired
         : activeUsers.requiredVotes(electorate.active, 0);
+      // WHAT IT IS. dapp.json's one line when it has one. A project made
+      // from "What should it do?" without a one-liner (the first session's
+      // own words, not an example's) has none until somebody writes one, so
+      // its hub opened on nothing but "Just you" (first-session run-through,
+      // 5 Oct 2026). Its description's first sentence stands in, cut the way
+      // the create dialog's suggestion is when no model answers
+      // (homeroom-bot-dm.js firstSentence). It is the project's first
+      // request, so nobody who can see the project is shown more than that.
+      const botDm = require('../services/homeroom-bot-dm');
+      let description = typeof app.description === 'string' && app.description.trim()
+        ? app.description.replace(/\s+/g, ' ').trim() : null;
+      if (!description && !app.self_hosted) {
+        const { rows: briefRows } = await pool.query(
+          'SELECT brief FROM homeroom_bot_first_versions WHERE app_id = $1',
+          [app.id]
+        );
+        if (briefRows[0]?.brief) description = botDm.firstSentence(briefRows[0].brief, createOptions.DESCRIPTION_MAX) || null;
+      }
+      // WHERE ITS FIRST VERSION STANDS, while Homeroom bot builds it from
+      // that description: the App tab's state (GET /api/apps/:slug
+      // `first_version`), for the hub to say beside who it is for.
+      // Best-effort: a read that fails is no state, never a failed hub.
+      let firstVersion = null;
+      if (!app.self_hosted) {
+        try {
+          const state = await botDm.firstVersionState(pool, app.id, { viewerId: req.user?.id ?? null });
+          firstVersion = hubFirstVersion(state, req.user?.id ?? null);
+        } catch (err) {
+          log.warn('apps', 'Could not read the first version for the hub', { slug: app.slug, message: err.message });
+        }
+      }
       res.json({
         slug: app.slug,
         name: app.name,
-        // dapp.json's one line about what the app is, for the page's hero.
-        description: typeof app.description === 'string' && app.description.trim()
-          ? app.description.replace(/\s+/g, ' ').trim() : null,
+        // What the app is, for the page's hero (above).
+        description,
+        first_version: firstVersion,
         ...membership,
         members,
         channel,
@@ -3678,7 +3750,7 @@ module.exports = {
   // one resolver, so it is pinned there rather than through a route.
   attachForkLineage,
   appRoutes, sweepStuckCreatingApps, accessFlags, canDeleteApp, compactGlobalChatApp,
-  deleteBlockReason, isCoreApp,
+  deleteBlockReason, isCoreApp, hubFirstVersion,
   // #2524: the activity guard and its two bounds, so the contract is
   // unit-testable without standing up the whole app router.
   activitySeconds, ACTIVITY_MAX_PER_POST, ACTIVITY_MAX_PER_DAY,

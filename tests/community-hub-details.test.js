@@ -161,7 +161,8 @@ test('#3489: Your work stays on the hub with nothing in progress, and says so', 
   assert.match(empty, /<p class="text-xs text-zinc-500 dark:text-zinc-400" data-ws-mine-empty="">No work in progress\.<\/p>/);
   assert.doesNotMatch(empty, /dev-ws-head-n|data-ws-lane|data-ws-mine-more/, 'no count of zero, no empty lane, no reveal');
   // Only a signed-in viewer's hub draws it: a visitor has no work to list.
-  assert.match(LANDER, /\{v\.mine && \(v\.mine\.rows\.length \|\| v\.mine\.viewer\) \? \(\s*<YourWorkCard/);
+  // A project nobody else is in may leave it out (tests/hub-just-you.test.js).
+  assert.match(LANDER, /\{v\.mine && \(v\.mine\.rows\.length \|\| \(v\.mine\.viewer && workEmpty\)\) \? \(\s*<YourWorkCard/);
 });
 
 test('the channel card\'s composer sends to the room and re-reads the hub', () => {
