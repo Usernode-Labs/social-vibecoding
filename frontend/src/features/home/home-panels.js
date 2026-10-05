@@ -358,35 +358,16 @@ const HomePanels = {
     panelsStore.set({
       painted: true,
       discover: viewFor('discover', HomePanels.discoverView),
-      challenges: viewFor('challenges', (panel) => (
-        HomePanels.inFirstWeek(panel) ? null : HomePanels.challengesView(panel)
-      )),
+      challenges: viewFor('challenges', HomePanels.challengesView),
     });
   },
 
-  // THE FIRST WEEK IS THE FIRST CHAPTER, WITHOUT POINTS (first-session plan,
-  // 2026-10-04). An account's first seven days are for meeting the people and
-  // the projects it came for, so Home draws no Challenges block until week
-  // two: no season progress, no point rewards, no "Not started" beside the
-  // things they are only beginning to do. The Challenges screen
-  // (#leaderboard/challenges) stays as it is, and nothing about scoring
-  // changes.
-  //
-  // The SERVER decides it (GET /api/auth/me `firstWeek`: the row's own
-  // created_at against the database's clock), so a device with its date set
-  // wrong cannot show or hide it. A null block is what render() already
-  // means by "nothing to show": ./panels/sections.tsx keeps the section host,
-  // its id, `data-panel-slot` and heading in the DOM and marks it `hidden`.
-  //
-  // The staging demo payload (`panel.demo`, ?demo=1) is drawn whatever the
-  // account's age. It is a reviewer's view of every state of the block, and
-  // the seeded check account (src/db/migrate.js) is days old in every preview,
-  // so the declared checks that select on the block would otherwise find it
-  // hidden.
-  inFirstWeek(panel) {
-    if (panel && panel.demo) return false;
-    return !!(window.App && App.user && App.user.firstWeek === true);
-  },
+  // A NEW ACCOUNT SEES CHALLENGES (first-session run-through, 2026-10-05).
+  // #3847 hid this block for an account's first seven days (the first
+  // chapter, without points). Evan reversed that: a brand-new account found
+  // Challenges missing from Home and expected it there, with its Getting
+  // started challenges. So nothing about an account's age hides it, and GET
+  // /api/auth/me no longer reports `firstWeek`.
 
   // `_stampState` and `STATE_ATTRS` lived here. They mirrored a block's own
   // state attributes (`data-create-enabled`, Discover's two lane counts) from
@@ -476,7 +457,13 @@ const HomePanels = {
     // server still sends are the gate's own, and wait for it to open. With
     // nothing hidden to count (a season of First challenges only) there is no
     // card to draw, and the block falls back to drawing them, as it always has.
-    const locked = HomePanels.lockedOnboarding(panel);
+    //
+    // Only while that card IS on Home (`App.user.showGettingStarted`). An
+    // account its first session brought in has no card (first-session.js:
+    // communities_onboarded_at stays unset), and a locked card pointing at a
+    // list it cannot see said nothing; the block draws the First challenges
+    // itself instead, done or not, with the unlock note under them.
+    const locked = HomePanels.gettingStartedOnHome() ? HomePanels.lockedOnboarding(panel) : null;
     if (locked) {
       if (HomePanels._expanded[panel.key]) HomePanels._expanded[panel.key] = false;
       return {
@@ -572,6 +559,12 @@ const HomePanels = {
   // (the server's additive `hidden_count` and `hidden_names`). Null once
   // unlocked, for a viewer the gate does not apply to (whose payload has no
   // `onboarding` at all), and when there is nothing hidden to count.
+  // Whether Home draws the Getting started card (./getting-started.tsx reads
+  // the same flag).
+  gettingStartedOnHome() {
+    return !!(typeof window !== 'undefined' && window.App && App.user && App.user.showGettingStarted === true);
+  },
+
   lockedOnboarding(panel) {
     const o = panel && panel.onboarding;
     if (!o || o.unlocked) return null;
@@ -1057,10 +1050,10 @@ if (typeof window !== 'undefined') window.HomePanels = HomePanels;
 
 // A boot paints from the device's snapshot of the session and verifies it
 // afterwards (App._reconcileSession). Repaint once the verified user lands,
-// so `firstWeek` (HomePanels.inFirstWeek) is the server's current answer
-// rather than the snapshot's: the week can end between two visits. Only once
-// there is something to paint; before the first read, render() would mark
-// the sections settled with nothing in them.
+// so `showGettingStarted` (HomePanels.gettingStartedOnHome) is the server's
+// current answer rather than the snapshot's: the card can have been closed
+// between two visits. Only once there is something to paint; before the
+// first read, render() would mark the sections settled with nothing in them.
 if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
   document.addEventListener('sv:session', () => {
     if (HomePanels._data) HomePanels.render();

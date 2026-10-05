@@ -3165,6 +3165,18 @@ async function sweepFirstVersions(pool, config, deps = {}) {
 const REPLAN_STEP_NAME = 'Updating the plan';
 
 /**
+ * What the plan step is called while the plan waits for its creator's
+ * answer (Build it, or Change something), for whoever reads it. "Write a
+ * plan" was said both then and while the bot wrote its build plan after
+ * Build it, so a maker waiting on the step read it as the bot's turn
+ * (first-session run-through, 5 October 2026).
+ */
+function planWaitsStepName(creatorId, creator, viewerId) {
+  if (viewerId != null && Number(viewerId) === Number(creatorId)) return 'Your turn: answer the plan';
+  return creator ? `Waiting for @${creator} to answer the plan` : 'Waiting for an answer to the plan';
+}
+
+/**
  * Where approval of a first version that is ready to try stands, for one
  * person reading its App tab (firstVersionState below), so the screen can
  * say what it waits on rather than only that it waits:
@@ -3314,9 +3326,14 @@ async function firstVersionState(pool, appId, deps = {}) {
         return null;
       })
       : null;
+    // The plan sent and waiting on its creator is the same step as the bot
+    // writing its build plan after Build it, but not the same wait.
+    const step = replanning ? { ...at('plan'), stepName: REPLAN_STEP_NAME }
+      : found.state.stage === 'plan' ? { ...at('plan'), stepName: planWaitsStepName(row.user_id, row.username, deps.viewerId) }
+        : at(found.state.stage);
     return {
       ...base,
-      ...(replanning ? { ...at('plan'), stepName: REPLAN_STEP_NAME } : at(found.state.stage)),
+      ...step,
       question: found.state.stage === 'question' && found.state.waitingOn === 'them',
       ready,
       ...(plan ? { plan } : {}),

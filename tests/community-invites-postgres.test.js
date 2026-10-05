@@ -73,7 +73,14 @@ async function connectPool() {
     -- What the page's picture reads (community-invites.js pictureFor).
     CREATE TABLE chat_sessions (
       id SERIAL PRIMARY KEY, app_id INTEGER, merged_at TIMESTAMPTZ,
-      shots_state TEXT, shots_run_id TEXT);
+      shots_state TEXT, shots_run_id TEXT, status TEXT);
+    -- Whether its first version is on its way: "Maya is making …"
+    -- (community-invites.js firstVersionPending).
+    CREATE TABLE homeroom_bot_first_versions (
+      app_id INTEGER PRIMARY KEY, bot_builds BOOLEAN NOT NULL DEFAULT FALSE,
+      status TEXT NOT NULL DEFAULT 'waiting', issue_number INTEGER);
+    CREATE TABLE homeroom_bot_runs (
+      id SERIAL PRIMARY KEY, app_id INTEGER, issue_number INTEGER, proposal_session_id INTEGER);
     CREATE TABLE shot_runs (id TEXT PRIMARY KEY, state TEXT NOT NULL);
     CREATE TABLE shot_artifacts (
       id TEXT PRIMARY KEY, run_id TEXT NOT NULL, story_id TEXT NOT NULL,
@@ -166,6 +173,7 @@ test('invite links against a real PostgreSQL', async (t) => {
         { live: true, name: 'Arena', inviter: 'ada', memberCount: 1 },
       );
       assert.equal(preview.project.slug, undefined, 'the address comes after joining');
+      assert.equal(preview.building, false, 'no first version on its way: made, not being made');
     });
 
     await t.test('somebody with access joins on the spot, pinned like Join; following again spends nothing', async () => {

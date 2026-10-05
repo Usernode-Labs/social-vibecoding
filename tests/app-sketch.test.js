@@ -275,7 +275,7 @@ test('the made screen says what is true: the bot builds it, or the description i
   const { loadTsx } = require('./lib/render-tsx');
   const made = loadTsx('frontend/src/features/first-session/made.tsx');
   assert.equal(made.buildLine(null, 'running', false), 'Your description is its first request.');
-  assert.equal(made.buildNote(true), 'Homeroom bot messages you when it\'s ready to try.');
+  assert.equal(made.buildNote(true), 'Homeroom bot messages you when the first version is ready to try.');
   assert.equal(made.buildNote(false), 'You or anyone you invite can build it from there.');
   assert.equal(made.sketchCaption('Run Club', true), 'A sketch from your description. Homeroom bot builds the real Run Club from it.');
   assert.match(made.sketchCaption('Run Club', false), /^A sketch from your description\. Nothing on it works yet: the real Run Club is built from it, by you or anyone you invite\.$/);

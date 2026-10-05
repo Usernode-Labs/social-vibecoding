@@ -2859,8 +2859,10 @@ const AppView = {
         },
       } : withPlan ? {
         // B6: its plan waits for Build it. A shot: the action id stands for
-        // no plan, so a tap here decides nothing.
-        building: true, mine: true, step: 3, of: 7, stepName: 'Write a plan',
+        // no plan, so a tap here decides nothing. The step is named as the
+        // server names it to the plan's creator while it waits on them
+        // (homeroom-bot-dm.js planWaitsStepName).
+        building: true, mine: true, step: 3, of: 7, stepName: 'Your turn: answer the plan',
         creator: null, ready: false, question: false, conversationId: null,
         plan: {
           bullets: [

@@ -34,6 +34,7 @@ const log = require('../services/logger');
 const appAccess = require('../services/app-access');
 const invites = require('../services/community-invites');
 const challengeScorer = require('../services/topochain/challenge-scorer');
+const testAccounts = require('../services/test-accounts');
 const { drainGuard } = require('../services/lifecycle');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const { applyShellDocumentHeaders, shellAssetCacheControl } = require('../services/static-cache');
@@ -68,7 +69,8 @@ function madeForName(preview, projectName) {
  * rest show when the link is pasted. A live link reads the way its page does:
  * "Maya made Run Tracker" when the person who sent it made the project ("Maya
  * made this for Sunday Run Club" when the community it was made for has a
- * name of its own), with their note (else the project's line, else who
+ * name of its own; "is making" while its first version is on its way,
+ * `building`), with their note (else the project's line, else who
  * invited you) and its picture (else its icon). A dead or unknown one says
  * only that it is a Homeroom invite, so a pasted link discloses no more than
  * preview() does.
@@ -78,9 +80,10 @@ function previewTags(preview, origin) {
   const name = live ? preview.project.name : null;
   const madeBy = live && preview.inviterMadeIt && preview.inviterName ? preview.inviterName : null;
   const madeFor = madeBy ? madeForName(preview, name) : null;
+  const made = preview && preview.building ? 'is making' : 'made';
   const title = !live
     ? 'Homeroom invite'
-    : madeBy ? (madeFor ? `${madeBy} made this for ${madeFor}` : `${madeBy} made ${name}`) : `Join ${name} on Homeroom`;
+    : madeBy ? (madeFor ? `${madeBy} ${made} this for ${madeFor}` : `${madeBy} ${made} ${name}`) : `Join ${name} on Homeroom`;
   const members = live && preview.memberCount
     ? ` ${preview.memberCount} ${preview.memberCount === 1 ? 'person is' : 'people are'} in it.`
     : '';
@@ -304,7 +307,13 @@ function communityInviteRoutes(config) {
       // In the community now, so its challenge counts now (#3564). A queued
       // person is not in it yet; the schedule counts them once let in.
       if (result.status === 'joined') await challengeScorer.scoreOnJoin(pool, config);
-      return res.json(result);
+      // Whether "You're in" tells them what Homeroom is (App._followInvite).
+      // An account following a link signed in had its account before the
+      // link, except a test account on its first sign-in: made ahead by an
+      // admin, it is as new as the sign-up a link opens (test-accounts.js
+      // onFirstRun). Read only for a join, which is when it is shown.
+      const newAccount = result.status === 'joined' && await testAccounts.onFirstRun(pool, req.user.id);
+      return res.json({ ...result, newAccount });
     } catch (err) {
       log.error('invites', 'Following an invite link failed', { err: err.message });
       return res.status(500).json({ error: 'Internal server error' });

@@ -54,39 +54,45 @@ const MADE_PROPS = {
   onSent() {},
 };
 
-// ── 1. Send says where it went, or why not ──────────────────────────────
+// ── 1. The made screen's sheet sends no invite by username any more ─────
+//
+// Evan, 5 October 2026: somebody who has just made their first project knows
+// nobody on Homeroom yet, so the first invite is a link and nothing else. An
+// invite by username is still sent from the project's Members dialog
+// (features/dialogs/members-controller.js), and accepted as below.
 
-test('1. after Send the sheet stays up and says where the invite went', () => {
+test('1. the made screen\'s sheet is Share link alone; a username is invited from Members', () => {
   const made = loadTsx(MADE);
-  assert.equal(made.sentLine('mo_t1006'), 'Invite sent to @mo_t1006. They\'ll find it in their notifications.');
+  assert.equal(made.sentLine, undefined);
+  assert.equal(made.inviteError, undefined);
   const src = read(MADE);
-  // The invite carries the note; a success keeps the sheet up, says so, and
-  // reads the rule line again so it counts the invite.
-  assert.match(src, /body: JSON\.stringify\(\{ username: handle, note: note\.trim\(\) \|\| null \}\)/);
-  assert.match(src, /setStatus\(sentLine\(sentTo\)\);\s+onSent\(`@\$\{sentTo\}`, false\);\s+void readRule\(false\);/);
-  // Share link still closes it, as before.
-  assert.match(src, /await postNote\(\);\s+onSent\(null, true\);/);
-  assert.match(src, /onSent=\{\(to, close\) => \{ setSent\(true\); if \(to\) setSentTo\(to\); if \(close\) setInviting\(false\); \}\}/);
+  assert.doesNotMatch(src, /Invite by username|@username|\/invites`/);
+  assert.match(src, /await postNote\(\);\s+onSent\(\);/);
+  assert.match(src, /onSent=\{\(\) => \{ setSent\(true\); setInviting\(false\); \}\}/);
   assert.match(src, /role="status" data-first-session-invite-status=""/);
+  assert.match(read('frontend/src/features/dialogs/members-controller.js'), /\/invites`/);
+  withStorage({}, () => {
+    const html = renderToHtml(createElement(made.InviteSheet, MADE_PROPS));
+    assert.match(html, />Share link</);
+    assert.doesNotMatch(html, /username/i);
+  });
 });
 
-test('1. an unknown username, and every other refusal, is said inline in the sheet\'s words', () => {
-  const { inviteError } = loadTsx(MADE);
-  assert.equal(inviteError('unknown_user', 'mo_t1066', 'Page Turners'),
-    'No one on Homeroom is called @mo_t1066. Check the spelling and try again.');
-  assert.equal(inviteError('already_member', 'priya_t1006', 'Page Turners'), '@priya_t1006 is already in Page Turners.');
-  assert.equal(inviteError('already_invited', 'mo_t1006', 'Page Turners'), '@mo_t1006 already has an invite to Page Turners.');
-  assert.equal(inviteError('self', 'alex_t1005', 'Page Turners'), 'That\'s you. You\'re already in Page Turners.');
-  assert.equal(inviteError(undefined, 'mo', 'Page Turners', 'App not found'), 'App not found', 'anything else as the server said it');
-  assert.equal(inviteError(undefined, 'mo', 'Page Turners'), 'Could not send the invite. Try again.');
+test('1. what they\'ll get: "is making" while its first version is not live', () => {
+  const made = loadTsx(MADE);
+  assert.equal(made.makerLine('alex_t1005', 'Page Turners', true), 'alex_t1005 is making Page Turners');
+  assert.equal(made.makerLine('alex_t1005', 'Page Turners', false), 'alex_t1005 made Page Turners');
+  withStorage({}, () => {
+    assert.match(renderToHtml(createElement(made.InviteSheet, MADE_PROPS)), /data-first-session-invite-maker="" class="[^"]*">alex_t1005 is making Page Turners</,
+      'being made unless told otherwise');
+    assert.match(renderToHtml(createElement(made.InviteSheet, { ...MADE_PROPS, making: false })), />alex_t1005 made Page Turners</);
+  });
   const src = read(MADE);
-  assert.match(src, /setError\(inviteError\(data\.code, data\.username \|\| handle, made\.name, data\.error\)\)/);
-  assert.match(src, /<p id="first-session-invite-error" role="alert"/);
-  assert.match(src, /aria-describedby=\{error \? 'first-session-invite-error' : undefined\}/);
-  const { sentLine } = loadTsx(MADE);
-  for (const line of [inviteError('unknown_user', 'x', 'Y'), inviteError('self', 'x', 'Y'), sentLine('x')]) {
-    assert.ok(!line.includes(String.fromCharCode(0x2014)), `no em dash: ${line}`);
-  }
+  // The shared link's title says the same.
+  assert.match(src, /const title = makerLine\(me, made\.name, making\);/);
+  // Live once a first version that was on its way is read as gone.
+  assert.match(src, /if \(app\.firstVersion && !app\.firstVersion\.ready\) setBuilding\(true\);/);
+  assert.match(src, /const making = !\(building && !fv\);/);
 });
 
 // ── 2. The note is remembered ───────────────────────────────────────────
@@ -115,7 +121,7 @@ test('2. the sheet opens on the maker\'s last note for that project', () => {
   assert.equal(linkNote(undefined), null);
   const src = read(MADE);
   assert.match(src, /onChange=\{\(e\) => \{ ownNote\.current = true; setNote\(e\.target\.value\); keepNote\(made\.slug, e\.target\.value\); \}\}/);
-  assert.match(src, /const fromLink = first && !ownNote\.current \? linkNote\(data\?\.links\) : null;/);
+  assert.match(src, /const fromLink = live && !ownNote\.current \? linkNote\(data\?\.links\) : null;/);
 });
 
 // ── 4 and 5. The invitee's end ──────────────────────────────────────────

@@ -392,9 +392,11 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     const states = await progress.requestStates(pool, { userId: maya.id });
     const state = states.find((s) => Number(s.row.issue_number) === 1).state;
     assert.deepEqual([state.stage, state.waitingOn], ['plan', 'them']);
-    assert.equal(progress.stepNumber('plan', true), 3, 'Step 3 of 7: Write a plan');
+    assert.equal(progress.stepNumber('plan', true), 3, 'Step 3 of 7, the plan\'s step');
+    // Its creator's turn, named for whoever reads it (planWaitsStepName).
     const fv = await dm.firstVersionState(pool, app.id);
-    assert.equal(fv.stepName, 'Write a plan');
+    assert.equal(fv.stepName, 'Waiting for @maya to answer the plan');
+    assert.equal((await dm.firstVersionState(pool, app.id, { viewerId: maya.id })).stepName, 'Your turn: answer the plan');
     assert.deepEqual(fv.plan.bullets, PLAN.bullets);
     assert.equal(fv.plan.actionId, (await planMessage(first)).meta.actionId);
     assert.equal((await progress.botWorkByIssue(pool, app.id)).get(1).what, 'queued', 'nobody else starts it');
