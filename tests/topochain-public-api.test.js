@@ -748,7 +748,10 @@ test('GET /leaderboard: happy path envelope keys + masking + shared identity fal
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.equal(body.success, true);
-  assert.deepEqual(Object.keys(body.data).sort(), ['event', 'leaderboard']);
+  // #3887: the envelope carries non_podium_count (the chip's number —
+  // over the UNFILTERED scope, not the returned rows).
+  assert.deepEqual(Object.keys(body.data).sort(), ['event', 'leaderboard', 'non_podium_count']);
+  assert.equal(body.data.non_podium_count, 1);
   assert.deepEqual(body.data.event, {
     id: 100, name: 'Sprint One', disclaimer: 'Please read the rules.', display_leaderboard: true,
     starts_at: body.data.event.starts_at, ends_at: body.data.event.ends_at,
@@ -760,11 +763,12 @@ test('GET /leaderboard: happy path envelope keys + masking + shared identity fal
   });
   assert.match(body.data.event.starts_at, /\+00:00$/);
   // SPEC 912: default per_page is 50 for this endpoint (not the shared
-  // 25 default other v4 endpoints use).
-  assert.deepEqual(body.meta, { page: 1, per_page: 50, total: 4, total_pages: 1 });
+  // 25 default other v4 endpoints use). #3887: the default view EXCLUDES
+  // the podium-excluded rows, so meta.total counts ranked users only.
+  assert.deepEqual(body.meta, { page: 1, per_page: 50, total: 3, total_pages: 1 });
 
   const rows = body.data.leaderboard;
-  assert.equal(rows.length, 4);
+  assert.equal(rows.length, 3);
   // rank 1: dave — masked identifier (no discord/display_name), real numbers.
   const dave = rows.find((r) => r.wallet_address === 'pk-dave-100');
   assert.equal(dave.rank, 1);
@@ -783,15 +787,43 @@ test('GET /leaderboard: happy path envelope keys + masking + shared identity fal
   // epoch_success_rate stored NULL -> v4 real zero, not null.
   assert.equal(bob.epoch_success_rate, 0);
 
-  // rank 3 (shared): alice (podium-excluded) and carol.
-  const alice = rows.find((r) => r.identifier === 'ali***@***.com');
-  assert.equal(alice.is_non_podium, true);
-  assert.equal(alice.rank, 3);
+  // rank 3: carol — shares the rank with the podium-EXCLUDED alice, who is
+  // not in the default response any more (#3887); the shared-rank numbering
+  // the snapshot stored is untouched by the filter.
   const carol = rows.find((r) => r.display_name === 'Carol Display');
   assert.equal(carol.rank, 3);
   assert.equal(carol.is_non_podium, false);
   // carol has no email (telegram identifier instead) — masked generic form.
   assert.equal(carol.identifier, 'car***');
+});
+
+test('GET /leaderboard: include_non_podium=1 shows the excluded rows, ranks unchanged from the default view (#3887)', async () => {
+  const res = await get('/api/v4/leaderboard?season_event_id=100&include_non_podium=1');
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.meta.total, 4, 'the count is over the full board again');
+  assert.equal(body.data.non_podium_count, 1, 'and the chip number is the same in both states');
+  const rows = body.data.leaderboard;
+  assert.equal(rows.length, 4);
+  // The excluded row is back — with the rank the shared rule stored, and
+  // every ranked user's number identical to the default response's.
+  const alice = rows.find((r) => r.identifier === 'ali***@***.com');
+  assert.equal(alice.is_non_podium, true);
+  assert.equal(alice.rank, 3);
+  const dave = rows.find((r) => r.wallet_address === 'pk-dave-100');
+  assert.equal(dave.rank, 1);
+  const carol = rows.find((r) => r.display_name === 'Carol Display');
+  assert.equal(carol.rank, 3);
+});
+
+test('GET /leaderboard: include_non_podium only takes the truthy forms — anything else stays excluded (#3887)', async () => {
+  for (const value of ['0', 'false', 'garbage', 'no']) {
+    const res = await get(`/api/v4/leaderboard?season_event_id=100&include_non_podium=${encodeURIComponent(value)}`);
+    assert.equal(res.status, 200, value);
+    const body = await res.json();
+    assert.equal(body.data.leaderboard.length, 3, value);
+    assert.equal(body.meta.total, 3, value);
+  }
 });
 
 test('GET /leaderboard: no season_event_id falls back to the active public event', async () => {
@@ -820,6 +852,9 @@ test('GET /leaderboard: display_leaderboard=false -> leaderboard [] and meta.tot
   assert.deepEqual(body.data.leaderboard, []);
   assert.equal(body.meta.total, 0);
   assert.equal(body.data.event.id, 101);
+  // #3887: the hidden-board envelope still carries the chip's key —
+  // nothing to show, so nothing to count.
+  assert.equal(body.data.non_podium_count, 0);
 });
 
 test('GET /leaderboard: per_page=0 -> 422, not the source per_page=0 500', async () => {
