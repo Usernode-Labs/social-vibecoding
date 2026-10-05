@@ -41,6 +41,13 @@ test('an invite by username joins a group the way its link does, against the ful
   await admin.query(`CREATE DATABASE ${name}`);
   const url = new URL(DSN); url.pathname = '/' + name;
   const pool = new Pool({ connectionString: String(url), max: 4 });
+  // pool.end() resolves once its idle connections are handed their end, not
+  // once their sockets close, so the teardown's DROP DATABASE ... WITH
+  // (FORCE) can reach one still closing. The server then terminates it
+  // (57P01) and the pool re-emits that as 'error'. src/db/pool.js listens
+  // and logs it; this pool did not, so it surfaced as an uncaughtException
+  // that failed the file on its teardown (5 of 6 runs). Expected here.
+  pool.on('error', () => {});
   await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
   const config = {
     databaseUrl: String(url), selfAppSlug: 'no-such-self-app', selfAppPublicVoting: true,
