@@ -21,6 +21,11 @@
  *     origin of its own) with a content security policy that lets it load
  *     nothing but this site's stylesheets, fonts and images. That is what lets
  *     a screen use the app's real classes and stylesheet and look like the app.
+ *     Which stylesheets is stamped on the article by the server
+ *     (`data-spec-styles`, src/services/spec-html.js): the platform's own
+ *     app draws with the shell's stylesheets, which are its own; every other
+ *     app's screens get only the native UI kit, which all apps share, and
+ *     carry the rest in a <style> block of their own.
  *     The frames go into the before/after viewer the proposal card uses
  *     (AppView._shotsViewerHtml), with the spec's three additions: side by
  *     side, side by side by default when there is room, and close-up / whole
@@ -166,12 +171,15 @@ function cleanScreenMarkup(markup: string): string {
   return out.innerHTML;
 }
 
-function frameDoc(markup: string, side: 'before' | 'after'): string {
+type SpecStyles = 'platform' | 'kit';
+
+function frameDoc(markup: string, side: 'before' | 'after', styles: SpecStyles): string {
   const origin = window.location.origin;
   const dark = document.documentElement.classList.contains('dark');
   const links = Array.from(document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"]'))
     .map((link) => link.href)
     .filter((href) => href.startsWith(`${origin}/`))
+    .filter((href) => styles === 'platform' || href.startsWith(`${origin}/usernode-native/`))
     .map((href) => `<link rel="stylesheet" href="${escapeAttr(href)}">`)
     .join('');
   const csp = `default-src 'none'; style-src 'unsafe-inline' ${origin}; img-src data: ${origin}; font-src data: ${origin}`;
@@ -187,7 +195,7 @@ interface Change {
 }
 
 function sideHtml(
-  which: 'before' | 'after', markup: string, g: Geometry, label: string,
+  which: 'before' | 'after', markup: string, g: Geometry, label: string, styles: SpecStyles,
 ): string {
   const crop = g.focus || [0, 0, g.width, g.height];
   const cls = which === 'before' ? 'shots-flip-before' : 'shots-flip-after';
@@ -195,10 +203,10 @@ function sideHtml(
     + ` role="img" aria-label="${escapeAttr(label)}" data-spec-frame=""`
     + ` data-spec-full="${g.width} ${g.height}" data-spec-focus="${g.focus ? g.focus.join(' ') : ''}">`
     + `<iframe sandbox="" referrerpolicy="no-referrer" tabindex="-1" aria-hidden="true" title="${escapeAttr(label)}"`
-    + ` data-srcdoc="${escapeAttr(frameDoc(markup, which))}"></iframe></span>`;
+    + ` data-srcdoc="${escapeAttr(frameDoc(markup, which, styles))}"></iframe></span>`;
 }
 
-function screensHtml(figure: Element, key: string): string {
+function screensHtml(figure: Element, key: string, styles: SpecStyles): string {
   const changes: Change[] = Array.from(figure.querySelectorAll('ol[data-changes] > li')).slice(0, MAX_CHANGES).map((li, index) => ({
     n: String(li.getAttribute('data-change') || index + 1).trim(),
     claim: (li.textContent || '').replace(/\s+/g, ' ').trim(),
@@ -224,8 +232,8 @@ function screensHtml(figure: Element, key: string): string {
     return {
       viewport: g.kind,
       zoomable: !!g.focus,
-      afterHtml: sideHtml('after', markup, g, `After (planned): ${described}`),
-      beforeHtml: sideHtml('before', markup, g, `Before: ${described}`),
+      afterHtml: sideHtml('after', markup, g, `After (planned): ${described}`, styles),
+      beforeHtml: sideHtml('before', markup, g, `Before: ${described}`, styles),
       afterChip: 'After · planned',
       beforeChip: 'Before · today',
       notesHtml: `${list ? `<ol class="shots-changes">${list}</ol>` : ''}`
@@ -311,7 +319,7 @@ function sanitizeProse(container: Element): string {
   return out.innerHTML;
 }
 
-function renderPart(nodes: Node[], key: string, screensBox: { next: number }): string {
+function renderPart(nodes: Node[], key: string, screensBox: { next: number }, styles: SpecStyles): string {
   const doc = document.implementation.createHTMLDocument('');
   const container = doc.createElement('div');
   for (const node of nodes) container.appendChild(doc.importNode(node, true));
@@ -321,7 +329,7 @@ function renderPart(nodes: Node[], key: string, screensBox: { next: number }): s
   const screens: string[] = [];
   container.querySelectorAll('figure[data-screens]').forEach((figure) => {
     const index = screens.length;
-    screens.push(screensHtml(figure, `${key}-${screensBox.next++}`));
+    screens.push(screensHtml(figure, `${key}-${screensBox.next++}`, styles));
     const holder = doc.createElement('p');
     holder.textContent = `${marker}-${index}`;
     figure.replaceWith(holder);
@@ -349,6 +357,8 @@ export function renderSpecHtml(source: string, options: RenderOptions): SpecHtml
 
   const parsed = new DOMParser().parseFromString(source, 'text/html');
   const article = parsed.querySelector('article[data-spec]') || parsed.body;
+  // Unstamped means the server did not know the app: the native kit alone.
+  const styles: SpecStyles = article.getAttribute('data-spec-styles') === 'platform' ? 'platform' : 'kit';
   const children = Array.from(article.childNodes);
   // A parsed document has no window, so its nodes are told apart by type, not instanceof.
   const sectionOf = (node: Node): 'user' | 'tech' | null => {
@@ -367,13 +377,13 @@ export function renderSpecHtml(source: string, options: RenderOptions): SpecHtml
     const preamble = children.filter((node) => !sectionOf(node));
     doc = {
       split: true,
-      preambleHtml: renderPart(preamble, key, screensBox),
-      userHtml: renderPart(Array.from(userSection.childNodes), key, screensBox),
-      techHtml: renderPart(Array.from(techSection.childNodes), key, screensBox),
+      preambleHtml: renderPart(preamble, key, screensBox, styles),
+      userHtml: renderPart(Array.from(userSection.childNodes), key, screensBox, styles),
+      techHtml: renderPart(Array.from(techSection.childNodes), key, screensBox, styles),
       html: '',
     };
   } else {
-    doc = { split: false, preambleHtml: '', userHtml: '', techHtml: '', html: renderPart(children, key, screensBox) };
+    doc = { split: false, preambleHtml: '', userHtml: '', techHtml: '', html: renderPart(children, key, screensBox, styles) };
   }
   doc = {
     ...doc,

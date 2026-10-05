@@ -765,13 +765,13 @@ function load() {
     ).replace(/\/$/, ''),
     selfAppSlug: SELF_APP_SLUG,
     selfAppDbName: SELF_APP_DB_NAME,
-    // #3699: apps whose spec author is asked for an HTML spec (before/after
-    // screens, diagrams) instead of markdown. Comma-separated slugs, `*` for
-    // every app, `none` for none; the platform's own app by default, so the
-    // platform tries it on itself first. See src/services/spec-html.js.
+    // #3699: apps whose spec author (an agent chat's or dev chat's scout, and
+    // the Homeroom bot) is asked for an HTML spec (before/after screens,
+    // diagrams) instead of markdown. Every app by default; comma-separated
+    // slugs to narrow it, `none` to turn it off. See src/services/spec-html.js.
     htmlSpecApps: (() => {
       const raw = process.env.HTML_SPEC_APPS;
-      if (raw == null || raw.trim() === '') return [SELF_APP_SLUG];
+      if (raw == null || raw.trim() === '') return ['*'];
       if (raw.trim().toLowerCase() === 'none') return [];
       return raw.split(',').map((s) => s.trim()).filter(Boolean);
     })(),

@@ -48,7 +48,7 @@ const {
   getDesignGuidance,
   runtimeReadsImages,
   SPEC_DESIGN_BRIEF,
-  SPEC_HTML_CONTRACT,
+  specHtmlContract,
 } = require('../services/prompts');
 const specHtml = require('../services/spec-html');
 const {
@@ -1376,7 +1376,23 @@ async function persistScoutPublication({
   const scoutText = localAgentLabel
     ? `${baseScoutText} Drafted on ${localAgentLabel}, so no Homeroom credits were used.`
     : baseScoutText;
-  const html = typeof contentHtml === 'string' && contentHtml.trim() ? contentHtml.trim() : null;
+  let html = typeof contentHtml === 'string' && contentHtml.trim() ? contentHtml.trim() : null;
+  if (html) {
+    // #3699: which stylesheet the screens draw with depends on the app
+    // (spec-html.js, stampSpecStyles); an app that cannot be read gets the
+    // native kit alone, the choice that never borrows the shell's styles.
+    let app = null;
+    try {
+      const { rows } = await pool.query(
+        'SELECT a.slug, a.self_hosted FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1',
+        [sessionId],
+      );
+      app = rows[0] || null;
+    } catch (err) {
+      log.warn('sessions', 'Could not read the app of an HTML spec', { sessionId, err: err.message });
+    }
+    html = specHtml.stampSpecStyles(html, specHtml.specStylesFor(app));
+  }
   const persist = async (client, { requiredSnapshot }) => {
     await client.query(
       'UPDATE chat_sessions SET spec_md = $1, spec_html = $3 WHERE id = $2',
@@ -9337,6 +9353,7 @@ async function runScoutTool({
   // screens, diagrams). A revision of an HTML spec revises the document
   // itself; a markdown spec on such an app is rewritten as one.
   const htmlSpec = specHtml.htmlSpecsEnabledFor(config, session.app_slug);
+  const platformStyles = specHtml.specStylesFor({ slug: session.app_slug, self_hosted: session.app_self_hosted }) === 'platform';
   const existingDoc = await loadSessionSpecDoc(pool, session.id);
   const existingSpec = existingDoc.md.trim();
   const existingShown = htmlSpec && existingDoc.html ? existingDoc.html.trim() : existingSpec;
@@ -9418,7 +9435,7 @@ Your job is to investigate this repo and produce ${htmlSpec ? 'an HTML SPEC' : '
 - Specific enough that a coding agent could implement it without re-doing your investigation, but NOT a literal diff or code block.
 - If the planned change introduces data-dependent UI (lists, threads, leaderboards, anything that renders rows), the "Technical implementation" half should name the staging seed data the build will need (per the "Staging mock data" platform convention), so seeding is planned rather than improvised at build time.${scoutDesignBrief}
 
-${htmlSpec ? SPEC_HTML_CONTRACT : `The spec is rendered as markdown in a viewer that follows standard CommonMark fencing. If you include a fenced code block that ITSELF contains a triple-backtick fence (common when quoting markdown examples or the platform's \`\`\`filepath:...\`\`\` output convention), wrap the OUTER block in a four-backtick fence (\`\`\`\`) — a longer fence can safely contain shorter ones. Otherwise the inner \`\`\` closes the block early and the rest of the spec renders broken. When in doubt, prefer fewer/inline code samples over deeply nested fences.`}
+${htmlSpec ? specHtmlContract(platformStyles) : `The spec is rendered as markdown in a viewer that follows standard CommonMark fencing. If you include a fenced code block that ITSELF contains a triple-backtick fence (common when quoting markdown examples or the platform's \`\`\`filepath:...\`\`\` output convention), wrap the OUTER block in a four-backtick fence (\`\`\`\`) — a longer fence can safely contain shorter ones. Otherwise the inner \`\`\` closes the block early and the rest of the spec renders broken. When in doubt, prefer fewer/inline code samples over deeply nested fences.`}
 
 Do NOT pad the spec with open questions. Only include a "### Questions" subsection — placed at the END of the "User-facing changes" half, since questions are for the (possibly non-technical) requester — for things that genuinely BLOCK implementation: decisions the coding agent cannot reasonably make on its own and that would change what gets built. Make a sensible default choice wherever you can and state it, rather than asking. Non-blocking items — things worth noting but not required to answer before building — belong in the "Technical implementation" half under "### Considerations" (trade-offs, assumptions, things to keep in mind) or "### Deferred work" (out-of-scope or follow-up items), NOT as questions. When there are no blockers, OMIT the "### Questions" subsection entirely — do NOT write "### Questions\nNone" or an empty section.
 

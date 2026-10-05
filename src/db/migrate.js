@@ -9764,7 +9764,7 @@ async function seedStagingHtmlSpecSession(pool, config) {
   .sd-title{font-size:22px;font-weight:700;margin:0 0 6px}.sd-lines i{display:block;height:10px;border-radius:5px;background:var(--bg-tertiary,#e3e3e6);margin:10px 0}
   .sd-left{position:absolute;left:28px;top:28px;width:620px}
 </style>`;
-  const html = `<article data-spec>
+  const html = `<article data-spec-styles="platform" data-spec>
   <h1>Staging demo HTML spec: the vote card says how many approvals are left</h1>
   <p>A spec written as HTML. The User-facing tab opens on before and after screens; the Technical tab on a diagram and a table.</p>
   <section data-spec-tab="user">
