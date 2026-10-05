@@ -223,6 +223,7 @@ export function normalizeBotMeta(input: unknown): { homeroomBot: HomeroomBotMeta
       chosen: optional('chosen'),
       startedAt: optional('startedAt'),
       askedText: optional('askedText'),
+      changeTitle: optional('changeTitle'),
       hello: optional('hello'),
       ...(pick(bot, 'live') === true ? { live: true } : {}),
       // B6: a plan, or two questions at once, and how its buttons went.

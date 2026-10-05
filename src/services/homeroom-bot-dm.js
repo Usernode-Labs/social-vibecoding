@@ -1170,6 +1170,8 @@ async function relayIssuePost({
       epoch: Number(dm.epoch) || 0,
       actions: readyActions({ sessionId: dm.sessionId, epoch: dm.epoch, approve: !!dm.card.approve }),
       status: 'open',
+      // #3870: what the change is, so the card says more than "is ready".
+      ...(typeof dm.title === 'string' && dm.title.trim() ? { changeTitle: clip(dm.title.trim(), 200) } : {}),
       ...(requester.askedText ? { askedText: askedLine(requester.askedText) } : {}),
     } : {}),
   };
@@ -1527,7 +1529,8 @@ async function changeReadiness(pool, sessionId, { now = Date.now() } = {}) {
   const { rows } = await pool.query(
     `SELECT status, check_state, approval_epoch, source, reviewed_head_sha, imported_pr_head_sha,
             checks_commit_sha, handoff_head_sha, checks_checked_at,
-            shots_state, shots_run_id, shots_detail, shots_updated_at
+            shots_state, shots_run_id, shots_detail, shots_updated_at,
+            pr_title, pr_title_fallback, session_title
        FROM chat_sessions WHERE id = $1`, [id],
   );
   const row = rows[0];
@@ -1541,7 +1544,18 @@ async function changeReadiness(pool, sessionId, { now = Date.now() } = {}) {
     epoch: Number(row.approval_epoch) || 0,
     waitingOnShots,
     broken: checked ? shotsState.brokenOnHead(row, head) : [],
+    // #3870: what the change is, for its ready card: its proposal's title,
+    // unless that is the placeholder written while titles could not be
+    // made, else its session's.
+    title: changeTitle(row),
   };
+}
+
+/** Pure (#3870): a change's own title, in one line, or null. */
+function changeTitle(row) {
+  const pr = !row?.pr_title_fallback && typeof row?.pr_title === 'string' ? row.pr_title.trim() : '';
+  const own = pr || (typeof row?.session_title === 'string' ? row.session_title.trim() : '');
+  return own ? clip(own.replace(/\s+/g, ' '), 200) : null;
 }
 
 /**
@@ -1615,6 +1629,7 @@ async function noteChangeReady(pool, sessionId, deps = {}) {
       kind: 'proposal', runId: Number(run.run_id), bot, ready: true, key: readyKey(id, state.epoch),
       dm: {
         link, sessionId: id, epoch: state.epoch,
+        ...(state.title ? { title: state.title } : {}),
         card: {
           approve: !!(approval?.counts && !approval.already),
           last: !!approval?.last,
