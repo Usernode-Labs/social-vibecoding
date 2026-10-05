@@ -71,11 +71,11 @@ test('the sketch against the full PostgreSQL schema', { timeout: 120000 }, async
   const { rows: [ada] } = await pool.query(
     `INSERT INTO users (username, password, has_platform_access) VALUES ('ada', 'x', TRUE) RETURNING id`);
   let n = 0;
-  async function project() {
+  async function project(label = 'Run Club') {
     n += 1;
     const { rows: [app] } = await pool.query(
       `INSERT INTO apps (name, slug, status, created_by) VALUES ($1, $2, 'creating', $3) RETURNING id, name, slug`,
-      [`Run Club ${n}`, `run-club-${n}`, ada.id]);
+      [`${label} ${n}`, `${label.toLowerCase().replace(/\s+/g, '-')}-${n}`, ada.id]);
     return app;
   }
   const user = { id: ada.id };
@@ -171,7 +171,9 @@ test('the sketch against the full PostgreSQL schema', { timeout: 120000 }, async
 
   await t.test('without a model (a staging preview, a local stack): the description\'s card, on the spot', async () => {
     const off = { isEnabled: () => false };
-    const app = await project();
+    // Its name picks the emoji before its description does
+    // (app-sketch.js keywordEmoji): "Run Club" would be a runner.
+    const app = await project('Friday Film Crew');
     assert.equal(await sketch.startSketch(pool, { app, user, brief: 'A poll to pick what we watch on movie night' }, { llm: off, ws: WS }), true);
     assert.equal(await sketch.startSketch(pool, { app, user, brief: 'again' }, { llm: off, ws: WS }), false, 'once per project');
     const row = await sketch.whenReady(pool, app.id, 100);
