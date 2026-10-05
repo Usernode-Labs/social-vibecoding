@@ -700,7 +700,9 @@ async function standing(pool, token, user) {
 
 /**
  * Follow a link as `user` ({ id, isAdmin, hasPlatformAccess }). One
- * transaction, the link's row locked for its use count.
+ * transaction, the link's row locked for its use count. `browser` is the
+ * browser it was followed from (invite-activity.browserFrom), for the
+ * maker's open notice.
  *
  * Returns `{ ok: true, status, slug, name, skippedWaitlist }`:
  *   status 'joined'  in the project now (slug set);
@@ -708,7 +710,7 @@ async function standing(pool, token, user) {
  *          'queued'  no platform access yet: joins when let in (no slug);
  * or `{ ok: false, status: 404|410, reason }` for an unknown or dead link.
  */
-async function redeem(pool, { token, user }) {
+async function redeem(pool, { token, user, browser = null }) {
   if (!user || !user.id) return { ok: false, status: 401, reason: 'signed_out' };
   if (!isToken(token)) return { ok: false, status: 404, reason: 'unknown' };
   // Read before taking a connection: the switch has its own (cached) read.
@@ -793,8 +795,9 @@ async function redeem(pool, { token, user }) {
       void require('./homeroom-bot-dm').greetJoiner(pool, {
         user, app: { id: invite.app_id, slug: invite.slug, name: invite.name },
       });
-      // WP-E: the link's maker hears who came in by it.
-      void require('./invite-activity').noteJoined(pool, { inviteId: invite.id, user });
+      // WP-E: the link's maker hears who came in by it, and the open that
+      // brought them (from this browser, maybe signed out) is not news now.
+      void require('./invite-activity').noteJoined(pool, { inviteId: invite.id, user, browser });
     }
     events.record(pool, {
       type: events.EVENT_TYPES.INVITE_LINK_REDEEMED,
@@ -929,7 +932,8 @@ async function redeemCarried(pool, req, res, userId) {
     );
     if (!rows[0]) return null;
     const user = { id: rows[0].id, isAdmin: !!rows[0].is_admin, hasPlatformAccess: !!rows[0].has_platform_access };
-    const result = await redeem(pool, { token, user });
+    const browser = require('./invite-activity').browserFrom(req);
+    const result = await redeem(pool, { token, user, browser });
     if (!result.ok) return null;
     return { name: result.name, status: result.status, slug: result.slug };
   } catch (err) {

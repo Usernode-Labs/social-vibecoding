@@ -204,6 +204,28 @@ test('the tables are staging:private, and a queued invite is applied by a trigge
   assert.match(schema, /IF TG_OP = 'UPDATE' AND OLD\.has_platform_access THEN\s+RETURN NULL;/, 'the false → true edge only');
 });
 
+test('the invite-links block runs in the Postgres suite\'s scratch schema: it reads only the tables that fixture makes', () => {
+  // tests/community-invites-postgres.test.js lifts this block out of
+  // schema.sql (to the next "-- ── " header) and runs it beside a handful of
+  // tables. A table in it that references one the fixture does not make
+  // fails the whole suite, and only where Postgres runs: the open counts'
+  // table did, until it moved to its own section after the block.
+  const schema = read('src/db/schema.sql');
+  const start = schema.indexOf('-- ── Communities, stage 6: invite links');
+  const block = schema.slice(start, schema.indexOf('\n-- ── ', start + 10));
+  const fixture = read('tests/community-invites-postgres.test.js');
+  const made = new Set([
+    ...[...fixture.matchAll(/CREATE TABLE (\w+)/g)].map((m) => m[1]),
+    ...[...block.matchAll(/CREATE TABLE IF NOT EXISTS (\w+)/g)].map((m) => m[1]),
+  ]);
+  const referenced = [...new Set([...block.matchAll(/REFERENCES (\w+)\(/g)].map((m) => m[1]))];
+  assert.ok(referenced.length > 0);
+  assert.deepEqual(referenced.filter((name) => !made.has(name)), []);
+  assert.ok(!block.includes('community_invite_opens'), 'the open counts live in their own section');
+  assert.match(schema, /-- ── Invite opens \(WP-E\)[\s\S]*?CREATE TABLE IF NOT EXISTS community_invite_opens/);
+  assert.match(schema, /COMMENT ON TABLE community_invite_opens IS 'staging:private';/);
+});
+
 test('the page\'s link preview: a live link names the project and inviter, a dead one nothing, all escaped', () => {
   const live = routes.previewTags({
     live: true,
@@ -242,7 +264,7 @@ test('the paths: the page is a shell document; following from the waiting room i
     "router.get('/invite/:token', invitePreviewLimiter,",
   ]) assert.ok(src.includes(route), route);
   // Only a live link leaves its token for sign-in to follow.
-  assert.match(src, /if \(preview\.live\) invites\.setInviteCookie\(req, res, token\);/);
+  assert.match(src, /if \(preview\.live\) \{\s*invites\.setInviteCookie\(req, res, token\);/);
 });
 
 test('signing UP from an invite page follows the link server-side; signing IN is asked first', () => {

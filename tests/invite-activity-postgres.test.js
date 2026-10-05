@@ -1,10 +1,11 @@
 'use strict';
 
 // WP-E against the full schema (src/services/invite-activity.js): what an
-// invite link brings back to its maker. Opens are counted and never named,
-// a join and a first hello name the person who came by the link, each kind
-// rings once a day per project and folds the rest into a count, and none of
-// it reaches anybody but the link's maker.
+// invite link brings back to its maker. Opens are counted once per person
+// and never named, a join and a first hello name the person who came by the
+// link, each kind rings once a day per project and folds the rest into a
+// count, and none of it reaches anybody but the link's maker. An open is
+// news only until that person joins: the join replaces it.
 //
 // Run with: TEST_DATABASE_URL=postgres://... node --test tests/invite-activity-postgres.test.js
 
@@ -20,7 +21,7 @@ const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
 const activity = require('../src/services/invite-activity');
 
 test('invite activity against the full PostgreSQL schema', { timeout: 120000 }, async (t) => {
-  const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
+  const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 10000 });
   try { await admin.query('SELECT 1'); } catch (err) {
     await admin.end();
     if (process.env.TEST_DATABASE_URL) throw err;
@@ -30,7 +31,7 @@ test('invite activity against the full PostgreSQL schema', { timeout: 120000 }, 
   const name = `invite_activity_${crypto.randomBytes(6).toString('hex')}`;
   await admin.query(`CREATE DATABASE ${name}`);
   const url = new URL(DSN); url.pathname = `/${name}`;
-  const pool = new Pool({ connectionString: String(url), max: 6 });
+  const pool = new Pool({ connectionString: String(url), max: 6, connectionTimeoutMillis: 10000 });
   t.after(async () => {
     await pool.end();
     await admin.query(`DROP DATABASE ${name}`);
@@ -120,7 +121,20 @@ test('invite activity against the full PostgreSQL schema', { timeout: 120000 }, 
     assert.equal(await activity.noteJoined(pool, { inviteId: invite.id, user: { id: maya.id } }), null);
   });
 
-  await t.test('only the first of the day rings: one push delivery queued, then none', async () => {
+  // A browser, as the route hands it over: the hash of its cookie.
+  const browser = (name) => crypto.createHash('sha256').update(`test-browser:${name}`).digest('hex');
+  const opensOf = async (app) => (await pool.query(
+    `SELECT user_id, browser, notification_id FROM community_invite_opens WHERE app_id = $1 ORDER BY id`, [app.id])).rows;
+  const openEvents = async (invite) => (await pool.query(
+    `SELECT user_id, app_id, metadata FROM events
+      WHERE event_type = 'invite_opened' AND (metadata->>'inviteId')::int = $1`, [invite.id])).rows;
+  const waitForEvents = async (invite, n) => {
+    for (let i = 0; i < 40 && (await openEvents(invite)).length < n; i += 1) await new Promise((r) => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 100));
+    return openEvents(invite);
+  };
+
+  await t.test('three people on the first day ring once, and the push waits for a join', async () => {
     const { app, invite } = await project();
     await pool.query(
       `INSERT INTO mobile_push_deployment_state (environment, firebase_project_id, send_enabled, send_not_before)
@@ -136,33 +150,145 @@ test('invite activity against the full PostgreSQL schema', { timeout: 120000 }, 
        VALUES ($1, $2, 'production', $3, $4, 'enc:opaque', 'ios', 'authorized', NOW() + INTERVAL '30 days')`,
       [maya.id, `nsc_${String(maya.id).padStart(43, '0')}`, crypto.randomUUID(), crypto.randomBytes(32).toString('hex')]);
     const before = (await pool.query('SELECT COUNT(*)::int AS n FROM mobile_push_deliveries')).rows[0].n;
-    await activity.noteOpened(pool, { token: invite.token });
-    await activity.noteOpened(pool, { token: invite.token });
-    await activity.noteOpened(pool, { token: invite.token });
+    const first = await activity.noteOpened(pool, { token: invite.token, browser: browser('ring-a') });
+    assert.equal(first.fresh, true);
+    assert.equal((await activity.noteOpened(pool, { token: invite.token, browser: browser('ring-b') })).fresh, false);
+    assert.equal((await activity.noteOpened(pool, { token: invite.token, browser: browser('ring-c') })).fresh, false);
     const rows = (await rowsOf(maya.id, 'invite_opened')).filter((r) => r.app_id === app.id);
     assert.equal(rows.length, 1);
-    assert.equal(rows[0].detail, '3');
+    assert.equal(rows[0].detail, '3', 'three people');
     assert.equal(rows[0].source_user_id, null, 'an open is never a name');
+    const deliveries = (await pool.query(
+      `SELECT available_at > NOW() + INTERVAL '14 minutes' AS waits, status
+         FROM mobile_push_deliveries WHERE notification_id = $1`, [rows[0].id])).rows;
     const after = (await pool.query('SELECT COUNT(*)::int AS n FROM mobile_push_deliveries')).rows[0].n;
     assert.equal(after - before, 1, 'one push for three opens');
-    // Each open is also an event for the admin Journey's first session,
-    // with no name on it when nobody is signed in.
-    const opened = async () => (await pool.query(
-      `SELECT user_id, app_id, metadata FROM events
-        WHERE event_type = 'invite_opened' AND (metadata->>'inviteId')::int = $1`, [invite.id])).rows;
-    for (let i = 0; i < 40 && (await opened()).length < 3; i += 1) await new Promise((r) => setTimeout(r, 50));
-    const recorded = await opened();
+    assert.deepEqual(deliveries, [{ waits: true, status: 'pending' }],
+      `the open's push waits ${activity.OPEN_PUSH_DELAY_MINUTES} minutes, for a join to replace it`);
+    // Each person's open is also an event for the admin Journey's first
+    // session, with no name on it when nobody is signed in.
+    const recorded = await waitForEvents(invite, 3);
     assert.equal(recorded.length, 3);
     assert.deepEqual(recorded.map((r) => [r.user_id, r.app_id, r.metadata.signedIn]), Array(3).fill([null, app.id, false]));
+  });
+
+  await t.test('one person opening a link four times is one open: no count, no unread, no ring', async () => {
+    const { app, invite } = await project();
+    const first = await activity.noteOpened(pool, { token: invite.token, browser: browser('one-person') });
+    assert.equal(first.fresh, true);
+    await pool.query('UPDATE notifications SET read_at = NOW() WHERE id = $1', [first.row.id]);
+    for (let i = 0; i < 3; i += 1) {
+      assert.deepEqual(await activity.noteOpened(pool, { token: invite.token, browser: browser('one-person') }),
+        { row: null, fresh: false }, 'the same browser again');
+    }
+    const rows = (await rowsOf(maya.id, 'invite_opened')).filter((r) => r.app_id === app.id);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].detail, null, '"Someone opened your invite", not "4 people"');
+    assert.ok(rows[0].read_at, 'and it stays read');
+    assert.equal((await opensOf(app)).length, 1);
+    assert.equal((await waitForEvents(invite, 1)).length, 1, 'one event, as one person');
+
+    // Signed in, they are their account on every device and browser: the
+    // phone, then the laptop, then the phone signed out, then signed in.
+    const signed = await project();
+    await activity.noteOpened(pool, { token: signed.invite.token, viewerId: sam.id, browser: browser('sam-phone') });
+    assert.deepEqual(await activity.noteOpened(pool, { token: signed.invite.token, viewerId: sam.id, browser: browser('sam-laptop') }),
+      { row: null, fresh: false }, 'another device, same account');
+    assert.deepEqual(await activity.noteOpened(pool, { token: signed.invite.token, browser: browser('sam-phone') }),
+      { row: null, fresh: false }, 'the same phone, signed out');
+    const signedRows = (await rowsOf(maya.id, 'invite_opened')).filter((r) => r.app_id === signed.app.id);
+    assert.equal(signedRows.length, 1);
+    assert.equal(signedRows[0].detail, null);
+    assert.deepEqual((await opensOf(signed.app)).map((r) => [r.user_id, r.browser]), [[sam.id, browser('sam-phone')]]);
+  });
+
+  await t.test('two people are two, and a second link of the same maker\'s does not count them again', async () => {
+    const { app, invite } = await project();
+    await activity.noteOpened(pool, { token: invite.token, viewerId: sam.id, browser: browser('two-sam') });
+    await activity.noteOpened(pool, { token: invite.token, browser: browser('two-stranger') });
+    const rows = (await rowsOf(maya.id, 'invite_opened')).filter((r) => r.app_id === app.id);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].detail, '2', '"2 people opened your invite"');
+    // Maya made a second link to the same project: Sam opening it is not a third.
+    const token = crypto.randomBytes(16).toString('base64url').slice(0, 22);
+    await pool.query(
+      `INSERT INTO community_invites (token, community_id, app_id, created_by, expires_at)
+       VALUES ($1, $2, $3, $4, NOW() + INTERVAL '7 days')`,
+      [token, app.community_id, app.id, maya.id]);
+    assert.deepEqual(await activity.noteOpened(pool, { token, viewerId: sam.id, browser: browser('two-sam-2') }),
+      { row: null, fresh: false });
+    assert.equal((await rowsOf(maya.id, 'invite_opened')).filter((r) => r.app_id === app.id)[0].detail, '2');
+  });
+
+  await t.test('a browser opened signed out and then signed in, and a person seen on two rows, are one', async () => {
+    const { app, invite } = await project();
+    await activity.noteOpened(pool, { token: invite.token, browser: browser('merge-v1') });
+    await activity.noteOpened(pool, { token: invite.token, viewerId: alex.id, browser: browser('merge-v2') });
+    assert.equal((await rowsOf(maya.id, 'invite_opened')).filter((r) => r.app_id === app.id)[0].detail, '2',
+      'until they sign in there, two browsers are two people');
+    // Alex signs in on the first browser: that browser was Alex all along.
+    assert.deepEqual(await activity.noteOpened(pool, { token: invite.token, viewerId: alex.id, browser: browser('merge-v1') }),
+      { row: null, fresh: false });
+    const rows = (await rowsOf(maya.id, 'invite_opened')).filter((r) => r.app_id === app.id);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].detail, null, 'one person after all');
+    assert.equal((await opensOf(app)).length, 1);
+  });
+
+  await t.test('a join replaces the open: off the notice, which goes when nobody is left, its waiting push with it', async () => {
+    const { app, invite } = await project();
+    // Opened signed out, then signed up in the same browser and joined.
+    const opened = await activity.noteOpened(pool, { token: invite.token, browser: browser('join-sam') });
+    const notice = opened.row.id;
+    await pool.query(
+      `INSERT INTO mobile_push_deliveries (notification_id, environment, installation_id, available_at)
+       VALUES ($1, 'production', $2, NOW() + INTERVAL '15 minutes') ON CONFLICT DO NOTHING`,
+      [notice, crypto.randomUUID()]);
+    await joinBy(invite, app, sam);
+    const joined = await activity.noteJoined(pool, { inviteId: invite.id, user: { id: sam.id }, browser: browser('join-sam') });
+    assert.equal(joined.fresh, true);
+    assert.equal((await rowsOf(maya.id, 'invite_opened')).filter((r) => r.app_id === app.id).length, 0,
+      'the open is gone: "Joined through your invite" says it');
+    assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM mobile_push_deliveries WHERE notification_id = $1', [notice])).rows[0].n, 0,
+      'and its push never goes');
+    assert.equal((await rowsOf(maya.id, 'member_joined')).filter((r) => r.app_id === app.id).length, 1);
+    // They are remembered, with their account: opening the link again
+    // signed out in that browser is not news.
+    assert.deepEqual((await opensOf(app)).map((r) => [r.user_id, r.notification_id]), [[sam.id, null]]);
+    assert.deepEqual(await activity.noteOpened(pool, { token: invite.token, browser: browser('join-sam') }),
+      { row: null, fresh: false });
+    assert.equal((await rowsOf(maya.id, 'invite_opened')).filter((r) => r.app_id === app.id).length, 0);
+
+    // Two opened; one joins: the other is still somebody who opened.
+    const both = await project();
+    await activity.noteOpened(pool, { token: both.invite.token, viewerId: alex.id, browser: browser('join-alex') });
+    await activity.noteOpened(pool, { token: both.invite.token, browser: browser('join-other') });
+    await joinBy(both.invite, both.app, alex);
+    await activity.noteJoined(pool, { inviteId: both.invite.id, user: { id: alex.id } });
+    const left = (await rowsOf(maya.id, 'invite_opened')).filter((r) => r.app_id === both.app.id);
+    assert.equal(left.length, 1);
+    assert.equal(left[0].detail, null, '"Someone opened your invite": the one who has not joined');
+  });
+
+  await t.test('a browser counted before opens were kept by person is remembered, not counted again', async () => {
+    const { app, invite } = await project();
+    assert.deepEqual(
+      await activity.noteOpened(pool, { token: invite.token, browser: browser('legacy'), seenBefore: true }),
+      { row: null, fresh: false });
+    assert.equal((await rowsOf(maya.id, 'invite_opened')).filter((r) => r.app_id === app.id).length, 0);
+    assert.deepEqual(await activity.noteOpened(pool, { token: invite.token, browser: browser('legacy') }),
+      { row: null, fresh: false }, 'and stays quiet once the old cookie has gone');
+    assert.equal(await activity.noteOpened(pool, { token: invite.token }), null,
+      'nothing to know a person by, so nothing to count once');
   });
 
   await t.test('an open by the maker, a member or a dead link counts nothing', async () => {
     const { app, invite } = await project();
     await joinBy(invite, app, old);
-    assert.equal(await activity.noteOpened(pool, { token: invite.token, viewerId: maya.id }), null);
-    assert.equal(await activity.noteOpened(pool, { token: invite.token, viewerId: old.id }), null);
+    assert.equal(await activity.noteOpened(pool, { token: invite.token, viewerId: maya.id, browser: browser('maker') }), null);
+    assert.equal(await activity.noteOpened(pool, { token: invite.token, viewerId: old.id, browser: browser('member') }), null);
     await pool.query('UPDATE community_invites SET revoked_at = NOW() WHERE id = $1', [invite.id]);
-    assert.equal(await activity.noteOpened(pool, { token: invite.token }), null);
+    assert.equal(await activity.noteOpened(pool, { token: invite.token, browser: browser('dead') }), null);
     assert.equal((await rowsOf(maya.id, 'invite_opened')).filter((r) => r.app_id === app.id).length, 0);
     await new Promise((r) => setTimeout(r, 100));
     assert.equal((await pool.query(
@@ -202,11 +328,11 @@ test('invite activity against the full PostgreSQL schema', { timeout: 120000 }, 
 
   await t.test('a row from yesterday is not folded into: today rings again', async () => {
     const { app, invite } = await project();
-    await activity.noteOpened(pool, { token: invite.token });
+    await activity.noteOpened(pool, { token: invite.token, browser: browser('yesterday') });
     await pool.query(
       `UPDATE notifications SET created_at = NOW() - INTERVAL '25 hours' WHERE user_id = $1 AND app_id = $2 AND kind = 'invite_opened'`,
       [maya.id, app.id]);
-    const today = await activity.noteOpened(pool, { token: invite.token });
+    const today = await activity.noteOpened(pool, { token: invite.token, browser: browser('today') });
     assert.equal(today.fresh, true);
     assert.equal((await rowsOf(maya.id, 'invite_opened')).filter((r) => r.app_id === app.id).length, 2);
   });
