@@ -45,6 +45,33 @@ test('a plan waits for Build it when first_version carries one, read as the App 
   assert.match(view, /const plan = mine && fv\.plan && Array\.isArray\(fv\.plan\.bullets\) && fv\.plan\.bullets\.length\s+&& Number\.isInteger\(fv\.plan\.actionId\) \? fv\.plan : null;/);
 });
 
+test('the made screen reads the project under `app`, past the service worker\'s cache', () => {
+  // Page Turners, 5 October 2026: GET /api/apps/:slug answers `{ app }`, and
+  // the made screen read `first_version` off the answer itself, so its plan
+  // and its step never showed (tests/first-session-made-plan-postgres.test.js
+  // runs it against the real route).
+  const { madeAppOf, madeAppUrl, waitingPlan } = loadTsx(`${DIR}/made.tsx`);
+  const fv = { step: 3, of: 7, stepName: 'Write a plan', ready: false, plan: PLAN };
+  assert.deepEqual(madeAppOf({ app: { status: 'running', first_version: fv } }), { firstVersion: fv, status: 'running' });
+  assert.deepEqual(waitingPlan(madeAppOf({ app: { first_version: fv } }).firstVersion), PLAN);
+  assert.deepEqual(madeAppOf({ app: { status: 'creating' } }), { firstVersion: null, status: 'creating' });
+  assert.equal(madeAppOf({ first_version: fv, status: 'running' }), null, 'a bare record is not the route\'s answer');
+  assert.equal(madeAppOf(null), null);
+  assert.equal(madeAppOf({ error: 'App not found' }), null);
+  // A poll asks what is true now: the tagged URL the App tab's recheck uses,
+  // which the service worker never answers from its boot cache.
+  assert.equal(madeAppUrl('page turners'), '/api/apps/page%20turners?status_recheck=1&manifest=summary');
+  const { classifyRequest } = require('../public/sw.js');
+  const origin = 'https://onhomeroom.test';
+  assert.equal(classifyRequest('GET', `${origin}${madeAppUrl('page-turners')}`, 'application/json', 'cors', origin), 'bypass');
+  assert.equal(classifyRequest('GET', `${origin}/api/apps/page-turners`, 'application/json', 'cors', origin), 'api',
+    'the plain read is the boot lane\'s, served from cache first');
+  const src = read(`${DIR}/made.tsx`);
+  assert.match(src, /fetch\(madeAppUrl\(made\.slug\), \{ credentials: 'same-origin', cache: 'no-store' \}\)/);
+  assert.match(src, /const app = madeAppOf\(body\);\s+if \(live && app\) \{ setFv\(app\.firstVersion\); setAppStatus\(app\.status\); \}/);
+  assert.ok(!/setFv\(app\.first_version/.test(src), 'never the top of the answer');
+});
+
 test('the plan is drawn under "Needs you", as the chat\'s own card, with what Build it does', () => {
   const { PlanSection, PLAN_LABEL, planNote } = loadTsx(`${DIR}/made.tsx`);
   assert.equal(PLAN_LABEL, 'Needs you');
