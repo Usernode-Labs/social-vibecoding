@@ -875,7 +875,7 @@ test('a backlog pass holds silently, and still speaks when it has something to s
 test('a "Triage this app again" item is triaged without the "looking" post, and held quietly', () => {
   assert.equal(bot.APP_AGAIN_REASON, 'app_again');
   assert.match(BOT_SRC, /SELECT \$1, q\.n, 0, 'app_again', \$4/, 'retriageApp queues with that reason');
-  assert.match(BOT_SRC, /const looked = item\.reason === RESTART_REASON \|\| item\.reason === APP_AGAIN_REASON \? null : await live\.post\(/);
+  assert.match(BOT_SRC, /const looked = item\.reason === RESTART_REASON \|\| item\.reason === APP_AGAIN_REASON\n\s+\|\| item\.reason === RETRY_FAILED_REASON \? null : await live\.post\(/);
   assert.match(BOT_SRC, /quietHold: item\.reason === APP_AGAIN_REASON,/);
   // The refresh keeps a priority-0 row's reason, so a comment before the
   // row runs does not turn it back into a "looking" one mid-pass.
