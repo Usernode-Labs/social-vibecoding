@@ -176,7 +176,7 @@ test('the tray\'s read passes `fresh` as cache: no-store, as every other re-read
 test('the worker\'s late correction (resync) reads the tray and the cards again, through the event both re-read on', () => {
   const store = read(STORE);
   const resync = store.slice(store.indexOf('export async function resync('), store.indexOf('\n}', store.indexOf('export async function resync(')));
-  assert.match(store, /import \{ WORK_CHANGED_EVENT \} from '\.\/bot-shared';/);
+  assert.match(store, /import \{ WORK_CHANGED_EVENT(?:, [\w, ]+)? \} from '\.\/bot-shared';/);
   assert.match(resync, /if \(conversationId && onScreen\(conversationId\)\) \{[\s\S]*window\.dispatchEvent\(new CustomEvent\(WORK_CHANGED_EVENT\)\);\n {2}\}/,
     'only for the conversation on screen');
 });

@@ -24,3 +24,35 @@ export function jobTitle(job: Named): string {
   const name = jobName(job);
   return !job.firstVersion && job.title ? `${name}: ${job.title}` : name;
 }
+
+/**
+ * The project an in-app address opens on its App tab (`#app/<slug>/app`, as
+ * services/homeroom-bot-dm.js openAppAction writes it), or null for any
+ * other address.
+ */
+export function appTabSlug(target: string | null | undefined): string | null {
+  const match = /^#app\/([^/?#]+)\/app$/.exec(String(target || ''));
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1]) || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A bot button's way into the platform (`open`, always `#app/…`). A
+ * project's App tab opens the way the rest of the shell opens a project's
+ * app: App.openAppTab, as an app's icon and its about pane do, which also
+ * works when that address is already the one in the bar. Any other address,
+ * or no router, goes to the address.
+ */
+export function openAppTarget(target: string | null | undefined): void {
+  if (typeof window === 'undefined' || !target || !target.startsWith('#app/')) return;
+  const slug = appTabSlug(target);
+  if (slug && typeof window.App?.openAppTab === 'function') {
+    window.App.openAppTab(slug, 'app');
+    return;
+  }
+  window.location.hash = target;
+}

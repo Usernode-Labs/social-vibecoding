@@ -14,6 +14,20 @@ import { Message, Localized, message as catalogText } from "../../../lib/i18n/re
  *   when a vote is owed, the DISCUSSION's last two messages, YOUR WORK when
  *   you have some, and Start a new change.
  *
+ * A project Homeroom bot is still building gets its FIRST VERSION card
+ * first, right under the hero: where the build stands, and the way to the
+ * bot's chat when the bot waits on its maker (FirstVersionCard below).
+ *
+ * ── A project nobody else is in ────────────────────────────────────────
+ *
+ * Evan, 5 Oct 2026, on a brand-new project of his own: "The initial hub if
+ * no one has joined is really sad." It read "Just you", "Nothing more to
+ * vote on." and "Your work · No work in progress." Nobody else can put a
+ * vote up there, so the vote line says nothing (`alone` in NothingToVote),
+ * and an empty Your work leaves the hub while something else on it already
+ * says what is next (hubWorkEmpty). A project with people in it keeps both
+ * as they were.
+ *
  * Your work is the first two of your items with the rest a press away IN
  * PLACE, because a list you came to the hub to glance at should not send
  * you to another page to see its third row. Needs you and the discussion
@@ -55,16 +69,19 @@ import { Message, Localized, message as catalogText } from "../../../lib/i18n/re
  * useCommunity) and draw nothing until it has answered.
  */
 
-import { useCallback, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 
+import { Button } from '@/components/ui/button';
 import { ArrowUpIcon, ChevronDownIcon, ChevronRightIcon } from '@/components/ui/icons';
+import { ProgressRing } from '@/components/ui/progress-ring';
 import { agoStamp } from '../../../lib/timestamp';
 import { swatchFor } from '../../messages/format';
+import { open as openConversation, openBot } from '../../messages/store';
 import { CardRowView } from '../card/fold';
 import { FeedMentionMenu, mentionSuggestionsPath, useMentionTypeahead } from '../card/mention-typeahead';
 import type { DevWorkshopView, ListRow } from '../card/model';
 import { isNeedsSeen, needsRowKey, useNeedsSeen } from '../../workshop/needs-seen';
-import { reloadCommunity, type CommunityPayload } from './community-card';
+import { reloadCommunity, type CommunityPayload, type HubFirstVersion } from './community-card';
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
@@ -269,6 +286,10 @@ function HubComposer({ slug, url, placeholder }: { slug: string; url: string; pl
         className="dev-ws-hub-compose-send"
         data-ws-channel-send="" aria-label={catalogText("workshop:send_f6f4688f")}
         disabled={busy || !text.trim()}
+        // The field keeps focus through the press, so the keyboard and the
+        // composer stay where the tap landed (lib/keyboard-open.ts). The
+        // press still closes the people list, as the blur did.
+        onMouseDown={(event) => { event.preventDefault(); mention.close(); }}
       >
         <ArrowUpIcon className="w-4 h-4" aria-hidden="true" />
       </button>} messages={{"aria-label":"workshop:send_f6f4688f"}} />
@@ -281,6 +302,130 @@ function HubComposer({ slug, url, placeholder }: { slug: string; url: string; pl
         onPick={mention.accept}
       />
     </form>
+  );
+}
+
+/** How often the hub reads the project again while its first version is being built. */
+export const FIRST_VERSION_POLL_MS = 15000;
+
+/**
+ * "Step 4 of 7: Build it". The name is the server's (`step_name`, from
+ * homeroom-bot-dm.js firstVersionState for this viewer), so the hub says
+ * exactly what the made screen and the App tab say, and follows them when
+ * a step is renamed.
+ */
+export function firstVersionStep(fv: HubFirstVersion): string {
+  if (!fv.step || !fv.of) return fv.ready ? 'Ready to try' : 'Being built';
+  return `Step ${fv.step} of ${fv.of}${fv.step_name ? `: ${fv.step_name}` : ''}`;
+}
+
+/**
+ * The line under the step: what happens next, for whoever reads it. Its
+ * maker is told what it waits on from them, or that the bot messages them
+ * when it is ready; anybody else, whose description it is.
+ *
+ * NO BUILD TIME. Evan, 5 Oct 2026: no average build time for a first
+ * version. It plans first and waits on its maker's answer, so an ordinary
+ * request's typical build was a promise it did not keep.
+ */
+export function firstVersionNote(fv: HubFirstVersion): string {
+  if (fv.ready) return 'Version one is ready to try.';
+  if (fv.waits_on === 'plan') return 'Homeroom bot has a plan for you.';
+  if (fv.waits_on === 'question') return 'Homeroom bot has a question for you.';
+  if (fv.mine) return 'Homeroom bot messages you when it’s ready to try.';
+  return fv.creator
+    ? `Homeroom bot is building it from @${fv.creator}’s description.`
+    : 'Homeroom bot is building it from its description.';
+}
+
+/** Which of the card's states this is, for its `data-ws-first-version`. */
+export function firstVersionKind(fv: HubFirstVersion): 'ready' | 'plan' | 'question' | 'building' {
+  if (fv.ready) return 'ready';
+  return fv.waits_on || 'building';
+}
+
+/**
+ * FIRST VERSION: where Homeroom bot's build of the project stands, while it
+ * builds it from the description it was made with. The same steps the made
+ * screen and the App tab say ("Step 4 of 7: Build it",
+ * services/homeroom-bot-progress.js), read from the hub's own record
+ * (GET /api/apps/:slug/community `first_version`), with the step as the
+ * ring the bot's activity cards lead with.
+ *
+ * When the bot waits on its maker (its plan, for their Build it, or a
+ * question), the card says so and "Go to chat" opens their chat with it,
+ * where the plan is decided. Ready to try, "See the change" opens the change,
+ * where it is tried and approved. Nothing for a project the bot is not
+ * building, or once its first version is live.
+ *
+ * No event marks each step, so while the card is on screen the record is
+ * read again every FIRST_VERSION_POLL_MS, as the App tab and the made screen
+ * read theirs (AppView._recheckFirstVersion, made.tsx).
+ */
+export function FirstVersionCard({ slug, data }: { slug: string; data: CommunityPayload | null }): ReactNode {
+  const fv = data?.first_version || null;
+  const ref = useRef<HTMLElement | null>(null);
+  const building = !!fv;
+  useEffect(() => {
+    if (!building || !slug) return undefined;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      if (!ref.current || !ref.current.getClientRects().length) return;
+      void reloadCommunity(slug);
+    }, FIRST_VERSION_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [building, slug]);
+  if (!fv) return null;
+  const step = firstVersionStep(fv);
+  const stepped = !!(fv.step && fv.of);
+  const chat = () => {
+    if (fv.conversation_id) openConversation(fv.conversation_id);
+    else void openBot();
+  };
+  return (
+    <section ref={ref} className="dev-ws-strip dev-ws-hub-first" data-ws-first-version={firstVersionKind(fv)}>
+      <div className="dev-ws-hub-first-row">
+        {stepped ? (
+          <ProgressRing
+            pct={Math.round(((fv.step || 0) / (fv.of || 1)) * 100)}
+            label={`${fv.step}/${fv.of}`}
+            title={step}
+            aria-hidden="true"
+          />
+        ) : null}
+        <span className="dev-ws-hub-door-text">
+          <span className="dev-ws-head">
+            <span className="dev-ws-head-title">First version</span>
+          </span>
+          <span className="dev-ws-hub-needs-first">
+            <span className="dev-ws-hub-needs-title" data-ws-first-version-step="">{step}</span>
+            <span className="dev-ws-hub-needs-sub" data-ws-first-version-note="">{firstVersionNote(fv)}</span>
+          </span>
+        </span>
+      </div>
+      {fv.waits_on ? (
+        <Button
+          type="button"
+          variant="pillAccent"
+          size="sm"
+          ink="solid"
+          className="self-start"
+          data-ws-first-version-chat=""
+          onClick={chat}
+        >
+          Go to chat
+        </Button>
+      ) : fv.ready && fv.session_id ? (
+        <a
+          href={`#app/${encodeURIComponent(slug)}/dev/proposals/${fv.session_id}`}
+          className="dev-ws-hub-open un-touch-target self-start"
+          data-ws-first-version-change=""
+        >
+          See the change
+          <ChevronRightIcon className="w-3.5 h-3.5" aria-hidden="true" />
+        </a>
+      ) : null}
+    </section>
   );
 }
 
@@ -381,15 +526,23 @@ export const owesVote = (queue: DevWorkshopView['queue']): boolean => queue.some
  * says so, instead of a card whose whole content was that nothing waits.
  * Requests nobody has picked up are still the Needs you page's rows, so when
  * there are some the line names them, and that phrase is the way in.
+ *
+ * ON A PROJECT NOBODY ELSE IS IN (`alone`) there is nobody to put a vote up,
+ * so "Nothing more to vote on." is a zero, and a zero says nothing: the line
+ * is not drawn, or it is the requests alone when there are some.
  */
-export function NothingToVote({ queue, onOpen }: {
+export function NothingToVote({ queue, onOpen, alone = false }: {
   queue: DevWorkshopView['queue'];
   onOpen: () => void;
+  /** Nobody but one person is in the project (hubAlone). */
+  alone?: boolean;
 }): ReactNode {
   const claims = queue.filter((row) => row.kind !== 'vote').length;
+  if (alone && !claims) return null;
   return (
     <p className="dev-ws-week-note" data-ws-hub-needs-none="">
-      <LocalizedValue render={() => (claims ? tr("workshop:nothing_more_to_vote_on_9a7d1c9d") : tr("workshop:nothing_more_to_vote_on_65789eca"))} />
+      <LocalizedValue render={() => (alone ? null : claims ? tr("workshop:nothing_more_to_vote_on_9a7d1c9d") : tr("workshop:nothing_more_to_vote_on_65789eca"))} />
+
       {claims ? (
         <button type="button" className="dev-ws-link un-touch-target" onClick={onOpen} data-ws-hub-needs-requests="">
           <LocalizedValue render={() => (tr("workshop:value1_nobody_has_picked_up_d5fe93b7", { value1: plural(claims, 'request', 'requests') }))} />
@@ -397,6 +550,42 @@ export function NothingToVote({ queue, onOpen }: {
       ) : null}
     </p>
   );
+}
+
+/**
+ * Whether nobody but one person is in the project: Just you, or a
+ * community whose one member is still alone in it. Not before the read has
+ * answered, so nothing is taken off the hub on a guess.
+ */
+export function hubAlone(data: Pick<CommunityPayload, 'audience' | 'member_count'> | null | undefined): boolean {
+  return !!data && (data.audience === 'solo' || (Number(data.member_count) || 0) <= 1);
+}
+
+/**
+ * What the hub's Your work says with nothing in progress, or null when it
+ * leaves the hub.
+ *
+ *   'plain'  "No work in progress." (#3489): a project with people in it,
+ *            where the place your work appears stays put
+ *   null     a project nobody else is in, while something else on the hub
+ *            already says what is next: its first version being built, the
+ *            start-here banner, or nothing a read-only viewer can start
+ *   'bot'    nobody else is in it and Homeroom bot builds here for you: to
+ *            change something, tell it (`mine.bot`, AppView._botDoor)
+ *   'menu'   nobody else is in it: the ⋯ is where a change is asked for
+ */
+export type WorkEmpty = 'plain' | 'bot' | 'menu' | null;
+
+export function hubWorkEmpty({ alone, building, startHere, readOnly, bot }: {
+  alone: boolean;
+  building: boolean;
+  startHere: boolean;
+  readOnly: boolean;
+  bot: boolean;
+}): WorkEmpty {
+  if (!alone) return 'plain';
+  if (building || startHere || readOnly) return null;
+  return bot ? 'bot' : 'menu';
 }
 
 /** How many of your items the hub shows before "Show N more". */
@@ -413,8 +602,13 @@ export const HUB_WORK_FIRST = 2;
  * the hub, so the place your work appears moved with your workload. The
  * page draws it for a signed-in viewer only (`mine.viewer`), as the Workshop
  * page's strip is.
+ *
+ * On a project nobody else is in, "No work in progress." under its own
+ * heading was the saddest block on a new project's hub. There it says how to
+ * change something instead (`empty`, hubWorkEmpty), or the page leaves it
+ * out while something else on the hub already says what is next.
  */
-export function YourWorkCard({ rows, slug, canPost, openKey, onToggleRow, all, onAll }: {
+export function YourWorkCard({ rows, slug, canPost, openKey, onToggleRow, all, onAll, empty = 'plain' }: {
   rows: ListRow[];
   slug: string;
   canPost: boolean;
@@ -424,13 +618,40 @@ export function YourWorkCard({ rows, slug, canPost, openKey, onToggleRow, all, o
       are wired by the page's fillers like any other (see workshop.tsx). */
   all: boolean;
   onAll: () => void;
+  /** What it says with nothing in progress (hubWorkEmpty). */
+  empty?: WorkEmpty;
 }): ReactNode {
   const cards = rows.filter((row): row is Extract<ListRow, { t: 'card' }> => row.t === 'card');
   if (!cards.length) {
+    if (!empty) return null;
     return (
       <section className="dev-ws-strip dev-ws-hub-work" data-ws-mine-card="">
         <div className="dev-ws-head"><RichMessage id="workshop:sentence_76f4104716ab" components={[<span className="dev-ws-head-title" />]} /></div>
-        <p className="text-xs text-zinc-500 dark:text-zinc-400" data-ws-mine-empty=""><Message id="workshop:no_work_in_progress_ed3f8772" /></p>
+        {empty === 'bot' ? (
+          <>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400" data-ws-mine-empty="bot">
+              <Message id="workshop:your_work_empty_tell_homeroom_bot" />
+            </p>
+            <Button
+              type="button"
+              variant="pillNeutral"
+              size="sm"
+              ink="neutral"
+              className="self-start"
+              data-ws-mine-bot=""
+              onClick={() => { void openBot(); }}
+            >
+              <Message id="workshop:go_to_chat" />
+            </Button>
+          </>
+        ) : empty === 'menu' ? (
+          <p className="text-xs text-zinc-500 dark:text-zinc-400" data-ws-mine-empty="menu">
+            <RichMessage id="workshop:your_work_empty_press_menu" components={[<span className="font-medium text-violet-700 dark:text-violet-400" />]} />
+          </p>
+        ) : (
+          <p className="text-xs text-zinc-500 dark:text-zinc-400" data-ws-mine-empty=""><Message id="workshop:no_work_in_progress_ed3f8772" /></p>
+        )}
+
       </section>
     );
   }

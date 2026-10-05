@@ -969,7 +969,8 @@ test('#3270, #3488: the Needs you pane is one feed, every project mixed, drawn b
   assert.match(pane, /<a class="workshop-reel-app" data-ws-item-app="" href="#app\/swap\/workshop">/);
   assert.match(pane, /<h2 class="dev-ws-item-title"><a href="#app\/garden\/dev\/proposals\/8">Item 8<\/a><\/h2>/);
   assert.match(pane, /<h2 class="dev-ws-item-title"><a href="#app\/swap\/dev\/governance\/9">Item 9<\/a><\/h2>/);
-  assert.match(pane, /class="dev-ws-eyebrow">Group decision · needs your vote</, 'a group decision says what it is');
+  assert.match(pane, /class="dev-ws-eyebrow">Group decision · Waiting for your approval</, 'a group decision says what it is');
+  assert.match(pane, /class="dev-ws-eyebrow">Change · Waiting for your approval</, 'and a change, in its page\'s words');
   // The rail, as a project's: Vote, Description, Comments, Ask, Try it, More.
   assert.deepEqual([...pane.matchAll(/data-ws-rail-btn="(\w+)"/g)].map((m) => m[1]),
     ['vote', 'description', 'comments', 'ask', 'try', 'more']);

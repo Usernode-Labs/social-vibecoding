@@ -1616,7 +1616,7 @@ export function init() {
       firstFeedback = null;
       // Every open hands back an editable composer (showFirstFeedback re-locks).
       setComposerLocked(false);
-      // The heading is "Ask for a change" from every way in (UI overhaul),
+      // The heading is "Suggest an improvement" from every way in,
       // so it is the markup's own and nothing renames it; `opts.intent`
       // ('issue', from the hub's ⋯) is still accepted and changes nothing.
       firstSuccess?.classList.add('hidden');
@@ -1850,9 +1850,10 @@ export function init() {
         submitFeedback();
       }
     });
-    // #556: same shortcut in the optional title input. Plain Enter is
-    // NOT intercepted — the natural next step from the title is writing
-    // the description, and there's no <form> for Enter to submit.
+    // #556: same shortcut in the optional title input. Plain Enter goes on
+    // to the description, the natural next step (#3907): feedback.tsx's
+    // `returnKeyHandler` on #feedback-form does that, and leaves a modified
+    // Enter to this listener.
     feedbackTitle.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
@@ -1886,7 +1887,7 @@ export function init() {
     if (!readCaptureDraft()) return;
     bootDraftAnnounced = true;
     try {
-      PlatformUI?.toast?.(globalThis.PlatformI18n.t("core:your_request_draft_was_saved_reopen_ask_for_a_ch_6b44bdfe"));
+      PlatformUI?.toast?.(globalThis.PlatformI18n.t("core:your_request_draft_was_saved_reopen_suggest_an_improvement"));
     } catch { /* the draft is in the stash either way */ }
   };
   App.noticeRescuedFeedbackDraft();

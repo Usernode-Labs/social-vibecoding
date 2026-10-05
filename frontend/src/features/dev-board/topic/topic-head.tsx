@@ -527,6 +527,30 @@ export function ProposalBody({ b }: { b: NonNullable<TopicBody['proposalBody']> 
   );
 }
 
+/**
+ * The rest of a change's summary, one tap down under its lead
+ * (`AppView._summaryParts`): on a change Homeroom bot built, its spec's
+ * Design brief, which was written for the build, not for the people
+ * deciding on it. The open flag is AppView's, like ProposalBody's, so a
+ * repaint does not shut it.
+ */
+function SummaryMore({ m }: { m: NonNullable<TopicBody['summaryMore']> }): ReactNode {
+  return (
+    <details
+      className="dev-topic-details dev-topic-hero-more"
+      data-topic-part="summary-more"
+      open={m.open}
+      onToggle={(e) => {
+        if (m.id != null) call('_setSummaryMoreOpen', m.id, e.currentTarget.open);
+      }}
+    >
+      <summary className="dev-topic-details-summary">How it’s built</summary>
+      {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
+      <Html className="dev-issue-body dev-topic-details-body" html={m.html} />
+    </details>
+  );
+}
+
 function Transcript({ t }: { t: TranscriptSection }): ReactNode {
   return (
     <div className="st-section" data-transcript-section={t.id}>
@@ -697,6 +721,31 @@ function AddressedBy({ r }: { r: IssueProposalRef }): ReactNode {
         ><IssueIdentity label={r.label} title={r.title} /><RefChevron /></a>
       </div>
     </aside>} messages={{"aria-label":"workshop:the_change_addressing_this_issue_25446d59"}} />
+  );
+}
+
+/**
+ * On a change's page: the change it went live inside
+ * (services/included-changes.js). The same box, row and chip as
+ * `AddressedBy`, read from the other end again: that names the change that
+ * closed an issue, this the change that carried this one live.
+ */
+function IncludedIn({ r }: { r: IssueProposalRef }): ReactNode {
+  return (
+    <aside className="dev-change-issues" aria-label="The change this one went live in" data-topic-part="included-in">
+      <h4 className="dev-topic-h">{r.heading}</h4>
+      <div className="mt-2">
+        <a
+          href={r.href}
+          className={REF_ROW}
+          data-included-in={r.sessionId}
+          onClick={(event) => {
+            if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+            event.preventDefault(); call('openTopic', 'proposal', r.sessionId);
+          }}
+        ><IssueIdentity label={r.label} title={r.title} /><RefChevron /></a>
+      </div>
+    </aside>
   );
 }
 
@@ -990,15 +1039,21 @@ function ChangeHero({ id, card, body, linkedIssues, onIssuesSaved }: {
   const vote = yesSpec && noSpec ? <VoteButton yes={yesSpec} no={noSpec} /> : null;
   const pills = vote ? all.filter((a) => a !== yesSpec && a !== noSpec) : all;
   const pill = card.pill && card.pill.state && card.pill.state.label ? card.pill.state : null;
+  const hasIssues = !!((body.issues && body.issues.length) || body.canEditIssues) && !!id;
   // The tags: priority, assignee, category, and the linkage. The state
   // chips — checks, behind main, the shots — stay off: the steps say it.
+  // A request the Addresses line under the summary already names, by its
+  // number AND its title, is not a "Closes #1" tag up here as well: that
+  // tag said the same thing in a pull request's words (first-session
+  // run-through, 4 Oct 2026).
+  const named = new Set(hasIssues ? (body.issues || []).map((issue) => Number(issue.n)) : []);
+  const unnamed = (b: any) => !(b && b.n != null && named.has(Number(b.n)));
   const badges = (card.badges || []).filter(Boolean);
   const chips = [
     ...badges.filter((b) => b.t === 'attr'),
-    ...(card.linked || []),
-    ...badges.filter((b) => b.t === 'issueChip'),
+    ...(card.linked || []).filter(unnamed),
+    ...badges.filter((b) => b.t === 'issueChip' && unnamed(b)),
   ];
-  const hasIssues = !!((body.issues && body.issues.length) || body.canEditIssues) && !!id;
   return (
     <section className="dev-topic-sheet dev-topic-hero" data-topic-sheet="hero" data-ws-tint={h.tint}>
       <div className="dev-topic-hero-top">
@@ -1048,10 +1103,12 @@ function ChangeHero({ id, card, body, linkedIssues, onIssuesSaved }: {
       </div>
       {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
       <Html className="dev-topic-hero-summary dev-topic-about-body" data-topic-part="summary" html={body.summaryHtml || ''} />
+      {body.summaryMore ? <SummaryMore m={body.summaryMore} /> : null}
       {body.summaryStale && body.summaryHtml
         ? <p className="dev-topic-note" role="note"><Message id="workshop:this_summary_may_describe_an_earlier_revision_52843050" /></p>
         : null}
       {body.tested && id ? <TestedLine id={id} t={body.tested} /> : null}
+      {body.includedIn ? <IncludedIn r={body.includedIn} /> : null}
       {hasIssues ? (
         <IssueAssociations
           proposalId={Number(id)}

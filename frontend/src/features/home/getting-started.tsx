@@ -43,7 +43,7 @@ import { Message, Localized, message as catalogText } from "../../lib/i18n/react
  *                            Workshop, and opening it from here ticks the
  *                            step (POST …/workshop-visit; the server checks
  *                            that nothing waits)
- *   suggest   Suggest ›      the "Ask for a change" dialog, for the default
+ *   suggest   Suggest ›      the "Suggest an improvement" dialog, for the default
  *                            app (opened first, since the dialog's "This app"
  *                            is the app that is open)
  *   other     <its CTA> ›    the challenge's own call-to-action

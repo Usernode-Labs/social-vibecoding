@@ -89,7 +89,11 @@ const PENDING_SQL = `
       FROM chat_sessions cs
      WHERE cs.status = 'promoted'
   )
-  SELECT s.user_id, COUNT(DISTINCT p.id) AS pending
+  SELECT s.user_id, COUNT(DISTINCT p.id) AS pending,
+         -- The one change, when there is exactly one: the row names it, so a
+         -- tap opens it rather than a list of one.
+         CASE WHEN COUNT(DISTINCT p.id) = 1 THEN MIN(p.id) END AS only_session_id,
+         CASE WHEN COUNT(DISTINCT p.id) = 1 THEN MIN(p.app_id) END AS only_app_id
     FROM open_proposals p
     JOIN stakeholders s ON s.app_id = p.app_id
    WHERE s.user_id IS DISTINCT FROM p.author_id
@@ -153,12 +157,16 @@ async function sweep(pool) {
       if (!allowedSet.has(userId)) continue;
       const pending = Math.min(Number(row.pending) || 0, MAX_COUNT);
       if (!pending) continue;
+      // One change waiting: the row carries its app and session, and opens
+      // it (notifications.js). Several: no app, and a tap opens the
+      // Communities screen's Needs you, which lists them all.
+      const one = pending === 1 && row.only_session_id && row.only_app_id;
       try {
         const { rows: created } = await pool.query(
-          `INSERT INTO notifications (user_id, app_id, source_user_id, kind, detail)
-           VALUES ($1, NULL, NULL, 'vote_digest', $2)
-           RETURNING id, user_id, app_id, source_user_id, kind, detail, created_at`,
-          [userId, String(pending)]
+          `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail)
+           VALUES ($1, $3, $4, NULL, 'vote_digest', $2)
+           RETURNING id, user_id, app_id, session_id, source_user_id, kind, detail, created_at`,
+          [userId, String(pending), one ? Number(row.only_app_id) : null, one ? Number(row.only_session_id) : null]
         );
         if (created[0]) {
           result.sent += 1;

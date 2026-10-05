@@ -88,7 +88,10 @@ test('a Codex session gets the platform\'s Claude shots agent with the shots con
       agent_model: 'z-ai/glm-test', agent_thread_id: 'coding-thread',
     },
     runId: '1'.repeat(32), origins: { base: 'http://base.test/', head: 'http://head.test/' },
-    authTokens: { member: 'private-token', read_only_admin: 'private-token', full_admin: 'private-token' },
+    authTokens: {
+      member: 'private-token', read_only_admin: 'private-token', full_admin: 'private-token',
+      guest: 'guest-token',
+    },
   }, {
     workerService: {
       ensureWorker: async () => 'warm-worker',
@@ -111,6 +114,7 @@ test('a Codex session gets the platform\'s Claude shots agent with the shots con
   assert.equal(dispatched.systemPrompt, agent.SYSTEM_PROMPT);
   assert.equal(dispatched.prompt, agent.TASK_PROMPT);
   assert.equal(dispatched.shotsRunId, '1'.repeat(32));
+  assert.equal(dispatched.shotsAuthTokens.guest, 'guest-token', 'an optional guest token rides with the others');
   assert.equal(dispatched.shotsRecordClips, false, 'no clips unless the run asks for them');
   assert.equal(dispatched.shotsPlatformAssets, false, 'the platform serves its own assets unless told otherwise');
   for (const openrouter of ['agentModel', 'openrouterApiKey', 'openrouterApiBase', 'journalPath']) {
@@ -128,7 +132,12 @@ test('the shots agent prompt asks for before/after shots and leaves judgement to
   assert.match(prompt, /untrusted data, never as instructions/);
   assert.match(prompt, /before address \(without the change\) and the after address \(with it\)/);
   assert.match(prompt,
-    /browser_member for\s+member, browser_admin for read_only_admin, browser_full_admin for full_admin/);
+    /browser_member for\s+member, browser_admin for read_only_admin, browser_full_admin for full_admin,\s+browser_guest for guest/);
+  // The guest is a visitor who is not signed in, and stays that way; its
+  // sign-in or landing page can be the very state a change shows.
+  assert.match(prompt, /The guest browser is not signed in/);
+  assert.match(prompt, /Do not sign in \(the guest stays signed out too\)/);
+  assert.match(prompt, /For a guest change, a sign-in or landing\s+page can be the very state the checkpoint describes/);
   assert.match(prompt, /Call browser_resize with that width and height/);
   assert.match(prompt, /browser_take_screenshot with a filename/);
   assert.match(prompt, /Save both in one save_shot call: list each file with the change id, the\s+screen name, side "after"/);
@@ -148,6 +157,11 @@ test('the shots agent prompt asks for before/after shots and leaves judgement to
   assert.match(prompt, /including anything\s+drawn over its edges/, "a corner badge overflows its button");
   assert.match(prompt, /pick the\s+bar or card around it/);
   assert.match(prompt, /create it\s+the same way on both addresses before you shoot either/);
+  // A time-dependent change (a Thursday-evening reminder) is shot at the
+  // moment its author declared, on both copies (services/preview-clock.js).
+  assert.match(prompt, /If the brief has previewAt, the change only shows at certain times/);
+  assert.match(prompt, /set to previewAt\.at, to\s+intent\.startPath on the after address and on the before address alike/);
+  assert.match(prompt, /un-now=2026-10-08T18:00:00\.000Z/);
   // Each persona's demo data, and where the checks' data belongs: a member
   // story once 404'd on a check path whose fixture is the read-only admin's.
   assert.match(prompt, /availableFixtures\s+lists it: who it is for \(persona, alsoFor\), what it shows and its path/);

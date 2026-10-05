@@ -64,7 +64,10 @@ async function startProxy(t, net_, { platformAssets = '1', memorySampleMs = null
   const ready = path.join(dir, 'proxy.ready');
   const notes = path.join(dir, 'notes.jsonl');
   fs.writeFileSync(notes, '');
-  const ports = { member: await freePort(), read_only_admin: await freePort(), full_admin: await freePort() };
+  const ports = {
+    member: await freePort(), read_only_admin: await freePort(), full_admin: await freePort(),
+    guest: await freePort(),
+  };
   const proxy = spawn(process.execPath, [
     '--require', path.join(__dirname, 'lib', 'shots-proxy-fake-network.js'),
     path.join(__dirname, '..', 'worker', 'shots-origin-proxy.js'),
@@ -79,6 +82,7 @@ async function startProxy(t, net_, { platformAssets = '1', memorySampleMs = null
       SHOTS_MEMBER_TOKEN: 'member.fixture.jwt',
       SHOTS_ADMIN_TOKEN: 'admin.fixture.jwt',
       SHOTS_FULL_ADMIN_TOKEN: 'full-admin.fixture.jwt',
+      SHOTS_GUEST_TOKEN: 'guest.fixture.jwt',
       SHOTS_PROXY_PERSONA_PORTS: JSON.stringify(ports),
       FAKE_DNS: JSON.stringify(FAKE_DNS),
       FAKE_ROUTES: JSON.stringify({ [PUBLIC]: net_.outsidePort }),
@@ -213,11 +217,14 @@ test('a page\'s request to a public host is pinned to the checked address and ca
   assert.deepEqual(pinned, { request: 'cdn.example', pinned: { one: PUBLIC, all: [{ address: PUBLIC, family: 4 }] } });
   assert.deepEqual(net_.outside, [{ path: '/lib.js?v=2', host: 'cdn.example', token: null }],
     'the outside host sees its own name, and never a persona\'s identity');
+  // Nor the guest's token.
+  assert.equal((await send(proxy.ports.guest, 'http://cdn.example/lib.js?v=3')).status, 200);
+  assert.equal(net_.outside.at(-1).token, null);
 
   // The pair is internal, and still reached by name, with the identity.
   assert.equal((await send(proxy.ports.member, `${net_.base}/`)).status, 200);
   assert.deepEqual(net_.pair, [{ path: '/', token: 'member.fixture.jwt' }]);
-  assert.ok(!proxy.stderr().includes('member.fixture.jwt'));
+  assert.ok(!proxy.stderr().includes('member.fixture.jwt') && !proxy.stderr().includes('guest.fixture.jwt'));
 });
 
 test('the legacy Tailwind CDN is an ordinary public host now, for any pair, and still counted', async (t) => {

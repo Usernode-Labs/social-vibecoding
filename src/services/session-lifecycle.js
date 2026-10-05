@@ -577,6 +577,12 @@ async function finalizeArchivedSession({
   // paths above: the activity tray of whoever asked for it reads again.
   // Never throws, and finds nobody for anybody else's session.
   await require('./homeroom-bot-dm').noteProposalChanged(pool, sessionId);
+  // 5 October (Page Turners): a closed change asks nobody anything: its
+  // "ready to try" rows, vote nudges and digests are settled
+  // (notifications.settleDecidedChange). Best-effort like the rest.
+  await require('./notifications').settleDecidedChange(pool, sessionId).catch((err) => {
+    log.warn('session-lifecycle', 'Settling the bell for a closed change failed', { sessionId, err: err.message });
+  });
   // Issues this session's dispatches declared lose their contribution to
   // the derived "In progress" chip the moment the row leaves the live
   // statuses — tell open Dev panels to refetch. This one hook covers every

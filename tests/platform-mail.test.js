@@ -556,8 +556,8 @@ test('the release mail is the "you\'re in" welcome, with its list and sign-off',
   });
   assert.equal(m.subject, "You're in. Welcome to Homeroom");
   for (const part of [m.text, m.html]) {
-    assert.match(part, /AI app-building, now multiplayer\./);
-    assert.match(part, /Vibecode apps solo or with a friend\./);
+    assert.match(part, /Make and share small apps with friends and groups\./);
+    assert.match(part, /Make an app for you, your friends or your group\./);
     assert.match(part, /Suggest, preview, and vote on changes\./);
     assert.match(part, /Evan from Homeroom/);
   }
@@ -566,7 +566,7 @@ test('the release mail is the "you\'re in" welcome, with its list and sign-off',
   // would otherwise be what the inbox shows.
   const pre = m.html.indexOf("Here's how to get started.");
   assert.ok(pre > -1 && pre < m.html.indexOf('<img '), 'preheader leads the body');
-  assert.match(m.html, /display:none[^"]*">AI app-building, now multiplayer\. Here's how/);
+  assert.match(m.html, /display:none[^"]*">Make and share small apps with friends and groups\. Here's how/);
 });
 
 test('the release mail offers mobile steps only for a published store link', () => {

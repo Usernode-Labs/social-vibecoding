@@ -248,6 +248,63 @@ test('Claude Code totals cover the run, so the ledger skips the thread delta', a
   assert.equal(result.estimatedCost.estimatedCostUsd, 0.102);
 });
 
+// ── A stopped Claude Code turn is priced from what it streamed (F) ─────
+
+test('a stopped Claude Code turn with no reported usage is priced from what its requests streamed', async () => {
+  // Claude Code totals a run only on its result event; a turn its clock
+  // stopped has none. The worker's per-request sum is the floor it is
+  // priced from, and only for the Claude harness.
+  const relayUsage = { requests: 23, inputTokens: 4_200_000, cachedInputTokens: 3_900_000, outputTokens: 31_000 };
+  assert.deepEqual(agentTurn.usageTotalFromResult({ agentHarness: 'claude', relayUsage }), {
+    inputTokens: 4_200_000, cachedInputTokens: 3_900_000, cacheWriteInputTokens: null,
+    outputTokens: 31_000, reasoningOutputTokens: null, source: 'stream',
+  });
+  assert.equal(agentTurn.usageTotalFromResult({ agentHarness: 'codex', relayUsage }), null,
+    'a Codex total is a thread\'s running total: a per-turn sum would corrupt its delta');
+  assert.equal(agentTurn.usageTotalFromResult({ agentHarness: 'claude', relayUsage: { requests: 0, inputTokens: 0, outputTokens: 0 } }), null,
+    'no request finished streaming: still unknown');
+  const reported = agentTurn.usageTotalFromResult({
+    agentHarness: 'claude', inputTokens: 10, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 5, relayUsage,
+  });
+  assert.equal(reported.inputTokens, 10, 'the run\'s own totals win when it reported them');
+  assert.equal(reported.source, undefined);
+
+  // Through the ledger: priced, marked as a floor, and the routed provider kept.
+  const row = {
+    session_id: 5, status: 'running', agent_thread_id: null, reasoning_effort: null,
+    metadata: { pricing: { available: true, inputPricePerMillion: 0.1, outputPricePerMillion: 0.4 } },
+    input_tokens: 0, cached_input_tokens: 0, cache_write_input_tokens: 0,
+    output_tokens: 0, reasoning_output_tokens: 0,
+  };
+  const client = {
+    async query(text, params) {
+      if (/FOR UPDATE/.test(text)) return { rows: [row] };
+      if (/^\s*UPDATE agent_turns/.test(text)) { row.updateSql = text; row.updateParams = params; return { rowCount: 1 }; }
+      return { rows: [] };
+    },
+    release() {},
+  };
+  const pool = { async connect() { return client; } };
+  const out = await agentTurn.completeCodexAttempt({
+    pool, turnUuid: 'u-stop', status: 'failed', usageScope: 'run', routedProvider: 'DeepInfra',
+    usageTotal: agentTurn.usageTotalFromResult({ agentHarness: 'claude', relayUsage }),
+  });
+  assert.equal(out.estimatedCost.costSource, 'requested_model_catalog_estimate');
+  assert.ok(out.estimatedCost.estimatedCostUsd > 0.4, 'no longer about $0');
+  assert.equal(JSON.parse(row.updateParams[18]).usage_source, 'stream_floor');
+  assert.match(row.updateSql, /routed_provider = COALESCE\(\$21, routed_provider\)/);
+  assert.equal(row.updateParams[20], 'DeepInfra');
+});
+
+test('both ledger completions pass the routed provider the listener saw', () => {
+  const fs = require('node:fs');
+  const sessions = fs.readFileSync(require.resolve('../src/routes/sessions'), 'utf8');
+  assert.match(sessions, /usageScope: agentTurn\.usageScopeForHarness\(runtimeContext\.agentHarness\),[\s\S]{0,240}routedProvider: result\?\.routedProvider \|\| null,/);
+  const ledger = fs.readFileSync(require.resolve('../src/services/agent-turn'), 'utf8');
+  assert.match(ledger, /usageScope: usageScopeForHarness\(activeTurn\.harness\),\n\s+routedProvider: result\?\.routedProvider \|\| null,/,
+    'and a recovered turn\'s');
+});
+
 // ── Worker: capability env ────────────────────────────────────────────
 
 test('a Claude-harness OpenRouter turn gets the OpenRouter capability set and nothing Anthropic', () => {

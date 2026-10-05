@@ -7,44 +7,52 @@ import { Message, Localized, message as catalogText } from "../../lib/i18n/react
  * do with it.
  *
  *   what      The project, being built: its tile and name, Homeroom bot's
- *             step from GET /api/apps/:slug (`first_version`, "Step 2 of 7:
- *             Read the description"), read again every ten seconds.
+ *             step from GET /api/apps/:slug (`app.first_version`, "Step 2 of
+ *             7: Read the description"), read again every ten seconds,
+ *             past the service worker's cache (madeAppOf, madeAppUrl).
  *   plan      B6: once the bot has read the description it waits for its
  *             plan's Build it (`first_version.plan`) and builds nothing
- *             until then. The plan is drawn first, under "Needs you", as
- *             the same card as in the chat and on the App tab: Build it is
- *             decided here through the chat's own call, and Change
- *             something leaves for the chat with the plan quoted
- *             (./index.tsx). A plan built from here stays, chosen.
+ *             until then. The plan itself is answered in the chat with
+ *             Homeroom bot, where Build it and Change something are: this
+ *             screen draws a small "Needs you" card under the project, "Homeroom
+ *             bot has a plan for <name>", whose Go to chat opens that chat
+ *             (PlanWaitsCard). It used to draw the whole plan, with Build it,
+ *             above the sketch, and it arrived there at whatever moment the
+ *             plan did (Evan, 5 October 2026).
  *   invite    "Invite people to <name>": Share invite opens a short sheet
  *             (InviteSheet below). Once something has gone out, the line
  *             says so and "Invite people later" becomes "Go to the
  *             Homeroom app". Either starts the tour (./index.tsx). While
  *             it is out, the project's community is read again, and the
  *             line says who has joined (joinedLine).
+ *   look      Under the buttons, quietly: while they wait, they can look
+ *             around Home and the other apps (LOOK_AROUND).
  *
  * The sheet is the first invite, not the project's full invite pane
- * (features/app-context/invite-pane.tsx, with live links and their limits,
- * which stays where it is): what they'll get, with the note edited in place,
- * then Share link; a username sits behind one button. The link it makes
- * works until it is turned off, for anyone it reaches (WP-D) — the project
- * is the gift, so the link should outlive a week. Under it, one line on what
- * joining means, from the project's real rule (GET .../invite-links
- * `joiningRule`). The first note shared is also
- * the maker's first message in the group's chat (the sheet says so), so the
- * people it brings find it waiting there.
+ * (features/app-context/invite-pane.tsx, with live links, their limits, an
+ * invite by username and the project's joining rule, which stays where it
+ * is): what they'll get, "<maker> is making <name>" while its first version
+ * is not live, with the note edited in place, then Share link. Nothing else:
+ * somebody brand new knows nobody on Homeroom to invite by username yet, and
+ * the joining rule is the project's business later (both taken out after
+ * Evan's run-through, 5 October 2026). The link it makes works until it is
+ * turned off, for anyone it reaches (WP-D): the project is the gift, so the
+ * link should outlive a week. The first note shared is also the maker's
+ * first message in the group's chat (the sheet says so), so the people it
+ * brings find it waiting there. The note is kept per project on this device
+ * (noteKey), else read back from the maker's own newest link.
  *
- *   sketch    A sketch of its main screen (services/app-sketch.js), drawn
- *             from the description in about half a minute: "Sketching…" from
- *             GET /api/apps/:slug/sketch, read every two seconds, then the
- *             page itself in a frame with an empty `sandbox` (no script, its
- *             own origin). Without one (no description, no model, a reply
- *             that was not usable) the card shows the build as before.
+ *   sketch    A featured card of the idea (./sketch-card.tsx,
+ *             services/app-sketch.js): its emoji, now the project's icon, a
+ *             tagline and what it will do, made from the description in a
+ *             few seconds, with the build's step under it. The same frame
+ *             stands while it is sketched. Without one (a project with no
+ *             sketch, or one that never came) the card shows the build alone.
  *
  * Every line says what is true for this project: when Homeroom bot builds
  * it (`made.conversationId`, its DM), its step and "messages you"; when it
  * does not, the description is the project's first request, for whoever
- * builds it.
+ * builds it. Nothing says how long a first version takes (buildNote).
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -54,11 +62,10 @@ import { XIcon } from '@/components/ui/icons';
 import { Wordmark } from '@/components/ui/wordmark';
 
 import { askForPingWhileBotBuilds } from '../dialogs/ping-ask';
-import { decideBotAction, MessagesApiError } from '../messages/api';
-import { PlanCardView } from '../messages/bot-plan-view';
 import type { HomeroomBotPlanQuestion } from '../messages/types';
 
 import type { Made } from './make';
+import { SketchCard, showsCard, useSketch } from './sketch-card';
 
 /** B6: the plan Homeroom bot waits on before it builds anything. */
 export type WaitingPlan = {
@@ -71,11 +78,33 @@ export type WaitingPlan = {
 
 type FirstVersion = {
   step?: number; of?: number; stepName?: string | null; ready?: boolean;
-  /** WP-E: about how many minutes a build takes, while this one is not ready. */
-  typicalMinutes?: number;
   /** B6: the plan waiting for Build it, for its creator (GET /api/apps/:slug). */
   plan?: Partial<WaitingPlan> | null;
 } | null;
+
+/**
+ * The project's record as GET /api/apps/:slug answers it, which is `{ app }`:
+ * its first version (null while the bot builds nothing) and its status. Null
+ * for an answer without a record. Page Turners, 5 October 2026: the made
+ * screen read `first_version` off the answer itself, never found one, and
+ * so never drew the plan its maker waited 18 minutes on.
+ */
+export function madeAppOf(body: unknown): { firstVersion: FirstVersion; status: string | null } | null {
+  const app = body && typeof body === 'object' ? (body as { app?: unknown }).app : null;
+  if (!app || typeof app !== 'object') return null;
+  const { first_version: firstVersion, status } = app as { first_version?: FirstVersion; status?: unknown };
+  return { firstVersion: firstVersion || null, status: typeof status === 'string' ? status : null };
+}
+
+/**
+ * The made screen's read of the project, every ten seconds. Tagged and
+ * no-store, as the App tab's recheck is (AppView._recheckFirstVersion): the
+ * service worker answers a plain GET /api/apps/:slug from its boot cache
+ * first, and a poll is asking what is true now.
+ */
+export function madeAppUrl(slug: string): string {
+  return `/api/apps/${encodeURIComponent(slug)}?status_recheck=1&manifest=summary`;
+}
 
 /**
  * The plan waiting for Build it, or null: read the way the App tab's
@@ -94,12 +123,12 @@ export function waitingPlan(fv: FirstVersion): WaitingPlan | null {
   };
 }
 
-/** Over the plan: it is the one thing on the screen that waits on them. */
+/** Over the plan's card: it is the one thing on the screen that waits on them. */
 export const PLAN_LABEL = () => tr("workshop:needs_you_74b6abdf");
 
-/** Under the plan, until Build it is tapped. */
-export function planNote(name: string): string {
-  return tr("auth:homeroom_bot_starts_building_value1_when_you_tap_98ef5703", { value1: name });
+/** The plan's card: that there is one, never what to tap in it (that is the chat's). */
+export function planWaitsLine(name: string): string {
+  return tr("auth:homeroom_bot_has_a_plan_for_name_bd8c3872", { name });
 }
 
 /** "Step 2 of 7: Read the description", or what to say without a build. */
@@ -111,117 +140,45 @@ export function buildLine(fv: FirstVersion, appStatus: string | null, botBuilds 
 }
 
 /**
- * The line under the build's: who tells them, or who builds it. WP-E: and,
- * while it is building, about how long that usually takes. B6: while its
- * plan waits, that nothing happens until they say so.
+ * The line under the build's: who tells them, or who builds it. B6: while
+ * its plan waits, that nothing happens until they say so. Before its plan
+ * is sent (`planAhead`), that there will be one to answer first.
+ *
+ * It says nothing about how long. It used to promise "usually in about 10
+ * minutes", an ordinary request's typical build (WP-E, homeroom-bot-dm.js
+ * typicalMinutes), and a first version plans first and waits on its maker's
+ * answer: Page Turners, 5 October 2026, sent its plan 11 minutes after Make
+ * it and was ready to try 50 minutes after it. No average stands in for it
+ * (Evan, the same day).
  */
-export function buildNote(botBuilds: boolean, minutes: number | null = null, planWaits = false): string {
+export function buildNote(botBuilds: boolean, planWaits = false, planAhead = false): string {
   if (!botBuilds) return tr("auth:you_or_anyone_you_invite_can_build_it_from_there_f3222583");
-  if (planWaits) return 'Homeroom bot is waiting for your go-ahead.';
-  return minutes && minutes > 0
-    ? tr("auth:homeroom_bot_messages_you_when_it_s_ready_to_try_6b46ca8d", { value1: minutes })
-    : tr("auth:homeroom_bot_messages_you_when_it_s_ready_to_try_87dee6a0");
+  if (planWaits) return tr("auth:homeroom_bot_is_waiting_for_your_go_ahead_7e902372");
+  return planAhead
+    ? tr("auth:homeroom_bot_plans_it_first_and_asks_you_to_appr_3c0da877")
+    : tr("auth:homeroom_bot_messages_you_when_the_first_version_0ad61e04");
 }
 
-export type SketchState = 'loading' | 'none' | 'pending' | 'ready' | 'failed';
-
-/** Under the sketch: what it is, and what happens to it. */
-export function sketchCaption(name: string, botBuilds: boolean): string {
-  return botBuilds
-    ? tr("auth:a_sketch_from_your_description_homeroom_bot_buil_7cab542f", { value1: name })
-    : tr("auth:a_sketch_from_your_description_nothing_on_it_wor_beb3edff", { value1: name });
+/**
+ * Whether its plan is still to come: nothing read yet, or before the plan's
+ * step (3 of 7).
+ */
+export function planAhead(fv: FirstVersion): boolean {
+  return !(fv && Number(fv.step) >= 3);
 }
 
-// Stop asking after this long: a sketch is drawn in well under a minute.
-const SKETCH_POLL_MS = 2000;
-const SKETCH_GIVE_UP_MS = 90 * 1000;
-
-/** The shell's look, so the sketch is drawn in the same one. */
-function useDarkClass(): boolean {
-  const read = () => typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
-  const [dark, setDark] = useState(read);
-  useEffect(() => {
-    const observer = new MutationObserver(() => setDark(read()));
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
-    return () => observer.disconnect();
-  }, []);
-  return dark;
+/**
+ * "alex is making Page Turners" while its first version is not live, and
+ * "alex made Page Turners" once it is: what they'll get, in the invite sheet
+ * and the title of what it shares.
+ */
+export function makerLine(me: string, name: string, making: boolean): string {
+  if (!me) return making ? tr("auth:being_made_name_5f764e40", { name }) : tr("auth:made_name_915a1e9c", { name });
+  return making ? tr("auth:me_is_making_name_98a84d21", { me, name }) : tr("auth:me_made_name_73957b27", { me, name });
 }
 
-/** GET /api/apps/:slug/sketch until it is ready, failed, or there is none. */
-function useSketch(slug: string): SketchState {
-  const [state, setState] = useState<SketchState>('loading');
-  useEffect(() => {
-    let live = true;
-    let timer = 0;
-    const started = Date.now();
-    const read = async () => {
-      const data = await fetch(`/api/apps/${encodeURIComponent(slug)}/sketch`, { credentials: 'same-origin' })
-        .then((r) => (r.ok ? r.json() : null))
-        .catch(() => null);
-      if (!live) return;
-      const status = data?.status;
-      if (status === 'ready' || status === 'failed' || status === 'none') { setState(status); return; }
-      // A read that failed is asked again; the card shows the build meanwhile.
-      if (status === 'pending') setState('pending');
-      if (Date.now() - started > SKETCH_GIVE_UP_MS) { setState((s) => (s === 'pending' ? 'failed' : s)); return; }
-      timer = window.setTimeout(() => { void read(); }, SKETCH_POLL_MS);
-    };
-    void read();
-    return () => { live = false; window.clearTimeout(timer); };
-  }, [slug]);
-  return state;
-}
-
-function SketchCard({ made, tile, sketch, line, botBuilds, busy, minutes, planWaits }: {
-  made: Made;
-  tile: string;
-  sketch: 'pending' | 'ready';
-  line: string;
-  botBuilds: boolean;
-  busy: boolean;
-  minutes: number | null;
-  planWaits: boolean;
-}) {
-  const dark = useDarkClass();
-  return (
-    <div data-first-session-sketch={sketch} className="mt-4 rounded-[20px] bg-white p-3 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
-      <div className="flex items-center gap-3 px-1 pb-3">
-        <span className="app-icon-tile flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-2xl" aria-hidden="true">{tile}</span>
-        <div className="min-w-0 flex-1">
-          <h1 id="first-session-made-title" className="truncate text-[17px] font-semibold leading-snug">{made.name}</h1>
-          <p className="flex items-center gap-1.5 text-[13px] text-zinc-500 dark:text-zinc-400">
-            {busy ? <span className="status-dot creating" aria-hidden="true" /> : null}
-            <span data-first-session-build="" className="truncate">{line}</span>
-          </p>
-        </div>
-      </div>
-      <div className="relative h-[380px] overflow-hidden rounded-[14px] bg-zinc-100 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-800">
-        {sketch === 'ready' ? (
-          <LocalizedDynamic element={<iframe
-            title={tr("auth:a_sketch_of_value1_1b50b7e2", { value1: made.name })}
-            src={`/api/apps/${encodeURIComponent(made.slug)}/sketch.html?theme=${dark ? 'dark' : 'light'}`}
-            sandbox=""
-            referrerPolicy="no-referrer"
-            className="h-full w-full border-0"
-          />} resolve={() => ({ get "title"() { return tr("auth:a_sketch_of_value1_1b50b7e2", { value1: made.name }); } })} />
-        ) : (
-          <div role="status" className="flex h-full flex-col gap-4 p-5">
-            <p className="pr-16 text-[14px] text-zinc-500 dark:text-zinc-400"><LocalizedValue render={() => (tr("auth:sketching_value1_from_your_description_b86a752c", { value1: made.name }))} /></p>
-            <div className="h-6 w-2/3 animate-pulse rounded-md bg-zinc-200 dark:bg-zinc-700" />
-            <div className="h-20 animate-pulse rounded-xl bg-zinc-200 dark:bg-zinc-700" />
-            <div className="h-11 w-1/2 animate-pulse rounded-lg bg-zinc-200 dark:bg-zinc-700" />
-            <div className="h-24 animate-pulse rounded-xl bg-zinc-200 dark:bg-zinc-700" />
-          </div>
-        )}
-        <span className="pointer-events-none absolute right-2 top-2 rounded-full bg-black/60 px-2 py-0.5 text-[12px] font-semibold text-white"><Message id="auth:sketch_0f9b002d" /></span>
-      </div>
-      <p className="px-1 pt-2.5 text-[13px] leading-snug text-zinc-500 dark:text-zinc-400">
-        {sketch === 'ready' ? sketchCaption(made.name, botBuilds) : buildNote(botBuilds, minutes, planWaits)}
-      </p>
-    </div>
-  );
-}
+/** Under the buttons: somewhere to be while it is built. */
+export const LOOK_AROUND = () => tr("auth:look_around_home_and_other_apps_e8b53396");
 
 const NOTE_DEFAULT = () => tr("workshop:come_try_it_with_me_6fb15c1a");
 // WP-D: the link works until it is turned off, for anyone it is sent to (0 is
@@ -232,29 +189,62 @@ const LINK_USES = 0;
 /** The note, posted once per project as the maker's first chat message. */
 const postedKey = (slug: string) => `usernode:first-session:note-posted:${slug}`;
 
-function InviteSheet({ made, me, onClose, onSent }: {
+/** The maker's last note for a project, kept on this device. */
+export const noteKey = (slug: string) => `usernode:first-session:note:${slug}`;
+
+/** The note they last wrote for `slug`, or null when there is none kept. */
+export function keptNote(slug: string): string | null {
+  try { return localStorage.getItem(noteKey(slug)); } catch { return null; }
+}
+
+function keepNote(slug: string, note: string): void {
+  try { localStorage.setItem(noteKey(slug), note); } catch { /* kept for this sheet only */ }
+}
+
+/** The note the sheet opens with: the one kept, else the example's, else the default. */
+export function openingNote(slug: string, example: string | null | undefined): string {
+  const kept = keptNote(slug);
+  return kept !== null ? kept : (example || NOTE_DEFAULT());
+}
+
+/** The newest note on the maker's own live links (GET .../invite-links `links`), or null. */
+export function linkNote(links: unknown): string | null {
+  if (!Array.isArray(links)) return null;
+  const mine = links.find((l) => l && typeof l === 'object' && (l as { mine?: boolean }).mine
+    && typeof (l as { note?: unknown }).note === 'string' && (l as { note: string }).note);
+  return mine ? (mine as { note: string }).note : null;
+}
+
+export function InviteSheet({ made, me, making = true, onClose, onSent }: {
   made: Made;
   me: string;
+  /** Its first version is not live yet: "<me> is making <name>" (makerLine). */
+  making?: boolean;
   onClose: () => void;
-  onSent: (to: string | null) => void;
+  /** The link went out (shared or copied). */
+  onSent: () => void;
 }) {
   useUiLanguage();
-  const [note, setNote] = useState(made.example?.note || NOTE_DEFAULT());
-  const [byName, setByName] = useState(false);
-  const [username, setUsername] = useState('');
+  const [note, setNote] = useState(() => openingNote(made.slug, made.example?.note));
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [shown, setShown] = useState(false);
-  const [rule, setRule] = useState<string | null>(null);
   const linkRef = useRef<string | null>(null);
+  // Whether the note in the box is theirs from this device (kept, or typed
+  // here); until it is, a note on one of their own links replaces it.
+  const ownNote = useRef(keptNote(made.slug) !== null);
   useEffect(() => { const r = requestAnimationFrame(() => setShown(true)); return () => cancelAnimationFrame(r); }, []);
-  // WP-D: what joining means here, said from the project's real rule.
+  // The maker's own newest note, when this device kept none.
   useEffect(() => {
+    if (ownNote.current) return undefined;
     let live = true;
     fetch(`/api/apps/${encodeURIComponent(made.slug)}/invite-links`, { credentials: 'same-origin' })
       .then((r) => (r.ok ? r.json() : null))
-      .then((data) => { if (live && typeof data?.joiningRule === 'string') setRule(data.joiningRule); })
+      .then((data) => {
+        const fromLink = live && !ownNote.current ? linkNote(data?.links) : null;
+        if (fromLink) setNote(fromLink);
+      })
       .catch(() => {});
     return () => { live = false; };
   }, [made.slug]);
@@ -298,7 +288,7 @@ function InviteSheet({ made, me, onClose, onSent }: {
     try {
       const url = await link();
       if (!url) return;
-      const title = `${me ? tr("auth:value1_made_4dd7e32d", { value1: me }) : tr("core:made_45a5300c")} ${made.name}`;
+      const title = makerLine(me, made.name, making);
       const nav = navigator as Navigator & { share?: (d: ShareData) => Promise<void> };
       let shared = false;
       if (typeof nav.share === 'function') {
@@ -310,37 +300,15 @@ function InviteSheet({ made, me, onClose, onSent }: {
         await navigator.clipboard.writeText(note.trim() ? `${note.trim()} ${url}` : url);
         setStatus(tr("auth:link_copied_paste_it_in_your_group_chat_ff1ea727"));
       }
+      keepNote(made.slug, note);
       await postNote();
-      onSent(null);
+      onSent();
     } catch {
       setError(tr("auth:could_not_share_the_link_try_again_4954e198"));
     } finally {
       setBusy(false);
     }
-  }, [busy, link, me, made.name, note, postNote, onSent]);
-
-  const sendToUsername = useCallback(async () => {
-    const handle = username.trim().replace(/^@/, '');
-    if (!handle || busy) return;
-    setBusy(true); setError(null); setStatus(null);
-    try {
-      const res = await fetch(`/api/apps/${encodeURIComponent(made.slug)}/invites`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({ username: handle }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) { setError(data.error || tr("auth:could_not_invite_them_aed7ba18")); return; }
-      await postNote();
-      setUsername('');
-      onSent(`@${handle}`);
-    } catch {
-      setError(tr("auth:network_error_2a33d984"));
-    } finally {
-      setBusy(false);
-    }
-  }, [username, busy, made.slug, postNote, onSent]);
+  }, [busy, link, me, made.name, making, note, postNote, onSent]);
 
   const tile = made.emoji || made.name.slice(0, 1);
   return (
@@ -364,8 +332,8 @@ function InviteSheet({ made, me, onClose, onSent }: {
           <div className="flex items-center gap-3 p-3">
             <span className="app-icon-tile flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-2xl" aria-hidden="true">{tile}</span>
             <div className="min-w-0">
-              <p className="text-[15px] font-semibold leading-snug">{`${me ? tr("auth:value1_made_4dd7e32d", { value1: me }) : tr("core:made_45a5300c")} ${made.name}`}</p>
-              <p className="text-[13px] text-zinc-500 dark:text-zinc-400"><Message id="auth:a_link_to_see_it_and_join_the_chat_bd28e004" /></p>
+              <p data-first-session-invite-maker="" className="text-[15px] font-semibold leading-snug">{makerLine(me, made.name, making)}</p>
+              <p className="text-[13px] text-zinc-500 dark:text-zinc-400"><Message id="auth:a_link_to_see_it_and_join_the_chat_7f4e836c" /></p>
             </div>
           </div>
           <div className="px-3 pb-2 pt-2.5 shadow-[inset_0_1px_0_var(--app-sheet-line)]">
@@ -375,92 +343,60 @@ function InviteSheet({ made, me, onClose, onSent }: {
               rows={2}
               maxLength={280}
               value={note}
-              onChange={(e) => setNote(e.target.value)} placeholder={catalogText("auth:add_a_note_optional_6bb0c6b3")}
+              onChange={(e) => { ownNote.current = true; setNote(e.target.value); keepNote(made.slug, e.target.value); }}
+              placeholder={catalogText("auth:add_a_note_optional_6bb0c6b3")}
               className="w-full resize-none border-0 bg-transparent p-0 text-[16px] leading-snug placeholder-zinc-500 focus:outline-none"
             />} messages={{"placeholder":"auth:add_a_note_optional_6bb0c6b3"}} />
           </div>
         </div>
         <p className="mt-2 text-[13px] text-zinc-500 dark:text-zinc-400"><Message id="auth:your_note_is_also_your_first_message_in_the_grou_210befcf" /></p>
-        <div className="mt-4 flex flex-col gap-2.5">
-          <Button type="button" onClick={() => { void shareLink(); }} disabled={busy} layout="full" variant="pillAccent" size="pillLg" ink="solidLate" className="flex items-center justify-center disabled:opacity-60"><Message id="auth:share_link_712a4823" /></Button>
-          {byName ? (
-            <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); void sendToUsername(); }}>
-              <Localized element={<input
-                autoFocus
-                value={username}
-                onChange={(e) => setUsername(e.target.value)} placeholder={catalogText("auth:username_93100fc4")}
-                autoCapitalize="none"
-                autoCorrect="off"
-                spellCheck={false}
-                className="h-11 min-w-0 flex-1 rounded-full border-0 bg-white px-4 text-[16px] placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 dark:bg-zinc-800"
-              />} messages={{"placeholder":"auth:username_93100fc4"}} />
-              <Button type="submit" disabled={busy || !username.trim()} variant="pillAccent" size="pill" ink="solid" className="disabled:opacity-60"><Message id="auth:send_f6f4688f" /></Button>
-            </form>
-          ) : (
-            <button type="button" onClick={() => setByName(true)} className="flex h-11 w-full items-center justify-center rounded-full bg-white text-[16px] font-semibold text-zinc-900 shadow-sm hover:bg-zinc-50 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700"><Message id="auth:invite_by_username_fefe06c7" /></button>
-          )}
+        <div className="mt-4">
+          <Button type="button" onClick={() => { void shareLink(); }} disabled={busy} layout="full" variant="pillAccent" size="pillLg" ink="solidLate" className="flex items-center justify-center disabled:opacity-60">
+            <Message id="auth:share_link_712a4823" />
+          </Button>
         </div>
-        {status ? <p className="mt-3 text-center text-[14px] text-emerald-700 dark:text-emerald-400">{status}</p> : null}
-        {error ? <p role="alert" className="mt-3 text-center text-[14px] text-red-600 dark:text-red-400">{error}</p> : null}
+        {status ? <p role="status" data-first-session-invite-status="" className="mt-3 text-center text-[14px] text-emerald-700 dark:text-emerald-400">{status}</p> : null}
+        {error ? <p id="first-session-invite-error" role="alert" className="mt-3 text-center text-[14px] text-red-600 dark:text-red-400">{error}</p> : null}
         <p className="mt-3 text-center text-[13px] text-zinc-500 dark:text-zinc-400"><Message id="auth:anyone_with_the_link_can_join_until_you_turn_it__4635ef3a" /></p>
-        {rule ? <p data-first-session-rule="" className="mt-1 text-center text-[13px] text-zinc-500 dark:text-zinc-400">{rule}</p> : null}
       </div>
     </div>
   );
 }
 
 /**
- * B6: the plan, waiting for Build it, the same card as in the chat with
- * Homeroom bot and on the App tab. Build it is decided once on the server,
- * through the chat's own call (api.decideBotAction); Change something is
- * the screen's owner's (./index.tsx: the chat, with the plan quoted).
+ * B6: the plan waits for its maker's answer, which is given in the chat with
+ * Homeroom bot (Build it, or Change something). Here it is one small card
+ * under the project, in the place it always takes, with the way to that
+ * chat. It never says Build it itself.
  */
-export function PlanSection({ name, plan, onBuilt, onGone, onChange }: {
-  name: string;
-  plan: WaitingPlan;
-  /** Built from here, with the answer each choice went with. */
-  onBuilt: (plan: WaitingPlan, choices: string[]) => void;
-  /** Decided somewhere else already, or replaced: read the project again. */
-  onGone: () => void;
-  onChange: () => void;
-}) {
+export function PlanWaitsCard({ name, onOpenChat }: { name: string; onOpenChat: () => void }) {
   useUiLanguage();
-  const [pressed, setPressed] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const build = useCallback(async (answers: Array<string | null>) => {
-    if (pressed) return;
-    setPressed(true);
-    setError(null);
-    try {
-      await decideBotAction(plan.actionId, 'build', answers.map((a) => a || ''));
-    } catch (err) {
-      if (err instanceof MessagesApiError && err.status === 409) { onGone(); return; }
-      setPressed(false);
-      setError(tr("auth:couldn_t_start_building_just_now_try_again_b1ee2774"));
-      return;
-    }
-    onBuilt(plan, plan.questions.map((q, i) => answers[i] || q.answers[0] || ''));
-  }, [pressed, plan, onBuilt, onGone]);
   return (
-    <section data-first-session-plan="open" aria-labelledby="first-session-plan-label" className="mt-4">
+    <section data-first-session-plan="waiting" aria-labelledby="first-session-plan-label" className="mt-4">
       <p id="first-session-plan-label" className="px-1 pb-1.5 text-[12px] font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">{PLAN_LABEL()}</p>
-      <PlanCardView
-        surface="app"
-        appName={name}
-        plan={{ bullets: plan.bullets, questions: plan.questions }}
-        state="open"
-        busy={pressed}
-        onBuild={(answers) => { void build(answers); }}
-        onChange={onChange}
-      />
-      {pressed ? null : <p className="px-1 pt-2 text-[13px] leading-snug text-zinc-500 dark:text-zinc-400">{planNote(name)}</p>}
-      {error ? <p role="alert" className="px-1 pt-1 text-[13px] text-red-600 dark:text-red-400">{error}</p> : null}
+      <div className="flex items-center gap-3 rounded-[20px] bg-white py-3 pl-4 pr-3 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
+        <div className="min-w-0 flex-1">
+          <p className="text-[15px] font-[650] leading-snug">{planWaitsLine(name)}</p>
+          <p className="text-[13px] text-zinc-500 dark:text-zinc-400"><Message id="auth:answer_it_in_your_chat_and_it_starts_building_659a6875" /></p>
+        </div>
+        <Button type="button" data-first-session-plan-chat="" onClick={onOpenChat} variant="pillAccent" size="sm" ink="solid" className="shrink-0 text-[15px] font-semibold">
+          <Message id="auth:go_to_chat_bc012506" />
+        </Button>
+      </div>
     </section>
   );
 }
 
 type CommunityMember = { username?: string; display_name?: string | null; source?: string };
 type Community = { member_count?: number; members?: CommunityMember[] } | null;
+
+/**
+ * The made screen's line once an invite is out: who has joined (joinedLine),
+ * or, before anyone has, "✓ Invite sent."
+ */
+export function sentLines(joined: string | null): string[] {
+  return [joined || tr("auth:invite_sent_4aa0288f")];
+}
 
 /**
  * Who has joined since the invite went out, from GET /api/apps/:slug/community
@@ -500,59 +436,62 @@ function useCommunity(slug: string, on: boolean): Community {
   return community;
 }
 
-export function MadeScreen({ made, me, onContinue, onChangePlan }: {
+export function MadeScreen({ made, me, onContinue, onOpenChat, onLookAround }: {
   made: Made;
   me: string;
   /** "Invite people later" / "Go to the Homeroom app": `skipped` when nothing went out. */
   onContinue: (skipped: boolean) => void;
-  /** Change something, under the plan: its chat with Homeroom bot, and the plan's message. */
-  onChangePlan: (conversationId: number | null, messageId: number | null) => void;
+  /** Go to chat, on the plan's card: the chat with Homeroom bot, where the plan is answered. */
+  onOpenChat: (conversationId: number | null) => void;
+  /** "look around Home and other apps", under the buttons. */
+  onLookAround: () => void;
 }) {
   useUiLanguage();
   const [fv, setFv] = useState<FirstVersion>(null);
   const [appStatus, setAppStatus] = useState<string | null>('creating');
   const [inviting, setInviting] = useState(false);
-  const [sentTo, setSentTo] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
-  // B6: a plan built from here stays, chosen, so the screen says what was decided.
-  const [chosen, setChosen] = useState<{ plan: WaitingPlan; choices: string[] } | null>(null);
-  const readRef = useRef<() => void>(() => {});
+  // Whether a first version has been read as on its way: once it has, a read
+  // without one means it is live (or came to something else), and the
+  // project is no longer "being made" (makerLine).
+  const [building, setBuilding] = useState(false);
 
   useEffect(() => {
     let live = true;
-    const read = () => fetch(`/api/apps/${encodeURIComponent(made.slug)}`, { credentials: 'same-origin' })
+    const read = () => fetch(madeAppUrl(made.slug), { credentials: 'same-origin', cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : null))
-      .then((app) => { if (live && app) { setFv(app.first_version || null); setAppStatus(app.status || null); } })
+      .then((body) => {
+        const app = madeAppOf(body);
+        if (live && app) {
+          setFv(app.firstVersion);
+          setAppStatus(app.status);
+          if (app.firstVersion && !app.firstVersion.ready) setBuilding(true);
+        }
+      })
       .catch(() => {});
-    readRef.current = read;
     read();
     const t = window.setInterval(read, 10000);
-    return () => { live = false; window.clearInterval(t); readRef.current = () => {}; };
+    return () => { live = false; window.clearInterval(t); };
   }, [made.slug]);
 
   const community = useCommunity(made.slug, sent);
   const joined = joinedLine(community);
-  const waiting = waitingPlan(fv);
-  // The plan to decide: one waiting that was not just built from here.
-  const plan = waiting && waiting.actionId !== chosen?.plan.actionId ? waiting : null;
-  const onBuilt = useCallback((built: WaitingPlan, choices: string[]) => {
-    setChosen({ plan: built, choices });
-    readRef.current();
-  }, []);
-  const onGone = useCallback(() => { readRef.current(); }, []);
+  const plan = waitingPlan(fv);
+  // Not live yet: nothing read, still on its way, or up for approval.
+  const making = !(building && !fv);
 
   const botBuilds = made.conversationId != null;
   // WP-E: "Get a ping when it's ready?" in the Homeroom app, now that there
   // is something to be pinged about (features/dialogs/ping-ask.ts: it shows
   // nothing on the web, or once the phone's answer is decided).
   useEffect(() => { if (botBuilds) askForPingWhileBotBuilds(); }, [botBuilds]);
-  const minutes = fv && !fv.ready && typeof fv.typicalMinutes === 'number' ? fv.typicalMinutes : null;
+  const note = buildNote(botBuilds, !!plan, planAhead(fv));
   const sketch = useSketch(made.slug);
   const line = buildLine(fv, appStatus, botBuilds);
   // Something is under way: the project being set up, or the bot's build
   // (not while its plan waits on them: then nothing is).
   const busy = appStatus === 'creating' || (botBuilds && !(fv && fv.ready) && !plan);
-  const tile = made.emoji || made.name.slice(0, 1);
+  const tile = sketch.card?.emoji || made.emoji || made.name.slice(0, 1);
   return (
     <div
       role="dialog"
@@ -565,22 +504,8 @@ export function MadeScreen({ made, me, onContinue, onChangePlan }: {
         <Wordmark className="h-6 w-auto text-[color:var(--brand-ink)]" />
       </div>
       <div className="mx-auto flex w-full max-w-sm grow flex-col px-4 pb-[max(34px,env(safe-area-inset-bottom))]">
-        {plan ? (
-          <PlanSection
-            key={plan.actionId}
-            name={made.name}
-            plan={plan}
-            onBuilt={onBuilt}
-            onGone={onGone}
-            onChange={() => onChangePlan(plan.conversationId ?? made.conversationId, plan.messageId)}
-          />
-        ) : chosen ? (
-          <div data-first-session-plan="built" className="mt-4">
-            <PlanCardView surface="app" appName={made.name} plan={chosen.plan} state="built" choices={chosen.choices} />
-          </div>
-        ) : null}
-        {sketch === 'pending' || sketch === 'ready' ? (
-          <SketchCard made={made} tile={tile} sketch={sketch} line={line} botBuilds={botBuilds} busy={busy} minutes={minutes} planWaits={!!plan} />
+        {showsCard(sketch.state) ? (
+          <SketchCard made={made} sketch={sketch} line={line} note={note} busy={busy} botBuilds={botBuilds} built={!making || !!(fv && fv.ready)} />
         ) : (
           <div className="mt-4 flex flex-col items-center rounded-[20px] bg-white px-6 py-7 text-center shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
             <span className="app-icon-tile flex h-20 w-20 items-center justify-center rounded-[22px] text-5xl" aria-hidden="true">{tile}</span>
@@ -590,17 +515,19 @@ export function MadeScreen({ made, me, onContinue, onChangePlan }: {
               {busy ? <span className="status-dot creating" aria-hidden="true" /> : null}
               <span data-first-session-build="">{line}</span>
             </div>
-            <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400">{buildNote(botBuilds, minutes, !!plan)}</p>
+            <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400">{note}</p>
           </div>
         )}
+        {/* Under the project, never above it: the sketch stays where it is when the plan lands. */}
+        {plan ? <PlanWaitsCard name={made.name} onOpenChat={() => onOpenChat(plan.conversationId ?? made.conversationId)} /> : null}
         <div className="mt-6">
           <p className="text-[17px] font-semibold"><LocalizedValue render={() => (tr("auth:invite_people_to_value1_847cd1ff", { value1: made.name }))} /></p>
           <p className="mt-0.5 text-[14px] leading-snug text-zinc-500 dark:text-zinc-400"><Message id="auth:they_can_follow_along_and_chat_with_you_while_it_637651af" /></p>
-          {sent ? (
-            <p data-first-session-sent={joined ? 'joined' : ''} className="mt-2 text-[14px] font-semibold text-emerald-700 dark:text-emerald-400">
-              <LocalizedValue render={() => (joined || tr("auth:invite_sent_value1_d60514ef", { value1: sentTo ? tr("auth:message_bc252627b50b", { recipient: sentTo }) : '' }))} />
+          {sent ? sentLines(joined).map((line) => (
+            <p key={line} data-first-session-sent={joined ? 'joined' : ''} className="mt-2 text-[14px] font-semibold text-emerald-700 dark:text-emerald-400">
+              {line}
             </p>
-          ) : null}
+          )) : null}
         </div>
         <div className="grow" />
         <div className="mt-6 flex flex-col gap-2.5">
@@ -614,13 +541,24 @@ export function MadeScreen({ made, me, onContinue, onChangePlan }: {
             <LocalizedValue render={() => (sent ? tr("auth:go_to_the_homeroom_app_8e0abf15") : tr("auth:invite_people_later_9acf0464"))} />
           </button>
         </div>
+        {/* Quiet, under both buttons: somewhere to be while Homeroom bot builds it. */}
+        {botBuilds ? (
+          <p className="mt-4 text-center text-[14px] leading-snug text-zinc-500 dark:text-zinc-400">
+            <Message id="auth:while_you_wait_50640701" />
+            <button type="button" data-first-session-look-around="" onClick={onLookAround} className="font-semibold text-zinc-700 underline underline-offset-2 dark:text-zinc-200">
+              {LOOK_AROUND()}
+            </button>
+            .
+          </p>
+        ) : null}
       </div>
       {inviting ? (
         <InviteSheet
-          made={made}
+          made={sketch.card ? { ...made, emoji: sketch.card.emoji } : made}
           me={me}
+          making={making}
           onClose={() => setInviting(false)}
-          onSent={(to) => { setSent(true); if (to) setSentTo(to); setInviting(false); }}
+          onSent={() => { setSent(true); setInviting(false); }}
         />
       ) : null}
     </div>

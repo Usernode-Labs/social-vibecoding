@@ -302,6 +302,43 @@ async function retire(pool, { userId, confirmation }, { actorId, config = {} } =
   };
 }
 
+// "You're in" (frontend/src/features/first-session) tells an account that a
+// link's own sign-up just made what Homeroom is, and an account that was
+// already there only where it is. A real account is new when it was made
+// within the hour before it joined (community-invites.js standing,
+// collab-invites.js welcomeFor). A test account is made ahead of time by an
+// admin, so its created_at says nothing about when its first run began, and
+// the first-session run-through of 5 October 2026 met the welcome for an
+// account that was already there. Its first run begins at its first sign-in,
+// the way a real one begins at its sign-up: the oldest of its sessions on
+// record, which is the only record a sign-in leaves (list() reads the newest
+// the same way). Only a test account is read here, so nothing about a real
+// account changes.
+const FIRST_RUN_SQL = `
+  SELECT MIN(s.created_at) >= $2::timestamptz - INTERVAL '1 hour' AS first_run
+    FROM users u
+    JOIN sessions s ON s.user_id = u.id
+   WHERE u.id = $1 AND u.test_account_created_at IS NOT NULL`;
+
+/**
+ * Whether `userId` is a test account on its first run at `at` (default now):
+ * signed in for the first time within the hour before it. False for every
+ * real account, for a test account first signed in earlier, and for a read
+ * that fails. Never throws: it only decides which welcome is shown.
+ */
+async function onFirstRun(db, userId, at = new Date()) {
+  const id = Number(userId);
+  const when = at instanceof Date ? at : new Date(at);
+  if (!Number.isSafeInteger(id) || id <= 0 || Number.isNaN(when.getTime())) return false;
+  try {
+    const { rows } = await db.query(FIRST_RUN_SQL, [id, when.toISOString()]);
+    return rows[0]?.first_run === true;
+  } catch (err) {
+    log.warn('test-accounts', 'Could not read whether a test account is on its first run', { userId: id, err: err.message });
+    return false;
+  }
+}
+
 async function isOnBotDmList(pool, username) {
   const { rows } = await pool.query(
     "SELECT value FROM platform_settings WHERE key = 'homeroom_bot_dm_users'"
@@ -323,4 +360,5 @@ module.exports = {
   list,
   retire,
   generatePassword,
+  onFirstRun,
 };

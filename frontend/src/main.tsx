@@ -127,6 +127,10 @@ import './lib/visual-viewport';
 // Homeroom app, whose web view is resized for it so the kit never sees it
 // covered: the tab bar and the Resume strip step aside (app.css).
 import './lib/keyboard-open';
+// …and a conversation keeps its newest line while those keys come up: the
+// group chat, a classic script, reaches the hold as a global (Messages
+// imports it).
+import './lib/keyboard-hold';
 // …and a sheet, dialog or menu opened over a dark app takes the app's tone
 // rather than the viewer's light mode (#2803).
 import './lib/surface-tone';

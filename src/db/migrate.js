@@ -75,6 +75,8 @@ async function migrate(config) {
   // Must run AFTER seedStagingMergedPrs — its snapshot dates are chosen
   // so the merged fixtures straddle the newest one (reporting-period).
   await seedStagingReportSnapshots(pool, config);
+  // Must run AFTER seedStagingMergedPrs — its tags hang off those fixtures.
+  await seedStagingSmallChangeTags(pool, config);
   await seedStagingMyOpenPr(pool, config);
   await seedStagingImportedPrProposal(pool, config);
   await seedStagingChecksAdvisoryCard(pool, config);
@@ -2931,6 +2933,56 @@ async function seedStagingMergedPrs(pool, config) {
     total: fixtures.length,
     inserted,
   });
+}
+
+// Small changes (#admin/small-changes): the watch-only small-change tag only
+// writes rows when a checks run settles, and nothing settles in a staging
+// preview, so the section would only ever show its empty state there. Tag
+// the first five merged-PR fixtures above, one of each verdict, so the
+// table, its badges, the veto words and the week's totals all render. Every
+// head is an obviously fake `5c...` sha, so a real head can never collide,
+// and ON CONFLICT on (session_id, head_sha) makes it idempotent. Strictly a
+// no-op outside staging.
+async function seedStagingSmallChangeTags(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const { rows: apps } = await pool.query('SELECT id FROM apps WHERE slug = $1', [config.selfAppSlug]);
+    const appId = apps[0]?.id;
+    if (!appId) return;
+    const { rows: sessions } = await pool.query(
+      `SELECT id, branch_name FROM chat_sessions
+        WHERE app_id = $1 AND branch_name LIKE 'staging-fixture/merged-pr-%'
+        ORDER BY branch_name ASC LIMIT 5`,
+      [appId]
+    );
+    const fixtures = [
+      { verdict: 'small', kind: 'fix', reason: '[staging fixture] Fixes the vote pill so it no longer overflows on narrow screens.', vetoes: [], files: 2, lines: 14, cost: 0.0004, hoursAgo: 2 },
+      { verdict: 'small', kind: 'wording', reason: '[staging fixture] Changes the empty-state wording on the dashboard tiles.', vetoes: [], files: 1, lines: 6, cost: 0.0003, hoursAgo: 5 },
+      { verdict: 'not_small', kind: null, reason: '[staging fixture] Changes how the activity feed sorts, which people rely on.', vetoes: [], files: 3, lines: 48, cost: 0.0006, hoursAgo: 20 },
+      { verdict: 'vetoed', kind: null, reason: null, vetoes: ['schema_or_data_sql', 'too_large'], files: 9, lines: 410, cost: null, hoursAgo: 30 },
+      { verdict: 'unavailable', kind: null, reason: null, vetoes: [], files: 2, lines: 22, cost: null, hoursAgo: 40, error: 'no_key' },
+    ];
+    let inserted = 0;
+    for (let i = 0; i < Math.min(sessions.length, fixtures.length); i++) {
+      const f = fixtures[i];
+      const { rowCount } = await pool.query(
+        `INSERT INTO small_change_tags
+           (session_id, app_id, head_sha, verdict, kind, reason, vetoes, files_changed,
+            lines_changed, model, cost_usd, duration_ms, error, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12, $13,
+                 NOW() - ($14::int * INTERVAL '1 hour'))
+         ON CONFLICT (session_id, head_sha) DO NOTHING`,
+        [sessions[i].id, appId, `5c${String(i + 1).padStart(38, '0')}`, f.verdict, f.kind, f.reason,
+          JSON.stringify(f.vetoes), f.files, f.lines,
+          f.verdict === 'vetoed' ? null : 'z-ai/glm-5.3-flash', f.cost,
+          f.verdict === 'vetoed' ? null : 1800, f.error || null, f.hoursAgo]
+      );
+      inserted += rowCount;
+    }
+    log.info('db', 'Staging small-change tags seeded', { appId, inserted });
+  } catch (err) {
+    log.warn('db', 'Staging small-change tags failed', { message: err.message });
+  }
 }
 
 // Locked report snapshots for the Reporting tab (reporting-period). The

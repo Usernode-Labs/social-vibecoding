@@ -130,6 +130,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 
 import { useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { returnKeyHandler } from '../../lib/return-to-next';
 import { useStoreState } from '../../lib/use-store-state';
 import { AppAllowance, useAppAllowance } from './app-allowance';
 import { invalidateAppAllowance } from './app-allowance-store.js';
@@ -1650,7 +1651,12 @@ export function CreateAppDialog() {
               {`${numberOf('details')}. ${importing ? tr("core:what_to_call_it_55325bff") : tr("core:what_to_call_it_and_what_it_should_do_5b93bb5c")}`}
               <span className="create-repo-sets-tag" data-repo-tag="details"><Message id="core:the_repo_sets_this_4961d9e2" /></span>
             </p>
-            <div id="create-name-block" className={CARD}>
+            {/* Return in the name goes on to what it should do (#3907), where
+                it is a new line. Before, it submitted the form, and `next()`
+                refused and focused the brief with an error. An import has no
+                brief (app.css folds the row away), so there the name is the
+                last field and Return submits the form as it always did. */}
+            <div id="create-name-block" className={CARD} onKeyDown={returnKeyHandler()}>
               <div className={ROW + ' create-name-row'}>
                 <label htmlFor="app-name" className={LABEL}><Message id="core:project_name_25498193" /></label>
                 <Localized element={<Input
@@ -1659,6 +1665,7 @@ export function CreateAppDialog() {
                   name="name"
                   type="text"
                   autoComplete="off"
+                  enterKeyHint="next"
                   {...FIELD} placeholder={catalogText("core:my_cool_app_60eee939")}
                   onInput={(e) => { setName(e.currentTarget.value); setError(''); }}
                 />} messages={{"placeholder":"core:my_cool_app_60eee939"}} />

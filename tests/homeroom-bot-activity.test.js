@@ -79,7 +79,7 @@ test('a card still going takes its step from progressFor; with nothing in progre
   };
   const going = activity.cardOf(row, entry);
   assert.deepEqual(going, {
-    messageId: 31, startedAt: '2026-10-02T11:51:00.000Z',
+    messageId: 31, startedAt: '2026-10-02T11:51:00.000Z', workedFrom: '2026-10-02T11:51:00.000Z',
     links: { request: '#app/ear%20trainer/dev/issues/12', proposal: null },
     state: 'working', stage: 'building', step: 3, of: 6, stepName: 'Build it', doing: 'building it',
     stepSince: '2026-10-02T11:56:00.000Z', stepLimitMinutes: 30,
@@ -144,7 +144,8 @@ test('WP1: a card whose build still waits or runs is working, whatever began aft
 // its history says what each card shows, in the card's own words.
 test('WP1: a card in words, as the person reads it, in the client\'s own labels', () => {
   assert.equal(activity.cardWords({ state: 'done', outcome: 'stopped' }), 'Didn\'t finish: Stopped before it finished');
-  assert.equal(activity.cardWords({ state: 'done', outcome: 'proposed' }), 'Done: Built it. Waiting for approval');
+  assert.equal(activity.cardWords({ state: 'done', outcome: 'proposed' }), 'Built: Built it. Waiting for approval');
+  assert.equal(activity.cardWords({ state: 'done', outcome: 'live' }), 'Done: Built it. It\'s live');
   assert.equal(activity.cardWords({ state: 'working', step: 3, of: 6, stepName: 'Build it', doing: 'building it' }), 'Step 3 of 6 · Build it: building it');
   assert.equal(activity.cardWords({ state: 'working', step: null, of: null, doing: 'building it' }), 'Working on it: building it');
   assert.equal(activity.cardWords(null), null);
@@ -192,7 +193,7 @@ test('a card that joined work under way starts when that work began, not when th
   assert.match(service, /AND r\.created_at >= c\.began\s+AND \(nxt\.began IS NULL OR r\.created_at < nxt\.began\)/);
   assert.match(service, /AND NOT \(r\.build_ok IS FALSE AND right\(COALESCE\(r\.build_error, ''\), char_length\(\$3::text\)\) = \$3::text\)/);
   const bot = read('src/services/homeroom-bot.js');
-  assert.match(bot, /error: `interrupted: \$\{plan\.lost \? \(plan\.why \|\| 'the turn was lost'\) : 'the spec turn was cut short'\}`\s*\+ ` \$\{RESTARTED_BUILD_NOTE\}`/,
+  assert.match(bot, /error: `interrupted: \$\{what\} \$\{RESTARTED_BUILD_NOTE\}`/,
     'the restart\'s requeue writes the note the card reads past');
 });
 
@@ -457,7 +458,7 @@ test('the client keeps only in-app links, whole steps and known endings, and nev
   });
   assert.deepEqual(cards.map((c) => c.messageId), [31, 32, 33, 34, 35], 'a card without a message is dropped');
   assert.deepEqual(cards[0], {
-    messageId: 31, state: 'working', startedAt: 'a', links: { request: '#app/x/dev/issues/3', proposal: null },
+    messageId: 31, state: 'working', startedAt: 'a', workedFrom: null, links: { request: '#app/x/dev/issues/3', proposal: null },
     step: 3, of: 6, stepName: 'Build it', doing: 'building it', outcome: null, endedAt: null,
   });
   assert.equal(cards[1].step, null, 'step 7 of 6 is not a step');
@@ -511,7 +512,11 @@ test('a card going: its step as a ring and in words, what it is doing, how long 
 test('a card done: what it came to, at a glance and in words, how long it took, and where to open it', () => {
   const proposed = draw({ card: done('proposed', { links: { request: '#app/ear-trainer/dev/issues/12', proposal: '#app/ear-trainer/dev/proposals/40' } }) });
   assert.match(proposed, /data-bot-activity="done" data-bot-activity-outcome="proposed"/);
-  assert.match(proposed, /data-bot-activity-eyebrow="">Done</);
+  // 4 October: "DONE" over a change still waiting for approval read as
+  // finished. It is Built; Done is for what went live.
+  assert.match(proposed, /data-bot-activity-eyebrow="">Built</);
+  assert.match(draw({ card: done('live') }), /data-bot-activity-eyebrow="">Done</);
+  assert.match(draw({ card: done('closed') }), /data-bot-activity-eyebrow="">Ended</);
   assert.match(proposed, /<span role="status">Built it\. Waiting for approval<\/span><span> · took 23m<\/span>/);
   assert.match(proposed, /d="M5 13l4 4L19 7"/, 'a check where the ring was');
   assert.match(proposed, />Open change<\/a><a [^>]*>Request #12<\/a>/, 'the change first');
@@ -722,7 +727,9 @@ function loadStore(t, { responses, catchUps = [] }) {
     getHomeroomBotActivity(options) {
       reads.push(options);
       const next = responses.shift();
-      return typeof next === 'function' ? next() : Promise.resolve(next || []);
+      // A read answers the cards and (5 October) the ready cards beside them.
+      const read = (cards) => ({ cards: cards || [], ready: [] });
+      return typeof next === 'function' ? next().then(read) : Promise.resolve(read(next));
     },
     catchUpHomeroomBotActivity() {
       asked.push(true);

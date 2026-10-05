@@ -89,7 +89,7 @@ import { describe as describeCommunity } from '../../workshop/community-scope';
 import { markNeedsSeen, needsRowKey, unseenNeeds, useNeedsSeen } from '../../workshop/needs-seen';
 import { ApprovalRules, CommunityCard, ShareItCard, canMakePrivate, confirmMakePrivate, useCommunity } from './community-card';
 import { WorkshopNotices } from './notices';
-import { ChannelCard, NeedsCard, NothingToVote, owesVote, YourWorkCard } from './hub-cards';
+import { ChannelCard, FirstVersionCard, NeedsCard, NothingToVote, hubAlone, hubWorkEmpty, owesVote, YourWorkCard } from './hub-cards';
 import { ProjectDiscussion } from './project-discussion';
 import { ProjectBand, type ProjectTabKey } from './project-band';
 import { SinceSummaryCard } from './since-summary-card';
@@ -505,24 +505,24 @@ function digestNote(meta: DevWorkshopView['meta'], written: boolean): string {
  * stopped being true: the "+" was only in All items' search row, so on
  * Current status it pointed at nothing on screen, and it has had no propose
  * row since New change moved to Improve (#1490) and then to the Homeroom
- * menu (#2740 review), where it is "Start a new change" under Agent sessions
- * since the UI overhaul — an owner decision this note does not undo. The "+"
+ * menu (#2740 review), an owner decision this note does not undo. The "+"
  * became the hero's ⋯, on the hub, so the note names what it holds (and, on
- * All items, where it is), and sends "make one yourself" to the row that
- * does it, by the name the header gives that menu ("Homeroom menu", the
- * mark's own aria-label).
+ * All items, where it is), and sends "make one yourself" to the ⋯'s own
+ * Build it yourself row. It sent it to the Homeroom menu's until that row
+ * showed only for people who have built something themselves (first-session
+ * run-through, 5 Oct 2026: ../../app-context/app-context-sheet.tsx
+ * AgentChats), so a newcomer would have looked for a row they do not have.
  *
  * Gated on the same facts as what it names: "import a PR" only where the ⋯
  * carries that row (`canCollaborate`), and nothing to press at all for a
- * read-only viewer, whose ⋯ holds Fork alone and whose menu has no Start a
- * new change (both from `AppView.readOnly`, the flag that row and the ⋯'s
- * writable rows are each gated on).
+ * read-only viewer, whose ⋯ holds Fork alone (`AppView.readOnly`, the flag
+ * the ⋯'s writable rows are gated on).
  *
  * UNDER THE START-HERE BANNER it stops at the ⋯. On the hub an empty
  * board is nearly always an app nobody has started, and #2573's banner right
- * above the note carries its own Start a new change button — so sending the reader
- * to the Homeroom menu for the same button would be the note talking past
- * the screen it is on. All items has no banner, so there it says the whole
+ * above the note carries its own Start a new change button, so sending the
+ * reader to a menu for the same thing would be the note talking past the
+ * screen it is on. All items has no banner, so there it says the whole
  * thing.
  */
 function EmptyNote({ filtered, loadFailed, underStartHere = false, onHub = false }: {
@@ -533,9 +533,8 @@ function EmptyNote({ filtered, loadFailed, underStartHere = false, onHub = false
   onHub?: boolean;
 }): ReactNode {
   const { readOnly, canCollaborate } = useDevActions();
-  const where = onHub ? '' : tr("workshop:on_the_hub_52691f37");
-  const adds = canCollaborate ? tr("workshop:to_ask_for_a_change_or_import_a_pr_224323cf") : tr("workshop:to_ask_for_a_change_eaa9c127");
-  const start = underStartHere ? '.' : '; to make one yourself, use Start a new change in the Homeroom menu.';
+  const emptyKey = `workshop:board_empty_press_menu_${onHub ? 'hub' : 'page'}_${canCollaborate ? 'import' : 'suggest'}_${underStartHere ? 'end' : 'build'}`;
+
   return (
     <div className="text-xs text-zinc-500 dark:text-zinc-400 mb-2" data-ws-empty="">
       <LocalizedValue render={() => (filtered ? (
@@ -544,11 +543,7 @@ function EmptyNote({ filtered, loadFailed, underStartHere = false, onHub = false
         <>
           <LocalizedValue render={() => (loadFailed ? tr("workshop:couldn_t_load_open_requests_right_now_b25d9c8c") : '')} />
           <LocalizedValue render={() => (readOnly ? tr("workshop:nothing_on_the_board_yet_5e81d262") : (
-            <>
-              <Message id="workshop:nothing_on_the_board_yet_press_b4525cf4" />
-              <span className="font-medium text-violet-700 dark:text-violet-400">⋯</span>
-              {where + adds + start}
-            </>
+            <RichMessage id={emptyKey} components={[<span className="font-medium text-violet-700 dark:text-violet-400" />]} />
           ))} />
         </>
       ))} />
@@ -1304,13 +1299,23 @@ function legendFor(kind: QueueRow['kind'] | 'done'): Array<[string[], string]> {
  * numbered change); the Description sheet has them in full, as chips.
  */
 type Fact = { key: string; tone: string | undefined; text: string };
+/**
+ * The pill states the facts line already says: the count itself ("1 / 2",
+ * an at-least-N rule's "1 of 2 approvals") is the tally in words, and the
+ * vote the viewer owes ("Vote · 0/2", a solo project's "Waiting for your
+ * approval") is the eyebrow.
+ */
+const SAID_ELSEWHERE = new Set(['needs_vote', 'tally', 'approvals']);
 function factsFor(row: QueueRow, voted: string | null): Fact[] {
   const out: Fact[] = [];
   const st = row.card.pill ? row.card.pill.state : null;
   if (row.kind === 'vote' && st) {
     if (voted) out.push({ key: 'voted', tone: 'ok', get text() { return tr("workshop:you_voted_value1_7ff14705", { value1: voted }); } });
-    out.push({ key: 'tally', tone: undefined, get text() { return tr("workshop:value1_of_value2_yes_d3b8fc3a", { value1: st.yes, value2: st.majority }); } });
-    if (st.label && !/^Vote\b/.test(st.label)) out.push({ key: 'state', tone: st.tone, text: st.label });
+    // The count in the change page's own words: an at-least-N rule's pill
+    // reads "1 of 2 approvals" there (AppView.statusPillState), and every
+    // rule's count reads the same way here.
+    out.push({ key: 'tally', tone: undefined, get text() { return tr("workshop:tally_value1_of_value2_approvals", { value1: st.yes, value2: st.majority, count: st.majority }); } });
+    if (st.label && !/^Vote\b/.test(st.label) && !SAID_ELSEWHERE.has(st.key)) out.push({ key: 'state', tone: st.tone, text: st.label });
   } else if (row.kind === 'vote' && row.tally) {
     // The Communities feed's rows (#3488): the counts, without a threshold
     // it has not worked out for each project. A zero says nothing.
@@ -1749,16 +1754,22 @@ function ShotsPicture({ v, near, wide }: {
  */
 function ItemBy({ row }: { row: QueueRow }): ReactNode {
   const isVote = row.kind === 'vote';
+  // A change Homeroom bot built reads as its page's by-line does (#3854,
+  // AppView._topicHeroView): "Homeroom bot · made 29m ago", not its
+  // account's name and "proposed". Its author arrives as that account's
+  // username on both feeds (AppView._botBuilt reads the same).
+  const bot = isVote && String(row.who || '').toLowerCase() === 'homeroom_bot';
+  const who = bot ? 'Homeroom bot' : row.who;
   return (
     <p className="dev-ws-item-by">
-      {row.who ? (
-        <span className="dev-ws-item-avatar" style={{ background: swatchFor(row.who) }} aria-hidden="true">
-          {row.who.slice(0, 1).toUpperCase()}
+      {who ? (
+        <span className="dev-ws-item-avatar" style={{ background: swatchFor(who) }} aria-hidden="true">
+          {who.slice(0, 1).toUpperCase()}
         </span>
       ) : null}
       <span>
         {isVote ? (
-          <><LocalizedValue render={() => (row.who ? <b>{row.who}</b> : tr("workshop:proposed_9b0c660b"))} />{row.ago ? ` · ${row.who ? 'proposed ' : ''}${row.ago}` : ''}</>
+          <><LocalizedValue render={() => (who ? <b>{who}</b> : tr("workshop:proposed_9b0c660b"))} /><LocalizedValue render={() => (row.ago && who ? tr(bot ? "workshop:item_by_made_ago" : "workshop:item_by_proposed_ago", { ago: row.ago }) : row.ago ? ` · ${row.ago}` : '')} /></>
         ) : (
           <>
             {row.number != null ? <b>{`#${row.number}`}</b> : null}
@@ -1865,10 +1876,15 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
             <LocalizedValue render={() => (tr("workshop:voted_value1_value2_for_the_next_1acc0f32", { value1: voted, value2: wide ? tr("workshop:message_9415dc7b20e3") : tr("workshop:message_875251734f82") }))} />
           </span>
         ) : (
+          // First-session run-through, 5 Oct 2026: a newcomer read
+          // "PROPOSAL · NEEDS YOUR VOTE" here and "Change · Waiting for your
+          // approval" on the same change's page. The item says what the page
+          // says: what it is, and that it waits on you
+          // (AppView._summarizeRequirements' group headline).
           <span className="dev-ws-eyebrow">
             <LocalizedValue render={() => (!isVote ? tr("workshop:request_59f03d64")
-              : row.card.attrs && row.card.attrs['data-gov-row'] ? tr("workshop:group_decision_needs_your_vote_89b38904")
-                : tr("workshop:proposal_needs_your_vote_59915593"))} />
+              : row.card.attrs && row.card.attrs['data-gov-row'] ? tr("workshop:group_decision_waiting_for_your_approval")
+                : tr("workshop:change_waiting_for_your_approval"))} />
           </span>
         )}
         {/* #3517: THE WAY BACK, WHERE A PHONE CAN SEE IT. Swiping down was
@@ -1969,10 +1985,10 @@ function DoneItem({ total, acted, left, leftVotes, onDone, onBack, doneLabel }: 
   const done = Math.max(0, Math.min(total, total - leftVotes));
   const line = left > 0 ? tr("workshop:that_s_it_for_now_d667f89e") : (acted > 0 ? 'That’s it!' : tr("workshop:you_re_all_caught_up_47aa1e80"));
   const parts: string[] = [];
-  if (acted > 0) parts.push(tr("workshop:you_voted_on_value1_this_time_23276348", { value1: plural(acted, 'proposal', 'proposals') }));
-  if (left > 0) parts.push(tr("workshop:you_skipped_value1_value2_above_if_you_change_yo_b20df291", { value1: left, value2: left === 1 ? tr("workshop:it_stays_cdcbf419") : tr("workshop:they_stay_c08a35ff") }));
+  if (acted > 0) parts.push(tr("workshop:you_voted_on_changes_this_time", { count: acted }));
+  if (left > 0) parts.push(tr(left === 1 ? "workshop:you_skipped_value1_it_stays_above" : "workshop:you_skipped_value1_they_stay_above", { value1: left }));
   else if (acted > 0) parts.push(tr("workshop:nothing_else_needs_you_right_now_e7d62eaa"));
-  else parts.push(tr("workshop:every_proposal_you_can_vote_on_has_your_answer_a_a342de6d"));
+  else parts.push(tr("workshop:every_change_you_can_vote_on_has_your_answer"));
   return (
     <section
       className="dev-ws-item dev-ws-needs-done"
@@ -1986,7 +2002,7 @@ function DoneItem({ total, acted, left, leftVotes, onDone, onBack, doneLabel }: 
           className="dev-ws-done-ring"
           pct={Math.round((done / total) * 100)}
           label={`${done}/${total}`}
-          title={done === total ? tr("workshop:all_value1_open_proposals_voted_on_7f051d1d", { value1: total }) : tr("workshop:value1_of_value2_open_proposals_voted_on_27ee31ca", { value1: done, value2: total })}
+          title={done === total ? tr("workshop:all_value1_open_changes_voted_on", { value1: total }) : tr("workshop:value1_of_value2_open_changes_voted_on", { value1: done, value2: total })}
           arcClassName={done === total ? 'stroke-emerald-500' : undefined}
         />} resolve={() => ({ "title": done === total ? tr("workshop:all_value1_open_proposals_voted_on_7f051d1d", { value1: total }) : tr("workshop:value1_of_value2_open_proposals_voted_on_27ee31ca", { value1: done, value2: total }) })} />
       ) : null}
@@ -2486,11 +2502,17 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
   // from the kit's own rAF, so this observes the class rather than racing it
   // through a second viewport listener. Only while a sheet is up, and only
   // below the breakpoint: a panel on a wide window is not fixed at all.
+  //
+  // `platform-kb-open` counts as well (lib/keyboard-open.ts). In the Homeroom
+  // app the web view is resized to end at the keys, nothing is covered, and
+  // `un-kb` never comes on, so the card kept its resting two-thirds cap and
+  // the vote form ran off the page behind the keys (5 October 2026). That
+  // class is the page's own "the keyboard is up", however the host made room.
   useEffect(() => {
     if (!sheet || wide || typeof document === 'undefined') return undefined;
     const docEl = document.documentElement;
     const sync = () => {
-      const up = docEl.classList.contains('un-kb');
+      const up = docEl.classList.contains('un-kb') || docEl.classList.contains('platform-kb-open');
       setKbUp((cur) => (cur === up ? cur : up));
       if (!up) return;
       const active = document.activeElement as HTMLElement | null;
@@ -2867,6 +2889,8 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
       type="submit"
       className="dc-send-btn dc-circle-send dev-ws-ask-send" aria-label={catalogText("workshop:ask_b8c209cd")}
       disabled={!draft.trim() || !target || inFlight}
+      // The field keeps focus through the press (lib/keyboard-open.ts).
+      onMouseDown={(event) => event.preventDefault()}
     ><ArrowUpIcon className="dev-ws-ask-send-icon" aria-hidden="true" /></button>} messages={{"aria-label":"workshop:ask_b8c209cd"}} />
   );
 
@@ -3843,7 +3867,20 @@ export function DevWorkshop(): ReactNode {
   // items' search no longer narrows the count, so it is not a condition:
   // #2915.) Named once because the empty note under it reads it too — see
   // EmptyNote.
-  const startHere = !!(v.dashboard && v.dashboard.open === 0 && !v.dashboard.everShipped);
+  //
+  // NOT WHILE HOMEROOM BOT BUILDS ITS FIRST VERSION (the hub's First version
+  // card). Before its description is filed as a request the board is empty
+  // too, and "The first change is yours to start" told its maker to start
+  // the change the bot was already making. The same goes for the hub's
+  // no-items note below.
+  const building = !!(community && community.first_version);
+  const startHere = !!(v.dashboard && v.dashboard.open === 0 && !v.dashboard.everShipped) && !building;
+  // A project nobody else is in (hubAlone): its hub leaves out the zeros a
+  // group's hub says (./hub-cards.tsx NothingToVote, hubWorkEmpty).
+  const alone = hubAlone(community);
+  const workEmpty = hubWorkEmpty({
+    alone, building, startHere, readOnly: !!actions.readOnly, bot: !!(v.mine && v.mine.bot),
+  });
 
   /* ── The band, and on All items its back bar ──
      The four tabs in the community's colour (ProjectBand), leading the
@@ -3945,13 +3982,19 @@ export function DevWorkshop(): ReactNode {
           )}
         />
       ) : null}
+      {/* ── First version: where Homeroom bot's build stands ──
+          Under the hero while the bot builds the project from its
+          description, so a new project's hub says what it is becoming and
+          how far along it is, and opens the bot's chat when the bot waits on
+          its maker. See ./hub-cards.tsx FirstVersionCard. */}
+      {slug ? <FirstVersionCard slug={slug} data={community} /> : null}
       {/* #2573: ABOVE the empty note, because the two answer different
           questions on the same screen. The note says what the board holds;
           this says what to do about an app nobody has started on, and the
           product decision put it at the top of the page. See
           StartHereBanner for the three conditions. */}
       {startHere ? <StartHereBanner /> : null}
-      {v.emptyNote ? (
+      {v.emptyNote && !building ? (
         <EmptyNote
           filtered={!!v.emptyNote.filtered}
           loadFailed={v.emptyNote.loadFailed}
@@ -3968,18 +4011,20 @@ export function DevWorkshop(): ReactNode {
           project that is just yours and has nobody to talk to yet, the Share
           it card, which is how it grows; your own work, two rows and the
           rest in place; and Start a new change. See ./since-summary-card.tsx
-          and ./hub-cards.tsx. */}
+          and ./hub-cards.tsx. On a project nobody else is in, the vote
+          line and an empty Your work leave the zeros out (`alone`,
+          `workEmpty`). */}
       {slug ? (
         <SinceSummaryCard slug={slug} since={v.since ? v.since.baseline : 0} onMore={() => openTab('workshop')} />
       ) : null}
       {owesVote(v.queue)
         ? <NeedsCard queue={v.queue} slug={slug} canPost={canPost} onOpen={() => openTab('needs')} />
-        : <NothingToVote queue={v.queue} onOpen={() => openTab('needs')} />}
+        : <NothingToVote queue={v.queue} onOpen={() => openTab('needs')} alone={alone} />}
       {slug && community?.audience !== 'solo' ? (
         <ChannelCard slug={slug} name={app.name || slug} data={community} compact onOpen={() => openTab('discussion')} />
       ) : null}
       {slug ? <ShareItCard slug={slug} name={app.name || undefined} /> : null}
-      {v.mine && (v.mine.rows.length || v.mine.viewer) ? (
+      {v.mine && (v.mine.rows.length || (v.mine.viewer && workEmpty)) ? (
         <YourWorkCard
           rows={v.mine.rows}
           slug={slug}
@@ -3988,6 +4033,7 @@ export function DevWorkshop(): ReactNode {
           onToggleRow={(key) => toggleRow('mine', key)}
           all={workAll}
           onAll={() => setWorkAll(!workAll)}
+          empty={workEmpty}
         />
       ) : null}
       {/* Start a new change was the hub's last line; it is the hero's ⋯
@@ -4043,12 +4089,23 @@ export function DevWorkshop(): ReactNode {
                 promised. A read-only viewer has neither door, so is told
                 the fact and nothing to press — and so is a viewer under the
                 start-here banner, whose Start a new change is at the top of this
-                very tab and whose board has no open item to pick up. */}
+                very tab and whose board has no open item to pick up.
+
+                Where Homeroom bot builds for this viewer (`mine.bot`, the
+                door the request pages open: AppView._botDoor), the way in is
+                asking for the change, not building it: a newcomer read the
+                developer path here on a project the bot builds (first-session
+                run-through, 5 Oct 2026). Elsewhere the way in is the hub's
+                ⋯, whose Build it yourself (B8) every writer has: the
+                Homeroom menu's shows only once you have had an agent session
+                (../../app-context/app-context-sheet.tsx AgentChats). */}
             {!v.mine.rows.length ? (
               <p className="text-xs text-zinc-500 dark:text-zinc-400" data-ws-mine-empty="">
                 <LocalizedValue render={() => (actions.readOnly || startHere
                   ? tr("workshop:you_have_no_work_going_on_23e6b6ea")
-                  : tr("workshop:you_have_no_work_going_on_pick_up_an_open_item_i_a9b4b318"))} />
+                  : v.mine.bot
+                    ? tr("workshop:you_have_no_work_going_on_tell_homeroom_bot")
+                    : tr("workshop:you_have_no_work_going_on_pick_up_build_it_yourself"))} />
               </p>
             ) : null}
             {/* THE FIRST THREE on the Workshop tab (#852 review), and the

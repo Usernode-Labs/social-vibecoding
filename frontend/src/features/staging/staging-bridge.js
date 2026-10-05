@@ -42,6 +42,8 @@ export const stagingBridge = {
       testPanelHidden: true,
       testHtml: '',
       fsBtnHidden: true,
+      clockLabel: '',
+      clockAsNow: false,
     });
   },
   isOpen() {
@@ -83,6 +85,21 @@ export const stagingBridge = {
    */
   setAudience(audience) {
     stagingStore.set({ solo: audience === 'solo' });
+  },
+
+  /**
+   * The moment the preview is shown as of (`{ label, asNow }`), or null when
+   * its change declares none (src/services/preview-clock.js). Only words the
+   * line under the bar: the preview's address, `un-now` included, is
+   * app-view.js's, through setSrc. Answers whether a line is now drawn,
+   * which is what lets app-view.js open the preview at that moment at all.
+   */
+  setClock(clock) {
+    const label = clock && typeof clock.label === 'string' ? clock.label.trim() : '';
+    stagingStore.set(label
+      ? { clockLabel: label, clockAsNow: !!clock.asNow }
+      : { clockLabel: '', clockAsNow: false });
+    return !!label;
   },
 
   /**

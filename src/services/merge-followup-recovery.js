@@ -34,6 +34,9 @@ async function recover(config, {
   // The newest confirmed merge per app is enough: a newer main contains its
   // predecessors. GitHub main is read below so a later direct push is also
   // tested/delivered rather than replacing it with an older merge commit.
+  // A change that went live inside another one (included_in_session_id,
+  // services/included-changes.js) shares that merge's commit and time but is
+  // not the merge: the carrying change is the one its follow-ups belong to.
   const { rows } = await pool.query(
     `WITH latest AS (
        SELECT DISTINCT ON (cs.app_id)
@@ -42,6 +45,7 @@ async function recover(config, {
          FROM chat_sessions cs
          JOIN apps a ON a.id = cs.app_id
         WHERE cs.status = 'merged' AND cs.pr_number IS NOT NULL
+          AND cs.included_in_session_id IS NULL
         ORDER BY cs.app_id, cs.merged_at DESC NULLS LAST, cs.id DESC
      )
      SELECT * FROM latest`

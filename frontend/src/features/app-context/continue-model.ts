@@ -1,8 +1,10 @@
 import { t as tr } from "../../lib/i18n/runtime";
-// The rows under "More" in the Homeroom menu (#2779 follow-up; it was
-// "Continue" until the UI overhaul, then "Agent sessions"): your agent
-// sessions, so going back to one is a tap from anywhere. Pure, so tests can
-// read the rules without a browser.
+// The rows under "Agent chats" in the Homeroom menu (#2779 follow-up; it was
+// "Continue" until the UI overhaul, then "Agent sessions", then "More"): your
+// agent sessions, so going back to one is a tap from anywhere. Pure, so tests
+// can read the rules without a browser. The section itself shows only once
+// the viewer has had an agent session (../agent-session/store.ts
+// agentChatsShown, first-session run-through, 5 Oct 2026).
 //
 // The rules:
 //   - every app's, not only the one the menu is open on, and on Home too: a

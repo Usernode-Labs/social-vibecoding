@@ -174,6 +174,43 @@ test('every kind the DM carries reads plainly, names the request, and has no em 
   }
 });
 
+test('a build that did not finish says why in plain words, and that a reply here starts it again', () => {
+  // 5 Oct 2026, Page Turners #3: "I tried to build this but couldn't finish
+  // (the build ran past its time limit (finished after a restart)). A person
+  // can pick it up from here." The requester was the person.
+  const context = { appName: 'Page Turners', issueNumber: 3, issueTitle: 'Display location and host information for meetings', firstVersion: false };
+  assert.equal(
+    dm.dmText('build_failed', { reason: 'the build ran past its time limit (finished after a restart)' }, context),
+    '**Page Turners** · request #3: Display location and host information for meetings\n\n'
+      + 'I couldn\'t finish building this: it took longer than I\'m allowed. Reply here and I\'ll try again.',
+  );
+  const said = (reason, extra = {}) => dm.dmText('build_failed', { reason }, { ...context, ...extra }).split('\n\n')[1];
+  assert.equal(said('the build ran past its time limit; last activity: npm test'),
+    'I couldn\'t finish building this: it took longer than I\'m allowed. Reply here and I\'ll try again.');
+  assert.equal(said('the platform restarted in the middle of each of its last 3 tries at building this'),
+    'I couldn\'t finish building this: Homeroom restarted while I was working on it, 3 times in a row. Reply here and I\'ll try again.');
+  assert.equal(said('the platform restarted while it was building, and the build was lost'),
+    'I couldn\'t finish building this: Homeroom restarted while I was working on it. Reply here and I\'ll try again.');
+  assert.equal(said('the build produced no change to propose (finished after a restart)'),
+    'I couldn\'t finish building this: I ended up with no changes to show you. Reply here and I\'ll try again.');
+  assert.equal(said('the change was built but could not be proposed: checks unavailable'),
+    'I built this, but I couldn\'t put it up for approval. Reply here and I\'ll try again.');
+  assert.equal(said('the build could not start (worker pool exhausted)'),
+    'I couldn\'t get started on building this. Reply here and I\'ll try again.');
+  assert.equal(said('the build turn failed (exit 1)'),
+    'I couldn\'t finish building this: something went wrong while I was working on it. Reply here and I\'ll try again.');
+  assert.equal(said(''),
+    'I couldn\'t finish building this: something went wrong while I was working on it. Reply here and I\'ll try again.');
+  assert.equal(said('the build ran past its time limit', { firstVersion: true }),
+    'I couldn\'t finish building the first version: it took longer than I\'m allowed. Reply here and I\'ll try again.');
+  for (const reason of ['the build ran past its time limit (finished after a restart)', 'the build turn failed (exit 1)',
+    'the change was built but could not be proposed: x', 'the platform restarted in the middle of each of its last 3 tries at building this']) {
+    const text = said(reason);
+    assert.doesNotMatch(text, /\(|time limit|finished after|exit 1|pick it up/, 'the run\'s own words are never quoted');
+    assert.doesNotMatch(text, DASH);
+  }
+});
+
 test('#20 (WP3): beside the proposal\'s card the news points at the card; the address is written out only without one', () => {
   const context = { appName: 'Seed swap', issueNumber: 7, issueTitle: 'Sort by date', firstVersion: false };
   const withCard = { ...KINDS.proposal, sessionId: 9 };
@@ -233,10 +270,13 @@ test('#7 (WP3): "live now" only once the app answered on the merge it deployed, 
   assert.equal(dm.mergedText({ line, appName: 'Plant Pal', live: false, change: true, card: false }),
     `${line}\n\nYour change is going live now and will be ready in a few minutes.`);
   for (const live of [true, false]) assert.doesNotMatch(dm.mergedText({ line, appName: 'Plant Pal', live }), DASH);
-  // The app first, to open it, then the proposal; the platform's own, its proposal alone.
-  assert.deepEqual(dm.cardsFor('merged', { sessionId: 9, appCard: true }, { id: 3 }, 7),
-    [{ type: 'app', appId: 3 }, { type: 'proposal', appId: 3, sessionId: 9 }]);
+  // 5 October: the app opens from the message's own button, which no card
+  // the bot cannot attach takes with it; the proposal is its card.
+  assert.deepEqual(dm.cardsFor('merged', { sessionId: 9, appCard: true }, { id: 3 }, 7), [{ type: 'proposal', appId: 3, sessionId: 9 }]);
   assert.deepEqual(dm.cardsFor('merged', { sessionId: 9 }, { id: 3 }, 7), [{ type: 'proposal', appId: 3, sessionId: 9 }]);
+  assert.deepEqual(dm.openAppAction({ slug: 'page-turners', appName: 'Page Turners' }),
+    { id: 'open_app', label: 'Open Page Turners', style: 'primary', type: 'open', target: '#app/page-turners/app' });
+  assert.equal(dm.openAppAction({ slug: '', appName: 'X' }), null);
 
   // Its health, read a few times a few seconds apart, on the build the merge deployed.
   const probes = [];

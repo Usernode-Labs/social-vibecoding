@@ -33,6 +33,7 @@ import { Button } from '@/components/ui/button';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
+import { returnKeyHandler } from '../../lib/return-to-next';
 import { walletSheetStore, type StakingView, type WalletSheetState } from './wallet-sheet-store';
 
 function controller(): any {
@@ -190,14 +191,20 @@ function SendForm({ onSent }: { onSent: () => void }): ReactNode {
     if (ok) onSent(); else setSending(false);
   };
 
+  // Return in the address goes on to the amount, and in the amount sends
+  // (#3907: the iOS keyboard's chevrons are gone). The amount's number pad
+  // has no Return key at all; a tap anywhere outside the field puts it away.
   return (
-    <div className="flex flex-col gap-2 p-4 mb-4 rounded-lg border border-zinc-200 dark:border-zinc-800">
+    <div
+      className="flex flex-col gap-2 p-4 mb-4 rounded-lg border border-zinc-200 dark:border-zinc-800"
+      onKeyDown={returnKeyHandler({ submit: () => { if (!sending) void submit(); } })}
+    >
       <Localized element={<input
         ref={toRef} placeholder={catalogText("account:recipient_address_ut1_109cc6d5")} aria-label={catalogText("account:recipient_address_454d0391")}
-        className={`${FIELD} font-mono`}
+        className={`${FIELD} font-mono`} enterKeyHint="next"
         value={to} onChange={(e) => setTo(e.target.value)}
       />} messages={{"placeholder":"account:recipient_address_ut1_109cc6d5","aria-label":"account:recipient_address_454d0391"}} />
-      <Localized element={<input placeholder={catalogText("account:amount_49e96d7c")} aria-label={catalogText("account:amount_49e96d7c")} inputMode="numeric" className={FIELD}
+      <Localized element={<input placeholder={catalogText("account:amount_49e96d7c")} aria-label={catalogText("account:amount_49e96d7c")} inputMode="numeric" enterKeyHint="send" className={FIELD}
         value={amount} onChange={(e) => setAmount(e.target.value)}
       />} messages={{"placeholder":"account:amount_49e96d7c","aria-label":"account:amount_49e96d7c"}} />
       <Button size="flushBold" disabled={sending} onClick={submit}><Message id="account:send_f6f4688f" /></Button>

@@ -328,7 +328,7 @@ test('the ⋯ menu leads with its asks and names its settings group', () => {
   // AppView._plusMenuHeading() calls. #1490 moved New change to Improve and
   // left import alone in the first group; #1900 put filing an issue back
   // beside it, under "Add to the board". The hub's ⋯ leads with that row as
-  // "Ask for a change", and the first group needs no heading: it is the
+  // "Suggest an improvement", and the first group needs no heading: it is the
   // menu's first, and "Settings & rules" says where the rest begins.
   const frame = englishUiSource(read('frontend/src/features/dev-board/actions-row.tsx'));
   assert.doesNotMatch(englishUiSource(frame), /label="Add to the board"/);

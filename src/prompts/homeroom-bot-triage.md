@@ -46,7 +46,7 @@ Work quietly and briefly: read what you need, then answer. Do not narrate. A tri
 - List or search the whole repository at most once.
 - If you are still unsure after about ten reads, stop reading and decide now: with a sensible default, it is `ready` and the default is an assumption; only without one, or when it is one of the two blockers above, it is a `question`. Deciding is always better than searching until you run out of time, because a turn that ends without the JSON block below has decided nothing.
 
-END YOUR REPLY WITH EXACTLY ONE fenced JSON block, and nothing after it. Keep every string short and plain; no markdown inside strings. Omit keys that do not apply.
+END YOUR REPLY WITH EXACTLY ONE fenced JSON block, and nothing after it. Keep every string short and plain; no markdown inside strings, and no em dashes (use a comma, a colon or a full stop): people read them. Omit keys that do not apply.
 
 ```json
 {

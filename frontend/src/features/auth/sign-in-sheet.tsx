@@ -32,37 +32,109 @@ import { Message, Localized, message as catalogText } from "../../lib/i18n/react
  * (`native`) the buttons ask the app for its own sheet instead and never
  * leave the page (signInNatively): the same outcomes, answered in place.
  *
+ * "Sign in with a password" is a step of its own here too:
+ *
+ *   password POST /api/auth/login with a username or an email, the sign-in
+ *            screen's own exchange (passwordSignIn in ./shared.ts). "Forgot
+ *            password?" still goes to that screen's reset (#login/forgot).
+ *
+ * A waitlist "you're in" link opens the sheet already at work
+ * (`releaseToken`): the address its token names filled in and the code
+ * sent, as the sign-in screen does for the same link (./login.tsx), with
+ * the same once-per-tab record of the send.
+ *
  * Every success ends in finishLogin(), so where the person lands is the
  * shell's decision (AuthScreens.finishLogin, then the invite link's path).
  * `followInvite` tells the verify route that this sign-in is the Join the
  * person just pressed on an invite's page: an account that already existed
  * follows the link too (routes/auth.js), rather than being asked again.
  *
- * A password sign-in stays on the sign-in screen (#login); the sheet's last
- * line goes there.
+ * ── The way out to "What do you want to make?" ─────────────────────────
+ *
+ * When a sign-in leads to the account's first session, the story hands
+ * this sheet `handOff` from its `beforeFinish`. The sheet slides away while
+ * the wallpaper the make screen stands on comes up behind it, and only then
+ * does the shell sign in, opening that screen in the same tick
+ * (../first-session/index.tsx), so nothing of Home shows between the two.
+ * Transform and opacity only, with no delay, so a busy main thread cannot
+ * hold the movement back on iOS; with reduced motion it is a cut.
  *
  * Rendered in place inside the landing's React-owned tree (no portal, for
  * the reasons ui/dialog.tsx gives), closed by default, and only ever opened
- * by a tap — never in the first render — so the prerendered document is
- * unchanged.
+ * once the screen is up (a tap, a provider's way back, a release link),
+ * never in the first render, so the prerendered document is unchanged.
+ *
+ * ── With the keyboard up ───────────────────────────────────────────────
+ *
+ * iPhone 17 simulator, iOS 26 Safari, 5 Oct 2026, the password step: the
+ * Sign in button sat behind the keyboard and the password field half under
+ * the keyboard's floating bar (Return still signed in). The sheet sat on the
+ * page's foot with the keys over it, and iOS panned the page to the tapped
+ * field alone. The panel is a `.platform-kb-sheet` now: while the keyboard
+ * is open its foot is on the top of what covers the page and its height is
+ * capped to what is visible (lib/keyboard-open.ts, app.css), and it scrolls
+ * inside. Taps on its fields focus without the pan, and the focused field is
+ * revealed in the panel with the step's button under it when the two fit
+ * (lib/keyboard-surface.ts). Every focus here is `preventScroll`, so that
+ * reveal is the only movement. Every step is the same: email, code, account,
+ * username and password. Return walks a step's fields, as on the make screen
+ * (#3904): from any but the last it goes to the next empty one, and only the
+ * last field's Return (the keyboard says "go") submits (`returnTarget`). The
+ * Homeroom app is losing the keyboard's ‹ › bar (flutter-mobile-app #603),
+ * and nothing here leans on that bar: what covers the page is measured from
+ * the visual viewport, whatever iOS draws above the keys.
+ *
+ * ── Opening it in the app, and what it is made of ──────────────────────
+ *
+ * Homeroom iOS app, 5 Oct 2026, Get started (and Sign in) recorded at 20
+ * fps: the sheet put the caret in Email as it started sliding up, and the
+ * app's web view raises its keyboard for a field focused from code, so the
+ * keys came up WHILE the sheet rose. For a moment the sheet was behind the
+ * rising keys, iOS scrolled the story up behind it to reveal the field, and
+ * the sheet then jumped up onto the keys: three movements fighting for half a
+ * second. On a touch screen the sheet now opens without a caret and the tap
+ * on the field raises the keys, after the sheet has arrived; the sheet then
+ * rides up with them as one eased, transform-only movement
+ * (lib/keyboard-surface.ts `ride`), and back down with them. It moves a
+ * caret to the next step's field by itself only while the keys are already
+ * up (they stay up across the hop), or on a desktop, where no keyboard
+ * rises (`mayFocusByCode`). Behind it nothing moves: the dim takes no pan
+ * (`touch-action: none`, as the kit's own backdrop) and the panel does not
+ * pass its scroll on to the page (`overscroll-contain`).
+ *
+ * The panel was a flat system grey (`bg-zinc-100`, a utility of its own, not
+ * a token the signed-out page lacked). It is the platform's sheet now: the
+ * plane colour (`--dc-sheet-solid`, the GroupedList's PLANE_FILL), the 20px
+ * radius, the `--app-sheet-line` hairline, and the 36px handle in `--border`
+ * that the workshop's sheets carry. The fields sit on it as white cards with
+ * the same hairline, as on the make screen.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from 'react';
 
+import { PLANE_FILL } from '@/components/ui/grouped-list';
 import { AppleIcon, GoogleIcon, XIcon } from '@/components/ui/icons';
+import { PasswordInput } from '@/components/ui/password-input';
 
+import { KB_OPEN_CLASS } from '../../lib/keyboard-open';
+import { useKeyboardSurface } from '../../lib/keyboard-surface';
+import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { inviteEmailFromToken, readAutoSend, writeAutoSend } from './login';
+import { NativeLoginDetailsLink } from './native-login-details';
+import { SessionConfirmationNotice, useSessionConfirmation } from './session-confirmation';
 import {
   blockedOffline,
   fetchSessionMint,
-  finishLogin,
   HANDLE_FIELD,
   legacy,
+  type NativeLoginFailureDetails,
+  passwordSignIn,
   sessionMintFailureMessage,
   USERNAME_RULE,
 } from './shared';
 import { TermsNotice } from './waitlist-shared';
 
-type Step = 'choose' | 'email' | 'code' | 'account' | 'username';
+type Step = 'choose' | 'email' | 'code' | 'account' | 'username' | 'password';
 
 export type SignInProvider = 'apple' | 'google';
 
@@ -162,8 +234,116 @@ const EMAIL_BUTTON = 'flex h-[50px] w-full items-center justify-center rounded-f
 // resend counts it down rather than pretending to send.
 const RESEND_COOLDOWN_MS = 60 * 1000;
 
-const FIELD_GROUP = 'rounded-2xl bg-white dark:bg-zinc-800 overflow-hidden';
-const FIELD = 'px-4 pt-3 pb-2 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-700';
+// How long the sheet takes to leave for the make screen (`handOff`): the
+// panel's and the cover's own 200ms, and a frame for the last of it to paint.
+export const HAND_OFF_MS = 240;
+
+/**
+ * Whether the sheet may put the caret in a step's field by itself. On a
+ * touch screen a field focused from code raises the keyboard in the app's
+ * web view, and doing that as the sheet opens (or as a step changes with
+ * the keys down) brings the keys up under a moving sheet; there the tap on
+ * the field does it, unless the keys are up already, when moving the caret
+ * keeps them up. Anywhere else (a mouse and a hardware keyboard) the caret
+ * is simply put where the typing goes.
+ */
+export function mayFocusByCode({ touch, keysUp }: { touch: boolean; keysUp: boolean }): boolean {
+  return !touch || keysUp;
+}
+
+/**
+ * Where Return in field `at` of a step's fields goes (5 Oct 2026: the
+ * Homeroom app is losing the keyboard's ‹ › bar, flutter-mobile-app #603,
+ * so Return is the way from one field to the next). From any field but the
+ * last, the next field after it that is still empty, or the last field when
+ * none is; null from the last field, whose Return submits the step. Never a
+ * submit from an earlier field: the account step used to submit from its
+ * username and fail on the empty password, and the password step leaned on
+ * the browser's own "fill out this field".
+ */
+export function returnTarget(values: readonly string[], at: number): number | null {
+  if (at < 0 || at >= values.length - 1) return null;
+  for (let i = at + 1; i < values.length; i += 1) if (!values[i]) return i;
+  return values.length - 1;
+}
+
+/** The keydown that walks a step's fields on Return (Shift+Return and an IME's Return are left alone). */
+export function returnWalks(fields: readonly RefObject<HTMLInputElement | null>[], at: number) {
+  return (e: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return;
+    const live = fields.map((f) => f.current).filter((el): el is HTMLInputElement => !!el);
+    const here = live.indexOf(e.currentTarget);
+    const target = returnTarget(live.map((el) => el.value), here < 0 ? at : here);
+    if (target == null) return; // the last field: the form submits
+    e.preventDefault();
+    live[target].focus({ preventScroll: true });
+  };
+}
+
+function touchScreen(): boolean {
+  try {
+    return typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches;
+  } catch {
+    return false;
+  }
+}
+
+function keyboardUp(): boolean {
+  const root = document.documentElement.classList;
+  return root.contains(KB_OPEN_CLASS) || root.contains('un-kb');
+}
+
+function prefersReducedMotion(): boolean {
+  try {
+    return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The line over "Sign in with a password", for the screen that opened the
+ * sheet. Only what is true there: an invite's Join and the story's Get
+ * started make an account for a new address; the story's Sign in is for
+ * somebody who has one.
+ */
+export function passwordLead(from: 'invite' | 'story' | 'signin'): string {
+  if (from === 'invite') return tr("auth:new_to_homeroom_this_makes_your_account_lead");
+  if (from === 'story') return tr("auth:already_have_an_account_lead");
+  return '';
+}
+
+/** Where a waitlist "you're in" link's sheet starts. */
+export type ReleaseArrival =
+  | { address: string; send: true }
+  | { address: string; send: false; cooldownUntil: number };
+
+/**
+ * The address a release link's token names, through the sign-in screen's
+ * own lookup (inviteEmailFromToken, GET /api/public/waitlist/more/:token),
+ * and whether its code still has to go. Once per tab, on the sign-in
+ * screen's record (./login.tsx's AUTO_SEND_KEY), so a reload, or the screen
+ * and the sheet both opening the link, sends one code: a code that already
+ * went to this address starts at the code step with what is left of the
+ * wait. Null when the token names nothing; the email step then stays empty.
+ */
+export async function releaseArrival(token: string, now = Date.now()): Promise<ReleaseArrival | null> {
+  const address = await inviteEmailFromToken(token);
+  if (!address) return null;
+  const prior = readAutoSend();
+  if (prior && prior.email === address) {
+    const until = prior.sentAt + RESEND_COOLDOWN_MS;
+    return { address, send: false, cooldownUntil: until > now ? until : 0 };
+  }
+  // Written before the request, as the screen does, so a failed send is not
+  // retried on a loop.
+  writeAutoSend(address);
+  return { address, send: true };
+}
+
+// White cards with the sheets' hairline, on the sheet's plane colour (the make screen's own field card).
+const FIELD_GROUP = 'overflow-hidden rounded-2xl bg-white shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900';
+const FIELD = 'px-4 pt-3 pb-2 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800';
 const LABEL = 'block text-[13px] text-zinc-500 dark:text-zinc-400';
 const INPUT = 'w-full border-0 bg-transparent px-0 py-1 text-[17px] text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none';
 const QUIET = 'py-1 text-[15px] font-medium text-violet-700 dark:text-violet-400 hover:underline';
@@ -186,12 +366,16 @@ export type SignInSheetProps = {
   returnTo?: string;
   /** Back from a provider: the username step, or what went wrong. */
   resume?: SignInResume | null;
+  /** Opened by a waitlist "you're in" link: the token that names the address to sign up with. */
+  releaseToken?: string | null;
   /**
    * Runs once the session exists and before the shell takes over:
    * 'existing' for an account that signed straight in, 'new' for one that
    * just set its password (in practice, one the code just made).
+   * `handOff` sends the sheet on its way to the make screen; it resolves
+   * once the sheet has gone.
    */
-  beforeFinish?: (kind: 'existing' | 'new') => void | Promise<void>;
+  beforeFinish?: (kind: 'existing' | 'new', handOff: () => Promise<void>) => void | Promise<void>;
   onClose: () => void;
   primaryClass: string;
 };
@@ -212,7 +396,7 @@ function rememberInviteJoin() {
 
 export function SignInSheet({
   open, title, intro, followInvite = false, providers = [], native = false, from = 'signin', returnTo = '/', resume = null,
-  beforeFinish, onClose, primaryClass,
+  releaseToken = null, beforeFinish, onClose, primaryClass,
 }: SignInSheetProps) {
   useUiLanguage();
   const firstStep: Step = providers.length ? 'choose' : 'email';
@@ -220,20 +404,43 @@ export function SignInSheet({
   const [email, setEmail] = useState('');
   const [needsUsername, setNeedsUsername] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [details, setDetails] = useState<NativeLoginFailureDetails | null>(null);
   const [busy, setBusy] = useState(false);
   const [cooldownUntil, setCooldownUntil] = useState(0);
   const [now, setNow] = useState(() => Date.now());
   // Slides up one frame after it mounts, so the transition has a start.
   const [shown, setShown] = useState(false);
+  // On its way to the make screen (`handOff`).
+  const [leaving, setLeaving] = useState(false);
+  const completion = useSessionConfirmation();
+  const { finishLogin: confirmSession, clear: clearConfirmation } = completion;
   const firstField = useRef<HTMLInputElement>(null);
   const codeField = useRef<HTMLInputElement>(null);
   const usernameField = useRef<HTMLInputElement>(null);
   const providerUsernameField = useRef<HTMLInputElement>(null);
   const passwordField = useRef<HTMLInputElement>(null);
   const confirmField = useRef<HTMLInputElement>(null);
+  const identifierField = useRef<HTMLInputElement>(null);
+  const currentPasswordField = useRef<HTMLInputElement>(null);
+  // Each multi-field step's fields in order, for Return (`returnWalks`).
+  const passwordStepFields = [identifierField, currentPasswordField];
+  const accountStepFields = [usernameField, passwordField, confirmField];
+  // The panel scrolls its fields; with the keyboard up they are revealed in
+  // it, with the step's button, and tapped without iOS's pan. It rides the
+  // keys up and down as one eased movement.
+  const panelRef = useRef<HTMLDivElement>(null);
+  useKeyboardSurface(panelRef, { ride: true });
+  // Read when it opens, not followed while it is open: the options that
+  // name the providers can land after a release link has opened the sheet,
+  // and must not send it back from the code to the first step.
+  const firstStepRef = useRef(firstStep);
+  firstStepRef.current = firstStep;
+  const releaseSeen = useRef<string | null>(null);
+  // The address an email code carried to the password step, for its first field.
+  const identifierPrefill = useRef('');
 
   useEffect(() => {
-    if (!open) { setShown(false); return undefined; }
+    if (!open) { setShown(false); setLeaving(false); return undefined; }
     const raf = requestAnimationFrame(() => setShown(true));
     return () => cancelAnimationFrame(raf);
   }, [open]);
@@ -242,17 +449,29 @@ export function SignInSheet({
   // from a provider, it opens where that left off.
   useEffect(() => {
     if (!open) return;
-    setStep(resume === 'username' ? 'username' : firstStep);
+    setStep(resume === 'username' ? 'username' : firstStepRef.current);
     setError(resumeError(resume));
+    setDetails(null);
     setBusy(false);
-  }, [open, resume, firstStep]);
+  }, [open, resume]);
 
-  useEffect(() => {
+  // The step's first field, and the caret in it when that raises no keys
+  // under a moving sheet (`mayFocusByCode`). In the commit, so a hop from a
+  // field whose keys are up lands before anything can take them down.
+  useIsomorphicLayoutEffect(() => {
     if (!open || step === 'choose') return;
+    const focus = mayFocusByCode({ touch: touchScreen(), keysUp: keyboardUp() });
+    if (step === 'password' && identifierPrefill.current && identifierField.current) {
+      identifierField.current.value = identifierPrefill.current;
+      identifierPrefill.current = '';
+      if (focus) currentPasswordField.current?.focus({ preventScroll: true });
+      return;
+    }
     const field = step === 'email' ? firstField : step === 'code' ? codeField
       : step === 'username' ? providerUsernameField
-        : (needsUsername ? usernameField : passwordField);
-    field.current?.focus();
+        : step === 'password' ? identifierField
+          : (needsUsername ? usernameField : passwordField);
+    if (focus) field.current?.focus({ preventScroll: true });
   }, [open, step, needsUsername]);
 
   // Back from the provider's page by the browser's Back button, the page can
@@ -263,13 +482,14 @@ export function SignInSheet({
     return () => window.removeEventListener('pageshow', onShow);
   }, []);
 
-  // Escape closes, like every sheet in the shell.
+  // Escape closes, like every sheet in the shell; not once it is leaving
+  // for the make screen, which is a sign-in already under way.
   useEffect(() => {
-    if (!open) return undefined;
+    if (!open || leaving) return undefined;
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
+  }, [open, leaving, onClose]);
 
   // The resend's countdown.
   useEffect(() => {
@@ -320,6 +540,48 @@ export function SignInSheet({
     }
   }, []);
 
+  // A waitlist "you're in" link (`releaseToken`): the address its token
+  // names, filled in, and the code sent once per tab, exactly what the
+  // sign-in screen does for the same link (./login.tsx). A token that names
+  // nothing leaves the email step as it is, to be filled in by hand.
+  useEffect(() => {
+    if (!open || !releaseToken || releaseSeen.current === releaseToken) return undefined;
+    releaseSeen.current = releaseToken;
+    let live = true;
+    setStep('email');
+    void releaseArrival(releaseToken).then((arrival) => {
+      if (!live || !arrival) return;
+      setEmail(arrival.address);
+      if (firstField.current) firstField.current.value = arrival.address;
+      if (!arrival.send) {
+        setStep('code');
+        setCooldownUntil(arrival.cooldownUntil);
+        setNow(Date.now());
+        return;
+      }
+      void requestCode(arrival.address);
+    });
+    return () => { live = false; };
+  }, [open, releaseToken, requestCode]);
+
+  // Away to the make screen: the panel goes down while the wallpaper comes
+  // up behind it. Resolves once that has had its time.
+  const handOff = useCallback((): Promise<void> => {
+    setLeaving(true);
+    const ms = prefersReducedMotion() ? 0 : HAND_OFF_MS;
+    return new Promise((resolve) => { window.setTimeout(resolve, ms); });
+  }, []);
+
+  // Every sign-in ends here: what the screen that opened the sheet does
+  // first (`beforeFinish`), then the shell's own sign-in. A session the
+  // shell cannot confirm brings the sheet back with the notice that says so.
+  const finish = useCallback(async (kind: 'existing' | 'new') => {
+    clearConfirmation();
+    await beforeFinish?.(kind, handOff);
+    const opened = await confirmSession();
+    if (!opened) setLeaving(false);
+  }, [beforeFinish, handOff, clearConfirmation, confirmSession]);
+
   const verify = useCallback(async () => {
     setError(null);
     const code = (codeField.current?.value || '').trim();
@@ -335,7 +597,12 @@ export function SignInSheet({
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) {
+        // A right code for an account that signs in with its password (an
+        // admin's, or one whose address was never confirmed): its password
+        // step, with the address carried over, as the sign-in screen does.
         if (data.code === 'password_required' || data.code === 'admin_password_required') {
+          identifierPrefill.current = email;
+          setStep('password');
           setError(data.error || tr("auth:this_account_signs_in_with_its_password_87003293"));
           return;
         }
@@ -345,8 +612,7 @@ export function SignInSheet({
         return;
       }
       if (data.next === 'signed-in') {
-        await beforeFinish?.('existing');
-        await finishLogin();
+        await finish('existing');
         return;
       }
       setNeedsUsername(data.needsUsername === true);
@@ -357,12 +623,12 @@ export function SignInSheet({
     } finally {
       setBusy(false);
     }
-  }, [email, followInvite, beforeFinish]);
+  }, [email, followInvite, finish]);
 
   const finishAccount = useCallback(async () => {
     setError(null);
     const handle = needsUsername ? (usernameField.current?.value || '').trim() : null;
-    if (handle === '') { setError(tr("auth:enter_a_username_78db4f77")); usernameField.current?.focus(); return; }
+    if (handle === '') { setError(tr("auth:enter_a_username_78db4f77")); usernameField.current?.focus({ preventScroll: true }); return; }
     const password = passwordField.current?.value || '';
     const confirm = confirmField.current?.value || '';
     if (password.length < 8) { setError(tr("auth:password_must_be_at_least_8_characters_e3b8d09d")); return; }
@@ -379,17 +645,42 @@ export function SignInSheet({
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.user) {
         setError(data.error || tr("auth:could_not_finish_setting_up_your_account_fccc97c1"));
-        if (data.field === 'username') usernameField.current?.focus();
+        if (data.field === 'username') usernameField.current?.focus({ preventScroll: true });
         return;
       }
-      await beforeFinish?.('new');
-      await finishLogin();
+      await finish('new');
     } catch (err) {
       setError(sessionMintFailureMessage(err));
     } finally {
       setBusy(false);
     }
-  }, [needsUsername, beforeFinish]);
+  }, [needsUsername, finish]);
+
+  // The password step: the sign-in screen's own exchange (./shared.ts).
+  const signInWithPassword = useCallback(async () => {
+    setError(null);
+    setDetails(null);
+    if (blockedOffline(setError)) return;
+    setBusy(true);
+    try {
+      const result = await passwordSignIn(
+        (identifierField.current?.value || '').trim(),
+        currentPasswordField.current?.value || '',
+      );
+      if (!result.ok) {
+        setError(result.error);
+        setDetails(result.details);
+        return;
+      }
+      // A password sign-in does not follow an invite by itself
+      // (routes/auth.js): the Join pressed on its page is remembered, so the
+      // shell follows it once they are in without asking a second time.
+      if (followInvite) rememberInviteJoin();
+      await finish('existing');
+    } finally {
+      setBusy(false);
+    }
+  }, [followInvite, finish]);
 
   // Off to the provider. The page leaves, so busy stays on until it does.
   // Inside the app it stays: the app's own sheet answers in place.
@@ -404,8 +695,7 @@ export function SignInSheet({
     try {
       const outcome = await signInNatively(provider, { from, followInvite });
       if ('next' in outcome && outcome.next === 'signed-in') {
-        await beforeFinish?.(outcome.created ? 'new' : 'existing');
-        await finishLogin();
+        await finish(outcome.created ? 'new' : 'existing');
         return;
       }
       if ('next' in outcome && outcome.next === 'username') {
@@ -418,12 +708,12 @@ export function SignInSheet({
     } finally {
       setBusy(false);
     }
-  }, [native, from, followInvite, returnTo, beforeFinish]);
+  }, [native, from, followInvite, returnTo, finish]);
 
   const finishProviderAccount = useCallback(async () => {
     setError(null);
     const handle = (providerUsernameField.current?.value || '').trim();
-    if (!handle) { setError(tr("auth:enter_a_username_78db4f77")); providerUsernameField.current?.focus(); return; }
+    if (!handle) { setError(tr("auth:enter_a_username_78db4f77")); providerUsernameField.current?.focus({ preventScroll: true }); return; }
     if (blockedOffline(setError)) return;
     setBusy(true);
     try {
@@ -437,7 +727,7 @@ export function SignInSheet({
       if (!res.ok || !data.user) {
         if (data.field === 'username') {
           setError(data.error || tr("auth:choose_another_username_e227309e"));
-          providerUsernameField.current?.focus();
+          providerUsernameField.current?.focus({ preventScroll: true });
           return;
         }
         // The continuation is gone: start over from the first step.
@@ -445,50 +735,78 @@ export function SignInSheet({
         setError(data.error || tr("auth:your_sign_in_expired_start_again_ff22fb29"));
         return;
       }
-      await beforeFinish?.('new');
-      await finishLogin();
+      await finish('new');
     } catch (err) {
       setError(sessionMintFailureMessage(err));
     } finally {
       setBusy(false);
     }
-  }, [beforeFinish, firstStep]);
+  }, [finish, firstStep]);
 
   if (!open) return null;
 
   const waitLeft = Math.max(0, Math.ceil((cooldownUntil - now) / 1000));
   const heading = step === 'choose' || step === 'email' ? title
     : step === 'code' ? tr("auth:check_your_email_77322879")
-      : step === 'username' ? 'Pick a username' : tr("auth:finish_your_account_09dacaef");
+      : step === 'password' ? tr("auth:sign_in_bfd402b2")
+        : step === 'username' ? tr("auth:pick_a_username_sign_in_sheet_title") : tr("auth:finish_your_account_09dacaef");
   const sub = step === 'choose' || (step === 'email' && !providers.length)
     ? intro
     : step === 'email'
       ? 'We\'ll email you a 6-digit code.'
       : step === 'code'
         ? `We sent a 6-digit code to ${email}. It expires in 10 minutes.`
-        : step === 'username'
-          ? tr("auth:your_username_is_public_on_homeroom_it_is_how_pe_73360cb5")
-          : (needsUsername ? tr("auth:pick_a_username_and_a_password_your_username_is__0490c02a") : tr("auth:pick_a_password_for_next_time_ccb57cd9"));
+        : step === 'password'
+          ? tr("auth:with_your_username_or_email_and_your_password")
+          : step === 'username'
+            ? tr("auth:your_username_is_public_on_homeroom_it_is_how_pe_73360cb5")
+            : (needsUsername ? tr("auth:pick_a_username_and_a_password_your_username_is__0490c02a") : tr("auth:pick_a_password_for_next_time_ccb57cd9"));
+  // Up, on its way up, or leaving for the make screen: whole literals, for
+  // the extractor. On a phone it slides; from md, where it is a centred
+  // card, it fades.
+  const panelState = leaving
+    ? 'pointer-events-none translate-y-full md:-translate-x-1/2 md:-translate-y-1/2 md:opacity-0'
+    : shown ? 'translate-y-0 md:-translate-x-1/2 md:-translate-y-1/2' : 'translate-y-full md:-translate-x-1/2 md:-translate-y-1/2';
+  const close = leaving ? undefined : onClose;
 
   return (
-    <div data-sign-in-sheet={step} className="fixed inset-0 z-50">
+    <div data-sign-in-sheet={step} data-sign-in-sheet-leaving={leaving ? '' : undefined} className="fixed inset-0 z-50">
+      {/* The dim takes no pan, so a drag on it does not scroll the story
+          behind (the kit's backdrop rule); its tap still closes. */}
       <div
         aria-hidden="true"
-        onClick={onClose}
-        className={`absolute inset-0 bg-black/40 transition-opacity duration-200 ${shown ? 'opacity-100' : 'opacity-0'}`}
+        onClick={close}
+        className={`absolute inset-0 touch-none bg-black/40 transition-opacity duration-200 motion-reduce:transition-none ${shown ? 'opacity-100' : 'opacity-0'}`}
+      />
+      {/*
+          The make screen's own ground (../first-session/make.tsx paints the
+          same --home-wallpaper over the same full-screen box), brought up
+          behind the leaving panel so the story is gone by the time the shell
+          signs in, and the make screen arrives on what is already there.
+          It takes the taps while it is up, so nothing under it is pressed.
+      */}
+      <div
+        aria-hidden="true"
+        data-sign-in-sheet-cover=""
+        className={leaving
+          ? 'absolute inset-0 touch-none opacity-100 transition-opacity duration-200 ease-out motion-reduce:transition-none'
+          : 'pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-200 ease-out motion-reduce:transition-none'}
+        style={{ background: 'var(--home-wallpaper)' }}
       />
       <div
+        ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="sign-in-sheet-title"
-        className={`absolute inset-x-0 bottom-0 max-h-[92%] overflow-y-auto rounded-t-[20px] bg-zinc-100 dark:bg-zinc-900 px-4 pt-2 pb-[max(2rem,env(safe-area-inset-bottom))] transition-transform duration-200 ease-out md:inset-x-auto md:left-1/2 md:bottom-auto md:top-1/2 md:w-full md:max-w-md md:rounded-[20px] md:pb-6 ${shown ? 'translate-y-0 md:-translate-x-1/2 md:-translate-y-1/2' : 'translate-y-full md:-translate-x-1/2 md:-translate-y-1/2'}`}
+        className={`platform-kb-sheet absolute inset-x-0 bottom-0 max-h-[92%] overflow-y-auto overscroll-contain rounded-t-[20px] ${PLANE_FILL} shadow-[inset_0_0_0_1px_var(--app-sheet-line)] px-4 pt-2 pb-[max(2rem,env(safe-area-inset-bottom))] transition-[transform,opacity] duration-200 ease-out motion-reduce:transition-none md:inset-x-auto md:left-1/2 md:bottom-auto md:top-1/2 md:w-full md:max-w-md md:rounded-[20px] md:pb-6 ${panelState}`}
       >
-        <div className="mx-auto h-1.5 w-10 rounded-full bg-zinc-300 dark:bg-zinc-700 md:hidden" aria-hidden="true" />
+        <div className="mx-auto h-1 w-9 rounded-full bg-[color:var(--border)] md:hidden" aria-hidden="true" />
         <div className="mt-3 flex items-center gap-3">
           <h2 id="sign-in-sheet-title" className="min-w-0 flex-1 text-[17px] font-semibold text-zinc-900 dark:text-zinc-100">{heading}</h2>
           <Localized element={<button
             type="button"
-            onClick={onClose} aria-label={catalogText("auth:close_7d9eb7ac")}
+            onClick={close}
+            aria-label={catalogText("auth:close_7d9eb7ac")}
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-200 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
           >
             <XIcon className="h-4 w-4" aria-hidden="true" />
@@ -522,7 +840,7 @@ export function SignInSheet({
             <div className={FIELD_GROUP}>
               <div className={FIELD}>
                 <label htmlFor="sign-in-sheet-email" className={LABEL}><Message id="auth:email_969ccbd3" /></label>
-                <input ref={firstField} id="sign-in-sheet-email" type="email" autoComplete="email" inputMode="email" defaultValue={email} className={INPUT} {...HANDLE_FIELD} />
+                <input ref={firstField} id="sign-in-sheet-email" type="email" autoComplete="email" inputMode="email" enterKeyHint="go" defaultValue={email} className={INPUT} {...HANDLE_FIELD} />
               </div>
             </div>
             <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}><LocalizedValue render={() => (busy ? tr("auth:sending_code_e6ddec3d") : tr("auth:send_code_66a5b409"))} /></button>
@@ -537,7 +855,7 @@ export function SignInSheet({
             <div className={FIELD_GROUP}>
               <div className={FIELD}>
                 <label htmlFor="sign-in-sheet-provider-username" className={LABEL}><Message id="auth:username_e3b89e9d" /></label>
-                <input ref={providerUsernameField} id="sign-in-sheet-provider-username" autoComplete="username" className={INPUT} placeholder={USERNAME_RULE()} {...HANDLE_FIELD} />
+                <input ref={providerUsernameField} id="sign-in-sheet-provider-username" autoComplete="username" enterKeyHint="go" className={INPUT} placeholder={USERNAME_RULE()} {...HANDLE_FIELD} />
               </div>
             </div>
             <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}><LocalizedValue render={() => (busy ? tr("auth:finishing_47e17128") : tr("auth:continue_31fbef16"))} /></button>
@@ -549,7 +867,7 @@ export function SignInSheet({
             <div className={FIELD_GROUP}>
               <div className={FIELD}>
                 <label htmlFor="sign-in-sheet-code" className={LABEL}><Message id="auth:code_340f4630" /></label>
-                <input ref={codeField} id="sign-in-sheet-code" inputMode="numeric" autoComplete="one-time-code" maxLength={6} className={`${INPUT} tracking-[0.4em]`} />
+                <input ref={codeField} id="sign-in-sheet-code" inputMode="numeric" autoComplete="one-time-code" enterKeyHint="go" maxLength={6} className={`${INPUT} tracking-[0.4em]`} />
               </div>
             </div>
             <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}><LocalizedValue render={() => (busy ? tr("auth:checking_ec963ffc") : tr("auth:continue_31fbef16"))} /></button>
@@ -562,32 +880,71 @@ export function SignInSheet({
           </form>
         ) : null}
 
+        {step === 'password' ? (
+          <form className="mt-5 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void signInWithPassword(); }}>
+            <div className={FIELD_GROUP}>
+              <div className={FIELD}>
+                <label htmlFor="sign-in-sheet-identifier" className={LABEL}><Message id="auth:username_or_email_2d4a46f3" /></label>
+                <input ref={identifierField} id="sign-in-sheet-identifier" name="username" type="text" required autoComplete="username" enterKeyHint="next" onKeyDown={returnWalks(passwordStepFields, 0)} className={INPUT} {...HANDLE_FIELD} />
+              </div>
+              <div className={FIELD}>
+                <label htmlFor="sign-in-sheet-current-password" className={LABEL}><Message id="auth:password_e7cf3ef4" /></label>
+                <PasswordInput ref={currentPasswordField} id="sign-in-sheet-current-password" name="password" required autoComplete="current-password" enterKeyHint="go" box="card" hint="dim" ring="bare" />
+              </div>
+            </div>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}><LocalizedValue render={() => (busy ? tr("auth:signing_in_sign_in_sheet_busy") : tr("auth:sign_in_bfd402b2"))} /></button>
+            <div className="flex items-center justify-between">
+              <button type="button" className={QUIET} onClick={() => { setError(null); setDetails(null); setStep(firstStep); }}>
+                <LocalizedValue render={() => (providers.length ? tr("auth:other_ways_to_continue_43153d1c") : tr("auth:use_an_email_code_sign_in_sheet"))} />
+              </button>
+              {/* The reset is the sign-in screen's (./login.tsx), reached by its own address. */}
+              <a href="#login/forgot" onClick={() => { if (followInvite) rememberInviteJoin(); onClose(); }} className={QUIET}><Message id="auth:forgot_password_30c1d8d3" /></a>
+            </div>
+          </form>
+        ) : null}
+
         {step === 'account' ? (
           <form className="mt-5 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void finishAccount(); }}>
             <div className={FIELD_GROUP}>
               {needsUsername ? (
                 <div className={FIELD}>
                   <label htmlFor="sign-in-sheet-username" className={LABEL}><Message id="auth:username_e3b89e9d" /></label>
-                  <input ref={usernameField} id="sign-in-sheet-username" autoComplete="username" className={INPUT} placeholder={USERNAME_RULE()} {...HANDLE_FIELD} />
+                  <input ref={usernameField} id="sign-in-sheet-username" autoComplete="username" enterKeyHint="next" onKeyDown={returnWalks(accountStepFields, 0)} className={INPUT} placeholder={USERNAME_RULE()} {...HANDLE_FIELD} />
                 </div>
               ) : null}
               <div className={FIELD}>
                 <label htmlFor="sign-in-sheet-password" className={LABEL}><Message id="auth:password_e7cf3ef4" /></label>
-                <Localized element={<input ref={passwordField} id="sign-in-sheet-password" type="password" autoComplete="new-password" className={INPUT} placeholder={catalogText("auth:at_least_8_characters_977f3b26")} />} messages={{"placeholder":"auth:at_least_8_characters_977f3b26"}} />
+                <Localized element={<input ref={passwordField} id="sign-in-sheet-password" type="password" autoComplete="new-password" enterKeyHint="next" onKeyDown={returnWalks(accountStepFields, 1)} className={INPUT} placeholder={catalogText("auth:at_least_8_characters_977f3b26")} />} messages={{"placeholder":"auth:at_least_8_characters_977f3b26"}} />
               </div>
               <div className={FIELD}>
                 <label htmlFor="sign-in-sheet-confirm" className={LABEL}><Message id="auth:password_again_5b18a694" /></label>
-                <input ref={confirmField} id="sign-in-sheet-confirm" type="password" autoComplete="new-password" className={INPUT} />
+                <input ref={confirmField} id="sign-in-sheet-confirm" type="password" autoComplete="new-password" enterKeyHint="go" className={INPUT} />
               </div>
             </div>
             <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}><LocalizedValue render={() => (busy ? tr("auth:finishing_47e17128") : tr("auth:continue_31fbef16"))} /></button>
           </form>
         ) : null}
 
-        {error ? <p role="alert" className="mt-3 text-[14px] text-red-600 dark:text-red-400">{error}</p> : null}
+        {error ? (
+          <div role="alert" className="mt-3 text-[14px] text-red-600 dark:text-red-400">
+            {error}
+            <NativeLoginDetailsLink details={details} />
+          </div>
+        ) : null}
+        <SessionConfirmationNotice completion={completion} />
 
         {step === 'choose' || step === 'email' ? (
-          <p className="mt-4 text-center text-[13px] text-zinc-500 dark:text-zinc-400"><RichMessage id="auth:sentence_427131c892b2" components={[<a href="#login" onClick={() => { if (followInvite) rememberInviteJoin(); onClose(); }} className="font-medium text-violet-700 dark:text-violet-400 hover:underline" />]} /></p>
+          <p className="mt-4 text-center text-[13px] text-zinc-500 dark:text-zinc-400">
+            {passwordLead(from)}
+            <a
+              href="#login"
+              data-sign-in-sheet-password=""
+              onClick={(e) => { e.preventDefault(); setError(null); setDetails(null); setStep('password'); }}
+              className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
+            >
+              <Message id="auth:sign_in_with_a_password_673a5037" />
+            </a>
+          </p>
         ) : null}
         <TermsNotice className="mt-3" />
       </div>

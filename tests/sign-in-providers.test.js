@@ -543,7 +543,7 @@ test('inside the app: the app\'s own sheet, offered where the server lists it an
   }
   const sheetSrc = read('frontend/src/features/auth/sign-in-sheet.tsx');
   assert.match(sheetSrc, /if \(!native\) \{\n\s+window\.location\.assign\(providerStartUrl/);
-  assert.match(sheetSrc, /await beforeFinish\?\.\(outcome\.created \? 'new' : 'existing'\);/);
+  assert.match(sheetSrc, /await finish\(outcome\.created \? 'new' : 'existing'\);/);
 });
 
 test('the console section is registered like its neighbours', () => {

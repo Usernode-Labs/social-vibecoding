@@ -205,6 +205,28 @@ test('the tables are staging:private, and a queued invite is applied by a trigge
   assert.match(schema, /IF TG_OP = 'UPDATE' AND OLD\.has_platform_access THEN\s+RETURN NULL;/, 'the false → true edge only');
 });
 
+test('the invite-links block runs in the Postgres suite\'s scratch schema: it reads only the tables that fixture makes', () => {
+  // tests/community-invites-postgres.test.js lifts this block out of
+  // schema.sql (to the next "-- ── " header) and runs it beside a handful of
+  // tables. A table in it that references one the fixture does not make
+  // fails the whole suite, and only where Postgres runs: the open counts'
+  // table did, until it moved to its own section after the block.
+  const schema = read('src/db/schema.sql');
+  const start = schema.indexOf('-- ── Communities, stage 6: invite links');
+  const block = schema.slice(start, schema.indexOf('\n-- ── ', start + 10));
+  const fixture = read('tests/community-invites-postgres.test.js');
+  const made = new Set([
+    ...[...fixture.matchAll(/CREATE TABLE (\w+)/g)].map((m) => m[1]),
+    ...[...block.matchAll(/CREATE TABLE IF NOT EXISTS (\w+)/g)].map((m) => m[1]),
+  ]);
+  const referenced = [...new Set([...block.matchAll(/REFERENCES (\w+)\(/g)].map((m) => m[1]))];
+  assert.ok(referenced.length > 0);
+  assert.deepEqual(referenced.filter((name) => !made.has(name)), []);
+  assert.ok(!block.includes('community_invite_opens'), 'the open counts live in their own section');
+  assert.match(englishUiSource(schema), /-- ── Invite opens \(WP-E\)[\s\S]*?CREATE TABLE IF NOT EXISTS community_invite_opens/);
+  assert.match(englishUiSource(schema), /COMMENT ON TABLE community_invite_opens IS 'staging:private';/);
+});
+
 test('the page\'s link preview: a live link names the project and inviter, a dead one nothing, all escaped', () => {
   const live = routes.previewTags({
     live: true,
@@ -243,7 +265,7 @@ test('the paths: the page is a shell document; following from the waiting room i
     "router.get('/invite/:token', invitePreviewLimiter,",
   ]) assert.ok(src.includes(route), route);
   // Only a live link leaves its token for sign-in to follow.
-  assert.match(src, /if \(preview\.live\) invites\.setInviteCookie\(req, res, token\);/);
+  assert.match(englishUiSource(src), /if \(preview\.live\) \{\s*invites\.setInviteCookie\(req, res, token\);/);
 });
 
 test('signing UP from an invite page follows the link server-side; signing IN is asked first', () => {
@@ -310,6 +332,12 @@ test('the words: the landing card, the invite pane', () => {
   assert.equal(card.madeLine({ ...made, inviterMadeIt: false }), '@jordan_t1004 invited you to join Flat 4B Chores.');
   assert.equal(card.madeLine({ ...forGroup, inviterMadeIt: false }), '@maya invited you to join Run Tracker.');
   assert.equal(card.underLine({ ...made, inviterMadeIt: false, memberCount: 1 }), '1 person is in it.');
+  // While its first version is on its way nothing is made yet (Evan, 5
+  // October 2026): "is making", in both of the gift's forms.
+  assert.equal(card.madeLine({ ...made, building: true }), 'jordan_t1004 is making Flat 4B Chores');
+  assert.equal(card.madeLine({ ...forGroup, building: true }), 'Maya is making this for Sunday Run Club');
+  assert.equal(card.madeLine({ ...made, building: true, inviterMadeIt: false }), '@jordan_t1004 invited you to join Flat 4B Chores.');
+  assert.equal(card.underLine({ ...made, building: true }), 'and invited you to join · 4 people are in it');
 
   const pane = loadTsx('frontend/src/features/app-context/invite-pane.tsx');
   const now = Date.parse('2026-09-27T12:00:00Z');
@@ -391,13 +419,18 @@ test(`the preview reads like the page: who made it, their note, the project's pi
   const shot = routes.previewTags({ ...live, project: { ...live.project, picture: { kind: 'shot', url: '/api/public/invites/t/picture' } } }, 'https://h.example');
   assert.match(shot, /twitter:card" content="summary_large_image"/);
   assert.match(shot, /og:image" content="https:\/\/h\.example\/api\/public\/invites\/t\/picture"/);
-  // WP-D: a sketch is a page, not an image: the preview keeps the icon.
-  const sketched = routes.previewTags({ ...live, project: { ...live.project, picture: { kind: 'sketch', url: '/api/public/invites/t/sketch.html' } } }, 'https://h.example');
+  // WP-D: the card of the idea is words, not an image: the preview keeps the icon.
+  const sketched = routes.previewTags({ ...live, project: { ...live.project, picture: { kind: 'sketch', url: null, darkUrl: null, card: { emoji: '🏃', tagline: 'Miles', points: [] } } } }, 'https://h.example');
   assert.match(sketched, /og:image" content="https:\/\/h\.example\/app-icons\/abc"/);
   assert.match(sketched, /twitter:card" content="summary"/);
-  assert.doesNotMatch(sketched, /sketch\.html/);
   // The note is escaped like everything else.
   assert.match(routes.previewTags({ ...live, note: 'a "quote" <b>' }, null), /content="a &quot;quote&quot; &lt;b&gt;"/);
+  // While its first version is on its way: "is making", as the page says.
+  assert.match(routes.previewTags({ ...live, building: true }, null), /og:title" content="Maya is making Sunday Run Club"/);
+  assert.match(routes.previewTags({ ...live, building: true, project: { ...live.project, name: 'Run Tracker' }, communityName: 'Sunday Run Club' }, null),
+    /og:title" content="Maya is making this for Sunday Run Club"/);
+  // The signed-in confirm says the same.
+  assert.match(englishUiSource(read('public/js/app.js')), /\? `\$\{standing\.inviterName\} \$\{standing\.building \? 'is making' : 'made'\} it and invited you\.`/);
 });
 
 test('the picture is served only through a live link, and only an after-shot of a merged change', () => {
@@ -407,14 +440,17 @@ test('the picture is served only through a live link, and only an after-shot of 
   const route = read('src/routes/community-invites.js');
   assert.match(englishUiSource(route), /router\.get\('\/api\/public\/invites\/:token\/picture', invitePreviewLimiter,/);
   assert.match(englishUiSource(route), /'X-Content-Type-Options': 'nosniff',/);
-  // WP-D: the sketch a project still being built shows, through a live link,
-  // sandboxed like the project's own sketch page.
-  assert.match(englishUiSource(route), /router\.get\('\/api\/public\/invites\/:token\/sketch\.html', invitePreviewLimiter,/);
-  assert.match(englishUiSource(route), /'Content-Security-Policy': require\('\.\.\/services\/app-sketch'\)\.SKETCH_CSP,/);
-  assert.match(englishUiSource(src), /async function sketchPage\(pool, token, \{ theme = null \} = \{\}\) \{\s+const invite = await loadInvite\(pool, token\);\s+if \(deadReason\(invite\)\) return null;/);
+  // WP-D: while a project is built, the card of the idea its maker was shown
+  // (services/app-sketch.js), as words in the preview the page draws itself.
+  // 5 October 2026: it was a framed page of a screen mock; no page is served.
+  assert.doesNotMatch(englishUiSource(route), /sketch\.html/);
+  assert.match(englishUiSource(src), /const card = sketch\[0\] \? require\('\.\/app-sketch'\)\.cardOf\(sketch\[0\]\.design\) : null;/);
+  assert.match(englishUiSource(src), /if \(picture\.kind === 'sketch'\) return \{ kind: 'sketch', url: null, darkUrl: null, card: picture\.card \};/);
   const card = read('frontend/src/features/auth/invite-card.tsx');
-  assert.match(englishUiSource(card), /<iframe\s+title=\{`A sketch of \$\{project\.name\}`\}\s+src=\{`\$\{picture\.url\}\?theme=/);
-  assert.match(englishUiSource(card), /sandbox=""/);
+  assert.doesNotMatch(englishUiSource(card), /<iframe/);
+  // "Being made" while its first version is on its way (`building`), no pill otherwise.
+  assert.match(englishUiSource(card), /<FeaturedCard name=\{project\.name\} colorKey=\{project\.name\} emoji=\{card\.emoji\} card=\{card\} stage=\{building \? 'making' : 'plain'\} \/>/);
+  assert.match(englishUiSource(card), /<Picture project=\{project\} building=\{!!preview\.building\} \/>/);
 });
 
 test(`a live link's landing is "Made for you"; the pitch stays in the document, hidden`, () => {

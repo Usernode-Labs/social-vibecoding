@@ -149,6 +149,29 @@ function useFilterQuery(visit: number): [string, (q: string) => void] {
   return [query, setQuery];
 }
 
+/**
+ * SIGN OUT IS FOUND TOO (5 Oct 2026). It is the button under the menu, not
+ * a page, so no page's terms held it, and a search for "Sign out" said "No
+ * settings match". The filter offers it as a hit of its own, after the
+ * pages, when every word typed starts one of these words ("sign out", "log
+ * out", "logout", "sign off"…), three letters at least between them so a
+ * stray letter does not offer it. Choosing it presses that button
+ * (#settings-logout, whose handler settings.js binds), the one way out.
+ */
+export const SIGN_OUT_WORDS = ['sign', 'out', 'signout', 'log', 'logout', 'off', 'logoff', 'signoff'];
+
+export function matchesSignOut(query: string): boolean {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length || words.join('').length < 3) return false;
+  return words.every((w) => SIGN_OUT_WORDS.some((term) => term.startsWith(w)));
+}
+
+/** The Sign out hit: the screen's own button, pressed. */
+function signOut(setQuery: (q: string) => void) {
+  setQuery('');
+  (document.getElementById('settings-logout') as HTMLButtonElement | null)?.click();
+}
+
 /** Where choosing a hit goes: the first matching part, else the page. */
 const hitTarget = (hit: FilterHit) => (hit.parts[0] ? hit.parts[0].key : hit.item.key);
 
@@ -169,16 +192,21 @@ function choose(hit: FilterHit, setQuery: (q: string) => void) {
  * first hit; Escape clears. A `search` input, so the platform's own clear
  * control and the "search" keyboard return key come for free.
  */
-function FilterField({ id, query, setQuery, hits }: {
+function FilterField({ id, query, setQuery, hits, signOutHit }: {
   id: string;
   query: string;
   setQuery: (q: string) => void;
   hits: FilterHit[];
+  signOutHit: boolean;
 }) {
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' && hits[0]) {
       e.preventDefault();
       choose(hits[0], setQuery);
+    } else if (e.key === 'Enter' && signOutHit) {
+      // Sign out is the only hit: Enter presses it, as it opens a page.
+      e.preventDefault();
+      signOut(setQuery);
     } else if (e.key === 'Escape' && query) {
       e.preventDefault();
       setQuery('');
@@ -220,6 +248,9 @@ const MENU_ROW = 'settings-menu-row min-h-[44px] py-2 text-zinc-700 dark:text-zi
 // room for the matched parts under the label.
 const HIT_ROW = 'settings-nav-item block w-full text-left rounded-lg px-3 py-2 text-sm font-medium transition-colors text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800';
 const HIT_PARTS = 'block text-xs font-normal text-zinc-500 dark:text-zinc-400';
+// The Sign out hit: a hit row in the button's own red, an action and not a page.
+const SIGN_OUT_HIT_ROW = 'settings-nav-item block w-full text-left rounded-lg px-3 py-2 text-sm font-medium transition-colors text-red-700 dark:text-red-400 hover:bg-red-500/10';
+const SIGN_OUT_TITLE = 'font-normal text-red-700 dark:text-red-400';
 
 /**
  * One sidebar row. Navigation, not a tab set (QA 2026-09-24 Q20): a tab
@@ -253,12 +284,13 @@ export function SettingsNavDesktop() {
   const [query, setQuery] = useFilterQuery(visit);
   const groups = desktop || [];
   const hits = filterPages(groups, query);
+  const signOutHit = matchesSignOut(query);
   const filtering = query.trim() !== '';
   return (
     <Localized element={<nav id="settings-nav-desktop" aria-label={catalogText("settings:settings_sections_e26d51d3")} className="space-y-1">
       {desktop ? (
         <div className="pb-3">
-          <FilterField id="settings-filter-desktop" query={query} setQuery={setQuery} hits={hits} />
+          <FilterField id="settings-filter-desktop" query={query} setQuery={setQuery} hits={hits} signOutHit={signOutHit} />
         </div>
       ) : null}
       {filtering ? (
@@ -277,7 +309,12 @@ export function SettingsNavDesktop() {
               ) : null}
             </button>
           ))}
-          {hits.length ? null : (
+          {signOutHit ? (
+            <button type="button" data-settings-sign-out="" className={SIGN_OUT_HIT_ROW} onClick={() => signOut(setQuery)}>
+              Sign out
+            </button>
+          ) : null}
+          {hits.length || signOutHit ? null : (
             <NoMatch query={query} className="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400" />
           )}
         </div>
@@ -302,17 +339,18 @@ export function SettingsMobileMenu() {
   const [query, setQuery] = useFilterQuery(visit);
   const groups = mobile || [];
   const hits = filterPages(groups, query);
+  const signOutHit = matchesSignOut(query);
   const filtering = query.trim() !== '';
   return (
     <div id="settings-mobile-menu-host" className="md:hidden">
       {mobile ? (
         <div className="px-1 pb-4">
-          <FilterField id="settings-filter-mobile" query={query} setQuery={setQuery} hits={hits} />
+          <FilterField id="settings-filter-mobile" query={query} setQuery={setQuery} hits={hits} signOutHit={signOutHit} />
         </div>
       ) : null}
       {filtering ? (
         <div className="mb-5" data-settings-filter-results="">
-          {hits.length ? (
+          {hits.length || signOutHit ? (
             <GroupedList className="mx-0">
               {hits.map((hit) => (
                 <ListRow
@@ -327,6 +365,18 @@ export function SettingsMobileMenu() {
                   onClick={() => choose(hit, setQuery)}
                 />
               ))}
+              {signOutHit ? (
+                <ListRow
+                  as="button"
+                  inset="text"
+                  data-settings-sign-out=""
+                  className={MENU_ROW}
+                  titleClassName={SIGN_OUT_TITLE}
+                  title="Sign out"
+                  chevron={false}
+                  onClick={() => signOut(setQuery)}
+                />
+              ) : null}
             </GroupedList>
           ) : (
             <NoMatch query={query} className="px-4 text-[15px] text-zinc-500 dark:text-zinc-400" />

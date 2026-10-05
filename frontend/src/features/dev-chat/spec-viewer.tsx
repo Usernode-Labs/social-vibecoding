@@ -371,6 +371,8 @@ function SharePopoverCard({ pop }: { pop: SharePopover }): ReactNode {
       <div id="dc-spec-share-error" className={pop.error ? ERR.on : ERR.off}>{pop.error}</div>
       <button
         id="dc-spec-share-send" className="dc-spec-action-btn dc-spec-share-send"
+        // The username keeps focus through the press (lib/keyboard-open.ts).
+        onMouseDown={(event) => event.preventDefault()}
         disabled={pop.sending} onClick={pop.send}
       ><LocalizedValue render={() => (pop.sending ? tr("workshop:sending_b8ed5279") : tr("workshop:send_f6f4688f"))} /></button>
     </div>} messages={{"aria-label":"workshop:share_this_spec_with_one_person_09c35a72"}} />

@@ -515,8 +515,10 @@ test('the join screen is re-offered once a snapshot boot confirms the session', 
   const join = reconcile.indexOf('window.CommunitiesFirstRun?.maybePrompt?.()');
   assert.ok(terms > 0 && join > terms, 'right after the terms ask, which it then waits for');
   assert.ok(reconcile.indexOf('App.user = user;') < join, 'with the confirmed user, not the snapshot');
-  // The gate still skips the unverified boot itself.
-  assert.match(GATE, /if \(window\.App && window\.App\._sessionFromSnapshot\) \{\s*\n\s*CommunitiesFirstRun\._resolve\(\);\s*\n\s*return;/);
+  // The gate still asks nothing of the unverified boot itself; the one thing
+  // it does there is draw an owed make screen from the snapshot, recording
+  // nothing (tests/first-session-persists.test.js).
+  assert.match(GATE, /if \(window\.App && window\.App\._sessionFromSnapshot\) \{\s*\n\s*CommunitiesFirstRun\._showFromSnapshot\(\);\s*\n\s*CommunitiesFirstRun\._resolve\(\);\s*\n\s*return;/);
   // It waits for a terms ask in flight or on screen, capped.
   assert.match(GATE, /for \(let i = 0; terms && \(terms\._inFlight \|\| terms\._presented\) && i < 2400; i \+= 1\) \{/);
   // The tour looks again once the screen is answered, which on this path is

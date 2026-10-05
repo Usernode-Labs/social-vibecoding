@@ -12,20 +12,45 @@ import { useDialog } from '../dialogs/use-dialog';
 import * as api from './api';
 import type { SharedObjectReference, SharedObjectType } from './types';
 
-interface AppChoice { id: number; slug: string; name: string }
+export interface AppChoice { id: number; slug: string; name: string; mine?: boolean }
+
+/**
+ * Pure: the apps the dialog offers, the viewer's own projects first and the
+ * rest after, each group in the order the server listed it.
+ */
+export function orderAppChoices(apps: readonly AppChoice[]): { mine: AppChoice[]; others: AppChoice[] } {
+  return { mine: apps.filter((app) => app.mine), others: apps.filter((app) => !app.mine) };
+}
+
+/**
+ * Pure: the app the dialog opens on: the one the item it was opened with
+ * names, by id or by its short name, when the viewer can see it. Null
+ * otherwise, and the person chooses.
+ */
+export function prefilledAppId(apps: readonly AppChoice[], reference?: Pick<SharedObjectReference, 'appId' | 'appSlug'> | null): number | null {
+  if (!reference) return null;
+  const byId = reference.appId ? apps.find((app) => app.id === reference.appId) : null;
+  if (byId) return byId.id;
+  const slug = typeof reference.appSlug === 'string' ? reference.appSlug.trim() : '';
+  const bySlug = slug ? apps.find((app) => app.slug === slug) : null;
+  return bySlug ? bySlug.id : (reference.appId || null);
+}
 
 export function ShareItemDialog() {
   useUiLanguage();
   const [type, setType] = useState<SharedObjectType>('app');
   const [apps, setApps] = useState<AppChoice[]>([]);
   const [appId, setAppId] = useState<number | null>(null);
+  // The app the dialog was opened from, until the list it is found in loads.
+  const [wantedSlug, setWantedSlug] = useState('');
   const [itemId, setItemId] = useState('');
   const [version, setVersion] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const dialog = useDialog<SharedObjectReference>('messagesShare', {
     onOpen: (reference) => {
-      setType(reference?.type || 'app'); setAppId(reference?.appId || null);
+      setType(reference?.type || 'app'); setAppId(prefilledAppId(apps, reference));
+      setWantedSlug(reference?.appSlug || '');
       setItemId(String(reference?.issueNumber || reference?.sessionId || reference?.proposalId || ''));
       setVersion(String(reference?.version || '')); setError('');
     },
@@ -38,7 +63,16 @@ export function ShareItemDialog() {
     return () => { alive = false; };
   }, [apps.length, dialog.isOpen]);
 
+  // Opened from an app named by its short name before the list had loaded:
+  // choose it once the list is in.
+  useEffect(() => {
+    if (!wantedSlug || appId || !apps.length) return;
+    setAppId(prefilledAppId(apps, { appSlug: wantedSlug }));
+    setWantedSlug('');
+  }, [apps, appId, wantedSlug]);
+
   const app = useMemo(() => apps.find((item) => item.id === appId) || null, [appId, apps]);
+  const groups = useMemo(() => orderAppChoices(apps), [apps]);
   const validId = (value: string) => api.strictId(value);
   const canAttach = !!app && (type === 'app' || !!validId(itemId)) && (type !== 'spec' || !!validId(version));
 
@@ -59,7 +93,7 @@ export function ShareItemDialog() {
       <DialogCard size="md">
         <div className="flex items-center justify-between mb-4"><div><h2 className="text-lg font-bold"><Message id="community:share_item_dbce8c33" /></h2><p className="text-xs text-zinc-500 dark:text-zinc-400"><Message id="community:access_is_checked_separately_for_every_recipient_b2563a67" /></p></div><Localized element={<button type="button" onClick={dialog.close} className="text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 dark:text-zinc-400" aria-label={catalogText("community:close_7d9eb7ac")}><XIcon className="w-5 h-5" /></button>} messages={{"aria-label":"community:close_7d9eb7ac"}} /></div>
         <label className="block mb-3"><span className="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1"><Message id="community:item_type_5b71c546" /></span><select value={type} onChange={(event) => { setType(event.target.value as SharedObjectType); setItemId(''); setVersion(''); }} className="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500"><option value="app"><Message id="community:app_0d04bfeb" /></option><option value="issue"><Message id="community:github_backed_issue_ea5c40fc" /></option><option value="proposal"><Message id="community:code_proposal_800e6d29" /></option><option value="governance"><Message id="community:governance_proposal_5f1d1a55" /></option><option value="spec"><Message id="community:exact_spec_version_e91a9827" /></option></select></label>
-        <label className="block mb-3"><span className="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1"><Message id="community:app_0d04bfeb" /></span><select value={appId || ''} disabled={loading} onChange={(event) => setAppId(api.strictId(event.target.value))} className="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500"><option value=""><LocalizedValue render={() => (loading ? tr("community:loading_apps_f8bcca38") : tr("community:choose_an_app_8b9b4f57"))} /></option>{apps.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+        <label className="block mb-3"><span className="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1"><Message id="community:app_0d04bfeb" /></span><select value={appId || ''} disabled={loading} onChange={(event) => setAppId(api.strictId(event.target.value))} className="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500"><option value=""><LocalizedValue render={() => (loading ? tr("community:loading_apps_f8bcca38") : tr("community:choose_an_app_8b9b4f57"))} /></option>{groups.mine.length && groups.others.length ? <><Localized element={<optgroup label={catalogText("community:your_projects")}>{groups.mine.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</optgroup>} messages={{"label":"community:your_projects"}} /><Localized element={<optgroup label={catalogText("community:other_projects")}>{groups.others.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</optgroup>} messages={{"label":"community:other_projects"}} /></> : [...groups.mine, ...groups.others].map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
         {type !== 'app' ? <label className="block mb-3"><span className="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1"><LocalizedValue render={() => (type === 'issue' ? tr("community:issue_number_b90458b6") : type === 'governance' ? tr("community:governance_proposal_id_7ba3cac6") : tr("community:proposal_session_id_3726713b"))} /></span><Input inputMode="numeric" pattern="[0-9]*" value={itemId} onChange={(event) => setItemId(event.target.value.replace(/\D/g, '').slice(0, 10))} placeholder="123" /></label> : null}
         {type === 'spec' ? <label className="block mb-3"><span className="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1"><Message id="community:spec_version_cd76c4ed" /></span><Input inputMode="numeric" pattern="[0-9]*" value={version} onChange={(event) => setVersion(event.target.value.replace(/\D/g, '').slice(0, 10))} placeholder="1" /></label> : null}
         <p className="text-xs text-zinc-500 dark:text-zinc-400"><Message id="community:the_server_resolves_the_live_title_and_state_if__cf33d33a" /></p>

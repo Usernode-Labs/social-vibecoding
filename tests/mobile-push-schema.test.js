@@ -113,7 +113,9 @@ test('closed database kind registry matches the reviewed service mapping and def
   // 35 → 36: B7's change_ready (proposal_alerts).
   // 36 → 43: WP-E's four build moments (builds) and three invite kinds
   // (invite_activity).
-  assert.equal(new Set(rows.map((row) => row.kind)).size, 43);
+  // 43 → 44: channel_message, a person's message in a small private group's
+  // discussion (messages; services/group-channel-notify.js).
+  assert.equal(new Set(rows.map((row) => row.kind)).size, 44);
   assert.match(schema, /DELETE FROM mobile_push_kind_categories[\s\S]*kind NOT IN/,
     'stale policy rows cannot silently keep a removed kind push-enabled');
 });

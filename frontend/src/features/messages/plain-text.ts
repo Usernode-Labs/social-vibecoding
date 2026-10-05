@@ -49,3 +49,17 @@ export function plainText(markdown: string | null | undefined): string {
   text = text.replace(/[\uE000-\uE07F]/g, (c) => String.fromCharCode(c.charCodeAt(0) - ESCAPED));
   return text.replace(/\s+/g, ' ').trim();
 }
+
+/**
+ * The Homeroom bot's DM row, read in passing. Its news about a request opens
+ * with the request's line, `**Flat 4B Chores** · request #7: Fix mark as
+ * done` (services/homeroom-bot-dm.js requestLine), so the row read "Flat 4B
+ * Chores · request #7: Fix mark as done Filed. …". The row keeps the
+ * project and the title and drops the number (first-session run-through,
+ * 5 Oct 2026); the message itself keeps it. A line with no title keeps its
+ * number, which is then all it names the request by. Takes `plainText`'s
+ * output.
+ */
+export function botRowPreview(summary: string): string {
+  return summary.replace(/ · request #\d+: /, ' · ');
+}

@@ -116,6 +116,12 @@ const CATEGORY_DEFINITIONS = Object.freeze([
       // #2387: a reply in a thread you started or replied in. "Replies" in
       // the description already covers it, so the copy does not change.
       'conversation_thread_reply',
+      // A person's message in a small private group's discussion
+      // (services/group-channel-notify.js): that discussion is the group's
+      // chat, so it is a message like any other, and turning Messages off
+      // silences it on the phone too. Kept in lockstep with the seed in
+      // db/schema.sql.
+      'channel_message',
     ]),
   }),
   Object.freeze({

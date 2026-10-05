@@ -13,6 +13,18 @@
  * makes the row a `member`, and that is what joins the project's community
  * (the collaborator trigger in src/db/schema.sql). The pending row already
  * makes the project read as a Group (communities.audienceSql).
+ *
+ * ── Joining, or building ────────────────────────────────────────────────
+ *
+ * On a project only its people can see (a Group, or Just you becoming one)
+ * this invite IS how somebody joins: being a collaborator is what being in a
+ * private project is, which is why an invite link there is this same grant
+ * (community-invites.js grantFor). So it is worded as an invitation to join
+ * (`detail: 'join'` on its notification, `joins` on the pending invite), and
+ * carries the inviter's note the way a link does. Only on a project anyone
+ * can use but only its invited people build is it an invitation to build.
+ * Accepting one that joined them answers with what the link path's "You're
+ * in" needs (welcomeFor), so the two ways in end on the same welcome.
  */
 
 const log = require('./logger');
@@ -47,17 +59,18 @@ async function hydrateAndPush(pool, notifRows) {
 
 /**
  * Invite `target` ({ id, username }) into `app` ({ id, slug }) on behalf of
- * `inviterId`. Returns `{ ok: true }`, or `{ ok: false, status }` when a row
- * already existed (`status` is that row's: 'member' or 'invited'). The
- * notification and the event are best-effort; the row is not.
+ * `inviterId`, with their `note` (already cleaned: community-invites.js
+ * cleanNote; null for none). Returns `{ ok: true }`, or `{ ok: false,
+ * status }` when a row already existed (`status` is that row's: 'member' or
+ * 'invited'). The notification and the event are best-effort; the row is not.
  */
-async function sendInvite(pool, { app, target, inviterId }) {
+async function sendInvite(pool, { app, target, inviterId, note = null }) {
   const { rows: inserted } = await pool.query(
-    `INSERT INTO app_collaborators (app_id, user_id, status, invited_by)
-     VALUES ($1, $2, 'invited', $3)
+    `INSERT INTO app_collaborators (app_id, user_id, status, invited_by, invite_note)
+     VALUES ($1, $2, 'invited', $3, $4)
      ON CONFLICT (app_id, user_id) DO NOTHING
      RETURNING user_id`,
-    [app.id, target.id, inviterId]
+    [app.id, target.id, inviterId, note || null]
   );
   if (!inserted.length) {
     const { rows: existing } = await pool.query(
@@ -73,6 +86,7 @@ async function sendInvite(pool, { app, target, inviterId }) {
       appId: app.id,
       recipientId: target.id,
       inviterId,
+      detail: await invitesToJoin(pool, app) ? JOIN_DETAIL : null,
     });
     await hydrateAndPush(pool, notifRows);
   } catch (err) {
@@ -192,4 +206,75 @@ async function acceptAndPin(pool, appId, userId) {
   }
 }
 
-module.exports = { acceptInvite, hydrateAndPush, sendInvite };
+// What a collab_invite notification's `detail` says when the invite is to
+// join the project rather than to build it (see the header).
+const JOIN_DETAIL = 'join';
+
+/**
+ * Whether an invite into `app` is an invitation to join it: true unless
+ * anyone can use the project (view-public), where it only lets them build.
+ * Read from `app` when it carries view_visibility, else from its row.
+ */
+async function invitesToJoin(pool, app) {
+  let view = app && app.view_visibility;
+  if (view === undefined) {
+    const { rows } = await pool.query('SELECT view_visibility FROM apps WHERE id = $1', [app.id]);
+    view = rows[0]?.view_visibility;
+  }
+  return view !== 'public';
+}
+
+/**
+ * What "You're in" (frontend/src/features/first-session) needs for `userId`,
+ * who has just accepted an invite into app `appId`, in the shape the invite
+ * link path hands it (App._followInvite): the project, who invited them and
+ * whether they made it, and whether the account is about as old as this
+ * accept (then "You're in" says what Homeroom is; a test account, made ahead
+ * by an admin, is new on its first sign-in instead: test-accounts.js
+ * onFirstRun). With them, what fills the middle of the screen: the project's
+ * one-line description and the picture its invite page shows
+ * (community-invites.js memberPicture), now that they may see it. Null when
+ * there is no accepted row to read.
+ */
+async function welcomeFor(pool, { appId, userId }) {
+  const { rows } = await pool.query(
+    `SELECT a.id, a.slug, a.name, a.icon_emoji, a.icon_image_id,
+            a.manifest_snapshot->>'description' AS description,
+            (ac.invited_by IS NOT NULL AND ac.invited_by = a.created_by) AS inviter_made_it,
+            inv.username AS inviter, inv.display_name AS inviter_display_name,
+            COALESCE(ac.accepted_at, NOW()) AS joined_at,
+            (u.created_at >= COALESCE(ac.accepted_at, NOW()) - INTERVAL '1 hour') AS new_account
+       FROM apps a
+       JOIN app_collaborators ac ON ac.app_id = a.id AND ac.user_id = $2 AND ac.status = 'member'
+       JOIN users u ON u.id = ac.user_id
+       LEFT JOIN users inv ON inv.id = ac.invited_by
+      WHERE a.id = $1`,
+    [appId, userId]
+  );
+  const row = rows[0];
+  if (!row) return null;
+  const communityInvites = require('./community-invites');
+  const [firstRun, picture, building] = await Promise.all([
+    row.new_account ? false : require('./test-accounts').onFirstRun(pool, userId, row.joined_at),
+    communityInvites.pictureFor(pool, row.id).catch((err) => {
+      log.warn('collab-invites', 'Could not read the project\'s picture for its welcome', { appId, err: err.message });
+      return null;
+    }),
+    communityInvites.firstVersionPending(pool, row.id),
+  ]);
+  return {
+    slug: row.slug,
+    name: row.name || row.slug,
+    iconEmoji: row.icon_emoji || null,
+    iconUrl: row.icon_image_id ? `/app-icons/${row.icon_image_id}` : null,
+    description: row.description || null,
+    picture: communityInvites.memberPicture(row.slug, picture),
+    inviterName: row.inviter_display_name || row.inviter || null,
+    inviterMadeIt: !!row.inviter_made_it,
+    // Its first version still on its way: "<maker> is making it".
+    building,
+    newAccount: !!row.new_account || firstRun,
+  };
+}
+
+module.exports = { JOIN_DETAIL, acceptInvite, hydrateAndPush, invitesToJoin, sendInvite, welcomeFor };

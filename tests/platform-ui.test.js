@@ -491,11 +491,16 @@ test('the Improve row is retired; what it led to is in the menu', () => {
   // so a row inside it was never the place a cue could be read from.
   const band = INDEX.match(/<div id="improve-quick-actions"[\s\S]*?<\/div>/);
   assert.ok(band, 'missing #improve-quick-actions');
-  assert.ok(band[0].includes('id="improve-row-feedback"'), 'Ask for a change is the band\'s button');
-  // New change is Start a new change under Agent sessions (UI overhaul).
+  assert.ok(band[0].includes('id="improve-row-feedback"'), 'Suggest an improvement is the band\'s button');
+  // New change is Build it yourself, leading Agent chats (UI overhaul, B8).
   assert.ok(!band[0].includes('id="improve-row-new-session"'), 'and alone in it');
-  const sessions = INDEX.match(/<div id="app-menu-sessions"[\s\S]*?id="improve-row-new-session"/);
-  assert.ok(sessions, 'Start a new change leads the Agent sessions section');
+  // That section is drawn after mount, and only for somebody who has had an
+  // agent session (first-session run-through, 5 Oct 2026): not prerendered.
+  assert.ok(!INDEX.includes('id="app-menu-sessions"') && !INDEX.includes('id="improve-row-new-session"'),
+    'Agent chats is not in the prerender');
+  assert.match(read('frontend/src/features/app-context/app-context-sheet.tsx'),
+    /<div id="app-menu-sessions">\s*<div className=\{SECTION\}>Agent chats<\/div>\s*\{readOnly \? null : \(\s*<button\s+id="improve-row-new-session"/,
+    'Build it yourself leads the Agent chats section');
   assert.ok(!/\bhidden\b/.test(band[0].slice(0, band[0].indexOf('>'))),
     'the band itself ships visible');
 
@@ -711,7 +716,7 @@ test('the menu\'s action leads it, shaped like the pill that used to open it', (
   // element claiming it.
   assert.ok(!read('frontend/src/features/app-context/app-context-sheet.tsx')
     .includes('id="improve-row-feedback"'), 'and not in two places');
-  // New change survives as Start a new change, a row under Agent sessions
+  // New change survives as Build it yourself, a row under Agent chats
   // in the menu's list (UI overhaul), with the same handler.
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
   assert.match(sheet, /id="improve-row-new-session"/, 'New change survives');

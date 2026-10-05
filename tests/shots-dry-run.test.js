@@ -8,7 +8,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
-const { parseArgs, contactSheet, agentEnv, watchAgentStream } = require('../scripts/shots-dry-run');
+const {
+  PERSONAS, parseArgs, contactSheet, agentEnv, watchAgentStream, browserServer,
+} = require('../scripts/shots-dry-run');
 const fixtures = require('./fixtures/shots');
 
 test('the dry run needs a declaration and two origins, and takes exact commits only', () => {
@@ -35,6 +37,25 @@ test('the dry run needs a declaration and two origins, and takes exact commits o
     '--claude-bin', 'bin/claude']).claudeBin, path.resolve('bin/claude'));
   assert.equal(parseArgs(['--intent', 'i.json', '--before', 'http://a', '--after', 'http://b',
     '--fixtures', 'f.json']).fixturesFile, path.resolve('f.json'));
+});
+
+test('every declared persona has a browser, and the guest\'s always starts signed out', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  assert.deepEqual(Object.keys(PERSONAS).sort(), [...require('../src/services/visible-changes').PERSONAS].sort());
+  assert.deepEqual(PERSONAS.guest, { dir: 'guest', server: 'browser_guest' });
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-dry-run-state-'));
+  try {
+    for (const persona of Object.keys(PERSONAS)) fs.writeFileSync(path.join(stateDir, `${persona}.json`), '{}');
+    const options = parseArgs(['--intent', 'i.json', '--before', 'http://a', '--after', 'http://b',
+      '--state-dir', stateDir]);
+    const args = (persona) => browserServer(options, persona, '/tmp/shots', null).args;
+    assert.ok(args('member').includes(path.join(stateDir, 'member.json')));
+    assert.equal(args('guest').includes('--storage-state'), false, 'a guest.json is never loaded');
+    assert.equal(args('guest')[args('guest').indexOf('--output-dir') + 1], path.join('/tmp/shots', 'guest'));
+  } finally {
+    fs.rmSync(stateDir, { recursive: true, force: true });
+  }
 });
 
 test('the agent starts without the Claude Code session the harness was run from', () => {

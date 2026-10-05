@@ -1657,7 +1657,7 @@ function registerTools(server, ctx) {
     claims: z.array(z.object({
       id: z.string(),
       claim: z.string(),
-      persona: z.enum(['member', 'read_only_admin', 'full_admin']),
+      persona: z.enum(['member', 'read_only_admin', 'full_admin', 'guest']),
       viewports: z.array(z.string()),
       steps: z.array(z.string()),
       baseState: z.enum(['present', 'not_present']),
@@ -1675,9 +1675,10 @@ function registerTools(server, ctx) {
     verifiedReason: z.string().nullable(),
     // One result per declared change: its shots are ready (with the shots
     // agent's note on what they leave out, if any), or it skipped the change
-    // and says why.
+    // and says why, or the change failed: the agent did the steps and the
+    // after build broke.
     shotResults: z.array(z.object({
-      id: z.string(), status: z.enum(['ready', 'skipped']), reason: z.string().nullable(),
+      id: z.string(), status: z.enum(['ready', 'skipped', 'failed']), reason: z.string().nullable(),
       note: z.string().nullable().optional(),
     })).optional(),
     overriddenBy: z.number().nullable(),
@@ -2889,7 +2890,7 @@ function registerTools(server, ctx) {
   // ── get_proposal ─────────────────────────────────────────────────────
   server.registerTool('get_proposal', {
     title: 'Get a proposal',
-    description: "Status of one proposal, by `proposalId` or `prNumber` (the pull request number people see on GitHub); the answer carries both, name it \"PR #2151 (proposal 4223)\". It includes the checks verdict and failing test NAMES, staging preview, vote tally and votes still needed. Checks gate merge: if failing, fix the named tests and submit an UPDATE to this proposal — never a second one. `branch` says how: `branch.home` is 'user_fork' when the proposal follows a branch in the author's own fork (push to it, then call submit_work with proposalId and branch) or 'app_repo' when its head is a branch only Homeroom can write (push to your own fork, then call submit_work with proposalId and that branch — pushing alone moves nothing). `nextStep` says the same in one line; follow it. `shots` holds before/after shots of each declared change on this exact revision: a verified state means the shots agent took them (a still per screen size, plus clips for motion) and people look at them to judge the change; `shotResults` says which changes it skipped and why, and what a ready change's shots leave out. Pending or failed entries never substitute legacy route captures. `captureRouteSource`, `captureDefaultedToRoot`, and `capturePaths` describe only the backward-compatible legacy capture/check path. `checks.state` 'pending' is NOT a verdict or a reason to push again — read `checks.phase`, `checks.checkedAt`, `checks.stale`, and `baseSha` before writing code; each output field describes itself.",
+    description: "Status of one proposal, by `proposalId` or `prNumber` (the pull request number people see on GitHub); the answer carries both, name it \"PR #2151 (proposal 4223)\". It includes the checks verdict and failing test NAMES, staging preview, vote tally and votes still needed. Checks gate merge: if failing, fix the named tests and submit an UPDATE to this proposal — never a second one. `branch` says how: `branch.home` is 'user_fork' when the proposal follows a branch in the author's own fork (push to it, then call submit_work with proposalId and branch) or 'app_repo' when its head is a branch only Homeroom can write (push to your own fork, then call submit_work with proposalId and that branch — pushing alone moves nothing). `nextStep` says the same in one line; follow it. `shots` holds before/after shots of each declared change on this exact revision: a verified state means the shots agent took them (a still per screen size, plus clips for motion) and people look at them to judge the change; `shotResults` says which changes it skipped and why, which failed (the shots agent did the steps and the after build broke, for example a server error: fix the code), and what a ready change's shots leave out. Pending or failed entries never substitute legacy route captures. `captureRouteSource`, `captureDefaultedToRoot`, and `capturePaths` describe only the backward-compatible legacy capture/check path. `checks.state` 'pending' is NOT a verdict or a reason to push again — read `checks.phase`, `checks.checkedAt`, `checks.stale`, and `baseSha` before writing code; each output field describes itself.",
     inputSchema: {
       proposalId: z.number().int().positive().optional()
         .describe('The proposal id, as list_my_proposals, prepare_work and submit_work report it — also the last number in a proposal\'s webPath. Either this or prNumber; this one wins when both are given, and a pair that names two different proposals is refused rather than answered.'),

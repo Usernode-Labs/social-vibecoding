@@ -93,6 +93,9 @@ export function ProposeConfirmPanel({ draft, prNumber, headId, goRef, onDraft, o
           type="button"
           className="dev-vote-reason-send dev-vote-reason-send-yes"
           data-agent-session-propose-confirm
+          // The title keeps focus through the press, so the panel does not
+          // move under the tap as the keyboard goes (lib/keyboard-open.ts).
+          onMouseDown={(event) => event.preventDefault()}
           onClick={onPropose}
         ><Message id="workshop:propose_1cbd9e71" /></button>
       </div>

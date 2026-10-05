@@ -38,7 +38,7 @@ import { Message, Localized, message as catalogText } from "../../../lib/i18n/re
  *   What you can DO here ends the members row: Invite opens Members &
  *   approvals, where the roster, invites and approvers are managed, for
  *   exactly whom the ⋯ menu offers it, and the ⋯ itself (`menu`, the
- *   page's DevPlusMenu) holds Ask for a change and the project's settings.
+ *   page's DevPlusMenu) holds Suggest an improvement and the project's settings.
  *   This hero lists; it does not manage.
  *
  *   MAKE IT PUBLIC. Who a project is for can grow after it exists: Invite
@@ -85,11 +85,38 @@ import { offerJoin, registerJoinAnchor } from '../../../lib/join-required';
 
 type Audience = 'open' | 'invited' | 'solo';
 
+/**
+ * The first version Homeroom bot is building from the project's
+ * description, while it builds it (routes/apps.js hubFirstVersion): the
+ * App tab's state, cut to what the hub says. Null once it is live, or when
+ * the bot is not building one.
+ */
+export type HubFirstVersion = {
+  step: number | null;
+  of: number | null;
+  /** The step's name as the server names it for this viewer (the App
+      tab's and the made screen's words), never one written here. */
+  step_name: string | null;
+  /** Built and up for approval: ready to try. */
+  ready: boolean;
+  /** The description is the viewer's. */
+  mine: boolean;
+  creator: string | null;
+  /** What it waits on from its maker, for them alone. */
+  waits_on: 'plan' | 'question' | null;
+  /** The maker's DM with the bot, for them alone. */
+  conversation_id: number | null;
+  /** The change, once it is ready to try. */
+  session_id: number | null;
+};
+
 export type CommunityPayload = {
   slug: string;
   name?: string;
-  /** dapp.json's one-line description, when the repository declares one. */
+  /** dapp.json's one-line description, or the first sentence of the
+      description it was made from when dapp.json has none yet. */
   description?: string | null;
+  first_version?: HubFirstVersion | null;
   member_count: number;
   is_member: boolean;
   is_creator: boolean;
@@ -133,20 +160,53 @@ export type CommunityPayload = {
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 /**
- * The approval rule as one sentence. Exported and pure so the wording is
- * tested against the three regimes governance.js knows.
+ * Who has to say yes, out of how many: "2 of the 12 active members", "both
+ * active members", "the only approver". A count dapp.json set can name more
+ * people than there are, and then says how many there are.
+ */
+function whoApproves(required: number, of: number, kind: 'approver' | 'member'): string {
+  const k = kind === 'approver' ? 'approvers' : 'members';
+  if (required < of) return tr(`workshop:who_${k}_some_of`, { required, of });
+  if (required > of) return tr(`workshop:who_${k}_more_than_${of === 1 ? 'one' : 'several'}`, { required, of });
+  if (of === 1) return tr(`workshop:who_${k}_only_one`);
+  if (of === 2) return tr(`workshop:who_${k}_both`);
+  return tr(`workshop:who_${k}_all`, { of });
+}
+
+/**
+ * The approval rule as one sentence, in the words the rest of the page
+ * uses: a change "goes live", people "approve" it. Exported and pure so the
+ * wording is tested against the three regimes governance.js knows:
+ *
+ *   - members vote (the default): the eased threshold over the active
+ *     members, or the quiet path, which needs one Yes and no objection
+ *     (active-users.js lazyWindowMs) and so cannot apply when one Yes is
+ *     already the threshold;
+ *   - invited approvers: the same math over the approvers alone;
+ *   - at least N (dapp.json's approvals_required, either policy): N
+ *     approvals and no clock at all.
+ *
+ * First-session run-through, 5 Oct 2026: "Members vote: a change merges at
+ * 2 yes votes (2 active members), or unopposed after a wait" was the
+ * sentence a newcomer met here.
  */
 export function approvalLine(approval: CommunityPayload['approval'] | null | undefined): string {
   if (!approval) return '';
   const required = Math.max(1, Number(approval.required) || 1);
   const electorate = Math.max(1, Number(approval.electorate) || 1);
+  const fixed = approval.approvals_required != null;
+  const quiet = !fixed && required > 1;
   if (approval.policy === 'invited') {
-    return tr("workshop:approvers_decide_value1_from_value2_to_merge_a_c_1f77f311", { value1: plural(required, tr("workshop:yes_vote_5b8e1fe6"), tr("workshop:yes_votes_89c988c3")), value2: plural(electorate, 'approver', 'approvers') });
+    const who = whoApproves(required, electorate, 'approver');
+    if (quiet) return tr("workshop:approval_invited_quiet", { who });
+    return tr(required === 1 ? "workshop:approval_invited_one" : "workshop:approval_invited_many", { who });
   }
-  if (approval.approvals_required != null) {
-    return tr("workshop:a_change_needs_value1_from_members_to_merge_a9e3ebab", { value1: plural(required, tr("workshop:yes_vote_5b8e1fe6"), tr("workshop:yes_votes_89c988c3")) });
+  if (fixed) {
+    return tr("workshop:approval_fixed_count", { count: required });
   }
-  return tr("workshop:members_vote_a_change_merges_at_value1_value2_or_e2eb796b", { value1: plural(required, tr("workshop:yes_vote_5b8e1fe6"), tr("workshop:yes_votes_89c988c3")), value2: plural(electorate, tr("workshop:active_member_96ec9ba3"), tr("workshop:active_members_6ed1f2aa")) });
+  const who = whoApproves(required, electorate, 'member');
+  if (quiet) return tr("workshop:approval_members_quiet", { who });
+  return tr(required === 1 ? "workshop:approval_members_one" : "workshop:approval_members_many", { who });
 }
 
 /** "Public community · 12 members"; "Just you" alone, because there is one. */
@@ -821,7 +881,17 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false }: {
  * on a project of one they are the whole of what there is to do with people.
  * Offered to exactly whom the hero would offer them; nothing when neither
  * applies, and nothing until the shared read has answered.
+ *
+ * While Homeroom bot builds its first version (the First version card above
+ * it, ./hub-cards.tsx), the line says what an invite is for right now, in
+ * the made screen's words: people can follow along while it is built.
  */
+export function shareItLine(building: boolean): string {
+  return building
+    ? tr("workshop:share_it_follow_along_while_built")
+    : tr("workshop:invite_people_to_make_it_a_private_community_or__5a5fd3b5");
+}
+
 export function ShareItCard({ slug, name }: { slug: string; name?: string }) {
   const data = useCommunity(slug);
   if (!data || data.audience !== 'solo') return null;
@@ -831,7 +901,7 @@ export function ShareItCard({ slug, name }: { slug: string; name?: string }) {
   return (
     <section className="dev-ws-strip dev-ws-share" data-ws-share="">
       <div className="dev-ws-head"><RichMessage id="workshop:sentence_8a3239763589" components={[<span className="dev-ws-head-title" />]} /></div>
-      <p className="dev-ws-strip-text"><Message id="workshop:invite_people_to_make_it_a_private_community_or__5a5fd3b5" /></p>
+      <p className="dev-ws-strip-text">{shareItLine(!!data.first_version && !data.first_version.ready)}</p>
       <div className="dev-ws-share-actions">
         {canInvite ? (
           <Button
@@ -855,8 +925,8 @@ export function ShareItCard({ slug, name }: { slug: string; name?: string }) {
  * HOW A CHANGE GETS IN, on the Workshop page: the approval rule, read from
  * the server rather than restated here (GET /api/apps/:slug/community,
  * `approval`), as the headline number an unopposed change needs. It is a
- * headline and it says so ("to merge", not "exactly") because opposition
- * raises it and the quiet-week path can merge below it
+ * headline, not the whole gate: opposition raises it, and the line names
+ * the quiet path that can put a change live below it
  * (services/active-users.js). It was the hero's last line; it sits with the
  * work it governs now. Nothing until the shared read has answered.
  */
@@ -867,7 +937,10 @@ export function ApprovalRules({ slug }: { slug: string }) {
     <section className="dev-ws-strip" data-ws-approval-rules="">
       <div className="dev-ws-head"><RichMessage id="workshop:sentence_14d8ef32eb50" components={[<span className="dev-ws-head-title" />]} /></div>
       <p className="dev-ws-rules-line" data-ws-community-rule="">{approvalLine(data.approval)}</p>
-      <p className="dev-ws-rules-sub"><Message id="workshop:changing_a_rule_is_a_proposal_too_applied_once_i_ed4c37d5" /></p>
+      {/* A change to these rules changes a protected dapp.json block
+          (explicit-approval.js): it keeps the rule above but never goes
+          live after a wait, so "the same way" would not be true of it. */}
+      <p className="dev-ws-rules-sub"><Message id="workshop:rules_change_needs_approval" /></p>
     </section>
   );
 }

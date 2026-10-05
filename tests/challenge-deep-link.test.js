@@ -1085,3 +1085,47 @@ test('the header back chevron asks the Challenges page first', () => {
   assert.match(appJs, /if \(App\._inLeaderboard && window\.TopochainChallenges\?\.handleBack\?\.\(\)\) return;/,
     'the same claim chain Settings, Admin and Browse use');
 });
+
+// #3253, #3248: the list row's `counted_by` ({ measure, target }) is the rule
+// that scores the challenge, and the page says under the task what it counts:
+// a proposal only once it is put to the vote, and nothing past a counted
+// measure's target while the challenge is still open.
+test('the page says a proposal counts at Propose to group, and when more stops counting', () => {
+  const { pane } = loadPane({ challenges: CH, eventId: 900500 });
+  const row = (counted_by, extra = {}) => ({
+    id: 900500, completed: false, card_preview: { goal: 'Ship it' }, counted_by, ...extra,
+  });
+  const SENT = 'Counts when you press Propose to group, which puts your change to a vote.';
+  assert.equal(pane._countNoteOf(row({ measure: 'PROPOSAL_SENT', target: null })), SENT);
+  assert.equal(pane._countNoteOf(row({ measure: 'PROPOSAL_SENT', target: null }, { progress: { done: true, current: null, target: null } })),
+    SENT, 'the same line once it is done: the task still does not say it');
+
+  const accepted = (current, extra = {}) => row({ measure: 'PROPOSAL_ACCEPTED', target: 2 },
+    { progress: { done: current >= 2, current, target: 2 }, ...extra });
+  assert.equal(pane._countNoteOf(accepted(2)),
+    "This challenge counts up to 2, and you have 2. More accepted changes before it ends don't add to it.");
+  assert.equal(pane._countNoteOf(row({ measure: 'TRY_APPS', target: 3 }, { progress: { done: true, current: 3, target: 3 } })),
+    "This challenge counts up to 3, and you have 3. More before it ends don't add to it.", 'any counted measure');
+  // A This week challenge's cap is the week's, and starts again on Monday.
+  assert.equal(pane._countNoteOf(accepted(2, { card_preview: { goal: 'Ship it', label: 'WEEKLY' } })),
+    "This challenge counts up to 2 each week, and you have 2 this week. More accepted changes this week don't add to it. It starts again on Monday.");
+
+  const NONE = [
+    [accepted(1), 'not at the cap yet'],
+    [accepted(0), 'nothing yet'],
+    [accepted(2, { completed: true }), 'the organiser closed it'],
+    [accepted(2, { effective: { schedule_end: new Date(Date.now() - 60000).toISOString() } }), 'it has ended'],
+    [accepted(2, { progress: undefined }), 'no progress for this viewer'],
+    [row({ measure: 'PROPOSAL_ACCEPTED', target: null }, { progress: { done: true, current: 2, target: 2 } }), 'no cap sent'],
+    [row(null), 'nothing scores it'],
+    [row(undefined), 'an older payload'],
+    [row({ measure: 42 }), 'a malformed measure'],
+  ];
+  for (const [c, why] of NONE) assert.equal(pane._countNoteOf(c), null, why);
+
+  pane._detailChallenge = accepted(2);
+  assert.equal(pane.detailView().countNote, pane._countNoteOf(accepted(2)), 'the page carries it');
+  pane._detailChallenge = CH[0];
+  assert.equal(pane.detailView().countNote, null);
+  pane._detailChallenge = null;
+});

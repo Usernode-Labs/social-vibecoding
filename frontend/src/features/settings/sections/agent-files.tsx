@@ -5,6 +5,13 @@ import { AgentFilesList } from '../agent-files-list';
 import { Field, SectionHeading, StatusLine } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 
+import { pressButton, returnKeyHandler } from '../../../lib/return-to-next';
+
+/** Return in the pending-upload form's last field: Save, as a tap would press it. */
+function saveAgentFile(): void {
+  pressButton(document.getElementById('agent-files-save'));
+}
+
 /**
  * Agent instructions & skills (issue #460). Per-user global files the coding
  * agent loads on every build/scout run this user dispatches, in any app:
@@ -18,6 +25,12 @@ import { Input } from '@/components/ui/input';
  * labels that WRAP their control rather than pointing at it, one of them
  * carrying an id and a capability-independent `hidden` of its own (it is
  * revealed only for skills, which take a description).
+ *
+ * Return walks that form (#3907: the iOS keyboard's chevrons are gone): the
+ * name goes on to the description when it is showing, and the last field
+ * presses Save, the button settings.js wires. settings.js also sets the
+ * name's `enterKeyHint` when it opens the form, since which one is last
+ * depends on the kind.
  */
 export function AgentFilesSection() {
   return (
@@ -72,6 +85,7 @@ export function AgentFilesSection() {
         <div
           id="agent-files-form"
           className="hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 mt-2 text-xs"
+          onKeyDown={returnKeyHandler({ submit: saveAgentFile })}
         >
           <div id="agent-files-form-title" className="font-medium text-zinc-700 dark:text-zinc-300 mb-2">
           </div>
@@ -80,6 +94,7 @@ export function AgentFilesSection() {
               id="agent-files-name"
               type="text"
               maxLength={64}
+              enterKeyHint="next"
               spacing="mt1"
               box="inset"
               mono
@@ -91,7 +106,9 @@ export function AgentFilesSection() {
             <Localized element={<Input
               id="agent-files-desc"
               type="text"
-              maxLength={200} placeholder={catalogText("settings:one_line_what_this_skill_does_5e8fbb47")}
+              maxLength={200}
+              enterKeyHint="done"
+              placeholder={catalogText("settings:one_line_what_this_skill_does_5e8fbb47")}
               spacing="mt1"
               box="inset"
               ring={false}

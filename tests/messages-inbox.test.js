@@ -180,7 +180,7 @@ test('the "+" is back at the strip\'s trailing end, and opens a choice rather th
   assert.match(englishUiSource(SCREENEnglish), /\{ key: 'group', label: 'Group chat'/);
   // B8: building it yourself, beside Homeroom bot, which leads for somebody who has it.
   assert.match(englishUiSource(SCREENEnglish), /\{ key: 'agent', label: 'Build it yourself', hint: 'Plan and build a change with a coding agent' \}/);
-  assert.match(englishUiSource(SCREENEnglish), /\{ key: 'bot', label: 'Homeroom bot', hint: 'Make an app or ask for a change' \}/);
+  assert.match(englishUiSource(SCREENEnglish), /\{ key: 'bot', label: 'Homeroom bot', hint: 'Make an app or suggest an improvement' \}/);
   assert.match(englishUiSource(SCREENEnglish), /return NEW_CHOICES\.filter\(\(item\) => item\.key !== 'bot' \|\| hasHomeroomBot\(\)\);/);
   const start = SCREENEnglish.slice(SCREENEnglish.indexOf('function startNew'));
   const starter = start.slice(0, start.indexOf('\n}\n'));

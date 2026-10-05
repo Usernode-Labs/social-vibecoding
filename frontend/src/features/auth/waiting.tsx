@@ -92,6 +92,10 @@ export function WaitingScreen() {
         const targetUrl = typeof host?.deepLinkUrl === 'function'
           ? host.deepLinkUrl(target) : '/' + target;
         history.replaceState(null, '', targetUrl);
+        // Let in on a build that is behind the live one: move to it before
+        // the signed-in shell starts, so the first-run screens are the live
+        // build's (App._moveToLiveShell). Never resolves once it reloads.
+        await w.App?._moveToLiveShell?.('signed-in');
         fx(() => {
           (host?.hideAll as undefined | (() => void))?.();
           w.App?.enterAuthed?.(user);
@@ -230,7 +234,8 @@ export function WaitingScreen() {
               pill, "Your queue status", back to this screen: the promise led
               in a circle. Nothing a waiting-room account can reach lists apps
               today, so the pill is gone rather than pointed at something that
-              does not exist. Log out is the one action left.
+              does not exist. Sign out is the one action left ("Sign out",
+              as Settings says it, beside every "Sign in").
           */}
           <div className="mt-6 space-y-3">
             <button

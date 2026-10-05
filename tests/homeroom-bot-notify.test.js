@@ -38,9 +38,13 @@ const MOMENT_WORDS = [
   ['hrbot:question:Plant Pal', 'Plant Pal: I have a question'],
   ['hrbot:ready:Plant Pal', 'Plant Pal is ready to try'],
   ['hrbot:ready_group:Supper Club', 'Your change to Supper Club is ready to try'],
+  // Built, but its before & after shots show part of it failing: never "ready to try".
+  ['hrbot:ready_broken:Flat 4B Chores', 'Flat 4B Chores is built, but not everything works yet'],
   // WP-F: a stop says which one, and what is next; never a bare "didn't finish".
   ['hrbot:stopped:Plant Pal', 'Plant Pal: your change stopped. I said why in our chat'],
-  ['hrbot:stopped_build:Plant Pal', 'Plant Pal: I couldn\'t finish building it. A person can pick it up'],
+  // 5 Oct 2026: what the DM it opens ends with. Never "A person can pick it up".
+  ['hrbot:stopped_build:Plant Pal', 'Plant Pal: I couldn\'t finish building it. Reply and I\'ll try again'],
+  ['hrbot:stopped_build:', 'I couldn\'t finish building it. Reply and I\'ll try again'],
   ['hrbot:stopped_blocked:Plant Pal', 'Plant Pal: I can\'t build it as written. Tell me more'],
   ['hrbot:stopped_person:Plant Pal', 'Plant Pal: this needs a person to decide'],
   ['hrbot:stopped_empty:Plant Pal', 'Plant Pal: I couldn\'t find anything to build. Tell me more'],
@@ -122,7 +126,7 @@ test('B4: the push and the bell keep one copy of the words', () => {
     return body.split('\n').map((l) => l.trim()).filter((l) => /^[a-z_]+: app \?/.test(l))
       .map(line => line.replace(/: '((?:[^'\\]|\\.)*)',$/, (_, text) => ': ' + JSON.stringify(text.replace(/\\'/g, "'")) + ','));
   };
-  assert.equal(words(server).length, 15);
+  assert.equal(words(server).length, 16);
   assert.deepEqual(words(client), words(server));
 });
 

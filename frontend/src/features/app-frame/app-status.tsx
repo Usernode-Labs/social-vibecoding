@@ -9,7 +9,9 @@
  * would have re-attached. A sixth since #15: the first version, being built
  * by the Homeroom bot from the project's description, with a line or two on
  * where it is, the way into the bot's DM for its creator, and the starter
- * for anyone who wants it anyway.
+ * for anyone who wants it anyway. Once that version is built and up for
+ * approval, the same screen says it is ready to try and what it waits on,
+ * with Try it and See the change.
  *
  * ── Why this can own `#app-content` ────────────────────────────────────
  *
@@ -53,14 +55,22 @@ export interface AppStatusView {
   /**
    * At most one, and only for a viewer who can act on it. `botChat` opens
    * the viewer's DM with the Homeroom bot (#15), by its id when known.
+   * `tryChange` and `seeChange` are a first version that is ready to try:
+   * its change's preview and its change page, by the change's id.
    */
   action: {
-    key: 'secrets' | 'buildLog' | 'botChat';
+    key: 'secrets' | 'buildLog' | 'botChat' | 'tryChange' | 'seeChange';
     label: string;
     slug: string;
     conversationId?: number | null;
+    sessionId?: number | null;
   } | null;
-  /** A quieter way on, under the action (#15: the starter, for now). */
+  /** A second way on, beside the action (a first version's change page, under Try it). */
+  alt?: { key: 'seeChange'; label: string; slug: string; sessionId: number } | null;
+  /**
+   * A quieter way on, under the action (#15: the starter, for now). Under
+   * an `alt` it is the third button, and drawn as the quietest.
+   */
   secondary?: { key: 'starter'; label: string; slug: string } | null;
   /**
    * B6: the plan a first version waits on, for its creator: the same card as
@@ -111,7 +121,18 @@ const ACTIONS = {
   secrets: { id: 'awaiting-open-secrets', opener: 'openAwaitingSecrets' },
   buildLog: { id: 'app-error-build-log', opener: 'openAppBuildLog' },
   botChat: { id: 'app-first-version-chat', opener: 'openBotChat' },
+  tryChange: { id: 'app-first-version-try', opener: 'tryFirstVersion' },
+  seeChange: { id: 'app-first-version-change', opener: 'openFirstVersionChange' },
 } as const;
+
+type StatusAction = NonNullable<AppStatusView['action']> | NonNullable<AppStatusView['alt']>;
+
+/** Its opener, with what it opens: a change by its id, else the DM by its id (or nothing). */
+function press(action: StatusAction): void {
+  const { opener } = ACTIONS[action.key];
+  if (action.key === 'tryChange' || action.key === 'seeChange') call(opener, action.slug, action.sessionId ?? null);
+  else call(opener, action.slug, action.conversationId ?? null);
+}
 
 export function AppStatusView_({ view }: { view: AppStatusView }): ReactNode {
   const action = view.action;
@@ -126,15 +147,28 @@ export function AppStatusView_({ view }: { view: AppStatusView }): ReactNode {
         <p className="text-xs font-mono text-red-700 max-w-md break-words dark:text-red-400">{view.detail}</p>
       ) : null}
       {action ? (
-        <Button
-          id={ACTIONS[action.key].id}
-          className="mt-3"
-          onClick={() => call(ACTIONS[action.key].opener, action.slug, action.conversationId ?? null)}
-        >
+        <Button id={ACTIONS[action.key].id} className="mt-3" onClick={() => press(action)}>
           {action.label}
         </Button>
       ) : null}
-      {view.secondary ? (
+      {view.alt ? (
+        <Button id={ACTIONS[view.alt.key].id} variant="neutral" ink="neutral" onClick={() => press(view.alt!)}>
+          {view.alt.label}
+        </Button>
+      ) : null}
+      {view.secondary && view.alt ? (
+        <Button
+          id="app-first-version-starter"
+          variant="unstyled"
+          size="sm"
+          ink="muted"
+          className="rounded-lg"
+          onClick={() => call('showStarter', view.secondary!.slug)}
+        >
+          {view.secondary.label}
+        </Button>
+      ) : null}
+      {view.secondary && !view.alt ? (
         <Button
           id="app-first-version-starter"
           variant="neutral"

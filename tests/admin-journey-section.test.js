@@ -97,6 +97,23 @@ test('eight chart cards, every mark counted, no percentage printed, no links fro
   assert.ok(!/\bapp\b/.test(src.match(/>[^<{]*</g).join(' ')), 'on screen it says project, not app');
 });
 
+test('every first-mile column says what it counts on a tap, and onboard follows act', () => {
+  const keys = ['admitted', 'mail_sent', 'code_asked', 'account', 'access', 'opened', 'username', 'join', 'first_act', 'onboard'];
+  const help = src.match(/const MILE_HELP: Record<string, string> = \{([\s\S]*?)\n\};/);
+  assert.ok(help, 'one table of column notes');
+  for (const key of keys) assert.match(help[1], new RegExp(`\\n  ${key}: '`), `${key} has a note`);
+  const label = src.match(/function MileLabel\([\s\S]*?\n\}\n/)[0];
+  assert.match(label, /<button type="button" className=\{JUI\.mileLabel\} aria-expanded=\{open != null\}/,
+    'the label is a button that says whether its note is open');
+  assert.match(label, /onClick=\{\(\) => \(open === 'tap' \? onClose\(\) : onOpen\('tap'\)\)\}/, 'a tap opens and closes it');
+  assert.match(label, /e\.pointerType === 'mouse'/, 'hover only opens it for a mouse');
+  assert.ok(!/title=/.test(label), 'never a title: a phone has no hover');
+  assert.match(src, /e\.key === 'Escape'/, 'Escape closes it');
+  assert.match(src, /\{labelFor\('onboard', 'onboard'\)\}/, 'onboard is labelled like the steps');
+  assert.match(src, /<OnboardCell onboard=\{p\.onboard\} \/>/, 'every track ends in its onboard cell');
+  assert.match(src, /repeat\(10,minmax\(0,1fr\)\)/, 'the grid has the tenth column');
+});
+
 test('the demo rides on ?demo=1 and cannot be edited', () => {
   assert.match(src, /new URLSearchParams\(location\.search\)\.get\('demo'\) === '1'/);
   assert.match(src, /`\$\{path\}\$\{path\.includes\('\?'\) \? '&' : '\?'\}demo=1`/);

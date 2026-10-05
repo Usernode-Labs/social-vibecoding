@@ -17,7 +17,18 @@
 // While the story landing is on (`App.user.storyFirstSession`), the step is
 // the first session's "What do you want to make?" instead (../first-session):
 // the question a new account made from the story's own sheet is asked, put
-// to every new account however it signed in.
+// to every new account however it signed in. When nothing has to come first
+// (no username to choose, no invite to follow) it opens in the same tick as
+// the signed-in shell (firstSessionNow), not after a beat of Home.
+//
+// IT IS ASKED UNTIL IT IS ANSWERED. Showing it records only that it was
+// asked (POST /api/me/first-session/started); the flag stays set until Make
+// it makes a project or "Look around first" is chosen
+// (src/services/first-session.js). So every later boot of the shell for that
+// account asks it again: a reload, a new tab, the phone app reopened, a sign
+// out and back in. A reload from the session snapshot (app.js) draws it from
+// the snapshot's user at once, so Home is not painted first, and the
+// verified read then keeps it or takes it away (_showFromSnapshot below).
 //
 // ── What it shows ──────────────────────────────────────────────────────
 //
@@ -89,6 +100,10 @@
     _shownHere: false,
     _settle: null,
     _settled: null,
+    // The make screen drawn from the session snapshot's user, before the
+    // session was confirmed (_showFromSnapshot): the verified read decides
+    // whether it stays.
+    _madeFromSnapshot: false,
 
     // Does this document have a join step to show? Read by the tour, which
     // never copies this browser's "done" to an account whose join screen is
@@ -98,6 +113,104 @@
       if (CommunitiesFirstRun._answered) return false;
       return !!(window.App && window.App.user
         && window.App.user.needsCommunitiesChoice === true);
+    },
+
+    // Does signing in with `user` lead straight to its first session, "What
+    // do you want to make?", with nothing to come before it? While the
+    // story landing is on, an account still due this step is asked that
+    // instead (see maybePrompt), and when no username has to be chosen
+    // first and no invite is bringing it in, it is asked AT ONCE: opened in
+    // the same tick the shell starts, so nothing of Home shows before it.
+    // The story's sign-in sheet asks the same question before it signs in
+    // (firstSessionNext in ./shared.ts), so it can hand off to that screen.
+    firstSessionNow(user) {
+      return !!(user && typeof user === 'object'
+        && user.hasPlatformAccess !== false
+        && user.needsCommunitiesChoice === true
+        && user.storyFirstSession === true
+        && user.needsUsernameChoice !== true
+        && !CommunitiesFirstRun._onInvitePath());
+    },
+
+    _onInvitePath() {
+      const app = window.App;
+      return !!(app && typeof app._inviteTokenFromPath === 'function'
+        && app._inviteTokenFromPath(location.pathname));
+    },
+
+    _island() {
+      const firstSession = window.UsernodeReact && window.UsernodeReact.firstSession;
+      return firstSession && typeof firstSession.make === 'function' ? firstSession : null;
+    },
+
+    // The first session, opened in this tick: the island draws it before
+    // the browser paints the shell it was signed in to, and the start is
+    // recorded behind it the way the later branch below records it.
+    _startFirstSessionNow() {
+      const firstSession = CommunitiesFirstRun._island();
+      if (!firstSession) return false;
+      // An invite already being followed is waited for below.
+      if (window.App._inviteFollow) return false;
+      if (!CommunitiesFirstRun.firstSessionNow(window.App.user)) return false;
+      CommunitiesFirstRun._openFirstSession(firstSession);
+      return true;
+    },
+
+    // Open "What do you want to make?" and record that it was asked. This
+    // document's step is then done with (`_answered`), but the ACCOUNT's is
+    // not: `needsCommunitiesChoice` is left as the server said, TRUE, so the
+    // session snapshot keeps it and the next boot asks again. Only the
+    // island's two answers clear it (../first-session/index.tsx).
+    _openFirstSession(firstSession) {
+      CommunitiesFirstRun._madeFromSnapshot = false;
+      CommunitiesFirstRun._answered = true;
+      firstSession.make();
+      CommunitiesFirstRun._recordFirstSession();
+      CommunitiesFirstRun._resolve();
+    },
+
+    // A boot from the session snapshot (a reload, the app reopened) asks
+    // nothing before the session is confirmed, but the make screen is the
+    // one exception: drawn now, from the snapshot's user, in the same tick
+    // the shell starts, so a reload of somebody who has not answered it
+    // shows it again rather than a beat of Home first. Nothing is recorded
+    // and the step stays open: the verified read (app.js _reconcileSession
+    // calls maybePrompt again) keeps it, or takes it away for an account
+    // that answered it somewhere else (_dropSnapshotMake).
+    _showFromSnapshot() {
+      const firstSession = CommunitiesFirstRun._island();
+      if (!firstSession || window.App._inviteFollow) return;
+      if (!CommunitiesFirstRun.firstSessionNow(window.App.user)) return;
+      CommunitiesFirstRun._madeFromSnapshot = true;
+      firstSession.make();
+    },
+
+    // The verified user is here: a make screen the snapshot drew stays only
+    // if this account is still due it now.
+    _dropSnapshotMake() {
+      if (!CommunitiesFirstRun._madeFromSnapshot) return;
+      if (CommunitiesFirstRun.firstSessionNow(window.App && window.App.user)
+          && !(window.App && window.App._inviteFollow)) return;
+      CommunitiesFirstRun._madeFromSnapshot = false;
+      const firstSession = CommunitiesFirstRun._island();
+      if (firstSession && typeof firstSession.dismissMake === 'function') firstSession.dismissMake();
+    },
+
+    // POST /api/me/first-session/started for an account that signed in
+    // some other way than the story's own sheet. Kept once, so Journey can
+    // tell the two apart; it does not answer the question, so asking again
+    // on a later boot records nothing new.
+    async _recordFirstSession() {
+      try {
+        await fetch('/api/me/first-session/started', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ via: 'sign_in' }),
+        });
+      } catch (err) {
+        console.warn('[communities-first-run] first session start not recorded:', err);
+      }
     },
 
     // Has THIS document shown the real join screen (never the ?shot=
@@ -184,14 +297,20 @@
         return;
       }
       if (window.App && window.App._sessionFromSnapshot) {
+        CommunitiesFirstRun._showFromSnapshot();
         CommunitiesFirstRun._resolve();
         return;
       }
+      CommunitiesFirstRun._dropSnapshotMake();
       if (!window.App || !window.App.user || window.App.user.needsCommunitiesChoice !== true) {
         CommunitiesFirstRun._answered = !!(window.App && window.App.user);
         CommunitiesFirstRun._resolve();
         return;
       }
+
+      // Before anything is awaited: from `sv:authed` this still runs inside
+      // the authed boot, ahead of the first paint of Home.
+      if (CommunitiesFirstRun._startFirstSessionNow()) return;
 
       await CommunitiesFirstRun._afterEarlierSteps();
       // A ghost-click window after the sheet before it, the same one the
@@ -206,6 +325,9 @@
       if (await CommunitiesFirstRun._joinedByInvite()) {
         CommunitiesFirstRun._answered = true;
         window.App.user.needsCommunitiesChoice = false;
+        // And on this device's snapshot, so the next boot does not draw the
+        // make screen from it before the session is confirmed.
+        try { window.App.saveSessionSnapshot?.(window.App.user); } catch (_) {}
         CommunitiesFirstRun._resolve();
         return;
       }
@@ -214,28 +336,13 @@
       // /api/auth/me, while the story landing is on): an account that
       // signed in some other way than the story's own sheet (a password, a
       // code, a provider, an admin-made test account) is asked "What do
-      // you want to make?" like one that did (../first-session). It answers
-      // this step the way that sheet does (POST /api/me/first-session/
-      // started), so it is not asked again and Getting started stays out of
-      // the first session. With no island to open it, the join screen is
-      // asked as before.
-      const firstSession = window.UsernodeReact && window.UsernodeReact.firstSession;
-      if (window.App.user.storyFirstSession === true
-          && firstSession && typeof firstSession.make === 'function') {
-        try {
-          await fetch('/api/me/first-session/started', {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ via: 'sign_in' }),
-          });
-        } catch (err) {
-          console.warn('[communities-first-run] first session start not recorded:', err);
-        }
-        CommunitiesFirstRun._answered = true;
-        window.App.user.needsCommunitiesChoice = false;
-        firstSession.make();
-        CommunitiesFirstRun._resolve();
+      // you want to make?" like one that did (../first-session), and
+      // recorded the way that sheet records it (POST /api/me/first-session/
+      // started). Getting started stays out of the first session. With no
+      // island to open it, the join screen is asked as before.
+      const firstSession = CommunitiesFirstRun._island();
+      if (window.App.user.storyFirstSession === true && firstSession) {
+        CommunitiesFirstRun._openFirstSession(firstSession);
         return;
       }
 

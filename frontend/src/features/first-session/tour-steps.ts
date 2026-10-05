@@ -24,13 +24,72 @@ export type TourStep = {
   place?: 'auto' | 'bottom' | { above: string };
   /** Pressing the target lands on a list; open the next step's screen itself (the bot's chat, not the inbox). */
   opensNext?: boolean;
+  /**
+   * A transcript in the cut-out: the newest of its `rows` is shown from its
+   * top edge (./index.tsx showNewestFromTop). Pinned to its newest line, a
+   * card taller than the transcript began part-way down, with no first line.
+   */
+  newestFromTop?: { scroller: string; rows: string };
   last?: boolean;
 };
 
-export type TourProject = { slug: string; name: string; conversationId?: number | null };
+/**
+ * The maker's last step: their chat with Homeroom bot, its header (the bot's
+ * name and what it is doing for them) with its messages under it, as one
+ * cut-out. It used to be the messages alone, under a dimmed header, and its
+ * newest card began part-way down: "the chat with Homeroom bot is missing the
+ * header" (Evan, on his phone, 5 October 2026). The conversation's own
+ * section scopes both, so no other pane's header or transcript is measured.
+ */
+export const BOT_CHAT_HEADER = '.messages-thread-direct > .messages-thread-header';
+export const BOT_CHAT_MESSAGES = '.messages-thread-direct > .messages-thread-scroll';
+
+/**
+ * Where the project's first version stands, as its App tab shows it
+ * (GET /api/apps/:slug `first_version`; public/js/app-view.js
+ * _firstVersionView): Homeroom bot still building it, built and waiting for
+ * approval, or neither (null: the app is what there is).
+ */
+export type FirstVersionStage = 'building' | 'ready' | null;
+
+export type TourProject = {
+  slug: string;
+  name: string;
+  conversationId?: number | null;
+  firstVersion?: FirstVersionStage;
+};
+
+/**
+ * The project's hub, named without a possessive: "Page Turners's hub" was
+ * what a name ending in s read as (first-session run-through, 5 October 2026).
+ */
+export function hubTitle(name: string): string {
+  return tr("auth:the_value1_hub_6e2a9b13", { value1: name });
+}
+
+/**
+ * The invited path's second step, over the App tab: what the page behind it
+ * says. A project still being built reads "<name> is being built …" there,
+ * so the step does not call it an app to use any time.
+ */
+export function appStep(name: string, firstVersion: FirstVersionStage = null): Pick<TourStep, 'title' | 'text'> {
+  if (firstVersion === 'building') {
+    return {
+      title: tr("auth:value1_being_built_4a7c1d90", { value1: name }),
+      text: tr("auth:homeroom_bot_is_building_its_first_version_unti_2d8e5f41"),
+    };
+  }
+  if (firstVersion === 'ready') {
+    return {
+      title: tr("auth:this_is_value1_9285731a", { value1: name }),
+      text: tr("auth:its_first_version_is_ready_to_try_and_goes_live_9b3f7a26"),
+    };
+  }
+  return { title: tr("auth:this_is_value1_9285731a", { value1: name }), text: tr("auth:the_group_s_app_made_on_homeroom_use_it_any_time_bd51fd5e") };
+}
 
 /** The invited path: seven steps, ending in the group's chat. */
-export function invitedSteps({ slug, name }: TourProject): TourStep[] {
+export function invitedSteps({ slug, name, firstVersion = null }: TourProject): TourStep[] {
   return [
     {
       screen: 'home',
@@ -42,8 +101,8 @@ export function invitedSteps({ slug, name }: TourProject): TourStep[] {
     {
       screen: 'app',
       target: '#app-content',
-      get title() { return tr("auth:this_is_value1_9285731a", { value1: name }); },
-      get text() { return tr("auth:the_group_s_app_made_on_homeroom_use_it_any_time_bd51fd5e"); },
+      get title() { return appStep(name, firstVersion).title; },
+      get text() { return appStep(name, firstVersion).text; },
       place: 'bottom',
     },
     {
@@ -68,7 +127,7 @@ export function invitedSteps({ slug, name }: TourProject): TourStep[] {
     {
       screen: 'hub',
       target: '#app-content',
-      get title() { return tr("auth:value1_s_hub_44139f68", { value1: name }); },
+      get title() { return hubTitle(name); },
       get text() { return tr("auth:communities_opens_on_the_group_you_just_joined_w_9fcd40cd"); },
       place: 'bottom',
     },
@@ -135,7 +194,7 @@ export function makerSteps({ slug, name, conversationId }: TourProject): TourSte
     {
       screen: 'hub',
       target: '#app-content',
-      get title() { return tr("auth:value1_s_hub_44139f68", { value1: name }); },
+      get title() { return hubTitle(name); },
       get text() { return tr("auth:who_s_in_it_what_s_being_built_and_what_s_up_for_93a3b812"); },
       place: 'bottom',
     },
@@ -155,7 +214,8 @@ export function makerSteps({ slug, name, conversationId }: TourProject): TourSte
     },
     {
       screen: 'bot',
-      target: '.messages-thread-scroll',
+      target: `${BOT_CHAT_HEADER}, ${BOT_CHAT_MESSAGES}`,
+      newestFromTop: { scroller: BOT_CHAT_MESSAGES, rows: 'article.messages-message' },
       get title() { return tr("auth:your_chat_with_homeroom_bot_5b8251d0"); },
       get text() { return tr("auth:it_shows_how_the_build_is_going_here_and_message_f75c92a8"); },
       place: 'bottom',

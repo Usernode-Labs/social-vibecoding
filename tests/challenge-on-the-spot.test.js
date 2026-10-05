@@ -114,7 +114,7 @@ test('a vote on your own proposal or request is not a candidate, and the window 
 // The first-session test (2026-10-03): the Homeroom bot is the author of the
 // proposal it writes for somebody's request, so "not their own proposal"
 // paid the requester for voting on their own solo app's first version, and
-// the in-app "Ask for a change" on that app paid both feedback measures.
+// the in-app "Suggest an improvement" on that app paid both feedback measures.
 const BOT_BUILD = /NOT EXISTS \(SELECT 1 FROM homeroom_bot_requesters r WHERE r\.app_id = cs\.app_id AND r\.issue_number = cs\.created_from_issue_number AND r\.user_id = (pv\.user_id|\$1)\)/;
 const NOT_JUST_YOU = "a.view_visibility = 'public' OR (SELECT COUNT(*) FROM community_members o WHERE o.community_id = a.community_id) > 1 OR EXISTS (SELECT 1 FROM app_collaborators ic WHERE ic.app_id = a.id AND ic.status = 'invited')";
 
@@ -380,7 +380,7 @@ test('every vote door counts the vote before it answers', () => {
   const route = votes.slice(votes.indexOf("router.post('/api/sessions/:id/vote'"));
   const body = route.slice(0, route.indexOf('settleVoteInBackground({ config, pool, session, revision })'));
   assert.match(votes, /require\('\.\.\/services\/topochain\/challenge-scorer'\)/);
-  assert.match(body, /await challengeScorer\.scoreOnVote\(pool, config\);\s*res\.json\(\{ ok: true, merged: false \}\);/,
+  assert.match(body, /await challengeScorer\.scoreOnVote\(pool, config\);\s*res\.json\(\{ ok: true, merged: false(?:, \.\.\.readyCard)? \}\);/,
     'a proposal vote: credited before the voter is answered');
   assert.ok(body.indexOf('scoreOnVote') > body.indexOf('if (reasonOnly) {'),
     'on a real vote only, behind the same gate as every other side effect');

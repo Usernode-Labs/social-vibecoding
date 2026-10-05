@@ -74,10 +74,12 @@ test('both live and completed proposal rows include the full PR body', () => {
   );
   // #1367 split the topic head into a view MODEL and a component; the
   // ordering contract is the order of the model's fields, which is what
-  // topic/topic-head.tsx renders them in.
+  // topic/topic-head.tsx renders them in. The summary's fields come from
+  // `_changeSummaryView` (its lead, and on a change Homeroom bot built the
+  // rest one tap down: first-session run-through, 4 Oct 2026).
   assert.match(
     APP_VIEW_SRC,
-    /summaryHtml: AppView\._proposalSummaryHtml\(item\),[\s\S]*?proposalBody: AppView\._proposalBodyView\(item\),[\s\S]*?details: AppView\._proposalDetailsView\(item\),/,
+    /\.\.\.AppView\._changeSummaryView\(item\),[\s\S]*?proposalBody: AppView\._proposalBodyView\(item\),[\s\S]*?details: AppView\._proposalDetailsView\(item\),/,
     'the focused topic places the full body between its summary and metadata'
   );
   const HEAD_SRC = fs.readFileSync(
@@ -149,7 +151,7 @@ test('every underway session topic renders summary, PR body and check details in
     APP_VIEW_SRC.indexOf('\n    } else {', APP_VIEW_SRC.indexOf("} else if (t.kind === 'session')") + 1)
   );
   assert.match(sessionBranch,
-    /body = \{[\s\S]*?summaryHtml: AppView\._proposalSummaryHtml\(item\),[\s\S]*?proposalBody: AppView\._proposalBodyView\(item\),[\s\S]*?details: AppView\._proposalDetailsView\(item\),/);
+    /body = \{[\s\S]*?\.\.\.AppView\._changeSummaryView\(item\),[\s\S]*?proposalBody: AppView\._proposalBodyView\(item\),[\s\S]*?details: AppView\._proposalDetailsView\(item\),/);
   assert.doesNotMatch(sessionBranch, /castVote|_cardVoteButtonSpecs|voteButtonsHtml/,
     'metadata reuse must not pull voting controls into Underway');
 });

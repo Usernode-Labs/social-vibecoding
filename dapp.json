@@ -85,6 +85,18 @@
       "description": "The Content rules check on every proposal (#2722): a model reads the proposal's diff against the conventions' Content rules section. off: no row. advisory (default): a flag shows on the checks but does not stop the merge. blocking: a flag fails the checks, so the proposal cannot merge until the content is fixed. Fails open on any error."
     },
     {
+      "key": "SMALL_CHANGE_TAG_MODE",
+      "group": "Platform",
+      "default": "on",
+      "description": "The small-change tag, watch only: for each proposal head, rule-based vetoes and then one GLM 5.3 Flash call on the Homeroom bot's OpenRouter key decide whether the change is clearly small and undoable. Admins read the results at /api/admin/small-change-tags. Nothing about votes, merges, checks or cards depends on it. on (default): tag every head a checks run settles on. off: do nothing."
+    },
+    {
+      "key": "HELPER_MODEL",
+      "group": "Platform",
+      "default": "glm",
+      "description": "The model behind the platform's short helper calls: titles, a new project's description and sketch card, grades, pills, chat reads, reports, the Workshop ask box, the content review, progress guesses. glm (default): GLM 5.3 Flash on the Homeroom bot's OpenRouter key, with Haiku 4.5 when it is late or fails. haiku: Haiku 4.5 only, as before. Calls on a person's own Anthropic key stay on Haiku."
+    },
+    {
       "key": "LOG_LEVEL",
       "group": "Platform",
       "default": "INFO",
@@ -705,7 +717,7 @@
       "expectText": "In progress"
     },
     {
-      "name": "Your requests lists what you asked for, open then done, with Ask for a change at the foot (UI overhaul)",
+      "name": "Your requests lists what you asked for, open then done, with Suggest an improvement at the foot (UI overhaul)",
       "path": "/?demo=1#profile/your-requests",
       "expectSelector": "#profile-proposals-screen:not(.hidden)[data-profile-work=\"requests\"] [data-profile-work-group=\"open\"] ~ [data-profile-work-group=\"done\"] ~ div > button[data-profile-work-ask]",
       "expectText": "someone is on it"
@@ -1524,34 +1536,34 @@
       "expectSelector": ".dev-ws-hero #dev-plus-menu [data-plus=\"import-pr\"]"
     },
     {
-      "name": "The hub's ⋯ menu leads with Ask for a change, then Build it yourself, then names its settings group (#1900, #852 review, B8)",
+      "name": "The hub's ⋯ menu leads with Suggest an improvement, then Build it yourself, then names its settings group (#1900, #852 review, B8)",
       "path": "/?demo=1&ws=status&shot=plus-menu#app/usernode-2d5619/dev",
       "expectSelector": "#dev-plus-menu > button[data-plus=\"issue\"]:first-child + button[data-plus=\"new-change\"] ~ [data-plus-group=\"settings\"]",
-      "expectText": "Ask for a change"
+      "expectText": "Suggest an improvement"
     },
     {
-      "name": "Build it yourself leads the menu's More section (once Agent sessions), where New change went (#1490, #2718 review, UI overhaul, B8)",
+      "name": "Build it yourself leads the menu's Agent chats section, for a viewer who has had an agent session (the check viewer has), where New change went (#1490, #2718 review, UI overhaul, B8, first-session run-through)",
       "path": "/?demo=1&shot=improve#app/usernode-2d5619/board",
       "expectSelector": "#apps-switcher-sheet[data-open] #app-menu-sessions > #improve-row-new-session",
       "expectText": "Build it yourself"
     },
     {
-      "name": "Ask for a change is the menu's one button, in exactly one place (#1490, #2718, UI overhaul)",
+      "name": "Suggest an improvement is the menu's one button, in exactly one place (#1490, #2718, UI overhaul)",
       "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#apps-switcher-sheet[data-open] #improve-quick-actions > #improve-row-feedback:only-child",
-      "expectText": "Ask for a change"
+      "expectText": "Suggest an improvement"
     },
     {
       "name": "The Homeroom menu opens anchored under the mark, not as a panel in the middle of the screen (#2784)",
       "path": "/?demo=1&shot=improve#app/usernode-2d5619/board",
       "expectSelector": "body:has(#platform-mark-btn[aria-expanded=\"true\"]) #apps-switcher-sheet[data-open][style*=\"--menu-anchor-top\"][style*=\"--menu-anchor-left\"] #improve-quick-actions > #improve-row-feedback",
-      "expectText": "Ask for a change"
+      "expectText": "Suggest an improvement"
     },
     {
-      "name": "The hub's ⋯ menu asks for a change directly and keeps New change in Improve (#1900)",
+      "name": "The hub's ⋯ menu offers Suggest an improvement directly and keeps New change in Improve (#1900)",
       "path": "/?demo=1&ws=status&shot=plus-menu#app/usernode-2d5619/dev",
       "expectSelector": "#dev-plus-menu:not(.hidden):not(:has([data-plus=\"proposal\"])) button[data-plus=\"issue\"] ~ [data-plus=\"import-pr\"]",
-      "expectText": "Ask for a change"
+      "expectText": "Suggest an improvement"
     },
     {
       "name": "Custom category chip renders on a Dev card (#780)",
@@ -2297,13 +2309,13 @@
       "expectSelector": "#app-install"
     },
     {
-      "name": "The app's own menu carries Ask for a change on an app view",
+      "name": "The app's own menu carries Suggest an improvement on an app view",
       "path": "/app/staging-demo-admins",
       "expectSelector": "#apps-switcher-sheet #improve-quick-actions > #improve-row-feedback",
       "allowConsoleErrors": true
     },
     {
-      "name": "The Dev view carries Ask for a change, one tap behind the mark",
+      "name": "The Dev view carries Suggest an improvement, one tap behind the mark",
       "path": "/app/staging-demo-admins/dev",
       "expectSelector": "#apps-switcher-sheet #improve-quick-actions > #improve-row-feedback"
     },
@@ -2313,7 +2325,7 @@
       "expectSelector": "#apps-switcher-sheet #switcher-nav > a#app-menu-row-workshop[data-context-row=\"workshop\"]"
     },
     {
-      "name": "The app-context sheet carries Build it yourself under More, once Agent sessions (Streamlined Concept, UI overhaul, B8)",
+      "name": "The app-context sheet carries Build it yourself under Agent chats for a viewer who has had an agent session (Streamlined Concept, UI overhaul, B8, first-session run-through)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#app-menu-sessions #improve-row-new-session"
     },
@@ -2627,7 +2639,7 @@
       "expectText": "Communities"
     },
     {
-      "name": "The hub's discussion is a preview (its last two messages and Open, the Discussion tab, with no composer), and Ask for a change leads the hero's ⋯, Build it yourself next, rather than ending the hub (#852 review, B8)",
+      "name": "The hub's discussion is a preview (its last two messages and Open, the Discussion tab, with no composer), and Suggest an improvement leads the hero's ⋯, Build it yourself next, rather than ending the hub (#852 review, B8)",
       "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"status\"]:has(section[data-ws-channel=\"preview\"] button[data-ws-channel-open]):not(:has(section[data-ws-channel=\"preview\"] form)):not(:has([data-ws-start-change])) #dev-plus-menu > [data-plus=\"issue\"]:first-child",
       "expectText": "Discussion"
@@ -2636,7 +2648,7 @@
       "name": "The Workshop tab leads with the approval rules, which All items no longer leads with (#3487, #3528)",
       "path": "/?demo=1&ws=workshop#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"workshop\"] > .dev-ws-tabbody > [data-ws-approval-rules]:first-child > [data-ws-community-rule]",
-      "expectText": "to merge"
+      "expectText": "A change goes live"
     },
     {
       "name": "Kanban cards show the assignee initial-avatar",
@@ -2949,10 +2961,10 @@
       "expectText": "Session finished"
     },
     {
-      "name": "The menu leads with Ask for a change, one button where there were two (#2718 review, UI overhaul)",
+      "name": "The menu leads with Suggest an improvement, one button where there were two (#2718 review, UI overhaul)",
       "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#apps-switcher-sheet[data-open] #improve-quick-actions:not(:has(#improve-row-new-session)) > #improve-row-feedback:first-child",
-      "expectText": "Ask for a change"
+      "expectText": "Suggest an improvement"
     },
     {
       "name": "Settings' About pane: all three version rows share one left edge",
@@ -3293,7 +3305,7 @@
       "name": "#2905: an app's chat in Messages draws no report or block text links in its rows, under a header with the app's own icon; B9: a message that asked Homeroom bot wears its Building chip for everyone",
       "path": "/?demo=1#messages/app/usernode-2d5619",
       "expectSelector": "#messages-screen:not(.hidden):has(header.messages-thread-header .app-icon-tile[data-icon=\"image\"] img) #gc-messages:has(.gc-msg):has([data-bot-request=building]):not(:has(.gc-msg button[aria-label=\"Report message\"])):not(:has(.gc-msg button.text-red-600))",
-      "expectText": "Building",
+      "expectText": "Homeroom bot is building this",
       "impact": [
         "frontend/src/features/group-chat/**",
         "public/css/app.css"
@@ -3316,9 +3328,10 @@
       "expectText": "Challenges"
     },
     {
-      "name": "The mark opens the menu, and it lists the app's own options, then More (once Agent sessions), with no discussion or invite row (#2718, #3362)",
+      "name": "The mark opens the menu, and it lists the app's own options, then Agent chats (it was More) for a viewer who has had an agent session, with no discussion or invite row (#2718, #3362, first-session run-through)",
       "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#apps-switcher-sheet[data-open]:not(:has(#app-menu-row-discussion, #app-menu-row-invite)) #switcher-nav > #app-menu-row-workshop ~ #app-menu-row-about + #app-menu-sessions"
+      "expectSelector": "#apps-switcher-sheet[data-open]:not(:has(#app-menu-row-discussion, #app-menu-row-invite)) #switcher-nav > #app-menu-row-workshop ~ #app-menu-row-about + #app-menu-sessions",
+      "expectText": "Agent chats"
     },
     {
       "name": "The menu links out to the project's community, scoped to the app, as a Go to community row (#2718, #2761, #3287)",
@@ -3327,7 +3340,7 @@
       "expectText": "Go to community"
     },
     {
-      "name": "More leads with Build it yourself, sessions or none (UI overhaul; it was Continue, then Agent sessions; B8; first-session plain words)",
+      "name": "Agent chats leads with Build it yourself (UI overhaul; it was Continue, then Agent sessions, then More; B8; shown once you have had an agent session, first-session run-through)",
       "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav > #app-menu-sessions > #improve-row-new-session:nth-child(2)",
       "expectText": "Build it yourself"
@@ -4821,10 +4834,10 @@
       "expectSelector": "#settings-screen.dc-lift.dc-lift-strip #settings-section-content.settings-sheet.dc-lift.dc-lift-session [data-settings-section=\"api-key\"]"
     },
     {
-      "name": "Settings' Log out is a danger-tinted pill under the sections",
+      "name": "Settings' Sign out is a danger-tinted pill under the sections",
       "path": "/#settings/about",
       "expectSelector": "#settings-footer #settings-logout.rounded-full",
-      "expectText": "Log out"
+      "expectText": "Sign out"
     },
     {
       "name": "The notifications sheet is a lifted sheet whose title row carries a close disc, over a chip rail",

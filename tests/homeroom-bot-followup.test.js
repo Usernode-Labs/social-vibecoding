@@ -327,7 +327,15 @@ test('"revise" that pushed nothing is a failure, said plainly, and nothing is re
   assert.equal(h.calls.reconciled.length, 0);
   assert.match(insertOf(h).params[18], /^revise: the turn produced no change/);
   assert.equal(h.calls.posts[0].kind, 'followup_failed');
-  assert.match(h.calls.posts[0].text, /It is as it was/);
+  // 5 Oct 2026: plain words and how to start it again, never the run's record
+  // (tests/homeroom-bot-revision-failed.test.js).
+  assert.equal(h.calls.posts[0].text, 'Homeroom bot couldn\'t update this change: it ended up with no changes to show. '
+    + 'The change is as it was. Reply here (or on the GitHub issue) and it will try again.');
+  // The requester hears it in their DM, with the change's card; the record goes with it to be read, never quoted.
+  assert.deepEqual(h.calls.posts[0].dm, {
+    reason: 'the turn produced no change', canRevise: true, sessionId: 5001,
+    link: live.proposalLink('app.onhomeroom.com', APP.slug, 5001),
+  });
 });
 
 test('a GLM follow-up whose agent failed is no revision: its push is never reconciled, and it asked for none', async (t) => {
@@ -345,7 +353,9 @@ test('a GLM follow-up whose agent failed is no revision: its push is never recon
   assert.equal(h.calls.reconciled.length, 0, 'the proposal stays as it was voted on');
   assert.equal(insertOf(h).params[18], 'revise: the turn failed (the agent exited with code 1), so its change was not kept');
   assert.equal(h.calls.posts[0].kind, 'followup_failed');
-  assert.match(h.calls.posts[0].text, /It is as it was/);
+  assert.equal(h.calls.posts[0].text, 'Homeroom bot couldn\'t update this change: something went wrong during the update. '
+    + 'The change is as it was. Reply here (or on the GitHub issue) and it will try again.');
+  assert.doesNotMatch(h.calls.posts[0].text, /exited|code 1|not kept|turn/, 'the run\'s record stays on the run');
   assert.equal(h.calls.exec[0].opts.discardFailedTurn, true, 'run-cc.sh is asked to commit and push nothing from a failed turn');
 
   // With no answer at all, the failure is the reason, not "unparseable".
@@ -408,6 +418,21 @@ test('after MAX_REVISIONS the turn runs read-only, and can only hand over', asyn
   assert.equal(out.verdict, 'person');
   assert.equal(h.calls.posts[0].kind, 'followup_person');
   assert.equal(followup.MAX_REVISIONS, 3);
+});
+
+test('a "revise" after MAX_REVISIONS changes nothing, and says a reply would not either', async (t) => {
+  const h = harness({
+    revisions: followup.MAX_REVISIONS,
+    comments: [{ author: 'evan', body: 'One more tweak', createdAt: '2026-09-26T11:30:00Z' }],
+    result: { lastResultText: '```json\n{"action":"revise","reply":"Done."}\n```', pushOk: false, sha: OLD_HEAD },
+  });
+  const out = await run(t, h);
+  assert.equal(out.verdict, 'failed');
+  assert.equal(h.calls.posts[0].kind, 'followup_failed');
+  assert.equal(h.calls.posts[0].text, 'Homeroom bot couldn\'t update this change: it has already updated it as many times as it may '
+    + 'on its own, so a person needs to make this one. The change is as it was.');
+  assert.doesNotMatch(h.calls.posts[0].text, /try again/, 'a reply would not get it updated');
+  assert.equal(h.calls.posts[0].dm.canRevise, false);
 });
 
 test('a proposal that is merging is left alone', async (t) => {

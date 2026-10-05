@@ -37,10 +37,11 @@ const READS = {
   },
   USE_APPS_MINUTES: {
     tables: ['app_activity', 'apps'],
-    key: 'window',
-    keyLabel: 'window',
+    key: 'window:',
+    keyLabel: 'window:<first day of the window>',
     text: ({ target }) => 'One row per person: their time in apps inside the window, added up, once it reaches '
-      + `${target == null ? 'the target' : `${fmt(target)} minutes`}. Apps they made themselves are left out.`,
+      + `${target == null ? 'the target' : `${fmt(target)} minutes`}. Apps they made themselves are left out. `
+      + 'On a weekly challenge each week is a window of its own.',
   },
   PROPOSAL_SENT: {
     tables: ['chat_sessions', 'apps'],
@@ -222,7 +223,8 @@ function anatomy(measureKey, { points = null, target = null } = {}) {
     steps.push({
       kind: 'grade',
       title: 'Grade each new one',
-      text: `One call to ${grader.GRADE_MODEL} for each new ${spec.unit}, one at a time, at most `
+      text: `One call to ${grader.GRADE_MODEL} (${grader.GRADE_FALLBACK_MODEL} when it does not answer in time) `
+        + `for each new ${spec.unit}, one at a time, at most `
         + `${scorer.MAX_GRADES_PER_RUN} in a run across every graded rule. It is sent the app name, the first `
         + `${fmt(grader.GRADE_TITLE_CHARS)} characters of the title and the first ${fmt(grader.GRADE_TEXT_CHARS)} of the text, `
         + `and returns a score from 1 to ${ceiling == null ? 'the ceiling' : fmt(ceiling)} with a reason. Both are kept on the `

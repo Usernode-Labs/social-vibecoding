@@ -12,8 +12,9 @@ import { Message, Localized, message as catalogText } from "../../lib/i18n/react
  *            you to join …" when the sender did not make it), and how many
  *            people are in it;
  *   picture  the project itself: the after-shot of its latest change, else
- *            the Discover card's image, else the sketch its maker was shown
- *            while it is built (a sandboxed page: no script, its own origin),
+ *            the Discover card's image, else, while it is built, the
+ *            featured card of the idea its maker was shown
+ *            (../first-session/sketch-card.tsx, drawn here from its words),
  *            else a large tile with its one-line description
  *            (preview().project.picture);
  *   join     the sender's note, when they left one, and the one way in.
@@ -40,7 +41,11 @@ import { useEffect, useState } from 'react';
 
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 
-export type InvitePicture = { kind: 'shot' | 'illustration' | 'sketch'; url: string; darkUrl: string | null };
+import { FeaturedCard, sketchCardOf } from '../first-session/sketch-card';
+
+export type InvitePicture =
+  | { kind: 'shot' | 'illustration'; url: string; darkUrl: string | null }
+  | { kind: 'sketch'; url?: null; darkUrl?: null; card: unknown };
 
 export type InvitePreview = {
   live: boolean;
@@ -55,6 +60,8 @@ export type InvitePreview = {
   inviter?: string | null;
   inviterName?: string | null;
   inviterMadeIt?: boolean;
+  /** Its first version is still on its way: "Maya is making Run Tracker". */
+  building?: boolean;
   /**
    * The community's own name, when it has one apart from its project's.
    * Communities and projects are one-to-one today and a community carries
@@ -104,13 +111,18 @@ export function madeForName(preview: InvitePreview): string | null {
  * The card's headline. "Maya made Run Tracker" when whoever sent the link
  * made the project — the gift the link is — or "Maya made this for Sunday
  * Run Club" when the community it was made for has a name of its own; the
- * plain invitation otherwise.
+ * plain invitation otherwise. While its first version is still on its way
+ * (`building`) it is "Maya is making Run Tracker": nothing is made yet.
  */
 export function madeLine(preview: InvitePreview): string {
   const name = preview.project?.name || 'a project';
   if (preview.inviterMadeIt && preview.inviterName) {
     const community = madeForName(preview);
-    return community ? tr("auth:value1_made_this_for_value2_fed31a94", { value1: preview.inviterName, value2: community }) : tr("auth:value1_made_value2_4169495a", { value1: preview.inviterName, value2: name });
+    const value1 = preview.inviterName;
+    if (preview.building) {
+      return community ? tr("auth:value1_is_making_this_for_value2", { value1, value2: community }) : tr("auth:value1_is_making_value2", { value1, value2: name });
+    }
+    return community ? tr("auth:value1_made_this_for_value2_fed31a94", { value1, value2: community }) : tr("auth:value1_made_value2_4169495a", { value1, value2: name });
   }
   return invitedLine(preview);
 }
@@ -196,26 +208,19 @@ function Tile({ project, size }: { project: NonNullable<InvitePreview['project']
  * the part of a screen that says what the project is. An illustration has
  * a dark version when its group made one, and each theme shows its own.
  */
-function Picture({ project }: { project: NonNullable<InvitePreview['project']> }) {
+function Picture({ project, building = false }: { project: NonNullable<InvitePreview['project']>; building?: boolean }) {
   const picture = project.picture;
-  if (picture && picture.kind === 'sketch') {
-    // WP-D: the page is drawn in this screen's look, read once: it is
-    // static, and the screen does not stay up long.
-    const dark = typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
+  // WP-D: while it is built, the card of the idea its maker was shown:
+  // "Being made" while its first version is on its way, no pill otherwise.
+  const card = picture && picture.kind === 'sketch' ? sketchCardOf(picture) : null;
+  if (card) {
     return (
-      <div data-landing-invite-picture="sketch" className="relative mx-4 mt-3 h-[340px] overflow-hidden rounded-[20px] bg-white dark:bg-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)]">
-        <LocalizedDynamic element={<iframe
-          title={tr("auth:a_sketch_of_value1_1b50b7e2", { value1: project.name })}
-          src={`${picture.url}?theme=${dark ? 'dark' : 'light'}`}
-          sandbox=""
-          referrerPolicy="no-referrer"
-          className="h-full w-full border-0"
-        />} resolve={() => ({ get "title"() { return tr("auth:a_sketch_of_value1_1b50b7e2", { value1: project.name }); } })} />
-        <span className="pointer-events-none absolute right-2 top-2 rounded-full bg-black/60 px-2 py-0.5 text-[12px] font-semibold text-white"><Message id="auth:sketch_0f9b002d" /></span>
+      <div data-landing-invite-picture="sketch" className="mx-4 mt-3">
+        <FeaturedCard name={project.name} colorKey={project.name} emoji={card.emoji} card={card} stage={building ? 'making' : 'plain'} />
       </div>
     );
   }
-  if (picture) {
+  if (picture && picture.kind !== 'sketch') {
     const img = 'block w-full h-[340px] object-cover object-top';
     return (
       <div data-landing-invite-picture={picture.kind} className="mx-4 mt-3 overflow-hidden rounded-[20px] bg-white dark:bg-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)]">
@@ -300,7 +305,7 @@ export function MadeForYou({ preview, primaryClass, onJoin }: {
           </div>
         </div>
       </section>
-      <Picture project={project} />
+      <Picture project={project} building={!!preview.building} />
       {preview.note ? (
         <section data-landing-invite-join="" className={`${CARD} mt-3`}>
           <p data-landing-invite-note="" className="rounded-2xl bg-violet-500/10 px-4 py-3 text-[15px] leading-snug text-zinc-700 dark:text-zinc-200">

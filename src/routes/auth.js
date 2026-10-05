@@ -729,19 +729,13 @@ function authRoutes(config) {
     // The first session's question in place of the join screen: an account
     // still due the join screen is asked "What do you want to make?"
     // instead whenever the story landing is on, however it signed in (the
-    // story's own sheet, a password, a code, a provider). Only read for an
-    // account that is due it; FALSE when the switch cannot be read, which
-    // leaves the join screen as it was.
+    // story's own sheet, a password, a code, a provider), and on every boot
+    // until it answers (services/first-session.js). Not for an account that
+    // is already somewhere, a project of its own or a community besides
+    // Homeroom: that one is asked the join screen. Only read for an account
+    // that is due it; FALSE when the whole lookup fails, which leaves the
+    // join screen as it was.
     let storyFirstSession = false;
-    // THE FIRST WEEK IS THE FIRST CHAPTER, WITHOUT POINTS (first-session
-    // plan, 2026-10-04). TRUE while the account is less than seven days old.
-    // Home's Challenges block hides itself while it is true
-    // (frontend/src/features/home/home-panels.js inFirstWeek): a newcomer
-    // meets the people and the projects first, and the season's points wait
-    // for week two. Decided HERE, by the database's clock against the row's
-    // own created_at, never by the device's clock. Same failure direction as
-    // the flags above: unreadable means FALSE, which is the block as it was.
-    let firstWeek = false;
     try {
       const { rows } = await pool.query(
         `SELECT u.anthropic_key_enc, u.anthropic_key_last4, u.usernode_pubkey,
@@ -752,7 +746,6 @@ function authRoutes(config) {
                   AND u.getting_started_closed_at IS NULL
                   AND u.getting_started_gate) AS show_getting_started,
                 (u.tour_done_at IS NOT NULL) AS tour_done,
-                (u.created_at > NOW() - INTERVAL '7 days') AS first_week,
                 EXISTS (
                   SELECT 1 FROM credentials.user_ai_credentials credential
                    WHERE credential.user_id = u.id
@@ -782,8 +775,7 @@ function authRoutes(config) {
       needsCommunitiesChoice = rows[0]?.needs_communities_choice === true;
       showGettingStarted = rows[0]?.show_getting_started === true;
       tourDone = rows[0]?.tour_done === true;
-      firstWeek = rows[0]?.first_week === true;
-      if (needsCommunitiesChoice) storyFirstSession = await firstSession.storyLandingEnabled(pool);
+      if (needsCommunitiesChoice) storyFirstSession = await firstSession.asksWhatToMake(pool, req.user.id);
       const verifiedLinks = await socialIdentity.verifiedProfileLinks(pool, req.user.id);
       profile = shapeProfile(rows[0], verifiedLinks);
     } catch {}
@@ -885,8 +877,10 @@ function authRoutes(config) {
         // (frontend/src/features/auth/communities-first-run.js).
         needsCommunitiesChoice,
         // TRUE when the join screen above is to be the first session's
-        // "What do you want to make?" instead (the story landing is on).
-        // Only ever TRUE alongside needsCommunitiesChoice.
+        // "What do you want to make?" instead (the story landing is on, and
+        // the account has no project or community yet). Only ever TRUE
+        // alongside needsCommunitiesChoice, and stays TRUE until that
+        // question is answered, so a reload asks it again.
         storyFirstSession,
         // The Getting started card on Home: shown to an account that came
         // through the join screen, until it is closed.
@@ -896,10 +890,6 @@ function authRoutes(config) {
         // tour counts it done when this OR the browser's own flag says so
         // (frontend/src/features/home/tour/tour-done.ts).
         tourDone,
-        // The account is in its first seven days: the first chapter, which
-        // has no points, so Home draws no Challenges block (see `firstWeek`
-        // above). The Challenges screen itself is unchanged.
-        firstWeek,
         hasApiKey,
         keyLast4,
         // In-chat venue availability: feature flag + beta eligibility + a

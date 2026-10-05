@@ -193,8 +193,11 @@ test('Apple and Google sign-in against the full PostgreSQL schema', { timeout: 1
     assert.ok(backCookies.hr_oauth_signup);
     assert.equal(backCookies.session, undefined, 'no session before the username');
     assert.equal(exchanged[0].code, 'c1');
-    const made = (await pool.query(`SELECT id, needs_communities_choice FROM users WHERE email = 'http@example.com'`)).rows[0];
-    assert.equal(made.needs_communities_choice, false, 'started from the story: asked what to make instead');
+    const made = (await pool.query(
+      `SELECT id, needs_communities_choice, getting_started_seen->>'first_session' AS first_session
+         FROM users WHERE email = 'http@example.com'`)).rows[0];
+    assert.equal(made.first_session, 'story', 'started from the story: asked what to make instead');
+    assert.equal(made.needs_communities_choice, true, 'and asked until it answers, not answered by the start');
 
     const finish = await fetch(`${base}/api/auth/oauth/finish`, {
       method: 'POST',

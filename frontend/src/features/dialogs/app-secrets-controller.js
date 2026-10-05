@@ -38,6 +38,9 @@
 //   row.githubSecret        — an existing row whose name exactly matches
 //                             one of those secrets; annotated rather than
 //                             duplicated.
+
+import { attachReturnKey, pressButton } from '../../lib/return-to-next';
+
 // The island's open/close controller, or null before hydration. Registered by
 // `useDialog('appSecrets')` — see use-dialog.ts. Looked up on every call
 // rather than captured, because the island unregisters on unmount.
@@ -532,17 +535,18 @@ const Secrets = {
           <div>
             <label class="${lbl}" for="decl-key">${globalThis.PlatformI18n.htmlText("core:key_99a52df3")}</label>
             <input id="decl-key" class="${input} font-mono" placeholder="${globalThis.PlatformI18n.htmlText("core:my_new_token_66d5b2c1")}"
-              autocapitalize="characters" autocomplete="off" spellcheck="false">
+              autocapitalize="characters" autocomplete="off" spellcheck="false" enterkeyhint="next">
             <p class="${help}">${globalThis.PlatformI18n.htmlText("core:upper_snake_case_the_name_your_code_reads_from_t_6a69b602")}</p>
           </div>
           <div>
             <label class="${lbl}" for="decl-description">${globalThis.PlatformI18n.htmlText("core:description_526e0087")}</label>
-            <input id="decl-description" class="${input}" placeholder="${globalThis.PlatformI18n.htmlText("core:what_this_value_is_and_where_to_get_it_cb663adf")}">
+            <input id="decl-description" class="${input}" placeholder="${globalThis.PlatformI18n.htmlText("core:what_this_value_is_and_where_to_get_it_cb663adf")}"
+              enterkeyhint="next">
           </div>
           <div>
             <label class="${lbl}" for="decl-value">${globalThis.PlatformI18n.htmlText("core:value_8e37953d")}</label>
             <input id="decl-value" class="${input} font-mono" placeholder="${globalThis.PlatformI18n.htmlText("core:leave_blank_to_declare_only_453d7d74")}"
-              autocomplete="off" spellcheck="false">
+              autocomplete="off" spellcheck="false" enterkeyhint="next">
             <p class="${help}">${canWrite
     ? globalThis.PlatformI18n.t("core:stored_as_soon_as_you_submit_optional_if_you_giv_f30fc98e")
     : globalThis.PlatformI18n.t("core:held_encrypted_and_stored_when_the_proposal_merg_17a9bed5")}</p>
@@ -558,7 +562,7 @@ const Secrets = {
           <p class="${help}">${globalThis.PlatformI18n.htmlText("core:required_blocks_deploys_until_it_has_a_value_pri_3890be15", { value12: isPlatform ? '' : globalThis.PlatformI18n.t("core:message_f704c2eea21c") })}</p>
           <div>
             <label class="${lbl}" for="decl-default">${globalThis.PlatformI18n.htmlText("core:default_21b111cb")}</label>
-            <input id="decl-default" class="${input} font-mono" placeholder="${globalThis.PlatformI18n.htmlText("core:optional_ec91fdd9")}">
+            <input id="decl-default" class="${input} font-mono" placeholder="${globalThis.PlatformI18n.htmlText("core:optional_ec91fdd9")}" enterkeyhint="next">
             <p class="${help}">${isPlatform
     ? globalThis.PlatformI18n.t("core:documents_the_fallback_your_code_already_uses_th_3e65014c")
     : globalThis.PlatformI18n.t("core:used_at_deploy_time_when_no_value_is_stored_c534d9cb")}</p>
@@ -566,14 +570,16 @@ const Secrets = {
           ${isPlatform ? `
           <div>
             <label class="${lbl}" for="decl-group">${globalThis.PlatformI18n.htmlText("core:group_34ca0e76")}</label>
-            <input id="decl-group" class="${input}" list="decl-group-options" placeholder="${globalThis.PlatformI18n.htmlText("core:general_c910d474")}">
+            <input id="decl-group" class="${input}" list="decl-group-options" placeholder="${globalThis.PlatformI18n.htmlText("core:general_c910d474")}"
+              enterkeyhint="done">
             <datalist id="decl-group-options">${groups.map((g) => `<option value="${escapeAttr(g)}"></option>`).join('')}</datalist>
             <p class="${help}">${globalThis.PlatformI18n.htmlText("core:the_heading_this_row_files_under_in_this_panel_29efebbb")}</p>
           </div>` : `
           <div>
             <label class="${lbl}" for="decl-staging-default">${globalThis.PlatformI18n.htmlText("core:staging_default_504b5f39")}</label>
-            <input id="decl-staging-default" class="${input} font-mono" placeholder="${globalThis.PlatformI18n.htmlText("core:optional_ec91fdd9")}">
-            <p class="${help}">${globalThis.PlatformI18n.htmlText("core:what_pr_previews_use_a_required_private_secret_n_bc24fbb7")}</p>
+            <input id="decl-staging-default" class="${input} font-mono" placeholder="${globalThis.PlatformI18n.htmlText("core:optional_ec91fdd9")}"
+              enterkeyhint="done">
+            <p class="${help}">${globalThis.PlatformI18n.htmlText("core:staging_default_help_pr_previews")}</p>
           </div>`}
         </div>
         <div class="flex items-center gap-2 mt-3">
@@ -584,6 +590,14 @@ const Secrets = {
         </div>
       </div>`;
 
+    // #3907: Return walks the five fields (the checkboxes are stepped over)
+    // and the last one presses the submit button, so a blocked form still
+    // refuses the same way a tap does. The iOS keyboard has no chevrons to
+    // walk them with any more. On the node this render just wrote, so a
+    // re-render never stacks a second listener.
+    attachReturnKey(host.firstElementChild, {
+      submit: () => { pressButton(document.getElementById('app-secrets-declare-submit')); },
+    });
     document.getElementById('app-secrets-declare-cancel')?.addEventListener('click', () => {
       Secrets.declareOpen = false;
       Secrets.setStatus('', '');

@@ -11,6 +11,7 @@ const communities = require('../services/communities');
 const attachmentsSvc = require('../services/attachments');
 const messageBookmarks = require('../services/message-bookmarks');
 const appChat = require('../services/app-chat');
+const groupChannelNotify = require('../services/group-channel-notify');
 const conversationsSvc = require('../services/conversations');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const {
@@ -888,6 +889,20 @@ function chatRoutes(config) {
         ? await appChat.markRead(pool, { appId: app.id, userId: req.user.id, messageId })
         : await appChat.markUnread(pool, { appId: app.id, userId: req.user.id, messageId });
       if (!result.ok) return res.status(404).json({ error: 'Message not found' });
+      // Read in the discussion is read in the bell: a small group's row
+      // about messages up to here is done with, so the next message rings
+      // again (services/group-channel-notify.js). "Mark unread" leaves the
+      // bell alone. Non-fatal: the cursor already moved.
+      if (move === 'read') {
+        try {
+          const cleared = await groupChannelNotify.markChannelRead(pool, req.user.id, app.id, messageId);
+          if (cleared > 0) {
+            require('../services/ws').pushNotificationToUser(req.user.id, { type: 'notifications_changed' });
+          }
+        } catch (err) {
+          log.warn('chat', 'Could not clear discussion notifications', { slug: req.params.slug, message: err.message });
+        }
+      }
       return res.json({ unread_count: result.unread_count });
     } catch (err) {
       log.error('chat', `Failed to mark ${move}`, { slug: req.params.slug, message: err.message });

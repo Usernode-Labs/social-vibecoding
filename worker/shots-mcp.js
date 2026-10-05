@@ -23,7 +23,7 @@ const proxyControlToken = String(process.env.SHOTS_PROXY_CONTROL_TOKEN || '');
 // Each persona's browser saves the files it is asked to (screenshots by name,
 // clips when a browser session closes) into its own directory here.
 const shotsDir = String(process.env.SHOTS_DIR || '');
-const PERSONA_DIRS = Object.freeze(['member', 'admin', 'full_admin']);
+const PERSONA_DIRS = Object.freeze(['member', 'admin', 'full_admin', 'guest']);
 if (!/^https?:\/\//.test(platform) || !/^[0-9a-f]{32}$/.test(runId) || !token) {
   process.stderr.write('Shots MCP configuration is incomplete.\n');
   process.exit(1);
@@ -229,17 +229,19 @@ server.registerTool('save_clip', {
 });
 
 server.registerTool('skip_change', {
-  description: 'Say that a declared change cannot be shown on these builds, with what you saw: the missing data, access, or interaction. Pass change to skip only that one; the reason is shown on the proposal, nothing you saved for that change is published (use this to withdraw shots that turned out not to show it), and the other changes still are. Saving a shot for the change afterwards takes the skip back. Leave change out only when nothing at all can be shot.',
+  description: 'Say that a declared change cannot be shown on these builds, with what you saw. Pass change to skip only that one; the reason is shown on the proposal, nothing you saved for that change is published (use this to withdraw shots that turned out not to show it), and the other changes still are. Saving a shot for the change afterwards takes the skip back. Leave change out only when nothing at all can be shot. Set outcome "failed" when you carried out the steps on the after address and the app itself broke: an action answered a server error (HTTP 5xx in browser_network_requests), the page showed an error, or the claimed effect never appeared because the app errored. That tells people and the author the change does not work. Leave outcome out (or "skipped") when these copies cannot reach the state: missing data, access, or an interaction you could not perform.',
   inputSchema: {
     reason: z.string().trim().min(1).max(1000)
-      .describe('A short explanation a person reading the proposal will understand.'),
+      .describe('A short explanation a person reading the proposal will understand. For "failed", say what you did and what the app answered.'),
     change: z.string().min(1).max(96).optional(),
+    outcome: z.enum(['skipped', 'failed']).optional()
+      .describe('"failed": you did the steps on the after address and the app broke. "skipped" (the default): the state cannot be reached on these copies.'),
   },
   annotations,
-}, async ({ reason, change }) => {
+}, async ({ reason, change, outcome }) => {
   try {
     return resultContent((await request('/skip', {
-      method: 'POST', body: { change: change || null, reason }, timeoutMs: 30_000,
+      method: 'POST', body: { change: change || null, reason, ...(outcome ? { outcome } : {}) }, timeoutMs: 30_000,
     })).result);
   } catch (error) { return toolError(error); }
 });

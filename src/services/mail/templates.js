@@ -313,9 +313,9 @@ function waitlistCode(payload) {
 const RELEASE_CODE_NOTE = 'Opening the link emails you a 6-digit code to sign in with. '
   + 'The code expires in 10 minutes, and you can ask for a new one at any time.';
 
-const RELEASE_HEADLINE = 'AI app-building, now multiplayer.';
+const RELEASE_HEADLINE = 'Make and share small apps with friends and groups.';
 const RELEASE_CAN_DO = [
-  'Vibecode apps solo or with a friend.',
+  'Make an app for you, your friends or your group.',
   'Use and improve apps with others.',
   'Suggest, preview, and vote on changes.',
   'Complete a few early challenges along the way.',
@@ -404,7 +404,7 @@ function waitlistReleased(payload) {
 
   return {
     subject: "You're in. Welcome to Homeroom",
-    preheader: "AI app-building, now multiplayer. Here's how to get started.",
+    preheader: "Make and share small apps with friends and groups. Here's how to get started.",
     text,
     html,
   };
@@ -524,6 +524,16 @@ function activityFrame({ subject, lead, url, label, unsubscribeUrl }) {
 // Something somebody asked Homeroom bot for is ready to try.
 function buildReady(payload) {
   const app = String(payload.appName || 'Your project').slice(0, 80);
+  // Built, but its before & after shots showed part of it failing.
+  if (payload.notWorking) {
+    return activityFrame({
+      subject: `${app} is built, but not everything works yet`,
+      lead: `Homeroom bot built what you asked for in ${app}, but not everything works yet. Open it to see what.`,
+      url: payload.url || PRODUCTION_ORIGIN,
+      label: 'Open it',
+      unsubscribeUrl: payload.unsubscribeUrl || null,
+    });
+  }
   return activityFrame({
     subject: `${app} is ready to try`,
     lead: `Homeroom bot built what you asked for in ${app}, and it's ready to try.`,

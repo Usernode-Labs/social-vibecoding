@@ -27,6 +27,7 @@ const PERSONAS = Object.freeze({
   member: { dir: 'member', server: 'browser_member' },
   read_only_admin: { dir: 'admin', server: 'browser_admin' },
   full_admin: { dir: 'full_admin', server: 'browser_full_admin' },
+  guest: { dir: 'guest', server: 'browser_guest' },
 });
 // The same MCP browser tools a hosted turn is denied (worker/run-cc.sh).
 const DENIED_BROWSER_TOOLS = ['browser_evaluate', 'browser_run_code', 'browser_file_upload', 'browser_install'];
@@ -40,7 +41,8 @@ function usage() {
   --state-dir DIR        Playwright storage state per persona: member.json,
                          read_only_admin.json, full_admin.json (signed-in
                          cookies for both origins); a missing file means that
-                         persona's browser starts signed out
+                         persona's browser starts signed out, and the guest's
+                         always does
   --out DIR              output directory (default .shots-dry-run/<time>)
   --repo DIR             git checkout holding both commits, for the brief's
                          changed files and diff (default: this repository)
@@ -160,7 +162,9 @@ function localBridge(runtimeDir) {
 // screenshots carry the page-site stamps the shots bridge requires before it
 // publishes one (worker/shots-boundary.js).
 function browserServer(options, persona, shotsDir, clipSize) {
-  const statePath = options.stateDir ? path.join(options.stateDir, `${persona}.json`) : null;
+  // The guest is the browser that is not signed in, whatever the directory holds.
+  const statePath = options.stateDir && persona !== 'guest'
+    ? path.join(options.stateDir, `${persona}.json`) : null;
   return {
     command: process.execPath,
     args: [
@@ -454,4 +458,6 @@ if (require.main === module) {
   });
 }
 
-module.exports = { parseArgs, revisionContext, contactSheet, agentEnv, watchAgentStream };
+module.exports = {
+  PERSONAS, parseArgs, revisionContext, contactSheet, agentEnv, watchAgentStream, browserServer,
+};

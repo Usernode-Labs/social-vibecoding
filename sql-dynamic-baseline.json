@@ -747,6 +747,13 @@
     {
       "source": "src/routes/topochain/public.js",
       "kind": "structural-template",
+      "fingerprint": "34540a7d410e6004fc43",
+      "count": 1,
+      "preview": "`SELECT ua.challenge_id, COUNT(*)::int AS credits FROM user_activities ua JOIN challenges c ON c.id = ua.challenge_id LEFT JOIN challenge_templates ct ON ct.id "
+    },
+    {
+      "source": "src/routes/topochain/public.js",
+      "kind": "structural-template",
       "fingerprint": "aff8d6e5f16e400828ea",
       "count": 1,
       "preview": "`SELECT c.id, c.season_event_id, c.challenge_template_id, c.enabled, c.completed, c.goal, c.task, c.reward, c.description, c.requirements, c.schedule_start, c.s"
@@ -1041,9 +1048,9 @@
     {
       "source": "src/services/homeroom-bot-dm.js",
       "kind": "structural-template",
-      "fingerprint": "ed24ad3703716df52e4f",
+      "fingerprint": "c913b1f251da2021e1da",
       "count": 1,
-      "preview": "`SELECT cs.id, cs.app_id, cs.user_id, cs.approval_epoch, COALESCE(cs.promoted_at, cs.created_at) AS opened_at, ${communities.audienceSql('a', '(SELECT COUNT(*) "
+      "preview": "`SELECT cs.id, cs.app_id, cs.user_id, cs.approval_epoch, COALESCE(cs.promoted_at, cs.created_at) AS opened_at, COALESCE(cs.requires_explicit_approval, FALSE) AS"
     },
     {
       "source": "src/services/homeroom-bot-dm.js",
@@ -1216,14 +1223,21 @@
     {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
-      "fingerprint": "14bc9ec7c4bde86c6783",
+      "fingerprint": "4fb03398efe7c9b53166",
+      "count": 1,
+      "preview": "`SELECT n.id, n.kind, n.user_id, n.read_at, n.created_at, n.app_id, a.slug AS app_slug, a.name AS app_name, n.chat_message_id, cm.content AS message_content, cm"
+    },
+    {
+      "source": "src/services/notifications.js",
+      "kind": "structural-template",
+      "fingerprint": "65dd4ea804620e146619",
       "count": 1,
       "preview": "`SELECT n.id, n.kind, n.read_at, n.created_at, n.app_id, a.slug AS app_slug, a.name AS app_name, n.chat_message_id, cm.content AS message_content, cm.thread_typ"
     },
     {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
-      "fingerprint": "91df73aa6c2d685889c8",
+      "fingerprint": "87e998a091a89f5c938b",
       "count": 1,
       "preview": "`SELECT n.id, n.kind, n.read_at, n.created_at, n.app_id, a.slug AS app_slug, a.name AS app_name, n.chat_message_id, cm.content AS message_content, cm.thread_typ"
     },
@@ -1247,13 +1261,6 @@
       "fingerprint": "b83117b670d097e6e2dc",
       "count": 1,
       "preview": "`UPDATE notifications SET read_at = NOW() WHERE user_id = $1 AND ${def.scope} = $2 AND kind = ANY($3) AND read_at IS NULL`"
-    },
-    {
-      "source": "src/services/notifications.js",
-      "kind": "structural-template",
-      "fingerprint": "bf3729bc3cdae40f61c7",
-      "count": 1,
-      "preview": "`SELECT n.id, n.kind, n.user_id, n.read_at, n.created_at, n.app_id, a.slug AS app_slug, a.name AS app_name, n.chat_message_id, cm.content AS message_content, cm"
     },
     {
       "source": "src/services/notifications.js",

@@ -688,6 +688,77 @@ point a deep `path:` at the specific changed self-app screen** —
 omitting it defaults to `/` (the home feed), which no capture fix can
 rescue.
 
+## Time-dependent features
+
+Some changes only show at certain times: a reminder the evening before
+bins day, a rota that turns over on Monday, a deadline, "tonight", a
+seasonal screen. A preview opens on whatever day it happens to be, so
+without help nobody can see such a change before they vote on it. (A group
+was once asked to approve a Thursday-evening banner that Try it opened on a
+Monday and the shots could not show.) A staging preview can instead be
+shown as of a chosen moment. Four things make that work:
+
+1. **Read "now" through the platform, never `new Date()`, `Date.now()` or
+   SQL's `NOW()` / `CURRENT_DATE`, wherever the day or the time decides
+   what shows.**
+   - In the page: `usernode.now()` (the bridge) returns a `Date`. It is the
+     real time, except on a preview opened at a moment, where it is that
+     moment plus the time since the page loaded. `usernode.previewNow` is
+     that moment as an ISO string, or `null`.
+   - On the server: `req.now`, a `Date`. New apps' `server.js` sets it (its
+     sign-in middleware calls `requestNow`). An app without it adds this
+     before its routes:
+
+     ```js
+     const IS_STAGING = process.env.USERNODE_ENV === 'staging';
+     const PREVIEW_NOW = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/;
+     function requestNow(req) {
+       const raw = IS_STAGING ? (req.headers['x-usernode-now'] || req.query['un-now']) : null;
+       return typeof raw === 'string' && PREVIEW_NOW.test(raw) ? new Date(raw) : new Date();
+     }
+     app.use((req, _res, next) => { req.now = requestNow(req); next(); });
+     ```
+
+   - The page tells the server: every API call sends
+     `x-usernode-now: usernode.now().toISOString()` when
+     `usernode.previewNow` is set. The starter templates' `api()` helper
+     already does.
+   - In SQL, pass `req.now` as a parameter (`WHERE due_on = $1::date`)
+     instead of `NOW()` where the answer decides what shows. A timestamp
+     that records when something happened (`created_at DEFAULT NOW()`)
+     stays as it is.
+   - Name the zone. The server runs in UTC, so "Thursday evening" computed
+     with `getDay()` / `getHours()` is Thursday evening in UTC. Work out the
+     day and the hour in the group's zone with `Intl.DateTimeFormat` and
+     `timeZone`, and say which zone the app uses in its `CLAUDE.md`.
+   - **Production ignores it entirely.** The platform only adds
+     `?un-now=` to a staging preview's address, the bridge never reads it
+     on a production app's address, and the server reads it only when
+     `USERNODE_ENV` is `staging`. The code path is the same everywhere; only
+     the value of "now" differs, so this is data, not a gated feature.
+2. **Say when it shows** in the change's description and testing steps,
+   in plain words: "The reminder shows on Thursdays from 6 pm until bins is
+   ticked."
+3. **Declare a preview moment.** Put one line in the TESTING block (it is
+   carried into the pull request's "How to test", where it shows to
+   nobody):
+
+   ```
+   <!-- usernode:preview-at 2026-10-08T19:00 Europe/London -->
+   ```
+
+   A local date and time (`YYYY-MM-DDTHH:MM`), then the IANA time zone the
+   app reasons in (UTC when left out). Pick a moment when the change shows
+   with the preview's own data: a Thursday at 7 pm, with the seeded rota's
+   bins still unticked. Try it then opens the preview at that moment and
+   says so above it ("Showing it as on Thursday 8 Oct, 7 pm", with "See it
+   as now" beside it), and the shots agent opens both the before and the
+   after copy at it. On `submit_work`, put the same line in
+   `testingSteps`. Only one moment per change; the first valid line wins.
+4. **Check it yourself** in the in-loop browser: add
+   `?un-now=2026-10-08T18:00:00Z` (an ISO time with `Z` or an offset) to
+   the URL, and look at it before and after the moment.
+
 ## Proposal tests — "CI for proposals"
 
 Every proposal carries a **checks** status: after each staging build the
@@ -1095,6 +1166,12 @@ Rules:
   an image, commits the file). The change takes effect when the PR is
   voted in, merged, and redeployed — not before. Don't mutate the
   icon through any other channel.
+- **Before & after shots.** The tile is on Homeroom's home screen, which
+  the app's own pages never show. Declare an icon change as a visible
+  change with `startPath` `/__shots/home-tile`: during the shots each
+  version of the app answers that path with its own home tile, drawn
+  from its own `dapp.json` (icon, name and colour). The path exists only
+  in the shots, not in a preview or in production.
 
 #### Icon style: one set on the home screen
 

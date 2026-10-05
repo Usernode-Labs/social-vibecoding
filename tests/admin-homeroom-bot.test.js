@@ -470,7 +470,8 @@ test('the ledger, the dashboard and the filter agree on every verdict, follow-up
   const table = tsx.slice(tsx.indexOf('const VERDICT_LABEL'), tsx.indexOf('};', tsx.indexOf('const VERDICT_LABEL')));
   const labelled = [...table.matchAll(/^\s+(\w+): '/gm)].map((m) => m[1]).sort();
   const schema = read('src/db/schema.sql');
-  const checks = [...schema.matchAll(/CHECK \(verdict IN \(([^)]*)\)\)/g)].map((m) => m[1]);
+  // The ledger's own constraint by name: other tables have a `verdict` too.
+  const checks = [...schema.matchAll(/homeroom_bot_runs_verdict_check\s+CHECK \(verdict IN \(([^)]*)\)\)/g)].map((m) => m[1]);
   assert.equal(checks.length, 2, 'the CREATE TABLE and the widening on boot');
   for (const list of checks) {
     const allowed = [...list.matchAll(/'(\w+)'/g)].map((m) => m[1]).sort();

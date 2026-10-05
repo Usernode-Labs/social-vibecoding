@@ -12,6 +12,7 @@ const webFetch = require('../services/web-fetch');
 const prMetadata = require('../services/pr-metadata');
 const sessionTitles = require('../services/session-title');
 const testingNotes = require('../services/testing-notes');
+const previewClock = require('../services/preview-clock');
 const proposalDescription = require('../services/proposal-description');
 const proposalDescriptionEdit = require('../services/proposal-description-edit');
 const platformIssueBlock = require('../services/platform-issue-block');
@@ -6227,6 +6228,10 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // opens a preview from a slug alone (the bot's ready card, an agent
       // session) has no name to show; this answer does.
       appName: session.app_name || null,
+      // A change that only shows at certain times declares the moment to see
+      // it at (services/preview-clock.js). Try it opens the preview there and
+      // the bar says so. Absent when nothing is declared.
+      ...previewClock.previewAnswer(session),
     };
   }
 
@@ -10076,6 +10081,9 @@ async function runCodexAttemptLoop({
         ? { ...result, agentHarness: runtimeContext.agentHarness }
         : result),
       usageScope: agentTurn.usageScopeForHarness(runtimeContext.agentHarness),
+      // The upstream provider OpenRouter named for the turn's requests, when
+      // the Claude Code listener saw one (worker.js observeCodingProviderResult).
+      routedProvider: result?.routedProvider || null,
       telemetryComponent: result?.providerDispatched === true
         ? (telemetryComponent
           || (mode === 'scout' ? 'coding_agent_scout' : 'coding_agent_build'))
@@ -11025,6 +11033,10 @@ path: /another/changed/view
     change" button.
   - Keep the steps short, numbered when practical, and understandable to a
     non-technical tester.
+  - If the change only shows at certain times, add one
+    "<!-- usernode:preview-at 2026-10-08T19:00 Europe/London -->" line: a
+    moment when it shows with the preview's data, in the app's time zone
+    ("Time-dependent features" in the system instructions).
   - The block must be LAST in your final message. Skip it entirely for changes
     with nothing user-visible to test.`;
 

@@ -234,6 +234,11 @@ export function FeedReplyComposer({
         ink="none"
         className="dev-feed-send shrink-0 un-touch-target inline-flex items-center justify-center"
         disabled={posting || !draft.trim()} title={catalogText("workshop:send_reply_625aafc3")} aria-label={catalogText("workshop:send_reply_625aafc3")}
+        // The field keeps focus through the press, so the keyboard and the
+        // composer stay where the tap landed (lib/keyboard-open.ts). The
+        // press still closes the suggestion lists, as the blur did.
+        onMouseDown={(event) => { event.preventDefault(); mention.close(); refs.close(); }}
+
       >
         {posting ? '…' : <ArrowUpIcon aria-hidden="true" />}
       </Button>} messages={{"title":"workshop:send_reply_625aafc3","aria-label":"workshop:send_reply_625aafc3"}} />

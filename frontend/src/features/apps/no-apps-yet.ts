@@ -13,7 +13,14 @@ import { t as tr } from "../../lib/i18n/runtime";
  * viewer who meets it in one place recognises it in the other, and a wording
  * change that reaches only one of them quietly ends that.
  *
- * "Discover" is capitalised because it names the section directly below the
- * launcher, which is where the sentence is pointing.
+ * It names the two ways to have one, in the order the screen draws them:
+ * the "New project" tile, which follows the note in an empty launcher
+ * (../home/create-tile.tsx CREATE_TILE_LABEL, present for every account),
+ * then the Discover section below the launcher. It said only "Find apps to
+ * add in the Discover section." until the first-session run-through of 5
+ * October 2026, where a brand-new account read it with the tile right after
+ * it, and was sent past the one thing on the screen that makes an app.
+ * "New project" and "Discover" are capitalised because they name what is on
+ * the screen.
  */
-export const NO_APPS_YET = () => tr("apps:no_apps_added_yet_find_apps_to_add_in_the_discov_fe1bc941");
+export const NO_APPS_YET = () => tr("apps:no_apps_added_yet_make_one_with_new_project_or_find_one_in_the_discover_section");

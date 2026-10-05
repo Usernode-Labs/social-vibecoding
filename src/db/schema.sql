@@ -2503,6 +2503,11 @@ CREATE INDEX IF NOT EXISTS idx_notifications_user_recent
 -- set, so wrapped in IF NOT EXISTS for idempotent re-runs.
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS session_id
   INTEGER REFERENCES chat_sessions(id) ON DELETE CASCADE;
+-- 5 October (Page Turners): a change that goes live or closes settles what
+-- the bell still asks everybody about it at once
+-- (notifications.settleDecidedChange), which reads by change, not by person.
+CREATE INDEX IF NOT EXISTS idx_notifications_session
+  ON notifications (session_id) WHERE session_id IS NOT NULL;
 
 -- #25: free-form detail for a notification kind that needs a small extra
 -- string. Today only 'reaction' uses it (the emoji someone reacted with);
@@ -5277,6 +5282,9 @@ INSERT INTO mobile_push_kind_categories (kind, category, default_enabled) VALUES
   ('conversation_reaction', 'messages', TRUE),
   -- #2387: a reply in a conversation thread you started or replied in.
   ('conversation_thread_reply', 'messages', TRUE),
+  -- A person's message in a small private group's discussion
+  -- (services/group-channel-notify.js): the group's chat, so Messages.
+  ('channel_message', 'messages', TRUE),
   -- WP-E: the Homeroom bot's moments about something you asked it for
   -- (services/homeroom-bot-dm.js BUILD_KINDS), so turning Messages off does
   -- not silence "it's ready to try".
@@ -5316,6 +5324,8 @@ DELETE FROM mobile_push_kind_categories
    'friend_request', 'friend_accept',
    -- #2387.
    'conversation_thread_reply',
+   -- A small private group's discussion.
+   'channel_message',
    -- #3181.
    'session_stalled',
    -- Server-wide limit alerts for full admins.
@@ -9835,12 +9845,13 @@ COMMENT ON TABLE homeroom_bot_first_versions IS 'staging:private';
 -- Every row before the column was one the bot builds, so the default is true.
 ALTER TABLE homeroom_bot_first_versions ADD COLUMN IF NOT EXISTS bot_builds BOOLEAN NOT NULL DEFAULT TRUE;
 
--- The first session's sketch of a new project's main screen
--- (services/app-sketch.js): drawn from its description about half a minute
--- after Make it, shown on the made screen while the real app is built, and
--- committed to the repository as design/sketch.* for the first version to
--- keep. `html` is sanitized markup in the sketch vocabulary, never raw model
--- output. One per project.
+-- The first session's sketch (services/app-sketch.js): since 5 October 2026
+-- a featured card of the idea, made from its description a few seconds after
+-- Make it and shown on the made screen while the real app is built. `design`
+-- holds the card (kind 'card': emoji, tagline, points), committed to the
+-- repository as design/sketch.json; its emoji becomes the project's icon.
+-- `html` is only set on the screen mocks made before it (sanitized markup,
+-- no longer shown). One per project.
 CREATE TABLE IF NOT EXISTS app_sketches (
   app_id        INTEGER PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
   user_id       INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -9973,7 +9984,9 @@ CREATE INDEX IF NOT EXISTS homeroom_bot_runs_awaiting_go_idx
 -- (GET /api/apps/:slug/my-bot-requests), never from chat_messages. `kind`:
 -- filed (the bot builds it), group (filed for the group, where the bot does
 -- not build), unsure (asks the person first), question (pointed at the
--- bot's own chat), dismissed (they said not now).
+-- bot's own chat), dismissed (they said not now), revise (a fix asked for
+-- on one of the bot's own changes still waiting for approval, sent to that
+-- change rather than filed as a new request).
 CREATE TABLE IF NOT EXISTS chat_bot_requests (
   chat_message_id INTEGER PRIMARY KEY REFERENCES chat_messages(id) ON DELETE CASCADE,
   app_id          INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
@@ -9983,24 +9996,29 @@ CREATE TABLE IF NOT EXISTS chat_bot_requests (
   title           TEXT,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT chat_bot_requests_kind_check CHECK (kind IN ('filed', 'group', 'unsure', 'question', 'dismissed', 'offer'))
+  CONSTRAINT chat_bot_requests_kind_check CHECK (kind IN ('filed', 'group', 'unsure', 'question', 'dismissed', 'offer', 'revise'))
 );
 -- WP-C: 'offer', a newcomer's message that reads as an idea, offered to them
--- as a request (homeroom-bot-chat.js maybeOffer). A table made before it has
--- the five-kind check; widen it once.
+-- as a request (homeroom-bot-chat.js maybeOffer). Fix in place (5 October):
+-- 'revise', a mention asking to fix one of the bot's own changes before it
+-- goes live (homeroom-bot-chat.js reviseFromMessage). A table made before
+-- either has a narrower check; widen it once.
 DO $$
 BEGIN
   IF EXISTS (
     SELECT 1 FROM pg_constraint
      WHERE conrelid = 'chat_bot_requests'::regclass
        AND conname = 'chat_bot_requests_kind_check'
-       AND pg_get_constraintdef(oid) NOT LIKE '%offer%'
+       AND pg_get_constraintdef(oid) NOT LIKE '%revise%'
   ) THEN
     ALTER TABLE chat_bot_requests DROP CONSTRAINT chat_bot_requests_kind_check;
     ALTER TABLE chat_bot_requests ADD CONSTRAINT chat_bot_requests_kind_check
-      CHECK (kind IN ('filed', 'group', 'unsure', 'question', 'dismissed', 'offer'));
+      CHECK (kind IN ('filed', 'group', 'unsure', 'question', 'dismissed', 'offer', 'revise'));
   END IF;
 END $$;
+-- The change a 'revise' row asked about: its card and its chip follow that
+-- change (its discussion, its revision, approval, live), not a new request.
+ALTER TABLE chat_bot_requests ADD COLUMN IF NOT EXISTS session_id INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_chat_bot_requests_requester
   ON chat_bot_requests(requester_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_chat_bot_requests_issue
@@ -11617,6 +11635,43 @@ BEGIN
   END IF;
 END $$;
 
+-- ── Invite opens (WP-E) ───────────────────────────────────────────────
+--
+-- A section of its own, after "Communities, stage 6", not inside it:
+-- tests/community-invites-postgres.test.js runs that block as written in
+-- a scratch schema with only the tables it reads, and this one needs
+-- notifications.
+--
+-- WP-E: who has opened a maker's invite links to a project, so "N people
+-- opened your invite" counts people, not page loads
+-- (services/invite-activity.js). One row per person, per maker and project:
+-- their account when they were signed in, else their browser, kept as the
+-- SHA-256 of a random HttpOnly cookie (hr_iv) that names nothing and says
+-- nothing about where it is. A browser that later opens a link signed in,
+-- or joins through one, is given its account, so the person stays one row.
+-- `notification_id` is the open notice they are counted on. It goes NULL
+-- when they join through the maker's link, whose own notice ("Joined
+-- through your invite") replaces their open; the row stays, so opening the
+-- link again later is still not news. staging:private: it says who looked
+-- at whose link.
+CREATE TABLE IF NOT EXISTS community_invite_opens (
+  id              SERIAL PRIMARY KEY,
+  maker_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  app_id          INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  user_id         INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  browser         VARCHAR(64),
+  notification_id INTEGER REFERENCES notifications(id) ON DELETE SET NULL,
+  opened_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CHECK (user_id IS NOT NULL OR browser IS NOT NULL)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_community_invite_opens_account
+  ON community_invite_opens (maker_id, app_id, user_id) WHERE user_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_community_invite_opens_browser
+  ON community_invite_opens (maker_id, app_id, browser) WHERE browser IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_community_invite_opens_notice
+  ON community_invite_opens (notification_id) WHERE notification_id IS NOT NULL;
+COMMENT ON TABLE community_invite_opens IS 'staging:private';
+
 -- ── Platform limit alerts ──────────────────────────────────────────────
 --
 -- The last level each server-wide cap reached (services/platform-limit-
@@ -11882,3 +11937,73 @@ CREATE INDEX IF NOT EXISTS edge_grant_redemptions_expiry_idx
 -- app host at once. This index is that lookup.
 CREATE INDEX IF NOT EXISTS sessions_token_sha256_idx
   ON sessions (encode(sha256(token::bytea), 'hex'));
+
+-- A change that went live inside another one (services/included-changes.js):
+-- when a change merges, an open change whose head commit is one of the
+-- merged pull request's own commits was built on, so its work is live too.
+-- It is marked merged with the merge it went live in (merged_at and
+-- merge_commit_sha are that merge's), and this names the change that
+-- carried it, so its page says "Live, included in #8" and nothing asks for
+-- its vote. NULL for every change that merged on its own. ON DELETE SET
+-- NULL: deleting the carrying change leaves this one merged.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS included_in_session_id INTEGER
+  REFERENCES chat_sessions(id) ON DELETE SET NULL;
+
+-- The inviter's note with an invite by @username (the first session's
+-- invite sheet, frontend/src/features/first-session/made.tsx, and
+-- POST /api/apps/:slug/invites): their own words, shown on the invite the
+-- person accepts, as a link's note is on the page it opens
+-- (community_invites.note). Plain text, at most 280 characters; NULL when
+-- they left none. services/collab-invites.js sendInvite is the one writer,
+-- through community-invites.js cleanNote. Kept once the invite is accepted,
+-- like invited_by.
+ALTER TABLE app_collaborators ADD COLUMN IF NOT EXISTS invite_note TEXT;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'app_collaborators'::regclass
+       AND conname = 'app_collaborators_invite_note_length'
+  ) THEN
+    ALTER TABLE app_collaborators
+      ADD CONSTRAINT app_collaborators_invite_note_length
+      CHECK (invite_note IS NULL OR char_length(invite_note) BETWEEN 1 AND 280);
+  END IF;
+END $$;
+
+-- The small-change tag, watch only (services/small-change.js): for each
+-- proposal head a checks run settles on, whether the change is clearly small
+-- and undoable (a fix, a wording or look change, a small optional addition).
+-- Read only by platform admins (GET /api/admin/small-change-tags) while the
+-- team watches how it behaves; nothing about votes, merges, checks or cards
+-- reads it. One row per (session, head): the unique key is the tagger's
+-- cache, and only an 'unavailable' row (no key, a GitHub or model failure)
+-- is ever replaced. `vetoes` lists the rule-based reasons that ruled a head
+-- out before any model call, in services/small-change.js VETOES order;
+-- `reason` is the model's one plain sentence. Private because it hangs off
+-- chat_sessions, which is.
+CREATE TABLE IF NOT EXISTS small_change_tags (
+  id             SERIAL PRIMARY KEY,
+  session_id     INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  app_id         INTEGER REFERENCES apps(id) ON DELETE CASCADE,
+  head_sha       VARCHAR(40) NOT NULL,
+  verdict        VARCHAR(16) NOT NULL,
+  kind           VARCHAR(16),
+  reason         TEXT,
+  vetoes         JSONB NOT NULL DEFAULT '[]'::jsonb,
+  files_changed  INTEGER,
+  lines_changed  INTEGER,
+  model          VARCHAR(255),
+  cost_usd       NUMERIC(18,8),
+  duration_ms    INTEGER,
+  error          VARCHAR(64),
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT small_change_tags_session_head UNIQUE (session_id, head_sha),
+  CONSTRAINT small_change_tags_verdict_check
+    CHECK (verdict IN ('small', 'not_small', 'vetoed', 'unavailable')),
+  CONSTRAINT small_change_tags_kind_check
+    CHECK (kind IS NULL OR kind IN ('fix', 'wording', 'look', 'addition'))
+);
+CREATE INDEX IF NOT EXISTS small_change_tags_created_idx
+  ON small_change_tags (created_at DESC, id DESC);
+COMMENT ON TABLE small_change_tags IS 'staging:private';

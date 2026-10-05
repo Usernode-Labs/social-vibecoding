@@ -19,6 +19,26 @@ test('semantic intent can require the isolated full-admin shots persona', () => 
   assert.equal(shots.parseIntent(candidate).stories[0].persona, 'full_admin');
 });
 
+test('a change may be declared for a guest, a visitor who is not signed in', () => {
+  const candidate = intent();
+  candidate.stories[0].persona = 'guest';
+  assert.equal(shots.parseIntent(candidate).stories[0].persona, 'guest');
+  candidate.stories[0].persona = 'anonymous';
+  assert.equal(shots.safeParseIntent(candidate).ok, false);
+});
+
+test('every surface that declares or reports a change names the same personas', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const read = (file) => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
+  const listed = `[${shots.PERSONAS.map((persona) => `'${persona}'`).join(', ')}]`;
+  assert.deepEqual(shots.PERSONAS, ['member', 'read_only_admin', 'full_admin', 'guest']);
+  for (const file of ['worker/visible-changes-mcp.js', 'src/cli/main.js', 'src/services/mcp-tools.js']) {
+    assert.ok(read(file).includes(`persona: z.enum(${listed})`), `${file} lists ${listed}`);
+  }
+  assert.ok(read('src/services/shots-view.js').includes(`${listed}.includes(claim?.persona)`));
+});
+
 test('new UI may explicitly label base absence without treating missing media as proof', () => {
   const candidate = intent();
   candidate.stories[0].intent.baseState = 'not_present';

@@ -71,12 +71,18 @@ export const ACTIVITY_OUTCOME_LABELS: Record<HomeroomBotActivityOutcome, string>
   get revise() { return tr("community:updated_the_change_44a13701"); },
 };
 
-export type ActivityTone = 'done' | 'you' | 'ended' | 'trouble';
+export type ActivityTone = 'done' | 'built' | 'you' | 'ended' | 'trouble';
 type Tone = ActivityTone;
 
-/** How each ending reads at a glance: finished well, waiting on the viewer, ended, or went wrong. */
+/**
+ * How each ending reads at a glance: finished well, built and waiting for
+ * approval, waiting on the viewer, ended, or went wrong. A change waiting for
+ * approval is Built, never Done: "Done" over "Built it. Waiting for approval"
+ * read as finished to the person still asked to approve it (4 October).
+ */
 export const ACTIVITY_OUTCOME_TONES: Record<HomeroomBotActivityOutcome, Tone> = {
-  proposed: 'done', live: 'done', answer: 'done', revise: 'done',
+  live: 'done', answer: 'done', revise: 'done',
+  proposed: 'built',
   question: 'you', blocked: 'you', empty: 'you',
   person: 'ended', held: 'ended', closed: 'ended',
   build_failed: 'trouble', failed: 'trouble', stopped: 'trouble',
@@ -84,6 +90,7 @@ export const ACTIVITY_OUTCOME_TONES: Record<HomeroomBotActivityOutcome, Tone> = 
 
 export const TONE_WORDS: Record<Tone, string> = {
   get done() { return tr("community:done_11a6767d"); },
+  get built() { return tr("community:activity_tone_built"); },
   get you() { return tr("community:needs_you_74b6abdf"); },
   get ended() { return tr("community:ended_7cdc804e"); },
   trouble: 'Didn’t finish',
@@ -95,6 +102,7 @@ export const TONE_WORDS: Record<Tone, string> = {
 // reads source text.
 const TONE_TILES: Record<Tone, string> = {
   done: 'h-[38px] w-[38px] rounded-full bg-[color:var(--brand-tint)] text-[color:var(--brand-ink)] dark:bg-[color:var(--brand-tint)] dark:text-[color:var(--brand-ink)]',
+  built: 'h-[38px] w-[38px] rounded-full bg-[color:var(--brand-tint)] text-[color:var(--brand-ink)] dark:bg-[color:var(--brand-tint)] dark:text-[color:var(--brand-ink)]',
   you: 'h-[38px] w-[38px] rounded-full bg-[color:var(--brand-tint)] text-[color:var(--brand-ink)] dark:bg-[color:var(--brand-tint)] dark:text-[color:var(--brand-ink)]',
   ended: 'h-[38px] w-[38px] rounded-full',
   trouble: 'h-[38px] w-[38px] rounded-full bg-red-500/10 text-red-700 dark:bg-red-500/15 dark:text-red-400',
@@ -102,7 +110,7 @@ const TONE_TILES: Record<Tone, string> = {
 const PLAIN_TILE = 'h-[38px] w-[38px] rounded-full';
 
 function ToneIcon({ tone }: { tone: Tone }) {
-  if (tone === 'done') return <CheckIcon aria-hidden="true" />;
+  if (tone === 'done' || tone === 'built') return <CheckIcon aria-hidden="true" />;
   if (tone === 'you') return <ChatIcon aria-hidden="true" />;
   if (tone === 'trouble') return <WarningTriangleIcon aria-hidden="true" />;
   return <InfoCircleIcon aria-hidden="true" />;
@@ -147,6 +155,27 @@ export function isActivityMessage(message: ConversationMessage): boolean {
  */
 export function isMovedActivity(message: ConversationMessage): boolean {
   return isActivityMessage(message) && !!message.metadata?.homeroomBot?.movedTo;
+}
+
+/**
+ * Pure (5 October): where a card's time counts from: when the work began
+ * (services/homeroom-bot-activity.js workClock), never the wait before it;
+ * the card's own start while nothing has begun, when its time is that wait.
+ */
+export function clockFrom(card: HomeroomBotActivity): string | null {
+  return card.workedFrom || card.startedAt;
+}
+
+/**
+ * Pure (5 October): the wait before the work, in words, to follow how long
+ * the work took: "after waiting 46m for the first version", "after waiting
+ * 12m for its turn". Null when there was none worth saying.
+ */
+export function waitedText(card: HomeroomBotActivity): string | null {
+  if (!card.waitedFor || !card.workedFrom) return null;
+  const waited = spanText(card.startedAt, new Date(card.workedFrom));
+  if (!waited || waited === 'under a minute') return null;
+  return card.waitedFor === 'first_version' ? tr("community:after_waiting_value1_for_the_first_version", { value1: waited }) : tr("community:after_waiting_value1_for_its_turn", { value1: waited });
 }
 
 /** "usually 10 to 25 minutes": how long a step usually takes, or null. */
@@ -228,25 +257,28 @@ export function BotActivityCardView({ meta, card, loaded = false, failed = false
     const stepped = card.step && card.of;
     lead = <ActivityLead step={card.step} of={card.of} stepName={card.stepName} />;
     eyebrow = stepped ? tr("community:step_value1_of_value2_value3_8acfce48", { value1: card.step, value2: card.of, value3: card.stepName ? ` · ${card.stepName}` : '' }) : tr("community:working_on_it_d55b6d1b");
-    const elapsed = spanText(card.startedAt, at);
+    // The work's time, not the wait's (clockFrom), with the wait said apart.
+    const elapsed = spanText(clockFrom(card), at);
+    const waited = waitedText(card);
     const usually = typicalText(card.typicalMinutes);
     status = (
       <>
         {project ? <span>{`${project} · `}</span> : null}
         <span role="status">{capitalized(card.doing || tr("community:working_on_it_fe56231d"))}</span>
         {usually ? <span>{` · ${usually}`}</span> : null}
-        {elapsed ? <span><LocalizedValue render={() => (tr("community:value1_so_far_a54dd7fb", { value1: elapsed }))} /></span> : null}
+        {elapsed ? <span><LocalizedValue render={() => (waited ? tr("community:value1_so_far_value2", { value1: elapsed, value2: waited }) : tr("community:value1_so_far_a54dd7fb", { value1: elapsed }))} /></span> : null}
       </>
     );
   } else if (card && tone && card.outcome) {
     lead = <ActivityLead tone={tone} />;
     eyebrow = TONE_WORDS[tone];
-    const took = card.endedAt ? spanText(card.startedAt, new Date(card.endedAt)) : null;
+    const took = card.endedAt ? spanText(clockFrom(card), new Date(card.endedAt)) : null;
+    const waited = waitedText(card);
     status = (
       <>
         {project ? <span>{`${project} · `}</span> : null}
         <span role="status">{ACTIVITY_OUTCOME_LABELS[card.outcome]}</span>
-        {took ? <span><LocalizedValue render={() => (tr("community:took_value1_132b0670", { value1: took }))} /></span> : null}
+        {took ? <span><LocalizedValue render={() => (waited ? tr("community:took_value1_value2", { value1: took, value2: waited }) : tr("community:took_value1_132b0670", { value1: took }))} /></span> : null}
       </>
     );
   } else {

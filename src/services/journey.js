@@ -16,6 +16,8 @@
 //     endpoint returns a percentage.
 
 const { NAV_SCREENS } = require('./ui-telemetry');
+const { loadOnboarding } = require('./topochain/challenge-onboarding');
+const { fetchCurrentSeason } = require('../routes/home-panels');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const WEEK_MS = 7 * DAY_MS;
@@ -367,7 +369,7 @@ const PERSON_FACTS = `
     u.id AS user_id, u.username, u.created_at AS account_at, u.password_set,
     u.has_platform_access, u.platform_access_granted_at AS access_at,
     u.needs_username_choice, u.needs_communities_choice, u.communities_onboarded_at,
-    u.tour_done_at, u.getting_started_seen,
+    u.tour_done_at, u.getting_started_seen, u.getting_started_gate,
     LEAST(
       (SELECT MIN(cm.joined_at) FROM conversation_members cm
          JOIN conversations c ON c.id = cm.conversation_id
@@ -491,13 +493,19 @@ function firstMileSteps(row, now = new Date()) {
       : { done: false, stuck: row.username_shown_at ? 'Username sheet shown, not answered' : 'Username not chosen' },
     join: row.communities_onboarded_at
       ? { done: true, at: t(row.communities_onboarded_at), note: seen.join_answer || null }
-      // Not asked: an invite link, the signed-out story, the first session
-      // asked in its place at another sign-in, or a project made in the
-      // first session answered it (join_answer 'invite', 'story', 'sign_in'
-      // or 'made'), or the account predates the screen.
+      // Not asked: an invite link, or the first session answered it in its
+      // place (join_answer 'invite'; 'story' or 'sign_in', how that
+      // question reached them; 'made' for a project made with no start
+      // recorded), or the account predates the screen. The first session's
+      // own answer, Make it or Look around first, is first_session_answer.
       : (hasAccount && row.needs_communities_choice === false
         ? { done: true, at: null, note: seen.join_answer ? `not asked: ${seen.join_answer}` : 'not asked', weak: true }
-        : { done: false, stuck: row.join_shown_at ? 'Join screen shown, not answered' : 'Join screen not answered' }),
+        // The first session's question stays owed until it is answered
+        // (services/first-session.js), so this is where somebody sits who
+        // was asked what to make and has not said.
+        : { done: false,
+          stuck: seen.first_session ? 'Asked what to make, not answered'
+            : row.join_shown_at ? 'Join screen shown, not answered' : 'Join screen not answered' }),
     first_act: row.first_act_at ? { done: true, at: t(row.first_act_at), note: row.first_act_kind }
       : { done: false, stuck: 'Inside, no act yet' },
   };
@@ -583,13 +591,52 @@ async function cohorts(pool, { now = new Date(), leftOutIds = [] } = {}) {
   };
 }
 
+// Whether the Getting started card was ever drawn for this person: the rule
+// onboarding.js cardShows() spells, without its "not closed yet", since a
+// card that was closed was shown.
+function cardWasShown(row) {
+  return row.user_id != null && row.getting_started_gate === true && row.communities_onboarded_at != null;
+}
+
+/**
+ * The first mile's last column, "onboard": how far the person got through
+ * Getting started, the tour and then the season's First challenges, the list
+ * the card on Home draws (services/onboarding.js). `null` without an
+ * account; `shown: false` when the card was never drawn for them (an account
+ * from before the card, or the join screen not answered yet). `complete` is
+ * the card's own "You're all set", which an earlier read can have granted
+ * with fewer ticks than today's list has. Read with `record: false`: an
+ * admin looking never opens anybody's gate.
+ */
+async function onboardFor(pool, row, seasonId) {
+  if (row.user_id == null) return null;
+  if (!cardWasShown(row)) return { shown: false, done: null, total: null, complete: false };
+  const state = seasonId != null
+    ? await loadOnboarding(pool, Number(row.user_id), { seasonId, record: false })
+    : null;
+  if (!state) {
+    const tourDone = row.tour_done_at != null;
+    return { shown: true, done: tourDone ? 1 : 0, total: 1, complete: tourDone };
+  }
+  return {
+    shown: true,
+    done: (state.tourDone ? 1 : 0) + state.summary.completed,
+    total: 1 + state.summary.total,
+    complete: state.finished,
+  };
+}
+
 /** One cohort's first mile: `day` is an admit day, or 'other_way'. */
 async function firstMile(pool, { day, now = new Date(), leftOutIds = [] } = {}) {
   const params = realPersonParams(leftOutIds);
   const result = day === 'other_way'
     ? await pool.query(FIRST_MILE_OTHER_WAY_SQL, [NEWCOMER_DAYS, now, ...params])
     : await pool.query(FIRST_MILE_ADMITTED_SQL, [day, now, ...params]);
-  const people = result.rows.map((row) => firstMilePerson(row, now));
+  const season = result.rows.some(cardWasShown) ? await fetchCurrentSeason(pool) : null;
+  const people = await Promise.all(result.rows.map(async (row) => ({
+    ...firstMilePerson(row, now),
+    onboard: await onboardFor(pool, row, season ? season.id : null),
+  })));
   return {
     cohort: day,
     people,

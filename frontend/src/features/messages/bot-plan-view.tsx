@@ -2,7 +2,7 @@ import { useMessages as useUiLanguage } from "../../lib/i18n/react";
 import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
 import { t as tr } from "../../lib/i18n/runtime";
 import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 
 import type { HomeroomBotPlan } from './types';
 
@@ -26,7 +26,9 @@ import type { HomeroomBotPlan } from './types';
  *
  * Once its buttons go, the card says why in one quiet line: built, replaced
  * by a newer plan (its bullets fold away), stopped after a week with no tap
- * (its bullets stay), changes asked for, or no longer needed.
+ * (its bullets stay), changes asked for, or no longer needed. Under it, a
+ * host may add a `footer`: the chat's "Notify me when it's ready", right
+ * after Build it is pressed there (./notify-me.tsx).
  *
  * Pure: no store, so the App tab draws it without the Messages screen.
  */
@@ -54,6 +56,8 @@ export interface PlanCardViewProps {
   onChange?: () => void;
   /** The chat's bubble surface, or the App tab's card. */
   surface?: 'messages' | 'app';
+  /** Drawn last, inside the card. */
+  footer?: ReactNode;
 }
 
 // Complete literals only: Tailwind's extractor reads source text.
@@ -63,7 +67,7 @@ const SURFACES = {
 } as const;
 
 export function PlanCardView({
-  appName, plan, state, choices = [], busy = false, onBuild, onChange, surface = 'messages',
+  appName, plan, state, choices = [], busy = false, onBuild, onChange, surface = 'messages', footer = null,
 }: PlanCardViewProps) {
   useUiLanguage();
   const [picked, setPicked] = useState<Array<string | null>>(() => plan.questions.map(() => null));
@@ -119,6 +123,7 @@ export function PlanCardView({
         </div>} messages={{"aria-label":"community:actions_ff8059dc"}} />
       ) : null}
       {shown !== 'open' && shown !== 'replaced' ? <p className="messages-bot-answered" role="status">{PLAN_STATE_LINES[shown]}</p> : null}
+      {footer}
     </div>} resolve={() => ({ get "aria-label"() { return tr("community:plan_for_value1_434edfa7", { value1: appName }); } })} />
   );
 }

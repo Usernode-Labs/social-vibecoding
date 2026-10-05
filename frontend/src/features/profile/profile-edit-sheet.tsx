@@ -114,6 +114,7 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
+import { returnKeyHandler } from '../../lib/return-to-next';
 import type { CropRect } from './avatar-crop';
 import { AvatarCropDialog, type CropSource } from './avatar-crop-dialog';
 import { Profile } from './profile.js';
@@ -447,7 +448,9 @@ export function ProfileEditSheet({
 
   return (
     <div id="profile-edit-root" ref={rootRef} className={ROOT_CLASS}>
-      <div id="profile-edit-sheet" ref={panelRef} className={CARD_CLASS} inert={cropping}>
+      {/* Return in the name goes on to the bio, where it is a new line
+          (#3907: the iOS keyboard's chevrons are gone). */}
+      <div id="profile-edit-sheet" ref={panelRef} className={CARD_CLASS} inert={cropping} onKeyDown={returnKeyHandler()}>
         <div className="text-lg font-bold pt-3 pb-4"><Message id="account:edit_profile_15c4aa13" /></div>
 
         {/*
@@ -515,6 +518,7 @@ export function ProfileEditSheet({
               <Input
                 id="profile-edit-name"
                 type="text"
+                enterKeyHint="next"
                 box="groupRow"
                 ring={false}
                 value={name}

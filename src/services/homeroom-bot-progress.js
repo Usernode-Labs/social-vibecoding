@@ -119,8 +119,16 @@ const SETUP_PARTS = Object.freeze({
   deploy: 'starting it up',
 });
 
+// B6: a first version's plan is the one its creator answers (stage 'plan').
+// Once they tap Build it, the build's own plan being written, and its turn
+// and workspace being waited for, are the build to them, not the plan again:
+// "Step 3 of 7: Write a plan", "writing the plan for the build", read as if
+// their Build it had not counted (first-session run-through, 5 October 2026).
+// A request's steps are unchanged: its plan is the bot's own.
+const FIRST_VERSION_BUILD_STAGES = new Set(['build_queued', 'starting', 'planning']);
+
 function stepNumber(stage, firstVersion) {
-  const key = STEP_OF_STAGE[stage];
+  const key = firstVersion && FIRST_VERSION_BUILD_STAGES.has(stage) ? 'build' : STEP_OF_STAGE[stage];
   if (!key) return null;
   const order = ['setup', 'read', 'plan', 'build', 'checks', 'vote', 'live'];
   const at = order.indexOf(key);
@@ -635,6 +643,44 @@ async function botWorkByIssue(pool, appId) {
   return out;
 }
 
+// 2026-10-05: what a request held by its project's first version is doing,
+// in the bot's words (its card, the tray, "how far along are you?"), and a
+// ready one whose build is held the same way.
+const FIRST_VERSION_WAIT = 'waiting for the first version to go live; I\'ll start on this as soon as it does';
+const FIRST_VERSION_BUILD_WAIT = 'ready to build; I\'ll start as soon as the first version goes live';
+
+/**
+ * Pure: whether `row` waits for its project's first version, from `holds`
+ * (homeroom-bot.js firstVersionHolds: app id → the first version's request
+ * number, or null before it is filed): `{ reason, number? }`, or null.
+ */
+function firstVersionWait(row, holds, { reason = null } = {}) {
+  if (!(holds instanceof Map) || !holds.size) return null;
+  const bot = require('./homeroom-bot');
+  if (!bot.heldForFirstVersion(holds, {
+    appId: row.app_id, issueNumber: row.issue_number, firstVersion: !!row.first_version, reason,
+  })) return null;
+  const number = holds.get(Number(row.app_id));
+  return { reason: bot.FIRST_VERSION_HOLD, ...(number != null ? { number: Number(number) } : {}) };
+}
+
+/**
+ * The first-version holds (firstVersionWait) on the projects of the staged
+ * rows still waiting to be read or built. Best-effort: a read that fails
+ * holds nothing here, and the loop's own read decides.
+ */
+async function waitingHolds(pool, staged) {
+  const appIds = staged
+    .filter((s) => s.state?.stage === 'queued' || s.state?.stage === 'build_queued')
+    .map((s) => Number(s.row.app_id));
+  if (!appIds.length) return new Map();
+  try {
+    return await require('./homeroom-bot').firstVersionHolds(pool, appIds);
+  } catch {
+    return new Map();
+  }
+}
+
 /**
  * Pure (#3771): what a request in the queue waits for, as the `queued`
  * stage's words and `waitingFor`. Its project busy with another request;
@@ -643,7 +689,14 @@ async function botWorkByIssue(pool, appId) {
  * (number 4)" said none of that, and "when will you pick it up?" had no
  * answer.
  */
-function queuedWait(row, { busy = new Map(), working = 0, perPerson = 2, queuePosition = null, now = new Date() } = {}) {
+function queuedWait(row, {
+  busy = new Map(), working = 0, perPerson = 2, queuePosition = null, now = new Date(), holds = null,
+} = {}) {
+  // 2026-10-05: its project's first version is not live yet, and nothing
+  // else on the project starts until it is (homeroom-bot.js
+  // FIRST_VERSION_PENDING_SQL). That is what it waits for, whatever else is.
+  const firstVersion = firstVersionWait(row, holds, { reason: row.queue_reason });
+  if (firstVersion) return { doing: FIRST_VERSION_WAIT, waitingFor: firstVersion };
   const ahead = (busy.get(Number(row.app_id)) || []).find((b) => b.issueNumber !== Number(row.issue_number));
   if (ahead) {
     // How long the other one has run is its own; the entry's time so far is
@@ -681,7 +734,11 @@ function queuedWait(row, { busy = new Map(), working = 0, perPerson = 2, queuePo
  * time), the most the bot does for one person at once, or nothing: it
  * starts next.
  */
-function buildWait(row, { busy = new Map(), working = 0, perPerson = 2, now = new Date() } = {}) {
+function buildWait(row, { busy = new Map(), working = 0, perPerson = 2, now = new Date(), holds = null } = {}) {
+  // 2026-10-05: no build on a project starts while its first version is
+  // not live (homeroom-bot.js liveBuildCandidates).
+  const firstVersion = firstVersionWait(row, holds);
+  if (firstVersion) return { doing: FIRST_VERSION_BUILD_WAIT, waitingFor: firstVersion };
   const ahead = (busy.get(Number(row.app_id)) || [])
     .find((b) => b.what === 'building' && b.issueNumber !== Number(row.issue_number));
   if (ahead) {
@@ -801,7 +858,8 @@ function entry({ row, number = null, title = null, firstVersion, state, proposal
     step,
     of: steps.length,
     stepName: step ? steps[step - 1] : null,
-    doing: state.doing,
+    // The same for what it is doing: building it, once Build it is tapped.
+    doing: firstVersion && state.stage === 'planning' ? 'building it' : state.doing,
     busyNow: BUSY_STAGES.has(state.stage) && !state.waitingOn,
     ...(state.since ? { since: iso(state.since), minutesSoFar: minutes } : {}),
     ...(limit ? { stepTimeLimitMinutes: limit } : {}),
@@ -846,15 +904,19 @@ async function requestStates(pool, { userId, settings = null, now = new Date(), 
   const busy = staged.some((s) => s.state?.stage === 'queued' || s.state?.stage === 'build_queued')
     ? await projectsBusy(pool, rows) : new Map();
   const perPerson = Number(settings?.perPerson) || 2;
+  const holds = await waitingHolds(pool, staged);
   return staged.map((s) => {
     if (s.state?.stage === 'queued') {
       return {
         row: s.row,
-        state: { ...s.state, ...queuedWait(s.row, { busy, working: busyCount, perPerson, queuePosition: s.queuePosition, now }) },
+        state: {
+          ...s.state,
+          ...queuedWait(s.row, { busy, working: busyCount, perPerson, queuePosition: s.queuePosition, now, holds }),
+        },
       };
     }
     if (s.state?.stage === 'build_queued') {
-      return { row: s.row, state: { ...s.state, ...buildWait(s.row, { busy, working: busyCount, perPerson, now }) } };
+      return { row: s.row, state: { ...s.state, ...buildWait(s.row, { busy, working: busyCount, perPerson, now, holds }) } };
     }
     return { row: s.row, state: s.state };
   });
@@ -963,6 +1025,9 @@ module.exports = {
   attachAttempts,
   queuedWait,
   buildWait,
+  FIRST_VERSION_WAIT,
+  FIRST_VERSION_BUILD_WAIT,
+  firstVersionWait,
   projectsBusy,
   botWorkByIssue,
   outcomeOf,

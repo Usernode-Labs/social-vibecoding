@@ -37,8 +37,11 @@ const MIN_FEEDBACK_CHARS = 20;
 // Which model marks a unit, and how much of the unit it is shown. Named here
 // rather than left as literals in the call because the admin's "How it
 // scores" panel prints them (./challenge-anatomy.js), and a number that is
-// typed twice is a number that is wrong in one of the two places.
-const GRADE_MODEL = 'claude-haiku-4-5';
+// typed twice is a number that is wrong in one of the two places. GLM 5.3
+// Flash marks it, and Haiku 4.5 when GLM does not answer in time
+// (llm.js helperMessage); each ledger row keeps the model that answered.
+const GRADE_MODEL = 'z-ai/glm-5.3-flash';
+const GRADE_FALLBACK_MODEL = 'claude-haiku-4-5';
 const GRADE_TITLE_CHARS = 200;
 const GRADE_TEXT_CHARS = 2000;
 
@@ -171,6 +174,7 @@ module.exports = {
   RUBRICS,
   MIN_FEEDBACK_CHARS,
   GRADE_MODEL,
+  GRADE_FALLBACK_MODEL,
   GRADE_TITLE_CHARS,
   GRADE_TEXT_CHARS,
   preFilter,

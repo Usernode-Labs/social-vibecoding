@@ -233,7 +233,7 @@ function requireIssueMembership(pool) {
   }, 'issue');
 }
 
-// B8: Ask for a change (POST /api/feedback) files a request on the app its
+// B8: Suggest an improvement (POST /api/feedback) files a request on the app its
 // body names rather than one in the path: the same gate, by slug. Returns the
 // join_required body to answer with, or null to let it through.
 async function appNeedsJoin(pool, slug, user) {
@@ -538,6 +538,70 @@ async function activitySummary(pool, appId) {
   };
 }
 
+// UNCHOSEN COMMUNITIES: the ones whose votes do not put a number on the
+// Communities tab for this viewer (5 Oct 2026).
+//
+// Every account with platform access is put in the platform's own
+// community, Homeroom, the moment it is let in (`source = 'auto'`, the
+// users_join_platform_community trigger in schema.sql), and every change
+// proposed to the platform is a vote it owes from then on. So a brand-new
+// account that had joined nothing and been asked nothing opened its first
+// session under an accent "5" or "8" on the Communities tab: a number that
+// asked for it, about a community it never chose, competing with "What do
+// you want to make?".
+//
+// A community is UNCHOSEN when the viewer is in it only that way, by
+// 'auto', and has not yet TAKEN PART in it: no vote on one of its changes
+// or decisions, no change of their own there, no request or decision they
+// filed, no message in its channel (Homeroom's is #general; its old
+// project discussion counts too), and no pin of it on Home. The first of
+// any of those is the person choosing it, and from then on its votes count
+// on the tab like any other community's. The membership source alone is
+// not enough: the one-time backfill wrote 'auto' for every existing account
+// it had no other reason for, people who had voted there long before
+// included.
+//
+// A pin is the stake the bell already reads for Homeroom: its "come and
+// vote" ping and the daily vote digest go to the platform's creator and
+// pinners only (services/notifications.js createPrProposedNotifications,
+// services/vote-digest.js), so a newcomer's bell never carried these votes
+// and the tab now agrees with it.
+//
+// Joining by hand (Join, an invite link) writes 'joined', never 'auto', and
+// creating, collaborating and pinning write their own sources, so a
+// community somebody chose is never unchosen; leaving Homeroom and joining
+// it again is choosing it too. This changes ONLY the tab's count
+// (frontend/src/features/workshop/community-scope.ts `tabVotes`): the votes
+// stay in Needs you, on the Communities list, in the switcher and on the
+// community's own page, where the person goes to look.
+const UNCHOSEN_COMMUNITIES_SQL = `
+  SELECT a.slug
+    FROM community_members m
+    JOIN apps a ON a.community_id = m.community_id
+   WHERE m.user_id = $1
+     AND m.source = 'auto'
+     AND NOT EXISTS (SELECT 1 FROM pr_votes v JOIN chat_sessions s ON s.id = v.session_id
+                      WHERE v.user_id = $1 AND s.app_id = a.id)
+     AND NOT EXISTS (SELECT 1 FROM issue_votes v JOIN issues i ON i.id = v.issue_id
+                      WHERE v.user_id = $1 AND i.app_id = a.id)
+     AND NOT EXISTS (SELECT 1 FROM chat_sessions s WHERE s.user_id = $1 AND s.app_id = a.id)
+     AND NOT EXISTS (SELECT 1 FROM issues i WHERE i.created_by = $1 AND i.app_id = a.id)
+     AND NOT EXISTS (SELECT 1 FROM chat_messages c WHERE c.user_id = $1 AND c.app_id = a.id)
+     AND NOT EXISTS (SELECT 1 FROM app_favorites f
+                      WHERE f.user_id = $1 AND f.app_id = a.id AND NOT f.hidden)
+     AND NOT (a.self_hosted AND EXISTS (
+           SELECT 1 FROM conversations g
+             JOIN conversation_messages gm ON gm.conversation_id = g.id
+            WHERE g.kind = 'channel' AND g.channel_key = 'general' AND gm.sender_id = $1))
+`;
+
+/** The slugs of the viewer's unchosen communities (UNCHOSEN_COMMUNITIES_SQL), as a Set. */
+async function unchosenCommunities(pool, userId) {
+  if (!userId) return new Set();
+  const { rows } = await pool.query(UNCHOSEN_COMMUNITIES_SQL, [userId]);
+  return new Set(rows.map((row) => row.slug));
+}
+
 module.exports = {
   appNeedsJoin,
   channelSummary,
@@ -559,4 +623,6 @@ module.exports = {
   requireIssueMembership,
   chatNeedsJoin,
   listMembers,
+  UNCHOSEN_COMMUNITIES_SQL,
+  unchosenCommunities,
 };

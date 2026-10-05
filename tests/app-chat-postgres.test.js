@@ -646,7 +646,7 @@ test('app channels against the full schema', { timeout: 120000 }, async (t) => {
   });
 
   await t.test('a deleted message cannot be reported', async () => {
-    const { contentReportRoutes } = require('../src/routes/content-reports');
+    const { moderationRoutes } = require('../src/routes/moderation');
     const live = (await post(bob, chan, 'still here')).message.id;
     const { rows: [gone] } = await pool.query(
       `SELECT id FROM chat_messages WHERE app_id = $1 AND deleted_at IS NOT NULL AND user_id = $2 LIMIT 1`,
@@ -655,7 +655,7 @@ test('app channels against the full schema', { timeout: 120000 }, async (t) => {
     const reportApp = express();
     reportApp.use(express.json());
     reportApp.use((req, _res, next) => { req.user = users[carol.id]; next(); });
-    reportApp.use(contentReportRoutes({}));
+    reportApp.use(moderationRoutes({}, { pool }));
     const reportServer = await new Promise((resolve) => {
       const listening = reportApp.listen(0, '127.0.0.1', () => resolve(listening));
     });

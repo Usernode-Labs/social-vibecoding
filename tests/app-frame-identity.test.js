@@ -312,7 +312,7 @@ async function makeHarness({ offline = false, offlineReady = false } = {}) {
       documentElement: { classList: { contains: () => true }, style: {} },
     },
     getComputedStyle: () => ({ getPropertyValue: () => '0px' }),
-    fetch: async (url) => sandbox.__fetch(url),
+    fetch: async (url, opts) => sandbox.__fetch(url, opts),
     alert: () => {},
     setTimeout: (fn, ms) => { const t = setTimeout(fn, ms); if (t.unref) t.unref(); return t; },
     clearTimeout,
@@ -816,14 +816,215 @@ test('#15: the first-version screenshot state is self-contained, and mounts no f
   const appJs = read('public/js/app.js');
   const routeShots = appJs.slice(appJs.indexOf('  _applyRouteShots() {'), appJs.indexOf('\n  },', appJs.indexOf('  _applyRouteShots() {')));
   assert.match(routeShots, /App\._applyFirstVersionShot\(\);/, 'reached as ?shot=first-version');
-  // B6: and `?shot=first-version-plan`, the same screen while its plan waits.
-  assert.match(appJs, /if \(shot !== 'first-version' && shot !== 'first-version-plan'\) return;\s*try \{\s*if \(typeof AppView !== 'undefined'\) AppView\.showFirstVersionShot\(shot === 'first-version-plan'\);/);
+  // B6: and `?shot=first-version-plan`, the same screen while its plan
+  // waits; `-ready` and `-approved`, built and up for approval.
+  assert.match(appJs, /'first-version': false, 'first-version-plan': 'plan', 'first-version-ready': 'ready', 'first-version-approved': 'approved',/);
+  assert.match(appJs, /if \(!Object\.prototype\.hasOwnProperty\.call\(variants, shot\)\) return;\s*try \{\s*if \(typeof AppView !== 'undefined'\) AppView\.showFirstVersionShot\(variants\[shot\]\);/);
   AppView.showFirstVersionShot(true);
   const planned = h.status();
-  assert.deepEqual([...planned.lines], ['Step 3 of 7: Write a plan'], 'the card says what comes next');
+  assert.deepEqual([...planned.lines], ['Step 3 of 7: Your turn: answer the plan'], 'the card says what comes next, and whose turn it is');
   assert.equal(planned.action, null, 'Change something is the way into the chat');
   assert.equal(planned.plan.bullets.length, 3);
   assert.deepEqual([...planned.plan.questions[0].answers], ['In the app', 'Phone alert']);
+  AppView.showFirstVersionShot('plan');
+  assert.deepEqual([...h.status().lines], ['Step 3 of 7: Your turn: answer the plan'], '\'plan\' is the same shot');
+  // Ready to try, as a member who still has to approve it…
+  AppView.showFirstVersionShot('ready');
+  const waiting = h.status();
+  assert.equal(bridge.frame(), null);
+  assert.equal(waiting.message, 'The first version of Plant Pal is ready to try');
+  assert.deepEqual([...waiting.lines], ['Step 6 of 7: Approval', 'Waiting for your approval.']);
+  assert.deepEqual([waiting.action.key, waiting.alt.key, waiting.secondary.key], ['tryChange', 'seeChange', 'starter']);
+  // …and as one who approved it, waiting on the other member.
+  AppView.showFirstVersionShot('approved');
+  const approved = h.status();
+  assert.match(approved.lines[1], /^You approved it\. Waiting for @sam, or it goes live on \S+ if nobody objects\.$/);
+  assert.deepEqual([approved.action.key, approved.alt.key], ['tryChange', 'seeChange']);
+});
+
+// ── 5 October: never painted from an answer it cannot trust ──────────────
+//
+// Page Turners' first version merged at 11:56 with priya_t1006's Yes among
+// the two it needed. At 11:57 her App tab said "The first version of Page
+// Turners is ready to try · Waiting for your approval." for about fifteen
+// seconds, until the 10s recheck read it past the worker: GET /api/apps/:slug
+// is in the service worker's zero-deadline boot lane, so the open drew the
+// copy cached on an earlier visit, from before the vote and the merge.
+
+const READY_FV = {
+  building: true, mine: false, step: 6, of: 7, stepName: 'Approval', creator: 'ada',
+  ready: true, question: false, conversationId: null,
+  approval: { sessionId: 31, mustApprove: true, approved: false, waitingOn: ['sam'], more: 0, missing: 2, goesLiveAt: null, soon: false },
+};
+
+// The worker's boot-lane copy carries the stamp public/sw.js stampAndPut
+// writes on everything it caches; a network answer has none.
+const workerCopy = (app) => ({
+  ok: true,
+  headers: { get: (name) => (name === 'sw-cached-at' ? String(Date.now() - 60_000) : null) },
+  json: async () => ({ app }),
+});
+const serverAnswer = (app) => ({ ok: true, headers: { get: () => null }, json: async () => ({ app }) });
+
+// Opens the App tab through AppView.open, answering the detail read with
+// `detail` and every tagged recheck with `recheck()`, and records the latter.
+async function openFirstVersion(h, { detail, recheck }) {
+  const { AppView, sandbox } = h;
+  AppView.appData = null;
+  AppView.prefetchDevData = () => {};
+  AppView._prefetchDevDataAfterFrame = () => {};
+  AppView.startActivityTracking = () => {};
+  AppView.startTokenRefresh = () => {};
+  const rechecks = [];
+  sandbox.__fetch = async (url, opts) => {
+    const u = String(url);
+    if (u.includes('/api/iframe-token')) return { ok: true, json: async () => ({ token: 'tok-1' }) };
+    if (u === `/api/apps/${SLUG}?manifest=summary`) return detail;
+    if (u.startsWith(`/api/apps/${SLUG}?status_recheck=1`)) {
+      rechecks.push({ url: u, opts });
+      return recheck();
+    }
+    return { ok: true, json: async () => ({ status: 'ready' }) };
+  };
+  await AppView.open(SLUG);
+  return rechecks;
+}
+
+test('5 Oct: the worker\'s copy of a pending first version is not painted; the server is asked at once', async () => {
+  const h = await makeHarness();
+  const { AppView, bridge } = h;
+  let answer;
+  const live = new Promise((resolve) => { answer = resolve; });
+  const rechecks = await openFirstVersion(h, {
+    detail: workerCopy({ ...h.record, self_hosted: false, first_version: READY_FV }),
+    recheck: () => live,
+  });
+  AppView.renderAppTab();
+
+  // Nothing about the first version is said from that copy…
+  assert.deepEqual({ ...h.status() }, { dot: null, message: 'Opening…', detail: null, action: null });
+  assert.equal(bridge.frame(), null, 'and the starter is not framed meanwhile');
+  assert.equal(h.surface(), 'platform');
+  // …and the read past every cache went out now, not on the 10s tick.
+  assert.equal(rechecks.length, 1);
+  assert.equal(rechecks[0].url, `/api/apps/${SLUG}?status_recheck=1&manifest=summary`);
+  assert.equal(rechecks[0].opts.cache, 'no-store');
+  assert.equal(AppView._firstVersionTimer, null, 'no tick is armed while it is out');
+  // A paint while it is out joins it.
+  const reading = AppView._firstVersionAsking.promise;
+  AppView.renderAppTab();
+  assert.equal(rechecks.length, 1);
+
+  // The server: it merged. The app is what there is.
+  answer(serverAnswer({ ...h.record, self_hosted: false, first_version: null }));
+  await reading;
+  assert.equal(h.status(), null, '"Waiting for your approval." was never painted');
+  assert.ok(bridge.frame(), 'the live app is framed');
+  assert.equal(h.surface(), 'app');
+  assert.equal(AppView._firstVersionTimer, null);
+});
+
+test('5 Oct: the server\'s own answer paints at once, and a fresh read that says it still waits is drawn', async () => {
+  const h = await makeHarness();
+  const { AppView, bridge } = h;
+  const approved = { ...READY_FV, approval: { ...READY_FV.approval, mustApprove: false, approved: true, missing: 1 } };
+  const rechecks = await openFirstVersion(h, {
+    detail: serverAnswer({ ...h.record, self_hosted: false, first_version: approved }),
+    recheck: async () => serverAnswer({ ...h.record, self_hosted: false, first_version: approved }),
+  });
+  AppView.renderAppTab();
+  assert.equal(rechecks.length, 0, 'an answer the network gave costs no second read');
+  assert.equal(bridge.frame(), null);
+  assert.deepEqual([...h.status().lines], ['Step 6 of 7: Approval', 'You approved it. Waiting for @sam.']);
+  assert.notEqual(AppView._firstVersionTimer, null, 'the 10s recheck is armed as before');
+
+  // Gone a while (the Workshop, say): back on the App tab, it asks first.
+  const read = AppView._firstVersionReads.get(AppView.appData);
+  read.got -= AppView.FIRST_VERSION_FRESH_MS + 1;
+  AppView.renderAppTab();
+  assert.equal(h.status().message, 'Opening…');
+  assert.equal(rechecks.length, 1);
+  await AppView._firstVersionAsking.promise;
+  assert.deepEqual([...h.status().lines], ['Step 6 of 7: Approval', 'You approved it. Waiting for @sam.']);
+  assert.notEqual(AppView._firstVersionTimer, null);
+  AppView._stopFirstVersionWatch();
+});
+
+test('5 Oct: a fresh read that fails shows the record there is, and keeps asking', async () => {
+  const h = await makeHarness();
+  const { AppView } = h;
+  const rechecks = await openFirstVersion(h, {
+    detail: workerCopy({ ...h.record, self_hosted: false, first_version: READY_FV }),
+    recheck: async () => { throw new Error('offline'); },
+  });
+  AppView.renderAppTab();
+  assert.equal(h.status().message, 'Opening…');
+  await AppView._firstVersionAsking.promise;
+  assert.equal(rechecks.length, 1);
+  assert.equal(h.status().message, 'The first version of Homeroom is ready to try', 'not "Opening…" for good');
+  assert.notEqual(AppView._firstVersionTimer, null, 'and the 10s recheck keeps asking');
+  AppView._stopFirstVersionWatch();
+});
+
+test('5 Oct: a Yes on its change, or a vote on its project, makes the App tab ask the server again', async () => {
+  const h = await makeHarness();
+  const { AppView, sandbox } = h;
+  const rechecks = await openFirstVersion(h, {
+    detail: serverAnswer({ ...h.record, self_hosted: false, first_version: READY_FV }),
+    recheck: async () => serverAnswer({ ...h.record, self_hosted: false, first_version: null }),
+  });
+  AppView.renderAppTab();
+  assert.equal(h.status().lines[1], 'Waiting for your approval.', 'the server\'s word, before her vote');
+
+  // She approves it on its change page (castVote, once the server took it)…
+  sandbox.App.currentTab = 'dev';
+  AppView._noteOwnVote(31, 'yes');
+  // …and comes back: the record from before her Yes is not painted again.
+  sandbox.App.currentTab = 'app';
+  AppView.renderAppTab();
+  assert.equal(h.status().message, 'Opening…');
+  assert.equal(rechecks.length, 1);
+  await AppView._firstVersionAsking.promise;
+  assert.equal(h.status(), null, 'merged meanwhile: the app');
+
+  // castVote is where that note is made, once the server has taken the vote.
+  const cast = SRC.slice(SRC.indexOf('  async castVote(sessionId, vote'), SRC.indexOf('  async castIssueVote('));
+  assert.ok(cast.indexOf('AppView._noteOwnVote(sessionId, vote);') > cast.indexOf('if (!res.ok) {'),
+    'only a vote the server took');
+
+  // A vote on the project while the screen is up (vote_update, the merge's
+  // among them) reads it again at once rather than repainting the record.
+  const h2 = await makeHarness();
+  const again = await openFirstVersion(h2, {
+    detail: serverAnswer({ ...h2.record, self_hosted: false, first_version: READY_FV }),
+    recheck: async () => serverAnswer({ ...h2.record, self_hosted: false, first_version: null }),
+  });
+  h2.AppView.renderAppTab();
+  assert.equal(h2.AppView.recheckFirstVersionNow(), true);
+  assert.equal(again.length, 1);
+  assert.equal(h2.status().lines[1], 'Waiting for your approval.', 'what is on screen stays until the answer lands');
+  await h2.AppView._firstVersionAsking.promise;
+  assert.equal(h2.status(), null);
+  assert.equal(h2.AppView.recheckFirstVersionNow(), false, 'nothing to read again once the app is up');
+
+  // Off its App tab, a vote marks the record old: the next paint asks first.
+  const h3 = await makeHarness();
+  const third = await openFirstVersion(h3, {
+    detail: serverAnswer({ ...h3.record, self_hosted: false, first_version: READY_FV }),
+    recheck: async () => serverAnswer({ ...h3.record, self_hosted: false, first_version: null }),
+  });
+  h3.sandbox.App.currentTab = 'dev';
+  assert.equal(h3.AppView.recheckFirstVersionNow(), false);
+  assert.equal(third.length, 0, 'nothing is read for a screen nobody is looking at');
+  h3.sandbox.App.currentTab = 'app';
+  h3.AppView.renderAppTab();
+  assert.equal(h3.status().message, 'Opening…');
+  await h3.AppView._firstVersionAsking.promise;
+  assert.equal(h3.status(), null);
+
+  const appJs = read('public/js/app.js');
+  const onVote = appJs.slice(appJs.indexOf('  handleVoteUpdate(data) {'), appJs.indexOf('\n  },', appJs.indexOf('  handleVoteUpdate(data) {')));
+  assert.match(onVote, /if \(App\.currentApp === data\.appSlug\) \{[\s\S]*?const rereading = AppView\.recheckFirstVersionNow\?\.\(\);\s*if \(!rereading && data\.merged && App\.currentTab === 'app'\) AppView\.renderAppTab\(\);/);
 });
 
 // ── canEagerLaunch is a PREDICATE ────────────────────────────────────────

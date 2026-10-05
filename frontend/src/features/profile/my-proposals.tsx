@@ -19,7 +19,7 @@ import { Message } from "../../lib/i18n/react";
  *             GET /api/me/proposal-history, In progress / Merged / Closed.
  *             It took the Communities tab's "What you are working on".
  *   requests  #profile/your-requests: GET /api/me/requests, what you asked for
- *             from the Ask for a change dialog or a board, Open / Done, with
+ *             from the Suggest an improvement dialog or a board, Open / Done, with
  *             the dialog one tap away at the foot.
  *   votes     #profile/your-votes: GET /api/me/history?type=votes, the changes
  *             and group decisions you voted on, Still open / Decided.
@@ -74,7 +74,7 @@ export const WORK_TITLES: Record<WorkKind, string> = {
 
 const EMPTY: Record<WorkKind, string> = {
   get changes() { return tr("account:you_have_not_started_a_change_yet_ed4f426e"); },
-  get requests() { return tr("account:you_have_not_asked_for_a_change_yet_38553fd4"); },
+  get requests() { return tr("account:you_have_not_suggested_an_improvement_yet"); },
   get votes() { return tr("account:you_have_not_voted_on_anything_yet_e7bcf734"); },
 };
 
@@ -228,7 +228,7 @@ export function ProfileProposalsScreen(): ReactNode {
               data-profile-work-ask=""
               className="w-full"
               onClick={() => { (window as any).App?.openFeedbackModal?.(); }}
-            ><Message id="account:ask_for_a_change_f445fc4f" /></Button>
+            ><Message id="account:suggest_an_improvement_button" /></Button>
           </div>
         ) : null}
       </div>

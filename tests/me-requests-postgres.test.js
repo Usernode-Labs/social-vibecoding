@@ -2,7 +2,7 @@
 
 // "Your requests" on Me (UI overhaul): GET /api/me/requests's SQL against the
 // full PostgreSQL schema (src/routes/profile.js MY_REQUESTS_SQL). A request
-// can be asked for in the Ask for a change dialog (feedback_reports) or on a
+// can be asked for in the Suggest an improvement dialog (feedback_reports) or on a
 // project's board (issues), and each one's standing is read from what this
 // platform records: a merged change that named it, a close-request the
 // members voted through, a change under way, or nothing yet.

@@ -133,7 +133,7 @@ test('observer forwards MCP JSON-RPC unchanged through a child server', async ()
   }
 });
 
-test('observer command-line entry point accepts the full-admin shots persona', async () => {
+for (const persona of ['full_admin', 'guest']) test(`observer command-line entry point accepts the ${persona} shots persona`, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-browser-observer-cli-'));
   const diagnosticFile = path.join(dir, 'diagnostics.log');
   const stubPath = path.join(dir, 'mcp-server-playwright');
@@ -154,7 +154,7 @@ process.stdin.on('data', chunk => {
 `, { mode: 0o755 });
   try {
     const observerPath = path.join(__dirname, '..', 'worker', 'shots-browser-observer.js');
-    const child = spawn(process.execPath, [observerPath, 'full_admin'], {
+    const child = spawn(process.execPath, [observerPath, persona], {
       env: {
         ...process.env,
         PATH: `${dir}${path.delimiter}${process.env.PATH || ''}`,
@@ -173,7 +173,7 @@ process.stdin.on('data', chunk => {
     assert.equal(JSON.parse(Buffer.concat(stdout).toString()).id, 11);
     const diagnostics = fs.readFileSync(diagnosticFile, 'utf8').trim().split('\n')
       .map(line => JSON.parse(line.slice(MARKER.length)));
-    assert.equal(diagnostics[0].persona, 'full_admin');
+    assert.equal(diagnostics[0].persona, persona);
     assert.deepEqual(diagnostics.map(event => event.kind), [
       'browser_call_start', 'browser_call_end', 'browser_server_exit',
     ]);

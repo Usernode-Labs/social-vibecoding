@@ -3,7 +3,7 @@
 // The Workshop screen's two numbers per app, and the rows behind them.
 //
 //   GET /api/workshop/counts
-//        → { counts: { '<slug>': { working, needs, owed }, … } }
+//        → { counts: { '<slug>': { working, needs, owed, unchosen? }, … } }
 //   GET /api/workshop/items   (#3051, see ITEMS_SQL below)
 //        → { items: { '<slug>': { working: Item[], needs: Item[] }, … } }
 //
@@ -73,6 +73,7 @@ const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const { currentVotePredicateSql, countedVotePredicateSql } = require('../services/pr-vote-revision');
 const { governanceKindsSql } = require('../services/governance-kinds');
+const communities = require('../services/communities');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
@@ -540,8 +541,19 @@ function workshopOverviewRoutes(config) {
       // The same two flags GET /api/apps resolves, so the two lists cannot
       // disagree about which apps exist for this viewer.
       const showSelfHosted = !!req.user.isAdmin || !!config.selfAppPublicVoting;
-      const { rows } = await pool.query(COUNTS_SQL, [
-        req.user.id, showSelfHosted, !!req.user.isAdmin,
+      // `unchosen` (5 Oct 2026): a community whose votes do not put a number
+      // on the Communities tab, because the viewer is in it only as every
+      // account is and has not taken part there yet
+      // (communities.UNCHOSEN_COMMUNITIES_SQL). Only the tab's badge reads it;
+      // `needs` itself is unchanged, so the list, the switcher and Needs you
+      // still say what waits. A failed read is the old behaviour: every
+      // vote on the badge.
+      const [{ rows }, unchosen] = await Promise.all([
+        pool.query(COUNTS_SQL, [req.user.id, showSelfHosted, !!req.user.isAdmin]),
+        communities.unchosenCommunities(pool, req.user.id).catch((err) => {
+          log.warn('workshop-overview', 'Unchosen communities read failed; badging every vote', { message: err.message });
+          return new Set();
+        }),
       ]);
       const counts = {};
       for (const row of rows) {
@@ -549,6 +561,7 @@ function workshopOverviewRoutes(config) {
           working: Number(row.working) || 0,
           needs: Number(row.needs) || 0,
           owed: Array.isArray(row.owed) ? row.owed.map(String) : [],
+          ...(unchosen.has(row.slug) ? { unchosen: true } : {}),
         };
       }
       if (IS_STAGING && req.query.demo === '1') {

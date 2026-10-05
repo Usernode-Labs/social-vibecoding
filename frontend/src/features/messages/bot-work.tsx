@@ -138,17 +138,24 @@ function resetBotWork(): void {
 
 // ── Words ────────────────────────────────────────────────────────────────
 
+/*
+ * The words below are the person's, never the platform's: a change, waiting
+ * for approval, live. "proposed Flat 4B Chores" in the header after a first
+ * version was ready (4 October) is what this rule is for, and
+ * tests/homeroom-bot-tray.test.js holds every line here to it.
+ */
+
 /** What a tile of Now says the bot is doing when the server sends no words of its own. */
 export const PHASE_LABELS: Record<HomeroomBotPhase, string> = {
   get looking() { return tr("community:looking_at_it_1984f4e5"); },
   building: 'building',
-  get following_up() { return tr("community:following_up_on_its_proposal_2b822bf7"); },
+  get following_up() { return tr("community:following_up_on_its_change"); },
   get setting_up() { return tr("community:getting_the_project_ready_3d4685fa"); },
   // #3734: one per step services/homeroom-bot-tray.js draws an in-flight
   // stage of the bot's progress as.
   get queued() { return tr("community:waiting_its_turn_in_my_queue_671f20c9"); },
-  get follow_up_queued() { return tr("community:waiting_its_turn_to_follow_up_on_its_proposal_1327004b"); },
-  get merging() { return tr("community:merging_its_approved_proposal_1b5f9e4b"); },
+  get follow_up_queued() { return tr("community:waiting_its_turn_to_follow_up_on_its_change"); },
+  get merging() { return tr("community:making_the_approved_change_live"); },
 };
 
 /** The same, as the header's status line says it after the request's name. */
@@ -159,15 +166,20 @@ export const SHORT_PHASES: Record<HomeroomBotPhase, string> = {
   get setting_up() { return tr("community:setting_up_6ae46cb7"); },
   get queued() { return tr("community:in_my_queue_56c9701b"); },
   get follow_up_queued() { return tr("community:queued_to_follow_up_bdc609ef"); },
-  merging: 'merging',
+  get merging() { return tr("community:going_live"); },
 };
 
-/** The last thing the bot did, as the status line says it when nothing else is going on. */
+/**
+ * The last thing the bot did, as the status line says it when nothing else
+ * is going on: the same ending its activity card names
+ * (ACTIVITY_OUTCOME_LABELS, and the server's copy in
+ * services/homeroom-bot-activity.js), with the request's name in it.
+ */
 export const LAST_WORDS: Record<HomeroomBotActivityOutcome, (name: string) => string> = {
   question: (name) => tr("community:asked_you_about_value1_ece021e7", { value1: name }),
-  proposed: (name) => tr("community:proposed_value1_6cf1f124", { value1: name }),
+  proposed: (name) => tr("community:value1_waiting_for_approval", { value1: name }),
   live: (name) => tr("community:value1_went_live_bae1c229", { value1: name }),
-  closed: (name) => tr("community:value1_s_proposal_was_closed_f49bf544", { value1: name }),
+  closed: (name) => tr("community:the_change_for_value1_was_closed", { value1: name }),
   blocked: (name) => tr("community:couldn_t_build_value1_as_written_c3b76ce7", { value1: name }),
   build_failed: (name) => tr("community:couldn_t_finish_building_value1_cd5d7f6c", { value1: name }),
   person: (name) => tr("community:left_value1_to_the_group_c43a5dde", { value1: name }),
@@ -176,7 +188,7 @@ export const LAST_WORDS: Record<HomeroomBotActivityOutcome, (name: string) => st
   held: (name) => tr("community:held_value1_back_for_now_18e4631c", { value1: name }),
   stopped: (name) => tr("community:stopped_on_value1_e50a5446", { value1: name }),
   answer: (name) => tr("community:answered_on_value1_e0b40710", { value1: name }),
-  revise: (name) => tr("community:changed_value1_s_proposal_03f92f9f", { value1: name }),
+  revise: (name) => tr("community:updated_the_change_for_value1", { value1: name }),
 };
 
 function capitalized(text: string): string {

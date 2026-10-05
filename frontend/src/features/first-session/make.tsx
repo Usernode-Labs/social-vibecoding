@@ -18,7 +18,58 @@ import { Message, Localized, message as catalogText } from "../../lib/i18n/react
  * the description. The Create app wizard stays as it is, behind the Create
  * button.
  *
- * "Look around first" is the quiet way out: Home, with nothing asked.
+ * "Look around first" is the quiet way out: Home, with nothing asked. It is
+ * an answer, like Make it: until one of the two, the question is still the
+ * account's to answer, and every boot of the shell asks it again (a reload,
+ * the app reopened, another device; ./index.tsx, services/first-session.js).
+ *
+ * It ARRIVES rather than appears: the screen's ground is the wallpaper
+ * from its first frame, the same one the signed-out story and the sign-in
+ * sheet's leaving cover paint over the same box (../auth/sign-in-sheet.tsx),
+ * and what stands on it rises into place a frame later. Transform and
+ * opacity only, no delay, so a busy main thread cannot hold it back on iOS;
+ * with reduced motion it is simply there.
+ *
+ * WITH THE KEYBOARD UP (production run, iOS app, 5 Oct 2026):
+ *   - The screen was one scroller from the top of the glass, so revealing
+ *     the description above the keys scrolled "Start from an example" up
+ *     behind the clock. The wordmark bar now stays put and only what is
+ *     under it scrolls, so nothing passes under the status bar. The bar
+ *     holds the whole mark below the inset (on a notched phone the mark
+ *     used to hang 12px out of its box, and the page would have scrolled
+ *     past it). The kit's keyboard avoidance is attached to the scroller
+ *     with the bar as its top (lib/composer-keyboard.ts), as every chat
+ *     column has it: a tap on a field is focused without the browser's pan,
+ *     and the field is revealed once, between the bar and the keys.
+ *   - The two answers are one sequence: the description's Return says
+ *     "next" and goes on to the name (Shift+Return is a new line), and the
+ *     name's Return makes it. In the app the keyboard's own next chevron
+ *     did not move from one to the other; Return is a way on that does not
+ *     depend on it.
+ *   - "Make it" only looks pale while it is making. It used to stay pale
+ *     until a name was typed, beside a placeholder that read like a name
+ *     already given. A press with an answer missing now puts the caret in
+ *     that field and says what it needs, and the placeholder reads as an
+ *     example.
+ *
+ * AND IN SAFARI (iPhone 17 simulator, iOS 26, 5 Oct 2026): with the keyboard
+ * up, iOS panned the page to the tapped description, wordmark bar and all,
+ * and "Make it" sat under the keyboard's floating bar once a press had
+ * scrolled the form. The screen is a `.platform-kb-surface` now: while the
+ * keyboard is open it is padded into the band of the page that is actually
+ * visible (lib/keyboard-open.ts, app.css), so the bar is at the top of what
+ * is seen and the scroller ends where the keys begin. Its fields are
+ * lib/keyboard-surface.ts's: a tap focuses without the pan (the first tap on
+ * the description, which this screen focuses from code, included), and the
+ * focused field is revealed inside the scroller with "Make it" under it when
+ * the two fit. Every focus here is `preventScroll`, so that reveal is the
+ * only movement. In the app, whose web view ends at the keys, the band is the
+ * whole screen and only the reveal does anything.
+ *
+ * An example is a starting point, not a choice that sticks: typing words of
+ * their own into "What should it do?" lets go of the example (its chip is no
+ * longer marked, and Make it no longer sends its description), and the name
+ * it filled in stays theirs to keep or change.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -26,6 +77,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Wordmark } from '@/components/ui/wordmark';
 
+import { useKeyboardSurface } from '../../lib/keyboard-surface';
 import { EXAMPLES, type Example } from './examples';
 
 /** create-app.tsx's BRIEF_MIN: the server's floor for a description. */
@@ -43,6 +95,37 @@ export type Made = {
 const FIELD = 'px-4 pt-3 pb-2 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800';
 const LABEL = 'block text-[13px] text-zinc-500 dark:text-zinc-400';
 const INPUT = 'w-full border-0 bg-transparent px-0 py-1 text-[17px] text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none';
+// Where the bar and the form start, and where they settle (see the header).
+const ARRIVING = 'translate-y-6 opacity-0 transition-[transform,opacity] duration-300 ease-out motion-reduce:transition-none';
+const ARRIVED = 'translate-y-0 opacity-100 transition-[transform,opacity] duration-300 ease-out motion-reduce:transition-none';
+const HINT = 'pb-1 text-xs text-zinc-500 dark:text-zinc-400';
+const NEEDED = 'pb-1 text-xs text-red-600 dark:text-red-400';
+
+export type Missing = 'brief' | 'name' | null;
+
+/** The first answer "Make it" still needs, in the screen's order; null when both are there. */
+export function missingAnswer(brief: string, name: string): Missing {
+  if (brief.trim().length < BRIEF_MIN) return 'brief';
+  if (!name.trim()) return 'name';
+  return null;
+}
+
+/** What a field says when "Make it" found it missing. */
+export function neededLine(missing: Missing, brief: string): string | null {
+  if (missing === 'brief') return brief.trim() ? tr("auth:say_a_little_more_about_what_it_should_do_5a1c8f24") : tr("auth:say_what_it_should_do_first_7e4b9d03");
+  if (missing === 'name') return tr("auth:give_it_a_name_to_make_it_you_can_change_it_lat_c2f6a815");
+  return null;
+}
+
+/** The device's IANA time zone ("Europe/London"), or null where it cannot be read. */
+export function deviceTimeZone(): string | null {
+  try {
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return typeof zone === 'string' && zone ? zone : null;
+  } catch {
+    return null;
+  }
+}
 
 export function MakeScreen({ who, onMade, onLookAround }: {
   who: string;
@@ -55,25 +138,48 @@ export function MakeScreen({ who, onMade, onLookAround }: {
   const [picked, setPicked] = useState<Example | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The answer a press of "Make it" found missing, said under its field
+  // until it changes.
+  const [missing, setMissing] = useState<Missing>(null);
   const briefRef = useRef<HTMLTextAreaElement>(null);
-  useEffect(() => { briefRef.current?.focus(); }, []);
+  const nameRef = useRef<HTMLInputElement>(null);
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  // The caret for a hardware keyboard; on a phone the first tap raises the
+  // keys (without iOS's pan: lib/keyboard-surface.ts takes that tap).
+  useEffect(() => { briefRef.current?.focus({ preventScroll: true }); }, []);
+  // Taps on the fields without the pan, and the focused field (with Make it
+  // when they fit) revealed inside the scroller once the keys are up.
+  useKeyboardSurface(scrollerRef);
+  // One frame on the wallpaper alone, so the rise has a start.
+  const [arrived, setArrived] = useState(false);
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => setArrived(true));
+    return () => cancelAnimationFrame(raf);
+  }, []);
+  const motion = arrived ? ARRIVED : ARRIVING;
 
   const pick = useCallback((e: Example) => {
     setPicked(e);
     setBrief(e.brief);
     setName(e.name);
     setError(null);
+    setMissing(null);
   }, []);
 
-  const valid = brief.trim().length >= BRIEF_MIN && name.trim().length > 0;
-
   const make = useCallback(async () => {
-    if (!valid || busy) return;
+    if (busy) return;
+    const gap = missingAnswer(brief, name);
+    if (gap) {
+      setMissing(gap);
+      (gap === 'brief' ? briefRef.current : nameRef.current)?.focus({ preventScroll: true });
+      return;
+    }
     setBusy(true);
     setError(null);
     // The example's one-line description only while the brief is still the
     // example's own; a brief they rewrote is theirs to describe later.
     const example = picked && brief.trim() === picked.brief ? picked : null;
+    const timeZone = deviceTimeZone();
     try {
       const res = await fetch('/api/apps', {
         method: 'POST',
@@ -85,6 +191,8 @@ export function MakeScreen({ who, onMade, onLookAround }: {
           brief: brief.trim(),
           ...(example ? { description: example.description } : {}),
           from: 'first-session',
+          // So the sketch's "today" is the maker's (services/app-sketch.js).
+          ...(timeZone ? { timeZone } : {}),
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -105,92 +213,123 @@ export function MakeScreen({ who, onMade, onLookAround }: {
     } finally {
       setBusy(false);
     }
-  }, [valid, busy, picked, brief, name, onMade]);
+  }, [busy, picked, brief, name, onMade]);
+  const needed = neededLine(missing, brief);
 
   return (
     <div
       role="dialog"
       aria-labelledby="first-session-make-title"
       data-first-session-make=""
-      className="fixed inset-0 z-[9000] flex flex-col overflow-y-auto text-zinc-900 dark:text-zinc-100"
+      className="platform-kb-surface fixed inset-0 z-[9000] flex flex-col text-zinc-900 dark:text-zinc-100"
       style={{ background: 'var(--home-wallpaper, #f4f2e4)' }}
     >
-      <div className="flex h-[52px] shrink-0 items-center justify-center pt-[env(safe-area-inset-top)]">
+      {/* Stays put over the scroller, so nothing scrolls under the status bar.
+          At least 32px tall under the status bar's inset, so the whole mark
+          is inside it and what scrolls stops below the mark, not beside it. */}
+      <div className={`flex h-[max(52px,calc(env(safe-area-inset-top)+32px))] shrink-0 items-center justify-center pt-[env(safe-area-inset-top)] ${motion}`}>
         <Wordmark className="h-6 w-auto text-[color:var(--brand-ink)]" />
       </div>
-      <form
-        className="mx-auto flex w-full max-w-sm grow flex-col px-4 pb-[max(34px,env(safe-area-inset-bottom))]"
-        onSubmit={(e) => { e.preventDefault(); void make(); }}
-      >
-        <div className="text-center">
-          <p className="mt-4 text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">
-            <LocalizedValue render={() => (who ? tr("auth:hi_value1_c7a0a63b", { value1: who }) : tr("auth:you_re_in_fdc1f013"))} />
-          </p>
-          <h1 id="first-session-make-title" className="mt-2.5 text-balance text-[30px] font-extrabold leading-[34px]"><Message id="auth:what_do_you_want_to_make_b89d3779" /></h1>
-          <p className="mt-2.5 text-pretty text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400"><Message id="auth:describe_it_for_your_group_homeroom_bot_builds_t_7a130336" /></p>
-        </div>
-        <p className="mt-6 pb-2 text-[13px] text-zinc-500 dark:text-zinc-400"><Message id="auth:start_from_an_example_eed6e395" /></p>
-        <Localized element={<div className="grid grid-cols-3 gap-2" role="group" aria-label={catalogText("auth:examples_e68ee04d")}>
-          {EXAMPLES.map((e) => {
-            const on = picked?.key === e.key;
-            return (
-              <button
-                key={e.key}
-                type="button"
-                aria-pressed={on}
-                data-first-session-example={e.key}
-                onClick={() => pick(e)}
-                className={`relative flex flex-col items-center gap-1.5 rounded-2xl bg-white px-1 pb-2.5 pt-3 text-center dark:bg-zinc-900 ${on ? 'shadow-[inset_0_0_0_2px_var(--accent)]' : 'shadow-[inset_0_0_0_1px_var(--app-sheet-line)]'}`}
-              >
-                <span className="app-icon-tile flex h-11 w-11 items-center justify-center rounded-xl text-2xl" aria-hidden="true">{e.emoji}</span>
-                <span className="text-[13px] font-semibold leading-tight">{e.short}</span>
-              </button>
-            );
-          })}
-        </div>} messages={{"aria-label":"auth:examples_e68ee04d"}} />
-        <div className="mt-4 overflow-hidden rounded-2xl bg-white shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
-          <div className={FIELD}>
-            <label htmlFor="first-session-brief" className={LABEL}><Message id="auth:what_should_it_do_1970bec5" /></label>
-            <Localized element={<textarea
-              ref={briefRef}
-              id="first-session-brief"
-              rows={3}
-              value={brief}
-              onChange={(e) => { setBrief(e.target.value); setError(null); }} placeholder={catalogText("auth:a_tracker_for_our_weekly_miles_c88112fb")}
-              className={`${INPUT} resize-none leading-[22px]`}
-            />} messages={{"placeholder":"auth:a_tracker_for_our_weekly_miles_c88112fb"}} />
-          </div>
-          <div className={FIELD}>
-            <label htmlFor="first-session-name" className={LABEL}><Message id="auth:what_should_we_call_it_38fea306" /></label>
-            <Localized element={<input
-              id="first-session-name"
-              type="text"
-              autoComplete="off"
-              value={name}
-              onChange={(e) => { setName(e.target.value); setError(null); }} placeholder={catalogText("auth:sunday_run_club_fd6fcdde")}
-              className={INPUT}
-            />} messages={{"placeholder":"auth:sunday_run_club_fd6fcdde"}} />
-            <p className="pb-1 text-xs text-zinc-500 dark:text-zinc-400"><Message id="auth:it_s_your_group_s_name_too_you_can_change_it_lat_7b0ae061" /></p>
-          </div>
-        </div>
-        {error ? <p role="alert" className="mt-3 text-[14px] text-red-600 dark:text-red-400">{error}</p> : null}
-        <div className="grow" />
-        <Button
-          type="submit"
-          disabled={!valid || busy}
-          layout="full"
-          variant="pillAccent"
-          size="pillLg"
-          ink="solidLate"
-          className="mt-6 flex items-center justify-center disabled:opacity-50"
+      {/* The scroller the keyboard surface reveals fields in. Its className
+          stays constant: nothing here varies it. */}
+      <div ref={scrollerRef} data-first-session-make-scroll="" className="flex min-h-0 grow flex-col overflow-y-auto">
+        <form
+          className={`mx-auto flex w-full max-w-sm grow flex-col px-4 pb-[max(34px,env(safe-area-inset-bottom))] ${motion}`}
+          onSubmit={(e) => { e.preventDefault(); void make(); }}
         >
-          <LocalizedValue render={() => (busy ? tr("auth:making_it_06eeb53a") : tr("auth:make_it_4ce7dbfb"))} />
-        </Button>
-        <p className="mt-3 text-center text-[15px] text-zinc-500 dark:text-zinc-400">
-          <Message id="auth:not_sure_yet_da1ff327" />
-          <button type="button" onClick={onLookAround} className="font-medium text-violet-700 hover:underline dark:text-violet-400"><Message id="auth:look_around_first_a8f0ccff" /></button>
-        </p>
-      </form>
+          <div className="text-center">
+            <p className="mt-4 text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">
+              <LocalizedValue render={() => (who ? tr("auth:hi_value1_c7a0a63b", { value1: who }) : tr("auth:you_re_in_fdc1f013"))} />
+            </p>
+            <h1 id="first-session-make-title" className="mt-2.5 text-balance text-[30px] font-extrabold leading-[34px]"><Message id="auth:what_do_you_want_to_make_b89d3779" /></h1>
+            <p className="mt-2.5 text-pretty text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400"><Message id="auth:describe_it_for_your_group_homeroom_bot_builds_t_7a130336" /></p>
+          </div>
+          <p className="mt-6 pb-2 text-[13px] text-zinc-500 dark:text-zinc-400"><Message id="auth:start_from_an_example_eed6e395" /></p>
+          <Localized element={<div className="grid grid-cols-3 gap-2" role="group" aria-label={catalogText("auth:examples_e68ee04d")}>
+            {EXAMPLES.map((e) => {
+              const on = picked?.key === e.key;
+              return (
+                <button
+                  key={e.key}
+                  type="button"
+                  aria-pressed={on}
+                  data-first-session-example={e.key}
+                  onClick={() => pick(e)}
+                  className={`relative flex flex-col items-center gap-1.5 rounded-2xl bg-white px-1 pb-2.5 pt-3 text-center dark:bg-zinc-900 ${on ? 'shadow-[inset_0_0_0_2px_var(--accent)]' : 'shadow-[inset_0_0_0_1px_var(--app-sheet-line)]'}`}
+                >
+                  <span className="app-icon-tile flex h-11 w-11 items-center justify-center rounded-xl text-2xl" aria-hidden="true">{e.emoji}</span>
+                  <span className="text-[13px] font-semibold leading-tight">{e.short}</span>
+                </button>
+              );
+            })}
+          </div>} messages={{"aria-label":"auth:examples_e68ee04d"}} />
+          <div className="mt-4 overflow-hidden rounded-2xl bg-white shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
+            <div className={FIELD}>
+              <label htmlFor="first-session-brief" className={LABEL}><Message id="auth:what_should_it_do_1970bec5" /></label>
+              <Localized element={<textarea
+                ref={briefRef}
+                id="first-session-brief"
+                rows={3}
+                value={brief}
+                enterKeyHint="next"
+                aria-describedby={missing === 'brief' ? 'first-session-brief-needed' : undefined}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  setBrief(next);
+                  // Their own words let go of the example.
+                  if (picked && next !== picked.brief) setPicked(null);
+                  setError(null);
+                  setMissing(null);
+                }}
+                onKeyDown={(e) => {
+                  // Return goes on to the name, as the key says; Shift+Return is a new line.
+                  if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return;
+                  e.preventDefault();
+                  nameRef.current?.focus({ preventScroll: true });
+                }}
+                placeholder={catalogText("auth:a_tracker_for_our_weekly_miles_c88112fb")}
+                className={`${INPUT} resize-none leading-[22px]`}
+              />} messages={{"placeholder":"auth:a_tracker_for_our_weekly_miles_c88112fb"}} />
+              {missing === 'brief' ? <p id="first-session-brief-needed" role="alert" className={NEEDED}>{needed}</p> : null}
+            </div>
+            <div className={FIELD}>
+              <label htmlFor="first-session-name" className={LABEL}><Message id="auth:what_should_we_call_it_38fea306" /></label>
+              <Localized element={<input
+                ref={nameRef}
+                id="first-session-name"
+                type="text"
+                autoComplete="off"
+                enterKeyHint="go"
+                value={name}
+                aria-describedby="first-session-name-hint"
+                onChange={(e) => { setName(e.target.value); setError(null); setMissing(null); }}
+                placeholder={catalogText("auth:for_example_sunday_run_club_3b7d2e90")}
+                className={INPUT}
+              />} messages={{"placeholder":"auth:for_example_sunday_run_club_3b7d2e90"}} />
+              {missing === 'name'
+                ? <p id="first-session-name-hint" role="alert" className={NEEDED}>{needed}</p>
+                : <p id="first-session-name-hint" className={HINT}><Message id="auth:it_s_your_group_s_name_too_you_can_change_it_lat_7b0ae061" /></p>}
+            </div>
+          </div>
+          {error ? <p role="alert" className="mt-3 text-[14px] text-red-600 dark:text-red-400">{error}</p> : null}
+          <div className="grow" />
+          <Button
+            type="submit"
+            disabled={busy}
+            layout="full"
+            variant="pillAccent"
+            size="pillLg"
+            ink="solidLate"
+            className="mt-6 flex items-center justify-center disabled:opacity-50"
+          >
+            <LocalizedValue render={() => (busy ? tr("auth:making_it_06eeb53a") : tr("auth:make_it_4ce7dbfb"))} />
+          </Button>
+          <p className="mt-3 text-center text-[15px] text-zinc-500 dark:text-zinc-400">
+            <Message id="auth:not_sure_yet_da1ff327" />
+            <button type="button" onClick={onLookAround} className="font-medium text-violet-700 hover:underline dark:text-violet-400"><Message id="auth:look_around_first_a8f0ccff" /></button>
+          </p>
+        </form>
+      </div>
     </div>
   );
 }

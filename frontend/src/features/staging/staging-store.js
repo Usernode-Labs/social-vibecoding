@@ -33,6 +33,7 @@ import { createStore } from '../../lib/plain-store.js';
  * @typedef {{ top: number, left: number, width: number, height: number }} DockRect
  * @typedef {{
  *   open: boolean, mode: string, dockRect: DockRect | null, urlLabel: string, background: string, solo: boolean,
+ *   clockLabel: string, clockAsNow: boolean,
  *   loaderVisible: boolean, loaderTitle: string, loaderSub: string, loaderRetry: boolean, loaderRetryLabel: string,
  *   testBtnHidden: boolean, testBtnTitle: string, testPanelHidden: boolean,
  *   testHtml: string, fsBtnHidden: boolean, fsBtnText: string, fsBtnTitle: string,
@@ -62,6 +63,14 @@ export const stagingStore = createStore(/** @type {StagingState} */ ({
    * the prerendered page carries.
    */
   solo: false,
+  /**
+   * The moment a preview is shown as of, in plain words ("Thursday 8 Oct,
+   * 7 pm"), when its change declares one (src/services/preview-clock.js);
+   * '' otherwise, which draws no line at all, as the prerendered page does.
+   * `clockAsNow` is the viewer's "See it as now".
+   */
+  clockLabel: '',
+  clockAsNow: false,
   loaderVisible: false,
   get loaderTitle() { return globalThis.PlatformI18n.t("workshop:opening_preview_57aa96ab"); },
   loaderSub: '',
@@ -92,7 +101,7 @@ export const stagingRefs = { iframe: null };
 /**
  * Click handlers, re-pointed by app-view.js where it used to assign `.onclick`.
  *
- * @type {Record<'onBack' | 'onDockClose' | 'onFullscreen' | 'onTest' | 'onTestingClose' | 'onRetry',
+ * @type {Record<'onBack' | 'onDockClose' | 'onFullscreen' | 'onTest' | 'onTestingClose' | 'onRetry' | 'onClockToggle',
  *   ((ev?: Event) => void) | null>}
  */
 export const stagingHandlers = {
@@ -102,6 +111,7 @@ export const stagingHandlers = {
   onTest: null,
   onTestingClose: null,
   onRetry: null,
+  onClockToggle: null,
 };
 
 export const visualCompareStore = createStore(/** @type {VisualCompareState} */ ({

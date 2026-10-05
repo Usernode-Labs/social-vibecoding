@@ -8,7 +8,10 @@ import { Message } from "../../lib/i18n/react";
  *
  *   welcome  A full-screen card on the landing's wallpaper: you joined this
  *            group, and — for an account the invite's own sign-up made — what
- *            Homeroom is, in three lines. "Go to <name>" starts the tour.
+ *            Homeroom is, in three lines. Under that, the project as its
+ *            invite showed it (./joined-picture.tsx). "Go to <name>" starts
+ *            the tour, told whether its first version is still being built
+ *            (read here from GET /api/apps/:slug, now that they may).
  *   tour     ./tour-steps.ts, over the live shell. Each screen is shown whole
  *            first, then the control that leads on is cut out of the dim and
  *            the reader presses it: the product's own handler navigates, and
@@ -18,8 +21,19 @@ import { Message } from "../../lib/i18n/react";
  * App.\_followInvite (public/js/app.js) opens it through
  * `window.UsernodeReact.firstSession.welcome(info)`, once per account and
  * project (localStorage), when the invite link it is following has just
- * joined the viewer. It answers false when it will not show, and the caller
- * lands them on the hub the way it always did.
+ * joined the viewer; so does an invite by username, accepted from the
+ * notifications (Notifications.\_acceptInvite, with the accept's `welcome`).
+ * It answers false when it will not show, and the caller lands them where
+ * it always did.
+ *
+ * A sign-in from the invite's own page (Join, then the sheet) is followed in
+ * the tick the signed-in shell starts, and the link's standing, which says
+ * whether to welcome them, is a request away: Home showed for that long
+ * before "You're in" (Evan, 5 October 2026). So the follow asks for the
+ * welcome's frame first, `holdWelcome()`, drawn at once (flushSync) on the
+ * same wallpaper, before the shell draws Home; welcome() fills it, and
+ * `endHold()` takes it down for any other ending. The make screen's own
+ * hand-off (#3894) works the same way.
  *
  * ── The island rules ──────────────────────────────────────────────────
  *
@@ -31,14 +45,17 @@ import { Message } from "../../lib/i18n/react";
  * and kept in state only when it moves.
  */
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { type Dispatch, type SetStateAction, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 
 import { Button } from '@/components/ui/button';
+import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { Wordmark } from '@/components/ui/wordmark';
 
+import { joinPicture, JoinedPicture } from './joined-picture';
 import { type Made, MakeScreen } from './make';
-import { MadeScreen } from './made';
-import { invitedSteps, makerSteps, type TourScreen, type TourStep } from './tour-steps';
+import { MadeScreen, madeAppOf, madeAppUrl } from './made';
+import { type FirstVersionStage, invitedSteps, makerSteps, type TourScreen, type TourStep } from './tour-steps';
 
 export type FirstSessionInfo = {
   slug: string;
@@ -49,13 +66,35 @@ export type FirstSessionInfo = {
   iconUrl?: string | null;
   inviterName?: string | null;
   inviterMadeIt?: boolean;
-  /** The account was made by the sign-up the link opened. */
+  /** Its first version is still on its way: "<maker> is making it" (community-invites.js firstVersionPending). */
+  building?: boolean;
+  /**
+   * The account was made by the sign-up the link opened (or is a test
+   * account on its first sign-in: services/test-accounts.js onFirstRun).
+   */
   newAccount?: boolean;
+  /** The project's one line, and the picture its invite showed (./joined-picture.tsx). */
+  description?: string | null;
+  picture?: unknown;
+  /** Where its first version stands, for the tour's second step (./tour-steps.ts). */
+  firstVersion?: FirstVersionStage;
 };
+
+/**
+ * Where a project's first version stands, from GET /api/apps/:slug's
+ * `first_version` (madeAppOf): being built, built and up for approval, or
+ * null once there is none (the app is what there is).
+ */
+export function firstVersionStage(body: unknown): FirstVersionStage {
+  const fv = madeAppOf(body)?.firstVersion;
+  if (!fv) return null;
+  return fv.ready ? 'ready' : 'building';
+}
 
 type Legacy = {
   App?: {
-    user?: { id?: number; username?: string; displayName?: string | null } | null;
+    user?: { id?: number; username?: string; displayName?: string | null; needsCommunitiesChoice?: boolean } | null;
+    saveSessionSnapshot?: (user: unknown) => void;
     navigateHome?: (opts?: unknown) => void;
     navigateToApp?: (slug: string, tab: string) => unknown;
     openDiscussionInHub?: (slug: string) => void;
@@ -65,7 +104,6 @@ type Legacy = {
   };
   AppView?: {
     _landOnHub?: (slug: string) => void;
-    changeFirstVersionPlan?: (slug: string, conversationId: number | null, messageId: number | null) => void;
   };
   UsernodeReact?: Record<string, unknown>;
 };
@@ -91,17 +129,6 @@ export function enterScreen(screen: TourScreen, slug: string, conversationId?: n
   else if (screen === 'hub') { AppView?._landOnHub?.(slug); App.navigateToApp?.(slug, 'dev'); }
   else if (screen === 'discussion') App.openDiscussionInHub?.(slug);
   else if (screen === 'bot' && conversationId) window.location.hash = `#messages/${conversationId}`;
-}
-
-/**
- * Change something, under the plan on the made screen: what the App tab's
- * does (AppView.changeFirstVersionPlan), the chat with Homeroom bot with the
- * plan quoted in its composer.
- */
-export function changePlanInChat(slug: string, conversationId: number | null, messageId: number | null): void {
-  const { AppView } = legacy();
-  if (typeof AppView?.changeFirstVersionPlan === 'function') AppView.changeFirstVersionPlan(slug, conversationId, messageId);
-  else if (conversationId) window.location.hash = `#messages/${conversationId}`;
 }
 
 /**
@@ -134,6 +161,46 @@ export function targetBox(selectors: string): Box | null {
   const right = Math.max(...rects.map((r) => r.right));
   const bottom = Math.max(...rects.map((r) => r.bottom));
   return { left, top, width: right - left, height: bottom - top };
+}
+
+/** How far below a transcript's top edge a row it shows from its top begins. */
+const ROW_INSET = 8;
+
+/**
+ * Pure: how far a transcript scrolls back so a row whose top is at `rowTop`
+ * begins ROW_INSET below the transcript's own top (`scrollerTop`), both on
+ * screen: 0 when it does already. Never forward: a row lower down is in view.
+ */
+export function scrollBackFor(scrollerTop: number, rowTop: number, inset: number = ROW_INSET): number {
+  const by = scrollerTop + inset - rowTop;
+  return by > 0 ? Math.ceil(by) : 0;
+}
+
+type ScrollerLike = { scrollTop: number; getBoundingClientRect(): { top: number; height: number }; querySelectorAll(rows: string): ArrayLike<{ getBoundingClientRect(): { top: number } }> };
+
+/**
+ * A step's transcript (TourStep.newestFromTop): its newest row is shown from
+ * its top edge. Pinned to its newest line, the bot's chat put a plan card
+ * taller than the space above the coach card part-way down, its first line
+ * ("Here's my plan for …") above the cut-out. Run every frame while the step
+ * is up, so it holds when the rows arrive after the step lands and when the
+ * chat follows a card that grew; the step covers its cut-out, so the reader
+ * is never scrolled against their own hand. Answers whether it scrolled.
+ */
+export function showNewestFromTop(
+  spec: { scroller: string; rows: string },
+  root: { querySelectorAll(selectors: string): ArrayLike<unknown> } = document,
+): boolean {
+  const scroller = (Array.from(root.querySelectorAll(spec.scroller)) as ScrollerLike[])
+    .find((el) => el.getBoundingClientRect().height > 0);
+  if (!scroller) return false;
+  const rows = scroller.querySelectorAll(spec.rows);
+  const newest = rows.length ? rows[rows.length - 1] : null;
+  if (!newest) return false;
+  const by = scrollBackFor(scroller.getBoundingClientRect().top, newest.getBoundingClientRect().top);
+  if (!by) return false;
+  scroller.scrollTop = Math.max(0, scroller.scrollTop - by);
+  return true;
 }
 
 const PAD = 6;
@@ -219,6 +286,9 @@ function Tour({ info, steps, onEnd }: { info: FirstSessionInfo; steps: TourStep[
     const tick = () => {
       try {
         const at = indexRef.current;
+        // Before measuring, so the cut-out is drawn round what it shows.
+        const reveal = stepRef.current.newestFromTop;
+        if (reveal) showNewestFromTop(reveal);
         const b = targetBox(stepRef.current.target);
         const key = `${at}:${boxKey(b)}`;
         if (key !== last) { last = key; setMeasured({ step: at, box: b }); }
@@ -324,18 +394,17 @@ function Tour({ info, steps, onEnd }: { info: FirstSessionInfo; steps: TourStep[
   );
 }
 
-function YoureIn({ info, onGo }: { info: FirstSessionInfo; onGo: () => void }) {
-  const user = legacy().App?.user;
-  const who = user?.displayName || user?.username || '';
-  const existing = !info.newAccount;
-  const maker = info.inviterMadeIt && info.inviterName ? info.inviterName : null;
-  const go = useRef<HTMLButtonElement>(null);
-  useEffect(() => { go.current?.focus(); }, []);
+/**
+ * "You're in"'s ground: the landing's wallpaper under the wordmark, full
+ * screen. Held empty (WelcomeHeld) while the invite's standing is read.
+ */
+function WelcomeFrame({ children, held = false }: { children: React.ReactNode; held?: boolean }) {
   return (
     <div
       role="dialog"
-      aria-labelledby="first-session-title"
-      data-first-session-welcome=""
+      aria-labelledby={held ? undefined : 'first-session-title'}
+      aria-label={held ? 'Opening your invite' : undefined}
+      data-first-session-welcome={held ? 'held' : ''}
       className="fixed inset-0 z-[9000] flex flex-col overflow-y-auto text-zinc-900 dark:text-zinc-100"
       style={{ background: 'var(--home-wallpaper, #f4f2e4)' }}
     >
@@ -343,60 +412,103 @@ function YoureIn({ info, onGo }: { info: FirstSessionInfo; onGo: () => void }) {
         <Wordmark className="h-6 w-auto text-[color:var(--brand-ink)]" />
       </div>
       <div className="mx-auto flex w-full max-w-sm grow flex-col px-4 pb-[max(34px,env(safe-area-inset-bottom))] text-center">
-        <div className="mx-auto mt-4 inline-flex items-center gap-2 rounded-full bg-white py-1.5 pl-1.5 pr-4 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
-          <span className="app-icon-tile flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-[10px] text-xl" aria-hidden="true">
-            {info.iconUrl ? <img src={info.iconUrl} alt="" className="h-full w-full object-cover" /> : (info.iconEmoji || info.name.slice(0, 1))}
-          </span>
-          <span className="text-[14px] font-semibold"><LocalizedValue render={() => (tr("auth:you_joined_value1_2c933cbb", { value1: info.name }))} /></span>
-        </div>
-        <p className="mt-4 text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">
-          <LocalizedValue render={() => (who ? tr("auth:you_re_in_value1_a139c04b", { value1: who }) : tr("auth:you_re_in_fdc1f013"))} />
-        </p>
-        <h1 id="first-session-title" className="mt-2.5 text-balance text-[30px] font-extrabold leading-[34px]">
-          <LocalizedValue render={() => (existing ? tr("auth:welcome_to_value1_7d0e598b", { value1: info.name }) : tr("auth:on_homeroom_communities_make_apps_together_c8b2a314"))} />
-        </h1>
-        <p className="mt-2.5 text-pretty text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400">
-          <LocalizedValue render={() => (existing
-            ? tr("auth:value1_have_a_look_then_say_hi_b3ab10ba", { value1: maker ? tr("auth:message_c84643d1a352", { maker }) : tr("auth:message_bfe211950aa4") })
-            : tr("auth:anyone_using_an_app_can_change_it_the_group_deci_cc2f9fb7"))} />
-        </p>
-        {existing ? null : (
-          <div className="mt-6 rounded-2xl bg-white p-4 text-left shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
-            <p className="text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400"><Message id="auth:how_it_works_9c870aa6" /></p>
-            <ol className="mt-3 grid gap-2.5">
-              {[
-                maker ? tr("auth:someone_makes_an_app_for_their_group_value1_made_147c32a9", { value1: maker }) : tr("auth:someone_makes_an_app_for_their_group_e4a0ffaf"),
-                tr("auth:anyone_in_the_group_can_ask_for_a_change_homeroo_17eff437"),
-                tr("auth:the_group_decides_what_goes_in_10eefc3d"),
-              ].map((line, i) => (
-                <li key={line} className="flex items-start gap-2.5 text-[15px] leading-snug text-zinc-700 dark:text-zinc-200">
-                  <span className="mt-px flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full bg-violet-600 text-[12px] font-bold text-white">{i + 1}</span>
-                  <span>{line}</span>
-                </li>
-              ))}
-            </ol>
-          </div>
-        )}
-        <div className="grow" />
-        <Button
-          ref={go}
-          type="button"
-          onClick={onGo}
-          layout="full"
-          variant="pillAccent"
-          size="pillLg"
-          ink="solidLate"
-          className="mt-8 flex items-center justify-center"
-        >
-          <LocalizedValue render={() => (tr("auth:go_to_value1_c3ca0145", { value1: info.name }))} />
-        </Button>
+        {children}
       </div>
     </div>
   );
 }
 
-type Mode =
+/** The frame while the invite's standing is read: where its words will be. */
+export function WelcomeHeld() {
+  return (
+    <WelcomeFrame held>
+      <SkeletonGroup label="Opening your invite" className="flex flex-col items-center">
+        <Skeleton shape="block" className="mt-4 h-12 w-56 rounded-full" />
+        <Skeleton className="mt-5 w-28" />
+        <Skeleton shape="block" className="mt-4 h-8 w-64" />
+        <Skeleton shape="muted" className="mt-4 w-56" />
+      </SkeletonGroup>
+    </WelcomeFrame>
+  );
+}
+
+export function YoureIn({ info, onGo }: { info: FirstSessionInfo; onGo: (firstVersion: FirstVersionStage) => void }) {
+  const user = legacy().App?.user;
+  const who = user?.displayName || user?.username || '';
+  const existing = !info.newAccount;
+  const maker = info.inviterMadeIt && info.inviterName ? info.inviterName : null;
+  const go = useRef<HTMLButtonElement>(null);
+  useEffect(() => { go.current?.focus(); }, []);
+  // Whether its first version is still being built, for the tour's App
+  // step: the record as the App tab reads it, past the service worker's
+  // cache. A read that fails leaves the step as it was.
+  const stage = useRef<FirstVersionStage>(info.firstVersion ?? (info.building ? 'building' : null));
+  useEffect(() => {
+    let live = true;
+    fetch(madeAppUrl(info.slug), { credentials: 'same-origin', cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body) => { if (live && body) stage.current = firstVersionStage(body); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [info.slug]);
+  const tile = info.iconUrl ? <img src={info.iconUrl} alt="" className="h-full w-full object-cover" /> : (info.iconEmoji || info.name.slice(0, 1));
+  return (
+    <WelcomeFrame>
+      <div className="mx-auto mt-4 inline-flex items-center gap-2 rounded-full bg-white py-1.5 pl-1.5 pr-4 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
+        <span className="app-icon-tile flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-[10px] text-xl" aria-hidden="true">
+          {tile}
+        </span>
+        <span className="text-[14px] font-semibold"><LocalizedValue render={() => (tr("auth:you_joined_value1_2c933cbb", { value1: info.name }))} /></span>
+      </div>
+      <p className="mt-4 text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">
+        <LocalizedValue render={() => (who ? tr("auth:you_re_in_value1_a139c04b", { value1: who }) : tr("auth:you_re_in_fdc1f013"))} />
+      </p>
+      <h1 id="first-session-title" className="mt-2.5 text-balance text-[30px] font-extrabold leading-[34px]">
+        <LocalizedValue render={() => (existing ? tr("auth:welcome_to_value1_7d0e598b", { value1: info.name }) : tr("auth:on_homeroom_communities_make_apps_together_c8b2a314"))} />
+      </h1>
+      <p className="mt-2.5 text-pretty text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400">
+        <LocalizedValue render={() => (existing
+          ? tr("auth:value1_have_a_look_then_say_hi_b3ab10ba", { value1: maker ? (info.building ? tr("auth:maker_is_making_it_for_the_group_5c1e7a02", { maker }) : tr("auth:message_c84643d1a352", { maker })) : tr("auth:message_bfe211950aa4") })
+          : tr("auth:anyone_using_an_app_can_change_it_the_group_deci_cc2f9fb7"))} />
+      </p>
+      {existing ? null : (
+        <div className="mt-6 rounded-2xl bg-white p-4 text-left shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
+          <p className="text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400"><Message id="auth:how_it_works_9c870aa6" /></p>
+          <ol className="mt-3 grid gap-2.5">
+            {[
+              maker ? (info.building ? tr("auth:someone_makes_an_app_for_their_group_maker_is_mak_8d2b4f61", { maker }) : tr("auth:someone_makes_an_app_for_their_group_value1_made_147c32a9", { value1: maker })) : tr("auth:someone_makes_an_app_for_their_group_e4a0ffaf"),
+              tr("auth:anyone_in_the_group_can_suggest_an_improvement_ho_3f9a1c57"),
+              tr("auth:the_group_decides_what_goes_in_10eefc3d"),
+            ].map((line, i) => (
+              <li key={line} className="flex items-start gap-2.5 text-[15px] leading-snug text-zinc-700 dark:text-zinc-200">
+                <span className="mt-px flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full bg-violet-600 text-[12px] font-bold text-white">{i + 1}</span>
+                <span>{line}</span>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+      <JoinedPicture slug={info.slug} name={info.name} picture={joinPicture(info.picture)} description={info.description} tile={tile} building={!!info.building} compact={!existing} />
+      <div className="grow" />
+      <Button
+        ref={go}
+        type="button"
+        onClick={() => onGo(stage.current)}
+        layout="full"
+        variant="pillAccent"
+        size="pillLg"
+        ink="solidLate"
+        className="mt-8 flex items-center justify-center"
+      >
+        <LocalizedValue render={() => (tr("auth:go_to_value1_c3ca0145", { value1: info.name }))} />
+      </Button>
+    </WelcomeFrame>
+  );
+}
+
+export type Mode =
   | { kind: 'none' }
+  | { kind: 'held' }
   | { kind: 'welcome'; info: FirstSessionInfo }
   | { kind: 'make' }
   | { kind: 'made'; made: Made }
@@ -406,8 +518,62 @@ type Mode =
 // (../auth/landing.tsx): ask it what to make once the shell has signed in.
 // An account that signed in any other way (a password, a code, a provider)
 // is asked through make() below instead, by the join screen it would
-// otherwise have seen (../auth/communities-first-run.js).
+// otherwise have seen (../auth/communities-first-run.js). So is every later
+// boot of an account that has not answered yet: the question is the
+// account's to answer, not this tab's, and the flag only gets the first
+// showing there a tick sooner.
 const MAKE_FLAG = 'usernode:first-session:make';
+
+export const LOOK_AROUND_PATH = '/api/me/first-session/look-around';
+
+/**
+ * The question was answered in this document: Make it made a project, or
+ * "Look around first". It is not opened here again, whatever asks: the
+ * verified session read can land after the answer and before the server has
+ * it (a reload's snapshot boot, ../auth/communities-first-run.js).
+ */
+let answeredHere = false;
+
+/**
+ * Answered: the shell's copy of the account says so, and so does this
+ * device's session snapshot, so the next boot does not draw the make screen
+ * from it before the session is confirmed. The server's own record is Make
+ * it's POST /api/apps, or recordLookAround below.
+ */
+export function noteAnswered(): void {
+  answeredHere = true;
+  const app = legacy().App;
+  if (!app?.user) return;
+  app.user.needsCommunitiesChoice = false;
+  try { app.saveSessionSnapshot?.(app.user); } catch { /* the next boot reads the server */ }
+}
+
+/**
+ * "Look around first", told to the server so the question is not asked
+ * again (src/routes/onboarding.js). Fire and forget: a request that fails
+ * leaves it owed, and the next boot asks it again, which is the honest
+ * outcome when the answer never arrived. Never a console.error.
+ */
+export async function recordLookAround(): Promise<void> {
+  try {
+    await fetch(LOOK_AROUND_PATH, { method: 'POST', credentials: 'same-origin' });
+  } catch { /* asked again on the next boot */ }
+}
+
+/**
+ * Open "What do you want to make?", unless something else is already up.
+ * `now` draws it before returning: asked from the signed-in shell's own
+ * start (`sv:authed`, or the join step in that same tick), that is before the
+ * browser paints the Home the shell has just shown, so the make screen is
+ * the first thing seen after the sign-in sheet leaves. Never from a render
+ * or an effect, where React cannot draw synchronously.
+ */
+export function openMake(setMode: Dispatch<SetStateAction<Mode>>, now: boolean): void {
+  if (answeredHere) return;
+  const open = () => setMode((prev) => (prev.kind === 'none' ? { kind: 'make' } : prev));
+  if (now) flushSync(open);
+  else open();
+}
 
 function viewerName(): string {
   const user = legacy().App?.user;
@@ -422,16 +588,17 @@ export function FirstSession() {
   // as soon as the shell has signed it in with access (`sv:authed` fires
   // only then; somebody still waiting is in the waiting room instead).
   useEffect(() => {
-    const check = () => {
+    const check = (now: boolean) => {
       let flagged = false;
       try { flagged = sessionStorage.getItem(MAKE_FLAG) === '1'; } catch { /* no make screen */ }
       if (!flagged) return;
       try { sessionStorage.removeItem(MAKE_FLAG); } catch { /* shown once anyway */ }
-      setMode((prev) => (prev.kind === 'none' ? { kind: 'make' } : prev));
+      openMake(setMode, now);
     };
-    if (legacy().App?.user) check();
-    document.addEventListener('sv:authed', check);
-    return () => document.removeEventListener('sv:authed', check);
+    if (legacy().App?.user) check(false);
+    const onAuthed = () => check(true);
+    document.addEventListener('sv:authed', onAuthed);
+    return () => document.removeEventListener('sv:authed', onAuthed);
   }, []);
 
   // The bridge App._followInvite calls. welcome() answers whether it will
@@ -446,14 +613,40 @@ export function FirstSession() {
         setMode({ kind: 'welcome', info });
         return true;
       },
+      // "You're in"'s frame, drawn before this returns (see the header):
+      // App._followInvite asks for it in the tick the signed-in shell starts,
+      // before the shell draws Home. Only over nothing: a screen already up
+      // stays.
+      holdWelcome(): boolean {
+        let held = false;
+        flushSync(() => setMode((prev) => {
+          if (prev.kind !== 'none' && prev.kind !== 'held') return prev;
+          held = true;
+          return { kind: 'held' };
+        }));
+        return held;
+      },
+      // The follow ended some other way (the hub, a confirm, a toast): the
+      // frame goes, and only the frame.
+      endHold(): void {
+        setMode((prev) => (prev.kind === 'held' ? { kind: 'none' } : prev));
+      },
       // "What do you want to make?" for an account that is due the join
-      // screen and did not come through the story's sheet. Nothing else is
-      // open by the time the join screen's turn comes, and if the story's
-      // own flag got there first this leaves its screen as it is.
+      // screen and did not come through the story's sheet, and for any
+      // account still due it on a later boot. Nothing else is open by the
+      // time the join screen's turn comes, and if the story's own flag got
+      // there first this leaves its screen as it is.
       make(): boolean {
         try { sessionStorage.removeItem(MAKE_FLAG); } catch { /* shown once anyway */ }
-        setMode((prev) => (prev.kind === 'none' ? { kind: 'make' } : prev));
+        openMake(setMode, true);
         return true;
+      },
+      // A make screen drawn from the session snapshot, for an account the
+      // confirmed session says is no longer due it (answered on another
+      // device, say). Only that screen: once Make it has made something,
+      // what follows it stays.
+      dismissMake(): void {
+        setMode((prev) => (prev.kind === 'make' ? { kind: 'none' } : prev));
       },
     };
     w.UsernodeReact.firstSession = api;
@@ -463,7 +656,9 @@ export function FirstSession() {
   const end = useCallback(() => setMode({ kind: 'none' }), []);
   const steps = useMemo(() => {
     if (mode.kind !== 'tour') return [];
-    const project = { slug: mode.info.slug, name: mode.info.name, conversationId: mode.info.conversationId };
+    const project = {
+      slug: mode.info.slug, name: mode.info.name, conversationId: mode.info.conversationId, firstVersion: mode.info.firstVersion,
+    };
     return mode.path === 'maker' ? makerSteps(project) : invitedSteps(project);
   }, [mode, language]);
 
@@ -471,8 +666,14 @@ export function FirstSession() {
     return (
       <MakeScreen
         who={viewerName()}
-        onMade={(made) => setMode({ kind: 'made', made })}
-        onLookAround={() => { setMode({ kind: 'none' }); legacy().App?.navigateHome?.(); }}
+        // POST /api/apps answered the question as it made the project.
+        onMade={(made) => { noteAnswered(); setMode({ kind: 'made', made }); }}
+        onLookAround={() => {
+          noteAnswered();
+          void recordLookAround();
+          setMode({ kind: 'none' });
+          legacy().App?.navigateHome?.();
+        }}
       />
     );
   }
@@ -489,13 +690,21 @@ export function FirstSession() {
           enterScreen('home', made.slug);
           setMode({ kind: 'tour', info, path: 'maker' });
         }}
-        // Change something is a reply in the chat: the first session ends
-        // there, with no tour over it.
-        onChangePlan={(conversationId, messageId) => {
+        // The plan is answered in the chat with Homeroom bot: the first
+        // session ends there, with no tour over it.
+        onOpenChat={(conversationId) => {
           markSeen(made.slug);
           rememberCommunity(made.slug);
           setMode({ kind: 'none' });
-          changePlanInChat(made.slug, conversationId, messageId);
+          enterScreen('bot', made.slug, conversationId);
+        }}
+        // "look around Home and other apps": Home, where Discover is, with
+        // nothing over it. The project stays on Home and in Communities.
+        onLookAround={() => {
+          markSeen(made.slug);
+          rememberCommunity(made.slug);
+          setMode({ kind: 'none' });
+          enterScreen('home', made.slug);
         }}
       />
     );
@@ -505,14 +714,15 @@ export function FirstSession() {
     return (
       <YoureIn
         info={mode.info}
-        onGo={() => {
+        onGo={(firstVersion) => {
           rememberCommunity(mode.info.slug);
           enterScreen('home', mode.info.slug);
-          setMode({ kind: 'tour', info: mode.info, path: 'invited' });
+          setMode({ kind: 'tour', info: { ...mode.info, firstVersion }, path: 'invited' });
         }}
       />
     );
   }
+  if (mode.kind === 'held') return <WelcomeHeld />;
   if (mode.kind === 'tour') return <Tour info={mode.info} steps={steps} onEnd={end} />;
   return null;
 }

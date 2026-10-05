@@ -131,6 +131,50 @@ test('the spec\'s user-facing half stops at its assumptions and at the technical
   assert.equal(long.length, proposalDescription.DESCRIPTION_MAX, 'bounded as a description block is');
 });
 
+// First-session run-through, 4 Oct 2026: a first version's summary carried
+// its spec's Design brief (accent colours as RGB triples, the kit's class
+// names, "Exact words: ..."), and that was the first thing an invited
+// flatmate read on the change. The brief is the build's; the summary stops
+// at it, as it stops at the assumptions.
+test('the spec\'s user-facing half stops at its Design brief, unless the brief is all it has', () => {
+  const firstVersion = [
+    '# Share the flat\'s chores and who is on each',
+    '',
+    '## User-facing changes',
+    '',
+    'Everyone in the flat sees this week\'s chores and who is on each one, and ticks a chore off when it is done.',
+    '',
+    '### Design',
+    '- Accent: sage green (light 95 118 83, dark 168 201 138).',
+    '- Kit: btn-primary, btn-secondary, card, skeleton, state-empty, state-error.',
+    '- Exact words: "This week", "Done".',
+    '',
+    '#### Kit',
+    'Use the starter\'s components.',
+    '',
+    '### Assumptions',
+    '- Chores rotate on Mondays.',
+    '',
+    '## Technical implementation',
+    '',
+    'Edit `public/index.html`.',
+  ].join('\n');
+  assert.equal(live.specUserFacing(firstVersion),
+    'Everyone in the flat sees this week\'s chores and who is on each one, and ticks a chore off when it is done.');
+  // Other subsections a person will see are still theirs, up to the brief.
+  assert.equal(live.specUserFacing('# T\n\n## User-facing changes\n\nThe list.\n\n### Screens\nA row each.\n\n### Design\nSage.\n\n## Technical implementation\n\nx'),
+    'The list.\n\n### Screens\nA row each.');
+  // A word that only starts like the heading is not it.
+  assert.equal(live.specUserFacing('# T\n\n## User-facing changes\n\nThe list.\n\n### Designer notes\nKept.\n\n## Technical implementation\n\nx'),
+    'The list.\n\n### Designer notes\nKept.');
+  // Nothing before the brief: the brief stands in, rather than no summary.
+  assert.equal(live.specUserFacing('# T\n\n## User-facing changes\n\n### Design\nSage green.\n\n### Assumptions\n- x\n\n## Technical implementation\n\ny'),
+    '### Design\nSage green.');
+  // And the build that wrote no description of its own is described by it.
+  assert.equal(live.buildDescription({ text: 'Done.', spec: firstVersion }).description,
+    live.specUserFacing(firstVersion));
+});
+
 test('the build\'s own description wins; the spec\'s half stands in when the build left it out', () => {
   const said = live.buildDescription({ text: BUILD_TEXT, spec: SPEC });
   assert.equal(said.description, DESCRIPTION);

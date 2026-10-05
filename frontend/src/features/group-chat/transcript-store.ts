@@ -96,11 +96,35 @@ export interface Quote {
 
 export type MessageKind = 'message' | 'system' | 'vote' | 'spec_share';
 
-/** B9: a request's chip on its message (homeroom-bot-chat.js setStatus). */
+/**
+ * B9: a request's chip on its message (homeroom-bot-chat.js setStatus).
+ * `fixing`: a fix asked for on one of the bot's changes still waiting for
+ * approval, until that change is ready again. `waiting_first_version`: a
+ * request held until the project's first version is live.
+ */
 export interface BotRequestChip {
-  status: 'reading' | 'building' | 'ready' | 'live';
+  status: 'reading' | 'building' | 'ready' | 'live' | 'fixing' | 'waiting_first_version';
   issueNumber: number | null;
   sessionId: number | null;
+}
+
+/**
+ * Where a card's request (or fix) stands now, read from the platform's
+ * records whenever the card is (homeroom-bot-chat.js cardsOf, CARD_STAGES).
+ * `waitingOn` and `youApprove` say who still has to approve a built change,
+ * `missing` how many more approvals it needs (0 once it has them) and
+ * `needed` how many in all, so a change that needs fewer than the people
+ * named says so.
+ */
+export interface BotRequestState {
+  stage: 'waiting_first_version' | 'reading' | 'waiting' | 'building' | 'question' | 'checking' | 'proposed' | 'approved'
+    | 'live' | 'closed' | 'person' | 'stopped' | 'fixing' | 'asked' | 'answered';
+  sessionId?: number;
+  youApprove?: boolean;
+  waitingOn?: string[];
+  more?: number;
+  missing?: number;
+  needed?: number;
 }
 
 /**
@@ -109,15 +133,21 @@ export interface BotRequestChip {
  * for the group), unsure (asks first), question (pointed at its chat), busy
  * (too many this hour), failed (could not file it). WP-C: offer, an idea of
  * a newcomer's offered as a request; `first`, their first request on the
- * project, which says it stays.
+ * project, which says it stays. Fix in place: revise, a fix sent to one of
+ * the bot's pending changes (`sessionId`, `firstVersion`), and
+ * revise_refused when that change could not take one. `state` follows the
+ * request from there.
  */
 export interface BotRequestCard {
   messageId: number;
-  kind: 'filed' | 'group' | 'unsure' | 'question' | 'busy' | 'failed' | 'offer';
+  kind: 'filed' | 'group' | 'unsure' | 'question' | 'busy' | 'failed' | 'offer' | 'revise' | 'revise_refused';
   title: string | null;
   issueNumber: number | null;
   typicalMinutes?: number;
   first?: boolean;
+  sessionId?: number;
+  firstVersion?: boolean;
+  state?: BotRequestState;
 }
 
 /**

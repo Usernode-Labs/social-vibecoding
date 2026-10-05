@@ -1943,6 +1943,7 @@ module.exports = {
   readTestsWithMeta,
   checkKey,
   readIcon,
+  loadIconImage,
   normalizeIconColor,
   readAdmins,
   readPlatformEnv,

@@ -16,9 +16,15 @@
 // into the run's two disposable databases (assertShotsDatabase). Nothing here
 // fakes a model: a fake model would exist only in the "after" build.
 //
-// Reserved ids: 990840-990859, across every table here, beside the shots
+// Reserved ids: 990840-990895, across every table here, beside the shots
 // session copies (990896-990899, shots-fixtures.js). tests/staging-demo-id-
 // ranges.test.js keeps the staging seeds and mocks out of the block.
+//
+// The states are written by the DEPLOYED platform's copy of this file, not
+// by either revision under test, so a state a proposal adds here reaches
+// shots only once it has merged. Data a proposal needs for its own shots
+// belongs in its staging seeds (src/db/migrate.js), which each side runs for
+// its own revision.
 
 const shotsFixtures = require('./shots-fixtures');
 
@@ -34,8 +40,17 @@ const IDS = Object.freeze({
   onboardingChallenges: Object.freeze([990854, 990855, 990856]),
   alwaysOpenChallenge: 990857,
   visibilityProposal: 990858,
+  weeklyTemplates: Object.freeze([990860, 990861]),
+  weeklyChallenges: Object.freeze([990862, 990863]),
+  proposalTemplate: 990864,
+  proposalChallenge: 990865,
+  memberRemix: 990866,
+  botConversation: 990867,
+  // A request number on the platform app, not a row id: its GitHub issues
+  // are nowhere near it, so the bot's records on it are the fixture's alone.
+  botRequest: 990868,
 });
-const RESERVED_RANGE = Object.freeze([990840, 990859]);
+const RESERVED_RANGE = Object.freeze([990840, 990895]);
 
 // The staging seeds' own topochain fixtures (src/db/migrate.js,
 // seedStagingTopochain): the season the challenge states join, and the event
@@ -51,6 +66,13 @@ const PREVIEW_URL = 'https://staging-fixture-preview.invalid';
 const FIXTURE_MARK = 'shots-demo';
 const COMPLETION = JSON.stringify({ kind: 'challenge_completion', fixture: FIXTURE_MARK });
 const BOT_BRANCH = 'homeroom-bot/shots-fixture-900003';
+// The staging seeds' fork-lineage source (src/db/migrate.js,
+// seedStagingForkLineage): a public app that is not the platform's own, which
+// the member's remix was copied from.
+const FIXTURE_FORK_SOURCE_SLUG = 'staging-demo-forkable';
+const REMIX_SLUG = 'shots-demo-member-remix';
+// The Homeroom bot's account (homeroom-bot-dm.js botAccount).
+const BOT_USERNAME = 'homeroom_bot';
 
 const sessionPath = (id) => `/#messages/agent/${id}`;
 
@@ -82,6 +104,8 @@ const TAKEN_SQL = Object.freeze({
   chat_sessions: 'SELECT COUNT(*)::int AS taken FROM chat_sessions WHERE id = ANY($1::bigint[])',
   challenge_templates: 'SELECT COUNT(*)::int AS taken FROM challenge_templates WHERE id = ANY($1::bigint[])',
   challenges: 'SELECT COUNT(*)::int AS taken FROM challenges WHERE id = ANY($1::bigint[])',
+  apps: 'SELECT COUNT(*)::int AS taken FROM apps WHERE id = ANY($1::bigint[])',
+  conversations: 'SELECT COUNT(*)::int AS taken FROM conversations WHERE id = ANY($1::bigint[])',
 });
 async function idsFree(client, table, ids) {
   const { rows } = await client.query(TAKEN_SQL[table], [ids]);
@@ -93,6 +117,19 @@ const AGENT_SESSION_COLUMNS = ['id', 'user_id', 'title', 'title_source', 'status
 const MESSAGE_COLUMNS = ['session_id', 'agent_session_id', 'role', 'content', 'metadata', 'created_at'];
 const CHANGE_COLUMNS = ['id', 'app_id', 'user_id', 'branch_name', 'session_title', 'status',
   'agent_session_id', 'created_at', 'last_activity_at'];
+const WEEKLY_TEMPLATE_COLUMNS = ['id', 'category', 'goal', 'task', 'reward', 'description', 'metric_type',
+  'metric_target', 'metric_label', 'illustration', 'created_at', 'updated_at'];
+const WEEKLY_CHALLENGE_COLUMNS = ['id', 'season_event_id', 'challenge_template_id', 'enabled', 'completed',
+  'display_order', 'schedule_start', 'schedule_end'];
+
+// The fixture event the challenge states join, where the staging seeds put it.
+async function fixtureEventFound(client) {
+  const event = await client.query(
+    `SELECT 1 FROM season_events WHERE id = $1 AND season_id = $2 AND internal = FALSE`,
+    [FIXTURE_EVENT_ID, FIXTURE_SEASON_ID]
+  );
+  return event.rowCount === 1;
+}
 
 // ── Writers ─────────────────────────────────────────────────────────────
 
@@ -104,6 +141,27 @@ async function insertAgentSession(client, ctx, { id, title, minutesAgo }) {
      VALUES ($1, $2, $3::text, CASE WHEN $3::text IS NULL THEN 'auto' ELSE 'manual' END, 'open', $4,
              '{}'::jsonb, NOW() - make_interval(mins => $5), NOW() - make_interval(mins => $5 + 20))`,
     [id, ctx.member.id, title, ctx.appId, minutesAgo]
+  );
+}
+
+// A weekly challenge on the fixture event, in a week begun four days ago with
+// three left, which the "This week" header counts down ("3d left").
+async function insertWeeklyChallenge(client, {
+  templateId, challengeId, order, goal, task, reward, description = null, metric = null, illustration,
+}) {
+  await client.query(
+    `INSERT INTO challenge_templates
+       (id, category, goal, task, reward, description, metric_type, metric_target, metric_label, illustration,
+        created_at, updated_at)
+     VALUES ($1, 'WEEKLY', $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())`,
+    [templateId, `[shots fixture] ${goal}`, task, reward, description,
+      metric ? 'count' : null, metric ? metric.target : null, metric ? metric.label : null, illustration]
+  );
+  await client.query(
+    `INSERT INTO challenges
+       (id, season_event_id, challenge_template_id, enabled, completed, display_order, schedule_start, schedule_end)
+     VALUES ($1, $2, $3, TRUE, FALSE, $4, NOW() - INTERVAL '4 days', NOW() + INTERVAL '3 days')`,
+    [challengeId, FIXTURE_EVENT_ID, templateId, order]
   );
 }
 
@@ -361,7 +419,7 @@ const STATES = [
       );
       return {
         shows: [{
-          state: 'A live Homeroom bot verdict marked Ready, with the build it made and the spec it built from (expand the row).',
+          state: 'A live Homeroom bot verdict marked Ready on request #900003, with the build it made and the spec it built from (expand that row).',
           path: '/#admin/homeroom-bot',
         }],
         alsoFor: ['full_admin'],
@@ -383,15 +441,9 @@ const STATES = [
         'activity_at', 'source'],
       season_events: ['id', 'season_id', 'internal', 'is_active'],
     },
-    free: async (client) => {
-      const event = await client.query(
-        `SELECT 1 FROM season_events WHERE id = $1 AND season_id = $2 AND internal = FALSE`,
-        [FIXTURE_EVENT_ID, FIXTURE_SEASON_ID]
-      );
-      return event.rowCount === 1
-        && await idsFree(client, 'challenge_templates', [...IDS.onboardingTemplates, IDS.alwaysOpenTemplate])
-        && idsFree(client, 'challenges', [...IDS.onboardingChallenges, IDS.alwaysOpenChallenge]);
-    },
+    free: async (client) => await fixtureEventFound(client)
+      && await idsFree(client, 'challenge_templates', [...IDS.onboardingTemplates, IDS.alwaysOpenTemplate])
+      && idsFree(client, 'challenges', [...IDS.onboardingChallenges, IDS.alwaysOpenChallenge]),
     async install(client, ctx) {
       const steps = [
         ['Say hello in #general', 'Post a first message in #general.'],
@@ -529,6 +581,254 @@ const STATES = [
         shows: [{
           state: `A friend request from ${sender.username} waiting for you (Accept, Decline).`,
           path: '/#profile?friends',
+        }],
+      };
+    },
+  },
+  {
+    // A "This week" group on the Challenges tab: two weekly challenges on
+    // the fixture event the tab opens on, which has none of its own, one
+    // counted to 2 ("0/2"), neither started. Nothing credits them in a copy.
+    id: 'shots-demo-weekly-challenges-v1',
+    persona: 'member',
+    needs: {
+      challenge_templates: WEEKLY_TEMPLATE_COLUMNS,
+      challenges: WEEKLY_CHALLENGE_COLUMNS,
+      season_events: ['id', 'season_id', 'internal', 'is_active'],
+    },
+    free: async (client) => await fixtureEventFound(client)
+      && await idsFree(client, 'challenge_templates', IDS.weeklyTemplates)
+      && idsFree(client, 'challenges', IDS.weeklyChallenges),
+    async install(client) {
+      await insertWeeklyChallenge(client, {
+        templateId: IDS.weeklyTemplates[0], challengeId: IDS.weeklyChallenges[0], order: 5,
+        goal: 'Spend ten minutes in apps', task: 'Use any apps for ten minutes in all this week.',
+        reward: '300 pts', illustration: 'ten-minutes-in-apps',
+      });
+      await insertWeeklyChallenge(client, {
+        templateId: IDS.weeklyTemplates[1], challengeId: IDS.weeklyChallenges[1], order: 6,
+        goal: 'Send useful feedback', task: 'Report a problem or an idea on two apps this week.',
+        reward: '250 pts', metric: { target: 2, label: 'Reports sent' }, illustration: 'useful-feedback',
+      });
+      return {
+        shows: [{
+          state: 'The Challenges tab\'s "This week" group: two weekly challenges, neither started, one counted to 2, with the days left on the group\'s header.',
+          path: '/#leaderboard/challenges',
+        }],
+        alsoFor: ['read_only_admin', 'full_admin'],
+      };
+    },
+  },
+  {
+    // A weekly challenge scored on sending a proposal (PROPOSAL_SENT): its
+    // rule switched on, its window open, and counted hourly and just now, so
+    // its card and its page say when it is next counted. Nothing scores in a
+    // copy; "Run now" (full admin) would credit the clone's real proposals.
+    id: 'shots-demo-proposal-challenge-v1',
+    persona: 'member',
+    needs: {
+      challenge_templates: WEEKLY_TEMPLATE_COLUMNS,
+      challenges: WEEKLY_CHALLENGE_COLUMNS,
+      challenge_scoring_rules: ['name', 'measure', 'challenge_id', 'interval_minutes', 'last_scored_at', 'enabled'],
+      season_events: ['id', 'season_id', 'internal', 'is_active'],
+    },
+    free: async (client) => await fixtureEventFound(client)
+      && await idsFree(client, 'challenge_templates', [IDS.proposalTemplate])
+      && idsFree(client, 'challenges', [IDS.proposalChallenge]),
+    async install(client) {
+      await insertWeeklyChallenge(client, {
+        templateId: IDS.proposalTemplate, challengeId: IDS.proposalChallenge, order: 7,
+        goal: 'Send a proposal', task: 'Put a change to any app up for a vote this week.',
+        description: 'Counted from the proposals you put to a vote this week. One is enough.',
+        reward: '500 pts', illustration: 'make-a-proposal',
+      });
+      await client.query(
+        `INSERT INTO challenge_scoring_rules (name, measure, challenge_id, interval_minutes, last_scored_at, enabled)
+         VALUES ('[shots fixture] Proposals sent, counted hourly', 'PROPOSAL_SENT', $1, 60, NOW(), TRUE)`,
+        [IDS.proposalChallenge]
+      );
+      return {
+        shows: [
+          { state: 'A weekly challenge scored on sending a proposal ("Sent a proposal"), open and counted hourly: its card in "This week" with its next count time.',
+            path: '/#leaderboard/challenges' },
+          { state: 'The same challenge\'s own page.',
+            path: `/#leaderboard/challenges/${FIXTURE_EVENT_ID}/${IDS.proposalChallenge}` },
+        ],
+        alsoFor: ['read_only_admin', 'full_admin'],
+      };
+    },
+  },
+  {
+    // A remix the member made of a staging demo app: its page's ⋯ offers its
+    // owner "Suggest this back". Shaped as the remix route makes one (Just
+    // you, its owner a member), but with the lineage the staging seeds' own
+    // fork has, by reference only: a copy has no repository to compare, so
+    // the dialog says why it cannot send rather than reaching for GitHub.
+    id: 'shots-demo-member-remix-v1',
+    persona: 'member',
+    needs: {
+      apps: ['id', 'name', 'slug', 'status', 'created_by', 'collab_visibility', 'view_visibility',
+        'forked_from', 'self_hosted', 'created_at'],
+      app_collaborators: ['app_id', 'user_id', 'status', 'accepted_at'],
+    },
+    free: async (client) => {
+      const source = await client.query('SELECT 1 FROM apps WHERE slug = $1 AND NOT self_hosted',
+        [FIXTURE_FORK_SOURCE_SLUG]);
+      const taken = await client.query('SELECT 1 FROM apps WHERE slug = $1', [REMIX_SLUG]);
+      return source.rowCount === 1 && taken.rowCount === 0 && idsFree(client, 'apps', [IDS.memberRemix]);
+    },
+    async install(client, ctx) {
+      const forkedAt = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+      const remix = await client.query(
+        `INSERT INTO apps (id, name, slug, status, created_by, collab_visibility, view_visibility, forked_from, created_at)
+         SELECT $1, '[shots fixture] My remix', $2, 'running', $3, 'private', 'private',
+                jsonb_build_object('appId', source.id, 'slug', source.slug, 'forkedAt', $4::text),
+                NOW() - INTERVAL '2 days'
+           FROM apps source
+          WHERE source.slug = $5 AND NOT source.self_hosted
+         RETURNING id`,
+        [IDS.memberRemix, REMIX_SLUG, ctx.member.id, forkedAt, FIXTURE_FORK_SOURCE_SLUG]
+      );
+      if (remix.rowCount !== 1) throw new Error('The remix fixture has no original to point at.');
+      await client.query(
+        `INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)
+         VALUES ($1, $2, 'member', NOW() - INTERVAL '2 days')`,
+        [IDS.memberRemix, ctx.member.id]
+      );
+      return {
+        shows: [{
+          state: 'A remix you made of another app (Just you): the ⋯ on its page offers "Suggest this back" (its dialog says why these copies cannot send it; do not press Send).',
+          path: `/#app/${REMIX_SLUG}/dev`,
+        }],
+      };
+    },
+  },
+  {
+    // The member's chat with the Homeroom bot, holding two activity cards on
+    // one request of theirs: the first look found it ready to build and its
+    // build is waiting its turn, so that card is working; a second look began
+    // since, with a card of its own below. A card's state is read from the
+    // bot's records (homeroom-bot-activity.js cardsFor), so these are the
+    // records: the request, the live run between the cards, and the cards.
+    // Both cards are read, so no Unread badge rides on every screen, and
+    // nothing is written to the bell.
+    id: 'shots-demo-member-bot-run-card-v1',
+    persona: 'member',
+    needs: {
+      users: ['id', 'username', 'password', 'is_synthetic', 'display_name'],
+      conversations: ['id', 'kind', 'created_by', 'status', 'created_at', 'updated_at'],
+      conversation_direct_pairs: ['conversation_id', 'user_low_id', 'user_high_id'],
+      conversation_members: ['conversation_id', 'user_id', 'role', 'status', 'invited_by', 'responded_at',
+        'joined_at', 'last_read_message_id'],
+      conversation_messages: ['id', 'conversation_id', 'sender_id', 'content', 'idempotency_key', 'metadata',
+        'created_at'],
+      homeroom_bot_dm_messages: ['message_id', 'user_id', 'conversation_id', 'app_id', 'issue_number', 'kind',
+        'created_at'],
+      homeroom_bot_requesters: ['app_id', 'issue_number', 'user_id', 'issue_title', 'created_at'],
+      homeroom_bot_runs: ['app_id', 'issue_number', 'mode', 'verdict', 'determined', 'build_note', 'duration_ms',
+        'created_at', 'build_ok', 'proposal_session_id', 'cap_suppressed', 'live_build_waiting_at'],
+    },
+    free: async (client, ctx) => {
+      // The bot's account, when the copy has one, is a platform account with
+      // no chat with the member yet.
+      const bot = (await client.query(
+        'SELECT id, is_synthetic FROM users WHERE username = $1', [BOT_USERNAME])).rows[0];
+      if (bot) {
+        if (!bot.is_synthetic || Number(bot.id) === Number(ctx.member.id)) return false;
+        const pair = await client.query(
+          `SELECT 1 FROM conversation_direct_pairs
+            WHERE user_low_id = LEAST($1::int, $2::int) AND user_high_id = GREATEST($1::int, $2::int)`,
+          [ctx.member.id, bot.id]
+        );
+        if (pair.rowCount) return false;
+      }
+      const request = await client.query(
+        `SELECT EXISTS (SELECT 1 FROM homeroom_bot_requesters WHERE app_id = $1 AND issue_number = $2)
+             OR EXISTS (SELECT 1 FROM homeroom_bot_runs WHERE app_id = $1 AND issue_number = $2)
+             OR EXISTS (SELECT 1 FROM homeroom_bot_dm_messages WHERE app_id = $1 AND issue_number = $2) AS taken`,
+        [ctx.appId, IDS.botRequest]
+      );
+      return !request.rows[0].taken && idsFree(client, 'conversations', [IDS.botConversation]);
+    },
+    async install(client, ctx) {
+      // A production clone has the bot's account; elsewhere it is made the
+      // way the staging Messages fixture makes it (staging-messages.js).
+      await client.query(
+        `INSERT INTO users (username, password, is_synthetic, display_name)
+         VALUES ($1, 'staging-demo-not-a-login', TRUE, 'Homeroom bot')
+         ON CONFLICT DO NOTHING`,
+        [BOT_USERNAME]
+      );
+      const bot = (await client.query(
+        'SELECT id FROM users WHERE username = $1 AND is_synthetic = TRUE', [BOT_USERNAME])).rows[0];
+      const app = (await client.query('SELECT name FROM apps WHERE id = $1', [ctx.appId])).rows[0];
+      if (!bot || !app) throw new Error('The Homeroom bot fixture lost its account or the platform app.');
+      const conversationId = IDS.botConversation;
+      // As openAdmittedDirect opens it (conversations.js): both already in.
+      await client.query(
+        `INSERT INTO conversations (id, kind, created_by, status, created_at, updated_at)
+         VALUES ($1, 'direct', $2, 'active', NOW() - INTERVAL '30 minutes', NOW() - INTERVAL '10 minutes')`,
+        [conversationId, bot.id]
+      );
+      await client.query(
+        `INSERT INTO conversation_direct_pairs (conversation_id, user_low_id, user_high_id)
+         VALUES ($1, LEAST($2::int, $3::int), GREATEST($2::int, $3::int))`,
+        [conversationId, bot.id, ctx.member.id]
+      );
+      await client.query(
+        `INSERT INTO conversation_members
+           (conversation_id, user_id, role, status, invited_by, responded_at, joined_at)
+         VALUES ($1, $2, 'member', 'member', $2, NOW() - INTERVAL '30 minutes', NOW() - INTERVAL '30 minutes'),
+                ($1, $3, 'member', 'member', $2, NOW() - INTERVAL '30 minutes', NOW() - INTERVAL '30 minutes')`,
+        [conversationId, bot.id, ctx.member.id]
+      );
+      const issueTitle = '[shots fixture] Show vote counts on the request list';
+      await client.query(
+        `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title, created_at)
+         VALUES ($1, $2, $3, $4, NOW() - INTERVAL '31 minutes')`,
+        [ctx.appId, IDS.botRequest, ctx.member.id, issueTitle]
+      );
+      // The first look's verdict, between the two cards. Nothing in a copy
+      // builds it, so it waits its turn for the life of the pair.
+      await client.query(
+        `INSERT INTO homeroom_bot_runs
+           (app_id, issue_number, mode, verdict, determined, build_note, duration_ms, created_at, live_build_waiting_at)
+         VALUES ($1, $2, 'live', 'ready', TRUE, '[shots fixture] Specific enough to build: one number on each row.',
+                 41000, NOW() - INTERVAL '20 minutes', NOW() - INTERVAL '20 minutes')`,
+        [ctx.appId, IDS.botRequest]
+      );
+      const metadata = JSON.stringify({
+        homeroomBot: {
+          kind: 'activity', appSlug: ctx.selfAppSlug, appName: app.name, issueNumber: IDS.botRequest, issueTitle,
+        },
+      });
+      const content = `**${app.name}** · request #${IDS.botRequest}: ${issueTitle}\n\n`
+        + 'I\'m working on this now. This card updates as I go.';
+      const cards = [['shots-fixture-hrbot-activity-first', 30], ['shots-fixture-hrbot-activity-second', 10]];
+      let newest = null;
+      for (const [key, minutesAgo] of cards) {
+        const sent = await client.query(
+          `INSERT INTO conversation_messages (conversation_id, sender_id, content, idempotency_key, metadata, created_at)
+           VALUES ($1, $2, $3, $4, $5::jsonb, NOW() - make_interval(mins => $6))
+           RETURNING id`,
+          [conversationId, bot.id, content, key, metadata, minutesAgo]
+        );
+        newest = sent.rows[0].id;
+        // A card's work begins when its record was written (cardRows).
+        await client.query(
+          `INSERT INTO homeroom_bot_dm_messages (message_id, user_id, conversation_id, app_id, issue_number, kind, created_at)
+           VALUES ($1, $2, $3, $4, $5, 'activity', NOW() - make_interval(mins => $6))`,
+          [newest, ctx.member.id, conversationId, ctx.appId, IDS.botRequest, minutesAgo]
+        );
+      }
+      await client.query(
+        'UPDATE conversation_members SET last_read_message_id = $3 WHERE conversation_id = $1 AND user_id = $2',
+        [conversationId, ctx.member.id, newest]
+      );
+      return {
+        shows: [{
+          state: 'Your chat with Homeroom bot: an activity card on a request of yours whose build is ready and waiting its turn (working), and a newer card on the same request below it. Nothing in it is unread.',
+          path: `/#messages/${IDS.botConversation}`,
         }],
       };
     },

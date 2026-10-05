@@ -14,6 +14,10 @@ const GroupChat = {
   // answers them on this project at all (it offers "Make this a request").
   _botCards: new Map(),
   _botHere: false,
+  // While a card of theirs is still going, the cards are read again now and
+  // then (_followBotCards): the timer, or null.
+  _botCardsTimer: null,
+  _botWorkListener: null,
   typingUsers: new Map(),
   typingTimeout: null,
   oldestMessageId: null,
@@ -292,6 +296,12 @@ const GroupChat = {
 
     GroupChat._openSocket();
     GroupChat.attachScrollHandlers();
+    // The Homeroom bot started or finished work for the viewer: their cards
+    // under its requests may have moved (botWorkChanged). Listened for once.
+    if (!GroupChat._botWorkListener && typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      GroupChat._botWorkListener = () => GroupChat.botWorkChanged();
+      window.addEventListener('homeroom-bot-work-changed', GroupChat._botWorkListener);
+    }
   },
 
   // Open (or re-open) the WS for the currently-mounted appSlug.
@@ -392,6 +402,10 @@ const GroupChat = {
 
   disconnect() {
     GroupChat._historyLoad = null;
+    if (GroupChat._botCardsTimer) {
+      clearTimeout(GroupChat._botCardsTimer);
+      GroupChat._botCardsTimer = null;
+    }
     if (GroupChat._reconnectTimer) {
       clearTimeout(GroupChat._reconnectTimer);
       GroupChat._reconnectTimer = null;
@@ -1984,10 +1998,12 @@ const GroupChat = {
   // history) to a message — update state + patch just its pill row. The
   // message may live in the general stream or any cached thread (#194).
   // B9: the chip a request's message wears, from its metadata: reading,
-  // building, ready (with the change to try), live. Null for none.
+  // building, ready (with the change to try), live, fixing (a fix asked on
+  // one of the bot's changes waiting for approval), or waiting_first_version
+  // (held until the project's first version is live). Null for none.
   _botRequestView(value) {
     if (!value || typeof value !== 'object') return null;
-    const status = ['reading', 'building', 'ready', 'live'].includes(value.status) ? value.status : null;
+    const status = ['reading', 'building', 'ready', 'live', 'fixing', 'waiting_first_version'].includes(value.status) ? value.status : null;
     if (!status) return null;
     return {
       status,
@@ -2025,6 +2041,45 @@ const GroupChat = {
     if (frame.appSlug && frame.appSlug !== GroupChat.appSlug) return;
     GroupChat._botCards.set(Number(card.messageId), card);
     GroupChat._repaintBotRequest(card.messageId);
+    GroupChat._followBotCards();
+  },
+
+  // The stages at which a card's request is still going (homeroom-bot-chat.js
+  // CARD_STAGES), or waiting on approval that may come in at any time, or on
+  // the project's first version going live.
+  _BOT_CARD_GOING: new Set(['waiting_first_version', 'reading', 'waiting', 'building', 'checking', 'proposed', 'approved', 'fixing']),
+
+  // Whether one card still has somewhere to go.
+  _botCardGoing(card) {
+    if (!card || (card.kind !== 'filed' && card.kind !== 'revise')) return false;
+    return GroupChat._BOT_CARD_GOING.has((card.state && card.state.stage) || 'reading');
+  },
+
+  // While a card of the viewer's is still going, read the cards again in a
+  // minute, so each says where its request stands now: the moments the
+  // server pushes do not cover every turn (a fix's discussion turn on
+  // somebody else's change, a vote). Only while this chat is open, and not
+  // while the page is hidden.
+  _followBotCards() {
+    if (GroupChat._botCardsTimer) {
+      clearTimeout(GroupChat._botCardsTimer);
+      GroupChat._botCardsTimer = null;
+    }
+    const slug = GroupChat.appSlug;
+    if (!slug || ![...GroupChat._botCards.values()].some((card) => GroupChat._botCardGoing(card))) return;
+    GroupChat._botCardsTimer = setTimeout(() => {
+      GroupChat._botCardsTimer = null;
+      if (GroupChat.appSlug !== slug) return;
+      if (typeof document !== 'undefined' && document.hidden) { GroupChat._followBotCards(); return; }
+      void GroupChat._loadBotCards();
+    }, 60 * 1000);
+  },
+
+  // The Homeroom bot started or finished work for the viewer (app.js turns
+  // `homeroom_bot_work_changed` into the window event connect() listens for,
+  // and sends it again after a reconnect): their cards may have moved.
+  botWorkChanged() {
+    if (GroupChat.appSlug && GroupChat._botCards.size) void GroupChat._loadBotCards();
   },
 
   // B9: read the viewer's cards again (after a load), and whether the bot
@@ -2040,6 +2095,7 @@ const GroupChat = {
       GroupChat._botCards = new Map((Array.isArray(data.cards) ? data.cards : [])
         .filter((card) => card && card.messageId).map((card) => [Number(card.messageId), card]));
       GroupChat.render();
+      GroupChat._followBotCards();
     } catch { /* offline: the cards come back on the next load */ }
   },
 
@@ -2077,6 +2133,13 @@ const GroupChat = {
     const messages = window.UsernodeReact && window.UsernodeReact.messages;
     if (messages && typeof messages.openBot === 'function') messages.openBot();
     else location.hash = '#messages';
+  },
+
+  // Fix in place: the change a fix went to, on its page (See change).
+  openBotChange(sessionId) {
+    const id = Number(sessionId);
+    if (!GroupChat.appSlug || !id) return;
+    location.hash = `#app/${encodeURIComponent(GroupChat.appSlug)}/dev/proposals/${id}`;
   },
 
   // B9: a request asked here, on its request page (See request).
@@ -3811,7 +3874,29 @@ const GroupChat = {
     GroupChat._attachQuoteHandlers(container);
     if (container._gcScrollBound) return;
     container._gcScrollBound = true;
+    // 5 Oct 2026: the keyboard coming up for the composer moves this
+    // scroller too (the app's web view resizing, iOS Safari revealing the
+    // field), and a scroll event it caused away from the bottom read as the
+    // reader scrolling up, so the room stopped following its newest line
+    // while they typed. lib/keyboard-hold.ts (the same hold as Messages'
+    // conversation) says when a scroll event is the keyboard's: then the
+    // view goes back to the bottom, still locked there, and no history loads.
+    const pinBottom = () => {
+      container.scrollTop = container.scrollHeight;
+      GroupChat._savedScrollTop = container.scrollTop;
+    };
+    const hold = window.UsernodeKeyboardHold
+      ? window.UsernodeKeyboardHold.attach(container, {
+        pinned: () => !!GroupChat._lockedToBottom,
+        follow: pinBottom,
+      })
+      : null;
     container.addEventListener('scroll', () => {
+      if (hold && hold.holding()) {
+        if (GroupChat._lockedToBottom
+          && container.scrollHeight - container.scrollTop - container.clientHeight > 1) pinBottom();
+        return;
+      }
       if (container.scrollTop === 0 && GroupChat.hasMore) {
         GroupChat.loadHistory();
       }

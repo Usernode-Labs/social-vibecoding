@@ -1356,7 +1356,7 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 824 → 826: +2 (the UI overhaul's other pages): the Your work screen's
   // Your changes and Your requests views, new routes with nothing declared
   // on them to fold into. The rest was REWRITTEN in place: the menu's
-  // "Give feedback" / "New change" checks pin Ask for a change and Start a
+  // "Give feedback" / "New change" checks pin Suggest an improvement and Start a
   // new change; the dialog's pin its new words; Communities' tab checks pin
   // the Needs you page; Me's "More" check pins Your work beside it, the
   // Your contributions check pins the Your work rows, and the Friends check
@@ -1541,7 +1541,9 @@ test('the open card is the fold’s sheet, and never picks up the Needs-you deck
   //
   // One rule, three screens — so the full-screen geometry is keyed on the
   // deck's OWN base class and the bare name stays the fold's.
-  assert.match(CSS, /\.dev-ws-sheet-modal \{ position: fixed; inset: 0; z-index: 30;/,
+  // (z-index 40 since 5 October 2026: above the tab bar and the Resume
+  // strip, tests/needs-sheet-above-bars.test.js.)
+  assert.match(CSS, /\.dev-ws-sheet-modal \{ position: fixed; inset: 0; z-index: 40;/,
     'the deck’s dialogs are the fixed, full-screen thing');
   assert.ok(!/^\.dev-ws-sheet \{/m.test(CSS),
     'and nothing is keyed on the bare name, which is one open card sitting in its row');

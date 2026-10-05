@@ -115,15 +115,19 @@ const PEOPLE = {
   emailInvites: 0,
 };
 
-test('a first version\'s plan treats the sketch\'s names, dates and numbers as placeholders', () => {
+test('a first version\'s plan treats sample names, dates and numbers as placeholders, and the card as a summary', () => {
   const flat = (text) => text.replace(/\s+/g, ' ');
   const first = flat(bot.triagePromptFor({ seed: 'SEED', issueNumber: 1, firstVersion: true }));
-  assert.match(first, /The sketch is an illustrative look only: its sample names, dates and numbers are placeholders, never facts about the group, and never a `plan` bullet or a `choices` question\./);
-  assert.match(first, /When the app involves the people in its group \(whose turn it is, who did what, who sees what\), plan around the project's real members, listed under WHO IS IN THIS PROJECT when known, and around new members joining later; never around people the sketch made up\./);
-  assert.ok(first.indexOf('The sketch is an illustrative look only') > first.indexOf('When the request names a design target'),
-    'right after the design target rule');
-  assert.doesNotMatch(flat(bot.triagePromptFor({ seed: 'SEED', issueNumber: 1 })), /illustrative look only/, 'only a first version');
-  const note = first.slice(first.indexOf('The sketch is an illustrative look only'), first.indexOf('never around people the sketch made up.'));
+  // 5 October 2026: the first session's sketch is a featured card of the
+  // idea, not a screen, so it is never a design target (services/app-sketch.js).
+  assert.doesNotMatch(first, /design target|design\/sketch\.html|plan the first version as it/);
+  assert.match(first, /When the request quotes the featured card its creator was shown \(`design\/sketch\.json`: an emoji, a tagline and a few points\), read it as a short summary of the description, not a design: it shows no screen, so it sets no layout, words or colours, and where the two differ the description wins\./);
+  assert.match(first, /Sample names, dates and numbers are placeholders, never facts about the group, and never a `plan` bullet or a `choices` question\./);
+  assert.match(first, /When the app involves the people in its group \(whose turn it is, who did what, who sees what\), plan around the project's real members, listed under WHO IS IN THIS PROJECT when known, and around new members joining later; never around people made up for an example\./);
+  assert.ok(first.indexOf('Sample names, dates and numbers') > first.indexOf('When the request quotes the featured card'),
+    'right after the card rule');
+  assert.doesNotMatch(flat(bot.triagePromptFor({ seed: 'SEED', issueNumber: 1 })), /featured card|Sample names/, 'only a first version');
+  const note = first.slice(first.indexOf('When the request quotes the featured card'), first.indexOf('never around people made up for an example.'));
   assert.doesNotMatch(note, /—/, 'no em dash');
 });
 
@@ -393,9 +397,11 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     const states = await progress.requestStates(pool, { userId: maya.id });
     const state = states.find((s) => Number(s.row.issue_number) === 1).state;
     assert.deepEqual([state.stage, state.waitingOn], ['plan', 'them']);
-    assert.equal(progress.stepNumber('plan', true), 3, 'Step 3 of 7: Write a plan');
+    assert.equal(progress.stepNumber('plan', true), 3, 'Step 3 of 7, the plan\'s step');
+    // Its creator's turn, named for whoever reads it (planWaitsStepName).
     const fv = await dm.firstVersionState(pool, app.id);
-    assert.equal(fv.stepName, 'Write a plan');
+    assert.equal(fv.stepName, 'Waiting for @maya to answer the plan');
+    assert.equal((await dm.firstVersionState(pool, app.id, { viewerId: maya.id })).stepName, 'Your turn: answer the plan');
     assert.deepEqual(fv.plan.bullets, PLAN.bullets);
     assert.equal(fv.plan.actionId, (await planMessage(first)).meta.actionId);
     assert.equal((await progress.botWorkByIssue(pool, app.id)).get(1).what, 'queued', 'nobody else starts it');

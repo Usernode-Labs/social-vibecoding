@@ -54,6 +54,8 @@ type RowView = {
   success: string;
 };
 
+type NonPodiumToggle = { count: number | null; on: boolean };
+
 type BodyView =
   | { state: 'loading' }
   | { state: 'error'; message: string }
@@ -66,6 +68,14 @@ type BodyView =
       disclaimer: string | null;
     }
   | {
+      // #3887: every scorer on this board is hidden by the default — the
+      // filter working, not an empty board. The chip rides along.
+      state: 'allexcluded';
+      challengeLine: { done: string | null; total: string } | null;
+      disclaimer: string | null;
+      nonPodiumToggle: NonPodiumToggle | null;
+    }
+  | {
       state: 'table';
       challengeLine: { done: string | null; total: string } | null;
       disclaimer: string | null;
@@ -73,6 +83,7 @@ type BodyView =
       columns: ColumnKey[];
       headers: Record<ColumnKey, string>;
       rows: RowView[];
+      nonPodiumToggle: NonPodiumToggle | null;
       pagination: {
         page: number;
         totalPages: number;
@@ -150,14 +161,54 @@ function ChallengeLine(
   );
 }
 
+/**
+ * #3887: the chip above the table. Hidden entirely when the board has no
+ * podium-excluded user (the descriptor is null); the count in the label is
+ * the server's own non_podium_count, and a server old enough to omit that
+ * field renders the chip without a number rather than with a wrong one.
+ * Class recipe and aria-pressed are the Kudos history chips'
+ * (./kudos-pane.tsx) — a filter chip, not a tab.
+ */
+function NonPodiumChip({ toggle }: { toggle: NonPodiumToggle | null }): ReactNode {
+  if (!toggle) return null;
+  const on = toggle.on
+    ? 'bg-violet-600 text-white border-violet-600'
+    : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 '
+      + 'border-zinc-200 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-700';
+  return (
+    <div className="flex items-center mb-3">
+      <button
+        type="button"
+        id="tc-lb-non-podium-toggle"
+        aria-pressed={toggle.on}
+        className={`px-3 py-1 text-xs font-medium rounded-full border ${on}`}
+        onClick={() => controller()?._toggleNonPodium()}
+      >
+        {toggle.count == null
+          ? 'Show non-podium users'
+          : `Show non-podium users (${toggle.count})`}
+      </button>
+    </div>
+  );
+}
+
 function Cell({ column, row }: { column: ColumnKey; row: RowView }): ReactNode {
+  // #3887: an included non-podium row reads in the shell's muted ink —
+  // the whole row grayed, no opacity trick — so a dimmed figure is never
+  // mistaken for a ranked one. The row stays hoverable and tappable as
+  // any other; gray is not disabled.
+  const ink = row.nonPodium ? ' text-zinc-500 dark:text-zinc-400' : '';
   if (column === 'rank') {
-    return <td className="px-3 py-2 text-sm font-mono text-zinc-500 dark:text-zinc-400">{row.rank}</td>;
+    return <td className={`px-3 py-2 text-sm font-mono text-zinc-500 dark:text-zinc-400${ink}`}>{row.rank}</td>;
   }
   if (column === 'user') {
     return (
       <td className="px-3 py-2 text-sm">
-        <span className="font-medium text-zinc-900 dark:text-zinc-100">{row.user}</span>
+        <span
+          className={`font-medium ${row.nonPodium
+            ? 'text-zinc-500 dark:text-zinc-400'
+            : 'text-zinc-900 dark:text-zinc-100'}`}
+        >{row.user}</span>
         {row.nonPodium ? (
           <Localized element={<span
             className="text-[0.9375rem] text-zinc-500 dark:text-zinc-400" title={catalogText("apps:excluded_from_podium_ranking_07f1600c")}
@@ -168,16 +219,16 @@ function Cell({ column, row }: { column: ColumnKey; row: RowView }): ReactNode {
   }
   if (column === 'points') {
     return (
-      <td className="px-3 py-2 text-sm font-mono text-right">
+      <td className={`px-3 py-2 text-sm font-mono text-right${ink}`}>
         {row.points}
         <span className="text-zinc-500 dark:text-zinc-400">{` +${row.extra}`}</span>
       </td>
     );
   }
   if (column === 'blocks') {
-    return <td className="px-3 py-2 text-sm font-mono text-right">{row.blocks}</td>;
+    return <td className={`px-3 py-2 text-sm font-mono text-right${ink}`}>{row.blocks}</td>;
   }
-  return <td className="px-3 py-2 text-sm font-mono text-right">{`${row.success}%`}</td>;
+  return <td className={`px-3 py-2 text-sm font-mono text-right${ink}`}>{`${row.success}%`}</td>;
 }
 
 function StandingsTable(
@@ -325,10 +376,25 @@ function Body({ view }: { view: BodyView | null }): ReactNode {
       </>
     );
   }
+  // #3887: everyone who scored here is hidden by the default. Same
+  // neutral-hint contract as noentries (data-tc-lb-empty — the declared
+  // check accepts "table or this hint"), but a different sentence, and the
+  // chip above it is how the viewer gets the rows back.
+  if (view.state === 'allexcluded') {
+    return (
+      <>
+        <ChallengeLine line={view.challengeLine} />
+        <Disclaimer text={view.disclaimer} />
+        <NonPodiumChip toggle={view.nonPodiumToggle} />
+        <p className={HINT} data-tc-lb-empty="">Everyone with a score on this board is excluded from the ranking.</p>
+      </>
+    );
+  }
   return (
     <>
       <ChallengeLine line={view.challengeLine} />
       <Disclaimer text={view.disclaimer} />
+      <NonPodiumChip toggle={view.nonPodiumToggle} />
       <StandingsTable view={view} />
       <Pagination meta={view.pagination} />
     </>

@@ -539,7 +539,7 @@ function InboxFilters({ filter }: { filter: InboxFilter }) {
  * building it yourself, then people.
  */
 const NEW_CHOICES = [
-  { key: 'bot', get label() { return tr("community:homeroom_bot_dbcdaf67"); }, get hint() { return tr("community:make_an_app_or_ask_for_a_change_8a212fe9"); } },
+  { key: 'bot', get label() { return tr("community:homeroom_bot_dbcdaf67"); }, get hint() { return tr("community:make_an_app_or_suggest_an_improvement"); } },
   // #2779: a conversation with the Mayor that works on any app, so there is
   // no app to pick first. It replaced "Agent chat", which asked which app and
   // opened a classic dev session there; those are no longer created. B8:

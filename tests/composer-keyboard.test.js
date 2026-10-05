@@ -230,6 +230,40 @@ test('attachComposerKeyboard hands the kit the scroller and the platform header'
   assert.equal(calls[0].detached, 1, 'detach is idempotent');
 });
 
+test('a screen with a bar of its own hands the kit that bar instead (the first session\'s make screen)', () => {
+  const { attachComposerKeyboard } = loadTsx('frontend/src/lib/composer-keyboard.ts');
+  const { kit, calls } = fakeKit();
+  const bar = { id: 'make-bar' };
+  attachComposerKeyboard({ nodeType: 1 }, { unNative: kit }, DOC, bar);
+  assert.equal(calls[0].opts.topEl, bar);
+  attachComposerKeyboard({ nodeType: 1 }, { unNative: kit }, DOC, null);
+  assert.deepEqual(calls[1].opts, {}, 'null: no bar, the scroller\'s own top');
+  attachComposerKeyboard({ nodeType: 1 }, { unNative: kit }, DOC);
+  assert.equal(calls[2].opts.topEl, HEADER, 'left out: the platform header, as before');
+});
+
+test('useComposerKeyboard hands over the bar its second ref holds', () => {
+  const r = fakeReact();
+  const { useComposerKeyboard } = loadTsx('frontend/src/lib/composer-keyboard.ts', { stubs: { react: r.React } });
+  const { kit, calls } = fakeKit();
+  const prevWin = global.window;
+  const prevDoc = global.document;
+  global.window = { unNative: kit };
+  global.document = DOC;
+  try {
+    const scroller = { current: { nodeType: 1 } };
+    const bar = { current: { id: 'make-bar' } };
+    r.render(() => useComposerKeyboard(scroller, bar));
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].opts.topEl, bar.current);
+    r.unmount();
+    assert.equal(calls[0].detached, 1);
+  } finally {
+    global.window = prevWin;
+    global.document = prevDoc;
+  }
+});
+
 test('attachComposerKeyboard is a no-op without an element or a kit, and survives a throwing kit', () => {
   const { attachComposerKeyboard } = loadTsx('frontend/src/lib/composer-keyboard.ts');
   const { kit, calls } = fakeKit();

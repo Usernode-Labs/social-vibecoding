@@ -24,6 +24,7 @@ import { Input } from '@/components/ui/input';
 import { PasswordInput } from '@/components/ui/password-input';
 
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
+import { returnKeyHandler } from '../../lib/return-to-next';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { AuthBackButton, backToLanding } from './back-button';
 import { NativeLoginDetailsLink } from './native-login-details';
@@ -175,7 +176,8 @@ export function RegisterScreen() {
           <h1 className="text-[28px] font-extrabold leading-tight tracking-tight text-center mb-1 text-zinc-900 dark:text-zinc-100"><Message id="auth:homeroom_c9149977" /></h1>
           <p className="text-[15px] text-zinc-500 dark:text-zinc-400 text-center mb-2 italic"><Message id="auth:a_place_where_users_own_and_build_apps_together_172e7501" /></p>
           <p className="text-[15px] text-zinc-500 dark:text-zinc-400 text-center mb-8"><Message id="auth:create_your_account_9e709348" /></p>
-          <form id="register-form" className="space-y-4" onSubmit={onSubmit}>
+          {/* Return walks code, username, password, then registers (#3907). */}
+          <form id="register-form" className="space-y-4" onSubmit={onSubmit} onKeyDown={returnKeyHandler()}>
             <SessionConfirmationNotice completion={completion} />
             <div className={AUTH_CARD}>
             <div className={AUTH_ROW}>
@@ -187,6 +189,7 @@ export function RegisterScreen() {
                 type="text"
                 required={true}
                 autoComplete="off"
+                enterKeyHint="next"
                 {...AUTHFIELD}
                 className="font-mono" placeholder={catalogText("auth:enter_activation_code_5005c13d")}
               />} messages={{"placeholder":"auth:enter_activation_code_5005c13d"}} />
@@ -203,6 +206,7 @@ export function RegisterScreen() {
                 type="text"
                 required={true}
                 autoComplete="username"
+                enterKeyHint="next"
                 {...HANDLE_FIELD}
                 maxLength={32}
                 aria-describedby="reg-username-public reg-username-hint"
@@ -237,6 +241,7 @@ export function RegisterScreen() {
                 name="password"
                 required={true}
                 autoComplete="new-password"
+                enterKeyHint="go"
                 aria-describedby="reg-password-hint"
                 aria-invalid={fieldError?.field === 'password' ? true : undefined}
                 onInput={() => setFieldError((f) => (f?.field === 'password' ? null : f))}

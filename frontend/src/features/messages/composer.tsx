@@ -7,10 +7,10 @@ import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type Chan
 
 import { ArrowUpIcon, ArrowUpTrayIcon, PaperClipIcon, PlusIcon } from '@/components/ui/icons';
 import * as api from './api';
-import { channels, draftFor, notifyTyping, replyFor, scopeKey, send, setDraft, setReply, takePendingShare, useMessagesSnapshot } from './store';
+import { channels, draftFor, notifyTyping, replyFor, scopeKey, send, setDraft, setReply, takePendingAttach, takePendingShare, useMessagesSnapshot } from './store';
 import { mirrorsReplies, requestPlace } from './bot-question';
-import type { ConversationUser, MessageAttachment, SharedObjectReference } from './types';
-import { fileSize, senderName } from './format';
+import type { ConversationUser, MessageAttachment, SharedObjectCard, SharedObjectReference, StagedObject } from './types';
+import { fileSize, pendingObjectLabel, senderName } from './format';
 import { plainText } from './plain-text';
 import { useAutoGrow } from '../../lib/use-auto-grow';
 import { prefixLookup, type PrefixLookup } from '../../lib/prefix-lookup';
@@ -30,13 +30,34 @@ function attachmentLimit(file: File): number {
   return 10 * 1024 * 1024;
 }
 
-function objectLabel(object: SharedObjectReference): string {
-  const app = object.appSlug ? `${object.appSlug} · ` : '';
-  if (object.type === 'app') return `${app}App`;
-  if (object.type === 'issue') return tr("community:value1_issue_value2_6d99f50b", { value1: app, value2: object.issueNumber });
-  if (object.type === 'governance') return tr("community:value1_governance_value2_73d81693", { value1: app, value2: object.proposalId });
-  if (object.type === 'spec') return tr("community:value1_spec_v_value2_session_value3_996d74b1", { value1: app, value2: object.version, value3: object.sessionId });
-  return tr("community:value1_proposal_value2_057953b2", { value1: app, value2: object.sessionId });
+/** The reference alone, as the server takes it: the staged title stays here. */
+function referenceOf(object: StagedObject): SharedObjectReference {
+  const { type, appId, appSlug, issueNumber, sessionId, proposalId, version } = object;
+  return { type, appId, appSlug, issueNumber, sessionId, proposalId, version };
+}
+
+/**
+ * The server's reading of a staged item for this viewer, the same one a
+ * sent card gets (api.resolveLinkCards), so its chip names its title and
+ * project. Null until it comes, and for what a link cannot name (a spec).
+ */
+function useStagedCard(object: StagedObject | null): SharedObjectCard | null {
+  const [read, setRead] = useState<{ key: string; card: SharedObjectCard | null }>({ key: '', card: null });
+  const linkable = !!object && object.type !== 'spec' && !!object.appSlug;
+  const key = linkable && object ? JSON.stringify(referenceOf(object)) : '';
+  useEffect(() => {
+    if (!key || !object?.appSlug || object.type === 'spec') return undefined;
+    let live = true;
+    const type = object.type;
+    const appSlug = object.appSlug;
+    const { issueNumber, sessionId, proposalId } = object;
+    void api.resolveLinkCards([{ type, appSlug, issueNumber, sessionId, proposalId }])
+      .then((cards) => { if (live) setRead({ key, card: cards[0] || null }); })
+      .catch(() => { if (live) setRead({ key, card: null }); });
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+  return key && read.key === key ? read.card : null;
 }
 
 /**
@@ -56,7 +77,13 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   const [value, setValue] = useState('');
   const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
   const [uploading, setUploading] = useState(0);
-  const [object, setObject] = useState<SharedObjectReference | null>(null);
+  const [object, setObject] = useState<StagedObject | null>(null);
+  // Ask for changes (store.openBot): what the box asks while its change is attached.
+  const [prompt, setPrompt] = useState<string | null>(null);
+  // The caret goes in the box once it is drawn: an attach can arrive before
+  // the conversation has loaded and the box exists.
+  const [focusWanted, setFocusWanted] = useState(false);
+  const stagedCard = useStagedCard(object);
   const [error, setError] = useState('');
   const [dragging, setDragging] = useState(false);
   // #1955: the paperclip and the share tray were two adjacent icons that both
@@ -75,7 +102,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   const friendIds = useFriendIds();
 
   useEffect(() => {
-    setValue(draftFor(scope)); setAttachments([]); setObject(null); setError('');
+    setValue(draftFor(scope)); setAttachments([]); setObject(null); setPrompt(null); setError('');
   }, [scope]);
 
   // Reply puts the caret here where there is a hardware keyboard, so the
@@ -89,7 +116,14 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
     if (inThread) return undefined;
     const onSelected = (event: Event) => {
       const detail = (event as CustomEvent<SharedObjectReference>).detail;
-      if (detail) { setObject(detail); inputRef.current?.focus(); }
+      if (detail) { setObject(detail); setPrompt(null); inputRef.current?.focus(); }
+    };
+    // Ask for changes: the change itself, attached, and the caret in the box.
+    const attachPending = () => {
+      if (!conversationId) return;
+      const pending = takePendingAttach(conversationId);
+      if (!pending) return;
+      setObject(pending.object); setPrompt(pending.placeholder); setFocusWanted(true);
     };
     const onShare = (event: Event) => {
       // A bare Messages screen is asking the user to choose a destination;
@@ -104,15 +138,18 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
     };
     window.addEventListener('usernode:messages-object-selected', onSelected);
     window.addEventListener('usernode:messages-share', onShare);
+    window.addEventListener('usernode:messages-attach', attachPending);
     // An app/card share can navigate into Messages before this conversation
     // composer mounts. Consume that one-shot payload after listeners exist.
     if (conversationId) {
       const pending = takePendingShare();
       if (pending !== undefined) window.UsernodeReact?.dialogs?.messagesShare?.open(pending || undefined);
+      attachPending();
     }
     return () => {
       window.removeEventListener('usernode:messages-object-selected', onSelected);
       window.removeEventListener('usernode:messages-share', onShare);
+      window.removeEventListener('usernode:messages-attach', attachPending);
     };
   }, [conversationId, inThread]);
 
@@ -120,6 +157,13 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
     if (typingStop.current) window.clearTimeout(typingStop.current);
     notifyTyping(false);
   }, [conversationId]);
+
+  const boxShown = !!active && active.membershipStatus === 'member' && !!active.canSend;
+  useEffect(() => {
+    if (!focusWanted || !boxShown || !inputRef.current) return;
+    setFocusWanted(false);
+    inputRef.current.focus({ preventScroll: true });
+  }, [focusWanted, boxShown]);
 
   // The `@word` being typed at the caret, or undefined when there is none.
   const mentionPrefix = useMemo(() => {
@@ -407,8 +451,8 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   // `preventScroll` for the same reason.
   function submit() {
     if (uploading || (!value.trim() && !attachments.length && !object)) return;
-    setError(''); notifyTyping(false);
-    const input = { content: value.trim(), attachmentIds: attachments.map((item) => item.id), attachments, object: object || undefined };
+    setError(''); notifyTyping(false); setPrompt(null);
+    const input = { content: value.trim(), attachmentIds: attachments.map((item) => item.id), attachments, object: object ? referenceOf(object) : undefined };
     setValue(''); setAttachments([]); setObject(null);
     requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }));
     send({ ...input, threadRootId }).catch((err) => setError(err instanceof Error ? err.message : tr("community:your_message_wasn_t_sent_c8fd3251")));
@@ -452,7 +496,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
           notched phone instead of growing a tall blank foot. */}
       <div className="messages-composer-card">
       {reply ? <div className="messages-reply-draft"><div className="min-w-0"><span className="font-semibold"><Message after={" "} id="community:replying_to_2e89f01d" />{senderName(reply.sender)}</span><p className="truncate"><LocalizedValue render={() => (plainText(reply.content) || tr("community:attachment_040d2b36"))} /></p>{reply.sender.bot && mirrorsReplies(reply.metadata?.homeroomBot) ? <p className="messages-bot-note"><LocalizedValue render={() => (tr("community:your_reply_is_posted_on_value1_s_public_discussi_72846ac8", { value1: reply.metadata?.homeroomBot ? requestPlace(reply.metadata.homeroomBot) : '' }))} /></p> : null}{reply.sender.bot && reply.metadata?.homeroomBot?.kind === 'plan' ? <p className="messages-bot-note"><Message id="community:say_what_to_change_and_homeroom_bot_sends_a_new__30c08eb2" /></p> : null}</div><Localized element={<button type="button" onClick={() => setReply(scope, null)} aria-label={catalogText("community:cancel_reply_2355f731")}>×</button>} messages={{"aria-label":"community:cancel_reply_2355f731"}} /></div> : null}
-      {object ? <div className="messages-pending-object"><span aria-hidden="true">◆</span><span className="truncate">{objectLabel(object)}</span><Localized element={<button type="button" onClick={() => setObject(null)} aria-label={catalogText("community:remove_shared_item_2bbf13f5")}>×</button>} messages={{"aria-label":"community:remove_shared_item_2bbf13f5"}} /></div> : null}
+      {object ? <div className="messages-pending-object"><span aria-hidden="true">◆</span><span className="truncate">{pendingObjectLabel(object, stagedCard)}</span><Localized element={<button type="button" onClick={() => { setObject(null); setPrompt(null); }} aria-label={catalogText("community:remove_shared_item_2bbf13f5")}>×</button>} messages={{"aria-label":"community:remove_shared_item_2bbf13f5"}} /></div> : null}
       {attachments.length || uploading ? <div className="dc-attach-strip dc-attach-strip-active">{attachments.map((item) => <div key={item.id} className="dc-attach-item"><div className="min-w-0"><div className="dc-attach-name">{item.name}</div><div className="dc-attach-size">{fileSize(item.size)}</div></div><LocalizedDynamic element={<button type="button" className="dc-attach-remove" onClick={() => setAttachments((items) => items.filter((candidate) => candidate.id !== item.id))} aria-label={tr("community:remove_value1_d2f6b9b7", { value1: item.name })}>×</button>} resolve={() => ({ get "aria-label"() { return tr("community:remove_value1_d2f6b9b7", { value1: item.name }); } })} /></div>)}{uploading ? <span className="dc-attach-uploading"><Message after={" "} id="community:uploading_8b898ca3" />{uploading}…</span> : null}</div> : null}
       {channelShown && channelMatches ? <Localized element={<div className="messages-mention-menu" id={listId} role="listbox" aria-label={catalogText("community:channels_4c8906cf")}>{channelMatches.map((item, index) => <button key={item.handle} id={optionId(index)} type="button" role="option" tabIndex={-1} aria-selected={index === activeOption} data-channel-option={item.handle} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setHighlight(index)} onClick={() => insertChannel(item.handle)}>#{item.handle}{item.kind === 'app' && item.name.toLowerCase() !== item.handle ? <span className="messages-channel-option-name"> {item.name}</span> : null}</button>)}</div>} messages={{"aria-label":"community:channels_4c8906cf"}} /> : null}
       {mentionShown && mention ? <Localized element={<div className="messages-mention-menu" id={listId} role="listbox" aria-label={catalogText("community:people_7db20897")}>{mention.map((member, index) => <button key={member.id} id={optionId(index)} type="button" role="option" tabIndex={-1} aria-selected={index === activeOption} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setHighlight(index)} onClick={() => insertMention(member.username)}>@{member.username}</button>)}</div>} messages={{"aria-label":"community:people_7db20897"}} /> : null}
@@ -491,7 +535,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
             </div>} messages={{"aria-label":"community:add_to_message_a51ec5e2"}} />
           ) : null}
         </div>
-        <LocalizedDynamic element={<textarea ref={inputRef} value={value} onChange={onComposerChange} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (onEmojiKeyDown(event)) return; if (suggestionKeys(event)) return; if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } else if (event.key === 'Escape' && reply) setReply(scope, null); }} onBlur={() => notifyTyping(false)} rows={1} maxLength={8000} placeholder={inThread ? tr("community:reply_in_thread_5f4ecc1c") : tr("community:message_fc71507e")} aria-label={inThread ? tr("community:reply_in_thread_a2367327") : tr("community:message_2f77668a")} aria-autocomplete="list" aria-controls={suggestions.length ? listId : undefined} aria-activedescendant={activeOption >= 0 ? optionId(activeOption) : undefined} className="messages-composer-input" />} resolve={() => ({ "placeholder": inThread ? tr("community:reply_in_thread_5f4ecc1c") : tr("community:message_fc71507e"), "aria-label": inThread ? tr("community:reply_in_thread_a2367327") : tr("community:message_2f77668a") })} />
+        <LocalizedDynamic element={<textarea ref={inputRef} value={value} onChange={onComposerChange} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (onEmojiKeyDown(event)) return; if (suggestionKeys(event)) return; if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } else if (event.key === 'Escape' && reply) setReply(scope, null); }} onBlur={() => notifyTyping(false)} rows={1} maxLength={8000} placeholder={inThread ? tr("community:reply_in_thread_5f4ecc1c") : (prompt || tr("community:message_fc71507e"))} aria-label={inThread ? tr("community:reply_in_thread_a2367327") : tr("community:message_2f77668a")} aria-autocomplete="list" aria-controls={suggestions.length ? listId : undefined} aria-activedescendant={activeOption >= 0 ? optionId(activeOption) : undefined} className="messages-composer-input" />} resolve={() => ({ "placeholder": inThread ? tr("community:reply_in_thread_5f4ecc1c") : (prompt || tr("community:message_fc71507e")), "aria-label": inThread ? tr("community:reply_in_thread_a2367327") : tr("community:message_2f77668a") })} />
         <Localized element={<button type="button" onMouseDown={(event) => event.preventDefault()} onClick={submit} disabled={!!uploading || (!value.trim() && !attachments.length && !object)} className="messages-send" aria-label={catalogText("community:send_message_93a26b1e")}><ArrowUpIcon aria-hidden="true" /></button>} messages={{"aria-label":"community:send_message_93a26b1e"}} />
       </div>
       {error ? <p role="alert" className="mt-1 text-xs text-red-700 dark:text-red-400">{error}</p> : null}

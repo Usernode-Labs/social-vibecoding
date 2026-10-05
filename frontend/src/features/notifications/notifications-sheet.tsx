@@ -396,6 +396,13 @@ function ScreenRow({ view, touch, removes }: ScreenRowProps): ReactNode {
             </span>
           )) : view.label}
         </span>
+        {/* #3227: what this kind of row means, for the one kind that needs
+            saying (kudos). It wraps: a truncated explanation explains nothing. */}
+        {view.note ? (
+          <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+            {view.note}
+          </span>
+        ) : null}
         {/* WHERE · WHO · WHEN. Everything the copy used to repeat inside a
             sentence lives on this line instead, which is what let the row
             spend its other two lines on the kind and the subject — see

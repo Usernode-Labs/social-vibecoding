@@ -118,6 +118,10 @@ function proposalHref(slug, sessionId) {
 
 // ── Starting a card ──
 
+// What a request filed or queued while its project's first version is not
+// live says it waits for (cardText).
+const FIRST_VERSION_WAIT_WORDS = 'Waiting for the first version to go live. I\'ll start on this as soon as it does.';
+
 /**
  * Pure: a card's words, for whatever does not draw the card itself. A card
  * `joined` to work already under way (catchUpCards) lands at the end of the
@@ -127,14 +131,19 @@ function proposalHref(slug, sessionId) {
  * moved under a plan by Build it (`go`, cardUnderPlan) says it is building.
  */
 function cardText({ appName, issueNumber, issueTitle, firstVersion }, dm, {
-  joined = false, filed = false, queued = false, lowAllowance = false, go = false,
+  joined = false, filed = false, queued = false, lowAllowance = false, waitsForFirstVersion = false, go = false,
 } = {}) {
   const line = dm.requestLine({ appName, issueNumber, issueTitle, firstVersion });
   if (go) return `${line}\n\nBuilding ${firstVersion ? 'the first version' : 'this'} now. This card updates as I go.`;
   // The one place the weekly limit is mentioned before it is reached: under
   // a fifth of the week's building time left (dm.allowanceLow).
   const low = lowAllowance ? '\n\nYou\'re close to this week\'s building time.' : '';
-  if (filed) return `${line}\n\nFiled. This card follows it from here.${low}`;
+  // 2026-10-05: nothing else on a project starts while its first version is
+  // not live (homeroom-bot.js FIRST_VERSION_PENDING_SQL), so a request filed
+  // or queued then says what it waits for, once, here.
+  const waits = waitsForFirstVersion && (filed || queued) ? FIRST_VERSION_WAIT_WORDS : null;
+  if (filed) return `${line}\n\nFiled. ${waits || 'This card follows it from here.'}${low}`;
+  if (waits) return `${line}\n\n${waits}${low}`;
   // Started when the request is queued, before anything has begun on it
   // (homeroom-bot.js refreshApp): waiting is said, not left silent.
   if (queued) return `${line}\n\nWaiting for a free builder. This card follows it from here.${low}`;
@@ -158,7 +167,7 @@ function jobCardKey(jobKey) {
  */
 async function sendCard(pool, {
   app, issueNumber, requester, bot, key, startedAt = null, filed = false, queued = false, lowAllowance = false, dm,
-  hello = null, lookAt = null, go = false,
+  hello = null, lookAt = null, go = false, waitsForFirstVersion = false,
 }) {
   const context = {
     appName: app.name || app.slug,
@@ -166,7 +175,7 @@ async function sendCard(pool, {
     issueTitle: requester.issueTitle || null,
     firstVersion: !!requester.firstVersion,
   };
-  const words = cardText(context, dm, { joined: !!startedAt, filed, queued, lowAllowance, go });
+  const words = cardText(context, dm, { joined: !!startedAt, filed, queued, lowAllowance, waitsForFirstVersion, go });
   return dm.sendDm(pool, {
     bot,
     userId: requester.userId,
@@ -192,6 +201,22 @@ async function sendCard(pool, {
     // #3707: news about a request they started in the DM points back at it.
     replyToId: await dm.requestStart(pool, { userId: requester.userId, appId: app.id, issueNumber }),
   });
+}
+
+/**
+ * Whether request `issueNumber` on `app` waits for the project's first
+ * version to go live (homeroom-bot.js firstVersionHolds). Never throws: a
+ * read that fails says nothing of it.
+ */
+async function waitsForFirstVersion(pool, app, issueNumber, deps) {
+  try {
+    const botSvc = settingsModule(deps);
+    if (typeof botSvc.firstVersionHolds !== 'function' || typeof botSvc.heldForFirstVersion !== 'function') return false;
+    const holds = await botSvc.firstVersionHolds(pool, [app.id]);
+    return botSvc.heldForFirstVersion(holds, { appId: app.id, issueNumber });
+  } catch {
+    return false;
+  }
 }
 
 /** B5: whether somebody other than `userId` made `app`. Never throws. */
@@ -278,13 +303,20 @@ async function startCard(pool, { app, issueNumber, requester, bot, jobKey, setti
     const hello = typeof dm.claimHello === 'function' && await madeBySomebodyElse(pool, app, requester.userId)
       && await dm.claimHello(pool, { userId: requester.userId, botId: bot.id, kind: 'member' })
       ? dm.memberHello(app.name || app.slug) : null;
+    // 2026-10-05: a request filed or queued while the project's first
+    // version is not live waits for it, and its card says so.
+    const waits = (filed || queued) && !requester.firstVersion
+      ? await waitsForFirstVersion(pool, app, n, deps) : false;
     const sent = await sendCard(pool, {
       app, issueNumber: n, requester, bot, key: jobCardKey(jobKey), filed, queued, lowAllowance, dm, hello,
+      waitsForFirstVersion: waits,
     });
     if (hello) await dm.noteHelloSent(pool, requester.userId, sent?.messageId);
     if (!sent?.messageId || sent.duplicate) return sent || null;
     await recordCard(pool, sent, { userId: requester.userId, appId: app.id, issueNumber: n });
-    log.info('homeroom-bot-activity', 'Started an activity card', { app: app.slug, issueNumber: n, userId: requester.userId, filed, queued });
+    log.info('homeroom-bot-activity', 'Started an activity card', {
+      app: app.slug, issueNumber: n, userId: requester.userId, filed, queued, ...(waits ? { waitsForFirstVersion: true } : {}),
+    });
     return sent;
   } catch (err) {
     log.warn('homeroom-bot-activity', 'Could not start an activity card', {
@@ -409,17 +441,137 @@ function buildUnderWay(row) {
 // build: its plan, the build, the proposal it opens.
 const BUILD_STAGES = new Set(['build_queued', 'starting', 'planning', 'building', 'proposing']);
 
+// ── How long it took: the work, not the wait ──
+//
+// Priya's request on Page Turners (5 October) was filed at 11:10, held until
+// the first version went live at 11:56, built, cut short by a platform
+// deploy, built again, and up for approval at 12:20. Its card counted from
+// 11:10: "Building it · 1h so far", then "took 1h 9m", for about 24 minutes
+// of work. THE RULE a card's clock follows now:
+//
+//   - it starts when the bot started working on the request: the start of
+//     the look that began the current stretch of work, never the moment the
+//     card was sent. A card sent when a request was filed or queued waits
+//     first (for a free builder, for its project's first version), and that
+//     wait is not the work's. Until a look begins, the card's time is the
+//     wait, under words that say it waits;
+//   - a look after a build a restart interrupted (RESTARTED_BUILD_NOTE)
+//     carries the stretch on: the clock neither starts again nor counts
+//     anything twice, and the minute or two of the restart is in it;
+//   - any other look starts a new stretch: one after the person answered a
+//     question, after a hold or a change to the plan, counts from when it
+//     began, not from the look before the wait;
+//   - the wait before the first stretch is said apart, in words, once it is
+//     WAIT_WORTH_SAYING_MS or more: "after waiting 46m for the first
+//     version", or "for its turn".
+//
+// A build waiting its turn after the look that decided to build it is part
+// of the stretch: the bot has started on the request by then.
+
+// A wait before the work began that is worth saying in words.
+const WAIT_WORTH_SAYING_MS = 5 * 60 * 1000;
+// The earlier looks of a card the clock reads back through (a restart may
+// send one build back at most homeroom-bot.js MAX_RESTARTED_BUILDS times).
+const EARLIER_LOOKS = 10;
+
+function ms(value) {
+  if (!value) return NaN;
+  const date = value instanceof Date ? value : new Date(value);
+  return date.getTime();
+}
+
+/**
+ * Pure: when the bot's current stretch of work on a card's request began
+ * (`workedFrom`), and when the wait before it began, if it is worth saying
+ * (`waitedFrom`, the card's own first moment), from cardRows' row: its
+ * first moment, the newest look's start (`began`), the run that look came
+ * to, and the looks before it (`earlier_runs`, newest first, each { at, ms,
+ * restarted }). `entry` is the person's progress entry for the request:
+ * a card whose request still waits in the queue has begun nothing.
+ * `workedFrom` is null while nothing has begun.
+ */
+function workClock(row, entry = null) {
+  const none = { workedFrom: null, waitedFrom: null };
+  const firstAt = ms(row.first_at || row.began || row.created_at);
+  if (!Number.isFinite(firstAt)) return none;
+  const earlier = Array.isArray(row.earlier_runs) ? row.earlier_runs : [];
+  // A card sent when its request was filed or queued has neither a look of
+  // its own (lookAt) nor any run until a look begins.
+  const begun = !!row.look_at || !!row.started_at || !!row.run_id || earlier.length > 0
+    || !(entry && entry.stage === 'queued');
+  if (!begun) return none;
+  const began = ms(row.began);
+  // A card moved under a plan is read from the plan's look, and counts from
+  // the tap that sent it (its own first moment), which came after.
+  let from = Number.isFinite(began) ? Math.max(firstAt, began) : firstAt;
+  let first = true;
+  for (const look of earlier) {
+    const at = ms(look?.at);
+    if (!look?.restarted || !Number.isFinite(at)) { first = false; break; }
+    // The look that began the interrupted build began before its run was
+    // recorded, by the time it took.
+    from = Math.max(firstAt, at - Math.max(0, Number(look.ms) || 0));
+  }
+  return {
+    workedFrom: iso(from),
+    waitedFrom: first && from - firstAt >= WAIT_WORTH_SAYING_MS ? iso(firstAt) : null,
+  };
+}
+
+/**
+ * Pure: what the wait before a card's work was for, given when its project's
+ * first version went live (`firstVersion`: { liveAt, issueNumber }, or
+ * null): that, when it went live while the request waited and the request
+ * is not the first version itself; else its turn.
+ */
+function waitedFor(row, clock, firstVersion = null) {
+  if (!clock?.waitedFrom || !clock.workedFrom) return null;
+  const live = ms(firstVersion?.liveAt);
+  if (Number.isFinite(live) && Number(firstVersion.issueNumber) !== Number(row.issue_number)
+    && live > ms(clock.waitedFrom) && live <= ms(clock.workedFrom) + 60 * 1000) return 'first_version';
+  return 'turn';
+}
+
+/**
+ * When each of `appIds`' first version went live, and which request it was:
+ * Map(app id → { liveAt, issueNumber }). Projects without one are left out.
+ */
+async function firstVersionsLive(pool, appIds) {
+  const ids = [...new Set(appIds.map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+  if (!ids.length) return new Map();
+  const { rows } = await pool.query(
+    `SELECT fv.app_id, fv.issue_number, MIN(cs.merged_at) AS live_at
+       FROM homeroom_bot_first_versions fv
+       JOIN chat_sessions cs ON cs.app_id = fv.app_id AND cs.status = 'merged'
+      WHERE fv.app_id = ANY($1::int[]) AND fv.issue_number IS NOT NULL
+        AND (fv.issue_number = ANY(cs.linked_issues)
+             OR EXISTS (SELECT 1 FROM homeroom_bot_runs r
+                         WHERE r.app_id = fv.app_id AND r.issue_number = fv.issue_number AND r.proposal_session_id = cs.id))
+      GROUP BY fv.app_id, fv.issue_number`,
+    [ids],
+  );
+  return new Map(rows.filter((r) => r.live_at).map((r) => [Number(r.app_id), { liveAt: r.live_at, issueNumber: Number(r.issue_number) }]));
+}
+
 /**
  * Pure: one card, from its row and (while it has no outcome) the person's
- * progress entry for its request, or null when there is none.
+ * progress entry for its request, or null when there is none. `firstVersion`
+ * is when its project's first version went live (firstVersionsLive), for
+ * what a wait before the work was for.
  */
-function cardOf(row, entry) {
+function cardOf(row, entry, { firstVersion = null } = {}) {
+  const clock = workClock(row, entry);
+  const waited = waitedFor(row, clock, firstVersion);
   const base = {
     messageId: Number(row.message_id),
-    // When its work began: the card's own moment, or for a card that joined
-    // work already under way, when that work started. B4: a card that
-    // carried on through several looks counts from the first.
+    // The card's own first moment, or for a card that joined work already
+    // under way, when that work started. B4: a card that carried on through
+    // several looks keeps the first.
     startedAt: iso(row.first_at || row.began || row.created_at),
+    // When the work it counts began (workClock), and what it waited for
+    // before, when that is worth saying: the card's time is the work's.
+    workedFrom: clock.workedFrom,
+    ...(waited ? { waitedFor: waited } : {}),
     links: linksOf(row),
   };
   let outcome = outcomeOf(row);
@@ -476,7 +628,10 @@ function typicalOf(entry) {
  * and the first live run from then, before the next card on the same
  * request began. A build a restart cut short and sent back to be looked at
  * again (RESTARTED_BUILD_NOTE) is not what its work came to: that work goes
- * on in the look that follows, so the card reads past it.
+ * on in the look that follows, so the card reads past it. `earlier_runs`:
+ * the card's looks before the newest, newest first, for its clock
+ * (workClock): when each was recorded, how long it took, and whether a
+ * restart cut its build short.
  */
 async function cardRows(pool, userId, limit = MAX_CARDS) {
   const { RESTARTED_BUILD_NOTE } = require('./homeroom-bot');
@@ -495,10 +650,12 @@ async function cardRows(pool, userId, limit = MAX_CARDS) {
      ), cards AS (
        SELECT message_id, app_id, issue_number, created_at,
               COALESCE(started_at, created_at) AS first_at,
-              COALESCE(look_at, started_at, created_at) AS began
+              COALESCE(look_at, started_at, created_at) AS began,
+              look_at, started_at
          FROM stamped
      )
      SELECT c.message_id, c.app_id, c.issue_number, c.created_at, c.first_at, c.began, a.slug, a.name,
+            c.look_at, c.started_at, prior.runs AS earlier_runs,
             nxt.began AS next_at,
             run.id AS run_id, run.verdict, run.build_ok, run.build_error, run.cap_suppressed,
             run.created_at AS run_at, run.proposal_session_id,
@@ -523,9 +680,22 @@ async function cardRows(pool, userId, limit = MAX_CARDS) {
        ) run ON TRUE
        LEFT JOIN chat_sessions cs ON cs.id = run.proposal_session_id
        LEFT JOIN chat_sessions bs ON bs.id = run.build_session_id
+       LEFT JOIN LATERAL (
+         SELECT json_agg(json_build_object('at', e.created_at, 'ms', e.duration_ms, 'restarted', e.restarted)
+                         ORDER BY e.id DESC) AS runs
+           FROM (
+             SELECT r.id, r.created_at, r.duration_ms,
+                    (r.build_ok IS FALSE AND right(COALESCE(r.build_error, ''), char_length($3::text)) = $3::text) AS restarted
+               FROM homeroom_bot_runs r
+              WHERE r.app_id = c.app_id AND r.issue_number = c.issue_number AND r.mode = 'live'
+                AND r.created_at >= c.first_at AND r.created_at < c.began
+              ORDER BY r.id DESC
+              LIMIT $4
+           ) e
+       ) prior ON TRUE
       ORDER BY c.message_id DESC
       LIMIT $2`,
-    [userId, limit, RESTARTED_BUILD_NOTE],
+    [userId, limit, RESTARTED_BUILD_NOTE, EARLIER_LOOKS],
   );
   return rows;
 }
@@ -550,13 +720,17 @@ const OUTCOME_LABELS = Object.freeze({
   answer: 'Answered on the change',
   revise: 'Updated the change',
 });
+// A change waiting for approval is built, not done: "Done" over "Built it.
+// Waiting for approval" read as finished to the person still asked to
+// approve it (4 October). Done is for what came to an end well.
 const OUTCOME_TONES = Object.freeze({
-  proposed: 'done', live: 'done', answer: 'done', revise: 'done',
+  live: 'done', answer: 'done', revise: 'done',
+  proposed: 'built',
   question: 'you', blocked: 'you', empty: 'you',
   person: 'ended', held: 'ended', closed: 'ended',
   build_failed: 'trouble', failed: 'trouble', stopped: 'trouble',
 });
-const TONE_WORDS = Object.freeze({ done: 'Done', you: 'Needs you', ended: 'Ended', trouble: 'Didn\'t finish' });
+const TONE_WORDS = Object.freeze({ done: 'Done', built: 'Built', you: 'Needs you', ended: 'Ended', trouble: 'Didn\'t finish' });
 
 /** Pure: a card (cardOf) as the person reads it, in one line, or null. */
 function cardWords(card) {
@@ -591,16 +765,30 @@ async function viewableSlugs(pool, user, slugs) {
 }
 
 /**
- * The state of `user`'s activity cards, newest first: { cards }. Each is
- * { messageId, startedAt, links, state: 'working', step, of, stepName,
- * doing, ... } or { ..., state: 'done', outcome, endedAt }. Never anybody
+ * The state of `user`'s activity cards, newest first: { cards, ready }. Each
+ * card is { messageId, startedAt, workedFrom, waitedFor?, links, state:
+ * 'working', step, of, stepName, doing, ... } or { ..., state: 'done',
+ * outcome, endedAt }. `ready` is their ready cards as they stand now
+ * (homeroom-bot-dm.js readyStates), read on the same events. Never anybody
  * else's: see the note at the top.
  */
 async function cardsFor(pool, { user, settings = null, config = null, deps = {}, now = new Date() }) {
   const userId = Number(user?.id);
-  if (!Number.isInteger(userId) || userId <= 0) return { cards: [] };
+  if (!Number.isInteger(userId) || userId <= 0) return { cards: [], ready: [] };
+  const dm = dmModule(deps);
+  const ready = typeof dm.readyStates === 'function'
+    ? await dm.readyStates(pool, { user }).catch((err) => {
+      log.warn('homeroom-bot-activity', 'Could not read the ready cards', { userId, err: err.message });
+      return [];
+    })
+    : [];
+  return { cards: await activityCards(pool, { user, userId, settings, config, deps, now }), ready };
+}
+
+/** The activity cards of cardsFor. */
+async function activityCards(pool, { user, userId, settings, config, deps, now }) {
   const rows = await cardRows(pool, userId);
-  if (!rows.length) return { cards: [] };
+  if (!rows.length) return [];
   const allowed = await viewableSlugs(pool, user, [...new Set(rows.map((row) => row.slug))]);
   const shown = rows.filter((row) => allowed.has(row.slug));
   // How far along: read once, and only when a card is still going.
@@ -616,9 +804,16 @@ async function cardsFor(pool, { user, settings = null, config = null, deps = {},
       if (entry.project && entry.number) progress.set(`${entry.project}#${entry.number}`, entry);
     }
   }
-  return {
-    cards: shown.map((row) => cardOf(row, progress.get(`${row.slug}#${Number(row.issue_number)}`) || null)),
-  };
+  const entryOf = (row) => progress.get(`${row.slug}#${Number(row.issue_number)}`) || null;
+  // What a wait before the work was for: read only for the cards that waited.
+  const waited = shown.filter((row) => workClock(row, entryOf(row)).waitedFrom);
+  const firstVersions = waited.length
+    ? await firstVersionsLive(pool, waited.map((row) => row.app_id)).catch((err) => {
+      log.warn('homeroom-bot-activity', 'Could not read when first versions went live', { userId, err: err.message });
+      return new Map();
+    })
+    : new Map();
+  return shown.map((row) => cardOf(row, entryOf(row), { firstVersion: firstVersions.get(Number(row.app_id)) || null }));
 }
 
 // ── Work already under way without a card ──
@@ -867,6 +1062,7 @@ module.exports = {
   DEMO_CARD_KEYS,
   DEMO_UNDER_WAY,
   cardText,
+  FIRST_VERSION_WAIT_WORDS,
   jobCardKey,
   requestCard,
   continueCard,
@@ -877,6 +1073,11 @@ module.exports = {
   linksOf,
   buildUnderWay,
   cardOf,
+  WAIT_WORTH_SAYING_MS,
+  EARLIER_LOOKS,
+  workClock,
+  waitedFor,
+  firstVersionsLive,
   cardWords,
   OUTCOME_LABELS,
   OUTCOME_TONES,

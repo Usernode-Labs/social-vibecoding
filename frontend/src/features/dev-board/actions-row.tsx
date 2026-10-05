@@ -12,7 +12,7 @@ import { Message, Localized, message as catalogText } from "../../lib/i18n/react
  * search row, then closed the view-tab strip on every tab; the strip is gone
  * (the hub is one page with doors), so it ends the hero's members row,
  * beside Invite: the project's own menu, on the project's own card, leading
- * with Ask for a change. workshop/workshop.tsx hands `DevPlusMenu` to the
+ * with Suggest an improvement. workshop/workshop.tsx hands `DevPlusMenu` to the
  * hero (`inHero`) and renders this row with `withPlus={false}` in All items'
  * pane head.
  *
@@ -278,7 +278,8 @@ export function DevPlusMenu({
   */
   const plusLabel = readOnly
     ? tr("workshop:remix_make_your_own_copy_4824fcaa")
-    : tr("workshop:ask_for_a_change_import_a_pr_or_manage_this_app_762a87fd");
+    : tr("workshop:suggest_an_improvement_import_a_pr_or_manage_this_app");
+
   return (
     <>
   {/* The native modal reparents its card under body. Portal there too so React's delegated events stay on the card's ancestor. */}
@@ -341,13 +342,15 @@ export function DevPlusMenu({
                 the ⋯'s now. The Homeroom menu's own action
                 (Improve.startSession), which keeps its row there too.
             */}
-            {/* B8: Ask for a change leads (it goes to Homeroom bot, or to
-                the group as a request); building it yourself is second. */}
-            <Localized element={<PlusRow title={catalogText("workshop:ask_for_a_change_f445fc4f")}
+            {/* B8: Suggest an improvement leads (it goes to Homeroom bot,
+                or to the group as a request); building it yourself is
+                second. */}
+            <Localized element={<PlusRow title={catalogText("workshop:suggest_an_improvement")}
               data-plus="issue"
               icon={<LightBulbIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+
               sub="Report a problem or idea without building it yourself"
-            />} messages={{"title":"workshop:ask_for_a_change_f445fc4f"}} />
+            />} messages={{"title":"workshop:suggest_an_improvement"}} />
             <Localized element={<PlusRow title={catalogText("workshop:build_it_yourself_72369f88")}
               data-plus="new-change"
               icon={<PencilSparklesIcon className={PLUS_ICON_CLS} aria-hidden="true" />}

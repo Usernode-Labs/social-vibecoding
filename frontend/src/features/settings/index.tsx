@@ -148,18 +148,21 @@ export function SettingsScreen() {
           <div id="settings-sidebar-col" className="hidden md:block md:w-56 shrink-0">
             <SettingsNavDesktop />
             {/*
-                Log out is pinned below the section list rather than buried
+                Sign out is pinned below the section list rather than buried
                 inside a section. On mobile it moves under the level-1 menu
                 (see Settings._syncFooter) — the node itself is MOVED, never
                 rebuilt, so the click handler settings.js binds in init()
-                survives the trip.
+                survives the trip. "Sign out", not "Log out" (5 Oct 2026):
+                the way in says Sign in everywhere, and a search for "Sign
+                out" found nothing. The id keeps its old name, which the
+                declared checks select on.
             */}
             <div id="settings-footer" className="mt-6 pt-2">
               <SettingsAccountRows />
               <button
                 id="settings-logout"
                 className="w-full rounded-full bg-red-500/10 px-4 py-2.5 text-[17px] font-semibold text-red-700 dark:text-red-400 hover:bg-red-500/15 transition-colors"
-              ><Message id="settings:log_out_49616145" /></button>
+              ><Message id="settings:sign_out_button" /></button>
             </div>
           </div>
           <div id="settings-content-col" className="flex-1 min-w-0">

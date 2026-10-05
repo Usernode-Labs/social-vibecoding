@@ -509,9 +509,16 @@ export async function handoffStatus(slug: string, change: { id: number; kind: 's
   );
 }
 
-export async function listSessions(): Promise<AgentSession[]> {
-  const body = await json<{ sessions: AgentSession[] }>(await request('/api/agent-sessions'), tr("workshop:could_not_load_agent_sessions_5d63c3e2"));
-  return body.sessions || [];
+/**
+ * The viewer's open sessions, and `started`: whether they have ever had one,
+ * archived ones included (the Homeroom menu's Agent chats shows only then).
+ * A server from before `started` existed answers without it, and a session
+ * in the list says it as well.
+ */
+export async function listSessions(): Promise<{ sessions: AgentSession[]; started: boolean }> {
+  const body = await json<{ sessions: AgentSession[]; started?: boolean }>(await request('/api/agent-sessions'), tr("workshop:could_not_load_agent_sessions_5d63c3e2"));
+  const sessions = body.sessions || [];
+  return { sessions, started: body.started === true || sessions.length > 0 };
 }
 
 export async function getSession(id: number): Promise<{ session: AgentSession; turn: AgentTurnState | null }> {

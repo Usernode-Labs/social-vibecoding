@@ -3,6 +3,8 @@ import { Button } from '@/components/ui/button';
 import { SectionHeading, StatusLine } from '@/components/ui/field';
 import { PasswordInput } from '@/components/ui/password-input';
 
+import { pressButton, returnKeyHandler } from '../../../lib/return-to-next';
+
 /**
  * Change password (issue #282). Default form calls POST /api/me/password
  * (current password required). In the Homeroom native app with a linked
@@ -11,18 +13,29 @@ import { PasswordInput } from '@/components/ui/password-input';
  * which signs a wallet-check challenge and calls POST
  * /api/me/wallet-change-password. settings.js wires the mode switch and both
  * submit paths.
+ *
+ * Return walks the fields (#3907: the iOS app has no keyboard chevrons any
+ * more): current, new, confirm, and Return in confirm presses whichever of
+ * the two submits is showing, so it takes the same path a tap does. In
+ * wallet mode the current-password row is hidden and simply skipped.
  */
+function submitShown(): void {
+  if (!pressButton(document.getElementById('cp-save'))) pressButton(document.getElementById('cp-wallet-save'));
+}
+
 export function PasswordSection() {
   return (
     <div data-settings-section="password" className="hidden">
-      <div id="change-password-section">
+      <div id="change-password-section" onKeyDown={returnKeyHandler({ submit: submitShown })}>
         <Localized element={<SectionHeading title={catalogText("settings:change_password_3f9c991f")}><Message id="settings:set_a_new_password_for_web_login_if_an_admin_gav_58cc01f8" /></SectionHeading>} messages={{"title":"settings:change_password_3f9c991f"}} />
         {/* One card, the three fields as its rows. */}
         <div className="rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden">
           <div id="cp-current-row" className="px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800">
             <Localized element={<PasswordInput
               id="cp-current"
-              autoComplete="current-password" placeholder={catalogText("settings:current_password_72ed2bd7")}
+              autoComplete="current-password"
+              enterKeyHint="next"
+              placeholder={catalogText("settings:current_password_72ed2bd7")}
               box="card"
               ring="bare"
               hint="dim"
@@ -31,7 +44,9 @@ export function PasswordSection() {
           <div className="px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800">
             <Localized element={<PasswordInput
               id="cp-new"
-              autoComplete="new-password" placeholder={catalogText("settings:new_password_at_least_8_characters_b4ae3c2a")}
+              autoComplete="new-password"
+              enterKeyHint="next"
+              placeholder={catalogText("settings:new_password_at_least_8_characters_b4ae3c2a")}
               box="card"
               ring="bare"
               hint="dim"
@@ -40,7 +55,9 @@ export function PasswordSection() {
           <div className="px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800">
             <Localized element={<PasswordInput
               id="cp-confirm"
-              autoComplete="new-password" placeholder={catalogText("settings:confirm_new_password_bf000421")}
+              autoComplete="new-password"
+              enterKeyHint="done"
+              placeholder={catalogText("settings:confirm_new_password_bf000421")}
               box="card"
               ring="bare"
               hint="dim"

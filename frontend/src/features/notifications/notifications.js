@@ -362,13 +362,27 @@ const Notifications = {
     if (!notif) return;
     // Dedup on id — a reconnect might replay the same notification that
     // /api/notifications already returned.
+    //
+    // A row can also come back GROWN: a small group's discussion row folds
+    // the next message into itself (src/services/group-channel-notify.js),
+    // and an invite's moments fold the same way. It was already unread, so
+    // it is not a second unread notification, and when it is newer than it
+    // was it moves to the top, where the feed's newest-first order puts it.
     const existing = Notifications.items.findIndex((n) => n.id === notif.id);
+    const wasUnread = existing >= 0 && !Notifications.items[existing].readAt;
     if (existing >= 0) {
-      Notifications.items[existing] = notif;
+      const before = Date.parse(Notifications.items[existing].createdAt) || 0;
+      const after = Date.parse(notif.createdAt) || 0;
+      if (after > before) {
+        Notifications.items.splice(existing, 1);
+        Notifications.items.unshift(notif);
+      } else {
+        Notifications.items[existing] = notif;
+      }
     } else {
       Notifications.items.unshift(notif);
     }
-    if (!notif.readAt) Notifications.unread += 1;
+    if (!notif.readAt && !wasUnread) Notifications.unread += 1;
     // #161: a completion arriving while the user is away from the
     // browser tab sets the dedicated tab-title marker (the replacement
     // for the old streaming-driven "✅ Done"). If they're actively
@@ -747,6 +761,13 @@ const Notifications = {
     if ((key === 'friend_accept' || key === 'friend_decline') && item.kind === 'friend_request') {
       return Notifications._answerFriendRequest(item, key === 'friend_accept');
     }
+    // #3227: the kudos row's button opens the Kudos leaderboard, where the
+    // change it thanks is ranked; the row itself still opens the change.
+    if (key === 'kudos_board' && item.kind === 'kudos') {
+      Notifications._dismissSheetForNav();
+      window.location.hash = '#leaderboard/prs';
+      return true;
+    }
     const sessionId = Number(item.sessionId);
     if (key === 'still_yes' && Number.isFinite(sessionId) && sessionId > 0
         && window.AppView && typeof AppView.castVote === 'function') {
@@ -982,6 +1003,28 @@ const Notifications = {
       }
       return;
     }
+    // #1374's daily digest of what waits for your approval. With one change
+    // the row names it (services/vote-digest.js puts its app and session on
+    // the row), and it opens that change with the other proposal kinds
+    // below. With several there is no app: it opens the Communities
+    // screen's Needs you, which lists every vote owed across your projects.
+    // It used to open nothing at all, so a tap (or a push) left you on
+    // whatever screen was showing (4 October).
+    // 5 October (Page Turners): a "ready to try" whose change went live says
+    // Live, and opens the app it is live in: there is nothing left to try or
+    // approve on the change page.
+    if (item.kind === 'change_ready' && item.sessionStatus === 'merged' && item.appSlug) {
+      Notifications._dismissSheetForNav();
+      if (typeof App !== 'undefined' && App.openAppTab) return App.openAppTab(item.appSlug, 'app');
+      window.location.hash = `#app/${encodeURIComponent(item.appSlug)}`;
+      return;
+    }
+    if (item.kind === 'vote_digest' && !item.appSlug) {
+      Notifications._dismissSheetForNav();
+      window.UsernodeReact?.workshop?.setTab?.('needs');
+      window.location.hash = '#communities';
+      return;
+    }
     if (item.appSlug) {
       // Every path below navigates (the topic sub-branch returns after
       // routing; an invalid topic ref falls through to the chat/proposals
@@ -1044,9 +1087,8 @@ const Notifications = {
       // card is.
       // #1374 adds three more that are ABOUT A PROPOSAL: it merged, somebody
       // voted on it, and the daily digest of what is waiting on you. The
-      // digest carries no sessionId, so it lands on the board — which is
-      // right, since its subject is "these several proposals" rather than
-      // one of them.
+      // digest reaches here only when it names its one change; a digest of
+      // several has no app and opens Needs you (above).
       // #1688: the re-confirm ask names one proposal and opens it; the
       // weekly card is a chat message, so its row opens the chat it is in.
       // B7: "ready to try" opens the change, its preview one tap away.
@@ -1373,6 +1415,12 @@ const Notifications = {
     Notifications._renderInvites();
   },
 
+  // An accept that has just brought them into the project answers with
+  // `welcome` (src/routes/collaborators.js): it opens "You're in" and its
+  // tour (features/first-session), the welcome an invite link ends on
+  // (App._followInvite), which ends in the group's chat with the inviter's
+  // note waiting and the reply chips under it. Without one, or once that
+  // welcome has been shown for this project, the chat opens as before.
   async _acceptInvite(appId, slug, kind) {
     const base = kind === 'approver' ? '/api/approver-invites' : '/api/invites';
     try {
@@ -1397,11 +1445,24 @@ const Notifications = {
         // presented over the screen this opens (#1329). The people you just
         // joined are in the app's discussion, which is a thread of Messages.
         Notifications._dismissSheetForNav();
+        if (kind !== 'approver' && Notifications._welcome(data.welcome, target)) return;
         Notifications._openAppDiscussion(target);
       }
     } catch (err) {
       console.warn('[notifications] acceptInvite failed', err);
     }
+  },
+
+  // "You're in" for an accepted invite, through the bridge the invite link
+  // uses (window.UsernodeReact.firstSession.welcome). True when it shows.
+  _welcome(welcome, slug) {
+    const fs = window.UsernodeReact && window.UsernodeReact.firstSession;
+    if (!welcome || typeof welcome !== 'object' || !fs || typeof fs.welcome !== 'function') return false;
+    const shown = fs.welcome({ ...welcome, slug: welcome.slug || slug, name: welcome.name || slug });
+    // The tour opens on Home, where the challenge this join counted is read
+    // from a minute's cache (as after an invite link, App._followInvite).
+    if (shown) window.HomePanels?.ensureLoaded?.({ force: true });
+    return !!shown;
   },
 
   async _declineInvite(appId, kind) {
@@ -1721,16 +1782,28 @@ function savedView(s) {
 // their own accept/decline endpoints. The descriptor carries the endpoint
 // discriminator (`kind`) as well as the copy, because the component's
 // buttons and its swipe tray both need it.
+//
+// A collaborator invite into a private project is an invitation to JOIN it
+// (`joins`, src/services/notifications.js listPendingInvites): being invited
+// in is how anybody joins a group. It reads the way an invite link's page
+// does, with the inviter's note and how many are in it. "Invited you to
+// build" is left for a project anyone can use but only its invited people
+// build. First-session run-through, 5 October 2026: a group's invite by
+// username said "invited you to build", with no note and no headcount.
 function inviteView(inv) {
   const isApprover = inv.kind === 'approver';
+  const count = Number(inv.memberCount) || 0;
   return {
     appId: inv.appId,
     slug: inv.appSlug || '',
     kind: isApprover ? 'approver' : 'collab',
     icon: isApprover ? '🗳️' : '✉️',
     who: inv.invitedBy ? `@${inv.invitedBy}` : globalThis.PlatformI18n.t("community:someone_864c855e"),
-    verb: isApprover ? globalThis.PlatformI18n.t("community:asked_you_to_help_approve_changes_to_73fa5923") : globalThis.PlatformI18n.t("community:invited_you_to_build_75b9fb6c"),
+    verb: isApprover ? globalThis.PlatformI18n.t("community:asked_you_to_help_approve_changes_to_73fa5923")
+      : inv.joins ? globalThis.PlatformI18n.t("community:invited_you_to_join_verb") : globalThis.PlatformI18n.t("community:invited_you_to_build_75b9fb6c"),
     appName: inv.appName || inv.appSlug || globalThis.PlatformI18n.t("community:an_app_66e93a7c"),
+    note: !isApprover && inv.note ? String(inv.note) : '',
+    members: !isApprover && count ? (count === 1 ? globalThis.PlatformI18n.t("community:value1_person_is_in_it", { value1: count }) : globalThis.PlatformI18n.t("community:value1_people_are_in_it", { value1: count })) : '',
     ...stampFields(inv.createdAt),
   };
 }
@@ -1951,8 +2024,9 @@ function botMomentLine(detail, message) {
     question: app ? globalThis.PlatformI18n.t("community:value1_i_have_a_question_48892b88", { value1: app }) : globalThis.PlatformI18n.t("community:i_have_a_question"),
     ready: app ? globalThis.PlatformI18n.t("community:value1_is_ready_to_try_98e09f89", { value1: app }) : globalThis.PlatformI18n.t("community:your_change_is_ready_to_try_ee2fdd6b"),
     ready_group: app ? globalThis.PlatformI18n.t("community:your_change_to_value1_is_ready_to_try_b8f36931", { value1: app }) : globalThis.PlatformI18n.t("community:your_change_is_ready_to_try_ee2fdd6b"),
+    ready_broken: app ? globalThis.PlatformI18n.t("community:value1_is_built_but_not_everything_works_yet", { value1: app }) : globalThis.PlatformI18n.t("community:your_change_is_built_but_not_everything_works_yet"),
     stopped: app ? globalThis.PlatformI18n.t("community:value1_your_change_stopped_i_said_why_in_our_cha_00b0b83f", { value1: app }) : globalThis.PlatformI18n.t("community:your_change_stopped_i_said_why_in_our_chat_936317fb"),
-    stopped_build: app ? globalThis.PlatformI18n.t("community:value1_i_couldn_t_finish_building_it_a_person_ca_2e6a09a2", { value1: app }) : globalThis.PlatformI18n.t("community:i_couldn_t_finish_building_it_a_person_can_pick__a35e58e1"),
+    stopped_build: app ? globalThis.PlatformI18n.t("community:value1_i_couldn_t_finish_building_it_reply_and_i_ll_try_again", { value1: app }) : globalThis.PlatformI18n.t("community:i_couldn_t_finish_building_it_reply_and_i_ll_try_again"),
     stopped_blocked: app ? globalThis.PlatformI18n.t("community:value1_i_can_t_build_it_as_written_tell_me_more_95d1e8ac", { value1: app }) : globalThis.PlatformI18n.t("community:i_can_t_build_it_as_written_tell_me_more_28fa7d68"),
     stopped_person: app ? globalThis.PlatformI18n.t("community:value1_this_needs_a_person_to_decide_b9b710b5", { value1: app }) : globalThis.PlatformI18n.t("community:this_needs_a_person_to_decide_4e5121a6"),
     stopped_empty: app ? globalThis.PlatformI18n.t("community:value1_i_couldn_t_find_anything_to_build_tell_me_0a676ecc", { value1: app }) : globalThis.PlatformI18n.t("community:i_couldn_t_find_anything_to_build_tell_me_more_11bf0b59"),
@@ -2257,12 +2331,20 @@ function rowView(n) {
 
   const prLabel = n.prTitle || null;
 
+  // #3227: a first kudos arrived with nothing saying what it was. The note
+  // under the subject says it in one breath: a thank-you, that it stays,
+  // and where it counts. The weekly allowance is read from the budget the
+  // Kudos badge already fetched (the leaderboard subtitle does the same, so
+  // the two never quote different numbers); the button opens the board.
   if (n.kind === 'kudos') {
+    const limit = (typeof window !== 'undefined' && window.Kudos?.Budget?.state?.limit) || 20;
     return {
       ...base,
       icon: '\u{1F44F}',
       by: n.sourceUsername || null,
       ...headline(globalThis.PlatformI18n.t("community:kudos_51483eb0"), prLabel || globalThis.PlatformI18n.t("community:your_change_af7f8c29")),
+      note: globalThis.PlatformI18n.t("community:kudos_note_value1_a_week", { value1: limit }),
+      actions: [{ key: 'kudos_board', label: globalThis.PlatformI18n.t("community:leaderboard_action") }],
     };
   }
 
@@ -2312,12 +2394,26 @@ function rowView(n) {
 
   // B7: a change Homeroom bot built for somebody is ready to try, and it
   // needs this reader's Yes. Who asked for it is the row's `by`.
+  // 5 October (Page Turners): once it is decided the row stops asking. It
+  // says what became of it, read live off the change (`sessionStatus`,
+  // services/notifications.js): Live (a tap opens the app), Going live, or
+  // Closed. A live one was put back unread for whoever had not said yes.
   if (n.kind === 'change_ready') {
+    const subject = prLabel || n.sessionTitle || 'a change';
+    if (n.sessionStatus === 'merged') {
+      return { ...base, icon: '\u{1F389}', by: n.sourceUsername || null, ...headline('Live', subject) };
+    }
+    if (n.sessionStatus === 'merging') {
+      return { ...base, icon: '\u{1F680}', by: n.sourceUsername || null, ...headline('Going live', subject) };
+    }
+    if (n.sessionStatus === 'archived') {
+      return { ...base, icon: '\u{1F5C2}\uFE0F', by: n.sourceUsername || null, ...headline('Closed', subject) };
+    }
     return {
       ...base,
       icon: '\u{1F440}',
       by: n.sourceUsername || null,
-      ...headline(globalThis.PlatformI18n.t("community:ready_to_try_5eff2e7b"), prLabel || n.sessionTitle || 'a change'),
+      ...headline(globalThis.PlatformI18n.t("community:ready_to_try_5eff2e7b"), subject),
     };
   }
 
@@ -2468,8 +2564,17 @@ function rowView(n) {
   // The daily digest, and the counterweight to `new_proposals` defaulting
   // off. `detail` is the COUNT, so the subject is a plural-aware phrase
   // rather than a bare number nobody can parse without the label.
+  // 5 October (Page Turners): it counts what STILL waits (`digestWaiting`,
+  // read live, services/notifications.js), so a change that went live since
+  // stops being one of them; and when nothing does, the row says so rather
+  // than "0 changes". Without the live count (an older server), the count it
+  // was sent with.
   if (n.kind === 'vote_digest') {
-    const count = Number(n.detail) || 0;
+    const count = Number.isFinite(Number(n.digestWaiting)) && n.digestWaiting != null
+      ? Number(n.digestWaiting) : (Number(n.detail) || 0);
+    if (count === 0) {
+      return { ...base, icon: '\u{1F5F3}\uFE0F', ...headline('Nothing is waiting for your approval now', null) };
+    }
     return {
       ...base,
       icon: '\u{1F5F3}\uFE0F',
@@ -2582,6 +2687,35 @@ function rowView(n) {
     };
   }
 
+  // A person's message in a small private group's discussion
+  // (src/services/group-channel-notify.js). One row per discussion: the
+  // messages that arrive before you read it fold in, `detail` counting them
+  // and the newest one its message and author. Headed by the person and the
+  // project, as a group chat's banner is, over what they said; the meta line
+  // names the surface (Discussion), as a conversation row's names Messages,
+  // so the project's name is not said twice.
+  // 5 October (Page Turners): a message Homeroom bot filed as a request
+  // (`requestNumber`, read live, services/notifications.js) is somebody
+  // asking for a change, as a joiner's first message says (below). Several
+  // messages folded into one row stay messages.
+  if (n.kind === 'channel_message') {
+    const count = /^\d{1,6}$/.test(String(n.detail || '')) ? Number(n.detail) : 1;
+    const place = n.appName || 'the discussion';
+    const snippet = (n.messageContent || '').slice(0, 140);
+    const author = n.sourceUsername ? `@${n.sourceUsername}` : 'Someone';
+    const asked = count === 1 && n.requestNumber != null;
+    return {
+      ...base,
+      wrap: true,
+      icon: asked ? '\u{1F4A1}' : '💬',
+      by: null,
+      appLine: 'Discussion',
+      ...(count > 1
+        ? headline(`${count} new messages in ${place}`, snippet ? `${author}: ${snippet}` : author)
+        : headline(asked ? `${author} asked for a change in ${place}` : `${author} in ${place}`, snippet || null)),
+    };
+  }
+
   // WP-E: what an invite link brought back to its maker
   // (src/services/invite-activity.js). A day's moments of one kind fold into
   // one row, `detail` counting them, the newest person its `by`. An open is
@@ -2598,25 +2732,35 @@ function rowView(n) {
         ...headline(count > 1 ? globalThis.PlatformI18n.t("community:value1_people_opened_your_invite_a359cb14", { value1: count }) : globalThis.PlatformI18n.t("community:someone_opened_your_invite_05c4550f"), null),
       };
     }
+    // 5 October (Page Turners): a first message is often what they want from
+    // the app, and when Homeroom bot filed it as a request (`requestNumber`,
+    // read live: it is filed seconds, or a "Suggest it", after the message
+    // rang) it is called that. Several people's hellos folded into one row
+    // stay hellos.
+    const asked = n.kind === 'first_message' && count === 1 && n.requestNumber != null;
     return {
       ...base,
       wrap: true,
-      icon: '\u{1F44B}',
+      icon: asked ? '\u{1F4A1}' : '\u{1F44B}',
       by: n.sourceUsername || null,
       ...(n.kind === 'member_joined'
         ? headline(globalThis.PlatformI18n.t("community:joined_through_your_invite_value1_5a6fee92", { value1: more }), null)
-        : headline(globalThis.PlatformI18n.t("community:said_hi_value1_93b7ebba", { value1: more }), (n.messageContent || '').slice(0, 140))),
+        : headline(asked ? globalThis.PlatformI18n.t("community:asked_for_a_change_headline") : globalThis.PlatformI18n.t("community:said_hi_value1_93b7ebba", { value1: more }), (n.messageContent || '').slice(0, 140))),
     };
   }
 
   // Collab-invite history rows (the actionable Accept/Decline buttons live
   // ONLY in the pinned Invites section, driven by pendingInvites — once
   // resolved this is just a plain history row). The app's name is the meta
-  // line's job, so the label is the whole headline.
+  // line's job, so the label is the whole headline. An invite into a private
+  // project is to join it (`detail: 'join'`, src/services/collab-invites.js).
+  // 5 October (Page Turners): an invite by username accepted is somebody
+  // joining through your invite, in the words a link's join uses
+  // (member_joined above), not a second phrase for the same thing.
   if (n.kind === 'collab_invite' || n.kind === 'collab_invite_accepted'
     || n.kind === 'approver_invite' || n.kind === 'approver_invite_accepted') {
     const label = n.kind === 'collab_invite'
-      ? globalThis.PlatformI18n.t("community:invited_you_to_build_with_them_aade4739")
+      ? (n.detail === 'join' ? globalThis.PlatformI18n.t("community:invited_you_to_join_title") : globalThis.PlatformI18n.t("community:invited_you_to_build_with_them_aade4739"))
       : n.kind === 'collab_invite_accepted'
         ? globalThis.PlatformI18n.t("community:accepted_your_invite_c2ffd2e0")
         : n.kind === 'approver_invite'

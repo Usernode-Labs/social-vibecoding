@@ -268,7 +268,7 @@ test('B5: its name and its one hello, against the full PostgreSQL schema', { tim
     const { rows: [msg] } = await pool.query('SELECT content, metadata FROM conversation_messages WHERE id = $1', [sent.messageId]);
     assert.equal(msg.content, dm.joinerHello('Supper Club'));
     assert.match(msg.content, /^Hi, I'm Homeroom bot, the AI that builds things for the groups on Homeroom\. Welcome to Supper Club!/);
-    assert.match(msg.content, /tap Ask for a change on its page\. I'll build it, and the group tries it and decides whether it goes live\.$/);
+    assert.match(msg.content, /tap Suggest an improvement on its page\. I'll build it, and the group tries it and decides whether it goes live\.$/);
     assert.equal(msg.metadata.homeroomBot.kind, 'hello_joiner');
     assert.equal(dm.momentOf(msg.metadata.homeroomBot), null, 'a hello rings nothing');
     assert.deepEqual(msg.metadata.homeroomBot.actions.map((a) => a.label), ['What can I ask for?', 'How does the group decide?']);

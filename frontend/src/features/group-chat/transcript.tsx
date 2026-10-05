@@ -319,7 +319,9 @@ export function Reactions({ msg }: { msg: TranscriptMessage }) {
           chip={msg.botRequest}
           mine={msg.mine}
           onTry={(sessionId) => controller()?.tryBotChange?.(sessionId)}
-          onProgress={() => controller()?.openBotChat?.()}
+          onProgress={() => (msg.botRequest?.status === 'fixing' && msg.botRequest.sessionId
+            ? controller()?.openBotChange?.(msg.botRequest.sessionId)
+            : controller()?.openBotChat?.())}
         />
       ) : null}
       {msg.reactions.map((r) => (
@@ -796,6 +798,8 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
                 onFile: () => chat?.makeBotRequest?.(msg.id),
                 onDismiss: () => chat?.dismissBotRequest?.(msg.id),
                 onOpenChat: () => chat?.openBotChat?.(),
+                onTry: (sessionId) => chat?.tryBotChange?.(sessionId),
+                onChange: (sessionId) => chat?.openBotChange?.(sessionId),
               }}
             />
           ) : null}

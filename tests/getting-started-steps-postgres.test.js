@@ -374,7 +374,7 @@ test('the Getting started buttons: default app, where Vote goes, and the Worksho
       const owed = await owedByCommunity(pool, plant.id, { showSelfHosted: true });
       assert.deepEqual(owed.map((w) => [w.slug, w.waiting, w.paying]), [['plant-pal', 1, 0]]);
 
-      // They vote on it anyway, and ask for a change from inside it.
+      // They vote on it anyway, and suggest an improvement from inside it.
       await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote) VALUES ($1, $2, 'yes')`, [firstVersion, plant.id]);
       await scorer.scoreOnVote(pool, config);
       await ask(plantPal, plant.id);

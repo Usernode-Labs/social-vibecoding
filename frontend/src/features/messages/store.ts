@@ -3,7 +3,7 @@ import { useSyncExternalStore } from 'react';
 
 import { navStore } from '../nav/nav-store.js';
 import * as api from './api';
-import { WORK_CHANGED_EVENT } from './bot-shared';
+import { WORK_CHANGED_EVENT, openAppTarget } from './bot-shared';
 import { channelDirectory, normalizeHandle, type ChannelRef } from './channels';
 import { platformHubServed, platformSlug, subscribePlatformSlug } from './channel-hub';
 import type { AppDiscussion, InboxFilter } from './inbox';
@@ -18,6 +18,7 @@ import type {
   MessagesSnapshot,
   ReplyThreadState,
   SharedObjectReference,
+  StagedObject,
 } from './types';
 
 const MAX_ID = 2_147_483_647;
@@ -108,6 +109,11 @@ const sentKeys = new Map<number, string>();
 const typingSentAt = new Map<number, number>();
 const typingExpiry = new Map<string, number>();
 let pendingShare: SharedObjectReference | null | undefined;
+/**
+ * A change the change page's Ask for changes put straight on the chat with
+ * Homeroom bot's composer (see openBot), for that conversation only.
+ */
+let pendingAttach: { conversationId: number; object: StagedObject; placeholder: string } | null = null;
 /** A `#messages/channel/<handle>` link followed before the lists landed. */
 let pendingChannel: string | null = null;
 let listRequest = 0;
@@ -559,8 +565,10 @@ export async function loadThread(conversationId: number, force = false): Promise
     // Read up to the newest message DRAWN — and only once the transcript
     // reaches the present, or a message link would mark everything after it
     // read. Never straight after "Mark unread" (#2387): the reader asked for
-    // this conversation to stay unread, and it is still open.
-    if (last && member && !page.nextAfter && unreadHold !== conversationId) void markRead(last);
+    // this conversation to stay unread, and it is still open. And only with
+    // somebody there to read it (readWhenThere): a message that lands in a
+    // conversation left open on an unattended screen waits for them.
+    if (last && member && !page.nextAfter && unreadHold !== conversationId) readMainWhenThere(conversationId);
   } catch (error) {
     if (request !== threadRequest) return;
     publish({
@@ -655,7 +663,7 @@ export async function loadNewer(): Promise<void> {
     const messages = [...state.messages, ...newer].sort(transcriptOrder);
     publish({ messages, nextAfter: page.nextAfter, loadingOlder: false });
     const last = newestMainId(messages);
-    if (!page.nextAfter && last && unreadHold !== conversationId) void markRead(last);
+    if (!page.nextAfter && last && unreadHold !== conversationId) readMainWhenThere(conversationId);
   } catch (error) {
     publish({ loadingOlder: false, threadError: errorMessage(error, tr("community:couldn_t_load_newer_messages_e2d2f883")) });
   }
@@ -894,6 +902,7 @@ export function close(): void {
   // durable draft. Leaving Messages cancels it instead of surprising the user
   // in an unrelated conversation later.
   pendingShare = undefined;
+  pendingAttach = null;
   replyThreadRequest += 1;
   unreadHold = null;
   publish({
@@ -1132,19 +1141,50 @@ export function open(conversationId?: number | null): void {
  * says "ask Homeroom bot". It is made the first time; until the server
  * answers, Messages opens on its list.
  */
-export async function openBot(reference?: SharedObjectReference | null): Promise<void> {
+export async function openBot(reference?: StagedObject | null): Promise<void> {
   let id: number | null = state.conversations.find((item) => item.homeroomBot)?.id || null;
   if (!id) {
     try { id = await api.openBotConversation(); } catch { id = null; }
   }
-  // B8: a change to write about ("Ask for changes"), staged on the composer
-  // as Share stages one (see share below).
-  if (reference) pendingShare = reference;
+  // B8: a change to write about ("Ask for changes"). One that names its
+  // project and itself is attached on the composer as it is, with the caret
+  // in the box and the box asking what should change: no dialog to fill in
+  // (the change page knows both). Anything less is chosen in the Share item
+  // dialog, as Share stages one (see share below).
+  const attach = !!id && !!reference && stagedComplete(reference);
+  if (attach && id && reference) pendingAttach = { conversationId: id, object: reference, placeholder: ASK_FOR_CHANGES_PLACEHOLDER };
+  else if (reference) pendingShare = reference;
   const already = !!id && state.route.conversationId === id;
   open(id);
   if (reference && already && typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent('usernode:messages-share', { detail: pendingShare }));
+    if (attach) window.dispatchEvent(new CustomEvent('usernode:messages-attach'));
+    else window.dispatchEvent(new CustomEvent('usernode:messages-share', { detail: pendingShare }));
   }
+}
+
+/** What the composer's box asks once Ask for changes has attached a change. */
+export const ASK_FOR_CHANGES_PLACEHOLDER = 'What should change?';
+
+/** Pure: whether a staged item names its project and itself, so it can be attached as it is. */
+export function stagedComplete(reference: SharedObjectReference): boolean {
+  const app = validId(reference.appId) || (typeof reference.appSlug === 'string' && reference.appSlug.trim() !== '');
+  if (!app) return false;
+  if (reference.type === 'app') return true;
+  if (reference.type === 'issue') return validId(reference.issueNumber);
+  if (reference.type === 'governance') return validId(reference.proposalId);
+  if (reference.type === 'spec') return validId(reference.sessionId) && validId(reference.version);
+  return validId(reference.sessionId);
+}
+
+/**
+ * The change Ask for changes staged for `conversationId`'s composer, once:
+ * null for any other conversation, which leaves it waiting for its own.
+ */
+export function takePendingAttach(conversationId: number): { object: StagedObject; placeholder: string } | null {
+  if (!pendingAttach || pendingAttach.conversationId !== conversationId) return null;
+  const { object, placeholder } = pendingAttach;
+  pendingAttach = null;
+  return { object, placeholder };
 }
 
 // B6: a message of the bot's to quote in the composer once its chat has
@@ -1419,12 +1459,13 @@ export async function answerBotQuestion(question: ConversationMessage, answer: s
  * B3: press one of a bot message's buttons (types.ts HomeroomBotAction).
  * A `server` one is decided once on the server (api.decideBotAction), which
  * updates the message on every device; `prompt` sends its words as the
- * person's own message, quoting nothing; `open` goes to its in-app address.
+ * person's own message, quoting nothing; `open` goes to its in-app address,
+ * a project's app the way the shell opens one (bot-shared.ts openAppTarget).
  * Rejects when a `server` press was refused (a 409: decided already).
  */
 export async function tapBotAction(message: ConversationMessage, action: HomeroomBotAction): Promise<void> {
   if (action.type === 'open') {
-    if (action.target && action.target.startsWith('#app/')) window.location.hash = action.target;
+    openAppTarget(action.target);
     return;
   }
   if (action.type === 'prompt') {
@@ -1778,7 +1819,14 @@ export async function loadReplyThread(conversationId: number, rootId: number, fo
       },
     });
     const newest = known.reduce((top, item) => Math.max(top, item.id), 0);
-    if (newest) void markThreadRead(conversationId, rootId, newest);
+    if (newest) {
+      readWhenThere(`thread:${conversationId}:${rootId}`, conversationId, () => {
+        // The newest reply drawn when they are back, in the thread still open.
+        if (state.thread?.conversationId !== conversationId || state.thread.rootId !== rootId) return;
+        const now = state.thread.messages.reduce((top, item) => Math.max(top, item.id), 0);
+        if (now > 0) void markThreadRead(conversationId, rootId, now);
+      });
+    }
   } catch (error) {
     if (request !== replyThreadRequest) return;
     const thread = state.thread;
@@ -1872,6 +1920,70 @@ async function markThreadRead(conversationId: number, rootId: number, replyId: n
   threadReadUpTo.set(key, replyId);
   if (typeof window !== 'undefined') window.Notifications?.markConversationThreadRead?.(conversationId, rootId);
   try { await api.markRead(conversationId, replyId); } catch { /* the next open reads it again */ }
+}
+
+/**
+ * A MESSAGE IS READ WHEN SOMEBODY IS THERE TO READ IT (5 October, Page
+ * Turners). A conversation open on screen used to be read up to its newest
+ * message the moment one landed, whoever was looking: a background tab, an
+ * app whose socket outlived the screen, a phone left on the table. Alex
+ * approved his first version from his chat with Homeroom bot and put the
+ * phone down; "Page Turners is live" landed in that open chat four minutes
+ * later and was read on the spot, which cleared its bell row and the
+ * Messages badge (both read off the same cursor,
+ * services/conversations.js markRead) before he ever looked.
+ *
+ * Now a read waits while the page is hidden or nobody has touched it for
+ * PRESENCE_MS, and happens when they are back: their next touch, key,
+ * scroll or return to the page (initializeMessagesStore), if that
+ * conversation is still on screen and not marked unread. Opening a
+ * conversation is touching the page, so an open still reads at once; a
+ * conversation left before they came back stays unread, as it should.
+ */
+const PRESENCE_MS = 2 * 60 * 1000;
+let lastPresence = Date.now();
+const heldReads = new Map<string, { conversationId: number; read: () => void }>();
+
+function pageHidden(): boolean {
+  return typeof document !== 'undefined' && document.visibilityState === 'hidden';
+}
+
+function someoneThere(): boolean {
+  return !pageHidden() && Date.now() - lastPresence < PRESENCE_MS;
+}
+
+/** Run `read` now if somebody is there, or when they are back (notePresence). The newest wins per `key`. */
+function readWhenThere(key: string, conversationId: number, read: () => void): void {
+  if (someoneThere()) {
+    heldReads.delete(key);
+    read();
+    return;
+  }
+  heldReads.set(key, { conversationId, read });
+}
+
+/** The open conversation read up to its newest message drawn, then. */
+function readMainWhenThere(conversationId: number): void {
+  readWhenThere(`main:${conversationId}`, conversationId, () => {
+    if (state.route.conversationId !== conversationId || state.nextAfter) return;
+    const last = newestMainId(state.messages);
+    if (last) void markRead(last);
+  });
+}
+
+/**
+ * Somebody used the page (or came back to it): reads that waited for them
+ * happen now, for the conversation still on screen.
+ */
+export function notePresence(): void {
+  if (pageHidden()) return;
+  lastPresence = Date.now();
+  if (!heldReads.size) return;
+  const held = [...heldReads.values()];
+  heldReads.clear();
+  for (const item of held) {
+    if (onScreen(item.conversationId) && unreadHold !== item.conversationId) item.read();
+  }
 }
 
 export async function markRead(messageId: number): Promise<void> {
@@ -2112,7 +2224,7 @@ function paintSaved(messageId: number, saved: boolean): void {
 export const messagesController = {
   open,
   // B8: the chat with Homeroom bot (app-view.js's doors to it).
-  openBot: (reference?: SharedObjectReference | null) => { void openBot(reference); },
+  openBot: (reference?: StagedObject | null) => { void openBot(reference); },
   // B6: the App tab's Change something, under a first version's plan.
   quoteBotMessage: (conversationId?: number | null, messageId?: number | null) => { void quoteBotMessage(conversationId, messageId); },
   openAddress,
@@ -2153,6 +2265,14 @@ export function initializeMessagesStore(): () => void {
   const onAuthed = () => { void loadConversations(); void loadAppDiscussions(); };
   window.addEventListener('online', onOnline);
   window.addEventListener('offline', onOffline);
+  // 5 October: somebody using the page, or coming back to it, is somebody
+  // there to read what is open (notePresence, readWhenThere). Captured and
+  // passive: it only notes the time, and never stands in a gesture's way.
+  const PRESENCE_EVENTS = ['pointerdown', 'pointermove', 'keydown', 'touchstart', 'wheel', 'scroll', 'focus'];
+  const presence = { capture: true, passive: true };
+  const onPresence = () => { notePresence(); };
+  for (const type of PRESENCE_EVENTS) window.addEventListener(type, onPresence, presence);
+  document.addEventListener('visibilitychange', onPresence);
   // The store is always mounted, but the endpoint is session-gated. Seed the
   // conversation list as soon as an already-resolved user exists, or wait for
   // the shell's one-shot authenticated boot event on an anonymous document.
@@ -2176,6 +2296,8 @@ export function initializeMessagesStore(): () => void {
   return () => {
     window.removeEventListener('online', onOnline);
     window.removeEventListener('offline', onOffline);
+    for (const type of PRESENCE_EVENTS) window.removeEventListener(type, onPresence, presence);
+    document.removeEventListener('visibilitychange', onPresence);
     document.removeEventListener('sv:authed', onAuthed);
   };
 }

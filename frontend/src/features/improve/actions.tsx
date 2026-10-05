@@ -57,17 +57,22 @@ function QuickAction({ id, label, onClick }: {
 }
 
 /**
- * Ask for a change: ONE BUTTON, where there were two (UI overhaul).
+ * Suggest an improvement: ONE BUTTON, where there were two (UI overhaul).
  *
  * The menu offered "Give feedback" and "New change" side by side, and people
  * found both confusing: feedback read as a note to nobody in particular, and
  * New change started an agent session without saying so. The two did the
  * same thing from where the viewer stands, asking for something to change,
  * and differed in who does the work. So the button asks for the change (the
- * same dialog, headed "Ask for a change", which posts a request members can
- * see, vote on and pick up), and starting one yourself is "Start a new
- * change" under Agent sessions in the list below, because what it opens is
- * an agent session (../app-context/app-context-sheet.tsx).
+ * same dialog, headed "Suggest an improvement", which posts a request members
+ * can see, vote on and pick up), and building it yourself is "Build it
+ * yourself", leading the list's Agent chats below, which shows once the
+ * viewer has had an agent session (../app-context/app-context-sheet.tsx
+ * AgentChats). Until then this button is the menu's one way to change the
+ * app, which is the point for a first-time user.
+ *
+ * It said "Ask for a change" until the first-session run-through (5 Oct
+ * 2026), which asked for words a first-time user would use.
  *
  * It needs nothing of the viewer (no collaborator bit, no session, no repo),
  * so it is always shown.
@@ -82,9 +87,9 @@ export function ImproveQuickActions(): ReactNode {
       className="shrink-0 flex items-stretch gap-2 px-4 pt-1 pb-2"
     >
       <Localized element={<QuickAction
-        id="improve-row-feedback" label={catalogText("apps:ask_for_a_change_f445fc4f")}
+        id="improve-row-feedback" label={catalogText("apps:suggest_an_improvement")}
         onClick={() => Improve.giveFeedback()}
-      />} messages={{"label":"apps:ask_for_a_change_f445fc4f"}} />
+      />} messages={{"label":"apps:suggest_an_improvement"}} />
     </div>
   );
 }

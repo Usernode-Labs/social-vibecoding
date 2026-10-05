@@ -353,10 +353,185 @@ test('#15: a question waiting on the creator, and a first version up for its vot
   const asked = view(AppView, firstVersionApp({}, { step: 2, stepName: 'Read the description', question: true }));
   assert.deepEqual(asked.lines, ['Step 2 of 7: Read the description', 'Homeroom bot has a question for you.']);
   assert.equal(asked.action.key, 'botChat', 'the chat is where it is answered');
+  // Up for its vote with no word on who approves it (a read that failed):
+  // ready to try, and its creator tries it from their chat, as before.
   const ready = view(AppView, firstVersionApp({}, { step: 6, stepName: 'Approval', ready: true }));
-  assert.deepEqual(ready.lines, ['Step 6 of 7: Approval', 'Its first version is ready. Try it from your chat.']);
+  assert.equal(ready.message, 'The first version of Plant Pal is ready to try');
+  assert.equal(ready.dot, null, 'nothing is being built');
+  assert.deepEqual(ready.lines, ['Step 6 of 7: Approval', 'Try it from your chat.']);
+  assert.equal(ready.action.key, 'botChat');
   const theirs = view(AppView, firstVersionApp({}, { mine: false, step: 6, stepName: 'Approval', ready: true }));
-  assert.equal(theirs.lines[1], 'Its first version is waiting for approval.');
+  assert.deepEqual(theirs.lines, ['Step 6 of 7: Approval', 'Waiting for approval.']);
+  assert.equal(theirs.action, null);
+});
+
+// ── Ready to try: what it waits on, for whoever reads it ──
+
+const DAY = 24 * 60 * 60 * 1000;
+const READY = { step: 6, stepName: 'Approval', ready: true };
+const APPROVAL = { sessionId: 31, mustApprove: false, approved: false, waitingOn: [], more: 0, missing: 1, goesLiveAt: null, soon: false };
+const readyApp = (fv = {}, approval = {}) => firstVersionApp({}, { ...READY, ...fv, approval: { ...APPROVAL, ...approval } });
+
+test('ready: a member who still has to approve it gets Try it and See the change, the starter quieter under them', () => {
+  const { AppView } = makeAppView();
+  const v = view(AppView, readyApp({ mine: false, conversationId: null }, { mustApprove: true }));
+  assert.deepEqual(v, {
+    dot: null,
+    message: 'The first version of Plant Pal is ready to try',
+    detail: null,
+    lines: ['Step 6 of 7: Approval', 'Waiting for your approval.'],
+    action: { key: 'tryChange', label: 'Try it', slug: 'plant-pal', sessionId: 31 },
+    alt: { key: 'seeChange', label: 'See the change', slug: 'plant-pal', sessionId: 31 },
+    secondary: { key: 'starter', label: 'Show the starter for now', slug: 'plant-pal' },
+  });
+  const out = html(v);
+  assert.doesNotMatch(out, /status-dot/);
+  assert.doesNotMatch(out, /being built/);
+  assert.match(out, /<p class="max-w-sm text-base font-semibold[^"]*">The first version of Plant Pal is ready to try<\/p>/);
+  assert.match(out, />Waiting for your approval\.</);
+  assert.match(out, /<button id="app-first-version-try" class="rounded-lg bg-violet-600[^"]*mt-3">Try it<\/button>/);
+  assert.match(out, /<button id="app-first-version-change" class="rounded-lg bg-zinc-100[^"]*">See the change<\/button>/);
+  assert.match(out, /<button id="app-first-version-starter" class="px-3 py-1\.5 text-sm font-medium text-zinc-600[^"]*rounded-lg">Show the starter for now<\/button>/,
+    'the third button is the quietest');
+  assert.ok(out.indexOf('app-first-version-try') < out.indexOf('app-first-version-change')
+    && out.indexOf('app-first-version-change') < out.indexOf('app-first-version-starter'), 'in that order');
+  // Its creator, when their own Yes is still needed, reads it the same way.
+  const maker = view(AppView, readyApp({}, { mustApprove: true }));
+  assert.equal(maker.lines[1], 'Waiting for your approval.');
+  assert.equal(maker.action.key, 'tryChange');
+  assert.doesNotMatch(html(maker), /app-first-version-chat/);
+});
+
+test('ready: once they approved it, whom it waits for and the day it goes live anyway', () => {
+  const { AppView } = makeAppView();
+  const at = new Date(Date.now() + 3 * DAY);
+  const v = view(AppView, readyApp({}, { approved: true, waitingOn: ['sam_t1004'], goesLiveAt: at.toISOString() }));
+  const weekday = new Intl.DateTimeFormat(undefined, { weekday: 'long' }).format(at);
+  assert.deepEqual(v.lines, ['Step 6 of 7: Approval', `You approved it. Waiting for @sam_t1004, or it goes live on ${weekday} if nobody objects.`]);
+  assert.deepEqual(v.action, { key: 'tryChange', label: 'Try it', slug: 'plant-pal', sessionId: 31 });
+  assert.equal(v.alt.key, 'seeChange');
+  assert.equal(v.message, 'The first version of Plant Pal is ready to try');
+  // No clock runs (an "at least N" project): only whom it waits for.
+  const noClock = view(AppView, readyApp({}, { approved: true, waitingOn: ['sam_t1004'] }));
+  assert.equal(noClock.lines[1], 'You approved it. Waiting for @sam_t1004.');
+});
+
+test('ready: a member whose Yes does not count is told it waits for approval, and where the change is', () => {
+  const { AppView } = makeAppView();
+  const v = view(AppView, readyApp({ mine: false, conversationId: null }, { waitingOn: ['sam_t1004'], goesLiveAt: new Date(Date.now() + DAY).toISOString() }));
+  assert.deepEqual(v.lines, ['Step 6 of 7: Approval', 'Waiting for approval.']);
+  assert.deepEqual(v.action, { key: 'seeChange', label: 'See the change', slug: 'plant-pal', sessionId: 31 });
+  assert.equal(v.alt, undefined);
+  const out = html(v);
+  assert.match(out, /<button id="app-first-version-change" class="rounded-lg bg-violet-600[^"]*mt-3">See the change<\/button>/);
+  assert.doesNotMatch(out, /app-first-version-try/);
+  assert.match(out, /<button id="app-first-version-starter" class="rounded-lg bg-zinc-100[^"]*">Show the starter for now<\/button>/,
+    'with no second button the starter keeps its own look');
+});
+
+test('5 Oct: "Waiting for your approval." is never said to a reader whose own Yes came after the answer', () => {
+  // priya_t1006 had approved Page Turners' first version and was still told
+  // it waited for her approval. The server words it from her own Yes
+  // (firstVersionApproval: mustApprove only while it is not in); an answer
+  // read before that Yes still says it is needed.
+  const { AppView } = makeAppView();
+  const SECOND = 1000;
+  const before = readyApp({ mine: false, conversationId: null }, { mustApprove: true, waitingOn: ['sam_t1004'], missing: 2 });
+  AppView._noteAppRecordRead(before, null, Date.now() - 5 * SECOND);
+  assert.equal(view(AppView, before).lines[1], 'Waiting for your approval.', 'the server\'s word, until she votes');
+
+  AppView.appData = before;
+  AppView._noteOwnVote(31, 'yes');
+  const v = view(AppView, before);
+  assert.equal(v.lines[1], 'You approved it. Waiting for @sam_t1004.', 'whom it waits on instead');
+  assert.deepEqual([v.action.key, v.alt.key], ['tryChange', 'seeChange']);
+  assert.equal(AppView._firstVersionTrusted(before), false, 'and the screen reads the server again before painting it');
+
+  // Hers was the last Yes it needed: nobody to wait for, and no day promised
+  // for a clock the next read will name.
+  const last = readyApp({}, { mustApprove: true, missing: 1, goesLiveAt: new Date(Date.now() + 2 * DAY).toISOString() });
+  AppView._noteAppRecordRead(last, null, Date.now() - 5 * SECOND);
+  assert.equal(view(AppView, last).lines[1], 'You approved it.');
+
+  // The worker's copy is older than her vote, whenever it arrived.
+  const copy = readyApp({}, { mustApprove: true, waitingOn: ['sam_t1004'], missing: 2 });
+  AppView._noteAppRecordRead(copy, { headers: { get: (n) => (n === 'sw-cached-at' ? '1' : null) } }, Date.now() + 5 * SECOND);
+  assert.equal(view(AppView, copy).lines[1], 'You approved it. Waiting for @sam_t1004.');
+
+  // An answer asked for after her vote is the server's word as it stands (a
+  // revised change asks for her Yes again).
+  const after = readyApp({}, { mustApprove: true });
+  AppView._noteAppRecordRead(after, null, Date.now() + 5 * SECOND);
+  assert.equal(view(AppView, after).lines[1], 'Waiting for your approval.');
+
+  // A No, or a Yes on some other change, changes nothing.
+  const { AppView: other } = makeAppView();
+  const asked = readyApp({}, { mustApprove: true });
+  other._noteAppRecordRead(asked, null, Date.now() - 5 * SECOND);
+  other._noteOwnVote(31, 'no');
+  other._noteOwnVote(32, 'yes');
+  assert.equal(view(other, asked).lines[1], 'Waiting for your approval.');
+});
+
+test('ready: the wait line, worded for each state of the gate, in the reader\'s week', () => {
+  const { AppView } = makeAppView();
+  // A Monday at noon, local time, so the days below are the reader's own.
+  const now = new Date(2026, 9, 5, 12, 0, 0);
+  const line = (a) => AppView._firstVersionWaitLine({ ...APPROVAL, approved: true, ...a }, now, 'en-US');
+  const at = (days, hour = 18) => new Date(2026, 9, 5 + days, hour, 0, 0).toISOString();
+  assert.equal(line({ waitingOn: ['sam'], goesLiveAt: at(0) }), 'You approved it. Waiting for @sam, or it goes live later today if nobody objects.');
+  assert.equal(line({ waitingOn: ['sam'], goesLiveAt: at(1, 9) }), 'You approved it. Waiting for @sam, or it goes live tomorrow if nobody objects.');
+  assert.equal(line({ waitingOn: ['sam'], goesLiveAt: at(2) }), 'You approved it. Waiting for @sam, or it goes live on Wednesday if nobody objects.');
+  assert.equal(line({ waitingOn: ['sam'], goesLiveAt: at(7) }), 'You approved it. Waiting for @sam, or it goes live on October 12 if nobody objects.');
+  // Named only when they are exactly who is needed; else how many more.
+  assert.equal(line({ waitingOn: ['sam', 'ada'], missing: 2 }), 'You approved it. Waiting for @sam and @ada.');
+  assert.equal(line({ waitingOn: ['sam', 'ada', 'kim'], more: 2, missing: 5 }), 'You approved it. Waiting for @sam, @ada, @kim and 2 more.');
+  assert.equal(line({ waitingOn: ['sam', 'ada'], missing: 1 }), 'You approved it. Waiting for one more person to approve.');
+  assert.equal(line({ waitingOn: [], missing: 2 }), 'You approved it. Waiting for 2 more people to approve.');
+  // Nothing more needed, or only its clock.
+  assert.equal(line({ soon: true, missing: 0 }), 'You approved it. It goes live in a minute or two.');
+  assert.equal(line({ missing: 0, goesLiveAt: at(1) }), 'You approved it. It goes live tomorrow if nobody objects.');
+  assert.equal(line({ missing: 0 }), 'You approved it.');
+  // Somebody whose Yes is not asked for: the same facts, without "You approved it."
+  const theirs = (a) => AppView._firstVersionWaitLine({ ...APPROVAL, ...a }, now, 'en-US');
+  assert.equal(theirs({ waitingOn: ['sam'], goesLiveAt: at(2) }), 'Waiting for approval.');
+  assert.equal(theirs({ soon: true, missing: 0 }), 'It goes live in a minute or two.');
+  assert.equal(theirs({ missing: 0, goesLiveAt: at(2) }), 'It goes live on Wednesday if nobody objects.');
+  assert.equal(AppView._liveDay('not a date', now, 'en-US'), null);
+  assert.equal(AppView._liveDay(at(-1), now, 'en-US'), 'on October 4', 'a day already past is its date');
+});
+
+test('ready: Try it opens the change\'s preview on this app; See the change opens its page', () => {
+  const { AppView, sandbox } = makeAppView();
+  const staged = [];
+  AppView.ensureStaging = (...args) => { staged.push(args); };
+  sandbox.location = { hash: '' };
+  AppView.appData = readyApp();
+  AppView.tryFirstVersion('plant-pal', 31);
+  assert.equal(staged.length, 1);
+  assert.equal(staged[0][0], 31);
+  assert.equal(staged[0][1], null);
+  assert.equal(staged[0][2], null);
+  assert.deepEqual({ ...staged[0][3] }, {}, 'the app on screen, as its viewer may see it');
+  assert.equal(sandbox.location.hash, '');
+  AppView.openFirstVersionChange('plant-pal', 31);
+  assert.equal(sandbox.location.hash, '#app/plant-pal/dev/proposals/31');
+  // Off its own screen, Try it goes to the change page instead.
+  sandbox.location.hash = '';
+  AppView.appData = { slug: 'other' };
+  AppView.tryFirstVersion('plant-pal', 31);
+  assert.equal(staged.length, 1);
+  assert.equal(sandbox.location.hash, '#app/plant-pal/dev/proposals/31');
+  // A change with no id opens nothing.
+  sandbox.location.hash = '';
+  AppView.tryFirstVersion('plant-pal', null);
+  AppView.openFirstVersionChange('plant-pal', 0);
+  assert.equal(sandbox.location.hash, '');
+  // The card hands each opener the change's id.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'features', 'app-frame', 'app-status.tsx'), 'utf8');
+  assert.match(src, /tryChange: \{ id: 'app-first-version-try', opener: 'tryFirstVersion' \}/);
+  assert.match(src, /seeChange: \{ id: 'app-first-version-change', opener: 'openFirstVersionChange' \}/);
+  assert.match(src, /if \(action\.key === 'tryChange' \|\| action\.key === 'seeChange'\) call\(opener, action\.slug, action\.sessionId \?\? null\);/);
 });
 
 test('#15: while the project is still being set up there is no starter to offer', () => {

@@ -1002,6 +1002,32 @@ async function compareCommitAncestry(owner, repo, baseSha, headSha) {
   };
 }
 
+// The commits of one pull request, as its Commits tab lists them: the ones on
+// its head that its base did not have. GitHub keeps the list after a squash
+// merge, so for a merged pull request it is what the change brought to main,
+// and an open change whose head is on it was built on (included in) this one
+// (services/included-changes.js). GitHub lists at most 250, so `complete` is
+// false when the list may be short. Lowercase SHAs. Throws on transport
+// errors.
+const PR_COMMITS_CAP = 250;
+
+async function listPullRequestCommitShas(owner, repo, prNumber) {
+  const octokit = await getReadOctokit(owner);
+  const shas = [];
+  for (let page = 1; page <= 3; page += 1) {
+    const { data } = await octokit.request(
+      'GET /repos/{owner}/{repo}/pulls/{pull_number}/commits',
+      { owner, repo, pull_number: prNumber, per_page: 100, page }
+    );
+    const batch = Array.isArray(data) ? data : [];
+    for (const commit of batch) {
+      if (typeof commit?.sha === 'string') shas.push(commit.sha.toLowerCase());
+    }
+    if (batch.length < 100) break;
+  }
+  return { shas, complete: shas.length < PR_COMMITS_CAP };
+}
+
 // #955: the parent SHAs of one commit, oldest-first as Git stores them —
 // so `[0]` is the FIRST parent, i.e. the branch the merge was made ONTO.
 // The platform's sync turn merges origin/main into a proposal branch, so a
@@ -1803,7 +1829,9 @@ async function getProposalDiff(owner, repo, basehead, charBudget = PROPOSAL_DIFF
 // #3654: the files a compare touched, with their status and patch, for the
 // Homeroom bot benchmark's diff-scope grader and its judge. One call gives
 // both the list and the diff text (capped like getProposalDiff's), and
-// `complete` says whether GitHub's 300-file page held everything.
+// `complete` says whether GitHub's 300-file page held everything. Also read
+// by the small-change tag (services/small-change.js), which needs the merge
+// base to read dapp.json as the change found it.
 async function compareFiles(owner, repo, basehead, charBudget = 60000) {
   const octokit = await getReadOctokit(owner);
   const { data } = await octokit.rest.repos.compareCommitsWithBasehead({
@@ -1823,7 +1851,10 @@ async function compareFiles(owner, repo, basehead, charBudget = 60000) {
     if (diff.length + block.length > charBudget) { truncated = true; break; }
     diff += block;
   }
-  return { files, diff, truncated, complete: files.length < COMPARE_FILES_CAP, aheadBy: data.ahead_by ?? null };
+  return {
+    files, diff, truncated, complete: files.length < COMPARE_FILES_CAP, aheadBy: data.ahead_by ?? null,
+    mergeBaseSha: data.merge_base_commit?.sha || null,
+  };
 }
 
 // #3654: delete a branch the Homeroom bot benchmark made. Refuses any name
@@ -2770,6 +2801,7 @@ module.exports = {
   createBranch,
   ensureBranchAtSha,
   compareCommitAncestry,
+  listPullRequestCommitShas,
   getCommitParents,
   getCommitTree,
   getBranchSha,

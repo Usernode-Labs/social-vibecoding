@@ -8,6 +8,16 @@
 // This module is pure. It checks one saved file against the declared
 // changes and folds everything saved into one result per change, so a change
 // the agent could not reach never hides the ones it did.
+//
+// A change that is not ready is one of two things, and people act on them
+// differently. SKIPPED: these copies could not reach the state (missing
+// data, access, an interaction the agent could not perform); better steps or
+// hints fix that. FAILED: the agent carried out the steps on the after build
+// and the app itself broke (a server error answered the action, an error
+// showed, or the claimed effect never appeared because the app errored).
+// That is the change not working, and it is shown and handled as a problem
+// (shots-state.brokenOnHead, homeroom-bot-followup.checksDue). The agent
+// says which, as skip_change's `outcome`.
 
 const crypto = require('crypto');
 const planContract = require('./visible-changes');
@@ -112,6 +122,17 @@ function shotTarget(intent, raw = {}) {
   return { storyId: story.id, viewport, side, variant: kind.variant, media: kind.media };
 }
 
+// Whether a skip says the after build broke ('failed') or the state could
+// not be reached ('skipped', the default and what every older caller meant).
+const OUTCOMES = Object.freeze(['skipped', 'failed']);
+function outcome(value) {
+  if (value == null || value === '') return 'skipped';
+  if (!OUTCOMES.includes(value)) {
+    throw new ShotError('invalid_outcome', 'Outcome must be "skipped" (these copies cannot reach it) or "failed" (the app broke when you tried it).');
+  }
+  return value;
+}
+
 function reason(value) {
   const text = typeof value === 'string' ? value.trim().slice(0, MAX_REASON) : '';
   if (!text) throw new ShotError('reason_required', 'Say briefly why, in words a person reading the proposal will understand.');
@@ -149,13 +170,17 @@ function missingWords(viewport, side, variant) {
 // it is motion (element shots are optional extras), and it may carry the
 // agent's note on what its shots leave out. A change the agent skipped by
 // name is skipped even when its shots were saved: that is how the agent
-// withdraws shots it found do not show the change. `fallbackReason` (a skip
-// of everything) only explains the changes that are not ready.
-function summarize(intent, saved, skipped = new Map(), { fallbackReason = null, notes = new Map() } = {}) {
+// withdraws shots it found do not show the change. It is failed instead
+// when the agent said the after build broke (`failed`). `fallbackReason` (a
+// skip of everything) only explains the changes that are not ready, and
+// `fallbackFailed` says that skip was the app breaking.
+function summarize(intent, saved, skipped = new Map(), {
+  fallbackReason = null, notes = new Map(), failed = new Set(), fallbackFailed = false,
+} = {}) {
   const published = [];
   const stories = intent.stories.map((story) => {
     if (skipped.has(story.id)) {
-      return { id: story.id, status: 'skipped', reason: skipped.get(story.id) };
+      return { id: story.id, status: failed.has(story.id) ? 'failed' : 'skipped', reason: skipped.get(story.id) };
     }
     const missing = [];
     const files = [];
@@ -176,7 +201,7 @@ function summarize(intent, saved, skipped = new Map(), { fallbackReason = null, 
     }
     return {
       id: story.id,
-      status: 'skipped',
+      status: fallbackReason && fallbackFailed ? 'failed' : 'skipped',
       reason: fallbackReason || `The shots agent did not save ${missing.join(', ')}.`,
     };
   });
@@ -188,11 +213,21 @@ function summarize(intent, saved, skipped = new Map(), { fallbackReason = null, 
     stories,
     files: published,
     readyCount: ready,
+    failedCount: stories.filter((story) => story.status === 'failed').length,
     // Stored as the run's plan hash: it fences storage and names exactly
     // which files were published.
     manifestHash: sha256(Buffer.from(planContract.canonicalJson({ mode: SHOTS_MODE, intent, manifest }))),
     verdict: { passed: ready > 0, mode: SHOTS_MODE, runs: 1, stories },
   };
+}
+
+// The words a run with no ready change, and at least one that failed, is
+// failed with: each failed change's claim, then what the agent saw.
+function failedReason(intent, stories) {
+  return stories.filter((story) => story.status === 'failed').map((story) => {
+    const claim = intent.stories.find((candidate) => candidate.id === story.id)?.claim || story.id;
+    return `Tried "${claim}" on the after build, and it did not work. ${story.reason || ''}`.trim();
+  }).join(' ').slice(0, 1800);
 }
 
 function isShotsVerdict(verdict) {
@@ -208,9 +243,12 @@ module.exports = {
   inspectClip,
   shotTarget,
   slotKey,
+  OUTCOMES,
+  outcome,
   reason,
   note,
   stored,
   summarize,
+  failedReason,
   isShotsVerdict,
 };
