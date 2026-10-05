@@ -1501,9 +1501,11 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
               // Ready to try: the change, and who it waits on, as this
               // viewer reads it (firstVersionApproval).
               ...(state.ready && state.approval ? { approval: state.approval } : {}),
-              // WP-E: about how long a build takes, for "usually about 8
-              // minutes" while it is not ready yet.
-              ...(mine && !state.ready ? { typicalMinutes: await botDm.typicalMinutesCached(pool) } : {}),
+              // No "usually about N minutes" (WP-E used to send the
+              // ordinary request's typical build here): a first version
+              // plans first and waits on its creator's answer, and took 50
+              // minutes in the 5 October run-through against a promise of
+              // 10. The made screen says those steps instead (buildNote).
             };
           }
         } catch (err) {

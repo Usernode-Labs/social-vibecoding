@@ -12,7 +12,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { loadTsx, renderComponent } = require('./lib/render-tsx');
+const { loadTsx, renderComponent, renderToHtml, createElement } = require('./lib/render-tsx');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -258,7 +258,19 @@ test('after Make it: the build\'s step, then one invite, and the second button s
   assert.match(src, /const LINK_DAYS = 0;\s+const LINK_USES = 0;/);
   assert.equal(require('../src/services/community-invites').NO_LIMIT, 0);
   assert.match(src, /Anyone with the link can join, until you turn it off\./);
-  assert.match(src, /setRule\(data\.joiningRule\)/);
+  // Evan, 5 October 2026: the first invite is a link and nothing else. No
+  // invite by username (somebody brand new knows nobody on Homeroom yet), and
+  // no joining-rule line ("With one other person using it, a change goes
+  // live when you both say yes, …"): both stay in the project's own invite
+  // pane (features/app-context/invite-pane.tsx).
+  assert.doesNotMatch(src, /joiningRule|setRule|Invite by username|\/invites`/);
+  const sheet = renderToHtml(createElement(made.InviteSheet, {
+    made: { slug: 'page-turners', name: 'Page Turners', emoji: '📚', description: null, example: null, conversationId: 3 },
+    me: 'alex', onClose() {}, onSent() {},
+  }));
+  assert.match(sheet, />Share link</);
+  assert.doesNotMatch(sheet, /username|say yes|goes live/i);
+  assert.match(read('frontend/src/features/app-context/invite-pane.tsx'), /joiningRule/, 'the project\'s own pane keeps the rule');
   assert.match(src, /Your note is also your first message in the group chat\./);
   assert.match(src, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(made\.slug\)\}\/messages`/);
   const invites = require('../src/services/community-invites');

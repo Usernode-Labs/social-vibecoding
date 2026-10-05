@@ -91,19 +91,21 @@ test('a build moment in the bell is the bot\'s, in its own words', () => {
   assert.deepEqual(row, { label: 'Homeroom bot', subject: 'Run Club is ready to try', by: null });
 });
 
-test('the invite page says the maker sees a join; the made screen says how long', () => {
+test('the invite page says the maker sees a join; the made screen promises no time', () => {
   const { seenLine } = loadTsx('frontend/src/features/auth/invite-card.tsx');
   assert.equal(seenLine({ inviterName: 'Maya', inviter: 'maya' }), 'Maya will see that you joined.');
   assert.equal(seenLine({ inviter: 'maya' }), '@maya will see that you joined.');
   assert.equal(seenLine({}), '');
   assert.match(read('public/js/app.js'), /will see that you joined\./, 'and the signed-in confirm says it too');
+  // WP-E said "usually in about 8 minutes" here, an ordinary request's
+  // typical build; a first version took 50 (first-session run-through, 5
+  // October 2026), and Evan asked for no average at all.
   const { buildNote } = loadTsx('frontend/src/features/first-session/made.tsx');
-  assert.equal(buildNote(true, 8), 'Homeroom bot messages you when it\'s ready to try, usually in about 8 minutes.');
-  assert.equal(buildNote(true, null), 'Homeroom bot messages you when it\'s ready to try.');
-  assert.equal(buildNote(false, 8), 'You or anyone you invite can build it from there.');
+  assert.equal(buildNote(true), 'Homeroom bot messages you when the first version is ready to try.');
+  assert.equal(buildNote(false), 'You or anyone you invite can build it from there.');
   const made = read('frontend/src/features/first-session/made.tsx');
   assert.match(made, /useEffect\(\(\) => \{ if \(botBuilds\) askForPingWhileBotBuilds\(\); \}, \[botBuilds\]\);/);
-  assert.match(read('src/routes/apps.js'), /\.\.\.\(mine && !state\.ready \? \{ typicalMinutes: await botDm\.typicalMinutesCached\(pool\) \} : \{\}\),/);
+  assert.doesNotMatch(read('src/routes/apps.js'), /typicalMinutes: await botDm\.typicalMinutesCached\(pool\)/);
 });
 
 test('opens are counted from the page\'s own reads, once per browser, never from the unfurled HTML', () => {
