@@ -508,15 +508,19 @@ function sameChip(have, want) {
 /**
  * Who still has to approve change `sessionId`, for `viewer`'s card: the same
  * reading as the DM's ready card (homeroom-bot-dm.js approvalState,
- * needsYesFrom). { youApprove, waitingOn, more }. A public community names
- * nobody: everybody there could vote.
+ * needsYesFrom). { youApprove, waitingOn, more, missing, needed }: `missing`
+ * is how many more approvals it needs (0 once it has them) and `needed` how
+ * many in all, so a change that needs two of three people says any of them
+ * will do (frontend/src/features/messages/approval-words.ts). A public
+ * community names nobody: everybody there could vote.
  */
 async function approvalOf(pool, { sessionId, viewer, deps = {} }) {
   const dm = dmModule(deps);
   const state = await dm.approvalState(pool, { sessionId, userId: viewer.id });
   if (!state) return null;
   const open = state.audience === 'open' && state.gov?.approverPolicy !== 'invited';
-  const ids = await dm.needsYesFrom(pool, state, { except: [viewer.id] });
+  // Nobody is waited on once it has the approvals it needs.
+  const ids = state.missing === 0 ? [] : await dm.needsYesFrom(pool, state, { except: [viewer.id] });
   const { rows } = ids.length
     ? await pool.query('SELECT username FROM users WHERE id = ANY($1::int[]) ORDER BY username', [ids])
     : { rows: [] };
@@ -525,6 +529,8 @@ async function approvalOf(pool, { sessionId, viewer, deps = {} }) {
     youApprove: !open && !!(state.counts && !state.already),
     waitingOn: names.slice(0, 3),
     more: Math.max(names.length - 3, 0),
+    missing: state.missing,
+    needed: state.needed,
   };
 }
 
@@ -1093,6 +1099,7 @@ module.exports = {
   fallbackTitle,
   botFor,
   cardOf,
+  approvalOf,
   CARD_STAGES,
   stageOf,
   chipFor,

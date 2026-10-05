@@ -4,6 +4,7 @@ import { CheckIcon } from '@/components/ui/icons';
 import { IconTile } from '@/components/ui/icon-tile';
 
 import * as api from './api';
+import { afterYesWords, countOf, waitingWords } from './approval-words';
 import { botMeta } from './bot-question';
 import { scopeKey, setReply } from './store';
 import type { ConversationMessage, HomeroomBotAction, HomeroomBotGoesLive, HomeroomBotMeta, HomeroomBotReady } from './types';
@@ -27,10 +28,12 @@ import type { ConversationMessage, HomeroomBotAction, HomeroomBotGoesLive, Homer
  * could not fix in its own round, says what does not work instead of
  * calling itself ready (brokenLine).
  *
- * In a group the card says who else it waits on. Once they approve, here or
- * anywhere, the buttons give way to one line on every device, which says
- * what happens next (approvedLine): it goes live in a minute or two, or when
- * the others approve too, or on a day if nobody objects. A version that was
+ * In a group the card says who else it waits on, and how many of them, when
+ * fewer approvals are needed than the people it names (./approval-words.ts).
+ * Once they approve, here or anywhere, the buttons give way to one line on
+ * every device, which says what happens next (approvedLine): it goes live in
+ * a minute or two, or when the others approve too, or after one more
+ * approval from any of them, or on a day if nobody objects. A version that was
  * replaced since the card was sent approves nothing: the card says to try
  * the new version first, and Approve comes back once they have.
  */
@@ -66,21 +69,17 @@ export function brokenLine(ready: HomeroomBotReady | undefined): string | null {
     : `${said.length} things aren’t working yet: ${said.join('; ')}`;
 }
 
-/** Pure: "a", "a and b", "a, b and c". */
-function listWords(items: string[]): string {
-  if (items.length <= 1) return items.join('');
-  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
-}
-
 /**
  * Pure: who it waits on, in a group: "Waiting for approval from you and
- * @ada". Nothing on a project of one, or when their Yes is the last needed.
+ * @ada" when it needs every one of them, "Needs 2 approvals from you, @priya
+ * or @mo" when it needs fewer (./approval-words.ts waitingWords). Nothing on
+ * a project of one, or when their Yes is the last needed.
  */
 export function waitingLine(ready: HomeroomBotReady | undefined, canApprove: boolean): string | null {
   if (!ready?.group || ready.last) return null;
-  const who = [...(canApprove ? ['you'] : []), ...ready.waitingOn.map((name) => `@${name}`)];
-  if (ready.more) who.push(`${ready.more} more`);
-  return who.length ? `Waiting for approval from ${listWords(who)}` : null;
+  return waitingWords({
+    you: canApprove, names: ready.waitingOn, more: ready.more, missing: ready.missing, needed: ready.needed,
+  });
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -105,14 +104,13 @@ export function liveDay(at: string, now: Date = new Date(Date.now()), locale?: s
   return `on ${new Intl.DateTimeFormat(locale, { month: 'long', day: 'numeric' }).format(when)}`;
 }
 
-/** Pure: whose Yes it still needs, worded to follow "It goes live": "when @ada approves too". */
+/**
+ * Pure: whose Yes it still needs, worded to follow "It goes live": "when
+ * @ada approves too" when that is everybody it names, "after one more
+ * approval from @priya or @mo" when any of them will do.
+ */
 function whoElse({ missing, waitingOn, more }: HomeroomBotGoesLive): string {
-  // Named only when they are exactly who is needed; else how many more.
-  if (waitingOn.length && waitingOn.length + more === missing) {
-    const who = [...waitingOn.map((name) => `@${name}`), ...(more ? [`${more} more`] : [])];
-    return `when ${listWords(who)} ${missing === 1 ? 'approves' : 'approve'} too`;
-  }
-  return missing === 1 ? 'when one more person approves' : `when ${missing} more people approve`;
+  return afterYesWords({ missing, names: waitingOn, more });
 }
 
 /**
@@ -121,7 +119,8 @@ function whoElse({ missing, waitingOn, more }: HomeroomBotGoesLive): string {
  * it. It goes live in a minute or two." when theirs was the last Yes needed;
  * "You approved it. It goes live when @ada approves too, or on Wednesday if
  * nobody objects." while it waits on others and its lazy-consensus clock
- * runs.
+ * runs; "You approved it. It goes live after one more approval from @priya
+ * or @mo, or on Wednesday if nobody objects." when either will do.
  */
 export function approvedLine(next: HomeroomBotGoesLive, now: Date = new Date(Date.now()), locale?: string): string {
   if (next.soon) return 'You approved it. It goes live in a minute or two.';
@@ -140,7 +139,11 @@ export function approvedLine(next: HomeroomBotGoesLive, now: Date = new Date(Dat
  */
 export function goesLiveFromReady(ready: HomeroomBotReady | undefined): HomeroomBotGoesLive {
   if (!ready || ready.last || !ready.group) return { soon: true, at: null, missing: 0, waitingOn: [], more: 0 };
-  return { soon: false, at: null, missing: Math.max(ready.waitingOn.length + ready.more, 1), waitingOn: ready.waitingOn, more: ready.more };
+  // One fewer than the card was sent needing, theirs being in; a card sent
+  // before cards said how many reads as everybody it names.
+  const sent = countOf(ready.missing);
+  const missing = sent !== null ? Math.max(sent - 1, 1) : Math.max(ready.waitingOn.length + ready.more, 1);
+  return { soon: false, at: null, missing, waitingOn: ready.waitingOn, more: ready.more };
 }
 
 /** What the line under a card that is not open says. `goesLive`: what happens next, once it is approved. */

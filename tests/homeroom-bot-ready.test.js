@@ -156,8 +156,10 @@ test('B7: the approved line, in words, in the reader\'s own week', () => {
   assert.equal(line({ waitingOn: ['sam_t1004'] }), 'You approved it. It goes live when @sam_t1004 approves too.');
   assert.equal(line({ missing: 2, waitingOn: ['ada', 'cy'] }), 'You approved it. It goes live when @ada and @cy approve too.');
   assert.equal(line({ missing: 4, waitingOn: ['ada', 'cy', 'di'], more: 1 }), 'You approved it. It goes live when @ada, @cy, @di and 1 more approve too.');
-  assert.equal(line({ missing: 1, waitingOn: ['ada', 'cy'] }), 'You approved it. It goes live when one more person approves.',
-    'never names two people when one Yes is enough');
+  // Page Turners, 5 October: one Yes of two people's is enough. Both are
+  // named, and "or" says either will do; never "when @ada and @cy approve".
+  assert.equal(line({ missing: 1, waitingOn: ['ada', 'cy'] }), 'You approved it. It goes live after one more approval from @ada or @cy.',
+    'names who can give the one Yes it needs, and that either will do');
   assert.equal(line({ missing: 2, waitingOn: [], at: on(2026, 9, 5) }), 'You approved it. It goes live when 2 more people approve, or tomorrow if nobody objects.');
   assert.equal(line({ missing: 0, at: on(2026, 9, 4, 22) }), 'You approved it. It goes live later today if nobody objects.');
   assert.equal(liveDay(on(2026, 9, 12), sunday, 'en-US'), 'on October 12', 'past the week, its date');
@@ -331,7 +333,7 @@ test('B7: who approves, who is told, and the card, against the full PostgreSQL s
     assert.deepEqual(await dm.needsYesFrom(pool, state, { except: [ben.id] }), [ada.id]);
     await dm.noteChangeReady(pool, id, { bot: homeroomBot, domain: 'app.example.test' });
     const sent = await card(ben.id, id);
-    assert.deepEqual(sent.meta.ready, { group: true, last: false, waitingOn: ['ada'] });
+    assert.deepEqual(sent.meta.ready, { group: true, last: false, waitingOn: ['ada'], missing: 2, needed: 2 });
     assert.deepEqual(sent.meta.actions.map((a) => a.id), ['try', 'approve', 'change']);
     assert.deepEqual(await told(id), [{ username: 'ada', detail: 'epoch:0', source_user_id: ben.id }]);
     await dm.noteApproversReady(pool, { sessionId: id, epoch: 0, requesterId: ben.id });
