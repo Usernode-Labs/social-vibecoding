@@ -1209,6 +1209,19 @@ test('GET /season-events/:id/challenges: a challenge the scorer counts says how 
   assert.ok('scoring' in closed, 'the key is always present, never omitted');
 });
 
+// #3253, #3248: the same rule read says what the rule counts, so the page can
+// say a proposal counts once it is put to the vote, and that a counted measure
+// stops paying at its target. Present before a first run, unlike `scoring`.
+test('GET /season-events/:id/challenges: a scored challenge names its measure and its cap', async () => {
+  const body = await (await get('/api/v4/season-events/100/challenges')).json();
+  const counted = body.data.find((c) => c.id === 10);
+  assert.deepEqual(counted.counted_by, { measure: 'USEFUL_FEEDBACK', target: 3 },
+    'the template rule\'s measure, with the challenge\'s own target as its cap');
+  const closed = body.data.find((c) => c.id === 11);
+  assert.equal(closed.counted_by, null, 'a rule the scorer skips says nothing');
+  assert.ok('counted_by' in closed, 'the key is always present, never omitted');
+});
+
 test('GET /season-events/:id/challenges: internal event -> 404', async () => {
   const res = await get('/api/v4/season-events/102/challenges');
   assert.equal(res.status, 404);

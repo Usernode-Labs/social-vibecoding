@@ -810,6 +810,28 @@ const TopochainChallenges = {
     return `last count ${clock(last)}`;
   },
 
+  // The page's line under the task about what counts, from the rule the
+  // server says scores it (`counted_by`: { measure, target }), else null.
+  //   #3253 A proposal challenge counts only once the change is put to the
+  //         vote, which the organiser's task text never said.
+  //   #3248 A counted measure stops crediting at its target (the scorer's
+  //         `already >= target` cap), so once the viewer is there, say that
+  //         more before the end add nothing — while the challenge is open.
+  _countNoteOf(c) {
+    const by = c && c.counted_by;
+    if (!by || typeof by.measure !== 'string') return null;
+    if (by.measure === 'PROPOSAL_SENT') {
+      return 'Counts when you press Propose to group, which puts your change to a vote.';
+    }
+    const cap = Number(by.target);
+    const current = c.progress ? Number(c.progress.current) : NaN;
+    if (!Number.isInteger(cap) || cap < 1 || !(current >= cap)) return null;
+    if (!TopochainChallenges._isOpen(c)) return null;
+    const more = by.measure === 'PROPOSAL_ACCEPTED' ? 'More accepted changes' : 'More';
+    return `This challenge counts up to ${cap.toLocaleString('en-US')}, and you have ${cap.toLocaleString('en-US')}. `
+      + `${more} before it ends don't add to it.`;
+  },
+
   // Open right now, by the rule Home's server applies (OPEN_ONLY_WHERE in
   // src/routes/home-panels.js): not marked over by the organiser, and inside
   // its effective schedule window. The public list carries every enabled
@@ -1646,6 +1668,8 @@ const TopochainChallenges = {
       // is where the task is read; before ITERATION 03 the card showed it and
       // the overlay never needed it.
       task: cp.task ? str(cp.task) : null,
+      // Under the task: what the rule counts, when the task cannot say it.
+      countNote: TopochainChallenges._countNoteOf(challenge),
       // The same artwork as the card's tile, for the page's well under the task.
       illustration: TopochainChallenges._illustrationOf(cp),
       illustrationTone: TopochainChallenges._illustrationToneOf(cp),
