@@ -946,6 +946,10 @@ export function ShareItCard({ slug, name }: { slug: string; name?: string }) {
  * the quiet path that can put a change live below it
  * (services/active-users.js). It was the hero's last line; it sits with the
  * work it governs now. Nothing until the shared read has answered.
+ *
+ * The rule and nothing else. A muted note under it said that changing these
+ * rules is a change too, approved before it goes live; the owner dropped it
+ * (5 Oct 2026), and the card is one line.
  */
 export function ApprovalRules({ slug }: { slug: string }) {
   const data = useCommunity(slug);
@@ -956,10 +960,6 @@ export function ApprovalRules({ slug }: { slug: string }) {
         <span className="dev-ws-head-title">Approval rules</span>
       </div>
       <p className="dev-ws-rules-line" data-ws-community-rule="">{approvalLine(data.approval)}</p>
-      {/* A change to these rules changes a protected dapp.json block
-          (explicit-approval.js): it keeps the rule above but never goes
-          live after a wait, so "the same way" would not be true of it. */}
-      <p className="dev-ws-rules-sub">Changing these rules is a change too, and it goes live only once it is approved.</p>
     </section>
   );
 }

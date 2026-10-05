@@ -2192,9 +2192,9 @@
       "expectSelector": "#dev-body #dev-workshop [data-ws-dashboard] .dev-ws-dash > [data-ws-dash-cell=\"open\"] + [data-ws-dash-cell=\"unclaimed\"] ~ [data-ws-dash-cell=\"shipped\"] > b"
     },
     {
-      "name": "Workshop: Your work stays on screen when it is empty, and says so (#2182), leading the Workshop page",
+      "name": "Workshop: Your work stays on screen when it is empty, and says so (#2182), under the approval rules",
       "path": "/?demo=1&shot=mine-empty&ws=workshop#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-body #dev-workshop .dev-ws-tabbody > [data-ws-mine] [data-ws-lane=\"mine\"] > [data-ws-mine-empty]",
+      "expectSelector": "#dev-body #dev-workshop .dev-ws-tabbody > [data-ws-approval-rules] ~ [data-ws-mine] [data-ws-lane=\"mine\"] > [data-ws-mine-empty]",
       "expectText": "You have no work going on."
     },
     {
@@ -2473,9 +2473,9 @@
       "expectSelector": "#dev-body #dev-workshop [data-ws-stage] #dev-kanban .dev-kanban-col .dev-ws-rowwrap > .dev-ws-row[role=\"button\"][aria-expanded=\"false\"][data-issue-row]"
     },
     {
-      "name": "A project's Workshop tab leads All items with its one line on what the open work is about, under the notices panel",
+      "name": "A project's Workshop tab leads All items with its one line on what the open work is about",
       "path": "/?demo=1&ws=workshop#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop [data-ws-notices] ~ [data-ws-dashboard] > [data-ws-open-line]",
+      "expectSelector": "#dev-body #dev-workshop [data-ws-dashboard] > [data-ws-open-line]",
       "expectText": "Staging demo: one line on what the open issues and waiting proposals are about."
     },
     {
@@ -2645,9 +2645,9 @@
       "expectText": "Discussion"
     },
     {
-      "name": "The Workshop tab leads with the approval rules, which All items no longer leads with (#3487, #3528)",
+      "name": "The Workshop tab leads with All items, then the approval rules, then the notices panel (#3487, #3528)",
       "path": "/?demo=1&ws=workshop#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"workshop\"] > .dev-ws-tabbody > [data-ws-approval-rules]:first-child > [data-ws-community-rule]",
+      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"workshop\"] > .dev-ws-tabbody > [data-ws-dashboard]:first-child + [data-ws-approval-rules] + [data-ws-notices]",
       "expectText": "A change goes live"
     },
     {
