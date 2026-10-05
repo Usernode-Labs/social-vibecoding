@@ -1,0 +1,3026 @@
+{
+  "loading_current_settings_81c719a7": {
+    "text": "वर्तमान सेटिंग्स को लोड करें ...",
+    "source": "81c719a76a76167f3869c9ec7fc5700c849a6f40c53c3cd7208448fc9701bd35"
+  },
+  "development_ai_4e0671b0": {
+    "text": "विकास ए",
+    "source": "4e0671b0f6195455558810c3b8818b82d03904ddb7702d8566929380a6a9a5e3"
+  },
+  "openrouter_eb70c3bc": {
+    "text": "OpenRouter के लिए",
+    "source": "eb70c3bc14fa7ae14285b750955958e63b64b8f19546c30fc2223ad9057a959c"
+  },
+  "claude_code_246ef8c1": {
+    "text": "Claude Code",
+    "source": "246ef8c1130d56f5d9df740a4b26c033a8b9c064daba9bb0a052d18993e87373"
+  },
+  "model_5e2c614c": {
+    "text": "मॉडल",
+    "source": "5e2c614c23f02239bc03c6c04fcb681950f9e72bf8fdff6be79c79841cbb10c0"
+  },
+  "reasoning_effort_3236aeec": {
+    "text": "उचित प्रयास",
+    "source": "3236aeec43e563ca9ea03a7d0c077021021a3e36b4a0648ea5539d07d9e0f379"
+  },
+  "default_21b111cb": {
+    "text": "वैकल्पिक",
+    "source": "21b111cbfe6e8fca2d181c43f53ad548b22e38aca955b9824706a504b0a07a2d"
+  },
+  "minimal_057b5de4": {
+    "text": "न्यूनतम",
+    "source": "057b5de48d7b90f123ec28d7e15f65d99b508d6b7cc2958c39472070f0f0f6bb"
+  },
+  "low_f793de20": {
+    "text": "कम",
+    "source": "f793de205ead5ac302c4a1627829dea41f176b1068b993a32373fc869918374b"
+  },
+  "medium_8e588cd1": {
+    "text": "मध्यम",
+    "source": "8e588cd187741f1cd76f5fab77b7208782a8c21d764ce7d7a4cf3ac4e0968873"
+  },
+  "high_c4ebc6d4": {
+    "text": "उच्च",
+    "source": "c4ebc6d4a5832cd9415f906ad03661110c705a72381c8b8b145761d02e2dd23a"
+  },
+  "extra_high_70eb321d": {
+    "text": "अतिरिक्त उच्च",
+    "source": "70eb321d8c393f2c586a249c8d6be866a37121ef46a8313e98a9952ff5e964fc"
+  },
+  "openrouter_development_ai_is_unavailable_for_thi_6a3d38c8": {
+    "text": "OpenRouter विकास एआई इस खाते के लिए उपलब्ध नहीं है।",
+    "source": "6a3d38c885287b249c21dd743ca485073fd4d54cea34ea0f30c25ed085b62037"
+  },
+  "this_changes_development_work_only_it_does_not_c_f122ec9d": {
+    "text": "यह परिवर्तन विकास केवल काम करता है. यह ग्लोबल चैट मॉडल को नहीं बदलता है.",
+    "source": "f122ec9ddf155e872826c4d74846c406a42a93dd5d4c21fc2c2549003ebbc885"
+  },
+  "global_chat_spend_this_month_and_overall_openrou_2e24e5ef": {
+    "text": "ग्लोबल चैट इस महीने खर्च करता है और कुल OpenRouter अनुदान",
+    "source": "2e24e5ef26528ad7db3104852bfd41c39f8ec6c4d65183c4420b77698ca20411"
+  },
+  "chat_460b3a7d": {
+    "text": "चैट",
+    "source": "460b3a7da007b7af9d35bca54181dc91382263b2bf133ca214871ca1fed1fc1c"
+  },
+  "global_chat_progress_59723007": {
+    "text": "वैश्विक चैट प्रगति",
+    "source": "5972300706594d8515e47614de115ecc13c2edc41e2e4f658bbb163de5e5adf1"
+  },
+  "activity_38da1505": {
+    "text": "गतिविधि",
+    "source": "38da1505ca8373288489495101b14f24ac95078f520ad64df18272aa6054f750"
+  },
+  "suggested_next_steps_00286bda": {
+    "text": "अगले कदम की सिफारिश",
+    "source": "00286bda0e5de782edd8bde64e395369507935adc37e9d0572314e3ea36d94b0"
+  },
+  "more_suggestions_f9048bba": {
+    "text": "और अधिक सुझाव",
+    "source": "f9048bbaf8ad9ab2298029943e81a50b1ba6ccc80d78cd00a511ec6cf95950d0"
+  },
+  "loading_result_9f43a300": {
+    "text": "लोड परिणाम",
+    "source": "9f43a3003599b6c21c3d66706eda2fd34e9f812f87b3325ff6988be86256e033"
+  },
+  "hold_an_option_for_related_suggestions_eef5dd9b": {
+    "text": "संबंधित सुझावों के लिए एक विकल्प रखें।",
+    "source": "eef5dd9b9382ea30933b85960ac416c5e409656b4899c279346b0dec60d9e162"
+  },
+  "message_global_chat_3f4c7744": {
+    "text": "संदेश वैश्विक चैट",
+    "source": "3f4c774467f5db1844d12a6026218117b78d9924fef15f2a66045d496cd58653"
+  },
+  "open_settings_3f940108": {
+    "text": "खुले सेटिंग्स",
+    "source": "3f940108cb1ecd9c0090da0b51b45f9fe673f00b22c7ffe3d013319b97456674"
+  },
+  "use_classic_56268536": {
+    "text": "क्लासिक का उपयोग करें",
+    "source": "562685365498c3d005d633655cf6678db40afed5b4eb16f286f7833c54936bcd"
+  },
+  "saved_in_messages_9ca89a80": {
+    "text": "संदेशों में बचाया गया।",
+    "source": "9ca89a80b01b01b424185121646a8f9fb2e5ab90984976cf847b6eea2119ade6"
+  },
+  "close_chat_3b14c5dc": {
+    "text": "निकट चैट",
+    "source": "3b14c5dc986f2a367a41de958956a0c442bbaa8ef5dac3ec4e4ae27307c25002"
+  },
+  "close_7d9eb7ac": {
+    "text": "बंद करें",
+    "source": "7d9eb7acb13e24625c404401d8e88b2350e32162455885f18276cf802f7701ed"
+  },
+  "start_a_new_chat_61025e4f": {
+    "text": "एक नया चैट शुरू करें",
+    "source": "61025e4f879061388ab867fdf01707765cd1b9d06c4488eaee86a3813a15049b"
+  },
+  "new_chat_db18382a": {
+    "text": "नई चैट",
+    "source": "db18382a249e0206bc28514931d423b77d55dce180c1eb8e4bf35f861c9a50ec"
+  },
+  "new_18fdd549": {
+    "text": "नए",
+    "source": "18fdd549b2ed367ac0c74cbec1214644728515b30edbcb78e7d322757a7c8359"
+  },
+  "earlier_messages_561a197a": {
+    "text": "पहले संदेश",
+    "source": "561a197a28071679645f993f94d309df81aa0ae564966e0792b07e116d73c12f"
+  },
+  "loading_ba3bbbe1": {
+    "text": "लोड हो रहा है…",
+    "source": "ba3bbbe10d8bef66441c88536ce7b8e724e2829b59a3da658654f4961cd61ae5"
+  },
+  "retry_942087cc": {
+    "text": "फिर से कोशिश करें",
+    "source": "942087cc2d41e01304b7195558d093d10c72af8e838c7556d6a02d471ee71852"
+  },
+  "chat_experimental_7ca69a8d": {
+    "text": "चैट (प्रयोगात्मक)",
+    "source": "7ca69a8d23d1f4f0093bc250ab60e47d23115a25ae2ff9f3bc2e9870d386fc03"
+  },
+  "continue_31fbef16": {
+    "text": "जारी रखें",
+    "source": "31fbef162594de01bab0cd525c51f74de7bcb15063029fa1a54b2cf5944c80d8"
+  },
+  "cancel_19766ed6": {
+    "text": "रद्द करें",
+    "source": "19766ed6ccb2f4a32778eed80d1928d2c87a18d7c275ccb163ec6709d3eb2e27"
+  },
+  "change_these_settings_47a0b043": {
+    "text": "इन सेटिंग्स को बदलें",
+    "source": "47a0b043100b249879197dc74b8be25dcadf3d1175fdcd40ac1715131d8587fb"
+  },
+  "open_in_classic_58aad219": {
+    "text": "क्लासिक में खुला",
+    "source": "58aad2197ed6203fa83a4698494346ee631628bd4f5d3afe1fb02cdd5bbdb8c9"
+  },
+  "cancelled_4b5ea033": {
+    "text": "रद्द कर दिया।",
+    "source": "4b5ea033faf0181109ca8b2f7fc41df1772df99e8aee9c1823d3c3eb370766ed"
+  },
+  "confirm_action_b49a9604": {
+    "text": "कार्रवाई की पुष्टि",
+    "source": "b49a9604ce16487ecd778be47833a71c0f867511073e0b9cfe2bd27641fb4c85"
+  },
+  "confirm_before_dc4ff380": {
+    "text": "पहले पुष्टि करें",
+    "source": "dc4ff380f13122a3ed3f121362ce3b4e26f7a8e54f00183ad14f4c1bef415ec5"
+  },
+  "global_chat_settings_458c75ca": {
+    "text": "वैश्विक चैट सेटिंग्स",
+    "source": "458c75cabbf6a3e3b44dde7c9d76197ca6c9a04fcfec29e4dd3af90669c044be"
+  },
+  "development_ai_settings_f0ae8065": {
+    "text": "विकास एआई सेटिंग्स",
+    "source": "f0ae8065330894efbf3c11325b335034a2fa92495dc4905e0c91e851c423cf7b"
+  },
+  "show_more_f5c9bd13": {
+    "text": "अधिक दिखाएं",
+    "source": "f5c9bd131486e793ee105bd81f001fc25cdc2dac9c1d9f636ac7d43a10efc7e6"
+  },
+  "couldn_t_load_how_far_along_this_is_178402d8": {
+    "text": "मुझे नहीं पता था कि यह कितनी दूर है।",
+    "source": "178402d87348a084bdc1626dfa634ea779f52d75e2ea5e294853930b0d4a5672"
+  },
+  "try_again_d8b8392e": {
+    "text": "फिर से कोशिश करें",
+    "source": "d8b8392e2c542950ca64867168e4ef87d4ad606882d5898f826b51c6d553988f"
+  },
+  "no_progress_to_show_for_this_one_2db8b148": {
+    "text": "इस पर कोई प्रगति नहीं दिखाई देती है।",
+    "source": "2db8b14858a649e10e1473a42e6243937aa273228d7f56322f88de7ee15544e6"
+  },
+  "open_change_6ab4b6b1": {
+    "text": "खुले बदलाव",
+    "source": "6ab4b6b1c8a23c5d5c7b5342c4bb3534aa99fe4a3a8af176676280283b3da8df"
+  },
+  "replaced_by_a_newer_plan_c5d17bcc": {
+    "text": "एक नई योजना के साथ प्रतिस्थापित",
+    "source": "c5d17bccac39855e7c9bbaffd1e83764c8d1c8b65e85d8238c5e3016cb966bea"
+  },
+  "suggested_8ad70375": {
+    "text": "प्रस्तावित",
+    "source": "8ad7037556d079419d067ab67761390f62a7db8ed3f4696554b320f13b18da97"
+  },
+  "actions_ff8059dc": {
+    "text": "कार्रवाई",
+    "source": "ff8059dc6752afdd30d275932b1d5031a2ec854b387a8c57ecc6689915293a43"
+  },
+  "build_it_5e383207": {
+    "text": "इसे बनाएं",
+    "source": "5e383207c65159ba379ca0ca2a83d23f2d145626b4d9527af53b1a5441151549"
+  },
+  "change_something_870a8e1a": {
+    "text": "कुछ बदलें",
+    "source": "870a8e1ae01badb9b70b6108bac3eeb768711b8ff3660ff69c7d42449d6ab3b5"
+  },
+  "something_else_cc728431": {
+    "text": "कुछ और",
+    "source": "cc72843144841a6f8110b7ebe7a1768101e03c4c8c152865cb7207e8e4bf8745"
+  },
+  "no_longer_needed_ace70031": {
+    "text": "अब जरूरी नहीं है।",
+    "source": "ace70031342ec31130d083d6d95b8200856c8169452d7e5427a80cd89ea3f3f3"
+  },
+  "choices_2f75b64a": {
+    "text": "विकल्पों",
+    "source": "2f75b64ac9163e816311e5c21589498f54c449f2da1d1436cb9ab2f10c160af5"
+  },
+  "open_project_5e5eba7f": {
+    "text": "खुले परियोजना",
+    "source": "5e5eba7f41abfe4ca8626fed02d332b15460bdec03f3313290986aa31a44ef05"
+  },
+  "homeroom_bot_activity_5bfda20d": {
+    "text": "Homeroom बॉट गतिविधि",
+    "source": "5bfda20dbeafea54a03cd39ea0bf42441a15536575c07d2eb83d7a4ebc55f540"
+  },
+  "couldn_t_load_what_i_m_working_on_e8390dd5": {
+    "text": "मैं जिस पर काम कर रहा हूं उस पर लोड नहीं कर सकता।",
+    "source": "e8390dd55a8b4638709b03fc3abf1d5e606bb280f92288fc278923dd5aff8922"
+  },
+  "loading_activity_0acd8adf": {
+    "text": "लोड गतिविधि",
+    "source": "0acd8adfdd7a67964063ab821d5c0833781384d6f8169f717f372ac53055edd3"
+  },
+  "now_fe18013d": {
+    "text": "अब",
+    "source": "fe18013d93d22f4f2a70344d30c00fe62d2ef29189ae5d25ccbda81fbd9c92b0"
+  },
+  "needs_you_74b6abdf": {
+    "text": "आपको जरूरत है",
+    "source": "74b6abdf59690fdffec2059089487cd63658249da5301cbf065e9977518fbd8f"
+  },
+  "i_m_not_working_on_anything_for_you_right_now_9d3a3f8e": {
+    "text": "मैं अभी आपके लिए कुछ भी नहीं कर रहा हूं।",
+    "source": "9d3a3f8e6c7b4d857e56afe0c5c861509ef3cb9fca45b65ceb26debefbc348d6"
+  },
+  "nothing_yet_when_i_work_on_a_request_of_yours_it_bf90bb46": {
+    "text": "जब मैं आपके अनुरोध पर काम करता हूं, तो यह यहां दिखाई देता है।",
+    "source": "bf90bb46720364427451f52cd6a36c774ff2f26a06d3f38bd39718e23e668044"
+  },
+  "couldn_t_refresh_this_just_now_it_may_be_out_of__279155b5": {
+    "text": "यह अभी ठीक नहीं हो सकता था; यह तारीख से बाहर हो सकता है।",
+    "source": "279155b53613ccaf793fed128e1865640abcfa014b840ece066d2749bb3fc5ad"
+  },
+  "message_request_sent_113edd9f": {
+    "text": "संदेश अनुरोध भेजा",
+    "source": "113edd9f1b230048de06e6c16c01ac92a0d44555b90e5c1d72919587b9f28fc8"
+  },
+  "you_can_t_send_messages_in_this_conversation_bcf6029b": {
+    "text": "आप इस बातचीत में संदेश नहीं भेज सकते हैं।",
+    "source": "bcf6029ba834f866830edf7c6f1afebb9a05deb4dc26f0faa47eac2456ff0f70"
+  },
+  "your_first_message_as_a_message_request_you_can__eed28da5": {
+    "text": "आपका पहला संदेश एक संदेश अनुरोध के रूप में भेजा जा सकता है एक बार वे स्वीकार करते हैं।",
+    "source": "eed28da521a0b8bec9b3899bd2813f78f17ab4f7a27399388bbed34f4de46eb9"
+  },
+  "replying_to_2e89f01d": {
+    "text": "जवाब देना",
+    "source": "2e89f01dcbda560844033107ca03f575eae34177bd934cee453a48ef2dbb1e3b"
+  },
+  "say_what_to_change_and_homeroom_bot_sends_a_new__30c08eb2": {
+    "text": "बताओ कि क्या बदलना है, और Homeroom बोट एक नया योजना भेजता है. केवल आप इसे देखते हैं.",
+    "source": "30c08eb212f3e1fbef2ac9990f0e09cb31bfdb646c77584449e4e51c59a10ea0"
+  },
+  "cancel_reply_2355f731": {
+    "text": "जवाब रद्द करें",
+    "source": "2355f73150190fc77c27f936d5b967569ac5d0bc9f5bf6f3cd8cb649d8f1a49d"
+  },
+  "remove_shared_item_2bbf13f5": {
+    "text": "साझा आइटम हटाएँ",
+    "source": "2bbf13f5cf668c9d55182b0665d61a159a248800b04ed43bc0ea33c65a9006d4"
+  },
+  "uploading_8b898ca3": {
+    "text": "अपलोड करें",
+    "source": "8b898ca34ce71371df505ff1a4c10cfc3bef3837150642dfbd0c6dc10e1ef6ea"
+  },
+  "channels_4c8906cf": {
+    "text": "चैनल",
+    "source": "4c8906cf76f5740ab8792aef9f0033fe21a92045e90b357816064e9f6860a03e"
+  },
+  "people_7db20897": {
+    "text": "लोग",
+    "source": "7db20897053bb2780b9b706e5505227b005de80c236e4a4836aab37a3a7bb298"
+  },
+  "emoji_matching_026002d8": {
+    "text": "Emoji संतुलन",
+    "source": "026002d85f9ea26a217c12dca6909ca01b784a5cf88845d2ab8706870618487c"
+  },
+  "emoji_61ad8976": {
+    "text": "इमोजी",
+    "source": "61ad8976e650e1532db7504bf379154f4f7c2ab43de00bfa06ed1e1895dec1df"
+  },
+  "add_to_message_a51ec5e2": {
+    "text": "संदेश में जोड़ें",
+    "source": "a51ec5e25959ad81e2b3daf4c217b6edab08d084a0eccc0a6e2ed3f1d8103fab"
+  },
+  "attach_files_e697cc1e": {
+    "text": "फ़ाइलों से जुड़ें",
+    "source": "e697cc1e45afa5418934fb94f7d9c1bf8e45628cade57a6d31871f5961978d77"
+  },
+  "share_item_dbce8c33": {
+    "text": "आइटम साझा",
+    "source": "dbce8c33386b640b926b1303ed94fb8d438884ecd01324b5a85b2971784aaf9e"
+  },
+  "send_message_93a26b1e": {
+    "text": "संदेश भेजें",
+    "source": "93a26b1eaff99b3a84dd80366660991d15703a96514497afd997c12c43000ed7"
+  },
+  "drop_files_to_attach_1ab1b095": {
+    "text": "फ़ाइलों को हटाने के लिए",
+    "source": "1ab1b095c1ed143e05cfebb9bd67a4594ced2ec7679efa2e48559f913e0d2f9d"
+  },
+  "new_message_78f5975a": {
+    "text": "नया संदेश",
+    "source": "78f5975a5d705e9528dd0e8d41206534b7e8c269b139bb151d5c0ca0928247c3"
+  },
+  "conversation_type_9ca49801": {
+    "text": "बातचीत का प्रकार",
+    "source": "9ca4980162f0fc49b5a79a9e220f648661553665b83532fc14d8acf514fc1004"
+  },
+  "group_name_762ebb70": {
+    "text": "समूह नाम",
+    "source": "762ebb70ef0ea2e80a41035e91a5f95ec35b0b03d2f2acc5c5b4f4c09213c8c5"
+  },
+  "design_crew_2eec8b54": {
+    "text": "डिजाइन टीम",
+    "source": "2eec8b54ad7388089d860ee52a728e4d151bdd8c29528f1fa9b4755b76a22566"
+  },
+  "selected_members_78a2792c": {
+    "text": "चुने हुए सदस्य",
+    "source": "78a2792cabfdb0602f776f43743691d1dade3476fd68275e72751f6e04e1cdfd"
+  },
+  "search_by_username_b7a43e76": {
+    "text": "उपयोगकर्ता नाम की खोज",
+    "source": "b7a43e76ac251fcb28780d6214277dca3ffba2be79e370615bdead85dbb53179"
+  },
+  "block_211d0bb8": {
+    "text": "ब्लॉक",
+    "source": "211d0bb8cf4f5b5202c2a9b7996e483898644aa24714b1e10edd80a54ba4b560"
+  },
+  "blocked_people_e11bdf73": {
+    "text": "ब्लॉक किए गए लोग",
+    "source": "e11bdf7344a1d95eeeedd2f920ca4a3bb1608da56ccc43271464e8840f7527fc"
+  },
+  "nobody_is_blocked_acecbd3f": {
+    "text": "कोई भी अवरुद्ध नहीं है।",
+    "source": "acecbd3f41406488c4210543c49b2611a5fdd013ec34533f598a8d813913c572"
+  },
+  "unblock_712da631": {
+    "text": "अनब्लॉक",
+    "source": "712da63171e0c9de0e1523438c5a0240ce765b722769f1df0df6975339263025"
+  },
+  "searching_c31723ab": {
+    "text": "खोज...",
+    "source": "c31723ab330289fe2cc4c7b69b7a862361da79a01f84893dc7b89a6de0ab4b42"
+  },
+  "no_matching_users_579f8c39": {
+    "text": "कोई उपयुक्त उपयोगकर्ता नहीं है।",
+    "source": "579f8c39232b314139f62bf385a3dd3e904e9e9bc4d277979aa4c6079224d0aa"
+  },
+  "unavailable_ca184496": {
+    "text": "अयोग्य",
+    "source": "ca184496974204a0bd3fd4925e0540bc4b0df6fcc232994d29754272b7183812"
+  },
+  "you_can_t_access_this_item_2b313470": {
+    "text": "आप इस आइटम तक नहीं पहुंच सकते हैं।",
+    "source": "2b313470acfd6925edaca613bb3901d6757ba04f1400d3ca59a1a7479a2accba"
+  },
+  "ai_11fb682b": {
+    "text": "ए",
+    "source": "11fb682be0a0233d5fb899721ecfc1827d20f0d2ff2e093310efa61efca8af1c"
+  },
+  "agent_11b39c93": {
+    "text": "एजेंट",
+    "source": "11b39c93777e8f1f3983bdba7c72b22fe68cfea20c677e9de53e17cb7dbfb19f"
+  },
+  "delete_this_chat_848dad9b": {
+    "text": "इस चैट को हटा दें?",
+    "source": "848dad9ba0a4bacc6810e23088a156b011693714583edb406148ebe325ad5dec"
+  },
+  "show_0df6f1ca": {
+    "text": "शो",
+    "source": "0df6f1cad36c49da768a6efdcc2c4be102f5729f7381cb53e4ff8061d17eaeb6"
+  },
+  "start_a_new_conversation_beae8c13": {
+    "text": "एक नई बातचीत शुरू करें",
+    "source": "beae8c136bd3f9ebd8d20d895693794f5d27c02e7d10d75af247630140eff137"
+  },
+  "loading_conversations_8d384c50": {
+    "text": "लोड वार्तालाप",
+    "source": "8d384c507b4792f9d01867fc8e2e085b9ff0022f0e46f70287fcb37f0b5710ce"
+  },
+  "conversations_1d432f58": {
+    "text": "बातचीत",
+    "source": "1d432f58690c2b4a9737b0a97f04b70bb4f0d9950d5177619039afe139f3b31e"
+  },
+  "search_messages_cd889ff4": {
+    "text": "संदेशों की खोज...",
+    "source": "cd889ff473992e87ffc9b8ef01fb7391d51da132ec07b112f004780ee28f84c7"
+  },
+  "search_messages_ddf0602b": {
+    "text": "खोज संदेश",
+    "source": "ddf0602b21a7f2a8a4653e2f70b43f776b578f167b414389fcd53f8c7f08d42c"
+  },
+  "offline_queued_messages_retry_when_you_reconnect_48dfe96c": {
+    "text": "Offline. Queued संदेश रिट्री जब आप पुनः कनेक्ट करते हैं.",
+    "source": "48dfe96ce53da35d4be6490ebb6c8519709ba288f55f2ec7db208e562986ab7a"
+  },
+  "no_messages_yet_f42e0f66": {
+    "text": "अभी तक कोई संदेश नहीं",
+    "source": "f42e0f66017d9937cc398684d9ba991ac7c0ec17f7cea27c68078e54176e277b"
+  },
+  "start_a_direct_conversation_or_bring_a_group_tog_209d9097": {
+    "text": "एक सीधे वार्तालाप शुरू करें या एक समूह को एक साथ लाएं।",
+    "source": "209d9097f3924636dbd2199a26e042c2a0447b133a587495ddb363dc051e9018"
+  },
+  "new_conversation_396c946f": {
+    "text": "नई बातचीत",
+    "source": "396c946f0c795aa63e5ecd43128af985f9c2682892a01706500807111424c000"
+  },
+  "nothing_here_under_this_filter_e73baf0a": {
+    "text": "इस फ़िल्टर के नीचे कुछ भी नहीं है।",
+    "source": "e73baf0adc384ee2be0504d7621db163426cfc920ed141674e7dd0abb659db97"
+  },
+  "no_messages_match_f9db90d0": {
+    "text": "कोई संदेश फिट नहीं »",
+    "source": "f9db90d08286fb18f4d1708363d91dc21f6cf25fb47bb3767ddc955bb67afc8c"
+  },
+  "decline_a2d285b3": {
+    "text": "गिरावट",
+    "source": "a2d285b352873457207a34a015267524bb4613c3e8c961c8998da4e08e0d5745"
+  },
+  "accept_89713b9c": {
+    "text": "स्वीकार करें",
+    "source": "89713b9c9c1b8f659c9f49db25e4a47886dd673fee248c3f650391f09a759cef"
+  },
+  "group_members_dd0fd917": {
+    "text": "समूह सदस्य",
+    "source": "dd0fd917e7772cf2ef97cc918a6e19174d74031a2a73486fe4ea32247d90ca06"
+  },
+  "conversation_actions_ef3683c4": {
+    "text": "बातचीत के कार्य",
+    "source": "ef3683c4bbe27eb54e4458789f35ba9fd517773f134e7d88c74a69cbb7811d64"
+  },
+  "rename_group_98d254a3": {
+    "text": "नाम समूह",
+    "source": "98d254a311d0e820bb8739eb28d4e1eb5fc1cfc34f755167759864cd15504b4c"
+  },
+  "members_invitations_781b3b21": {
+    "text": "सदस्य और निमंत्रण",
+    "source": "781b3b2185cab45591601365b3dff6ac110039b79743687eead591d2fe4d9c59"
+  },
+  "report_user_82016f1f": {
+    "text": "उपयोगकर्ता की रिपोर्ट",
+    "source": "82016f1f318751d17cf2012c8eb1ca986c533fc6d9c95f84455309a91c8c2198"
+  },
+  "refresh_conversation_889bdee4": {
+    "text": "बातचीत को ताज़ा करें",
+    "source": "889bdee49e27ea18328dfca520d92eb92fabff6ae0dae6aa7a29675751596f13"
+  },
+  "this_discussion_could_not_be_opened_0c1d4eb6": {
+    "text": "इस बातचीत को खोलने में सक्षम नहीं था।",
+    "source": "0c1d4eb67c4e960eac80b6f16e5ae344a90207f65d3c8a7e105c82b5cc8e9c1a"
+  },
+  "it_may_have_been_removed_or_you_may_not_be_a_mem_794d824a": {
+    "text": "यह हटा दिया गया हो सकता है, या आप उस ऐप के सदस्य नहीं हो सकते हैं।",
+    "source": "794d824a6a314325c499cea5b408fb61693ebc0bf3490e1d2bfd557033b45905"
+  },
+  "agent_session_da3d3fb8": {
+    "text": "एजेंट सत्र",
+    "source": "da3d3fb8f5983aa4a93c71fb29e22a58a9f1fbcf2b15bb11ca32eff3d7630d9f"
+  },
+  "agent_chat_3b662892": {
+    "text": "एजेंट चैट",
+    "source": "3b6628926bd28b0522ad00dba9f5c5afb8ff8effe57c1ab6bb3a6777232fb41b"
+  },
+  "open_full_view_229fbeec": {
+    "text": "पूर्ण दृश्य खुले",
+    "source": "229fbeec6b2f9d821ce4812877621a2e60d56c1c9eeb42470bfe0ef6691130b2"
+  },
+  "this_session_could_not_be_opened_here_20246e7f": {
+    "text": "इस बैठक को यहां नहीं खोला जा सकता है।",
+    "source": "20246e7fff5e5fac0ee3bfaac16140341077a983839967033ab67ad6af7e0a97"
+  },
+  "open_it_in_the_app_9c6e2aa6": {
+    "text": "इसे एप्लिकेशन में खोलें",
+    "source": "9c6e2aa69c7e4eff1fae4ece4092a21ddef762e50647e41c79bfb8eebbe476b2"
+  },
+  "loading_session_3d3c04cb": {
+    "text": "लोड सत्र...",
+    "source": "3d3c04cbc07b2cc869cc8826900dba6c4a82d61a6a838692e8e83de96d34029c"
+  },
+  "choose_a_conversation_df2ea2bc": {
+    "text": "एक बातचीत चुनें",
+    "source": "df2ea2bc7099883d7e222ac9e2644a7966b34d2509cd12d174e6b4ffde91c58b"
+  },
+  "your_chats_open_here_a_community_s_channel_is_on_e76e96dd": {
+    "text": "आपके चैट यहां खुले हैं. एक समुदाय का चैनल अपने केंद्र में है, समुदायों के तहत है.",
+    "source": "e76e96ddd0890e3b2c0825dbfb9c0063ff973e7ec35bec9d53bf444d5f95f0e8"
+  },
+  "loading_messages_3a496d42": {
+    "text": "लोड संदेश...",
+    "source": "3a496d425b0f4530284018d5ab74d70028841e58df623e72148795d8f7815e73"
+  },
+  "you_left_this_group_b4d42394": {
+    "text": "आपने इस समूह को छोड़ दिया है।",
+    "source": "b4d4239426c5cfb40bf9ccfd697782918ce5c3ccc681df1706e1ccc6be8a587f"
+  },
+  "back_to_messages_b37d7879": {
+    "text": "संदेशों पर लौटें",
+    "source": "b37d78799ae1facfbf1be2b82438df0def1168fe0a6e732b0bacc96a4f1a3038"
+  },
+  "no_messages_yet_say_hello_55d6da42": {
+    "text": "अभी तक कोई संदेश नहीं है. नमस्ते कहें.",
+    "source": "55d6da428dc9f4af67c77cf3b21f8d27459b4b3ba677f86a636cb02ef809b391"
+  },
+  "jump_to_present_91330b6f": {
+    "text": "प्रस्तुत करने के लिए जाओ",
+    "source": "91330b6f2507706af8a70c5ae4a49aae2668407a74ffea9f0a9525f8830f009f"
+  },
+  "thread_5373c7f8": {
+    "text": "थ्रेड",
+    "source": "5373c7f8a5a69019e959540ef127be3302afdd5e2313244e6d08cbd5e975d06d"
+  },
+  "close_thread_5110caa6": {
+    "text": "निकट त्रुटि",
+    "source": "5110caa6ca6c3ef28948a5962f370a17ad382c417453b260f2e2a080016eb7ac"
+  },
+  "accepted_members_can_read_the_complete_retained__3a068bd2": {
+    "text": "स्वीकार किए गए सदस्य पूरी रखा इतिहास पढ़ सकते हैं।",
+    "source": "3a068bd240cd7b72e4c0ed91e1b1f8c7284db8eaf14be9d4b0a2a1d1c5cd1677"
+  },
+  "remove_c3812fc4": {
+    "text": "हटाएँ",
+    "source": "c3812fc4acb861d5182fc2b8155f327f736fbe5e5eb86a7bd7afcb6dc5497282"
+  },
+  "invite_people_27bf0f2d": {
+    "text": "लोगों को आमंत्रित करें",
+    "source": "27bf0f2d3f3f549002f193566e19b010a40b80c1a5564cf65a80d83f2f2c0462"
+  },
+  "add_9fd728c6": {
+    "text": "जोड़ें",
+    "source": "9fd728c66c9a256b121472dabf32a34317aed01d8427d70ec830289cf23a7cc8"
+  },
+  "leave_group_3475393d": {
+    "text": "समूह छोड़ें",
+    "source": "3475393dbebd81d948dd6eb98b14f27c3922183d3afdc30d6b45d1de562ff470"
+  },
+  "done_11a6767d": {
+    "text": "हो गया",
+    "source": "11a6767d5674c7e45f7e00dc525762275b3a48491ad6045427d2609cc496c516"
+  },
+  "preview_324b134f": {
+    "text": "पूर्वानुमान",
+    "source": "324b134f57c70c729ae3dc4d298bb451656717d70523e942c1ce667b8024ea07"
+  },
+  "message_deleted_7e94d4b9": {
+    "text": "संदेश हटा दिया",
+    "source": "7e94d4b9a46bed9bc030dfae9e10522d8089b42269c7a841a6682af3b4368afe"
+  },
+  "edit_message_9757ccd5": {
+    "text": "संदेश Edit",
+    "source": "9757ccd5ef123556c20a8de269d851361cc98b38024d253fc70d81599c4915f3"
+  },
+  "save_1509f561": {
+    "text": "सहेजें",
+    "source": "1509f561f2416598629b886ad7d3c05a7e221e4e0675c84bbff4ee6d9e03913d"
+  },
+  "edited_1fb9f409": {
+    "text": "संपादित",
+    "source": "1fb9f4097256db2d7b1e13aff79cee44339891a31c556b9cf6093885773b3618"
+  },
+  "not_sent_cd5f943d": {
+    "text": "नहीं भेजा",
+    "source": "cd5f943d586317a053254e54e42d9979e79bec16124c3bde2e30c340aca5df87"
+  },
+  "discard_eb1a70e3": {
+    "text": "डिस्कार्ट",
+    "source": "eb1a70e39274bb762b5d7c1adb5debeea2b05e12af28207f21a375b596853273"
+  },
+  "access_is_checked_separately_for_every_recipient_b2563a67": {
+    "text": "प्रत्येक प्राप्तकर्ता के लिए अलग-अलग पहुंच की जांच की जाती है।",
+    "source": "b2563a67a34089b57026c4d1ce7802a78fecffe6047a2f875fdf53ee2cefcf67"
+  },
+  "item_type_5b71c546": {
+    "text": "आइटम प्रकार",
+    "source": "5b71c546c6b543ca748d1ec4f756fbfb412cfad738502a5619358eeab02bbfda"
+  },
+  "app_0d04bfeb": {
+    "text": "App के लिए",
+    "source": "0d04bfeb7d64b71c74fc925cca93d683154e8cc7e6e5838faced498e34c9984d"
+  },
+  "github_backed_issue_ea5c40fc": {
+    "text": "GitHub समर्थित मुद्दे",
+    "source": "ea5c40fcaec0889f31b8a8df1e1f23dbc48e128583caf21a83d816d69bfe37a0"
+  },
+  "code_proposal_800e6d29": {
+    "text": "कोड प्रस्ताव",
+    "source": "800e6d295b48fac7deafa608f37f5b4f7247750902ba3d93c789717304bb9b59"
+  },
+  "governance_proposal_5f1d1a55": {
+    "text": "सरकार का प्रस्ताव",
+    "source": "5f1d1a552aaa9a5799ea0117a34f5d087c1245f6bef91c99de2e460c1769ec23"
+  },
+  "exact_spec_version_e91a9827": {
+    "text": "SPEC संस्करण",
+    "source": "e91a982762d3e6fe49b56ab2dba428bb2a854f37966673ef7c3d59865409df6a"
+  },
+  "spec_version_cd76c4ed": {
+    "text": "SPC संस्करण",
+    "source": "cd76c4ede6edd1a411e829b04d46f3e9f31f34044900bfbe8746984baab02663"
+  },
+  "the_server_resolves_the_live_title_and_state_if__cf33d33a": {
+    "text": "सर्वर लाइव शीर्षक और स्थिति को हल करता है. यदि एक्सेस बाद में हटा दिया जाता है, तो कार्ड मेटाडेटा-मुक्त और उपलब्ध नहीं हो जाता है.",
+    "source": "cf33d33ac16d5d0ed8498d71f6ca5eaad0cfc80722cdc5561a88fd6fc6dae973"
+  },
+  "attach_item_dcd3fcd1": {
+    "text": "आइटम आइटम",
+    "source": "dcd3fcd1b6acdba61f24d8dd647bb3ed2173795d8839285cc0ba44a740b64810"
+  },
+  "share_to_d6066d19": {
+    "text": "साझा करें...",
+    "source": "d6066d19866556f046337b21b43a9b447847575ee746f0789fb385c0960f7af5"
+  },
+  "send_to_9bcbb3bc": {
+    "text": "भेजें",
+    "source": "9bcbb3bc11e28c336a117a7dc8f19cf10af18deff70cea40d3defac51602b490"
+  },
+  "search_people_groups_and_discussions_c1433ce0": {
+    "text": "लोगों, समूहों और चर्चाओं की खोज करें",
+    "source": "c1433ce0de96da47fb9c82b81bc97bf6fd69ebd9aa71c2a536be7cb73c890163"
+  },
+  "where_to_share_e29e2162": {
+    "text": "कहां साझा करें",
+    "source": "e29e21623958932c50c38d32e285f8678fbd481b7b2ac44e343d9ed21d7461be"
+  },
+  "loading_your_chats_1b52c1b1": {
+    "text": "अपने चैट को लोड करने के लिए ...",
+    "source": "1b52c1b1da30f227ec7b1f33160b383aa8e80494122da102dd1f4c2924c3c6b3"
+  },
+  "selected_57fd7a0c": {
+    "text": "चुने गए",
+    "source": "57fd7a0cf33f2666eede69e44f8857159653f2f28e4fd7482a5e16d4af628d2a"
+  },
+  "add_a_message_optional_0e4633fa": {
+    "text": "एक संदेश जोड़ें (वैकल्पिक)",
+    "source": "0e4633fab693b7e616ac4d7b5c81cfffa15178a7742fa879f459fc6eb962dc2b"
+  },
+  "say_why_you_re_sharing_it_df99cb02": {
+    "text": "बताओ क्यों आप इसे साझा कर रहे हैं",
+    "source": "df99cb0228afc76d6865917a1877fdd09cbc47c2916ca008a9046783b2310978"
+  },
+  "in_2eb9d0d3": {
+    "text": "में",
+    "source": "2eb9d0d30d4ceaac52e60cce021ce7d3c04cff836bb0bd8dec4a4f54fa6cc97a"
+  },
+  "unsave_51883bd8": {
+    "text": "असुरक्षित",
+    "source": "51883bd8df178d966865a2a1c5b5b72f7d5929eed44246315be2ae2d08a067aa"
+  },
+  "saved_b5c120b3": {
+    "text": "बचाए गए",
+    "source": "b5c120b316c237a0deab3140267aebedba61947d3ae268d708a53d5be119e9fb"
+  },
+  "invites_f212a985": {
+    "text": "आमंत्रण",
+    "source": "f212a985ab1612db36f99f8ce3d228fb1a0332c07daf544534846bf2cdf8c6fb"
+  },
+  "unread_1b9f384c": {
+    "text": "अनदेखा",
+    "source": "1b9f384c1436f607447ff66db22dcfe569141506b7499589a9b4857580075b26"
+  },
+  "clear_notification_f3936d87": {
+    "text": "स्पष्ट सूचना",
+    "source": "f3936d8750c0ab35ce0798f693969512b148e27c299540394150aaae2ae3fc13"
+  },
+  "notifications_78801183": {
+    "text": "सूचनाएँ",
+    "source": "788011833a5a0f22db90c91e8eb7bd8e9f5cd423354ff5ef8c338e7895f44ba9"
+  },
+  "mark_all_read_3bc62a9e": {
+    "text": "मार्क सब पढ़ते हैं",
+    "source": "3bc62a9e6a39484a62a5d651ad0f3908f172f4bbcfea8f21f8876a644e3c2153"
+  },
+  "notification_filters_2c59fc9a": {
+    "text": "सूचना फ़िल्टर",
+    "source": "2c59fc9a00262864868402ad2890c2260f705a5d4de1bc898bfeb2e8cb54b988"
+  },
+  "messages_04d7b483": {
+    "text": "संदेश",
+    "source": "04d7b48339271ea67d3c8493e07e90bc68dc565485eebe5e0b67c21c1586e3c0"
+  },
+  "all_a52ace42": {
+    "text": "सभी",
+    "source": "a52ace420f2175d08b1577a1bea5445e36801229c074ef9ed6c55a73401fd9c2"
+  },
+  "all_messages_5eb8f655": {
+    "text": "सभी संदेश",
+    "source": "5eb8f655776b20593ab370a85d51182afe7bb0617ce16ae2856d7e03720b4572"
+  },
+  "today_2b065c7c": {
+    "text": "आज",
+    "source": "2b065c7c9ce466e5ebcad757987d5d660ee4c9ea708bc62c43444b53334738ba"
+  },
+  "earlier_e10ae990": {
+    "text": "पहले",
+    "source": "e10ae990740118886b011c218c7d0777c5c203954e0038747965ddbe5aea1744"
+  },
+  "see_older_notifications_e6e2b91e": {
+    "text": "पुराने नोटिस देखें",
+    "source": "e6e2b91ee8d1f8e8b27adebc8b2a18ea8a7b7c471f90a1085b87044cf53e4df7"
+  },
+  "development_ai_settings_could_not_be_loaded_0392e478": {
+    "text": "विकास एआई सेटिंग्स को लोड नहीं किया जा सकता था।",
+    "source": "0392e4789207ebadb3c35c40f7bd59621e69e1626b6dfbf3bd0552975210a6c9"
+  },
+  "choose_an_openrouter_model_first_eb5ba7eb": {
+    "text": "पहले OpenRouter मॉडल का चयन करें।",
+    "source": "eb5ba7eba33e7551c83e4a6135a3fabd48ab7fc13754e526bcfdeafe27ea7ef8"
+  },
+  "saving_23e39291": {
+    "text": "बचत...",
+    "source": "23e39291d6135814ed7c936e278974544b0df5fbf0eb0427b6700979b7472a93"
+  },
+  "development_ai_settings_saved_380f9a9e": {
+    "text": "विकास एआई सेटिंग्स बचाए गए हैं।",
+    "source": "380f9a9e3acc31297bd2a0cf795650b899f957d424352b3a8139cbc64b48380b"
+  },
+  "claude_code_is_now_the_default_development_ai_49bf5516": {
+    "text": "Claude Code अब डिफ़ॉल्ट विकास एआई है।",
+    "source": "49bf5516851eb2500b6b9c110294034d3c2c9cc1db3f55d6e433c1f3de62ce3f"
+  },
+  "development_ai_settings_could_not_be_saved_e502d14c": {
+    "text": "विकास एआई सेटिंग्स बचाया नहीं जा सकता था।",
+    "source": "e502d14c38cad9b7be39fbb0274c11d042b73b3d1c798a1074b7d640b6b64b53"
+  },
+  "recommended_a71fecca": {
+    "text": "· अनुशंसित",
+    "source": "a71fecca70332015fcade5732727824d9468bfb1d3b680029de2a594373f7e51"
+  },
+  "save_development_ai_d1bd84e5": {
+    "text": "विकास को बचाने के लिए",
+    "source": "d1bd84e5ca73063ed172d31b0574b799f8df88c1a8f176ebfd47d84ede7e0872"
+  },
+  "value1_left_dd048b18": {
+    "text": "· {{value1}} छोड़ दिया गया",
+    "source": "dd048b18a839cc9cc81604eeb78341f07fd85b5e5ab3fe7f1c8622856ecdc392"
+  },
+  "value1_s_00cf3855": {
+    "text": "· {{value1}}s के लिए",
+    "source": "00cf3855a13926ab999e5183c451b418a97e672dc0fdb7232c70e59f38dfd97f"
+  },
+  "hold_for_related_options_0b7ba22f": {
+    "text": "संबंधित विकल्पों का पालन करें",
+    "source": "0b7ba22f2eea2a0ac1dce24523a99c5eeb2d5782cc27967c5e493a5a9ab09c7c"
+  },
+  "more_options_for_value1_98095a61": {
+    "text": "{{value1}} के लिए अधिक विकल्प",
+    "source": "98095a61f465882924ba737cf19296fa8a8799cbe4dd56d843f520f25ed8c08a"
+  },
+  "ask_homeroom_eb01e374": {
+    "text": "Homeroom से पूछें।",
+    "source": "eb01e374480eee9297d48496b029944d91db31b18f4b15ac37854eec2b7a776f"
+  },
+  "openrouter_is_required_350e6861": {
+    "text": "OpenRouter की जरूरत है",
+    "source": "350e6861a34e66b4d4e7137cf1b43da4faa1dfac69da432fd8fa01c13b1377e3"
+  },
+  "stop_response_d5ca579c": {
+    "text": "जवाब देना बंद",
+    "source": "d5ca579c1943396cfc4b8bfd63e0e2e0c69656cb7e4a038266f49cb449084e83"
+  },
+  "stop_cae7d57b": {
+    "text": "रुकें",
+    "source": "cae7d57bc067a514b8e34c9589631a95c7dc051638ddd2a190773269279a99df"
+  },
+  "send_f6f4688f": {
+    "text": "भेजें",
+    "source": "f6f4688ff23d50c67053963c251fa0ce64a925cf283537cf066b1f362cb9b778"
+  },
+  "enable_global_chat_to_start_5ea6248f": {
+    "text": "ग्लोबल चैट शुरू करने की अनुमति दें",
+    "source": "5ea6248faad3c972694669c80c9e65966f56af2baa1bdd7e45ccc7f678408eef"
+  },
+  "free_form_chat_needs_openrouter_e95bbf8e": {
+    "text": "मुफ्त फॉर्म चैट OpenRouter की जरूरत है",
+    "source": "e95bbf8e84903b28bfed71fec5236b4de938ea193ed43cc884e59d9e42d78e73"
+  },
+  "global_chat_is_an_optional_experimental_feature_4bd8b033": {
+    "text": "वैश्विक चैट एक वैकल्पिक प्रयोग सुविधा है।",
+    "source": "4bd8b03375f143c18b653719dfe44a0bde3f7379d41ee4217ebd7424f63fb998"
+  },
+  "the_direct_options_below_still_work_without_it_69033459": {
+    "text": "नीचे दिए गए सीधे विकल्प अभी भी इसके बिना काम करते हैं।",
+    "source": "69033459c4922123c0904a482d93d97f9d5bb88e1ffec43dacffef93f7647936"
+  },
+  "error_54a0e8c1": {
+    "text": "गलती",
+    "source": "54a0e8c17ebb21a11f8a25b8042786ef7efe52441e6cc87e92c67e0c4c0c6e78"
+  },
+  "change_value1_2c7346eb": {
+    "text": "बदलाव {{value1}}",
+    "source": "2c7346eb46679355efac9bda218416de123df8daabb4eabb9508a494e8ec9e7f"
+  },
+  "what_should_change_in_value1_915dc563": {
+    "text": "{{value1}} में क्या बदलाव करना चाहिए?",
+    "source": "915dc56308797bb43bb492aca0d49b77247006e1fa7cf8fe9cff4b1ebd42320a"
+  },
+  "system_6725e7bb": {
+    "text": "प्रणाली",
+    "source": "6725e7bbcd28f3a8a586fa34bf191fd72dde8b61756932cd3237c17a6f196f1a"
+  },
+  "light_dbcd5e7b": {
+    "text": "प्रकाश",
+    "source": "dbcd5e7bb7a0f538810de44c3efbd813037ee3fa358747bb71fa58e157af45f7"
+  },
+  "dark_60acc53f": {
+    "text": "काला",
+    "source": "60acc53f13a5d1bf115878c4a785e9a43e8286c4139a8402a6ac7d23966f9153"
+  },
+  "on_13001175": {
+    "text": "पर",
+    "source": "130011756125313c72f2cab730db4347e2841526d236a89cb25f38789fa49229"
+  },
+  "off_ca7981b4": {
+    "text": "बंद करें",
+    "source": "ca7981b46ecf2c1787b6d76d81d9fd7fa0ca95842e2fcc2a452869891a9334d1"
+  },
+  "always_de9f057a": {
+    "text": "हमेशा",
+    "source": "de9f057a471cdb8d3b082719bdc7ad2031788d042947349723fa83c9d13a517a"
+  },
+  "errors_only_30767c16": {
+    "text": "गलतियां केवल",
+    "source": "30767c1658efced5a79e733761828dd5abf1473d54b6addee7378129d98cdf73"
+  },
+  "could_not_save_this_setting_9159403b": {
+    "text": "इस सेटिंग को बचाया नहीं जा सकता।",
+    "source": "9159403b440931304b8324f993cc7fb3b1cfac365b709fa15b9e34c728bfe77f"
+  },
+  "confirmed_fe00b67b": {
+    "text": "पुष्टि",
+    "source": "fe00b67b6dd1143f383553116b83dadce3502fb0282c3ec4ddaa99f756119626"
+  },
+  "confirm_eebdd24a": {
+    "text": "पुष्टि करें",
+    "source": "eebdd24a77d9ad32222660c07777163bf5f6732df2b172351f3f8d5783e4f529"
+  },
+  "applying_3329a9bb": {
+    "text": "आवेदन करने के...",
+    "source": "3329a9bb48b9c8d4a5e6182042ea9737427233c72b853b93d0a6365050ae476d"
+  },
+  "apply_31e392d1": {
+    "text": "आवेदन करें",
+    "source": "31e392d1c0378beca611de66c0f4c71cba29159905cc54242d9bddee5b23d851"
+  },
+  "open_agent_session_912e7429": {
+    "text": "खुले एजेंट सत्र",
+    "source": "912e7429579ff6e74bd5f792e1354aefe7d21c45ac1ca7fd9554a30df9e97c09"
+  },
+  "open_ed077f3d": {
+    "text": "खुले",
+    "source": "ed077f3d8125d60dca1979c7133601bd187d47c73ed9975028f677e49e709942"
+  },
+  "ready_to_apply_8a325d63": {
+    "text": "आवेदन करने के लिए तैयार",
+    "source": "8a325d631b809a77cf08ce098a6cc4b1117c3b6a167adfce44cd73488bb8bda0"
+  },
+  "understanding_your_request_a69b173a": {
+    "text": "आपके अनुरोध को समझने के लिए ...",
+    "source": "a69b173a6cf3fcbd8b164017f30c934ff689aa3ea5ec44426c57fd5c16a93242"
+  },
+  "enable_experimental_global_chat_in_settings_firs_7f52fc3a": {
+    "text": "सबसे पहले सेटिंग्स में वैश्विक चैट के प्रयोग को सक्षम करें।",
+    "source": "7f52fc3a44ba2f55328963e1e9297d48e11d3135abccb6cfbecd828c27a94e0d"
+  },
+  "add_or_claim_an_openrouter_key_in_settings_to_us_3d3f4209": {
+    "text": "Global Chat का उपयोग करने के लिए सेटिंग्स में OpenRouter कुंजी जोड़ें या दावा करें।",
+    "source": "3d3f4209cad0946c0dd9e7d5ed9bb8c97579f5915247b32aae11725749817801"
+  },
+  "reconnecting_to_the_saved_turn_d539058a": {
+    "text": "फिर से बचाए गए टूर्नामेंट के लिए ...",
+    "source": "d539058a8856a3465e22512fec6122b32b424183805c1bba3e587e1532c357be"
+  },
+  "the_connection_was_interrupted_before_an_answer__b4b35150": {
+    "text": "जवाब बचाने से पहले कनेक्शन टूट गया. कृपया फिर से कोशिश करें.",
+    "source": "b4b35150dc59eed31b988a62127a48f692bacabab6f4b6dc383e472b31b1c848"
+  },
+  "that_development_handoff_is_missing_its_app_092a42de": {
+    "text": "यह विकास Handoff अपने एप्लिकेशन की अनुपस्थिति है।",
+    "source": "092a42de1f13eb8ef137f17af19874d8033bcca6636f5241d08f6e915aa93038"
+  },
+  "couldn_t_reach_homeroom_try_again_0484b4ab": {
+    "text": "यह Homeroom तक नहीं पहुंच सकता है।",
+    "source": "0484b4ab53722a7d77dc5398d4bd9a406279189ffd5a171db102374f7de2f72e"
+  },
+  "couldn_t_approve_it_just_now_28cbba46": {
+    "text": "इसे अभी अनुमोदित नहीं किया जा सकता।",
+    "source": "28cbba4640cee64af1196bb457b766c620506b7ca5f54ad7832a4b128f6cc29b"
+  },
+  "step_value1_of_value2_value3_8acfce48": {
+    "text": "चरण {{value1}} से {{value2}}{{value3}}",
+    "source": "8acfce484160ef9152322a6062440a4f5c98473aedfd9cfea1e806fbfb62d009"
+  },
+  "value1_so_far_a54dd7fb": {
+    "text": "· {{value1}} अब तक",
+    "source": "a54dd7fb804a25e49b76e6f73f15ccb96c77d4be4979009ea82bc9fcc8a13cce"
+  },
+  "took_value1_132b0670": {
+    "text": "· लिया {{value1}}",
+    "source": "132b0670a8ae7b9963dd09710ecc9a7596b96beb665b9dfbecae8b3e73ad18cd"
+  },
+  "open_request_3cfb5504": {
+    "text": "खुले अनुरोध",
+    "source": "3cfb5504e6a1736d0e6b0e5b7e7a50582d4115f3286e7cdf7f81e47d819fd57e"
+  },
+  "request_value1_8051e8ec": {
+    "text": "अनुरोध करें #{{value1}}",
+    "source": "8051e8ec89b01dc15ba7b5d1c6befdbae6c5f82fccfa527329ea465b906b2d8e"
+  },
+  "homeroom_bot_activity_value1_2b82533b": {
+    "text": "Homeroom बॉट गतिविधि: {{value1}}",
+    "source": "2b82533b6abf0c93f94953f5f875fe8982859a4f3a2976dc992bb6936dfaf390"
+  },
+  "plan_for_value1_434edfa7": {
+    "text": "योजना के लिए {{value1}}",
+    "source": "434edfa770a2cb4eab95de216d9760ff72c7a67ec0774e5ebc1d7d09c8c561fa"
+  },
+  "here_s_my_plan_for_value1_a3b06f44": {
+    "text": "यहाँ {{value1}} के लिए मेरा योजना है:",
+    "source": "a3b06f446fc5557b9887d65f146e51f253939406f691e7c167641081198a70ff"
+  },
+  "you_answered_value1_ddf5f998": {
+    "text": "आपने जवाब दिया: {{value1}}",
+    "source": "ddf5f99887d3739253b69b063b08e24a002420c863363a14f9911196c0a45b84"
+  },
+  "your_answers_are_posted_on_value1_s_public_discu_9905b828": {
+    "text": "आपके जवाब {{value1}} की सार्वजनिक चर्चा में पोस्ट किए जाते हैं, जहां समूह उन्हें देख सकता है।",
+    "source": "9905b828c0c86f0906ea19c5305ceaa38a8135b24a4bde8bfdba878a082b1089"
+  },
+  "file_this_request_3157f534": {
+    "text": "इस अनुरोध को फाइल करें?",
+    "source": "3157f534dc2a3a8515a159d708bb29fd1f1cac9abf98391865e8d2373f4b3f2e"
+  },
+  "suggested_answers_c9be94c6": {
+    "text": "प्रस्तावित जवाब",
+    "source": "c9be94c6babe47b45d22890325e3f7ebb20d4bba29155f456e68c9f28e6bc494"
+  },
+  "you_chose_value1_1aaffd87": {
+    "text": "आप चुने हैं: {{value1}}",
+    "source": "1aaffd87f09ed8a524dd06537b6beab7c49cc1b6801e028b8fa33b24660ae205"
+  },
+  "you_answered_value1_196bdd5e": {
+    "text": "आपने जवाब दिया: {{value1}}",
+    "source": "196bdd5edaaa17ad523ccdfae487c17c1703c424f0b47e89d5e78023efc0429d"
+  },
+  "your_answer_is_posted_on_value1_s_public_discuss_422f4666": {
+    "text": "आपका जवाब {{value1}} की सार्वजनिक चर्चा में पोस्ट किया गया है, जहां समूह इसे देख सकता है।",
+    "source": "422f4666b4ca20c753f83b15ad137b4f7c56586584a2ebd52c66c99104f2e75a"
+  },
+  "questions_you_can_ask_f9678b43": {
+    "text": "सवाल आप पूछ सकते हैं",
+    "source": "f9678b4366a60399d324eb813ed4310c53fd4518b021f2ba43d41f4f8908c2a9"
+  },
+  "you_asked_value1_a9b97b24": {
+    "text": "आप पूछते हैं: {{value1}}",
+    "source": "a9b97b24c6a34fe358ef095d74ca188099743ce492be358d52b66b8e4b07e2fd"
+  },
+  "you_chose_value1_e2fdede6": {
+    "text": "आपने चुना {{value1}}",
+    "source": "e2fdede6e191d37daccf3d3290b2cf7b94caf4deb6894f26b159f06f2d5e94cc"
+  },
+  "value1_earlier_value2_55c37318": {
+    "text": "{{value1}} पहले {{value2}}",
+    "source": "55c37318c5afdb1aa42b496357b8734a0fb85f92c106598dd6d4d5ef1f04936c"
+  },
+  "hide_history_db1ddf34": {
+    "text": "इतिहास छिपाना",
+    "source": "db1ddf34fe743a1eaa8d68a74c2f12ac070c6247e313dc49f4624aa2b6a958df"
+  },
+  "show_history_value1_579f517d": {
+    "text": "प्रदर्शित इतिहास ({{value1}})",
+    "source": "579f517df969c6f7326725a6ed3161935e406403ddc857dc9f1b66df87a54b04"
+  },
+  "homeroom_c9149977": {
+    "text": "Homeroom",
+    "source": "c91499775f13ea080fe340d005a43a58a009f086d0c9cca82ba629ff8a375af3"
+  },
+  "communities_c864f329": {
+    "text": "समुदाय",
+    "source": "c864f329f5dde534613448895303d0a62f17af46b75ab16cb6c8170a120d1293"
+  },
+  "pr_value1_8d7f966f": {
+    "text": "पीएचडी #{{value1}}",
+    "source": "8d7f966f57f51c2d9a1099f6c3ee82a185e0face212ae803874249eb4c21836c"
+  },
+  "you_can_attach_up_to_value1_files_d5b1c331": {
+    "text": "आप {{value1}} फ़ाइलों को जोड़ सकते हैं।",
+    "source": "d5b1c331d490755696ea941c2ce79a845612e8474d9b22af7fa71998ddd87d05"
+  },
+  "value1_is_too_large_for_this_file_type_9ad5e813": {
+    "text": "{{value1}} इस फ़ाइल प्रकार के लिए बहुत बड़ा है।",
+    "source": "9ad5e81348a216046f6174491ecb7af6363fbb7368b1f02666d81727caf4d48e"
+  },
+  "couldn_t_upload_value1_72787374": {
+    "text": "{{value1}} को अपलोड नहीं किया जा सकता।",
+    "source": "727873748b9289ee36516f58da560fdbac3c3a9a18442513a4d873c4f25b7cc7"
+  },
+  "your_message_wasn_t_sent_c8fd3251": {
+    "text": "आपका संदेश नहीं भेजा गया है।",
+    "source": "c8fd3251af3a79e4695d952e259007b10db034f57e9293a912078236efcd0c3d"
+  },
+  "they_get_a506c8f9": {
+    "text": "उन्हें मिलता है",
+    "source": "a506c8f9f1f009f51981929c3ed67337d22e20954c663298e1a94b348ab28d73"
+  },
+  "attachment_040d2b36": {
+    "text": "अनुलग्नक",
+    "source": "040d2b3689dd1d4c9661e938f4633914f2c0aa0a1fbc3bc0047f554c0b16fd20"
+  },
+  "your_reply_is_posted_on_value1_s_public_discussi_72846ac8": {
+    "text": "आपका जवाब {{value1}} की सार्वजनिक चर्चा में पोस्ट किया गया है।",
+    "source": "72846ac8058ad4f65520e02b55b71a03fd31591f43a57f8a7cd1909c39f7cde9"
+  },
+  "remove_value1_d2f6b9b7": {
+    "text": "हटाएँ {{value1}}",
+    "source": "d2f6b9b77710b52df80fff25d20d8afa220dcf255a52ce006f3236431fc122f9"
+  },
+  "reply_in_thread_5f4ecc1c": {
+    "text": "Thread में जवाब...",
+    "source": "5f4ecc1c9a12d4f4c3a5d54a6d3357bf01df3c140b6cc7547836752ffb76c1eb"
+  },
+  "message_fc71507e": {
+    "text": "संदेश...",
+    "source": "fc71507e47999a3341bcaa4b4161a10b3d227009fdf265bab344a4ea7b21231c"
+  },
+  "reply_in_thread_a2367327": {
+    "text": "Thread में जवाब",
+    "source": "a236732715648b31ac8834059279b44d4e676c02820de6e47e0d6f5d0e512760"
+  },
+  "message_2f77668a": {
+    "text": "संदेश",
+    "source": "2f77668a9dfbf8d5848b9eeb4a7145ca94c6ed9236e4a773f6dcafa5132b2f91"
+  },
+  "couldn_t_start_this_conversation_12ddde6f": {
+    "text": "इस बातचीत को शुरू नहीं किया जा सकता।",
+    "source": "12ddde6f010060b08af6dbc8272dfe549f8a59993b9a63b996f8793491f15d0e"
+  },
+  "couldn_t_create_this_group_268177d8": {
+    "text": "इस समूह को नहीं बनाया जा सकता।",
+    "source": "268177d83136617fe1d47135aefcab9e2e94f1221951c7327e1a34d041de811d"
+  },
+  "couldn_t_unblock_this_user_0d5a53e3": {
+    "text": "इस उपयोगकर्ता को अनब्लॉक नहीं किया जा सकता।",
+    "source": "0d5a53e3dca004c0774481f2f68c8a80c7453674effcf539e9e8d795870d0133"
+  },
+  "block_value1_b9dfdc7d": {
+    "text": "ब्लॉक @{{value1}}?",
+    "source": "b9dfdc7d7f47e94bb87224748193f5faaecbf906f9639e2fe176241e23e1fca0"
+  },
+  "their_messages_in_shared_chats_and_app_discussio_2202f540": {
+    "text": "साझा चैट और ऐप वार्तालापों में उनके संदेश छिपे हुए होंगे, और वे आपको सीधे संदेश देने में सक्षम नहीं होंगे।",
+    "source": "2202f540b7de621528e4cbca8f9b208c8efe83dd196b88af2741e514fc06565b"
+  },
+  "couldn_t_block_this_person_3b1a2797": {
+    "text": "मैं इस व्यक्ति को अवरुद्ध नहीं कर सकता।",
+    "source": "3b1a27970cbe26052c7581f712eaa2a2e812ca662f56d9827110e63095034910"
+  },
+  "direct_002c7c68": {
+    "text": "सीधे",
+    "source": "002c7c68468b4f550fbaa7fb8588155c58f8b5760fde69b3fe1773ae2a197ba2"
+  },
+  "group_34ca0e76": {
+    "text": "समूह",
+    "source": "34ca0e76608842ff3e7d924a455a396a82f471052c15e3f2ed7f090ac702e5c1"
+  },
+  "find_a_person_9af70da5": {
+    "text": "किसी व्यक्ति को ढूंढें",
+    "source": "9af70da5251e6559788a11a4d57037431321c2b5816b5fb09967671c73445b02"
+  },
+  "block_value1_1cff48c9": {
+    "text": "ब्लॉक @{{value1}}",
+    "source": "1cff48c9561be027f8595ade33cfd4a8c95e1ece1d92b536ef59a63f550cc9a2"
+  },
+  "creating_c79ed949": {
+    "text": "बनाना...",
+    "source": "c79ed9492e3c17199ab50694e07f5525cc6d598a02531528b0eb5ed933cd5466"
+  },
+  "create_group_35be9c54": {
+    "text": "समूह बनाएं",
+    "source": "35be9c541d68e6ea78dfce189aa504a97247ca6b1c59f125a75498b279796629"
+  },
+  "untitled_f59ab8d1": {
+    "text": "नामहीन",
+    "source": "f59ab8d1331b7b16952fbd388258f856b9e09ce2d7b904f500bdfe4905640774"
+  },
+  "value1_tap_to_review_ce8274cc": {
+    "text": "{{value1}} · समीक्षा के लिए टैप करें",
+    "source": "ce8274cc403ed129ee537929116a3b89d5a4f6a8eb8392f00eb94153bdd9f031"
+  },
+  "value1_unread_1e87d0d9": {
+    "text": "{{value1}} अनदेखा",
+    "source": "1e87d0d91b1035caa03915590b757839d25062fe53a0004ec03b86c153cd4627"
+  },
+  "everyone_on_homeroom_7af179f4": {
+    "text": "सभी में Homeroom",
+    "source": "7af179f445089856e275472ab215530ebda3bc45cbca4d6519077deb05af30e6"
+  },
+  "could_not_delete_this_chat_54945b07": {
+    "text": "आप इस चैट को हटा नहीं सकते हैं।",
+    "source": "54945b07d93667cee23fd299fc9d9066d75bc26947262d160445f604cbe4d708"
+  },
+  "deleting_43b5894c": {
+    "text": "हटाने...",
+    "source": "43b5894c3e4e2b24f13c935f4fae0a0a8fbe7d7792750a09b88c2097fd9a32b8"
+  },
+  "delete_e2d0a549": {
+    "text": "हटाएँ",
+    "source": "e2d0a54968ead24efc0dffa6ac78fc606dceec34a0f586177a74a54cc2272cf8"
+  },
+  "untitled_chat_4d4e126c": {
+    "text": "अनगिनत चैट",
+    "source": "4d4e126c2185da5e86b7478f0f12fc30009339941ef0d8627959aeb4641b6f69"
+  },
+  "working_5474eef8": {
+    "text": "काम करने...",
+    "source": "5474eef8d0f179c707cf418e2bbb468c77cc24edc5e9f5f4e137e85e06a8eea0"
+  },
+  "delete_value1_264fa406": {
+    "text": "हटाएँ {{value1}}",
+    "source": "264fa40661cb1fb07bd4100635867dc3caf001c372ec623481aba57f4be24936"
+  },
+  "homeroom_bot_dbcdaf67": {
+    "text": "Homeroom बॉट",
+    "source": "dbcdaf6793937cb49c108a0928a95702345de32d1e04db8037f1bb66945bcde9"
+  },
+  "make_an_app_or_ask_for_a_change_8a212fe9": {
+    "text": "एक ऐप बनाएं या परिवर्तन के लिए पूछें",
+    "source": "8a212fe9ea94c919bfd92c413ef7aa7c911d441524b7cc1f9e54ced6290efe0f"
+  },
+  "build_it_yourself_72369f88": {
+    "text": "इसे स्वयं बनाएं",
+    "source": "72369f88c9f11b25fcd904b6d341a8a5fba3f574b8b4e5f0a608713514bad729"
+  },
+  "plan_and_build_a_change_with_a_coding_agent_25ff6d91": {
+    "text": "एक कोडिंग एजेंट के साथ एक परिवर्तन योजना और निर्माण",
+    "source": "25ff6d910b718424045573c7e4a20dd8248d74f5734778042f4eec63113d4499"
+  },
+  "direct_message_cd3e1605": {
+    "text": "सीधे संदेश",
+    "source": "cd3e16057d094b97fa8efe29cec3b03e82ff48f4fc5712a2e5878732bd2a0ab6"
+  },
+  "talk_to_one_person_3e2fc650": {
+    "text": "एक व्यक्ति से बात करें",
+    "source": "3e2fc6502a876510a479c723a2e0b928242debeb189433b4e4a96689ef3bc4e8"
+  },
+  "group_chat_28c7d3f8": {
+    "text": "समूह चैट",
+    "source": "28c7d3f8b75de76f887dfddddf60086b646b2efdb00e4a1d559ccec95712a336"
+  },
+  "bring_a_few_people_together_aef2cce1": {
+    "text": "कुछ लोगों को एक साथ लाएं",
+    "source": "aef2cce10ace85195b480c459352da1e7f06e5dc7235ec2d8eb0f2627c33e877"
+  },
+  "show_less_94ea9b1d": {
+    "text": "कम दिखाएं",
+    "source": "94ea9b1d33a02975ea6b71d6cf87d461a48de07869c047b5daeb1654e9d539f8"
+  },
+  "show_value1_more_398301a5": {
+    "text": "दिखाएँ {{value1}} अधिक",
+    "source": "398301a528cbae821f8133650d147cdd6e38aba081b46cf2cf059d3fea6d29c5"
+  },
+  "couldn_t_update_this_invitation_831e6ac8": {
+    "text": "इस निमंत्रण को अपडेट नहीं किया जा सकता।",
+    "source": "831e6ac8dbd95e339ba333fc02c2070e6baccb9f050f2cd30f247c3ea35357c2"
+  },
+  "couldn_t_decline_and_block_this_requester_8a88ced0": {
+    "text": "इस अनुरोध को खारिज और अवरुद्ध नहीं किया जा सकता है।",
+    "source": "8a88ced084d49d3e8c8f18df4fa5a7d71185d76b3c482e6ac6ba4a3cbae56439"
+  },
+  "message_request_2de564f2": {
+    "text": "संदेश अनुरोध",
+    "source": "2de564f22a0b80dc904f53eaf258390eda50ae6027f5ec03224bbba762184a1a"
+  },
+  "group_invitation_3733873c": {
+    "text": "समूह निमंत्रण",
+    "source": "3733873c8398374120518e9900cab8a1fc1ffe1ce2a72e3d2b4aa420f3033c9c"
+  },
+  "block_value1_04a7c0e9": {
+    "text": "ब्लॉक {{value1}}?",
+    "source": "04a7c0e9b4aa4ce9ca7be841abb6606c4d719ee2959008fcf96f6b23a860162c"
+  },
+  "couldn_t_block_this_user_e400a5f2": {
+    "text": "इस उपयोगकर्ता को अवरुद्ध नहीं किया जा सकता।",
+    "source": "e400a5f2bb353c890c3d6a9c1e0f4f08ab7fce6171c37a126bc80565c6f5f2d9"
+  },
+  "couldn_t_rename_this_group_26ef0861": {
+    "text": "इस समूह को फिर से नाम नहीं दिया जा सकता।",
+    "source": "26ef08612d529eab4f6f49bb4d64c0ba461edca3074ff12a49656a31a656689d"
+  },
+  "earlier_project_discussion_read_only_ea2d0ed7": {
+    "text": "प्रारंभिक प्रोजेक्ट चर्चा · read-only",
+    "source": "ea2d0ed77a2a2f6927d1eca3ca4901a30c2fc527129b1a90584d1e3285de7bb2"
+  },
+  "value1_everyone_building_this_project_4725d0de": {
+    "text": "{{value1}}हर कोई इस परियोजना का निर्माण करता है",
+    "source": "4725d0de024f65e5188888e7fd2ebb3b9f470ff86cf73412c5977cebce2353db"
+  },
+  "new_session_cffdba22": {
+    "text": "नई सत्र",
+    "source": "cffdba22adf299e8fc6f937ef63ca4352ca9db3022d4634004c0a9bd10aa0dfe"
+  },
+  "show_value1_more_value2_05aac1e5": {
+    "text": "दिखाएँ {{value1}} और अधिक {{value2}}",
+    "source": "05aac1e5a91f0dddaa387149dc919e19846f1ecd408af6266e7137e82e18fbfa"
+  },
+  "conversation_ccca1817": {
+    "text": "बातचीत",
+    "source": "ccca1817575365871461752f3229dd59ede742ae69e350e20fd00a6ce3d149e3"
+  },
+  "load_earlier_messages_33fd46b9": {
+    "text": "पिछले संदेशों को लोड करें",
+    "source": "33fd46b9e7798283b42a66fe595d088ea3afb0badac619e86951ffd740d0caca"
+  },
+  "load_newer_messages_dc294d6b": {
+    "text": "नए संदेशों को डाउनलोड करें",
+    "source": "dc294d6b7860deb7ba26e88ab206bc7145de8f7c00bcdd2455f21b47543e4367"
+  },
+  "value1_is_typing_eb59b2e3": {
+    "text": "{{value1}} है टाइपिंग ...",
+    "source": "eb59b2e3070b8a2c60db5e39bc3bd26fa7ccc54e8026b7e1dfbbcc513a1abe4d"
+  },
+  "value1_are_typing_9fba80d4": {
+    "text": "{{value1}} के बारे में जानने के लिए...",
+    "source": "9fba80d4ebcafe1b929f11d386fdc6949c4dd947a62bbcadacfeba350e2ed9d4"
+  },
+  "loading_replies_90fa2cf3": {
+    "text": "लोड करने का जवाब...",
+    "source": "90fa2cf31d174dcd56b93ebdd783624f65142a1408418384fab9ad5c1ba09c47"
+  },
+  "no_replies_yet_c106d94d": {
+    "text": "अभी तक जवाब नहीं",
+    "source": "c106d94d2cb199ddc6fd8e5adf09f27b5d37f7b8e485d85002955c08ee4ded34"
+  },
+  "load_earlier_replies_ce2528d4": {
+    "text": "लोड पहले जवाब",
+    "source": "ce2528d49381fed5bbf7d4b40d0b6ffdcbadfe92bae2b77bf0151e3643d71211"
+  },
+  "couldn_t_invite_these_people_a19842c3": {
+    "text": "मैं इन लोगों को आमंत्रित नहीं कर सकता।",
+    "source": "a19842c3ccd07ae343f3b9d0b880476fee8b8015b45ace8f4a899f84942fc058"
+  },
+  "remove_value1_from_this_group_2533e073": {
+    "text": "इस समूह से @{{value1}} को हटा दें?",
+    "source": "2533e073c6f3ccc8400bb079147c28472fc3308f619fc5225b4a8f2fa7e5b53a"
+  },
+  "couldn_t_remove_this_member_60b70d59": {
+    "text": "इस सदस्य को हटाया नहीं जा सकता।",
+    "source": "60b70d59512f150bd9ef23811cffd859892a094ec18660d21300a5bafd0415a9"
+  },
+  "leave_value1_3c3762d8": {
+    "text": "{{value1}} को छोड़ दें?",
+    "source": "3c3762d87ff653555f192b387fb81a7594a9e423b644e39d1db48ddf06275dc6"
+  },
+  "leave_fc6e4a40": {
+    "text": "छोड़ो",
+    "source": "fc6e4a408d56be9670c14ee7be21e1a39c93c2df82f7c95975485e90ca6371c3"
+  },
+  "couldn_t_leave_this_conversation_bbc9e4f7": {
+    "text": "मैं इस बातचीत को नहीं छोड़ सकता।",
+    "source": "bbc9e4f7d91815afb12274ca4d3fffc522ca5b3a3d000f4ea847daf6af67d64f"
+  },
+  "inviting_a4c2059a": {
+    "text": "आमंत्रित...",
+    "source": "a4c2059a1177eccc64fd6b9d49e44e07786f820ad65fbd939db54afda0110d23"
+  },
+  "your_edit_wasn_t_saved_5897b50f": {
+    "text": "आपके संपादक को बचाया नहीं गया।",
+    "source": "5897b50ffa1a497c1c368240ee0c81a9ceb8c501c57c3d1bc589691e0e3e5afb"
+  },
+  "couldn_t_update_the_reaction_af4f9cd0": {
+    "text": "प्रतिक्रिया को अद्यतन नहीं किया जा सकता।",
+    "source": "af4f9cd08d406af4e00d108c4a80d429b843f5298f12e683bda2c6ad534de107"
+  },
+  "couldn_t_update_your_saved_messages_5f3dc26f": {
+    "text": "आपके बचाए गए संदेशों को अपडेट नहीं किया जा सकता है।",
+    "source": "5f3dc26f7806c8e876a3c91f28eefbe64193ee672b8ad0b2006eab45f28c850b"
+  },
+  "delete_this_message_8f6e2cda": {
+    "text": "इस संदेश को हटा दें?",
+    "source": "8f6e2cda49ca7d233da70f3162dd7e33d66a6117d5d77832a185932264e4687d"
+  },
+  "everyone_will_see_message_deleted_in_its_place_t_03e4f87d": {
+    "text": "हर कोई अपने स्थान पर \"संदेश हटा दिया\" देखेगा. यह अनदेखा नहीं किया जा सकता है.",
+    "source": "03e4f87d60e8e2e174c50e08b3cb2b07b1337b6f0dc38181eae123849fbaf504"
+  },
+  "couldn_t_delete_this_message_ac227630": {
+    "text": "इस संदेश को नहीं हटाया जा सकता।",
+    "source": "ac2276304e3a3e64b063bb4191bb82c7b9a18282f1b936778229fd1789233c9f"
+  },
+  "marked_unread_43523e7b": {
+    "text": "अनदेखा न करें",
+    "source": "43523e7b79c573237ebe073ec36eb98e5bba555d931bf28627d6277acd87c892"
+  },
+  "couldn_t_mark_this_unread_7dafe955": {
+    "text": "इस अनदेखी को नहीं पढ़ा जा सकता।",
+    "source": "7dafe9557a1c9a855ebdb2cff962e6b767b9232f9288df794ada43c2f92e4875"
+  },
+  "view_thread_9c322305": {
+    "text": "Thread देखें",
+    "source": "9c32230599cc4fa40bce69ff46fb5b9234949ca4cebbe6739538047c90c44114"
+  },
+  "copy_text_b0ac9cea": {
+    "text": "कॉपी पाठ",
+    "source": "b0ac9cea86878b84b24131ccd5ed5979ed5c199e0a62f88fc1d1aed77723b53a"
+  },
+  "copy_link_to_message_fc091522": {
+    "text": "संदेश के लिए लिंक कॉपी करें",
+    "source": "fc0915221d9236577d2679c29436a5b22a5b0e3aacc6faf13bc8300d12287d89"
+  },
+  "mark_unread_54b4e3f2": {
+    "text": "मार्क अनदेखा",
+    "source": "54b4e3f28dc5b7562bda4fc41662525042c2ba1e9b4301641d27c8f38f7f1e82"
+  },
+  "delete_message_87e7176a": {
+    "text": "संदेश हटाएँ",
+    "source": "87e7176a7ce700af0c4afe34a922d1401eec9611ffc5a99bdbf032e8654c2e9b"
+  },
+  "report_message_0a1e3c52": {
+    "text": "रिपोर्ट संदेश",
+    "source": "0a1e3c5275559c907933f2d7aed5ed272b16da899c93061a08b3f67c41f869d7"
+  },
+  "message_from_value1_63fc2d77": {
+    "text": "संदेश से {{value1}}",
+    "source": "63fc2d77e801374699024beed0d7ce16032e25c8729d0f5345add61f93bb8fd0"
+  },
+  "block_value1_8d3f3e35": {
+    "text": "ब्लॉक {{value1}}",
+    "source": "8d3f3e35915de0a2a3c1b1fbadc0472c3fe367b67d30ae7387c3c547579392db"
+  },
+  "reply_c253f451": {
+    "text": "जवाब",
+    "source": "c253f451bdd56431ff15f638498d0003c36aabd5b07e5d21aaa7f1391410747c"
+  },
+  "couldn_t_load_your_apps_cf911d9a": {
+    "text": "आप अपने ऐप्स को लोड नहीं कर सकते।",
+    "source": "cf911d9aa89bec56ed4efa1e87fa121fdeef98a0cda8834c7d06a4e267d6de84"
+  },
+  "loading_apps_f8bcca38": {
+    "text": "एप्लिकेशन डाउनलोड करें...",
+    "source": "f8bcca389b9584d397aeace82b5411cf8d309edb2ca80387f9dcaa256538eef3"
+  },
+  "choose_an_app_8b9b4f57": {
+    "text": "एक ऐप चुनें",
+    "source": "8b9b4f57f1c79971d8a869ce0b02afdbe780a68ebc670c5bde27037b4b5047ba"
+  },
+  "issue_number_b90458b6": {
+    "text": "विषय संख्या",
+    "source": "b90458b6339c0e14f5cea20207035c8a316ca33c0fda5d372ab8c4fc51fdb075"
+  },
+  "governance_proposal_id_7ba3cac6": {
+    "text": "प्रबंधन प्रस्ताव आईडी",
+    "source": "7ba3cac655abae6c86b76606647c6778bf699578ced44b4765dc2f2e114a441b"
+  },
+  "proposal_session_id_3726713b": {
+    "text": "प्रस्ताव / सत्र आईडी",
+    "source": "3726713b596c9fef4071a5e61c72a178fc2f10cb9dab3a109deaed43d1846089"
+  },
+  "shared_to_value1_e7e092bd": {
+    "text": "{{value1}} पर साझा किया गया",
+    "source": "e7e092bd4a4bfeedd80ed13a305d3daa9b7a9838e921713cf1b80b9a5b871189"
+  },
+  "nothing_matches_32ab4da6": {
+    "text": "कोई मैच नहीं है।",
+    "source": "32ab4da69c2b250a37c9b0791ba1457265caab3b493bf4a68e5b4f951e0aef34"
+  },
+  "no_chats_or_discussions_to_share_to_yet_a41db50d": {
+    "text": "अभी तक साझा करने के लिए कोई चैट या चर्चा नहीं है।",
+    "source": "a41db50d99a3b11dd8a771af350b58c022b03fd20e41eec7dfd17fe09846b3e6"
+  },
+  "sharing_2e913af4": {
+    "text": "साझा...",
+    "source": "2e913af44d225a04f59256f792374fe8a7f0d08fe8cccefbac943a27e58fcc97"
+  },
+  "clear_83b12c22": {
+    "text": "स्पष्ट",
+    "source": "83b12c2216efb4fdc924e1deb5182e905e4926ed0c1c324d467107f46d5a26a9"
+  },
+  "value1_notifications_08e2b2c5": {
+    "text": "{{value1}} सूचनाएं",
+    "source": "08e2b2c5718cfd7c61346bcb8c4581624a81160628a532ca7693a5a14306fa5d"
+  },
+  "unread_value1_d75b9a49": {
+    "text": "अनदेखा ({{value1}})",
+    "source": "d75b9a49d50c99ac6509de9a24e41851f7988af7efd0e6e4eb1d33f6cc6b28f4"
+  },
+  "you_re_all_caught_up_47aa1e80": {
+    "text": "तुम सब पकड़े गए हो।",
+    "source": "47aa1e80a7c7d61445cd42555b7cf425e8dfebd8ce611dfa7faa8a20ee3c8562"
+  },
+  "nothing_here_yet_you_ll_get_pinged_here_d49bf867": {
+    "text": "यहाँ कुछ भी नहीं है. आप यहां पेंच हो जाएंगे.",
+    "source": "d49bf8672f9ed5775512122c16d34be620b66e9ce5cad28ddba0dbcd852c1455"
+  },
+  "see_older_message_notifications_9e9efd37": {
+    "text": "पुराने संदेश नोटिस देखें",
+    "source": "9e9efd37b9ab7db4709f254e059d7a4fd7186ed50f56bf365b121026c5d7d346"
+  },
+  "couldn_t_mark_notifications_as_read_try_again_4684b79d": {
+    "text": "नोट्स को पढ़ने के रूप में चिह्नित नहीं किया जा सकता. फिर से कोशिश करें.",
+    "source": "4684b79db7b82375a807642e8d7a9ee046a30ad8ad92160040d9ef96640d025e"
+  },
+  "couldn_t_clear_this_notification_try_again_fb3e0e07": {
+    "text": "मैं इस सूचना को स्पष्ट नहीं कर सकता. फिर से कोशिश करें.",
+    "source": "fb3e0e07077d5fe8662522936bb73d33f8276c1ac2ca925696a40bea663adcbf"
+  },
+  "couldn_t_answer_this_friend_request_try_again_c64b0dae": {
+    "text": "मैं इस दोस्त के अनुरोध का जवाब नहीं दे सकता. फिर से कोशिश करें.",
+    "source": "c64b0dae9829e91b7154385085d87ecac42b9b41c4fe1a89b5c2ffe2184d4ae9"
+  },
+  "you_and_value1_are_friends_01331405": {
+    "text": "आप और {{value1}} दोस्त हैं",
+    "source": "0133140531804a89917008346efcd7a83d84463deac983601cc861099b1f6694"
+  },
+  "this_request_was_withdrawn_47feb580": {
+    "text": "इस अनुरोध को रद्द कर दिया गया है",
+    "source": "47feb58065eb6a62cacf12c54bf6ae9bf65020896e98cc94bb58b68dee5839fd"
+  },
+  "request_declined_1df48b2d": {
+    "text": "अनुरोध कम हो गया",
+    "source": "1df48b2da038a8590b47b3202e6bbad0a620607550d8af9630ce801097e527b4"
+  },
+  "spec_v_value1_507f703d": {
+    "text": "स्पेक v{{value1}}",
+    "source": "507f703d3cdacf6fa1ff22888d9a6046ab59ac0bcd40164b789866f6d6dbed2a"
+  },
+  "accept_failed_http_value1_fd19613c": {
+    "text": "असफल स्वीकार करें (HTTP {{value1}})",
+    "source": "fd19613c31890fad6df19dceb81d7ac30e8d464e97e1d564e62ec0fafccfb54c"
+  },
+  "session_stopped_before_finishing_5ba6f649": {
+    "text": "सत्र समाप्त होने से पहले समाप्त",
+    "source": "5ba6f649b0725df18ccd138bb3aab827ac86a085256486dc274be20c69910848"
+  },
+  "the_coding_agent_finished_9f88c5ae": {
+    "text": "कोडिंग एजेंट खत्म",
+    "source": "9f88c5ae1ce087c3a204d2dfba330bdb4a46303a850b402f6e0b62f030e095c1"
+  },
+  "agent_session_finished_2286d252": {
+    "text": "एजेंट सत्र समाप्त",
+    "source": "2286d25285c5ccaed77a70d14cfe59b05faf98e3c0401938ab76a09314f8a113"
+  },
+  "homeroom_test_alert_6358ce2c": {
+    "text": "Homeroom परीक्षण चेतावनी",
+    "source": "6358ce2ccf3650710d9b0172a3f016b5a40dbdcb91c30555e5d0784806bae3e4"
+  },
+  "friend_request_d67dac88": {
+    "text": "दोस्त की मांग",
+    "source": "d67dac8830c6ae27b1b94b0c16d1ab66829b180d81d2d15da553d3462f045be5"
+  },
+  "accepted_your_friend_request_81e161e7": {
+    "text": "अपने दोस्त के अनुरोध को स्वीकार करें",
+    "source": "81e161e70a796148969562dabbf68795f2b2bbae334ec4a160f734be60dbc891"
+  },
+  "app_allowance_changed_073325ba": {
+    "text": "एप्लिकेशन में बदलाव",
+    "source": "073325ba4b129d12488f893258935903fa0e829346ad079eb6aa865b56cff94c"
+  },
+  "requested_more_app_slots_95ca8bbb": {
+    "text": "अधिक एप्लिकेशन स्लॉट की मांग",
+    "source": "95ca8bbb7b83829f9a6c7063f4ed1201a913a65f49fc649c114c16ba3ff6261f"
+  },
+  "app_allowance_request_declined_07bd8f2a": {
+    "text": "एप्लिकेशन अनुदान अनुरोध कम हो गया",
+    "source": "07bd8f2a05c7457f88b94033ede50364b3ed26c38231f1d1fd8d69aa4a22e432"
+  },
+  "openrouter_key_needs_admin_review_f5fd3921": {
+    "text": "OpenRouter Key की जरूरत है admin समीक्षा",
+    "source": "f5fd39213c2dba93689a02e0e5192aebaca33cdff5eeda038c04cdddbec4362b"
+  },
+  "openrouter_access_enabled_36cb5f41": {
+    "text": "OpenRouter एक्सेस सक्षम",
+    "source": "36cb5f410fe5924635ae39ac4a65725ae1573c333f9d4c3bb5f2c4520ad2d8a0"
+  },
+  "value1_used_up_94cd130e": {
+    "text": "{{value1}} उपयोग किया गया",
+    "source": "94cd130edf6a3829d287f1cf2abaf61cf9252ec2c629f3153a2337bebd3e991d"
+  },
+  "value1_running_low_5d2a6027": {
+    "text": "{{value1}} कम चल रहा है",
+    "source": "5d2a602792ddd1aae66dbc78bc0e1f90f1b1356079f52dd5019e74a78162a8db"
+  },
+  "app_limit_reached_f7e1c689": {
+    "text": "एप्लिकेशन सीमा तक पहुंच",
+    "source": "f7e1c68974a2452a04140ef81b832c12b49375dc18b4a5460149108587ee9dfa"
+  },
+  "session_limit_reached_13439b08": {
+    "text": "बैठक की सीमा तक पहुंच गई",
+    "source": "13439b0858a247658b94bc3d87021946376ef13b9488221e967324e15368ca88"
+  },
+  "nearing_the_app_limit_bf64e475": {
+    "text": "App Limit के करीब",
+    "source": "bf64e475877bcdc139500c1083034ec23e53b60ac47658abdcae2cbc094d8a60"
+  },
+  "nearing_the_session_limit_f3042c0f": {
+    "text": "बैठक की सीमा के करीब",
+    "source": "f3042c0f19409505448949f68b67c0cfd600db0c3d49176760f4c43ab184a622"
+  },
+  "still_yes_1ab9570b": {
+    "text": "अभी भी हाँ",
+    "source": "1ab9570b63e1803af6c36c97ecfc868be70cc4cd8153ae7ee3145cc6fa18ba78"
+  },
+  "app_storage_27e2347e": {
+    "text": "App स्टोरेज",
+    "source": "27e2347ea0c67c52dc6af7ec2486f54c7c5cc47a666852e047c79c319ee0c29f"
+  },
+  "sentence_e46818576648": {
+    "text": "{{value1}} के बारे में",
+    "source": "e4681857664819bb17436a57cee2239ec805b2ac5831756b7753dac964ce5976"
+  },
+  "sentence_82f287830bb2": {
+    "text": "मॉडल: {{value1}}",
+    "source": "82f287830bb24969aeda7152935acff57b8afc0a854fc51d1b3c7d5ffac6f882"
+  },
+  "sentence_d012a3d02997": {
+    "text": "कारण: {{value1}} प्रयास",
+    "source": "d012a3d02997f668906b6289906ce0cc823412bda745079d50d514322ecb7c4e"
+  },
+  "sentence_c2eb3198fef7": {
+    "text": "पदों की संख्या: {{value1}}",
+    "source": "c2eb3198fef7589b82c7ea36648a181cb292c5e25b7d808c1c235c2cd6e20e18"
+  },
+  "sentence_9fd899c9ba0c": {
+    "text": "चैट <0>(प्रयोगात्मक)</0>",
+    "source": "9fd899c9ba0c0689ef2b56e7d337d372953bd9ea3b20059381a051c26cce99e1"
+  },
+  "sentence_9d7276bbcca1": {
+    "text": "आपके संदेश अनुरोध को स्वीकार करने के लिए {{value1}} का इंतजार करें. आप एक बार फिर भेज सकते हैं.",
+    "source": "9d7276bbcca1f87a35bf885f3d4c556de308c91d3e6abac9a150cd9af2eb1e34"
+  },
+  "sentence_9f4e9b5d2fc9": {
+    "text": "{{value1}} आपको आमंत्रित किया गया. स्वीकृति आपको पूरी रखी गई वार्तालाप इतिहास तक पहुंच प्रदान करती है.",
+    "source": "9f4e9b5d2fc998d174f79dbfb07331757b2a54723d29208d93d6ce7fa7a1eaaa"
+  },
+  "sentence_aa1c7b6ae7d5": {
+    "text": "Decline & ब्लॉक @{{value1}}",
+    "source": "aa1c7b6ae7d59cd37a6ef8bf983c19666f702e06cf31e19d2bb1ae63e13090d3"
+  },
+  "sentence_15430bd4c33a": {
+    "text": "इस लिंक को {{value1}} में पोस्ट करें. हर कोई कार्ड देखता है अगर वे इसे खोल सकते हैं.",
+    "source": "15430bd4c33af82132e47e71bdeb90386e8f800cf745bd9a381450e9827073e1"
+  },
+  "github_issues_b1f5866f": {
+    "text": "GitHub के बारे में",
+    "source": "b1f5866f204f32ea7fc959b83a33fb3437da37b9a53f835d134c9208a778d3f8"
+  },
+  "platform_issues_35216768": {
+    "text": "प्लेटफॉर्म के मुद्दे",
+    "source": "3521676818f1eb0bf67d03d57be69bc2d19ab45300270eb9d1a7e900ed714323"
+  },
+  "recent_app_activity_548cacca": {
+    "text": "नवीनतम एप्लिकेशन गतिविधि",
+    "source": "548caccabd24319ef767e740475b3ba946b933d2424048ee25a254f680ea56a5"
+  },
+  "app_discussions_396aa1f9": {
+    "text": "App पर चर्चा",
+    "source": "396aa1f9de54f216eed994cfe1c76f22f80d5bf055873b56dd8f5a1ed976b6f6"
+  },
+  "no_apps_found_4a081d54": {
+    "text": "कोई ऐप नहीं मिला।",
+    "source": "4a081d54297e2e68abc0d3d4e4de58da19b9b78a4574355fac7fdf27be444022"
+  },
+  "no_issues_found_050dc004": {
+    "text": "कोई समस्या नहीं मिली।",
+    "source": "050dc004622e7d35fc737e5e15474bc2a5f09de9f033981e3ad8b67a4e8757b4"
+  },
+  "no_current_proposals_ea84049a": {
+    "text": "कोई वर्तमान प्रस्ताव नहीं।",
+    "source": "ea84049aa3940b5e2880c48c385ccfb1dfc72c76cab36b4eabaeb317531d1e06"
+  },
+  "no_active_development_found_0bf8f648": {
+    "text": "कोई सक्रिय विकास नहीं मिला।",
+    "source": "0bf8f6487e73f9297325d36f64dcb997513a8fb7eb0859f28a8aa1c56cc40df9"
+  },
+  "no_conversations_found_d444e99d": {
+    "text": "कोई बातचीत नहीं मिली।",
+    "source": "d444e99d95e8986b79af88d14e8dd852e4c60ec1fd0d3c6137d1b3b654fc363f"
+  },
+  "no_notifications_found_9dd3c8fb": {
+    "text": "कोई सूचना नहीं मिली।",
+    "source": "9dd3c8fb1ac2be72a8bb0a651e22ead26b3f7e658bb03ba4a66987c2528c5237"
+  },
+  "no_leaderboard_entries_found_7dfdebc2": {
+    "text": "कोई लीडरबोर्ड इनपुट नहीं पाए गए।",
+    "source": "7dfdebc24c77dc7d71356f91884269382bfbe8d00ca32d788e01bb540dcde2a8"
+  },
+  "no_settings_found_6e42a971": {
+    "text": "कोई व्यवस्था नहीं मिली।",
+    "source": "6e42a971e03fbdce50a06f9aea8a14438e8c96424b92a23219f8d24706b9853f"
+  },
+  "no_results_found_7ecdbfee": {
+    "text": "कोई परिणाम नहीं मिला।",
+    "source": "7ecdbfee6d1ce28548f6ca630810986ab070a0ff5a284374daeca97da83676cf"
+  },
+  "this_action_1aa2b739": {
+    "text": "इस कार्रवाई",
+    "source": "1aa2b739a5018a3d6a02d032edc5fc1aa7903a59141d4e9502fee48cbcca6a86"
+  },
+  "merged_work_e49b606e": {
+    "text": "मिट्टी का काम",
+    "source": "e49b606e7393279e9ce1d76bed240aaeb1b97059f6f1e5c6a9458ea827e48d07"
+  },
+  "active_time_7d_a454349f": {
+    "text": "सक्रिय समय (7 डी)",
+    "source": "a454349f21866890e0f34d42a93eb55e425658659507898fe01fa0a445fd3667"
+  },
+  "active_users_d8fc11b0": {
+    "text": "सक्रिय उपयोगकर्ता",
+    "source": "d8fc11b038204ef65ef36d452e0f7fea107776b22f199b4110d34d594739e8a8"
+  },
+  "open_issues_28aa0023": {
+    "text": "खुले मुद्दे",
+    "source": "28aa0023dce4b2091975b618c1db4362eb722fab8dec009c552c3361c52e5bae"
+  },
+  "open_proposals_23caaccd": {
+    "text": "खुले प्रस्ताव",
+    "source": "23caaccd7b6e9b84ddefdc028006655b9ce918a7210f37280b20a94710c1ab17"
+  },
+  "active_development_6e3c9235": {
+    "text": "सक्रिय विकास",
+    "source": "6e3c9235771da9b6ee1486b251bde7bbcd63e0d706fd13f2d972f0c0509fde86"
+  },
+  "prs_recognized_512a9981": {
+    "text": "PR को पहचाना जाता है",
+    "source": "512a9981d028ba04e27f43dd574e44140a829d7132ed70af0ccf99ca3348c788"
+  },
+  "spent_this_month_26bbf64a": {
+    "text": "इस महीने खर्च करें",
+    "source": "26bbf64a8da0b55c0af1fcc2b68d344d143ae2fe1c6a0ed0e71df2cd05c46024"
+  },
+  "monthly_cap_013025a3": {
+    "text": "मासिक कैप",
+    "source": "013025a3b6ac12e9ee81e8062581afaf9712ac6c251a1b61556e69e32527601b"
+  },
+  "cap_remaining_d6a2ad28": {
+    "text": "कैप रहता है",
+    "source": "d6a2ad2807e773c76b35f2a2858509ff3b3cca9ba1d42fcde81e5fd1e64594a0"
+  },
+  "openrouter_remaining_83f16d33": {
+    "text": "OpenRouter बने रहें",
+    "source": "83f16d33a6026f76088f217c469beb759f39a69329199227cae5660c21db5710"
+  },
+  "preserve_every_value_i_did_not_ask_to_change_use_8d4e97f9": {
+    "text": "किसी भी मूल्य को बनाए रखें जिसे मैंने बदलने के लिए नहीं कहा था, इस सेटिंग्स समूह के लिए केवल क्षमताओं का उपयोग करें,",
+    "source": "8d4e97f97df3d71d662dd3fb2f952bde08e9fdaf5e46e422cd640211c3b2aef4"
+  },
+  "and_show_the_exact_confirmation_before_saving_d933434d": {
+    "text": "और बचत से पहले सटीक पुष्टि दिखाएं।",
+    "source": "d933434d1eba189bee4fc8a761772103728ed58ad914d2b117e45754aee5ae2f"
+  },
+  "the_setting_update_was_not_returned_4df3fa3d": {
+    "text": "सेटिंग अपडेट वापस नहीं किया गया था।",
+    "source": "4df3fa3d671556300b345a0e695bf77b2f82615bb9f420b356bcb6475efb89bc"
+  },
+  "could_not_apply_this_setting_46944d3a": {
+    "text": "इस व्यवस्था को लागू नहीं किया जा सकता है।",
+    "source": "46944d3a824a494047697b0e903f2bea630abca7a008bd734ad4048a5a587244"
+  },
+  "could_not_load_those_details_bb039255": {
+    "text": "इन विवरणों को लोड नहीं किया जा सकता।",
+    "source": "bb039255a3f78adead96bf58892d543d5d9269428a339640c3819346e3b8b747"
+  },
+  "global_chat_could_not_complete_that_request_971c26dd": {
+    "text": "ग्लोबल चैट इस अनुरोध को पूरा नहीं कर सका।",
+    "source": "971c26dd36750aa35f2340fc9cdc67beaed867bd25220db6d512b7c52efc14aa"
+  },
+  "global_chat_is_unavailable_a0e6b0b3": {
+    "text": "वैश्विक चैट उपलब्ध नहीं है।",
+    "source": "a0e6b0b3839a5e99d44521feaac491b799830310bc91b209635bd44c2e671c55"
+  },
+  "could_not_load_this_chat_76fd44e0": {
+    "text": "इस चैट को लोड नहीं किया जा सकता है।",
+    "source": "76fd44e0ae9199c99fa6531e31e76b4881b7485e734f619e88c8fae42d2000fb"
+  },
+  "loading_options_deb4c8ee": {
+    "text": "लोड विकल्प...",
+    "source": "deb4c8ee555942edfa1efdb72b6bfcbf3fc6ee08a2c80816081499ec57ea1874"
+  },
+  "preparing_confirmation_883525a6": {
+    "text": "पुष्टि की तैयारी...",
+    "source": "883525a63095ac4f5e6cdda7e55e37b5f964d2d2664b0a99ced642042acb8ebb"
+  },
+  "that_request_could_not_be_completed_b6428269": {
+    "text": "इस अनुरोध को पूरा नहीं किया जा सकता था।",
+    "source": "b642826963e0c3581962f39fa79cf970fadce486a69bd9dee8963528aaa3acfa"
+  },
+  "that_direct_action_could_not_be_completed_8a210e3c": {
+    "text": "इस सीधे कार्य को पूरा नहीं किया जा सकता था।",
+    "source": "8a210e3cae521ff9c7fe4c0aab3df26b6a7b870657ae01724f8311068114e932"
+  },
+  "open_a_global_chat_first_4c5e70bf": {
+    "text": "सबसे पहले एक वैश्विक चैट खोलें।",
+    "source": "4c5e70bfd265b9f49f6955bf564c71775c7d0c8bb189d79d660f3eaf03afdfc0"
+  },
+  "could_not_load_earlier_messages_ee351717": {
+    "text": "पहले संदेशों को लोड नहीं किया जा सकता है।",
+    "source": "ee3517171e466945481fc1343550aac44dc776ce4ea143f702dfa57a8c14b47c"
+  },
+  "could_not_start_a_new_chat_2b52c735": {
+    "text": "एक नया चैट शुरू नहीं किया जा सकता।",
+    "source": "2b52c7351b5043e25278cfbe6e26a00aa1766928d7df77458855e69f6648adb9"
+  },
+  "that_action_could_not_be_completed_a74c00a4": {
+    "text": "इस कार्रवाई को पूरा नहीं किया जा सकता था।",
+    "source": "a74c00a461e7dbe9ec89fd7e7c6e4502f16c25d55c301fa2a887c4d8983927c2"
+  },
+  "that_browser_action_is_unavailable_3e4ec423": {
+    "text": "यह ब्राउज़र कार्रवाई उपलब्ध नहीं है।",
+    "source": "3e4ec423a14e217f4b506cc552864c71a6510784d7e9786ff1fde75211a8645d"
+  },
+  "that_browser_action_is_missing_its_target_0b45526d": {
+    "text": "यह ब्राउज़र कार्रवाई अपने लक्ष्य को याद कर रही है।",
+    "source": "0b45526d9f6e69e9023b0f01f4a8459c43645e4b90f69a86693d026ce5e869dc"
+  },
+  "that_local_setting_is_unavailable_e2db0db0": {
+    "text": "यह स्थान उपलब्ध नहीं है।",
+    "source": "e2db0db03f852f7970ab5d149a5b4149e47371a7e908618fcc376b21f7fc3eb0"
+  },
+  "that_browser_action_could_not_be_completed_7129557c": {
+    "text": "इस ब्राउज़र कार्रवाई को पूरा नहीं किया जा सकता था।",
+    "source": "7129557ccb88b16edc2d465a1bf199081d6e86fbc73ec28369c1fe1b5e151022"
+  },
+  "deleted_user_152bc3aa": {
+    "text": "हटाए गए उपयोगकर्ता",
+    "source": "152bc3aa4e147002e50b05a522ce842f6ff87017fff045e2b27d5bc92936dea6"
+  },
+  "asked_you_a_question_60079c1e": {
+    "text": "मैंने एक सवाल पूछा",
+    "source": "60079c1edd5c946a56c3d293fe334fc3f633d8e6aecea91499d29375fac8baef"
+  },
+  "built_it_waiting_for_approval_a7b43883": {
+    "text": "अनुमोदन के लिए इंतजार कर रहे हैं।",
+    "source": "a7b4388340dfc017d6195100d12dcc8412d45243fb87f34eac31464feb78db09"
+  },
+  "built_it_it_s_live_8e851dc2": {
+    "text": "इसे बनाए रखें, यह जीवित है",
+    "source": "8e851dc289b7313002d3d546c82a091190a240595d8f93cbd6288c8994e46eb4"
+  },
+  "built_it_the_change_was_closed_d0699233": {
+    "text": "इसे बनाया गया. परिवर्तन बंद कर दिया गया",
+    "source": "d06992330b001ec7168e2a457f33e6c88d52e4fc80e1cb7d4241cea1bf5af3b0"
+  },
+  "can_t_build_it_as_it_s_written_04834d5b": {
+    "text": "इसे लिखने के रूप में नहीं बनाया जा सकता है",
+    "source": "04834d5b810dc0397bcce3120c43ce97baa9f82b28a7afbe9c9f60f6e35ee852"
+  },
+  "couldn_t_finish_building_it_4f83179a": {
+    "text": "इसे खत्म नहीं किया जा सकता",
+    "source": "4f83179a2bc18fc37f9f34d4ecca3007246f14f89f812183055a5f4d5d022c8f"
+  },
+  "left_it_for_the_group_to_decide_aabb98ab": {
+    "text": "यह निर्णय लेने के लिए समूह को छोड़ दें",
+    "source": "aabb98abd6cb50e30c921be32f01ffb7a51ca0a953d14b93be37ef87f12243b0"
+  },
+  "found_nothing_to_build_yet_d68f1c32": {
+    "text": "अभी तक बनाने के लिए कुछ भी नहीं मिला",
+    "source": "d68f1c32c6645d7fed56d5b0954df12c2d29b5f9f215f771bd6d026ca427807d"
+  },
+  "couldn_t_finish_looking_at_it_41726b10": {
+    "text": "मैं इसे देखकर खत्म नहीं कर सकता था",
+    "source": "41726b1098f1689f823c661999464279e223835dc2a347b66ed48bc153fe8ca7"
+  },
+  "ready_but_held_back_for_now_1d771f71": {
+    "text": "तैयार, लेकिन अब के लिए वापस रखें",
+    "source": "1d771f71f8ab78a3f331b8876fc198f47810e7b8e729f20387f61bf2461ea0dc"
+  },
+  "stopped_before_it_finished_769f7d46": {
+    "text": "खत्म होने से पहले रुक गया",
+    "source": "769f7d46f28a924d83c82cd7850392eb6effeab96882e1d4214c3b93b49d6317"
+  },
+  "answered_on_the_change_dad67499": {
+    "text": "बदलाव के लिए जवाब",
+    "source": "dad674993e0f006c6bb6ad2bb1ec9d021eeb2ee81c1829e5ef35962fdbab1adb"
+  },
+  "updated_the_change_44a13701": {
+    "text": "परिवर्तन को अपडेट करें",
+    "source": "44a13701373f45a4f094c6ec5c0d90df021050780b1d0f90f4cefa21fa4bad1c"
+  },
+  "working_on_it_d55b6d1b": {
+    "text": "पर काम करने के लिए",
+    "source": "d55b6d1bbd56f5bfe03ec5ada5709ee9e06661755c40c233642416875be1b0e5"
+  },
+  "working_on_it_fe56231d": {
+    "text": "इसके लिए काम करना",
+    "source": "fe56231dc5d1f73c377cc13bd8535908377e1c5ec569e46d56cfeb5381e5ae38"
+  },
+  "you_chose_build_it_82ff36d0": {
+    "text": "आपने इसे बनाना चुना है",
+    "source": "82ff36d06b065beb7525f78686ddfd94b3ca12527f92e06b476aaa62a760ebb1"
+  },
+  "i_stopped_waiting_on_this_plan_reply_to_pick_it__91d435f9": {
+    "text": "मैं इस योजना के लिए इंतजार करना बंद कर दिया. जवाब इसे फिर से उठाने के लिए।",
+    "source": "91d435f9469dd92533b2e5360feb93e7f751a9de605a897944ae9b96dbe26e0a"
+  },
+  "you_asked_for_changes_a_new_plan_is_on_its_way_9f866b56": {
+    "text": "आप परिवर्तन के लिए पूछ रहे हैं. एक नया योजना अपने रास्ते पर है.",
+    "source": "9f866b568f00962af76f1717d30e4afba9ec7a28e556744fd8e5711f4fac1dc9"
+  },
+  "the_project_059df477": {
+    "text": "परियोजना",
+    "source": "059df477b2cb17de69fe3c613c4a8c0fafde2f3678015a9d05041253a5de3c5e"
+  },
+  "your_project_131a8553": {
+    "text": "आपकी परियोजना",
+    "source": "131a85536d3aae650859c8c5fd6b86058f036c6d49036b3ec2263ede54960a8d"
+  },
+  "you_approved_it_it_s_going_live_8f8d8143": {
+    "text": "तुमने इसे स्वीकार कर लिया. यह जीवित रहेगा.",
+    "source": "8f8d8143fc79972efe1228c54e0302b37a51122487fdfd6b7b76d9377b0174a2"
+  },
+  "you_approved_it_62187898": {
+    "text": "आपने इसे मंजूरी दी है।",
+    "source": "62187898d91000a1d73d2642e421d6668ec6d76ff9a2693f6442d2c55d10145d"
+  },
+  "this_change_was_updated_try_the_new_version_firs_fc0e1f5f": {
+    "text": "यह परिवर्तन अद्यतन किया गया है. पहले नए संस्करण की कोशिश करें.",
+    "source": "fc0e1f5f670468962e709959fcba242848bf733ac0276c076a1c663bb66ea57b"
+  },
+  "this_change_was_updated_its_newer_version_is_bel_fbe52612": {
+    "text": "यह परिवर्तन अद्यतन किया गया है. इसका नवीनतम संस्करण नीचे है.",
+    "source": "fbe52612072debac02d42adade0ff1f35006452d176b5a786dec903427c0652a"
+  },
+  "looking_at_it_1984f4e5": {
+    "text": "इसे देखकर",
+    "source": "1984f4e5a7f409a35b6a7946c022b6136352601a333c16c0389c5410a689e777"
+  },
+  "following_up_on_its_proposal_2b822bf7": {
+    "text": "अपने प्रस्ताव का पालन करें",
+    "source": "2b822bf73ebd11a6eee93491ee6d85b2b5f25b5c40d08d8bd1804cfafc2eb104"
+  },
+  "getting_the_project_ready_3d4685fa": {
+    "text": "परियोजना तैयार करने के लिए",
+    "source": "3d4685fa8bfd765b95a388f1214d1edd7735225574564a8622c2031fdefbf959"
+  },
+  "waiting_its_turn_in_my_queue_671f20c9": {
+    "text": "मेरी रीति में अपनी रीति का इंतजार",
+    "source": "671f20c94157a2505da4f820d59a6ff132b872d3fda62a1d2433cac232fb2e1d"
+  },
+  "waiting_its_turn_to_follow_up_on_its_proposal_1327004b": {
+    "text": "अपने प्रस्ताव का अनुसरण करने के लिए इंतजार कर रहे हैं",
+    "source": "1327004b3c866fe3b747b8faf664da5500b478e574627cb1bb3fca3def4fd327"
+  },
+  "merging_its_approved_proposal_1b5f9e4b": {
+    "text": "अपने अनुमोदित प्रस्ताव को संकलित करें",
+    "source": "1b5f9e4b5e25b7406ce5444e02a8c6058c323db0787de92134868b92f170221e"
+  },
+  "reading_it_e459ec75": {
+    "text": "इसे पढ़ना",
+    "source": "e459ec755cbfeaeb6f61f54757df9b1b0c2ddd20abcc4180100a2b99e239b90e"
+  },
+  "following_up_452d3822": {
+    "text": "आगे बढ़ें",
+    "source": "452d3822585886ed3bbf73e6b6bd96df6c74f3d4e9658fb077c525bb0d3e7cbd"
+  },
+  "setting_up_6ae46cb7": {
+    "text": "सेटअप",
+    "source": "6ae46cb7870f12d1542fdb8e1c970588aed277e3a1273063a032b9f0eea47c1e"
+  },
+  "in_my_queue_56c9701b": {
+    "text": "मेरे कबूतर में",
+    "source": "56c9701ba307e2339d62702d9b7d8d56139d4a32054d24a2d2fb1e8d66d287ed"
+  },
+  "queued_to_follow_up_bdc609ef": {
+    "text": "आगे बढ़ने के लिए जानें",
+    "source": "bdc609eff3f2d1b12d05c695efa9c281f14be890e271981ac408ca1611741e56"
+  },
+  "waiting_on_you_40fd9e27": {
+    "text": "आप का इंतजार",
+    "source": "40fd9e27fced4d3fe3774f01d021b80bf2dc5a6e6a36532f47c85215dc0962f6"
+  },
+  "community_hub_c2f9c96f": {
+    "text": "सामुदायिक हब",
+    "source": "c2f9c96f91b710623562c88656c8d865cbdd357647cdf6267f36ea34c41ad5fb"
+  },
+  "show_the_conversation_list_08d92ce7": {
+    "text": "वार्तालाप सूची दिखाएं",
+    "source": "08d92ce7249c7d36f32bc82bb7c04844a4be0c248643c8c0255c04c03e14be0e"
+  },
+  "full_width_d34008d2": {
+    "text": "पूर्ण चौड़ाई",
+    "source": "d34008d28f89d292b674edcb48c1a532854feae544a194c58d5ef3f49ee199c8"
+  },
+  "invitation_pending_e49a7342": {
+    "text": "निमंत्रण निमंत्रण",
+    "source": "e49a73427b52b59805202ff29516e9b010651f898b2608b103b8e6c5210fb979"
+  },
+  "you_own_this_group_65050cc1": {
+    "text": "आप इस समूह का मालिक हैं।",
+    "source": "65050cc14a44aee310664e93e14457d761868f22ab0b4ff442e5199a5863892c"
+  },
+  "request_pending_bc26ab4d": {
+    "text": "अनुरोध पेंटिंग",
+    "source": "bc26ab4d4ba9f030b32611d37569fcfd1842a25e30ec71dd68f106cbb4ceefb7"
+  },
+  "waiting_for_approval_10c5739b": {
+    "text": "अनुमोदन का इंतजार",
+    "source": "10c5739b95bdf361bfc01dfe5c095102bef36b3e27002327192d0c6a368aeb22"
+  },
+  "in_progress_c1f88e9d": {
+    "text": "प्रगति में",
+    "source": "c1f88e9d6c4145cf0530ae020155384d5688d70ed82a07a35d783bbc4b32238c"
+  },
+  "no_active_change_4a394283": {
+    "text": "कोई सक्रिय परिवर्तन नहीं",
+    "source": "4a3942839082d51f659b2b83829fe2798259a46631b237e21c881acb1492f8c6"
+  },
+  "only_members_of_this_app_can_reply_here_3f1490d8": {
+    "text": "केवल इस एप्लिकेशन के सदस्य यहां जवाब दे सकते हैं।",
+    "source": "3f1490d83c746e3db8d5cdb482bd6cbdb9510df8129b0bd9a6fe2ede8659e68e"
+  },
+  "ownership_will_transfer_to_the_oldest_remaining__edc80f07": {
+    "text": "संपत्ति सबसे पुराने शेष सदस्य को स्थानांतरित की जाएगी।",
+    "source": "edc80f07d446c1c3776fb84126e73eee4701d6ee35aaa7859f1b4d4bc534fe95"
+  },
+  "this_conversation_ecbd7892": {
+    "text": "इस बातचीत",
+    "source": "ecbd789229f98f907ccdf15c719b8186faead082ca6325d82c17d6770863551f"
+  },
+  "you_re_sharing_quickly_wait_a_minute_and_try_aga_4388cf86": {
+    "text": "आप जल्दी से साझा कर रहे हैं. एक मिनट इंतजार करें और फिर से कोशिश करें.",
+    "source": "4388cf865fd19dc8091ad5ecc4eb346e068337fcff696f6d6bd78299527742d0"
+  },
+  "couldn_t_share_this_try_again_4240568a": {
+    "text": "मैं इसे साझा नहीं कर सकता. फिर से कोशिश करें.",
+    "source": "4240568a6005ed575272889641a23c949f9ee87bfc5cc9057ddffb0b9985cf5b"
+  },
+  "they_need_to_accept_your_message_request_before__b4e27f68": {
+    "text": "उन्हें आपके संदेश अनुरोध को स्वीकार करने की आवश्यकता है, इससे पहले कि आप अधिक भेज सकते हैं।",
+    "source": "b4e27f68b2baa9c13f9509945113d7b99d6d7b2344e55f679a4b8042f2497029"
+  },
+  "this_conversation_is_no_longer_available_07f8c47b": {
+    "text": "यह बातचीत अब उपलब्ध नहीं है।",
+    "source": "07f8c47b9be5545c63a0b80b176f6d1bd087334db208eedb7107a6108f3f9574"
+  },
+  "you_re_doing_that_too_quickly_try_again_in_a_mom_ce2ac38e": {
+    "text": "आप इसे बहुत जल्दी कर रहे हैं. एक पल में फिर से कोशिश करें.",
+    "source": "ce2ac38edce4fbc48b0f4739c4e5b3e6bc9b19ccd6ecd7cd2015e7d7edb81ccd"
+  },
+  "couldn_t_load_your_conversations_d915a35b": {
+    "text": "आप अपनी बातचीत को लोड नहीं कर सकते।",
+    "source": "d915a35be43ec637ec26dd40898f2d4b34c6725683ae4d4296a615a18c9fa811"
+  },
+  "couldn_t_load_this_conversation_407fa735": {
+    "text": "इस बातचीत को लोड नहीं किया जा सकता।",
+    "source": "407fa735faae01425f2572ccda60f668786a07053fbc95f269aa3f20f91f06a4"
+  },
+  "couldn_t_load_newer_messages_e2d2f883": {
+    "text": "नए संदेशों को लोड नहीं किया जा सकता।",
+    "source": "e2d2f883ae5f77847849d6901841c7a0b59405eafe794e00a57af10df5f919c1"
+  },
+  "couldn_t_load_older_messages_e5f71ac8": {
+    "text": "पुराने संदेशों को लोड नहीं किया जा सकता।",
+    "source": "e5f71ac8cd95e29c515c58640e6da6194c270b1519342b68bef24381cb65bdf5"
+  },
+  "no_such_app_f515f068": {
+    "text": "ऐसी कोई ऐप नहीं",
+    "source": "f515f068faf9dec95256bcb6ca8013c08015afb3ca1e17f58eb55e4947072985"
+  },
+  "a_group_needs_a_name_b24f84c2": {
+    "text": "एक समूह को एक नाम की जरूरत है।",
+    "source": "b24f84c2fa692fb40e218feef36d693d3aa971cd8d5bda1425056c56cc96d09a"
+  },
+  "group_names_can_be_up_to_80_characters_f033d511": {
+    "text": "समूह नाम 80 वर्णों तक हो सकते हैं।",
+    "source": "f033d511abcd5f314012727d23e8059e7b6a8ab8ca8d4a5ca9eb9b8d58e5b360"
+  },
+  "this_choice_has_nothing_to_decide_15ed3f9f": {
+    "text": "इस विकल्प का कोई निर्णय नहीं है।",
+    "source": "15ed3f9fe4bb165f62e9a7e3c74b895a8fb0c0a2422489171b447cbc46497ca3"
+  },
+  "message_queued_it_will_retry_when_you_reconnect_662214e9": {
+    "text": "संदेश क्यूएड. जब आप फिर से कनेक्ट करते हैं तो यह वापस आ जाएगा.",
+    "source": "662214e97d04fadcacbd296e655aa80728f4718cc7226960f2493413ca3e9d72"
+  },
+  "your_reply_wasn_t_sent_e8974b31": {
+    "text": "आपका जवाब नहीं भेजा गया।",
+    "source": "e8974b31e1ebc8589a50f21a5e0e7b48e6f155da29dce6c5caacfcc135477cc5"
+  },
+  "couldn_t_load_this_thread_7931a018": {
+    "text": "इस तार को लोड नहीं किया जा सकता।",
+    "source": "7931a0182b47faf3e7a5e2558e99909b9fccec2d1733260cd941190a15910549"
+  },
+  "couldn_t_load_earlier_replies_611acb13": {
+    "text": "पहले जवाब नहीं दे सकते थे।",
+    "source": "611acb137945cb260ba6f517dc8bfd0d65cc38a3577c77585e9d4b9e46a2a566"
+  },
+  "an_app_66e93a7c": {
+    "text": "एक ऐप",
+    "source": "66e93a7c5a2576c34833f10761ca00fadbd40b36eff79f1e0969652f607b0b43"
+  },
+  "asked_you_to_help_approve_changes_to_73fa5923": {
+    "text": "आपसे अनुरोध किया गया है कि आप परिवर्तनों को अनुमोदित करने में मदद करें",
+    "source": "73fa59233b43148fdfa19c6cb531599f0e2f367ed2e5f2d94f6421b7a483087e"
+  },
+  "invited_you_to_build_75b9fb6c": {
+    "text": "इसे बनाने के लिए आमंत्रित करें",
+    "source": "75b9fb6c3bcf6ac75b47572f1cd620f76f48b72683d0dcbbdc19b6838d91b41c"
+  },
+  "your_app_4696a335": {
+    "text": "आपका एप्लिकेशन",
+    "source": "4696a33536d73ae60917e6cf5ed24e7399ff83b34ac5302c51be7f602819a7ce"
+  },
+  "change_failed_3c3e8bc5": {
+    "text": "बदलाव असफल",
+    "source": "3c3e8bc53be43064c7c9424638c7bf520cec9ce667e3b5e3bfced9005df30425"
+  },
+  "change_has_a_question_5e64654e": {
+    "text": "परिवर्तन एक सवाल है",
+    "source": "5e64654edae93f6a5a8dd3d5c133c7ff29f5d7f31f997bc33502dbab7b02336b"
+  },
+  "change_ready_to_try_542c811b": {
+    "text": "कोशिश करने के लिए तैयार परिवर्तन",
+    "source": "542c811b86312327f6eb2deab974db49fb691c7d382a8132a306abcb556d15f0"
+  },
+  "your_session_41aa2577": {
+    "text": "आपकी सत्र",
+    "source": "41aa2577deb77c3b6f29c6084872b40e769db97191a204e5b1b9b19da1598814"
+  },
+  "your_change_is_ready_to_try_ee2fdd6b": {
+    "text": "परिवर्तन की कोशिश करने के लिए तैयार है",
+    "source": "ee2fdd6b20c5ae55ce452bb45a507dfc080d2bda453b5c4903df18078adccc2d"
+  },
+  "your_change_stopped_i_said_why_in_our_chat_936317fb": {
+    "text": "आपका बदलाव बंद हो गया. मैंने कहा क्यों हमारे चैट में",
+    "source": "936317fb71101a19d822cdce74c0ffb0c1601b7eb213fb3026ebf7676c735740"
+  },
+  "i_couldn_t_finish_building_it_a_person_can_pick__a35e58e1": {
+    "text": "मैं इसे खत्म नहीं कर सकता. एक व्यक्ति इसे उठा सकता है",
+    "source": "a35e58e13316d16d043e03ed11840969563a597f29d8143ea169c3759a886b7d"
+  },
+  "i_can_t_build_it_as_written_tell_me_more_28fa7d68": {
+    "text": "मैं इसे लिखने के रूप में नहीं बना सकता. मुझे और बताओ",
+    "source": "28fa7d6814ffff9c03c761c4473d86d32be5c303fc1a724dd7ed76c5b17b5b6a"
+  },
+  "this_needs_a_person_to_decide_4e5121a6": {
+    "text": "यह निर्णय लेने के लिए एक व्यक्ति की जरूरत है",
+    "source": "4e5121a6fe69d5a98f5bc6209e66de61a6923e834d6b250d1af4bf088c76a2ca"
+  },
+  "i_couldn_t_find_anything_to_build_tell_me_more_11bf0b59": {
+    "text": "मैं कुछ भी नहीं ढूंढ सकता. मुझे और बताओ",
+    "source": "11bf0b599b7469f28354d4f1afa2768c39fb9bc28024f5724df165682dec352c"
+  },
+  "i_couldn_t_start_building_it_fb2999ea": {
+    "text": "मैं इसे बनाना शुरू नहीं कर सका",
+    "source": "fb2999ea853f8331b1a4ee1ea61df14bd8450fb1247539818a7854f8f38eb1db"
+  },
+  "the_preview_didn_t_start_i_m_trying_again_71bba4ed": {
+    "text": "प्रीव्यू शुरू नहीं हुआ. मैं फिर से कोशिश कर रहा हूँ",
+    "source": "71bba4ed0c8a1d4efb877755333df42dad3da330b22e61f35ad475a75a01ab6c"
+  },
+  "i_ve_paused_until_monday_7f2b450a": {
+    "text": "मैं सोमवार तक रुक गया।",
+    "source": "7f2b450ab449e687ad03c915216800487cf8d554d74f25f1ecb59eb1d56cffa3"
+  },
+  "your_change_is_live_53d55fa2": {
+    "text": "आपका बदलाव जीवित है",
+    "source": "53d55fa29612548f8f5fba0f7e1c12f598d57da0c7af1753cb9508329fdf94d6"
+  },
+  "your_project_is_live_e14f05ab": {
+    "text": "आपका प्रोजेक्ट जीवित है",
+    "source": "e14f05abc4706e72de9b8fd51c19f4f9e58684c322f587299c842c7fc25b2e41"
+  },
+  "your_change_is_going_live_484a98e1": {
+    "text": "आपका बदलाव जीवित रहेगा",
+    "source": "484a98e17ed17c0f35d1f65ea263da3fc76a5aa11a3fc2e9b8837e8edc1bf328"
+  },
+  "your_project_is_going_live_5c1cb0c8": {
+    "text": "आपका प्रोजेक्ट जीवित रहेगा",
+    "source": "5c1cb0c8fa05d335a8ea651b3da469133f69695a26e93503983770c76427fc2f"
+  },
+  "your_app_allowance_changed_a81daec7": {
+    "text": "आपका एप्लिकेशन अनुदान बदल गया है।",
+    "source": "a81daec7ffe98d40fb261b829f3e7a250531437618986d7293c0ca9b7952a679"
+  },
+  "you_requested_a_push_notification_test_open_aler_522c6129": {
+    "text": "आपने एक धक्का सूचना परीक्षण के लिए अनुरोध किया. Open Alerts सेटिंग्स फिर से कोशिश करने के लिए.",
+    "source": "522c61298b92a0f02bd9fb40e052b2155db62af49b21873ae33df03e24b4e909"
+  },
+  "mentioned_you_44c08b55": {
+    "text": "आपको बताया",
+    "source": "44c08b55164b0e8045379b23a3784356f3ce0109dda9141ee89e830c8a1c1cb3"
+  },
+  "replied_in_thread_f1f2b38d": {
+    "text": "Thread में जवाब",
+    "source": "f1f2b38daa292aa57889c6b5a6b965376fe444f0fe3cbc91d56d35bac69c9203"
+  },
+  "tried_to_delete_this_shared_app_2ced5ce6": {
+    "text": "इस साझा ऐप को हटाने का प्रयास करें",
+    "source": "2ced5ce63c3e5ec3467f37869a5808e15b9549118585f9cb7d8d825167bd67a6"
+  },
+  "deleted_a_shared_app_you_contributed_to_1bce0ac4": {
+    "text": "एक साझा ऐप को हटा दिया जिसे आपने योगदान दिया है",
+    "source": "1bce0ac46fac5ea42b61ec5aa5519485baba0a610d9c678234b4e3e20c14bf77"
+  },
+  "report_update_1cb4c806": {
+    "text": "रिपोर्ट अद्यतन",
+    "source": "1cb4c806f847eef1580ad33ce5625d149fdaba3bafaaad5f36f887605423a1a1"
+  },
+  "moderation_action_f9bb667d": {
+    "text": "मॉडरेशन कार्रवाई",
+    "source": "f9bb667d7c64e594340c28cffd9b8cc9d0ccc2d32d463c2f9aaab24d4942d095"
+  },
+  "your_app_allowance_is_unchanged_67a13413": {
+    "text": "आपका एप्लिकेशन अनुदान अपरिवर्तित है।",
+    "source": "67a1341357aae98e66a217101b16a1c3a3b99fd3fd292969049ac7543f0aaaf1"
+  },
+  "platform_limit_9118ac91": {
+    "text": "प्लेटफॉर्म सीमा",
+    "source": "9118ac91e69745494ada4130a83b1216725e8f69333eb3e9d40670b9797594b4"
+  },
+  "the_server_is_nearing_one_of_its_limits_5ff890cc": {
+    "text": "सर्वर अपनी सीमाओं में से एक के करीब है",
+    "source": "5ff890cc04c73a0a88c42f6b45246ef00bec66bf3db6493bd9b0bdcaceb1f69f"
+  },
+  "github_app_requests_2587118b": {
+    "text": "GitHub App अनुरोध",
+    "source": "2587118b087c9a95d897c39b5ce6c145a7755f60b5049dbaf1a531dfe65280d5"
+  },
+  "github_requests_8b9c565e": {
+    "text": "GitHub अनुरोध",
+    "source": "8b9c565e46d3fb2f9cd382863254e11baf219983c6ebfedbd551da96826cc1a6"
+  },
+  "it_resets_within_the_hour_4ff977a2": {
+    "text": "यह घंटे के भीतर फिर से शुरू होता है।",
+    "source": "4ff977a2c90245d795505f0022674db798a0f683f39d041998c50a92279e2f01"
+  },
+  "work_that_needs_github_fails_until_the_hour_rese_777e12c1": {
+    "text": "काम जिसे GitHub की आवश्यकता होती है, घंटे की पुनरावृत्ति तक विफल हो जाता है।",
+    "source": "777e12c16cb8a7d453ed31414b735305fb8ccff291f7eb49d0bbb6308774a7da"
+  },
+  "background_work_waits_so_people_s_work_keeps_the_602104b2": {
+    "text": "पृष्ठभूमि का काम इंतजार करता है ताकि लोगों का काम बाकी को बनाए रखे।",
+    "source": "602104b236ad4e16be1d22c495a7c1e9f40ce05a9ea570ab3cf25efd080f76b6"
+  },
+  "coding_sessions_e02d0758": {
+    "text": "कोडिंग सत्र",
+    "source": "e02d0758fd64b5e3bfd5a0efc1e90ecbc523f8ea14beb690be87d2dda8cc0901"
+  },
+  "new_apps_are_refused_until_the_app_limit_is_rais_99fa8843": {
+    "text": "नए ऐप्स को तब तक अस्वीकार कर दिया जाता है जब तक कि ऐप सीमा को एडमिन → सीमा में उठाया नहीं जाता है या ऐप को हटा दिया जाता है।",
+    "source": "99fa88434aa8e2ca20e70388abff2e986a963d912af5a204b576c964c713035c"
+  },
+  "raise_the_app_limit_in_admin_limits_before_new_a_02e3137b": {
+    "text": "एडमिन में एप्लिकेशन सीमा बढ़ाएं → नए एप्लिकेशन को अस्वीकार करने से पहले सीमाएं।",
+    "source": "02e3137bda4e799ace1dad76a9a1e11c9df9db2e1d9be33f0703e1d70d456289"
+  },
+  "new_sessions_pause_idle_ones_or_wait_until_max_g_6431c386": {
+    "text": "नई सत्रों को तोड़ दें, या प्रतीक्षा करें, जब तक कि MAX_GLOBAL_SESSIONS उठाया जाता है।",
+    "source": "6431c3869ebb72d42f270b248194d32e52f2cb4d6e4043ef9167f96fd2f8b1d6"
+  },
+  "at_the_limit_idle_sessions_are_paused_to_make_ro_e07f6365": {
+    "text": "सीमा पर, आईडीएल सत्रों को कमरे बनाने के लिए रोक दिया जाता है।",
+    "source": "e07f636591a6b46caeb5f640af4ed21c3cfcb44c3b5b693c7b5548f973ec5d1e"
+  },
+  "your_change_af7f8c29": {
+    "text": "आपकी बदलाव",
+    "source": "af7f8c29352df69119b6ad928163437a96e0e657489d9a2a1bb52b4321d9d725"
+  },
+  "needs_votes_05cc11b0": {
+    "text": "वोटों की जरूरत",
+    "source": "05cc11b0c4ba587c00fdd4095e910a95d7f5350c84d05cae0d83706cebb0853c"
+  },
+  "testing_couldn_t_run_814b8ad7": {
+    "text": "परीक्षण नहीं किया जा सकता",
+    "source": "814b8ad75528046d253ec0b608fa38b33b588ce089f943879d5cb95b8058d9e3"
+  },
+  "new_change_1e986694": {
+    "text": "नई बदलाव",
+    "source": "1e98669442c0d77703980b7abddf20da86081ca6d9e780026afcc2d3fc301f09"
+  },
+  "ready_to_try_5eff2e7b": {
+    "text": "कोशिश करने के लिए तैयार",
+    "source": "5eff2e7bbcbb296bb48877eccbd3d3337bf19b015abcc0e943c06851b05a1d9a"
+  },
+  "made_live_by_an_admin_840ae13d": {
+    "text": "एक admin द्वारा बनाया गया लाइव",
+    "source": "840ae13d3d42c5ab0860f342c3448f70c3d84b5be6f8c1486c79aaed165a8a51"
+  },
+  "voted_no_9dfd1ccc": {
+    "text": "वोट नहीं",
+    "source": "9dfd1ccc16ec2c9488835e19348f4615a5d5de271ed96480e86c760be8420071"
+  },
+  "voted_yes_3393ce52": {
+    "text": "वोट दिया हाँ",
+    "source": "3393ce52f5d0ada30ea98a7102a4b6721aefb9c6fca6de7e3de373b6b48b6393"
+  },
+  "still_good_4d975c76": {
+    "text": "अभी भी अच्छा?",
+    "source": "4d975c768ba3d18d3caad0e167e9dd375b056d84b802abe9c18fbd8d1ec67e1e"
+  },
+  "a_change_you_backed_5b160ef2": {
+    "text": "एक बदलाव जिसे आप समर्थन करते हैं",
+    "source": "5b160ef22d38576c0750456932ed3ca904ebb73583a5347ace2f35c1f85ae6a5"
+  },
+  "nothing_landed_this_week_871c4020": {
+    "text": "इस सप्ताह कुछ भी प्रकाशित नहीं किया गया है",
+    "source": "871c4020302976610855e33e6907cd690167726691b60d969b67ceb7dbd8519c"
+  },
+  "change_is_64647725": {
+    "text": "परिवर्तन है",
+    "source": "6464772572329bcab423b4f87fa79212bee6e4b4c42912d7aab81849d067dc3b"
+  },
+  "changes_are_a21803be": {
+    "text": "परिवर्तन हैं",
+    "source": "a21803be4c9c127d7d5aadcca1739c6a9961f97f21db9feeb246ef21a8c5aee6"
+  },
+  "the_app_ecf6410c": {
+    "text": "ऐप",
+    "source": "ecf6410c21e70b6249f59badba275ed326c3043ff2a39f08b88373ead8932dbc"
+  },
+  "new_request_5977ded3": {
+    "text": "नई मांग",
+    "source": "5977ded363b218084c538878f7d774389364b7178275cb951a193733df870a19"
+  },
+  "your_app_9c3728a7": {
+    "text": "आपका एप्लिकेशन",
+    "source": "9c3728a79757345b39efb2dfb111b06977f8afa689b6ceb7f97dcb5a7d6355e8"
+  },
+  "new_data_cannot_be_saved_until_an_admin_raises_i_605186e6": {
+    "text": "नए डेटा को तब तक संग्रहीत नहीं किया जा सकता जब तक कि एक व्यवस्थापक अपनी सीमा नहीं बढ़ाता है या समय को साफ करने की अनुमति नहीं देता है",
+    "source": "605186e6d3f244a0f7dba6ca222c2fb42d9c532b2008dfa6cfb981dd7cf27c29"
+  },
+  "an_update_did_not_go_live_ffae361e": {
+    "text": "एक अद्यतन जीवित नहीं चला गया",
+    "source": "ffae361e82113d1f29e64a24fc777dc03a4638b6164bdd7f5f2b699b2c4a7191"
+  },
+  "an_approved_change_has_not_gone_live_yet_4034302b": {
+    "text": "एक अनुमोदित परिवर्तन अभी तक जीवित नहीं हुआ है",
+    "source": "4034302bb9563f62fb26522dbe532cc57f33e5252ccff6ebdd202f0887d938b4"
+  },
+  "app_problem_4614a47f": {
+    "text": "App समस्याएं",
+    "source": "4614a47fc4cc068822b24570248d4039f20bbdeaa8924858ab1c7883cce382d7"
+  },
+  "something_needs_looking_at_b7adea75": {
+    "text": "कुछ देखने की जरूरत है",
+    "source": "b7adea7561314228eaeb80cef843cafa2618b5b17f24b3658710e9060110e9c6"
+  },
+  "waiting_for_your_approval_af7a94b9": {
+    "text": "आपके अनुमोदन का इंतजार",
+    "source": "af7a94b91a7493faa5d5226a2ddbb38b57df3d30f426deb82d9cd9c64547d122"
+  },
+  "shared_by_your_agent_0fcd7a76": {
+    "text": "आपके एजेंट द्वारा साझा किया गया",
+    "source": "0fcd7a76f4e82e8febdb24db95743a7d5c4c3d96dead350eb1c79f3fd6d1585c"
+  },
+  "submitted_by_your_agent_83c2df66": {
+    "text": "आपके एजेंट द्वारा प्रस्तुत",
+    "source": "83c2df6650e71ae86f2ad77cef9186b4eed0e67849419bc80a79ba784f8d3d76"
+  },
+  "claude_asked_you_something_e893e9f6": {
+    "text": "Claude आपको कुछ पूछता है",
+    "source": "e893e9f6b727d639ab57a021b8742f33fab958cd61caa4ea63e39a9fd43fdf77"
+  },
+  "session_finished_ad28fe4c": {
+    "text": "सत्र समाप्त",
+    "source": "ad28fe4ccd5dfdccdb62420d828a39601bb2671aba7522331e08774fb401d6eb"
+  },
+  "the_coding_agent_stopped_before_finishing_1d6ebdd4": {
+    "text": "कोडिंग एजेंट समाप्त होने से पहले रुक गया",
+    "source": "1d6ebdd43b141704b98dbd2fd2a61d6bad326378d47dffb9b7ee183d17af5335"
+  },
+  "spec_shared_6630a0ba": {
+    "text": "SPC साझा करें",
+    "source": "6630a0babb3b9d7075093fe1e307f9196f3eb1ce016997a56fc8aa9464296983"
+  },
+  "someone_opened_your_invite_05c4550f": {
+    "text": "किसी ने आपका निमंत्रण खोला",
+    "source": "05c4550fa7198da15648ca9259fc9cf5c102efa7f740f1411e34faa71d5f3a3b"
+  },
+  "invited_you_to_build_with_them_aade4739": {
+    "text": "उन्हें उनके साथ निर्माण करने के लिए आमंत्रित किया",
+    "source": "aade4739d58e756bbdb985ad8de99ac77fb126c58ad47314a26a26eca19e95d7"
+  },
+  "accepted_your_invite_c2ffd2e0": {
+    "text": "आपका निमंत्रण स्वीकार किया",
+    "source": "c2ffd2e0a5a489bab9baa1c8a2e998c3dba474b961f5ff85bf59b70d3e8ed923"
+  },
+  "asked_you_to_help_approve_changes_e6164b0a": {
+    "text": "परिवर्तनों को मंजूरी देने में मदद करने के लिए कहा गया है",
+    "source": "e6164b0a6419080401f96838bbce66750bb3d46f98df003fa6ad337a95a714e1"
+  },
+  "can_approve_changes_now_c60f3ce2": {
+    "text": "अब बदलाव स्वीकार कर सकते हैं",
+    "source": "c60f3ce200966403f95faa96de9af46a85011faa086f90da593240ebfccfef60"
+  },
+  "replied_to_you_8f4e90a9": {
+    "text": "तुम्हें जवाब दिया",
+    "source": "8f4e90a9456df3d33d4d3314dab9a1945f6fc845c5b698c020204d105bc9cf84"
+  },
+  "this_chat_c5a27d91": {
+    "text": "इस चैट",
+    "source": "c5a27d91fed8a24fb4a03a4646b855784cc0780ddc01d56b358d7a27f78b6fec"
+  },
+  "message_text_copied_1ff13082": {
+    "text": "संदेश पाठ कॉपी",
+    "source": "1ff13082060b3d91f8cb68c790727784cd0cabf521223039075028798beeffa8"
+  },
+  "link_copied_d12860c2": {
+    "text": "लिंक कॉपी करें",
+    "source": "d12860c21e78baa522ac743ecfbd77fb9cf4558e581e0e54afcace23b3ce1849"
+  },
+  "request_failed_value1_94dd9f90": {
+    "text": "अनुरोध विफल ({{value1}})",
+    "source": "94dd9f90831623b064f46ac55fbe00fde3c6a43e4b333f38eaaf1e8b690b2f63"
+  },
+  "you_can_t_add_value1_as_a_friend_right_now_eb405da3": {
+    "text": "आप अभी @{{value1}} को एक दोस्त के रूप में नहीं जोड़ सकते हैं।",
+    "source": "eb405da3026293efbdef0feeec509bc31e26789bbe624207813d22631464f3e5"
+  },
+  "cancel_your_friend_request_to_value1_12988df6": {
+    "text": "अपने दोस्त के अनुरोध को @{{value1}} पर रद्द करें?",
+    "source": "12988df6d6d90144c8ad410d375c4d8ddd49c406a145ed43d389f55c564bf4db"
+  },
+  "unfriend_value1_they_won_t_be_told_684fd621": {
+    "text": "@{{value1}}? उन्हें नहीं बताया जाएगा।",
+    "source": "684fd62190964d95257cc5ac7e30bdb7fbcda7ca80ca3d366f2c7a5634be3fa0"
+  },
+  "no_one_matches_value1_53847d98": {
+    "text": "कोई भी \"{{value1}}\" के साथ मैच नहीं करता है।",
+    "source": "53847d98abe6e818c3c1a27634ae0aca5f94c9fc54f280ad77f5a7eedf78dedc"
+  },
+  "request_failed_value1_966aa748": {
+    "text": "अनुरोध विफल ({{value1}}) है।",
+    "source": "966aa74899402597c0857361bac8d536a4e7e03ee23e9b87e9a673b168e90e24"
+  },
+  "global_chat_request_failed_value1_e9caa8da": {
+    "text": "वैश्विक चैट अनुरोध विफल हो गया ({{value1}}).",
+    "source": "e9caa8da57657368493b6c4d8148951b49246bb9343d04c9ee111f33908188f7"
+  },
+  "value1_sec_984d1397": {
+    "text": "{{value1}} सेकंड",
+    "source": "984d139743d44275d16ffc19455e1d838f156da446fc816b47b32809498f44c5"
+  },
+  "value1_min_af34cffe": {
+    "text": "{{value1}} मिनट",
+    "source": "af34cffefc46a288b18c74f328365ea4a48bb8582d9b3fbd1aaefd90101ad14f"
+  },
+  "value1_hr_0bb6d2b1": {
+    "text": "{{value1}} घंटे",
+    "source": "0bb6d2b1a991e47a520dbcec59a80cfbf82a2426d219450c3df23ecacc2cd494"
+  },
+  "about_value1_fd098734": {
+    "text": "के बारे में {{value1}}",
+    "source": "fd098734868bb53a6ce59f58c8c7b28bb35a865d7bad3fa75d345d39b2872c51"
+  },
+  "issues_for_value1_a827d432": {
+    "text": "{{value1}} के बारे में प्रश्न",
+    "source": "a827d432a777ae09c0f46a50928e81e31e9788f62dfa87f9428286432175fc71"
+  },
+  "discussions_in_value1_6df01c46": {
+    "text": "{{value1}} में चर्चा",
+    "source": "6df01c464f76ed4d7c5ad7c7ee2a51ad150dc24ce60a80c491d29c4122e6fd82"
+  },
+  "open_value1_839d6dee": {
+    "text": "खुले {{value1}}",
+    "source": "839d6deea6a76ef29639a4d6c49033675994c1403db287710415ae314aa71fd4"
+  },
+  "comments_on_value1_3f7fe57d": {
+    "text": "टिप्पणियाँ {{value1}}",
+    "source": "3f7fe57d834e4d99fce3dcdbf97c46abf71fa2c56d8c9a0007a2197f345bbdb4"
+  },
+  "before_after_for_value1_4ba43dff": {
+    "text": "{{value1}} के लिए पहले और बाद में",
+    "source": "4ba43dfffb16afe189c65c659e06a9d54a44feef83ed312ad774cfafa9bbb4df"
+  },
+  "details_for_value1_5d2ce814": {
+    "text": "{{value1}} के बारे में जानकारी",
+    "source": "5d2ce8141e684edf0474652ad0e23c01063ec9cc23c7f5593f2f36bc3f58105c"
+  },
+  "checks_for_value1_e09fee46": {
+    "text": "{{value1}} के लिए चेक",
+    "source": "e09fee46f3e731fc2ef6c575836f8fca0585ac5c92aa5bacdac68db3be53aa86"
+  },
+  "profile_for_value1_d58c2634": {
+    "text": "प्रोफ़ाइल के लिए {{value1}}",
+    "source": "d58c26348bfc51a2922e3335f94a8f19b16e731106f884c76306e45e4deea207"
+  },
+  "merged_work_by_value1_b36948e5": {
+    "text": "अनुच्छेद {{value1}} से जुड़े अन्य समाचार",
+    "source": "b36948e57ded10916c24b763b05cfeb358caade2cdac227ee7efd412cacf14f0"
+  },
+  "value1_proposal_value2_172b0788": {
+    "text": "{{value1}} (प्रस्ताव #{{value2}})",
+    "source": "172b07884cc1ced45cd109c422e5ee68aa05dfc7491d3a427ccf7722a2ef6b59"
+  },
+  "value1_development_value2_42e043b3": {
+    "text": "{{value1}} (विकास #{{value2}})",
+    "source": "42e043b3faccbd38977c61a37c521a5ed5117cb74012705186735819a137af8d"
+  },
+  "in_the_value1_settings_group_key_value2_value3_e57efdab": {
+    "text": "\"{{value1}}\" सेटिंग्स समूह में (कील: {{value2}}), {{value3}}।",
+    "source": "e57efdab9ed8b21c8533c98baa4fa71d492cd78954e4292b7384cca9ccfbd69a"
+  },
+  "action_failed_value1_661ab5fd": {
+    "text": "कार्रवाई विफल ({{value1}}) है।",
+    "source": "661ab5fdcf001ca8c70ce8e7fec13fd4bd726b7e78e702e30ca09db76eb3e8a1"
+  },
+  "upload_failed_value1_c5fcf184": {
+    "text": "अपलोड असफल ({{value1}})",
+    "source": "c5fcf1849ea8c5f149a92985b000282758c3a34cf7e7bfb055781ae7d340ecbd"
+  },
+  "usually_about_value1_minutes_91edc42f": {
+    "text": "आमतौर पर लगभग {{value1}} मिनट",
+    "source": "91edc42f9d3b1ca74149cd363402a9c52088b195c6fd52c2b5ff05a5489ef2bb"
+  },
+  "usually_value1_to_value2_minutes_181d281b": {
+    "text": "आमतौर पर {{value1}} से {{value2}} मिनट",
+    "source": "181d281b7ccd0835ce9037ece86ab521ac90742cc870bea0b9b0c1b16253db59"
+  },
+  "value1_request_value2_10a9ffd4": {
+    "text": "{{value1}} अनुरोध #{{value2}}",
+    "source": "10a9ffd411f8780ec8259b4f00172246eebc3fcf3b4e58d7e57457de4bc8871d"
+  },
+  "your_change_to_value1_is_ready_to_try_b8f36931": {
+    "text": "{{value1}} में अपना बदलाव करने के लिए तैयार है",
+    "source": "b8f3693173ef36f6ea8e1e79ac470f2cd3c6847d23617afe13014b662ca41828"
+  },
+  "value1_is_ready_to_try_98e09f89": {
+    "text": "{{value1}} के लिए तैयार है",
+    "source": "98e09f89a8fd9cfe81d96d2057fd17141c838c94914f4ddb6fc140c8a3df7875"
+  },
+  "value1_and_value2_f4780f76": {
+    "text": "{{value1}} और {{value2}}",
+    "source": "f4780f76354cc77c3f4da4f7dd8b2af692cb084537b16663ffb1c87fdde83f97"
+  },
+  "value1_more_90959ba4": {
+    "text": "{{value1}} से अधिक",
+    "source": "90959ba47ea5f977809398384271046b11bdfe4b9b2d127205820fcee0f79861"
+  },
+  "waiting_for_approval_from_value1_5424ba7c": {
+    "text": "{{value1}} से अनुमोदन का इंतजार",
+    "source": "5424ba7c01994e9a51435dbfeb88e839ec758f21794328d33edd8ae7fd3e3716"
+  },
+  "value1_first_version_4a4b9596": {
+    "text": "{{value1}} प्रथम संस्करण",
+    "source": "4a4b9596778260e12ad1a9a5783bcf78be3fcb8f93a18d768bec698e4e2137a7"
+  },
+  "asked_you_about_value1_ece021e7": {
+    "text": "{{value1}} के बारे में पूछें",
+    "source": "ece021e7224cbd3c80d5eea081bd9617e6996dbc1afa4710ccc9f3e001db657e"
+  },
+  "proposed_value1_6cf1f124": {
+    "text": "अनुच्छेद {{value1}}",
+    "source": "6cf1f124b1d696c81edfabaa32b5ad052ab714d80210ebe15815d6fd52cffbd7"
+  },
+  "value1_went_live_bae1c229": {
+    "text": "{{value1}} उपलब्ध हो गए हैं",
+    "source": "bae1c22919a41dacc32d00b0be74e3ac7fc85f5ba58f00ba4a226365bc7dc8c6"
+  },
+  "value1_s_proposal_was_closed_f49bf544": {
+    "text": "{{value1}} के प्रस्ताव को बंद कर दिया गया",
+    "source": "f49bf544ceccca23bf4df9c2b97c5610be7f2742223067dfa5951476d75962dc"
+  },
+  "couldn_t_build_value1_as_written_c3b76ce7": {
+    "text": "{{value1}} के रूप में नहीं बनाया जा सकता",
+    "source": "c3b76ce704a0a47b59c21eb2b35fcc2501fd1b034ed3fef7a61748ff947b1152"
+  },
+  "couldn_t_finish_building_value1_cd5d7f6c": {
+    "text": "इमारत खत्म नहीं हो पाई {{value1}}",
+    "source": "cd5d7f6cf1385e0d18559bd54ff65344d18af92142e7dea539ca980357b655da"
+  },
+  "left_value1_to_the_group_c43a5dde": {
+    "text": "समूह के लिए छोड़ दिया {{value1}}",
+    "source": "c43a5dde59a105424416e9633c7e29eaca652a737c99673bddccbddff3df892b"
+  },
+  "found_nothing_to_build_in_value1_22547337": {
+    "text": "{{value1}} में बनाने के लिए कुछ भी नहीं मिला",
+    "source": "225473372d81015b11ac5e4530632633c4e5b31b286a975f76be5e6362b2422e"
+  },
+  "couldn_t_finish_looking_at_value1_264cc956": {
+    "text": "{{value1}} पर नजर नहीं आ रही थी।",
+    "source": "264cc956fb0e9c7814d397e00c55175b3d48819c2c550d71242abd84f810d0bd"
+  },
+  "held_value1_back_for_now_18e4631c": {
+    "text": "अब के लिए {{value1}} वापस",
+    "source": "18e4631c18fed5bf14302e98059a704e241072415cdf813dc0f8f08dbf8873c3"
+  },
+  "stopped_on_value1_e50a5446": {
+    "text": "{{value1}} में रुक गया।",
+    "source": "e50a5446d159c24d824208b4a55fb597d354544c2b1df95f3cc74b2274de6033"
+  },
+  "answered_on_value1_e0b40710": {
+    "text": "{{value1}} में जवाब दिया गया।",
+    "source": "e0b407104de66823ca15442e919a9b837980c7c409cd020fbc29d48bcb435b80"
+  },
+  "changed_value1_s_proposal_03f92f9f": {
+    "text": "{{value1}} के प्रस्ताव में बदलाव",
+    "source": "03f92f9fa358920a8c612e63e7b67b99ba9f2e8d338f4814ec2727e0ad6f4291"
+  },
+  "working_on_value1_e874ddad": {
+    "text": "{{value1}} पर काम करता है",
+    "source": "e874ddadf19c830cc760aac0c52039830d621391bc7a831de8e1c43d7ec48a08"
+  },
+  "value1_queued_a4991001": {
+    "text": "{{value1}} कोलकाता",
+    "source": "a49910019ee13041f5c104ff90c84563c47ba5111a629d5a1e50ff3b407b96c3"
+  },
+  "working_on_value1_value2_value3_5573966a": {
+    "text": "पर काम करता है {{value1}} · {{value2}}{{value3}}",
+    "source": "5573966a0330ce3363d7f1d3988882c9829097a0948cbf3fdebd905ddc08d316"
+  },
+  "working_on_value1_requests_value2_1172d03f": {
+    "text": "{{value1}} अनुरोधों पर काम करते हैं{{value2}}",
+    "source": "1172d03ff47e4bd42c496111951d1048d219082559e2e7dd5863a8e7cfb8e452"
+  },
+  "value1_needs_you_a1e7084a": {
+    "text": "{{value1}} आप की जरूरत है",
+    "source": "a1e7084a5e698a46eb97c392f1aa21b8f8901efa0807fd89712e36c0eb9deba8"
+  },
+  "value1_requests_need_you_e1d1c808": {
+    "text": "{{value1}} अनुरोधों की जरूरत है",
+    "source": "e1d1c8088a5498d35ef2827856fa4cad282d583deb06e2d14e1f09e7f2bdce6c"
+  },
+  "value1_need_you_efe77087": {
+    "text": "{{value1}} आप की जरूरत है",
+    "source": "efe77087d63479190cacfc8855e442d8458e641d8cedfd5995b338f51f29c745"
+  },
+  "last_value1_value2_0ac69961": {
+    "text": "अंतिम: {{value1}}{{value2}}",
+    "source": "0ac699617fe6815100ed6ad4e9443025aafa944a5149de371126b93934363e66"
+  },
+  "value1_issue_value2_6d99f50b": {
+    "text": "{{value1}}महाराज #{{value2}}",
+    "source": "6d99f50be666b885cf6d35c221831084cceb5408f2bba9dcd1ed3355237c78bf"
+  },
+  "value1_governance_value2_73d81693": {
+    "text": "{{value1}}सरकार #{{value2}}",
+    "source": "73d81693a261eae99f3abfcd4e481093f09884a9cb4941d4e7773b20d45e66b4"
+  },
+  "value1_spec_v_value2_session_value3_996d74b1": {
+    "text": "{{value1}}Spec v{{value2}} · सत्र {{value3}}",
+    "source": "996d74b102d86780b7f0d3c07d8482307de35b5058e4a72690395b20b28d98da"
+  },
+  "value1_proposal_value2_057953b2": {
+    "text": "{{value1}}प्रस्ताव {{value2}}",
+    "source": "057953b238ca2bfbb6b67c6bcc8c99077c81b571811a452a65ca601e35a63242"
+  },
+  "by_value1_227ec51b": {
+    "text": "द्वारा {{value1}}",
+    "source": "227ec51b7d71317e54c83e3a752375b0f303a0197a7fe97461dc6b2413dcc9f4"
+  },
+  "value1_kb_75f92af0": {
+    "text": "{{value1}} KB",
+    "source": "75f92af07bbc9708fd27fe52687fb40191d4bc61c533a5d2d45a7b8f1fa74f51"
+  },
+  "value1_mb_36c9af23": {
+    "text": "{{value1}} एमबी",
+    "source": "36c9af2361ca1150d366ae1dd0f324080e3144af6267d07392f6cc74757db7d1"
+  },
+  "the_homeroom_community_s_channel_value1_0696bbfa": {
+    "text": "Homeroom समुदाय का चैनल · {{value1}}",
+    "source": "0696bbfa32f2f2e14174f06340bd9db4393a4bb7540d651f3c407296bf99abeb"
+  },
+  "pr_value1_e1d02dd7": {
+    "text": "पीएचडी #{{value1}}",
+    "source": "e1d02dd73cc1b8e031a5cb7ed1bd1e8565fecebd5fabb549cb67dccf86ea5004"
+  },
+  "value1_discussion_72914a0c": {
+    "text": "#{{value1}} · चर्चा",
+    "source": "72914a0c6141aa9a18bcca45a8131ace2d5a8fad49d7fbe668494c25e23f3fb3"
+  },
+  "you_can_t_post_in_the_value1_discussion_911b4d43": {
+    "text": "आप {{value1}} चर्चा में पोस्ट नहीं कर सकते हैं।",
+    "source": "911b4d4338bc2af9f003e970f6981028fa31d443ab2909c9e7e0452d8fe7f9cc"
+  },
+  "messages_value1_02f1281f": {
+    "text": "↑ #Messages/{{value1}}(? / काउंटी$)",
+    "source": "02f1281fc8c14d957e26c4d861f2daf05c294d45921fa755cd4f9fd30bc94b80"
+  },
+  "by_value1_363778f7": {
+    "text": "द्वारा @{{value1}}",
+    "source": "363778f7384cd4e264593302776bc396ee7d91dc0d5095a3aed877112710e730"
+  },
+  "request_value1_06eaf7b2": {
+    "text": "पदों की संख्या #{{value1}}",
+    "source": "06eaf7b2829e8afe08139d59548b9f80bee8aa8b6d4ef31e5e3d906ef4fc2e28"
+  },
+  "the_change_for_value1_in_value2_failed_you_can_r_89e9dcf5": {
+    "text": "{{value1}} में {{value2}} के लिए परिवर्तन विफल रहा. आप वापस कर सकते हैं",
+    "source": "89e9dcf5495c73b3e27e92f2915c375e331893d1a91bb1ee1b25c94a01c0827b"
+  },
+  "the_change_for_value1_in_value2_is_waiting_for_y_b77a0e0e": {
+    "text": "{{value1}} में {{value2}} के लिए परिवर्तन आपके इनपुट का इंतजार कर रहा है",
+    "source": "b77a0e0e55f783ea2e0308bbe7437c69b0ea398ca3f7f729452e17a3a56a9c48"
+  },
+  "the_change_for_value1_in_value2_is_ready_e1116378": {
+    "text": "{{value1}} में {{value2}} के लिए परिवर्तन तैयार है",
+    "source": "e1116378261eead882f03447fea9adab05c037b7890d15a62c9b4f75d3400298"
+  },
+  "your_session_on_value1_stopped_before_finishing__bfc0084e": {
+    "text": "{{value1}} पर आपका सत्र समाप्त होने से पहले बंद हो गया. इसे जारी रखने के लिए खोलें",
+    "source": "bfc0084ee14760d70905228ed7585d4194588344bc7a8a927c94bef766db36c9"
+  },
+  "the_coding_agent_finished_on_value1_value2_100dc6c6": {
+    "text": "कोडिंग एजेंट {{value1}} पर समाप्त हो गया: {{value2}}",
+    "source": "100dc6c67f0c66e36c6e17cc183027543644b312e12c52e9f3d9aa454c5ed2d3"
+  },
+  "your_agent_session_in_value1_finished_value2_85593f19": {
+    "text": "आपका एजेंट सत्र {{value1}} में समाप्त हो गया: {{value2}}",
+    "source": "85593f19a13fed16a06d04fd10b75bca100d722efb20cdf2c91acfc33d68aa8e"
+  },
+  "value1_i_have_a_question_48892b88": {
+    "text": "{{value1}}: मेरे पास एक सवाल है",
+    "source": "48892b88103deffaa9efbcae5a4cfea8592b746a6c89098b9fe643d2b8a6d736"
+  },
+  "value1_your_change_stopped_i_said_why_in_our_cha_00b0b83f": {
+    "text": "{{value1}}: आपका परिवर्तन बंद हो गया. मैंने कहा क्यों हमारे चैट में",
+    "source": "00b0b83fb6daa928d8930b420d5d6d2d10c7bc1810e9073f7d7638a71f293b00"
+  },
+  "value1_i_couldn_t_finish_building_it_a_person_ca_2e6a09a2": {
+    "text": "{{value1}}: मैं इसे खत्म नहीं कर सकता. एक व्यक्ति इसे उठा सकता है",
+    "source": "2e6a09a2931c7b933a53b6eda0ecd5d32eb915f0c362f6ff15fa45e4f80cbd29"
+  },
+  "value1_i_can_t_build_it_as_written_tell_me_more_95d1e8ac": {
+    "text": "{{value1}}: मैं इसे लिखित रूप में नहीं बना सकता. मुझे और बताओ",
+    "source": "95d1e8ace7edf438d192e6bdd7b021273e071cfcc00999c420cf3a67a9ab0b67"
+  },
+  "value1_this_needs_a_person_to_decide_b9b710b5": {
+    "text": "{{value1}}: यह निर्णय करने के लिए एक व्यक्ति की आवश्यकता है",
+    "source": "b9b710b5da17c137abb5de7f9874e294bb6b8599d6a561a1453a4f1d61916118"
+  },
+  "value1_i_couldn_t_find_anything_to_build_tell_me_0a676ecc": {
+    "text": "{{value1}}: मुझे बनाने के लिए कुछ भी नहीं मिला. मुझे और बताओ",
+    "source": "0a676ecca98d89e08a9d3d6957b612f78053b46c4df4b42caad19580f3639609"
+  },
+  "value1_i_couldn_t_start_building_it_you_can_stil_af93c980": {
+    "text": "{{value1}}: मैं इसे शुरू नहीं कर सकता. आप अभी भी एक अनुरोध पोस्ट कर सकते हैं",
+    "source": "af93c980d04483152d0de09ba4908db2cf109b02d0d70e653456cd168e0bbeba"
+  },
+  "value1_the_preview_didn_t_start_i_m_trying_again_4741741e": {
+    "text": "{{value1}}: पूर्वावलोकन शुरू नहीं हुआ. मैं फिर से कोशिश कर रहा हूं",
+    "source": "4741741ee200a3c28b822a68ae22b41e693d1ddb35b5f362ba05ac89c133078e"
+  },
+  "value1_i_ll_start_it_on_monday_e8e25143": {
+    "text": "{{value1}}: मैं इसे सोमवार को शुरू करूंगा",
+    "source": "e8e25143a439debc12abb6638182a11624e2c5195646befb3d8438d07b11efc4"
+  },
+  "your_change_to_value1_is_live_16fbd06c": {
+    "text": "{{value1}} के लिए आपका परिवर्तन लाइव है",
+    "source": "16fbd06cc48ba51c4339cf9120abf434c7fc7a6fd034e8c6fe682c05a8d8b96e"
+  },
+  "value1_is_live_558192c9": {
+    "text": "{{value1}} में रहते हैं",
+    "source": "558192c9f69fa6482df07447942eb11fb4c059832bc6c8fe3a1762498a309239"
+  },
+  "your_change_to_value1_is_going_live_9b8b6646": {
+    "text": "{{value1}} के लिए आपका बदलाव जीवित रहेगा",
+    "source": "9b8b6646047b21883b853322450cd4f7a0a54a2179895d5772b578e4d27025c4"
+  },
+  "value1_is_going_live_de7bd855": {
+    "text": "{{value1}} में रहते हैं",
+    "source": "de7bd855b86c97fbd36bf64399fc8020844744e144a78a18085b0618de2d321f"
+  },
+  "your_app_allowance_went_up_from_value1_to_value2_779de90d": {
+    "text": "आपका एप्लिकेशन अनुदान {{value1}} से {{value2}} तक बढ़ गया।",
+    "source": "779de90db76f8eff0ec14ef217530a6fa28a271beeff2673e62e774f37bc2978"
+  },
+  "your_app_allowance_went_down_from_value1_to_valu_f008109e": {
+    "text": "आपके एप्लिकेशन अनुदान {{value1}} से {{value2}} तक गिर गया।",
+    "source": "f008109ec4f0fc49f620a373c558261b16d74a9420cdcecb51a280162ad00189"
+  },
+  "your_app_allowance_is_value1_ecc75ef9": {
+    "text": "आपका एप्लिकेशन अनुदान {{value1}} है।",
+    "source": "ecc75ef9d832fbb3bbcb529af429b45c1581836c1012f4d93da42656fdc04744"
+  },
+  "value1_of_value2_value3_used_this_hour_9168976c": {
+    "text": "{{value1}} में से {{value2}} {{value3}} इस घंटे का उपयोग किया गया।",
+    "source": "9168976cff916a9e072247f43ad244c284b8e5a7c1417c24ea7618c9af761c03"
+  },
+  "value1_of_value2_value3_in_use_89607a08": {
+    "text": "{{value1}} में से {{value2}} {{value3}} का उपयोग किया जाता है।",
+    "source": "89607a0886068196674a902419dca26fe0c2380ca74cba59b0ce6b6bb651cd10"
+  },
+  "value1_value2_waiting_for_approval_0fbf5eaf": {
+    "text": "{{value1}} {{value2}} अनुमोदन के लिए इंतजार",
+    "source": "0fbf5eaf659e3ea6a88bd0b77f56da5c46238c9d3c4cf80059023caab7d8993d"
+  },
+  "this_week_on_value1_bc004b3e": {
+    "text": "इस सप्ताह पर {{value1}}",
+    "source": "bc004b3e578446c9708badd13eb32b9de1a59f976c94f57115302d287bc0b4b4"
+  },
+  "value1_has_used_most_of_its_storage_2a7e3ce1": {
+    "text": "{{value1}} ने अपने भंडारण का अधिकांश उपयोग किया है",
+    "source": "2a7e3ce1381c033fbbc4920f3a6b48a0dd8c716d28d07870d980bb671e565fd0"
+  },
+  "value1_is_out_of_storage_bacc60c7": {
+    "text": "{{value1}} भंडारण से बाहर है।",
+    "source": "bacc60c71a6e0a1c55ab7e4d8b0fa0f1d2865584a0a708dc814095969106b9e5"
+  },
+  "value1_changes_d3f1e65e": {
+    "text": "{{value1}} बदलाव",
+    "source": "d3f1e65e1a1ea78fedaebd76ffa62bcd694e11d653cd6bce14515e290871915a"
+  },
+  "with_value1_value2_79e2a0a3": {
+    "text": ", के साथ {{value1}} {{value2}}",
+    "source": "79e2a0a3875b378abfb2d3c8d3ba455227acd41369fafedb3900c45cec7d3dbc"
+  },
+  "value1_people_opened_your_invite_a359cb14": {
+    "text": "{{value1}} लोगों ने आपका निमंत्रण खोला",
+    "source": "a359cb1436d67e85f9d02e9e8b443abcd91e4a9d1af743ab15634238ee58d4e1"
+  },
+  "joined_through_your_invite_value1_5a6fee92": {
+    "text": "अपने निमंत्रण के माध्यम से शामिल हों{{value1}}",
+    "source": "5a6fee92a4d51f19a270e69f4e53fcbc8cbb4b26c78d560c72f27ce3971d2d06"
+  },
+  "said_hi_value1_93b7ebba": {
+    "text": "कहा गया है {{value1}}",
+    "source": "93b7ebba1fbe6ae00d40298840d4e0faccc9be2e8c438d98d0c2c2bb8600a1ba"
+  },
+  "request_59f03d64": {
+    "text": "अनुरोध",
+    "source": "59f03d642b41e22f4575061e817f9e87c3ced5a0e77d5c92364bd45b7f90d0c9"
+  },
+  "proposal_5d42766c": {
+    "text": "प्रस्ताव",
+    "source": "5d42766c7ecac46c344f7ed2f8940a0054b00641cb56876ceb30c9eab50159b0"
+  },
+  "development_21b6a798": {
+    "text": "विकास",
+    "source": "21b6a798321a49f75b9c3827fa3cfdb7efe2c4e05c3d13aefe1c825b9774a158"
+  },
+  "notification_7d31b833": {
+    "text": "सूचना",
+    "source": "7d31b83313991d4c969b95ff28385ff891514dbe7a93c93c5db8145ad031420f"
+  },
+  "profile_d696a35b": {
+    "text": "प्रोफ़ाइल",
+    "source": "d696a35bdd1883da07a8d6c41bb7a3153381b23aa197629ee273479a6eaa5a9c"
+  },
+  "leaderboard_31b47121": {
+    "text": "लीडरबोर्ड",
+    "source": "31b471215872634299bc844f90c0493a24f6db1f00dca395175da335c4c0ca1d"
+  },
+  "challenge_27cf1792": {
+    "text": "चुनौती",
+    "source": "27cf1792f7bb4da955117bb4a15cb33f4e4705984cacfac9055a2884b061e4e1"
+  },
+  "wallet_d1c9a01d": {
+    "text": "बटुए",
+    "source": "d1c9a01d57e900867b70369511eea3c3cc47536e8953bc4818d5f465252dd6be"
+  },
+  "staking_5190ff48": {
+    "text": "हड़ताल",
+    "source": "5190ff487713fdbbb8d5e6241ee505a1272af85fd5e8b640aa6ff32911133035"
+  },
+  "setting_818cd8d9": {
+    "text": "सेटअप",
+    "source": "818cd8d91aea3a1689455f009f49e87fe7fa647fa2c4b9f09072dd1c33d52ca5"
+  },
+  "admin_c1c224b0": {
+    "text": "एडमैन",
+    "source": "c1c224b03cd9bc7b6a86d77f5dace40191766c485cd55dc48caf9ac873335d6f"
+  },
+  "result_6e7d50e8": {
+    "text": "परिणाम",
+    "source": "6e7d50e84f4731ef74187cf8cfa2672184eed8866b0b0074a772f4a64e0f4ba2"
+  },
+  "form_2e0e960a": {
+    "text": "फॉर्म",
+    "source": "2e0e960ab3204127b1dce399c9984c81f52a79f4d85cb0c3afddcfcfe8a2b48c"
+  },
+  "results_219c4a6c": {
+    "text": "परिणाम",
+    "source": "219c4a6c86a716e99d5dc9611b61e584deb11b57e972d87d4b773387ebc3cadd"
+  },
+  "confirmation_d7430705": {
+    "text": "पुष्टि",
+    "source": "d743070540a1268e32cc405c1d735593fdcd5349939773c0d64f197f4b762756"
+  },
+  "yes_85a39ab3": {
+    "text": "हाँ",
+    "source": "85a39ab345d672ff8ca9b9c6876f3adcacf45ee7c1e2dbd2408fd338bd55e07e"
+  },
+  "no_1ea442a1": {
+    "text": "नहीं",
+    "source": "1ea442a134b2a184bd5d40104401f2a37fbc09ccf3f4bc9da161c6099be3691d"
+  },
+  "details_45989de4": {
+    "text": "विवरण",
+    "source": "45989de49fb7f66dfe17a8fc26f3a02c7abcd74f7e8e6cf9f39fa0e3775780df"
+  },
+  "issues_666067dd": {
+    "text": "मुद्दे",
+    "source": "666067dd376e5d4553b8fd554f855855819ad213ae825022d2a32dfa28431115"
+  },
+  "discussions_60157cfc": {
+    "text": "बहस",
+    "source": "60157cfcfe3f31c32f2c6394ad10f941a4b32c0be68151d35054c9230295fbc6"
+  },
+  "comments_355f79f2": {
+    "text": "टिप्पणियाँ",
+    "source": "355f79f29d7d3c2df917ad07f7441e3ce4b0ac48892b778076dbdca401851712"
+  },
+  "checks_de07d072": {
+    "text": "चेक",
+    "source": "de07d07209556c79b9ebb275d801fb2074d1460474841a5d9d8b0475d01dc826"
+  },
+  "view_dcc839a4": {
+    "text": "दृष्टि",
+    "source": "dcc839a4015c4b7dd9db959a8f757833b8adb92462a751b973386e453c6d58a3"
+  },
+  "read_9b9a8d05": {
+    "text": "पढ़ना",
+    "source": "9b9a8d05a7ec353bda84f9c1bb3178c299de3001b5e970508ddc889c487f92ca"
+  },
+  "phase_46342ec1": {
+    "text": "चरण",
+    "source": "46342ec1eec9d78dd13d15f0e035d625a9b357b3493f8c2baef668633194852c"
+  },
+  "members_1044a4c0": {
+    "text": "सदस्यों",
+    "source": "1044a4c056d0d685bf4f09174d2bc136137765d62916779fadcacf006a99ffac"
+  },
+  "from_21819769": {
+    "text": "से",
+    "source": "218197693424e0154cefc0af31aed96c084b987e08136e91d5528ddbb5461e24"
+  },
+  "kudos_51483eb0": {
+    "text": "कोड्स",
+    "source": "51483eb0b6d593009a02ce75240e6d94327c29cd0934297fce4025e12128ced0"
+  },
+  "merged_bd0a0620": {
+    "text": "चले गए",
+    "source": "bd0a06202c440a9ee86f50165aa66886259d89c3d219e2ef47a759cde6a38c00"
+  },
+  "reasoning_d8211e24": {
+    "text": "तर्क",
+    "source": "d8211e24e83d1600a1b0cfe2f7baa68e4d4eb71131a0b2b1b2050cba111ea481"
+  },
+  "enabled_92c1cdfd": {
+    "text": "सक्षम",
+    "source": "92c1cdfdf4cb9cf6fcca962f206de36fd5d60db1178bc9461052f8de703a0e06"
+  },
+  "backend_2fb4019a": {
+    "text": "बैकएंड",
+    "source": "2fb4019a35e427e8d595c79fe996407a01031a9e00ed0a7d174bfb1a0e455b90"
+  },
+  "ended_7cdc804e": {
+    "text": "समाप्त",
+    "source": "7cdc804e6996997d599232fbf8ce066a4f6c0696e7b586fc7b3ee499f35d4559"
+  },
+  "change_c0bf75bd": {
+    "text": "बदलाव",
+    "source": "c0bf75bd78bf9572596720d596bd5a20a5b9145cde0fe50dec1e783cb184d69b"
+  },
+  "discussion_5eb6cf64": {
+    "text": "चर्चा",
+    "source": "5eb6cf647d2c5d14a044e2d103dcef4cf0cdc872434c374debc1043092bc4746"
+  },
+  "chats_ef5b4049": {
+    "text": "चैट",
+    "source": "ef5b4049bb367b05531fa2c2982dbc5b710c3dde724d9a2683747c1da9b61eac"
+  },
+  "someone_864c855e": {
+    "text": "किसी को",
+    "source": "864c855e3d64399dc06fa30ebb75526c2c2e73db7216b16a3d4cf03e8a52ec3b"
+  },
+  "yesterday_56618125": {
+    "text": "कल",
+    "source": "566181254b293aa66653e43313be9e39c12d44f9ac4fcd3236ef1e9c50a2903f"
+  },
+  "live_b64ac05f": {
+    "text": "लाइव",
+    "source": "b64ac05f17e64d037db81a98f51e2688216e292ae9748f979f04dfbac49fd7fc"
+  },
+  "spec_9bdc1337": {
+    "text": "स्पेक",
+    "source": "9bdc1337d7016d5825e164ca3a90ad5cb013b39396a1a1ee6324f8dc5ed6a1ee"
+  },
+  "item_652bcc3a": {
+    "text": "आइटम",
+    "source": "652bcc3a478428893cc505ae19f847b49be52f861bedc64bb192ceed409fa733"
+  },
+  "you_08b04193": {
+    "text": "आप",
+    "source": "08b041935798fbf6fd6ff51099ffedb140a475889986d14f5559ff8e7fc571dd"
+  },
+  "channel_ce4683e7": {
+    "text": "चैनल",
+    "source": "ce4683e7013a18cdf3d224bfcb4e9594ea8f559e946a837c633defe7d3c32172"
+  },
+  "invite_1fd9ae16": {
+    "text": "आमंत्रण",
+    "source": "1fd9ae1607aa3d804ef494984ed57aa79b6d3553962c76f6c8f5fa0a4dde04b7"
+  },
+  "replied_1cd7fa93": {
+    "text": "जवाब",
+    "source": "1cd7fa936258e09c42cb5ae2e6aff298ae3e75ea55fbbcb7960f21a998877e4e"
+  },
+  "reacted_964ec337": {
+    "text": "प्रतिक्रिया",
+    "source": "964ec337d1f2ab5dd086268f886f93797631dac767482a3de5fafaa0494d7473"
+  },
+  "friends_bd104d1b": {
+    "text": "दोस्तों",
+    "source": "bd104d1b98d032274986497eeb7997c44a1d674b29140e43cd525d33468ecb6e"
+  },
+  "account_7e1b0d56": {
+    "text": "खाता",
+    "source": "7e1b0d5641f2640ce9a953ec231eea2c27a2a7633f7d3c273e5735e2b30c10b7"
+  },
+  "posted_afd80c5a": {
+    "text": "प्रकाशित",
+    "source": "afd80c5a1b84c378544290379f7195d17d994e3a6e30675372c6dc58446e0614"
+  },
+  "agents_279b44d2": {
+    "text": "एजेंट",
+    "source": "279b44d2ab4b40c0fc132f8f3051293544cca91de9c8aa14f2cd29adb132b0ee"
+  },
+  "message_c5a27d91fed8": {
+    "text": "इस चैट",
+    "source": "c5a27d91fed8a24fb4a03a4646b855784cc0780ddc01d56b358d7a27f78b6fec"
+  },
+  "message_d9298a10d1b0": {
+    "text": "अन्य",
+    "source": "d9298a10d1b0735837dc4bd85dac641b0f3cef27a47e5d53a54f2f3f5b2fcffa"
+  },
+  "message_01db91d06032": {
+    "text": "अन्य",
+    "source": "01db91d06032cc64162c16f8e35725b0e632beebdde8b2c2459979d04fb1e20c"
+  },
+  "message_ad9c1065bfc3": {
+    "text": "@{{username}} मिलता है",
+    "source": "ad9c1065bfc35da4492868a14190d1a27813de68620fb0beac28e54015e182f7"
+  },
+  "i_have_a_question": {
+    "text": "एक सवाल है",
+    "source": "2cfcf9ff2690c3b6e91d44d16605503d31b54ca397b5134abdaa4a5110b35d58"
+  },
+  "count_need_you_3260b3bd_one": {
+    "text": "{{count}} आपको जरूरत है",
+    "source": "0650f25903274d88bca076b382f88d3ad911dd3f0e4de1628eb992c23deb6484"
+  },
+  "count_need_you_3260b3bd_other": {
+    "text": "{{count}} आपको जरूरत है",
+    "source": "3260b3bd04b31abc14910b7243d28c141ae3cdf4e544c018b9bb6d43a8724d3f"
+  },
+  "group_count_members_856a71f4_one": {
+    "text": "समूह · {{count}} सदस्य",
+    "source": "4d0f536f5bfbf96be7b016108e70547c8fb3e0ae2ecba9f6b2f8a2dfc0bdb4eb"
+  },
+  "group_count_members_856a71f4_other": {
+    "text": "समूह · {{count}} सदस्य",
+    "source": "856a71f47e1bbb80580146595612815e3f9a0b6d76d6d9f2037b8f303b0e6b0e"
+  },
+  "count_app_slots_b7d271fe_one": {
+    "text": "{{count}} एप्लिकेशन के लिए उपलब्ध स्थान",
+    "source": "1a6494aa599985c7bf1acfb08784889d1ba81adebc4da702557178b5169b9b60"
+  },
+  "count_app_slots_b7d271fe_other": {
+    "text": "{{count}} ऐप्स के लिए उपलब्ध स्थान",
+    "source": "b7d271fed799e3a56b3cfbdaaebd54a490c14dabb5dcc96765233c9ac5f4883b"
+  },
+  "count_changes_went_live_a73051dc_one": {
+    "text": "पदों की संख्या: {{count}}",
+    "source": "74865062f18013140e8c94e97170308f6ee6be3d3e3ff13b6aba861141f4bea3"
+  },
+  "count_changes_went_live_a73051dc_other": {
+    "text": "पदों की संख्या: {{count}}",
+    "source": "a73051dc7ee77282dc6ccc3cb05b26ed779fbdc66972c091973e1f4799635fa6"
+  },
+  "members_count_one": {
+    "text": "{{value1}} सदस्य",
+    "source": "e834a56abc83b979640f002ccccfd77ecf9f100045352e84e97a6909eb00a33a"
+  },
+  "members_count_other": {
+    "text": "{{value1}} सदस्य",
+    "source": "bd8bd923627091d1080fddbbab012ee2ee9ade3e6d861e22935542005abdf865"
+  },
+  "message_409f67f96459_one": {
+    "text": "{{value1}} पिछला निष्पादन",
+    "source": "84720f60e421b942fd0af44ce4f647defc2f319b68b73dbf2187fb87beade4c8"
+  },
+  "message_409f67f96459_other": {
+    "text": "{{value1}} पिछले निष्पादन",
+    "source": "dcb3f1967fcf1d7b4a252502651f976e59fb0a37b805b059dc78b88f6eb9cafa"
+  },
+  "message_aea4cec7f85d_one": {
+    "text": "{{value1}} अधिक कार्ड दिखाएं",
+    "source": "f2030173be4f87d5d91115bd9bc4bf7c4d778a5f8964f2963aa0ca39dd56915d"
+  },
+  "message_aea4cec7f85d_other": {
+    "text": "{{value1}} और अधिक कार्ड दिखाएं",
+    "source": "e5f7eb1846c8a68b0481224bbbb283b94d7e24c8661f4dfcca8a98d3a7d86329"
+  },
+  "message_022310188e11_one": {
+    "text": "प्रदर्शित करें {{value1}} अतिरिक्त आमंत्रण",
+    "source": "c5670620d4c391d915d5189b36530482cb5ba5b2c0721b7839d595a3f164527c"
+  },
+  "message_022310188e11_other": {
+    "text": "{{value1}} अतिरिक्त निमंत्रण",
+    "source": "ef3783a48a3e693e58623f4d587f3fac17454e339ca8143b8a2899921106329b"
+  }
+}
