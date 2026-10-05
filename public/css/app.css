@@ -3562,6 +3562,24 @@ html[data-browser-scroller^="auth-"] body :is(
   inset: auto;
   min-height: calc(100dvh - var(--browser-banner-h));
 }
+/* THE STORY'S FOOT CLEARS SAFARI'S TOOLBAR (iPhone 17 simulator, iOS 26
+   Safari, 5 October 2026). "Already have an account? Sign in" under Get
+   started sat behind Safari's bottom toolbar. In a phone browser the landing
+   is the paged document, and Safari 26 draws the page on under its floating
+   toolbar: a fixed box ends above the toolbar (the small viewport), the
+   document runs on beneath it. The page's foot reserved the home indicator
+   (`.platform-safe-scroll`) and 34px of air, and Safari reports no inset for
+   its own toolbar, so the last line could never be scrolled out from under
+   it. `100lvh - 100svh` is that toolbar: the page with it tucked away less
+   the page with it shown (about 98px on an iPhone 17; 0 where no toolbar
+   comes and goes). Reserved under the story's own foot, the end of the page
+   now scrolls clear of the toolbar shown, and of the slimmer bar Safari
+   tucks it into. iOS only: there the toolbar is at the foot. In the
+   Homeroom app and an installed app there is no browser toolbar and no
+   `data-browser-scroller`, so nothing changes. */
+html.un-ios[data-browser-scroller="auth-landing-scroll"] [data-landing-story] {
+  padding-bottom: max(0px, calc(100lvh - 100svh));
+}
 /* The anonymous overlay covered the signed-in shell, including any screen
    painted from the last-session snapshot. In document flow those roots must
    leave the layout too, so visitors see only the anonymous page. */
@@ -18022,6 +18040,44 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
 @media (max-width: 767.98px) {
   .dev-ws-discussion { margin: 0 -4px; }
 }
+/* WITH THE KEYBOARD UP IN A PHONE BROWSER, THE ROOM IS WHAT IS SEEN
+   (iOS Safari, 5 October 2026: an invitee opened a project's Discussion to
+   talk, tapped the message box, and saw a blank cream page with the keys
+   up; no messages, no composer, no header). In a phone browser the page is
+   the scroller (#1518), so this fitted box sits in the document's flow, and
+   the fixed-shell physics every other chat relies on did not hold here:
+   iOS scrolled the page to put the message box over the keys, then the
+   column's keyboard reservation (`.platform-kb-column`, `--un-kb-inset`)
+   lifted the box a keyboard's height again inside a page that had already
+   moved by it, and the kit's pan reset only runs in a bounded shell. What
+   was left on screen was the column's empty padding.
+
+   So while the keyboard is open (`platform-kb-open`, lib/keyboard-open.ts)
+   the room is laid on the band of the page that is actually visible: from
+   the pan (`--platform-vv-top`) to the top of what covers the foot
+   (`--platform-kb-cover`: the keys, and Safari's pill and form bar over
+   them). Its column reserves nothing more, the transcript fills what is
+   left above the composer, and the conversation's own stick-to-bottom
+   (with its keyboard hold, lib/keyboard-hold.ts) keeps the newest line in
+   view as it shrinks. The tab's box keeps its height in the page, so the
+   page under it does not move, and the room drops back into it when the
+   keys go. In the bounded shell (the app, an installed app) none of this
+   applies: there is no `data-browser-scroller`. */
+@media (max-width: 767px) {
+  html[data-browser-scroller].platform-kb-open .dev-ws-discussion {
+    position: fixed;
+    left: 0;
+    right: 0;
+    top: var(--platform-vv-top, 0px);
+    bottom: var(--platform-kb-cover, 0px);
+    z-index: 35;
+    min-height: 0;
+    margin: 0;
+  }
+  html[data-browser-scroller].platform-kb-open .dev-ws-discussion .platform-kb-column {
+    padding-bottom: 0;
+  }
+}
 /* THE COMPOSER'S FOOT IS ALREADY CLEAR. `.platform-safe-bar` adds the tab
    bar's height under every composer, on the rule that inside #app-view the
    bar is hidden; a project page under the Communities tab shows it, and
@@ -19484,6 +19540,42 @@ html.un-kb #platform-tabs {
   }
   html.platform-kb-open .platform-safe-bar {
     padding-bottom: 0.5rem !important;
+  }
+}
+
+/* A FULL-SCREEN SURFACE KEEPS ITS FIELD AND ITS BUTTON ABOVE THE KEYS
+   (iPhone 17 simulator, iOS 26 Safari, 5 October 2026). The sign-in sheet's
+   Sign in button sat behind the keyboard with the password field half under
+   the keyboard's floating bar, and the make screen's "Make it" sat under the
+   same bar. Both are `fixed inset-0`, which Safari leaves at the page's full
+   height with the keys, the address pill and the form bar over its foot, and
+   which iOS pans up to reveal a tapped field. The band of the page that is
+   actually visible while the keyboard is open is the pan above it
+   (`--platform-vv-top`, lib/visual-viewport.ts) and `--platform-kb-cover`
+   below it (lib/keyboard-open.ts; the visual viewport ends above the pill
+   and the bar, so whatever iOS draws over the keys is in the cover, and
+   nothing here assumes a height for it).
+
+   - `.platform-kb-surface`, a full-screen column (the make screen): padded
+     into the band, so its bar stays at the top of what is seen and its
+     scroller ends where the keys begin. The ground still paints the whole
+     box, so the pill and the bar float over the screen's own wallpaper.
+   - `.platform-kb-sheet`, a bottom sheet inside a full-screen root (the
+     sign-in sheet): its foot on the band's foot and its height capped to the
+     band, so it rides on the keys and scrolls inside.
+
+   In the Homeroom app the web view itself ends at the keys, so both are 0
+   and nothing moves. Phone only, like the rest of this block. */
+@media (max-width: 767px) {
+  html.platform-kb-open .platform-kb-surface {
+    padding-top: var(--platform-vv-top, 0px);
+    padding-bottom: var(--platform-kb-cover, 0px);
+  }
+  html.platform-kb-open .platform-kb-sheet {
+    bottom: var(--platform-kb-cover, 0px);
+    max-height: calc(100% - var(--platform-vv-top, 0px) - var(--platform-kb-cover, 0px) - 12px);
+    /* The home indicator is behind the keys. */
+    padding-bottom: 1.25rem;
   }
 }
 

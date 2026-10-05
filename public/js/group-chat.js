@@ -3874,7 +3874,29 @@ const GroupChat = {
     GroupChat._attachQuoteHandlers(container);
     if (container._gcScrollBound) return;
     container._gcScrollBound = true;
+    // 5 Oct 2026: the keyboard coming up for the composer moves this
+    // scroller too (the app's web view resizing, iOS Safari revealing the
+    // field), and a scroll event it caused away from the bottom read as the
+    // reader scrolling up, so the room stopped following its newest line
+    // while they typed. lib/keyboard-hold.ts (the same hold as Messages'
+    // conversation) says when a scroll event is the keyboard's: then the
+    // view goes back to the bottom, still locked there, and no history loads.
+    const pinBottom = () => {
+      container.scrollTop = container.scrollHeight;
+      GroupChat._savedScrollTop = container.scrollTop;
+    };
+    const hold = window.UsernodeKeyboardHold
+      ? window.UsernodeKeyboardHold.attach(container, {
+        pinned: () => !!GroupChat._lockedToBottom,
+        follow: pinBottom,
+      })
+      : null;
     container.addEventListener('scroll', () => {
+      if (hold && hold.holding()) {
+        if (GroupChat._lockedToBottom
+          && container.scrollHeight - container.scrollTop - container.clientHeight > 1) pinBottom();
+        return;
+      }
       if (container.scrollTop === 0 && GroupChat.hasMore) {
         GroupChat.loadHistory();
       }

@@ -58,13 +58,62 @@
  * the reasons ui/dialog.tsx gives), closed by default, and only ever opened
  * once the screen is up (a tap, a provider's way back, a release link),
  * never in the first render, so the prerendered document is unchanged.
+ *
+ * ── With the keyboard up ───────────────────────────────────────────────
+ *
+ * iPhone 17 simulator, iOS 26 Safari, 5 Oct 2026, the password step: the
+ * Sign in button sat behind the keyboard and the password field half under
+ * the keyboard's floating bar (Return still signed in). The sheet sat on the
+ * page's foot with the keys over it, and iOS panned the page to the tapped
+ * field alone. The panel is a `.platform-kb-sheet` now: while the keyboard
+ * is open its foot is on the top of what covers the page and its height is
+ * capped to what is visible (lib/keyboard-open.ts, app.css), and it scrolls
+ * inside. Taps on its fields focus without the pan, and the focused field is
+ * revealed in the panel with the step's button under it when the two fit
+ * (lib/keyboard-surface.ts). Every focus here is `preventScroll`, so that
+ * reveal is the only movement. Every step is the same: email, code, account,
+ * username and password. Return walks a step's fields, as on the make screen
+ * (#3904): from any but the last it goes to the next empty one, and only the
+ * last field's Return (the keyboard says "go") submits (`returnTarget`). The
+ * Homeroom app is losing the keyboard's ‹ › bar (flutter-mobile-app #603),
+ * and nothing here leans on that bar: what covers the page is measured from
+ * the visual viewport, whatever iOS draws above the keys.
+ *
+ * ── Opening it in the app, and what it is made of ──────────────────────
+ *
+ * Homeroom iOS app, 5 Oct 2026, Get started (and Sign in) recorded at 20
+ * fps: the sheet put the caret in Email as it started sliding up, and the
+ * app's web view raises its keyboard for a field focused from code, so the
+ * keys came up WHILE the sheet rose. For a moment the sheet was behind the
+ * rising keys, iOS scrolled the story up behind it to reveal the field, and
+ * the sheet then jumped up onto the keys: three movements fighting for half a
+ * second. On a touch screen the sheet now opens without a caret and the tap
+ * on the field raises the keys, after the sheet has arrived; the sheet then
+ * rides up with them as one eased, transform-only movement
+ * (lib/keyboard-surface.ts `ride`), and back down with them. It moves a
+ * caret to the next step's field by itself only while the keys are already
+ * up (they stay up across the hop), or on a desktop, where no keyboard
+ * rises (`mayFocusByCode`). Behind it nothing moves: the dim takes no pan
+ * (`touch-action: none`, as the kit's own backdrop) and the panel does not
+ * pass its scroll on to the page (`overscroll-contain`).
+ *
+ * The panel was a flat system grey (`bg-zinc-100`, a utility of its own, not
+ * a token the signed-out page lacked). It is the platform's sheet now: the
+ * plane colour (`--dc-sheet-solid`, the GroupedList's PLANE_FILL), the 20px
+ * radius, the `--app-sheet-line` hairline, and the 36px handle in `--border`
+ * that the workshop's sheets carry. The fields sit on it as white cards with
+ * the same hairline, as on the make screen.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from 'react';
 
+import { PLANE_FILL } from '@/components/ui/grouped-list';
 import { AppleIcon, GoogleIcon, XIcon } from '@/components/ui/icons';
 import { PasswordInput } from '@/components/ui/password-input';
 
+import { KB_OPEN_CLASS } from '../../lib/keyboard-open';
+import { useKeyboardSurface } from '../../lib/keyboard-surface';
+import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { inviteEmailFromToken, readAutoSend, writeAutoSend } from './login';
 import { NativeLoginDetailsLink } from './native-login-details';
 import { SessionConfirmationNotice, useSessionConfirmation } from './session-confirmation';
@@ -184,6 +233,61 @@ const RESEND_COOLDOWN_MS = 60 * 1000;
 // panel's and the cover's own 200ms, and a frame for the last of it to paint.
 export const HAND_OFF_MS = 240;
 
+/**
+ * Whether the sheet may put the caret in a step's field by itself. On a
+ * touch screen a field focused from code raises the keyboard in the app's
+ * web view, and doing that as the sheet opens (or as a step changes with
+ * the keys down) brings the keys up under a moving sheet; there the tap on
+ * the field does it, unless the keys are up already, when moving the caret
+ * keeps them up. Anywhere else (a mouse and a hardware keyboard) the caret
+ * is simply put where the typing goes.
+ */
+export function mayFocusByCode({ touch, keysUp }: { touch: boolean; keysUp: boolean }): boolean {
+  return !touch || keysUp;
+}
+
+/**
+ * Where Return in field `at` of a step's fields goes (5 Oct 2026: the
+ * Homeroom app is losing the keyboard's ‹ › bar, flutter-mobile-app #603,
+ * so Return is the way from one field to the next). From any field but the
+ * last, the next field after it that is still empty, or the last field when
+ * none is; null from the last field, whose Return submits the step. Never a
+ * submit from an earlier field: the account step used to submit from its
+ * username and fail on the empty password, and the password step leaned on
+ * the browser's own "fill out this field".
+ */
+export function returnTarget(values: readonly string[], at: number): number | null {
+  if (at < 0 || at >= values.length - 1) return null;
+  for (let i = at + 1; i < values.length; i += 1) if (!values[i]) return i;
+  return values.length - 1;
+}
+
+/** The keydown that walks a step's fields on Return (Shift+Return and an IME's Return are left alone). */
+export function returnWalks(fields: readonly RefObject<HTMLInputElement | null>[], at: number) {
+  return (e: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return;
+    const live = fields.map((f) => f.current).filter((el): el is HTMLInputElement => !!el);
+    const here = live.indexOf(e.currentTarget);
+    const target = returnTarget(live.map((el) => el.value), here < 0 ? at : here);
+    if (target == null) return; // the last field: the form submits
+    e.preventDefault();
+    live[target].focus({ preventScroll: true });
+  };
+}
+
+function touchScreen(): boolean {
+  try {
+    return typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches;
+  } catch {
+    return false;
+  }
+}
+
+function keyboardUp(): boolean {
+  const root = document.documentElement.classList;
+  return root.contains(KB_OPEN_CLASS) || root.contains('un-kb');
+}
+
 function prefersReducedMotion(): boolean {
   try {
     return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -232,8 +336,9 @@ export async function releaseArrival(token: string, now = Date.now()): Promise<R
   return { address, send: true };
 }
 
-const FIELD_GROUP = 'rounded-2xl bg-white dark:bg-zinc-800 overflow-hidden';
-const FIELD = 'px-4 pt-3 pb-2 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-700';
+// White cards with the sheets' hairline, on the sheet's plane colour (the make screen's own field card).
+const FIELD_GROUP = 'overflow-hidden rounded-2xl bg-white shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900';
+const FIELD = 'px-4 pt-3 pb-2 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800';
 const LABEL = 'block text-[13px] text-zinc-500 dark:text-zinc-400';
 const INPUT = 'w-full border-0 bg-transparent px-0 py-1 text-[17px] text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none';
 const QUIET = 'py-1 text-[15px] font-medium text-violet-700 dark:text-violet-400 hover:underline';
@@ -311,6 +416,14 @@ export function SignInSheet({
   const confirmField = useRef<HTMLInputElement>(null);
   const identifierField = useRef<HTMLInputElement>(null);
   const currentPasswordField = useRef<HTMLInputElement>(null);
+  // Each multi-field step's fields in order, for Return (`returnWalks`).
+  const passwordStepFields = [identifierField, currentPasswordField];
+  const accountStepFields = [usernameField, passwordField, confirmField];
+  // The panel scrolls its fields; with the keyboard up they are revealed in
+  // it, with the step's button, and tapped without iOS's pan. It rides the
+  // keys up and down as one eased movement.
+  const panelRef = useRef<HTMLDivElement>(null);
+  useKeyboardSurface(panelRef, { ride: true });
   // Read when it opens, not followed while it is open: the options that
   // name the providers can land after a release link has opened the sheet,
   // and must not send it back from the code to the first step.
@@ -336,19 +449,23 @@ export function SignInSheet({
     setBusy(false);
   }, [open, resume]);
 
-  useEffect(() => {
+  // The step's first field, and the caret in it when that raises no keys
+  // under a moving sheet (`mayFocusByCode`). In the commit, so a hop from a
+  // field whose keys are up lands before anything can take them down.
+  useIsomorphicLayoutEffect(() => {
     if (!open || step === 'choose') return;
+    const focus = mayFocusByCode({ touch: touchScreen(), keysUp: keyboardUp() });
     if (step === 'password' && identifierPrefill.current && identifierField.current) {
       identifierField.current.value = identifierPrefill.current;
       identifierPrefill.current = '';
-      currentPasswordField.current?.focus();
+      if (focus) currentPasswordField.current?.focus({ preventScroll: true });
       return;
     }
     const field = step === 'email' ? firstField : step === 'code' ? codeField
       : step === 'username' ? providerUsernameField
         : step === 'password' ? identifierField
           : (needsUsername ? usernameField : passwordField);
-    field.current?.focus();
+    if (focus) field.current?.focus({ preventScroll: true });
   }, [open, step, needsUsername]);
 
   // Back from the provider's page by the browser's Back button, the page can
@@ -505,7 +622,7 @@ export function SignInSheet({
   const finishAccount = useCallback(async () => {
     setError(null);
     const handle = needsUsername ? (usernameField.current?.value || '').trim() : null;
-    if (handle === '') { setError('Enter a username.'); usernameField.current?.focus(); return; }
+    if (handle === '') { setError('Enter a username.'); usernameField.current?.focus({ preventScroll: true }); return; }
     const password = passwordField.current?.value || '';
     const confirm = confirmField.current?.value || '';
     if (password.length < 8) { setError('Password must be at least 8 characters'); return; }
@@ -522,7 +639,7 @@ export function SignInSheet({
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.user) {
         setError(data.error || 'Could not finish setting up your account');
-        if (data.field === 'username') usernameField.current?.focus();
+        if (data.field === 'username') usernameField.current?.focus({ preventScroll: true });
         return;
       }
       await finish('new');
@@ -590,7 +707,7 @@ export function SignInSheet({
   const finishProviderAccount = useCallback(async () => {
     setError(null);
     const handle = (providerUsernameField.current?.value || '').trim();
-    if (!handle) { setError('Enter a username.'); providerUsernameField.current?.focus(); return; }
+    if (!handle) { setError('Enter a username.'); providerUsernameField.current?.focus({ preventScroll: true }); return; }
     if (blockedOffline(setError)) return;
     setBusy(true);
     try {
@@ -604,7 +721,7 @@ export function SignInSheet({
       if (!res.ok || !data.user) {
         if (data.field === 'username') {
           setError(data.error || 'Choose another username.');
-          providerUsernameField.current?.focus();
+          providerUsernameField.current?.focus({ preventScroll: true });
           return;
         }
         // The continuation is gone: start over from the first step.
@@ -648,10 +765,12 @@ export function SignInSheet({
 
   return (
     <div data-sign-in-sheet={step} data-sign-in-sheet-leaving={leaving ? '' : undefined} className="fixed inset-0 z-50">
+      {/* The dim takes no pan, so a drag on it does not scroll the story
+          behind (the kit's backdrop rule); its tap still closes. */}
       <div
         aria-hidden="true"
         onClick={close}
-        className={`absolute inset-0 bg-black/40 transition-opacity duration-200 motion-reduce:transition-none ${shown ? 'opacity-100' : 'opacity-0'}`}
+        className={`absolute inset-0 touch-none bg-black/40 transition-opacity duration-200 motion-reduce:transition-none ${shown ? 'opacity-100' : 'opacity-0'}`}
       />
       {/*
           The make screen's own ground (../first-session/make.tsx paints the
@@ -664,17 +783,18 @@ export function SignInSheet({
         aria-hidden="true"
         data-sign-in-sheet-cover=""
         className={leaving
-          ? 'absolute inset-0 opacity-100 transition-opacity duration-200 ease-out motion-reduce:transition-none'
+          ? 'absolute inset-0 touch-none opacity-100 transition-opacity duration-200 ease-out motion-reduce:transition-none'
           : 'pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-200 ease-out motion-reduce:transition-none'}
         style={{ background: 'var(--home-wallpaper)' }}
       />
       <div
+        ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="sign-in-sheet-title"
-        className={`absolute inset-x-0 bottom-0 max-h-[92%] overflow-y-auto rounded-t-[20px] bg-zinc-100 dark:bg-zinc-900 px-4 pt-2 pb-[max(2rem,env(safe-area-inset-bottom))] transition-[transform,opacity] duration-200 ease-out motion-reduce:transition-none md:inset-x-auto md:left-1/2 md:bottom-auto md:top-1/2 md:w-full md:max-w-md md:rounded-[20px] md:pb-6 ${panelState}`}
+        className={`platform-kb-sheet absolute inset-x-0 bottom-0 max-h-[92%] overflow-y-auto overscroll-contain rounded-t-[20px] ${PLANE_FILL} shadow-[inset_0_0_0_1px_var(--app-sheet-line)] px-4 pt-2 pb-[max(2rem,env(safe-area-inset-bottom))] transition-[transform,opacity] duration-200 ease-out motion-reduce:transition-none md:inset-x-auto md:left-1/2 md:bottom-auto md:top-1/2 md:w-full md:max-w-md md:rounded-[20px] md:pb-6 ${panelState}`}
       >
-        <div className="mx-auto h-1.5 w-10 rounded-full bg-zinc-300 dark:bg-zinc-700 md:hidden" aria-hidden="true" />
+        <div className="mx-auto h-1 w-9 rounded-full bg-[color:var(--border)] md:hidden" aria-hidden="true" />
         <div className="mt-3 flex items-center gap-3">
           <h2 id="sign-in-sheet-title" className="min-w-0 flex-1 text-[17px] font-semibold text-zinc-900 dark:text-zinc-100">{heading}</h2>
           <button
@@ -716,7 +836,7 @@ export function SignInSheet({
             <div className={FIELD_GROUP}>
               <div className={FIELD}>
                 <label htmlFor="sign-in-sheet-email" className={LABEL}>Email</label>
-                <input ref={firstField} id="sign-in-sheet-email" type="email" autoComplete="email" inputMode="email" defaultValue={email} className={INPUT} {...HANDLE_FIELD} />
+                <input ref={firstField} id="sign-in-sheet-email" type="email" autoComplete="email" inputMode="email" enterKeyHint="go" defaultValue={email} className={INPUT} {...HANDLE_FIELD} />
               </div>
             </div>
             <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Sending code…' : 'Send code'}</button>
@@ -731,7 +851,7 @@ export function SignInSheet({
             <div className={FIELD_GROUP}>
               <div className={FIELD}>
                 <label htmlFor="sign-in-sheet-provider-username" className={LABEL}>Username</label>
-                <input ref={providerUsernameField} id="sign-in-sheet-provider-username" autoComplete="username" className={INPUT} placeholder={USERNAME_RULE} {...HANDLE_FIELD} />
+                <input ref={providerUsernameField} id="sign-in-sheet-provider-username" autoComplete="username" enterKeyHint="go" className={INPUT} placeholder={USERNAME_RULE} {...HANDLE_FIELD} />
               </div>
             </div>
             <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Finishing…' : 'Continue'}</button>
@@ -743,7 +863,7 @@ export function SignInSheet({
             <div className={FIELD_GROUP}>
               <div className={FIELD}>
                 <label htmlFor="sign-in-sheet-code" className={LABEL}>Code</label>
-                <input ref={codeField} id="sign-in-sheet-code" inputMode="numeric" autoComplete="one-time-code" maxLength={6} className={`${INPUT} tracking-[0.4em]`} />
+                <input ref={codeField} id="sign-in-sheet-code" inputMode="numeric" autoComplete="one-time-code" enterKeyHint="go" maxLength={6} className={`${INPUT} tracking-[0.4em]`} />
               </div>
             </div>
             <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Checking…' : 'Continue'}</button>
@@ -761,11 +881,11 @@ export function SignInSheet({
             <div className={FIELD_GROUP}>
               <div className={FIELD}>
                 <label htmlFor="sign-in-sheet-identifier" className={LABEL}>Username or email</label>
-                <input ref={identifierField} id="sign-in-sheet-identifier" name="username" type="text" required autoComplete="username" className={INPUT} {...HANDLE_FIELD} />
+                <input ref={identifierField} id="sign-in-sheet-identifier" name="username" type="text" required autoComplete="username" enterKeyHint="next" onKeyDown={returnWalks(passwordStepFields, 0)} className={INPUT} {...HANDLE_FIELD} />
               </div>
               <div className={FIELD}>
                 <label htmlFor="sign-in-sheet-current-password" className={LABEL}>Password</label>
-                <PasswordInput ref={currentPasswordField} id="sign-in-sheet-current-password" name="password" required autoComplete="current-password" box="card" hint="dim" ring="bare" />
+                <PasswordInput ref={currentPasswordField} id="sign-in-sheet-current-password" name="password" required autoComplete="current-password" enterKeyHint="go" box="card" hint="dim" ring="bare" />
               </div>
             </div>
             <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Signing in…' : 'Sign in'}</button>
@@ -785,16 +905,16 @@ export function SignInSheet({
               {needsUsername ? (
                 <div className={FIELD}>
                   <label htmlFor="sign-in-sheet-username" className={LABEL}>Username</label>
-                  <input ref={usernameField} id="sign-in-sheet-username" autoComplete="username" className={INPUT} placeholder={USERNAME_RULE} {...HANDLE_FIELD} />
+                  <input ref={usernameField} id="sign-in-sheet-username" autoComplete="username" enterKeyHint="next" onKeyDown={returnWalks(accountStepFields, 0)} className={INPUT} placeholder={USERNAME_RULE} {...HANDLE_FIELD} />
                 </div>
               ) : null}
               <div className={FIELD}>
                 <label htmlFor="sign-in-sheet-password" className={LABEL}>Password</label>
-                <input ref={passwordField} id="sign-in-sheet-password" type="password" autoComplete="new-password" className={INPUT} placeholder="At least 8 characters" />
+                <input ref={passwordField} id="sign-in-sheet-password" type="password" autoComplete="new-password" enterKeyHint="next" onKeyDown={returnWalks(accountStepFields, 1)} className={INPUT} placeholder="At least 8 characters" />
               </div>
               <div className={FIELD}>
                 <label htmlFor="sign-in-sheet-confirm" className={LABEL}>Password again</label>
-                <input ref={confirmField} id="sign-in-sheet-confirm" type="password" autoComplete="new-password" className={INPUT} />
+                <input ref={confirmField} id="sign-in-sheet-confirm" type="password" autoComplete="new-password" enterKeyHint="go" className={INPUT} />
               </div>
             </div>
             <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Finishing…' : 'Continue'}</button>

@@ -234,7 +234,8 @@ export function WaitingScreen() {
               pill, "Your queue status", back to this screen: the promise led
               in a circle. Nothing a waiting-room account can reach lists apps
               today, so the pill is gone rather than pointed at something that
-              does not exist. Log out is the one action left.
+              does not exist. Sign out is the one action left ("Sign out",
+              as Settings says it, beside every "Sign in").
           */}
           <div className="mt-6 space-y-3">
             <button
@@ -242,7 +243,7 @@ export function WaitingScreen() {
               className="flex h-11 w-full items-center justify-center rounded-full bg-white text-[16px] font-semibold text-zinc-900 shadow-sm hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 transition-colors"
               onClick={onLogout}
             >
-              Log out
+              Sign out
             </button>
           </div>
         </div>
