@@ -39,7 +39,7 @@ const mod = loadTsx(`${DIR}/sketch-card.tsx`);
 
 function sketchCard(props) {
   return renderToHtml(createElement(mod.SketchCard, {
-    made: MADE, line: 'Step 2 of 7: Read the description', note: 'Homeroom bot messages you when the first version is ready to try.',
+    made: MADE, line: 'Step 2 of 7: Read the description', note: 'Homeroom is making your app. It will message you when the first version is ready to try, or if it has any questions.',
     busy: true, botBuilds: true, built: false, ...props,
   }));
 }
@@ -74,7 +74,7 @@ test('while it is sketched: the same frame, the name in place, a band of light o
   assert.match(html, /motion-safe:animate-card-sweep/);
   assert.match(html, /pointer-events-none absolute inset-0 overflow-hidden motion-reduce:hidden/);
   assert.match(html, /data-first-session-build="">Step 2 of 7: Read the description<\/span>/);
-  assert.match(html, /Homeroom bot messages you when the first version is ready to try\./);
+  assert.match(html, /Homeroom is making your app\. It will message you when the first version is ready to try, or if it has any questions\./);
   // No stack of grey blocks, no frame, no words yet.
   assert.doesNotMatch(html, /animate-pulse rounded-(?:md|lg|xl) bg-zinc-200|<iframe|data-featured-card-words/);
   // The example's emoji, when one was picked, is already the icon.
@@ -124,7 +124,7 @@ test('the made screen draws the card, its emoji is the screen\'s icon, and nothi
   assert.doesNotMatch(made, /<iframe|sketch\.html|sketchCaption/);
   // Rendered with nothing read yet: the card being sketched, not the letter tile.
   const { MadeScreen } = loadTsx(`${DIR}/made.tsx`);
-  const html = renderToHtml(createElement(MadeScreen, { made: MADE, me: 'Maya', onContinue() {}, onOpenChat() {}, onLookAround() {} }));
+  const html = renderToHtml(createElement(MadeScreen, { made: MADE, me: 'Maya', onContinue() {}, onOpenChat() {} }));
   assert.match(html, /data-featured-card="sketching"/);
   assert.match(html, /data-first-session-build="">Setting it up…<\/span>/);
   // The poll asks past the service worker's cache.

@@ -21,8 +21,11 @@
  *             Homeroom app". Either starts the tour (./index.tsx). While
  *             it is out, the project's community is read again, and the
  *             line says who has joined (joinedLine).
- *   look      Under the buttons, quietly: while they wait, they can look
- *             around Home and the other apps (LOOK_AROUND).
+ *
+ * Nothing under the two buttons. A quiet "While you wait, look around Home
+ * and other apps" used to sit there; "Invite people later" is already the
+ * way on without inviting anyone, so it was a third way off one screen
+ * (Evan, 5 October 2026).
  *
  * The sheet is the first invite, not the project's full invite pane
  * (features/app-context/invite-pane.tsx, with live links, their limits, an
@@ -137,8 +140,7 @@ export function buildLine(fv: FirstVersion, appStatus: string | null, botBuilds 
 
 /**
  * The line under the build's: who tells them, or who builds it. B6: while
- * its plan waits, that nothing happens until they say so. Before its plan
- * is sent (`planAhead`), that there will be one to answer first.
+ * its plan waits, that nothing happens until they say so.
  *
  * It says nothing about how long. It used to promise "usually in about 10
  * minutes", an ordinary request's typical build (WP-E, homeroom-bot-dm.js
@@ -146,21 +148,18 @@ export function buildLine(fv: FirstVersion, appStatus: string | null, botBuilds 
  * answer: Page Turners, 5 October 2026, sent its plan 11 minutes after Make
  * it and was ready to try 50 minutes after it. No average stands in for it
  * (Evan, the same day).
+ *
+ * Nor does it explain the plan any more. Until the plan was sent it said
+ * "Homeroom bot plans it first, and asks you to approve the plan", and after
+ * it only that it messages you. Evan, 5 October 2026: one plain line, the
+ * same before and after the plan, that says it asks when it has questions.
+ * The plan, when it comes, has its own card under the project
+ * (PlanWaitsCard), and while it waits this line says so instead.
  */
-export function buildNote(botBuilds: boolean, planWaits = false, planAhead = false): string {
+export function buildNote(botBuilds: boolean, planWaits = false): string {
   if (!botBuilds) return 'You or anyone you invite can build it from there.';
   if (planWaits) return 'Homeroom bot is waiting for your go-ahead.';
-  return planAhead
-    ? 'Homeroom bot plans it first, and asks you to approve the plan. It messages you when the first version is ready to try.'
-    : 'Homeroom bot messages you when the first version is ready to try.';
-}
-
-/**
- * Whether its plan is still to come: nothing read yet, or before the plan's
- * step (3 of 7).
- */
-export function planAhead(fv: FirstVersion): boolean {
-  return !(fv && Number(fv.step) >= 3);
+  return 'Homeroom is making your app. It will message you when the first version is ready to try, or if it has any questions.';
 }
 
 /**
@@ -172,9 +171,6 @@ export function makerLine(me: string, name: string, making: boolean): string {
   if (!me) return making ? `Being made: ${name}` : `Made: ${name}`;
   return `${me} ${making ? 'is making' : 'made'} ${name}`;
 }
-
-/** Under the buttons: somewhere to be while it is built. */
-export const LOOK_AROUND = 'look around Home and other apps';
 
 const NOTE_DEFAULT = 'Come try it with me!';
 // WP-D: the link works until it is turned off, for anyone it is sent to (0 is
@@ -332,7 +328,10 @@ export function InviteSheet({ made, me, making = true, onClose, onSent }: {
             </div>
           </div>
           <div className="px-3 pb-2 pt-2.5 shadow-[inset_0_1px_0_var(--app-sheet-line)]">
-            <label htmlFor="first-session-note" className="sr-only">Your note</label>
+            {/* Named on screen, in the label style of "What they'll get" above
+                and the make screen's fields (make.tsx LABEL): unlabelled, the
+                note read as part of the card rather than something to write. */}
+            <label htmlFor="first-session-note" className="block pb-1 text-[13px] text-zinc-500 dark:text-zinc-400">Note</label>
             <textarea
               id="first-session-note"
               rows={2}
@@ -430,15 +429,13 @@ function useCommunity(slug: string, on: boolean): Community {
   return community;
 }
 
-export function MadeScreen({ made, me, onContinue, onOpenChat, onLookAround }: {
+export function MadeScreen({ made, me, onContinue, onOpenChat }: {
   made: Made;
   me: string;
   /** "Invite people later" / "Go to the Homeroom app": `skipped` when nothing went out. */
   onContinue: (skipped: boolean) => void;
   /** Go to chat, on the plan's card: the chat with Homeroom bot, where the plan is answered. */
   onOpenChat: (conversationId: number | null) => void;
-  /** "look around Home and other apps", under the buttons. */
-  onLookAround: () => void;
 }) {
   const [fv, setFv] = useState<FirstVersion>(null);
   const [appStatus, setAppStatus] = useState<string | null>('creating');
@@ -478,7 +475,7 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, onLookAround }: {
   // is something to be pinged about (features/dialogs/ping-ask.ts: it shows
   // nothing on the web, or once the phone's answer is decided).
   useEffect(() => { if (botBuilds) askForPingWhileBotBuilds(); }, [botBuilds]);
-  const note = buildNote(botBuilds, !!plan, planAhead(fv));
+  const note = buildNote(botBuilds, !!plan);
   const sketch = useSketch(made.slug);
   const line = buildLine(fv, appStatus, botBuilds);
   // Something is under way: the project being set up, or the bot's build
@@ -515,7 +512,7 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, onLookAround }: {
         {plan ? <PlanWaitsCard name={made.name} onOpenChat={() => onOpenChat(plan.conversationId ?? made.conversationId)} /> : null}
         <div className="mt-6">
           <p className="text-[17px] font-semibold">{`Invite people to ${made.name}`}</p>
-          <p className="mt-0.5 text-[14px] leading-snug text-zinc-500 dark:text-zinc-400">They can follow along and chat with you while it's built.</p>
+          <p className="mt-0.5 text-[14px] leading-snug text-zinc-500 dark:text-zinc-400">They can follow along and chat with you while it's being built.</p>
           {sent ? sentLines(joined).map((line) => (
             <p key={line} data-first-session-sent={joined ? 'joined' : ''} className="mt-2 text-[14px] font-semibold text-emerald-700 dark:text-emerald-400">
               {line}
@@ -536,16 +533,6 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, onLookAround }: {
             {sent ? 'Go to the Homeroom app' : 'Invite people later'}
           </button>
         </div>
-        {/* Quiet, under both buttons: somewhere to be while Homeroom bot builds it. */}
-        {botBuilds ? (
-          <p className="mt-4 text-center text-[14px] leading-snug text-zinc-500 dark:text-zinc-400">
-            {'While you wait, '}
-            <button type="button" data-first-session-look-around="" onClick={onLookAround} className="font-semibold text-zinc-700 underline underline-offset-2 dark:text-zinc-200">
-              {LOOK_AROUND}
-            </button>
-            .
-          </p>
-        ) : null}
       </div>
       {inviting ? (
         <InviteSheet

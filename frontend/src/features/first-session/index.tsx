@@ -694,14 +694,6 @@ export function FirstSession() {
           setMode({ kind: 'none' });
           enterScreen('bot', made.slug, conversationId);
         }}
-        // "look around Home and other apps": Home, where Discover is, with
-        // nothing over it. The project stays on Home and in Communities.
-        onLookAround={() => {
-          markSeen(made.slug);
-          rememberCommunity(made.slug);
-          setMode({ kind: 'none' });
-          enterScreen('home', made.slug);
-        }}
       />
     );
   }
