@@ -3,8 +3,9 @@
 // B7 (decided: "Approve" on a project that is just you). A change on a
 // project that is just the viewer's, whose one Yes is the Yes it needs, no
 // longer asks them to vote: the status reads "Waiting for your approval",
-// the step is "Your approval", the button is one tap, "Approve" (their own
-// Yes, which makes it live), and "Don't approve" sits last and red in ⋯, as
+// the step is "Your approval", the button is "Approve" (their own Yes, which
+// makes it live) and opens the same vote picker every other vote uses, whose
+// confirm reads Approve here, and "Don't approve" sits last and red in ⋯, as
 // today's No with its line. A group project, a rule asking for more than one
 // Yes, or a test account's uncounted vote keeps the vote as it is.
 //
@@ -103,14 +104,14 @@ test('B7: the button, the status, the step and ⋯ on a project that is just you
   assert.match(SRC, /\(item\.status === 'promoted' \? AppView\._waitingWords\(item\) : item\.status\)/);
 });
 
-test('B7: Approve is one tap, the viewer\'s own Yes, and reads Approved once it is in', () => {
-  const { VoteButton } = loadTsx('frontend/src/features/dev-board/card/dev-card.tsx');
+test('B7: Approve opens the vote picker, whose confirm reads Approve, and the button reads Approved once it is in', () => {
+  const { VoteButton, VotePicker } = loadTsx('frontend/src/features/dev-board/card/dev-card.tsx');
   const yes = { key: 'yes', cls: 'gc-vote-btn gc-vote-btn-yes', label: 'Yes (0/1)', act: { fn: 'castVote', args: [7, 'yes', 3] }, solo: true, approve: true };
   const no = { key: 'no', cls: 'gc-vote-btn gc-vote-btn-no', label: 'No (0/1)', act: { fn: 'castVote', args: [7, 'no', 3] } };
   const open = renderToHtml(createElement(VoteButton, { yes, no }));
   assert.match(open, /class="dev-vote-btn dev-vote-btn-approve" data-vote-btn="approve"/);
   assert.match(open, />Approve<\/button>$/);
-  assert.ok(!/aria-haspopup/.test(open), 'no picker: nothing to choose between');
+  assert.match(open, /aria-haspopup="dialog"/, 'the tap opens the same picker every vote uses');
   const done = renderToHtml(createElement(VoteButton, { yes: { ...yes, cls: `${yes.cls} gc-vote-active` }, no }));
   assert.match(done, /data-vote-btn="approved"/);
   assert.match(done, /disabled=""/);
@@ -118,5 +119,27 @@ test('B7: Approve is one tap, the viewer\'s own Yes, and reads Approved once it 
   const group = renderToHtml(createElement(VoteButton, { yes: { ...yes, approve: undefined }, no }));
   assert.match(group, /data-vote-btn="open"/, 'a group keeps Vote and its picker');
   const card = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/dev-board/card/dev-card.tsx'), 'utf8');
-  assert.match(card, /onClick=\{\(e\) => \{ e\.stopPropagation\(\); send\(yes, null\); \}\}/, 'one tap, no line asked for');
+  // The approve branch wires the shared toggle and carries the picker's two
+  // homes, exactly as the group button below it does.
+  const b7 = card.slice(
+    card.indexOf('if (yes.approve && yes.act?.fn === \'castVote\')'),
+    card.indexOf('className={`dev-vote-btn${mine'),
+  );
+  assert.match(b7, /onClick=\{toggle\}/, 'the tap opens the panel; the send is the panel\'s own');
+  assert.match(b7, /ref=\{btnRef\}/, 'the anchor the shared dismissal logic reads');
+  assert.match(b7, /\{popover\}\s*\{sheet\}/, 'the popover and the sheet are its two homes');
+  // On a project that is just you the panel's confirm reads Approve and its
+  // optional line is a note; a group keeps "Vote yes" and its line.
+  const tally = () => '';
+  const panelProps = {
+    yes, no, prior: null, side: 'yes', line: '', reasonId: 'dev-vote-reason-7', tally, withLine: true,
+    onSide: () => {}, onLine: () => {}, onBoxKey: () => {}, onCancel: () => {}, onSend: () => {},
+  };
+  const soloPanel = renderToHtml(createElement(VotePicker, { ...panelProps, solo: true }));
+  assert.match(soloPanel, /class="dev-vote-reason-send dev-vote-reason-send-yes">Approve<\/button>/,
+    'the confirm carries the word the button does');
+  assert.match(soloPanel, /Add a note, if you like\.<\/label>/);
+  const groupPanel = renderToHtml(createElement(VotePicker, { ...panelProps, solo: false }));
+  assert.match(groupPanel, /class="dev-vote-reason-send dev-vote-reason-send-yes">Vote yes<\/button>/);
+  assert.match(groupPanel, /Add a line for the group, if you like\.<\/label>/);
 });

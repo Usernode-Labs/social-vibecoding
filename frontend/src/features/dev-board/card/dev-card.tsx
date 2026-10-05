@@ -706,22 +706,34 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
     sheetEl,
   ) : null;
   // B7: a change on a project that is just the viewer's, whose Yes is the
-  // one it needs: nobody to vote with, so one tap approves it, which makes
-  // it live. Its No is "Don't approve" in ⋯, with its line, as any No.
+  // one it needs: nobody to vote with, so a Yes makes it live. It used to be
+  // one tap; now the tap opens the SAME picker every other vote uses — its
+  // confirm reads Approve on a solo project (VotePicker's `solo`), with the
+  // optional box asking for a note — and its No is "Don't approve" in ⋯,
+  // with its line, as any No. The button keeps its name and its Approved
+  // state, which stays inert: the picker does not open from work already
+  // done.
   if (yes.approve && yes.act?.fn === 'castVote') {
     const approved = mine === 'yes';
     return (
-      <button
-        type="button"
-        className={`dev-vote-btn dev-vote-btn-approve${approved ? ' dev-vote-btn-yes' : ''}`}
-        data-vote-btn={approved ? 'approved' : 'approve'}
-        title={approved ? 'You approved it.' : 'Approve it, and it goes live.'}
-        disabled={disabled || approved}
-        onClick={(e) => { e.stopPropagation(); send(yes, null); }}
-      >
-        {approved ? <CheckIcon aria-hidden="true" /> : null}
-        {approved ? 'Approved' : 'Approve'}
-      </button>
+      <>
+        <button
+          ref={btnRef}
+          type="button"
+          className={`dev-vote-btn dev-vote-btn-approve${approved ? ' dev-vote-btn-yes' : ''}`}
+          data-vote-btn={approved ? 'approved' : 'approve'}
+          aria-haspopup="dialog"
+          aria-expanded={open || !!sheetEl ? 'true' : undefined}
+          title={approved ? 'You approved it.' : 'Approve it, and it goes live.'}
+          disabled={disabled || approved}
+          onClick={toggle}
+        >
+          {approved ? <CheckIcon aria-hidden="true" /> : null}
+          {approved ? 'Approved' : 'Approve'}
+        </button>
+        {popover}
+        {sheet}
+      </>
     );
   }
   return (
@@ -753,12 +765,14 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
  * across the top (Yes on by default, each half carrying its tally), the line
  * box under its own label, and Cancel beside the one button that reads
  * "Vote yes" or "Vote no" with the switch — off on a No until there is a
- * line. One drawing for both of its homes,
+ * line. On a project that is just the viewer's the Yes button reads Approve
+ * instead. One drawing for both of its homes,
  * `VoteButton`'s anchored popover on desktop and its kit bottom sheet on
  * touch, so the wording and the rules cannot drift between the two.
  * `withLine` is false on a governance vote, which carries no line. `solo` is
  * a project that is just the viewer's: there is no group to address, so the
- * Yes side's optional line asks for a note instead. The No side is the same
+ * Yes side's optional line asks for a note instead and its confirm reads
+ * Approve. The No side is the same
  * either way, its line included. Exported for the tests that render it
  * directly; the state lives in `VoteButton`.
  */
@@ -850,7 +864,7 @@ export function VotePicker({
           onMouseDown={(event) => event.preventDefault()}
           onClick={onSend}
         >
-          {yesOn ? 'Vote yes' : 'Vote no'}
+          {yesOn ? (solo ? 'Approve' : 'Vote yes') : 'Vote no'}
         </button>
       </div>
     </>

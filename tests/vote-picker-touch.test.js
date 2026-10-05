@@ -79,7 +79,8 @@ test('#22: on a project that is just yours the Yes line is a note; the No side i
   assert.match(onYes, /<label class="dev-vote-reason-label" for="dev-vote-reason-7">Add a note, if you like\.<\/label>/);
   assert.doesNotMatch(onYes, /for the group/);
   assert.match(onYes, /placeholder="What do you like about it\?"/, 'the box itself is the same');
-  assert.match(onYes, /class="dev-vote-reason-send dev-vote-reason-send-yes">Vote yes<\/button>/, 'and a Yes needs no note');
+  assert.match(onYes, /class="dev-vote-reason-send dev-vote-reason-send-yes">Approve<\/button>/,
+    'the confirm reads Approve on a project that is just yours, and a Yes needs no note');
   const onNo = picker({ solo: true, side: 'no' });
   assert.match(onNo, /What’s not working for you\? One line is plenty\.<\/label>/);
   assert.match(onNo, /placeholder="What would you want to change\?"/);
