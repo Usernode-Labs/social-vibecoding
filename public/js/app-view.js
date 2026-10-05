@@ -19766,17 +19766,40 @@ const AppView = {
         return { ...base, tier: 5, key: 'needs_vote', label: 'Waiting for your approval', tone: 'progress', fill: true, dot: true, reasons,
           title: 'Approve it, and it goes live' };
       }
+      // The member floor (#3826): the tally reads full and the vote is
+      // still open, which reads as a mistake. Where this viewer's Yes
+      // would count, theirs is the one it waits on, so the pill says so
+      // instead of repeating a count it just showed. In an invited-
+      // approver app a non-approver's vote is advisory, so it keeps the
+      // plain vote label and only says the floor is unmet.
+      if (yes >= maj && waitsOnMember) {
+        const counts = p.approval_policy !== 'invited';
+        return { ...base, tier: 5, key: 'needs_vote',
+          label: counts ? `Needs your Yes · ${yes}/${maj}` : `Vote · ${yes}/${maj}`,
+          tone: 'progress', fill: true, dot: true, reasons,
+          title: counts
+            ? `It has the Yes votes it needs (${yes} of ${maj}), but none is from another member yet. Your Yes would be it.`
+            : 'It has the Yes votes it needs, but a Yes from another member is still missing.' };
+      }
       return { ...base, tier: 5, key: 'needs_vote', label: `Vote · ${yes}/${maj}`, tone: 'progress', fill: true, dot: true, reasons,
         title: 'You haven’t voted on this yet' };
     }
-    // 6 — plain tally.
-    const outcome = yes >= maj ? (waitsOnMember ? 'progress' : 'ok') : no >= maj ? 'blocked' : 'progress';
+    // 6 — plain tally. The member floor's wait gets WORDS (#3826): the
+    // votes are in, so a bare "3 / 3" reads as passed, and the lock glyph
+    // alone never said why it is not going live. The words are the home
+    // strip's ("Needs another member's Yes", MergeStatus.lifecycle 8a),
+    // with the tally riding as the suffix the contested tier uses, and
+    // the amber the conversation tier wears.
+    if (yes >= maj && waitsOnMember) {
+      return { ...base, tier: 6, key: 'needs_member',
+        label: `Needs another member’s Yes · ${yes}/${maj}`, tone: 'attention', fill: true, reasons,
+        title: AppView._explicitCopy(p.explicit_approval_reason).sentence };
+    }
+    const outcome = yes >= maj ? 'ok' : no >= maj ? 'blocked' : 'progress';
     const activeAtMerge = parseInt(p.active_users_at_merge, 10);
     return { ...base, tier: 6, key: 'tally', label: `${yes} / ${maj}`, tone: outcome, fill: true, reasons,
-      title: (yes >= maj && waitsOnMember)
-        ? AppView._explicitCopy(p.explicit_approval_reason).sentence
-        : (hasSnap && Number.isFinite(activeAtMerge) && activeAtMerge > 0)
-          ? `needed ${snap} of ${activeAtMerge} active users at merge time` : undefined };
+      title: (hasSnap && Number.isFinite(activeAtMerge) && activeAtMerge > 0)
+        ? `needed ${snap} of ${activeAtMerge} active users at merge time` : undefined };
   },
 
   // The pill's MARKUP moved to card/dev-card.tsx (`StatusPill`), which
