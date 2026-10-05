@@ -99,6 +99,20 @@ const FILTER_CHIPS: Array<{ key: string; label: string }> = [
   { key: 'new', label: 'New' },
 ];
 
+// The seven kind chips (#3962) — Browse.CATEGORIES, labelled. A COPY for the
+// same reason FILTER_CHIPS is one, and pinned to Browse.CATEGORIES by
+// tests/browse-screen.test.js for the same reason too. 'other' is the bucket
+// for the projects that declare nothing, not a label a dapp.json can carry.
+const CATEGORY_CHIPS: Array<{ key: string; label: string }> = [
+  { key: 'all', label: 'All' },
+  { key: 'games', label: 'Games' },
+  { key: 'social', label: 'Social' },
+  { key: 'productivity', label: 'Productivity' },
+  { key: 'tools', label: 'Tools' },
+  { key: 'fun', label: 'Fun' },
+  { key: 'other', label: 'Other' },
+];
+
 export function BrowseScreen() {
   const screenRef = useRef<HTMLElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -113,6 +127,7 @@ export function BrowseScreen() {
     showClear?: boolean;
     sort: string;
     filter: string;
+    category: string;
     curated: boolean;
     grouped: boolean;
     moreExpanded: boolean;
@@ -225,6 +240,33 @@ export function BrowseScreen() {
           ))}
         </ChipRail>
         {/*
+            THE KIND CHIPS (#3962), under the filter chips: a second rail
+            narrowing what the filter chip above left, before Sort orders it —
+            see Browse.categoryApps for what each chip holds. Same chip kit,
+            same shape, `aria-label="Filter by kind"`; and on a 390px phone
+            these seven wrap to a second line rather than scrolling
+            (.browse-category-chips in app.css), so every kind stays visible.
+        */}
+        <ChipRail
+          id="browse-category-chips"
+          role="group"
+          aria-label="Filter by kind"
+          className="browse-category-chips mt-2 max-w-xl gap-2 px-0 py-0"
+        >
+          {CATEGORY_CHIPS.map((c) => (
+            <Chip
+              key={c.key}
+              size="bar"
+              className="browse-filter-chip px-4"
+              selected={state.category === c.key}
+              data-category={c.key}
+              onClick={() => browse()?.setCategory(c.key)}
+            >
+              {c.label}
+            </Chip>
+          ))}
+        </ChipRail>
+        {/*
             Sort (#1383). Rides the search bar rather than sitting in its own
             strip: both narrow the same list, and one sticky row costs the
             phone less of the fold than two would.
@@ -272,6 +314,9 @@ export function BrowseScreen() {
           // The chip the rows were filtered with, beside the order: the
           // declared check for the chips reads it for the same reason.
           data-filter={state.filter}
+          // …and the kind the rows were narrowed to (#3962), for the same
+          // reason.
+          data-category={state.category}
           // Phone: the BODY of the pane whose head is the search bar above
           // (#1919) — one frosted sheet holding the hairline-separated rows,
           // continuing the head's ring and closing its radius. It used to be

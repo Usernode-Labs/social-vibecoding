@@ -201,6 +201,28 @@ test('a starter carries the creator\'s line and rule into its dapp.json like Emp
   assert.deepEqual(appManifest.readGovernance(dapp), { approvers: 'invited', approvals: 2 });
 });
 
+// #3962: the kind pick becomes dapp.json's top-level `category`, beside the
+// description — what the first deploy's reconcileAppCategory then persists.
+test('the dapp.json carries the kind when chosen, and stays alone when not', () => {
+  const withKind = JSON.parse(file(getTemplateFiles('Notes', 'notes-abc123', 'postgres://x', null, {
+    category: 'games',
+  }), 'dapp.json'));
+  assert.deepEqual(withKind, { category: 'games', secrets: [] });
+  assert.deepEqual(appManifest.readCategory(withKind), 'games',
+    'what the template writes, the manifest reader reads back');
+  const withBoth = JSON.parse(file(getTemplateFiles('Notes', 'notes-abc123', 'postgres://x', null, {
+    description: 'Shared notes', category: 'productivity',
+  }), 'dapp.json'));
+  assert.deepEqual(Object.keys(withBoth), ['description', 'category', 'secrets']);
+  // Everything the platform did before, unchanged without a kind: the usual
+  // one-line manifest is exactly what it always was.
+  assert.deepEqual(JSON.parse(file(getTemplateFiles('Notes', 'notes-abc123', 'postgres://x', null, {}), 'dapp.json')),
+    { secrets: [] });
+  assert.deepEqual(JSON.parse(file(getTemplateFiles('Notes', 'notes-abc123', 'postgres://x', null, {
+    category: null,
+  }), 'dapp.json')), { secrets: [] });
+});
+
 test('the starters live outside src/, where the SQL lint would read their queries as the platform\'s', () => {
   assert.equal(appTemplates.STARTERS_DIR, path.join(ROOT, 'app-templates'));
   assert.deepEqual(fs.readdirSync(appTemplates.STARTERS_DIR).sort(), [...STARTERS].sort(),

@@ -148,6 +148,7 @@ const Browse = {
     }
     Browse._applyInitialSort();
     Browse._applyInitialFilter();
+    Browse._applyInitialCategory();
     Browse._syncLevel();
     Browse.render();
     Browse._load();
@@ -452,6 +453,28 @@ const Browse = {
     { key: 'new', label: 'New' },
   ],
 
+  // The second rail, under the filter chips (issue #3962): the KIND a
+  // project declares in its own dapp.json (`category`, read by
+  // services/app-manifest.js readCategory off GET /api/apps's rows). All ·
+  // Games · Social · Productivity · Tools · Fun · Other. This is the same
+  // slug list as services/create-options.js CATEGORIES plus the 'other'
+  // bucket, which no dapp.json can declare — it collects the projects that
+  // declare nothing.
+  //
+  // The order of this array is the order of the chips; the first is the
+  // default and the store's prerender value. browse-screen.tsx keeps a COPY
+  // of these for the same reason it keeps one of FILTERS (tests/
+  // browse-screen.test.js pins the two together).
+  CATEGORIES: [
+    { key: 'all', label: 'All' },
+    { key: 'games', label: 'Games' },
+    { key: 'social', label: 'Social' },
+    { key: 'productivity', label: 'Productivity' },
+    { key: 'tools', label: 'Tools' },
+    { key: 'fun', label: 'Fun' },
+    { key: 'other', label: 'Other' },
+  ],
+
   // "New" is the apps CREATED in the last NEW_WINDOW_DAYS days (by
   // `created_at`). A directory where nothing is that young would give the
   // chip an empty list, which reads as a broken filter rather than a quiet
@@ -470,11 +493,25 @@ const Browse = {
   // without overriding a choice made by hand later in the same visit.
   _urlFilterTaken: false,
 
+  // The kind chip, on the same terms as the filter chip above: a session
+  // value on this object, never storage, so a kind left on by a visit last
+  // week cannot hide half the directory either.
+  _category: 'all',
+  // ?category= seeds the FIRST entry of a page load, spent once — the same
+  // hand-a-link lands-on-its-chip shape as ?filter= above.
+  _urlCategoryTaken: false,
+
   // Anything unrecognised falls back to All rather than emptying the screen.
   // Pure — unit-tested.
   resolveFilter(raw) {
     const key = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
     return Browse.FILTERS.some((f) => f.key === key) ? key : 'all';
+  },
+
+  // The kind chip's fallback, shaped exactly like resolveFilter's.
+  resolveCategory(raw) {
+    const key = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+    return Browse.CATEGORIES.some((c) => c.key === key) ? key : 'all';
   },
 
   // Runs on screen ENTRY, never during render — the same reason
@@ -491,11 +528,31 @@ const Browse = {
     if (Browse._store) Browse._store.set({ filter: Browse._filter });
   },
 
+  // The kind chip's entry-time seed, shaped exactly like
+  // _applyInitialFilter's.
+  _applyInitialCategory() {
+    if (!Browse._urlCategoryTaken) {
+      Browse._urlCategoryTaken = true;
+      let raw = null;
+      try { raw = new URLSearchParams(location.search).get('category'); } catch (err) { raw = null; }
+      if (raw) Browse._category = Browse.resolveCategory(raw);
+    }
+    if (Browse._store) Browse._store.set({ category: Browse._category });
+  },
+
   // A chip's onClick.
   setFilter(key) {
     const next = Browse.resolveFilter(key);
     Browse._filter = next;
     if (Browse._store) Browse._store.set({ filter: next });
+    Browse.render();
+  },
+
+  // The kind chip's onClick.
+  setCategory(key) {
+    const next = Browse.resolveCategory(key);
+    Browse._category = next;
+    if (Browse._store) Browse._store.set({ category: next });
     Browse.render();
   },
 
@@ -541,18 +598,46 @@ const Browse = {
     return list;
   },
 
-  // The nothing-to-show line, per chip. Pure — unit-tested.
-  emptyText(query, key) {
+  // The kind chip's set, before any sort or search. 'other' is the bucket
+  // for the undeclared: an app whose row carries no category (every app
+  // created before kinds existed, and every project whose dapp.json says
+  // nothing). All hides nothing. Pure — unit-tested.
+  categoryApps(apps, key) {
+    const category = Browse.resolveCategory(key == null ? Browse._category : key);
+    const list = (apps || []).filter(Boolean);
+    if (category === 'other') return list.filter((a) => !a.category);
+    if (category === 'all') return list;
+    return list.filter((a) => a.category === category);
+  },
+
+  // The nothing-to-show line, per chip. With a query, a filter chip other
+  // than All still names the filter it emptied; otherwise a kind chip other
+  // than All names the kind. Without a query, same precedence. All/All keep
+  // today's strings exactly. Pure — unit-tested.
+  emptyText(query, key, categoryKey) {
     const filter = Browse.resolveFilter(key == null ? Browse._filter : key);
+    const category = Browse.resolveCategory(categoryKey == null ? Browse._category : categoryKey);
     const q = String(query || '').trim();
     if (q) {
       if (filter === 'featured') return `No featured apps match “${q}”.`;
       if (filter === 'yours') return `Nothing you’ve joined matches “${q}”.`;
       if (filter === 'new') return `No new apps match “${q}”.`;
+      if (category === 'games') return `No games match “${q}”.`;
+      if (category === 'social') return `No social apps match “${q}”.`;
+      if (category === 'productivity') return `No productivity apps match “${q}”.`;
+      if (category === 'tools') return `No tools match “${q}”.`;
+      if (category === 'fun') return `No fun apps match “${q}”.`;
+      if (category === 'other') return `No other apps match “${q}”.`;
       return `No apps match “${q}”.`;
     }
     if (filter === 'featured') return 'No featured apps yet.';
     if (filter === 'yours') return 'You haven’t joined anything yet. Join apps from All.';
+    if (category === 'games') return 'No games to show yet.';
+    if (category === 'social') return 'No social apps to show yet.';
+    if (category === 'productivity') return 'No productivity apps to show yet.';
+    if (category === 'tools') return 'No tools to show yet.';
+    if (category === 'fun') return 'No fun apps to show yet.';
+    if (category === 'other') return 'No other apps to show yet.';
     return 'No apps to show yet.';
   },
 
@@ -649,14 +734,16 @@ const Browse = {
     return (apps || []).slice().sort(cmp);
   },
 
-  // The rows for the current chip and query. The chip picks the set first
-  // (filterApps), then the sort orders it, then the search narrows it. The
-  // search covers every app the chip admits (home's own search is scoped to
-  // "Your apps"), reusing Home's matcher so both fields behave identically.
-  // The three compose, and searching never changes the order.
+  // The rows for the current chip, kind and query. The filter chip picks the
+  // set first (filterApps), then the kind chip narrows it (categoryApps),
+  // then the sort orders it, then the search narrows it. The search covers
+  // every app the chips admit (home's own search is scoped to "Your apps"),
+  // reusing Home's matcher so both fields behave identically. The four
+  // compose, and searching never changes the order.
   visibleApps() {
     const pool = Browse.filterApps(Browse._apps, Browse._filter);
-    const sorted = Browse.sortApps(pool, Browse._sort);
+    const kinds = Browse.categoryApps(pool, Browse._category);
+    const sorted = Browse.sortApps(kinds, Browse._sort);
     return sorted.filter((a) => Home.matchesQuery(a, Browse._query));
   },
 
@@ -760,6 +847,9 @@ const Browse = {
       sort: Browse._sort,
       // …and the chips and #browse-list[data-filter], for the same reason.
       filter: Browse._filter,
+      // …and the kind rail and #browse-list[data-category], for the same
+      // reason again (issue #3962).
+      category: Browse._category,
       // #1912: EVERY sort tucks the demos and apps needing fixes behind
       // Show more — the disclosure used to exist on Recommended only, so
       // switching to a metric sort suddenly showed everything. Only
@@ -771,7 +861,7 @@ const Browse = {
       grouped: Browse._sort === 'recommended' && !query,
       moreExpanded: Browse._moreExpanded,
       error: false,
-      empty: rows.length ? null : Browse.emptyText(query, Browse._filter),
+      empty: rows.length ? null : Browse.emptyText(query, Browse._filter, Browse._category),
     });
 
     Browse._maybeShotDetail(rows);

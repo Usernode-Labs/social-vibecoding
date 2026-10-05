@@ -607,7 +607,13 @@ api.routes(app, pool);
 // Discover and the project's page show) and the first sentence of
 // CLAUDE.md's About section, so the coding agent starts from the same
 // intent. Absent, both stay as they were.
-function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = null, description = null, template = null, sketch = null } = {}) {
+//
+// `category` is the create screen's optional "What kind is it?" pick
+// (services/create-options.js CATEGORIES). It becomes dapp.json's
+// top-level `category`, the line Discover's second chip rail filters on.
+// Absent, the file stays as it was — the project lands in Discover's
+// 'other' bucket, where the undeclared always sit.
+function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = null, description = null, category = null, template = null, sketch = null } = {}) {
   const canonicalRepoFile = getCanonicalRepoFile(repoUrl);
   // `template` is the create screen's starter (services/app-templates.js).
   // Absent or `empty` writes exactly what every new app always got; a
@@ -989,6 +995,10 @@ value = "build"
       content: JSON.stringify(
         {
           ...(about ? { description: about } : {}),
+          // The create screen's "What kind is it?" pick — the chip Discover's
+          // second rail filters on. Optional, so the usual dapp.json stays
+          // exactly what it always was.
+          ...(category ? { category } : {}),
           // A starter's tile icon, else the first session card's, and the
           // checks a starter's first proposal runs.
           ...(icon ? { icon } : {}),

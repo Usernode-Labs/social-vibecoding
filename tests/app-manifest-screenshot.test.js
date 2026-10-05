@@ -76,8 +76,9 @@ test('unparseable manifest still yields the default screenshot block', () => {
 
 test('full read() return carries the screenshot key alongside the others', () => {
   withManifest({ secrets: [], screenshot: { deviceScaleFactor: 1 } }, (m) => {
+    // #3962 added `category` to the snapshot beside `description`.
     assert.deepEqual(Object.keys(m).sort(),
-      ['admins', 'description', 'governance', 'icon', 'llm', 'name', 'permissions', 'platform_env', 'screenshot',
+      ['admins', 'category', 'description', 'governance', 'icon', 'llm', 'name', 'permissions', 'platform_env', 'screenshot',
         'secrets', 'tests', 'visibility'].sort());
     assert.equal(m.screenshot.deviceScaleFactor, 1);
   });

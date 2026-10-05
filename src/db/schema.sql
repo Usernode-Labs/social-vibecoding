@@ -11897,6 +11897,14 @@ END $$;
 -- failed create writes the same starter the creator picked.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS template VARCHAR(40);
 
+-- The project's declared kind — the chip Discover's second rail filters on
+-- (services/app-manifest.js readCategory, which the deploy-time
+-- reconcileAppCategory keeps in step with dapp.json). Nullable with no
+-- default: NULL is the undeclared project, the bucket Discover's 'other'
+-- chip collects. No backfill and no index — the column is read off the rows
+-- a browse already fetched.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS category VARCHAR(32);
+
 -- "Suggest this back" (services/suggest-back.js): a proposal opened on an
 -- original from one of its remixes records the copy it came from. NULL for
 -- every other proposal. The partial unique index is what keeps one copy to

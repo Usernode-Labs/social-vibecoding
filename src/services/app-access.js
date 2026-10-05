@@ -89,6 +89,10 @@ const NON_SECRET_APP_COLUMNS = [
   // The community the app belongs to (services/communities.js). An id, and
   // the community's members are the app's own collaborators and joiners.
   'community_id',
+  // The declared kind (#3962; services/app-manifest.js readCategory) —
+  // Discover's second chip rail filters on it, carried with the row GET
+  // /api/apps already returns. NULL is the undeclared project.
+  'category',
 ];
 
 // `NON_SECRET_APP_COLUMNS` rendered as a bare comma-joined column list

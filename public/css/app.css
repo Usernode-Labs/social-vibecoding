@@ -3441,6 +3441,7 @@ html.un-ios.in-native-webview .dc-active-dot-busy.dc-active-dot-promoted {
 .create-who-pill:active,
 .create-approver-pill:active,
 .create-approvals-pill:active,
+.create-category-pill:active,
 .members-vis-pill:active,
 [data-theme-mode]:active {
   transform: none;
@@ -5594,6 +5595,14 @@ html[data-browser-scroller="home-screen"] .home-body-fill {
   #browse-screen .browse-pane-body,
   #browse-screen .browse-pane-note { background-color: var(--dc-sheet-solid); }
 }
+
+/* The Discover kind rail (#3962, #browse-category-chips). Its seven chips
+   read a plain CSS rule rather than utilities because the primitive's rail
+   (ChipRail) is a horizontal scroller: flex-wrap turns it into a wrapping
+   row, so every kind stays visible at 390px instead of hiding behind a
+   finger-scroll. The chips themselves are the same .browse-filter-chip
+   + px-4 utility shape the filter rail above uses — no new chip look. */
+#browse-screen .browse-category-chips { flex-wrap: wrap; }
 
 /* ── App-card "…" actions menu ─────────────────────────────
    Popover built by Home.openCardMenu (appended to <body>, fixed-
@@ -12698,6 +12707,30 @@ html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
 #create-card[data-approvers="invited"]  .create-approver-pill[data-approver-pill="invited"],
 #create-card[data-approvals="majority"] .create-approvals-pill[data-approvals-pill="majority"],
 #create-card[data-approvals="atLeast"]  .create-approvals-pill[data-approvals-pill="atLeast"] {
+  background: #0a6ee0; /* violet-600, as tailwind.config.js compiles it */
+  color: #ffffff;
+}
+/* ── The kind pills (#3962) ────────────────────────────────────────────
+   The Short description step's "What kind is it?" rail: five segments built
+   from the dialog's RAIL/SEGMENT constants like the approvals rail, keyed
+   off #create-card[data-category] the same way. DIFFERENT WRAP, on purpose:
+   the approvals rail's two flex-1 segments can share one line, and these
+   five cannot — "Productivity" alone is wider than a 390px pane's share.
+   So this rail wraps at its natural widths and each pill keeps its own
+   measure, instead of shrinking five ways to an ellipse. */
+#create-card .create-category-rail { flex-wrap: wrap; }
+#create-card .create-category-pill {
+  flex: none;
+  white-space: nowrap;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+#create-card .create-category-pill:hover { color: var(--text-primary); }
+#create-card[data-category="games"]        .create-category-pill[data-category-pill="games"],
+#create-card[data-category="social"]       .create-category-pill[data-category-pill="social"],
+#create-card[data-category="productivity"] .create-category-pill[data-category-pill="productivity"],
+#create-card[data-category="tools"]        .create-category-pill[data-category-pill="tools"],
+#create-card[data-category="fun"]          .create-category-pill[data-category-pill="fun"] {
   background: #0a6ee0; /* violet-600, as tailwind.config.js compiles it */
   color: #ffffff;
 }

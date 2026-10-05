@@ -1063,6 +1063,12 @@ async function rebuildProductionInner(config, app, options = {}) {
     // the letter tile. Best-effort; needs cloneDir for the image bytes.
     await appManifest.reconcileAppIcon(prodPool, app, manifest, cloneDir)
       .catch((err) => log.warn('staging', 'Icon reconcile failed', { app: app.slug, err: err.message }));
+    // And the manifest's `category` (Discover's kind chips): a merged PR
+    // that declares, changes or drops the one-word kind applies here on
+    // the rebuild its merge triggered. Like the icon, dapp.json is fully
+    // authoritative — an absent line clears apps.category. Best-effort.
+    await appManifest.reconcileAppCategory(prodPool, app, manifest)
+      .catch((err) => log.warn('staging', 'Category reconcile failed', { app: app.slug, err: err.message }));
     const stored = await appSecrets.getRawValues(prodPool, app.id, config.dataEncryptionKey);
     const merge = appSecrets.mergeForDeploy(
       manifest, stored, appSecrets.platformDefaultsFromEnv()

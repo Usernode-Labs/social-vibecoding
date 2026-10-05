@@ -11,7 +11,8 @@
 //   details  the name, and for a project made here "What should it do?",
 //            required of everyone and filed as the project's first request
 //   about    a project made here only: the one-line "What is it?", required,
-//            suggested from what it should do on arrival
+//            suggested from what it should do on arrival, and beside it the
+//            optional "What kind is it?" pick (#3962)
 //   approve  LAST, a private or a public community only: who approves changes
 //
 // Nothing is chosen for the person: every answer starts empty, pressing a
@@ -268,6 +269,49 @@ test('the one-line description is a step of its own, suggested on arrival, and o
   assert.match(fn, /line = \(line \|\| firstSentence\(text, DESCRIPTION_MAX\)\)\.slice\(0, DESCRIPTION_MAX\);/, 'the first sentence when no suggestion comes back');
   assert.match(fn, /if \(suggestion\.current\.seq !== seq\) return;/, 'a late answer is dropped');
   assert.match(fn, /if \(suggestion\.current\.edited\) return;/, 'a line typed while it was on its way wins');
+});
+
+test('#3962: the Short description step asks what kind it is, optionally, and the body carries the pick', () => {
+  const about = SRC.slice(SRC.indexOf('data-create-step="about"'), SRC.indexOf('data-create-step="approve"'));
+  assert.match(about, /What kind is it\?/);
+  assert.match(about, /create-category-rail/);
+  // The five pills are drawn from the dialog's own list, one map, so the
+  // list itself is what carries the choices.
+  const { CATEGORIES } = mod();
+  assert.deepEqual(CATEGORIES.map((c) => c.key), ['games', 'social', 'productivity', 'tools', 'fun']);
+  assert.deepEqual(CATEGORIES.map((c) => c.label), ['Games', 'Social', 'Productivity', 'Tools', 'Fun']);
+  assert.match(about, /\{CATEGORIES\.map\(\(c\) => \(\s*<button\s+key=\{c\.key\}\s+type="button"\s+data-category-pill=\{c\.key\}\s+aria-pressed=\{category === c\.key\}/);
+  assert.match(about, /\{c\.label\}/);
+  assert.match(about, /className=\{'create-category-pill ' \+ SEGMENT\}/);
+  assert.doesNotMatch(about, /data-category-pill="other"/, "'other' is the bucket for the undeclared, not a choice");
+  assert.doesNotMatch(about, /create-category-pill[\s\S]{0,200}importing/, 'an import never saw this step, so nothing to ask');
+  // Set only, like the other pills; nothing chosen on arrival.
+  assert.match(SRC, /const \[category, setCategory\] = useState<Category \| null>\(null\);/);
+  // Next is not gated on it: the step's answer is still the description alone.
+  const answered = SRC.slice(SRC.indexOf('function answered(which: Step): boolean {'), SRC.indexOf('const stepAnswered'));
+  assert.match(answered, /case 'about': return describe\.trim\(\)\.length > 0;/);
+  // A fresh open and a close put it back to nothing, with every other answer.
+  assert.match(SRC, /setBrief\(initial\.brief\);\s*setCategory\(null\);/);
+  assert.match(SRC, /setBrief\(''\);\s*setCategory\(null\);/);
+  // The card carries the pick for app.css, like every other answer.
+  assert.match(SRC, /'data-category': category \?\? ''/);
+  // And app.css styles the rail: wrap (five segments cannot share a 390px
+  // line), the same accent fill keyed off the card's attribute, and the
+  // :active transform opt-out its sibling pills share.
+  assert.match(CSS, /#create-card \.create-category-rail \{ flex-wrap: wrap; \}/);
+  assert.match(CSS, /#create-card\[data-category="games"\]\s+\.create-category-pill\[data-category-pill="games"\]/);
+  assert.match(CSS, /\.create-category-pill:active,/);
+  // The wire body: a project made here sends the pick when chosen; an
+  // unpicked step sends nothing; an import never does.
+  const { createBody } = mod();
+  const base = { name: 'Chess club', mode: 'new', approvers: null, approvals: null };
+  assert.equal(createBody({ ...base, audience: 'solo', category: 'games' }).category, 'games');
+  assert.equal(createBody({ ...base, audience: 'solo', category: null }).category, undefined, 'unpicked sends nothing');
+  assert.equal(createBody({ ...base, audience: 'solo', mode: 'import', repoUrl: 'https://github.com/o/r', repo: {}, category: 'games' }).category,
+    undefined, 'an import leaves the kind to its own dapp.json');
+  // The submit path passes the state through, beside the repo and template.
+  const submit = SRC.slice(SRC.indexOf('async function submit(event: FormEvent) {'), SRC.indexOf('  const stepIndex'));
+  assert.match(submit, /category,\s*repo,\s*template,\s*\}\);/);
 });
 
 test('the invite step: one row per person, suggestions from the user search, an email marked Will invite', () => {

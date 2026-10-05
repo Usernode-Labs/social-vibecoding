@@ -178,7 +178,7 @@ function makeBrowse(opts = {}) {
   vm.runInContext(BROWSE_SRC, sandbox);
   // The store ./mount.ts plants, with the same initial value browse-store.js
   // ships (which is also the shell's prerendered empty state).
-  const state = { level: 'list', rows: null, empty: null, error: false, detail: null, sort: 'recommended', filter: 'all' };
+  const state = { level: 'list', rows: null, empty: null, error: false, detail: null, sort: 'recommended', filter: 'all', category: 'all' };
   sandbox.Browse._store = {
     get: () => state,
     set: (patch) => Object.assign(state, patch),
@@ -723,6 +723,186 @@ test('the chips prerender with All pressed, from the store\'s initial value', ()
   assert.match(INDEX, /id="browse-list"[^>]*data-filter="all"/);
   // The language's own filter chip, not a hand-rolled one.
   assert.match(read('frontend/src/features/apps/browse-screen.tsx'), /from '@\/components\/ui\/chip'/);
+});
+
+// ── Kind chips: All / Games / Social / Productivity / Tools / Fun / Other ──
+
+test("the kind rail is a faithful copy of Browse.CATEGORIES, in its order", () => {
+  const { Browse } = makeBrowse();
+  assert.deepEqual(Array.from(Browse.CATEGORIES, (c) => c.label),
+    ['All', 'Games', 'Social', 'Productivity', 'Tools', 'Fun', 'Other']);
+  assert.deepEqual(Array.from(Browse.CATEGORIES, (c) => c.key),
+    ['all', 'games', 'social', 'productivity', 'tools', 'fun', 'other'],
+    "'other' is the bucket for the undeclared, and 'all' the default");
+  // Same reason FILTER_CHIPS is a copy: window.Browse does not exist in the
+  // SSG pass, so the chips carry their own labels.
+  const src = read('frontend/src/features/apps/browse-screen.tsx');
+  const block = src.match(/const CATEGORY_CHIPS[\s\S]*?\n\];/);
+  assert.ok(block, 'CATEGORY_CHIPS is still declared in browse-screen.tsx');
+  const copied = [...block[0].matchAll(/\{\s*key:\s*'([^']+)',\s*label:\s*'([^']+)'\s*\}/g)]
+    .map((m) => ({ key: m[1], label: m[2] }));
+  assert.deepEqual(copied, Array.from(Browse.CATEGORIES, (c) => ({ key: c.key, label: c.label })));
+});
+
+test('resolveCategory: anything unrecognised is All, like the filter chips', () => {
+  const { Browse } = makeBrowse();
+  for (const key of ['all', 'games', 'social', 'productivity', 'tools', 'fun', 'other']) {
+    assert.equal(Browse.resolveCategory(key), key);
+  }
+  assert.equal(Browse.resolveCategory(' GAMES '), 'games');
+  for (const bad of ['shopping', '', null, undefined, 42, 'drop-tables']) {
+    assert.equal(Browse.resolveCategory(bad), 'all', String(bad));
+  }
+});
+
+test('categoryApps: each kind admits its set, Other holds the undeclared, All hides nothing', () => {
+  const { Browse } = makeBrowse();
+  const apps = [
+    app({ slug: 'chess', category: 'games' }),
+    app({ slug: 'chat', category: 'social' }),
+    app({ slug: 'notes', category: 'productivity' }),
+    app({ slug: 'clock', category: 'tools' }),
+    app({ slug: 'quiz', category: 'fun' }),
+    app({ slug: 'old', created_at: ago(400) }),
+    // The rows arrive with the unknown kind already nulled (the manifest
+    // reader's warn, pinned in tests/app-manifest-category.test.js), so the
+    // client's bucket is simply "no category".
+    app({ slug: 'wrong', category: null }),
+  ];
+  const keys = (list) => Array.from(list, (a) => a.slug);
+  assert.deepEqual(keys(Browse.categoryApps(apps, 'games')), ['chess']);
+  assert.deepEqual(keys(Browse.categoryApps(apps, 'social')), ['chat']);
+  assert.deepEqual(keys(Browse.categoryApps(apps, 'productivity')), ['notes']);
+  assert.deepEqual(keys(Browse.categoryApps(apps, 'tools')), ['clock']);
+  assert.deepEqual(keys(Browse.categoryApps(apps, 'fun')), ['quiz']);
+  // 'other' is a bucket, not a declaration: the app whose dapp.json named a
+  // kind the reader dropped, and every app created before kinds did.
+  assert.deepEqual(keys(Browse.categoryApps(apps, 'other')), ['old', 'wrong']);
+  assert.deepEqual(keys(Browse.categoryApps(apps, 'all')), keys(apps), 'All is everything');
+  // Pure: the input is untouched and the default key is the current chip.
+  assert.equal(apps.length, 7);
+  Browse._category = 'games';
+  assert.deepEqual(keys(Browse.categoryApps(apps)), ['chess']);
+});
+
+test('the kind chip narrows after the filter chip, before Sort and search', () => {
+  const { Browse, state } = makeBrowse();
+  Browse._apps = [
+    app({ slug: 'game-few', name: 'Chess Few', category: 'games', featured: true, featured_order: 0, active_users: 1 }),
+    app({ slug: 'game-many', name: 'Chess Many', category: 'games', featured: true, featured_order: 1, active_users: 50 }),
+    app({ slug: 'game-loud', name: 'Chess Loud', category: 'games', active_users: 999 }),
+    app({ slug: 'chat-many', name: 'Chat Many', category: 'social', active_users: 500 }),
+  ];
+  Browse.setCategory('games');
+  assert.equal(state.category, 'games', 'the rail and #browse-list[data-category] read the store');
+  assert.deepEqual(slugs(state), ['game-few', 'game-many', 'game-loud']);
+  // Featured narrows the games, not the other way round.
+  Browse.setFilter('featured');
+  assert.deepEqual(slugs(state), ['game-few', 'game-many'], 'the chips compose');
+  Browse.setSort('users');
+  assert.deepEqual(slugs(state), ['game-many', 'game-few'], 'Sort works WITHIN the kind');
+  Browse.setQuery('many', { immediate: true });
+  assert.deepEqual(slugs(state), ['game-many'], 'and the search narrows it further');
+  Browse.setQuery('', { immediate: true });
+  Browse.setFilter('all');
+  Browse.setCategory('other');
+  assert.deepEqual(slugs(state), [], 'the undeclared bucket excludes every declared app');
+  Browse.setCategory('all');
+  assert.deepEqual(slugs(state), ['game-loud', 'chat-many', 'game-many', 'game-few'],
+    'All brings every kind back, still sorted');
+  assert.equal(state.sort, 'users', 'and switching chips never lost the order');
+});
+
+test('an empty kind says which kind is empty, beside the filter chips and the query', () => {
+  const { Browse, state } = makeBrowse();
+  Browse._apps = [app({ slug: 'plain', name: 'Plain' })];
+  Browse.setCategory('games');
+  assert.equal(state.empty, 'No games to show yet.');
+  Browse.setQuery('zzz', { immediate: true });
+  assert.equal(state.empty, 'No games match “zzz”.');
+  Browse.setQuery('', { immediate: true });
+  // The other four kinds, through the same store path the rail drives.
+  for (const [key, line] of [
+    ['social', 'No social apps to show yet.'],
+    ['productivity', 'No productivity apps to show yet.'],
+    ['tools', 'No tools to show yet.'],
+    ['fun', 'No fun apps to show yet.'],
+  ]) {
+    Browse.setCategory(key);
+    assert.equal(state.empty, line);
+  }
+  // The undeclared app lives in Other, and All holds it, so neither is empty.
+  Browse.setCategory('other');
+  assert.equal(state.empty, null);
+  Browse.setCategory('all');
+  assert.equal(state.empty, null, 'All with a match shows rows, not a line');
+  // The rest of the sentences, from the pure helper the store path calls:
+  // the five match lines, the two All lines and Other's empty line.
+  assert.equal(Browse.emptyText('zzz', 'all', 'social'), 'No social apps match “zzz”.');
+  assert.equal(Browse.emptyText('zzz', 'all', 'productivity'), 'No productivity apps match “zzz”.');
+  assert.equal(Browse.emptyText('zzz', 'all', 'tools'), 'No tools match “zzz”.');
+  assert.equal(Browse.emptyText('zzz', 'all', 'fun'), 'No fun apps match “zzz”.');
+  assert.equal(Browse.emptyText('zzz', 'all', 'other'), 'No other apps match “zzz”.');
+  assert.equal(Browse.emptyText('zzz', 'all', 'all'), 'No apps match “zzz”.',
+    'All keeps the sentence it always had');
+  assert.equal(Browse.emptyText('', 'all', 'other'), 'No other apps to show yet.');
+  assert.equal(Browse.emptyText('', 'all', 'all'), 'No apps to show yet.',
+    'All with no query keeps its line');
+  // A filter chip other than All still names the filter, even over a kind.
+  Browse.setCategory('games');
+  Browse.setFilter('featured');
+  Browse.setQuery('zzz', { immediate: true });
+  assert.equal(state.empty, 'No featured apps match “zzz”.',
+    'a named filter wins the sentence while a query is active');
+  Browse.setQuery('', { immediate: true });
+  assert.equal(state.empty, 'No featured apps yet.');
+  Browse.setFilter('all');
+  assert.equal(state.empty, 'No games to show yet.');
+});
+
+test('the kind chip is remembered for the session only, and ?category= seeds the first entry', () => {
+  const { Browse, state, storage } = makeBrowse({ search: '?category=games' });
+  Browse._load = () => {};
+  Browse.open(null);
+  assert.equal(state.category, 'games', 'a link lands on its kind');
+  Browse.setCategory('fun');
+  Browse.close();
+  Browse.open(null);
+  assert.equal(state.category, 'fun',
+    'the choice survives leaving Discover, and the spent link does not override it');
+  assert.equal(Object.keys(storage).some((k) => /category/i.test(k)), false,
+    'nothing is stored: a reload starts on All');
+  const fresh = makeBrowse();
+  fresh.Browse._load = () => {};
+  fresh.Browse.open(null);
+  assert.equal(fresh.state.category, 'all');
+  const junk = makeBrowse({ search: '?category=bananas' });
+  junk.Browse._load = () => {};
+  junk.Browse.open(null);
+  assert.equal(junk.state.category, 'all', 'an unknown kind is All, never an empty screen');
+});
+
+test('the kind rail prerenders under the filter chips, with All pressed', () => {
+  const src = read('frontend/src/features/apps/browse-store.js');
+  assert.match(src, /category: 'all',/);
+  // Applied on ENTRY, never during render, right where the filter seed is.
+  assert.match(BROWSE_SRC, /Browse\._applyInitialFilter\(\);\n\s+Browse\._applyInitialCategory\(\);/);
+  const bar = INDEX.slice(INDEX.indexOf('id="browse-search-bar"'), INDEX.indexOf('id="browse-sort-bar"'));
+  const filterEnd = bar.indexOf('id="browse-sort-bar"');
+  const rail = bar.slice(bar.indexOf('id="browse-category-chips"'), filterEnd);
+  const chips = [...rail.matchAll(/<button[^>]*aria-pressed="(true|false)"[^>]*data-category="([a-z]+)"[^>]*>([^<]+)</g)]
+    .map((m) => `${m[2]}:${m[1]}:${m[3]}`);
+  assert.deepEqual(chips, [
+    'all:true:All', 'games:false:Games', 'social:false:Social',
+    'productivity:false:Productivity', 'tools:false:Tools', 'fun:false:Fun', 'other:false:Other',
+  ]);
+  assert.match(bar, /id="browse-category-chips" role="group" aria-label="Filter by kind"/);
+  // The filter rail stays ahead of the kind rail, and Sort stays below both.
+  assert.ok(bar.indexOf('id="browse-filter-chips"') < bar.indexOf('id="browse-category-chips"'),
+    'the kind rail sits under the filter rail');
+  assert.match(INDEX, /id="browse-list"[^>]*data-category="all"/);
+  assert.match(INDEX, /id="browse-list"[^>]*data-filter="all"/);
+  assert.match(read('frontend/src/features/apps/browse-screen.tsx'), /aria-label="Filter by kind"/);
 });
 
 // ── Search covers EVERY visible app (home's is scoped to yours) ────

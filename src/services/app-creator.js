@@ -13,6 +13,7 @@ const { appIdentityEnv } = require('./app-identity-env');
 const deployFailure = require('./deploy-failure');
 const { getTemplateFiles, getConnectorScaffoldFiles, getCanonicalRepoFile } = require('./template');
 const appTemplates = require('./app-templates');
+const createOptions = require('./create-options');
 const { getPool } = require('../db/pool');
 const appCreationPhase = require('./app-creation-phase');
 const journeyEvents = require('./journey-events');
@@ -68,6 +69,15 @@ function descriptionOf(row) {
 function templateOf(row) {
   const t = row?.template;
   return typeof t === 'string' && appTemplates.isTemplate(t) ? t : appTemplates.DEFAULT_TEMPLATE;
+}
+
+// The create screen's "What kind is it?" pick, carried in the manifest
+// snapshot the same way the description is, so a Retry after a failed create
+// writes the same chip. Re-checked against CATEGORIES in case the snapshot
+// came from before kinds existed or off an import.
+function categoryOf(row) {
+  const c = row?.manifest_snapshot?.category;
+  return createOptions.CATEGORIES.includes(c) ? c : null;
 }
 
 async function createApp(config, appRow) {
@@ -147,7 +157,7 @@ async function createApp(config, appRow) {
 
         // repoUrl makes the template name this repo as the app's canonical
         // one (.claude/homeroom-canonical-repo, read by the freshness check).
-        const files = getTemplateFiles(name, slug, dbUrl, repoUrl, { governance: governanceOf(appRow), description: descriptionOf(appRow), template: templateOf(appRow), sketch });
+        const files = getTemplateFiles(name, slug, dbUrl, repoUrl, { governance: governanceOf(appRow), description: descriptionOf(appRow), category: categoryOf(appRow), template: templateOf(appRow), sketch });
         await github.pushFiles(botUsername, slug, files, {
           message: `Initialize ${name} from Homeroom template`,
         });
@@ -277,7 +287,7 @@ async function createApp(config, appRow) {
       fs.mkdirSync(tempDir, { recursive: true });
       fs.mkdirSync(path.join(tempDir, 'public'), { recursive: true });
 
-      const files = getTemplateFiles(name, slug, dbUrl, null, { governance: governanceOf(appRow), description: descriptionOf(appRow), template: templateOf(appRow) });
+      const files = getTemplateFiles(name, slug, dbUrl, null, { governance: governanceOf(appRow), description: descriptionOf(appRow), category: categoryOf(appRow), template: templateOf(appRow) });
       for (const f of files) {
         const filePath = path.join(tempDir, f.path);
         fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -390,6 +400,13 @@ async function finalizeDeployInner(config, { appId, name, slug, tempDir, dbUrl, 
     // so the image bytes are read from it directly. Best-effort.
     await appManifest.reconcileAppIcon(pool, { id: appId, slug }, manifest, tempDir)
       .catch((err) => log.warn('app-creator', 'Icon reconcile failed', { appId, err: err.message }));
+
+    // And the manifest's `category` (Discover's kind chips): like the icon
+    // and the screenshot scale, dapp.json is the authority — a dapp.json
+    // without the line clears apps.category, so a proposal that removes a
+    // project's kind also unshelves it in Discover. Best-effort.
+    await appManifest.reconcileAppCategory(pool, { id: appId, slug }, manifest)
+      .catch((err) => log.warn('app-creator', 'Category reconcile failed', { appId, err: err.message }));
 
     const storedValues = await appSecrets.getRawValues(pool, appId, config.dataEncryptionKey);
     const merge = appSecrets.mergeForDeploy(

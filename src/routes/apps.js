@@ -1014,7 +1014,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     if (options.error) {
       return res.status(400).json({ error: options.error });
     }
-    const { collabVisibility, viewVisibility, invitees, inviteEmails, governance: rule, description, template } = options;
+    const { collabVisibility, viewVisibility, invitees, inviteEmails, governance: rule, description, category, template } = options;
 
     // Import-existing pre-flight: parse URL, accept any pending invite
     // for this exact repo, then verify Write access. Anything other
@@ -1149,13 +1149,18 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       }
 
       // WHAT IT IS, if the creator said. Seeded as the manifest snapshot the
-      // template's dapp.json is about to match ({ description, secrets: [] }),
-      // so app-creator writes it into the new repository and a Retry still
-      // has it. The first deploy then snapshots the real file over it.
-      if (description) {
+      // template's dapp.json is about to match ({ description, category,
+      // secrets: [] }), so app-creator writes it into the new repository and
+      // a Retry still has it. The first deploy then snapshots the real file
+      // over it.
+      if (description || category) {
         const { rows: described } = await pool.query(
           `UPDATE apps SET manifest_snapshot = $1 WHERE id = $2 RETURNING *`,
-          [JSON.stringify({ description, secrets: [] }), appRow.id]
+          [JSON.stringify({
+            ...(description ? { description } : {}),
+            ...(category ? { category } : {}),
+            secrets: [],
+          }), appRow.id]
         );
         appRow = described[0] || appRow;
       }

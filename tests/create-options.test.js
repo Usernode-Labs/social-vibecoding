@@ -98,8 +98,9 @@ test('the new repository\'s dapp.json carries a non-default rule, and only then'
     { approvers: 'invited', approvals: 3 });
   const creator = fs.readFileSync(path.join(__dirname, '../src/services/app-creator.js'), 'utf8');
   // The GitHub path also passes the first session's sketch (tests/app-sketch.test.js).
-  assert.equal((creator.match(/\{ governance: governanceOf\(appRow\), description: descriptionOf\(appRow\), template: templateOf\(appRow\)(?:, sketch)? \}/g) || []).length, 2,
-    'both template paths (GitHub and local) pass the row\'s rule, its line and its starter');
+  // #3962: both paths now pass the kind beside the line.
+  assert.equal((creator.match(/\{ governance: governanceOf\(appRow\), description: descriptionOf\(appRow\), category: categoryOf\(appRow\), template: templateOf\(appRow\)(?:, sketch)? \}/g) || []).length, 2,
+    'both template paths (GitHub and local) pass the row\'s rule, its line, its kind and its starter');
 });
 
 test('"What is it?" is one optional line, tidied and bounded', () => {
@@ -133,6 +134,25 @@ test('the new repository\'s dapp.json and CLAUDE.md carry the line, and only whe
   assert.match(about('Shared notes for the house'), /^## About Notes\n\nShared notes for the house\n\n/);
   assert.doesNotMatch(about(null), /Shared notes/);
   const route = fs.readFileSync(path.join(__dirname, '../src/routes/apps.js'), 'utf8');
-  assert.match(route, /UPDATE apps SET manifest_snapshot = \$1 WHERE id = \$2 RETURNING \*`,\s*\[JSON\.stringify\(\{ description, secrets: \[\] \}\), appRow\.id\]/,
-    'the route seeds the line where app-creator (and a Retry) reads it');
+  // #3962: the snapshot carries the kind beside the line, each only when said.
+  assert.match(route, /UPDATE apps SET manifest_snapshot = \$1 WHERE id = \$2 RETURNING \*`,\s*\[JSON\.stringify\(\{\s*\.\.\.\(description \? \{ description \} : \{\}\),\s*\.\.\.\(category \? \{ category \} : \{\}\),\s*secrets: \[\],\s*\}\), appRow\.id\]/,
+    'the route seeds the line and the kind where app-creator (and a Retry) reads them');
+});
+
+test('"What kind is it?" is one optional pick off the list, strict like the rule', () => {
+  const kind = (category) => options.parseCreateOptions({ audience: 'open', category });
+  assert.equal(kind(undefined).category, null, 'absent sends no kind');
+  assert.equal(kind(null).category, null);
+  assert.equal(kind('  GAMES  ').category, 'games', 'case-insensitive on input, lowercase in the result');
+  assert.deepEqual(options.parseCategory('Fun'), { category: 'fun' });
+  for (const bad of ['shopping', 'other', 'other ', 42, true, ['games'], {}]) {
+    assert.match(options.parseCategory(bad).error, /^category must be one of: /,
+      `${JSON.stringify(bad)} is a 400, never a silent drop`);
+  }
+  assert.equal(options.parseCreateOptions({ audience: 'open', category: 'nope' }).error,
+    'category must be one of: games, social, productivity, tools, fun');
+  // The dialog's pick and the dapp.json reader are one list, not two copies.
+  assert.deepEqual(options.CATEGORIES, ['games', 'social', 'productivity', 'tools', 'fun']);
+  // An import sends none; nothing here changes that.
+  assert.equal(kind('games', { imported: true }).category, 'games');
 });

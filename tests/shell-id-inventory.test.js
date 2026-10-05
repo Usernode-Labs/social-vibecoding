@@ -318,6 +318,8 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── #3962: Discover's kind chips ──────────────────────────────────────
+  'browse-category-chips': '#3962: Discover\'s second chip rail, under the filter chips — the kind each project declares in its own dapp.json (category), All / Games / Social / Productivity / Tools / Fun / Other. Ships with All pressed, the store\'s prerender value.',
   'report-modal': '#2721 shared reporting dialog',
   // ── B8: Suggest an improvement answered by Homeroom bot ─────────────────
   'feedback-sent-line': 'B8: the line under the filed-request confirmation\'s heading, worded by the controller: "Find it on your profile…", or "Homeroom bot is on it, usually about 8 minutes."',

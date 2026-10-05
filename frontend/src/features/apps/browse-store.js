@@ -56,4 +56,12 @@ export const browseStore = createStore({
    * (Browse._applyInitialFilter), never during render.
    */
   filter: 'all',
+  /**
+   * Which of Browse.CATEGORIES kind chips is on (issue #3962): 'all' | 'games'
+   * | 'social' | 'productivity' | 'tools' | 'fun' | 'other'. 'all' is the
+   * PRERENDER value, for the same reason as `filter`: ?category= and the
+   * session's own choice are applied on screen entry
+   * (Browse._applyInitialCategory), never during render.
+   */
+  category: 'all',
 });

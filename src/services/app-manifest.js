@@ -60,6 +60,11 @@ const log = require('./logger');
 const usernames = require('./usernames');
 const appPermissions = require('./app-permissions');
 const { validatePath } = require('./testing-notes');
+// Discover's category slugs live with the create screen's choices
+// (services/create-options.js CATEGORIES) so a dapp.json line and a
+// POST /api/apps body answer the same question the same way. This file does
+// not export anything that file needs, so there is no cycle.
+const { CATEGORIES } = require('./create-options');
 
 const MANIFEST_FILENAME = 'dapp.json';
 
@@ -796,6 +801,23 @@ function readVisibility(parsed) {
   return { build, view };
 }
 
+// The optional top-level `category`: the one-word kind Discover's second
+// chip rail filters on (issue #3962). Lenient where the create screen is
+// strict — a repository whose dapp.json says something else still deploys,
+// it just stays uncategorised — so a stray value warns and drops to null
+// rather than failing the deploy. The slug is lowercased before the check,
+// and 'other' is not accepted: it is the bucket Discover collects the
+// undeclared into, not a declaration. Never throws.
+function readCategory(parsed) {
+  const raw = parsed?.category;
+  if (raw == null) return null;
+  if (typeof raw !== 'string' || !CATEGORIES.includes(raw.trim().toLowerCase())) {
+    log.warn('app-manifest', 'Ignoring unknown dapp.json category', { value: raw });
+    return null;
+  }
+  return raw.trim().toLowerCase();
+}
+
 // Human description of a (collab, view) visibility pair — shared by the
 // reconcile chat message and the visibility-PR title so every surface
 // describes the same state with the same words. Matches the wording the
@@ -1152,9 +1174,9 @@ function read(cloneDir) {
   try {
     raw = fs.readFileSync(filePath, 'utf-8');
   } catch (err) {
-    if (err.code === 'ENOENT') return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
+    if (err.code === 'ENOENT') return { name: null, description: null, category: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
     log.warn('app-manifest', 'Read failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
+    return { name: null, description: null, category: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
   }
 
   let parsed;
@@ -1162,7 +1184,7 @@ function read(cloneDir) {
     parsed = JSON.parse(raw);
   } catch (err) {
     log.warn('app-manifest', 'Parse failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
+    return { name: null, description: null, category: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
   }
 
   const platformEnv = readPlatformEnv(parsed);
@@ -1171,6 +1193,7 @@ function read(cloneDir) {
   return {
     name: readName(parsed),
     description: readDescription(parsed),
+    category: readCategory(parsed),
     secrets,
     llm: readLlm(parsed),
     permissions: readPermissions(parsed),
@@ -1726,6 +1749,40 @@ async function reconcileAppScreenshot(pool, app, manifest) {
 }
 
 /**
+ * Deploy-time category reconcile (issue #3962) — sibling of
+ * reconcileAppScreenshot. The manifest's optional top-level `category`
+ * (readCategory) is the source of truth for Discover's kind chip, so it
+ * persists into apps.category and like `screenshot`/`icon` the manifest is
+ * FULLY authoritative: a dapp.json without the line clears the column,
+ * restoring the undeclared bucket ('other'), rather than leaving a kind
+ * the file has already stopped declaring. There is no platform-side
+ * category setter to clobber, so "what's in dapp.json is what you get"
+ * holds unconditionally.
+ *
+ * No-op (returns false) when the row is missing or the stored value
+ * already matches. Best-effort like its siblings: callers fire-and-log;
+ * a failure here must never fail the deploy.
+ */
+async function reconcileAppCategory(pool, app, manifest) {
+  const category = CATEGORIES.includes(manifest?.category)
+    ? manifest.category : null;
+
+  const { rows } = await pool.query(
+    'SELECT category FROM apps WHERE id = $1', [app.id]
+  );
+  if (!rows.length) return false;
+  if ((rows[0].category || null) === category) return false;
+
+  await pool.query(
+    'UPDATE apps SET category = $1 WHERE id = $2', [category, app.id]
+  );
+  log.info('app-manifest', 'Reconciled app category from dapp.json', {
+    appId: app.id, slug: app.slug, category: category || null,
+  });
+  return true;
+}
+
+/**
  * Load + validate the icon image file the manifest points at, from the
  * freshly-cloned working tree. Returns `{ data, contentType, sha256 }`
  * or null on any validation failure (missing file, symlink escaping the
@@ -1934,6 +1991,7 @@ module.exports = {
   read,
   readName,
   readDescription,
+  readCategory,
   MAX_DESCRIPTION_LENGTH,
   readLlm,
   readVisibility,
@@ -1966,6 +2024,7 @@ module.exports = {
   reconcileAppVisibility,
   reconcileAppGovernance,
   reconcileAppScreenshot,
+  reconcileAppCategory,
   reconcileAppIcon,
   reconcileAppAdmins,
   applyVisibilityChange,

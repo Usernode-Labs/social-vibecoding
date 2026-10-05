@@ -33,7 +33,9 @@
  *            bot builds for (#3624), the bot builds that first version.
  *   about    a project made here only: the one-line "What is it?", required,
  *            suggested from what it should do on arrival
- *            (POST /api/apps/suggest-description, or its first sentence).
+ *            (POST /api/apps/suggest-description, or its first sentence),
+ *            and beside it the optional "What kind is it?" pick (#3962),
+ *            the Discover kind chips' slug.
  *   approve  who approves changes: members vote, or people you pick (starting
  *            with you), with "at least N yes votes" as a follow-up under the
  *            second. A private or a public community only, and last.
@@ -45,7 +47,8 @@
  * step's "Change" reopens it with its answer still picked.
  *
  * `POST /api/apps` takes `audience`, `invitees`, `inviteEmails`,
- * `description`, `governance`, `template` (services/create-options.js) and
+ * `description`, `category`, `governance`, `template`
+ * (services/create-options.js) and
  * `brief` (services/homeroom-bot-dm.js); the rule and
  * the line are written to the new repository's dapp.json, or, for an import
  * whose dapp.json does not already set them, committed into it by the bot
@@ -180,6 +183,23 @@ export type Invitee =
 
 /** The most people a private community is created with (services/create-options.js). */
 export const MAX_INVITEES = 20;
+
+/**
+ * The kinds the Short description step asks for (#3962), in the order and the
+ * words the row uses. The keys are services/create-options.js CATEGORIES, the
+ * same list POST /api/apps validates and the dapp.json reader accepts; the
+ * chosen slug becomes the new repository's dapp.json `category` line, the one
+ * Discover's second chip rail filters on. 'other' is not offered: it is the
+ * bucket for the projects that declare nothing.
+ */
+type Category = 'games' | 'social' | 'productivity' | 'tools' | 'fun';
+export const CATEGORIES: ReadonlyArray<{ key: Category; label: string }> = [
+  { key: 'games', label: 'Games' },
+  { key: 'social', label: 'Social' },
+  { key: 'productivity', label: 'Productivity' },
+  { key: 'tools', label: 'Tools' },
+  { key: 'fun', label: 'Fun' },
+];
 
 /** An address worth offering as a "Will invite" row. The server checks again. */
 export const EMAIL_RE = /^[^\s@,]+@[^\s@,]+\.[^\s@,]+$/;
@@ -333,6 +353,12 @@ export function createBody(answers: {
    * not of an import; the API keeps it optional.
    */
   description?: string;
+  /**
+   * "What kind is it?" (#3962), the slug the Discover kind chips filter on.
+   * A project made here may pick one; an import never does — its repo's own
+   * dapp.json decides, and the first deploy reconciles from that.
+   */
+  category?: Category | null;
   mode: Mode;
   repoUrl?: string;
   audience: Audience;
@@ -360,6 +386,11 @@ export function createBody(answers: {
   if (!importing && brief.length >= BRIEF_MIN) body.brief = brief.slice(0, BRIEF_MAX);
   const description = (answers.description || '').replace(/\s+/g, ' ').trim();
   if (description && !(importing && answers.repo?.description)) body.description = description;
+  // The kind pick rides the same terms as the description: a project made
+  // here sends it when chosen, an import never (services/create-options.js
+  // parseCategory answers 400 to anything else, so an unknown slug never
+  // reaches the row).
+  if (!importing && answers.category) body.category = answers.category;
   if (answers.audience === 'invited') {
     const people = answers.invitees || [];
     const usernames = people.flatMap((p) => (p.kind === 'user' ? [p.username] : []));
@@ -892,6 +923,9 @@ export function CreateAppDialog() {
   const [approvers, setApprovers] = useState<Approvers | null>(null);
   const [approvals, setApprovals] = useState<Approvals | null>(null);
   const [approvalsN, setApprovalsN] = useState(1);
+  // "What kind is it?" (#3962), asked beside the short description. Optional:
+  // nothing is chosen for the person, and an unanswered kind sends no line.
+  const [category, setCategory] = useState<Category | null>(null);
   const [mode, setMode] = useState<Mode | null>(null);
   const [template, setTemplate] = useState<TemplateId | null>(null);
   const [step, setStep] = useState<Step>('who');
@@ -971,6 +1005,7 @@ export function CreateAppDialog() {
       setName(initial.name);
       setBotBuild(!!(window.App?.user as { homeroomBotDm?: boolean } | undefined)?.homeroomBotDm);
       setBrief(initial.brief);
+      setCategory(null);
       if (describeRef.current) describeRef.current.value = initial.description;
       setDescribe(initial.description);
       suggestion.current = { from: initial.brief.trim(), edited: false, seq: suggestion.current.seq + 1 };
@@ -993,6 +1028,7 @@ export function CreateAppDialog() {
       setName('');
       setDescribe('');
       setBrief('');
+      setCategory(null);
       suggestion.current = { from: '', edited: false, seq: suggestion.current.seq + 1 };
       setSuggesting(false);
       setSuggestNote('');
@@ -1228,6 +1264,7 @@ export function CreateAppDialog() {
       approvers,
       approvals,
       approvalsN,
+      category,
       repo,
       template,
     });
@@ -1330,6 +1367,9 @@ export function CreateAppDialog() {
     'data-kind': kind ?? '',
     'data-approvers': approvers ?? '',
     'data-approvals': approvals ?? '',
+    // The kind pick (#3962): app.css keys the pills' fill off the card's
+    // value, like the approvals rail above.
+    'data-category': category ?? '',
     'data-final': isLast ? 'true' : 'false',
     // What an import's dapp.json decides: the answers it replaces, and the
     // approval rule it sets (app.css dims and tags them).
@@ -1784,6 +1824,33 @@ export function CreateAppDialog() {
                     setError('');
                   }}
                 />
+              </div>
+            </div>
+            {/*
+                What kind it is (#3962), optional and written into the new
+                repository's dapp.json beside the description, so a community
+                can change it later with a vote like any other line there.
+                Discover's second rail filters on it. Nothing is picked on
+                arrival, and Next does not wait for it: the step's answer is
+                still the description alone. The rail wraps (a 390px pane
+                fits no five "Productivity" segments) rather than the
+                approvals rail's full-width segments.
+            */}
+            <div className={CARD + ' px-4 pt-3 pb-2'}>
+              <p className={LABEL}>What kind is it?</p>
+              <div className={RAIL + ' create-category-rail'}>
+                {CATEGORIES.map((c) => (
+                  <button
+                    key={c.key}
+                    type="button"
+                    data-category-pill={c.key}
+                    aria-pressed={category === c.key}
+                    className={'create-category-pill ' + SEGMENT}
+                    onClick={() => setCategory(c.key)}
+                  >
+                    {c.label}
+                  </button>
+                ))}
               </div>
             </div>
             <div className="flex items-start justify-between gap-3 px-1">

@@ -79,6 +79,19 @@
  * three beside the icon in the About pane), and the line in dapp.json stays
  * as it was written.
  *
+ * ── What kind it is ───────────────────────────────────────────────────
+ *
+ * `category` is dapp.json's top-level one-word kind — the chip Discover's
+ * second rail filters on. Optional, and written where the description and
+ * the rule are: the new repository's dapp.json, so a community changes it
+ * later with a vote like any other line there. The slugs are lowercase in
+ * storage and in the file; the create screen's chips carry the labels. An
+ * import sends none: its repository already has a dapp.json, and that file
+ * decides (services/app-manifest.js readCategory, whose deploy-time
+ * reconcileAppCategory writes it into apps.category). 'other' is not on
+ * the list and cannot be declared — it is the bucket Discover collects the
+ * undeclared into.
+ *
  * ── What it starts from ───────────────────────────────────────────────
  *
  * `template` is the starter the new repository is scaffolded from
@@ -92,6 +105,13 @@ const appTemplates = require('./app-templates');
 
 const AUDIENCES = new Set(['solo', 'invited', 'open']);
 const VISIBILITIES = new Set(['public', 'private']);
+// The kinds a project can declare (Discover's category chips). One list,
+// because POST /api/apps validates the create screen's pick here and the
+// dapp.json reader (services/app-manifest.js readCategory) keeps the same
+// slugs — a value one accepts and the other drops would be a project whose
+// row says one thing and its file another. 'other' is deliberately absent:
+// it is the bucket for the undeclared, not a declaration.
+const CATEGORIES = ['games', 'social', 'productivity', 'tools', 'fun'];
 const MAX_INVITEES = 20;
 const MAX_APPROVALS_REQUIRED = 50;
 const USERNAME_MAX = 64;
@@ -189,10 +209,24 @@ function parseDescription(raw) {
 }
 
 /**
+ * The one-word kind, or null when absent. Strict like the rule above: a
+ * creator who sent a value meant it, and a silently dropped kind would be a
+ * project sitting in the wrong chip — so anything but one of CATEGORIES
+ * (case-insensitive on input, lowercase in the result) is a 400.
+ */
+function parseCategory(raw) {
+  if (raw == null) return { category: null };
+  if (typeof raw !== 'string') return { error: `category must be one of: ${CATEGORIES.join(', ')}` };
+  const slug = raw.trim().toLowerCase();
+  if (!CATEGORIES.includes(slug)) return { error: `category must be one of: ${CATEGORIES.join(', ')}` };
+  return { category: slug };
+}
+
+/**
  * Everything POST /api/apps needs to know about who a new project is for.
  * Returns `{ error }` for a 400, otherwise
  * `{ audience, collabVisibility, viewVisibility, invitees, inviteEmails,
- * governance, description, template }`.
+ * governance, description, category, template }`.
  */
 function parseCreateOptions(body = {}, { imported = false } = {}) {
   let audience = null;
@@ -226,6 +260,9 @@ function parseCreateOptions(body = {}, { imported = false } = {}) {
   const desc = parseDescription(body.description);
   if (desc.error) return { error: desc.error };
 
+  const cat = parseCategory(body.category);
+  if (cat.error) return { error: cat.error };
+
   const tpl = appTemplates.parseTemplate(body.template);
   if (tpl.error) return { error: tpl.error };
   if (imported && tpl.template !== appTemplates.DEFAULT_TEMPLATE) {
@@ -240,6 +277,7 @@ function parseCreateOptions(body = {}, { imported = false } = {}) {
     inviteEmails: mail.emails,
     governance: gov.governance,
     description: desc.description,
+    category: cat.category,
     template: tpl.template,
   };
 }
@@ -262,9 +300,11 @@ function governanceBlock(governance) {
 
 module.exports = {
   AUDIENCES,
+  CATEGORIES,
   MAX_INVITEES,
   DESCRIPTION_MAX,
   parseCreateOptions,
+  parseCategory,
   governanceBlock,
   visibilityForAudience,
   visibilityComboError,
