@@ -234,6 +234,10 @@ export function FeedReplyComposer({
         disabled={posting || !draft.trim()}
         title="Send reply"
         aria-label="Send reply"
+        // The field keeps focus through the press, so the keyboard and the
+        // composer stay where the tap landed (lib/keyboard-open.ts). The
+        // press still closes the suggestion lists, as the blur did.
+        onMouseDown={(event) => { event.preventDefault(); mention.close(); refs.close(); }}
       >
         {posting ? '…' : <ArrowUpIcon aria-hidden="true" />}
       </Button>

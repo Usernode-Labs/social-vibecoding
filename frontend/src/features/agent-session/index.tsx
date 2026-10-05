@@ -1624,6 +1624,7 @@ export function SavedDrafts({ drafts, busy, onSend, onEdit }: {
               title={busy ? 'The agent is still working. You can send this when it finishes' : 'Send this draft now'}
               disabled={busy}
               data-agent-session-draft-send
+              onMouseDown={(event) => event.preventDefault()}
               onClick={() => onSend(draft)}
             >
               <DraftSendIcon width={16} height={16} aria-hidden="true" />
@@ -1992,16 +1993,21 @@ function Composer({ id }: { id: string }) {
             back the moment the draft is saved or the field is cleared, and
             the model sheet says the same figures meanwhile. */}
         {credit && kind !== 'save' ? <CreditPill credit={credit} onOpen={() => openSheet('homeroom')} /> : <div className="min-w-0 flex-1" />}
+        {/* Every button in Send's place keeps the field focused through the
+            press. A blur drops the keyboard, the tab bar and the Resume strip
+            come back (lib/keyboard-open.ts), the composer falls by the
+            keyboard's height, and the click lands on nothing. */}
         {kind === 'save' ? (
           <>
           <Button type="button" variant="pillDanger" ink="dangerTint" size="icon" className="inline-flex h-10 w-10 shrink-0 items-center justify-center" aria-label="Stop" title="Stop"
-            disabled={snapshot.turnPhase === 'mayor2'} onClick={() => { void stopAgentTurn(); }}>
+            disabled={snapshot.turnPhase === 'mayor2'} onMouseDown={(event) => event.preventDefault()} onClick={() => { void stopAgentTurn(); }}>
             <span className="h-3.5 w-3.5 rounded-sm bg-current" aria-hidden="true" />
           </Button>
           <Button
             key="save"
             type="submit"
             data-agent-session-send="save"
+            onMouseDown={(event) => event.preventDefault()}
             variant="unstyled"
             ink="solid"
             // Words, not a round button in Send's place: a green circle read
@@ -2019,6 +2025,7 @@ function Composer({ id }: { id: string }) {
             key="send"
             type={running ? 'button' : 'submit'}
             data-agent-session-send={kind}
+            onMouseDown={(event) => event.preventDefault()}
             variant={running ? 'pillDanger' : 'pillAccent'}
             disabledStyle="dim"
             size="icon"
