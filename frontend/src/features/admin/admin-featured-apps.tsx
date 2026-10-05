@@ -45,7 +45,7 @@ interface AppMeta {
   main_sha?: string | null;
   last_deploy_at?: string | null;
   directory_review_status?: string;
-  directory?: { tier: string; label: string };
+  directory?: { tier: string; state?: string; label: string };
   has_illustration?: boolean;
 }
 
@@ -90,7 +90,7 @@ const OUTCOMES: { value: string; label: string; when: string; effect: string }[]
     value: 'working',
     label: 'Reviewed working',
     when: 'You used the app and its main flow works from start to finish.',
-    effect: 'Listed under “Reviewed working apps” in Browse apps, and can be added to Featured. Goes back to “Needs re-review” when a new version is deployed.',
+    effect: 'Listed under “Reviewed working apps” in Browse apps, and can be added to Featured. Goes back to “Not yet reviewed” when a new version is deployed, and has to be reviewed again.',
   },
   {
     value: 'demo',
@@ -217,7 +217,7 @@ function DirectoryReview({ apps, onSaved }: { apps: AppMeta[]; onSaved: () => vo
             <span>{`Now: ${app.directory?.label || 'Not yet reviewed'}`}</span>
             <a className={AdminUI.btn.link} href={`/#app/${encodeURIComponent(app.slug)}`} target="_blank" rel="noopener noreferrer">2. Open app to test</a>
           </div>
-          {app.directory?.label === 'Needs re-review' ? (
+          {app.directory?.state === 'outdated' ? (
             <p className={AdminUI.muted}>A new version was deployed after the last review, so it has to be tested again.</p>
           ) : null}
 

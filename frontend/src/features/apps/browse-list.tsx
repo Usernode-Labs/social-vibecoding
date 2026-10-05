@@ -72,9 +72,8 @@ function Row({ view, headingSays }: {
    * ("Reviewed working" under "Reviewed working apps"). A row whose own label
    * is that one drops it: the same words once over the section and again on
    * every row under it was the metadata that made a Discover row four lines
-   * deep. A label the heading does NOT say ("Needs an icon", "Needs
-   * re-review" under "Not yet reviewed") stays, and so does every label in
-   * an ungrouped sort, where no heading says anything.
+   * deep. A label the heading does NOT say ("Needs an icon") stays, and so
+   * does every label in an ungrouped sort, where no heading says anything.
    */
   headingSays?: string;
 }): ReactNode {

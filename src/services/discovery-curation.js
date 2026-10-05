@@ -36,7 +36,11 @@ function describe(app) {
   } else {
     state = review === 'working' ? 'outdated' : 'unreviewed';
     tier = 'unreviewed';
-    label = state === 'outdated' ? 'Needs re-review' : 'Not yet reviewed';
+    // One label for both: on Discover the section heading already says "Not
+    // yet reviewed", so an outdated review reads like any other unreviewed
+    // app (browse-list drops a label its heading says). `state` still tells
+    // the admin review screen why the working claim expired.
+    label = 'Not yet reviewed';
   }
   return { state, tier, label, reviewedAt: reviewedAt === null ? null : new Date(reviewedAt).toISOString() };
 }

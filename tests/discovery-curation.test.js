@@ -48,7 +48,8 @@ test('changing code or redeploying the same code retires the working claim', () 
   ]) {
     const result = curation.describe(app(override));
     assert.equal(result.tier, 'unreviewed', JSON.stringify(override));
-    assert.equal(result.label, 'Needs re-review');
+    assert.equal(result.state, 'outdated', JSON.stringify(override));
+    assert.equal(result.label, 'Not yet reviewed');
   }
   assert.equal(curation.describe(app({ last_deploy_at: new Date('2026-09-01T13:00:00Z') })).tier, 'ready');
   assert.equal(curation.describe(app({ last_deploy_at: null })).tier, 'ready');
