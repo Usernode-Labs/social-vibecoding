@@ -37,10 +37,11 @@ const READS = {
   },
   USE_APPS_MINUTES: {
     tables: ['app_activity', 'apps'],
-    key: 'window',
-    keyLabel: 'window',
+    key: 'window:',
+    keyLabel: 'window:<first day of the window>',
     text: ({ target }) => 'One row per person: their time in apps inside the window, added up, once it reaches '
-      + `${target == null ? 'the target' : `${fmt(target)} minutes`}. Apps they made themselves are left out.`,
+      + `${target == null ? 'the target' : `${fmt(target)} minutes`}. Apps they made themselves are left out. `
+      + 'On a weekly challenge each week is a window of its own.',
   },
   PROPOSAL_SENT: {
     tables: ['chat_sessions', 'apps'],

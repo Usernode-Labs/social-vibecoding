@@ -232,7 +232,12 @@ test('First challenges has no clock; This week falls back to the event’s end; 
   pane._renderGrid();
   const h = headers(gridOf(store));
   assert.equal(h.setup.meta, '1/3', 'a count and nothing else, even with a dated step');
-  assert.equal(h.week.meta, '0/2 · 2d left', 'the selected event’s end');
+  // This week runs to the event's end or to the end of this week (Monday
+  // 00:00 UTC, when its cap starts again), whichever comes first.
+  const weekEnd = pane._weekEnd();
+  const eventEnd = inHours(47);
+  const sooner = Date.parse(weekEnd) < Date.parse(eventEnd) ? weekEnd : eventEnd;
+  assert.equal(h.week.meta, `0/2 · ${pane._timeLeft(sooner)}`, 'the event’s end, or the week’s if sooner');
   assert.equal(h.always.meta, '0/2 · 5d left', 'an organiser’s own end date gives Always open a clock');
 
   context.selectedEvent = () => ({ id: 10, ends_at: inHours(-2) });
@@ -240,7 +245,18 @@ test('First challenges has no clock; This week falls back to the event’s end; 
   assert.equal(headers(gridOf(store)).week.meta, '0/2 · no deadline', 'an ended event is no clock');
   delete context.selectedEvent;
   pane._renderGrid();
-  assert.equal(headers(gridOf(store)).week.meta, '0/2 · no deadline', 'and no event known, none either');
+  assert.equal(headers(gridOf(store)).week.meta, `0/2 · ${pane._timeLeft(weekEnd)}`,
+    'no event known: the week still ends on Monday, so This week still has a clock');
+});
+
+test('a week ends at the next Monday 00:00 UTC, whatever the day', () => {
+  const { pane } = loadPane({ challenges: [] });
+  // Thursday 1 Oct 2026, 15:00 UTC → Monday 5 Oct 00:00.
+  assert.equal(pane._weekEnd(Date.parse('2026-10-01T15:00:00Z')), '2026-10-05T00:00:00.000Z');
+  // Sunday 23:59 → the next morning.
+  assert.equal(pane._weekEnd(Date.parse('2026-10-04T23:59:00Z')), '2026-10-05T00:00:00.000Z');
+  // Monday 00:00 itself starts a week, which ends the Monday after.
+  assert.equal(pane._weekEnd(Date.parse('2026-10-05T00:00:00Z')), '2026-10-12T00:00:00.000Z');
 });
 
 // ─── Collapse ───────────────────────────────────────────────────────────

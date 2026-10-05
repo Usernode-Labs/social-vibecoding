@@ -747,6 +747,13 @@
     {
       "source": "src/routes/topochain/public.js",
       "kind": "structural-template",
+      "fingerprint": "34540a7d410e6004fc43",
+      "count": 1,
+      "preview": "`SELECT ua.challenge_id, COUNT(*)::int AS credits FROM user_activities ua JOIN challenges c ON c.id = ua.challenge_id LEFT JOIN challenge_templates ct ON ct.id "
+    },
+    {
+      "source": "src/routes/topochain/public.js",
+      "kind": "structural-template",
       "fingerprint": "aff8d6e5f16e400828ea",
       "count": 1,
       "preview": "`SELECT c.id, c.season_event_id, c.challenge_template_id, c.enabled, c.completed, c.goal, c.task, c.reward, c.description, c.requirements, c.schedule_start, c.s"

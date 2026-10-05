@@ -346,6 +346,45 @@ function resolveWindow(row, { now = Date.now(), graceMs = WINDOW_GRACE_MS } = {}
   return { startMs, endMs, open: started && !ended };
 }
 
+// ── Weekly challenges ──────────────────────────────────────────────────
+//
+// A challenge in the WEEKLY category says "up to 2 count each week", and the
+// cap is per week, not per challenge row. Season 2 runs each weekly challenge
+// as ONE row for the whole season (22 Sep to 31 Dec), so a cap counted over
+// the row meant "up to 2 this season", and the pre-season test week's credits
+// blocked people for the rest of it. A week is Monday 00:00 to Sunday 23:59
+// UTC, the same for everyone whatever their time zone.
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+function isWeekly(row) {
+  const category = (row && (row.category || row.t_category)) || '';
+  return String(category).trim().toUpperCase() === 'WEEKLY';
+}
+
+// The Monday 00:00 UTC that starts the week `ms` falls in.
+function weekStartMs(ms) {
+  const d = new Date(ms);
+  const sinceMonday = (d.getUTCDay() + 6) % 7;
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - sinceMonday);
+}
+
+// The weeks a run scores a weekly challenge over: this week, and last week
+// too for WINDOW_GRACE_MS after it closed, so a Sunday-night action is still
+// paid by the run that comes after midnight. Each is clipped to the
+// challenge's own window; a week wholly outside it is left out.
+function weeklyWindows(window, { now = Date.now(), graceMs = WINDOW_GRACE_MS } = {}) {
+  const current = weekStartMs(now);
+  const starts = now - current < graceMs ? [current - WEEK_MS, current] : [current];
+  const out = [];
+  for (const start of starts) {
+    const end = start + WEEK_MS - 1;
+    const from = window.startMs == null ? start : Math.max(start, window.startMs);
+    const to = window.endMs == null ? end : Math.min(end, window.endMs);
+    if (from <= to) out.push({ startMs: from, endMs: to, open: window.open, weekStartMs: start });
+  }
+  return out;
+}
+
 // The effective target and points for one rule over one challenge. The rule's
 // own values win; blank falls back to what the card already says, so the
 // numbers a participant reads are the numbers they are paid by.
@@ -441,8 +480,14 @@ function unitPoints({ payout, points, target, index }) {
 // `candidates` are in arrival order per person (oldest first) and each names
 // itself with a `sourceKey`. `credited` says what the ledger already holds
 // for this challenge: the keys already paid for, and how many credits each
-// person has. Both are what make the scorer safe to run every ten minutes —
-// the plan for a person already fully credited is empty.
+// person has, in all and per week (`weeks`, keyed by weekStartMs). Both are
+// what make the scorer safe to run every ten minutes — the plan for a person
+// already fully credited is empty.
+//
+// On a WEEKLY challenge the cap is counted inside the candidate's own week,
+// and a single-completion measure is not marked as THE completion: the
+// database allows one completion per person per challenge, and a weekly
+// challenge is completed again every week.
 //
 // A graded measure returns credits marked `needsGrade`, with `points` as the
 // ceiling; the caller grades them and drops any the grader could not score.
@@ -457,18 +502,28 @@ function planCredits(rule, row, { candidates = [], credited = new Map(), now = D
   if (spec.counted && !(target >= 1)) return [];
 
   const window = resolveWindow(row, { now });
+  const weekly = isWeekly(row);
   const out = [];
   // How many credits each person will have once this run's own plan is
   // applied — without it, two candidates in the same run would both be
-  // "the second account" and the challenge would overpay.
+  // "the second account" and the challenge would overpay. On a weekly
+  // challenge the tally is per person per week.
   const running = new Map();
 
   for (const c of candidates) {
     const userId = Number(c.userId);
     if (!Number.isFinite(userId)) continue;
-    const state = credited.get(userId) || { keys: new Set(), count: 0 };
+    const state = credited.get(userId) || { keys: new Set(), count: 0, weeks: new Map() };
     if (state.keys.has(c.sourceKey)) continue;
-    const already = state.count + (running.get(userId) || 0);
+    let slot = userId;
+    let held = state.count;
+    if (weekly) {
+      const at = c.activityAt != null ? Date.parse(c.activityAt) : NaN;
+      const week = weekStartMs(Number.isFinite(at) ? at : now);
+      slot = `${userId}:${week}`;
+      held = (state.weeks && state.weeks.get(week)) || 0;
+    }
+    const already = held + (running.get(slot) || 0);
     if (already >= target) continue;
     // A windowed measure's SQL already filters by window; this is the belt to
     // that braces, and the only guard for a candidate list handed in by a
@@ -482,11 +537,11 @@ function planCredits(rule, row, { candidates = [], credited = new Map(), now = D
       points: unitPoints({ payout: spec.payout, points, target, index: already }),
       activityAt: c.activityAt,
       description: c.description || null,
-      completion: !spec.counted,
+      completion: !spec.counted && !weekly,
       needsGrade: spec.graded === true,
       gradeInput: c.gradeInput || null,
     });
-    running.set(userId, (running.get(userId) || 0) + 1);
+    running.set(slot, (running.get(slot) || 0) + 1);
   }
   return out;
 }
@@ -610,6 +665,10 @@ module.exports = {
   WINDOW_GRACE_MS,
   parseRewardPoints,
   resolveWindow,
+  WEEK_MS,
+  isWeekly,
+  weekStartMs,
+  weeklyWindows,
   skipReason,
   effectiveTarget,
   effectivePoints,

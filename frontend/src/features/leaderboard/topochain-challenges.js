@@ -665,7 +665,7 @@ const TopochainChallenges = {
     let best = null;
     for (const c of challenges) {
       if (TopochainChallenges._isDone(c) || !TopochainChallenges._isOpen(c)) continue;
-      const raw = (c.effective && c.effective.schedule_end) || (ev && ev.ends_at);
+      const raw = TopochainChallenges._endOf(c, ev);
       const left = TopochainChallenges._timeLeft(raw);
       if (!left) continue;
       const at = Date.parse(raw);
@@ -783,10 +783,29 @@ const TopochainChallenges = {
   // started's cards; the other groups' headers carry the earliest end instead
   // (_groupTimeLeft), from the same two sources.
   _deadlineOf(c) {
-    const own = c && c.effective && c.effective.schedule_end;
     const ctx = window.TopochainEventContext;
     const ev = ctx && typeof ctx.selectedEvent === 'function' ? ctx.selectedEvent() : null;
-    return TopochainChallenges._timeLeft(own || (ev && ev.ends_at));
+    return TopochainChallenges._timeLeft(TopochainChallenges._endOf(c, ev));
+  },
+
+  // When a challenge's time runs out, for its countdown: its own end, else
+  // the event's (`ev`, null for Always open, which never borrows it). A This
+  // week challenge's cap starts again every Monday 00:00 UTC, the week the
+  // scorer counts by, so its clock runs to the end of this week when that
+  // comes first: "This week · 6d left", not the season's 90 days.
+  _endOf(c, ev) {
+    const raw = (c && c.effective && c.effective.schedule_end) || (ev && ev.ends_at) || null;
+    if (TopochainChallenges._groupOf(c).key !== 'week') return raw;
+    const weekEnd = TopochainChallenges._weekEnd();
+    return !raw || Date.parse(weekEnd) < Date.parse(raw) ? weekEnd : raw;
+  },
+
+  // The next Monday 00:00 UTC, as an ISO string. The same rule as
+  // HomePanels.weekEnd and the scorer's challenge-rules.weekStartMs.
+  _weekEnd(now = Date.now()) {
+    const d = new Date(now);
+    const sinceMonday = (d.getUTCDay() + 6) % 7;
+    return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - sinceMonday + 7)).toISOString();
   },
 
   // The same rule and words as HomePanels.timeLeft, so a challenge says the

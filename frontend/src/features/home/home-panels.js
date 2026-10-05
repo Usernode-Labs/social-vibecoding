@@ -613,6 +613,25 @@ const HomePanels = {
       ? HomePanels.CHALLENGE_GROUPS[category] : HomePanels.OTHER_GROUP;
   },
 
+  // When a row's time runs out, for its countdown: its own `ends_at`, else
+  // `fallback` (the season's end). A This week challenge's cap starts again
+  // every Monday 00:00 UTC, the week the scorer counts by, so its clock runs
+  // to the end of this week when that comes first. The same rule as the
+  // Challenges tab's TopochainChallenges._endOf.
+  endsOf(c, fallback = null) {
+    const raw = (c && c.ends_at) || fallback || null;
+    if (HomePanels.groupOf(c).key !== 'week') return raw;
+    const weekEnd = HomePanels.weekEnd();
+    return !raw || Date.parse(weekEnd) < Date.parse(raw) ? weekEnd : raw;
+  },
+
+  // The next Monday 00:00 UTC, as an ISO string.
+  weekEnd(now = Date.now()) {
+    const d = new Date(now);
+    const sinceMonday = (d.getUTCDay() + 6) % 7;
+    return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - sinceMonday + 7)).toISOString();
+  },
+
   // Whether setup is behind the viewer, which decides where the First challenges group sits.
   // The tab's rule (TopochainChallenges._setupFinished): with an onboarding
   // summary the server's gate says so (`unlocked === true`); without one, the
@@ -679,7 +698,7 @@ const HomePanels = {
       for (const c of payload) {
         if (!c || HomePanels.groupOf(c).key !== key) continue;
         if (c.open === false || (c.progress && c.progress.done)) continue;
-        const ends = c.ends_at || seasonEnd;
+        const ends = HomePanels.endsOf(c, seasonEnd);
         if (!HomePanels.timeLeft(ends)) continue;
         if (soonest == null || Date.parse(ends) < Date.parse(soonest)) soonest = ends;
       }
@@ -906,7 +925,7 @@ const HomePanels = {
       // carries while it is not open (organiser-closed, or outside its
       // window). `ends_at` is the challenge's own end, else its event's.
       deadline: done || c.open === false ? null
-        : HomePanels.timeLeft(c.ends_at || (panel && panel.season && panel.season.ends_at)),
+        : HomePanels.timeLeft(HomePanels.endsOf(c, panel && panel.season && panel.season.ends_at)),
       earned: done && points ? `Earned ${points.toLocaleString('en-US')} pts` : null,
     };
   },
