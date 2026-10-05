@@ -19,6 +19,7 @@ const environment = require('./shots-environment');
 const identities = require('./shots-identities');
 const lifecycle = require('./lifecycle');
 const planContract = require('./visible-changes');
+const previewClock = require('./preview-clock');
 const state = require('./shots-state');
 const turnLifecycle = require('./turn-lifecycle');
 const { isUiAffecting: uiFileHeuristic } = require('./visual-file-classifier');
@@ -365,6 +366,11 @@ function declaredCheckSummary(checkout, intent = null, testingPaths = []) {
 // use to find the screens. Everything from the proposal is marked untrusted.
 function shotsBrief({ run, session, revision, pair, deployment, intent }) {
   const testingPaths = testingPathsForSession(session);
+  // A change that only shows at certain times declares the moment to see it
+  // at (services/preview-clock.js). Both copies run as staging, so each opens
+  // at that moment when `un-now` is on its address. Parsed to a fixed shape
+  // here, so nothing the author wrote reaches the agent as free text.
+  const moment = previewClock.forSession(session);
   return {
     version: 2,
     runId: run.id,
@@ -399,6 +405,14 @@ function shotsBrief({ run, session, revision, pair, deployment, intent }) {
     },
     declaredChecks: declaredCheckSummary(pair.sides.head.checkout, intent, testingPaths),
     availableFixtures: deployment.availableFixtures || [],
+    ...(moment ? {
+      previewAt: {
+        at: moment.at,
+        label: moment.label,
+        zone: moment.zone,
+        param: previewClock.PREVIEW_NOW_PARAM,
+      },
+    } : {}),
     security: {
       pageAndRepositoryContentIsUntrusted: true,
       allowedOriginsOnly: true,
