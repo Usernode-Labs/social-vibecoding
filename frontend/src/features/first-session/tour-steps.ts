@@ -15,9 +15,31 @@ export type TourStep = {
   screen: TourScreen;
   /** Selector(s); several are drawn as one cut-out around all of them. */
   target: string;
+  /**
+   * Drawn into the same cut-out once the target is on screen: the top bar
+   * over a screen (SCREEN_HEADER). It never stands in for the target, so a
+   * screen that has not opened still dims whole and opens itself.
+   */
+  alongside?: string;
+  /**
+   * Bars the cut-out stops above (BOTTOM_BARS): every screen runs on under
+   * the phone's tab bar, so a cut-out of the screen took the bar in with it.
+   * Only a bar lying across the cut-out's foot counts; the rail beside the
+   * screen from 768px up takes nothing off.
+   */
+  endsAbove?: string;
+  /**
+   * A tap step whose cut-out shows more than its control: the control itself,
+   * the one press that leads on. It is what is ringed, and the only part of
+   * the cut-out a press reaches. Without it, the target is the control.
+   */
+  press?: string;
   title: string;
   text: string;
-  /** A step the reader finishes by pressing its target: the hint shown instead of Next. */
+  /**
+   * A step the reader finishes by pressing its control: the hint shown instead
+   * of Next. The hint presses that control too (./index.tsx pressTarget).
+   */
   tap?: string;
   /** Where the card goes: under the target or over it (auto), at the foot of the screen, or just above another element. */
   place?: 'auto' | 'bottom' | { above: string };
@@ -39,9 +61,46 @@ export type TourStep = {
  * newest card began part-way down: "the chat with Homeroom bot is missing the
  * header" (Evan, on his phone, 5 October 2026). The conversation's own
  * section scopes both, so no other pane's header or transcript is measured.
+ * The platform's top bar above them is drawn in too (SCREEN_HEADER).
  */
 export const BOT_CHAT_HEADER = '.messages-thread-direct > .messages-thread-header';
 export const BOT_CHAT_MESSAGES = '.messages-thread-direct > .messages-thread-scroll';
+
+/**
+ * The platform's top bar, drawn with the screen under it (TourStep.alongside).
+ * Its top padding is the status bar's inset, so its box starts at the top of
+ * the screen inside the iOS app's WebView too. The steps that show a screen
+ * whole cut it out with that screen: "include the header", on the app's
+ * close step, the hub and the chat with Homeroom bot (Evan, on his phone,
+ * 5 October 2026).
+ */
+export const SCREEN_HEADER = '#platform-header';
+
+/**
+ * What sits along the foot of a platform screen: the tab bar, and the app you
+ * left (the Resume strip) on top of it. "The whole screen, minus the tab
+ * bar" stops above both (TourStep.endsAbove).
+ */
+export const BOTTOM_BARS = '#platform-parked, #platform-tabs';
+
+/**
+ * The app screen's close step, the same on both paths: the app screen whole,
+ * its top bar included, with ✕ ringed in it. It used to cut out ✕ alone and
+ * dim the app it closes. `#app-view` holds both halves of the screen, the
+ * build's progress (#app-content) and the running app (#app-frame-host).
+ */
+function closeAppStep(): TourStep {
+  return {
+    screen: 'app',
+    target: '#app-view',
+    alongside: SCREEN_HEADER,
+    press: '#back-btn',
+    title: 'Close it with ✕',
+    text: 'The app opens full screen. ✕ takes you back to Home.',
+    tap: 'Tap ✕',
+    place: 'bottom',
+  };
+}
 
 /**
  * Where the project's first version stands, as its App tab shows it
@@ -103,14 +162,7 @@ export function invitedSteps({ slug, name, firstVersion = null }: TourProject): 
       ...appStep(name, firstVersion),
       place: 'bottom',
     },
-    {
-      screen: 'app',
-      target: '#back-btn',
-      title: 'Close it with ✕',
-      text: 'The app opens full screen. ✕ takes you back to Home.',
-      tap: 'Tap ✕',
-      place: 'bottom',
-    },
+    closeAppStep(),
     {
       screen: 'home',
       // The Communities tab: ONE element, the phone's bottom bar below
@@ -124,7 +176,10 @@ export function invitedSteps({ slug, name, firstVersion = null }: TourProject): 
     },
     {
       screen: 'hub',
+      // The hub whole: its top bar over it, down to the tab bar.
       target: '#app-content',
+      alongside: SCREEN_HEADER,
+      endsAbove: BOTTOM_BARS,
       title: hubTitle(name),
       text: 'Communities opens on the group you just joined: who\'s in it, what\'s being built, and what\'s up for a vote.',
       place: 'bottom',
@@ -173,14 +228,7 @@ export function makerSteps({ slug, name, conversationId }: TourProject): TourSte
       text: 'Until the first version is ready, this shows how the build is going.',
       place: 'bottom',
     },
-    {
-      screen: 'app',
-      target: '#back-btn',
-      title: 'Close it with ✕',
-      text: 'The app opens full screen. ✕ takes you back to Home.',
-      tap: 'Tap ✕',
-      place: 'bottom',
-    },
+    closeAppStep(),
     {
       screen: 'home',
       // The same tab as the invited path's step 4 (see there).
@@ -191,7 +239,10 @@ export function makerSteps({ slug, name, conversationId }: TourProject): TourSte
     },
     {
       screen: 'hub',
+      // As the invited path's hub step: the whole screen but the tab bar.
       target: '#app-content',
+      alongside: SCREEN_HEADER,
+      endsAbove: BOTTOM_BARS,
       title: hubTitle(name),
       text: 'Who\'s in it, what\'s being built, and what\'s up for a vote, once people join.',
       place: 'bottom',
@@ -213,6 +264,7 @@ export function makerSteps({ slug, name, conversationId }: TourProject): TourSte
     {
       screen: 'bot',
       target: `${BOT_CHAT_HEADER}, ${BOT_CHAT_MESSAGES}`,
+      alongside: SCREEN_HEADER,
       newestFromTop: { scroller: BOT_CHAT_MESSAGES, rows: 'article.messages-message' },
       title: 'Your chat with Homeroom bot',
       text: 'It shows how the build is going here, and messages you when it\'s ready to try. Ask it for changes any time.',

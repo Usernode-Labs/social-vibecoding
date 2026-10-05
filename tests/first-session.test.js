@@ -13,7 +13,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const { loadTsx, renderComponent } = require('./lib/render-tsx');
+const { loadTsx, renderComponent, renderToHtml, createElement } = require('./lib/render-tsx');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -37,17 +37,30 @@ test('the invited tour: each screen whole, then the tap that leads on, ending in
   assert.doesNotMatch(JSON.stringify(steps), /Homeroom bot (builds|turns)/);
 });
 
+// Every selector a step names: what it cuts out, what it draws alongside,
+// the bars it stops above and the control it presses.
+const SELECTOR_FIELDS = ['target', 'alongside', 'endsAbove', 'press'];
+const idsNamed = (steps) => [...new Set(steps
+  .flatMap((s) => SELECTOR_FIELDS.flatMap((f) => (s[f] ? s[f].split(',') : [])))
+  .map((t) => t.trim())
+  .filter((t) => t.startsWith('#'))
+  .map((t) => t.slice(1)))].sort();
+
 test('every id the tour points at is one the shell ships', () => {
-  const { invitedSteps } = loadTsx(`${DIR}/tour-steps.ts`);
+  const { invitedSteps, makerSteps } = loadTsx(`${DIR}/tour-steps.ts`);
   const baseline = JSON.parse(read('tests/baselines/shell-markup.json'));
   const ids = new Set(baseline.ids || []);
-  const named = invitedSteps({ slug: 'x', name: 'X' })
-    .flatMap((s) => s.target.split(',').map((t) => t.trim()))
-    .filter((t) => t.startsWith('#'))
-    .map((t) => t.slice(1));
-  assert.deepEqual([...new Set(named)].sort(), ['app-content', 'back-btn', 'gc-form', 'gc-messages', 'platform-tab-workshop']);
+  assert.deepEqual(idsNamed(invitedSteps({ slug: 'x', name: 'X' })), [
+    'app-content', 'app-view', 'back-btn', 'gc-form', 'gc-messages', 'platform-header', 'platform-parked', 'platform-tab-workshop', 'platform-tabs',
+  ]);
+  assert.deepEqual(idsNamed(makerSteps({ slug: 'x', name: 'X', conversationId: 5 })), [
+    'app-content', 'app-view', 'back-btn', 'platform-header', 'platform-parked', 'platform-tab-messages', 'platform-tab-workshop', 'platform-tabs',
+  ]);
   // The shell's own ids, from its pinned inventory.
-  for (const id of ['app-content', 'back-btn']) assert.ok(ids.has(id), `#${id} is in the shell's id inventory`);
+  for (const id of ['app-content', 'app-view', 'back-btn', 'platform-header']) assert.ok(ids.has(id), `#${id} is in the shell's id inventory`);
+  // The tab bar and the Resume strip on it are React's, each one element.
+  assert.equal((read('frontend/src/features/nav/tab-bar.tsx').match(/id="platform-tabs"/g) || []).length, 1);
+  assert.equal((read('frontend/src/features/nav/parked-strip.tsx').match(/id="platform-parked"/g) || []).length, 1);
   // The tab bar draws its tabs' ids from their keys, and dapp.json's checks
   // select the Communities tab by this one.
   assert.ok(read('dapp.json').includes('#platform-tab-workshop'));
@@ -73,21 +86,25 @@ test('the Communities and Messages steps point at the bar\'s own tabs, the same 
 });
 
 test('a step draws only its own target, measured before its card is painted', () => {
-  const { boxForStep } = loadTsx(`${DIR}/index.tsx`);
+  const { boxForStep, pressForStep } = loadTsx(`${DIR}/index.tsx`);
   // 4 of 7 on a 375x812 browser drew its ring round step 3's ✕, at the
   // header's top-left, over Home's Homeroom logo: the card had moved on and
   // the box had not. A box counts only for the step it was measured for.
   const backBtn = { left: 16, top: 36, width: 28, height: 28 };
   assert.equal(boxForStep({ step: 2, box: backBtn }, 3), null);
   assert.deepEqual(boxForStep({ step: 3, box: backBtn }, 3), backBtn);
+  // The control a step rings is measured with it, and counts only for it too.
+  const appScreen = { left: 0, top: 0, width: 375, height: 812 };
+  assert.equal(pressForStep({ step: 2, box: appScreen, press: backBtn }, 3), null);
+  assert.deepEqual(pressForStep({ step: 3, box: appScreen, press: backBtn }, 3), backBtn);
   const src = read(`${DIR}/index.tsx`);
-  assert.match(src, /const box = boxForStep\(measured, index\);/);
+  assert.match(src, /const box = boxForStep\(measured, index\);\s+const pressBox = pressForStep\(measured, index\);/);
   // Measured in a layout effect when the step changes, so the first paint of
   // a step is its own target (or no ring at all), never the last one's.
-  assert.match(src, /useLayoutEffect\(\(\) => \{\s+setMeasured\(\{ step: index, box: targetBox\(step\.target\) \}\);\s+\}, \[index, step\.target\]\);/);
+  assert.match(src, /useLayoutEffect\(\(\) => \{\s+setMeasured\(measure\(index, step\)\);\s+\}, \[index, step\]\);/);
   // The per-frame follow tags what it measures with the step, and survives a
   // frame that throws rather than leaving the ring where it was.
-  assert.match(src, /const key = `\$\{at\}:\$\{boxKey\(b\)\}`;\s+if \(key !== last\) \{ last = key; setMeasured\(\{ step: at, box: b \}\); \}/);
+  assert.match(src, /const m = measure\(at, stepRef\.current\);\s+const key = `\$\{at\}:\$\{boxKey\(m\.box\)\}:\$\{boxKey\(m\.press\)\}`;\s+if \(key !== last\) \{ last = key; setMeasured\(m\); \}/);
   assert.match(src, /\} catch \{ \/\* measured again next frame \*\/ \}\s+raf = requestAnimationFrame\(tick\);/);
   assert.doesNotMatch(src, /setBox\(/);
 });
@@ -107,6 +124,174 @@ test('the ring round a tab on the phone\'s bar stays on the screen', () => {
   assert.deepEqual(holeFor({ left: 100, top: 100, width: 50, height: 20 }, phone), { left: 94, top: 94, width: 62, height: 32 });
   // And one in the top-left corner keeps its ring on screen too.
   assert.deepEqual(holeFor({ left: 0, top: 0, width: 28, height: 28 }, phone), { left: 3, top: 3, width: 31, height: 31 });
+});
+
+// The tour a NEW user sees, on a phone: "What do you want to make?", Make it,
+// then "Invite people later" (or "Go to the Homeroom app") on the made screen
+// starts the maker's path. Homeroom bot builds a new user's project, so it has
+// its chat and all seven steps; no step is skipped on a phone. The card counts
+// them "1 of 7" to "7 of 7", which is how Evan numbered them (5 Oct 2026).
+test('a new user\'s tour, numbered as its card numbers it, with what each step cuts out', () => {
+  const { makerSteps, SCREEN_HEADER, BOTTOM_BARS, BOT_CHAT_HEADER, BOT_CHAT_MESSAGES } = loadTsx(`${DIR}/tour-steps.ts`);
+  assert.equal(SCREEN_HEADER, '#platform-header');
+  assert.equal(BOTTOM_BARS, '#platform-parked, #platform-tabs');
+  const steps = makerSteps({ slug: 'film', name: 'Friday Film Crew', conversationId: 12 });
+  const shape = (s) => ({
+    screen: s.screen, target: s.target, alongside: s.alongside, endsAbove: s.endsAbove, press: s.press, tap: s.tap, title: s.title,
+  });
+  assert.deepEqual(steps.map(shape), [
+    { screen: 'home', target: '.app-card[data-slug="film"]', alongside: undefined, endsAbove: undefined, press: undefined, tap: 'Tap it to open it', title: 'Friday Film Crew is on your Home' },
+    { screen: 'app', target: '#app-content', alongside: undefined, endsAbove: undefined, press: undefined, tap: undefined, title: 'Friday Film Crew, being built' },
+    // 3: the app screen whole, its header included, ✕ ringed in it.
+    { screen: 'app', target: '#app-view', alongside: SCREEN_HEADER, endsAbove: undefined, press: '#back-btn', tap: 'Tap ✕', title: 'Close it with ✕' },
+    { screen: 'home', target: '#platform-tab-workshop', alongside: undefined, endsAbove: undefined, press: undefined, tap: 'Tap Communities', title: 'Your group lives in Communities' },
+    // 5: the hub whole, with its header, down to the tab bar.
+    { screen: 'hub', target: '#app-content', alongside: SCREEN_HEADER, endsAbove: BOTTOM_BARS, press: undefined, tap: undefined, title: 'The Friday Film Crew hub' },
+    { screen: 'hub', target: '#platform-tab-messages', alongside: undefined, endsAbove: undefined, press: undefined, tap: 'Tap Messages', title: 'Homeroom bot is in Messages' },
+    // 7: the chat with Homeroom bot, with the header over it.
+    { screen: 'bot', target: `${BOT_CHAT_HEADER}, ${BOT_CHAT_MESSAGES}`, alongside: SCREEN_HEADER, endsAbove: undefined, press: undefined, tap: undefined, title: 'Your chat with Homeroom bot' },
+  ]);
+  // The invited path's close and hub steps are the same cut-outs.
+  const { invitedSteps } = loadTsx(`${DIR}/tour-steps.ts`);
+  const invited = invitedSteps({ slug: 'film', name: 'Friday Film Crew' });
+  assert.deepEqual(invited[2], steps[2]);
+  assert.deepEqual(['target', 'alongside', 'endsAbove'].map((f) => invited[4][f]), ['#app-content', SCREEN_HEADER, BOTTOM_BARS]);
+});
+
+/** A document of fixed boxes, by selector, for as long as `fn` runs. */
+function withBoxes(boxes, fn) {
+  const doc = {
+    querySelectorAll: (selectors) => selectors.split(',').map((s) => s.trim())
+      .flatMap((s) => (boxes[s] ? [boxes[s]] : []))
+      .map((b) => ({ getBoundingClientRect: () => ({ ...b, right: b.left + b.width, bottom: b.top + b.height }) })),
+  };
+  const had = Object.hasOwn(globalThis, 'document');
+  const before = globalThis.document;
+  globalThis.document = doc;
+  try { return fn(); } finally { if (had) globalThis.document = before; else delete globalThis.document; }
+}
+
+test('3, 5 and 7 of 7 cut out their screen with its header: the whole app, the hub down to the tab bar, the bot\'s chat', () => {
+  const { measure, holeFor, aroundBox } = loadTsx(`${DIR}/index.tsx`);
+  const { makerSteps, BOT_CHAT_HEADER, BOT_CHAT_MESSAGES } = loadTsx(`${DIR}/tour-steps.ts`);
+  const steps = makerSteps({ slug: 'film', name: 'Friday Film Crew', conversationId: 12 });
+  // A 390x844 phone in the iOS app: the header's top padding is the status
+  // bar's 47px inset, so its box starts at the top of the screen.
+  const phone = { width: 390, height: 844 };
+  const header = { left: 0, top: 0, width: 390, height: 99 };
+  const screen = { left: 0, top: 91, width: 390, height: 753 };
+  const tabs = { left: 0, top: 754, width: 390, height: 90 };
+  const whole = { left: 0, top: 0, width: 390, height: 844 };
+
+  // 3 of 7: the app screen and its header, the whole screen, and ✕ is the
+  // one control ringed and the one a press reaches.
+  const backBtn = { left: 16, top: 55, width: 28, height: 28 };
+  const close = withBoxes({ '#platform-header': header, '#app-view': screen, '#back-btn': backBtn }, () => measure(2, steps[2]));
+  assert.deepEqual(close, { step: 2, box: whole, press: backBtn });
+  const hole = holeFor(close.box, phone, 0);
+  assert.deepEqual(hole, whole, 'runs to the screen\'s edges, with no line of dim round it');
+  const ring = holeFor(close.press, phone);
+  assert.deepEqual(ring, { left: 10, top: 49, width: 40, height: 40 });
+  assert.deepEqual(aroundBox(hole, ring), [
+    { left: 0, top: 0, width: 390, height: 49 },
+    { left: 0, top: 89, width: 390, height: 755 },
+    { left: 0, top: 49, width: 10, height: 40 },
+    { left: 50, top: 49, width: 340, height: 40 },
+  ]);
+  // Not on the app screen yet: no cut-out (the header alone is not one), so
+  // the screen dims whole and the step opens its screen itself.
+  assert.deepEqual(withBoxes({ '#platform-header': header, '#back-btn': backBtn }, () => measure(2, steps[2])), { step: 2, box: null, press: null });
+
+  // 5 of 7: the hub and its header, its padded foot meeting the tab bar.
+  const hub = withBoxes({ '#platform-header': header, '#app-content': screen, '#platform-tabs': tabs }, () => measure(4, steps[4]));
+  assert.deepEqual(hub.box, { left: 0, top: 0, width: 390, height: 748 });
+  assert.deepEqual(holeFor(hub.box, phone, 0), { left: 0, top: 0, width: 390, height: 754 });
+  // With the app you left on the bar, it stops above that strip too.
+  const parked = { left: 8, top: 702, width: 374, height: 52 };
+  const hubParked = withBoxes({ '#platform-header': header, '#app-content': screen, '#platform-tabs': tabs, '#platform-parked': parked }, () => measure(4, steps[4]));
+  assert.equal(holeFor(hubParked.box, phone, 0).height, 702);
+  // From 768px up the bar is the rail beside the screen, and takes nothing off.
+  const wide = withBoxes({
+    '#platform-header': { left: 0, top: 0, width: 1280, height: 60 },
+    '#app-content': { left: 224, top: 52, width: 1056, height: 748 },
+    '#platform-tabs': { left: 0, top: 60, width: 224, height: 740 },
+  }, () => measure(4, steps[4]));
+  assert.deepEqual(wide.box, { left: 0, top: 0, width: 1280, height: 800 });
+
+  // 7 of 7: the header over the conversation's own header and messages.
+  const chat = withBoxes({
+    '#platform-header': header,
+    [BOT_CHAT_HEADER]: { left: 0, top: 91, width: 390, height: 70 },
+    [BOT_CHAT_MESSAGES]: { left: 0, top: 161, width: 390, height: 520 },
+    '#platform-tabs': tabs,
+  }, () => measure(6, steps[6]));
+  assert.deepEqual(chat.box, { left: 0, top: 0, width: 390, height: 681 });
+
+  // A tap step with no `press` rings its whole cut-out, as before, and
+  // leaves all of it pressable.
+  const tab = { left: 211, top: 756, width: 90, height: 56 };
+  const communities = withBoxes({ '#platform-tab-workshop': tab }, () => measure(3, steps[3]));
+  assert.deepEqual(communities, { step: 3, box: tab, press: tab });
+  const tabHole = holeFor(communities.box, phone);
+  assert.deepEqual(aroundBox(tabHole, holeFor(communities.press, phone)), []);
+
+  const src = read(`${DIR}/index.tsx`);
+  assert.match(src, /const hole = box && holeFor\(box, viewport, step\.tap && !step\.press \? RING : 0\);/);
+  assert.match(src, /const ring = hole && step\.tap && pressBox \? holeFor\(pressBox, viewport\) : null;/);
+  assert.match(src, /const covers = hole \? \(ring \? aroundBox\(hole, ring\) : \[hole\]\) : \[\];/);
+  assert.match(src, /\{covers\.map\(\(cover, i\) => <div key=\{i\} className="pointer-events-auto fixed" style=\{cover\} \/>\)\}/);
+});
+
+// "Make 'tap to open it' also clickable (and the other steps like it) in the
+// tutorial, don't change the styling tho, I like it blue. Maybe just a tap
+// state, but not a button." (Evan, 5 October 2026)
+test('the blue hint on a tap step presses the step\'s own control, and still looks like the words it was', () => {
+  const { pressTarget, pressOf, Tour } = loadTsx(`${DIR}/index.tsx`);
+  const { makerSteps } = loadTsx(`${DIR}/tour-steps.ts`);
+  const steps = makerSteps({ slug: 'film', name: 'Friday Film Crew', conversationId: 12 });
+  // The control it presses is the one the step's watcher waits for.
+  assert.deepEqual(steps.filter((s) => s.tap).map(pressOf), [
+    '.app-card[data-slug="film"]', '#back-btn', '#platform-tab-workshop', '#platform-tab-messages',
+  ]);
+
+  // It presses the first one on screen, as a finger would, and nothing else.
+  const control = (width) => {
+    const el = { clicks: 0, getBoundingClientRect: () => ({ width, height: width ? 40 : 0 }), click() { el.clicks += 1; } };
+    return el;
+  };
+  const offscreen = control(0);
+  const shown = control(80);
+  const later = control(80);
+  const root = { querySelectorAll: (sel) => { root.asked = sel; return [offscreen, shown, later]; } };
+  assert.equal(pressTarget('#back-btn', root), true);
+  assert.equal(root.asked, '#back-btn');
+  assert.deepEqual([offscreen.clicks, shown.clicks, later.clicks], [0, 1, 0]);
+  assert.equal(pressTarget('#back-btn', { querySelectorAll: () => [offscreen] }), false, 'nothing on screen, nothing pressed');
+  assert.equal(offscreen.clicks, 0);
+
+  // Drawn: a real button, so a keyboard reaches it, named by its words, in
+  // the blue it was, with a pressed state and no fill, edge or underline.
+  const had = { window: Object.hasOwn(globalThis, 'window'), document: Object.hasOwn(globalThis, 'document') };
+  const before = { window: globalThis.window, document: globalThis.document };
+  globalThis.window = { innerWidth: 390, innerHeight: 844 };
+  globalThis.document = { getElementById: () => null, querySelector: () => null };
+  let html;
+  try {
+    html = renderToHtml(createElement(Tour, { info: { slug: 'film', name: 'Friday Film Crew', conversationId: 12 }, steps, onEnd() {} }));
+  } finally {
+    for (const k of ['window', 'document']) { if (had[k]) globalThis[k] = before[k]; else delete globalThis[k]; }
+  }
+  const hint = html.match(/<button type="button" data-first-session-tap="" class="([^"]+)">Tap it to open it<\/button>/);
+  assert.ok(hint, 'the hint is a button whose name is its words');
+  assert.equal(hint[1], 'py-1.5 text-[13px] font-semibold text-violet-700 transition-opacity active:opacity-60 dark:text-violet-400');
+  assert.doesNotMatch(hint[1], /\b(bg-|border|ring|rounded|underline|shadow)/);
+
+  // Pressed, it goes the one way a press on the control goes: the watcher
+  // that moves the tour on matches the same control the hint presses.
+  const src = read(`${DIR}/index.tsx`);
+  assert.match(src, /onClick=\{\(\) => \{ pressTarget\(pressOf\(step\)\); \}\}/);
+  assert.match(src, /const hit = Array\.from\(document\.querySelectorAll\(pressOf\(step\)\)\)\.some\(\(el\) => el\.contains\(t\)\);/);
+  assert.match(src, /document\.addEventListener\('click', onClick, true\);/);
 });
 
 test('the island renders nothing until it is opened, so the prerender is unchanged', () => {
