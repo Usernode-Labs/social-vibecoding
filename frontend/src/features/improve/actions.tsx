@@ -54,17 +54,19 @@ function QuickAction({ id, label, onClick }: {
 }
 
 /**
- * Ask for a change: ONE BUTTON, where there were two (UI overhaul).
+ * Suggest an improvement: ONE BUTTON, where there were two (UI overhaul).
  *
  * The menu offered "Give feedback" and "New change" side by side, and people
  * found both confusing: feedback read as a note to nobody in particular, and
  * New change started an agent session without saying so. The two did the
  * same thing from where the viewer stands, asking for something to change,
  * and differed in who does the work. So the button asks for the change (the
- * same dialog, headed "Ask for a change", which posts a request members can
- * see, vote on and pick up), and starting one yourself is "Start a new
- * change" under Agent sessions in the list below, because what it opens is
- * an agent session (../app-context/app-context-sheet.tsx).
+ * same dialog, headed "Suggest an improvement", which posts a request members
+ * can see, vote on and pick up), and building it yourself is "Build it
+ * yourself", a row of the list below (../app-context/app-context-sheet.tsx).
+ *
+ * It said "Ask for a change" until the first-session run-through (5 Oct
+ * 2026), which asked for words a first-time user would use.
  *
  * It needs nothing of the viewer (no collaborator bit, no session, no repo),
  * so it is always shown.
@@ -80,7 +82,7 @@ export function ImproveQuickActions(): ReactNode {
     >
       <QuickAction
         id="improve-row-feedback"
-        label="Ask for a change"
+        label="Suggest an improvement"
         onClick={() => Improve.giveFeedback()}
       />
     </div>

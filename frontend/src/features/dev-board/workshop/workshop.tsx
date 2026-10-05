@@ -528,7 +528,7 @@ function EmptyNote({ filtered, loadFailed, underStartHere = false, onHub = false
 }): ReactNode {
   const { readOnly, canCollaborate } = useDevActions();
   const where = onHub ? '' : ' on the hub';
-  const adds = canCollaborate ? ' to ask for a change or import a PR' : ' to ask for a change';
+  const adds = canCollaborate ? ' to suggest an improvement or import a PR' : ' to suggest an improvement';
   const start = underStartHere ? '.' : '; to make one yourself, use Start a new change in the Homeroom menu.';
   return (
     <div className="text-xs text-zinc-500 dark:text-zinc-400 mb-2" data-ws-empty="">
@@ -4114,7 +4114,7 @@ export function DevWorkshop(): ReactNode {
                 {actions.readOnly || startHere
                   ? 'You have no work going on.'
                   : v.mine.bot
-                    ? 'You have no work going on. To change something, tell Homeroom bot, or use Ask for a change in the Homeroom menu.'
+                    ? 'You have no work going on. To change something, tell Homeroom bot, or use Suggest an improvement in the Homeroom menu.'
                     : 'You have no work going on. Pick up an open item in All items, or use Build it yourself in the Homeroom menu.'}
               </p>
             ) : null}

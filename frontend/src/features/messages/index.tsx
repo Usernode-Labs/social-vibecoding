@@ -536,7 +536,7 @@ function InboxFilters({ filter }: { filter: InboxFilter }) {
  * building it yourself, then people.
  */
 const NEW_CHOICES = [
-  { key: 'bot', label: 'Homeroom bot', hint: 'Make an app or ask for a change' },
+  { key: 'bot', label: 'Homeroom bot', hint: 'Make an app or suggest an improvement' },
   // #2779: a conversation with the Mayor that works on any app, so there is
   // no app to pick first. It replaced "Agent chat", which asked which app and
   // opened a classic dev session there; those are no longer created. B8:

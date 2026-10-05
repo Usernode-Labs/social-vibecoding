@@ -319,7 +319,7 @@ const RETIRED_IDS = {
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
   'report-modal': '#2721 shared reporting dialog',
-  // ── B8: Ask for a change answered by Homeroom bot ─────────────────
+  // ── B8: Suggest an improvement answered by Homeroom bot ─────────────────
   'feedback-sent-line': 'B8: the line under the filed-request confirmation\'s heading, worded by the controller: "Find it on your profile…", or "Homeroom bot is on it, usually about 8 minutes."',
   'feedback-sent-chat': 'B8: Open chat, the confirmation\'s main button when Homeroom bot builds the request: the chat where its card is.',
   'feedback-sent-fix': 'B8: the confirmation\'s small "Build it yourself with a coding agent" link, for somebody who could start a change there.',
@@ -734,7 +734,7 @@ const ADDED_IDS = {
   // (#1603), left with the label's old words: "What should change?" is plainly
   // the one thing the request needs (UI overhaul). aria-required on the field
   // and the refusal under it are unchanged.
-  'feedback-target-label': 'UI overhaul: "Where should this go?", the Ask for a change dialog\'s label for its destination row (#feedback-target is aria-labelledby it). It asks the question the grey #feedback-target-hint used to; the hint is only the refusal now.',
+  'feedback-target-label': 'UI overhaul: "Where should this go?", the Suggest an improvement dialog\'s label for its destination row (#feedback-target is aria-labelledby it). It asks the question the grey #feedback-target-hint used to; the hint is only the refusal now.',
   'feedback-target-app-name': 'UI overhaul: the app option\'s first line, the app\'s NAME ("Run Club"), written by feedback-controller.js on each open ("This app" with no name, "No app open" with no app). It was the whole button\'s text, "This app (Run Club)".',
   'feedback-target-app-sub': 'UI overhaul: the app option\'s second line, "This app", mirroring the platform option\'s "Homeroom / The platform itself". The controller hides it when the first line already says "This app".',
   'feedback-text-error': "The inline refusal under the description: \"Please add a description.\" Deliberately its OWN node rather than a fifth writer of #feedback-status, which has an explicit newer-and-more-specific-wins rule (paintQueueState) that would either swallow this message or let it erase the offline hint. Ships empty and hidden, like #feedback-status: the controller owns the text, and a message rendered before the submit that earns it would both lie on open and mismatch on hydration.",
@@ -751,7 +751,7 @@ const ADDED_IDS = {
   // violet "Improve" pill, between the bell and the mark. The panel it opened
   // is reached from #app-menu-row-improve below; its glyph and both its dots
   // kept their ids and are listed here still, on the row and on the mark.
-  'improve-row-feedback': 'Opens the feedback dialog — the retired #feedback-btn. The Homeroom menu\'s one button since the UI overhaul, "Ask for a change".',
+  'improve-row-feedback': 'Opens the feedback dialog — the retired #feedback-btn. The Homeroom menu\'s one button since the UI overhaul, "Suggest an improvement".',
   'improve-quick-actions': 'The panel\'s three circular actions — Feedback, New change, Share — captioned beneath so three fit across a phone.',
   // #improve-version-dot is NOT here any more, and did not move: it is
   // retired. Amber while a build was deploying or downloading, violet once
@@ -762,7 +762,7 @@ const ADDED_IDS = {
   // it is. `Improve.setVersionState` and the store field stay; the second
   // renderer is what went. It never reached tests/baselines, so it leaves
   // this map without entering RETIRED_IDS.
-  'improve-row-new-session': 'Starts a dev session — the Dev "+" menu\'s "Propose a change". Since the UI overhaul it is "Start a new change", the first row under Agent sessions in the Homeroom menu (#app-menu-sessions), not a button beside Ask for a change.',
+  'improve-row-new-session': 'Starts a dev session — the Dev "+" menu\'s "Propose a change". Since the UI overhaul it is "Start a new change", the first row under Agent sessions in the Homeroom menu (#app-menu-sessions), not a button beside Suggest an improvement.',
   'app-menu-sessions': 'UI overhaul: the Homeroom menu\'s Agent sessions section (it was "Continue"), rendered on the menu pane whether or not you have sessions, because it leads with "Start a new change" (#improve-row-new-session). Your sessions (#app-menu-continue) arrive after mount, inside it.',
   'settings-theme-section': 'The Theme settings pane\'s inner node, matching every other section\'s wrapper/inner pair.',
   // ── THE UI OVERHAUL: the home screen's four areas ────────────────

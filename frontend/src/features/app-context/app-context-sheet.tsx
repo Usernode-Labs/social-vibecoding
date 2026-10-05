@@ -831,7 +831,7 @@ export function AppsSwitcherSheet(): ReactNode {
               sessions"), BELOW the app's own rows: your agent sessions, on
               every app, under their own heading. See the comment on
               `continuing` above. The heading is a plain word since the
-              first-session run-through (4 Oct 2026): Ask for a change, above,
+              first-session run-through (4 Oct 2026): Suggest an improvement, above,
               is the front door, and "agent sessions" is a term a newcomer
               does not have. The rows say what each one is.
 
@@ -853,7 +853,7 @@ export function AppsSwitcherSheet(): ReactNode {
                 className={`${ROW} w-full text-left`}
                 onClick={() => Improve.startSession()}
               >
-                {/* B8: Ask for a change (above) goes to Homeroom bot; this
+                {/* B8: Suggest an improvement (above) goes to Homeroom bot; this
                     is building it yourself, with a coding agent. */}
                 <RowBody
                   icon={<PlusIcon className="text-violet-600 dark:text-violet-400" />}

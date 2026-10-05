@@ -7,7 +7,7 @@ import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
  * up/down chevrons and the check mark above the keys (flutter-mobile-app PR
  * #603). Those chevrons were the only way from one field to the next in
  * several forms: Change password, the sign-up code step's password pair,
- * Edit profile, Ask for a change, the secrets editor. Return did nothing
+ * Edit profile, Suggest an improvement, the secrets editor. Return did nothing
  * there, or submitted the whole form from its first field and let the
  * browser's required check bounce focus back. The first session's "What do
  * you want to make?" (features/first-session/make.tsx, #3904) did it by

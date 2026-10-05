@@ -1016,7 +1016,7 @@ async function unknownRequests(pool, ctx, numbers) {
        UNION ALL
        SELECT issue_number, app_id FROM homeroom_bot_runs WHERE issue_number = ANY($2::int[])
        UNION ALL
-       -- A request filed from an app's "Ask for a change" dialog has no twin.
+       -- A request filed from an app's "Suggest an improvement" dialog has no twin.
        SELECT issue_number, app_id FROM feedback_reports WHERE issue_number = ANY($2::int[])
      ) x
       WHERE x.app_id IN (
@@ -2523,7 +2523,7 @@ function commentText(theirs, comment) {
  * Whether `app` has a request numbered `n` that the platform knows of: the
  * same records unknownRequests reads (the platform's own twin, a requester,
  * the bot's queue and runs), and the feedback report of a request filed from
- * the app's "Ask for a change" dialog, which keeps no twin by design
+ * the app's "Suggest an improvement" dialog, which keeps no twin by design
  * (routes/issues.js isIssueAuthor). Reading only the first two, a request
  * filed there was "no request" until the live loop had looked at it, and on
  * an app the bot does not build on it always was.

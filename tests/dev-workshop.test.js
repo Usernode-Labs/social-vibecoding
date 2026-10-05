@@ -3503,9 +3503,9 @@ test('bug g: the empty-board note says what the ⋯ holds, and sends "make one y
   const fresh = empty();
   const all = workshopHtml(fresh, 'all');
   assert.doesNotMatch(all, /propose a change/, 'no promise of a propose row the "+" does not have');
-  assert.match(all, NOTE(` on the hub to ask for a change${START}`), "a writer's note: the ⋯ asks for a change");
+  assert.match(all, NOTE(` on the hub to suggest an improvement${START}`), "a writer's note: the ⋯ suggests an improvement");
   withDevActions({ canCollaborate: true }, () => {
-    assert.match(workshopHtml(fresh, 'all'), NOTE(` on the hub to ask for a change or import a PR${START}`),
+    assert.match(workshopHtml(fresh, 'all'), NOTE(` on the hub to suggest an improvement or import a PR${START}`),
       "a collaborator's ⋯ also imports a PR, so the note says so");
   });
 
@@ -3514,7 +3514,7 @@ test('bug g: the empty-board note says what the ⋯ holds, and sends "make one y
   // the reader to a menu for the button just above it.
   const status = workshopHtml(fresh, 'status');
   assert.match(status, /data-ws-start-here-btn=""[^>]*>Start a new change</, 'the banner offers Start a new change');
-  assert.match(status, NOTE(' to ask for a change\\.'), 'and the note under it names the ⋯ alone');
+  assert.match(status, NOTE(' to suggest an improvement\\.'), 'and the note under it names the ⋯ alone');
   assert.doesNotMatch(status, /propose a change/);
   // ...and "What you are working on", on the Workshop tab beside it, states
   // the fact alone too: the board has no open item to pick up, and New
@@ -3525,7 +3525,7 @@ test('bug g: the empty-board note says what the ⋯ holds, and sends "make one y
   const finished = empty({ _mergedTotal: 3 });
   const bare = workshopHtml(finished, 'status');
   assert.ok(!bare.includes('data-ws-start-here'), 'no banner on an app that has shipped');
-  assert.match(bare, NOTE(` to ask for a change${START}`));
+  assert.match(bare, NOTE(` to suggest an improvement${START}`));
 
   // A read-only viewer's "+" holds Fork alone and their menu has no New
   // change, so there is nothing to press: the note states the fact.
@@ -3615,7 +3615,7 @@ test('the ⋯ is the hub hero’s: once, at the end of its actions, and no page 
     'Invite, then the ⋯, ending the actions');
   assert.equal(html.split('id="dev-plus-btn"').length - 1, 1, 'one ⋯');
   // The menu comes with it, leading with the ask, then Settings & rules.
-  assert.match(html, /id="dev-plus-menu"[\s\S]*?data-plus="issue"[\s\S]*?>Ask for a change<[\s\S]*?data-plus-group="settings"/);
+  assert.match(html, /id="dev-plus-menu"[\s\S]*?data-plus="issue"[\s\S]*?>Suggest an improvement<[\s\S]*?data-plus-group="settings"/);
   // Joined sits across from them, at the row's far end (#852).
   assert.match(html, /<\/div><span class="dev-ws-hero-member"><button[^>]*data-ws-community-leave=""/);
   // The same props the toolbar row reads, from the same store, so the gates
@@ -5050,7 +5050,7 @@ test('#2182: "What you are working on" stays on screen with nothing in it, and s
   AppView._ghIssuesMeta = { ...(AppView._ghIssuesMeta || {}), homeroomBot: { typicalMinutes: 8 } };
   assert.equal(AppView._workshopView().mine.bot, true);
   const bot = workshopHtml(AppView, 'workshop');
-  assert.match(bot, /data-ws-mine-empty="">You have no work going on\. To change something, tell Homeroom bot, or use Ask for a change in the Homeroom menu\.<\/p>/,
+  assert.match(bot, /data-ws-mine-empty="">You have no work going on\. To change something, tell Homeroom bot, or use Suggest an improvement in the Homeroom menu\.<\/p>/,
     'the bot\'s project points at asking for a change');
   assert.doesNotMatch(bot, /Pick up an open item|Build it yourself in the Homeroom menu/, 'and not at building it');
   withDevActions({ readOnly: true }, () => {

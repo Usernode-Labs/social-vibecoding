@@ -626,7 +626,7 @@ async function recordRequester(pool, { app, repo, issueNumber, issue = null }) {
   const poster = await live.issuePoster(pool, { app, repo, issueNumber, issue });
   if (!poster) return null;
   // B4: in their own words, when they wrote it here: the description of the
-  // request they filed on the platform (Ask for a change).
+  // request they filed on the platform (Suggest an improvement).
   const { rows } = await pool.query(
     `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title, asked_text)
      SELECT $1, $2, u.id, $4,
@@ -2742,7 +2742,7 @@ async function typicalMinutesCached(pool, now = Date.now()) {
 }
 
 /**
- * B8: a request somebody filed through Ask for a change (routes/feedback.js),
+ * B8: a request somebody filed through Suggest an improvement (routes/feedback.js),
  * told to the bot the way its own filing from a DM is (homeroom-bot-mayor.js
  * fileRequest): recorded as theirs, in their own words, and, on a project the
  * bot builds on, put first in its queue with its card in their DM. Resolves
@@ -2891,7 +2891,7 @@ const JOINER_PROMPTS = Object.freeze(['What can I ask for?', 'How does the group
 function joinerHello(appName) {
   const name = appName || 'this project';
   return `Hi, I'm Homeroom bot, the AI that builds things for the groups on Homeroom. Welcome to ${name}! `
-    + `When you'd like something in ${name} to change, tell me here or tap Ask for a change on its page. `
+    + `When you'd like something in ${name} to change, tell me here or tap Suggest an improvement on its page. `
     + 'I\'ll build it, and the group tries it and decides whether it goes live.';
 }
 

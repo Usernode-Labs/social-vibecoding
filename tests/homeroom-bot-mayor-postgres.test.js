@@ -1571,7 +1571,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     await pool.query('DELETE FROM homeroom_bot_runs WHERE id = $1', [adaRun.id]);
   });
 
-  await t.test('a request filed from "Ask for a change" is a request: the bot can post on it, start it and name it', async () => {
+  await t.test('a request filed from "Suggest an improvement" is a request: the bot can post on it, start it and name it', async () => {
     // Filed through POST /api/feedback: a feedback report beside the GitHub
     // issue and no `issues` twin (by design), and the bot has not looked at
     // it yet, so no requester, queue row or run either.

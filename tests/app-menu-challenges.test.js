@@ -72,7 +72,7 @@ test('the app menu carries no platform destination at all', () => {
     'Agent sessions follow the app\'s own rows');
   const sheet = html.slice(html.indexOf('id="apps-switcher-sheet"'), html.indexOf('id="switcher-nav"'));
   assert.ok(!nav.includes('id="improve-row-feedback"') && sheet.includes('id="improve-row-feedback"'),
-    'Ask for a change is a button above the list, not a row in it');
+    'Suggest an improvement is a button above the list, not a row in it');
   assert.ok(!html.includes('id="app-context-row-workshop"')
     && !html.includes('id="improve-views"'),
     'and the Workshop is a row, not a toggle segment as well (#2761)');

@@ -9909,7 +9909,7 @@ const AppView = {
     const mine = {
       viewer: meId != null,
       // Homeroom bot builds requests here for this viewer: the empty strip
-      // then says to ask for a change rather than build one.
+      // then says to suggest an improvement rather than build one.
       bot: !!AppView._botDoor(),
       count: mineList.length,
       shown: AppView.WORKSHOP_MINE_MAX,
