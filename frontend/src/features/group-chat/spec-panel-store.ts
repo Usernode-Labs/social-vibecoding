@@ -23,7 +23,9 @@ export type SpecPanelBody =
    *  message turns it into something that looks like a spec. */
   | { kind: 'error'; text: string }
   /** Sanitized markdown, produced by `DevChat.renderMarkdown`. */
-  | { kind: 'markdown'; html: string };
+  | { kind: 'markdown'; html: string }
+  /** An HTML spec (#3699), made safe by `renderSpecHtml`: two halves when `split`. */
+  | { kind: 'spec'; split: boolean; preambleHtml: string; userHtml: string; techHtml: string; html: string };
 
 export interface SpecPanelState {
   open: boolean;

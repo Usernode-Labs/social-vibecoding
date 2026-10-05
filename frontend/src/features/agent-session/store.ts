@@ -102,6 +102,8 @@ export interface SpecSheetState {
   version: number | null;
   versions: number[];
   text: string;
+  /** The version's HTML document when it was written as one (#3699); `text` is then its markdown copy. */
+  html: string | null;
   phase: 'loading' | 'ready' | 'error';
   error: string;
   /**
@@ -1864,16 +1866,18 @@ export async function openSpec(changeId: number, version: number | null = null) 
   publish({
     drawerOpen: false,
     paneTab: 'spec',
-    specSheet: { changeId, version, versions: same ? same.versions : [], text: '', phase: 'loading', error: '', tab },
+    specSheet: { changeId, version, versions: same ? same.versions : [], text: '', html: null, phase: 'loading', error: '', tab },
   });
   try {
-    const { spec, versions } = await api.getSpec(changeId);
+    const { spec, html: latestHtml, versions } = await api.getSpec(changeId);
     const numbers = versions.map((v) => Number(v.version)).filter((v) => Number.isInteger(v) && v > 0);
     const newest = numbers.length ? Math.max(...numbers) : null;
-    const text = version != null && version !== newest ? await api.getSpecVersion(changeId, version) : spec;
+    const { text, html } = version != null && version !== newest
+      ? await api.getSpecVersionDoc(changeId, version)
+      : { text: spec, html: latestHtml };
     if (ticket !== specRequest) return;
     publish((current) => ({
-      specSheet: { changeId, version: version ?? newest, versions: numbers, text, phase: 'ready', error: '', tab: current.specSheet?.tab ?? tab },
+      specSheet: { changeId, version: version ?? newest, versions: numbers, text, html, phase: 'ready', error: '', tab: current.specSheet?.tab ?? tab },
     }));
   } catch (error) {
     if (ticket !== specRequest) return;
