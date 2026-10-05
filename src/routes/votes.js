@@ -3511,14 +3511,20 @@ function voteRoutes(config) {
         });
       }
       // B7: a Yes settles the "ready to try" card Homeroom bot sent this
-      // voter about the change, on every device. Never throws.
-      if (vote === 'yes') void require('../services/homeroom-bot-dm').noteApproved(pool, session.id, req.user.id);
+      // voter about the change, on every device, and the card says what
+      // happens next. The answer carries that too (`goesLive`), so the card
+      // that was tapped says it at once rather than when the update lands.
+      // One query when the voter has no such card. Never throws.
+      const goesLive = vote === 'yes'
+        ? await require('../services/homeroom-bot-dm').noteApproved(pool, session.id, req.user.id)
+        : null;
+      const readyCard = goesLive ? { goesLive } : {};
 
       if (unchanged) {
         log.debug('votes', 'Vote unchanged, skipping broadcast+merge', {
           sessionId: session.id, userId: req.user.id, vote,
         });
-        return res.json({ ok: true, merged: false, unchanged: true });
+        return res.json({ ok: true, merged: false, unchanged: true, ...readyCard });
       }
       if (reasonOnly) {
         // #1688: the same vote with new words. The roster and the proposer's
@@ -3527,7 +3533,7 @@ function voteRoutes(config) {
         const { pushVoteUpdate: pushReason } = require('../services/ws');
         pushReason({ sessionId: session.id, appSlug: session.app_slug, merged: false });
         log.debug('votes', 'Vote reason updated', { sessionId: session.id, userId: req.user.id });
-        return res.json({ ok: true, merged: false, unchanged: false, reasonUpdated: true });
+        return res.json({ ok: true, merged: false, unchanged: false, reasonUpdated: true, ...readyCard });
       }
 
       const voteLabel = session.pr_title
@@ -3627,7 +3633,7 @@ function voteRoutes(config) {
       // moved nothing, and the schedule counts the rare one that matters.
       // Never throws, so the vote answers the same either way.
       await challengeScorer.scoreOnVote(pool, config);
-      res.json({ ok: true, merged: false });
+      res.json({ ok: true, merged: false, ...readyCard });
 
       // The live head read the response no longer waits on, then the
       // majority check. If it turns into a merge, a second broadcast flips

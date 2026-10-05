@@ -582,13 +582,17 @@ const OUTCOME_LABELS = Object.freeze({
   answer: 'Answered on the change',
   revise: 'Updated the change',
 });
+// A change waiting for approval is built, not done: "Done" over "Built it.
+// Waiting for approval" read as finished to the person still asked to
+// approve it (4 October). Done is for what came to an end well.
 const OUTCOME_TONES = Object.freeze({
-  proposed: 'done', live: 'done', answer: 'done', revise: 'done',
+  live: 'done', answer: 'done', revise: 'done',
+  proposed: 'built',
   question: 'you', blocked: 'you', empty: 'you',
   person: 'ended', held: 'ended', closed: 'ended',
   build_failed: 'trouble', failed: 'trouble', stopped: 'trouble',
 });
-const TONE_WORDS = Object.freeze({ done: 'Done', you: 'Needs you', ended: 'Ended', trouble: 'Didn\'t finish' });
+const TONE_WORDS = Object.freeze({ done: 'Done', built: 'Built', you: 'Needs you', ended: 'Ended', trouble: 'Didn\'t finish' });
 
 /** Pure: a card (cardOf) as the person reads it, in one line, or null. */
 function cardWords(card) {

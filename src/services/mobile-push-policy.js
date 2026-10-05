@@ -479,11 +479,13 @@ function buildCopy(kind, context, now) {
     }
     case 'vote_digest': {
       const count = /^\d+$/.test(detail) ? Math.max(0, Number(detail)) : 0;
+      // Where a tap goes (notifications.js): one change opens that change,
+      // several the Communities screen's Needs you, which lists them.
       return {
         title: count
           ? `${count} ${count === 1 ? 'change is' : 'changes are'} waiting for your approval`
           : 'Changes are waiting for your approval',
-        body: 'Open Dev to review them',
+        body: count === 1 ? 'Open it to try it and approve it' : 'See them under Needs you in Communities',
       };
     }
     case 'check_failed':
