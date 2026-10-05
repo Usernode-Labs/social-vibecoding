@@ -12,6 +12,9 @@
 //     says so in words when nothing does.
 //   - Alex's bell called Priya's first message, a request Homeroom bot
 //     filed, "Said hi". It is "Asked for a change" once it is a request.
+//     The rest of the group heard Mo's request in the discussion as
+//     "@mo_t1006 in Page Turners": it is "@mo_t1006 asked for a change in
+//     Page Turners" once it is one.
 //   - Mo's invite by username said "Accepted your invite" where Priya's link
 //     said "Joined through your invite": one phrase for one thing now.
 //
@@ -147,6 +150,29 @@ test('a first message the bot filed is "Asked for a change"; a hello, or several
     'a day\'s hellos folded together stay hellos');
 });
 
+// The same run: Mo's message in Page Turners' discussion, which Homeroom bot
+// filed as a request, reached the rest of the group as "@mo_t1006 in Page
+// Turners · Could it also show whose plac…". It asked for a change.
+test('a group discussion message the bot filed says who asked for a change; folded messages stay messages', () => {
+  const { N } = load();
+  const said = (extra) => N._rowView({
+    id: 13, kind: 'channel_message', createdAt: new Date().toISOString(), readAt: null,
+    appName: 'Page Turners', appSlug: 'page-turners', appId: 5, sourceUsername: 'mo_t1006',
+    chatMessageId: 71, messageContent: 'Could it also show whose place we meet at next time?', ...extra,
+  });
+  const asked = said({ requestNumber: 4 });
+  assert.equal(asked.label, '@mo_t1006 asked for a change in Page Turners');
+  assert.equal(subject(asked), 'Could it also show whose place we meet at next time?', 'what they said, under it');
+  assert.equal(asked.icon, '\u{1F4A1}', 'the first message\'s request icon');
+  assert.equal(asked.appLine, 'Discussion', 'still a discussion row');
+  assert.equal(said({ requestNumber: null }).label, '@mo_t1006 in Page Turners', 'not a request: what they said');
+  assert.equal(said({}).label, '@mo_t1006 in Page Turners', 'an older server');
+  assert.equal(said({ requestNumber: null }).icon, '💬');
+  const folded = said({ requestNumber: 4, detail: '2' });
+  assert.equal(folded.label, '2 new messages in Page Turners', 'two messages are not one request');
+  assert.match(subject(folded), /^@mo_t1006: Could it also/);
+});
+
 test('an invite by username accepted reads as a link\'s join does', () => {
   const { N } = load();
   const row = (kind) => N._rowView({
@@ -167,9 +193,9 @@ test('every decision settles the bell: the merge, a carried change, every close,
   const lifecycle = read('src/services/session-lifecycle.js');
   const finalize = lifecycle.slice(lifecycle.indexOf('async function finalizeArchivedSession'));
   assert.match(finalize.slice(0, finalize.indexOf('\n}\n')), /settleDecidedChange\(pool, sessionId\)/);
-  assert.match(read('src/services/homeroom-bot-chat.js'), /refreshFirstMessage\(pool, \{ appId, chatMessageId: messageId \}\)/);
+  assert.match(read('src/services/homeroom-bot-chat.js'), /refreshFiledMessage\(pool, \{ appId, chatMessageId: messageId \}\)/);
   // The bell's three reads carry the live columns.
   const service = read('src/services/notifications.js');
   assert.equal((service.match(/\$\{LIVE_ROW_COLUMNS_SQL\}/g) || []).length, 3);
-  assert.equal((service.match(/\$\{FIRST_MESSAGE_REQUEST_JOIN_SQL\}/g) || []).length, 3);
+  assert.equal((service.match(/\$\{FILED_MESSAGE_JOIN_SQL\}/g) || []).length, 3);
 });

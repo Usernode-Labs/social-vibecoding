@@ -457,7 +457,9 @@ test('a live build that pushed nothing says so on the issue, instead of going si
   assert.equal(liveCalls.some((c) => c[0] === 'promote'), false);
   const failed = liveCalls.find((c) => c[0] === 'post' && c[1] === 'build_failed');
   assert.ok(failed, 'the build-failed note is posted');
-  assert.match(failed[2], /the build produced no change to propose \(finished after a restart\)/);
+  // Said in plain words on the request; the run's own record stays on the run.
+  assert.equal(failed[2], 'Homeroom bot couldn\'t finish building this: it ended up with no changes to show. '
+    + 'Reply here (or on the GitHub issue) and it will try again.');
   assert.deepEqual(liveOutcome(pool).slice(0, 3), [950, false, 'the build produced no change to propose (finished after a restart)']);
   assert.ok(sessionUpdates(pool).some((c) => /'archived'/.test(c.sql)));
 });
@@ -534,7 +536,7 @@ test('the third build in a row a restart cuts short is said to have failed, not 
   assert.deepEqual(requeues(pool), [], 'not back in the queue');
   const failed = liveCalls.find((c) => c[0] === 'post' && c[1] === 'build_failed');
   assert.ok(failed, 'the person is told, as for any failed build');
-  assert.match(failed[2], /the platform restarted in the middle of each of its last 3 tries at building this/);
+  assert.match(failed[2], /^Homeroom bot couldn't finish building this: Homeroom restarted in the middle of the build, 3 times in a row\. /);
   const outcome = liveOutcome(pool);
   assert.deepEqual(outcome.slice(0, 2), [950, false]);
   assert.equal(outcome[2], 'the platform restarted in the middle of each of its last 3 tries at building this');

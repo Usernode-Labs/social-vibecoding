@@ -2026,7 +2026,10 @@ function botMomentLine(detail, message) {
     ready_group: app ? `Your change to ${app} is ready to try` : 'Your change is ready to try',
     ready_broken: app ? `${app} is built, but not everything works yet` : 'Your change is built, but not everything works yet',
     stopped: app ? `${app}: your change stopped. I said why in our chat` : 'Your change stopped. I said why in our chat',
-    stopped_build: app ? `${app}: I couldn't finish building it. A person can pick it up` : 'I couldn\'t finish building it. A person can pick it up',
+    // 5 Oct 2026: what the DM it opens ends with (homeroom-bot-dm.js dmText
+    // 'build_failed'), whose why is there. A reply starts it again; "A person
+    // can pick it up" was a dead end for the person it was for.
+    stopped_build: app ? `${app}: I couldn't finish building it. Reply and I'll try again` : 'I couldn\'t finish building it. Reply and I\'ll try again',
     stopped_blocked: app ? `${app}: I can't build it as written. Tell me more` : 'I can\'t build it as written. Tell me more',
     stopped_person: app ? `${app}: this needs a person to decide` : 'This needs a person to decide',
     stopped_empty: app ? `${app}: I couldn't find anything to build. Tell me more` : 'I couldn\'t find anything to build. Tell me more',
@@ -2695,20 +2698,25 @@ function rowView(n) {
   // project, as a group chat's banner is, over what they said; the meta line
   // names the surface (Discussion), as a conversation row's names Messages,
   // so the project's name is not said twice.
+  // 5 October (Page Turners): a message Homeroom bot filed as a request
+  // (`requestNumber`, read live, services/notifications.js) is somebody
+  // asking for a change, as a joiner's first message says (below). Several
+  // messages folded into one row stay messages.
   if (n.kind === 'channel_message') {
     const count = /^\d{1,6}$/.test(String(n.detail || '')) ? Number(n.detail) : 1;
     const place = n.appName || 'the discussion';
     const snippet = (n.messageContent || '').slice(0, 140);
     const author = n.sourceUsername ? `@${n.sourceUsername}` : 'Someone';
+    const asked = count === 1 && n.requestNumber != null;
     return {
       ...base,
       wrap: true,
-      icon: '💬',
+      icon: asked ? '\u{1F4A1}' : '💬',
       by: null,
       appLine: 'Discussion',
       ...(count > 1
         ? headline(`${count} new messages in ${place}`, snippet ? `${author}: ${snippet}` : author)
-        : headline(`${author} in ${place}`, snippet || null)),
+        : headline(asked ? `${author} asked for a change in ${place}` : `${author} in ${place}`, snippet || null)),
     };
   }
 

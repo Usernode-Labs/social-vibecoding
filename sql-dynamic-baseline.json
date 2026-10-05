@@ -1216,6 +1216,27 @@
     {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
+      "fingerprint": "4fb03398efe7c9b53166",
+      "count": 1,
+      "preview": "`SELECT n.id, n.kind, n.user_id, n.read_at, n.created_at, n.app_id, a.slug AS app_slug, a.name AS app_name, n.chat_message_id, cm.content AS message_content, cm"
+    },
+    {
+      "source": "src/services/notifications.js",
+      "kind": "structural-template",
+      "fingerprint": "65dd4ea804620e146619",
+      "count": 1,
+      "preview": "`SELECT n.id, n.kind, n.read_at, n.created_at, n.app_id, a.slug AS app_slug, a.name AS app_name, n.chat_message_id, cm.content AS message_content, cm.thread_typ"
+    },
+    {
+      "source": "src/services/notifications.js",
+      "kind": "structural-template",
+      "fingerprint": "87e998a091a89f5c938b",
+      "count": 1,
+      "preview": "`SELECT n.id, n.kind, n.read_at, n.created_at, n.app_id, a.slug AS app_slug, a.name AS app_name, n.chat_message_id, cm.content AS message_content, cm.thread_typ"
+    },
+    {
+      "source": "src/services/notifications.js",
+      "kind": "structural-template",
       "fingerprint": "acaf4bd6989cd08458d2",
       "count": 1,
       "preview": "`SELECT COUNT(*)::int AS c FROM notifications AS n WHERE n.user_id = $1 AND n.read_at IS NULL AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}`"
@@ -1247,27 +1268,6 @@
       "fingerprint": "eb68b3940172c1cd1033",
       "count": 1,
       "preview": "`INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail) SELECT v.user_id, v.app_id, v.session_id, v.source_user_id, v.kind, v.det"
-    },
-    {
-      "source": "src/services/notifications.js",
-      "kind": "structural-template",
-      "fingerprint": "f887331a6b1eb702b3d9",
-      "count": 1,
-      "preview": "`SELECT n.id, n.kind, n.read_at, n.created_at, n.app_id, a.slug AS app_slug, a.name AS app_name, n.chat_message_id, cm.content AS message_content, cm.thread_typ"
-    },
-    {
-      "source": "src/services/notifications.js",
-      "kind": "structural-template",
-      "fingerprint": "fb3dd14d54aabf16e251",
-      "count": 1,
-      "preview": "`SELECT n.id, n.kind, n.user_id, n.read_at, n.created_at, n.app_id, a.slug AS app_slug, a.name AS app_name, n.chat_message_id, cm.content AS message_content, cm"
-    },
-    {
-      "source": "src/services/notifications.js",
-      "kind": "structural-template",
-      "fingerprint": "fd4dd62d56a6b216f18e",
-      "count": 1,
-      "preview": "`SELECT n.id, n.kind, n.read_at, n.created_at, n.app_id, a.slug AS app_slug, a.name AS app_name, n.chat_message_id, cm.content AS message_content, cm.thread_typ"
     },
     {
       "source": "src/services/onboarding.js",

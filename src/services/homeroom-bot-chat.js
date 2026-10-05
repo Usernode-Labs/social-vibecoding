@@ -655,11 +655,12 @@ async function record(pool, {
   const row = rows[0] || null;
   // 5 October (Page Turners): a joiner's first message is often what they
   // ask for, and their invite's maker was told they said hi the moment it
-  // was sent, seconds (or a "Suggest it") before it became a request. Their
-  // row is pushed again as it reads now, "Asked for a change"
-  // (notifications.refreshFirstMessage). Never throws.
+  // was sent, seconds (or a "Suggest it") before it became a request; the
+  // rest of a small group heard "@mo_t1006 in Page Turners" over it. Those
+  // rows are pushed again as they read now, asking for a change
+  // (notifications.refreshFiledMessage). Never throws.
   if (row && row.issue_number != null && ['filed', 'group', 'revise'].includes(row.kind)) {
-    await require('./notifications').refreshFirstMessage(pool, { appId, chatMessageId: messageId });
+    await require('./notifications').refreshFiledMessage(pool, { appId, chatMessageId: messageId });
   }
   return row;
 }

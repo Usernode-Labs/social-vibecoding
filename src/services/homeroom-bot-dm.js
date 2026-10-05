@@ -860,28 +860,62 @@ function questionLead(line, it, dm) {
 }
 
 /**
- * Pure: why a build of `it` did not finish, said to the person it was for.
- * `reason` is the run's own record (homeroom-bot.js, homeroom-bot-live.js),
- * written for the platform: on 5 Oct 2026 a requester read "the build ran
- * past its time limit (finished after a restart)". It is read for what
- * happened and never quoted. "(finished after a restart)" only says which
- * process recorded it, never why it ended: a build that ran too long or
- * changed nothing is said as that.
+ * Pure: what ended a build that did not finish, as one of a few causes
+ * ({ cause, times }). `reason` is the run's own record (homeroom-bot.js,
+ * homeroom-bot-live.js), written for the platform: on 5 Oct 2026 a
+ * requester read "the build ran past its time limit (finished after a
+ * restart)". It is read for what happened and never quoted. "(finished
+ * after a restart)" only says which process recorded it, never why it
+ * ended: a build that ran too long or changed nothing is said as that.
  */
-function buildFailedWords(reason, it = 'this') {
+function buildFailedCause(reason) {
   const r = String(reason || '').replace(/\s*\(finished after a restart\)/g, '');
   const restarts = /restarted in the middle of each of its last (\d+) tries/.exec(r);
-  if (restarts) {
-    return `I couldn't finish building ${it}: Homeroom restarted while I was working on it, ${restarts[1]} times in a row.`;
-  }
-  if (/ran past its time limit/.test(r)) return `I couldn't finish building ${it}: it took longer than I'm allowed.`;
-  if (/restarted|by a restart/.test(r)) return `I couldn't finish building ${it}: Homeroom restarted while I was working on it.`;
-  if (/built but could not be proposed/.test(r)) return `I built ${it}, but I couldn't put it up for approval.`;
-  if (/produced no change/.test(r)) return `I couldn't finish building ${it}: I ended up with no changes to show you.`;
+  if (restarts) return { cause: 'restarts', times: Number(restarts[1]) };
+  if (/ran past its time limit/.test(r)) return { cause: 'time' };
+  if (/restarted|by a restart/.test(r)) return { cause: 'restart' };
+  if (/built but could not be proposed/.test(r)) return { cause: 'unproposed' };
+  if (/produced no change/.test(r)) return { cause: 'no_change' };
   if (/could not start|would not start|could not open a session|could not create its branch/.test(r)) {
-    return `I couldn't get started on building ${it}.`;
+    return { cause: 'no_start' };
   }
-  return `I couldn't finish building ${it}: something went wrong while I was working on it.`;
+  return { cause: 'other' };
+}
+
+// Each cause in words, two ways (5 Oct 2026). `me`: the bot to the person
+// it was building for, in its DM. `bot`: about the bot, on the request
+// itself, where everybody in the project reads it (homeroom-bot-live.js
+// buildFailedText, also its GitHub comment), as the bot's other posts there
+// are worded.
+const BUILD_FAILED_SAID = Object.freeze({
+  me: Object.freeze({
+    restarts: (it, n) => `I couldn't finish building ${it}: Homeroom restarted while I was working on it, ${n} times in a row.`,
+    time: (it) => `I couldn't finish building ${it}: it took longer than I'm allowed.`,
+    restart: (it) => `I couldn't finish building ${it}: Homeroom restarted while I was working on it.`,
+    unproposed: (it) => `I built ${it}, but I couldn't put it up for approval.`,
+    no_change: (it) => `I couldn't finish building ${it}: I ended up with no changes to show you.`,
+    no_start: (it) => `I couldn't get started on building ${it}.`,
+    other: (it) => `I couldn't finish building ${it}: something went wrong while I was working on it.`,
+  }),
+  bot: Object.freeze({
+    restarts: (it, n) => `Homeroom bot couldn't finish building ${it}: Homeroom restarted in the middle of the build, ${n} times in a row.`,
+    time: (it) => `Homeroom bot couldn't finish building ${it}: the build took longer than it's allowed.`,
+    restart: (it) => `Homeroom bot couldn't finish building ${it}: Homeroom restarted in the middle of the build.`,
+    unproposed: (it) => `Homeroom bot built ${it}, but couldn't put it up for approval.`,
+    no_change: (it) => `Homeroom bot couldn't finish building ${it}: it ended up with no changes to show.`,
+    no_start: (it) => `Homeroom bot couldn't get started on building ${it}.`,
+    other: (it) => `Homeroom bot couldn't finish building ${it}: something went wrong during the build.`,
+  }),
+});
+
+/**
+ * Pure: why a build of `it` did not finish, in plain words (see
+ * buildFailedCause), said by the bot to the person it was for (`voice`
+ * 'me', the default) or about the bot on the request ('bot').
+ */
+function buildFailedWords(reason, it = 'this', voice = 'me') {
+  const { cause, times } = buildFailedCause(reason);
+  return (BUILD_FAILED_SAID[voice] || BUILD_FAILED_SAID.me)[cause](it, times);
 }
 
 /**

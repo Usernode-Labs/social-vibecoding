@@ -770,7 +770,8 @@ test('each verdict says its own thing; a verdict held by a cap says only that it
 
   live.buildAndPropose = async () => ({ ok: false, sessionId: 5002, error: 'the build produced no change to propose', costUsd: 0 });
   assert.equal(await build(h, { verdict: 'ready', buildNote: 'x' }), 'build_failed');
-  assert.match(h.posts.at(-1).text, /tried to build this but couldn't finish: the build produced no change to propose/);
+  assert.equal(h.posts.at(-1).text, 'Homeroom bot couldn\'t finish building this: it ended up with no changes to show. '
+    + 'Reply here (or on the GitHub issue) and it will try again.');
 });
 
 
