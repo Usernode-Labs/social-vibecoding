@@ -4821,10 +4821,10 @@
       "expectSelector": "#settings-screen.dc-lift.dc-lift-strip #settings-section-content.settings-sheet.dc-lift.dc-lift-session [data-settings-section=\"api-key\"]"
     },
     {
-      "name": "Settings' Log out is a danger-tinted pill under the sections",
+      "name": "Settings' Sign out is a danger-tinted pill under the sections",
       "path": "/#settings/about",
       "expectSelector": "#settings-footer #settings-logout.rounded-full",
-      "expectText": "Log out"
+      "expectText": "Sign out"
     },
     {
       "name": "The notifications sheet is a lifted sheet whose title row carries a close disc, over a chip rail",

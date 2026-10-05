@@ -183,7 +183,8 @@ test('"Make it" looks pale only while making: a press with an answer missing goe
   const src = read(`${DIR}/make.tsx`);
   assert.match(src, /disabled=\{busy\}/, 'never disabled for a missing answer');
   assert.doesNotMatch(src, /disabled=\{!valid/);
-  assert.match(src, /const gap = missingAnswer\(brief, name\);\s+if \(gap\) \{\s+setMissing\(gap\);\s+\(gap === 'brief' \? briefRef\.current : nameRef\.current\)\?\.focus\(\);\s+return;\s+\}/);
+  // (preventScroll since 5 Oct 2026: the keyboard surface reveals the field, with Make it.)
+  assert.match(src, /const gap = missingAnswer\(brief, name\);\s+if \(gap\) \{\s+setMissing\(gap\);\s+\(gap === 'brief' \? briefRef\.current : nameRef\.current\)\?\.focus\(\{ preventScroll: true \}\);\s+return;\s+\}/);
   assert.match(src, /\{missing === 'name'\s+\? <p id="first-session-name-hint" role="alert" className=\{NEEDED\}>\{needed\}<\/p>/);
   // The placeholder reads as an example, not as a name already given.
   assert.match(src, /placeholder="For example, Sunday Run Club"/);
@@ -208,33 +209,106 @@ test('the description and the name are one sequence: Return says next and goes o
   assert.match(fields[1], /enterKeyHint="go"/i);
   assert.match(form, /<button[^>]*type="submit"/, 'Return in the name submits the form');
   // Return in the description moves on; Shift+Return and an IME's Return do not.
-  assert.match(src, /if \(e\.key !== 'Enter' \|\| e\.shiftKey \|\| e\.nativeEvent\.isComposing\) return;\s+e\.preventDefault\(\);\s+nameRef\.current\?\.focus\(\);/);
+  assert.match(src, /if \(e\.key !== 'Enter' \|\| e\.shiftKey \|\| e\.nativeEvent\.isComposing\) return;\s+e\.preventDefault\(\);\s+nameRef\.current\?\.focus\(\{ preventScroll: true \}\);/);
   assert.match(src, /ref=\{nameRef\}\s+id="first-session-name"/);
 });
 
-test('with the keyboard up nothing scrolls under the status bar: the bar stays, the form scrolls under it with the kit\'s avoidance', () => {
+test('with the keyboard up nothing scrolls under the status bar: the bar stays, the form scrolls under it, inside the visible band', () => {
   const src = read(`${DIR}/make.tsx`);
   const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Jordan', onMade() {}, onLookAround() {} });
   const root = /<div role="dialog"[^>]*>/.exec(html)[0];
-  assert.match(root, /class="fixed inset-0 z-\[9000\] flex flex-col /);
+  assert.match(root, /class="platform-kb-surface fixed inset-0 z-\[9000\] flex flex-col /);
   assert.doesNotMatch(root, /overflow/, 'the screen itself does not scroll from the top of the glass');
   // The bar (with the status bar's inset) comes first, then the scroller holding the form.
   const bar = html.indexOf('pt-[env(safe-area-inset-top)]');
   const scroller = html.indexOf('data-first-session-make-scroll=""');
   assert.ok(bar > -1 && scroller > bar && html.indexOf('<form') > scroller);
   assert.match(html, /<div data-first-session-make-scroll="" class="flex min-h-0 grow flex-col overflow-y-auto">\s*<form/);
-  // The kit's keyboard avoidance, with this screen's bar as its top: a tapped
-  // field is focused without the browser's pan and revealed once below it.
-  assert.match(src, /import \{ useComposerKeyboard \} from '\.\.\/\.\.\/lib\/composer-keyboard';/);
-  assert.match(src, /useComposerKeyboard\(scrollerRef, barRef\);/);
+  // 5 Oct 2026 (iOS Safari): the screen is a keyboard surface, padded into
+  // the band of the page that is visible while the keys are up (app.css
+  // `.platform-kb-surface`), and its fields are lib/keyboard-surface.ts's: a
+  // tap focuses without iOS's pan, and the focused field is revealed inside
+  // the scroller with Make it under it when they fit. The scroller is what
+  // the surface reveals in; the bar is above it, outside it.
+  assert.match(src, /import \{ useKeyboardSurface \} from '\.\.\/\.\.\/lib\/keyboard-surface';/);
+  assert.match(src, /useKeyboardSurface\(scrollerRef\);/);
+  assert.doesNotMatch(src, /useComposerKeyboard/, 'one owner of the fields\' taps: the surface, not the kit\'s chat avoidance too');
+  assert.match(src, /useEffect\(\(\) => \{ briefRef\.current\?\.focus\(\{ preventScroll: true \}\); \}, \[\]\);/);
   // The bar holds the whole mark under the status bar's inset (on a notched
   // phone the mark used to hang 12px out of a 52px box), so what scrolls
   // stops below it.
-  assert.match(src, /<div ref=\{barRef\} className=\{`flex h-\[max\(52px,calc\(env\(safe-area-inset-top\)\+32px\)\)\] shrink-0 items-center justify-center pt-\[env\(safe-area-inset-top\)\] \$\{motion\}`\}>/);
-  // The kit adds its class to the scroller, so React must never rewrite it.
+  assert.match(src, /<div className=\{`flex h-\[max\(52px,calc\(env\(safe-area-inset-top\)\+32px\)\)\] shrink-0 items-center justify-center pt-\[env\(safe-area-inset-top\)\] \$\{motion\}`\}>/);
+  // The scroller's class string is constant.
   assert.match(src, /<div ref=\{scrollerRef\} data-first-session-make-scroll="" className="flex min-h-0 grow flex-col overflow-y-auto">/);
   // #3894's arrival is untouched: the bar and the form still rise in.
   assert.match(src, /className=\{`mx-auto flex w-full max-w-sm grow flex-col px-4 pb-\[max\(34px,env\(safe-area-inset-bottom\)\)\] \$\{motion\}`\}/);
+});
+
+// Evan, 5 Oct 2026: a chosen example stayed chosen after he started writing
+// his own description over it.
+test('typing their own words into "What should it do?" lets go of the example; the name it filled stays theirs', () => {
+  const src = read(`${DIR}/make.tsx`);
+  // The description's onChange drops the example the moment its text is not
+  // the example's own.
+  assert.match(src, /onChange=\{\(e\) => \{\s+const next = e\.target\.value;\s+setBrief\(next\);\s+\/\/[^\n]*\n\s+if \(picked && next !== picked\.brief\) setPicked\(null\);/);
+  // The chip is marked from `picked` alone, so it is unmarked with it.
+  assert.match(src, /const on = picked\?\.key === e\.key;/);
+  assert.match(src, /aria-pressed=\{on\}/);
+  // Make it sends the example's description only while it is still picked
+  // and its brief untouched.
+  assert.match(src, /const example = picked && brief\.trim\(\) === picked\.brief \? picked : null;/);
+  // The name field is not cleared by letting go of the example.
+  const onChange = src.slice(src.indexOf('const next = e.target.value;'), src.indexOf('placeholder="A tracker'));
+  assert.doesNotMatch(onChange, /setName\(/);
+
+  // Executed against a React it can step by hand: pick an example, type over
+  // it, and no chip is pressed any more; the name stays.
+  let slots = [];
+  let at = 0;
+  const real = require(require.resolve('react', { paths: [path.join(ROOT, 'frontend')] }));
+  const React = {
+    ...real,
+    useState(init) {
+      const k = at++;
+      if (!(k in slots)) slots[k] = typeof init === 'function' ? init() : init;
+      return [slots[k], (v) => { slots[k] = typeof v === 'function' ? v(slots[k]) : v; }];
+    },
+    useRef(init) { const k = at++; if (!(k in slots)) slots[k] = { current: init }; return slots[k]; },
+    useCallback(fn) { at++; return fn; },
+    useEffect() { at++; },
+    useLayoutEffect() { at++; },
+  };
+  const { MakeScreen } = loadTsx(`${DIR}/make.tsx`, { stubs: { react: React } });
+  const draw = () => { at = 0; return MakeScreen({ who: 'Jordan', onMade() {}, onLookAround() {} }); };
+  const find = (node, test, out = []) => {
+    if (!node || typeof node !== 'object') return out;
+    if (Array.isArray(node)) { node.forEach((n) => find(n, test, out)); return out; }
+    if (node.props && test(node)) out.push(node);
+    if (node.props) find(node.props.children, test, out);
+    return out;
+  };
+  const chips = (tree) => find(tree, (n) => n.props['data-first-session-example'] !== undefined);
+  const brief = (tree) => find(tree, (n) => n.type === 'textarea')[0];
+  const nameField = (tree) => find(tree, (n) => n.props.id === 'first-session-name')[0];
+  let tree = draw();
+  const first = chips(tree)[0];
+  first.props.onClick();
+  tree = draw();
+  assert.equal(chips(tree).filter((c) => c.props['aria-pressed']).length, 1, 'the example is chosen');
+  const prefilled = nameField(tree).props.value;
+  assert.ok(prefilled, 'and it filled in the name');
+  brief(tree).props.onChange({ target: { value: `${brief(tree).props.value} and our own twist` } });
+  tree = draw();
+  assert.equal(chips(tree).filter((c) => c.props['aria-pressed']).length, 0, 'their own words let go of it');
+  assert.equal(nameField(tree).props.value, prefilled, 'the name it filled stays theirs');
+  // Typing the example's own words back does not choose it again by itself.
+  slots = [];
+  tree = draw();
+  chips(tree)[1].props.onClick();
+  tree = draw();
+  brief(tree).props.onChange({ target: { value: brief(tree).props.value } });
+  tree = draw();
+  assert.equal(chips(tree).filter((c) => c.props['aria-pressed']).length, 1, 'the same text is not their own words');
 });
 
 test('the make screen sends the device\'s time zone with Make it, so the sketch\'s today is the maker\'s', () => {

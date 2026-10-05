@@ -1,5 +1,6 @@
 import { useEffect, useRef, type MutableRefObject, type RefObject } from 'react';
 
+import { attachKeyboardHold, type HoldEnv } from '../../lib/keyboard-hold';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 
 /*
@@ -21,6 +22,12 @@ import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
  * `pinned`. While it holds, a new message, and any later change of size of
  * the rows or of the scroller itself, puts the scroller back at the bottom.
  * A reader who scrolled up to read history is never moved.
+ *
+ * And the keyboard coming up is not the reader scrolling (iOS app, 5 Oct
+ * 2026: tapping the message box in the Homeroom bot's DM sent the
+ * transcript back to its oldest line). While the composer's keys arrive,
+ * lib/keyboard-hold.ts holds the bottom: a scroll event then puts the
+ * scroller back at the newest line instead of un-pinning it.
  */
 
 /** How far from the bottom still counts as at the bottom: about two lines. */
@@ -42,7 +49,8 @@ type MutationLike = { observe(target: Node, options: { childList: boolean }): vo
 type MutationRecordLike = { addedNodes: ArrayLike<Node>; removedNodes: ArrayLike<Node> };
 const BORDER_BOX = { box: 'border-box' } as const;
 
-export interface ObserverEnv {
+/** The observers, and what the keyboard's hold listens to (the window, in a browser). */
+export interface ObserverEnv extends HoldEnv {
   ResizeObserver?: new (callback: () => void) => Observer;
   MutationObserver?: new (callback: (records: MutationRecordLike[]) => void) => MutationLike;
 }
@@ -61,8 +69,20 @@ export function attachStickToBottom(
   atPresent: { current: boolean } = { current: true },
   env: ObserverEnv = globalThis as unknown as ObserverEnv,
 ): () => void {
-  const onScroll = () => { pinned.current = atPresent.current && isNearBottom(el); };
   const follow = () => { if (pinned.current) el.scrollTop = el.scrollHeight; };
+  // The keyboard arriving for the composer beside this transcript.
+  const hold = attachKeyboardHold(el, {
+    pinned: () => pinned.current && atPresent.current,
+    follow,
+  }, env);
+  const onScroll = () => {
+    if (hold.holding()) {
+      // The keyboard's, not the reader's: back to the newest line, still pinned.
+      if (pinned.current && !isNearBottom(el, 1)) follow();
+      return;
+    }
+    pinned.current = atPresent.current && isNearBottom(el);
+  };
   el.addEventListener('scroll', onScroll, { passive: true });
   const Sizes = env.ResizeObserver;
   const Rows = env.MutationObserver;
@@ -86,6 +106,7 @@ export function attachStickToBottom(
     }
   }
   return () => {
+    hold.detach();
     el.removeEventListener('scroll', onScroll);
     rows?.disconnect();
     sizes?.disconnect();
