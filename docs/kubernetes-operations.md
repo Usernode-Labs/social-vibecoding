@@ -62,9 +62,14 @@ commit, and once (per commit and verdict) records the stall on
 admins. The Dev board shows an amber banner with the workflow run linked until
 the running build catches up. A red run is reported at once; a run still going,
 a run that succeeded without a rollout, or no run at all is reported after
-`RELEASE_GRACE_MS` (default ten minutes). Re-running the failed workflow jobs,
-or the next merge, releases the commit; the poller clears the record on the new
-build's first tick. A token without `actions:read` degrades to the time-based
+`RELEASE_GRACE_MS` (default ten minutes). The workflow runs one push at a time,
+so after a burst of merges the newest one's run waits for the others: a run
+that has not finished is reported only once no run of the workflow on `main`
+has finished for the grace, and a run that succeeded gives the rollout its own
+grace from when it finished. Re-running the failed workflow jobs, or the next
+merge, releases the commit; a build that already carries the recorded commit
+reads as resolved at once, and the poller clears the record on the new build's
+first tick at `main`. A token without `actions:read` degrades to the time-based
 verdict rather than failing.
 
 Nothing in that chain tells open browser tabs about the new build either; the
