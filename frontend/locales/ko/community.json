@@ -2990,5 +2990,237 @@
   "message_022310188e11_other": {
     "text": "더보기 {{value1}} 더보기",
     "source": "ef3783a48a3e693e58623f4d587f3fac17454e339ca8143b8a2899921106329b"
+  },
+  "activity_tone_built": {
+    "text": "건설",
+    "source": "cfe0e6cbcf5cdd1aab44a39ab4d39713561bafab51fa7ff4654c980d5578ee5f"
+  },
+  "after_waiting_value1_for_the_first_version": {
+    "text": "첫 번째 버전을 기다리는 후 {{value1}}",
+    "source": "449098c66563222c9cf62b5ba88161341cd83e0624195edbc54be3fb6f089e6c"
+  },
+  "after_waiting_value1_for_its_turn": {
+    "text": "{{value1}} 회전을 기다리는 후",
+    "source": "b6182e3c7b7ec56205c65e189caa74b23738055a85deb2262b08492d532af28d"
+  },
+  "value1_so_far_value2": {
+    "text": " · {{value1}} 지금까지, {{value2}}",
+    "source": "a06a0a3ea3bc9278c3cfa46c92ea85295e9e55685ade772dbeda79dce508a8a4"
+  },
+  "took_value1_value2": {
+    "text": " · 가져온 {{value1}}, {{value2}}",
+    "source": "4db987a9361169e6f8e637c21696a80f195905555a7afc058555424501a0d6fb"
+  },
+  "your_change_to_value1_is_built_but_not_everything_works_yet": {
+    "text": "{{value1}}로 변경되었지만 아직 모든 것이 작동하지 않습니다.",
+    "source": "1ddfa662a253fbd45833861890babd07d39ee6d5403f203d92736610938d3cc2"
+  },
+  "value1_is_built_but_not_everything_works_yet": {
+    "text": "{{value1}} 건설되었지만 아직 모든 것이 작동하지 않습니다.",
+    "source": "93195c4553cafa46e75e3046ecde04e715b8aa413fdf8b189a1c1277f4537fb9"
+  },
+  "later_today": {
+    "text": "나중에 오늘",
+    "source": "d82abce3b38dcf9bf4db6f432c0bc25a2f8b40a7f8a803f799148463f84908e7"
+  },
+  "tomorrow": {
+    "text": "내일은",
+    "source": "bafd151a86f9a573b153e76e3a8a0053b3340ce304a301a5354288fb18bce848"
+  },
+  "on_value1_weekday": {
+    "text": "에 {{value1}}",
+    "source": "9af44882b6827879fde07cd010dfff1af87bc051b28acd829ba9479cad556894"
+  },
+  "on_value1_date": {
+    "text": "에 {{value1}}",
+    "source": "9af44882b6827879fde07cd010dfff1af87bc051b28acd829ba9479cad556894"
+  },
+  "you_approved_it_it_goes_live_in_a_minute_or_two": {
+    "text": "당신은 그것을 승인했습니다.그것은 1 분 또는 2 분 안에 살아있을 것입니다.",
+    "source": "031f9cc4611d29f566254b73524f7eb6d46f24e2d00a28b38bf90dd10162d463"
+  },
+  "you_approved_it_it_goes_live_value1_if_nobody_objects": {
+    "text": "당신은 그것을 승인했습니다. 그것은 {{value1}} 아무도 물건이없는 경우에 라이브됩니다.",
+    "source": "30105422636105cf3ea8207cd3526ab904dcb682341cc9451d5ea1b538a6fe3b"
+  },
+  "you_approved_it_it_goes_live_once_it_has_the_approvals_it_needs": {
+    "text": "당신은 그것을 승인했습니다.그것은 그것이 필요로하는 승인을 얻을 때 살아남습니다.",
+    "source": "d58855575f219ae40dd2ecce4e91da36d8047e128bd5ff6f36022599e59ca77b"
+  },
+  "you_approved_it_it_goes_live_value1_or_value2_if_nobody_objects": {
+    "text": "당신은 그것을 승인했습니다. 그것은 {{value1}}, 또는 {{value2}} 아무도 개체가없는 경우에 라이브됩니다.",
+    "source": "0f11108b9c872b7347dcb568256a6e2c8765c6ac2876dd63f956430d4bf34dd6"
+  },
+  "you_approved_it_it_goes_live_value1": {
+    "text": "당신은 그것을 승인했습니다.그것은 살아있다 {{value1}}.",
+    "source": "d2a7f6b7200bd3327105fd4881c4e422ac7495ac780bc0950f7e035e5f42bd54"
+  },
+  "it_s_live": {
+    "text": "그것은 살아있다.",
+    "source": "60da6fe080769aeb4b646a8e9d1f362875e622c91a857f780f16d0ba213e6244"
+  },
+  "it_s_approved_and_going_live_now": {
+    "text": "그것은 승인되었고 지금은 살아있을 것입니다.",
+    "source": "0d227d34966bf77b39b699a68fabde7b4f2887d85b81bded313e80f2d2e3be46"
+  },
+  "this_change_was_closed_without_going_live": {
+    "text": "이 변화는 살아있지 않고 폐쇄되었습니다.",
+    "source": "7eecf57f1d6de536d7afe699a609a5954a1d0446f50bbe23e3ea1eb8060996b7"
+  },
+  "following_up_on_its_change": {
+    "text": "그 변화에 대해 계속해서",
+    "source": "3405326b084eb6de83d953a14e16969dca4934dd63fa8caec9682644c1fad325"
+  },
+  "waiting_its_turn_to_follow_up_on_its_change": {
+    "text": "그녀의 변화에 따라 그녀의 회전을 기다리는",
+    "source": "755c7cf0fd4c2c640039512cdb94d040fa6f140c421edb9a3a93d64efecd613c"
+  },
+  "making_the_approved_change_live": {
+    "text": "승인된 변화를 생생하게 한다.",
+    "source": "011a568b1b47a9e63e9d9798643be004b9c738975777f7e4a2433abb0d3a6a30"
+  },
+  "going_live": {
+    "text": "살아가는 것",
+    "source": "9a87940f878e828d7f5ee599fa59151493d3f724366028628b48fb3439c472a8"
+  },
+  "value1_waiting_for_approval": {
+    "text": "{{value1}} 승인을 기다리고 있습니다.",
+    "source": "289c89b38ada40a3d5aa89181ebf07f7f5983d3167646803ca58965e446d7e9b"
+  },
+  "the_change_for_value1_was_closed": {
+    "text": "{{value1}}에 대한 변경이 종료되었습니다.",
+    "source": "90a1e4552016935eb4a0c2e287bfa577690aaea2432332ba50c2b41c7350ac74"
+  },
+  "updated_the_change_for_value1": {
+    "text": "{{value1}}에 대한 변경 사항 업데이트",
+    "source": "c4321d6a5227f297d08b6feaa45472692f4d5409d0f056bc98ddd5344c45fea8"
+  },
+  "make_an_app_or_suggest_an_improvement": {
+    "text": "앱을 만들거나 개선을 제안하십시오.",
+    "source": "2abfe5d51d6a6b02caff5cac161fef214edaf8ccd0a92042f22b937a08802844"
+  },
+  "your_projects": {
+    "text": "당신의 프로젝트",
+    "source": "e82a6eb21afd56d66f69500536f26ceb1bd31571935358e19f8794b701061cb5"
+  },
+  "other_projects": {
+    "text": "다른 프로젝트들",
+    "source": "7b4418d894c3105ded6cd9fa3b7592905821d5ec2732dfa0b8bde492f00ffeb1"
+  },
+  "invited_you_to_join_verb": {
+    "text": "참여하도록 초대합니다.",
+    "source": "9f7fe81f8a20f39f85a13d8d16b69381eb4b2851a67cf84b12b1d5cf3b7d1124"
+  },
+  "value1_person_is_in_it": {
+    "text": "{{value1}} 이곳에 있는 사람들",
+    "source": "cc36de473d0b2d0baa19ff992b94a8db174b372da8d5dbeab0713f55ed863c96"
+  },
+  "value1_people_are_in_it": {
+    "text": "{{value1}} 사람들이 그 안에 있습니다.",
+    "source": "2d266ef7ef2adeb2bdca159c90922390e664509a46794f0349f2f99585e3cfbe"
+  },
+  "your_change_is_built_but_not_everything_works_yet": {
+    "text": "당신의 변화는 건설되었지만 아직 모든 것이 작동하지는 않습니다.",
+    "source": "b48ae2813a369b64068fc6e1c95fc6d663c83aa24cdc56698ef0a465067b5219"
+  },
+  "value1_i_couldn_t_finish_building_it_reply_and_i_ll_try_again": {
+    "text": "{{value1}} : 나는 그것을 완성 할 수 없었다. 응답하고 다시 시도 할 것입니다.",
+    "source": "e8a051edde733114b636c4ef4d5250b4652a31dbdd4d5c5ba825017c33c7e9f3"
+  },
+  "i_couldn_t_finish_building_it_reply_and_i_ll_try_again": {
+    "text": "나는 그것을 완성 할 수 없었다. 응답하고 다시 시도 할 것이다.",
+    "source": "c2cb309cf07231aa1eee69064d3c283b6d2529738b4977662a5bf73b38d7e7f2"
+  },
+  "kudos_note_value1_a_week": {
+    "text": "다른 멤버로부터 고마워합니다.당신이 얻는 Kudos는 끝나지 않습니다.그들은 Kudos 리더십 보드에 의존합니다.모든 사람은 {{value1}} 주인에게 주는 일주일.",
+    "source": "1ee168233cfdfaf50df9a2a54761954942d71087cfb62d2253b4a918ce5bde3d"
+  },
+  "leaderboard_action": {
+    "text": "리더 보드",
+    "source": "31b471215872634299bc844f90c0493a24f6db1f00dca395175da335c4c0ca1d"
+  },
+  "asked_for_a_change_headline": {
+    "text": "변화를 요구한다.",
+    "source": "c8781da4144505cb190418fed3fc84818b9d3c916627aad649d215c15936c8ff"
+  },
+  "invited_you_to_join_title": {
+    "text": "당신이 가입하도록 초대합니다.",
+    "source": "3bf5410dbe516202f4f9f72b63ae64fad18950ce4305b8c10832b9c16c606efc"
+  },
+  "merged_788011833a5a": {
+    "text": "알림",
+    "source": "788011833a5a0f22db90c91e8eb7bd8e9f5cd423354ff5ef8c338e7895f44ba9"
+  },
+  "merged_58224176ff92": {
+    "text": "준비가 되었을 때 알려주세요.",
+    "source": "58224176ff92c9443e01c10a4f7b1f11be822527e32877e8cec96cae1a73bf0e"
+  },
+  "merged_92dfd3632bae": {
+    "text": "알림을 끄기",
+    "source": "92dfd3632baeb6d4f116758b2c1a354134a00006071df2866fda8eeb6fe3429c"
+  },
+  "merged_ec25fb591739": {
+    "text": "준비가 되었을 때 알림을 드리겠습니다.",
+    "source": "ec25fb591739bc8783fa80a6204759aeb2897bdf3250366f3be3c0fb1cb75c1b"
+  },
+  "merged_1b6adda412b2": {
+    "text": "Notifications are off for Homeroom, 그래서 준비가 되었을 때 여기에 메시지를 드리겠습니다.",
+    "source": "1b6adda412b2e0b83ce941d395dc710a2dce228741406815888a8f2d14546345"
+  },
+  "merged_be68ae5803c2": {
+    "text": "준비가 되었을 때 여기에 메시지를 드리겠습니다.",
+    "source": "be68ae5803c27a9ba482f9006e157928a1fae02ae3f9d27ce435fb8ee07f6103"
+  },
+  "merged_f4780f76354c": {
+    "text": "{{value1}} 및 {{value2}}",
+    "source": "f4780f76354cc77c3f4da4f7dd8b2af692cb084537b16663ffb1c87fdde83f97"
+  },
+  "merged_2e95cd47e935": {
+    "text": "{{value1}} 또는 {{value2}}",
+    "source": "2e95cd47e935caa7c7548e682e26d9f9dd5ff735b1b48d1c3d03ff9bb77aa388"
+  },
+  "merged_bb0347a468d9": {
+    "text": "당신은",
+    "source": "bb0347a468d97e98a9c00e37cebec1ab930f6f1221cae0f1fbb92b07e1900ba2"
+  },
+  "merged_95851eb1e3dd": {
+    "text": "필요 {{value1}}에서 {{value2}}",
+    "source": "95851eb1e3ddbe7cc794593f60a4969fafc0b52af7b2ce1394d9867f3d8e954a"
+  },
+  "merged_5424ba7c0199": {
+    "text": "{{value1}}에서 승인을 기다리고 있습니다.",
+    "source": "5424ba7c01994e9a51435dbfeb88e839ec758f21794328d33edd8ae7fd3e3716"
+  },
+  "merged_fd8ea6e5449e": {
+    "text": "후 {{value1}}에서 {{value2}}",
+    "source": "fd8ea6e5449eaf50acc22a8c944c54975652767529052bcf85904b14c389f730"
+  },
+  "bot_ready_broken_things_other": {
+    "text": "{{count}} 일은 아직 작동하지 않습니다 : {{value1}}",
+    "source": "0ee77068c9c2d72db634b7e67db8106e19ad7f68b5ed53a8d88a0cf35afdd45c"
+  },
+  "approval_more_other": {
+    "text": "{{count}} 더 많은 승인",
+    "source": "eb6ff3b9f8d0c44d36ed1b0b8ffda342c6453edbf19fc8535971b2a03d1fc5a1"
+  },
+  "approval_count_other": {
+    "text": "{{count}} 승인",
+    "source": "0ed77d61db0d56b9e59f92382b0f0d806e111416f9a0c10a8c06e4666c76a9b4"
+  },
+  "approval_others_other": {
+    "text": "{{count}} 다른 사람들",
+    "source": "169de0f0ee875a1234b668c4344db82209654959a28804f506686decdbd7bc58"
+  },
+  "approval_people_more_other": {
+    "text": "{{count}} 더보기",
+    "source": "e3d6d4345ad8bde8395491aa9d90d87477e5e590ccbc84aadc7663fb57f9ccdd"
+  },
+  "approval_when_people_other": {
+    "text": "{{value1}} 승인할 때",
+    "source": "bdb787bb1b5fa766d91f631d778a339aa909a1470401fec6f13a43f2bdec9db8"
+  },
+  "approval_when_more_other": {
+    "text": "{{count}} 더 많은 사람들이 승인 할 때",
+    "source": "9f0c4312e56b6838090b716bbb23d870c0e3108c45d71f1f03061f6ab9e45c47"
   }
 }

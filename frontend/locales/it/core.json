@@ -9778,5 +9778,109 @@
   "set_missing_value_other": {
     "text": "Non è necessario ricostruire. impostare i valori e votare di nuovo.",
     "source": "71b73657efc24c93887f08057558775471c8707084f070b6581dde6736ed71bd"
+  },
+  "staging_default_help_pr_previews": {
+    "text": "Un segreto richiesto + privato ha bisogno di uno (o un default), altrimenti nessuna preview di questa app può essere avviato.",
+    "source": "bc24fbb732ec23ea84b95f783751fff63951b73fbdac21222aa33aaf598b7c32"
+  },
+  "your_request_draft_was_saved_reopen_suggest_an_improvement": {
+    "text": "Il progetto di richiesta è stato salvato. reopen Suggerisce un miglioramento per completarlo.",
+    "source": "02f08a6b626876d6d4ceefd64440f1ca711c14ed6a78543189aa84260a46812d"
+  },
+  "suggest_an_improvement": {
+    "text": "Suggerisci un miglioramento",
+    "source": "cfbf47a0b6534ad1577177e339c73219b433f6e196a8ead8aeb2270f1b17714a"
+  },
+  "value1_value2_live_included": {
+    "text": "{{value1}} e {{value2}}",
+    "source": "b1a41e2d0874708a767c5bf1e54bb745a0132c9f99250b415971a8e68cca02d2"
+  },
+  "live_value1_included_headline": {
+    "text": "Sito ufficiale, {{value1}}",
+    "source": "25d7a0970579f861388566cd4b6599d8b8ea869c3d554f66fa10bb2c5c84b989"
+  },
+  "tested_one_thing_isn_t_working_status": {
+    "text": "Testato · Una cosa non funziona",
+    "source": "df85d5451de442f374dc7651a6ba634f0f6adb11fe65900417e09aa334a454d5"
+  },
+  "tested_value1_things_aren_t_working_status": {
+    "text": "Testato · {{value1}} cose non funzionano",
+    "source": "c053b1aef88fda4c852add4ca7bc1b17946e698e54bdad699c6ddb3290bb9d77"
+  },
+  "something_didn_t_work_shots_heading": {
+    "text": "Qualcosa non funziona",
+    "source": "3f67150dd7bdaf0e0a5e0530164ee3e6fd6400ab7976ed08cd5d16e73b15bcd2"
+  },
+  "the_shots_agent_tried_this_change_on_the_after_bui_reason": {
+    "text": "L'agente di tiro ha provato questo cambiamento sul post-building, e l'app si è rotto.",
+    "source": "674fd9f7edab121eaedaf02dbe1babae082ee2cfadef1a09d0a827f6f2a9ebf9"
+  },
+  "signed_out_visitor_persona": {
+    "text": "Il visitatore firmato",
+    "source": "94394f77292fa36ef99382f7e4f08bd7304407fd972f648bfe684520604d8268"
+  },
+  "member_persona": {
+    "text": "Membro",
+    "source": "e31ab643c44f7a0ec824b59d1194d60dac334200d845e61d2d289daa0f087ea4"
+  },
+  "value1_is_making_it_and_invited_you": {
+    "text": "{{value1}} lo sta facendo e vi invito.",
+    "source": "b81e4c76e772c23efc10a478ccd3338c3b8336d2edfec87831aaf23060200217"
+  },
+  "merged_c926c2c50e65": {
+    "text": "Apertura...",
+    "source": "c926c2c50e65d5a5799f548604472ee8554b53c376e45be580b3a06a484d8fc0"
+  },
+  "merged_4d65280d1e38": {
+    "text": "La prima versione di {{value1}} è pronta a provare",
+    "source": "4d65280d1e380f67e84c40437f2278b8c6d72a24320e165fdf6dc76235e87b8a"
+  },
+  "merged_f33c29002d44": {
+    "text": "Mostra il starter per ora",
+    "source": "f33c29002d4496b6d87e3ff4ff1bfbeecd53b856e3ebc65ae55933d274c4cb7e"
+  },
+  "merged_fbd1d3790090": {
+    "text": "Apri il mio chat con Homeroom bot",
+    "source": "fbd1d3790090f5391eff23a38eb41c7353ae196fb764f710e9888e4f48862948"
+  },
+  "merged_fe6951113784": {
+    "text": "Prova il",
+    "source": "fe69511137842f6fddcfcc1e96e39bf6920b5ed00251ec6549d79463928b2e0c"
+  },
+  "merged_2e983b2e3f6b": {
+    "text": "Vedi il cambiamento",
+    "source": "2e983b2e3f6b714471e52efbd5d610da9c0682833b03a9ac7d0cd215ffdc12bc"
+  },
+  "merged_8e32225ea418": {
+    "text": "Vivere come parte di",
+    "source": "8e32225ea418d59f16a4670325c0e83dde6d1f0256edad187073652ea1bbd07a"
+  },
+  "merged_c0bf75bd78bf": {
+    "text": "Cambiamento",
+    "source": "c0bf75bd78bf9572596720d596bd5a20a5b9145cde0fe50dec1e783cb184d69b"
+  },
+  "merged_acad28457754": {
+    "text": "Richiesta di appuntamento #{{value1}}",
+    "source": "acad2845775482eeca0eef56b7f0664302227963f7fc52004f0fdfc7722c9c59"
+  },
+  "merged_2c7346eb4667": {
+    "text": "Cambiare {{value1}}",
+    "source": "2c7346eb46679355efac9bda218416de123df8daabb4eabb9508a494e8ec9e7f"
+  },
+  "merged_b737abb40cf6": {
+    "text": "Scarica la preview...",
+    "source": "b737abb40cf6d20ad88b9d824aab197f5e6046ca3f7e2752dd52cf3423041ec5"
+  },
+  "merged_ea0e29657a17": {
+    "text": "Non è possibile aprire il link che invita. prova di nuovo.",
+    "source": "ea0e29657a1775df08faf42d673c1d03a20973428d1588b3a377266c78bad4c1"
+  },
+  "merged_ddf710fe8175": {
+    "text": "Non funziona",
+    "source": "ddf710fe8175018ae4a542d9d8eaf1ca8acc72320159f4f62ab2dcbff7922a8d"
+  },
+  "merged_020957b917e2": {
+    "text": "L'agente di tiro ha provato questo dopo la costruzione, e l'app è rotto.",
+    "source": "020957b917e2489770850e94d5e588d60c8326bda0f38a32c632e0240d0edb1f"
   }
 }

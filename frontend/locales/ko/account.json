@@ -1230,5 +1230,13 @@
   "value1_requests_waiting_cee3ef71_other": {
     "text": "{{value1}} 기다리는 요청",
     "source": "cee3ef71bf16d56843cf28ec0f51864de4f5bb505fc2c28e24405f874c233dc7"
+  },
+  "you_have_not_suggested_an_improvement_yet": {
+    "text": "아직 개선을 제안하지 않았습니다.",
+    "source": "5e9431860b65a3591ea7dcd871f7d4dd07b866835c116586396af144ed0e9ee3"
+  },
+  "suggest_an_improvement_button": {
+    "text": "개선 제안",
+    "source": "cfbf47a0b6534ad1577177e339c73219b433f6e196a8ead8aeb2270f1b17714a"
   }
 }
