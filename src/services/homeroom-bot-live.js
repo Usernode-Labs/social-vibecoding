@@ -197,9 +197,19 @@ function proposalText({ link, prNumber }) {
   return `Homeroom bot built this and opened a proposal for the group to vote on${pr}: ${link}`;
 }
 
+// 5 Oct 2026, Page Turners #3: this said "Homeroom bot tried to build this
+// but couldn't finish: the build ran past its time limit (finished after a
+// restart). A person could pick it up from here." to everybody in the
+// project: the run's own record, and a dead end. It says what happened in
+// the words the requester's DM uses (homeroom-bot-dm.js buildFailedWords),
+// and how anybody here starts it again. A person's reply here, or on the
+// GitHub issue, is activity on the request: the bot reads it again
+// (homeroom-bot.js classifyIssue, 'changed'), which is how a request it
+// could build gets built. The record stays on the run (build_error, shown
+// on the admin's Homeroom bot screen) and in the log.
 function buildFailedText(reason) {
-  return `Homeroom bot tried to build this but couldn't finish: ${clipText(reason, 400) || 'unknown reason'}. `
-    + 'A person could pick it up from here.';
+  const words = require('./homeroom-bot-dm').buildFailedWords(reason, 'this', 'bot');
+  return `${words} Reply here (or on the GitHub issue) and it will try again.`;
 }
 
 // #3152: a verdict a live cap held. One line, so the person who filed the
