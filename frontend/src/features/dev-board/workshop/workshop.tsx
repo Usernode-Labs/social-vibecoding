@@ -1990,10 +1990,10 @@ function DoneItem({ total, acted, left, leftVotes, onDone, onBack, doneLabel }: 
   const done = Math.max(0, Math.min(total, total - leftVotes));
   const line = left > 0 ? 'That’s it for now.' : (acted > 0 ? 'That’s it!' : 'You’re all caught up.');
   const parts: string[] = [];
-  if (acted > 0) parts.push(`You voted on ${plural(acted, 'proposal', 'proposals')} this time.`);
+  if (acted > 0) parts.push(`You voted on ${plural(acted, 'change', 'changes')} this time.`);
   if (left > 0) parts.push(`You skipped ${left}. ${left === 1 ? 'It stays' : 'They stay'} above if you change your mind.`);
   else if (acted > 0) parts.push('Nothing else needs you right now.');
-  else parts.push('Every proposal you can vote on has your answer, and every open request has somebody on it.');
+  else parts.push('Every change you can vote on has your answer, and every open request has somebody on it.');
   return (
     <section
       className="dev-ws-item dev-ws-needs-done"
@@ -2007,7 +2007,7 @@ function DoneItem({ total, acted, left, leftVotes, onDone, onBack, doneLabel }: 
           className="dev-ws-done-ring"
           pct={Math.round((done / total) * 100)}
           label={`${done}/${total}`}
-          title={done === total ? `All ${total} open proposals voted on` : `${done} of ${total} open proposals voted on`}
+          title={done === total ? `All ${total} open changes voted on` : `${done} of ${total} open changes voted on`}
           arcClassName={done === total ? 'stroke-emerald-500' : undefined}
         />
       ) : null}
