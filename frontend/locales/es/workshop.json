@@ -6046,5 +6046,417 @@
   "message_89d6405a357f_other": {
     "text": "{{value1}} votos que habéis perdido",
     "source": "ac4c7b90ee74b776e8957f1833b4a03ade2ca26e834de611e716139adfa173f6"
+  },
+  "suggest_an_improvement_import_a_pr_or_manage_this_app": {
+    "text": "Proponer una mejora, importar un PR o gestionar esta aplicación",
+    "source": "988dd0e3c3af9c2b0693c97d6efd46628378673fd8176ff2b80577d99d3d7558"
+  },
+  "suggest_an_improvement": {
+    "text": "Sugerir una mejora",
+    "source": "cfbf47a0b6534ad1577177e339c73219b433f6e196a8ead8aeb2270f1b17714a"
+  },
+  "approval_invited_quiet": {
+    "text": "Un cambio se publica cuando {{who}} lo aprueban, o tras una espera si una persona lo aprueba y nadie se opone.",
+    "source": "cb90f9614af1a41f6a1edefeb2f5269e087150121122e49c9684549d61d7ce1f"
+  },
+  "approval_invited_one": {
+    "text": "Un cambio se publica cuando {{who}} lo aprueba.",
+    "source": "a7835706a443624fff6e970ae8669dabe5f19d76360ae2ca76f1456ba26272f2"
+  },
+  "approval_invited_many": {
+    "text": "Un cambio se publica cuando {{who}} lo aprueban.",
+    "source": "f0f5f3a49f59850c7c74b14827259e61c3e8f4ae956307b3fdf3ddde49c57e76"
+  },
+  "approval_members_quiet": {
+    "text": "Un cambio se publica cuando {{who}} lo aprueban, o tras una espera si una persona lo aprueba y nadie se opone.",
+    "source": "698365d4594c1b985a44984c4b4453e0f5c9a2d9cfa0d288b51dc67fa72b3d54"
+  },
+  "approval_members_one": {
+    "text": "Un cambio se publica cuando {{who}} lo aprueba.",
+    "source": "f7a278911abd5d981735502810885cd48f5634d56ac48103f536f4b9c62857c2"
+  },
+  "approval_members_many": {
+    "text": "Un cambio se publica cuando {{who}} lo aprueban.",
+    "source": "260f4cdb4b323c386b8a97b525b34975018e5a1efa7ab0d36163e3b19af20a0b"
+  },
+  "share_it_follow_along_while_built": {
+    "text": "Invita a la gente a seguir mientras se está construyendo, o haga pública para que todo el mundo pueda unirse.",
+    "source": "db250e1b722349c050cdad8a7e8217ef3925ab3e2449d2f3495656a90a6e32a6"
+  },
+  "your_work_empty_tell_homeroom_bot": {
+    "text": "Para cambiar algo, diga Homeroom bot.",
+    "source": "6bd2b50567314596a18a4e70aa62d0255aa10869dccb5da8d32915d1f3ac23b7"
+  },
+  "go_to_chat": {
+    "text": "Ir al chat",
+    "source": "435760070a20227c3773cb057e9217a3db3b0b6b32a4e7243f6b0d2a5e26e465"
+  },
+  "your_work_empty_press_menu": {
+    "text": "No hay nada en curso. Pulsa <0>⋯</0> para sugerir una mejora.",
+    "source": "562881d2bff52630865d9cf08318d58e4b7bccfa426f19af61f558b7ac77cb75"
+  },
+  "item_by_made_ago": {
+    "text": " · hecho {{ago}}",
+    "source": "aa22ac557dd2674b75d578ace798a3ea090c6a9a76536e3e093107fc06018ec0"
+  },
+  "item_by_proposed_ago": {
+    "text": " · Propuesto {{ago}}",
+    "source": "32d3121e845dc31688bcd04696eac2b65169f85e59e2cd451a840db0cd58fa57"
+  },
+  "group_decision_waiting_for_your_approval": {
+    "text": "Decisión de grupo · Esperando su aprobación",
+    "source": "4ace6776a6de5a971c778a833380d48fb056fdbc1da85a1908e9ac5307f3b00e"
+  },
+  "change_waiting_for_your_approval": {
+    "text": "Cambiar · Esperando su aprobación",
+    "source": "6c58d291bb237ee484d94e0e148f0110e51bc93325db3570fb4db3ee168b6861"
+  },
+  "you_skipped_value1_it_stays_above": {
+    "text": "{{value1}}. se queda por encima si cambia tu mente.",
+    "source": "4d3047bc966fde3534ff180419accaf7a79ef88d6b2c64e83562d1fadcd877c7"
+  },
+  "you_skipped_value1_they_stay_above": {
+    "text": "{{value1}}.Se quedan por encima si cambia tu mente.",
+    "source": "d7c6c40490ac6bed8b10076ea36eb545082676925cd92f13bf286536b2008c73"
+  },
+  "every_change_you_can_vote_on_has_your_answer": {
+    "text": "Cada cambio que puedes votar tiene tu respuesta, y cada solicitud abierta tiene alguien en ella.",
+    "source": "c676a1afbab3ed947776a7b675d8bfb17e63b2ba01377bd7262fef042085ac14"
+  },
+  "all_value1_open_changes_voted_on": {
+    "text": "Todos los {{value1}} cambios abiertos votados en",
+    "source": "13ac56f03e9efdb0d33d3f2e0110a2d93ca90b8270d51ed147400e756baa5474"
+  },
+  "value1_of_value2_open_changes_voted_on": {
+    "text": "{{value1}} de {{value2}} cambios abiertos votados en",
+    "source": "a6f9f89d2f01d24c41332ed72ccf1e4736a20c857a6081bdb7502019f6b310cd"
+  },
+  "you_have_no_work_going_on_tell_homeroom_bot": {
+    "text": "Para cambiar algo, digan Homeroom bot, o utilicen Sugger una mejora en el menú Homeroom.",
+    "source": "300e0ccab28195b9febe729ceed5213be96441ff32893700a44ebf1cf7856a42"
+  },
+  "you_have_no_work_going_on_pick_up_build_it_yourself": {
+    "text": "Seleccione un elemento abierto en Todos los artículos, o pulse ✍ en el hub y utilice Construirlo por sí mismo.",
+    "source": "c318648d67c6728a79438c85feaa67a1155784c3c311d427f80f6becb4019329"
+  },
+  "homeroom_bot_is_looking_at_this_92cc576b": {
+    "text": "Homeroom bot está mirando esto",
+    "source": "f3615f022199e6153e583b7b3b202b8784035d66b1dbb8b4fb88ec461cc20961"
+  },
+  "homeroom_bot_is_building_this_024e15bd": {
+    "text": "Homeroom bot está construyendo esto",
+    "source": "3c6231acc397ec700768ceda163343fdda9d1206cdaa203d5d3a5f63dbc168c3"
+  },
+  "homeroom_bot_is_fixing_this_4a975b64": {
+    "text": "Homeroom bot está fijando esto",
+    "source": "87c7ca8be9ffae108efbad1b867cd094bd22742b0a3302a5adfd89568711cdc3"
+  },
+  "homeroom_bot_has_this_7e4f1f31": {
+    "text": "Homeroom bot tiene este",
+    "source": "2dc27bfac826b8d0d8ddef853fe745b2c0a9349874bb1ab8fc8d6ba4f12d2a60"
+  },
+  "homeroom_bot_has_this_and_starts_on_it_once_the__e59bc25f": {
+    "text": "Homeroom bot tiene esto, y comienza en él una vez que la primera versión está en vivo",
+    "source": "eedb0202e84e2431fab6f39690a8446565363e71a641afcff3e42d1819867144"
+  },
+  "live_955ad329": {
+    "text": "vivo",
+    "source": "b64ac05f17e64d037db81a98f51e2688216e292ae9748f979f04dfbac49fd7fc"
+  },
+  "homeroom_bot_built_this_and_it_s_live_80426eb2": {
+    "text": "Homeroom bot construido esto, y es vivo",
+    "source": "c72efeedfd257be20833d14ec1e1b9f6d72887199ea06082b7d45a829a9e1e79"
+  },
+  "waiting_for_the_first_version_to_go_live_i_ll_st_14c3e9a0": {
+    "text": "Esperando que la primera versión se vaya en vivo. voy a comenzar a esto tan pronto como lo haga.",
+    "source": "6488bae53c0df37545bf74bbb0ea275f98d96a4da6ce6737122463a5983c8b18"
+  },
+  "everyone_here_can_see_homeroom_bot_has_it_94cf59e1": {
+    "text": "Todo el mundo aquí puede ver Homeroom bot lo tiene.",
+    "source": "5bcebfccc988d568f0294b43edfc7e6ee01823226cd54e93d0d6fddc66a602f8"
+  },
+  "it_has_the_approvals_it_needs_c8f7c942": {
+    "text": "Tiene la aprobación que necesita.",
+    "source": "3750cf5a31a4c5c218096c31c8360ce044c8a987a516f12297a18698ad453dfb"
+  },
+  "waiting_for_approval_3a172afe": {
+    "text": "Esperando la aprobación.",
+    "source": "5ce37d602fc131eb735a06880dde2e744b52cbeca3fa83741c78c167e1d3b5b8"
+  },
+  "got_it_title_first_version_wait_46687664": {
+    "text": "Obtuvo: {{title}}. {{wait}}{{stays}}",
+    "source": "8d94739d49112c812830a3d86cdf74c68a3f56c174af299c56c7246b53264470"
+  },
+  "got_it_title_waiting_for_a_free_builder_stays_547c3a4f": {
+    "text": "Obtuvo: {{title}}. esperando para un constructor gratuito.{{stays}}",
+    "source": "ef70580d164ea81325d07df4483a91c053a7ec6e4b9ba2fa9b371d93af4527fb"
+  },
+  "building_it_now_title_stays_da377e12": {
+    "text": "Construye ahora: {{title}}.{{stays}}",
+    "source": "d93d65cd6c8c835dc157d2d9125fc01737151a3c4f778b8fee838a024727fcca"
+  },
+  "i_have_a_question_about_this_it_s_in_our_chat_26948acb": {
+    "text": "Tengo una pregunta sobre esto. es en nuestro chat.",
+    "source": "e63520cee9fc333abeb71a38a2463d1be99d2c0ff29e29d968ea79fcd59a3510"
+  },
+  "built_title_testing_it_now_73879d22": {
+    "text": "Construido: {{title}}.Testando ahora.",
+    "source": "87c7874c565b64ea5d13f6e64f4b09ad98b598d2f3e9e5b6e31224bf7f60b23d"
+  },
+  "built_title_approval_12515f6a": {
+    "text": "Edición: {{title}}. {{approval}}",
+    "source": "9e048ec14e93500f2e3694331b7515bc8e90c3bfe3d428d84da5c3db83adb51a"
+  },
+  "approved_title_it_s_going_live_95909b1c": {
+    "text": "Aprobado: {{title}}. se va a vivir.",
+    "source": "5fde356d9267aa95ad754efac31d42eaa4fd73b5f78978c2381ea85d080f6cfa"
+  },
+  "live_title_31f18255": {
+    "text": "El número es: {{title}}.",
+    "source": "8358923430374db7a6cc7ae04d5418f635e7528965d4e67c9d0b752a53034e65"
+  },
+  "closed_title_it_won_t_go_live_0e9933dc": {
+    "text": "Cerrado: {{title}}. no va a vivir.",
+    "source": "959f226ba0cee32ae62d7c676554d62e9692394b4d23bd59cb9a4d5209d68330"
+  },
+  "i_left_this_for_the_group_to_decide_d42ad251": {
+    "text": "Dejo esto para que el grupo decida.",
+    "source": "bd2d0c73e27fe0d68b3de3881fe03eb1677b6a34dd01600a6b3c70ff694fdd76"
+  },
+  "i_couldn_t_finish_this_our_chat_says_why_098af220": {
+    "text": "No podía terminar esto.Nuestro chat dice por qué.",
+    "source": "433758abfceb52d1443ee6d4d431691768621fc1fe038796cd21efac0a77c6d1"
+  },
+  "the_first_version_f71838e0": {
+    "text": "La primera versión",
+    "source": "235d8c9008082e60bf4e42fa5f1895b9cf6c862776828993270fae13ae777eaa"
+  },
+  "quoted_title_01f82e13": {
+    "text": "“{{title}}”",
+    "source": "5b9d8536cc3dcabad788110ad730e9a0696f9e6a21b1fa5edee8d6a050a589fe"
+  },
+  "that_change_d76328a0": {
+    "text": "ese cambio",
+    "source": "53b49a7b6340d4a953e6d1297caac7c28d0eb054451a354d4fef0dccaeb06040"
+  },
+  "updated_change_testing_it_now_552f5519": {
+    "text": "Actualizado {{change}}.Testándolo ahora.",
+    "source": "fbbf3af43458856024c167023cf23e7d6dea84922e92381fc340b5dbbc665c1f"
+  },
+  "updated_change_approval_a515bef8": {
+    "text": "Actualización {{change}}. {{approval}}",
+    "source": "be23205846b13c44b25638f11966104d93f87abddc9d7bb0173ea2ba9cbab48c"
+  },
+  "i_have_a_question_about_your_fix_it_s_in_the_dis_f0018276": {
+    "text": "Tengo una pregunta sobre tu fijo. es en la discusión de {{change}}.",
+    "source": "20714af294808a3dd18c3fa64581f81bb9c6ea26cea8072a1fb190051903e5db"
+  },
+  "i_answered_you_in_the_discussion_of_change_b1966324": {
+    "text": "Yo te he respondido en la discusión de {{change}}.",
+    "source": "747d39cdd3ee96faf51ea7e5b1523d9029c89143efd68a1fcfccf6a04f9c353b"
+  },
+  "i_left_your_fix_to_change_for_the_group_to_decid_fbd7c990": {
+    "text": "Dejo su fijo a {{change}} para que el grupo decida.",
+    "source": "9f4558d26ecf2ce2f8f2248a1058f5bf4e4fccd3394f51db49fbcdfef134d497"
+  },
+  "change_was_approved_62a75168": {
+    "text": "{{change}} ha sido aprobado. se va a vivir.",
+    "source": "2c6db62b8304bf65240df0fbbb00ef4e787cecfda977855f6ae4fca7fb7feb83"
+  },
+  "change_is_live_5a610e58": {
+    "text": "{{change}} está vivo.",
+    "source": "c9b20fed2e5fa3f81c4b2724321e1ab27e0dc6049476ee5fe25704580b1feb83"
+  },
+  "change_was_closed_eaab8ee5": {
+    "text": "{{change}} se cerró. no va a vivir.",
+    "source": "b6204e50a216e39721ff3d1cc6c327c5493781154606abaa303bc8bdb283c68f"
+  },
+  "i_couldn_t_finish_fixing_change_87fae57a": {
+    "text": "No podía terminar fijando {{change}}.",
+    "source": "99335ce39b73acfbd4e9cffa5aa454da6a2305863132d7b2d35733f20814be8f"
+  },
+  "got_it_i_ll_fix_that_in_change_before_it_goes_li_fbee19c8": {
+    "text": "Lo haré. lo haré en {{change}} antes de que sea vivo.",
+    "source": "def541a0002ce942157dc841bb63c095e60551f654dee68fe0823b34bb76b9f6"
+  },
+  "i_couldn_t_change_change_just_now_you_can_say_wh_3a5f3aa0": {
+    "text": "No puedo cambiar {{change}} ahora mismo. puedes decir lo que quieres en su discusión.",
+    "source": "28c575f7b0c32d7ebd20bc0f5c16d253d4d2dd0c99aeb0186e830f7ff1a8b731"
+  },
+  "see_change_69870418": {
+    "text": "Ver el cambio",
+    "source": "304297bc3299d2a642a4d2d87f07aae9c2903dfecf221119396cd5468778eced"
+  },
+  "merged_42ee1d1bf264": {
+    "text": "Cómo se construye",
+    "source": "42ee1d1bf264f73d3e3f8eb3e0b517e35e9a87eab351a8b61e15b9d25799314e"
+  },
+  "merged_d9fa293ef6e3": {
+    "text": "El cambio que se ha ido vivo en",
+    "source": "d9fa293ef6e39dc18d0e1e62b4ab6ba3c483c399bc0ab01473ae0b632f78dbf5"
+  },
+  "merged_50ee9f04064f": {
+    "text": "Primera versión",
+    "source": "50ee9f04064fc0a781fcec6dc5f1d814600157429f6d4620134dda0fe5667bb5"
+  },
+  "merged_435760070a20": {
+    "text": "Ir al chat",
+    "source": "435760070a20227c3773cb057e9217a3db3b0b6b32a4e7243f6b0d2a5e26e465"
+  },
+  "merged_2e983b2e3f6b": {
+    "text": "Ver el cambio",
+    "source": "2e983b2e3f6b714471e52efbd5d610da9c0682833b03a9ac7d0cd215ffdc12bc"
+  },
+  "who_approvers_some_of": {
+    "text": "{{required}} de los {{of}} aprobados",
+    "source": "6ed4268d38587c2bea5a00800af08ad74b5ce1de8702f1c0eb7d22f6c9abdf70"
+  },
+  "who_approvers_more_than_one": {
+    "text": "{{required}} aprobados (hay {{of}})",
+    "source": "5c0d3ee20e89b47fc2ade7eb1aae79e8970b2f41588c3057e64744bc7d7def2f"
+  },
+  "who_approvers_more_than_several": {
+    "text": "{{required}} aprobados (hay {{of}})",
+    "source": "5c99d093aa0713862446309292e083a7b9de6d3d08af65c28e1d3874a0581d84"
+  },
+  "who_approvers_only_one": {
+    "text": "La única aprobación",
+    "source": "c693875fbdc38493a9032fd7574145e87128cd409ba01329a4b13df078257194"
+  },
+  "who_approvers_both": {
+    "text": "Ambos aprobaron",
+    "source": "69cf4904714592b82f0a82c4e31fe566c8a5b0903a954860713b8de126272987"
+  },
+  "who_approvers_all": {
+    "text": "Todos los {{of}} aprobados",
+    "source": "fb1cf7a5b042c9ee4765a17405fd982bb39d273b9125c24ac04c1bf4850a3cb8"
+  },
+  "who_members_some_of": {
+    "text": "{{required}} de los {{of}} miembros activos",
+    "source": "78e45dbbd3b856f6abc2413ce7429ddedb54b6c1cd4d1100b97a25c23263126b"
+  },
+  "who_members_more_than_one": {
+    "text": "{{required}} miembros activos (hay {{of}})",
+    "source": "0c62b53f30f32b6bd0135180032b53c19cdf351138578544c2fbaed91833505b"
+  },
+  "who_members_more_than_several": {
+    "text": "{{required}} miembros activos (hay {{of}})",
+    "source": "d7fb7168285c025bebf1eef96bb9c81e206884cc8a0450281301e8abd6d64c65"
+  },
+  "who_members_only_one": {
+    "text": "El único miembro activo",
+    "source": "d2524cfab9aac6192c69e3bc457856caf2315953e8fa8687f02963a2e592aac4"
+  },
+  "who_members_both": {
+    "text": "Los dos miembros activos",
+    "source": "ab12f0130f25943ea521bf6234ca133176a09902fee4f09b778fc25d48c9c377"
+  },
+  "who_members_all": {
+    "text": "Todos los {{of}} miembros activos",
+    "source": "6dcc3fa854e392aa4266f7f7dabe41971b7996db00ae90dcf75f4aba74069e3f"
+  },
+  "board_empty_press_menu_hub_import_end": {
+    "text": "No hay nada en la mesa todavía. pulsa <0>⋯</0> para sugerir una mejora o importar un PR.",
+    "source": "8118cf7ecfe38e379e37a9f797eb5e29b5865a1ebcf8b8d03bf6fd5d233d968e"
+  },
+  "board_empty_press_menu_hub_import_build": {
+    "text": "No hay nada en la mesa todavía. pulse <0>⋯</0> para sugerir una mejora o importar un PR; para hacer uno por sí mismo, use Build it yourself there.",
+    "source": "2f7b68c53cea05b100255b284d776a771fe86ac50eb12d09aa13df69a55e257b"
+  },
+  "board_empty_press_menu_hub_suggest_end": {
+    "text": "No hay nada en la mesa todavía. pulsa <0>⋯</0> para sugerir una mejora.",
+    "source": "57194745ba2ee4949e9dca3dd8c88f6510be401cc9fa3211692a411fc666e5cf"
+  },
+  "board_empty_press_menu_hub_suggest_build": {
+    "text": "No hay nada en la mesa todavía. pulsa <0>⋯</0> para sugerir una mejora; para hacer uno por sí mismo, use Build it yourself there.",
+    "source": "4a45e47f52aa4048dc5e16ed86da6792a52ce81493fbc810337113a9c26507d5"
+  },
+  "board_empty_press_menu_page_import_end": {
+    "text": "No hay nada en la mesa todavía. pulse <0>⋯</0> en el hub para sugerir una mejora o importar un PR.",
+    "source": "a76efcce49877435b9842c4a8afb1307cdef3ea9305b5280614985c9788b3ca1"
+  },
+  "board_empty_press_menu_page_import_build": {
+    "text": "No hay nada en la mesa todavía. pulse <0>⋯</0> en el hub para sugerir una mejora o importar un PR; para hacer uno por sí mismo, use Construirlo por sí mismo allí.",
+    "source": "93e959f2debdf1313285c58b27e48f892789db97982b065d30ced1979a23b7b2"
+  },
+  "board_empty_press_menu_page_suggest_end": {
+    "text": "No hay nada en el tablero todavía. pulse <0>⋯</0> en el hub para sugerir una mejora.",
+    "source": "e5c763a9522202f426eb74444eb7d4dbfb93b040a72d097abbdf0082a402a972"
+  },
+  "board_empty_press_menu_page_suggest_build": {
+    "text": "No hay nada en la mesa todavía. pulse <0>⋯</0> en el hub para sugerir una mejora; para hacer uno por sí mismo, use Build it yourself there.",
+    "source": "f7cfff081907fa17ccac2af4f4d0dca5470774608ba55f0f368c1684da7c1e5f"
+  },
+  "merged_4d912ca586fa": {
+    "text": "Reportar un problema o una idea sin construirlo por sí mismo",
+    "source": "4d912ca586fa4324eed964a8dda7ec311a6323f7617cdf6efe9f451ff705104e"
+  },
+  "merged_3025de259d79": {
+    "text": "Con un agente de codificación, entonces pedir la aprobación",
+    "source": "3025de259d799f73b1fea3029041e58fdd67a4a2dcaf52d390ad58aeb6de7808"
+  },
+  "merged_37593a2773aa": {
+    "text": "Sólo las personas invitadas pueden abrir y construirlo.Código permanece público en GitHub.",
+    "source": "37593a2773aa97cc397c8f398dfd7c1cfb5cf5178f6cfda65c32d82242f126b0"
+  },
+  "merged_a22c66e20ee2": {
+    "text": "Gestionar quién puede usar y construir esta aplicación",
+    "source": "a22c66e20ee28225feac089cdca6cb0b0a9fa6feb64847ecbad06914d6c4df7d"
+  },
+  "merged_0fd42059833d": {
+    "text": "Preview y ajuste la imagen de la tarjeta Discover",
+    "source": "0fd42059833d72770e5fa7597cea27b23bc0033d925a1f0935d0f60d4b97ed6e"
+  },
+  "merged_d3052fff5a0f": {
+    "text": "¿Quién aprueba las propuestas y cuántas aprobaciones se necesitan?",
+    "source": "d3052fff5a0f510a6a7579b509a9092b59be412f11b23b1243d677fbd4341fb4"
+  },
+  "merged_64035d331986": {
+    "text": "Gestión de colaboradores, admins de aplicaciones y aprobación de propuestas",
+    "source": "64035d331986dcc16091e82d15f075650eab56ba8c3d4d56c118facc40136842"
+  },
+  "merged_59a22acd2e28": {
+    "text": "Las renamas son propuestas, aplicadas una vez votadas en",
+    "source": "59a22acd2e287558b4713d405f07964bddd54b5e158f5710fee92f5857eb0fc5"
+  },
+  "merged_82bb5bb897a2": {
+    "text": "Haz tu propia copia",
+    "source": "82bb5bb897a289f90180a30a283b884a02a67c5488371286ddab47ce658642dd"
+  },
+  "approval_fixed_count_many": {
+    "text": "Un cambio se realiza una vez que {{count}} miembros lo aprueban.",
+    "source": "30df4712aaff8c1b45e6ef9eca4a6affab1d0bc25dc661a5dbd02d1b32a55e00"
+  },
+  "approval_fixed_count_one": {
+    "text": "Un cambio se realiza una vez que {{count}} miembros lo aprueban.",
+    "source": "24690e5ca080b5d671c4572640cd06e24a75880035009fb15e5b40e6fef00df4"
+  },
+  "approval_fixed_count_other": {
+    "text": "Un cambio se realiza una vez que {{count}} miembros lo aprueban.",
+    "source": "30df4712aaff8c1b45e6ef9eca4a6affab1d0bc25dc661a5dbd02d1b32a55e00"
+  },
+  "you_voted_on_changes_this_time_many": {
+    "text": "Ha votado en {{count}} cambios esta vez.",
+    "source": "924a655de26ce4bda337642816565c29bf59a706310425fd3bd5e28ae58f8a0b"
+  },
+  "you_voted_on_changes_this_time_one": {
+    "text": "Votó en {{count}} cambio esta vez.",
+    "source": "12eb6d28bc857d1094983e42ab360fdb304b5a22ad365a56fd48ce4599546945"
+  },
+  "you_voted_on_changes_this_time_other": {
+    "text": "Ha votado en {{count}} cambios esta vez.",
+    "source": "924a655de26ce4bda337642816565c29bf59a706310425fd3bd5e28ae58f8a0b"
+  },
+  "tally_value1_of_value2_approvals_many": {
+    "text": "{{value1}} de {{value2}} aprobados",
+    "source": "b27fd6af0785e5f2b2cf63259db484cff26ab7015075dbeb18e8fd4843ff6b24"
+  },
+  "tally_value1_of_value2_approvals_one": {
+    "text": "{{value1}} de {{value2}} aprobación",
+    "source": "54c42fe9100b706bd7423f12491a6b2ee1ff2790ed3d0ae132114ecbfef0241d"
+  },
+  "tally_value1_of_value2_approvals_other": {
+    "text": "{{value1}} de {{value2}} aprobados",
+    "source": "b27fd6af0785e5f2b2cf63259db484cff26ab7015075dbeb18e8fd4843ff6b24"
   }
 }
