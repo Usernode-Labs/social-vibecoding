@@ -58,6 +58,7 @@ const { HOMEROOM_BOT_LOCK } = require('./advisory-locks');
 const live = require('./homeroom-bot-live');
 const followup = require('./homeroom-bot-followup');
 const snapshots = require('./homeroom-bot-snapshots');
+const { withoutEmDashes } = require('./em-dashes');
 // #3692: the activity tray in a person's DM with the bot. Lazy, as the DM
 // module is: it reads this module's settings.
 function tray() { return require('./homeroom-bot-tray'); }
@@ -1051,7 +1052,33 @@ function planQuestions(raw) {
   return out;
 }
 
+/**
+ * 5 Oct 2026: what a verdict says to people (its question and the answers
+ * to tap, a first version's plan, why a person should decide or why there
+ * is nothing to build) without em dashes, whatever the model wrote
+ * (em-dashes.js). Pure.
+ */
+function plainVerdict(v) {
+  if (!v) return v;
+  const plain = (t) => (typeof t === 'string' ? withoutEmDashes(t) : t);
+  return {
+    ...v,
+    question: plain(v.question),
+    questionDefault: plain(v.questionDefault),
+    questionAnswers: Array.isArray(v.questionAnswers) ? v.questionAnswers.map(plain) : v.questionAnswers,
+    plan: v.plan ? {
+      bullets: v.plan.bullets.map(plain),
+      questions: v.plan.questions.map((q) => ({ question: plain(q.question), answers: q.answers.map(plain) })),
+    } : v.plan,
+    reason: plain(v.reason),
+  };
+}
+
 function parseVerdict(text) {
+  return plainVerdict(readVerdict(text));
+}
+
+function readVerdict(text) {
   const raw = String(text || '');
   const candidates = [];
   let m;
@@ -4569,8 +4596,17 @@ async function runFollowUp(pool, config, {
     });
     await recordSnapshot(runId);
     await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
+    log.warn('homeroom-bot', 'Follow-up said it revised, but the change did not move', {
+      app: app.slug, issueNumber, sessionId: session.id, why, runId,
+    });
     const postedAt = [];
-    await say('followup_failed', followup.revisionFailedText({ why, prNumber: session.pr_number }), postedAt)
+    // What happened in plain words, and how to start it again; the record
+    // (`why`) stays on the run and in the line above (followup.revisionFailedText).
+    // The requester hears it in their DM too, with the change's card.
+    const proposalUrl = deps.domain ? live.proposalLink(deps.domain, app.slug, session.id) : null;
+    await say('followup_failed', followup.revisionFailedText({ why, canRevise }), postedAt, {
+      dm: { reason: why, canRevise, sessionId: session.id, link: proposalUrl },
+    })
       .catch((err) => log.warn('homeroom-bot', 'Follow-up post failed', { err: err.message }));
     await live.advanceSeen({
       pool, github, threadContext, app, repo, issueNumber, runId, since: seedReadAt, postedAt,

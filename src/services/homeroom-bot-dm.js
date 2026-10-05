@@ -257,7 +257,7 @@ function cardsFor(kind, dm, app, issueNumber) {
   const appId = Number(app?.id);
   if (!Number.isInteger(appId) || appId <= 0) return [];
   const sessionId = Number(dm?.sessionId);
-  if ((kind === 'proposal' || kind === 'followup_revise' || kind === 'merged') && hasProposalCard(dm)) {
+  if ((kind === 'proposal' || kind === 'followup_revise' || kind === 'followup_failed' || kind === 'merged') && hasProposalCard(dm)) {
     return [{ type: 'proposal', appId, sessionId }];
   }
   const n = Number(issueNumber);
@@ -343,6 +343,9 @@ const MOMENTS = Object.freeze({
   // Stopped: it did not finish, or waits on something only time or a person changes.
   build_failed: 'stopped', blocked: 'stopped', person: 'stopped', empty: 'stopped',
   first_version_failed: 'stopped', preview_failed: 'stopped', allowance: 'held', paused: 'held',
+  // An update they asked for that did not happen ("your change stopped. I
+  // said why in our chat", the stop's own words).
+  followup_failed: 'stopped',
   // Live.
   merged: 'live',
   // An answer to what they wrote: the model's, and its offer to file.
@@ -882,40 +885,69 @@ function buildFailedCause(reason) {
   return { cause: 'other' };
 }
 
+// What the bot was doing when it stopped: building a request, or updating
+// a change it had already built, after somebody asked for something
+// different on it (homeroom-bot-followup.js revisionFailedText).
+const FAILED_DOING = Object.freeze({
+  build: Object.freeze({ verb: 'finish building', noun: 'build', starting: 'building' }),
+  update: Object.freeze({ verb: 'update', noun: 'update', starting: 'updating' }),
+});
+
 // Each cause in words, two ways (5 Oct 2026). `me`: the bot to the person
 // it was building for, in its DM. `bot`: about the bot, on the request
 // itself, where everybody in the project reads it (homeroom-bot-live.js
 // buildFailedText, also its GitHub comment), as the bot's other posts there
 // are worded.
-const BUILD_FAILED_SAID = Object.freeze({
+const FAILED_SAID = Object.freeze({
   me: Object.freeze({
-    restarts: (it, n) => `I couldn't finish building ${it}: Homeroom restarted while I was working on it, ${n} times in a row.`,
-    time: (it) => `I couldn't finish building ${it}: it took longer than I'm allowed.`,
-    restart: (it) => `I couldn't finish building ${it}: Homeroom restarted while I was working on it.`,
-    unproposed: (it) => `I built ${it}, but I couldn't put it up for approval.`,
-    no_change: (it) => `I couldn't finish building ${it}: I ended up with no changes to show you.`,
-    no_start: (it) => `I couldn't get started on building ${it}.`,
-    other: (it) => `I couldn't finish building ${it}: something went wrong while I was working on it.`,
+    restarts: (d, it, n) => `I couldn't ${d.verb} ${it}: Homeroom restarted while I was working on it, ${n} times in a row.`,
+    time: (d, it) => `I couldn't ${d.verb} ${it}: it took longer than I'm allowed.`,
+    restart: (d, it) => `I couldn't ${d.verb} ${it}: Homeroom restarted while I was working on it.`,
+    unproposed: (d, it) => `I built ${it}, but I couldn't put it up for approval.`,
+    no_change: (d, it) => `I couldn't ${d.verb} ${it}: I ended up with no changes to show you.`,
+    no_start: (d, it) => `I couldn't get started on ${d.starting} ${it}.`,
+    other: (d, it) => `I couldn't ${d.verb} ${it}: something went wrong while I was working on it.`,
   }),
   bot: Object.freeze({
-    restarts: (it, n) => `Homeroom bot couldn't finish building ${it}: Homeroom restarted in the middle of the build, ${n} times in a row.`,
-    time: (it) => `Homeroom bot couldn't finish building ${it}: the build took longer than it's allowed.`,
-    restart: (it) => `Homeroom bot couldn't finish building ${it}: Homeroom restarted in the middle of the build.`,
-    unproposed: (it) => `Homeroom bot built ${it}, but couldn't put it up for approval.`,
-    no_change: (it) => `Homeroom bot couldn't finish building ${it}: it ended up with no changes to show.`,
-    no_start: (it) => `Homeroom bot couldn't get started on building ${it}.`,
-    other: (it) => `Homeroom bot couldn't finish building ${it}: something went wrong during the build.`,
+    restarts: (d, it, n) => `Homeroom bot couldn't ${d.verb} ${it}: Homeroom restarted in the middle of the ${d.noun}, ${n} times in a row.`,
+    time: (d, it) => `Homeroom bot couldn't ${d.verb} ${it}: the ${d.noun} took longer than it's allowed.`,
+    restart: (d, it) => `Homeroom bot couldn't ${d.verb} ${it}: Homeroom restarted in the middle of the ${d.noun}.`,
+    unproposed: (d, it) => `Homeroom bot built ${it}, but couldn't put it up for approval.`,
+    no_change: (d, it) => `Homeroom bot couldn't ${d.verb} ${it}: it ended up with no changes to show.`,
+    no_start: (d, it) => `Homeroom bot couldn't get started on ${d.starting} ${it}.`,
+    other: (d, it) => `Homeroom bot couldn't ${d.verb} ${it}: something went wrong during the ${d.noun}.`,
   }),
 });
 
 /**
- * Pure: why a build of `it` did not finish, in plain words (see
- * buildFailedCause), said by the bot to the person it was for (`voice`
- * 'me', the default) or about the bot on the request ('bot').
+ * Pure: why the bot stopped, in plain words, from the run's own record
+ * (read by buildFailedCause, never quoted). `voice` is 'me' (the default:
+ * the bot to the person it was for, in its DM) or 'bot' (about the bot, on
+ * the request); `doing` is 'build' (the default) or 'update' (a change it
+ * had built, which has nothing left to put up for approval).
  */
+function failedWords(reason, { it = 'this', voice = 'me', doing = 'build' } = {}) {
+  const read = buildFailedCause(reason);
+  const d = FAILED_DOING[doing] || FAILED_DOING.build;
+  const cause = d === FAILED_DOING.update && read.cause === 'unproposed' ? 'other' : read.cause;
+  return (FAILED_SAID[voice] || FAILED_SAID.me)[cause](d, it, read.times);
+}
+
+/** Pure: why a build of `it` did not finish (failedWords), in the DM's voice or ('bot') on the request. */
 function buildFailedWords(reason, it = 'this', voice = 'me') {
-  const { cause, times } = buildFailedCause(reason);
-  return (BUILD_FAILED_SAID[voice] || BUILD_FAILED_SAID.me)[cause](it, times);
+  return failedWords(reason, { it, voice, doing: 'build' });
+}
+
+/**
+ * Pure (5 Oct 2026): why the bot could not update `it`, a change it had
+ * built, after it was asked for something different on it: the same causes
+ * as a build's, from the same reading of the run's record
+ * (homeroom-bot.js runFollowUp: "the turn produced no change", "its change
+ * could not be pushed", "the turn failed (...), so its change was not
+ * kept"), said in the same two voices.
+ */
+function updateFailedWords(reason, it = 'this change', voice = 'me') {
+  return failedWords(reason, { it, voice, doing: 'update' });
 }
 
 /**
@@ -985,6 +1017,26 @@ function dmText(kind, dm, context) {
       // again (homeroom-bot-mayor.js start_request): on 5 Oct 2026 "Oh no,
       // can you try again?" had it building again within seconds.
       return `${line}\n\n${buildFailedWords(dm.reason, it)} Reply here and I'll try again.`;
+    case 'followup_failed': {
+      // 5 Oct 2026: an update to their change that did not happen, in plain
+      // words (updateFailedWords), never the run's own record, and how to
+      // try again that is sure to reach the bot: Ask for changes on the
+      // change, which posts what they write in its discussion and puts its
+      // follow-up first in the queue (homeroom-bot-mayor.js reviseAttached).
+      // A reply here goes to the bot's chat model, which can send it on the
+      // same way (revise_proposal) once it knows what to change, so the DM
+      // names the way that does not depend on it.
+      const change = context.firstVersion ? 'the first version' : 'your change';
+      if (dm.canRevise === false) {
+        return `${line}\n\nI couldn't update ${change}: I've already updated it as many times as I can on my own, `
+          + 'so a person needs to make this one. It\'s as it was.';
+      }
+      const words = updateFailedWords(dm.reason, change, 'me');
+      let next = `To try again, open it on ${context.appName} and tap Ask for changes.`;
+      if (hasProposalCard(dm)) next = 'To try again, open it below and tap Ask for changes.';
+      else if (dm.link) next = `To try again, open it and tap Ask for changes: ${dm.link}`;
+      return `${line}\n\n${words} It's as it was. ${next}`;
+    }
     case 'person':
       // #3772: and what to do about it. "Left for the group" was a dead end
       // for somebody who was the group: a reply here is posted on the
@@ -3437,6 +3489,8 @@ module.exports = {
   weekKey,
   dmText,
   buildFailedWords,
+  updateFailedWords,
+  failedWords,
   twoQuestions,
   // B7: ready to try, and who approves it.
   approvalState,
