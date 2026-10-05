@@ -54,6 +54,7 @@ import { resolveIllustration } from '../../lib/challenge-illustrations';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { CHALLENGE_CARD_FACE, ChallengeCard, ChallengeMeta, ProgressRail } from './challenge-card';
+import { ChallengesIntro } from './challenges-intro';
 import { GroupHeader } from './group-header';
 import { LockedChallengesCard } from './locked-challenges-card';
 import { SeasonProgress, type SeasonProgressView } from './season-progress';
@@ -853,9 +854,15 @@ export function ChallengesPane(): ReactNode {
     <>
       <div id="tc-se-grid" className={state.detail ? 'hidden' : undefined}>
         {/*
-            The viewer's own standing leads the tab, as the prototype's
-            Challenges page does — the points, rank, breakdown and token
-            allocation the Me screen used to carry (./your-standing.tsx).
+            What challenges are for, above everything else on the tab, until
+            the viewer closes it on this device (./challenges-intro.tsx). It
+            is inside the grid so a challenge's page hides it too.
+        */}
+        <ChallengesIntro />
+        {/*
+            The viewer's own standing leads the rest of the tab, as the
+            prototype's Challenges page does — the points, rank, breakdown and
+            token allocation the Me screen used to carry (./your-standing.tsx).
         */}
         <YourStanding />
         <Grid view={state.grid} />
