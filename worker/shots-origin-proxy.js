@@ -429,11 +429,21 @@ const listening = (target, targetPort) => new Promise((resolve, reject_) => {
 
 // Ready only once every listener is up: the runner starts the browsers as
 // soon as this file exists. It holds the shared port, as it always has.
+// Written whole, then renamed into place: a reader that sees the file must
+// never read it half-written. writeFileSync alone creates it empty first,
+// and a caller polling for it under load read the port as '' (port 0) and
+// was refused (tests/shots-origin-proxy-identity.test.js, 5 October).
+function writeReady(sharedPort) {
+  const partial = `${readyFile}.${process.pid}.tmp`;
+  fs.writeFileSync(partial, String(sharedPort), { mode: 0o600 });
+  fs.renameSync(partial, readyFile);
+}
+
 Promise.all([
   listening(server, port),
   ...personaServers.map(({ server: personaServer, personaPort }) => listening(personaServer, personaPort)),
 ]).then(([sharedPort]) => {
-  if (readyFile) fs.writeFileSync(readyFile, String(sharedPort), { mode: 0o600 });
+  if (readyFile) writeReady(sharedPort);
   // The worker's memory through the turn (shots-memory.js), when the runner
   // asks for it: the proxy lives as long as the turn does.
   const sampleMs = Number(process.env.SHOTS_MEMORY_SAMPLE_MS);

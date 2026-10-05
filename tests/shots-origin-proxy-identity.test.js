@@ -206,6 +206,20 @@ test('the platform\'s own pairs get nothing: their sessions are cookies the boot
   assert.deepEqual(up.seen.map(({ token }) => token), [null]);
 });
 
+test('the ready file appears whole: written under another name, then renamed into place', () => {
+  // Every caller polls for the file and then reads the shared port out of
+  // it. writeFileSync alone creates it empty before writing, and under the
+  // full suite's load a reader once read '' as port 0 and was refused
+  // (5 October, the test below).
+  const src = fs.readFileSync(path.join(__dirname, '..', 'worker', 'shots-origin-proxy.js'), 'utf8');
+  const body = src.slice(src.indexOf('function writeReady('), src.indexOf('Promise.all(['));
+  assert.match(body, /fs\.writeFileSync\(partial, String\(sharedPort\)/);
+  assert.match(body, /fs\.renameSync\(partial, readyFile\)/);
+  assert.match(body, /const partial = `\$\{readyFile\}\.\$\{process\.pid\}\.tmp`/, 'beside it, so the rename stays on one filesystem');
+  assert.doesNotMatch(src, /writeFileSync\(readyFile/);
+  assert.match(src, /if \(readyFile\) writeReady\(sharedPort\);/);
+});
+
 test('without persona ports the proxy is the single shared listener it was, and attaches nothing', async (t) => {
   // The worker image's build-time verifiers start it this way.
   const up = await upstreams(t);
