@@ -14,7 +14,10 @@
  * the description. The Create app wizard stays as it is, behind the Create
  * button.
  *
- * "Look around first" is the quiet way out: Home, with nothing asked.
+ * "Look around first" is the quiet way out: Home, with nothing asked. It is
+ * an answer, like Make it: until one of the two, the question is still the
+ * account's to answer, and every boot of the shell asks it again (a reload,
+ * the app reopened, another device; ./index.tsx, services/first-session.js).
  *
  * It ARRIVES rather than appears: the screen's ground is the wallpaper
  * from its first frame, the same one the signed-out story and the sign-in

@@ -55,32 +55,53 @@ test('the options carry the switch, and the admin switches it beside the invite 
   assert.match(screen, /id="admin-topo-wl-story-enabled"/);
 });
 
-test('making something, or starting from the story, answers the join screen without the Getting started card', async () => {
-  const pool = fakePool([[]]);
-  await firstSession.answerJoinScreen(pool, 7, 'story');
+test('making something, or looking around, answers the join screen without the Getting started card; starting answers nothing', async () => {
+  const pool = fakePool([[], [], []]);
+  await firstSession.answerJoinScreen(pool, 7, 'made');
   assert.match(pool.calls[0].sql, /SET needs_communities_choice = FALSE,/);
   assert.match(pool.calls[0].sql, /WHERE id = \$1 AND needs_communities_choice = TRUE/);
   assert.doesNotMatch(pool.calls[0].sql, /communities_onboarded_at/);
-  assert.deepEqual(pool.calls[0].params, [7, 'story']);
+  // join_answer is still how the question reached them; the answer is beside it.
+  assert.match(pool.calls[0].sql, /'join_answer', COALESCE\(getting_started_seen->>'first_session', \$2::text\),\s+'first_session_answer', \$2::text\)/);
+  assert.deepEqual(pool.calls[0].params, [7, 'made']);
+  await firstSession.answerJoinScreenByLookingAround(pool, 9);
+  assert.deepEqual(pool.calls[1].params, [9, 'looked_around']);
+  // Being shown the question is recorded once, and leaves it owed.
+  await firstSession.recordStart(pool, 7, 'story');
+  assert.doesNotMatch(pool.calls[2].sql, /needs_communities_choice = FALSE/);
+  assert.match(pool.calls[2].sql, /WHERE id = \$1 AND needs_communities_choice = TRUE\s+AND getting_started_seen->>'first_session' IS NULL/);
+  assert.deepEqual(pool.calls[2].params, [7, 'story']);
   assert.match(read('src/routes/apps.js'), /if \(req\.body\.from === 'first-session'\) \{\s+await require\('\.\.\/services\/first-session'\)\.answerJoinScreenByMaking\(pool, req\.user\.id\)/);
-  assert.match(read('src/routes/onboarding.js'), /router\.post\('\/api\/me\/first-session\/started', drainGuard, sameOriginBrowserOnly,/);
-  // Recorded before the account is let in, so it is open to one still waiting.
-  assert.match(read('src/middleware/auth.js'), /'\/api\/me\/first-session\/started',\s+\];/);
+  const routes = read('src/routes/onboarding.js');
+  assert.match(routes, /router\.post\('\/api\/me\/first-session\/started', drainGuard, sameOriginBrowserOnly,/);
+  assert.match(routes, /await firstSession\.recordStart\(pool, req\.user\.id, via\);/);
+  assert.match(routes, /router\.post\('\/api\/me\/first-session\/look-around', drainGuard, sameOriginBrowserOnly,/);
+  assert.match(routes, /await firstSession\.answerJoinScreenByLookingAround\(pool, req\.user\.id\);/);
+  // A provider's sign-up from the story records the start the same way.
+  assert.match(read('src/routes/sign-in-providers.js'), /if \(state\.started_from === 'story'\) await firstSession\.recordStart\(pool, result\.userId, 'story'\);/);
+  // Recorded before the account is let in, so it is open to one still waiting;
+  // the answer is not (the make screen is only ever shown with access).
+  const gate = read('src/middleware/auth.js');
+  assert.match(gate, /'\/api\/me\/first-session\/started',\s+\];/);
+  assert.doesNotMatch(gate, /first-session\/look-around/);
 });
 
 test('an account that signs in some other way is asked what to make in the join screen\'s place', () => {
   // The server: only for an account still due the join screen, while the story is on.
   const auth = read('src/routes/auth.js');
-  assert.match(auth, /if \(needsCommunitiesChoice\) storyFirstSession = await firstSession\.storyLandingEnabled\(pool\);/);
+  assert.match(auth, /if \(needsCommunitiesChoice\) storyFirstSession = await firstSession\.asksWhatToMake\(pool, req\.user\.id\);/);
   assert.match(auth, /needsCommunitiesChoice,\s+\/\/[^\n]*\n(?:\s+\/\/[^\n]*\n)*\s+storyFirstSession,/);
-  // The join step hands over to the island, answering itself as 'sign_in'.
+  // The join step hands over to the island, recording itself as 'sign_in'.
   const join = read('frontend/src/features/auth/communities-first-run.js');
-  assert.match(join, /if \(window\.App\.user\.storyFirstSession === true\s+&& firstSession && typeof firstSession\.make === 'function'\) \{/);
+  assert.match(join, /if \(window\.App\.user\.storyFirstSession === true && firstSession\) \{\s+CommunitiesFirstRun\._openFirstSession\(firstSession\);\s+return;/);
   assert.match(join, /body: JSON\.stringify\(\{ via: 'sign_in' \}\),/);
-  assert.match(join, /window\.App\.user\.needsCommunitiesChoice = false;\s+firstSession\.make\(\);\s+CommunitiesFirstRun\._resolve\(\);\s+return;/);
+  // Opening it leaves the account's flag as the server said: only an answer clears it.
+  const open = join.slice(join.indexOf('_openFirstSession(firstSession) {'), join.indexOf('_showFromSnapshot() {'));
+  assert.match(open, /CommunitiesFirstRun\._answered = true;\s+firstSession\.make\(\);\s+CommunitiesFirstRun\._recordFirstSession\(\);\s+CommunitiesFirstRun\._resolve\(\);/);
+  assert.doesNotMatch(open, /needsCommunitiesChoice = false/);
   // It comes before the suggestions are fetched, so the join screen is never drawn first.
-  assert.ok(join.indexOf('firstSession.make()') < join.indexOf("fetch('/api/me/join-suggestions'"));
-  assert.match(read('src/routes/onboarding.js'), /const answer = req\.body && req\.body\.via === 'sign_in' \? 'sign_in' : 'story';/);
+  assert.ok(join.indexOf('CommunitiesFirstRun._openFirstSession(firstSession);') < join.indexOf("fetch('/api/me/join-suggestions'"));
+  assert.match(read('src/routes/onboarding.js'), /const via = req\.body && req\.body\.via === 'sign_in' \? 'sign_in' : 'story';/);
   // The island opens it once, whichever of the two asks first, and draws it
   // at once when asked from the shell's own start (sv:authed, or the join
   // step in that tick), so Home is never painted before it.
@@ -95,7 +116,7 @@ test('an account that signs in some other way is asked what to make in the join 
 
 test('the route records which way the first session was reached', async () => {
   const pool = fakePool([[]]);
-  await firstSession.answerJoinScreen(pool, 8, 'sign_in');
+  await firstSession.recordStart(pool, 8, 'sign_in');
   assert.deepEqual(pool.calls[0].params, [8, 'sign_in']);
 });
 

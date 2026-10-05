@@ -1238,8 +1238,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       }
 
       // Made from the first session's "What do you want to make?"
-      // (frontend/src/features/first-session): making something answers the
-      // join screen, so it is not put between them and what they made.
+      // (frontend/src/features/first-session): making something answers it,
+      // and the join screen it stood in for, so neither is asked again
+      // (services/first-session.js). Until this, every boot asks it.
       if (req.body.from === 'first-session') {
         await require('../services/first-session').answerJoinScreenByMaking(pool, req.user.id)
           .catch((err) => log.warn('apps', 'Join screen not answered', { userId: req.user.id, err: err.message }));
