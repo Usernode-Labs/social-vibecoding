@@ -46,6 +46,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { ActionBand, ActionButton, Badge, DevCard, StatusPill, TitleContent, VoteButton, isVoteSpec } from '../card/dev-card';
 import type { DevCardModel } from '../card/model';
 import { swatchFor } from '../../group-chat/swatch';
+import { useInlineImageViewer } from '../../image-viewer/image-viewer';
 import { topicHeadStore } from './topic-store';
 import { ChangeConversation } from './conversation';
 import { TopicBack } from './topic-back';
@@ -1767,10 +1768,15 @@ export function TopicBodySections({ body }: { body: TopicBody }): ReactNode {
   // sheet open, so it is resolved to null before the test below.
   const roster = body.roster && body.roster.phase !== 'hidden' ? body.roster : null;
   const hasAbout = !!(summaryHtml || issueHtml || issueEditor?.canEdit || tiles || body.proposalBody || body.note || roster);
+  // #3908: a screenshot in the request's words opens in the app's viewer,
+  // over this page, instead of following its file link out of it. The
+  // pictures are inside sanitised markdown, so the sheet takes the tap.
+  const images = useInlineImageViewer();
   return (
     <>
+      {images.viewer}
       {hasAbout ? (
-        <section className="dev-topic-sheet dev-topic-about" data-topic-sheet="about">
+        <section className="dev-topic-sheet dev-topic-about" data-topic-sheet="about" {...images.scope}>
           {!issueEditor ? <h4 className="dev-topic-h"><LocalizedValue render={() => (body.aboutTitle || tr("workshop:about_4efca0d1"))} /></h4> : null}
           {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
           {summaryHtml ? (

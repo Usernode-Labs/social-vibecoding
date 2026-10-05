@@ -61,6 +61,9 @@ async function connectPool() {
       collab_visibility TEXT NOT NULL DEFAULT 'public',
       view_visibility TEXT NOT NULL DEFAULT 'public',
       icon_emoji TEXT, icon_image_id TEXT,
+      -- #3700: what a private community's invite preview reads beyond the
+      -- link (community-invites.js entryFor), and the access check's own.
+      icon_color TEXT, moderation_suspended_at TIMESTAMPTZ,
       manifest_snapshot JSONB, featured_illustration JSONB,
       approver_policy TEXT NOT NULL DEFAULT 'anyone', approvals_required INTEGER,
       locked BOOLEAN NOT NULL DEFAULT FALSE,
@@ -107,6 +110,8 @@ async function connectPool() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       PRIMARY KEY (app_id, user_id));
     CREATE TABLE app_admins (app_id INTEGER NOT NULL, user_id INTEGER NOT NULL);
+    CREATE TABLE user_app_blocks (
+      user_id INTEGER NOT NULL, app_id INTEGER NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
     CREATE TABLE events (
       id SERIAL PRIMARY KEY, user_id INTEGER, app_id INTEGER, session_id INTEGER,
       event_type TEXT, metadata JSONB, created_at TIMESTAMPTZ DEFAULT NOW());
@@ -235,6 +240,82 @@ test('invite links against a real PostgreSQL', async (t) => {
       const none = await pool.query('SELECT 1 FROM app_collaborators WHERE app_id = 2 AND user_id = 5');
       assert.equal(none.rows.length, 0, 'a cancelled invite is not applied on release');
       assert.equal((await invites.preview(pool, made.link.token)).reason, 'revoked');
+    });
+
+    await t.test('#3700: a private community\'s live link is an invite preview from the link alone; only Join lets anyone in', async () => {
+      const appAccess = require('../src/services/app-access');
+      const group = await app('book-club');
+      await pool.query(`INSERT INTO users (id, username, has_platform_access) VALUES
+        (13, 'jo', TRUE), (14, 'kit', TRUE), (15, 'lou', TRUE), (16, 'max', TRUE)`);
+      await pool.query(`UPDATE apps SET icon_color = '#2e6660', manifest_snapshot = '{"description":"Our monthly pick"}' WHERE id = 2`);
+      const jo = as(13, 'jo', true);
+      const opens = (user) => appAccess.getAppForUser(pool, 'book-club', user, 'view', appAccess.ACCESS_COLUMNS);
+      const made = await invites.createInvite(pool, { app: group, user: ADA, note: 'Come read' });
+      const usesOf = async () => (await pool.query('SELECT uses FROM community_invites WHERE id = $1', [made.link.id])).rows[0].uses;
+
+      // A non-member, link or no link, is refused by the gates as before.
+      assert.equal(await opens(jo), null, 'the existing view gate 404s a non-member');
+      const standing = await invites.standing(pool, made.link.token, jo);
+      assert.deepEqual([standing.live, standing.mine, standing.slug, standing.page], [true, null, null, null]);
+      assert.deepEqual(standing.invitePreview, { iconColor: '#2e6660', audienceLabel: 'Private community' });
+      assert.deepEqual(
+        [standing.project.name, standing.project.description, standing.inviter, standing.note, standing.memberCount],
+        ['Book Club', 'Our monthly pick', 'ada', 'Come read', (await pool.query('SELECT COUNT(*)::int AS n FROM community_members WHERE community_id = 2')).rows[0].n],
+      );
+      // Only what the link's own preview says: no other member, no item, no
+      // address of the project.
+      const text = JSON.stringify(standing);
+      const { rows: others } = await pool.query(
+        `SELECT u.username FROM community_members m JOIN users u ON u.id = m.user_id
+          WHERE m.community_id = 2 AND u.username <> 'ada'`);
+      assert.ok(others.length > 0, 'the group has members besides its inviter');
+      for (const { username } of others) assert.equal(text.includes(`"${username}"`), false, `${username} is not named`);
+      assert.doesNotMatch(text, /book-club|\/app\//, 'nor the project\'s address');
+      for (const key of ['members', 'items', 'proposals', 'issues', 'channel', 'activity', 'repo_url']) {
+        assert.equal(text.includes(`"${key}"`), false, `no ${key}`);
+      }
+      assert.equal(await opens(jo), null, 'and reading it opened nothing');
+
+      // A link that is not live shows no preview: turned off, expired, used
+      // up, or its maker no longer in the group (deadReason, redeem's rule).
+      const deadly = [
+        ['revoked', async (link) => invites.revokeInvite(pool, { inviteId: link.id, user: ADA })],
+        ['expired', async (link) => pool.query("UPDATE community_invites SET expires_at = NOW() - INTERVAL '1 minute' WHERE id = $1", [link.id])],
+        ['used_up', async (link) => pool.query('UPDATE community_invites SET uses = max_uses WHERE id = $1', [link.id])],
+      ];
+      for (const [reason, kill] of deadly) {
+        const link = (await invites.createInvite(pool, { app: group, user: ADA })).link;
+        await kill(link);
+        const dead = await invites.standing(pool, link.token, jo);
+        assert.deepEqual([dead.live, dead.reason, dead.page, dead.invitePreview, dead.project], [false, reason, null, null, undefined], reason);
+      }
+      await pool.query("INSERT INTO app_collaborators (app_id, user_id, status) VALUES (2, 15, 'member')");
+      await pool.query('INSERT INTO community_members (community_id, user_id) VALUES (2, 15)');
+      const lous = (await invites.createInvite(pool, { app: group, user: as(15, 'lou', true) })).link;
+      await pool.query('DELETE FROM app_collaborators WHERE app_id = 2 AND user_id = 15');
+      const gone = await invites.standing(pool, lous.token, jo);
+      assert.deepEqual([gone.live, gone.reason, gone.invitePreview], [false, 'revoked', null], 'a maker out of the group');
+
+      // A suspended app, or one this viewer blocked: no preview either.
+      await pool.query('UPDATE apps SET moderation_suspended_at = NOW() WHERE id = 2');
+      assert.equal((await invites.standing(pool, made.link.token, as(14, 'kit', true))).invitePreview, null, 'suspended');
+      await pool.query('UPDATE apps SET moderation_suspended_at = NULL WHERE id = 2');
+      await pool.query('INSERT INTO user_app_blocks (user_id, app_id) VALUES (14, 2)');
+      assert.equal((await invites.standing(pool, made.link.token, as(14, 'kit', true))).invitePreview, null, 'blocked');
+
+      // Join through the preview: a use spent, a member, the app open to them.
+      const before = await usesOf();
+      const joined = await invites.redeem(pool, { token: made.link.token, user: jo });
+      assert.deepEqual([joined.status, joined.slug], ['joined', 'book-club']);
+      assert.equal(await usesOf(), before + 1);
+      assert.ok(await opens(jo), 'a member now, through the gate the link did not loosen');
+      // An existing member following it again: the hub, as before.
+      const again = await invites.standing(pool, made.link.token, jo);
+      assert.deepEqual([again.mine, again.slug, again.page, again.invitePreview], ['joined', 'book-club', null, null]);
+      // And a public community's link is still its page.
+      const arenaLink = (await invites.createInvite(pool, { app: await app('arena'), user: ADA })).link;
+      const pub = await invites.standing(pool, arenaLink.token, as(16, 'max', true));
+      assert.deepEqual([pub.page, pub.invitePreview], ['arena', null]);
     });
 
     await t.test('a link dies with its maker\'s standing, and so does a queued invite from it', async () => {

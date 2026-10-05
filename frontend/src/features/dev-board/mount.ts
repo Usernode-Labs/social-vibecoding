@@ -52,6 +52,7 @@ import { DevTopicSubView } from './topic-frame';
 import { publishViewMode } from './view-mode-store';
 import { publishDevActions } from './actions-store';
 import { publishWorkshopGroup } from './workshop/group-mode-store';
+import { publishInviteOffer, type InviteOffer } from './workshop/invite-offer';
 import {
   aiEnabledStore,
   cardNowStore,
@@ -123,6 +124,8 @@ export interface DevBoardBridge {
   publishAiEnabled(enabled: boolean): void;
   publishViewMode(mode: string): void;
   publishWorkshopGroup(mode: string): void;
+  /** #3700: the invite link a project's page was opened from (App._followInvite). */
+  publishInviteOffer(offer: InviteOffer | null): void;
   unmount(host: Element | null): void;
   unmountAll(): void;
   /** Live portal count — the leak assertion in tests reads this. */
@@ -375,6 +378,7 @@ export const devBoardBridge: DevBoardBridge = {
 
   publishViewMode,
   publishWorkshopGroup,
+  publishInviteOffer,
   unmount: unmountLegacyPortal,
   unmountAll: unmountAllLegacyPortals,
   rootCount: legacyPortalCount,

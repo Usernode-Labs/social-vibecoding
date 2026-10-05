@@ -201,7 +201,7 @@ test('every Kubernetes chart release validates its immutable platform image with
   assert.match(validation, /loadShellRelease\('\/app\/public'\)/);
 });
 
-test('Kubernetes workflow retains queued releases and only publishes the current branch tip', () => {
+test('Kubernetes workflow retains queued releases, publishes the tip, and never an older revision over a newer one', () => {
   const workflow = read('.github/workflows/build-kubernetes-images.yml');
   const release = workflow.slice(workflow.indexOf('\n  release:\n'));
   assert.match(workflow,
@@ -209,6 +209,16 @@ test('Kubernetes workflow retains queued releases and only publishes the current
     'a later waiting push must not cancel an earlier merge before it gets a release run');
   assert.match(release, /git ls-remote --exit-code origin "\$GITHUB_REF"/);
   assert.match(release, /if \[ "\$current_sha" = "\$GITHUB_SHA" \]; then/);
+  // Behind the tip (5 October: twelve queued runs in a row skipped, so
+  // nothing deployed for an hour and a half), a stable run publishes only
+  // ahead of an older, lower-numbered release, at most every
+  // RELEASE_EVERY_MINUTES. tests/kubernetes-release-publish-rule.test.js runs
+  // the step against every case.
+  assert.match(release, /helm show chart "\$CHART_REF" --version '0\.1\.\*'/,
+    'the newest release Argo CD would run, read from the registry');
+  assert.match(release, /compare "\$published_sha" "\$GITHUB_SHA"\)" = ahead/, 'only over an older revision');
+  assert.match(release, /compare "\$GITHUB_SHA" "\$current_sha"\)" = ahead/, 'only a revision the branch still contains');
+  assert.match(release, /\[ "\$RELEASE_CHANNEL" = stable \] \|\| decide false/, 'a candidate waits for its tip');
   for (const step of ['Log in to GHCR for Helm', 'Publish OCI Helm release', 'Record atomic release']) {
     assert.match(release, new RegExp(`- name: ${step}\\n        if: steps\\.current_head\\.outputs\\.publish == 'true'`));
   }

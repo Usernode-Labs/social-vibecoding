@@ -68,16 +68,32 @@ const ADD_ON = 'border-transparent bg-transparent text-zinc-600 dark:text-zinc-3
 const ADD_OFF = 'border-transparent bg-zinc-100 dark:bg-zinc-800 text-zinc-900 '
   + 'dark:text-zinc-100 hover:bg-zinc-200 dark:hover:bg-zinc-700';
 
+/**
+ * The review label a Discover row shows (#3911). The API's `directory.label`
+ * is the admin console's vocabulary, and one of its words is not for
+ * browsers: "Needs re-review" (state `outdated`, see
+ * src/services/discovery-curation.js) is an app reviewed as working whose
+ * newer version nobody has checked yet. To someone browsing, that version is
+ * simply not yet reviewed, which is the heading the app already sits under
+ * in Recommended, so the row says that instead. Its tier and its place in
+ * every sort are unchanged; Admin › Featured apps reads the server's label
+ * and keeps the distinction it needs.
+ */
+export function rowDirectoryLabel(directory?: { state?: string; label?: string } | null): string | null {
+  if (!directory?.label) return null;
+  return directory.state === 'outdated' ? 'Not yet reviewed' : directory.label;
+}
+
 function Row({ view, headingSays }: {
   view: RowView;
   /**
    * The directory label the tier heading over this row already says
-   * ("Reviewed working" under "Reviewed working apps"). A row whose own label
-   * is that one drops it: the same words once over the section and again on
-   * every row under it was the metadata that made a Discover row four lines
-   * deep. A label the heading does NOT say ("Needs an icon", "Needs
-   * re-review" under "Not yet reviewed") stays, and so does every label in
-   * an ungrouped sort, where no heading says anything.
+   * ("Reviewed working" under "Reviewed working apps", "Not yet reviewed"
+   * under "Not yet reviewed"). A row whose own label is that one drops it:
+   * the same words once over the section and again on every row under it was
+   * the metadata that made a Discover row four lines deep. A label the
+   * heading does NOT say stays, and so does every label in an ungrouped sort
+   * or a search, where no heading says anything.
    */
   headingSays?: string;
 }): ReactNode {
@@ -116,6 +132,7 @@ function Row({ view, headingSays }: {
   }, []);
 
   const warm = () => controller()?.warmRow(view);
+  const label = rowDirectoryLabel(view.app.directory);
 
   return (
     <ListRow
@@ -158,8 +175,8 @@ function Row({ view, headingSays }: {
           {/* `truncate`, not just `block` (QA 2026-09-24 Q10): the subtitle box
               clips, so without its own ellipsis this line was cut mid-word
               ("Reviewed workir") on a phone. */}
-          {view.app.directory?.label && view.app.directory.label !== headingSays ? (
-            <span className="block truncate text-xs text-zinc-600 dark:text-zinc-400">{view.app.directory.label}</span>
+          {label && label !== headingSays ? (
+            <span className="block truncate text-xs text-zinc-600 dark:text-zinc-400">{label}</span>
           ) : null}
           <span className="block truncate">{view.meta}</span>
           {hasAppPills(view.app) ? (

@@ -1582,9 +1582,9 @@ async function askModel(t, { messages, tools, toolChoice, where, attempts = MAX_
         // not to, and with require_parameters OpenRouter then routes only to
         // providers that support it: for GLM 5.3 Flash, one of its thirty
         // (Inceptron), so every 429 and slow answer of that one provider was
-        // the DM's, with nowhere to fail over. Global Chat sends it only to
-        // models that take it (orchestrator.js). A turn runs its calls one by
-        // one either way. `false` would still be sent, and still narrow it.
+        // the DM's, with nowhere to fail over. The transport now sends it only
+        // for true, and nothing asks for that. A turn runs its calls one by
+        // one either way.
         parallelToolCalls: null,
         timeoutMs: REQUEST_TIMEOUT_MS,
         // OpenRouter's session pins a provider. It is this turn's, not the

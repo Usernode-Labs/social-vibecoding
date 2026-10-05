@@ -1691,7 +1691,7 @@ function proposalHandoffRoutes(config) {
             }
             const spec = input.spec || session.spec_md;
             if (input.spec) {
-              await pool.query(`UPDATE chat_sessions SET spec_md = $1 WHERE id = $2`, [input.spec, session.id]);
+              await pool.query(`UPDATE chat_sessions SET spec_md = $1, spec_html = NULL WHERE id = $2`, [input.spec, session.id]);
             }
             await snapshotSpec(pool, session.id, spec, input.headSha);
             const adopted = await pool.query(
@@ -1799,7 +1799,7 @@ function proposalHandoffRoutes(config) {
           }
           const spec = input.spec || session.spec_md;
           if (input.spec) {
-            await pool.query(`UPDATE chat_sessions SET spec_md = $1 WHERE id = $2`, [input.spec, session.id]);
+            await pool.query(`UPDATE chat_sessions SET spec_md = $1, spec_html = NULL WHERE id = $2`, [input.spec, session.id]);
           }
           await snapshotSpec(pool, session.id, spec, input.headSha);
           const adopted = await pool.query(

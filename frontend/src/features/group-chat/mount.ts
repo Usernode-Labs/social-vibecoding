@@ -48,7 +48,7 @@ import {
   type ComposerScope,
   type ComposerSlot,
 } from './composer-store';
-import { GeneralChat, type GeneralChatProps } from './general-chat';
+import { GENERAL_FOLLOW_PX, GeneralChat, type GeneralChatProps } from './general-chat';
 import { ReactionBar, type ReactionBarProps } from './reaction-bar';
 import { reactionBarStore, type ReactionBarState } from './reaction-bar-store';
 import { SpecPanel } from './spec-panel';
@@ -58,10 +58,12 @@ import { Transcript } from './transcript';
 import {
   EMPTY_VIEW,
   transcriptStore,
+  unreadOpenings,
   type TranscriptLead,
   type TranscriptMessage,
   type TranscriptState,
 } from './transcript-store';
+import { attachLineHold, lineTopIn, openingScrollTop } from '../messages/unread-anchor';
 
 /**
  * Whether two view-model values hold the same data. The rows are plain data
@@ -424,6 +426,32 @@ export function publishReactionBar(next: ReactionBarState): void {
   reactionBarStore.set(next);
 }
 
+/**
+ * Open the channel at its "New" line (`GroupChat._openAtUnread`): the line a
+ * row or two under the top of `container`, as a conversation in Messages
+ * opens (../messages/unread-anchor.ts), and held there while what is drawn
+ * above it fills in. Answers where it went and whether that is the bottom
+ * (`pinned`, the module's `_lockedToBottom`), or null with no line drawn.
+ * The line is the transcript's (./transcript.tsx), so it is found and
+ * measured here rather than by the module.
+ */
+let releaseLine: (() => void) | null = null;
+export function openAtUnreadLine(container: HTMLElement | null): { top: number; pinned: boolean } | null {
+  const line = container?.querySelector<HTMLElement>('[data-unread-line]') || null;
+  if (!container || !line) return null;
+  const at = openingScrollTop({
+    lineTop: lineTopIn(container, line),
+    scrollHeight: container.scrollHeight,
+    clientHeight: container.clientHeight,
+    slack: GENERAL_FOLLOW_PX,
+  });
+  container.scrollTop = at.top;
+  releaseLine?.();
+  releaseLine = at.pinned ? null : attachLineHold(container, line);
+  unreadOpenings.set((s: { count: number }) => ({ count: s.count + 1 }));
+  return at;
+}
+
 if (typeof window !== 'undefined') {
   const w = window as unknown as { UsernodeReact?: Record<string, unknown> };
   w.UsernodeReact = w.UsernodeReact || {};
@@ -450,5 +478,6 @@ if (typeof window !== 'undefined') {
     mountGeneralChat,
     unmountGeneralChat,
     publishComposer,
+    openAtUnreadLine,
   };
 }

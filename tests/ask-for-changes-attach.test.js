@@ -105,7 +105,7 @@ test('the chip names the title and the project, never the short name or "Proposa
 });
 
 test('the Share item dialog opens on the app it came from, the viewer\'s own projects first', () => {
-  const { orderAppChoices, prefilledAppId } = loadTsx('frontend/src/features/messages/share-dialog.tsx');
+  const { orderAppChoices, filterAppChoices, APP_GROUPS, prefilledAppId } = loadTsx('frontend/src/features/messages/share-dialog.tsx');
   const apps = [
     { id: 1, slug: 'alpha', name: 'Alpha', mine: false },
     { id: 2, slug: 'flat-4b-chores-e98ecd', name: 'Flat 4B Chores', mine: true },
@@ -121,8 +121,10 @@ test('the Share item dialog opens on the app it came from, the viewer\'s own pro
   assert.equal(prefilledAppId([], { appId: 9 }), 9, 'an id is kept while the list loads');
   assert.equal(prefilledAppId(apps, null), null);
   const dialog = englishUiSource(read('frontend/src/features/messages/share-dialog.tsx'));
-  assert.match(dialog, /<optgroup label="Your projects">/);
-  assert.match(dialog, /<optgroup label="Other projects">/);
+  // #3937: the dropdown's two option groups are the list's filter chips now,
+  // and the list itself still leads with the viewer's own projects.
+  assert.deepEqual(filterAppChoices(apps).map((a) => a.id), [2, 4, 1, 3]);
+  assert.deepEqual(APP_GROUPS.map((g) => g.label), ['All', 'Your projects', 'Other projects']);
   assert.match(dialog, /setAppId\(prefilledAppId\(apps, reference\)\);/);
   assert.match(dialog, /setAppId\(prefilledAppId\(apps, \{ appSlug: wantedSlug \}\)\);/, 'chosen once the list it is in loads');
   const api = read('frontend/src/features/messages/api.ts');

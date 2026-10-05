@@ -318,10 +318,12 @@ test('the Communities tab opens on the project the tour is about', () => {
 
 test('App._followInvite welcomes somebody the link has just let in, and lands anyone else as before', () => {
   const app = read('public/js/app.js');
-  assert.match(englishUiSource(app), /const fresh = standing\.joinedAt && Date\.now\(\) - Date\.parse\(standing\.joinedAt\) < 30 \* 60 \* 1000;\s+if \(fresh && welcome\(standing, standing\.slug\)\) return;\s+openHub\(standing\.slug\);/);
+  // Just let in and not welcomed: where a Join lands (#3700). A member
+  // reopening an old link: the hub, as before.
+  assert.match(englishUiSource(app), /const fresh = standing\.joinedAt && Date\.now\(\) - Date\.parse\(standing\.joinedAt\) < 30 \* 60 \* 1000;\s+if \(fresh && welcome\(standing, standing\.slug\)\) return;\s+(?:\/\/[^\n]*\n\s*)*if \(fresh\) \{ await App\._landJoined\(standing\.slug\); return; \}\s+openHub\(standing\.slug\);/);
   // Signed in before following it: an account that was already there,
   // unless the join's answer says it is a test account on its first sign-in.
-  assert.match(englishUiSource(app), /if \(welcome\(\{ \.\.\.standing, newAccount: result\.newAccount === true \}, result\.slug\)\) return;\s+toast\(`You joined \$\{result\.name \|\| name\}\.`\);/);
+  assert.match(englishUiSource(app), /if \(welcome\(\{ \.\.\.standing, newAccount: result\.newAccount === true \}, result\.slug\)\) return;\s+await App\._landJoined\(result\.slug\);/);
   const invites = read('src/services/community-invites.js');
   assert.match(englishUiSource(invites), /joinedAt: appliedAt instanceof Date \? appliedAt\.toISOString\(\) : \(appliedAt \|\| null\),\s+newAccount,/);
 });
@@ -330,7 +332,8 @@ test('somebody an invite is bringing in is asked to join it once, and not what t
   const app = read('public/js/app.js');
   // The follow publishes whether it brought them in.
   assert.match(englishUiSource(app), /async _followInvite\(token\) \{\s*App\._markNavigationVia\?\.\('handed'\);[\s\S]{0,400}App\._inviteFollow = new Promise\(\(resolve\) => \{ settle = resolve; \}\);\s+try \{/);
-  assert.match(englishUiSource(app), /\} finally \{\s+settle\(joinedHere\);\s+(?:\/\/[^\n]*\n\s*)*if \(held\) App\._endWelcomeHold\(\);\s+\}\s+\},/);
+  // Unless the project's page took the link (#3700): its Join settles it.
+  assert.match(englishUiSource(app), /\} finally \{\s+if \(!deferred\) settle\(joinedHere\);\s+(?:\/\/[^\n]*\n\s*)*if \(held\) App\._endWelcomeHold\(\);\s+\}\s+\},/);
   assert.match(englishUiSource(app), /if \(standing\.mine === 'joined' && standing\.slug\) \{\s+joinedHere = true;/);
   assert.match(englishUiSource(app), /toast\(DEAD\[result\.reason\] \|\| 'Could not join\. Try again\.', true\); return; \}\s+joinedHere = true;/);
   // Join pressed on the link's page, then a password sign-in: no second ask.

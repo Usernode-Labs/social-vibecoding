@@ -76,12 +76,13 @@ import { Message, Localized, message as catalogText } from "../../../lib/i18n/re
  * where nothing was asked for.
  */
 
-import { useEffect, useReducer, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useReducer, useRef, useState, type ReactNode, type Ref } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { CheckIcon, ChevronRightIcon, LockIcon, PlayIcon, UserGroupIcon, UserIcon } from '@/components/ui/icons';
 import { swatchFor } from '../../messages/format';
 import { offerJoin, registerJoinAnchor } from '../../../lib/join-required';
+import { invitedByLine, joinByInvite, seenByLine, useInviteOffer, type InviteJoin, type InviteOffer } from './invite-offer';
 
 type Audience = 'open' | 'invited' | 'solo';
 
@@ -635,7 +636,50 @@ export function canMakePrivate(data: Pick<CommunityPayload, 'audience' | 'can_ma
   return !!data && data.audience === 'open' && !!data.can_manage && !data.audience_change;
 }
 
-export function CommunityCard({ slug, name, menu, canOpenApp = false }: {
+/**
+ * WHO INVITED THEM, AND JOIN (#3700): "@maya invited you", their note, one
+ * "Join <name>" as the screen's primary button, and "Maya will see that you
+ * joined." The confirm's words (./invite-offer.ts), on a page. First in the
+ * hero of a page an invite link opened, and the body of a private
+ * community's invite preview (../../invite-preview). `children` hang under
+ * the button: the hero's Join question.
+ */
+export function InviteCard({ offer, name, busy, onJoin, joinRef, children }: {
+  offer: Pick<InviteOffer, 'inviter' | 'inviterName' | 'inviterMadeIt' | 'building' | 'note'>;
+  name: string;
+  busy: boolean;
+  onJoin: () => void;
+  joinRef?: Ref<HTMLButtonElement>;
+  children?: ReactNode;
+}) {
+  const seen = seenByLine(offer);
+  return (
+    <div className="dev-ws-invite" data-ws-invite="">
+      <p className="dev-ws-invite-from" data-ws-invite-from="">{invitedByLine(offer)}</p>
+      {offer.note ? <p className="dev-ws-invite-note" data-ws-invite-note="">{`“${offer.note}”`}</p> : null}
+      <div className="dev-ws-join-anchor">
+        <Button
+          ref={joinRef}
+          type="button"
+          layout="full"
+          variant="pillAccent"
+          disabledStyle="dim"
+          size="pillLg"
+          ink="solid"
+          data-ws-invite-join=""
+          disabled={busy}
+          onClick={onJoin}
+        >
+          {`Join ${name}`}
+        </Button>
+        {children}
+      </div>
+      {seen ? <p className="dev-ws-invite-seen" data-ws-invite-seen="">{seen}</p> : null}
+    </div>
+  );
+}
+
+export function CommunityCard({ slug, name, menu, canOpenApp = false, onJoinedByInvite }: {
   slug: string;
   /** The app's identity as the page already knows it (improveStore), so the
       hero draws the same tile and name as the header's chip. */
@@ -646,13 +690,19 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false }: {
   /** Whether "Open app" leads the actions (#3367): every project but the
       platform's own, which is the page you are on. */
   canOpenApp?: boolean;
+  /** Where Join through the invite link this page was opened from lands
+      (./invite-offer.ts): the page's own choice, Needs you or the hub. */
+  onJoinedByInvite?: () => void;
 }) {
   useUiLanguage();
   const data = useCommunity(slug);
+  // The invite link this page was opened from, if it was (#3700).
+  const offer = useInviteOffer(slug);
   const [busy, setBusy] = useState(false);
   // The open Join question, if one is: its answer goes back to whoever asked
-  // (lib/join-required.ts's offerJoin), which does the joining.
-  const [asking, setAsking] = useState<null | { answer: (ok: boolean) => void }>(null);
+  // (lib/join-required.ts's offerJoin), which does the joining, unless the
+  // answer is 'joined': the invite link has done it already.
+  const [asking, setAsking] = useState<null | { answer: (ok: boolean | 'joined') => void }>(null);
   const cardRef = useRef<HTMLElement | null>(null);
   const joinRef = useRef<HTMLButtonElement | null>(null);
   const popRef = useRef<HTMLDivElement | null>(null);
@@ -666,10 +716,10 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false }: {
   const canJoin = !!data && !data.is_member;
   useEffect(() => {
     if (!canJoin) return undefined;
-    let open: ((ok: boolean) => void) | null = null;
+    let open: ((ok: boolean | 'joined') => void) | null = null;
     const off = registerJoinAnchor(slug, {
       visible: () => !!joinRef.current && joinRef.current.getClientRects().length > 0,
-      ask: () => new Promise<boolean>((resolve) => {
+      ask: () => new Promise<boolean | 'joined'>((resolve) => {
         open = resolve;
         setAsking({
           answer: (ok) => {
@@ -741,6 +791,28 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false }: {
     }
   };
 
+  // JOIN THROUGH THE LINK this page was opened from (./invite-offer.ts),
+  // which spends a use of it and tells its maker, as the confirm's Join did.
+  // From the button it lands where the page says (`onJoinedByInvite`); as
+  // the answer to a question a refusal asked under it, it lands nowhere, so
+  // the press that met the refusal is simply sent again (offerJoin).
+  const joinThroughLink = async (land: boolean): Promise<boolean> => {
+    if (!offer || busy) return false;
+    setBusy(true);
+    let outcome: InviteJoin['outcome'] = 'failed';
+    try {
+      ({ outcome } = await joinByInvite(offer));
+    } finally {
+      setBusy(false);
+      void load();
+    }
+    if (outcome === 'joined' && land) onJoinedByInvite?.();
+    return outcome === 'joined' || outcome === 'welcomed';
+  };
+  const answerThroughLink = (answer: (ok: boolean | 'joined') => void) => {
+    void joinThroughLink(false).then((ok) => answer(ok ? 'joined' : false));
+  };
+
   const leave = async () => {
     const home = (window as any).Home;
     if (!home?.setMembership || busy) return;
@@ -759,8 +831,58 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false }: {
   // the ⋯'s own gate.
   const displayName = name || data.name || slug;
   const solo = data.audience === 'solo';
+  // OPENED FROM AN INVITE LINK and not in it yet (#3700): who invited them
+  // and one prominent Join lead the hero, and that Join is the only one on
+  // it. `?shot=invite-join` draws the same for whoever is looking, so the
+  // hero is drawn as for an outsider then (`member`).
+  const invited = !!offer && (!!offer.preview || !data.is_member);
+  const member = data.is_member && !offer?.preview;
+  // The question a refusal asks, under whichever Join is showing.
+  const popup = asking ? (
+    <LocalizedDynamic element={<div
+      ref={popRef}
+      className="dev-ws-join-pop"
+      role="dialog"
+      aria-label={tr("workshop:join_value1_b4f8b7c8", { value1: displayName })}
+      data-ws-join-pop=""
+    >
+      <p className="dev-ws-ask-q"><Message after={" "} id="workshop:join_fd30fe68" />{displayName}?</p>
+      <p className="dev-ws-vote-sub"><Message id="workshop:members_start_changes_file_requests_vote_and_cha_c37decc6" /></p>
+      <div className="dev-ws-answer-row">
+        <button
+          type="button"
+          className="dev-ws-answer-btn dev-ws-answer-join"
+          data-ws-join-answer="join"
+          autoFocus
+          // Busy is the row's Join waiting on this very answer; only the
+          // link's join, once pressed, is something to wait out here.
+          disabled={invited && busy}
+          onClick={() => { if (invited) answerThroughLink(asking.answer); else asking.answer(true); }}
+        ><Message id="workshop:join_fd30fe68" /></button>
+      </div>
+      <button type="button" className="dev-ws-vote-later" data-ws-join-answer="later" onClick={() => asking.answer(false)}><Message id="workshop:not_now_a0e63d7c" /></button>
+    </div>} resolve={() => ({ get "aria-label"() { return tr("workshop:join_value1_b4f8b7c8", { value1: displayName }); } })} />
+  ) : null;
+  // WHO INVITED THEM, AND JOIN, first in the hero: visible without scrolling
+  // on a phone, above everything the page shows them to decide by (who is
+  // here, what it is, Open app, the fortnight, and below the hero what is
+  // being decided).
+  const inviteHead = invited && offer ? (
+    <InviteCard
+      offer={offer}
+      name={displayName}
+      busy={busy}
+      joinRef={joinRef}
+      onJoin={() => {
+        if (asking) { answerThroughLink(asking.answer); return; }
+        void joinThroughLink(true);
+      }}
+    >
+      {popup}
+    </InviteCard>
+  ) : null;
   // YOU AND THIS PROJECT, at the end of the action row: Join, or Joined.
-  const membership = !data.is_member ? (
+  const membership = invited ? null : !data.is_member ? (
     <span className="dev-ws-join-anchor">
       <Button
         ref={joinRef}
@@ -774,28 +896,7 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false }: {
         disabled={busy && !asking}
         onClick={() => { void join(); }}
       ><Message id="workshop:join_fd30fe68" /></Button>
-      {asking ? (
-        <LocalizedDynamic element={<div
-          ref={popRef}
-          className="dev-ws-join-pop"
-          role="dialog"
-          aria-label={tr("workshop:join_value1_b4f8b7c8", { value1: displayName })}
-          data-ws-join-pop=""
-        >
-          <p className="dev-ws-ask-q"><Message after={" "} id="workshop:join_fd30fe68" />{displayName}?</p>
-          <p className="dev-ws-vote-sub"><Message id="workshop:members_start_changes_file_requests_vote_and_cha_c37decc6" /></p>
-          <div className="dev-ws-answer-row">
-            <button
-              type="button"
-              className="dev-ws-answer-btn dev-ws-answer-join"
-              data-ws-join-answer="join"
-              autoFocus
-              onClick={() => asking.answer(true)}
-            ><Message id="workshop:join_fd30fe68" /></button>
-          </div>
-          <button type="button" className="dev-ws-vote-later" data-ws-join-answer="later" onClick={() => asking.answer(false)}><Message id="workshop:not_now_a0e63d7c" /></button>
-        </div>} resolve={() => ({ get "aria-label"() { return tr("workshop:join_value1_b4f8b7c8", { value1: displayName }); } })} />
-      ) : null}
+      {popup}
     </span>
   ) : data.is_creator ? null : (
     // JOINED IS THE LEAVE CONTROL. A state you can see, with a check, and a
@@ -827,6 +928,7 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false }: {
       // the card after it.
       style={asking ? { position: 'relative', zIndex: 5 } : undefined}
     >
+      {inviteHead}
       {/* WHO IS HERE, AND WHO IT IS FOR: the faces, then "Public community ·
           23 members". The tile and the name are the coloured header's. */}
       <HeroPeople
@@ -848,7 +950,7 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false }: {
       <div className="dev-ws-hero-row">
       <div className="dev-ws-hero-actions">
         {openApp}
-        {data.is_member && !solo ? (
+        {member && !solo ? (
           <Localized element={<Button title={catalogText("workshop:invite_people_with_a_link_214c7ce6")}
             type="button"
             variant="pillNeutral"

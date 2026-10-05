@@ -29,9 +29,13 @@ import { Message, Localized, message as catalogText } from "../../lib/i18n/react
  * transformed and clipped ancestors, and a fixed layer inside them would be
  * sized to them rather than to the screen. It exists only after a tap, so the
  * prerendered document never has it.
+ *
+ * A request's screenshots open here too (#3908), through
+ * `useInlineImageViewer` below: their markup is a sanitised string rather
+ * than a thumbnail React draws, so the surface around it delegates the tap.
  */
 
-import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
 import { XIcon } from '@/components/ui/icons';
@@ -57,6 +61,97 @@ export function openInViewer(event: ReactMouseEvent<HTMLAnchorElement>, open: ()
   if (!isPlainClick(event)) return;
   event.preventDefault();
   open();
+}
+
+/*
+ * ── A request's screenshots (#3908) ───────────────────────────────────
+ *
+ * An issue's body and its GitHub comments are markdown the module renders
+ * (`DevChat.renderMarkdown` with `images: true`), and every picture in them
+ * comes out as `<a class="dc-inline-img-link" href=… target="_blank">` around
+ * its `<img>`: the file's own link, which is what a chat thumbnail was before
+ * #3286, and which lost the page the same way ("screenshots from issues open
+ * full screen, not in a viewer, so you lose the page"). That markup is a
+ * string sanitised where it is built, so it cannot carry a handler and its
+ * data-* attributes are stripped. The element the surface draws around it
+ * takes the tap instead: one delegated click handler that finds the
+ * picture's link under it and opens the picture here.
+ *
+ * `data-image-viewer-scope` on that element is the marker. nav-link.js's
+ * external-link router (#1312) leaves a scope's picture links alone instead
+ * of handing a screenshot hosted elsewhere (a GitHub upload) to the system
+ * browser before this handler runs, and a declared check selects on it.
+ *
+ * Only the renderer's own picture link is taken: an image the author linked
+ * somewhere on purpose (`[![…](img)](url)`) is drawn without that class and
+ * keeps its destination. The link stays the file, so a modified click still
+ * opens it in a new tab.
+ */
+
+/** The picture link `DevChat.renderMarkdown` wraps an inline image in. */
+export const INLINE_IMAGE_LINK = 'a.dc-inline-img-link';
+
+export interface InlineImage {
+  src: string;
+  alt: string;
+}
+
+/**
+ * The picture a click inside `scope` landed on, or null when it landed on
+ * anything else. The link must be in the scope's own DOM: React bubbles a
+ * portal's clicks through the component tree, and a sheet portalled to
+ * <body> by a child is not this surface's to take.
+ */
+export function inlineImageAt(target: EventTarget | null, scope: Element | null): InlineImage | null {
+  const el = target as Element | null;
+  if (!el || typeof el.closest !== 'function' || !scope) return null;
+  const link = el.closest(INLINE_IMAGE_LINK);
+  if (!link || !scope.contains(link)) return null;
+  const img = link.querySelector('img');
+  // The link is the full-size file; the sanitiser drops an href it does not
+  // allow, and the picture's own src is the same file.
+  const src = link.getAttribute('href') || (img && img.getAttribute('src')) || '';
+  if (!src) return null;
+  return { src, alt: (img && img.getAttribute('alt')) || '' };
+}
+
+/**
+ * The delegated half: spread `scope` on the element around the rendered
+ * markdown and render `viewer` anywhere in the same component (it portals).
+ * One picture at a time: the viewer has no gallery.
+ */
+export function useInlineImageViewer(): {
+  scope: { onClick: (event: ReactMouseEvent<HTMLElement>) => void; 'data-image-viewer-scope': '' };
+  viewer: ReactNode;
+} {
+  const [shown, setShown] = useState<InlineImage | null>(null);
+  const onClick = useCallback((event: ReactMouseEvent<HTMLElement>) => {
+    if (!isPlainClick(event)) return;
+    const image = inlineImageAt(event.target, event.currentTarget);
+    if (!image) return;
+    event.preventDefault();
+    setShown(image);
+  }, []);
+  const close = useCallback(() => setShown(null), []);
+  return {
+    scope: { onClick, 'data-image-viewer-scope': '' },
+    viewer: shown ? <ImageViewer src={shown.src} alt={shown.alt} onClose={close} /> : null,
+  };
+}
+
+/**
+ * Whether `src` is on another site. `download` is ignored there and the
+ * browser follows the link instead, which would replace the page under the
+ * viewer; such a file opens in a new tab (or, in the installed app, through
+ * nav-link.js to the system browser) rather than being saved.
+ */
+export function isRemoteFile(src: string): boolean {
+  if (typeof window === 'undefined' || !window.location) return false;
+  try {
+    return new URL(src, window.location.href).origin !== window.location.origin;
+  } catch {
+    return false;
+  }
 }
 
 export function ImageViewer({ src, alt, onClose }: {
@@ -95,6 +190,9 @@ export function ImageViewer({ src, alt, onClose }: {
 
   if (typeof document === 'undefined') return null;
   const name = alt || tr("core:image_1aa4cb0b");
+  // A request's screenshot can live on another site (a GitHub upload); see
+  // `isRemoteFile`.
+  const remote = isRemoteFile(src);
   return createPortal(
     <div
       className="fixed inset-0 z-[2200] flex items-center justify-center bg-black/90"
@@ -134,9 +232,12 @@ export function ImageViewer({ src, alt, onClose }: {
         <a
           href={src}
           download={alt || true}
+          {...(remote ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
           className="inline-flex items-center h-10 px-4 rounded-full bg-white/15 text-white text-sm font-semibold"
           data-image-viewer-download=""
-        ><Message id="core:download_d6eafe82" /></a>
+        >
+          {remote ? 'Open original' : <Message id="core:download_d6eafe82" />}
+        </a>
         <Localized element={<button
           ref={closeRef}
           type="button"

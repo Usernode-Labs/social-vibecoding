@@ -1428,9 +1428,9 @@ export function DevCard(
  * The card's left edge: the bar's tone, and the card's TYPE where it has no
  * bar. 4px at a third strength (app.css `[data-edge]`), so a column reads as
  * a stack of tinted spines — blue while a vote is open, violet while going
- * live, amber behind main, red on a conflict, grey once live (a done state is
- * quiet) or paused — and an open issue, which has no state, wears its type's amber so the
- * Issues column is not the one bare column.
+ * live, amber behind main, red on a conflict, green once live (#3873), grey
+ * while paused — and an open issue, which has no state, wears its type's
+ * amber so the Issues column is not the one bare column.
  */
 export function edgeFor(m: DevCardModel): string {
   const s = m.pill?.state;

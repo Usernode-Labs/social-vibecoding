@@ -10,7 +10,9 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 
-import { groupsWithPrevious } from '@/components/ui/chat';
+import {
+  JumpToLatestButton, NewMessagesBanner, NewMessagesDivider, TranscriptOverlay, groupsWithPrevious,
+} from '@/components/ui/chat';
 import {
   ArrowsPointingInIcon, ArrowsPointingOutIcon, ChatIcon, ChevronDownIcon, DraftTrashIcon, EllipsisHorizontalIcon, PlusIcon,
   SearchIcon, SparklesIcon, UserGroupIcon, XIcon,
@@ -39,7 +41,11 @@ import { plainText } from './plain-text';
 import { useDismiss } from '../message-actions/use-dismiss';
 import { ShareItemDialog } from './share-dialog';
 import { ShareToDialog } from './share-to-dialog';
+import { JumpToLatest } from './jump-to-latest';
 import { useStickToBottom } from './stick-to-bottom';
+import {
+  firstUnreadId, jumpLabel, lineTopIn, messageRow, newMessagesLabel, openingScrollTop, useLineHold, useUnreadAffordances,
+} from './unread-anchor';
 import {
   agentThreadAddress,
   closeThread,
@@ -1626,6 +1632,15 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   const focusId = snap.route.focusMessageId;
   const [flashId, setFlashId] = useState<number | null>(null);
   const shownFocus = useRef<number | null>(null);
+  // THE "NEW" LINE (./unread-anchor.ts): above the first message after where
+  // reading had stopped when this conversation was opened (the store's
+  // `unreadMark`). The transcript opens with it near the top.
+  const unreadLine = useRef<HTMLDivElement>(null);
+  const mark = snap.unreadMark && snap.unreadMark.conversationId === conversationId ? snap.unreadMark : null;
+  const viewerId = typeof window !== 'undefined' ? Number(window.App?.user?.id) || 0 : 0;
+  const unreadRows = useMemo(() => snap.messages.map((message) => messageRow(message, viewerId)), [snap.messages, viewerId]);
+  const lineAt = mark ? firstUnreadId(unreadRows, mark.lastReadId) : null;
+  const holdLine = useLineHold(conversationId);
 
   useIsomorphicLayoutEffect(() => {
     if (!conversationId) return;
@@ -1654,6 +1669,20 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
       }
     }
     if (focusId && shownFocus.current === focusId && snap.nextAfter) { previousLast.current = last; return; }
+    // Unread messages: the conversation opens at the first of them, its
+    // "New" line a row or two below the top, instead of at the newest. When
+    // everything new fits at the bottom it opens there, following what
+    // arrives as it always did (openingScrollTop says which).
+    const line = unreadLine.current;
+    if (previousLast.current === null && line && !snap.nextAfter) {
+      const at = openingScrollTop({ lineTop: lineTopIn(el, line), scrollHeight: el.scrollHeight, clientHeight: el.clientHeight });
+      el.scrollTop = at.top;
+      pinned.current = at.pinned;
+      // And keeps it there while images and link cards above it fill in.
+      if (!at.pinned) holdLine(el, line);
+      previousLast.current = last;
+      return;
+    }
     // The viewer's own send always lands in view, wherever they had scrolled.
     // Anything else follows only a reader who was at the bottom BEFORE it
     // arrived (#3757): measured now, after the draw, a reply taller than the
@@ -1667,6 +1696,22 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
     }
     previousLast.current = last;
   }, [snap.messages, focusId, snap.nextAfter]);
+
+  // The banner over the transcript's top and the jump to the latest over its
+  // foot. After the effect above, so they measure where the opening put it.
+  const { view: unread, toLine, toLatest } = useUnreadAffordances(scroller, unreadLine, {
+    conversation: conversationId,
+    markKey: mark ? `${mark.conversationId}:${mark.lastReadId}` : '',
+    lineAt,
+    rows: unreadRows,
+    atPresent: !snap.nextAfter,
+    offerBanner: !focusId,
+  });
+  // At the foot of a linked window (#2387) the latest is not drawn yet.
+  const jumpToLatest = () => {
+    if (snap.nextAfter) { pinned.current = true; jumpToPresent(); return; }
+    toLatest();
+  };
 
   async function older() {
     const el = scroller.current;
@@ -1703,6 +1748,14 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   const rows: ReactNode[] = [];
   let previousDay = '';
   let previous: ConversationMessage | null = null;
+  // The "New" line, drawn once: above the first unread message, or above
+  // the first row drawn after it when that message is not drawn itself.
+  let lineDrawn = false;
+  const drawLine = () => {
+    if (lineDrawn) return;
+    lineDrawn = true;
+    rows.push(<NewMessagesDivider key="unread-line" ref={unreadLine} />);
+  };
   // #2884: three or more cards in a row — messages that are only a shared
   // item — draw as the first and a "… N more" row (../../lib/card-runs.ts).
   // A day divider breaks a run, so folding never hides one.
@@ -1716,6 +1769,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
       rows.push(<div key={`day-${day}`} className="messages-day" aria-hidden="true">{dayLabel(message)}</div>);
       previousDay = day;
     }
+    if (lineAt !== null && message.id >= lineAt) drawLine();
     // #2387 follow-up: a thread's reply, drawn where it landed — one card for
     // the run of replies to that thread with nothing else said between them
     // on the same day. A deleted reply is gone from the run; the next message
@@ -1759,6 +1813,9 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
     const runKey = String(message.clientKey || message.id);
     if (length && !expandedRuns.has(runKey)) {
       const hidden = length - 1;
+      // The first unread folded away in the run: the line goes above the
+      // fold that holds it.
+      if (lineAt !== null && snap.messages[index + hidden].id >= lineAt) drawLine();
       rows.push(
         <div key={`more-${runKey}`} className="messages-card-run">
           <LocalizedDynamic element={<button
@@ -1786,6 +1843,14 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
       {botDm ? <BotWorkSync conversationId={conversationId} newsKey={newestBotMessageId(snap.messages)} /> : null}
       {/* #3736: and keeps the activity cards in its transcript current. */}
       {botDm ? <BotActivitySync conversationId={conversationId} newsKey={newestBotMessageId(snap.messages)} /> : null}
+      {/* What is new, counted over the transcript's top; a tap goes to the
+          "New" line (./unread-anchor.ts). Hung beside the scroller, not in
+          it, so the scroller keeps its size and its class string. */}
+      {mark ? (
+        <TranscriptOverlay edge="top">
+          <NewMessagesBanner shown={unread.banner} onClick={toLine}>{newMessagesLabel(mark.count)}</NewMessagesBanner>
+        </TranscriptOverlay>
+      ) : null}
       {/* No `un-kb-avoid` WRITTEN here: the column reserves the keyboard
           inset (`platform-kb-column` above). The kit adds the class itself
           once useComposerKeyboard attaches (#3571), as it does to
@@ -1817,6 +1882,11 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
           </div>
         ) : null}
       </div>
+      {/* Jump to latest, over the transcript's foot whenever the reader is
+          not at the bottom, with a dot for what arrived while they were up. */}
+      <TranscriptOverlay edge="foot">
+        <JumpToLatestButton shown={unread.jump} dot={unread.arrived > 0} aria-label={jumpLabel(unread.arrived)} title="Jump to latest" onClick={jumpToLatest} />
+      </TranscriptOverlay>
       <div className="messages-typing" aria-live="polite"><LocalizedValue render={() => (typing.length === 1 ? tr("community:value1_is_typing_eb59b2e3", { value1: typing[0] }) : typing.length > 1 ? tr("community:value1_are_typing_9fba80d4", { value1: typing.slice(0, 2).join(', ') }) : '')} /></div>
       <MessageComposer />
     </section>} resolve={() => ({ "aria-label": snap.active?.title || tr("community:conversation_ccca1817") })} />
@@ -1922,6 +1992,7 @@ function ReplyThreadPanel() {
           return <MessageRow key={message.clientKey || message.id} message={{ ...message, threadRootId: message.threadRootId || rootId }} conversationId={conversationId} grouped={grouped} channels={channels} kind={kind} inThread />;
         })}
       </div>
+      <JumpToLatest scroller={scroller} />
       <MessageComposer threadRootId={rootId} />
     </aside>} messages={{"aria-label":"community:thread_5373c7f8"}} />
   );

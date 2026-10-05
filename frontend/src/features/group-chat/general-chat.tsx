@@ -36,8 +36,77 @@ import { Message, Localized, message as catalogText } from "../../lib/i18n/react
  * its store subscription alive.
  */
 
+import { useMemo, useRef, useState, type RefObject } from 'react';
+
+import { NewMessagesBanner, TranscriptOverlay } from '@/components/ui/chat';
+import { useStoreState } from '../../lib/use-store-state';
+import { JumpToLatest } from '../messages/jump-to-latest';
+import {
+  firstUnreadId, newMessagesLabel, transcriptRow, useUnreadAffordances, type UnreadRow,
+} from '../messages/unread-anchor';
 import { ComposerForm, ComposerSlots, StatusLine } from './composer';
 import { ReplyStarters } from './reply-starters';
+import { transcriptStore, unreadOpenings } from './transcript-store';
+
+/**
+ * How near the bottom the channel counts as followed: public/js/group-chat.js
+ * keeps `_lockedToBottom` within 50px, so Jump to latest is up exactly when
+ * a new message would not be followed.
+ */
+export const GENERAL_FOLLOW_PX = 50;
+
+const NO_ROWS: readonly UnreadRow[] = [];
+
+/** The general stream's rows, as the unread pieces read them. */
+function useChannelRows(): { rows: readonly UnreadRow[]; unread: { lastReadId: number; count: number } | null } {
+  const main = useStoreState(transcriptStore).byKey.main;
+  const messages = main ? main.messages : null;
+  const rows = useMemo(() => (messages ? messages.map(transcriptRow) : NO_ROWS), [messages]);
+  return { rows, unread: main?.lead.unread || null };
+}
+
+/**
+ * "3 new messages" over the top of the stream, while the channel is open at
+ * its "New" line (./transcript.tsx draws the line; group-chat.js and
+ * ./mount.ts open the stream at it). Its own component, beside the stream,
+ * so the pane around it holds no state.
+ *
+ * It starts counting from the OPENING (`unreadOpenings`): the stream is
+ * moved to the line after the rows land, and where the line sat before that
+ * is not the reader scrolling onto it. A stream that did not open at the
+ * line (a message the bell sent them to) offers no banner.
+ */
+function ChannelUnreadBanner({ scroller }: { scroller: RefObject<HTMLElement | null> }) {
+  const { rows, unread } = useChannelRows();
+  const opened = useStoreState(unreadOpenings).count;
+  const [atMount] = useState(opened);
+  const line = useMemo(() => ({
+    get current(): HTMLElement | null {
+      return scroller.current?.querySelector<HTMLElement>('[data-unread-line]') || null;
+    },
+  }), [scroller]);
+  const lineAt = unread ? firstUnreadId(rows, unread.lastReadId) : null;
+  const { view, toLine } = useUnreadAffordances(scroller, line, {
+    conversation: null,
+    markKey: unread ? `${unread.lastReadId}:${opened}` : '',
+    lineAt,
+    rows,
+    offerBanner: opened !== atMount,
+    slack: GENERAL_FOLLOW_PX,
+  });
+  if (!unread) return null;
+  return (
+    <TranscriptOverlay edge="top">
+      <NewMessagesBanner shown={view.banner} onClick={toLine}>{newMessagesLabel(unread.count)}</NewMessagesBanner>
+    </TranscriptOverlay>
+  );
+}
+
+/** Jump to latest over the stream's foot, with a dot for what arrived while the reader was up it. */
+function ChannelJumpToLatest({ scroller }: { scroller: RefObject<HTMLElement | null> }) {
+  const { rows } = useChannelRows();
+  return <JumpToLatest scroller={scroller} slack={GENERAL_FOLLOW_PX} rows={rows} />;
+}
 
 const SAFE_BAR = 'platform-safe-bar';
 
@@ -61,6 +130,7 @@ export interface GeneralChatProps {
 }
 
 export function GeneralChat({ introAppName, readOnly, notice, maxLength }: GeneralChatProps) {
+  const messages = useRef<HTMLDivElement>(null);
   return (
     <div className="flex flex-col h-full min-h-0 dc-lift dc-lift-session">
       <div className="gc-tab-body flex-1 flex min-h-0">
@@ -76,7 +146,11 @@ export function GeneralChat({ introAppName, readOnly, notice, maxLength }: Gener
           {introAppName ? (
             <div className="mx-3 mt-3 px-4 py-3 rounded-2xl bg-violet-500/10 text-[15px] leading-snug text-zinc-700 dark:text-zinc-200"><RichMessage id="workshop:sentence_223c6d41842d" values={{ value1: introAppName }} components={[<span className="font-medium" />]} /></div>
           ) : null}
-          <div id="gc-messages" className="flex-1 overflow-y-auto py-2 space-y-0.5" />
+          {/* Over the stream's top and its foot: siblings of #gc-messages,
+              which stays the transcript's alone. */}
+          <ChannelUnreadBanner scroller={messages} />
+          <div ref={messages} id="gc-messages" className="flex-1 overflow-y-auto py-2 space-y-0.5" />
+          <ChannelJumpToLatest scroller={messages} />
           <StatusLine
             scope="general"
             className="px-3 text-xs text-zinc-500 dark:text-zinc-400 h-5 shrink-0"

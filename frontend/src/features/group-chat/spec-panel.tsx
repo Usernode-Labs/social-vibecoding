@@ -26,10 +26,11 @@ import { Localized, message as catalogText } from "../../lib/i18n/react";
  * same closure had created.
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
+import { useSpecFrames } from '../../lib/spec-html';
 import { useStoreState } from '../../lib/use-store-state';
-import { specPanelStore, type SpecPanelState } from './spec-panel-store';
+import { specPanelStore, type SpecPanelBody, type SpecPanelState } from './spec-panel-store';
 
 function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).GroupChat : null) || null;
@@ -48,6 +49,46 @@ function ui(): any {
 function MarkdownBody({ html }: { html: string }) {
   const wrapper = useMemo(() => ({ __html: html }), [html]);
   return <div className="gc-spec-panel-body" dangerouslySetInnerHTML={wrapper} />;
+}
+
+/** A piece of an HTML spec (#3699); its before/after screens are frames scaled to fit. */
+function HtmlPart({ html, className, role }: { html: string; className?: string; role?: string }) {
+  const wrapper = useMemo(() => ({ __html: html }), [html]);
+  const ref = useRef<HTMLDivElement>(null);
+  useSpecFrames(ref, html);
+  return <div ref={ref} className={className} role={role} dangerouslySetInnerHTML={wrapper} />;
+}
+
+/**
+ * An HTML spec with the dev chat viewer's two tabs, the plain-language half
+ * first. The tab is this panel's own and goes back to User-facing for each
+ * new spec.
+ */
+function SpecDocBody({ body }: { body: Extract<SpecPanelBody, { kind: 'spec' }> }) {
+  const [tab, setTab] = useState<'user' | 'tech'>('user');
+  useEffect(() => { setTab('user'); }, [body.userHtml, body.html]);
+  if (!body.split) return <HtmlPart className="gc-spec-panel-body" html={body.html} />;
+  const half = tab === 'tech' ? body.techHtml : body.userHtml;
+  const tabButton = (which: 'user' | 'tech', label: string) => (
+    <button
+      type="button"
+      className={tab === which ? 'dc-spec-viewer-tab dc-spec-viewer-tab-active' : 'dc-spec-viewer-tab'}
+      role="tab" aria-selected={tab === which} data-spec-tab={which}
+      onClick={() => setTab(which)}
+    >{label}</button>
+  );
+  return (
+    <div className="gc-spec-panel-body">
+      {body.preambleHtml ? <HtmlPart className="dc-spec-viewer-preamble" html={body.preambleHtml} /> : null}
+      <div className="dc-spec-viewer-tabs" role="tablist" aria-label="Spec sections">
+        {tabButton('user', 'User-facing')}
+        {tabButton('tech', 'Technical')}
+      </div>
+      {half
+        ? <HtmlPart role="tabpanel" html={half} />
+        : <div role="tabpanel"><p className="dc-spec-tab-empty">Nothing in this section.</p></div>}
+    </div>
+  );
 }
 
 function CopyButton() {
@@ -85,9 +126,10 @@ export function SpecPanelView({ open, title, subtitle, canCopy, body }: SpecPane
           ×
         </button>} messages={{"aria-label":"workshop:close_spec_panel_ff189ab2"}} />
       </div>
+      {body && body.kind === 'spec' ? <SpecDocBody body={body} /> : null}
       {body && body.kind === 'markdown'
         ? <MarkdownBody html={body.html} />
-        : (
+        : body && body.kind === 'spec' ? null : (
           <div className="gc-spec-panel-body">
             <div className="gc-spec-panel-error">{body ? body.text : ''}</div>
           </div>

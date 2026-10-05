@@ -76,4 +76,8 @@ test('proposal unit suites run SQL validation against the worker PostgreSQL 17 p
   assert.match(unitSuite, /includes\('scripts\/check-sql\.js'\)/);
   assert.match(unitSuite, /SQL_CHECK_CONNECTION_URL=postgres:\/\/postgres:postgres@127\.0\.0\.1:5432\/postgres/);
   assert.match(unitSuite, /npm run lint:sql[\s\S]*npm test/);
+  // The suites that load the whole schema run in parallel against this
+  // server: at the default lock table, a dozen at once failed with "out of
+  // shared memory" (5 October 2026). 1024 holds them.
+  assert.match(unitSuite, /pg_ctl -D \/home\/node\/pgdata -w -o "-c max_locks_per_transaction=1024" -l \/tmp\/unit-suite-postgres\.log start/);
 });

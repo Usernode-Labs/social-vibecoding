@@ -1,0 +1,354 @@
+/**
+ * The Communities tab pressed while it is lit: up a level, at every width
+ * (#3701). Held on a phone's bar: "Your communities".
+ *
+ * ── One gesture had two meanings ───────────────────────────────────────
+ *
+ * Since the tab became a community (#852) the same press did two things by
+ * window width: on a phone the lit tab opened the switcher, and on the
+ * desktop rail the lit row went back to All communities. The phone's half
+ * also broke what the tab you are already on does everywhere else, in
+ * Apple's own apps and most large ones: it takes you back to the tab's first
+ * page, or to the top when you are on it. Someone deep in All items or a card
+ * who pressed it wanted the community back, and was shown a picker.
+ *
+ * ── The ladder ─────────────────────────────────────────────────────────
+ *
+ * So a press of the lit tab is one step up, the same at every width
+ * (`rungFor`):
+ *
+ *   1. BELOW A COMMUNITY'S TABS (All items, a card, a reply thread beside
+ *      its Discussion): back to the community, on the tab you were on, at
+ *      its top. 'up'
+ *   2. ON ONE OF ITS TABS, SCROLLED DOWN: to the top. 'top'
+ *   3. ON ONE OF ITS TABS, AT THE TOP: All communities, the tab's root. 'root'
+ *   4. ON ALL COMMUNITIES: to the top, and nothing else. 'top', or 'none'
+ *      when it is already there.
+ *
+ * A STEP THAT CHANGES PAGE PUSHES AN ENTRY, as a tab press does (#3620), so
+ * Back from where it landed is where it was pressed: a card goes up by the
+ * hub's own address (`upToCommunity`), All items by the page's own tab entry
+ * (AppView._pushWorkshopTab, in ../dev-board/workshop/workshop.tsx), and the
+ * root by `#communities` (./community-scope.ts goToCommunity). Closing a reply
+ * thread changes no page and no address, as opening it did not.
+ *
+ * ── Switching sideways ────────────────────────────────────────────────
+ *
+ * The switcher is no harder to reach. The header's name and ⌄ open it as
+ * they did (../header/header-title.tsx), and on a phone's bar a press HELD
+ * for HOLD_MS without moving opens it too (`createHold`), the way Instagram
+ * and Threads switch accounts from their profile tab. A short press never
+ * does. No haptic goes with it: the native bridge has no haptic call
+ * (NATIVE-BRIDGE.md), and the kit's tick is private to the kit.
+ *
+ * ── Who knows where you are ───────────────────────────────────────────
+ *
+ * The router knows the screen and the app (`App.currentApp`, and whether the
+ * address is the project page itself, AppView._onProjectPage). Only the page
+ * knows whether All items is up (../dev-board/workshop/workshop.tsx) or a
+ * reply thread is open beside its Discussion
+ * (../dev-board/workshop/project-discussion.tsx). Each tells this module
+ * while it is mounted (`registerLevel`), and a press asks at that moment.
+ * Nothing here renders.
+ */
+
+import { goToCommunity, openSwitcher } from './community-scope';
+
+/** What one press of the lit tab does. */
+export type Rung = 'up' | 'top' | 'root' | 'none';
+
+/**
+ * Where the press is made: below a community's tabs, on one of them, on All
+ * communities (the tab's root), or somewhere the ladder does not know.
+ */
+export type Place = 'below' | 'tab' | 'root' | null;
+
+/** The ladder. `scrolled`: the page on screen is not at its top. */
+export function rungFor(at: Place, scrolled: boolean): Rung {
+  if (at === 'below') return 'up';
+  if (at === 'tab') return scrolled ? 'top' : 'root';
+  if (at === 'root') return scrolled ? 'top' : 'none';
+  return 'none';
+}
+
+/** A community's page, saying what is up on it. */
+export interface Level {
+  /** The community the page is. */
+  slug: string;
+  /** Something below the page's tabs is up: All items, a reply thread. */
+  below?: () => boolean;
+  /** Take it away: back to the tab it hangs off. */
+  up?: () => void;
+  /** The page's own element, which says where the page scrolls. */
+  host?: () => HTMLElement | null;
+}
+
+const levels = new Set<Level>();
+
+/** A page says what it knows for as long as it is mounted. Returns the undo. */
+export function registerLevel(level: Level): () => void {
+  levels.add(level);
+  return () => { levels.delete(level); };
+}
+
+/** Within this many pixels of its top a page is at its top: a rubber band's pixel is not a scroll. */
+export const AT_TOP_PX = 2;
+
+/**
+ * The element a page's offset is read and written in. On a phone's browser
+ * the DOCUMENT scrolls instead of the page's own scroller, and PlatformUI
+ * says when (lib/browser-scroll.ts: "Controllers use PlatformUI.scrollElement()
+ * when reading or restoring a page's position").
+ */
+export function scrollerOf(el: HTMLElement | null): HTMLElement | null {
+  if (!el) return null;
+  try {
+    const ui = (window as unknown as { PlatformUI?: { scrollElement?: (e: HTMLElement) => HTMLElement | null } }).PlatformUI;
+    return ui?.scrollElement?.(el) || el;
+  } catch {
+    return el;
+  }
+}
+
+export function isScrolled(el: { scrollTop: number } | null): boolean {
+  return !!el && el.scrollTop > AT_TOP_PX;
+}
+
+/** Up to the top of `el`, gliding there unless reduced motion is asked for. */
+export function toTop(el: HTMLElement | null): void {
+  if (!el) return;
+  let smooth = true;
+  try { smooth = !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches; } catch { smooth = true; }
+  try {
+    if (typeof el.scrollTo === 'function') {
+      el.scrollTo({ top: 0, behavior: smooth ? 'smooth' : 'auto' });
+      return;
+    }
+  } catch { /* the plain write below */ }
+  el.scrollTop = 0;
+}
+
+/** The project page's tabs (AppView.WORKSHOP_TABS). */
+const PAGE_TABS = ['status', 'discussion', 'workshop', 'needs', 'all'];
+
+/**
+ * The tab a page below the community goes back to: the one last up there
+ * (AppView._workshopTab), and for All items the Workshop it hangs off, which
+ * is the tab lit over it. Anything unreadable is the hub.
+ */
+export function tabToReturnTo(last: unknown): string {
+  if (last === 'all') return 'workshop';
+  return typeof last === 'string' && PAGE_TABS.includes(last) ? last : 'status';
+}
+
+type ViewApi = {
+  _onProjectPage?: (slug: string) => boolean;
+  _workshopTab?: () => string | null;
+  _landOnTab?: (slug: string, tab: string) => void;
+};
+type AppApi = { currentApp?: string | null; _hubHref?: (slug: string) => string };
+
+function view(): ViewApi | null {
+  return (window as unknown as { AppView?: ViewApi }).AppView || null;
+}
+
+function app(): AppApi | null {
+  return (window as unknown as { App?: AppApi }).App || null;
+}
+
+/**
+ * Step 1 from a page of its own under the community (a card, a shared
+ * change): the community's page, on the tab last up there, at its top, as a
+ * new entry. The door every way into a page's tab takes
+ * (AppView._landOnTab: the tab remembered, the page's offset forgotten), and
+ * the address a card's "‹ Workshop" chip follows
+ * (../dev-board/topic/topic-back.tsx), pushed rather than stepped Back to.
+ */
+export function upToCommunity(slug: string): void {
+  const v = view();
+  let last: unknown = null;
+  try { last = v?._workshopTab?.(); } catch { last = null; }
+  try { v?._landOnTab?.(slug, tabToReturnTo(last)); } catch { /* the page opens on the tab it remembers */ }
+  let href = '';
+  try { href = app()?._hubHref?.(slug) || ''; } catch { href = ''; }
+  window.location.hash = href || `#app/${encodeURIComponent(slug)}/workshop`;
+}
+
+/**
+ * A press of the lit Communities tab. `screen` is the nav store's: the
+ * screen root the router last revealed. Returns the rung it took.
+ */
+export function pressLitTab(screen: string | null): Rung {
+  if (screen === 'workshop-screen') {
+    const el = scrollerOf(document.getElementById('workshop-screen'));
+    const rung = rungFor('root', isScrolled(el));
+    if (rung === 'top') toTop(el);
+    return rung;
+  }
+  // The other screen that lights the tab: a community's own (#app-view on
+  // its `dev` tab; the app itself lights none, nor do its change threads).
+  if (screen !== 'app-view') return 'none';
+  const slug = app()?.currentApp || null;
+  if (!slug) return 'none';
+  let onPage = false;
+  try { onPage = !!view()?._onProjectPage?.(slug); } catch { onPage = false; }
+  const mine = [...levels].filter((level) => level.slug === slug);
+  const open = onPage
+    ? mine.find((level) => { try { return !!level.below?.(); } catch { return false; } })
+    : undefined;
+  const host = mine.map((level) => level.host?.() || null).find(Boolean) || null;
+  const el = scrollerOf(host?.closest<HTMLElement>('#dev-forum-scroll') || null);
+  // Off the project page's own address is a page below it: a card, a
+  // shared change, the archived chat. On it, All items or a thread is.
+  const at: Place = !onPage || open ? 'below' : 'tab';
+  const rung = rungFor(at, isScrolled(el));
+  if (rung === 'up') {
+    if (open?.up) open.up();
+    else upToCommunity(slug);
+  } else if (rung === 'top') {
+    toTop(el);
+  } else if (rung === 'root') {
+    goToCommunity(null);
+  }
+  return rung;
+}
+
+/** How long a press is held before it opens "Your communities". */
+export const HOLD_MS = 500;
+/** A finger that moves further than this is scrolling or swiping, not holding. */
+export const HOLD_SLOP_PX = 10;
+/** How long after the finger lifts the click that lift may leave is still the hold's. */
+export const HOLD_CLICK_MS = 700;
+
+/** The parts of a pointer event a hold reads: React's and the DOM's both fit. */
+interface HoldPointer {
+  pointerType: string;
+  isPrimary?: boolean;
+  clientX: number;
+  clientY: number;
+  currentTarget: EventTarget | null;
+}
+
+export interface HoldOptions {
+  /** Whether a hold may start now: the phone's bar, not the desktop rail. */
+  enabled: () => boolean;
+  /** The hold landed, on `el`. */
+  onHold: (el: Element | null) => void;
+  ms?: number;
+  /** For the tests: the document and the clock. */
+  doc?: Pick<Document, 'addEventListener' | 'removeEventListener'>;
+  setTimer?: (fn: () => void, ms: number) => number;
+  clearTimer?: (id: number) => void;
+}
+
+/**
+ * A held press, for touch: HOLD_MS still (within HOLD_SLOP_PX) runs
+ * `onHold`. Lifting early, moving, or the browser taking the touch for a
+ * scroll (pointercancel) cancels it, and the press is an ordinary tap.
+ *
+ * TWO THINGS THE BROWSER WOULD DO WITH THE SAME HOLD are stood down:
+ *
+ *   - its own long-press menu on a link (Android's, as `contextmenu`; iOS's
+ *     preview is app.css's `-webkit-touch-callout: none`). A `contextmenu`
+ *     while the finger is down is the browser deciding the press was held,
+ *     so it lands the hold at once rather than racing the timer;
+ *   - the click the lift may still send. "Your communities" is over the bar
+ *     by then, so that click can be hit-tested onto the sheet's scrim (which
+ *     would shut it again) or reach the tab (which would take a ladder step).
+ *     The first click after a landed hold is swallowed, at the document, in
+ *     the capture phase, before either sees it, unless a new press starts
+ *     first or HOLD_CLICK_MS passes.
+ *
+ * A plain object, not a hook, so the tests can drive it without React.
+ */
+export function createHold(opts: HoldOptions) {
+  const ms = opts.ms ?? HOLD_MS;
+  const doc = opts.doc ?? (typeof document !== 'undefined' ? document : null);
+  const setTimer = opts.setTimer ?? ((fn: () => void, wait: number) => window.setTimeout(fn, wait));
+  const clearTimer = opts.clearTimer ?? ((id: number) => window.clearTimeout(id));
+  let timer = 0;
+  let origin: { x: number; y: number } | null = null;
+  let target: Element | null = null;
+  let down = false;
+  let fired = false;
+  let unguard: (() => void) | null = null;
+
+  const stop = () => {
+    if (timer) clearTimer(timer);
+    timer = 0;
+    origin = null;
+  };
+  const land = () => {
+    stop();
+    fired = true;
+    opts.onHold(target);
+  };
+  const guard = () => {
+    if (!doc || unguard) return;
+    let wait = 0;
+    const off = () => {
+      if (!unguard) return;
+      unguard = null;
+      doc.removeEventListener('click', onClick, true);
+      doc.removeEventListener('pointerdown', off, true);
+      if (wait) clearTimer(wait);
+    };
+    const onClick = (event: Event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      off();
+    };
+    unguard = off;
+    doc.addEventListener('click', onClick, true);
+    doc.addEventListener('pointerdown', off, true);
+    wait = setTimer(off, HOLD_CLICK_MS);
+  };
+  const lift = () => {
+    down = false;
+    stop();
+    if (fired) guard();
+    fired = false;
+  };
+
+  return {
+    onPointerDown(event: HoldPointer) {
+      if (event.pointerType !== 'touch' || event.isPrimary === false) return;
+      stop();
+      fired = false;
+      if (!opts.enabled()) return;
+      down = true;
+      target = (event.currentTarget as Element | null) || null;
+      origin = { x: event.clientX, y: event.clientY };
+      timer = setTimer(land, ms);
+    },
+    onPointerMove(event: HoldPointer) {
+      const start = origin;
+      if (!start) return;
+      if (Math.abs(event.clientX - start.x) > HOLD_SLOP_PX || Math.abs(event.clientY - start.y) > HOLD_SLOP_PX) stop();
+    },
+    onPointerUp() { lift(); },
+    onPointerCancel() { lift(); },
+    onContextMenu(event: { preventDefault: () => void }) {
+      if (!down) return;
+      event.preventDefault();
+      if (timer) land();
+    },
+    /** Unmounting: no timer left to land, no guard left on the document. */
+    dispose() {
+      stop();
+      down = false;
+      fired = false;
+      unguard?.();
+    },
+  };
+}
+
+/** The phone's bar: below the 768px breakpoint, where the bar is not the rail. */
+function onPhoneBar(): boolean {
+  try { return !window.matchMedia('(min-width: 768px)').matches; } catch { return false; }
+}
+
+/** The Communities tab's hold: "Your communities", on the phone's bar only. */
+export function createSwitcherHold() {
+  return createHold({ enabled: onPhoneBar, onHold: (el) => openSwitcher('tab', el) });
+}

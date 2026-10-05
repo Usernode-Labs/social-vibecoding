@@ -20,10 +20,11 @@ import { Message } from "../../lib/i18n/react";
  * never folded away.
  *
  * It replaced the in-place "Which project?" panel under the header, and it
- * opens from three places, all through the same store: the phone's tab
- * pressed while it is lit, the community's name and ⌄ in the coloured
- * header, and the header's "Communities ⌄" on the Communities list. (On a wide
- * window the lit sidebar row goes back to All communities instead.)
+ * opens from three places, all through the same store: the community's name
+ * and ⌄ in the coloured header, the header's "Communities ⌄" on the
+ * Communities list, and the phone's tab HELD (#3701). The tab PRESSED while
+ * it is lit no longer opens it, at any width: it goes up a level, to the
+ * community, its top, then All communities (./tab-ladder.ts).
  *
  * ── Two presentations ──────────────────────────────────────────────────
  *
@@ -309,7 +310,9 @@ function SwitcherMenu(): ReactNode {
       const t = e.target as Node | null;
       if (t && panel.current?.contains(t)) return;
       // The opener toggles on its own; a press on it must not close and reopen.
-      if (t instanceof Element && t.closest('[data-community-switch], #platform-tab-workshop')) return;
+      // (Not the rail's Communities row: it opens nothing since #3701, so a
+      // press on it closes the menu like a press anywhere else.)
+      if (t instanceof Element && t.closest('[data-community-switch]')) return;
       closeSwitcher();
     };
     // Escape gives focus back to whatever opened it.

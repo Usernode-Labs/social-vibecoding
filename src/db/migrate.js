@@ -153,6 +153,7 @@ async function migrate(config) {
   // Must run AFTER seedStagingDemoUser — the fixture session is owned by
   // the demo user so the check viewer exercises the NON-owner spec panel.
   await seedStagingSharedSpecPanelSession(pool, config);
+  await seedStagingHtmlSpecSession(pool, config);
   await seedStagingDemoProposal(pool, config);
   await seedStagingSpecUserShareFixtures(pool, config);
   await seedStagingHeadlessFixtures(pool, config);
@@ -855,8 +856,8 @@ async function backfillOrphanedSpecDrafts(pool) {
   let res;
   try {
     res = await pool.query(
-      `INSERT INTO chat_session_specs (session_id, version, content)
-         SELECT cs.id, COALESCE(latest.max_version, 0) + 1, cs.spec_md
+      `INSERT INTO chat_session_specs (session_id, version, content, content_html)
+         SELECT cs.id, COALESCE(latest.max_version, 0) + 1, cs.spec_md, cs.spec_html
            FROM chat_sessions cs
            LEFT JOIN LATERAL (
              SELECT version AS max_version, content
@@ -9728,6 +9729,129 @@ async function seedStagingSharedSpecPanelSession(pool, config) {
   log.info('db', 'Staging shared-spec-panel fixture seeded', {
     appId, sessionId: specSessionId,
   });
+}
+
+// #3699: an HTML spec, shared to the group, for the spec viewer's HTML path:
+// the two tabs drawn from the document, the before/after screens in the
+// proposal card's viewer, and a diagram and a table on the Technical tab.
+// Same shape and owner rule as the shared-spec fixture above (owned by the
+// demo user, so the check exercises a non-owner's view of a shared version),
+// fixed id 900831. spec_md is the document's markdown copy, as the capture
+// path stores it, so the orphaned-draft backfill finds nothing to add.
+async function seedStagingHtmlSpecSession(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const { specHtmlToMarkdown } = require('../services/spec-html');
+
+  const { rows: appRows } = await pool.query('SELECT id FROM apps WHERE slug = $1', [config.selfAppSlug]);
+  const appId = appRows[0]?.id;
+  const { rows: demoRows } = await pool.query('SELECT id FROM users WHERE username = $1', ['staging-demo-user']);
+  const demoUserId = demoRows[0]?.id;
+  if (!appId || !demoUserId) {
+    log.warn('db', 'Staging HTML-spec fixture skipped: self-app row or demo user missing');
+    return;
+  }
+
+  const card = `<style>
+  .sd-page{font:14px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;background:var(--bg-primary,#fff);color:var(--text-primary,#0a0a0a);height:800px;padding:28px}
+  .sd-card{width:380px;margin-left:auto;border:1px solid var(--border,#d1d1d6);border-radius:14px;padding:16px;display:grid;gap:12px}
+  .sd-top{display:flex;justify-content:space-between;align-items:center;font-weight:600}
+  .sd-pill{font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;background:rgba(196,120,0,.14);color:#a35a00}
+  .sd-row{display:flex;justify-content:space-between;font-size:13px}
+  .sd-muted{color:var(--text-muted,#68686c);font-size:12px}
+  .sd-bar{display:flex;gap:3px;height:7px}.sd-bar i{flex:1;border-radius:4px;background:var(--bg-tertiary,#e3e3e6)}.sd-bar i.on{background:#16a34a}
+  .sd-btns{display:grid;grid-template-columns:1fr 1fr;gap:8px}.sd-btns span{text-align:center;padding:9px;border-radius:10px;font-weight:600}
+  .sd-yes{background:var(--accent,#0a6ee0);color:#fff}.sd-no{border:1px solid var(--border,#d1d1d6)}
+  .sd-title{font-size:22px;font-weight:700;margin:0 0 6px}.sd-lines i{display:block;height:10px;border-radius:5px;background:var(--bg-tertiary,#e3e3e6);margin:10px 0}
+  .sd-left{position:absolute;left:28px;top:28px;width:620px}
+</style>`;
+  const html = `<article data-spec-styles="platform" data-spec>
+  <h1>Staging demo HTML spec: the vote card says how many approvals are left</h1>
+  <p>A spec written as HTML. The User-facing tab opens on before and after screens; the Technical tab on a diagram and a table.</p>
+  <section data-spec-tab="user">
+    <figure data-screens>
+      <ol data-changes>
+        <li data-change="1" data-steps="Dev board → Up for vote → open a proposal">The vote card says how many more approvals the change needs, with a bar that fills as they come in</li>
+        <li data-change="2" data-steps="Dev board → Up for vote → open a proposal">The vote card names who approved</li>
+      </ol>
+      <template data-screen data-size="desktop" data-focus="820 0 460 330">
+        ${card}
+        <div class="sd-page">
+          <div class="sd-left"><p class="sd-title">Weekly challenges reset every Monday</p><div class="sd-lines"><i style="width:80%"></i><i style="width:92%"></i><i style="width:60%"></i></div></div>
+          <div class="sd-card">
+            <div class="sd-top"><span>PR #3388</span><span class="sd-pill">Up for vote</span></div>
+            <div class="sd-row" data-side="before" data-change="1"><span><b>2</b> approve · <b>0</b> reject</span><span class="sd-muted">Ends in 2d 4h</span></div>
+            <div data-side="after" data-change="1"><div class="sd-row"><b>2 more approvals to merge</b><span class="sd-muted">2 of 4</span></div><div class="sd-bar"><i class="on"></i><i class="on"></i><i></i><i></i></div></div>
+            <div class="sd-muted" data-side="after" data-change="2">Approved by mika and jroh · 3 haven't voted</div>
+            <div class="sd-btns"><span class="sd-yes">Approve</span><span class="sd-no">Reject</span></div>
+          </div>
+        </div>
+      </template>
+      <template data-screen data-size="phone" data-focus="0 0 390 330">
+        ${card}
+        <div class="sd-page" style="padding:16px">
+          <div class="sd-card" style="width:auto">
+            <div class="sd-top"><span>PR #3388</span><span class="sd-pill">Up for vote</span></div>
+            <div class="sd-row" data-side="before" data-change="1"><span><b>2</b> approve · <b>0</b> reject</span><span class="sd-muted">2d 4h left</span></div>
+            <div data-side="after" data-change="1"><div class="sd-row"><b>2 more to merge</b><span class="sd-muted">2 of 4</span></div><div class="sd-bar"><i class="on"></i><i class="on"></i><i></i><i></i></div></div>
+            <div class="sd-muted" data-side="after" data-change="2">mika, jroh · 3 haven't voted</div>
+            <div class="sd-btns"><span class="sd-yes">Approve</span><span class="sd-no">Reject</span></div>
+          </div>
+        </div>
+      </template>
+    </figure>
+    <h3>Stays the same</h3>
+    <ul><li>How votes are counted, and who can vote</li><li>The Approve and Reject buttons</li></ul>
+  </section>
+  <section data-spec-tab="tech">
+    <figure>
+      <svg viewBox="0 0 460 120" role="img"><title>Votes flow through the tally and a new approvals rule into the proposal API and the vote card</title>
+        <rect class="spec-box" x="10" y="20" width="120" height="40" rx="8"></rect><text x="22" y="45" font-size="12">votes</text>
+        <rect class="spec-box" x="170" y="20" width="120" height="40" rx="8"></rect><text x="182" y="45" font-size="12">tallyVotes()</text>
+        <rect class="spec-box-new" x="330" y="20" width="120" height="40" rx="8"></rect><text x="342" y="45" font-size="12">approvalsNeeded</text>
+        <rect class="spec-box-changed" x="170" y="76" width="120" height="36" rx="8"></rect><text x="182" y="99" font-size="12">vote card</text>
+        <line class="spec-line" x1="130" y1="40" x2="168" y2="40"></line><line class="spec-line" x1="290" y1="40" x2="328" y2="40"></line><line class="spec-line" x1="230" y1="60" x2="230" y2="74"></line>
+      </svg>
+      <figcaption>Dashed: new code. Blue outline: changed.</figcaption>
+    </figure>
+    <table><thead><tr><th>Voting rule</th><th>The card says</th></tr></thead>
+      <tbody><tr><td>At least N approvals</td><td>"2 more approvals to merge"</td></tr><tr><td>Time-limited vote</td><td>"Closes in 2d 4h"</td></tr></tbody></table>
+  </section>
+</article>`;
+  const markdown = specHtmlToMarkdown(html).trim();
+
+  const fixtureBranch = 'staging-fixture/html-spec';
+  const sessionId = 900831;
+  const { rows: existing } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+    [appId, fixtureBranch]
+  );
+  if (existing.length) {
+    await pool.query(
+      'UPDATE chat_sessions SET user_id = $1, spec_md = $2, spec_html = $3 WHERE id = $4',
+      [demoUserId, markdown, html, existing[0].id]
+    );
+  } else {
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (id, app_id, user_id, branch_name, session_title, status, spec_md, spec_html, created_at)
+       VALUES ($1, $2, $3, $4, '[staging fixture] Staging demo: an HTML spec', 'paused', $5, $6, NOW() - INTERVAL '2 hours')`,
+      [sessionId, appId, demoUserId, fixtureBranch, markdown, html]
+    );
+    await pool.query(
+      `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
+       VALUES ($1, 'system', 'Spec drafted', $2::jsonb, NOW() - INTERVAL '100 minutes')`,
+      [sessionId, JSON.stringify({ specPreview: markdown.slice(0, 400), specLines: markdown.split('\n').length, specVersion: 1, specFormat: 'html' })]
+    );
+  }
+  const specSessionId = existing.length ? existing[0].id : sessionId;
+  await pool.query(
+    `INSERT INTO chat_session_specs (session_id, version, content, content_html, built_at, shared_to_group_at)
+     VALUES ($1, 1, $2, $3, NOW() - INTERVAL '100 minutes', NOW() - INTERVAL '95 minutes')
+     ON CONFLICT (session_id, version) DO UPDATE SET content = EXCLUDED.content, content_html = EXCLUDED.content_html,
+       shared_to_group_at = COALESCE(chat_session_specs.shared_to_group_at, EXCLUDED.shared_to_group_at)`,
+    [specSessionId, markdown, html]
+  );
+  log.info('db', 'Staging HTML-spec fixture seeded', { appId, sessionId: specSessionId });
 }
 
 // Checkbox-flicker fix fixture. The fix is a client-rendering change, but

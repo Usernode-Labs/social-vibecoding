@@ -92,9 +92,10 @@ function makeMockPool(initial = {}) {
     calls.push({ sql: s, params });
 
     // GET /spec: unscoped session lookup.
-    if (/SELECT cs\.id, cs\.user_id, cs\.spec_md\s+FROM chat_sessions cs\s+WHERE cs\.id = \$1/i.test(s)) {
+    // #3699: spec_html rides along (the latest version's HTML document, or null).
+    if (/SELECT cs\.id, cs\.user_id, cs\.spec_md, cs\.spec_html\s+FROM chat_sessions cs\s+WHERE cs\.id = \$1/i.test(s)) {
       const row = state.sessions.get(Number(params[0]));
-      return { rows: row ? [{ id: row.id, user_id: row.user_id, spec_md: row.spec_md }] : [] };
+      return { rows: row ? [{ id: row.id, user_id: row.user_id, spec_md: row.spec_md, spec_html: row.spec_html || null }] : [] };
     }
     // GET /spec, owner arm: unfiltered version list.
     if (/LENGTH\(content\) AS char_count\s+FROM chat_session_specs\s+WHERE session_id = \$1\s+ORDER BY version DESC/i.test(s)) {
@@ -105,7 +106,7 @@ function makeMockPool(initial = {}) {
       return { rows };
     }
     // GET /spec, non-owner arm: shared-visibility filter, content rides along.
-    if (/LENGTH\(content\) AS char_count, content\s+FROM chat_session_specs s[\s\S]*chat_session_spec_user_shares us[\s\S]*chat_session_spec_conversation_shares scs/i.test(s)) {
+    if (/LENGTH\(content\) AS char_count, content, content_html\s+FROM chat_session_specs s[\s\S]*chat_session_spec_user_shares us[\s\S]*chat_session_spec_conversation_shares scs/i.test(s)) {
       const sid = Number(params[0]);
       const viewer = Number(params[1]);
       const rows = state.specs
@@ -114,7 +115,7 @@ function makeMockPool(initial = {}) {
           || state.userShares.some((u) => u.session_id === sid && u.version === x.version && u.recipient_id === viewer)
           || state.convShares.some((c) => c.session_id === sid && c.version === x.version && c.user_id === viewer))
         .sort((a, b) => b.version - a.version)
-        .map((x) => ({ ...specMeta(x), content: x.content }));
+        .map((x) => ({ ...specMeta(x), content: x.content, content_html: x.content_html || null }));
       return { rows };
     }
     return { rows: [], rowCount: 0 };
@@ -182,6 +183,26 @@ test('owner → spec_md + ALL versions, unshared drafts included', async () => {
     assert.equal(status, 200);
     assert.equal(body.spec, '# Live draft, ahead of v2');
     assert.deepEqual(body.versions.map((v) => v.version), [2, 1]);
+  } finally {
+    loaded.restore();
+  }
+});
+
+test('#3699: an HTML spec rides along as `html`, for the owner and for a shared version, never in the version rows', async () => {
+  const state = baseState();
+  state.sessions[0][1].spec_html = '<article data-spec><h1>Live</h1></article>';
+  state.specs[1].content_html = '<article data-spec><h1>v2</h1></article>';
+  const pool = makeMockPool(state);
+  const loaded = loadSessions(pool);
+  try {
+    const owner = await getSpec(loaded, { id: 1, username: 'alice' }, '/api/sessions/10/spec');
+    assert.equal(owner.body.spec, '# Live draft, ahead of v2', 'spec stays the markdown');
+    assert.equal(owner.body.html, '<article data-spec><h1>Live</h1></article>');
+    const other = await getSpec(loaded, { id: 2, username: 'bob' }, '/api/sessions/10/spec');
+    assert.equal(other.body.html, '<article data-spec><h1>v2</h1></article>');
+    assert.ok(!('content_html' in other.body.versions[0]));
+    const plain = await getSpec(loaded, { id: 1, username: 'alice' }, '/api/sessions/11/spec');
+    assert.equal(plain.body.html, null, 'a markdown spec has no html');
   } finally {
     loaded.restore();
   }

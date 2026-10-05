@@ -756,7 +756,13 @@ async function askHelperModel({
       temperature: 0,
       maxOutputTokens,
       timeoutMs: HELPER_TIME_LIMIT_MS[helper] || 10000,
-      parallelToolCalls: false,
+      // Never sent (#3772, as the DM's askModel). streamChat sends
+      // parallel_tool_calls unless it is null, `false` included, and with
+      // require_parameters OpenRouter then routes only to providers that
+      // take it: for GLM 5.3 Flash one of its thirty-three (Inceptron), so
+      // every helper was that one provider's, rate-limited and slow, with
+      // nowhere to fail over. One forced tool call needs no such setting.
+      parallelToolCalls: null,
       tools: [{
         type: 'function',
         function: { name: HELPER_TOOL, description: 'Give your answer in this shape.', parameters: schema },

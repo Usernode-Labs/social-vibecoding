@@ -60,9 +60,10 @@ test('one capture round trip serves the button and the reviewable state', () => 
   assert.match(controller, /const runCapture = async \(capture, \{ nativeAttempt \}\) =>/);
   // A native attempt suspends BEFORE the shot (the phone photographs what is
   // on screen); a display-capture attempt suspends only once the grant lands,
-  // which is why `hide` is passed in rather than called here.
-  assert.match(controller, /blob = await capture\(hideDialog\)/);
-  assert.match(controller, /onCaptureStart: hide/);
+  // which is why `hide` is passed in rather than called here. The signal
+  // beside it gives the attempt up while the browser has not answered.
+  assert.match(controller, /blob = await capture\(hideDialog, attempt\.signal\)/);
+  assert.match(controller, /onCaptureStart: hide, signal/);
   assert.match(controller, /App\._simulateFeedbackCaptureFailure = \(\) => runCapture\(/);
 });
 
@@ -83,6 +84,65 @@ test('a dismissal that lands mid-capture does not clear the draft', () => {
   // The flag is released whatever the attempt did, or the dialog would never
   // clear again.
   assert.match(controller, /captureInFlight = false;\n\s*clearCaptureDraft\(\);/);
+});
+
+// ── A share the browser never answers ─────────────────────────────────────
+//
+// Firefox on a Mac hands the choice to the system picker, and a Firefox that
+// has been running a while can take "Share This Window" and never settle
+// getDisplayMedia. The dialog waited on it with both attach buttons disabled,
+// and captureInFlight (set at the start of the attempt) stayed true for the
+// life of the page, so no later close cleared the dialog again.
+
+test('a display capture waits with Photos still usable, and only a suspension sets captureInFlight', () => {
+  const round = controller.slice(
+    controller.indexOf('const runCapture = async'),
+    controller.indexOf("screenshotBtn.addEventListener('click'"),
+  );
+  const beforeHide = round.slice(0, round.indexOf('const hideDialog = () => {'));
+  assert.match(beforeHide, /screenshotBtn\.disabled = true;/);
+  assert.doesNotMatch(beforeHide, /setScreenshotActionsDisabled\(true\)/,
+    'the Photos button stays usable until the dialog actually goes');
+  assert.doesNotMatch(beforeHide, /captureInFlight = true/,
+    'a close before the grant is the viewer\'s own and must close for real');
+  const hide = round.slice(round.indexOf('const hideDialog = () => {'), round.indexOf('const restoreDialog = () => {'));
+  assert.match(hide, /setScreenshotActionsDisabled\(true\);\n\s*captureInFlight = true;\n\s*suspended = true;/);
+  // Released, and the stash cleared, only by the attempt that set them: an
+  // attempt given up for Photos must not clear the stash Photos just armed.
+  assert.match(round, /if \(suspended\) \{\n\s*captureInFlight = false;\n\s*clearCaptureDraft\(\);\n\s*\}/);
+});
+
+test('choosing an image or resetting the row gives up the unanswered share', () => {
+  assert.match(controller, /let pendingCapture = null;/);
+  assert.match(controller, /const resetScreenshotState = \(\) => \{\n\s*abandonPendingCapture\(\);/,
+    'every close, open and send resets the row, and with it the wait');
+  const picker = controller.slice(
+    controller.indexOf("screenshotPickerBtn.addEventListener('click'"),
+    controller.indexOf("screenshotInput.addEventListener('change'"),
+  );
+  assert.ok(picker.indexOf('abandonPendingCapture()') > 0
+    && picker.indexOf('abandonPendingCapture()') < picker.indexOf('stashCaptureDraft()'),
+    'the share is given up before Photos opens');
+  // Given up is not a failure: nothing is said.
+  assert.match(controller, /if \(err && err\.code === 'abandoned'\) \{\n\s*\/\/[^\n]*\n\s*\/\/[^\n]*\n\s*\} else if \(err && err\.code === 'denied'\)/);
+});
+
+test('a long wait says what to do, and the line goes once the browser answers', () => {
+  assert.match(controller, /const CAPTURE_WAIT_HINT_MS = 10 \* 1000;/);
+  assert.match(controller, /Still waiting for your browser to share the screen\. If you already chose what to share and nothing happened, restart the browser, or choose an image instead\. Your feedback is safe\./);
+  const round = controller.slice(
+    controller.indexOf('const runCapture = async'),
+    controller.indexOf("screenshotBtn.addEventListener('click'"),
+  );
+  // Same ownership rule as paintQueueState: only its own line is cleared.
+  assert.match(round, /if \(waitHintText && feedbackStatus\.textContent === waitHintText\) feedbackStatus\.classList\.add\('hidden'\);/);
+  assert.match(round, /const hideDialog = \(\) => \{\n\s*if \(modalHidden\) return undefined;\n\s*settleWait\(\);/);
+  assert.match(round, /\} finally \{\n\s*settleWait\(\);/);
+});
+
+test('a share far smaller than the page is named, not reported as a locate failure', () => {
+  assert.match(controller, /err\.code === 'wrong_surface'/);
+  assert.match(controller, /That was a small window, not this page\./);
 });
 
 test('every capture failure says the feedback itself is safe', () => {

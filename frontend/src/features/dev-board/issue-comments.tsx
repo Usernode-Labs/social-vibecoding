@@ -13,6 +13,7 @@ import { ChevronDownIcon } from '@/components/ui/icons';
 import { messageStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { swatchFor } from '../messages/format';
+import { useInlineImageViewer } from '../image-viewer/image-viewer';
 import { ClampedComment } from './comment-clamp';
 import {
   issueCommentsStore,
@@ -121,10 +122,15 @@ function Comment({ comment }: { comment: IssueCommentView }) {
 }
 
 export function IssueCommentsView({ comments, truncated, htmlUrl }: IssueCommentsState) {
+  // #3908: a screenshot in a comment (GitHub's upload, or one pasted as
+  // markdown) opens in the app's viewer over the page, as one in the
+  // request's own body does (topic/topic-head.tsx TopicBodySections).
+  const images = useInlineImageViewer();
   // No comments is no section at all, not an empty "Discussion" heading.
   if (!comments.length) return null;
   return (
-    <div className="dev-topic-gh-thread">
+    <div className="dev-topic-gh-thread" {...images.scope}>
+      {images.viewer}
       <div className="dev-topic-h"><Message id="workshop:discussion_5eb6cf64" /></div>
       {truncated ? (
         <div className="dev-topic-gh-more">

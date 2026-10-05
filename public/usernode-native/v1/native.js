@@ -4858,13 +4858,66 @@
    *  - iOS can pan the visual viewport before the inset publishes — the
    *    settled pin resets window.scrollTo(0,0), but only when the page
    *    frame is actually a fixed shell.
+   *  - A chat's composer sits OUTSIDE its scroller, under it in a column
+   *    that reserves the inset itself. Its field's tap is the one that
+   *    panned and then snapped back (Homeroom app and iOS Safari, 5 Oct
+   *    2026: the composer overshot into the top half of the screen, then
+   *    the pin dropped it onto the keys a quarter second later).
+   *    opts.column names that column: its fields outside scrollEl take the
+   *    same interception, with no reveal (the column's padding is what
+   *    places them) and the caret at the end of any draft.
+   *  - And the column RIDES the keys (fixed shell, keys covering the page:
+   *    the Homeroom app once its web view stops resizing, an installed
+   *    app). The keyboard's height arrives about 50ms into its ~300ms
+   *    rise, all at once, so the column's padding snapped the composer and
+   *    the transcript to the top of where the keys would end while they
+   *    were 40% of the way up; on the way down the tab bar's band came back
+   *    in the blur while the padding eased out in 150ms, so the composer
+   *    hopped up 16pt and then outran the keys. A step of the scroller's
+   *    foot that big, this soon after a focus or a blur, is taken back and
+   *    played out on the column's padding along the keys' own curve (an
+   *    ease-out cubic over 300ms, measured), from where the keys already
+   *    are. Padding, not a transform: the transcript keeps following its
+   *    newest line on every frame of it (its own resize observer), so the
+   *    composer and the messages move as one.
    * ──────────────────────────────────────────────────────────────────── */
 
   var KB_TAP_SLOP = 8; // px of touchmove that turns a tap into a drag
   var KB_SETTLE_MS = 120; // quiet period after the last visualViewport event
   var KB_FOCUS_FALLBACK_MS = 250; // reveal anyway if no vv event follows a focus
+  var KB_RIDE_MS = 300; // the keys' rise and fall (iPhone simulator, iOS 26: ~300ms)
+  var KB_RIDE_MIN = 100; // px: only a keyboard-sized step of the column rides
+  var KB_RIDE_WINDOW_MS = 1000; // a step this soon after a focus or a blur is the keys'
+  // How far up the keys already are when a rise is reported, at most. In
+  // the Homeroom app's web view the visual viewport learns the keyboard's
+  // height ~90ms into its rise, with the keys ~84% of the way up (iPhone
+  // simulator, 5 Oct 2026); time since the focus overstates that, since the
+  // keys only start ~100ms after it. Safari reports near the start.
+  var KB_RIDE_OPEN_HEAD = 0.45;
+  var KB_RIDE_STEPS = 12; // keyframes sampled along the curve
 
-  // attachKeyboardAvoidance(scrollEl, { topEl?, margin? = 8, fields? }) —
+  // The keys' curve, measured frame by frame: 12% of the way at 28ms, 58%
+  // at 75ms, 90% at 158ms, 98% at 225ms of a 300ms move.
+  function kbEase(x) {
+    var t = Math.max(0, Math.min(1, x));
+    return 1 - Math.pow(1 - t, 3);
+  }
+
+  // The column's padding-bottom keyframes for a ride: the scroller's foot
+  // moved by `delta` px (down is positive) to land on `finalPad`; the keys
+  // are `x0` of the way through their move. Pure, for the tests.
+  function kbRideFrames(finalPad, delta, x0, steps) {
+    var n = steps || KB_RIDE_STEPS;
+    var frames = [];
+    for (var i = 0; i <= n; i++) {
+      var x = x0 + (1 - x0) * (i / n);
+      var pad = Math.max(0, finalPad + delta * (1 - kbEase(x)));
+      frames.push({ paddingBottom: Math.round(pad * 10) / 10 + 'px', offset: i / n });
+    }
+    return frames;
+  }
+
+  // attachKeyboardAvoidance(scrollEl, { topEl?, margin? = 8, fields?, column? }) —
   // scrollEl is the app's content scroller (the fixed-shell inner pane);
   // topEl an optional fixed bar overlaying its top (typically the
   // un-navbar also wired via attachNavBar); margin the breathing room
@@ -4872,7 +4925,9 @@
   // that REPLACES the default text-entry allowlist. Composes with
   // attachNavBar and element-mode attachPullToRefresh. Sheet/modal/alert
   // fields are body-mounted, outside scrollEl, and keep the kit's
-  // existing avoidance. Structural no-op on desktop or without
+  // existing avoidance. column is the element holding scrollEl and its
+  // composer: a field in it but outside scrollEl is focused without the
+  // native pan and is not revealed. Structural no-op on desktop or without
   // visualViewport. Returns { detach() }; never throws on bad input.
   function attachKeyboardAvoidance(scrollEl, options) {
     var noop = { detach: function () {} };
@@ -4891,6 +4946,8 @@
     var topEl = opts.topEl && opts.topEl.nodeType === 1 ? opts.topEl : null;
     var margin = opts.margin != null ? opts.margin : 8;
     var fieldsSel = typeof opts.fields === 'string' ? opts.fields : null;
+    var column = opts.column && opts.column.nodeType === 1 && opts.column !== scrollEl
+      && opts.column.contains(scrollEl) ? opts.column : null;
 
     scrollEl.classList.add('un-kb-avoid');
 
@@ -4900,20 +4957,94 @@
     var settleTimer = null;
     var suppressFocusin = null; // field being focused by the interception path
 
+    // The ride (see the header): the scroller's layout foot last seen, when
+    // a field last took or let go of the keys, and the running animation.
+    var rideAnim = null;
+    var lastFoot = null;
+    var keysMovedAt = -Infinity;
+    var RideObserver = typeof window.ResizeObserver === 'function' ? window.ResizeObserver : null;
+    var rides = !!column && !!RideObserver && typeof column.animate === 'function';
+    var priorTransition = rides ? column.style.transition : '';
+
+    function clock() {
+      return window.performance && typeof window.performance.now === 'function' ? window.performance.now() : Date.now();
+    }
+    function footOf() { return scrollEl.offsetTop + scrollEl.offsetHeight; }
+    function inFixedShell() {
+      try {
+        return getComputedStyle(document.documentElement).overflowY === 'hidden'
+          || getComputedStyle(document.body).overflowY === 'hidden';
+      } catch (e) { return false; }
+    }
+    // A focus or a blur in the column: the keys are about to move. A ride
+    // in flight stops where it is, so the next step starts from what is on
+    // screen rather than from where it was headed.
+    function onKeysMove() {
+      keysMovedAt = clock();
+      if (!rideAnim) return;
+      lastFoot = footOf();
+      var anim = rideAnim;
+      rideAnim = null;
+      anim.onfinish = anim.oncancel = null;
+      try { anim.cancel(); } catch (e) { /* ignore */ }
+    }
+    function onColumnResize() {
+      if (rideAnim) return; // our own padding, frame by frame
+      var foot = footOf();
+      var before = lastFoot;
+      lastFoot = foot;
+      if (before == null) return;
+      var delta = foot - before;
+      if (Math.abs(delta) < KB_RIDE_MIN || prefersReducedMotion || !inFixedShell()) return;
+      var since = clock() - keysMovedAt;
+      if (!(since >= 0 && since < KB_RIDE_WINDOW_MS)) return;
+      // Down (the keys going): they started with the blur. Up: see
+      // KB_RIDE_OPEN_HEAD.
+      var x0 = Math.min(delta > 0 ? 0.9 : KB_RIDE_OPEN_HEAD, since / KB_RIDE_MS);
+      var finalPad = 0;
+      try { finalPad = parseFloat(getComputedStyle(column).paddingBottom) || 0; } catch (e) { /* 0 */ }
+      try {
+        rideAnim = column.animate(kbRideFrames(finalPad, delta, x0), {
+          duration: Math.round(KB_RIDE_MS * (1 - x0)),
+          easing: 'linear',
+        });
+      } catch (e) { rideAnim = null; return; }
+      rideAnim.onfinish = rideAnim.oncancel = function () {
+        rideAnim = null;
+        lastFoot = footOf();
+      };
+    }
+    var rideObserver = null;
+    if (rides) {
+      // The kit's padding transition would outrank the animation (a running
+      // transition sits above animations in the cascade); the ride is it.
+      column.style.transition = 'none';
+      lastFoot = footOf();
+      rideObserver = new RideObserver(onColumnResize);
+      rideObserver.observe(scrollEl);
+      column.addEventListener('focusin', onKeysMove);
+      column.addEventListener('focusout', onKeysMove);
+    }
+
     function kbUp() {
       return document.documentElement.classList.contains('un-kb');
+    }
+
+    // Where a field may be: the scroller, or the composer column around it.
+    function inReach(node) {
+      return scrollEl.contains(node) || (!!column && column.contains(node));
     }
 
     // Resolve a tap/focus target to an interceptable field, or null.
     function matchField(target) {
       if (!target || target.nodeType !== 1 || !target.closest) return null;
-      if (!scrollEl.contains(target)) return null;
+      if (!inReach(target)) return null;
       if (fieldsSel) {
         var custom = target.closest(fieldsSel);
-        return custom && scrollEl.contains(custom) ? custom : null;
+        return custom && inReach(custom) ? custom : null;
       }
       var field = target.closest('input, textarea, [contenteditable]');
-      if (!field || !scrollEl.contains(field)) return null;
+      if (!field || !inReach(field)) return null;
       var tag = field.tagName.toLowerCase();
       return isTextEntryField({
         tag: tag,
@@ -4999,7 +5130,7 @@
       // Re-pin the focused field on any settle: late inset growth (e.g.
       // the iOS QuickType bar appearing) re-adjusts without a new focus.
       var active = matchField(document.activeElement);
-      if (active && document.activeElement === active) reveal(active);
+      if (active && document.activeElement === active && scrollEl.contains(active)) reveal(active);
     }
 
     function onVvEvent() {
@@ -5043,7 +5174,15 @@
         try { field.focus(); } catch (err2) { /* ignore */ }
       }
       suppressFocusin = null;
-      scheduleReveal(field);
+      if (scrollEl.contains(field)) { scheduleReveal(field); return; }
+      // The composer: its column already places it on the keys. The tap's
+      // own caret placement went with the default, so a draft is picked up
+      // where it ends.
+      try {
+        if (typeof field.setSelectionRange === 'function' && typeof field.value === 'string') {
+          field.setSelectionRange(field.value.length, field.value.length);
+        }
+      } catch (err3) { /* an input type without a selection */ }
     }
 
     // Non-tap focuses (programmatic .focus(), Tab / next-button hops):
@@ -5054,23 +5193,26 @@
       if (e.target === suppressFocusin) return; // interception path owns it
       if (!kbUp()) return; // cold focuses wait for the settled pin
       var field = matchField(e.target);
-      if (field) reveal(field);
+      if (field && scrollEl.contains(field)) reveal(field);
     }
 
-    scrollEl.addEventListener('touchstart', onTouchStart, { passive: true });
-    scrollEl.addEventListener('touchmove', onTouchMove, { passive: true });
-    scrollEl.addEventListener('touchend', onTouchEnd, { passive: false });
-    scrollEl.addEventListener('touchcancel', onTouchCancel, { passive: true });
+    // One set of touch listeners: on the column when there is one (a tap
+    // in the scroller bubbles to it), else on the scroller.
+    var host = column || scrollEl;
+    host.addEventListener('touchstart', onTouchStart, { passive: true });
+    host.addEventListener('touchmove', onTouchMove, { passive: true });
+    host.addEventListener('touchend', onTouchEnd, { passive: false });
+    host.addEventListener('touchcancel', onTouchCancel, { passive: true });
     scrollEl.addEventListener('focusin', onFocusIn);
     vv.addEventListener('resize', onVvEvent, { passive: true });
     vv.addEventListener('scroll', onVvEvent, { passive: true });
 
     return {
       detach: function () {
-        scrollEl.removeEventListener('touchstart', onTouchStart);
-        scrollEl.removeEventListener('touchmove', onTouchMove);
-        scrollEl.removeEventListener('touchend', onTouchEnd);
-        scrollEl.removeEventListener('touchcancel', onTouchCancel);
+        host.removeEventListener('touchstart', onTouchStart);
+        host.removeEventListener('touchmove', onTouchMove);
+        host.removeEventListener('touchend', onTouchEnd);
+        host.removeEventListener('touchcancel', onTouchCancel);
         scrollEl.removeEventListener('focusin', onFocusIn);
         vv.removeEventListener('resize', onVvEvent);
         vv.removeEventListener('scroll', onVvEvent);
@@ -5078,6 +5220,13 @@
         clearPending();
         touch = null;
         scrollEl.classList.remove('un-kb-avoid');
+        if (rides) {
+          if (rideObserver) rideObserver.disconnect();
+          column.removeEventListener('focusin', onKeysMove);
+          column.removeEventListener('focusout', onKeysMove);
+          if (rideAnim) { var anim = rideAnim; rideAnim = null; anim.onfinish = anim.oncancel = null; try { anim.cancel(); } catch (e) { /* ignore */ } }
+          column.style.transition = priorTransition;
+        }
       },
     };
   }

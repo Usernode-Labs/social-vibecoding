@@ -610,13 +610,19 @@ export interface SpecVersion {
 /**
  * A change's spec, from the change's own routes (the conversation's owner
  * owns its changes): the latest text and its saved versions, newest first.
+ * `html` is the latest version's HTML document when it was written as one
+ * (#3699); `spec` is then its markdown copy.
  */
-export async function getSpec(changeId: number): Promise<{ spec: string; versions: SpecVersion[] }> {
-  const body = await json<{ spec?: string; versions?: SpecVersion[] }>(
+export async function getSpec(changeId: number): Promise<{ spec: string; html: string | null; versions: SpecVersion[] }> {
+  const body = await json<{ spec?: string; html?: string | null; versions?: SpecVersion[] }>(
     await request(`/api/sessions/${changeId}/spec`),
     tr("workshop:could_not_load_the_spec_feb412c1"),
   );
-  return { spec: typeof body.spec === 'string' ? body.spec : '', versions: Array.isArray(body.versions) ? body.versions : [] };
+  return {
+    spec: typeof body.spec === 'string' ? body.spec : '',
+    html: typeof body.html === 'string' && body.html ? body.html : null,
+    versions: Array.isArray(body.versions) ? body.versions : [],
+  };
 }
 
 /**
@@ -647,12 +653,21 @@ export async function ensureChangeStaging(changeId: number): Promise<{ status: s
   return json(await request(`/api/sessions/${changeId}/ensure-staging`, { method: 'POST' }), tr("workshop:could_not_rebuild_the_preview_fe8ef72c"));
 }
 
-export async function getSpecVersion(changeId: number, version: number): Promise<string> {
-  const body = await json<{ spec?: { content?: string } }>(
+/** One saved version of a change's spec: its text, and its HTML document when it has one (#3699). */
+export async function getSpecVersionDoc(changeId: number, version: number): Promise<{ text: string; html: string | null }> {
+  const body = await json<{ spec?: { content?: string; content_html?: string | null } }>(
     await request(`/api/sessions/${changeId}/specs/${version}`),
     tr("workshop:could_not_load_that_version_of_the_spec_671c8b66"),
   );
-  return body.spec && typeof body.spec.content === 'string' ? body.spec.content : '';
+  const spec = body.spec || {};
+  return {
+    text: typeof spec.content === 'string' ? spec.content : '',
+    html: typeof spec.content_html === 'string' && spec.content_html ? spec.content_html : null,
+  };
+}
+
+export async function getSpecVersion(changeId: number, version: number): Promise<string> {
+  return (await getSpecVersionDoc(changeId, version)).text;
 }
 
 export async function getChange(changeId: number): Promise<ChangeDetail | null> {

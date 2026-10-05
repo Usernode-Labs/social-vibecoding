@@ -1354,9 +1354,9 @@
       "expectSelector": "#browse-list[data-sort=\"users\"]:not(:has(h2)):not(:has(.browse-row[data-slug=\"directory-sample-demo\"])):not(:has(.browse-row[data-slug=\"directory-sample-broken\"])) button[aria-controls=\"browse-more-apps\"][aria-expanded=\"false\"]"
     },
     {
-      "name": "Show more keeps demo and broken directory apps reachable (#1523)",
+      "name": "Show more keeps demo and broken apps reachable (#1523); an updated app has no re-review tag (#3911)",
       "path": "/?demo=1&curation=1&sort=recommended&shot=browse-more#apps",
-      "expectSelector": "#browse-more-apps:has([data-directory-state=\"demo\"]) [data-directory-state=\"broken\"]",
+      "expectSelector": "#browse-list:has(h2~.browse-row[data-slug=\"directory-sample-updated\"][data-directory-state=\"outdated\"] .browse-row-meta>:first-child:not(.text-xs)) #browse-more-apps:has([data-directory-state=\"demo\"]) [data-directory-state=\"broken\"]",
       "expectText": "Show less"
     },
     {
@@ -1644,6 +1644,12 @@
       "path": "/?shot=spec-viewer#app/usernode-2d5619/dev/sessions/900830",
       "expectSelector": "#dc-spec-viewer .dc-spec-viewer-tabs",
       "expectText": "Staging demo shared spec"
+    },
+    {
+      "name": "An HTML spec opens on its before and after screens in the spec panel",
+      "path": "/?shot=spec-viewer#app/usernode-2d5619/dev/sessions/900831",
+      "expectSelector": "#dc-spec-viewer .shots-viewer-spec .shots-stage",
+      "expectText": "Staging demo HTML spec"
     },
     {
       "name": "The code-landed breadcrumb offers Propose, not \"Try that again\"",
@@ -2419,9 +2425,9 @@
       "expectSelector": "#dev-kanban[data-kanban-active=\"done\"] #dev-kanban-col-done.dev-kanban-col-active"
     },
     {
-      "name": "Done keeps task attributes and opens a completed change's Closed issue inside Homeroom (#2423)",
+      "name": "Done keeps task attributes, a live change's ✓ Live is green (#3873), and a Closed issue opens in Homeroom (#2423)",
       "path": "/?demo=1&view=kanban&col=done&cards=open#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban-col-done:has([data-gov-row=\"9100060\"] .attr-chip):has([data-proposal-row=\"9100027\"] .dev-card-meta > button.dev-badge[data-issue-chip=\"900006\"])",
+      "expectSelector": "#dev-kanban-col-done:has([data-gov-row=\"9100060\"] .attr-chip):has([data-proposal-row=\"9100027\"] .dev-card-meta > button.dev-badge[data-issue-chip=\"900006\"]):has([data-proposal-row=\"9100027\"][data-edge=\"ok\"] .gc-vote-count-ok)",
       "expectText": "Closed #900006"
     },
     {
@@ -2479,9 +2485,9 @@
       "expectText": "Staging demo: one line on what the open issues and waiting proposals are about."
     },
     {
-      "name": "A project's hub leads with a hero that says who it is for (communities)",
-      "path": "/#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop .dev-ws-hero[data-ws-community][data-audience=\"open\"] [data-ws-community-audience]",
+      "name": "A project's hub leads with a hero that says who it is for (communities); opened from an invite link, who invited you and Join come first in it (#3700)",
+      "path": "/?shot=invite-join#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-body #dev-workshop .dev-ws-hero[data-ws-community][data-audience=\"open\"]:has(> .dev-ws-invite:first-child [data-ws-invite-join]) [data-ws-community-audience]",
       "expectText": "Public community"
     },
     {
@@ -2853,9 +2859,9 @@
       "expectSelector": "#gc-thread-head:has([data-issue-title='900008']):has([data-issue-body-edit='900008'])"
     },
     {
-      "name": "Issue topic links its attached-screenshot preview to the full-size image (#2349)",
+      "name": "Issue topic screenshots link to the full-size file and open in the in-app viewer, body and discussion (#2349, #3908)",
       "path": "/?demo=1#app/usernode-2d5619/dev/issues/900010",
-      "expectSelector": ".dc-inline-img-link[href][target=\"_blank\"] > .dc-inline-img",
+      "expectSelector": "#gc-thread-head:has(.dev-topic-gh-thread[data-image-viewer-scope] .dc-inline-img-link > [alt=\"Screenshot from a phone\"]) .dev-topic-about[data-image-viewer-scope] .dc-inline-img-link[href][target=\"_blank\"] > .dc-inline-img",
       "expectText": "[Mock] issue with an attached screenshot"
     },
     {
@@ -3204,7 +3210,7 @@
     {
       "name": "The global chat composer wears the safe-bar contract, so on a phone it sits above the tab bar (bug e)",
       "path": "/?demo=1",
-      "expectSelector": "#global-chat-screen .global-chat-shell > .global-chat-transcript:not(.platform-safe-scroll) + form.global-chat-composer.platform-safe-bar > textarea#global-chat-composer[placeholder]"
+      "expectSelector": "#global-chat-screen .global-chat-shell > .global-chat-transcript:not(.platform-safe-scroll) ~ form.global-chat-composer.platform-safe-bar > textarea#global-chat-composer[placeholder]"
     },
     {
       "name": "#2783: #general groups one person's consecutive messages under a single name, the later ones as continuation lines (in Homeroom's Discussion tab, where its address opens since #3653)",
@@ -3312,9 +3318,9 @@
       ]
     },
     {
-      "name": "A message in Messages offers a save button",
+      "name": "A message in Messages offers a save button, and + → Share item leads with a search box and type chips (#3937)",
       "path": "/?demo=1#messages/910001",
-      "expectSelector": ".messages-message-self .messages-message-actions button[aria-label=\"Save message\"]"
+      "expectSelector": "body:has(#messages-share-dialog input[type=\"search\"][aria-label=\"Search apps\"] + fieldset [data-share-type=\"app\"][aria-pressed=\"true\"]) .messages-message-self .messages-message-actions button[aria-label=\"Save message\"]"
     },
     {
       "name": "An already-saved message offers to unsave instead, and says so to a screen reader",

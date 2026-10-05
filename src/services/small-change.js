@@ -283,7 +283,9 @@ async function askModel({ pool, config, appId, sessionId, compare, deps }) {
       temperature: 0,
       maxOutputTokens: MAX_OUTPUT_TOKENS,
       timeoutMs: TIMEOUT_MS,
-      parallelToolCalls: false,
+      // Never sent (#3772): `false` narrows GLM 5.3 Flash to the one
+      // provider that takes parallel_tool_calls (see llm.js askHelperModel).
+      parallelToolCalls: null,
       tools: [VERDICT_TOOL],
       toolChoice: { type: 'function', function: { name: 'record_verdict' } },
       messages: [

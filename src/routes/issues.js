@@ -674,6 +674,18 @@ function stagingMockIssueComments(number) {
       { author: 'usernode-bot', body: MOCK_BOT_SPEC_COMMENT, createdAt: hoursAgo(20) },
       longReply(),
     ],
+    // #3908: the screenshot issue's thread carries a picture too, so a
+    // preview can open a comment's screenshot in the app's viewer as well
+    // as the one in the request's body. Same same-origin asset as the body.
+    900010: [
+      ...stampLadder(),
+      {
+        author: 'another-tester',
+        body: '[Mock] Same thing on my phone:\n\n![Screenshot from a phone](/icons/v3/icon-192.png)',
+        createdAt: hoursAgo(12),
+      },
+      longReply(),
+    ],
   };
   if (threads[n]) return threads[n];
   // A number that is not an issue at all (an unparseable :number reaches

@@ -447,6 +447,14 @@ export interface TranscriptLead {
    * thread keeps its flat named rows and centred lines (an issue's page).
    */
   language?: 'chat' | 'flat';
+  /**
+   * The general chat only: where the reader's reading stood when the
+   * channel opened (`GroupChat._takeUnreadMark`), the newest message read
+   * then and how many were unread. The transcript draws its "New" line
+   * above the first message after it, and the pane counts them. Null or
+   * absent with nothing unread.
+   */
+  unread?: { lastReadId: number; count: number } | null;
 }
 
 export interface TranscriptView {
@@ -481,6 +489,14 @@ export const EMPTY_VIEW: TranscriptView = {
 export const INITIAL_TRANSCRIPT: TranscriptState = { ready: false, byKey: {} };
 
 export const transcriptStore = createStore<TranscriptState>(INITIAL_TRANSCRIPT);
+
+/**
+ * How many times a channel has been opened at its "New" line
+ * (mount.ts openAtUnreadLine). The pane's banner counts from the opening, so
+ * where the line sat before the stream was moved to it is not the reader
+ * scrolling onto it (general-chat.tsx).
+ */
+export const unreadOpenings = createStore<{ count: number }>({ count: 0 });
 
 if (typeof window !== 'undefined') {
   (window as unknown as { GroupChatTranscriptStore?: unknown })

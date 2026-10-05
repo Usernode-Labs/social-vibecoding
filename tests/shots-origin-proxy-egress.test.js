@@ -20,7 +20,7 @@ const path = require('node:path');
 const http = require('node:http');
 const net = require('node:net');
 const { spawn } = require('node:child_process');
-const { once } = require('node:events');
+const { closedPromise, waitForReady, stopProxy } = require('./lib/shots-proxy');
 
 const PUBLIC = '93.184.215.14';
 const FAKE_DNS = {
@@ -90,18 +90,16 @@ async function startProxy(t, net_, { platformAssets = '1', memorySampleMs = null
     },
     stdio: ['ignore', 'ignore', 'pipe'],
   });
+  const closed = closedPromise(proxy);
   const stderr = [];
   proxy.stderr.on('data', (chunk) => stderr.push(chunk));
   t.after(async () => {
-    proxy.kill('SIGTERM');
-    await once(proxy, 'close');
+    await stopProxy(proxy, closed);
     fs.rmSync(dir, { recursive: true, force: true });
   });
-  const deadline = Date.now() + 5000;
-  while (!fs.existsSync(ready) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
-  assert.equal(fs.existsSync(ready), true, 'the proxy started');
+  const shared = await waitForReady(proxy, ready, { output: () => Buffer.concat(stderr).toString() });
   return {
-    shared: Number(fs.readFileSync(ready, 'utf8')),
+    shared,
     ports,
     notes: () => fs.readFileSync(notes, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line)),
     stderr: () => Buffer.concat(stderr).toString(),

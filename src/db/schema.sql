@@ -1156,6 +1156,13 @@ CREATE INDEX IF NOT EXISTS pr_undo_votes_session_idx ON pr_undo_votes(session_id
 -- shared_to_group_at is set when the user posts a version into the
 -- app's group chat.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS spec_md TEXT NOT NULL DEFAULT '';
+-- #3699: a spec may be written as a small HTML document (before/after
+-- screens, diagrams; src/services/spec-html.js). spec_html is that document
+-- and spec_md is then its MARKDOWN COPY, so spec_md stays byte-identical to
+-- the latest version's content and every reader of spec text keeps working.
+-- NULL for a markdown spec. chat_session_specs.content_html is the same per
+-- version. Both tables are staging:private, which covers these columns.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS spec_html TEXT;
 
 -- Session auto-pause: persisted "last interacted with" timestamp. Bumped
 -- on every chat turn, on session open/view, and on resume. The DB-driven
@@ -1824,6 +1831,9 @@ CREATE TABLE IF NOT EXISTS chat_session_specs (
 );
 CREATE INDEX IF NOT EXISTS idx_chat_session_specs_session
   ON chat_session_specs (session_id, version DESC);
+-- #3699: the version's HTML document when it was written as one (see
+-- chat_sessions.spec_html); content is then its markdown copy.
+ALTER TABLE chat_session_specs ADD COLUMN IF NOT EXISTS content_html TEXT;
 
 -- #86: private spec shares. Each row grants ONE user read access to ONE
 -- frozen spec version (the "Share to user" button on the dev-session
