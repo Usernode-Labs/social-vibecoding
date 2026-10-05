@@ -378,12 +378,16 @@ test('#3203: the page says when the challenge ends, as a moment, and the header 
 
   pane._renderGrid();
   const grid = gridOf(store);
-  assert.equal(groupOf(grid, 'week').metaTitle, 'Ends Mon 12 Oct, 02:00', 'the header’s clock as a moment');
+  // This week ends when its cap starts again, Monday 00:00 UTC, which comes
+  // before the organiser's 2099 end; the other groups keep the organiser's.
+  const weekEnds = pane._endsText(pane._weekEnd());
+  assert.match(weekEnds, /^ends Mon \d+ \w+, 00:00$/);
+  assert.equal(groupOf(grid, 'week').metaTitle, pane._cap(weekEnds), 'the header’s clock as a moment');
   assert.equal(groupOf(grid, 'always').metaTitle, null, 'no deadline, no tooltip');
   assert.equal(groupOf(grid, 'other').metaTitle, 'Ends Mon 12 Oct, 02:00');
 
   const page = (c) => { const d = pageOf(pane, c); return [d.deadline, d.ends]; };
-  assert.deepEqual(page(challenges[0]), [null, 'ends Mon 12 Oct, 02:00'], 'the eyebrow keeps the countdown; the meta says when');
+  assert.deepEqual(page(challenges[0]), [null, weekEnds], 'the eyebrow keeps the countdown; the meta says when');
   assert.deepEqual(page(challenges[1]), [null, null], 'Always open never borrows the event’s end');
   assert.deepEqual(page(challenges[3]), [null, null], 'a finished challenge has nothing left to end');
 
@@ -539,7 +543,7 @@ test('the pane renders each header as a disclosure over the grid it names, with 
     // The name wins the row's width: at 320px "Season challenges" beside
     // "0/2 · no deadline" does not fit, and the meta is what gives way.
     assert.match(row[3], /^<span class="[^"]*\bshrink-0\b[^"]*">/, `${key}: the name keeps its width`);
-    const meta = row[3].match(/<span class="([^"]*)"><span class="([^"]*)">\d+\/\d+/);
+    const meta = row[3].match(/<span class="([^"]*)"[^>]*><span class="([^"]*)"[^>]*>\d+\/\d+/);
     assert.ok(meta, `${key}: the meta renders`);
     assert.match(meta[2], /\btruncate\b/, `${key}: the meta truncates`);
     assert.doesNotMatch(meta[1], /\bshrink-0\b/, `${key}: and its end of the row can shrink`);
