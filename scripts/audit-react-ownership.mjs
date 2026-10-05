@@ -355,6 +355,7 @@ const OWNED = [
   // #3654: the Homeroom bot section and its Benchmark tab (the tab is a tail
   // the section reads itself), both one React tree in the section host.
   { sel: '#admin-section-content', when: '#admin/homeroom-bot' }, // features/admin/admin-homeroom-bot.tsx (+ admin-homeroom-bench.tsx, and its /benchmark/… places)
+  { sel: '#admin-section-content', when: '#admin/small-changes' }, // features/admin/admin-small-changes.tsx
   // The programme console's screens convert one at a time (#1120 slice 24).
   // The host is #admin-topo-content, not the section host: admin-topochain.js
   // still owns the shell around it and recreates that node on every screen
@@ -401,7 +402,7 @@ const ROUTES = [
   // than dropping the route.
   '#app/recipebot/dev/issues/900001',
   '#admin/e2e', '#admin/gallery', '#admin/node', '#admin/merges', '#admin/push', '#admin/campaigns', '#admin/mail', '#admin/estimator', '#admin/analytics', '#admin/journey', '#admin/overview', '#admin/codes', '#admin/featured-apps', '#admin/db-export', '#admin/features', '#admin/limits', '#admin/users', '#admin/users/900301', '#admin/support', '#admin/support/900302', '#admin/status', '#admin/rollover', '#admin/staging-reap',
-  '#admin/model-costs', '#admin/reports', '#admin/welcome-dm', '#admin/sign-in', '#admin/homeroom-bot', '#admin/homeroom-bot/settings', '#admin/homeroom-bot/benchmark',
+  '#admin/model-costs', '#admin/reports', '#admin/welcome-dm', '#admin/sign-in', '#admin/homeroom-bot', '#admin/homeroom-bot/settings', '#admin/homeroom-bot/benchmark', '#admin/small-changes',
   // The Benchmark's own places, in the same host (`when: '#admin/homeroom-bot'`
   // covers them): runs, one run of each kind on the staging demo, and suites.
   '#admin/homeroom-bot/benchmark/runs', '#admin/homeroom-bot/benchmark/runs/936551', '#admin/homeroom-bot/benchmark/runs/936550',
