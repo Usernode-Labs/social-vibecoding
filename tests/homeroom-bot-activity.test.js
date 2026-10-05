@@ -192,7 +192,7 @@ test('a card that joined work under way starts when that work began, not when th
   assert.match(service, /AND r\.created_at >= c\.began\s+AND \(nxt\.began IS NULL OR r\.created_at < nxt\.began\)/);
   assert.match(service, /AND NOT \(r\.build_ok IS FALSE AND right\(COALESCE\(r\.build_error, ''\), char_length\(\$3::text\)\) = \$3::text\)/);
   const bot = read('src/services/homeroom-bot.js');
-  assert.match(bot, /error: `interrupted: \$\{plan\.lost \? \(plan\.why \|\| 'the turn was lost'\) : 'the spec turn was cut short'\}`\s*\+ ` \$\{RESTARTED_BUILD_NOTE\}`/,
+  assert.match(bot, /error: `interrupted: \$\{what\} \$\{RESTARTED_BUILD_NOTE\}`/,
     'the restart\'s requeue writes the note the card reads past');
 });
 

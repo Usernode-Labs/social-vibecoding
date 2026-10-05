@@ -860,6 +860,31 @@ function questionLead(line, it, dm) {
 }
 
 /**
+ * Pure: why a build of `it` did not finish, said to the person it was for.
+ * `reason` is the run's own record (homeroom-bot.js, homeroom-bot-live.js),
+ * written for the platform: on 5 Oct 2026 a requester read "the build ran
+ * past its time limit (finished after a restart)". It is read for what
+ * happened and never quoted. "(finished after a restart)" only says which
+ * process recorded it, never why it ended: a build that ran too long or
+ * changed nothing is said as that.
+ */
+function buildFailedWords(reason, it = 'this') {
+  const r = String(reason || '').replace(/\s*\(finished after a restart\)/g, '');
+  const restarts = /restarted in the middle of each of its last (\d+) tries/.exec(r);
+  if (restarts) {
+    return `I couldn't finish building ${it}: Homeroom restarted while I was working on it, ${restarts[1]} times in a row.`;
+  }
+  if (/ran past its time limit/.test(r)) return `I couldn't finish building ${it}: it took longer than I'm allowed.`;
+  if (/restarted|by a restart/.test(r)) return `I couldn't finish building ${it}: Homeroom restarted while I was working on it.`;
+  if (/built but could not be proposed/.test(r)) return `I built ${it}, but I couldn't put it up for approval.`;
+  if (/produced no change/.test(r)) return `I couldn't finish building ${it}: I ended up with no changes to show you.`;
+  if (/could not start|would not start|could not open a session|could not create its branch/.test(r)) {
+    return `I couldn't get started on building ${it}.`;
+  }
+  return `I couldn't finish building ${it}: something went wrong while I was working on it.`;
+}
+
+/**
  * The DM text for one of the bot's posts on a request, from the structured
  * `dm` its caller passed (homeroom-bot.js): plain words, no code. Returns
  * null for a kind the DM does not carry.
@@ -918,8 +943,14 @@ function dmText(kind, dm, context) {
       return `${line}\n\nI looked into this and can't build it as it's written: ${clip(dm.reason, 600)}\n\n`
         + 'Reply to this message with more detail and I\'ll look again.';
     case 'build_failed':
-      return `${line}\n\nI tried to build ${it} but couldn't finish (${clip(dm.reason, 300) || 'unknown reason'}). `
-        + 'A person can pick it up from here.';
+      // What happened in plain words, never the run's own record of it
+      // (buildFailedWords), and what to do about it, as #3772 gave `person`:
+      // "A person can pick it up from here" was a dead end for somebody who
+      // was the person. A reply here, quoting this or not, is read by the
+      // bot (it is not one of MIRRORED_KINDS), which starts the request
+      // again (homeroom-bot-mayor.js start_request): on 5 Oct 2026 "Oh no,
+      // can you try again?" had it building again within seconds.
+      return `${line}\n\n${buildFailedWords(dm.reason, it)} Reply here and I'll try again.`;
     case 'person':
       // #3772: and what to do about it. "Left for the group" was a dead end
       // for somebody who was the group: a reply here is posted on the
@@ -3354,6 +3385,7 @@ module.exports = {
   PAUSED_FOR_WEEK_TEXT,
   weekKey,
   dmText,
+  buildFailedWords,
   twoQuestions,
   // B7: ready to try, and who approves it.
   approvalState,
