@@ -159,7 +159,9 @@ async function recordUnlocked(pool, userId) {
 // bound to it, which is how the card knows what a step's button does) and
 // the viewer's gate facts,
 // so the card, the gate and every list are one query and one answer.
-async function loadOnboarding(pool, userId, { seasonId, eventId } = {}) {
+// `record: false` is a read with no side effect, for a reader that is not
+// the viewer (Admin › Journey's onboard column): it never records the unlock.
+async function loadOnboarding(pool, userId, { seasonId, eventId, record = true } = {}) {
   const scope = seasonId != null ? 'se.season_id = $2'
     : 'se.season_id = (SELECT season_id FROM season_events WHERE id = $2)';
   const { rows } = await pool.query(
@@ -215,7 +217,7 @@ async function loadOnboarding(pool, userId, { seasonId, eventId } = {}) {
     [userId ?? null, seasonId ?? eventId]
   );
   const state = buildOnboarding(rows);
-  if (state && state.opened && userId != null) await recordUnlocked(pool, userId);
+  if (record && state && state.opened && userId != null) await recordUnlocked(pool, userId);
   return state;
 }
 
