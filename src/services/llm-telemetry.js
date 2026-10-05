@@ -48,6 +48,16 @@ const COMPONENTS = new Set([
   'since_summary',
   // The watch-only small-change tag's one call per head (services/small-change.js).
   'small_change',
+  // Helpers that moved to GLM 5.3 Flash with a Haiku fallback (llm.js
+  // helperMessage), each named so its speed and fallback rate read on their own.
+  'short_description',
+  'app_sketch',
+  'challenge_grade',
+  'challenge_grade_feedback',
+  'challenge_grade_proposal',
+  'chat_ask',
+  'workshop_ask',
+  'content_review',
   'other_helper',
 ]);
 const BILLING_PATHS = new Set([

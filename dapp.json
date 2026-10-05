@@ -91,6 +91,12 @@
       "description": "The small-change tag, watch only: for each proposal head, rule-based vetoes and then one GLM 5.3 Flash call on the Homeroom bot's OpenRouter key decide whether the change is clearly small and undoable. Admins read the results at /api/admin/small-change-tags. Nothing about votes, merges, checks or cards depends on it. on (default): tag every head a checks run settles on. off: do nothing."
     },
     {
+      "key": "HELPER_MODEL",
+      "group": "Platform",
+      "default": "glm",
+      "description": "The model behind the platform's short helper calls: titles, a new project's description and sketch card, grades, pills, chat reads, reports, the Workshop ask box, the content review, progress guesses. glm (default): GLM 5.3 Flash on the Homeroom bot's OpenRouter key, with Haiku 4.5 when it is late or fails. haiku: Haiku 4.5 only, as before. Calls on a person's own Anthropic key stay on Haiku."
+    },
+    {
       "key": "LOG_LEVEL",
       "group": "Platform",
       "default": "INFO",

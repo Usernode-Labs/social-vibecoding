@@ -68,7 +68,9 @@ test('the read may answer revise only naming a change it was offered', () => {
   assert.deepEqual(llm.chatAskVerdict({ kind: 'question', title: '', change: '' }, offered), { kind: 'question', title: null, change: null });
   const src = read('src/services/llm.js');
   assert.match(src, /"revise": it asks to fix or change one of the changes above before it goes live\. Set "change" to that change's id\./);
-  assert.match(src, /output_config: \{ format: \{ type: 'json_schema', schema: offered\.length \? CHAT_ASK_REVISE_SCHEMA : CHAT_ASK_SCHEMA \} \}/);
+  assert.match(src, /const schema = offered\.length \? CHAT_ASK_REVISE_SCHEMA : CHAT_ASK_SCHEMA;/);
+  assert.match(src, /helper: 'chat_ask',\s+activeClient,\s+schema,/, 'the same schema is GLM\'s forced tool');
+  assert.match(src, /output_config: \{ format: \{ type: 'json_schema', schema \} \}/, 'and Haiku\'s structured output');
 });
 
 test('where a request stands, from its records', () => {
