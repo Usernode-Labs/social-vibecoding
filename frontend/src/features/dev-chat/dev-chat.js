@@ -4391,6 +4391,12 @@ const DevChat = {
   // front, because it stashes its kickoff message as the new session's DRAFT
   // (#609) and a draft is keyed by session id. Nothing else links a change to
   // an issue at creation time, so the placeholder has no issue to carry.
+  //
+  // No callers since classic creation closed (#3375): every entry point
+  // prepares an unsent agent conversation instead, so nothing in the app
+  // reaches the placeholder any more. The unit tests still drive it
+  // directly; its deletion is tracked in docs/agent-sessions.md ("As
+  // built: stages 3 and 4").
   startPendingSession(appSlug) {
     DevChat.currentSession = {
       pending: true,
