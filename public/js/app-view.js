@@ -5431,9 +5431,17 @@ const AppView = {
   // B10b: the one Tested line a change page shows, in place of the steps
   // list and its checks: what testing found, in words, from the latest run.
   // A tap opens Details at the Checks part. Nothing before the first run.
+  // Checks that passed never read "All checks passed" over a declared change
+  // the before & after shots agent tried and found broken (its
+  // `shotResults` status 'failed'): a page that renders is not a button
+  // that works.
   _testedLine(item) {
     const state = item && item.check_state;
     if (!state) return null;
+    const broken = (state === 'passing' || state === 'skipped') ? AppView._shotsBrokenCount(item.shots) : 0;
+    if (broken) {
+      return { state: 'failed', text: broken === 1 ? 'Tested · One thing isn’t working' : `Tested · ${broken} things aren’t working` };
+    }
     if (state === 'passing') return { state: 'passed', text: 'Tested · All checks passed' };
     if (state === 'pending') return { state: 'running', text: 'Testing it…' };
     if (state === 'failing') return { state: 'failed', text: 'Testing found a problem' };
@@ -19751,6 +19759,17 @@ const AppView = {
     return reason || 'Nothing has picked this preview up yet.';
   },
 
+  // How many declared changes the shots on this commit show failing: the
+  // shots agent did the steps and the after build broke. Zero for shots on
+  // another commit (the view serves no results for those) and for runs
+  // from before the failed outcome existed.
+  _shotsBrokenCount(shots) {
+    if (!shots || typeof shots !== 'object' || !['verified', 'failed'].includes(String(shots.state || ''))) return 0;
+    const results = Array.isArray(shots.shotResults) ? shots.shotResults : [];
+    const failed = results.filter((entry) => entry && entry.status === 'failed').length;
+    return failed || (shots.state === 'failed' && shots.failureCode === 'shots_change_failed' ? 1 : 0);
+  },
+
   // The words for each shots state — a label and a sentence — shared by
   // the verified/pending card below and the change page's strip.
   _shotsStateCopy(shots) {
@@ -19767,7 +19786,11 @@ const AppView = {
       reviewing: ['Saving the shots', 'The shots are being saved to the proposal.'],
       // A restart interrupted the run and the recovery sweep starts it
       // again by itself, so it is not a failure to act on yet.
-      failed: e.failureCode === 'shots_stopped'
+      // The shots agent did what the change says it does on the after
+      // build, and the app broke: the change does not work.
+      failed: e.failureCode === 'shots_change_failed'
+        ? ['Something didn\u2019t work', e.failureReason || 'The shots agent tried this change on the after build, and the app broke.']
+        : e.failureCode === 'shots_stopped'
         ? ['Shots stopped', e.failureReason || 'Stopped before it finished. No shots were taken for this commit.']
         : e.automaticRetryPending === true
           ? ['Trying the shots again', 'Homeroom restarted while taking these shots, so it starts them again on its own in a moment.']
@@ -19891,7 +19914,10 @@ const AppView = {
     // One result per declared change; runs from before shots have none.
     const shotResults = Array.isArray(shots.shotResults) ? shots.shotResults : [];
     const resultOf = (claim) => shotResults.find((entry) => entry && entry.id === claim.id);
-    const skipped = (claim) => resultOf(claim)?.status === 'skipped';
+    // A failed change was tried on the after build and the app broke; like a
+    // skipped one it has no shots of its own, but it reads as a problem.
+    const failed = (claim) => resultOf(claim)?.status === 'failed';
+    const skipped = (claim) => resultOf(claim)?.status === 'skipped' || failed(claim);
     const numberOf = (storyId) => claims.findIndex((claim) => claim.id === storyId) + 1;
     const persona = (claim) => (claim.persona === 'read_only_admin' ? 'read-only admin'
       : claim.persona === 'full_admin' ? 'full admin' : 'member');
@@ -20064,6 +20090,13 @@ const AppView = {
     const items = claims.map((claim) => {
       const result = resultOf(claim);
       const n = numberOf(claim.id);
+      if (failed(claim)) {
+        return `<li data-shots-story="${attr(claim.id || '')}" data-shots-shot-status="failed" class="shots-claim">
+          <span class="shots-claim-n">${n}</span>
+          <div class="min-w-0 flex-1"><div class="flex items-start justify-between gap-3"><strong class="text-sm leading-snug">${esc(claim.claim || '')}</strong><span class="dev-badge bg-red-500/10 text-red-700 dark:text-red-400">Didn\u2019t work</span></div>
+          <p class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">${esc(result.reason || 'The shots agent tried this on the after build, and the app broke.')}</p></div>
+        </li>`;
+      }
       if (skipped(claim)) {
         return `<li data-shots-story="${attr(claim.id || '')}" data-shots-shot-status="skipped" class="shots-claim">
           <span class="shots-claim-n">${n}</span>

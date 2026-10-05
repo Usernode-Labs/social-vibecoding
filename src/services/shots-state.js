@@ -408,10 +408,11 @@ function runSummary(row, artifactSummary = []) {
     // differ (services/shots-diff.js). Runs from before it have none.
     screens: shots.isShotsVerdict(row.hard_verdict) && Array.isArray(row.hard_verdict.screens)
       ? row.hard_verdict.screens : [],
+    // `failed`: the agent did the steps and the after build broke.
     shotResults: shots.isShotsVerdict(row.hard_verdict) && Array.isArray(row.hard_verdict.stories)
       ? row.hard_verdict.stories.map((story) => ({
         id: story?.id,
-        status: story?.status === 'ready' ? 'ready' : 'skipped',
+        status: story?.status === 'ready' || story?.status === 'failed' ? story.status : 'skipped',
         reason: story?.status === 'ready' ? null : (story?.reason || null),
         note: story?.status === 'ready' ? (story?.note || null) : null,
       }))
@@ -426,6 +427,105 @@ function runSummary(row, artifactSummary = []) {
     artifactSummary,
     updatedAt: row.updated_at || row.completed_at || row.created_at || null,
   };
+}
+
+// ── What a settled run means for whoever waits on it ────────────────────
+//
+// The Homeroom bot offers a change of its own as ready to try only once its
+// shots on that exact head have settled, and gives it back to itself to fix
+// when they show a declared change failing (homeroom-bot-dm.noteShotsSettled).
+// Every way the proposal's slot settles calls this after its write commits:
+// a terminal transition (published, failed, cancelled, stale), a waiver, a
+// run that will not start, a declaration that needs none. Fire-and-forget,
+// and one indexed read for any proposal that is not the bot's.
+let settleListener = (pool, sessionId) => require('./homeroom-bot-dm').noteShotsSettled(pool, sessionId);
+
+function noteSettled(pool, sessionId) {
+  const id = Number(sessionId);
+  const listener = settleListener;
+  if (!listener || !pool || !Number.isInteger(id) || id <= 0) return;
+  setImmediate(() => {
+    Promise.resolve().then(() => listener(pool, id)).catch(() => {});
+  });
+}
+
+function setSettleListenerForTests(listener) {
+  const previous = settleListener;
+  settleListener = listener;
+  return previous;
+}
+
+const IN_FLIGHT_STATES = new Set(['planned', 'provisioning', 'exploring', 'replaying', 'reviewing']);
+// How long a ready-to-try message waits on shots that have not settled,
+// from the checks verdict on the same head. A run is bounded by its own
+// budget (SHOTS_MAX_RUN_MS, 24 minutes) and recovery fails one that stops
+// reporting, so this only matters if no settle ever arrives; the bot's
+// refresh then sends what waited (homeroom-bot-dm.sweepHeldReady).
+const READY_HOLD_MS = 45 * 60_000;
+
+function lowerSha(value) {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+function timeOf(value) {
+  if (value == null) return NaN;
+  const ms = value instanceof Date ? value.getTime() : Date.parse(String(value));
+  return Number.isFinite(ms) ? ms : NaN;
+}
+
+/**
+ * Pure: the declared changes the shots on head `headSha` show failing (the
+ * shots agent did the steps and the after build broke), from a session row's
+ * `shots_state` and `shots_detail`: [{ id, claim, steps, reason }]. Empty
+ * for shots on another head, unsettled shots, and runs from before the
+ * failed outcome existed.
+ */
+function brokenOnHead(row, headSha) {
+  const detail = row?.shots_detail;
+  const head = lowerSha(headSha);
+  if (!detail || typeof detail !== 'object' || !head) return [];
+  if (!['verified', 'failed'].includes(row.shots_state)) return [];
+  if (lowerSha(detail.headSha) !== head) return [];
+  const claims = Array.isArray(detail.claims) ? detail.claims : [];
+  const results = Array.isArray(detail.shotResults) ? detail.shotResults : [];
+  return results.filter((result) => result && result.status === 'failed' && typeof result.id === 'string')
+    .slice(0, planContract.MAX_STORIES)
+    .map((result) => {
+      const declared = claims.find((claim) => claim && claim.id === result.id) || {};
+      return {
+        id: result.id,
+        claim: clip(declared.claim, 300) || result.id,
+        steps: Array.isArray(declared.steps) ? declared.steps.slice(0, 12).map((step) => String(step).slice(0, 200)) : [],
+        reason: clip(result.reason, 1000),
+      };
+    });
+}
+
+/**
+ * Pure: whether shots of head `headSha` are still to come, so a change is
+ * not yet ready to try. True while a run on that head is under way, or
+ * while declared shots have no settled run on it yet and nothing recorded
+ * that one will not start (a run is created only once the checks settle,
+ * beside the verdict that asks this). False when nothing visible was
+ * declared, when shots on this head settled, and once READY_HOLD_MS has
+ * passed since the checks verdict (`checks_checked_at`) or, without one,
+ * since the slot last changed.
+ */
+function holdsReady(row, headSha, { now = Date.now() } = {}) {
+  const detail = row?.shots_detail;
+  const head = lowerSha(headSha);
+  if (!detail || typeof detail !== 'object' || !head) return false;
+  if (detail.required === false || row.shots_state === 'not_required' || !row.shots_state) return false;
+  const since = Math.max(timeOf(row.checks_checked_at) || 0, timeOf(row.shots_updated_at) || 0);
+  if (!since || now - since > READY_HOLD_MS) return false;
+  const onHead = !detail.headSha || lowerSha(detail.headSha) === head;
+  if (onHead && row.shots_run_id) return IN_FLIGHT_STATES.has(row.shots_state);
+  if (onHead && TERMINAL_STATES.has(row.shots_state)) return false;
+  if (row.shots_state === 'planned' && typeof detail.notStartedReason === 'string' && detail.notStartedReason.trim()) {
+    return false;
+  }
+  const stories = detail.intent && Array.isArray(detail.intent.stories) ? detail.intent.stories : [];
+  return stories.length > 0;
 }
 
 async function createRunWithClient(client, {
@@ -499,7 +599,9 @@ async function createRunWithClient(client, {
 }
 
 async function createRun(pool, options) {
-  return withTransaction(pool, (client) => createRunWithClient(client, options));
+  const created = await withTransaction(pool, (client) => createRunWithClient(client, options));
+  if (created?.created && created.run?.state === 'not_required') noteSettled(pool, options.sessionId);
+  return created;
 }
 
 
@@ -529,7 +631,7 @@ async function transitionRun(pool, runId, nextState, rawPatch = {}) {
     throw new ShotsStateError('invalid_shots_run', 'Invalid before & after shots run id.', 400);
   }
   const patch = { ...rawPatch };
-  return withTransaction(pool, async (client) => {
+  const next = await withTransaction(pool, async (client) => {
     const selected = await client.query(
       `SELECT r.*, s.shots_run_id AS current_run_id
          FROM shot_runs r
@@ -625,6 +727,8 @@ async function transitionRun(pool, runId, nextState, rawPatch = {}) {
     }
     return next;
   });
+  if (TERMINAL_STATES.has(next?.state)) noteSettled(pool, next.session_id);
+  return next;
 }
 
 // A fire-and-forget shots run belongs to a web process. Keep a durable
@@ -768,6 +872,9 @@ async function overrideRun(pool, runId, { userId, reason }) {
     if (!sessionUpdated.rowCount) {
       throw new ShotsStateError('stale_shots_operation', 'The proposal shots owner changed during the override.');
     }
+    return next;
+  }).then((next) => {
+    noteSettled(pool, next?.session_id);
     return next;
   });
 }
@@ -914,6 +1021,8 @@ async function recordNotStarted(pool, sessionId, reason) {
       RETURNING id`,
     [id, text]
   );
+  // A run that will not start is settled for whoever waits on it.
+  if (rows.length) noteSettled(pool, id);
   return { recorded: rows.length > 0 };
 }
 
@@ -1015,4 +1124,8 @@ module.exports = {
   rerunSameHead,
   runSummary,
   getForSession,
+  READY_HOLD_MS,
+  brokenOnHead,
+  holdsReady,
+  _setSettleListenerForTests: setSettleListenerForTests,
 };

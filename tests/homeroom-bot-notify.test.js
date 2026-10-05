@@ -37,6 +37,8 @@ const MOMENT_WORDS = [
   ['hrbot:question:Plant Pal', 'Plant Pal: I have a question'],
   ['hrbot:ready:Plant Pal', 'Plant Pal is ready to try'],
   ['hrbot:ready_group:Supper Club', 'Your change to Supper Club is ready to try'],
+  // Built, but its before & after shots show part of it failing: never "ready to try".
+  ['hrbot:ready_broken:Flat 4B Chores', 'Flat 4B Chores is built, but not everything works yet'],
   // WP-F: a stop says which one, and what is next; never a bare "didn't finish".
   ['hrbot:stopped:Plant Pal', 'Plant Pal: your change stopped. I said why in our chat'],
   ['hrbot:stopped_build:Plant Pal', 'Plant Pal: I couldn\'t finish building it. A person can pick it up'],
@@ -120,7 +122,7 @@ test('B4: the push and the bell keep one copy of the words', () => {
     const body = src.slice(src.indexOf('const words = {'), src.indexOf('}[m[1]]'));
     return body.split('\n').map((l) => l.trim()).filter((l) => /^[a-z_]+: app \?/.test(l));
   };
-  assert.equal(words(server).length, 15);
+  assert.equal(words(server).length, 16);
   assert.deepEqual(words(client), words(server));
 });
 

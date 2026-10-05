@@ -2480,7 +2480,7 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
           recordFailure,
           deps: {
             github, worker, agentTurn, limits, threadContext, managedOpenRouter, sessions,
-            activeWorkers, votes: deps.votes || null, ...liveD,
+            activeWorkers, votes: deps.votes || null, dm: deps.dm || null, ...liveD,
           },
         });
       }
@@ -4553,9 +4553,13 @@ async function reconcileRevision({ config, pool, session, app, issueNumber, deps
 //     queued again.
 //   - each failing head is looked at once: the run that looked records it
 //     (checks_head_sha), and checksDue reads that back as `looked`.
+//   - a declared change its before & after shots show failing on that head
+//     is due the same turn (followup.brokenClaims): every settled shots run
+//     reaches homeroom-bot-dm.noteShotsSettled, whose noteChangeReady calls
+//     noteProposalChecks before it would offer the change as ready to try.
 
 const CHECKS_ROW_SQL = `SELECT cs.id, cs.app_id, cs.linked_issues, cs.check_state, cs.checks_commit_sha,
-            cs.reviewed_head_sha, cs.test_results, a.slug, a.name, a.repo_url,
+            cs.reviewed_head_sha, cs.test_results, cs.shots_state, cs.shots_detail, a.slug, a.name, a.repo_url,
             EXISTS (
               SELECT 1 FROM homeroom_bot_runs r
                WHERE r.proposal_session_id = cs.id
@@ -4573,12 +4577,14 @@ async function checksToFix(pool, sessionId) {
 }
 
 /**
- * A check verdict settled 'failing' on proposal `sessionId` (visuals.js).
- * When it is the bot's own open proposal, on an app it is live on, and a
- * fix is due on its current head, its issue is queued for a checks
- * follow-up and the loop woken. A run that looks like the platform's fault
- * (followup.checksLookLikeInfra) is left for the platform's own re-run.
- * Never throws; resolves whether it queued.
+ * A check verdict settled 'failing' on proposal `sessionId` (visuals.js),
+ * or its before & after shots showed a declared change failing while its
+ * checks passed (homeroom-bot-dm.noteChangeReady). When it is the bot's own
+ * open proposal, on an app it is live on, and a fix is due on its current
+ * head, its issue is queued for a checks follow-up and the loop woken. A
+ * run that looks like the platform's fault (followup.checksLookLikeInfra)
+ * is left for the platform's own re-run. Never throws; resolves whether it
+ * queued.
  */
 async function noteProposalChecks(pool, { sessionId } = {}) {
   try {
@@ -4607,8 +4613,11 @@ async function noteProposalChecks(pool, { sessionId } = {}) {
        WHERE homeroom_bot_queue.started_at IS NULL`,
       [row.app_id, issueNumber, CHECKS_REASON],
     );
-    log.info('homeroom-bot', 'Its proposal\'s checks failed; queued to fix them', {
+    log.info('homeroom-bot', due.failing.length
+      ? 'Its proposal\'s checks failed; queued to fix them'
+      : 'Part of its proposal failed when Homeroom tried it; queued to fix it', {
       app: row.slug, issueNumber, sessionId: row.id, head: due.head, failing: due.failing.length, total: due.total,
+      broken: due.broken?.length || 0,
     });
     noteIssueActivity({ appId: row.app_id, issueNumber, reason: CHECKS_REASON });
     return true;
@@ -4633,6 +4642,8 @@ async function runChecksFix(pool, config, {
   const issueNumber = Number(item.issue_number);
   const prNumber = session.pr_number;
   const { head, failing, total } = checks;
+  // The declared changes its shots show failing on this head, if any.
+  const broken = Array.isArray(checks.broken) ? checks.broken : [];
   // The run keeps what the bot has seen of the issue: nobody said anything,
   // so the last run's mark stands (without one the next refresh would read
   // the whole thread as new).
@@ -4666,13 +4677,13 @@ async function runChecksFix(pool, config, {
     const targets = await live.mentionTargets({
       pool, github, app, repo, issueNumber, issue, botLogin, bot, proposalSessionId: session.id,
     }).catch(() => []);
-    const text = followup.checksPersonText({ why, prNumber, failingCount: failing.length });
+    const text = followup.checksPersonText({ why, prNumber, failingCount: failing.length, broken });
     const posted = await live.post({
       pool, github, ws: deps.ws, app, repo, issueNumber, kind: 'followup_person', runId, text,
       sender: bot, senderId: bot.id, mentions: targets, notifications: deps.notifications || null,
       // Said where the group votes too: the checks are the proposal's.
       proposalSessionId: session.id,
-      dm: { reason: `its checks are failing: ${why}` },
+      dm: { reason: failing.length ? `its checks are failing: ${why}` : `part of it does not work yet: ${why}` },
     }).catch((err) => {
       log.warn('homeroom-bot', 'Checks hand-off post failed', { app: app.slug, issueNumber, err: err.message });
       return null;
@@ -4682,8 +4693,16 @@ async function runChecksFix(pool, config, {
       postedAt: posted?.githubCreatedAt ? [posted.githubCreatedAt] : [], proposalSessionId: session.id,
     }).catch(() => {});
     log.info('homeroom-bot', 'Handed its proposal\'s failing checks to a person', {
-      app: app.slug, issueNumber, sessionId: session.id, head, why,
+      app: app.slug, issueNumber, sessionId: session.id, head, why, broken: broken.length,
     });
+    // This head has been looked at now. A change whose checks pass but whose
+    // shots showed part of it failing was held back from "ready to try" for
+    // this round; it goes out now, saying plainly what does not work
+    // (homeroom-bot-dm.noteChangeReady).
+    if (broken.length) {
+      (deps.dm || require('./homeroom-bot-dm')).noteChangeReady(pool, session.id, { ws: deps.ws || null })
+        .catch(() => {});
+    }
     return { ran: true, verdict, runId, acted: 'checks_person' };
   };
 
@@ -4700,13 +4719,14 @@ async function runChecksFix(pool, config, {
     sessionId: session.id, prNumber,
     threadMessages: proposalThread?.messages || [], truncated: !!proposalThread?.truncated,
   });
-  const prompt = followup.checksFixPrompt({ seed, proposalBlock, prNumber, failing, total });
+  const prompt = followup.checksFixPrompt({ seed, proposalBlock, prNumber, failing, total, broken });
   snapshot = {
     stage: 'checks_fix', appId: app.id, issueNumber,
     baseSha: head,
     texts: {
       seed, prompt, proposal_block: proposalBlock,
       failing: JSON.stringify(failing),
+      ...(broken.length ? { broken: JSON.stringify(broken) } : {}),
       thread: snapshots.frozenThread({
         issueNumber, issue, comments, threadMessages: issueThread?.messages || [], botLogin,
       }),
@@ -4716,7 +4736,9 @@ async function runChecksFix(pool, config, {
   const turn = await followup.runFollowUpTurn({
     // `mode` is runFollowUp's: a build turn, since revisions remain.
     pool, config, bot, repo, session, prompt, mode, issueNumber, turnBudgetMs, model, deps,
-    commitMsg: `Homeroom bot: fix the failing checks on #${issueNumber}`,
+    commitMsg: failing.length
+      ? `Homeroom bot: fix the failing checks on #${issueNumber}`
+      : `Homeroom bot: fix what did not work on #${issueNumber}`,
   });
   const result = turn.result || {};
   const relay = relaySpend(result.relayUsage, turn.pricing, agentTurn);
@@ -4767,7 +4789,9 @@ async function runChecksFix(pool, config, {
     const link = deps.domain ? live.proposalLink(deps.domain, app.slug, session.id) : null;
     await live.postOnProposal({
       pool, ws: deps.ws, app, issueNumber, runId, kind: 'checks_revise', bot, sessionId: session.id,
-      text: followup.checksRevisedText({ summary, reply: parsed?.reply, prNumber, link }),
+      text: followup.checksRevisedText({
+        summary, reply: parsed?.reply, prNumber, link, broken: broken.length > 0, failing: failing.length > 0,
+      }),
     }).catch((err) => log.warn('homeroom-bot', 'Checks revision post failed', { app: app.slug, issueNumber, err: err.message }));
     log.info('homeroom-bot', 'Revised its proposal to fix its failing checks', {
       app: app.slug, issueNumber, sessionId: session.id, head, failing: failing.length, costUsd, runId,
@@ -6312,6 +6336,10 @@ async function runOnce(pool, config, deps = {}) {
       // B6: and a plan nobody tapped Build it under for a week stops waiting.
       const stalePlans = await settleStalePlans(pool, { dm: deps.dm });
       if (stalePlans) out.plansStopped = stalePlans;
+      // A change that passed its checks and waited longer than it should on
+      // its before & after shots is offered as ready to try anyway.
+      const heldReady = await (deps.dm || require('./homeroom-bot-dm')).sweepHeldReady?.(pool, { ws: deps.ws || null });
+      if (heldReady) out.heldReadyLooked = heldReady;
     }
 
     // Inside a platform-fault backoff nothing is dispatched (#3122). A wake

@@ -12,6 +12,7 @@ const os = require('node:os');
 const github = require('./github');
 const log = require('./logger');
 const shotsDiff = require('./shots-diff');
+const shotsFiles = require('./shots-files');
 const logRedaction = require('./log-redaction');
 const shotsAgent = require('./shots-agent');
 const shotsControl = require('./shots-control');
@@ -938,6 +939,8 @@ async function failCurrentRun(pool, runId, error, stateService = state, runTrace
       failureCode: errorCode(error),
       failureReason: visibleError(error),
       ...(runTrace ? { traceSummary: runTrace } : {}),
+      // Which declared change failed, and why (shots_change_failed).
+      ...(error?.hardVerdict ? { hardVerdict: error.hardVerdict } : {}),
     });
     return true;
   } catch (transitionError) {
@@ -1187,6 +1190,15 @@ async function executeRun(config, options, injected = {}) {
       if (agentOutcome.error && !registration.control.skipped.size && !registration.control.skippedAll) {
         throw agentOutcome.error;
       }
+      // A change the agent tried and found broken on the after build is the
+      // change not working, not shots that could not be taken: its own code,
+      // and the verdict is kept so every reader can say which change failed
+      // (shots-state.brokenOnHead, the Homeroom bot's fix round).
+      if (summary.failedCount) {
+        const failure = new ShotsOrchestrationError('shots_change_failed', shotsFiles.failedReason(intent, summary.stories));
+        failure.hardVerdict = summary.verdict;
+        throw failure;
+      }
       throw new ShotsOrchestrationError(
         'shots_capture_incomplete',
         reasons.join(' ').slice(0, 1800) || 'The shots agent did not save a before and after shot.'
@@ -1275,6 +1287,7 @@ async function executeRun(config, options, injected = {}) {
       ...(control ? { control: {
         savedFiles: control.saved.size,
         skippedChanges: control.skipped.size,
+        ...(control.failed?.size ? { failedChanges: control.failed.size } : {}),
         notedChanges: control.notes.size,
         skippedAll: control.skippedAll ? true : false,
       } } : {}),

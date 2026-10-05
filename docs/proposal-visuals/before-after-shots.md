@@ -26,6 +26,7 @@ program failed replay on a locator, an assertion, or a fingerprint.
 | clip | A WebM of one side, for a `motion` change | variant `animation`, side `base`/`head` |
 | screen | A declared viewport (`desktop`, `mobile`, …) | `viewport` |
 | skipped | A change the shots agent could not reach, with its reason | `hard_verdict.stories[].status` |
+| failed | A change the shots agent tried on the after build, where the app itself broke (a server error, an error on screen, the effect never appearing) | `hard_verdict.stories[].status` |
 | shots agent | The hosted model that takes the shots (Claude Sonnet 5.5 for every proposal) | shots worker turn |
 | visible changes | The author's declaration of the changes (`impact`, `rationale`, `stories`) | `visibleChanges` on the way in, `intent` once stored |
 | preview | The running staging build of a proposal, and only that | |
@@ -160,7 +161,7 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
    | `save_shot` | Publishes PNGs the browser saved with `browser_take_screenshot`, several per call, each for a change, screen, side and kind; one screenshot can be listed for several changes |
    | `save_clip` | Publishes the clip that the change's browser recorded most recently |
    | `note_change` | Records what a change's shots leave out of its claim, shown beside them |
-   | `skip_change` | Records why a change cannot be shown and withdraws anything saved for it (saving again takes the skip back); without a change id, it skips every change that is not ready |
+   | `skip_change` | Records why a change cannot be shown and withdraws anything saved for it (saving again takes the skip back); without a change id, it skips every change that is not ready. `outcome: "failed"` says the agent did the steps on the after address and the app broke, rather than that these copies cannot reach the state |
    | `fail_request` | Blocks a declared `controlledFailurePath` on both builds |
 
    For each change and screen, the agent resizes the browser, follows the
@@ -174,7 +175,8 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
    triggers only the motion. Then it calls `browser_close` again, which writes
    the recording, and `save_clip` publishes it.
 4. **Saving** (`reviewing`). Each change is folded into one result. A change
-   the agent skipped by name is **skipped**, even if shots were saved for it.
+   the agent skipped by name is **skipped**, even if shots were saved for it,
+   or **failed** when it skipped it with `outcome: "failed"`.
    Otherwise a change is **ready** when every screen has a before and an
    after screen shot, plus a before and an after clip if it is motion, and it
    carries the agent's note if it left one. Element shots are optional
@@ -185,8 +187,9 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
 5. **Shots ready** (`verified`). A run publishes if at least one change is
    ready, so one unreachable change never hides the others. If none is
    ready, the run fails with `shots_capture_incomplete` and each change's
-   reason. If the agent itself failed and skipped nothing, it keeps the
-   agent's error instead.
+   reason, or with `shots_change_failed` when a change failed: then it keeps
+   its verdict, so every reader can say which change failed. If the agent
+   itself failed and skipped nothing, it keeps the agent's error instead.
 
 `hard_verdict` records the outcome:
 `{ passed, mode: "shots", runs: 1, stories: [{ id, status, reason?, note? }] }`.
@@ -286,6 +289,10 @@ this has no `screens`: its card flips a screen per change and size, with
 nothing outlined. The Workshop feed's picture still leads with the element
 shot when it is big enough to read (at least 120×40 px on both sides).
 - **Skipped.** The change, a "Skipped" badge and the reason.
+- **Failed.** The change, a red "Didn’t work" badge and what the agent saw.
+  A run whose only changes failed reads "Something didn’t work". The change
+  page's Tested line reads "Tested · One thing isn’t working" instead of
+  "All checks passed" while the shots on its commit show a change failing.
 - While running, the card shows its state ("Building before and after",
   "Taking the shots", "Saving the shots") and a Stop action. A failed run
   offers "Take the shots again", and so does a ready one (after better steps
@@ -297,9 +304,24 @@ shot when it is big enough to read (at least 120×40 px on both sides).
   with the declaration, for whoever reviews it.
 
 The public view model and the connector's `get_proposal` carry `shotResults`
-(`[{ id, status: "ready" | "skipped", reason, note }]`) beside `claims` and
+(`[{ id, status: "ready" | "skipped" | "failed", reason, note }]`) beside `claims` and
 `artifacts`. Runs from before shots have no `shotResults`, and their older
 paired clips still play.
+
+## A change of the Homeroom bot's
+
+The bot offers a change of its own as ready to try only once its shots on
+that exact head have settled (`shots-state.holdsReady`, read by
+`homeroom-bot-dm.changeReadiness`), for at most 45 minutes after its checks
+verdict. Every way the shots slot settles (a terminal transition, a waiver,
+a run that will not start) calls `homeroom-bot-dm.noteShotsSettled`, and the
+bot's refresh sends anything held past the limit. When the shots show a
+declared change failing, the change goes back to the bot in the round a
+failing check gets (`homeroom-bot-followup.checksDue`'s `broken`, once per
+head and within its revisions) before anybody is told it is ready. Once that
+round is spent, the card says plainly what does not work ("Flat 4B Chores is
+built, but not everything works yet", "One thing isn’t working yet: …"), and
+nobody else is asked to approve it.
 
 ## Configuration
 

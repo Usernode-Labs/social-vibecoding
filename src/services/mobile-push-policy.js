@@ -82,6 +82,7 @@ function botMomentCopy(detail, message) {
     question: app ? `${app}: I have a question` : 'I have a question',
     ready: app ? `${app} is ready to try` : 'Your change is ready to try',
     ready_group: app ? `Your change to ${app} is ready to try` : 'Your change is ready to try',
+    ready_broken: app ? `${app} is built, but not everything works yet` : 'Your change is built, but not everything works yet',
     stopped: app ? `${app}: your change stopped. I said why in our chat` : 'Your change stopped. I said why in our chat',
     stopped_build: app ? `${app}: I couldn't finish building it. A person can pick it up` : 'I couldn\'t finish building it. A person can pick it up',
     stopped_blocked: app ? `${app}: I can't build it as written. Tell me more` : 'I can\'t build it as written. Tell me more',
