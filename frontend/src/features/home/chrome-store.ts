@@ -1,6 +1,8 @@
 /**
  * The home screen's two small hosts, as view models: the iOS widget-editing
- * strip above the launcher grid, and the "Show all N apps" button below it.
+ * strip above the launcher grid, and the "Show all N apps" button below it —
+ * plus the Shortcuts heading's "Sort A–Z" flag (#3750), painted on the same
+ * pass for the same reason.
  *
  * ── Why these are a second store, not part of grid-store ──────────────
  *
@@ -46,11 +48,17 @@ export interface WidgetStripState {
 export interface HomeChromeState {
   /** 0 hides "Show all N apps"; otherwise the count it names. */
   moreCount: number;
+  /**
+   * Whether the Shortcuts heading offers "Sort A–Z" (#3750): two or more
+   * tiles on the launcher, not already in name order, and not a search.
+   */
+  sortable: boolean;
   strip: WidgetStripState;
 }
 
 export const INITIAL_CHROME: HomeChromeState = {
   moreCount: 0,
+  sortable: false,
   strip: { active: false, helpVisible: false, tiles: [] },
 };
 

@@ -1457,7 +1457,7 @@ test('render() and load() are the only publishers of the grid model', () => {
   // load() is the single-flight gate; the load itself is _loadOnce().
   const load = code.indexOf('async _loadOnce() {');
   const render = code.indexOf('  render() {');
-  const afterRender = code.indexOf('  _renderAppsMore(count) {');
+  const afterRender = code.indexOf('  _renderAppsMore(count, sortable) {');
   assert.ok(load > 0 && render > load && afterRender > render);
   const inLoad = sites.filter((at) => at > load && at < render).length;
   const inRender = sites.filter((at) => at > render && at < afterRender).length;

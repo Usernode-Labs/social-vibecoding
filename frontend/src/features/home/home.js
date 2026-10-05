@@ -678,6 +678,38 @@ const Home = {
     return layout;
   },
 
+  // The name a tile shows, for "Sort A–Z" — the app's name, or its slug when
+  // it has none (the same fallback the tile menus use).
+  _shortcutName(slug) {
+    const app = (Home._apps || []).find((a) => a && a.slug === slug);
+    return (app && app.name) || slug;
+  },
+
+  // "Sort A–Z" in the Shortcuts heading (#3750). A one-shot rearrangement,
+  // committed exactly the way a drop is (_onGridPlace): the new arrangement
+  // becomes this width's stored layout and is written through
+  // _persistLayout, which reverts on failure and skips the staging demo
+  // fixture. It keeps the cells the tiles already occupy (holes and all —
+  // HomeLayout.sortByName) and only changes who sits where, so dragging
+  // afterwards is the "manual" order, with nothing to switch off.
+  //
+  // It does not touch the iOS widget's pinned shortcuts: that is a separate
+  // ordered list the viewer arranges in its own strip, and a grid drop never
+  // reorders it either.
+  sortShortcutsAZ() {
+    if (Home._dragActive) return;
+    if ((Home._query || '').trim()) return;
+    const cols = Home.currentCols();
+    const layout = Home.currentLayout(cols);
+    if (layout.length < 2 || HomeLayout.isSortedByName(layout, Home._shortcutName)) return;
+    const next = HomeLayout.sortByName(layout, Home._shortcutName);
+    Home._layoutCache = next;
+    if (!Home._layouts) Home._layouts = {};
+    Home._layouts[String(cols)] = next;
+    Home.render();
+    Home._persistLayout(cols, next);
+  },
+
   // One fetch per TTL, shared by concurrent callers — Home.load() runs from
   // a dozen WS/event paths and must not turn into a dozen requests.
   _ensureLayoutLoaded(opts) {
@@ -771,6 +803,9 @@ const Home = {
     // Non-zero only when the collapsed grid is holding tiles back; the count
     // is every app the viewer has, which is what the button offers to show.
     let moreCount = 0;
+    // Whether the Shortcuts heading offers "Sort A–Z" (#3750). Never in the
+    // search view: a result list is not the arrangement a sort would change.
+    let sortable = false;
     // The trailing "Create an app" tile — null in the search view, which is a
     // transient list of matches rather than the launcher.
     let create = null;
@@ -798,6 +833,10 @@ const Home = {
       // order in this array.
       const cols = Home.currentCols();
       const layout = Home.currentLayout(cols);
+      // Two tiles at least, and not already in name order — a press that
+      // would move nothing is not offered.
+      sortable = layout.length >= 2
+        && !HomeLayout.isSortedByName(layout, Home._shortcutName);
       // AS MANY ROWS AS THE FIRST TWO-THIRDS OF THE SCREEN HOLDS, AND NEVER
       // FEWER THAN TWO (HomeLayout.DEFAULT_ROWS). The cap is on what is SHOWN,
       // never on what a viewer may have or where they may put it: the canvas
@@ -907,7 +946,7 @@ const Home = {
     // explicit cell placement #app-list uses. Its reorder recognizer is
     // attached by ./widget-strip.tsx's effect, which calls _wireWidgetStrip —
     // that function attaches listeners, it writes no markup.
-    Home._renderAppsMore(moreCount);
+    Home._renderAppsMore(moreCount, sortable);
     // Discover / Challenges, painted from the widgets cache
     // (#911) — no network. Their hosts are fixed sections OUTSIDE #app-list,
     // so the grid's wholesale innerHTML re-render above cannot disturb them;
@@ -1572,9 +1611,10 @@ const Home = {
   // Kept its name and its caller. It no longer touches the DOM, and the
   // listener it used to re-attach on every paint is now attached once by
   // ./apps-more.tsx to an element React keeps.
-  _renderAppsMore(count) {
+  _renderAppsMore(count, sortable) {
     chromeStore.set({
       moreCount: count || 0,
+      sortable: !!sortable,
       strip: Home.widgetSectionView(),
     });
   },

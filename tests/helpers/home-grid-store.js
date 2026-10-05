@@ -56,6 +56,7 @@ const INITIAL_GRID = {
 /** Mirrors INITIAL_CHROME in frontend/src/features/home/chrome-store.ts. */
 const INITIAL_CHROME = {
   moreCount: 0,
+  sortable: false,
   strip: { active: false, helpVisible: false, tiles: [] },
 };
 

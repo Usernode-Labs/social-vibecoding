@@ -290,6 +290,44 @@ const HomeLayout = {
 
 
 
+  // ── Sort A–Z (#3750) ───────────────────────────────────────────────
+  //
+  // The Shortcuts heading's "Sort A–Z": the viewer's tiles, alphabetical by
+  // the name each one shows. It is a one-shot rearrangement, not a mode — the
+  // result is an ordinary stored layout, so dragging afterwards works exactly
+  // as it always has.
+  //
+  // HOLES STILL SURVIVE. The sort does not re-pack: it keeps the very cells
+  // the layout occupies and hands them out again, in reading order, to the
+  // apps in name order. A viewer who left row 1 empty to split their tiles
+  // into two groups keeps that shape; only who sits where changes. Overflow
+  // items (rows at/after MAX_ROWS) come last in reading order, so they take
+  // the end of the alphabet.
+  //
+  // `nameOf(slug)` is the caller's display name for a tile; a missing one
+  // falls back to the slug. Case-insensitive and locale-aware (`numeric`, so
+  // "App 2" sorts before "App 10"); two equal names fall back to the slug so
+  // the result is the same on every client.
+  sortByName(layout, nameOf) {
+    const cells = HomeLayout.readingOrder(layout);
+    const label = (slug) => String((nameOf && nameOf(slug)) || slug || '');
+    const order = cells
+      .map((it) => ({ slug: it.slug, label: label(it.slug) }))
+      .sort((a, b) => (
+        a.label.localeCompare(b.label, undefined, { sensitivity: 'base', numeric: true })
+        || (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0)
+      ));
+    return cells.map((it, i) => ({ ...it, slug: order[i].slug }));
+  },
+
+  // Whether sortByName would move nothing — the heading hides its action
+  // then, rather than offering a press that does nothing.
+  isSortedByName(layout, nameOf) {
+    const cells = HomeLayout.readingOrder(layout);
+    const sorted = HomeLayout.sortByName(layout, nameOf);
+    return cells.every((it, i) => it.slug === sorted[i].slug);
+  },
+
   // ── Repair ─────────────────────────────────────────────────────────
 
   // Reconcile a stored layout against what actually exists right now:

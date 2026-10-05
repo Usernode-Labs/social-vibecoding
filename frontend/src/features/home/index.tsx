@@ -92,6 +92,7 @@ import { AppsMore } from './apps-more';
 import { GettingStarted } from './getting-started';
 import { ChallengesSection, DiscoverSection } from './panels/sections';
 import { SectionHeading } from './panels/ui';
+import { SortShortcuts } from './sort-shortcuts';
 import { WidgetStrip } from './widget-strip';
 
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -259,8 +260,12 @@ export function HomeScreen() {
               rest of the product names the set the same way (the tile menus'
               "Add to Shortcuts", the browse screen's badge), because two
               names for one collection is worse than either.
+
+              Its action is "Sort A–Z" (#3750, ./sort-shortcuts.tsx), drawn
+              only once Home.render() says there is something to sort, so
+              the prerendered heading is still the bare label.
           */}
-          <SectionHeading>Shortcuts</SectionHeading>
+          <SectionHeading action={<SortShortcuts />}>Shortcuts</SectionHeading>
           <AppGrid />
           {/*
               "Show all N apps" — revealed by Home.render() only when the
