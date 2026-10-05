@@ -120,10 +120,31 @@ test('the Share item dialog opens on the app it came from, the viewer\'s own pro
   assert.equal(prefilledAppId([], { appId: 9 }), 9, 'an id is kept while the list loads');
   assert.equal(prefilledAppId(apps, null), null);
   const dialog = read('frontend/src/features/messages/share-dialog.tsx');
-  assert.match(dialog, /<optgroup label="Your projects">/);
-  assert.match(dialog, /<optgroup label="Other projects">/);
+  assert.match(dialog, /<ProjectGroup label="Your projects"/);
+  assert.match(dialog, /<ProjectGroup label="Other projects"/);
   assert.match(dialog, /setAppId\(prefilledAppId\(apps, reference\)\);/);
   assert.match(dialog, /setAppId\(prefilledAppId\(apps, \{ appSlug: wantedSlug \}\)\);/, 'chosen once the list it is in loads');
   const api = read('frontend/src/features/messages/api.ts');
   assert.match(api, /mine: row\.is_member === true \|\| row\.is_collaborator === true,/, 'a project they are in, from GET \/api\/apps');
+});
+
+test('the dialog picks the type from chips and the project from a searchable list', () => {
+  const { filterAppChoices } = loadTsx('frontend/src/features/messages/share-dialog.tsx');
+  const apps = [
+    { id: 1, slug: 'alpha', name: 'Alpha', mine: false },
+    { id: 2, slug: 'flat-4b-chores-e98ecd', name: 'Flat 4B Chores', mine: true },
+    { id: 3, slug: 'beta', name: 'Beta', mine: false },
+  ];
+  assert.deepEqual(filterAppChoices(apps, '').map((a) => a.id), [1, 2, 3], 'an empty query keeps everything, in the server\'s order');
+  assert.deepEqual(filterAppChoices(apps, '   ').map((a) => a.id), [1, 2, 3], 'so does a whitespace-only one');
+  assert.deepEqual(filterAppChoices(apps, 'B').map((a) => a.id), [2, 3], 'case-insensitive, the server\'s order kept');
+  assert.deepEqual(filterAppChoices(apps, 'flat 4b').map((a) => a.id), [2], 'names only');
+  assert.deepEqual(filterAppChoices(apps, 'nope'), []);
+  const dialog = read('frontend/src/features/messages/share-dialog.tsx');
+  assert.match(dialog, /setType\(chip\.key\); setItemId\(''\); setVersion\(''\)/,
+    'a chip change clears the id and version, as the dropdown it replaced did');
+  assert.match(dialog, /placeholder="Search projects"/);
+  assert.match(dialog, /Loading apps…/);
+  assert.match(dialog, /No projects match/);
+  assert.match(dialog, /aria-pressed=\{selected\}/, 'a project row is a pressed toggle');
 });
