@@ -23,7 +23,7 @@ import type {
   UserSearchResult,
 } from './types';
 import type { HomeroomLink } from './homeroom-links';
-import { plainText } from './plain-text';
+import { botRowPreview, plainText } from './plain-text';
 
 const MAX_ID = 2_147_483_647;
 
@@ -375,6 +375,8 @@ export function normalizeConversation(input: unknown): ConversationDetail {
     || (kind === 'direct' ? peer?.username || members.find((member) => member.status === 'member')?.username : '')
     || 'Conversation';
   const canSendValue = pick(row, 'canSend', 'can_send');
+  const homeroomBot = kind === 'direct' && pick(row, 'homeroomBot') === true;
+  const summary = plainText(text(pick(row, 'latestSummary', 'latest_summary', 'preview')) || latestMessage?.content || '');
   return {
     id,
     kind,
@@ -390,8 +392,9 @@ export function normalizeConversation(input: unknown): ConversationDetail {
     peer,
     latestMessage,
     // One line of plain text: the row is a preview, not the message, and a
-    // bot message's `**Project**` should not show its asterisks.
-    latestSummary: plainText(text(pick(row, 'latestSummary', 'latest_summary', 'preview')) || latestMessage?.content || ''),
+    // bot message's `**Project**` should not show its asterisks. The
+    // Homeroom bot's row leaves out the request's number (botRowPreview).
+    latestSummary: homeroomBot ? botRowPreview(summary) : summary,
     lastActivityAt: dateText(pick(row, 'lastActivityAt', 'last_activity_at', 'updatedAt', 'updated_at', 'createdAt', 'created_at')),
     unreadCount: Number(pick(row, 'unreadCount', 'unread_count')) || 0,
     awaitingAcceptance: kind === 'direct' && pick(row, 'awaitingAcceptance', 'awaiting_acceptance') === true,
@@ -400,7 +403,7 @@ export function normalizeConversation(input: unknown): ConversationDetail {
     canManage: bool(pick(row, 'canManage', 'can_manage'), text(pick(row, 'myRole', 'my_role', 'role')) === 'owner'),
     archived: bool(pick(row, 'archived')) || text(pick(row, 'status')) === 'archived',
     channelKey: kind === 'channel' ? text(pick(row, 'channelKey', 'channel_key')) || null : null,
-    ...(kind === 'direct' && pick(row, 'homeroomBot') === true ? { homeroomBot: true } : {}),
+    ...(homeroomBot ? { homeroomBot: true } : {}),
   };
 }
 

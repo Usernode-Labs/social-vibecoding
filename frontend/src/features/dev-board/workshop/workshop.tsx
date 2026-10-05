@@ -1307,13 +1307,23 @@ function legendFor(kind: QueueRow['kind'] | 'done'): Array<[string[], string]> {
  * numbered change); the Description sheet has them in full, as chips.
  */
 type Fact = { key: string; tone: string | undefined; text: string };
+/**
+ * The pill states the facts line already says: the count itself ("1 / 2",
+ * an at-least-N rule's "1 of 2 approvals") is the tally in words, and the
+ * vote the viewer owes ("Vote · 0/2", a solo project's "Waiting for your
+ * approval") is the eyebrow.
+ */
+const SAID_ELSEWHERE = new Set(['needs_vote', 'tally', 'approvals']);
 function factsFor(row: QueueRow, voted: string | null): Fact[] {
   const out: Fact[] = [];
   const st = row.card.pill ? row.card.pill.state : null;
   if (row.kind === 'vote' && st) {
     if (voted) out.push({ key: 'voted', tone: 'ok', text: `You voted ${voted}` });
-    out.push({ key: 'tally', tone: undefined, text: `${st.yes} of ${st.majority} yes` });
-    if (st.label && !/^Vote\b/.test(st.label)) out.push({ key: 'state', tone: st.tone, text: st.label });
+    // The count in the change page's own words: an at-least-N rule's pill
+    // reads "1 of 2 approvals" there (AppView.statusPillState), and every
+    // rule's count reads the same way here.
+    out.push({ key: 'tally', tone: undefined, text: `${st.yes} of ${st.majority} ${st.majority === 1 ? 'approval' : 'approvals'}` });
+    if (st.label && !/^Vote\b/.test(st.label) && !SAID_ELSEWHERE.has(st.key)) out.push({ key: 'state', tone: st.tone, text: st.label });
   } else if (row.kind === 'vote' && row.tally) {
     // The Communities feed's rows (#3488): the counts, without a threshold
     // it has not worked out for each project. A zero says nothing.
@@ -1750,16 +1760,22 @@ function ShotsPicture({ v, near, wide }: {
  */
 function ItemBy({ row }: { row: QueueRow }): ReactNode {
   const isVote = row.kind === 'vote';
+  // A change Homeroom bot built reads as its page's by-line does (#3854,
+  // AppView._topicHeroView): "Homeroom bot · made 29m ago", not its
+  // account's name and "proposed". Its author arrives as that account's
+  // username on both feeds (AppView._botBuilt reads the same).
+  const bot = isVote && String(row.who || '').toLowerCase() === 'homeroom_bot';
+  const who = bot ? 'Homeroom bot' : row.who;
   return (
     <p className="dev-ws-item-by">
-      {row.who ? (
-        <span className="dev-ws-item-avatar" style={{ background: swatchFor(row.who) }} aria-hidden="true">
-          {row.who.slice(0, 1).toUpperCase()}
+      {who ? (
+        <span className="dev-ws-item-avatar" style={{ background: swatchFor(who) }} aria-hidden="true">
+          {who.slice(0, 1).toUpperCase()}
         </span>
       ) : null}
       <span>
         {isVote ? (
-          <>{row.who ? <b>{row.who}</b> : 'Proposed'}{row.ago ? ` · ${row.who ? 'proposed ' : ''}${row.ago}` : ''}</>
+          <>{who ? <b>{who}</b> : 'Proposed'}{row.ago ? ` · ${who ? (bot ? 'made ' : 'proposed ') : ''}${row.ago}` : ''}</>
         ) : (
           <>
             {row.number != null ? <b>{`#${row.number}`}</b> : null}
@@ -1865,10 +1881,15 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
             {`Voted ${voted} · ${wide ? 'press ↓ or scroll' : 'swipe up'} for the next`}
           </span>
         ) : (
+          // First-session run-through, 5 Oct 2026: a newcomer read
+          // "PROPOSAL · NEEDS YOUR VOTE" here and "Change · Waiting for your
+          // approval" on the same change's page. The item says what the page
+          // says: what it is, and that it waits on you
+          // (AppView._summarizeRequirements' group headline).
           <span className="dev-ws-eyebrow">
             {!isVote ? 'Request'
-              : row.card.attrs && row.card.attrs['data-gov-row'] ? 'Group decision · needs your vote'
-                : 'Proposal · needs your vote'}
+              : row.card.attrs && row.card.attrs['data-gov-row'] ? 'Group decision · Waiting for your approval'
+                : 'Change · Waiting for your approval'}
           </span>
         )}
         {/* #3517: THE WAY BACK, WHERE A PHONE CAN SEE IT. Swiping down was
@@ -1969,10 +1990,10 @@ function DoneItem({ total, acted, left, leftVotes, onDone, onBack, doneLabel }: 
   const done = Math.max(0, Math.min(total, total - leftVotes));
   const line = left > 0 ? 'That’s it for now.' : (acted > 0 ? 'That’s it!' : 'You’re all caught up.');
   const parts: string[] = [];
-  if (acted > 0) parts.push(`You voted on ${plural(acted, 'proposal', 'proposals')} this time.`);
+  if (acted > 0) parts.push(`You voted on ${plural(acted, 'change', 'changes')} this time.`);
   if (left > 0) parts.push(`You skipped ${left}. ${left === 1 ? 'It stays' : 'They stay'} above if you change your mind.`);
   else if (acted > 0) parts.push('Nothing else needs you right now.');
-  else parts.push('Every proposal you can vote on has your answer, and every open request has somebody on it.');
+  else parts.push('Every change you can vote on has your answer, and every open request has somebody on it.');
   return (
     <section
       className="dev-ws-item dev-ws-needs-done"
@@ -1986,7 +2007,7 @@ function DoneItem({ total, acted, left, leftVotes, onDone, onBack, doneLabel }: 
           className="dev-ws-done-ring"
           pct={Math.round((done / total) * 100)}
           label={`${done}/${total}`}
-          title={done === total ? `All ${total} open proposals voted on` : `${done} of ${total} open proposals voted on`}
+          title={done === total ? `All ${total} open changes voted on` : `${done} of ${total} open changes voted on`}
           arcClassName={done === total ? 'stroke-emerald-500' : undefined}
         />
       ) : null}
@@ -4058,12 +4079,21 @@ export function DevWorkshop(): ReactNode {
                 promised. A read-only viewer has neither door, so is told
                 the fact and nothing to press — and so is a viewer under the
                 start-here banner, whose Start a new change is at the top of this
-                very tab and whose board has no open item to pick up. */}
+                very tab and whose board has no open item to pick up.
+
+                Where Homeroom bot builds for this viewer (`mine.bot`, the
+                door the request pages open: AppView._botDoor), the way in is
+                asking for the change, not building it: a newcomer read the
+                developer path here on a project the bot builds (first-session
+                run-through, 5 Oct 2026). Elsewhere the menu's own name for
+                building it is Build it yourself (B8). */}
             {!v.mine.rows.length ? (
               <p className="text-xs text-zinc-500 dark:text-zinc-400" data-ws-mine-empty="">
                 {actions.readOnly || startHere
                   ? 'You have no work going on.'
-                  : 'You have no work going on. Pick up an open item in All items, or use Start a new change in the Homeroom menu.'}
+                  : v.mine.bot
+                    ? 'You have no work going on. To change something, tell Homeroom bot, or use Ask for a change in the Homeroom menu.'
+                    : 'You have no work going on. Pick up an open item in All items, or use Build it yourself in the Homeroom menu.'}
               </p>
             ) : null}
             {/* THE FIRST THREE on the Workshop tab (#852 review), and the
