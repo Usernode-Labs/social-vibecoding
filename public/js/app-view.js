@@ -18931,7 +18931,9 @@ const AppView = {
   // console-errors badge, an advisory chip and an explicit-approval chip.
   // They collapse into ONE pill, chosen by a strict precedence:
   //
-  //   0 settled        ✓ Live (grey: a done state is quiet)
+  //   0 settled        ✓ Live (green: live is the one settled state that
+  //                    is visibly good — issue #3873; see the tier-0
+  //                    comment below)
   //   1 in flight      Going live… / Resolving conflicts…   (spinner)
   //   2 blocked        Checks failing · N / Checks couldn't run /
   //                    Preview won't boot / Merge conflict /
@@ -19470,13 +19472,18 @@ const AppView = {
     // has (first-session run-through, 4 Oct 2026): a change goes LIVE, it is
     // not "merged" or "deployed". The keys keep the precise state.
     //
-    // A finished change is QUIET: tone `neutral`, grey with a check, the way
-    // "Joined" is drawn (AGENTS.md, "a state that is already done gets no
-    // fill"). It was a green wash, which made the settled card the loudest
-    // one in the column. The card's edge follows the tone (edgeFor).
+    // A finished change used to be QUIET — tone `neutral`, grey with a
+    // check, the way "Joined" is drawn (AGENTS.md, "a state that is already
+    // done gets no fill") — because a green wash made the settled card the
+    // loudest one in the column. evan asked for it green (issue #3873), and
+    // the reversal is accepted: live is the one settled state that is
+    // visibly good, the green a "Checks passing" chip and a reached majority
+    // already wear, so a glance down the column says which changes shipped.
+    // The card's edge follows the tone (edgeFor), so a settled card wears a
+    // green spine too.
     if (p.status === 'merged') {
       if (p.deployment_state === 'deployed') {
-        return { ...base, tier: 0, key: 'deployed', label: '✓ Live', tone: 'neutral', lock: false, advisory: 0,
+        return { ...base, tier: 0, key: 'deployed', label: '✓ Live', tone: 'ok', lock: false, advisory: 0,
           title: 'This change is live in the app.' };
       }
       if (p.deployment_state === 'deploying') {
@@ -19501,7 +19508,7 @@ const AppView = {
         // about, and every app not redeployed since revision labels were
         // introduced would otherwise flag its whole history (#3368).
       }
-      return { ...base, tier: 0, key: 'merged', label: '✓ Live', tone: 'neutral', lock: false, advisory: 0 };
+      return { ...base, tier: 0, key: 'merged', label: '✓ Live', tone: 'ok', lock: false, advisory: 0 };
     }
     // 1 — in flight.
     if (p.status === 'merging') {

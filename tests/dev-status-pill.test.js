@@ -109,14 +109,15 @@ const hoursAhead = (h) => new Date(Date.now() + h * 3600 * 1000).toISOString();
 
 // ── Precedence, tier by tier ────────────────────────────────────────────
 
-test('tier 0 — a merged row is settled and reads ✓ Live, quiet rather than green', () => {
+test('tier 0 — a merged row is settled and reads ✓ Live, green', () => {
   const AppView = makeAppView();
   const s = AppView.statusPillState(PR({ status: 'merged', yes_count: 5 }));
   assert.equal(s.tier, 0);
-  // The newcomer's word (first-session run-through, 4 Oct 2026), and a done
-  // state gets no fill: grey with a check, as "Joined" is (AGENTS.md).
+  // The newcomer's word (first-session run-through, 4 Oct 2026). Live is the
+  // one settled state that is visibly good: the `ok` green (issue #3873,
+  // reversing the earlier grey, done-state-is-quiet choice).
   assert.equal(s.label, '✓ Live');
-  assert.equal(s.tone, 'neutral');
+  assert.equal(s.tone, 'ok');
 });
 
 test('tier 0 — derived deployment state distinguishes live, pending, and stalled merges', () => {
@@ -124,7 +125,7 @@ test('tier 0 — derived deployment state distinguishes live, pending, and stall
   const deployed = AppView.statusPillState(PR({ status: 'merged', deployment_state: 'deployed' }));
   assert.equal(deployed.label, '✓ Live');
   assert.equal(deployed.key, 'deployed');
-  assert.equal(deployed.tone, 'neutral');
+  assert.equal(deployed.tone, 'ok');
 
   const deploying = AppView.statusPillState(PR({ status: 'merged', deployment_state: 'deploying' }));
   assert.equal(deploying.label, 'Going live…');
@@ -150,7 +151,7 @@ test('merged child proposals say whether delivery is pending, failed or confirme
   // before revision labels existed), not a problem to flag on every row.
   assert.equal(state('unknown').label, '✓ Live');
   assert.equal(state('unknown').key, 'merged');
-  assert.equal(state('unknown').tone, 'neutral');
+  assert.equal(state('unknown').tone, 'ok');
   assert.equal(state(undefined).label, '✓ Live');
 });
 
@@ -453,11 +454,12 @@ test('tier 6 — the plain tally, and the at-least-N approvals variant', () => {
   assert.equal(voted.label, '2 / 5');
   assert.equal(voted.tone, 'progress');
 
-  // Settled is quiet: a done state gets no fill (tier 0, grey with a check).
+  // Settled shows no vote controls, and the pill is the `ok` green
+  // (issue #3873 — tier 0, green with a check).
   const won = AppView.statusPillState(PR({
     status: 'merged', yes_count: 5, votes_required: 5,
   }));
-  assert.equal(won.tone, 'neutral');
+  assert.equal(won.tone, 'ok');
 
   const approvals = AppView.statusPillState(PR({
     check_state: 'passing', approvals_required: 3, yes_count: 2,
