@@ -3,8 +3,9 @@
  * do with it.
  *
  *   what      The project, being built: its tile and name, Homeroom bot's
- *             step from GET /api/apps/:slug (`first_version`, "Step 2 of 7:
- *             Read the description"), read again every ten seconds.
+ *             step from GET /api/apps/:slug (`app.first_version`, "Step 2 of
+ *             7: Read the description"), read again every ten seconds,
+ *             past the service worker's cache (madeAppOf, madeAppUrl).
  *   plan      B6: once the bot has read the description it waits for its
  *             plan's Build it (`first_version.plan`) and builds nothing
  *             until then. The plan is drawn first, under "Needs you", as
@@ -72,6 +73,30 @@ type FirstVersion = {
   /** B6: the plan waiting for Build it, for its creator (GET /api/apps/:slug). */
   plan?: Partial<WaitingPlan> | null;
 } | null;
+
+/**
+ * The project's record as GET /api/apps/:slug answers it, which is `{ app }`:
+ * its first version (null while the bot builds nothing) and its status. Null
+ * for an answer without a record. Page Turners, 5 October 2026: the made
+ * screen read `first_version` off the answer itself, never found one, and
+ * so never drew the plan its maker waited 18 minutes on.
+ */
+export function madeAppOf(body: unknown): { firstVersion: FirstVersion; status: string | null } | null {
+  const app = body && typeof body === 'object' ? (body as { app?: unknown }).app : null;
+  if (!app || typeof app !== 'object') return null;
+  const { first_version: firstVersion, status } = app as { first_version?: FirstVersion; status?: unknown };
+  return { firstVersion: firstVersion || null, status: typeof status === 'string' ? status : null };
+}
+
+/**
+ * The made screen's read of the project, every ten seconds. Tagged and
+ * no-store, as the App tab's recheck is (AppView._recheckFirstVersion): the
+ * service worker answers a plain GET /api/apps/:slug from its boot cache
+ * first, and a poll is asking what is true now.
+ */
+export function madeAppUrl(slug: string): string {
+  return `/api/apps/${encodeURIComponent(slug)}?status_recheck=1&manifest=summary`;
+}
 
 /**
  * The plan waiting for Build it, or null: read the way the App tab's
@@ -520,9 +545,12 @@ export function MadeScreen({ made, me, onContinue, onChangePlan }: {
 
   useEffect(() => {
     let live = true;
-    const read = () => fetch(`/api/apps/${encodeURIComponent(made.slug)}`, { credentials: 'same-origin' })
+    const read = () => fetch(madeAppUrl(made.slug), { credentials: 'same-origin', cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : null))
-      .then((app) => { if (live && app) { setFv(app.first_version || null); setAppStatus(app.status || null); } })
+      .then((body) => {
+        const app = madeAppOf(body);
+        if (live && app) { setFv(app.firstVersion); setAppStatus(app.status); }
+      })
       .catch(() => {});
     readRef.current = read;
     read();
