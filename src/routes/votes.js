@@ -3535,6 +3535,10 @@ function voteRoutes(config) {
         log.debug('votes', 'Vote reason updated', { sessionId: session.id, userId: req.user.id });
         return res.json({ ok: true, merged: false, unchanged: false, reasonUpdated: true, ...readyCard });
       }
+      // 5 Oct: whoever asked Homeroom bot for this change reads their ready
+      // card again, so it says who it still waits on now. One indexed read
+      // when it is not the bot's. Never throws.
+      void require('../services/homeroom-bot-dm').noteVoted(pool, session.id);
 
       const voteLabel = session.pr_title
         ? `PR #${session.pr_number || session.id}: ${session.pr_title}`

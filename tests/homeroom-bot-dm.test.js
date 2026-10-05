@@ -232,10 +232,13 @@ test('#7 (WP3): "live now" only once the app answered on the merge it deployed, 
   assert.equal(dm.mergedText({ line, appName: 'Plant Pal', live: false, change: true, card: false }),
     `${line}\n\nYour change is going live now and will be ready in a few minutes.`);
   for (const live of [true, false]) assert.doesNotMatch(dm.mergedText({ line, appName: 'Plant Pal', live }), DASH);
-  // The app first, to open it, then the proposal; the platform's own, its proposal alone.
-  assert.deepEqual(dm.cardsFor('merged', { sessionId: 9, appCard: true }, { id: 3 }, 7),
-    [{ type: 'app', appId: 3 }, { type: 'proposal', appId: 3, sessionId: 9 }]);
+  // 5 October: the app opens from the message's own button, which no card
+  // the bot cannot attach takes with it; the proposal is its card.
+  assert.deepEqual(dm.cardsFor('merged', { sessionId: 9, appCard: true }, { id: 3 }, 7), [{ type: 'proposal', appId: 3, sessionId: 9 }]);
   assert.deepEqual(dm.cardsFor('merged', { sessionId: 9 }, { id: 3 }, 7), [{ type: 'proposal', appId: 3, sessionId: 9 }]);
+  assert.deepEqual(dm.openAppAction({ slug: 'page-turners', appName: 'Page Turners' }),
+    { id: 'open_app', label: 'Open Page Turners', style: 'primary', type: 'open', target: '#app/page-turners/app' });
+  assert.equal(dm.openAppAction({ slug: '', appName: 'X' }), null);
 
   // Its health, read a few times a few seconds apart, on the build the merge deployed.
   const probes = [];

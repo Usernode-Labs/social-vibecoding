@@ -2,7 +2,7 @@ import { useSyncExternalStore } from 'react';
 
 import { navStore } from '../nav/nav-store.js';
 import * as api from './api';
-import { WORK_CHANGED_EVENT } from './bot-shared';
+import { WORK_CHANGED_EVENT, openAppTarget } from './bot-shared';
 import { channelDirectory, normalizeHandle, type ChannelRef } from './channels';
 import { platformHubServed, platformSlug, subscribePlatformSlug } from './channel-hub';
 import type { AppDiscussion, InboxFilter } from './inbox';
@@ -1456,12 +1456,13 @@ export async function answerBotQuestion(question: ConversationMessage, answer: s
  * B3: press one of a bot message's buttons (types.ts HomeroomBotAction).
  * A `server` one is decided once on the server (api.decideBotAction), which
  * updates the message on every device; `prompt` sends its words as the
- * person's own message, quoting nothing; `open` goes to its in-app address.
+ * person's own message, quoting nothing; `open` goes to its in-app address,
+ * a project's app the way the shell opens one (bot-shared.ts openAppTarget).
  * Rejects when a `server` press was refused (a 409: decided already).
  */
 export async function tapBotAction(message: ConversationMessage, action: HomeroomBotAction): Promise<void> {
   if (action.type === 'open') {
-    if (action.target && action.target.startsWith('#app/')) window.location.hash = action.target;
+    openAppTarget(action.target);
     return;
   }
   if (action.type === 'prompt') {

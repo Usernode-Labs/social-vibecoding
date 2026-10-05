@@ -228,6 +228,14 @@ export interface HomeroomBotActivity {
   messageId: number;
   state: 'working' | 'done';
   startedAt: string | null;
+  /**
+   * When the work the card's time counts began (services/homeroom-bot-
+   * activity.js workClock): the work, never the wait before it. Null while
+   * nothing has begun, when its time is that wait.
+   */
+  workedFrom: string | null;
+  /** What it waited for before the work began, from `startedAt`, when that wait is worth saying. */
+  waitedFor?: 'first_version' | 'turn';
   links: { request: string | null; proposal: string | null };
   step: number | null;
   of: number | null;
@@ -237,6 +245,35 @@ export interface HomeroomBotActivity {
   endedAt: string | null;
   /** How long the step it is at usually takes, in minutes, when it takes a while. */
   typicalMinutes?: { from: number; to: number };
+}
+
+/**
+ * A ready card's change as it stands now, read with the activity cards
+ * (services/homeroom-bot-dm.js readyStates): `live` (with the button that
+ * opens the app), `going_live`, `closed` without going live, or `open`, up
+ * for approval, with who it still waits on and, once the reader's Yes is
+ * in, what happens next. The card was sent with what was true then.
+ */
+export interface HomeroomBotReadyNow {
+  messageId: number;
+  state: 'open' | 'going_live' | 'live' | 'closed';
+  actions: HomeroomBotAction[];
+  approval?: {
+    missing: number;
+    needed: number;
+    last: boolean;
+    /** The reader's own Yes is in. */
+    approved: boolean;
+    waitingOn: string[];
+    more: number;
+  };
+  goesLive?: HomeroomBotGoesLive;
+}
+
+/** One read of the bot DM's cards: its activity cards and its ready cards. */
+export interface HomeroomBotActivityRead {
+  cards: HomeroomBotActivity[];
+  ready: HomeroomBotReadyNow[];
 }
 
 export interface ConversationMember extends ConversationUser {
