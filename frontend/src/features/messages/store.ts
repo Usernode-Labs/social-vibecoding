@@ -17,6 +17,7 @@ import type {
   MessagesSnapshot,
   ReplyThreadState,
   SharedObjectReference,
+  StagedObject,
 } from './types';
 
 const MAX_ID = 2_147_483_647;
@@ -107,6 +108,11 @@ const sentKeys = new Map<number, string>();
 const typingSentAt = new Map<number, number>();
 const typingExpiry = new Map<string, number>();
 let pendingShare: SharedObjectReference | null | undefined;
+/**
+ * A change the change page's Ask for changes put straight on the chat with
+ * Homeroom bot's composer (see openBot), for that conversation only.
+ */
+let pendingAttach: { conversationId: number; object: StagedObject; placeholder: string } | null = null;
 /** A `#messages/channel/<handle>` link followed before the lists landed. */
 let pendingChannel: string | null = null;
 let listRequest = 0;
@@ -893,6 +899,7 @@ export function close(): void {
   // durable draft. Leaving Messages cancels it instead of surprising the user
   // in an unrelated conversation later.
   pendingShare = undefined;
+  pendingAttach = null;
   replyThreadRequest += 1;
   unreadHold = null;
   publish({
@@ -1131,19 +1138,50 @@ export function open(conversationId?: number | null): void {
  * says "ask Homeroom bot". It is made the first time; until the server
  * answers, Messages opens on its list.
  */
-export async function openBot(reference?: SharedObjectReference | null): Promise<void> {
+export async function openBot(reference?: StagedObject | null): Promise<void> {
   let id: number | null = state.conversations.find((item) => item.homeroomBot)?.id || null;
   if (!id) {
     try { id = await api.openBotConversation(); } catch { id = null; }
   }
-  // B8: a change to write about ("Ask for changes"), staged on the composer
-  // as Share stages one (see share below).
-  if (reference) pendingShare = reference;
+  // B8: a change to write about ("Ask for changes"). One that names its
+  // project and itself is attached on the composer as it is, with the caret
+  // in the box and the box asking what should change: no dialog to fill in
+  // (the change page knows both). Anything less is chosen in the Share item
+  // dialog, as Share stages one (see share below).
+  const attach = !!id && !!reference && stagedComplete(reference);
+  if (attach && id && reference) pendingAttach = { conversationId: id, object: reference, placeholder: ASK_FOR_CHANGES_PLACEHOLDER };
+  else if (reference) pendingShare = reference;
   const already = !!id && state.route.conversationId === id;
   open(id);
   if (reference && already && typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent('usernode:messages-share', { detail: pendingShare }));
+    if (attach) window.dispatchEvent(new CustomEvent('usernode:messages-attach'));
+    else window.dispatchEvent(new CustomEvent('usernode:messages-share', { detail: pendingShare }));
   }
+}
+
+/** What the composer's box asks once Ask for changes has attached a change. */
+export const ASK_FOR_CHANGES_PLACEHOLDER = 'What should change?';
+
+/** Pure: whether a staged item names its project and itself, so it can be attached as it is. */
+export function stagedComplete(reference: SharedObjectReference): boolean {
+  const app = validId(reference.appId) || (typeof reference.appSlug === 'string' && reference.appSlug.trim() !== '');
+  if (!app) return false;
+  if (reference.type === 'app') return true;
+  if (reference.type === 'issue') return validId(reference.issueNumber);
+  if (reference.type === 'governance') return validId(reference.proposalId);
+  if (reference.type === 'spec') return validId(reference.sessionId) && validId(reference.version);
+  return validId(reference.sessionId);
+}
+
+/**
+ * The change Ask for changes staged for `conversationId`'s composer, once:
+ * null for any other conversation, which leaves it waiting for its own.
+ */
+export function takePendingAttach(conversationId: number): { object: StagedObject; placeholder: string } | null {
+  if (!pendingAttach || pendingAttach.conversationId !== conversationId) return null;
+  const { object, placeholder } = pendingAttach;
+  pendingAttach = null;
+  return { object, placeholder };
 }
 
 // B6: a message of the bot's to quote in the composer once its chat has
@@ -2111,7 +2149,7 @@ function paintSaved(messageId: number, saved: boolean): void {
 export const messagesController = {
   open,
   // B8: the chat with Homeroom bot (app-view.js's doors to it).
-  openBot: (reference?: SharedObjectReference | null) => { void openBot(reference); },
+  openBot: (reference?: StagedObject | null) => { void openBot(reference); },
   // B6: the App tab's Change something, under a first version's plan.
   quoteBotMessage: (conversationId?: number | null, messageId?: number | null) => { void quoteBotMessage(conversationId, messageId); },
   openAddress,

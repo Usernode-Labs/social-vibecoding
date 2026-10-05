@@ -622,11 +622,19 @@ export async function searchUsers(query: string): Promise<UserSearchResult[]> {
   return array(pick(data, 'users')).map(normalizeUser).filter((user) => user.id);
 }
 
-export async function listApps(): Promise<Array<{ id: number; slug: string; name: string }>> {
+/**
+ * The apps the viewer can see, for the Share item dialog. `mine` is a
+ * project they are in (its community, or building it), which the dialog
+ * lists first.
+ */
+export async function listApps(): Promise<Array<{ id: number; slug: string; name: string; mine: boolean }>> {
   const data = record(await request<unknown>('/api/apps'));
   return array(pick(data, 'apps')).map((item) => {
     const row = record(item);
-    return { id: strictId(row.id) || 0, slug: text(row.slug), name: text(row.name, text(row.slug)) };
+    return {
+      id: strictId(row.id) || 0, slug: text(row.slug), name: text(row.name, text(row.slug)),
+      mine: row.is_member === true || row.is_collaborator === true,
+    };
   }).filter((app) => app.id && app.slug);
 }
 
