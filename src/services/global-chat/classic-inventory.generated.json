@@ -1452,6 +1452,21 @@
     },
     {
       "source": "src/routes/admin.js",
+      "method": "GET",
+      "path": "/api/admin/small-change-tags",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.get.admin.small.change.tags.69f78234",
+      "domain": "admin",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin"
+    },
+    {
+      "source": "src/routes/admin.js",
       "method": "PUT",
       "path": "/api/admin/homeroom-bot/settings",
       "expression": null,

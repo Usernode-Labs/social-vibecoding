@@ -46,6 +46,8 @@ const COMPONENTS = new Set([
   'homeroom_bench',
   // The hub's since-your-last-visit line (services/since-summary.js).
   'since_summary',
+  // The watch-only small-change tag's one call per head (services/small-change.js).
+  'small_change',
   'other_helper',
 ]);
 const BILLING_PATHS = new Set([
