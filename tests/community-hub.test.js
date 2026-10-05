@@ -84,24 +84,25 @@ test('a project page is four tabs, Hub, Discussion, Needs you and Workshop, with
   assert.match(LANDER, /<PageBack\s+label="Workshop"\s+title=\{pageTitle\(tab\)\}\s+onBack=\{\(\) => openTab\(pageParent\(tab\)\)\}/);
   assert.match(LANDER, /\{band\}\s*\{pageBar\}/);
   // The hub's order, as agreed: the hero (who is here, what it is, what you
-  // can do, the fortnight), what landed since your last visit, Needs you (a
-  // quiet line when no vote is owed, #3408), the discussion's last two
-  // messages (or Share it, for Just you), and your work. One column at every
-  // width. Start a new change ended it until #852's review moved it into the
-  // hero's ⋯ (tests/improve-action-deduplication.test.js).
+  // can do, the fortnight), the first version while Homeroom bot builds it
+  // (tests/hub-just-you.test.js), what landed since your last visit, Needs
+  // you (a quiet line when no vote is owed, #3408), the discussion's last
+  // two messages (or Share it, for Just you), and your work. One column at
+  // every width. Start a new change ended it until #852's review moved it
+  // into the hero's ⋯ (tests/improve-action-deduplication.test.js).
   const hub = LANDER.slice(LANDER.indexOf("{tab === 'status' ? ("), LANDER.indexOf("{tab === 'discussion' ? ("));
-  const order = ['<CommunityCard', '<SinceSummaryCard', '<NeedsCard', '<ChannelCard', '<ShareItCard', '<YourWorkCard'].map((x) => hub.indexOf(x));
-  assert.ok(order.every((n) => n >= 0), `all six on the hub: ${JSON.stringify(order)}`);
-  assert.deepEqual([...order].sort((a, b) => a - b), order, 'hero, summary, Needs you, discussion, Share it, your work');
+  const order = ['<CommunityCard', '<FirstVersionCard', '<SinceSummaryCard', '<NeedsCard', '<ChannelCard', '<ShareItCard', '<YourWorkCard'].map((x) => hub.indexOf(x));
+  assert.ok(order.every((n) => n >= 0), `all seven on the hub: ${JSON.stringify(order)}`);
+  assert.deepEqual([...order].sort((a, b) => a - b), order, 'hero, first version, summary, Needs you, discussion, Share it, your work');
   assert.doesNotMatch(hub, /data-ws-start-change/, 'no Start a new change at its foot');
-  assert.match(hub, /\{owesVote\(v\.queue\)\s*\? <NeedsCard [^\n]*\n\s*: <NothingToVote queue=\{v\.queue\} onOpen=\{\(\) => openTab\('needs'\)\} \/>\}/,
-    'Needs you only while a vote is owed; one quiet line in its place otherwise (#3408)');
+  assert.match(hub, /\{owesVote\(v\.queue\)\s*\? <NeedsCard [^\n]*\n\s*: <NothingToVote queue=\{v\.queue\} onOpen=\{\(\) => openTab\('needs'\)\} alone=\{alone\} \/>\}/,
+    'Needs you only while a vote is owed; one quiet line in its place otherwise (#3408), and none on a project nobody else is in');
   assert.match(hub, /<SinceSummaryCard slug=\{slug\} since=\{v\.since \? v\.since\.baseline : 0\} onMore=\{\(\) => openTab\('workshop'\)\} \/>/,
     'the summary card\'s Week by week is the Workshop tab');
   assert.match(hub, /<ChannelCard slug=\{slug\} name=\{app\.name \|\| slug\} data=\{community\} compact onOpen=\{\(\) => openTab\('discussion'\)\} \/>/,
     'the discussion is a preview whose Open is the Discussion tab');
-  assert.match(hub, /\{v\.mine && \(v\.mine\.rows\.length \|\| v\.mine\.viewer\) \? \(\s*<YourWorkCard/,
-    'your work for any signed-in viewer, with work or without (#3489)');
+  assert.match(hub, /\{v\.mine && \(v\.mine\.rows\.length \|\| \(v\.mine\.viewer && workEmpty\)\) \? \(\s*<YourWorkCard/,
+    'your work for any signed-in viewer, with work or without (#3489), unless a project nobody else is in has nothing to say there');
   assert.doesNotMatch(hub, /<WorkshopDoor|dev-ws-hub-side|data-ws-since=""/, 'no Workshop door, no second column, and the since list is the Workshop\'s');
   assert.doesNotMatch(read('public/css/app.css'), /dev-ws-hub-side/);
   // Discussion is the channel whole.

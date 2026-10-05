@@ -79,11 +79,37 @@ import { offerJoin, registerJoinAnchor } from '../../../lib/join-required';
 
 type Audience = 'open' | 'invited' | 'solo';
 
+/**
+ * The first version Homeroom bot is building from the project's
+ * description, while it builds it (routes/apps.js hubFirstVersion): the
+ * App tab's state, cut to what the hub says. Null once it is live, or when
+ * the bot is not building one.
+ */
+export type HubFirstVersion = {
+  step: number | null;
+  of: number | null;
+  step_name: string | null;
+  /** Built and up for approval: ready to try. */
+  ready: boolean;
+  /** The description is the viewer's. */
+  mine: boolean;
+  creator: string | null;
+  /** What it waits on from its maker, for them alone. */
+  waits_on: 'plan' | 'question' | null;
+  /** The maker's DM with the bot, for them alone. */
+  conversation_id: number | null;
+  /** The change, once it is ready to try. */
+  session_id: number | null;
+  typical_minutes: number | null;
+};
+
 export type CommunityPayload = {
   slug: string;
   name?: string;
-  /** dapp.json's one-line description, when the repository declares one. */
+  /** dapp.json's one-line description, or the first sentence of the
+      description it was made from when dapp.json has none yet. */
   description?: string | null;
+  first_version?: HubFirstVersion | null;
   member_count: number;
   is_member: boolean;
   is_creator: boolean;
@@ -867,7 +893,17 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false }: {
  * on a project of one they are the whole of what there is to do with people.
  * Offered to exactly whom the hero would offer them; nothing when neither
  * applies, and nothing until the shared read has answered.
+ *
+ * While Homeroom bot builds its first version (the First version card above
+ * it, ./hub-cards.tsx), the line says what an invite is for right now, in
+ * the made screen's words: people can follow along while it is built.
  */
+export function shareItLine(building: boolean): string {
+  return building
+    ? 'Invite people to follow along while it’s built, or make it public so anyone can join.'
+    : 'Invite people to make it a private community, or make it public so anyone can join.';
+}
+
 export function ShareItCard({ slug, name }: { slug: string; name?: string }) {
   const data = useCommunity(slug);
   if (!data || data.audience !== 'solo') return null;
@@ -879,7 +915,7 @@ export function ShareItCard({ slug, name }: { slug: string; name?: string }) {
       <div className="dev-ws-head">
         <span className="dev-ws-head-title">Share it</span>
       </div>
-      <p className="dev-ws-strip-text">Invite people to make it a private community, or make it public so anyone can join.</p>
+      <p className="dev-ws-strip-text">{shareItLine(!!data.first_version && !data.first_version.ready)}</p>
       <div className="dev-ws-share-actions">
         {canInvite ? (
           <Button
