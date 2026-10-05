@@ -64,7 +64,7 @@ const {
 const { TEMPLATE_JOIN_COLUMNS_SQL, buildChallengeListItem } = require('./challenge-view');
 const {
   loadOnboarding, visibleChallenges, challengeCategory, resolveProgress, loadEventBlocks,
-  isLocked, gateSummary,
+  isLocked, gateSummary, COUNTS_THIS_WEEK_SQL,
 } = require('../../services/topochain/challenge-onboarding');
 const { loadRuleFacts, intervalMinutes } = require('../../services/topochain/challenge-scorer');
 const events = require('../../services/events');
@@ -790,10 +790,13 @@ function topochainPublicRoutes(config) {
       const counts = new Map();
       if (req.user?.id && visible.length) {
         const { rows: countRows } = await pool.query(
-          `SELECT challenge_id, COUNT(*)::int AS credits
-             FROM user_activities
-            WHERE user_id = $1 AND challenge_id = ANY($2::bigint[])
-            GROUP BY challenge_id`,
+          `SELECT ua.challenge_id, COUNT(*)::int AS credits
+             FROM user_activities ua
+             JOIN challenges c ON c.id = ua.challenge_id
+             LEFT JOIN challenge_templates ct ON ct.id = c.challenge_template_id
+            WHERE ua.user_id = $1 AND ua.challenge_id = ANY($2::bigint[])
+              AND ${COUNTS_THIS_WEEK_SQL}
+            GROUP BY ua.challenge_id`,
           [req.user.id, visible.map((r) => Number(r.id))]
         );
         for (const row of countRows) counts.set(Number(row.challenge_id), Number(row.credits));

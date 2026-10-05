@@ -1104,6 +1104,9 @@ test('the page says a proposal counts at Propose to group, and when more stops c
     "This challenge counts up to 2, and you have 2. More accepted changes before it ends don't add to it.");
   assert.equal(pane._countNoteOf(row({ measure: 'TRY_APPS', target: 3 }, { progress: { done: true, current: 3, target: 3 } })),
     "This challenge counts up to 3, and you have 3. More before it ends don't add to it.", 'any counted measure');
+  // A This week challenge's cap is the week's, and starts again on Monday.
+  assert.equal(pane._countNoteOf(accepted(2, { card_preview: { goal: 'Ship it', label: 'WEEKLY' } })),
+    "This challenge counts up to 2 each week, and you have 2 this week. More accepted changes this week don't add to it. It starts again on Monday.");
 
   const NONE = [
     [accepted(1), 'not at the cap yet'],

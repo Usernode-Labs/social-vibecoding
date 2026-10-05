@@ -686,19 +686,28 @@ const TopochainChallenges = {
   // A challenge's end as the server sent it: its own `effective.schedule_end`,
   // else the selected event's `ends_at`, except under Always open (`key`
   // 'always'), which never borrows the event's end.
+  //
+  // A This week challenge's cap starts again every Monday 00:00 UTC, the week
+  // the scorer counts by, so its end is the end of this week when that comes
+  // first: "This week · 6d left", not the season's 90 days.
   _endRaw(c, key = null) {
     const own = c && c.effective && c.effective.schedule_end;
-    if (own || key === 'always') return own || null;
-    const ctx = window.TopochainEventContext;
-    const ev = ctx && typeof ctx.selectedEvent === 'function' ? ctx.selectedEvent() : null;
-    return (ev && ev.ends_at) || null;
+    let raw = own || null;
+    if (!own && key !== 'always') {
+      const ctx = window.TopochainEventContext;
+      const ev = ctx && typeof ctx.selectedEvent === 'function' ? ctx.selectedEvent() : null;
+      raw = (ev && ev.ends_at) || null;
+    }
+    if ((key || TopochainChallenges._groupOf(c).key) !== 'week') return raw;
+    const weekEnd = TopochainChallenges._weekEnd();
+    return !raw || Date.parse(weekEnd) < Date.parse(raw) ? weekEnd : raw;
   },
 
-  // #3203: WHEN a challenge's window closes, not only how long is left. A
-  // weekly challenge does not reset on a fixed weekday: each week is its own
-  // challenge, ending at the moment its organiser set (or the event's end),
-  // so "3d left" alone could not tell a viewer whether work done tonight
-  // still counts. In the viewer's own locale and time zone, lower case for
+  // #3203: WHEN a challenge's window closes, not only how long is left, so
+  // "3d left" alone does not leave a viewer guessing whether work done
+  // tonight still counts. For a This week challenge that moment is the end
+  // of the week (_endRaw: Monday 00:00 UTC, when its cap starts again) or its
+  // organiser's end, whichever is sooner. In the viewer's own locale and time zone, lower case for
   // the meta line it joins ("ends Mon 12 Oct, 02:00"); null once past or on
   // an unparseable date, as _timeLeft is. `_clockFormat` lets tests pin the
   // locale and zone.
@@ -828,7 +837,15 @@ const TopochainChallenges = {
     if (!Number.isInteger(cap) || cap < 1 || !(current >= cap)) return null;
     if (!TopochainChallenges._isOpen(c)) return null;
     const more = by.measure === 'PROPOSAL_ACCEPTED' ? 'More accepted changes' : 'More';
-    return `This challenge counts up to ${cap.toLocaleString('en-US')}, and you have ${cap.toLocaleString('en-US')}. `
+    const n = cap.toLocaleString('en-US');
+    // A This week challenge's cap is this week's (the scorer counts per week,
+    // and `progress` is this week's credits), so the limit is the week, and
+    // it starts again on Monday.
+    if (TopochainChallenges._groupOf(c).key === 'week') {
+      return `This challenge counts up to ${n} each week, and you have ${n} this week. `
+        + `${more} this week don't add to it. It starts again on Monday.`;
+    }
+    return `This challenge counts up to ${n}, and you have ${n}. `
       + `${more} before it ends don't add to it.`;
   },
 
@@ -853,6 +870,14 @@ const TopochainChallenges = {
   // (_groupTimeLeft), from the same two sources.
   _deadlineOf(c) {
     return TopochainChallenges._timeLeft(TopochainChallenges._endRaw(c));
+  },
+
+  // The next Monday 00:00 UTC, as an ISO string. The same rule as
+  // HomePanels.weekEnd and the scorer's challenge-rules.weekStartMs.
+  _weekEnd(now = Date.now()) {
+    const d = new Date(now);
+    const sinceMonday = (d.getUTCDay() + 6) % 7;
+    return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - sinceMonday + 7)).toISOString();
   },
 
   // The same rule and words as HomePanels.timeLeft, so a challenge says the
