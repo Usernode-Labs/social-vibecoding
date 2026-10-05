@@ -4858,13 +4858,21 @@
    *  - iOS can pan the visual viewport before the inset publishes — the
    *    settled pin resets window.scrollTo(0,0), but only when the page
    *    frame is actually a fixed shell.
+   *  - A chat's composer sits OUTSIDE its scroller, under it in a column
+   *    that reserves the inset itself. Its field's tap is the one that
+   *    panned and then snapped back (Homeroom app and iOS Safari, 5 Oct
+   *    2026: the composer overshot into the top half of the screen, then
+   *    the pin dropped it onto the keys a quarter second later).
+   *    opts.column names that column: its fields outside scrollEl take the
+   *    same interception, with no reveal (the column's padding is what
+   *    places them) and the caret at the end of any draft.
    * ──────────────────────────────────────────────────────────────────── */
 
   var KB_TAP_SLOP = 8; // px of touchmove that turns a tap into a drag
   var KB_SETTLE_MS = 120; // quiet period after the last visualViewport event
   var KB_FOCUS_FALLBACK_MS = 250; // reveal anyway if no vv event follows a focus
 
-  // attachKeyboardAvoidance(scrollEl, { topEl?, margin? = 8, fields? }) —
+  // attachKeyboardAvoidance(scrollEl, { topEl?, margin? = 8, fields?, column? }) —
   // scrollEl is the app's content scroller (the fixed-shell inner pane);
   // topEl an optional fixed bar overlaying its top (typically the
   // un-navbar also wired via attachNavBar); margin the breathing room
@@ -4872,7 +4880,9 @@
   // that REPLACES the default text-entry allowlist. Composes with
   // attachNavBar and element-mode attachPullToRefresh. Sheet/modal/alert
   // fields are body-mounted, outside scrollEl, and keep the kit's
-  // existing avoidance. Structural no-op on desktop or without
+  // existing avoidance. column is the element holding scrollEl and its
+  // composer: a field in it but outside scrollEl is focused without the
+  // native pan and is not revealed. Structural no-op on desktop or without
   // visualViewport. Returns { detach() }; never throws on bad input.
   function attachKeyboardAvoidance(scrollEl, options) {
     var noop = { detach: function () {} };
@@ -4891,6 +4901,8 @@
     var topEl = opts.topEl && opts.topEl.nodeType === 1 ? opts.topEl : null;
     var margin = opts.margin != null ? opts.margin : 8;
     var fieldsSel = typeof opts.fields === 'string' ? opts.fields : null;
+    var column = opts.column && opts.column.nodeType === 1 && opts.column !== scrollEl
+      && opts.column.contains(scrollEl) ? opts.column : null;
 
     scrollEl.classList.add('un-kb-avoid');
 
@@ -4904,16 +4916,21 @@
       return document.documentElement.classList.contains('un-kb');
     }
 
+    // Where a field may be: the scroller, or the composer column around it.
+    function inReach(node) {
+      return scrollEl.contains(node) || (!!column && column.contains(node));
+    }
+
     // Resolve a tap/focus target to an interceptable field, or null.
     function matchField(target) {
       if (!target || target.nodeType !== 1 || !target.closest) return null;
-      if (!scrollEl.contains(target)) return null;
+      if (!inReach(target)) return null;
       if (fieldsSel) {
         var custom = target.closest(fieldsSel);
-        return custom && scrollEl.contains(custom) ? custom : null;
+        return custom && inReach(custom) ? custom : null;
       }
       var field = target.closest('input, textarea, [contenteditable]');
-      if (!field || !scrollEl.contains(field)) return null;
+      if (!field || !inReach(field)) return null;
       var tag = field.tagName.toLowerCase();
       return isTextEntryField({
         tag: tag,
@@ -4999,7 +5016,7 @@
       // Re-pin the focused field on any settle: late inset growth (e.g.
       // the iOS QuickType bar appearing) re-adjusts without a new focus.
       var active = matchField(document.activeElement);
-      if (active && document.activeElement === active) reveal(active);
+      if (active && document.activeElement === active && scrollEl.contains(active)) reveal(active);
     }
 
     function onVvEvent() {
@@ -5043,7 +5060,15 @@
         try { field.focus(); } catch (err2) { /* ignore */ }
       }
       suppressFocusin = null;
-      scheduleReveal(field);
+      if (scrollEl.contains(field)) { scheduleReveal(field); return; }
+      // The composer: its column already places it on the keys. The tap's
+      // own caret placement went with the default, so a draft is picked up
+      // where it ends.
+      try {
+        if (typeof field.setSelectionRange === 'function' && typeof field.value === 'string') {
+          field.setSelectionRange(field.value.length, field.value.length);
+        }
+      } catch (err3) { /* an input type without a selection */ }
     }
 
     // Non-tap focuses (programmatic .focus(), Tab / next-button hops):
@@ -5054,23 +5079,26 @@
       if (e.target === suppressFocusin) return; // interception path owns it
       if (!kbUp()) return; // cold focuses wait for the settled pin
       var field = matchField(e.target);
-      if (field) reveal(field);
+      if (field && scrollEl.contains(field)) reveal(field);
     }
 
-    scrollEl.addEventListener('touchstart', onTouchStart, { passive: true });
-    scrollEl.addEventListener('touchmove', onTouchMove, { passive: true });
-    scrollEl.addEventListener('touchend', onTouchEnd, { passive: false });
-    scrollEl.addEventListener('touchcancel', onTouchCancel, { passive: true });
+    // One set of touch listeners: on the column when there is one (a tap
+    // in the scroller bubbles to it), else on the scroller.
+    var host = column || scrollEl;
+    host.addEventListener('touchstart', onTouchStart, { passive: true });
+    host.addEventListener('touchmove', onTouchMove, { passive: true });
+    host.addEventListener('touchend', onTouchEnd, { passive: false });
+    host.addEventListener('touchcancel', onTouchCancel, { passive: true });
     scrollEl.addEventListener('focusin', onFocusIn);
     vv.addEventListener('resize', onVvEvent, { passive: true });
     vv.addEventListener('scroll', onVvEvent, { passive: true });
 
     return {
       detach: function () {
-        scrollEl.removeEventListener('touchstart', onTouchStart);
-        scrollEl.removeEventListener('touchmove', onTouchMove);
-        scrollEl.removeEventListener('touchend', onTouchEnd);
-        scrollEl.removeEventListener('touchcancel', onTouchCancel);
+        host.removeEventListener('touchstart', onTouchStart);
+        host.removeEventListener('touchmove', onTouchMove);
+        host.removeEventListener('touchend', onTouchEnd);
+        host.removeEventListener('touchcancel', onTouchCancel);
         scrollEl.removeEventListener('focusin', onFocusIn);
         vv.removeEventListener('resize', onVvEvent);
         vv.removeEventListener('scroll', onVvEvent);

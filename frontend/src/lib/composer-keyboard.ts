@@ -57,7 +57,7 @@ import { useEffect, useRef, type RefObject } from 'react';
 
 type KitHandle = { detach?: () => void } | null | undefined;
 type KitLike = {
-  attachKeyboardAvoidance?: (scrollEl: Element, opts?: { topEl?: Element }) => KitHandle;
+  attachKeyboardAvoidance?: (scrollEl: Element, opts?: { topEl?: Element; column?: Element }) => KitHandle;
 };
 type WinLike = { unNative?: KitLike | null };
 type DocLike = { getElementById(id: string): Element | null };
@@ -77,9 +77,12 @@ export function attachComposerKeyboard(
   const kit = win?.unNative;
   if (!el || !kit || typeof kit.attachKeyboardAvoidance !== 'function') return NOOP;
   const topEl = (bar === undefined ? doc?.getElementById('platform-header') : bar) || undefined;
+  // The column the composer sits in under the scroller: the kit takes its
+  // message box's tap too, so iOS never pans to it (5 Oct 2026).
+  const column = (typeof el.closest === 'function' ? el.closest('.platform-kb-column') : null) || undefined;
   let handle: KitHandle;
   try {
-    handle = kit.attachKeyboardAvoidance(el, topEl ? { topEl } : {});
+    handle = kit.attachKeyboardAvoidance(el, { ...(topEl ? { topEl } : {}), ...(column ? { column } : {}) });
   } catch {
     return NOOP;
   }
