@@ -3086,5 +3086,321 @@
   "message_022310188e11_other": {
     "text": "Показати {{value1}} більше запрошень",
     "source": "ef3783a48a3e693e58623f4d587f3fac17454e339ca8143b8a2899921106329b"
+  },
+  "activity_tone_built": {
+    "text": "побудований",
+    "source": "cfe0e6cbcf5cdd1aab44a39ab4d39713561bafab51fa7ff4654c980d5578ee5f"
+  },
+  "after_waiting_value1_for_the_first_version": {
+    "text": "після чекання {{value1}} для першої версії",
+    "source": "449098c66563222c9cf62b5ba88161341cd83e0624195edbc54be3fb6f089e6c"
+  },
+  "after_waiting_value1_for_its_turn": {
+    "text": "Попередня статтяКто чего не ест {{value1}}",
+    "source": "b6182e3c7b7ec56205c65e189caa74b23738055a85deb2262b08492d532af28d"
+  },
+  "value1_so_far_value2": {
+    "text": " · {{value1}} дотепер, {{value2}}",
+    "source": "a06a0a3ea3bc9278c3cfa46c92ea85295e9e55685ade772dbeda79dce508a8a4"
+  },
+  "took_value1_value2": {
+    "text": " · взято {{value1}}, {{value2}}",
+    "source": "4db987a9361169e6f8e637c21696a80f195905555a7afc058555424501a0d6fb"
+  },
+  "your_change_to_value1_is_built_but_not_everything_works_yet": {
+    "text": "Ваша зміна на {{value1}} побудована, але не все працює ще",
+    "source": "1ddfa662a253fbd45833861890babd07d39ee6d5403f203d92736610938d3cc2"
+  },
+  "value1_is_built_but_not_everything_works_yet": {
+    "text": "{{value1}} побудовано, але не все працює ще",
+    "source": "93195c4553cafa46e75e3046ecde04e715b8aa413fdf8b189a1c1277f4537fb9"
+  },
+  "later_today": {
+    "text": "Пізніше сьогодні",
+    "source": "d82abce3b38dcf9bf4db6f432c0bc25a2f8b40a7f8a803f799148463f84908e7"
+  },
+  "tomorrow": {
+    "text": "Завтра",
+    "source": "bafd151a86f9a573b153e76e3a8a0053b3340ce304a301a5354288fb18bce848"
+  },
+  "on_value1_weekday": {
+    "text": "Всього {{value1}}",
+    "source": "9af44882b6827879fde07cd010dfff1af87bc051b28acd829ba9479cad556894"
+  },
+  "on_value1_date": {
+    "text": "Всього {{value1}}",
+    "source": "9af44882b6827879fde07cd010dfff1af87bc051b28acd829ba9479cad556894"
+  },
+  "you_approved_it_it_goes_live_in_a_minute_or_two": {
+    "text": "Ви його схвалили, він живий за одну або дві хвилини.",
+    "source": "031f9cc4611d29f566254b73524f7eb6d46f24e2d00a28b38bf90dd10162d463"
+  },
+  "you_approved_it_it_goes_live_value1_if_nobody_objects": {
+    "text": "Ви затвердили його. він йде живим {{value1}} якщо ніхто не об'єкти.",
+    "source": "30105422636105cf3ea8207cd3526ab904dcb682341cc9451d5ea1b538a6fe3b"
+  },
+  "you_approved_it_it_goes_live_once_it_has_the_approvals_it_needs": {
+    "text": "Ви затвердили його. він живе, як тільки у нього є дозвіл, який він потребує.",
+    "source": "d58855575f219ae40dd2ecce4e91da36d8047e128bd5ff6f36022599e59ca77b"
+  },
+  "you_approved_it_it_goes_live_value1_or_value2_if_nobody_objects": {
+    "text": "Він йде живим {{value1}}, або {{value2}}, якщо ніхто не має об'єктів.",
+    "source": "0f11108b9c872b7347dcb568256a6e2c8765c6ac2876dd63f956430d4bf34dd6"
+  },
+  "you_approved_it_it_goes_live_value1": {
+    "text": "Про це йдеться у повідомленні, оприлюдненому {{value1}}.",
+    "source": "d2a7f6b7200bd3327105fd4881c4e422ac7495ac780bc0950f7e035e5f42bd54"
+  },
+  "it_s_live": {
+    "text": "Він живий є.",
+    "source": "60da6fe080769aeb4b646a8e9d1f362875e622c91a857f780f16d0ba213e6244"
+  },
+  "it_s_approved_and_going_live_now": {
+    "text": "Це було прийнято і зараз буде жити.",
+    "source": "0d227d34966bf77b39b699a68fabde7b4f2887d85b81bded313e80f2d2e3be46"
+  },
+  "this_change_was_closed_without_going_live": {
+    "text": "Ця зміна була закрита, не йде жива.",
+    "source": "7eecf57f1d6de536d7afe699a609a5954a1d0446f50bbe23e3ea1eb8060996b7"
+  },
+  "following_up_on_its_change": {
+    "text": "Слідкуйте за його зміною",
+    "source": "3405326b084eb6de83d953a14e16969dca4934dd63fa8caec9682644c1fad325"
+  },
+  "waiting_its_turn_to_follow_up_on_its_change": {
+    "text": "Очікуючи, що він повернеться, щоб продовжити свою зміну",
+    "source": "755c7cf0fd4c2c640039512cdb94d040fa6f140c421edb9a3a93d64efecd613c"
+  },
+  "making_the_approved_change_live": {
+    "text": "Запрошуємо до прийнятих змін",
+    "source": "011a568b1b47a9e63e9d9798643be004b9c738975777f7e4a2433abb0d3a6a30"
+  },
+  "going_live": {
+    "text": "йти живим",
+    "source": "9a87940f878e828d7f5ee599fa59151493d3f724366028628b48fb3439c472a8"
+  },
+  "value1_waiting_for_approval": {
+    "text": "{{value1}} чекає на затвердження",
+    "source": "289c89b38ada40a3d5aa89181ebf07f7f5983d3167646803ca58965e446d7e9b"
+  },
+  "the_change_for_value1_was_closed": {
+    "text": "Зміни на {{value1}} були закриті",
+    "source": "90a1e4552016935eb4a0c2e287bfa577690aaea2432332ba50c2b41c7350ac74"
+  },
+  "updated_the_change_for_value1": {
+    "text": "Про внесення змін до {{value1}}",
+    "source": "c4321d6a5227f297d08b6feaa45472692f4d5409d0f056bc98ddd5344c45fea8"
+  },
+  "make_an_app_or_suggest_an_improvement": {
+    "text": "Завантажити додаток або запропонувати поліпшення",
+    "source": "2abfe5d51d6a6b02caff5cac161fef214edaf8ccd0a92042f22b937a08802844"
+  },
+  "your_projects": {
+    "text": "Ваші проекти",
+    "source": "e82a6eb21afd56d66f69500536f26ceb1bd31571935358e19f8794b701061cb5"
+  },
+  "other_projects": {
+    "text": "Інші проекти",
+    "source": "7b4418d894c3105ded6cd9fa3b7592905821d5ec2732dfa0b8bde492f00ffeb1"
+  },
+  "invited_you_to_join_verb": {
+    "text": "Запрошуємо Вас приєднатися",
+    "source": "9f7fe81f8a20f39f85a13d8d16b69381eb4b2851a67cf84b12b1d5cf3b7d1124"
+  },
+  "value1_person_is_in_it": {
+    "text": "{{value1}} осіб є в ньому",
+    "source": "cc36de473d0b2d0baa19ff992b94a8db174b372da8d5dbeab0713f55ed863c96"
+  },
+  "value1_people_are_in_it": {
+    "text": "В ньому перебувають {{value1}} осіб.",
+    "source": "2d266ef7ef2adeb2bdca159c90922390e664509a46794f0349f2f99585e3cfbe"
+  },
+  "your_change_is_built_but_not_everything_works_yet": {
+    "text": "Ваша зміна побудована, але не все працює ще",
+    "source": "b48ae2813a369b64068fc6e1c95fc6d663c83aa24cdc56698ef0a465067b5219"
+  },
+  "value1_i_couldn_t_finish_building_it_reply_and_i_ll_try_again": {
+    "text": "{{value1}}: Я не міг завершити його будівництво. відповісти і я спробую знову",
+    "source": "e8a051edde733114b636c4ef4d5250b4652a31dbdd4d5c5ba825017c33c7e9f3"
+  },
+  "i_couldn_t_finish_building_it_reply_and_i_ll_try_again": {
+    "text": "Я не можу завершити його будівництво. відповісти і я спробую знову",
+    "source": "c2cb309cf07231aa1eee69064d3c283b6d2529738b4977662a5bf73b38d7e7f2"
+  },
+  "kudos_note_value1_a_week": {
+    "text": "Кодоси, які ви отримуєте, не закінчуються; вони розраховують на лідерство Кодос. Кожен має {{value1}} на тиждень, щоб дати.",
+    "source": "1ee168233cfdfaf50df9a2a54761954942d71087cfb62d2253b4a918ce5bde3d"
+  },
+  "leaderboard_action": {
+    "text": "лідерство",
+    "source": "31b471215872634299bc844f90c0493a24f6db1f00dca395175da335c4c0ca1d"
+  },
+  "asked_for_a_change_headline": {
+    "text": "Запит на зміну",
+    "source": "c8781da4144505cb190418fed3fc84818b9d3c916627aad649d215c15936c8ff"
+  },
+  "invited_you_to_join_title": {
+    "text": "Запрошуємо Вас приєднатися",
+    "source": "3bf5410dbe516202f4f9f72b63ae64fad18950ce4305b8c10832b9c16c606efc"
+  },
+  "merged_788011833a5a": {
+    "text": "Сповіщення",
+    "source": "788011833a5a0f22db90c91e8eb7bd8e9f5cd423354ff5ef8c338e7895f44ba9"
+  },
+  "merged_58224176ff92": {
+    "text": "Повідомте, коли вона готова",
+    "source": "58224176ff92c9443e01c10a4f7b1f11be822527e32877e8cec96cae1a73bf0e"
+  },
+  "merged_92dfd3632bae": {
+    "text": "Відкрийте повідомлення",
+    "source": "92dfd3632baeb6d4f116758b2c1a354134a00006071df2866fda8eeb6fe3429c"
+  },
+  "merged_ec25fb591739": {
+    "text": "Я відправляю вам повідомлення, коли він буде готовий.",
+    "source": "ec25fb591739bc8783fa80a6204759aeb2897bdf3250366f3be3c0fb1cb75c1b"
+  },
+  "merged_1b6adda412b2": {
+    "text": "Повідомлення вимкнені на Homeroom, так що я буду повідомляти вам тут, коли це готово.",
+    "source": "1b6adda412b2e0b83ce941d395dc710a2dce228741406815888a8f2d14546345"
+  },
+  "merged_be68ae5803c2": {
+    "text": "Повідомлю вам тут, коли вона готова.",
+    "source": "be68ae5803c27a9ba482f9006e157928a1fae02ae3f9d27ce435fb8ee07f6103"
+  },
+  "merged_f4780f76354c": {
+    "text": "{{value1}} і {{value2}}",
+    "source": "f4780f76354cc77c3f4da4f7dd8b2af692cb084537b16663ffb1c87fdde83f97"
+  },
+  "merged_2e95cd47e935": {
+    "text": "{{value1}} або {{value2}}",
+    "source": "2e95cd47e935caa7c7548e682e26d9f9dd5ff735b1b48d1c3d03ff9bb77aa388"
+  },
+  "merged_bb0347a468d9": {
+    "text": "Ти",
+    "source": "bb0347a468d97e98a9c00e37cebec1ab930f6f1221cae0f1fbb92b07e1900ba2"
+  },
+  "merged_95851eb1e3dd": {
+    "text": "Потрібні {{value1}} з {{value2}}",
+    "source": "95851eb1e3ddbe7cc794593f60a4969fafc0b52af7b2ce1394d9867f3d8e954a"
+  },
+  "merged_5424ba7c0199": {
+    "text": "Очікуємо на затвердження від {{value1}}",
+    "source": "5424ba7c01994e9a51435dbfeb88e839ec758f21794328d33edd8ae7fd3e3716"
+  },
+  "merged_fd8ea6e5449e": {
+    "text": "після {{value1}} з {{value2}}",
+    "source": "fd8ea6e5449eaf50acc22a8c944c54975652767529052bcf85904b14c389f730"
+  },
+  "bot_ready_broken_things_few": {
+    "text": "{{count}} речі ще не працюють: {{value1}}",
+    "source": "0ee77068c9c2d72db634b7e67db8106e19ad7f68b5ed53a8d88a0cf35afdd45c"
+  },
+  "bot_ready_broken_things_many": {
+    "text": "{{count}} речі ще не працюють: {{value1}}",
+    "source": "0ee77068c9c2d72db634b7e67db8106e19ad7f68b5ed53a8d88a0cf35afdd45c"
+  },
+  "bot_ready_broken_things_one": {
+    "text": "Про це йдеться в повідомленні: {{value1}}",
+    "source": "d0af5741b80e78aa0bcc08758abb5bde87654bf506211607d435c7c5f1768a77"
+  },
+  "bot_ready_broken_things_other": {
+    "text": "{{count}} речі ще не працюють: {{value1}}",
+    "source": "0ee77068c9c2d72db634b7e67db8106e19ad7f68b5ed53a8d88a0cf35afdd45c"
+  },
+  "approval_more_few": {
+    "text": "{{count}} більше затверджень",
+    "source": "eb6ff3b9f8d0c44d36ed1b0b8ffda342c6453edbf19fc8535971b2a03d1fc5a1"
+  },
+  "approval_more_many": {
+    "text": "{{count}} більше затверджень",
+    "source": "eb6ff3b9f8d0c44d36ed1b0b8ffda342c6453edbf19fc8535971b2a03d1fc5a1"
+  },
+  "approval_more_one": {
+    "text": "Ще одне затвердження",
+    "source": "91ad276242136bda27661a044f8d4fb038dc7d3e854d8d46414e8d4400335821"
+  },
+  "approval_more_other": {
+    "text": "{{count}} більше затверджень",
+    "source": "eb6ff3b9f8d0c44d36ed1b0b8ffda342c6453edbf19fc8535971b2a03d1fc5a1"
+  },
+  "approval_count_few": {
+    "text": "{{count}} оприлюднено",
+    "source": "0ed77d61db0d56b9e59f92382b0f0d806e111416f9a0c10a8c06e4666c76a9b4"
+  },
+  "approval_count_many": {
+    "text": "{{count}} оприлюднено",
+    "source": "0ed77d61db0d56b9e59f92382b0f0d806e111416f9a0c10a8c06e4666c76a9b4"
+  },
+  "approval_count_one": {
+    "text": "Одне затвердження",
+    "source": "5e10d2915e5b9aee0c9d09fdced381de35b1f3d9a51e558bd5fa68b52de7da59"
+  },
+  "approval_count_other": {
+    "text": "{{count}} оприлюднено",
+    "source": "0ed77d61db0d56b9e59f92382b0f0d806e111416f9a0c10a8c06e4666c76a9b4"
+  },
+  "approval_others_few": {
+    "text": "{{count}} Інші",
+    "source": "169de0f0ee875a1234b668c4344db82209654959a28804f506686decdbd7bc58"
+  },
+  "approval_others_many": {
+    "text": "{{count}} Інші",
+    "source": "169de0f0ee875a1234b668c4344db82209654959a28804f506686decdbd7bc58"
+  },
+  "approval_others_one": {
+    "text": "{{count}} Інші",
+    "source": "14f0bd63435bc6ffc86011a9c9cd78fe5c6ffdbf1de15e1a155952e037eb71ab"
+  },
+  "approval_others_other": {
+    "text": "{{count}} Інші",
+    "source": "169de0f0ee875a1234b668c4344db82209654959a28804f506686decdbd7bc58"
+  },
+  "approval_people_more_few": {
+    "text": "{{count}} більше",
+    "source": "e3d6d4345ad8bde8395491aa9d90d87477e5e590ccbc84aadc7663fb57f9ccdd"
+  },
+  "approval_people_more_many": {
+    "text": "{{count}} більше",
+    "source": "e3d6d4345ad8bde8395491aa9d90d87477e5e590ccbc84aadc7663fb57f9ccdd"
+  },
+  "approval_people_more_one": {
+    "text": "{{count}} більше",
+    "source": "e3d6d4345ad8bde8395491aa9d90d87477e5e590ccbc84aadc7663fb57f9ccdd"
+  },
+  "approval_people_more_other": {
+    "text": "{{count}} більше",
+    "source": "e3d6d4345ad8bde8395491aa9d90d87477e5e590ccbc84aadc7663fb57f9ccdd"
+  },
+  "approval_when_people_few": {
+    "text": "У разі прийняття {{value1}}",
+    "source": "bdb787bb1b5fa766d91f631d778a339aa909a1470401fec6f13a43f2bdec9db8"
+  },
+  "approval_when_people_many": {
+    "text": "У разі прийняття {{value1}}",
+    "source": "bdb787bb1b5fa766d91f631d778a339aa909a1470401fec6f13a43f2bdec9db8"
+  },
+  "approval_when_people_one": {
+    "text": "У разі прийняття {{value1}}",
+    "source": "66a15b5d2583a95537ffbddc92900400473018682e96f42c68541dda464e6d25"
+  },
+  "approval_when_people_other": {
+    "text": "У разі прийняття {{value1}}",
+    "source": "bdb787bb1b5fa766d91f631d778a339aa909a1470401fec6f13a43f2bdec9db8"
+  },
+  "approval_when_more_few": {
+    "text": "Коли {{count}} більше людей затверджують",
+    "source": "9f0c4312e56b6838090b716bbb23d870c0e3108c45d71f1f03061f6ab9e45c47"
+  },
+  "approval_when_more_many": {
+    "text": "Коли {{count}} більше людей затверджують",
+    "source": "9f0c4312e56b6838090b716bbb23d870c0e3108c45d71f1f03061f6ab9e45c47"
+  },
+  "approval_when_more_one": {
+    "text": "Якщо ще одна особа погоджується",
+    "source": "1677e07739ed3c270bd405349bdc149df91b05c4a0a44142984dc24d2c396bf2"
+  },
+  "approval_when_more_other": {
+    "text": "Коли {{count}} більше людей затверджують",
+    "source": "9f0c4312e56b6838090b716bbb23d870c0e3108c45d71f1f03061f6ab9e45c47"
   }
 }
