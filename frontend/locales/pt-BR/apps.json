@@ -2742,5 +2742,81 @@
   "message_0578756e9eff_other": {
     "text": "Atividade em {{value1}} apps",
     "source": "830e7651fad836db300a958863260e75dc93ee5eb3a438529dfdb7eaab4e30b2"
+  },
+  "agent_chats_heading": {
+    "text": "agente chat",
+    "source": "1fe2de5055383e8d2894b44d6bd64cb787ffd82c1339e57f9a078f7ddb6fbfc5"
+  },
+  "no_apps_added_yet_make_one_with_new_project_or_find_one_in_the_discover_section": {
+    "text": "Não adicionou aplicativos ainda. faça um com Novo projeto, ou encontre um na seção Descubra.",
+    "source": "021ceedb1d2d90137693101011be7489c0a505868e807d88ebbeb52582933f9d"
+  },
+  "suggest_an_improvement": {
+    "text": "Sugerir uma melhoria",
+    "source": "cfbf47a0b6534ad1577177e339c73219b433f6e196a8ead8aeb2270f1b17714a"
+  },
+  "tour_suggest_improvement_body": {
+    "text": "Diga ao bot Homeroom o que deve mudar. ele o constrói para você, ou o transmite ao grupo como pedido.",
+    "source": "4979f8adf334727c409a8be8a1d8da9c146e5de914655b7d2d9c9ee40d6c5a2e"
+  },
+  "merged_4def98c89240": {
+    "text": "Algo estava errado, tente novamente.",
+    "source": "4def98c892406e31099ba18e5d6a60db12420dd723a27a5ab77235d20adb0beb"
+  },
+  "merged_8841bc82e63f": {
+    "text": "Faça isso, e isso conta",
+    "source": "8841bc82e63f9bdc8f9c8547644989f097459246988cfdc53ce63b6495b1ddff"
+  },
+  "merged_49d6eb8edfd0": {
+    "text": "Os desafios completos.",
+    "source": "49d6eb8edfd0dce6ddbe2fa1f9fe9a4613b7d53e3192940e6086c9725063f240"
+  },
+  "merged_c800e3465ccc": {
+    "text": "Ganhar pontos",
+    "source": "c800e3465ccc723ebbb31fe768234a2f72f75757482499bf6bc00828c6c3962c"
+  },
+  "merged_842cf5735699": {
+    "text": "Cada cartão mostra o que ganha. pontos adicionados em stands.",
+    "source": "842cf57356992e319ceeedaf8ed8d2a6016db67220f0340c739767d3607ca707"
+  },
+  "merged_bf41f5da91ca": {
+    "text": "Novos todos os dias",
+    "source": "bf41f5da91ca13644dd0caaf60f1238086bdafb9792ef947013352cbb91b65b4"
+  },
+  "merged_f9e7147ce15d": {
+    "text": "Esta semana começa novamente na segunda-feira, sempre aberta não tem prazo.",
+    "source": "f9e7147ce15de8cbf60a11f8029f19f7566876b13b1eaacef214d2367141ee95"
+  },
+  "merged_39f97a2f3052": {
+    "text": "Próximo {{value1}}",
+    "source": "39f97a2f30527ab84b7cdccf37b604e8a6b96764b28b61a7af7f66eae67ecc7b"
+  },
+  "merged_7d9eb7acb13e": {
+    "text": "Fechar",
+    "source": "7d9eb7acb13e24625c404401d8e88b2350e32162455885f18276cf802f7701ed"
+  },
+  "merged_fb954981445c": {
+    "text": "Mostrar usuários não-podium",
+    "source": "fb954981445c19714ea3a09472aec0f734b4dc360f7cfd885b5b369288fa6514"
+  },
+  "merged_f541d86a416c": {
+    "text": "Mostrar usuários não-podium ({{value1}})",
+    "source": "f541d86a416c2f907425f96af26b0a10e22615a3fd4dae5165fd0cbbf9a53afb"
+  },
+  "merged_61dd23c819d4": {
+    "text": "Qualquer pessoa com uma pontuação nesta tabela é excluída do ranking.",
+    "source": "61dd23c819d4a080313b9b0a675955605bf51092cedb6e1eb160406f6f461946"
+  },
+  "merged_3f30e05942f0": {
+    "text": "Como os desafios funcionam",
+    "source": "3f30e05942f0df25fb46a9059f6a4cd08b76df4161c94824f3e3a99ac2939ed3"
+  },
+  "merged_82bb5bb897a2": {
+    "text": "Faça sua própria cópia",
+    "source": "82bb5bb897a289f90180a30a283b884a02a67c5488371286ddab47ce658642dd"
+  },
+  "making_your_link_status": {
+    "text": "Faça o seu link",
+    "source": "0a71b96416fc79398c7cd457d22e987ad45459a475ca6a8f77733efa0fea1b28"
   }
 }

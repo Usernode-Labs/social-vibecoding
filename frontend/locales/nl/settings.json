@@ -3394,5 +3394,13 @@
   "message_4183b7793fd2": {
     "text": "Verificatie",
     "source": "4183b7793fd28ba47ea9e79e7697f2915da218567e6657a158b51bd14bce91cd"
+  },
+  "sign_out_button": {
+    "text": "Sign uit",
+    "source": "48f0d3d397d49f135f116d947a805b49f084f637154a8e9913e7233a11dc16a0"
+  },
+  "merged_48f0d3d397d4": {
+    "text": "Sign uit",
+    "source": "48f0d3d397d49f135f116d947a805b49f084f637154a8e9913e7233a11dc16a0"
   }
 }
