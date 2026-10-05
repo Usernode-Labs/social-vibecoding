@@ -1,3 +1,9 @@
+import { getLanguage } from "../../lib/i18n/runtime";
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { RichMessage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message } from "../../lib/i18n/react";
 /**
  * `#dc-session-list`'s rows, as the only React writer below that host.
  *
@@ -87,6 +93,7 @@ export async function runSessionAction(
 }
 
 function ActionButton({ a }: { a: SessionAction }): ReactNode {
+  useUiLanguage();
   const [pending, setPending] = useState<string | null>(null);
   return (
     <button
@@ -118,10 +125,10 @@ function ActionButton({ a }: { a: SessionAction }): ReactNode {
 function Row({ row }: { row: SessionRow }): ReactNode {
   const open = () => { void call('openSessionFromList', [row.id]); };
   return (
-    <div
+    <LocalizedDynamic element={<div
       role="button"
       tabIndex={0}
-      aria-label={`Open session: ${row.title} (${row.status})`}
+      aria-label={tr("workshop:open_session_value1_value2_902d250d", { value1: row.title, value2: row.status })}
       className="dc-session-item px-3 py-2 cursor-pointer hover:bg-zinc-100 dark:hover:bg-zinc-800/50 flex items-center gap-2"
       data-id={row.id}
       onClick={open}
@@ -136,10 +143,7 @@ function Row({ row }: { row: SessionRow }): ReactNode {
       <span className={`text-xs ${STATUS_TONE[row.statusTone]} font-mono`}>{row.status}</span>
       <span className="text-sm text-zinc-800 dark:text-zinc-300 flex-1 truncate" title={row.branch}>{row.title}</span>
       {row.busy ? (
-        <span className="inline-flex items-center gap-1 text-xs text-emerald-700 shrink-0 dark:text-emerald-400">
-          <span className="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>
-          {'working…'}
-        </span>
+        <span className="inline-flex items-center gap-1 text-xs text-emerald-700 shrink-0 dark:text-emerald-400"><RichMessage id="workshop:sentence_43fb2fd0ead3" components={[<span className="dc-status-icon dc-status-spinner-arc" aria-hidden="true" />]} /></span>
       ) : null}
       {row.pr ? (
         <a
@@ -148,11 +152,11 @@ function Row({ row }: { row: SessionRow }): ReactNode {
           rel="noopener"
           className="text-xs text-violet-700 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300"
           onClick={(e) => e.stopPropagation()}
-        >{`PR#${row.pr.number}`}</a>
+        ><LocalizedValue render={() => (tr("workshop:pr_value1_8d7f966f", { value1: row.pr?.number || '' }))} /></a>
       ) : null}
       {row.actions.map((a) => <ActionButton key={a.key} a={a} />)}
       <SessionDate createdAt={row.createdAt} />
-    </div>
+    </div>} resolve={() => ({ get "aria-label"() { return tr("workshop:open_session_value1_value2_902d250d", { value1: row.title, value2: row.status }); } })} />
   );
 }
 
@@ -178,20 +182,11 @@ function SessionDate({ createdAt }: { createdAt: string }) {
 function EmptyPitch(): ReactNode {
   return (
     <div className="text-center px-6 py-12">
-      <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1">
-        Want to change this app? Just ask.
-      </p>
+      <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1"><Message id="workshop:want_to_change_this_app_just_ask_5bd5f0cd" /></p>
       <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-3 max-w-xs mx-auto">
-        {"Describe what you'd like different in plain English. An AI writes the code and opens a "
-          + 'real pull request. No coding required. The app’s users then vote it in.'}
+        {tr("workshop:describe_what_you_d_like_different_in_plain_engl_5a074ef4")}
       </p>
-      <p className="text-xs text-zinc-500 dark:text-zinc-500">
-        {'Hit '}
-        <span className="font-medium text-emerald-700 dark:text-emerald-400">+ New Session</span>
-        {' above to start, e.g. '}
-        <span className="italic">&quot;make the header dark blue&quot;</span>
-        {'.'}
-      </p>
+      <p className="text-xs text-zinc-500 dark:text-zinc-500"><RichMessage id="workshop:sentence_777cf83ea78a" components={[<span className="font-medium text-emerald-700 dark:text-emerald-400" />, <span className="italic" />]} /></p>
     </div>
   );
 }
@@ -201,6 +196,7 @@ function EmptyPitch(): ReactNode {
  * the same weight as a row's own actions, that reads the whole history.
  */
 function OlderRow({ older }: { older: number }): ReactNode {
+  useUiLanguage();
   const [pending, setPending] = useState(false);
   return (
     <button
@@ -214,7 +210,7 @@ function OlderRow({ older }: { older: number }): ReactNode {
         setPending(false);
       }}
     >
-      {pending ? 'Loading…' : `Show ${older.toLocaleString()} older ${older === 1 ? 'session' : 'sessions'}`}
+      <LocalizedValue render={() => (pending ? tr("workshop:loading_ba3bbbe1") : tr("workshop:message_375f94f9bcfc", { value1: older.toLocaleString(getLanguage()), count: older }))} />
     </button>
   );
 }
@@ -228,5 +224,6 @@ export function SessionListView({ rows, older = 0 }: SessionListState): ReactNod
 }
 
 export function SessionList(): ReactNode {
+  useUiLanguage();
   return <SessionListView {...useStoreState<SessionListState>(sessionListStore)} />;
 }

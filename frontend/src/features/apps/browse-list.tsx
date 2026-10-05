@@ -1,3 +1,6 @@
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message } from "../../lib/i18n/react";
 /**
  * The browse screen's level-1 rows (#1191 slice 6, conversion 3).
  *
@@ -173,12 +176,12 @@ function Row({ view, headingSays }: {
         <>
       {/* No `type` — the hand-written row shipped a bare <button>, and it sits
           in no form, so the default submit type is inert either way. */}
-      <button
+      <LocalizedDynamic element={<button
         className={ADD_BASE + (view.added ? ADD_ON : ADD_OFF)}
         data-slug={view.slug}
         data-added={String(view.added)}
         aria-pressed={view.added}
-        aria-label={view.added ? undefined : `Join ${view.name}`}
+        aria-label={view.added ? undefined : tr("apps:join_value1_8a9b2690", { value1: view.name })}
         title={view.addTitle}
         onClick={(e) => {
           e.stopPropagation();
@@ -196,8 +199,8 @@ function Row({ view, headingSays }: {
             name carries the rest — "Join <app>", so a screen reader hears
             what is being joined. "Joined" is a state and stays short; a tap
             on it asks before leaving (Home.setMembership). */}
-        {view.added ? 'Joined' : 'Join'}
-      </button>
+        <LocalizedValue render={() => (view.added ? tr("apps:joined_69318b0c") : tr("apps:join_fd30fe68"))} />
+      </button>} resolve={() => ({ "aria-label": view.added ? undefined : tr("apps:join_value1_8a9b2690", { value1: view.name }) })} />
         </>
       )}
     />
@@ -240,18 +243,16 @@ export function BrowseRows({ rows, curated = false, grouped = true, moreExpanded
     <>
       {grouped ? (
         <>
-          {ready.length ? <SectionHeader className={headingClass}>Reviewed working apps</SectionHeader> : null}
-          {renderRows(ready, 'Reviewed working')}
-          {unreviewed.length ? <SectionHeader className={headingClass}>Not yet reviewed</SectionHeader> : null}
-          {renderRows(unreviewed, 'Not yet reviewed')}
+          {ready.length ? <SectionHeader className={headingClass}><Message id="apps:reviewed_working_apps_362d52d1" /></SectionHeader> : null}
+          {renderRows(ready, tr("apps:reviewed_working_eef07e09"))}
+          {unreviewed.length ? <SectionHeader className={headingClass}><Message id="apps:not_yet_reviewed_ba0dc155" /></SectionHeader> : null}
+          {renderRows(unreviewed, tr("apps:not_yet_reviewed_ba0dc155"))}
         </>
       ) : renderRows(shown)}
       {more.length ? (
         <>
           <div className="md:col-span-full p-3">
-            <p className="mb-2 text-sm text-zinc-600 dark:text-zinc-400">
-              Demos and apps needing fixes, setup, or an icon are still available below and in search.
-            </p>
+            <p className="mb-2 text-sm text-zinc-600 dark:text-zinc-400"><Message id="apps:demos_and_apps_needing_fixes_setup_or_an_icon_ar_31110925" /></p>
             <Button
               type="button"
               variant="neutral"
@@ -260,7 +261,7 @@ export function BrowseRows({ rows, curated = false, grouped = true, moreExpanded
               aria-controls="browse-more-apps"
               onClick={() => controller()?.toggleMore()}
             >
-              {moreExpanded ? 'Show less' : `Show more (${more.length})`}
+              <LocalizedValue render={() => (moreExpanded ? tr("apps:show_less_94ea9b1d") : tr("apps:show_more_value1_951897cf", { value1: more.length }))} />
             </Button>
           </div>
           <div id="browse-more-apps" className={moreExpanded

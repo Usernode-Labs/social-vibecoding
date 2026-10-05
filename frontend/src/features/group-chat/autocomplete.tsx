@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * `#gc-mention-menu`, `#gc-ref-menu` and `#gc-emoji-menu` — the composer's
  * autocomplete listboxes, as the only React writers below those hosts.
@@ -71,13 +75,13 @@ export function MentionMenuView({ items, active }: AutocompleteSlot<MentionOptio
             <>
               <img className="gc-mention-option-mark" src="/brand/homeroom-mark.png" alt="" aria-hidden="true" />
               {item.displayName || item.username}
-              <span className="messages-bot-badge">AI</span>
+              <span className="messages-bot-badge"><Message id="workshop:ai_11fb682b" /></span>
             </>
           ) : (
             <>
               <span className="gc-mention-option-at">@</span>
               {item.username}
-              {item.you ? <span className="gc-mention-option-you">you</span> : null}
+              {item.you ? <span className="gc-mention-option-you"><Message id="workshop:you_bb0347a4" /></span> : null}
             </>
           )}
         </div>
@@ -107,7 +111,7 @@ export function RefMenuView({ items, active }: AutocompleteSlot<RefOption>) {
           {item.kind === 'channel' ? (
             <span className="gc-channel-ref">{`#${item.number}`}</span>
           ) : item.kind === 'pr' ? (
-            <span className="gc-ref gc-ref-pr">{`PR#${item.number}`}</span>
+            <span className="gc-ref gc-ref-pr"><LocalizedValue render={() => (tr("workshop:pr_value1_8d7f966f", { value1: item.number }))} /></span>
           ) : (
             <span className="gc-ref gc-ref-issue">{`#${item.number}`}</span>
           )}
@@ -130,10 +134,9 @@ export function EmojiMenuView({ items, active, query }: EmojiSlot) {
   if (!items.length) return null;
   return (
     <>
-      <div className="gc-emoji-menu-heading">
-        Emoji matching <span className="gc-emoji-menu-query">{`:${query}`}</span>
+      <div className="gc-emoji-menu-heading"><Message after={" "} id="workshop:emoji_matching_026002d8" /><span className="gc-emoji-menu-query">{`:${query}`}</span>
       </div>
-      <div role="listbox" aria-label="Emoji">
+      <Localized element={<div role="listbox" aria-label={catalogText("workshop:emoji_61ad8976")}>
         {items.map((item, i) => (
           <div
             key={item.emoji}
@@ -149,19 +152,22 @@ export function EmojiMenuView({ items, active, query }: EmojiSlot) {
             <span className="gc-emoji-option-code">{`:${item.shortcode}:`}</span>
           </div>
         ))}
-      </div>
+      </div>} messages={{"aria-label":"workshop:emoji_61ad8976"}} />
     </>
   );
 }
 
 export function MentionMenu() {
+  useUiLanguage();
   return <MentionMenuView {...useStoreState(autocompleteStore).mention} />;
 }
 
 export function RefMenu() {
+  useUiLanguage();
   return <RefMenuView {...useStoreState(autocompleteStore).ref} />;
 }
 
 export function EmojiMenu() {
+  useUiLanguage();
   return <EmojiMenuView {...useStoreState(autocompleteStore).emoji} />;
 }

@@ -1,3 +1,5 @@
+import { useMessages as useUiLanguage } from "../../../lib/i18n/react";
+import { Localized, message as catalogText } from "../../../lib/i18n/react";
 /**
  * The two fixed section hosts, and the state that decides what is in them.
  *
@@ -94,10 +96,9 @@ function Section({
  */
 export function DiscoverSectionView({ painted, discover }: HomePanelsState) {
   return (
-    <Section
+    <Localized element={<Section
       id="home-discover-section"
-      slot="discover"
-      label="Discover"
+      slot="discover" label={catalogText("apps:discover_d4a33d5b")}
       // CONSTANT, like the label: both are rendered in the prerender and by
       // the first client render, so neither can disagree with the document
       // the shell ships. Nothing here reads the view model — the ⋮ names its
@@ -109,7 +110,7 @@ export function DiscoverSectionView({ painted, discover }: HomePanelsState) {
         : undefined}
     >
       {discover ? <DiscoverPanel view={discover} /> : null}
-    </Section>
+    </Section>} messages={{"label":"apps:discover_d4a33d5b"}} />
   );
 }
 
@@ -118,10 +119,9 @@ export function DiscoverSectionView({ painted, discover }: HomePanelsState) {
 // string renderer put them too.
 export function ChallengesSectionView({ painted, challenges }: HomePanelsState) {
   return (
-    <Section
+    <Localized element={<Section
       id="home-challenges-section"
-      slot="challenges"
-      label="Challenges"
+      slot="challenges" label={catalogText("apps:challenges_40b9c8f4")}
       // NO TRAILING COUNTER. "· 1 of 6 · 3,900 pts left" rode here, shrunk to
       // 12px because at the label's own size it pushed "Challenges" into an
       // ellipsis on a phone — a fix that left a heading carrying the area's
@@ -138,14 +138,16 @@ export function ChallengesSectionView({ painted, challenges }: HomePanelsState) 
       painted={painted}
     >
       {challenges ? <ChallengesPanel view={challenges} /> : null}
-    </Section>
+    </Section>} messages={{"label":"apps:challenges_40b9c8f4"}} />
   );
 }
 
 export function DiscoverSection() {
+  useUiLanguage();
   return <DiscoverSectionView {...useStoreState(panelsStore)} />;
 }
 
 export function ChallengesSection() {
+  useUiLanguage();
   return <ChallengesSectionView {...useStoreState(panelsStore)} />;
 }

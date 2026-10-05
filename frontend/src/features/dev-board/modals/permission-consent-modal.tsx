@@ -1,3 +1,5 @@
+import { useMessages as useUiLanguage } from "../../../lib/i18n/react";
+import { Message } from "../../../lib/i18n/react";
 /**
  * `#permission-consent-modal` — "Allow <app> to record audio from your
  * microphone?" and its eight siblings (#2219).
@@ -65,9 +67,7 @@ export function PermissionConsentCard({ view }: { view: PermissionConsentModalVi
           variant="neutral"
           ink="neutral"
           onClick={() => call('_permissionConsentDecline')}
-        >
-          Not now
-        </Button>
+        ><Message id="workshop:not_now_a0e63d7c" /></Button>
         <Button
           type="button"
           id="permission-consent-allow"
@@ -81,6 +81,7 @@ export function PermissionConsentCard({ view }: { view: PermissionConsentModalVi
 }
 
 export function PermissionConsentModal(): ReactNode {
+  useUiLanguage();
   const { view } = useStoreState<{ view: PermissionConsentModalView | null }>(
     permissionConsentModalStore
   );

@@ -1,3 +1,5 @@
+import { t as tr } from "../../../lib/i18n/runtime";
+import { Localized, message as catalogText } from "../../../lib/i18n/react";
 /**
  * `PR#123` / `#123` suggestions for the Activity feed's reply box (#2497).
  *
@@ -114,7 +116,7 @@ export function spliceRef(
   value: string, start: number, caret: number, kind: RefOption['kind'], number: number,
 ): { value: string; caret: number } {
   const before = value.slice(0, start);
-  const insert = kind === 'pr' ? `PR#${number} ` : `#${number} `;
+  const insert = kind === 'pr' ? tr("workshop:pr_value1_51f9dc18", { value1: number }) : `#${number} `;
   return { value: before + insert + value.slice(caret), caret: before.length + insert.length };
 }
 
@@ -171,7 +173,7 @@ export function loadRefCandidates(slug: string): Promise<RefCandidates> {
         .map((pr: any) => ({
           kind: 'pr' as const,
           number: Number(pr.pr_number),
-          title: String(pr.pr_title || `by ${pr.username || ''}`),
+          title: String(pr.pr_title || tr("workshop:by_value1_227ec51b", { value1: pr.username || '' })),
         }));
       const issues: RefOption[] = (Array.isArray(issueData?.issues) ? issueData.issues : [])
         .filter((i: any) => i && i.number != null)
@@ -345,13 +347,12 @@ export function FeedRefMenu({
 }) {
   if (!items.length) return null;
   return (
-    <div
+    <Localized element={<div
       ref={menuRef}
       className={below
         ? 'gc-mention-menu dev-feed-mention-menu dev-feed-mention-menu-below'
         : 'gc-mention-menu dev-feed-mention-menu'}
-      role="listbox"
-      aria-label="Insert a pull request or issue reference"
+      role="listbox" aria-label={catalogText("workshop:insert_a_pull_request_or_issue_reference_9c2a084f")}
       data-feed-ref-menu=""
       // mousedown, not click, and prevented — the field keeps focus, so the
       // list is still open when the pick lands (a blur would close it first).
@@ -368,6 +369,6 @@ export function FeedRefMenu({
       }}
     >
       <RefMenuView items={items} active={active} />
-    </div>
+    </div>} messages={{"aria-label":"workshop:insert_a_pull_request_or_issue_reference_9c2a084f"}} />
   );
 }

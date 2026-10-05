@@ -1,3 +1,5 @@
+import { LocalizedValue, LocalizedDynamic } from "../../../src/lib/i18n/react";
+import { t as tr } from "../../../src/lib/i18n/runtime";
 import * as React from 'react';
 
 import { cn } from '@/lib/utils';
@@ -72,18 +74,18 @@ const PasswordInput = React.forwardRef<HTMLInputElement, PasswordInputProps>(
             <form> whose submit is the sign-in itself, and a bare <button>
             would submit it.
         */}
-        <button
+        <LocalizedDynamic element={<button
           type="button"
           className={TOGGLE}
-          aria-label={shown ? 'Hide password' : 'Show password'}
+          aria-label={shown ? tr("core:hide_password_a60a56c5") : tr("core:show_password_6aeaa6a5")}
           aria-pressed={shown}
-          title={shown ? 'Hide password' : 'Show password'}
+          title={shown ? tr("core:hide_password_a60a56c5") : tr("core:show_password_6aeaa6a5")}
           onClick={() => setShown((on) => !on)}
         >
           {shown
             ? <EyeOffIcon className="w-5 h-5" aria-hidden="true" />
             : <EyeIcon className="w-5 h-5" aria-hidden="true" />}
-        </button>
+        </button>} resolve={() => ({ "aria-label": shown ? tr("core:hide_password_a60a56c5") : tr("core:show_password_6aeaa6a5"), "title": shown ? tr("core:hide_password_a60a56c5") : tr("core:show_password_6aeaa6a5") })} />
       </div>
     );
   },

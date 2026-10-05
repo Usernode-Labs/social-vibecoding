@@ -1,3 +1,5 @@
+import { RichMessage } from "../../lib/i18n/react";
+import { Message, useMessages } from "../../lib/i18n/react";
 /**
  * The signed-out story: what Homeroom is, for somebody who arrived on their
  * own, in place of the waitlist pitch (./landing.tsx shows it unless the
@@ -18,6 +20,7 @@ export function Story({ primaryClass, onStart, onSignIn }: {
   onStart: () => void;
   onSignIn: () => void;
 }) {
+  useMessages('auth');
   return (
     <div data-landing-story="" className="px-4 flex grow flex-col text-center">
       <img
@@ -28,19 +31,11 @@ export function Story({ primaryClass, onStart, onSignIn }: {
         draggable={false}
         className="mx-auto mt-4 block h-auto w-[112px] max-w-full"
       />
-      <p className="mt-4 text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">
-        Welcome to Homeroom
-      </p>
-      <h1 className="mt-2.5 text-[30px] leading-[34px] md:text-[34px] md:leading-[38px] font-extrabold text-balance">
-        On Homeroom, communities make apps together.
-      </h1>
-      <p className="mt-2.5 text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400 text-pretty">
-        Anyone using an app can change it. Your group decides what goes in.
-      </p>
+      <p className="mt-4 text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400"><Message id="auth:welcome_to_homeroom_99ecd252" /></p>
+      <h1 className="mt-2.5 text-[30px] leading-[34px] md:text-[34px] md:leading-[38px] font-extrabold text-balance"><Message id="auth:on_homeroom_communities_make_apps_together_c8b2a314" /></h1>
+      <p className="mt-2.5 text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400 text-pretty"><Message id="auth:anyone_using_an_app_can_change_it_your_group_dec_f0ce1d1c" /></p>
       <div className="mt-6 text-left">
-        <p className="text-center text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">
-          What groups make
-        </p>
+        <p className="text-center text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400"><Message id="auth:what_groups_make_7b8fbf31" /></p>
         <ul className="mt-2.5 overflow-hidden rounded-2xl bg-white dark:bg-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)]">
           {EXAMPLES.map((e) => (
             <li key={e.key} className="flex items-center gap-3 px-3.5 py-2.5 [&+&]:shadow-[inset_0_1px_0_var(--app-sheet-line)]">
@@ -55,15 +50,8 @@ export function Story({ primaryClass, onStart, onSignIn }: {
       </div>
       <div className="grow" />
       <div className="mt-6 w-full max-w-sm md:max-w-md mx-auto flex flex-col gap-2.5">
-        <a href="#signup" data-landing-story-start="" className={primaryClass} onClick={(e) => { e.preventDefault(); onStart(); }}>
-          Get started
-        </a>
-        <p className="mt-1.5 text-center text-[15px] text-zinc-500 dark:text-zinc-400">
-          {'Already have an account? '}
-          <a href="#login" data-landing-story-signin="" className="font-medium text-violet-700 dark:text-violet-400 hover:underline" onClick={(e) => { e.preventDefault(); onSignIn(); }}>
-            Sign in
-          </a>
-        </p>
+        <a href="#signup" data-landing-story-start="" className={primaryClass} onClick={(e) => { e.preventDefault(); onStart(); }}><Message id="auth:get_started_61e8d44a" /></a>
+        <p className="mt-1.5 text-center text-[15px] text-zinc-500 dark:text-zinc-400"><RichMessage id="auth:sentence_8648d232f126" components={[<a href="#login" data-landing-story-signin="" className="font-medium text-violet-700 dark:text-violet-400 hover:underline" onClick={(e) => { e.preventDefault(); onSignIn(); }} />]} /></p>
       </div>
     </div>
   );

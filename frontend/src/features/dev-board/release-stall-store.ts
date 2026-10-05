@@ -1,3 +1,4 @@
+import { t as tr } from "../../lib/i18n/runtime";
 /**
  * The Dev board's "merged but not released" banner, as a view model.
  *
@@ -44,18 +45,18 @@ export const releaseStallStore = createStore<ReleaseStallState>({
 export function releaseStallText(s: Pick<ReleaseStallState, 'kind' | 'sha' | 'prNumber' | 'running'>): string {
   // A squash merge names its PR; a direct push only has the commit.
   const merged = s.prNumber
-    ? `PR #${s.prNumber}${s.sha ? ` (${s.sha})` : ''} merged`
-    : `Commit ${s.sha || '(unknown)'} landed on main`;
-  const running = s.running ? ` The platform is still running ${s.running}.` : '';
+    ? tr("workshop:pr_value1_value2_merged_07ad1dfc", { value1: s.prNumber, value2: s.sha ? ` (${s.sha})` : '' })
+    : tr("workshop:commit_value1_landed_on_main_8e007a6b", { value1: s.sha || tr("workshop:message_8fe7794d43e7") });
+  const running = s.running ? tr("workshop:the_platform_is_still_running_value1_6eed9a1e", { value1: s.running }) : '';
   switch (s.kind) {
     case 'workflow_failed':
-      return `${merged} but was not released: its release workflow did not complete.${running}`
-        + ' Run it on main to release the latest commit; a later merge would also carry this change.';
+      return tr("workshop:value1_but_was_not_released_its_release_workflow_430b4fad", { value1: merged, value2: running })
+        + tr("workshop:run_it_on_main_to_release_the_latest_commit_a_la_0e7cf1b9");
     case 'workflow_running':
-      return `${merged} and its release workflow is still running, well past the usual couple of minutes.${running}`;
+      return tr("workshop:value1_and_its_release_workflow_is_still_running_724ba8ad", { value1: merged, value2: running });
     case 'rollout_missing':
-      return `${merged} and its release workflow succeeded, but the platform has not rolled onto it.${running}`;
+      return tr("workshop:value1_and_its_release_workflow_succeeded_but_th_b1b69096", { value1: merged, value2: running });
     default:
-      return `${merged} but is not running yet, and no release workflow run could be found for it.${running}`;
+      return tr("workshop:value1_but_is_not_running_yet_and_no_release_wor_9bf4277a", { value1: merged, value2: running });
   }
 }

@@ -1,3 +1,6 @@
+import { t as tr } from "../../lib/i18n/runtime";
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * #platform-mark-btn — the Homeroom mark, and the menu behind it.
  *
@@ -105,9 +108,10 @@ import { improveStore } from '../improve/improve-store.js';
 const WORKING_DOT_CLS =
   'absolute -top-1.5 -right-1.5 flex items-center justify-center w-[15px] h-[15px] rounded-full '
   + 'bg-zinc-200 text-violet-600 dark:bg-zinc-900 dark:text-violet-400';
-const WORKING_TITLE = 'One of your changes is building';
+const WORKING_TITLE = () => tr("account:one_of_your_changes_is_building_f08263fb");
 
 export function PlatformMark() {
+  useUiLanguage();
   // The trigger reports its surface's state, read from the store rather than
   // written onto the node: the sheet has two other ways to close (backdrop,
   // Escape) and a trigger that only hears about the ones routed through
@@ -126,7 +130,7 @@ export function PlatformMark() {
   useVisibilityHiddenClass(dotRef, 'feedback-queue-dot', false);
 
   return (
-    <button
+    <Localized element={<button
       id="platform-mark-btn"
       type="button"
       /*
@@ -141,11 +145,10 @@ export function PlatformMark() {
       className="shrink-0 inline-flex items-center gap-0.5 h-7 pr-0.5 un-touch-target
                  text-[color:var(--brand-ink)]"
       aria-haspopup="dialog"
-      aria-expanded={open ? 'true' : 'false'}
-      aria-label="Homeroom menu"
+      aria-expanded={open ? 'true' : 'false'} aria-label={catalogText("account:homeroom_menu_4123e2c1")}
       /* What the spinner means, on hover (#3015). The menu this opens says
          it too, for a touch screen (../improve/actions.tsx UpdateStatus). */
-      title={working ? WORKING_TITLE : undefined}
+      title={working ? WORKING_TITLE() : undefined}
       onClick={() => (window as unknown as {
         AppContext?: { toggle?: () => void };
       }).AppContext?.toggle?.()}
@@ -200,6 +203,6 @@ export function PlatformMark() {
         </span>
       </span>
       <ChevronDownIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
-    </button>
+    </button>} messages={{"aria-label":"account:homeroom_menu_4123e2c1"}} />
   );
 }

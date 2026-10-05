@@ -1,3 +1,4 @@
+import { t as tr } from "../../lib/i18n/runtime";
 /**
  * The app's general discussion, as the board's card sees it.
  *
@@ -47,5 +48,5 @@ export interface DiscussionState {
 
 export const discussionStore = createStore<DiscussionState>({
   href: null,
-  preview: 'Talk with everyone building this app',
+  get preview() { return tr("workshop:talk_with_everyone_building_this_app_cabb5cf3"); },
 });

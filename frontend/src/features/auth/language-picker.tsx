@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Select } from '@/components/ui/select';
 import { languageNames } from '../../lib/i18n/locale';
 import { changeLanguage, getPreference } from '../../lib/i18n/runtime';
@@ -10,6 +10,7 @@ export function LanguagePicker() {
   const [value, setValue] = useState(() => getPreference() || '');
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
+  useEffect(() => { setValue(getPreference() || ''); }, [t]);
   return (
     <div className="mx-auto max-w-xs px-4 py-3">
       <Select variant="plain" aria-label={t('language.title')} value={value} disabled={loading}

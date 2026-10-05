@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { RichMessage } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * `#auth-register-screen` — the activation-code flow (#1080, step 2 chunk C,
  * screen 3 of 6).
@@ -65,6 +69,7 @@ const FIELD_HINT_ERROR = 'mt-1 text-[13px] leading-snug text-red-600 dark:text-r
 type RegisterField = 'username' | 'password';
 
 export function RegisterScreen() {
+  useUiLanguage();
   const rootRef = useRef<HTMLElement>(null);
   useVisibilityHiddenClass(rootRef, AUTH_SCREEN_IDS.register, false);
   // The screen's interior mounts on its first reveal, not in the prerender —
@@ -124,7 +129,7 @@ export function RegisterScreen() {
           (data.field === 'username' ? username : password).current?.focus();
           return;
         }
-        setError(data.error || 'Registration failed');
+        setError(data.error || tr("auth:registration_failed_d40e3b08"));
         return;
       }
       await finishLogin();
@@ -167,23 +172,15 @@ export function RegisterScreen() {
       <AuthBackButton href="#" onClick={backToLanding} />
       <div className="min-h-full flex items-center justify-center">
         <div className="w-full max-w-sm px-6 py-16">
-          <h1 className="text-[28px] font-extrabold leading-tight tracking-tight text-center mb-1 text-zinc-900 dark:text-zinc-100">
-            Homeroom
-          </h1>
-          <p className="text-[15px] text-zinc-500 dark:text-zinc-400 text-center mb-2 italic">
-            A place where users own and build apps together
-          </p>
-          <p className="text-[15px] text-zinc-500 dark:text-zinc-400 text-center mb-8">
-            Create your account
-          </p>
+          <h1 className="text-[28px] font-extrabold leading-tight tracking-tight text-center mb-1 text-zinc-900 dark:text-zinc-100"><Message id="auth:homeroom_c9149977" /></h1>
+          <p className="text-[15px] text-zinc-500 dark:text-zinc-400 text-center mb-2 italic"><Message id="auth:a_place_where_users_own_and_build_apps_together_172e7501" /></p>
+          <p className="text-[15px] text-zinc-500 dark:text-zinc-400 text-center mb-8"><Message id="auth:create_your_account_9e709348" /></p>
           <form id="register-form" className="space-y-4" onSubmit={onSubmit}>
             <SessionConfirmationNotice completion={completion} />
             <div className={AUTH_CARD}>
             <div className={AUTH_ROW}>
-              <label htmlFor="reg-code" className={AUTH_LABEL}>
-                Activation Code
-              </label>
-              <Input
+              <label htmlFor="reg-code" className={AUTH_LABEL}><Message id="auth:activation_code_84945976" /></label>
+              <Localized element={<Input
                 ref={code}
                 id="reg-code"
                 name="code"
@@ -191,18 +188,15 @@ export function RegisterScreen() {
                 required={true}
                 autoComplete="off"
                 {...AUTHFIELD}
-                className="font-mono"
-                placeholder="enter activation code"
-              />
+                className="font-mono" placeholder={catalogText("auth:enter_activation_code_5005c13d")}
+              />} messages={{"placeholder":"auth:enter_activation_code_5005c13d"}} />
             </div>
             <div className={AUTH_ROW}>
               <label
                 htmlFor="reg-username"
                 className={AUTH_LABEL}
-              >
-                Username
-              </label>
-              <Input
+              ><Message id="auth:username_e3b89e9d" /></label>
+              <Localized element={<Input
                 ref={username}
                 id="reg-username"
                 name="username"
@@ -214,9 +208,8 @@ export function RegisterScreen() {
                 aria-describedby="reg-username-public reg-username-hint"
                 aria-invalid={fieldError?.field === 'username' ? true : undefined}
                 onInput={() => setFieldError((f) => (f?.field === 'username' ? null : f))}
-                {...AUTHFIELD}
-                placeholder="choose a username"
-              />
+                {...AUTHFIELD} placeholder={catalogText("auth:choose_a_username_f28748d9")}
+              />} messages={{"placeholder":"auth:choose_a_username_f28748d9"}} />
               {/*
                 #3575: who sees the name, said next to the field where it is
                 chosen. Its own line ahead of the rule, because the rule's
@@ -224,23 +217,21 @@ export function RegisterScreen() {
                 stays put while the person fixes the name.
               */}
               <p id="reg-username-public" className={FIELD_HINT}>
-                {USERNAME_PUBLIC_NOTE}
+                {USERNAME_PUBLIC_NOTE()}
               </p>
               <p
                 id="reg-username-hint"
                 className={fieldError?.field === 'username' ? FIELD_HINT_ERROR : FIELD_HINT}
               >
-                {fieldError?.field === 'username' ? fieldError.message : USERNAME_RULE}
+                {fieldError?.field === 'username' ? fieldError.message : USERNAME_RULE()}
               </p>
             </div>
             <div className={AUTH_ROW}>
               <label
                 htmlFor="reg-password"
                 className={AUTH_LABEL}
-              >
-                Password
-              </label>
-              <PasswordInput
+              ><Message id="auth:password_e7cf3ef4" /></label>
+              <Localized element={<PasswordInput
                 ref={password}
                 id="reg-password"
                 name="password"
@@ -249,14 +240,13 @@ export function RegisterScreen() {
                 aria-describedby="reg-password-hint"
                 aria-invalid={fieldError?.field === 'password' ? true : undefined}
                 onInput={() => setFieldError((f) => (f?.field === 'password' ? null : f))}
-                {...AUTHFIELD}
-                placeholder="choose a password"
-              />
+                {...AUTHFIELD} placeholder={catalogText("auth:choose_a_password_dffbca6d")}
+              />} messages={{"placeholder":"auth:choose_a_password_dffbca6d"}} />
               <p
                 id="reg-password-hint"
                 className={fieldError?.field === 'password' ? FIELD_HINT_ERROR : FIELD_HINT}
               >
-                {fieldError?.field === 'password' ? fieldError.message : PASSWORD_RULE}
+                {fieldError?.field === 'password' ? fieldError.message : PASSWORD_RULE()}
               </p>
             </div>
             </div>
@@ -264,16 +254,9 @@ export function RegisterScreen() {
               {error}
               <NativeLoginDetailsLink details={details} />
             </div>
-            <Button type="submit" layout="full" variant="pillAccent" size="pillLg" ink="solidLate">
-              Register
-            </Button>
+            <Button type="submit" layout="full" variant="pillAccent" size="pillLg" ink="solidLate"><Message id="auth:register_bb7234ec" /></Button>
           </form>
-          <p className="mt-3">
-            <a href="#login" className={PILL_LINK}>
-              {'Already have an account? '}
-              <span className="ml-1 text-violet-700 dark:text-violet-400">Sign in</span>
-            </a>
-          </p>
+          <p className="mt-3"><RichMessage id="auth:sentence_8a2490281c4f" components={[<a href="#login" className={PILL_LINK} />, <span className="ml-1 text-violet-700 dark:text-violet-400" />]} /></p>
         </div>
       </div>
         </>

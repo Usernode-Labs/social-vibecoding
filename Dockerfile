@@ -9,6 +9,12 @@ WORKDIR /build
 COPY frontend ./frontend
 COPY scripts/shell-stamp.js ./scripts/shell-stamp.js
 COPY scripts/language-packs.js ./scripts/language-packs.js
+COPY scripts/check-ui-messages.js ./scripts/check-ui-messages.js
+COPY scripts/server-messages.js ./scripts/server-messages.js
+COPY src/routes ./src/routes
+COPY src/middleware ./src/middleware
+COPY public/js ./public/js
+COPY public/cli-authorize.html public/connect-authorize.html ./public/
 # The ONE server-tree file the shell bundle imports:
 # frontend/src/features/admin/topochain/countries.ts reads the same ISO table
 # the server does rather than mirroring 249 names into a second copy that

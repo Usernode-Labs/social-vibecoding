@@ -37,7 +37,7 @@ export function seedAppAllowance(user) {
 
 function publish(data) {
   const quota = normalizeQuota(data?.quota);
-  if (!quota) throw new Error('Could not load your app allowance.');
+  if (!quota) throw new Error(globalThis.PlatformI18n.t("core:could_not_load_your_app_allowance_a67f1e63"));
   appAllowanceStore.set({ quota, server: normalizeServer(data?.server), requestedAt: data.requestedAt || null, error: '' });
   if (typeof window !== 'undefined' && window.App?.user) {
     Object.assign(window.App.user, {
@@ -58,10 +58,10 @@ export function refreshAppAllowance(fetcher = (url, init) => fetch(url, init)) {
     try {
       const res = await fetcher('/api/me/app-allowance', { credentials: 'same-origin', cache: 'no-store' });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Could not load your app allowance.');
+      if (!res.ok) throw new Error(data.error || globalThis.PlatformI18n.t("core:could_not_load_your_app_allowance_a67f1e63"));
       if (current === revision) publish(data);
     } catch (err) {
-      if (current === revision) appAllowanceStore.set({ error: err.message || 'Could not load your app allowance.' });
+      if (current === revision) appAllowanceStore.set({ error: err.message || globalThis.PlatformI18n.t("core:could_not_load_your_app_allowance_a67f1e63") });
     } finally {
       if (current === revision) {
         pending = null;
@@ -86,7 +86,7 @@ export async function requestMoreApps(fetcher = (url, init) => fetch(url, init))
   appAllowanceStore.set({ loading: false });
   const res = await fetcher('/api/me/app-allowance/request', { method: 'POST', credentials: 'same-origin' });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Could not send your request.');
+  if (!res.ok) throw new Error(data.error || globalThis.PlatformI18n.t("core:could_not_send_your_request_698d8762"));
   if (current === revision) {
     revision++;
     pending = null;

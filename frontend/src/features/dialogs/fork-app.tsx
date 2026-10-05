@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * Fork-app dialog (#fork-modal), which people see as "Remix".
  *
@@ -55,16 +59,16 @@ const POLL_INTERVAL_MS = 4000;
  * tests/remix-safe-defaults.test.js pins the words as the shell ships them.
  */
 const FORK_INFO_LINES: ReadonlyArray<{ lead: string | null; text: string }> = [
-  { lead: 'Copied:', text: 'the code, the look and the icon.' },
+  { lead: 'Copied:', get text() { return tr("core:the_code_the_look_and_the_icon_9f03a6ac"); } },
   {
-    lead: 'Starts fresh:',
-    text: 'it’s Just you, with an empty database. Invite people or open it up later.',
+    get lead() { return tr("core:starts_fresh_bcafdf4b"); },
+    get text() { return tr("core:it_s_just_you_with_an_empty_database_invite_peop_09b6731b"); },
   },
   {
-    lead: 'Not copied:',
-    text: 'anyone’s data, keys, chat or members. If the app needs a key, you’ll add your own before it goes live.',
+    get lead() { return tr("core:not_copied_c9824ba4"); },
+    get text() { return tr("core:anyone_s_data_keys_chat_or_members_if_the_app_ne_562cacfb"); },
   },
-  { lead: null, text: 'Its code is public on GitHub.' },
+  { lead: null, get text() { return tr("core:its_code_is_public_on_github_b4e29b5e"); } },
 ];
 
 export interface ForkSource {
@@ -73,6 +77,7 @@ export interface ForkSource {
 }
 
 export function ForkAppDialog() {
+  useUiLanguage();
   const inputRef = useRef<HTMLInputElement>(null);
   const errorRef = useRef<HTMLDivElement>(null);
   const sourceRef = useRef<ForkSource | null>(null);
@@ -92,7 +97,7 @@ export function ForkAppDialog() {
       setError('');
       setForked(null);
       stopWatchingCreation();
-      if (inputRef.current) inputRef.current.value = `${src?.name || 'App'} (remix)`;
+      if (inputRef.current) inputRef.current.value = tr("core:value1_remix_3e9e5264", { value1: src?.name || tr("core:message_0d04bfeb7d64") });
       setTimeout(() => {
         inputRef.current?.focus();
         inputRef.current?.select();
@@ -134,7 +139,7 @@ export function ForkAppDialog() {
     const source = sourceRef.current;
     if (!source?.slug) return;
     const name = (inputRef.current?.value || '').trim();
-    if (name.length < 3) return setError('Name must be at least 3 characters.');
+    if (name.length < 3) return setError(tr("core:name_must_be_at_least_3_characters_7cd487b2"));
 
     setBusy(true);
     try {
@@ -146,7 +151,7 @@ export function ForkAppDialog() {
       const data = await res.json().catch(() => ({}));
       void invalidateAppAllowance();
       if (!res.ok) {
-        setError(data.error || 'Could not make your copy.');
+        setError(data.error || tr("core:could_not_make_your_copy_ba5bbed0"));
         return;
       }
       const slug = data.app?.slug;
@@ -156,7 +161,7 @@ export function ForkAppDialog() {
         // Home writes an address right after the close (#3683).
         dialog.closeForNavigation();
         window.PlatformUI?.toast?.(
-          'Your copy is being made. It will appear in your apps when it is ready.',
+          tr("core:your_copy_is_being_made_it_will_appear_in_your_a_c06c296e"),
         );
         (window.App?.navigateHome as (() => void) | undefined)?.();
         return;
@@ -168,7 +173,7 @@ export function ForkAppDialog() {
       // the user closes it.
       (window.Home?.load as (() => void) | undefined)?.();
     } catch {
-      setError('Network error. Please try again.');
+      setError(tr("core:network_error_please_try_again_9ff8cfaf"));
     } finally {
       setBusy(false);
     }
@@ -211,7 +216,7 @@ export function ForkAppDialog() {
                     publishAppStatus({
                       slug,
                       status: 'error',
-                      errorReason: data.error || `Retry failed (HTTP ${res.status}).`,
+                      errorReason: data.error || tr("core:retry_failed_http_value1_16e2772d", { value1: res.status }),
                     });
                     return;
                   }
@@ -221,7 +226,7 @@ export function ForkAppDialog() {
                   publishAppStatus({
                     slug,
                     status: 'error',
-                    errorReason: 'Could not reach the server to retry. Try again from the app tile.',
+                    get errorReason() { return tr("core:could_not_reach_the_server_to_retry_try_again_fr_2e49f76e"); },
                   });
                 });
             }}
@@ -240,22 +245,18 @@ export function ForkAppDialog() {
             the name into its sentence ("ForkingBook Clubstands up").
         */}
         <h2 className="text-lg font-bold mb-1 break-words">
-          {'Remix '}
-          <span id="fork-source-name">{sourceName || 'this app'}</span>
+          <Message id="core:remix_ab20b589" />
+          <span id="fork-source-name"><LocalizedValue render={() => (sourceName || tr("core:this_app_d2c823cf"))} /></span>
         </h2>
-        <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-4">
-          Make your own copy. You get the code and the look, and it starts as Just you.
-        </p>
+        <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-4"><Message id="core:make_your_own_copy_you_get_the_code_and_the_look_4f82d061" /></p>
         <AppAllowance />
         <form id="fork-form" className="space-y-4" onSubmit={submit}>
           <div>
             <label
               htmlFor="fork-input"
               className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1"
-            >
-              Name for your copy
-            </label>
-            <Input
+            ><Message id="core:name_for_your_copy_e68edc1a" /></label>
+            <Localized element={<Input
               id="fork-input"
               ref={inputRef}
               type="text"
@@ -265,15 +266,14 @@ export function ForkAppDialog() {
               autoComplete="off"
               box="dialog"
               hint="muted"
-              ring="seamless"
-              placeholder="My copy"
-            />
+              ring="seamless" placeholder={catalogText("core:my_copy_0a0cb172")}
+            />} messages={{"placeholder":"core:my_copy_0a0cb172"}} />
           </div>
           <div
             className="text-xs text-zinc-600 dark:text-zinc-300 space-y-1.5 rounded-lg bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 p-3"
           >
-            {FORK_INFO_LINES.map((line) => (
-              <p key={line.lead || line.text}>
+            {FORK_INFO_LINES.map((line, index) => (
+              <p key={index}>
                 {line.lead ? (
                   <strong className="font-semibold text-zinc-900 dark:text-zinc-100">{line.lead}</strong>
                 ) : null}
@@ -292,9 +292,7 @@ export function ForkAppDialog() {
               id="fork-cancel"
               className="flex-1 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
               onClick={() => dialog.close()}
-            >
-              Cancel
-            </button>
+            ><Message id="core:cancel_19766ed6" /></button>
             <Button
               type="submit"
               id="fork-submit"
@@ -302,7 +300,7 @@ export function ForkAppDialog() {
               disabled={busy || quotaBlocksCreation}
               disabledStyle="block"
             >
-              {busy ? 'Remixing…' : 'Remix'}
+              <LocalizedValue render={() => (busy ? tr("core:remixing_7fdd65e6") : tr("core:remix_f84ed437"))} />
             </Button>
           </div>
         </form>

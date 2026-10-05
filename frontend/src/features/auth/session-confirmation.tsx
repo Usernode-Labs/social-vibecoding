@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message } from "../../lib/i18n/react";
 import { useCallback, useRef, useState } from 'react';
 
 import { alertVariants } from '@/components/ui/alert';
@@ -21,13 +25,13 @@ export function browserVersions(agent: string): { browser: string; operatingSyst
   const browser = /\b(CriOS|FxiOS|EdgiOS|Edg|Chrome|Firefox)\/(\d+(?:\.\d+){0,3})/.exec(agent);
   const safari = /Version\/(\d+(?:\.\d+){0,3})[^\n]*Safari\//.exec(agent);
   const names: Record<string, string> = {
-    CriOS: 'Chrome iOS', FxiOS: 'Firefox iOS', EdgiOS: 'Edge iOS',
+    get CriOS() { return tr("auth:chrome_ios_6727dc85"); }, get FxiOS() { return tr("auth:firefox_ios_9b08cf7b"); }, get EdgiOS() { return tr("auth:edge_ios_76ed771c"); },
     Edg: 'Edge', Chrome: 'Chrome', Firefox: 'Firefox',
   };
   return {
-    browser: browser ? `${names[browser[1]]} ${browser[2]}` : safari ? `Safari ${safari[1]}` : 'Unknown',
-    operatingSystem: ios ? `iOS ${ios[1].replace(/_/g, '.')}` : android ? `Android ${android[1]}`
-      : /Windows NT/.test(agent) ? 'Windows' : /Mac OS X/.test(agent) ? 'macOS' : 'Unknown',
+    browser: browser ? `${names[browser[1]]} ${browser[2]}` : safari ? tr("auth:safari_value1_6f8f8316", { value1: safari[1] }) : tr("auth:unknown_b764cdc0"),
+    operatingSystem: ios ? tr("auth:ios_value1_a9d9bcce", { value1: ios[1].replace(/_/g, '.') }) : android ? tr("auth:android_value1_3a9871c0", { value1: android[1] })
+      : /Windows NT/.test(agent) ? 'Windows' : /Mac OS X/.test(agent) ? 'macOS' : tr("auth:unknown_b764cdc0"),
   };
 }
 
@@ -60,13 +64,13 @@ export function sessionConfirmationText(details: SessionConfirmationDetails): st
     `Time: ${details.timestamp}`,
     `Step: ${details.stage}`,
     `Result: ${details.code}`,
-    `HTTP status: ${details.status ?? 'No response'}`,
-    `Platform build: ${details.platformBuild ?? 'Unknown'}`,
+    `HTTP status: ${details.status ?? tr("auth:no_response_961136f9")}`,
+    `Platform build: ${details.platformBuild ?? tr("auth:unknown_b764cdc0")}`,
     `Surface: ${details.surface}`,
     `Browser: ${details.browser}`,
     `Operating system: ${details.operatingSystem}`,
-    `App version: ${details.appVersion ?? 'Unknown'}`,
-    `App build: ${details.appBuild ?? 'Unknown'}`,
+    `App version: ${details.appVersion ?? tr("auth:unknown_b764cdc0")}`,
+    `App build: ${details.appBuild ?? tr("auth:unknown_b764cdc0")}`,
   ].join('\n');
 }
 
@@ -76,7 +80,7 @@ const MESSAGES: Record<LoginCompletionFailure['code'], string> = {
   'network-error': 'Sign-in was accepted, but we could not reach the server to confirm your session. Check your connection, then retry the session check.',
   timeout: 'Sign-in was accepted, but confirming your session took too long. Check your connection, then retry the session check.',
   'invalid-response': 'Sign-in was accepted, but the session response could not be read. Retry the session check. If it keeps failing, copy the details for support.',
-  'client-error': 'Your session could not be opened on this device. Retry the session check. If it keeps failing, copy the details for support.',
+  get 'client-error'() { return tr("auth:your_session_could_not_be_opened_on_this_device__1d84fc76"); },
 };
 
 export function useSessionConfirmation() {
@@ -107,6 +111,7 @@ export function useSessionConfirmation() {
 export function SessionConfirmationNotice({ completion }: {
   completion: ReturnType<typeof useSessionConfirmation>;
 }) {
+  useUiLanguage();
   const [copyStatus, setCopyStatus] = useState('');
   if (!completion.failure) return null;
   const details = sessionConfirmationText(completion.failure);
@@ -115,15 +120,15 @@ export function SessionConfirmationNotice({ completion }: {
       <p role="alert">{MESSAGES[completion.failure.code]}</p>
       <Button type="button" variant="neutral" ink="neutral" disabled={completion.checking}
         onClick={() => { setCopyStatus(''); void completion.finishLogin(); }}>
-        {completion.checking ? 'Checking session…' : 'Retry session check'}
+        <LocalizedValue render={() => (completion.checking ? tr("auth:checking_session_b952cab7") : tr("auth:retry_session_check_73306833"))} />
       </Button>
       <details>
-        <summary className="min-h-11 cursor-pointer text-sm font-medium leading-[44px]">Sign-in details</summary>
+        <summary className="min-h-11 cursor-pointer text-sm font-medium leading-[44px]"><Message id="auth:sign_in_details_e348d653" /></summary>
         <pre className="whitespace-pre-wrap break-words rounded-lg bg-zinc-100 p-3 text-xs text-zinc-800 select-text dark:bg-zinc-800 dark:text-zinc-100">{details}</pre>
         <Button type="button" variant="neutral" ink="neutral" onClick={async () => {
-          try { await navigator.clipboard.writeText(details); setCopyStatus('Details copied'); }
-          catch { setCopyStatus('Could not copy. You can select the details above.'); }
-        }}>Copy details</Button>
+          try { await navigator.clipboard.writeText(details); setCopyStatus(tr("auth:details_copied_e2acabb2")); }
+          catch { setCopyStatus(tr("auth:could_not_copy_you_can_select_the_details_above_e37a2f53")); }
+        }}><Message id="auth:copy_details_ec7ee282" /></Button>
         <p role="status" className="text-sm">{copyStatus}</p>
       </details>
     </div>

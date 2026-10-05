@@ -1,3 +1,8 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { RichMessage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * Sign-in as a sheet: the email code, asked for over the screen that led
  * to it rather than on a screen of its own, so what you are joining stays in
@@ -68,17 +73,17 @@ export type SignInResume = 'username' | `error-${string}`;
 const RESUME_ERRORS: Record<string, string> = {
   cancelled: 'Sign-in was cancelled.',
   expired: 'That sign-in took too long, or started somewhere else. Try again.',
-  no_verified_email: 'That account has no verified email address to sign in with. Use your email instead.',
-  password_required: 'This account signs in with a password. Use "Sign in with a password" below.',
-  admin_password_required: 'This admin account signs in with a password. Use "Sign in with a password" below.',
-  linked_elsewhere: 'Your Homeroom account is linked to a different account there. Use your email instead.',
-  logout_required: 'You are already signed in. Reload the page.',
+  get no_verified_email() { return tr("auth:that_account_has_no_verified_email_address_to_si_46f59c5c"); },
+  get password_required() { return tr("auth:this_account_signs_in_with_a_password_use_sign_i_ccb42a63"); },
+  get admin_password_required() { return tr("auth:this_admin_account_signs_in_with_a_password_use__2510d812"); },
+  get linked_elsewhere() { return tr("auth:your_homeroom_account_is_linked_to_a_different_a_61a4c6b4"); },
+  get logout_required() { return tr("auth:you_are_already_signed_in_reload_the_page_1ff84fa2"); },
 };
-const RESUME_FALLBACK = 'That did not work. Try again, or use your email.';
+const RESUME_FALLBACK = () => tr("auth:that_did_not_work_try_again_or_use_your_email_f0f7802b");
 
 export function resumeError(resume: SignInResume | null | undefined): string | null {
   if (!resume || !resume.startsWith('error-')) return null;
-  return RESUME_ERRORS[resume.slice('error-'.length)] || RESUME_FALLBACK;
+  return RESUME_ERRORS[resume.slice('error-'.length)] || RESUME_FALLBACK();
 }
 
 /** Where the provider's sign-in starts: carries what the sheet knows across the trip. */
@@ -99,7 +104,7 @@ export type NativeSignInOutcome =
   | { error: string | null };
 
 function nativeError(code: unknown): string {
-  return resumeError(`error-${typeof code === 'string' && code ? code : 'failed'}`) || RESUME_FALLBACK;
+  return resumeError(`error-${typeof code === 'string' && code ? code : 'failed'}`) || RESUME_FALLBACK();
 }
 
 /**
@@ -112,7 +117,7 @@ export async function signInNatively(provider: SignInProvider, { from, followInv
   followInvite: boolean;
 }): Promise<NativeSignInOutcome> {
   const bridge = legacy().usernode;
-  if (!bridge || typeof bridge.signInWithProvider !== 'function') return { error: RESUME_FALLBACK };
+  if (!bridge || typeof bridge.signInWithProvider !== 'function') return { error: RESUME_FALLBACK() };
   const started = await fetch(`/api/auth/oauth/${provider}/native/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -129,9 +134,9 @@ export async function signInNatively(provider: SignInProvider, { from, followInv
     idToken = answer?.idToken;
   } catch (err) {
     if ((err as { usernodeCode?: unknown } | null)?.usernodeCode === 'cancelled') return { error: null };
-    return { error: RESUME_FALLBACK };
+    return { error: RESUME_FALLBACK() };
   }
-  if (typeof idToken !== 'string' || !idToken) return { error: RESUME_FALLBACK };
+  if (typeof idToken !== 'string' || !idToken) return { error: RESUME_FALLBACK() };
   const res = await fetchSessionMint(`/api/auth/oauth/${provider}/native`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -209,6 +214,7 @@ export function SignInSheet({
   open, title, intro, followInvite = false, providers = [], native = false, from = 'signin', returnTo = '/', resume = null,
   beforeFinish, onClose, primaryClass,
 }: SignInSheetProps) {
+  useUiLanguage();
   const firstStep: Step = providers.length ? 'choose' : 'email';
   const [step, setStep] = useState<Step>(firstStep);
   const [email, setEmail] = useState('');
@@ -275,7 +281,7 @@ export function SignInSheet({
   const requestCode = useCallback(async (address: string) => {
     setError(null);
     const value = address.trim().toLowerCase();
-    if (!value || !value.includes('@')) { setError('Enter a valid email address'); return; }
+    if (!value || !value.includes('@')) { setError(tr("auth:enter_a_valid_email_address_c20ffba2")); return; }
     if (blockedOffline(setError)) return;
     setBusy(true);
     try {
@@ -293,14 +299,14 @@ export function SignInSheet({
         // limiter says.
         if (res.status === 429) {
           setStep('code');
-          setError(data.error || 'Too many requests. Wait a moment and try again.');
+          setError(data.error || tr("auth:too_many_requests_wait_a_moment_and_try_again_fa85b243"));
           const retryAfter = Number(res.headers.get('Retry-After'));
           setCooldownUntil(Date.now() + (Number.isFinite(retryAfter) && retryAfter > 0
             ? Math.min(retryAfter, 900) * 1000 : RESEND_COOLDOWN_MS));
           return;
         }
         setStep('email');
-        setError(data.error || 'Could not send a code');
+        setError(data.error || tr("auth:could_not_send_a_code_a2afaee4"));
         return;
       }
       if (codeField.current) codeField.current.value = '';
@@ -308,7 +314,7 @@ export function SignInSheet({
       setCooldownUntil(Date.now() + RESEND_COOLDOWN_MS);
       setNow(Date.now());
     } catch {
-      setError('Network error');
+      setError(tr("auth:network_error_2a33d984"));
     } finally {
       setBusy(false);
     }
@@ -317,7 +323,7 @@ export function SignInSheet({
   const verify = useCallback(async () => {
     setError(null);
     const code = (codeField.current?.value || '').trim();
-    if (!code) { setError('Enter the code from the email'); return; }
+    if (!code) { setError(tr("auth:enter_the_code_from_the_email_8bb269bd")); return; }
     if (blockedOffline(setError)) return;
     setBusy(true);
     try {
@@ -330,12 +336,12 @@ export function SignInSheet({
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) {
         if (data.code === 'password_required' || data.code === 'admin_password_required') {
-          setError(data.error || 'This account signs in with its password.');
+          setError(data.error || tr("auth:this_account_signs_in_with_its_password_87003293"));
           return;
         }
         setError(res.status === 429
-          ? data.error || 'Too many code attempts. Try again shortly.'
-          : data.error || 'Invalid or expired code.');
+          ? data.error || tr("auth:too_many_code_attempts_try_again_shortly_0c68f9cc")
+          : data.error || tr("auth:invalid_or_expired_code_810983de"));
         return;
       }
       if (data.next === 'signed-in') {
@@ -356,11 +362,11 @@ export function SignInSheet({
   const finishAccount = useCallback(async () => {
     setError(null);
     const handle = needsUsername ? (usernameField.current?.value || '').trim() : null;
-    if (handle === '') { setError('Enter a username.'); usernameField.current?.focus(); return; }
+    if (handle === '') { setError(tr("auth:enter_a_username_78db4f77")); usernameField.current?.focus(); return; }
     const password = passwordField.current?.value || '';
     const confirm = confirmField.current?.value || '';
-    if (password.length < 8) { setError('Password must be at least 8 characters'); return; }
-    if (password !== confirm) { setError('Passwords do not match'); return; }
+    if (password.length < 8) { setError(tr("auth:password_must_be_at_least_8_characters_e3b8d09d")); return; }
+    if (password !== confirm) { setError(tr("auth:passwords_do_not_match_b6eb82cd")); return; }
     if (blockedOffline(setError)) return;
     setBusy(true);
     try {
@@ -372,7 +378,7 @@ export function SignInSheet({
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.user) {
-        setError(data.error || 'Could not finish setting up your account');
+        setError(data.error || tr("auth:could_not_finish_setting_up_your_account_fccc97c1"));
         if (data.field === 'username') usernameField.current?.focus();
         return;
       }
@@ -417,7 +423,7 @@ export function SignInSheet({
   const finishProviderAccount = useCallback(async () => {
     setError(null);
     const handle = (providerUsernameField.current?.value || '').trim();
-    if (!handle) { setError('Enter a username.'); providerUsernameField.current?.focus(); return; }
+    if (!handle) { setError(tr("auth:enter_a_username_78db4f77")); providerUsernameField.current?.focus(); return; }
     if (blockedOffline(setError)) return;
     setBusy(true);
     try {
@@ -430,13 +436,13 @@ export function SignInSheet({
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.user) {
         if (data.field === 'username') {
-          setError(data.error || 'Choose another username.');
+          setError(data.error || tr("auth:choose_another_username_e227309e"));
           providerUsernameField.current?.focus();
           return;
         }
         // The continuation is gone: start over from the first step.
         setStep(firstStep);
-        setError(data.error || 'Your sign-in expired. Start again.');
+        setError(data.error || tr("auth:your_sign_in_expired_start_again_ff22fb29"));
         return;
       }
       await beforeFinish?.('new');
@@ -452,8 +458,8 @@ export function SignInSheet({
 
   const waitLeft = Math.max(0, Math.ceil((cooldownUntil - now) / 1000));
   const heading = step === 'choose' || step === 'email' ? title
-    : step === 'code' ? 'Check your email'
-      : step === 'username' ? 'Pick a username' : 'Finish your account';
+    : step === 'code' ? tr("auth:check_your_email_77322879")
+      : step === 'username' ? 'Pick a username' : tr("auth:finish_your_account_09dacaef");
   const sub = step === 'choose' || (step === 'email' && !providers.length)
     ? intro
     : step === 'email'
@@ -461,8 +467,8 @@ export function SignInSheet({
       : step === 'code'
         ? `We sent a 6-digit code to ${email}. It expires in 10 minutes.`
         : step === 'username'
-          ? 'Your username is public on Homeroom. It is how people @mention you.'
-          : (needsUsername ? 'Pick a username and a password. Your username is public on Homeroom.' : 'Pick a password for next time.');
+          ? tr("auth:your_username_is_public_on_homeroom_it_is_how_pe_73360cb5")
+          : (needsUsername ? tr("auth:pick_a_username_and_a_password_your_username_is__0490c02a") : tr("auth:pick_a_password_for_next_time_ccb57cd9"));
 
   return (
     <div data-sign-in-sheet={step} className="fixed inset-0 z-50">
@@ -480,14 +486,13 @@ export function SignInSheet({
         <div className="mx-auto h-1.5 w-10 rounded-full bg-zinc-300 dark:bg-zinc-700 md:hidden" aria-hidden="true" />
         <div className="mt-3 flex items-center gap-3">
           <h2 id="sign-in-sheet-title" className="min-w-0 flex-1 text-[17px] font-semibold text-zinc-900 dark:text-zinc-100">{heading}</h2>
-          <button
+          <Localized element={<button
             type="button"
-            onClick={onClose}
-            aria-label="Close"
+            onClick={onClose} aria-label={catalogText("auth:close_7d9eb7ac")}
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-200 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
           >
             <XIcon className="h-4 w-4" aria-hidden="true" />
-          </button>
+          </button>} messages={{"aria-label":"auth:close_7d9eb7ac"}} />
         </div>
         <p className="mt-1 text-[15px] leading-snug text-zinc-500 dark:text-zinc-400">{sub}</p>
 
@@ -505,12 +510,10 @@ export function SignInSheet({
                 {provider === 'apple'
                   ? <AppleIcon className="h-[18px] w-[18px] -mt-0.5" aria-hidden="true" />
                   : <GoogleIcon className="h-[18px] w-[18px]" aria-hidden="true" />}
-                {`Continue with ${PROVIDER_LABEL[provider]}`}
+                <LocalizedValue render={() => (tr("auth:continue_with_value1_8e0bf694", { value1: PROVIDER_LABEL[provider] }))} />
               </button>
             ))}
-            <button type="button" data-sign-in-provider="email" disabled={busy} className={EMAIL_BUTTON} onClick={() => { setError(null); setStep('email'); }}>
-              Continue with email
-            </button>
+            <button type="button" data-sign-in-provider="email" disabled={busy} className={EMAIL_BUTTON} onClick={() => { setError(null); setStep('email'); }}><Message id="auth:continue_with_email_8c99a086" /></button>
           </div>
         ) : null}
 
@@ -518,13 +521,13 @@ export function SignInSheet({
           <form className="mt-5 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void requestCode(firstField.current?.value || ''); }}>
             <div className={FIELD_GROUP}>
               <div className={FIELD}>
-                <label htmlFor="sign-in-sheet-email" className={LABEL}>Email</label>
+                <label htmlFor="sign-in-sheet-email" className={LABEL}><Message id="auth:email_969ccbd3" /></label>
                 <input ref={firstField} id="sign-in-sheet-email" type="email" autoComplete="email" inputMode="email" defaultValue={email} className={INPUT} {...HANDLE_FIELD} />
               </div>
             </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Sending code…' : 'Send code'}</button>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}><LocalizedValue render={() => (busy ? tr("auth:sending_code_e6ddec3d") : tr("auth:send_code_66a5b409"))} /></button>
             {providers.length ? (
-              <button type="button" className={QUIET} onClick={() => { setError(null); setStep('choose'); }}>Other ways to continue</button>
+              <button type="button" className={QUIET} onClick={() => { setError(null); setStep('choose'); }}><Message id="auth:other_ways_to_continue_43153d1c" /></button>
             ) : null}
           </form>
         ) : null}
@@ -533,11 +536,11 @@ export function SignInSheet({
           <form className="mt-5 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void finishProviderAccount(); }}>
             <div className={FIELD_GROUP}>
               <div className={FIELD}>
-                <label htmlFor="sign-in-sheet-provider-username" className={LABEL}>Username</label>
-                <input ref={providerUsernameField} id="sign-in-sheet-provider-username" autoComplete="username" className={INPUT} placeholder={USERNAME_RULE} {...HANDLE_FIELD} />
+                <label htmlFor="sign-in-sheet-provider-username" className={LABEL}><Message id="auth:username_e3b89e9d" /></label>
+                <input ref={providerUsernameField} id="sign-in-sheet-provider-username" autoComplete="username" className={INPUT} placeholder={USERNAME_RULE()} {...HANDLE_FIELD} />
               </div>
             </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Finishing…' : 'Continue'}</button>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}><LocalizedValue render={() => (busy ? tr("auth:finishing_47e17128") : tr("auth:continue_31fbef16"))} /></button>
           </form>
         ) : null}
 
@@ -545,15 +548,15 @@ export function SignInSheet({
           <form className="mt-5 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void verify(); }}>
             <div className={FIELD_GROUP}>
               <div className={FIELD}>
-                <label htmlFor="sign-in-sheet-code" className={LABEL}>Code</label>
+                <label htmlFor="sign-in-sheet-code" className={LABEL}><Message id="auth:code_340f4630" /></label>
                 <input ref={codeField} id="sign-in-sheet-code" inputMode="numeric" autoComplete="one-time-code" maxLength={6} className={`${INPUT} tracking-[0.4em]`} />
               </div>
             </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Checking…' : 'Continue'}</button>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}><LocalizedValue render={() => (busy ? tr("auth:checking_ec963ffc") : tr("auth:continue_31fbef16"))} /></button>
             <div className="flex items-center justify-between">
-              <button type="button" className={QUIET} onClick={() => { setError(null); setStep('email'); }}>Use another email</button>
+              <button type="button" className={QUIET} onClick={() => { setError(null); setStep('email'); }}><Message id="auth:use_another_email_687da8b8" /></button>
               <button type="button" className={`${QUIET} disabled:text-zinc-500 disabled:dark:text-zinc-400 disabled:no-underline`} disabled={busy || waitLeft > 0} onClick={() => { void requestCode(email); }}>
-                {waitLeft > 0 ? `Send a new code in ${waitLeft}s` : 'Send a new code'}
+                <LocalizedValue render={() => (waitLeft > 0 ? tr("auth:send_a_new_code_in_value1_s_d5144c5d", { value1: waitLeft }) : tr("auth:send_a_new_code_9200fc2f"))} />
               </button>
             </div>
           </form>
@@ -564,30 +567,27 @@ export function SignInSheet({
             <div className={FIELD_GROUP}>
               {needsUsername ? (
                 <div className={FIELD}>
-                  <label htmlFor="sign-in-sheet-username" className={LABEL}>Username</label>
-                  <input ref={usernameField} id="sign-in-sheet-username" autoComplete="username" className={INPUT} placeholder={USERNAME_RULE} {...HANDLE_FIELD} />
+                  <label htmlFor="sign-in-sheet-username" className={LABEL}><Message id="auth:username_e3b89e9d" /></label>
+                  <input ref={usernameField} id="sign-in-sheet-username" autoComplete="username" className={INPUT} placeholder={USERNAME_RULE()} {...HANDLE_FIELD} />
                 </div>
               ) : null}
               <div className={FIELD}>
-                <label htmlFor="sign-in-sheet-password" className={LABEL}>Password</label>
-                <input ref={passwordField} id="sign-in-sheet-password" type="password" autoComplete="new-password" className={INPUT} placeholder="At least 8 characters" />
+                <label htmlFor="sign-in-sheet-password" className={LABEL}><Message id="auth:password_e7cf3ef4" /></label>
+                <Localized element={<input ref={passwordField} id="sign-in-sheet-password" type="password" autoComplete="new-password" className={INPUT} placeholder={catalogText("auth:at_least_8_characters_977f3b26")} />} messages={{"placeholder":"auth:at_least_8_characters_977f3b26"}} />
               </div>
               <div className={FIELD}>
-                <label htmlFor="sign-in-sheet-confirm" className={LABEL}>Password again</label>
+                <label htmlFor="sign-in-sheet-confirm" className={LABEL}><Message id="auth:password_again_5b18a694" /></label>
                 <input ref={confirmField} id="sign-in-sheet-confirm" type="password" autoComplete="new-password" className={INPUT} />
               </div>
             </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Finishing…' : 'Continue'}</button>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}><LocalizedValue render={() => (busy ? tr("auth:finishing_47e17128") : tr("auth:continue_31fbef16"))} /></button>
           </form>
         ) : null}
 
         {error ? <p role="alert" className="mt-3 text-[14px] text-red-600 dark:text-red-400">{error}</p> : null}
 
         {step === 'choose' || step === 'email' ? (
-          <p className="mt-4 text-center text-[13px] text-zinc-500 dark:text-zinc-400">
-            {'New to Homeroom? This makes your account. '}
-            <a href="#login" onClick={() => { if (followInvite) rememberInviteJoin(); onClose(); }} className="font-medium text-violet-700 dark:text-violet-400 hover:underline">Sign in with a password</a>
-          </p>
+          <p className="mt-4 text-center text-[13px] text-zinc-500 dark:text-zinc-400"><RichMessage id="auth:sentence_427131c892b2" components={[<a href="#login" onClick={() => { if (followInvite) rememberInviteJoin(); onClose(); }} className="font-medium text-violet-700 dark:text-violet-400 hover:underline" />]} /></p>
         ) : null}
         <TermsNotice className="mt-3" />
       </div>

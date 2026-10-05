@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../../lib/i18n/react";
+import { t as tr } from "../../../lib/i18n/runtime";
+import { Message } from "../../../lib/i18n/react";
 /**
  * `#home-tour` — the five-step welcome tour, which replaced the
  * `#home-welcome` banner (#1561).
@@ -483,6 +487,7 @@ function panelOpenNow(): boolean {
 }
 
 export function OnboardingTour() {
+  useUiLanguage();
   const rootRef = useRef<HTMLDivElement | null>(null);
   const topRef = useRef<HTMLDivElement | null>(null);
   const rightRef = useRef<HTMLDivElement | null>(null);
@@ -1064,9 +1069,7 @@ export function OnboardingTour() {
               ink="muted"
               className="rounded px-1 py-1"
               onClick={() => setConfirming(true)}
-            >
-              Skip
-            </Button>
+            ><Message id="apps:skip_28d03596" /></Button>
             <div className="ml-auto flex items-center gap-2">
               <Button
                 id="home-tour-back"
@@ -1077,9 +1080,7 @@ export function OnboardingTour() {
                 disabledStyle="dim"
                 disabled={index === 0}
                 onClick={goBack}
-              >
-                Back
-              </Button>
+              ><Message id="apps:back_76900f1b" /></Button>
               {/*
                   On every step. On the menu step it opens the menu rather
                   than skipping it (goNext), so it cannot carry the viewer
@@ -1091,7 +1092,7 @@ export function OnboardingTour() {
                 size="sm"
                 onClick={goNext}
               >
-                {last ? 'Finish' : 'Next'}
+                <LocalizedValue render={() => (last ? tr("apps:finish_a6c7a84b") : tr("apps:next_1ff57a29"))} />
               </Button>
             </div>
           </div>
@@ -1106,9 +1107,7 @@ export function OnboardingTour() {
           <p
             id="home-tour-confirm-text"
             className="text-sm text-zinc-700 dark:text-zinc-200"
-          >
-            Are you sure? You can reopen this from Settings.
-          </p>
+          ><Message id="apps:are_you_sure_you_can_reopen_this_from_settings_3ed51ef8" /></p>
           <div className="mt-4 flex items-center justify-end gap-2">
             <Button
               id="home-tour-confirm-cancel"
@@ -1117,17 +1116,13 @@ export function OnboardingTour() {
               size="sm"
               ink="muted"
               onClick={() => setConfirming(false)}
-            >
-              Keep going
-            </Button>
+            ><Message id="apps:keep_going_9d7fd0e0" /></Button>
             <Button
               id="home-tour-confirm-skip"
               type="button"
               size="sm"
               onClick={() => finish('skip')}
-            >
-              Skip the tour
-            </Button>
+            ><Message id="apps:skip_the_tour_62762c9e" /></Button>
           </div>
         </div>
       </div>

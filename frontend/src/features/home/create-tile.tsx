@@ -1,3 +1,5 @@
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
 /**
  * "New project" (it said "Create an app" until communities, stage 4) — the
  * launcher grid's trailing tile.
@@ -86,7 +88,7 @@ const LABEL_OFF = 'home-create-label app-card-title text-zinc-400 dark:text-zinc
 // "New project" since communities, stage 4: the create dialog it opens is
 // titled "New project" (stage 3), and what it makes is a project for someone
 // (Just you, a private or a public community), not only an app to use.
-export const CREATE_TILE_LABEL = 'New project';
+export const CREATE_TILE_LABEL = () => tr("apps:new_project_a41eb2bf");
 
 export function CreateTile({ view, style }: { view: CreateTileView; style?: string }) {
   const node = useRef<HTMLButtonElement | null>(null);
@@ -105,9 +107,9 @@ export function CreateTile({ view, style }: { view: CreateTileView; style?: stri
   const on = view.enabled;
   // The locked tile's name starts with its visible label (the name a voice
   // user says has to be the one on screen), then says what a tap does.
-  const locked = `${CREATE_TILE_LABEL}. View app quota. ${view.hint}`;
+  const locked = tr("apps:value1_view_app_quota_value2_3e0d5aae", { value1: CREATE_TILE_LABEL(), value2: view.hint });
   return (
-    <button
+    <LocalizedDynamic element={<button
       ref={node}
       type="button"
       id="home-create-tile"
@@ -118,7 +120,7 @@ export function CreateTile({ view, style }: { view: CreateTileView; style?: stri
       // section it replaces. `data-create-enabled` is the quota state.
       data-panel-slot="create"
       data-create-enabled={String(on)}
-      title={on ? 'Start a new project' : locked}
+      title={on ? tr("apps:start_a_new_project_a72ef427") : locked}
       {...(on ? null : { 'aria-label': locked })}
       onClick={() => {
         // Both states open the same dialog. At the limit its quota row
@@ -130,7 +132,7 @@ export function CreateTile({ view, style }: { view: CreateTileView; style?: stri
       <span className={`${FACE} ${on ? FACE_ON : FACE_OFF}`} aria-hidden="true">
         <PlusWideIcon className="h-6 w-6" strokeWidth="2" />
       </span>
-      <span className={on ? LABEL_ON : LABEL_OFF}>{CREATE_TILE_LABEL}</span>
-    </button>
+      <span className={on ? LABEL_ON : LABEL_OFF}>{CREATE_TILE_LABEL()}</span>
+    </button>} resolve={() => ({ "title": on ? tr("apps:start_a_new_project_a72ef427") : locked })} />
   );
 }

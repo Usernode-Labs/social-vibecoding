@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message } from "../../lib/i18n/react";
 /**
  * `#dev-issue-comments` — the GitHub thread under an issue's topic card — as
  * the only React writer below that host. See ./issue-comments-store.ts.
@@ -53,6 +57,7 @@ const openSpecs = new Set<string>();
  * the comment's four-line clamp.
  */
 function BotSpec({ id, spec }: { id: string; spec: NonNullable<IssueCommentView['spec']> }) {
+  useUiLanguage();
   const wrapper = useMemo(() => ({ __html: spec.html }), [spec.html]);
   const [open, setOpen] = useState(() => openSpecs.has(id));
   return (
@@ -68,7 +73,7 @@ function BotSpec({ id, spec }: { id: string; spec: NonNullable<IssueCommentView[
     >
       <summary className="dev-issue-spec-head">
         <span className="dev-issue-spec-text">
-          <span className="dev-issue-spec-kicker">The spec</span>
+          <span className="dev-issue-spec-kicker"><Message id="workshop:the_spec_a1344a81" /></span>
           {spec.title ? <span className="dev-issue-spec-title">{spec.title}</span> : null}
         </span>
         <ChevronDownIcon className="dev-issue-spec-chev" aria-hidden="true" />
@@ -99,9 +104,9 @@ function Comment({ comment }: { comment: IssueCommentView }) {
         <div className="dev-feed-msg-head">
           <span className="dev-feed-msg-author">{comment.author}</span>
           {comment.bot ? (
-            <span className="text-[0.9375rem] text-sky-700 dark:text-sky-400">bot</span>
+            <span className="text-[0.9375rem] text-sky-700 dark:text-sky-400"><Message id="workshop:bot_9d74932b" /></span>
           ) : null}
-          <span className="dev-topic-gh-tag">GitHub</span>
+          <span className="dev-topic-gh-tag"><Message id="workshop:github_f911e414" /></span>
           {stamp.text ? (
             <time className="dev-feed-msg-time" dateTime={comment.createdAt} title={stamp.title}>
               {stamp.text}
@@ -120,20 +125,18 @@ export function IssueCommentsView({ comments, truncated, htmlUrl }: IssueComment
   if (!comments.length) return null;
   return (
     <div className="dev-topic-gh-thread">
-      <div className="dev-topic-h">Discussion</div>
+      <div className="dev-topic-h"><Message id="workshop:discussion_5eb6cf64" /></div>
       {truncated ? (
         <div className="dev-topic-gh-more">
-          {'Earlier comments omitted. '}
-          {htmlUrl ? (
+          <Message id="workshop:earlier_comments_omitted_5c0d8232" />
+          <LocalizedValue render={() => (htmlUrl ? (
             <a
               href={htmlUrl}
               target="_blank"
               rel="noopener"
               className="underline hover:text-zinc-600 dark:hover:text-zinc-300"
-            >
-              View the full thread on GitHub
-            </a>
-          ) : 'View the full thread on GitHub'}
+            ><Message id="workshop:view_the_full_thread_on_github_055c3a2a" /></a>
+          ) : tr("workshop:view_the_full_thread_on_github_055c3a2a"))} />
           .
         </div>
       ) : null}
@@ -143,5 +146,6 @@ export function IssueCommentsView({ comments, truncated, htmlUrl }: IssueComment
 }
 
 export function IssueComments() {
+  useUiLanguage();
   return <IssueCommentsView {...useStoreState<IssueCommentsState>(issueCommentsStore)} />;
 }

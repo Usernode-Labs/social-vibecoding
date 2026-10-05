@@ -1,3 +1,8 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { RichMessage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * Import-a-PR dialog (#import-pr-modal).
  *
@@ -88,13 +93,14 @@ export function importPrErrorMessage(
   prNumber: number,
 ): string {
   if (serverError) return serverError;
-  if (status === 404) return `PR #${prNumber} wasn’t found on GitHub. It may have been deleted.`;
-  if (status === 409) return `PR #${prNumber} can’t be imported right now.`;
-  if (status === 503) return 'The platform is restarting. Try the import again in a few seconds.';
-  return 'Something went wrong importing this PR. Please try again.';
+  if (status === 404) return tr("core:pr_value1_wasn_t_found_on_github_it_may_have_bee_6621d7bc", { value1: prNumber });
+  if (status === 409) return tr("core:pr_value1_can_t_be_imported_right_now_612df76a", { value1: prNumber });
+  if (status === 503) return tr("core:the_platform_is_restarting_try_the_import_again__1e1a8573");
+  return tr("core:something_went_wrong_importing_this_pr_please_tr_f38d20b9");
 }
 
 export function ImportPrDialog() {
+  useUiLanguage();
   const errorRef = useRef<HTMLDivElement>(null);
   const progressRef = useRef<HTMLDivElement>(null);
   const slowRef = useRef<HTMLDivElement>(null);
@@ -155,7 +161,7 @@ export function ImportPrDialog() {
       ok = res.ok;
       data = await res.json().catch(() => ({}));
     } catch {
-      setList({ kind: 'error', text: 'Couldn’t load pull requests. Please try again.' });
+      setList({ kind: 'error', get text() { return tr("core:couldn_t_load_pull_requests_please_try_again_35b7ffb5"); } });
       return;
     }
     if (!ok) {
@@ -163,7 +169,7 @@ export function ImportPrDialog() {
       // state rather than an error the user can't act on.
       setList({
         kind: 'note',
-        text: 'GitHub isn’t configured for this app, so there’s nothing to import.',
+        get text() { return tr("core:github_isn_t_configured_for_this_app_so_there_s__f96b81f6"); },
       });
       return;
     }
@@ -171,7 +177,7 @@ export function ImportPrDialog() {
     if (rows.length === 0) {
       setList({
         kind: 'note',
-        text: 'No open pull requests are available to import right now.',
+        get text() { return tr("core:no_open_pull_requests_are_available_to_import_ri_21bf4beb"); },
       });
       return;
     }
@@ -197,7 +203,7 @@ export function ImportPrDialog() {
     setSlow(false);
     if (!on) return;
     setProgressText(
-      `Importing PR #${prNumber}: checking it on GitHub and adding it to In progress…`,
+      tr("core:importing_pr_value1_checking_it_on_github_and_ad_c3b760d9", { value1: prNumber }),
     );
     slowTimer.current = setTimeout(() => {
       if (busyRef.current) setSlow(true);
@@ -211,7 +217,7 @@ export function ImportPrDialog() {
     if (!slug) return;
     if (busy) return;
     const pr = selected;
-    if (pr == null) return setError('Pick a pull request to import.');
+    if (pr == null) return setError(tr("core:pick_a_pull_request_to_import_79d2c8ea"));
     setError('');
     setImportBusy(true, pr);
 
@@ -238,7 +244,7 @@ export function ImportPrDialog() {
       sessionId = data.sessionId;
     } catch {
       setImportBusy(false);
-      setError('Network error. Please try again.');
+      setError(tr("core:network_error_please_try_again_9ff8cfaf"));
       return;
     }
 
@@ -257,7 +263,7 @@ export function ImportPrDialog() {
       // the staging build takes minutes, and until it lands the proposal shows
       // "Preview building…" with checks pending.
       window.PlatformUI?.toast?.(
-        `PR #${pr} was imported. Its preview is being built now. Find it in Dev under In progress.`,
+        tr("core:pr_value1_was_imported_its_preview_is_being_buil_c17a4bff", { value1: pr }),
       );
     }
     dialog.close();
@@ -270,12 +276,8 @@ export function ImportPrDialog() {
       {...dialog.backdropProps}
     >
       <DialogCard size="md">
-        <h2 className="text-lg font-bold mb-1">
-          Import a pull request
-        </h2>
-        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
-          Pick an open pull request to add to In progress. It stays there until you ask for approval.
-        </p>
+        <h2 className="text-lg font-bold mb-1"><Message id="core:import_a_pull_request_eaf57bed" /></h2>
+        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-2"><Message id="core:pick_an_open_pull_request_to_add_to_in_progress__98b812e6" /></p>
         {/*
             #866: two expectations worth setting before the import, both of
             which used to surprise people. (1) The staging preview is built
@@ -284,13 +286,7 @@ export function ImportPrDialog() {
             fork — rows marked "from a fork" run an outside contributor's
             code in the preview, so read the diff on GitHub first.
         */}
-        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
-          {"A staging preview is built from the pull request's head commit, so it takes a few minutes to appear, and automated checks stay pending until it does. Rows marked "}
-          <span className="text-amber-800 dark:text-amber-400">
-            from a fork
-          </span>
-          {" are branches in someone else's repository: review the changes on GitHub before importing."}
-        </p>
+        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-4"><RichMessage id="core:sentence_138f319d4224" components={[<span className="text-amber-800 dark:text-amber-400" />]} /></p>
         <div
           id="import-pr-list"
           className={
@@ -300,7 +296,7 @@ export function ImportPrDialog() {
           }
         >
           {!dialog.isOpen ? null : list.kind === 'loading' ? (
-            <div className={NOTE_CLASS}>Loading open pull requests…</div>
+            <div className={NOTE_CLASS}><Message id="core:loading_open_pull_requests_c93af41e" /></div>
           ) : list.kind === 'note' ? (
             <div className={NOTE_CLASS}>{list.text}</div>
           ) : list.kind === 'error' ? (
@@ -342,13 +338,12 @@ export function ImportPrDialog() {
                         informed rather than discovered after importing.
                     */}
                     {c.fromFork ? (
-                      <span
-                        className="block text-xs text-amber-800 dark:text-amber-400 mt-0.5"
-                        title="This branch lives in a fork, not in this app's own repository. The preview is built from the pull request's head commit. Review the changes on GitHub before importing."
+                      <Localized element={<span
+                        className="block text-xs text-amber-800 dark:text-amber-400 mt-0.5" title={catalogText("core:this_branch_lives_in_a_fork_not_in_this_app_s_ow_ae49ecc7")}
                       >
-                        {'from a fork: '}
+                        <Message id="core:from_a_fork_d1c26901" />
                         <span className="font-mono">{String(c.headRepo || 'unknown fork')}</span>
-                      </span>
+                      </span>} messages={{"title":"core:this_branch_lives_in_a_fork_not_in_this_app_s_ow_ae49ecc7"}} />
                     ) : null}
                     {c.htmlUrl ? (
                       <a
@@ -357,9 +352,7 @@ export function ImportPrDialog() {
                         rel="noopener"
                         className="inline-block text-xs text-violet-700 hover:underline mt-1 dark:text-violet-400"
                         onClick={(event) => event.stopPropagation()}
-                      >
-                        View on GitHub ↗
-                      </a>
+                      ><Message id="core:view_on_github_f5acbc5b" /></a>
                     ) : null}
                   </span>
                 </label>
@@ -386,9 +379,7 @@ export function ImportPrDialog() {
               {progressText}
             </span>
           </div>
-          <div id="import-pr-progress-slow" ref={slowRef} className="hidden mt-1 text-xs opacity-80">
-            Still working. GitHub is being slow, so don’t close this window.
-          </div>
+          <div id="import-pr-progress-slow" ref={slowRef} className="hidden mt-1 text-xs opacity-80"><Message id="core:still_working_github_is_being_slow_so_don_t_clos_f372ef03" /></div>
         </div>
         <div id="import-pr-error" ref={errorRef} className="text-red-700 dark:text-red-400 text-sm hidden mt-3">
           {error}
@@ -400,9 +391,7 @@ export function ImportPrDialog() {
             className="flex-1 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
             disabled={busy}
             onClick={() => dialog.close()}
-          >
-            Cancel
-          </button>
+          ><Message id="core:cancel_19766ed6" /></button>
           <Button
             type="button"
             id="import-pr-submit"
@@ -411,7 +400,7 @@ export function ImportPrDialog() {
             disabled={busy || selected == null}
             onClick={submit}
           >
-            {busy ? 'Importing…' : 'Import'}
+            <LocalizedValue render={() => (busy ? tr("core:importing_c01c4324") : tr("core:import_2cff9baa"))} />
           </Button>
         </div>
       </DialogCard>

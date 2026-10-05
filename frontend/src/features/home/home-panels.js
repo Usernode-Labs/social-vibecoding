@@ -128,7 +128,7 @@ const HomePanels = {
   formatReward(reward) {
     const s = String(reward == null ? '' : reward).trim();
     if (!s) return '';
-    return /^[\d][\d.,]*$/.test(s) ? `${s} pts` : s;
+    return /^[\d][\d.,]*$/.test(s) ? globalThis.PlatformI18n.t("apps:value1_pts_7157c665", { value1: s }) : s;
   },
 
   // Bar fill, 0-100. A missing/zero/NaN target is 0 (the caller renders no
@@ -240,10 +240,10 @@ const HomePanels = {
     if (!panel) return '';
     const total = Number(panel.total) || 0;
     const done = Number(panel.done) || 0;
-    let line = `${done} of ${total}`;
+    let line = globalThis.PlatformI18n.t("apps:value1_of_value2_a48c498b", { value1: done, value2: total });
     const remaining = panel.points_remaining;
     if (typeof remaining === 'number' && Number.isFinite(remaining) && remaining > 0) {
-      line += ` · ${remaining.toLocaleString('en-US')} pts left`;
+      line += globalThis.PlatformI18n.t("apps:value1_pts_left_83d21081", { value1: remaining.toLocaleString(globalThis.PlatformI18n.getLanguage()) });
     }
     return line;
   },
@@ -419,7 +419,7 @@ const HomePanels = {
     // rather than heading the action sheet "Widget".
     const built = data && Array.isArray(data.panels)
       ? data.panels.find((p) => p && p.key === key) : null;
-    return (built && built.title) || 'Widget';
+    return (built && built.title) || globalThis.PlatformI18n.t("apps:widget_7dd7a28c");
   },
 
   // The widget CONTENT for one key, whether or not the server built a
@@ -481,7 +481,7 @@ const HomePanels = {
       if (HomePanels._expanded[panel.key]) HomePanels._expanded[panel.key] = false;
       return {
         key: panel.key,
-        title: panel.title || 'Challenges',
+        title: panel.title || globalThis.PlatformI18n.t("apps:challenges_40b9c8f4"),
         summary: HomePanels.summaryLine(panel),
         season: null,
         onboardingNote: null,
@@ -507,7 +507,7 @@ const HomePanels = {
     if (empty) {
       return {
         key: panel.key,
-        title: panel.title || 'Challenges',
+        title: panel.title || globalThis.PlatformI18n.t("apps:challenges_40b9c8f4"),
         summary: null,
         season: null,
         total,
@@ -536,7 +536,7 @@ const HomePanels = {
     const groups = HomePanels.challengeGroups(rows, views, panel, doneFrom);
     return {
       key: panel.key,
-      title: panel.title || 'Challenges',
+      title: panel.title || globalThis.PlatformI18n.t("apps:challenges_40b9c8f4"),
       // Still computed, and still the one-line form of the same counts
       // the season progress draws — it is the block's accessible summary and what the ⋮
       // menu and the tests read. It is no longer rendered in the section
@@ -550,7 +550,7 @@ const HomePanels = {
       // challenges only), drawn as before: the cards, then the note. Once
       // unlocked there is nothing to say: no note.
       onboardingNote: panel.onboarding && !panel.onboarding.unlocked
-        ? 'Finish Getting started to unlock the rest of the season.'
+        ? globalThis.PlatformI18n.t("apps:finish_getting_started_to_unlock_the_rest_of_the_2ab652a3")
         : null,
       // Always 0 here: a count above 0 is the locked branch above.
       lockedCount: 0,
@@ -595,16 +595,16 @@ const HomePanels = {
   // group's rank while setup is unfinished; groupRankOf moves a finished Get
   // started to the end.
   CHALLENGE_GROUPS: {
-    ONBOARDING: { key: 'setup', heading: 'First challenges', order: 0 },
-    WEEKLY: { key: 'week', heading: 'This week', order: 1 },
-    PERSISTENT: { key: 'always', heading: 'Always open', order: 2 },
+    ONBOARDING: { key: 'setup', get heading() { return globalThis.PlatformI18n.t("apps:first_challenges_79462a6d"); }, order: 0 },
+    WEEKLY: { key: 'week', get heading() { return globalThis.PlatformI18n.t("apps:this_week_8c4eef5a"); }, order: 1 },
+    PERSISTENT: { key: 'always', get heading() { return globalThis.PlatformI18n.t("apps:always_open_67b6ffc1"); }, order: 2 },
   },
-  OTHER_GROUP: { key: 'other', heading: 'Season challenges', order: 3 },
+  OTHER_GROUP: { key: 'other', get heading() { return globalThis.PlatformI18n.t("apps:season_challenges_ba3646b8"); }, order: 3 },
   // The collapsed block's finished fill (visibleSlots' `doneFrom`), headed
   // after every group that still has something to do (#2490). Home only: the
   // tab draws every card, so a finished card stays in its own group there. No
   // `order`, because no category resolves to it and it never ranks.
-  DONE_GROUP: { key: 'done', heading: 'Done' },
+  DONE_GROUP: { key: 'done', get heading() { return globalThis.PlatformI18n.t("apps:done_11a6767d"); } },
 
   // A challenge's group, from its label: the category, trimmed and uppercased.
   groupOf(c) {
@@ -695,7 +695,7 @@ const HomePanels = {
     });
     return runs.map(({ group, views: members }) => {
       let meta = null;
-      if (group.key === 'always') meta = 'no deadline';
+      if (group.key === 'always') meta = globalThis.PlatformI18n.t("apps:no_deadline_4cee0239");
       else if (group.key !== 'setup' && group.key !== 'done') meta = clockOf(group.key);
       if (group.key !== 'setup') {
         for (const view of members) view.deadline = null;
@@ -754,7 +754,7 @@ const HomePanels = {
       ? Home.popularApps(Home._apps || []) : [];
     return {
       key: panel.key,
-      title: panel.title || 'Discover',
+      title: panel.title || globalThis.PlatformI18n.t("apps:discover_d4a33d5b"),
       featured: featured.map((a) => HomePanels.discoverTileView(a)),
       popular: popular.map((a) => HomePanels.discoverTileView(a)),
     };
@@ -859,7 +859,7 @@ const HomePanels = {
     const points = Number(c.earned_points) > 0 ? Number(c.earned_points) : 0;
     let rail;
     if (done) {
-      rail = { state: 'done', stateLabel: 'Done', fill: 1, counted: false };
+      rail = { state: 'done', get stateLabel() { return globalThis.PlatformI18n.t("core:message_11a6767d5674"); }, fill: 1, counted: false };
     } else if (numeric && target > 1) {
       const count = Math.min(current, target);
       const unit = c.metric.label ? ` ${c.metric.label}` : '';
@@ -870,9 +870,9 @@ const HomePanels = {
         counted: true,
       };
     } else if (points) {
-      rail = { state: 'progress', stateLabel: 'Started', fill: null, counted: false };
+      rail = { state: 'progress', get stateLabel() { return globalThis.PlatformI18n.t("core:message_ecbc89cd37a0"); }, fill: null, counted: false };
     } else {
-      rail = { state: 'new', stateLabel: 'Not started', fill: 0, counted: false };
+      rail = { state: 'new', get stateLabel() { return globalThis.PlatformI18n.t("apps:not_started_ba35f0c4"); }, fill: 0, counted: false };
     }
     const eventId = Number(c.season_event_id);
     return {
@@ -907,7 +907,7 @@ const HomePanels = {
       // window). `ends_at` is the challenge's own end, else its event's.
       deadline: done || c.open === false ? null
         : HomePanels.timeLeft(c.ends_at || (panel && panel.season && panel.season.ends_at)),
-      earned: done && points ? `Earned ${points.toLocaleString('en-US')} pts` : null,
+      earned: done && points ? globalThis.PlatformI18n.t("apps:earned_value1_pts_bb32d65a", { value1: points.toLocaleString(globalThis.PlatformI18n.getLanguage()) }) : null,
     };
   },
 
@@ -944,7 +944,7 @@ const HomePanels = {
       return {
         done: Math.max(0, Math.min(t, Number(gate.completed) || 0)),
         total: t,
-        caption: 'done in First challenges',
+        get caption() { return globalThis.PlatformI18n.t("apps:done_in_first_challenges_b5d2171d"); },
       };
     }
     const name = panel.season && typeof panel.season.name === 'string'
@@ -952,7 +952,7 @@ const HomePanels = {
     return {
       done: Math.max(0, Math.min(total, Number(hasAll ? panel.all_done : panel.done) || 0)),
       total,
-      caption: name ? `done in ${name}` : 'done',
+      caption: name ? globalThis.PlatformI18n.t("apps:done_in_value1_e6213234", { value1: name }) : 'done',
     };
   },
 
@@ -969,7 +969,7 @@ const HomePanels = {
     const ms = ends - Date.now();
     if (ms <= 0) return null;
     const hours = Math.ceil(ms / 3600000);
-    return hours < 24 ? `${hours}h left` : `${Math.ceil(ms / 86400000)}d left`;
+    return hours < 24 ? globalThis.PlatformI18n.t("apps:value1_h_left_1000363c", { value1: hours }) : globalThis.PlatformI18n.t("apps:value1_d_left_eacaadd0", { value1: Math.ceil(ms / 86400000) });
   },
 
   // Real hash navigation (not a router call) so the Challenges screen gets a
@@ -1065,4 +1065,9 @@ if (typeof document !== 'undefined' && typeof document.addEventListener === 'fun
   document.addEventListener('sv:session', () => {
     if (HomePanels._data) HomePanels.render();
   });
+}
+
+// Recompute translated view models from cached data without resetting forms.
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  document.addEventListener('homeroom:language-changed', () => { if (HomePanels._data) HomePanels.render(); });
 }

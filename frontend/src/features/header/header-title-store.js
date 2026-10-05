@@ -63,7 +63,7 @@ import { createStore } from '../../lib/plain-store.js';
 
 /** @type {HeaderTitleState} */
 const INITIAL = {
-  text: 'Homeroom',
+  get text() { return globalThis.PlatformI18n.t("account:homeroom_c9149977"); },
   subtitle: '',
 };
 

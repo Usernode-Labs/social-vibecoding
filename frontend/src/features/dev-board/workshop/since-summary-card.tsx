@@ -1,3 +1,7 @@
+import { getLanguage } from "../../../lib/i18n/runtime";
+import { t as tr } from "../../../lib/i18n/runtime";
+import { useMessages as useUiLanguage } from "../../../lib/i18n/react";
+import { Message, Localized, message as catalogText } from "../../../lib/i18n/react";
 /**
  * The top of a project's hub: what landed since you were last here, in a
  * sentence or two.
@@ -60,10 +64,10 @@ const midnight = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(
 export function sinceLabel(windowStart: number, now: number = Date.now()): string {
   const start = new Date(windowStart);
   const days = Math.round((midnight(new Date(now)) - midnight(start)) / DAY_MS);
-  if (days <= 0) return 'Since earlier today';
-  if (days === 1) return 'Since yesterday';
-  if (days < 7) return `Since ${start.toLocaleDateString(undefined, { weekday: 'long' })}`;
-  return `Since ${start.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`;
+  if (days <= 0) return tr("workshop:since_earlier_today_5825cbb8");
+  if (days === 1) return tr("workshop:since_yesterday_b8aea980");
+  if (days < 7) return tr("workshop:since_value1_5ca5812e", { value1: start.toLocaleDateString(getLanguage(), { weekday: 'long' }) });
+  return tr("workshop:since_value1_5ca5812e", { value1: start.toLocaleDateString(getLanguage(), { month: 'short', day: 'numeric' }) });
 }
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
@@ -98,6 +102,7 @@ export function SinceSummaryCard({ slug, since, onMore }: {
   /** The way to the whole of it, week by week (the Workshop page). */
   onMore?: () => void;
 }): ReactNode {
+  useUiLanguage();
   const [data, setData] = useState<SinceSummary | null>(null);
   const [dismissed, setDismissed] = useState(0);
 
@@ -134,21 +139,17 @@ export function SinceSummaryCard({ slug, since, onMore }: {
             line of its own under the text. The × keeps the very end. */}
         <span className="dev-ws-hub-head-end">
           {onMore ? (
-            <button type="button" className="dev-ws-hub-open dev-ws-since-card-more un-touch-target" data-ws-since-summary-more="" onClick={onMore}>
-              Week by week
-              <ChevronRightIcon className="w-3.5 h-3.5" aria-hidden="true" />
+            <button type="button" className="dev-ws-hub-open dev-ws-since-card-more un-touch-target" data-ws-since-summary-more="" onClick={onMore}><Message id="workshop:week_by_week_c94b209f" /><ChevronRightIcon className="w-3.5 h-3.5" aria-hidden="true" />
             </button>
           ) : null}
-          <button
+          <Localized element={<button
             type="button"
-            className="dev-ws-since-card-x un-touch-target"
-            aria-label="Dismiss this summary"
-            title="Dismiss this summary"
+            className="dev-ws-since-card-x un-touch-target" aria-label={catalogText("workshop:dismiss_this_summary_78446d42")} title={catalogText("workshop:dismiss_this_summary_78446d42")}
             data-ws-since-summary-dismiss=""
             onClick={dismiss}
           >
             <XIcon className="dev-ws-since-card-x-glyph" aria-hidden="true" />
-          </button>
+          </button>} messages={{"aria-label":"workshop:dismiss_this_summary_78446d42","title":"workshop:dismiss_this_summary_78446d42"}} />
         </span>
       </div>
       {data.state === 'ai' ? (
@@ -165,7 +166,7 @@ export function SinceSummaryCard({ slug, since, onMore }: {
           count and the tag beside the window's name. */}
       <p className="dev-ws-since-card-foot">
         <span className="dev-ws-since-card-n">{plural(data.count, 'change', 'changes')}</span>
-        {data.state === 'ai' ? <span className="dev-ws-since-card-tag">AI summary</span> : null}
+        {data.state === 'ai' ? <span className="dev-ws-since-card-tag"><Message id="workshop:ai_summary_c693eaf2" /></span> : null}
       </p>
     </section>
   );

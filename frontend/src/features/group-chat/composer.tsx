@@ -1,3 +1,6 @@
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * The group chat composer — the staged-reply chip, the attachment error, the
  * pending-upload strip, the form, and the status line above it — as the only
@@ -104,18 +107,17 @@ function ReplyPreview({ scope, quote }: { scope: ComposerScope; quote: QuoteChip
       {quote ? (
         <div className="gc-reply-preview-inner">
           <div className="gc-reply-preview-body">
-            <span className="gc-reply-preview-label">{`↩ Replying to ${quote.label}`}</span>
+            <span className="gc-reply-preview-label"><LocalizedValue render={() => (tr("workshop:replying_to_value1_5e0a7167", { value1: quote.label }))} /></span>
             <span className="gc-reply-preview-snippet">{quote.snippet}</span>
           </div>
-          <button
+          <Localized element={<button
             type="button"
             id={scope === 'general' ? 'gc-reply-cancel' : undefined}
-            className="gc-reply-preview-x"
-            aria-label="Cancel reply"
+            className="gc-reply-preview-x" aria-label={catalogText("workshop:cancel_reply_2355f731")}
             onClick={() => controller()?.clearQuote?.()}
           >
             ✕
-          </button>
+          </button>} messages={{"aria-label":"workshop:cancel_reply_2355f731"}} />
         </div>
       ) : null}
     </div>
@@ -197,15 +199,13 @@ export function ComposerForm({ scope, fill, placeholder, maxLength }: ComposerFo
   if (fill) {
     return (
       <form id={ids.form} className="gc-composer-card flex items-end gap-1.5">
-        <button
+        <Localized element={<button
           type="button"
-          id={ids.attach}
-          title="Attach files"
-          aria-label="Attach files"
+          id={ids.attach} title={catalogText("workshop:attach_files_e697cc1e")} aria-label={catalogText("workshop:attach_files_e697cc1e")}
           className="gc-composer-glyph shrink-0"
         >
           <PaperClipIcon aria-hidden="true" />
-        </button>
+        </button>} messages={{"title":"workshop:attach_files_e697cc1e","aria-label":"workshop:attach_files_e697cc1e"}} />
         <input type="file" id={ids.file} className="hidden" multiple />
         <Textarea
           id={ids.input}
@@ -219,23 +219,21 @@ export function ComposerForm({ scope, fill, placeholder, maxLength }: ComposerFo
           hint="muted"
           ring="bare"
         />
-        <button type="submit" className="gc-send shrink-0" aria-label="Send" title="Send">
+        <Localized element={<button type="submit" className="gc-send shrink-0" aria-label={catalogText("workshop:send_f6f4688f")} title={catalogText("workshop:send_f6f4688f")}>
           <ArrowUpIcon aria-hidden="true" />
-        </button>
+        </button>} messages={{"aria-label":"workshop:send_f6f4688f","title":"workshop:send_f6f4688f"}} />
       </form>
     );
   }
   return (
     <form id={ids.form} className="flex gap-2 items-end">
-      <button
+      <Localized element={<button
         type="button"
-        id={ids.attach}
-        title="Attach files"
-        aria-label="Attach files"
+        id={ids.attach} title={catalogText("workshop:attach_files_e697cc1e")} aria-label={catalogText("workshop:attach_files_e697cc1e")}
         className="shrink-0 rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-sm text-zinc-500 dark:text-zinc-400 hover:text-violet-500 hover:border-violet-500 transition-colors"
       >
         📎
-      </button>
+      </button>} messages={{"title":"workshop:attach_files_e697cc1e","aria-label":"workshop:attach_files_e697cc1e"}} />
       <input type="file" id={ids.file} className="hidden" multiple />
       <Textarea
         id={ids.input}
@@ -249,9 +247,7 @@ export function ComposerForm({ scope, fill, placeholder, maxLength }: ComposerFo
         hint="muted"
         ring="seamless"
       />
-      <Button type="submit" size="sm" className="shrink-0">
-        Send
-      </Button>
+      <Button type="submit" size="sm" className="shrink-0"><Message id="workshop:send_f6f4688f" /></Button>
     </form>
   );
 }

@@ -1,3 +1,5 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * `#gc-react-bar` — the quick reaction row, the `＋` grid and the touch-only
  * Edit action, as the only React writer below that host.
@@ -62,20 +64,19 @@ export function ReactionBarView({
             character is not one to reach for.
         */}
         {quick.map((emoji, i) => <EmojiButton key={`${i}:${emoji}`} emoji={emoji} />)}
-        <button className="gc-react-bar-more" aria-label="More emoji">＋</button>
+        <Localized element={<button className="gc-react-bar-more" aria-label={catalogText("workshop:more_emoji_28d6ab39")}>＋</button>} messages={{"aria-label":"workshop:more_emoji_28d6ab39"}} />
         {/*
             Touch-only Edit for the viewer's own ordinary messages — desktop
             has the hover pencil. Rendered always and hidden per row, as the
             markup did, so the host's delegated handler has one node to find.
         */}
-        <button
-          className={`gc-react-bar-edit${editable ? '' : ' hidden'}`}
-          aria-label="Edit message"
+        <Localized element={<button
+          className={`gc-react-bar-edit${editable ? '' : ' hidden'}`} aria-label={catalogText("workshop:edit_message_9757ccd5")}
         >
           ✏️
-        </button>
+        </button>} messages={{"aria-label":"workshop:edit_message_9757ccd5"}} />
       </div> : null}
-      {reportable ? <button type="button" className="gc-react-bar-report min-h-[44px] w-full text-sm text-red-700 dark:text-red-400">Report message</button> : null}
+      {reportable ? <button type="button" className="gc-react-bar-report min-h-[44px] w-full text-sm text-red-700 dark:text-red-400"><Message id="workshop:report_message_0a1e3c52" /></button> : null}
       <div className={`gc-react-bar-grid${gridOpen && !readOnly ? '' : ' hidden'}`} >
         {grid.map((emoji, i) => <EmojiButton key={`${i}:${emoji}`} emoji={emoji} />)}
       </div>
@@ -84,5 +85,6 @@ export function ReactionBarView({
 }
 
 export function ReactionBar(props: ReactionBarProps) {
+  useUiLanguage();
   return <ReactionBarView {...props} {...useStoreState<ReactionBarState>(reactionBarStore)} />;
 }

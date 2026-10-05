@@ -1,3 +1,5 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * #dev-console-panel — the first fully React-owned panel of #1079 chunk B.
  *
@@ -53,6 +55,7 @@ function LogRow({ entry }: { entry: DevConsoleEntry }) {
 }
 
 export function DevConsolePanel() {
+  useUiLanguage();
   const version = useSyncExternalStore(
     devConsole.subscribe,
     devConsole.getSnapshot,
@@ -138,9 +141,7 @@ export function DevConsolePanel() {
       style={{ height: "40vh", maxHeight: "60vh" }}
     >
       <div className="flex items-center gap-3 px-3 py-2 border-b border-zinc-800 shrink-0 text-sm">
-        <span className="font-medium text-zinc-200">
-          Developer console
-        </span>
+        <span className="font-medium text-zinc-200"><Message id="workshop:developer_console_2ef15ac2" /></span>
         <span id="dev-console-counts" className="text-xs text-zinc-400">
           {showLive ? devConsole.countsLabel() : null}
         </span>
@@ -151,40 +152,25 @@ export function DevConsolePanel() {
           className="text-xs bg-zinc-800 border border-zinc-700 rounded px-1 py-0.5 text-zinc-200"
           onChange={(e) => devConsole.setFilter(e.target.value)}
         >
-          <option value="all">
-            All
-          </option>
-          <option value="error">
-            Errors
-          </option>
-          <option value="warn">
-            Warnings
-          </option>
-          <option value="info">
-            Info
-          </option>
-          <option value="log">
-            Log
-          </option>
-          <option value="debug">
-            Debug
-          </option>
+          <option value="all"><Message id="workshop:all_a52ace42" /></option>
+          <option value="error"><Message id="workshop:errors_cb702378" /></option>
+          <option value="warn"><Message id="workshop:warnings_0e04cd10" /></option>
+          <option value="info"><Message id="workshop:info_170322a3" /></option>
+          <option value="log"><Message id="workshop:log_21e49eb2" /></option>
+          <option value="debug"><Message id="workshop:debug_1a03bd2f" /></option>
         </select>
         <button
           id="dev-console-clear"
           className="text-xs text-zinc-400 hover:text-zinc-200"
           onClick={() => devConsole.clear()}
-        >
-          Clear
-        </button>
-        <button
+        ><Message id="workshop:clear_83b12c22" /></button>
+        <Localized element={<button
           id="dev-console-close"
-          className="text-zinc-400 hover:text-zinc-100"
-          aria-label="Close"
+          className="text-zinc-400 hover:text-zinc-100" aria-label={catalogText("workshop:close_7d9eb7ac")}
           onClick={() => devConsole.hide()}
         >
           <XIcon className="w-4 h-4" />
-        </button>
+        </button>} messages={{"aria-label":"workshop:close_7d9eb7ac"}} />
       </div>
       <div
         ref={logRef}
@@ -200,9 +186,7 @@ export function DevConsolePanel() {
         ref={emptyRef}
         id="dev-console-empty-hint"
         className="hidden px-3 py-2 text-xs text-zinc-400 border-t border-zinc-800 shrink-0"
-      >
-        No messages yet. If this app was created before dev-console support shipped, ask the coding agent in Dev Chat to "add dev-console forwarding to public/index.html".
-      </div>
+      ><Message id="workshop:no_messages_yet_if_this_app_was_created_before_d_465316cc" /></div>
     </div>
   );
 }

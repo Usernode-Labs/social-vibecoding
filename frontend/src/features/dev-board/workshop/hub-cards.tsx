@@ -1,3 +1,8 @@
+import { useMessages as useUiLanguage } from "../../../lib/i18n/react";
+import { RichMessage } from "../../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../../lib/i18n/react";
+import { t as tr } from "../../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../../lib/i18n/react";
 /**
  * The project hub's own cards. The hub is the first of the project page's
  * four tabs (Hub, Discussion, Needs you, Workshop: ./project-band.tsx), and
@@ -115,23 +120,18 @@ export function ChannelCard({ slug, name, data, compact = false, onOpen }: {
       data-ws-channel-handle={channel.handle || undefined}
     >
       <div className="dev-ws-head">
-        <span className="dev-ws-head-title">Discussion</span>
+        <span className="dev-ws-head-title"><Message id="workshop:discussion_5eb6cf64" /></span>
         {channel.handle ? <span className="dev-ws-hub-handle">#{channel.handle}</span> : null}
         <span className="dev-ws-hub-head-end">
           {unread > 0 && !compact ? (
             <span className="dev-ws-hub-new" data-ws-channel-unread={String(unread)}>
-              {unread > 99 ? '99+' : unread} new
-            </span>
+              {unread > 99 ? '99+' : unread}<Message before={" "} id="workshop:new_11507a0e" /></span>
           ) : null}
           {toTab ? (
-            <button type="button" className="dev-ws-hub-open un-touch-target" data-ws-channel-open="" onClick={onOpen}>
-              Open
-              <ChevronRightIcon className="w-3.5 h-3.5" aria-hidden="true" />
+            <button type="button" className="dev-ws-hub-open un-touch-target" data-ws-channel-open="" onClick={onOpen}><Message id="workshop:open_ed077f3d" /><ChevronRightIcon className="w-3.5 h-3.5" aria-hidden="true" />
             </button>
           ) : (
-            <a href={href} className="dev-ws-hub-open un-touch-target" data-ws-channel-open="">
-              Open
-              <ChevronRightIcon className="w-3.5 h-3.5" aria-hidden="true" />
+            <a href={href} className="dev-ws-hub-open un-touch-target" data-ws-channel-open=""><Message id="workshop:open_ed077f3d" /><ChevronRightIcon className="w-3.5 h-3.5" aria-hidden="true" />
             </a>
           )}
         </span>
@@ -143,7 +143,7 @@ export function ChannelCard({ slug, name, data, compact = false, onOpen }: {
           data-ws-channel-more-unread={String(more)}
           onClick={onOpen}
         >
-          {`${more > 99 ? '99+' : more} more unread ${more === 1 ? 'message' : 'messages'}`}
+          <LocalizedValue render={() => (tr("workshop:message_9d3fd6f5af71", { value1: more > 99 ? '99+' : more, count: more }))} />
         </button>
       ) : null}
       {recent.length ? (
@@ -166,10 +166,10 @@ export function ChannelCard({ slug, name, data, compact = false, onOpen }: {
           })}
         </ol>
       ) : (
-        <p className="dev-ws-week-note" data-ws-channel-empty="">Nobody has said anything here yet.</p>
+        <p className="dev-ws-week-note" data-ws-channel-empty=""><Message id="workshop:nobody_has_said_anything_here_yet_15a4f875" /></p>
       )}
       {channel.post_url && !compact ? (
-        <HubComposer slug={slug} url={channel.post_url} placeholder={`Message ${channel.handle ? `#${channel.handle}` : name}…`} />
+        <LocalizedDynamic element={<HubComposer slug={slug} url={channel.post_url} placeholder={tr("workshop:message_value1_9786b3d3", { value1: channel.handle ? `#${channel.handle}` : name })} />} resolve={() => ({ get "placeholder"() { return tr("workshop:message_value1_9786b3d3", { value1: channel.handle ? `#${channel.handle}` : name }); } })} />
       ) : null}
     </section>
   );
@@ -196,6 +196,7 @@ export function conversationIdFromPostUrl(url: string): number | null {
  * that room.
  */
 function HubComposer({ slug, url, placeholder }: { slug: string; url: string; placeholder: string }) {
+  useUiLanguage();
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -231,12 +232,12 @@ function HubComposer({ slug, url, placeholder }: { slug: string; url: string; pl
         const body = await res.json().catch(() => ({}));
         // Asked and answered Not now: the question was the answer.
         if (body && body.code === 'join_required') return;
-        throw new Error((body && body.error) || 'That did not send. Try again.');
+        throw new Error((body && body.error) || tr("workshop:that_did_not_send_try_again_ddd02090"));
       }
       setText('');
       await reloadCommunity(slug);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'That did not send. Try again.');
+      setError(err instanceof Error ? err.message : tr("workshop:that_did_not_send_try_again_ddd02090"));
     } finally {
       setBusy(false);
     }
@@ -263,15 +264,14 @@ function HubComposer({ slug, url, placeholder }: { slug: string; url: string; pl
         // picks the person instead of sending "@be".
         onKeyDown={(e) => { if (!e.nativeEvent.isComposing) mention.onKeyDown(e); }}
       />
-      <button
+      <Localized element={<button
         type="submit"
         className="dev-ws-hub-compose-send"
-        data-ws-channel-send=""
-        aria-label="Send"
+        data-ws-channel-send="" aria-label={catalogText("workshop:send_f6f4688f")}
         disabled={busy || !text.trim()}
       >
         <ArrowUpIcon className="w-4 h-4" aria-hidden="true" />
-      </button>
+      </button>} messages={{"aria-label":"workshop:send_f6f4688f"}} />
       {error ? <p className="dev-ws-hub-compose-error" role="alert" data-ws-channel-error="">{error}</p> : null}
       <FeedMentionMenu
         items={mention.items}
@@ -343,22 +343,22 @@ export function NeedsCard({ queue, slug, canPost, onOpen }: {
         <ReelThumb />
         <span className="dev-ws-hub-door-text">
           <span className="dev-ws-head">
-            <span className="dev-ws-head-title">Needs you</span>
-            {count ? <span className="dev-ws-head-n">{count} to vote</span> : null}
+            <span className="dev-ws-head-title"><Message id="workshop:needs_you_74b6abdf" /></span>
+            {count ? <span className="dev-ws-head-n"><RichMessage id="workshop:sentence_18cf76796ad8" values={{ value1: count }} /></span> : null}
           </span>
           {count && title ? (
             <span className="dev-ws-hub-needs-first">
               <span className="dev-ws-hub-needs-title">{title}</span>
               <span className="dev-ws-hub-needs-sub">
-                {first && first.who ? `from @${first.who}` : ''}
+                <LocalizedValue render={() => (first && first.who ? tr("workshop:from_value1_3c21e0bc", { value1: first.who }) : '')} />
                 {first && first.who && count > 1 ? ' · ' : ''}
-                {count > 1 ? `and ${count - 1} more` : ''}
+                <LocalizedValue render={() => (count > 1 ? tr("workshop:and_value1_more_05cce967", { value1: count - 1 }) : '')} />
               </span>
             </span>
           ) : skipped ? (
             <span className="dev-ws-hub-needs-first">
               <span className="dev-ws-hub-needs-sub" data-ws-hub-needs-skipped="">
-                {`${plural(skipped, 'vote', 'votes')} you skipped ${skipped === 1 ? 'is' : 'are'} still open`}
+                <LocalizedValue render={() => (tr("workshop:message_4cc39772ad36", { value1: plural(skipped, 'vote', 'votes'), count: skipped }))} />
               </span>
             </span>
           ) : null}
@@ -366,7 +366,7 @@ export function NeedsCard({ queue, slug, canPost, onOpen }: {
         <ChevronRightIcon className="dev-ws-hub-chev" aria-hidden="true" />
       </button>
       {count && !canPost ? (
-        <p className="dev-ws-hub-needs-join" data-ws-hub-needs-join="">Join to vote on these.</p>
+        <p className="dev-ws-hub-needs-join" data-ws-hub-needs-join=""><Message id="workshop:join_to_vote_on_these_da1f25f8" /></p>
       ) : null}
     </section>
   );
@@ -389,10 +389,10 @@ export function NothingToVote({ queue, onOpen }: {
   const claims = queue.filter((row) => row.kind !== 'vote').length;
   return (
     <p className="dev-ws-week-note" data-ws-hub-needs-none="">
-      {claims ? 'Nothing more to vote on · ' : 'Nothing more to vote on.'}
+      <LocalizedValue render={() => (claims ? tr("workshop:nothing_more_to_vote_on_9a7d1c9d") : tr("workshop:nothing_more_to_vote_on_65789eca"))} />
       {claims ? (
         <button type="button" className="dev-ws-link un-touch-target" onClick={onOpen} data-ws-hub-needs-requests="">
-          {`${plural(claims, 'request', 'requests')} nobody has picked up`}
+          <LocalizedValue render={() => (tr("workshop:value1_nobody_has_picked_up_d5fe93b7", { value1: plural(claims, 'request', 'requests') }))} />
         </button>
       ) : null}
     </p>
@@ -429,10 +429,8 @@ export function YourWorkCard({ rows, slug, canPost, openKey, onToggleRow, all, o
   if (!cards.length) {
     return (
       <section className="dev-ws-strip dev-ws-hub-work" data-ws-mine-card="">
-        <div className="dev-ws-head">
-          <span className="dev-ws-head-title">Your work</span>
-        </div>
-        <p className="text-xs text-zinc-500 dark:text-zinc-400" data-ws-mine-empty="">No work in progress.</p>
+        <div className="dev-ws-head"><RichMessage id="workshop:sentence_76f4104716ab" components={[<span className="dev-ws-head-title" />]} /></div>
+        <p className="text-xs text-zinc-500 dark:text-zinc-400" data-ws-mine-empty=""><Message id="workshop:no_work_in_progress_ed3f8772" /></p>
       </section>
     );
   }
@@ -440,10 +438,7 @@ export function YourWorkCard({ rows, slug, canPost, openKey, onToggleRow, all, o
   const shown = all ? cards : cards.slice(0, HUB_WORK_FIRST);
   return (
     <section className="dev-ws-strip dev-ws-hub-work" data-ws-mine-card="">
-      <div className="dev-ws-head">
-        <span className="dev-ws-head-title">Your work</span>
-        <span className="dev-ws-head-n">{cards.length}</span>
-      </div>
+      <div className="dev-ws-head"><RichMessage id="workshop:sentence_17e07c2cb431" values={{ value1: cards.length }} components={[<span className="dev-ws-head-title" />, <span className="dev-ws-head-n" />]} /></div>
       <div className="dev-ws-lane" data-ws-lane="mine-hub">
         {shown.map((row) => (
           <CardRowView
@@ -465,7 +460,7 @@ export function YourWorkCard({ rows, slug, canPost, openKey, onToggleRow, all, o
           onClick={onAll}
         >
           <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
-          {all ? 'Show less' : `Show ${rest} more`}
+          <LocalizedValue render={() => (all ? tr("workshop:show_less_94ea9b1d") : tr("workshop:show_value1_more_398301a5", { value1: rest }))} />
         </button>
       ) : null}
     </section>

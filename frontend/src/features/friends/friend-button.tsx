@@ -1,3 +1,6 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
 /**
  * The friend control on a person's page (#2386) — `#profile/<name>`, drawn
  * under the name for a signed-in viewer looking at someone else.
@@ -60,25 +63,25 @@ export function friendsButtonView(state: FriendState, username: string): {
   switch (state) {
     case 'outgoing':
       return {
-        primary: { action: 'menu', label: 'Requested', accent: false },
+        primary: { action: 'menu', get label() { return tr("core:requested_2d9e2828"); }, accent: false },
         secondary: null,
-        menu: { action: 'cancel', label: 'Cancel request', confirm: `Cancel your friend request to @${username}?` },
+        menu: { action: 'cancel', get label() { return tr("core:cancel_request_56196683"); }, confirm: tr("community:cancel_your_friend_request_to_value1_12988df6", { value1: username }) },
       };
     case 'incoming':
       return {
-        primary: { action: 'accept', label: 'Accept', accent: true },
-        secondary: { action: 'decline', label: 'Decline' },
+        primary: { action: 'accept', get label() { return tr("core:accept_89713b9c"); }, accent: true },
+        secondary: { action: 'decline', get label() { return tr("core:decline_a2d285b3"); } },
         menu: null,
       };
     case 'friends':
       return {
-        primary: { action: 'menu', label: 'Friends', accent: false },
+        primary: { action: 'menu', get label() { return tr("core:friends_bd104d1b"); }, accent: false },
         secondary: null,
-        menu: { action: 'unfriend', label: 'Unfriend', confirm: `Unfriend @${username}? They won’t be told.` },
+        menu: { action: 'unfriend', get label() { return tr("core:unfriend_dd56a057"); }, confirm: tr("community:unfriend_value1_they_won_t_be_told_684fd621", { value1: username }) },
       };
     default:
       return {
-        primary: { action: 'request', label: 'Add friend', accent: true },
+        primary: { action: 'request', get label() { return tr("core:add_friend_c1f87281"); }, accent: true },
         secondary: null,
         menu: null,
       };
@@ -94,6 +97,7 @@ export function FriendButton({
   username: string;
   initialState: FriendState;
 }): ReactNode {
+  useUiLanguage();
   const [state, setState] = useState<FriendState>(normalizeState(initialState));
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
@@ -148,7 +152,7 @@ export function FriendButton({
       data-friend-button={username}
       data-friend-state={state}
     >
-      <Button
+      <LocalizedDynamic element={<Button
         ref={primaryRef}
         type="button"
         size="sm"
@@ -156,7 +160,7 @@ export function FriendButton({
         ink={primary.accent ? 'solid' : 'neutral'}
         data-friend-action={primary.action}
         aria-haspopup={primary.action === 'menu' ? 'menu' : undefined}
-        aria-label={primary.action === 'menu' ? `${primary.label} with @${username}. More options` : undefined}
+        aria-label={primary.action === 'menu' ? tr("core:value1_with_value2_more_options_336a3c71", { value1: primary.label, value2: username }) : undefined}
         disabled={pending}
         aria-busy={pending}
         className="inline-flex items-center gap-1.5 disabled:opacity-60"
@@ -170,7 +174,7 @@ export function FriendButton({
             state is, and on Requested that it opens a menu. */}
         {state === 'friends' ? <CheckIcon aria-hidden="true" className="w-4 h-4" /> : null}
         {state === 'outgoing' ? <ChevronDownIcon aria-hidden="true" className="w-3.5 h-3.5" /> : null}
-      </Button>
+      </Button>} resolve={() => ({ "aria-label": primary.action === 'menu' ? tr("core:value1_with_value2_more_options_336a3c71", { value1: primary.label, value2: username }) : undefined })} />
       {view.secondary ? (
         <Button
           type="button"

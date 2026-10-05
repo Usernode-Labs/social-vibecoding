@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * #platform-header — the shell's top bar, as a React island (#1079 chunk B).
  *
@@ -206,6 +210,7 @@ function appRouteUpHref(
 }
 
 export function PlatformHeader() {
+  useUiLanguage();
   // The four elements the centering measurement needs. Passing them as refs
   // replaces the classic script's document.querySelector('header') +
   // previousElementSibling / nextElementSibling walk.
@@ -499,10 +504,10 @@ export function PlatformHeader() {
                 same root header (#1569), so only those two hide this slot;
                 their navigation menu still provides the route between them.
             */}
-          <a
+          <LocalizedDynamic element={<a
             id="back-btn"
             className={BACK_BTN_CLASS + (mode === 'none' ? ' hidden' : '')}
-            aria-label={backArrow ? 'Back' : backClose ? 'Close app' : 'Home'}
+            aria-label={backArrow ? tr("account:back_76900f1b") : backClose ? tr("account:close_app_2e99a1bc") : tr("account:home_3a786953")}
             {...(resolvedBackHref ? { href: resolvedBackHref } : {})}
           >
             {/*
@@ -534,7 +539,7 @@ export function PlatformHeader() {
               id="back-icon-close"
               className={backClose ? 'w-5 h-5' : 'hidden w-5 h-5'}
             />
-          </a>
+          </a>} resolve={() => ({ "aria-label": backArrow ? tr("account:back_76900f1b") : backClose ? tr("account:close_app_2e99a1bc") : tr("account:home_3a786953") })} />
         </div>
         {/*
             The screen's only h1 — a NAME, not a control, since #2718. It was
@@ -684,11 +689,10 @@ export function PlatformHeader() {
               only on hover. Same for #sidebar-toggle; the back button and
               the app chip keep theirs.
           */}
-          <a
+          <Localized element={<a
             id="notifications-btn"
             href="#notifications"
-            className="relative w-7 h-7 flex items-center justify-center rounded-full un-touch-target border border-transparent text-[color:var(--brand-ink)] transition-colors hover:bg-[color:var(--brand-tint)] hover:border-[color:var(--brand-line)]"
-            aria-label="Notifications"
+            className="relative w-7 h-7 flex items-center justify-center rounded-full un-touch-target border border-transparent text-[color:var(--brand-ink)] transition-colors hover:bg-[color:var(--brand-tint)] hover:border-[color:var(--brand-line)]" aria-label={catalogText("account:notifications_78801183")}
             aria-haspopup="dialog"
             onClick={(event) => {
               if ((window as any).NavLink?.isNativeClick?.(event)) return;
@@ -697,7 +701,7 @@ export function PlatformHeader() {
             }}
           >
             <BellIcon className="w-5 h-5" />
-            <span
+            <Localized element={<span
               id="notifications-badge"
               /*
                  Constant, and deliberately so. Notifications._renderBadge
@@ -709,11 +713,10 @@ export function PlatformHeader() {
                  value is never patched back out.
               */
               data-session-done="0"
-              className="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-600 text-white text-[0.65rem] font-bold flex items-center justify-center"
-              aria-label="Unread notifications"
+              className="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-600 text-white text-[0.65rem] font-bold flex items-center justify-center" aria-label={catalogText("account:unread_notifications_b1e97dfc")}
             >
-            </span>
-          </a>
+            </span>} messages={{"aria-label":"account:unread_notifications_b1e97dfc"}} />
+          </a>} messages={{"aria-label":"account:notifications_78801183"}} />
           {/*
               THE MARK, LAST, and the corner is the whole argument for the
               position. This is the one control on the bar that is always

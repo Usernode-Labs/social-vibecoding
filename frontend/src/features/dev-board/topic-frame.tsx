@@ -1,3 +1,4 @@
+import { Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * The Dev topic sub-view's frame — the thread's host, and nothing above it —
  * converted from `AppView._renderTopicSubView()`'s `innerHTML` template.
@@ -95,13 +96,12 @@ export function DevTopicSubView() {
           className="flex-1 min-w-0 min-h-0"
           dangerouslySetInnerHTML={THREAD_INITIAL}
         />
-        <div
+        <Localized element={<div
           id="gc-spec-resizer"
           className="gc-spec-resizer"
           role="separator"
-          aria-orientation="vertical"
-          aria-label="Resize spec panel"
-        />
+          aria-orientation="vertical" aria-label={catalogText("workshop:resize_spec_panel_55a5d1c7")}
+        />} messages={{"aria-label":"workshop:resize_spec_panel_55a5d1c7"}} />
         <div id="gc-spec-side-panel" className="gc-spec-side-panel" />
       </div>
     </div>

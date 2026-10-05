@@ -79,9 +79,9 @@ import { mountWalletSheet, unmountWalletSheet } from './wallet-sheet-body';
       if (!addr) return;
       try {
         await navigator.clipboard.writeText(addr);
-        PlatformUI.toast('Address copied');
+        PlatformUI.toast(globalThis.PlatformI18n.t("account:address_copied_a2617581"));
       } catch (_) {
-        PlatformUI.toast('Could not copy address');
+        PlatformUI.toast(globalThis.PlatformI18n.t("account:could_not_copy_address_90d6f4c8"));
       }
     },
 
@@ -105,25 +105,25 @@ import { mountWalletSheet, unmountWalletSheet } from './wallet-sheet-body';
     async sendFromSheet(to, amount) {
       if (WalletSheet._demo) { WalletSheet._demoToast(); return false; }
       if (!WalletSheet._submissionSupported) {
-        PlatformUI.toast('Sending is unavailable in this app version');
+        PlatformUI.toast(globalThis.PlatformI18n.t("account:sending_is_unavailable_in_this_app_version_6d9555c9"));
         return false;
       }
       try {
         await window.sendTransaction(to, amount, '', {
           waitForInclusion: false,
-          confirmTitle: 'Send from wallet',
+          get confirmTitle() { return globalThis.PlatformI18n.t("account:send_from_wallet_44635765"); },
           confirmSubtitle:
-            `Sending ${amount} ${WalletSheet._symbol()} to ` +
+            globalThis.PlatformI18n.t("account:sending_value1_value2_to_87f96b96", { value1: amount, value2: WalletSheet._symbol() }) +
             WalletSheet._shortAddr(to),
         });
-        PlatformUI.toast('Transaction submitted');
+        PlatformUI.toast(globalThis.PlatformI18n.t("account:transaction_submitted_5d059415"));
         await WalletSheet._refreshRecords();
         WalletSheet._publish();
         return true;
       } catch (err) {
         console.warn('[wallet-sheet] send failed:', err);
-        PlatformUI.toast('Send failed: ' +
-          ((err && err.message) || 'unknown error'));
+        PlatformUI.toast(globalThis.PlatformI18n.t("account:send_failed_a0c0f33a") +
+          ((err && err.message) || globalThis.PlatformI18n.t("account:unknown_error_3e4443e5")));
         return false;
       }
     },
@@ -154,7 +154,7 @@ import { mountWalletSheet, unmountWalletSheet } from './wallet-sheet-body';
 
     _demoToast() {
       if (window.PlatformUI && PlatformUI.toast) {
-        PlatformUI.toast('Preview only. Nothing was changed.');
+        PlatformUI.toast(globalThis.PlatformI18n.t("account:preview_only_nothing_was_changed_97d01bf7"));
       }
     },
 
@@ -234,13 +234,13 @@ import { mountWalletSheet, unmountWalletSheet } from './wallet-sheet-body';
           WalletSheet._stateError = null;
         } else if (readError) {
           WalletSheet._stateError = readError.message ||
-            'Could not refresh wallet state.';
+            globalThis.PlatformI18n.t("account:could_not_refresh_wallet_state_2a24d03d");
         }
       } catch (err) {
         // Keep the last valid snapshot; the error is intentionally inline and
         // non-blocking so Send/Receive and navigation remain usable.
         WalletSheet._stateError = (err && err.message) ||
-          'Could not refresh wallet state.';
+          globalThis.PlatformI18n.t("account:could_not_refresh_wallet_state_2a24d03d");
       }
     },
 
@@ -259,7 +259,7 @@ import { mountWalletSheet, unmountWalletSheet } from './wallet-sheet-body';
     _fmtBalance() {
       const s = WalletSheet._state;
       if (!s || s.tokenAmount == null) return '—';
-      return Number(s.tokenAmount).toLocaleString(undefined, {
+      return Number(s.tokenAmount).toLocaleString(globalThis.PlatformI18n.getLanguage(), {
         maximumFractionDigits: 0,
       });
     },
@@ -282,7 +282,7 @@ import { mountWalletSheet, unmountWalletSheet } from './wallet-sheet-body';
       if (!value) return null;
       const date = new Date(value);
       if (!Number.isFinite(date.getTime())) return null;
-      return date.toLocaleString();
+      return date.toLocaleString(globalThis.PlatformI18n.getLanguage());
     },
 
     // Kept the historical name from the header-chip era; now paints the
@@ -334,11 +334,11 @@ import { mountWalletSheet, unmountWalletSheet } from './wallet-sheet-body';
       const items = WalletSheet._records;
       if (items == null) return null;
       return items.map((r, i) => {
-        const when = r.submittedAt ? new Date(r.submittedAt).toLocaleString() : '';
+        const when = r.submittedAt ? new Date(r.submittedAt).toLocaleString(globalThis.PlatformI18n.getLanguage()) : '';
         let status;
         if (r.status === 'confirmed' || r.confirmedAt) {
           status = r.blockHeight != null
-            ? `confirmed · block ${Number(r.blockHeight).toLocaleString()}`
+            ? globalThis.PlatformI18n.t("account:confirmed_block_value1_810d373a", { value1: Number(r.blockHeight).toLocaleString(globalThis.PlatformI18n.getLanguage()) })
             : 'confirmed';
         } else if (r.status === 'submitted') {
           status = 'pending';
@@ -347,7 +347,7 @@ import { mountWalletSheet, unmountWalletSheet } from './wallet-sheet-body';
         }
         return {
           key: String(r.txId || `${r.destinationPubkey}-${r.submittedAt}-${i}`),
-          line1: `Sent ${r.amount} ${WalletSheet._symbol()} to ${WalletSheet._shortAddr(r.destinationPubkey)}`,
+          line1: globalThis.PlatformI18n.t("account:sent_value1_value2_to_value3_2b9d8c89", { value1: r.amount, value2: WalletSheet._symbol(), value3: WalletSheet._shortAddr(r.destinationPubkey) }),
           line2: `${when} · ${status}`,
         };
       });
@@ -362,7 +362,7 @@ import { mountWalletSheet, unmountWalletSheet } from './wallet-sheet-body';
       panel.className = 'px-4 pb-4 max-h-[75vh] overflow-y-auto';
       const title = document.createElement('div');
       title.className = 'text-lg font-bold py-3';
-      title.textContent = 'Wallet';
+      title.textContent = globalThis.PlatformI18n.t("account:wallet_d1c9a01d");
       panel.appendChild(title);
       const bodyEl = document.createElement('div');
       bodyEl.id = 'wallet-sheet-body';
@@ -425,7 +425,7 @@ import { mountWalletSheet, unmountWalletSheet } from './wallet-sheet-body';
         await WalletSheet._refreshState();
       } catch (err) {
         WalletSheet._stateError = (err && err.message) ||
-          'Could not open delegation management.';
+          globalThis.PlatformI18n.t("account:could_not_open_delegation_management_3e60c940");
       } finally {
         WalletSheet._stakingPending = false;
         WalletSheet._renderChip();

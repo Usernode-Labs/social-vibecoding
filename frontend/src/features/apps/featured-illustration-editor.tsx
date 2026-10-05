@@ -1,3 +1,8 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { RichMessage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
@@ -27,6 +32,7 @@ const KEY_PAN = 3;
 const KEY_ZOOM = 1.08;
 
 export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose: () => void }) {
+  useUiLanguage();
   const root = useRef<HTMLDivElement>(null);
   const card = useRef<HTMLDivElement>(null);
   const file = useRef<HTMLInputElement>(null);
@@ -55,7 +61,7 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
     const controller = new AbortController();
     fetch(endpoint, { signal: controller.signal }).then(async res => {
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Could not load the illustration. Reopen the editor to try again.');
+      if (!res.ok) throw new Error(data.error || tr("apps:could_not_load_the_illustration_reopen_the_edito_9c5e15b1"));
       if (controller.signal.aborted) return;
       setArt(data.illustration ? { ...data.illustration, ...clampFrame(data.illustration) } : null);
       setPending(data.pending || null); setLoading(false);
@@ -151,7 +157,7 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
         // 409 carries the card already waiting; keep it on screen with the
         // message so the link is one tap away.
         if (data.pending) setPending(data.pending);
-        throw new Error(data.error || 'Could not save. Try again.');
+        throw new Error(data.error || tr("apps:could_not_save_try_again_fe32924b"));
       }
       // Nothing changed on the app: the caches the editor used to patch here
       // are patched by the illustration_changed broadcast when the vote
@@ -172,18 +178,17 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
     contributors: Number(app.contributor_count ?? cachedApp?.contributor_count) || 0, illustration: art,
   };
   return <div ref={root} className="rounded-2xl bg-white dark:bg-zinc-900 mb-5">
-    <div ref={card} className="flex flex-col px-4 pb-5" aria-label="Featured illustration">
-      <h2 className="text-lg font-bold pt-3 pb-4">Featured illustration</h2>
-      <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-3">Preview on Discover</p>
-      <div className="flex gap-2 mb-3" role="group" aria-label="Preview theme">
+    <Localized element={<div ref={card} className="flex flex-col px-4 pb-5" aria-label={catalogText("apps:featured_illustration_2ad772c7")}>
+      <h2 className="text-lg font-bold pt-3 pb-4"><Message id="apps:featured_illustration_2ad772c7" /></h2>
+      <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-3"><Message id="apps:preview_on_discover_5d0fbea2" /></p>
+      <Localized element={<div className="flex gap-2 mb-3" role="group" aria-label={catalogText("apps:preview_theme_8bc94986")}>
         {(['light', 'dark'] as const).map(theme => <Button key={theme} type="button" variant="neutral" ink="muted"
           aria-pressed={previewTheme === theme} className={previewTheme === theme ? 'ring-2 ring-violet-500' : undefined} onClick={() => setPreviewTheme(theme)}>
-          {theme === 'light' ? 'Light' : 'Dark'}
+          <LocalizedValue render={() => (theme === 'light' ? tr("apps:light_dbcd5e7b") : tr("apps:dark_60acc53f"))} />
         </Button>)}
-      </div>
+      </div>} messages={{"aria-label":"apps:preview_theme_8bc94986"}} />
       <div className="flex justify-center mb-4">
-        <div ref={surface} data-framing-surface={art ? 'true' : 'false'} role="group"
-          aria-label="Illustration framing: drag to move, scroll or pinch to zoom, arrow keys to nudge"
+        <Localized element={<div ref={surface} data-framing-surface={art ? 'true' : 'false'} role="group" aria-label={catalogText("apps:illustration_framing_drag_to_move_scroll_or_pinc_c84117df")}
           tabIndex={interactive ? 0 : -1}
           className="rounded-2xl focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-500"
           // touchAction so a pan is a pan and not a page scroll; userSelect
@@ -226,23 +231,21 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
           onPointerUp={event => endPointer(event.pointerId)}
           onPointerCancel={event => endPointer(event.pointerId)}>
           <DiscoverCard tile={tile} preview previewTheme={previewTheme} />
-        </div>
+        </div>} messages={{"aria-label":"apps:illustration_framing_drag_to_move_scroll_or_pinc_c84117df"}} />
       </div>
-      <input ref={file} name="featured-illustration" type="file" accept="image/png,image/jpeg,image/webp" className="hidden"
-        aria-label="Upload featured illustration" onChange={e => { void chooseFile(e.target.files?.[0]); e.target.value = ''; }} />
+      <Localized element={<input ref={file} name="featured-illustration" type="file" accept="image/png,image/jpeg,image/webp" className="hidden" aria-label={catalogText("apps:upload_featured_illustration_f64bc5ff")} onChange={e => { void chooseFile(e.target.files?.[0]); e.target.value = ''; }} />} messages={{"aria-label":"apps:upload_featured_illustration_f64bc5ff"}} />
       <fieldset disabled={busy || loading || !!sent} className="flex flex-col gap-3">
-        <Button type="button" variant="neutral" ink="muted" className="min-h-[44px]" onClick={() => { uploadTheme.current = 'light'; file.current?.click(); }}>{art ? 'Replace light image' : 'Upload light image'}</Button>
-        <p className="text-xs text-zinc-500 dark:text-zinc-400">PNG, JPEG or WebP, up to 20 MB.</p>
+        <Button type="button" variant="neutral" ink="muted" className="min-h-[44px]" onClick={() => { uploadTheme.current = 'light'; file.current?.click(); }}><LocalizedValue render={() => (art ? tr("apps:replace_light_image_949e4fd9") : tr("apps:upload_light_image_e98556da"))} /></Button>
+        <p className="text-xs text-zinc-500 dark:text-zinc-400"><Message id="apps:png_jpeg_or_webp_up_to_20_mb_88d30953" /></p>
         {art ? <>
           <Button type="button" variant="neutral" ink="muted" className="min-h-[44px]"
             onClick={() => { uploadTheme.current = 'dark'; file.current?.click(); }}>
-            {art.darkUrl ? 'Replace dark image' : 'Upload dark image'}
+            <LocalizedValue render={() => (art.darkUrl ? tr("apps:replace_dark_image_14e9fa2a") : tr("apps:upload_dark_image_7ba6c144"))} />
           </Button>
           {art.darkUrl ? <Button type="button" variant="neutral" ink="muted"
-            onClick={() => { pendingDark.current = null; setArt({ ...art, darkUrl: null }); }}>Use light image in both themes</Button> : null}
-          <p className="text-xs text-zinc-500 dark:text-zinc-400">Use images with the same dimensions. Framing and colour are shared across both themes.</p>
-          <p className="text-xs text-zinc-500 dark:text-zinc-400">
-            Drag the card to move the image. Scroll or pinch to zoom. Zoom <span data-zoom-readout>{Math.round(art.zoom * 100)}%</span>.
+            onClick={() => { pendingDark.current = null; setArt({ ...art, darkUrl: null }); }}><Message id="apps:use_light_image_in_both_themes_4ae3065e" /></Button> : null}
+          <p className="text-xs text-zinc-500 dark:text-zinc-400"><Message id="apps:use_images_with_the_same_dimensions_framing_and__167f0740" /></p>
+          <p className="text-xs text-zinc-500 dark:text-zinc-400"><Message after={" "} id="apps:drag_the_card_to_move_the_image_scroll_or_pinch__228e373c" /><span data-zoom-readout>{Math.round(art.zoom * 100)}%</span>.
           </p>
           {/*
               The twelve tone-50 colours, and nothing else: no hex field and
@@ -257,8 +260,8 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
               until a colour is picked — which is the honest reading of "the
               colour this card wears is not one of these".
           */}
-          <div data-tint-picker role="radiogroup" aria-label="Card colour" className="flex flex-wrap items-center gap-2">
-            <span className="text-xs text-zinc-500 dark:text-zinc-400 mr-1">Card colour</span>
+          <Localized element={<div data-tint-picker role="radiogroup" aria-label={catalogText("apps:card_colour_32fcd150")} className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-zinc-500 dark:text-zinc-400 mr-1"><Message id="apps:card_colour_32fcd150" /></span>
             {TONES.map(tone => {
               const chosen = art.tint === tone;
               return <button key={tone} type="button" role="radio" aria-checked={chosen}
@@ -269,30 +272,24 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
                   chosen ? 'ring-2 ring-violet-500 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900' : ''}`}
                 style={{ background: 'var(--tone-50)', borderColor: 'var(--tint-line)' }} />;
             })}
-          </div>
+          </div>} messages={{"aria-label":"apps:card_colour_32fcd150"}} />
           <div className="flex gap-3">
-            <Button type="button" variant="neutral" ink="muted" className="min-h-[44px]" onClick={() => setArt({ ...art, ...DEFAULT_FRAME })}>Reset position</Button>
-            <Button type="button" variant="neutral" ink="muted" className="min-h-[44px]" onClick={() => { setArt(null); pendingBlob.current = null; pendingDark.current = null; }}>Use app icon</Button>
+            <Button type="button" variant="neutral" ink="muted" className="min-h-[44px]" onClick={() => setArt({ ...art, ...DEFAULT_FRAME })}><Message id="apps:reset_position_8cebff87" /></Button>
+            <Button type="button" variant="neutral" ink="muted" className="min-h-[44px]" onClick={() => { setArt(null); pendingBlob.current = null; pendingDark.current = null; }}><Message id="apps:use_app_icon_694d7da2" /></Button>
           </div>
         </> : null}
       </fieldset>
-      {loading && !error ? <p role="status" className="text-sm mt-3">Loading preview…</p> : null}
+      {loading && !error ? <p role="status" className="text-sm mt-3"><Message id="apps:loading_preview_c4cf2b2c" /></p> : null}
       {error ? <p role="alert" className="text-sm text-red-700 dark:text-red-400 mt-3">{error}</p> : null}
-      {sent ? <p role="status" data-illustration-sent className="text-sm mt-3 text-zinc-700 dark:text-zinc-300">
-        {'Sent to the group for approval. The illustration changes when the vote passes. '}
-        <a href={sent.href} className="text-violet-600 dark:text-violet-400 underline" onClick={onClose}>Open the proposal</a>
-      </p> : pending ? <p role="status" data-illustration-pending className="text-sm mt-3 text-zinc-700 dark:text-zinc-300">
-        {'A change to this illustration is already waiting for the group\'s vote. Another can be proposed once it settles. '}
-        <a href={pending.href} className="text-violet-600 dark:text-violet-400 underline" onClick={onClose}>Open the proposal</a>
-      </p> : <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-3">Proposing opens a governance card on the board. The change applies when the group votes it in.</p>}
+      {sent ? <p role="status" data-illustration-sent className="text-sm mt-3 text-zinc-700 dark:text-zinc-300"><RichMessage id="apps:sentence_22046666d2d9" components={[<a href={sent.href} className="text-violet-600 dark:text-violet-400 underline" onClick={onClose} />]} /></p> : pending ? <p role="status" data-illustration-pending className="text-sm mt-3 text-zinc-700 dark:text-zinc-300"><RichMessage id="apps:sentence_08aea6e52077" components={[<a href={pending.href} className="text-violet-600 dark:text-violet-400 underline" onClick={onClose} />]} /></p> : <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-3"><Message id="apps:proposing_opens_a_governance_card_on_the_board_t_c32ac785" /></p>}
       <div className="flex gap-3 mt-5">
         {sent
-          ? <Button type="button" className="min-h-[44px] flex-1" onClick={onClose}>Done</Button>
+          ? <Button type="button" className="min-h-[44px] flex-1" onClick={onClose}><Message id="apps:done_11a6767d" /></Button>
           : <>
-            <Button type="button" className="min-h-[44px] flex-1" disabled={loading || busy || !!pending} onClick={() => { void save(); }}>{busy ? 'Please wait…' : 'Propose change'}</Button>
-            <Button type="button" variant="neutral" ink="muted" className="min-h-[44px]" disabled={busy} onClick={onClose}>Cancel</Button>
+            <Button type="button" className="min-h-[44px] flex-1" disabled={loading || busy || !!pending} onClick={() => { void save(); }}><LocalizedValue render={() => (busy ? tr("apps:please_wait_4660a983") : tr("apps:propose_change_0a123612"))} /></Button>
+            <Button type="button" variant="neutral" ink="muted" className="min-h-[44px]" disabled={busy} onClick={onClose}><Message id="apps:cancel_19766ed6" /></Button>
           </>}
       </div>
-    </div>
+    </div>} messages={{"aria-label":"apps:featured_illustration_2ad772c7"}} />
   </div>;
 }

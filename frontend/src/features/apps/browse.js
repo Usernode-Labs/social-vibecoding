@@ -299,7 +299,7 @@ const Browse = {
       const app = Browse.appBySlug(Browse._slug);
       App.setHeaderTitle(app?.name || Browse._slug);
     } else {
-      App.setHeaderTitle('All apps');
+      App.setHeaderTitle(globalThis.PlatformI18n.t("apps:all_apps_01bed311"));
     }
   },
 
@@ -339,7 +339,7 @@ const Browse = {
       const params = new URLSearchParams(location.search);
       const demoQS = params.get('demo') === '1' ? `?demo=1${params.get('curation') === '1' ? '&curation=1' : ''}` : '';
       const res = await fetch(`/api/apps${demoQS}`);
-      if (!res.ok) throw new Error('Failed to load apps');
+      if (!res.ok) throw new Error(globalThis.PlatformI18n.t("apps:failed_to_load_apps_e46b87db"));
       const { apps } = await res.json();
       Browse._apps = apps;
       Home._apps = apps;
@@ -362,11 +362,11 @@ const Browse = {
   // The order of this array is the order of the <select>; the first entry is
   // the default. Labels are user-facing.
   SORTS: [
-    { key: 'recommended', label: 'Recommended' },
-    { key: 'users', label: 'Most users' },
-    { key: 'active', label: 'Most active' },
-    { key: 'merged', label: 'Most changes live' },
-    { key: 'new', label: 'Newest' },
+    { key: 'recommended', get label() { return globalThis.PlatformI18n.t("apps:recommended_d70604e8"); } },
+    { key: 'users', get label() { return globalThis.PlatformI18n.t("apps:most_users_125c07d3"); } },
+    { key: 'active', get label() { return globalThis.PlatformI18n.t("apps:most_active_202997c9"); } },
+    { key: 'merged', get label() { return globalThis.PlatformI18n.t("apps:most_changes_live_8c370510"); } },
+    { key: 'new', get label() { return globalThis.PlatformI18n.t("apps:newest_d15efa17"); } },
   ],
 
   // localStorage key for the remembered choice. Namespaced like the rest of
@@ -443,13 +443,13 @@ const Browse = {
   // browse-screen.tsx keeps a COPY of them for the same reason it keeps one
   // of SORTS (tests/browse-screen.test.js pins the two together).
   FILTERS: [
-    { key: 'all', label: 'All' },
-    { key: 'featured', label: 'Featured' },
+    { key: 'all', get label() { return globalThis.PlatformI18n.t("apps:all_a52ace42"); } },
+    { key: 'featured', get label() { return globalThis.PlatformI18n.t("apps:featured_c533cafa"); } },
     // The key stays `yours` — ?filter=yours links and the declared checks
     // select on it — while the label says what the chip now holds: the
     // communities you are in, not the shortcuts on your Home screen.
-    { key: 'yours', label: 'Joined' },
-    { key: 'new', label: 'New' },
+    { key: 'yours', get label() { return globalThis.PlatformI18n.t("apps:joined_69318b0c"); } },
+    { key: 'new', get label() { return globalThis.PlatformI18n.t("apps:new_18fdd549"); } },
   ],
 
   // "New" is the apps CREATED in the last NEW_WINDOW_DAYS days (by
@@ -546,14 +546,14 @@ const Browse = {
     const filter = Browse.resolveFilter(key == null ? Browse._filter : key);
     const q = String(query || '').trim();
     if (q) {
-      if (filter === 'featured') return `No featured apps match “${q}”.`;
-      if (filter === 'yours') return `Nothing you’ve joined matches “${q}”.`;
-      if (filter === 'new') return `No new apps match “${q}”.`;
-      return `No apps match “${q}”.`;
+      if (filter === 'featured') return globalThis.PlatformI18n.t("apps:no_featured_apps_match_value1_4804bb1f", { value1: q });
+      if (filter === 'yours') return globalThis.PlatformI18n.t("apps:nothing_you_ve_joined_matches_value1_c848cf2f", { value1: q });
+      if (filter === 'new') return globalThis.PlatformI18n.t("apps:no_new_apps_match_value1_c6174cc6", { value1: q });
+      return globalThis.PlatformI18n.t("apps:no_apps_match_value1_fa32af34", { value1: q });
     }
-    if (filter === 'featured') return 'No featured apps yet.';
-    if (filter === 'yours') return 'You haven’t joined anything yet. Join apps from All.';
-    return 'No apps to show yet.';
+    if (filter === 'featured') return globalThis.PlatformI18n.t("apps:no_featured_apps_yet_613b1f22");
+    if (filter === 'yours') return globalThis.PlatformI18n.t("apps:you_haven_t_joined_anything_yet_join_apps_from_a_5895dba0");
+    return globalThis.PlatformI18n.t("apps:no_apps_to_show_yet_aa1dc7d4");
   },
 
   // Unreviewed is not the same as broken. Apps with icons that have not yet
@@ -685,25 +685,25 @@ const Browse = {
     const sort = Browse.resolveSort(key == null ? Browse._sort : key);
     const bits = [];
     const users = parseInt(app.active_users || 0, 10) || 0;
-    bits.push(`${users} user${users === 1 ? '' : 's'}`);
+    bits.push(globalThis.PlatformI18n.t("apps:count_users_b89ce7bf", { count: users }));
     if (sort === 'active') {
       const recent = parseInt(app.merged_prs_recent || 0, 10) || 0;
-      if (recent > 0) bits.push(`${recent} live in 30d`);
+      if (recent > 0) bits.push(globalThis.PlatformI18n.t("apps:value1_live_in_30d_ef3807c9", { value1: recent }));
     } else if (sort === 'merged') {
       const merged = parseInt(app.merged_prs || 0, 10) || 0;
-      if (merged > 0) bits.push(`${merged} change${merged === 1 ? '' : 's'} live`);
+      if (merged > 0) bits.push(globalThis.PlatformI18n.t("apps:count_changes_live_c5341db9", { count: merged }));
     }
     if (sort === 'new') {
       const created = formatRelativeTime(app.created_at);
-      if (created) bits.push(`Created ${created}`);
+      if (created) bits.push(globalThis.PlatformI18n.t("apps:created_value1_54213967", { value1: created }));
     } else {
       const rel = formatRelativeTime(app.last_deploy_at || app.created_at);
-      if (rel) bits.push(`Updated ${rel}`);
+      if (rel) bits.push(globalThis.PlatformI18n.t("apps:updated_value1_0041faff", { value1: rel }));
     }
     const status = app.status === 'running' ? ''
-      : app.status === 'creating' ? 'Spinning up…'
-      : app.status === 'awaiting_secrets' ? 'Awaiting secrets'
-      : app.status === 'error' ? 'Error'
+      : app.status === 'creating' ? globalThis.PlatformI18n.t("apps:spinning_up_7a0d6a5c")
+      : app.status === 'awaiting_secrets' ? globalThis.PlatformI18n.t("apps:awaiting_secrets_a7841a8b")
+      : app.status === 'error' ? globalThis.PlatformI18n.t("apps:error_54a0e8c1")
       : app.status || '';
     if (status) bits.push(status);
     return bits.join(' · ');
@@ -736,7 +736,7 @@ const Browse = {
       demo: isDemo,
       openable: !isDemo,
       added: isAdded,
-      addTitle: isAdded ? `Joined. Tap to leave ${app.name || app.slug}` : `Join ${app.name || app.slug}`,
+      addTitle: isAdded ? globalThis.PlatformI18n.t("apps:joined_tap_to_leave_value1_bebe1ddb", { value1: app.name || app.slug }) : globalThis.PlatformI18n.t("apps:join_value1_8a9b2690", { value1: app.name || app.slug }),
     };
   },
 
@@ -931,7 +931,7 @@ const Browse = {
     } catch (err) {
       ok = false;
     }
-    PlatformUI.toast(ok ? 'Link copied' : 'Couldn’t copy the link');
+    PlatformUI.toast(ok ? globalThis.PlatformI18n.t("apps:link_copied_d12860c2") : globalThis.PlatformI18n.t("apps:couldn_t_copy_the_link_da5f2273"));
   },
 
   // ── Contributors (#919) ───────────────────────────────────────────
@@ -978,11 +978,11 @@ const Browse = {
     };
 
     if (state === 'loading') {
-      view.note = 'Loading contributors…';
+      view.note = globalThis.PlatformI18n.t("apps:loading_contributors_bfaea4c0");
     } else if (state === 'error') {
-      view.note = 'Couldn’t load contributors.';
+      view.note = globalThis.PlatformI18n.t("apps:couldn_t_load_contributors_68653b35");
     } else if (!items.length) {
-      view.note = 'No contributors yet.';
+      view.note = globalThis.PlatformI18n.t("apps:no_contributors_yet_39eb422f");
     } else {
       const shown = expanded ? items : items.slice(0, Browse.CONTRIB_FOLD);
       view.rows = shown.map((c, i) => Browse.contributorRowView(c, i + 1));
@@ -991,8 +991,8 @@ const Browse = {
       // quotes `total` so the number matches the heading.
       if (items.length > Browse.CONTRIB_FOLD) {
         view.toggle = expanded
-          ? 'Show fewer'
-          : `Show all ${total} contributor${total === 1 ? '' : 's'}`;
+          ? globalThis.PlatformI18n.t("apps:show_fewer_255beb65")
+          : globalThis.PlatformI18n.t("apps:show_all_count_contributors_1f9f766a", { count: total });
       }
     }
 
@@ -1012,9 +1012,9 @@ const Browse = {
     // Creator wins over member — the creator is always backfilled as one,
     // so showing both would be noise on every single first row.
     const bits = [];
-    if (c && c.is_creator) bits.push('Creator');
-    else if (c && c.is_member) bits.push('Member');
-    if (votes > 0) bits.push(`${votes} vote${votes === 1 ? '' : 's'}`);
+    if (c && c.is_creator) bits.push(globalThis.PlatformI18n.t("apps:creator_88447b83"));
+    else if (c && c.is_member) bits.push(globalThis.PlatformI18n.t("apps:member_7c968fb7"));
+    if (votes > 0) bits.push(globalThis.PlatformI18n.t("apps:count_votes_8ce57030", { count: votes }));
     return {
       who,
       rank,
@@ -1158,12 +1158,12 @@ const Browse = {
         updatedRel,
         canOpen,
         openLabel: canOpen
-          ? 'Open'
-          : (app.status === 'creating' ? 'Spinning up…'
-            : app.status === 'error' ? 'Not running'
-            : (app.status || 'Unavailable')),
+          ? globalThis.PlatformI18n.t("apps:open_ed077f3d")
+          : (app.status === 'creating' ? globalThis.PlatformI18n.t("apps:spinning_up_7a0d6a5c")
+            : app.status === 'error' ? globalThis.PlatformI18n.t("apps:not_running_9e3856ee")
+            : (app.status || globalThis.PlatformI18n.t("apps:unavailable_ca184496"))),
         isAdded,
-        favLabel: isAdded ? 'Remove from Shortcuts' : 'Add to Shortcuts',
+        favLabel: isAdded ? globalThis.PlatformI18n.t("apps:remove_from_shortcuts_7d2c796a") : globalThis.PlatformI18n.t("apps:add_to_shortcuts_f27a62d8"),
         // The Share row (shareDetailApp). A flag, not the URL: the click
         // resolves the link from the app record it is handed, the same one
         // Open and Add act on, rather than from a string frozen at paint.
@@ -1292,12 +1292,12 @@ function formatRelativeTime(input) {
   const t = new Date(input);
   if (Number.isNaN(t.getTime())) return null;
   const seconds = Math.floor((Date.now() - t.getTime()) / 1000);
-  if (seconds < 60) return 'just now';
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-  if (seconds < 86400 * 30) return `${Math.floor(seconds / 86400)}d ago`;
-  if (seconds < 86400 * 365) return `${Math.floor(seconds / (86400 * 30))}mo ago`;
-  return `${Math.floor(seconds / (86400 * 365))}y ago`;
+  if (seconds < 60) return globalThis.PlatformI18n.t("apps:just_now_7ddb44d8");
+  if (seconds < 3600) return globalThis.PlatformI18n.t("apps:value1_m_ago_28f5747c", { value1: Math.floor(seconds / 60) });
+  if (seconds < 86400) return globalThis.PlatformI18n.t("apps:value1_h_ago_51452941", { value1: Math.floor(seconds / 3600) });
+  if (seconds < 86400 * 30) return globalThis.PlatformI18n.t("apps:value1_d_ago_0dc906ea", { value1: Math.floor(seconds / 86400) });
+  if (seconds < 86400 * 365) return globalThis.PlatformI18n.t("apps:value1_mo_ago_9a0a3ce4", { value1: Math.floor(seconds / (86400 * 30)) });
+  return globalThis.PlatformI18n.t("apps:value1_y_ago_d5d09ed0", { value1: Math.floor(seconds / (86400 * 365)) });
 }
 
 // Still published as a global: App.navigateToBrowse, app.js's hash router and
@@ -1305,3 +1305,8 @@ function formatRelativeTime(input) {
 // scripts. Guarded because the SSG prerender pass evaluates this module in
 // Node (the island imports it).
 if (typeof window !== 'undefined') window.Browse = Browse;
+
+// Recompute translated view models from cached data without resetting forms.
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  document.addEventListener('homeroom:language-changed', () => { if (window.App?._inBrowse) Browse.render(); });
+}

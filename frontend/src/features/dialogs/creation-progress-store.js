@@ -44,10 +44,10 @@ import { createStore } from '../../lib/plain-store.js';
  * sync.
  */
 export const CREATION_STEPS = [
-  { key: 'database', label: 'Setting up your database' },
-  { key: 'repository', label: 'Preparing the repository' },
-  { key: 'build', label: 'Building your app' },
-  { key: 'deploy', label: 'Going live' },
+  { key: 'database', get label() { return globalThis.PlatformI18n.t("core:setting_up_your_database_89669dd2"); } },
+  { key: 'repository', get label() { return globalThis.PlatformI18n.t("core:preparing_the_repository_da510db3"); } },
+  { key: 'build', get label() { return globalThis.PlatformI18n.t("core:building_your_app_f0242cf8"); } },
+  { key: 'deploy', get label() { return globalThis.PlatformI18n.t("core:going_live_408c1ebf"); } },
 ];
 
 export const INITIAL_CREATION_PROGRESS = /** @type {CreationProgressState} */ ({

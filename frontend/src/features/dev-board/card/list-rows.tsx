@@ -1,3 +1,8 @@
+import { useMessages as useUiLanguage } from "../../../lib/i18n/react";
+import { RichMessage } from "../../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../../lib/i18n/react";
+import { t as tr } from "../../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../../lib/i18n/react";
 /**
  * The rows a card column is made of, shared by the feed's pinned-sessions
  * block and the kanban In-progress column: cards, the group dividers, the
@@ -48,6 +53,7 @@ export interface RowFold {
 }
 
 function ArchivedBlock({ rows }: { rows: ArchivedRow[] }): ReactNode {
+  useUiLanguage();
   const [open, setOpen] = useState(false);
   return (
     <div className="pt-1" data-archived-block="">
@@ -64,19 +70,14 @@ function ArchivedBlock({ rows }: { rows: ArchivedRow[] }): ReactNode {
           className="w-3 h-3 transition-transform"
           style={open ? { transform: 'rotate(90deg)' } : undefined}
         />
-        {`Show archived (${rows.length})`}
+        <LocalizedValue render={() => (tr("workshop:show_archived_value1_b2ae791d", { value1: rows.length }))} />
       </button>
       <div data-archived-list="" className={open ? 'space-y-2 pt-2' : 'hidden space-y-2 pt-2'}>
         {rows.map((r) => (
           <div key={r.id} className={r.cls}>
             <CardIcon spec={r.icon} />
-            <span className="flex-1 min-w-0">
-              <span className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 break-words">{r.label}</span>
-              <span className="block text-xs text-zinc-500 dark:text-zinc-400 truncate">Archived</span>
-            </span>
-            <button type="button" className="gc-vote-btn" data-unarchive-chip={r.id} title="Restore this session (reopens its PR)">
-              Unarchive
-            </button>
+            <span className="flex-1 min-w-0"><RichMessage id="workshop:sentence_96b5ddf250a7" values={{ value1: r.label }} components={[<span className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 break-words" />, <span className="block text-xs text-zinc-500 dark:text-zinc-400 truncate" />]} /></span>
+            <Localized element={<button type="button" className="gc-vote-btn" data-unarchive-chip={r.id} title={catalogText("workshop:restore_this_session_reopens_its_pr_837045bf")}><Message id="workshop:unarchive_f565318d" /></button>} messages={{"title":"workshop:restore_this_session_reopens_its_pr_837045bf"}} />
           </div>
         ))}
       </div>

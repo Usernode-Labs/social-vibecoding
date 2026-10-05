@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message } from "../../lib/i18n/react";
 /**
  * Per-app notification settings (#app-notifications-modal), for #1374.
  *
@@ -49,6 +53,7 @@ type Category = {
 };
 
 export function AppNotificationsDialog(): ReactNode {
+  useUiLanguage();
   const [appName, setAppName] = useState('');
   const [slug, setSlug] = useState('');
   const [categories, setCategories] = useState<Category[]>([]);
@@ -62,11 +67,11 @@ export function AppNotificationsDialog(): ReactNode {
     try {
       const res = await fetch(`/api/apps/${encodeURIComponent(target)}/notification-preferences`);
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Could not load notification settings.');
+      if (!res.ok) throw new Error(data.error || tr("core:could_not_load_notification_settings_9b7eaff0"));
       setAppName(data.app?.name || target);
       setCategories(data.categories || []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not load notification settings.');
+      setError(err instanceof Error ? err.message : tr("core:could_not_load_notification_settings_9b7eaff0"));
     } finally {
       setLoading(false);
     }
@@ -101,10 +106,10 @@ export function AppNotificationsDialog(): ReactNode {
         body: JSON.stringify({ preferences: { [key]: value } }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Could not save that.');
+      if (!res.ok) throw new Error(data.error || tr("core:could_not_save_that_593417b9"));
       setCategories(data.categories || []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not save that.');
+      setError(err instanceof Error ? err.message : tr("core:could_not_save_that_593417b9"));
     } finally {
       setBusy(false);
     }
@@ -118,17 +123,15 @@ export function AppNotificationsDialog(): ReactNode {
       layout="scroll"
     >
       <DialogCard size="md" relative>
-        <h2 className="text-lg font-bold mb-1 text-zinc-900 dark:text-zinc-100">
-          Notifications
-        </h2>
+        <h2 className="text-lg font-bold mb-1 text-zinc-900 dark:text-zinc-100"><Message id="core:notifications_78801183" /></h2>
         <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-4">
-          {appName
-            ? `What ${appName} can tell you about. Each of these covers the bell here and a notification on your phone, together.`
-            : 'What this app can tell you about.'}
+          <LocalizedValue render={() => (appName
+            ? tr("core:what_value1_can_tell_you_about_each_of_these_cov_2e8b14dc", { value1: appName })
+            : tr("core:what_this_app_can_tell_you_about_680a9344"))} />
         </p>
 
         {loading ? (
-          <p className="text-xs text-zinc-500 dark:text-zinc-400">Loading…</p>
+          <p className="text-xs text-zinc-500 dark:text-zinc-400"><Message id="core:loading_ba3bbbe1" /></p>
         ) : null}
 
         <div className="space-y-3">
@@ -146,12 +149,10 @@ export function AppNotificationsDialog(): ReactNode {
                     type="button"
                     className="mt-1 text-xs text-violet-700 underline dark:text-violet-300"
                     onClick={() => { void write(category.key, null); }}
-                  >
-                    Follow my default
-                  </button>
+                  ><Message id="core:follow_my_default_989794b6" /></button>
                 ) : (
                   <span className="block text-xs text-zinc-400 mt-1 dark:text-zinc-500">
-                    {category.source === 'account' ? 'Your default for all apps' : 'Default'}
+                    <LocalizedValue render={() => (category.source === 'account' ? tr("core:your_default_for_all_apps_e8c9643f") : tr("core:default_21b111cb"))} />
                   </span>
                 )}
               </span>
@@ -173,9 +174,7 @@ export function AppNotificationsDialog(): ReactNode {
           </div>
         ) : null}
 
-        <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-4 leading-relaxed">
-          Turning something off stops the notification, not the thing itself. New issues and proposals still appear on this app&apos;s board.
-        </p>
+        <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-4 leading-relaxed"><Message id="core:turning_something_off_stops_the_notification_not_3ee92c35" /></p>
 
         <div className="flex justify-end mt-5">
           <Button
@@ -184,9 +183,7 @@ export function AppNotificationsDialog(): ReactNode {
             variant="neutral"
             ink="neutral"
             onClick={() => dialog.close()}
-          >
-            Done
-          </Button>
+          ><Message id="core:done_11a6767d" /></Button>
         </div>
       </DialogCard>
     </DialogRoot>

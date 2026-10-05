@@ -1,3 +1,4 @@
+import { t as tr } from "../../lib/i18n/runtime";
 /**
  * The client for mutual friends (#2386) — src/routes/friends.js.
  *
@@ -90,7 +91,7 @@ async function request(path: string, method = 'GET'): Promise<unknown> {
     const body = (data && typeof data === 'object' ? data : {}) as Record<string, unknown>;
     throw new FriendsApiError(
       response.status,
-      typeof body.error === 'string' ? body.error : `Request failed (${response.status})`,
+      typeof body.error === 'string' ? body.error : tr("community:request_failed_value1_94dd9f90", { value1: response.status }),
       typeof body.code === 'string' ? body.code : null,
     );
   }
@@ -131,8 +132,8 @@ export async function act(userId: number, action: FriendAction): Promise<FriendS
 export function errorMessage(err: unknown, username: string): string {
   const status = (err as { status?: number } | null)?.status;
   if (err instanceof FriendsApiError && status === 429) return err.message;
-  if (status === 404) return `You can’t add @${username} as a friend right now.`;
-  return 'Couldn’t update this friendship. Check your connection and try again.';
+  if (status === 404) return tr("community:you_can_t_add_value1_as_a_friend_right_now_eb405da3", { value1: username });
+  return tr("core:couldn_t_update_this_friendship_check_your_conne_fd19809a");
 }
 
 /**

@@ -1,3 +1,5 @@
+import { t as tr } from "../../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../../lib/i18n/react";
 /**
  * A project's four tabs: Hub · Discussion · Needs you · Workshop.
  *
@@ -18,10 +20,10 @@ export type ProjectTabKey = 'status' | 'discussion' | 'workshop' | 'needs' | 'al
 
 /** The four tabs, in the band's order. All items is the Workshop's page. */
 export const PROJECT_TABS: ReadonlyArray<{ key: ProjectTabKey; label: string }> = [
-  { key: 'status', label: 'Hub' },
-  { key: 'discussion', label: 'Discussion' },
-  { key: 'needs', label: 'Needs you' },
-  { key: 'workshop', label: 'Workshop' },
+  { key: 'status', get label() { return tr("workshop:hub_d87c9ca3"); } },
+  { key: 'discussion', get label() { return tr("workshop:discussion_5eb6cf64"); } },
+  { key: 'needs', get label() { return tr("workshop:needs_you_74b6abdf"); } },
+  { key: 'workshop', get label() { return tr("workshop:workshop_c0086f23"); } },
 ];
 
 /** The tab lit for a page: All items is the Workshop's. */
@@ -65,7 +67,7 @@ export function ProjectBand({ tab, owed, filtered, onTab, barRef }: {
       className="dev-ws-tabs dev-ws-band"
       data-ws-band=""
     >
-      <div className="dev-ws-tabtrack" role="tablist" aria-label="Project" onKeyDown={onKeyDown}>
+      <Localized element={<div className="dev-ws-tabtrack" role="tablist" aria-label={catalogText("workshop:project_98595978")} onKeyDown={onKeyDown}>
         {PROJECT_TABS.map((t) => {
           const on = lit === t.key;
           return (
@@ -88,11 +90,11 @@ export function ProjectBand({ tab, owed, filtered, onTab, barRef }: {
                   <span className="dev-ws-filter-dot" data-ws-filtered="" aria-hidden="true" />
                 ) : null}
               </span>
-              {t.key === 'workshop' && filtered ? <span className="sr-only"> (filtered)</span> : null}
+              {t.key === 'workshop' && filtered ? <span className="sr-only"><Message before={" "} id="workshop:filtered_ff5bcbf4" /></span> : null}
             </button>
           );
         })}
-      </div>
+      </div>} messages={{"aria-label":"workshop:project_98595978"}} />
     </div>
   );
 }

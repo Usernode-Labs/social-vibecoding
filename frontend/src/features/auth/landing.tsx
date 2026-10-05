@@ -1,3 +1,8 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { RichMessage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * `#auth-landing-screen` — the anonymous shell's entry point (#1080, step 2
  * chunk C, screen 1 of 6).
@@ -261,12 +266,11 @@ const ViewerRegion = memo(function ViewerRegion() {
           `pointer-lock` is not written (QA 2026-09-24 Q35): this frame has
           no sandbox, so pointer lock was never restricted in the first place.
       */}
-      <iframe
+      <Localized element={<iframe
         id="app-viewer-frame"
-        className="flex-1 w-full border-0"
-        title="App"
+        className="flex-1 w-full border-0" title={catalogText("auth:app_0d04bfeb")}
         allow="clipboard-write"
-      ></iframe>
+      ></iframe>} messages={{"title":"auth:app_0d04bfeb"}} />
     </div>
   );
 });
@@ -358,12 +362,11 @@ export function LandingTile({
           </div>
         )}
         {gated ? (
-          <span
-            className="absolute -top-1.5 -right-1.5 w-6 h-6 flex items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-600 shadow-sm text-zinc-500 dark:text-zinc-300"
-            title="Account required"
+          <Localized element={<span
+            className="absolute -top-1.5 -right-1.5 w-6 h-6 flex items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-600 shadow-sm text-zinc-500 dark:text-zinc-300" title={catalogText("auth:account_required_3afe74ce")}
           >
             <LockIcon className="w-3.5 h-3.5" aria-hidden="true" />
-          </span>
+          </span>} messages={{"title":"auth:account_required_3afe74ce"}} />
         ) : null}
       </div>
       {/*
@@ -380,7 +383,7 @@ export function LandingTile({
           {label}
         </div>
         {gated ? (
-          <p className="app-card-status text-zinc-500 dark:text-zinc-500">Account required</p>
+          <p className="app-card-status text-zinc-500 dark:text-zinc-500"><Message id="auth:account_required_3afe74ce" /></p>
         ) : null}
       </div>
     </div>
@@ -528,27 +531,28 @@ const CHIP_LABEL = 'text-[15px] text-[rgba(0,0,0,0.8)] dark:text-zinc-100';
  */
 const CHIPS: readonly { line: string; dot: string }[] = [
   {
-    line: 'Describe an app in chat',
+    get line() { return tr("auth:describe_an_app_in_chat_e85260b0"); },
     dot: 'radial-gradient(circle closest-side, #6717fb 0%, #5a32fb 12.5%, #4e4dfc 25%,'
       + ' #3484fc 50%, #1bbafd 75%, #0fd5fd 87.5%, #02f0fd 100%)',
   },
   {
-    line: 'An AI builds it',
+    get line() { return tr("auth:an_ai_builds_it_0700648a"); },
     dot: 'radial-gradient(circle closest-side, #41b24a 0%, #66c459 25%, #8bd669 50%,'
       + ' #b0e878 75%, #d6fa87 100%)',
   },
   {
-    line: 'The community votes it in',
+    get line() { return tr("auth:the_community_votes_it_in_ac862463"); },
     dot: 'radial-gradient(circle closest-side, #fb179d 0%, #fc3776 25%, #fc5750 50%,'
       + ' #fd7629 75%, #fd8615 87.5%, #fd9602 100%)',
   },
   {
-    line: 'Contributors own a share',
+    get line() { return tr("auth:contributors_own_a_share_be1f7a57"); },
     dot: 'radial-gradient(circle closest-side, #ffae2b 0%, #ffce4d 50%, #ffee6f 100%)',
   },
 ];
 
 export function LandingScreen() {
+  useUiLanguage();
   const rootRef = useRef<HTMLElement>(null);
   useVisibilityHiddenClass(rootRef, AUTH_SCREEN_IDS.landing, false);
   // The screen's interior mounts on its first reveal, not in the prerender —
@@ -726,7 +730,7 @@ export function LandingScreen() {
         if (launchId !== st.launchId) return;
         if (!token) {
           legacy().PlatformUI?.toast?.(
-            'Could not sign in to this app. Check your connection and try again.',
+            tr("auth:could_not_sign_in_to_this_app_check_your_connect_fa29242e"),
             { error: true },
           );
           return;
@@ -736,7 +740,7 @@ export function LandingScreen() {
           url.searchParams.set('token', token);
           launchUrl = url.toString();
         } catch {
-          legacy().PlatformUI?.toast?.('This app could not be opened.', { error: true });
+          legacy().PlatformUI?.toast?.(tr("auth:this_app_could_not_be_opened_2fa6a837"), { error: true });
           return;
         }
       }
@@ -1160,15 +1164,14 @@ export function LandingScreen() {
         className="un-safe-top-extend relative flex items-center gap-3 px-4 pt-2 pb-4 shrink-0"
       >
         <div className="w-7 h-7 shrink-0 flex items-center justify-center">
-          <button
+          <Localized element={<button
             id="landing-back-btn"
             type="button"
-            className={hiddenLast(!openApp, LANDING_BACK_CLASS)}
-            aria-label="Back to apps"
+            className={hiddenLast(!openApp, LANDING_BACK_CLASS)} aria-label={catalogText("auth:back_to_apps_27ab5ab0")}
             onClick={() => live.current.closeLandingApp()}
           >
             <ChevronLeftIcon className="w-5 h-5" />
-          </button>
+          </button>} messages={{"aria-label":"auth:back_to_apps_27ab5ab0"}} />
         </div>
         {/*
             The bar's one label, saying two different things.
@@ -1278,19 +1281,13 @@ export function LandingScreen() {
               say so once, here, rather than letting two taps fail silently.
           */}
           <div className={OFFLINE_NOTICE}>
-            <h2 className="text-sm font-semibold text-amber-800 dark:text-amber-400">
-              You're offline
-            </h2>
-            <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-              Signing in and joining the waitlist both need a connection.
-            </p>
+            <h2 className="text-sm font-semibold text-amber-800 dark:text-amber-400"><Message id="auth:you_re_offline_050be795" /></h2>
+            <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400"><Message id="auth:signing_in_and_joining_the_waitlist_both_need_a__eedb16ec" /></p>
             <button
               type="button"
               data-offline-retry=""
               className="mt-3 rounded-lg border border-amber-500/50 px-3 py-1.5 text-sm font-medium text-amber-800 dark:text-amber-300 hover:bg-amber-500/10 transition-colors"
-            >
-              Try again
-            </button>
+            ><Message id="auth:try_again_d8b8392e" /></button>
           </div>
           {/*
               AN INVITE LINK'S CARDS (./invite-card.tsx): who made it, the
@@ -1432,15 +1429,9 @@ export function LandingScreen() {
               string, and a later line added here should inherit it.
           */}
           <div className={hiddenLast(pitchHidden, 'px-4 flex grow flex-col text-center')}>
-            <p className="mt-5 text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">
-              Opening gradually
-            </p>
-            <h1 className="mt-2.5 text-[30px] leading-[34px] md:text-[34px] md:leading-[38px] xl:text-[38px] xl:leading-[42px] font-extrabold text-balance">
-              Come build the next version with us.
-            </h1>
-            <p className="mt-2.5 text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400 text-pretty">
-              Access opens in batches, and we'll email you when your spot is ready.
-            </p>
+            <p className="mt-5 text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400"><Message id="auth:opening_gradually_9f7c7cc0" /></p>
+            <h1 className="mt-2.5 text-[30px] leading-[34px] md:text-[34px] md:leading-[38px] xl:text-[38px] xl:leading-[42px] font-extrabold text-balance"><Message id="auth:come_build_the_next_version_with_us_f498c00b" /></h1>
+            <p className="mt-2.5 text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400 text-pretty"><Message id="auth:access_opens_in_batches_and_we_ll_email_you_when_51176018" /></p>
             {/*
                 THE WAY OUT TO THE LONG VERSION. One sentence is the right
                 length for a first screen and far too short for somebody
@@ -1459,17 +1450,13 @@ export function LandingScreen() {
                 It names its destination rather than saying "here", because a
                 link's text is what a screen reader reads out of context.
             */}
-            <p className={hiddenLast(!siteUrl, 'mt-3 text-[15px]')}>
-              <a
+            <p className={hiddenLast(!siteUrl, 'mt-3 text-[15px]')}><RichMessage id="auth:sentence_3ac27ed804d9" components={[<a
                 href={siteUrl || undefined}
                 target={siteUrl ? '_blank' : undefined}
                 rel={siteUrl ? 'noopener noreferrer' : undefined}
                 data-offline-disabled=""
                 className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
-              >
-                Learn more about Homeroom
-              </a>
-            </p>
+               />]} /></p>
             {/*
                 THE PIN ITSELF — board 1's `<div style="flex-grow: 1">`, in the
                 same place: between the sentence and the two pills. Measured in
@@ -1574,12 +1561,8 @@ export function LandingScreen() {
                     data-offline-disabled=""
                     className={hiddenLast(!waitlistUrl, PRIMARY_PILL)}
                     onClick={onLeaveCta}
-                  >
-                    Join the waitlist
-                  </a>
-                  <a href="#login" className={SECONDARY_PILL} onClick={onLeaveCta}>
-                    Sign in
-                  </a>
+                  ><Message id="auth:join_the_waitlist_6a16124b" /></a>
+                  <a href="#login" className={SECONDARY_PILL} onClick={onLeaveCta}><Message id="auth:sign_in_bfd402b2" /></a>
                 </div>
                 {/*
                     The way back for somebody who already joined, on a device
@@ -1599,16 +1582,14 @@ export function LandingScreen() {
                     'mt-1.5 text-center text-[15px] text-zinc-500 dark:text-zinc-400',
                   )}
                 >
-                  {'Already joined? '}
+                  <Message id="auth:already_joined_5e432059" />
                   <a
                     id="landing-status-link"
                     href="#waitlist?confirm=1"
                     data-offline-disabled=""
                     className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
                     onClick={onLeaveCta}
-                  >
-                    Check your status
-                  </a>
+                  ><Message id="auth:check_your_status_80769ea9" /></a>
                 </p>
               </div>
               {/*
@@ -1630,9 +1611,7 @@ export function LandingScreen() {
                 href="#waiting"
                 className={hiddenLast(!session, PRIMARY_PILL)}
                 onClick={onLeaveCta}
-              >
-                Your queue status
-              </a>
+              ><Message id="auth:your_queue_status_a2bfff01" /></a>
             </div>
           </div>
           {storyOn ? (
@@ -1648,9 +1627,9 @@ export function LandingScreen() {
           markup the prerender shipped.
       */}
       {madeForYou ? (
-        <SignInSheet
+        <LocalizedDynamic element={<SignInSheet
           open={sheet === 'join'}
-          title={`Join ${invite!.project!.name}`}
+          title={tr("auth:join_value1_8a9b2690", { value1: invite!.project!.name })}
           intro={providers.length
             ? 'Sign in or make an account. It takes a minute.'
             : 'Sign in or make an account with your email. It takes a minute.'}
@@ -1662,12 +1641,12 @@ export function LandingScreen() {
           resume={resume}
           onClose={closeSheet}
           primaryClass={PRIMARY_PILL}
-        />
+        />} resolve={() => ({ get "title"() { return tr("auth:join_value1_8a9b2690", { value1: invite!.project!.name }); } })} />
       ) : null}
       {storyOn ? (
-        <SignInSheet
+        <LocalizedDynamic element={<SignInSheet
           open={sheet === 'start' || sheet === 'signin'}
-          title={sheet === 'signin' ? 'Sign in' : 'Make your account'}
+          title={sheet === 'signin' ? tr("auth:sign_in_bfd402b2") : tr("auth:make_your_account_af240e0c")}
           intro={sheet === 'signin'
             ? (providers.length ? 'Welcome back.' : 'Welcome back. We\'ll email you a code.')
             : (providers.length ? 'It takes a minute.' : 'With your email. It takes a minute.')}
@@ -1679,7 +1658,7 @@ export function LandingScreen() {
           beforeFinish={startedFromStory}
           onClose={closeSheet}
           primaryClass={PRIMARY_PILL}
-        />
+        />} resolve={() => ({ "title": sheet === 'signin' ? tr("auth:sign_in_bfd402b2") : tr("auth:make_your_account_af240e0c") })} />
       ) : null}
         </>
       ) : null}

@@ -1,3 +1,4 @@
+import { t as tr } from "../../lib/i18n/runtime";
 // The agent-session transcript as the screen draws it (#2779). Pure: the
 // persisted rows (GET /api/agent-sessions/:id/messages) and the cards' live
 // states (GET .../actions) in, view items out, so what the user sees is
@@ -118,13 +119,13 @@ const DIVIDER_EVENTS = new Set(['change_started', 'change_switched', 'change_clo
 const MAX_VALUE_CHARS = 140;
 
 const FIELD_LABELS: Record<string, string> = {
-  slug: 'App',
-  title: 'Change',
-  changeId: 'Change',
-  proposalId: 'Change',
-  number: 'Request',
-  linkedIssues: 'Links',
-  body: 'Details',
+  get slug() { return tr("workshop:app_0d04bfeb"); },
+  get title() { return tr("workshop:change_c0bf75bd"); },
+  get changeId() { return tr("workshop:change_c0bf75bd"); },
+  get proposalId() { return tr("workshop:change_c0bf75bd"); },
+  get number() { return tr("workshop:request_59f03d64"); },
+  get linkedIssues() { return tr("workshop:links_9024c197"); },
+  get body() { return tr("workshop:details_45989de4"); },
 };
 
 function clip(text: string, max = MAX_VALUE_CHARS) {
@@ -135,9 +136,9 @@ function clip(text: string, max = MAX_VALUE_CHARS) {
 function valueText(key: string, value: unknown): string | null {
   if (value == null || value === '') return null;
   if (key === 'changeId' || key === 'proposalId') return `#${value}`;
-  if (key === 'number') return `Request #${value}`;
+  if (key === 'number') return tr("workshop:request_value1_8051e8ec", { value1: value });
   if (key === 'linkedIssues' && Array.isArray(value)) {
-    return value.length ? value.map((n) => `Request #${n}`).join(', ') : null;
+    return value.length ? value.map((n) => tr("workshop:request_value1_8051e8ec", { value1: n })).join(', ') : null;
   }
   if (typeof value === 'string') return clip(value);
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
@@ -202,7 +203,7 @@ export function joinFor(action: AgentAction | undefined): { slug: string; name: 
 
 // The server's stand-in for a message that was only files (attachments.js
 // ATTACHMENTS_ONLY_TEXT): the files say it, so the bubble shows no text.
-const ATTACHMENTS_ONLY_TEXT = '(attached files)';
+const ATTACHMENTS_ONLY_TEXT = () => tr("workshop:attached_files_dbb67568");
 
 /** A user row's words and the files sent with it (routes/agent-sessions.js). */
 export function userMessage(content: string, listed: unknown): { text: string; attachments: AgentAttachment[] } {
@@ -211,7 +212,7 @@ export function userMessage(content: string, listed: unknown): { text: string; a
     && typeof (att as AgentAttachment).id === 'string' && /^[a-f0-9]{32}$/.test((att as AgentAttachment).id)
     && typeof (att as AgentAttachment).filename === 'string'
   ));
-  const text = attachments.length && content.trim() === ATTACHMENTS_ONLY_TEXT ? '' : content;
+  const text = attachments.length && content.trim() === ATTACHMENTS_ONLY_TEXT() ? '' : content;
   return { text, attachments };
 }
 
@@ -242,9 +243,9 @@ export function prettyModel(id: unknown): string {
  * user's own machine.
  */
 export function agentLabel(meta: Record<string, unknown>): string {
-  if (typeof meta.localAgentLabel === 'string' && meta.localAgentLabel) return `${meta.localAgentLabel} · your machine`;
+  if (typeof meta.localAgentLabel === 'string' && meta.localAgentLabel) return tr("workshop:value1_your_machine_e4876047", { value1: meta.localAgentLabel });
   if (typeof meta.agentBackend !== 'string' && typeof meta.agentModel !== 'string') return '';
-  const agent = meta.agentBackend === 'codex_openrouter' && meta.agentHarness !== 'claude' ? 'Codex' : 'Claude Code';
+  const agent = meta.agentBackend === 'codex_openrouter' && meta.agentHarness !== 'claude' ? 'Codex' : tr("workshop:claude_code_246ef8c1");
   const model = prettyModel(meta.agentModel);
   return model ? `${agent} · ${model}` : agent;
 }
@@ -479,7 +480,7 @@ export function buildTranscript(
  */
 export function skippedChecksReason(detail: string | null | undefined): string {
   const reason = typeof detail === 'string' ? detail.trim().slice(0, 280).replace(/[\s.]+$/, '') : '';
-  return `Checks were skipped: ${reason || 'there was nothing to test'}. It can still go live.`;
+  return tr("workshop:checks_were_skipped_value1_it_can_still_go_live_1f7d7d2b", { value1: reason || tr("workshop:there_was_nothing_to_test_e6373204") });
 }
 
 /**
@@ -494,14 +495,14 @@ export function checksSummary(
   skipReason?: string | null,
 ): { key: 'passing' | 'failing' | 'running' | 'error' | 'skipped'; text: string; reason?: string } | null {
   if (!checkState) return null;
-  if (checkState === 'passing') return { key: 'passing', text: 'Checks passing' };
-  if (checkState === 'skipped') return { key: 'skipped', text: 'Checks skipped', reason: skippedChecksReason(skipReason) };
+  if (checkState === 'passing') return { key: 'passing', get text() { return tr("workshop:checks_passing_548591f8"); } };
+  if (checkState === 'skipped') return { key: 'skipped', get text() { return tr("workshop:checks_skipped_765099c7"); }, reason: skippedChecksReason(skipReason) };
   if (checkState === 'failing') {
     const n = Number(checkFailing) || 0;
-    return { key: 'failing', text: n > 0 ? `${n} check${n === 1 ? '' : 's'} failing` : 'Checks failing' };
+    return { key: 'failing', text: n > 0 ? tr("workshop:message_8f4baf3d4fb3", { value1: n, count: n }) : tr("workshop:checks_failing_cc33bd61") };
   }
-  if (checkState === 'pending' || checkState === 'running') return { key: 'running', text: 'Checks running' };
-  return { key: 'error', text: 'Checks couldn\u2019t run' };
+  if (checkState === 'pending' || checkState === 'running') return { key: 'running', get text() { return tr("workshop:checks_running_1bac2cb3"); } };
+  return { key: 'error', get text() { return tr("workshop:checks_couldn_t_run_f223e7e6"); } };
 }
 
 /** A run's heading, in words. */
@@ -509,12 +510,12 @@ export function runHeading(run: Pick<RunItem, 'mode' | 'status'>): string {
   const scout = run.mode === 'scout';
   const sync = run.mode === 'sync';
   switch (run.status) {
-    case 'running': return scout ? 'Writing the spec…' : sync ? 'Syncing with main…' : 'Building the change…';
-    case 'done': return scout ? 'Wrote the spec' : sync ? 'Synced with main' : 'Built the change';
-    case 'no_changes': return 'Made no changes';
-    case 'failed': return scout ? 'The spec was not written' : sync ? 'Could not sync with main' : 'The build did not finish';
-    case 'stopped': return scout ? 'Stopped writing the spec' : 'Stopped the build';
-    default: return scout ? 'Spec run ended' : sync ? 'Sync ended' : 'Build ended';
+    case 'running': return scout ? tr("workshop:writing_the_spec_62b08e5b") : sync ? tr("workshop:syncing_with_main_07afc841") : tr("workshop:building_the_change_7db6fbc2");
+    case 'done': return scout ? tr("workshop:wrote_the_spec_9b88d679") : sync ? tr("workshop:synced_with_main_3c3b07fe") : tr("workshop:built_the_change_953991de");
+    case 'no_changes': return tr("workshop:made_no_changes_8f4cc924");
+    case 'failed': return scout ? tr("workshop:the_spec_was_not_written_0913c7b5") : sync ? tr("workshop:could_not_sync_with_main_fdce861e") : tr("workshop:the_build_did_not_finish_e53047ef");
+    case 'stopped': return scout ? tr("workshop:stopped_writing_the_spec_7d36b9aa") : tr("workshop:stopped_the_build_5600623e");
+    default: return scout ? tr("workshop:spec_run_ended_83a3bde5") : sync ? tr("workshop:sync_ended_950bef31") : tr("workshop:build_ended_b5d11a0f");
   }
 }
 
@@ -531,7 +532,7 @@ export function durationLabel(ms: number | null): string {
  * What a turn that did not finish offers, the dev chat's own pair for a failed
  * or stopped turn (services/recovery-pills.js `turn_failed`).
  */
-export const TURN_FAILED_REPLIES = ['Try that again', 'What went wrong?'];
+export const TURN_FAILED_REPLIES = () => ([tr("workshop:try_that_again_d15466d4"), tr("workshop:what_went_wrong_3f5cd5dd")]);
 
 /**
  * Reply suggestions belong to the last thing said, and only while it is last.
@@ -541,8 +542,8 @@ export const TURN_FAILED_REPLIES = ['Try that again', 'What went wrong?'];
 export function latestReplies(items: TranscriptItem[]): string[] {
   const last = items[items.length - 1];
   if (!last) return [];
-  if (last.kind === 'mayor') return last.quickReplies.length ? last.quickReplies : (last.ended ? TURN_FAILED_REPLIES : []);
-  if (last.kind === 'note' && last.turnFailed) return TURN_FAILED_REPLIES;
+  if (last.kind === 'mayor') return last.quickReplies.length ? last.quickReplies : (last.ended ? TURN_FAILED_REPLIES() : []);
+  if (last.kind === 'note' && last.turnFailed) return TURN_FAILED_REPLIES();
   return [];
 }
 
@@ -558,22 +559,22 @@ export function replyCostLabel(row: Pick<AgentMessage, 'costCents' | 'metadata'>
 }
 
 const TOOL_ACTIVITY: Record<string, string> = {
-  list_apps: 'Looking at apps',
-  get_app: 'Reading the app',
-  list_requests: 'Reading requests',
+  get list_apps() { return tr("workshop:looking_at_apps_0c862894"); },
+  get get_app() { return tr("workshop:reading_the_app_a46d66fa"); },
+  get list_requests() { return tr("workshop:reading_requests_e51c8e82"); },
   get_request: 'Reading a request',
   get_discussion: 'Reading a discussion',
   get_proposal: 'Reading a change',
-  list_my_proposals: 'Checking your proposals',
-  get_change: 'Checking the change',
-  get_platform_conventions: 'Reading the platform rules',
-  web_fetch: 'Reading a web page',
+  get list_my_proposals() { return tr("workshop:checking_your_proposals_3838625f"); },
+  get get_change() { return tr("workshop:checking_the_change_b32a4bd4"); },
+  get get_platform_conventions() { return tr("workshop:reading_the_platform_rules_132bdf02"); },
+  get web_fetch() { return tr("workshop:reading_a_web_page_1e55bf5c"); },
   recheck_change: 'Re-running the checks',
-  switch_active_change: 'Switching changes',
-  set_focus_app: 'Changing the focus',
-  get_prod_status: 'Reading production status',
-  dispatch_scout: 'The coding agent is writing the spec',
-  dispatch_coding_agent: 'The coding agent is building',
+  get switch_active_change() { return tr("workshop:switching_changes_bde551f7"); },
+  get set_focus_app() { return tr("workshop:changing_the_focus_6079cda8"); },
+  get get_prod_status() { return tr("workshop:reading_production_status_669a8438"); },
+  get dispatch_scout() { return tr("workshop:the_coding_agent_is_writing_the_spec_bc35c0bb"); },
+  get dispatch_coding_agent() { return tr("workshop:the_coding_agent_is_building_57d6a1c2"); },
 };
 
 export function toolActivity(name: string): string {
@@ -582,16 +583,16 @@ export function toolActivity(name: string): string {
 
 /** The active change's state, in the words the header pill uses. */
 export function changeStatusLabel(status: string | null | undefined, busy = false): string {
-  if (busy) return 'Building';
+  if (busy) return tr("workshop:building_87c5912f");
   switch (status) {
     // "paused" is the platform's bookkeeping, never a state of the work: it
     // pauses by itself when idle and resumes by itself when used.
     case 'active':
-    case 'paused': return 'In progress';
-    case 'promoted': return 'Waiting for approval';
-    case 'merging': return 'Going live';
-    case 'merged': return 'Live';
-    case 'archived': return 'Closed';
-    default: return 'No active change';
+    case 'paused': return tr("workshop:in_progress_c1f88e9d");
+    case 'promoted': return tr("workshop:waiting_for_approval_10c5739b");
+    case 'merging': return tr("workshop:going_live_408c1ebf");
+    case 'merged': return tr("workshop:live_b64ac05f");
+    case 'archived': return tr("workshop:closed_c21ead06");
+    default: return tr("workshop:no_active_change_4a394283");
   }
 }

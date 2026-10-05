@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * `#dc-spec-viewer`'s children — the shared-spec reader.
  * See ./spec-viewer-store.ts for what the seam carries and what stays the
@@ -83,9 +87,9 @@ const POP = { on: 'dc-spec-share-pop', off: 'dc-spec-share-pop hidden' } as cons
 const ERR = { on: 'dc-spec-share-error', off: 'dc-spec-share-error hidden' } as const;
 
 const BUILD_HINT
-  = 'This is a plan, not a built change. Ready? Ask the AI in chat to build it.';
+  = () => tr("workshop:this_is_a_plan_not_a_built_change_ready_ask_the__55521b3b");
 
-const SHARE_USER_LABEL = 'Share to user';
+const SHARE_USER_LABEL = () => tr("workshop:share_to_user_2957a7aa");
 
 /**
  * Memoised on the STRING so the `{__html}` wrapper keeps its identity across
@@ -115,7 +119,7 @@ function TabButton({ tab, active, label }: {
 }
 
 function Body({ body }: { body: SpecBody }): ReactNode {
-  if (body.kind === 'loading') return <div className={MUTED_BLOCK}>Loading spec…</div>;
+  if (body.kind === 'loading') return <div className={MUTED_BLOCK}><Message id="workshop:loading_spec_d1c120fc" /></div>;
   if (body.kind === 'empty') return <div className={MUTED_BLOCK}>{body.copy}</div>;
   if (body.kind === 'plain') {
     return <MarkdownBody className="dc-spec-viewer-body" html={body.html} />;
@@ -130,17 +134,17 @@ function Body({ body }: { body: SpecBody }): ReactNode {
           />
         )
         : null}
-      <div className="dc-spec-viewer-tabs" role="tablist" aria-label="Spec sections">
-        <TabButton tab="user" active={body.tab} label="User-facing" />
-        <TabButton tab="tech" active={body.tab} label="Technical" />
-      </div>
+      <Localized element={<div className="dc-spec-viewer-tabs" role="tablist" aria-label={catalogText("workshop:spec_sections_2c81579b")}>
+        <Localized element={<TabButton tab="user" active={body.tab} label={catalogText("workshop:user_facing_9f6f005f")} />} messages={{"label":"workshop:user_facing_9f6f005f"}} />
+        <Localized element={<TabButton tab="tech" active={body.tab} label={catalogText("workshop:technical_e851504f")} />} messages={{"label":"workshop:technical_e851504f"}} />
+      </div>} messages={{"aria-label":"workshop:spec_sections_2c81579b"}} />
       {/* An empty-but-present half keeps its tab and says so, so the toggle
           does not appear and disappear between versions. */}
       {body.halfHtml
         ? <MarkdownBody className="dc-spec-viewer-body" role="tabpanel" html={body.halfHtml} />
         : (
           <div className="dc-spec-viewer-body" role="tabpanel">
-            <p className="dc-spec-tab-empty">Nothing in this section.</p>
+            <p className="dc-spec-tab-empty"><Message id="workshop:nothing_in_this_section_04506069" /></p>
           </div>
         )}
     </>
@@ -152,26 +156,25 @@ function Body({ body }: { body: SpecBody }): ReactNode {
  * marker headings — never the rendered half and never the active tab.
  */
 function CopyButton({ action, raw }: { action: SpecAction; raw: string }): ReactNode {
-  const [label, setLabel] = useState('Copy markdown');
+  useUiLanguage();
+  const [label, setLabel] = useState(tr("workshop:copy_markdown_7a99a712"));
   if (action.kind !== 'live') {
     return (
-      <button
-        className="dc-spec-action-btn dc-spec-copy-btn" disabled
-        title="No spec to copy yet"
-      >Copy markdown</button>
+      <Localized element={<button
+        className="dc-spec-action-btn dc-spec-copy-btn" disabled title={catalogText("workshop:no_spec_to_copy_yet_388b77ab")}
+      ><Message id="workshop:copy_markdown_7a99a712" /></button>} messages={{"title":"workshop:no_spec_to_copy_yet_388b77ab"}} />
     );
   }
   return (
-    <button
-      id="dc-spec-viewer-copy" className="dc-spec-action-btn dc-spec-copy-btn"
-      title="Copy the whole spec (both sections) as markdown"
+    <Localized element={<button
+      id="dc-spec-viewer-copy" className="dc-spec-action-btn dc-spec-copy-btn" title={catalogText("workshop:copy_the_whole_spec_both_sections_as_markdown_4e43ede6")}
       onClick={async () => {
         const ok = await ui()?.copyText?.(raw);
-        setLabel(ok ? 'Copied!' : 'Copy failed');
-        if (!ok) ui()?.toast?.('Couldn’t copy. Select the text and copy it manually');
-        setTimeout(() => setLabel('Copy markdown'), 1500);
+        setLabel(ok ? 'Copied!' : tr("workshop:copy_failed_5b50e7a6"));
+        if (!ok) ui()?.toast?.(tr("workshop:couldn_t_copy_select_the_text_and_copy_it_manual_9181be57"));
+        setTimeout(() => setLabel(tr("workshop:copy_markdown_7a99a712")), 1500);
       }}
-    >{label}</button>
+    >{label}</button>} messages={{"title":"workshop:copy_the_whole_spec_both_sections_as_markdown_4e43ede6"}} />
   );
 }
 
@@ -181,19 +184,21 @@ function GroupShareButton(
   if (action.kind === 'absent') return null;
   if (action.kind === 'blank') {
     return (
-      <button
-        className="dc-spec-action-btn" disabled title="No spec version to share yet"
-      >Share to group</button>
+      <Localized element={<button
+        className="dc-spec-action-btn" disabled title={catalogText("workshop:no_spec_version_to_share_yet_f7682399")}
+      ><Message id="workshop:share_to_group_57f22054" /></button>} messages={{"title":"workshop:no_spec_version_to_share_yet_f7682399"}} />
     );
   }
   return (
-    <button
+    <LocalizedDynamic element={<button
       id="dc-spec-viewer-share" className="dc-spec-action-btn" disabled={action.shared}
       title={action.shared
-        ? 'Already shared to group chat'
-        : 'Post a card linking to this spec in the group chat'}
+        ? tr("workshop:already_shared_to_group_chat_33449e1f")
+        : tr("workshop:post_a_card_linking_to_this_spec_in_the_group_ch_035662ee")}
       onClick={() => controller()?._shareSpecVersion?.(version)}
-    >{action.shared ? 'Shared' : 'Share to group'}</button>
+    ><LocalizedValue render={() => (action.shared ? tr("workshop:shared_e3c4b39d") : tr("workshop:share_to_group_57f22054"))} /></button>} resolve={() => ({ "title": action.shared
+        ? tr("workshop:already_shared_to_group_chat_33449e1f")
+        : tr("workshop:post_a_card_linking_to_this_spec_in_the_group_ch_035662ee") })} />
   );
 }
 
@@ -220,7 +225,7 @@ function useSharePopover(version: number | null): SharePopover {
   const [value, setValue] = useState('');
   const [error, setError] = useState('');
   const [sending, setSending] = useState(false);
-  const [label, setLabel] = useState(SHARE_USER_LABEL);
+  const [label, setLabel] = useState(SHARE_USER_LABEL());
   const [names, setNames] = useState<string[]>([]);
   // Picking a suggestion collapses the list until the next keystroke — the
   // one piece of the old `sugBox.innerHTML = ''` dance that was intentional.
@@ -276,21 +281,21 @@ function useSharePopover(version: number | null): SharePopover {
 
   const send = async () => {
     const username = value.trim().replace(/^@/, '');
-    if (!username) { setError('Enter a username'); return; }
+    if (!username) { setError(tr("workshop:enter_a_username_35b68c13")); return; }
     setSending(true);
     const result = await controller()?._shareSpecToUser?.(version, username);
     setSending(false);
     if (!result || !result.ok) {
-      setError((result && result.error) || 'Failed to share');
+      setError((result && result.error) || tr("workshop:failed_to_share_cc171656"));
       return;
     }
     setError('');
     setPicked(false);
     setValue('');
     const sentName = (result.recipient && result.recipient.username) || username;
-    setLabel(`Sent to @${sentName}`);
+    setLabel(tr("workshop:sent_to_value1_0d534827", { value1: sentName }));
     setOpen(false);
-    setTimeout(() => setLabel(SHARE_USER_LABEL), 2500);
+    setTimeout(() => setLabel(SHARE_USER_LABEL()), 2500);
   };
 
   return {
@@ -318,18 +323,17 @@ function UserShareButton(
   if (action.kind === 'absent') return null;
   if (action.kind === 'blank') {
     return (
-      <button
-        className="dc-spec-action-btn" disabled title="No spec version to share yet"
-      >Share to user</button>
+      <Localized element={<button
+        className="dc-spec-action-btn" disabled title={catalogText("workshop:no_spec_version_to_share_yet_f7682399")}
+      ><Message id="workshop:share_to_user_2957a7aa" /></button>} messages={{"title":"workshop:no_spec_version_to_share_yet_f7682399"}} />
     );
   }
   return (
-    <button
-      ref={pop.btnRef} id="dc-spec-viewer-share-user" className="dc-spec-action-btn"
-      title="Privately share this spec version with one person"
+    <Localized element={<button
+      ref={pop.btnRef} id="dc-spec-viewer-share-user" className="dc-spec-action-btn" title={catalogText("workshop:privately_share_this_spec_version_with_one_perso_d8da3298")}
       aria-haspopup="dialog" aria-expanded={pop.open} aria-controls="dc-spec-share-pop"
       onClick={pop.toggle}
-    >{pop.label}</button>
+    >{pop.label}</button>} messages={{"title":"workshop:privately_share_this_spec_version_with_one_perso_d8da3298"}} />
   );
 }
 
@@ -340,13 +344,13 @@ function UserShareButton(
  */
 function SharePopoverCard({ pop }: { pop: SharePopover }): ReactNode {
   return (
-    <div
+    <Localized element={<div
       ref={pop.popRef} id="dc-spec-share-pop" className={pop.open ? POP.on : POP.off}
-      role="dialog" aria-label="Share this spec with one person"
+      role="dialog" aria-label={catalogText("workshop:share_this_spec_with_one_person_09c35a72")}
     >
-      <input
+      <Localized element={<input
         ref={pop.inputRef} id="dc-spec-share-input" className="dc-spec-share-input"
-        type="text" placeholder="Username…" aria-label="Username to share with"
+        type="text" placeholder={catalogText("workshop:username_806a9528")} aria-label={catalogText("workshop:username_to_share_with_ce819d48")}
         autoComplete="off" spellCheck={false}
         maxLength={32}
         value={pop.value}
@@ -355,7 +359,7 @@ function SharePopoverCard({ pop }: { pop: SharePopover }): ReactNode {
           if (e.key === 'Enter') { e.preventDefault(); pop.send(); }
           if (e.key === 'Escape') pop.close();
         }}
-      />
+      />} messages={{"placeholder":"workshop:username_806a9528","aria-label":"workshop:username_to_share_with_ce819d48"}} />
       <div id="dc-spec-share-suggestions" className="dc-spec-share-suggestions">
         {pop.matches.map((name) => (
           <button
@@ -368,8 +372,8 @@ function SharePopoverCard({ pop }: { pop: SharePopover }): ReactNode {
       <button
         id="dc-spec-share-send" className="dc-spec-action-btn dc-spec-share-send"
         disabled={pop.sending} onClick={pop.send}
-      >{pop.sending ? 'Sending…' : 'Send'}</button>
-    </div>
+      ><LocalizedValue render={() => (pop.sending ? tr("workshop:sending_b8ed5279") : tr("workshop:send_f6f4688f"))} /></button>
+    </div>} messages={{"aria-label":"workshop:share_this_spec_with_one_person_09c35a72"}} />
   );
 }
 
@@ -391,24 +395,24 @@ export function SpecViewerView({ s }: { s: SpecViewerState }): ReactNode {
         >
           {s.versions.length
             ? s.versions.map((v) => <option key={v.value} value={v.value}>{v.label}</option>)
-            : <option value="">No versions yet</option>}
+            : <option value=""><Message id="workshop:no_versions_yet_ff76e037" /></option>}
         </select>
         <CopyButton action={s.copy} raw={s.raw} />
         <UserShareButton action={s.userShare} pop={pop} />
         <GroupShareButton action={s.groupShare} version={s.version} />
-        <button
-          id="dc-spec-viewer-close" className="dc-spec-viewer-close"
-          aria-label="Close spec viewer"
+        <Localized element={<button
+          id="dc-spec-viewer-close" className="dc-spec-viewer-close" aria-label={catalogText("workshop:close_spec_viewer_1aa0a813")}
           onClick={() => controller()?.closeSpecViewer?.()}
-        >×</button>
+        >×</button>} messages={{"aria-label":"workshop:close_spec_viewer_1aa0a813"}} />
         {owner ? <SharePopoverCard pop={pop} /> : null}
       </div>
       <div className="dc-spec-viewer-body-wrap"><Body body={s.body} /></div>
-      {s.buildHint ? <div className="dc-spec-viewer-build-hint">{BUILD_HINT}</div> : null}
+      {s.buildHint ? <div className="dc-spec-viewer-build-hint">{BUILD_HINT()}</div> : null}
     </>
   );
 }
 
 export function SpecViewer(): ReactNode {
+  useUiLanguage();
   return <SpecViewerView s={useStoreState(specViewerStore)} />;
 }

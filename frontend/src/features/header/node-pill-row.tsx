@@ -1,3 +1,6 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message } from "../../lib/i18n/react";
 /**
  * `#account-row-node` — the node status row in the Profile screen's account group.
  * See ./node-pill-store.ts for what the seam carries.
@@ -27,27 +30,27 @@ export const STATUS_STYLES: Record<NodeStatusKind, {
 }> = {
   synced: {
     dot: 'bg-emerald-500',
-    label: 'Synced',
+    get label() { return tr("account:synced_5da22fe4"); },
     ink: 'text-emerald-700 dark:text-emerald-400',
   },
   syncing: {
     dot: 'bg-amber-500',
-    label: 'Syncing',
+    get label() { return tr("account:syncing_5c8b9e1c"); },
     ink: 'text-amber-800 dark:text-amber-400',
   },
   connecting: {
     dot: 'bg-zinc-400 animate-pulse',
-    label: 'Connecting',
+    get label() { return tr("account:connecting_d403c686"); },
     ink: 'text-zinc-500 dark:text-zinc-400',
   },
   offline: {
     dot: 'bg-red-500',
-    label: 'Offline',
+    get label() { return tr("account:offline_a1794783"); },
     ink: 'text-red-700 dark:text-red-400',
   },
   unavailable: {
     dot: 'bg-zinc-400',
-    label: 'Unavailable',
+    get label() { return tr("account:unavailable_ca184496"); },
     ink: 'text-zinc-500 dark:text-zinc-400',
   },
 };
@@ -68,6 +71,7 @@ function controller(): any {
 }
 
 export function NodePillRow(): ReactNode {
+  useUiLanguage();
   const s = useStoreState(nodePillStore);
   const style = styleFor(s.status);
   return (
@@ -82,9 +86,7 @@ export function NodePillRow(): ReactNode {
         aria-hidden="true"
       >
       </span>
-      <span className="text-sm font-medium">
-        Node
-      </span>
+      <span className="text-sm font-medium"><Message id="account:node_e9337253" /></span>
       {/* Empty until the module has something to say — the hand-written row
           shipped this span blank, and the prerender has to agree. */}
       <span

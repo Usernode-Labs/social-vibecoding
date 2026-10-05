@@ -1,3 +1,4 @@
+import { Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * The anonymous shell's corner Back control — ONE implementation (#2444).
  *
@@ -60,16 +61,15 @@ export interface AuthBackButtonProps {
 
 export function AuthBackButton({ href, onClick }: AuthBackButtonProps) {
   return (
-    <a
+    <Localized element={<a
       href={href}
       data-auth-back=""
       className={AUTH_BACK_CLASS}
-      style={AUTH_BACK_STYLE}
-      aria-label="Back"
+      style={AUTH_BACK_STYLE} aria-label={catalogText("auth:back_76900f1b")}
       onClick={onClick}
     >
       <ChevronLeftIcon className="w-6 h-6" aria-hidden="true" />
-    </a>
+    </a>} messages={{"aria-label":"auth:back_76900f1b"}} />
   );
 }
 

@@ -1,3 +1,6 @@
+import { t as tr } from "../../lib/i18n/runtime";
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 import { useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -6,16 +9,16 @@ import { DialogCard } from '@/components/ui/dialog';
 import type { NativeLoginFailureDetails } from './shared';
 
 const BRIDGE_EXPLANATIONS: Record<string, string> = {
-  'blocked-frame': 'The app refused this page’s secure connection. The page origin may differ from the one this app build trusts, but this report cannot confirm the cause.',
-  unattached: 'The app did not answer the secure connection request.',
-  inconclusive: 'The app’s connection check did not return a conclusive answer.',
-  unsupported: 'This app build does not support the secure connection this page needs.',
-  ready: 'The bridge connected, but native login preparation still failed.',
-  unknown: 'The bridge has not reported a connection result.',
+  get 'blocked-frame'() { return tr("auth:the_app_refused_this_page_s_secure_connection_th_227bfc2c"); },
+  get unattached() { return tr("auth:the_app_did_not_answer_the_secure_connection_req_21b48906"); },
+  get inconclusive() { return tr("auth:the_app_s_connection_check_did_not_return_a_conc_95f5588f"); },
+  get unsupported() { return tr("auth:this_app_build_does_not_support_the_secure_conne_55826606"); },
+  get ready() { return tr("auth:the_bridge_connected_but_native_login_preparatio_b7168f7d"); },
+  get unknown() { return tr("auth:the_bridge_has_not_reported_a_connection_result_423aec06"); },
 };
 
 function known(value: string | number | null): string {
-  return value === null ? 'Unknown' : String(value);
+  return value === null ? tr("auth:unknown_b764cdc0") : String(value);
 }
 
 /** Safe, fixed failure snapshot only: never read live form fields or full URLs. */
@@ -42,6 +45,7 @@ function NativeLoginDetailsDialog({
   details: NativeLoginFailureDetails;
   onClose: () => void;
 }) {
+  useUiLanguage();
   const dialog = useRef<HTMLDialogElement>(null);
   const [copyStatus, setCopyStatus] = useState('');
   useEffect(() => {
@@ -53,24 +57,23 @@ function NativeLoginDetailsDialog({
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(nativeLoginDetailsText(details));
-      setCopyStatus('Details copied');
+      setCopyStatus(tr("auth:details_copied_e2acabb2"));
     } catch {
-      setCopyStatus('Could not copy. You can select the details below.');
+      setCopyStatus(tr("auth:could_not_copy_you_can_select_the_details_below_805af1d3"));
     }
   };
 
   return (
-    <dialog
-      ref={dialog}
-      aria-label="Secure sign-in details"
+    <Localized element={<dialog
+      ref={dialog} aria-label={catalogText("auth:secure_sign_in_details_4148b81e")}
       className="m-auto w-[calc(100%-2rem)] max-w-md max-h-[85dvh] overflow-y-auto rounded-xl border-0 bg-transparent p-0 text-zinc-900 dark:text-zinc-100 backdrop:bg-black/60"
       onCancel={(event) => { event.preventDefault(); onClose(); }}
       onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}
     >
       <DialogCard size="md" className="max-w-none space-y-4">
         <div className="flex items-center justify-between gap-3">
-          <h2 className="text-lg font-bold">Secure sign-in details</h2>
-          <Button type="button" variant="neutral" ink="neutral" onClick={onClose}>Close</Button>
+          <h2 className="text-lg font-bold"><Message id="auth:secure_sign_in_details_4148b81e" /></h2>
+          <Button type="button" variant="neutral" ink="neutral" onClick={onClose}><Message id="auth:close_7d9eb7ac" /></Button>
         </div>
         <p className="text-sm text-zinc-600 dark:text-zinc-300">
           {BRIDGE_EXPLANATIONS[details.bridgeState || 'unknown']}
@@ -79,17 +82,16 @@ function NativeLoginDetailsDialog({
           {nativeLoginDetailsText(details)}
         </pre>
         <div className="flex items-center gap-3">
-          <Button type="button" variant="neutral" ink="neutral" onClick={() => { void copy(); }}>
-            Copy details
-          </Button>
+          <Button type="button" variant="neutral" ink="neutral" onClick={() => { void copy(); }}><Message id="auth:copy_details_ec7ee282" /></Button>
           <span role="status" className="text-xs text-zinc-500 dark:text-zinc-400">{copyStatus}</span>
         </div>
       </DialogCard>
-    </dialog>
+    </dialog>} messages={{"aria-label":"auth:secure_sign_in_details_4148b81e"}} />
   );
 }
 
 export function NativeLoginDetailsLink({ details }: { details: NativeLoginFailureDetails | null }) {
+  useUiLanguage();
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   if (!details) return null;
@@ -99,9 +101,7 @@ export function NativeLoginDetailsLink({ details }: { details: NativeLoginFailur
       type="button"
       className="mt-1 block min-h-11 text-sm font-medium text-violet-700 underline underline-offset-2 dark:text-violet-400"
       onClick={() => setOpen(true)}
-    >
-      More details
-    </button>
+    ><Message id="auth:more_details_b5eff1db" /></button>
     {open ? <NativeLoginDetailsDialog details={details} onClose={() => {
       setOpen(false);
       requestAnimationFrame(() => trigger.current?.focus());

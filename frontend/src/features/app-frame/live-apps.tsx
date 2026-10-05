@@ -1,3 +1,5 @@
+import { t as tr } from "../../lib/i18n/runtime";
+import { Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * The green "still loaded" dot (#2902).
  *
@@ -35,12 +37,12 @@ export function useCurrentAppSlug(): string | null {
 }
 
 /** What the dot means, for a row's or a tile's accessible name. */
-export const LIVE_APP_LABEL = 'still open';
+export const LIVE_APP_LABEL = () => tr("workshop:still_open_b0daa8cc");
 
 /**
  * The dot itself. Decorative to assistive tech — the owning control adds
  * LIVE_APP_LABEL to its own name — and `title` for a pointer that hovers it.
  */
 export function LiveAppDot({ className }: { className: string }) {
-  return <span className={`app-live-dot ${className}`} title="Still open" aria-hidden="true" />;
+  return <Localized element={<span className={`app-live-dot ${className}`} title={catalogText("apps:still_open_ccde2b49")} aria-hidden="true" />} messages={{"title":"apps:still_open_ccde2b49"}} />;
 }

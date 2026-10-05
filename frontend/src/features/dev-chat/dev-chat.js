@@ -114,14 +114,11 @@ const DevChat = {
   // The idle placeholder lives here (not only in the template) because
   // _setStreamingUI swaps it for the busy variant while a turn runs and
   // has to put the original back afterwards.
-  COMPOSER_PLACEHOLDER:
-    'Describe a change in plain English, e.g. "add a dark mode toggle". No coding needed.',
+  get COMPOSER_PLACEHOLDER() { return globalThis.PlatformI18n.t("workshop:describe_a_change_in_plain_english_e_g_add_a_dar_4084f4c1"); },
   // #810: the save icon exists ONLY while a turn runs (that's the state
   // where sending is impossible), so the busy copy points at it again.
-  COMPOSER_PLACEHOLDER_BUSY:
-    'Claude is working. Type your next note and tap 💾 to save it for later.',
-  SAVE_DRAFT_TITLE:
-    'Save this text as a draft (Ctrl+Enter). It stays here until you send it',
+  get COMPOSER_PLACEHOLDER_BUSY() { return globalThis.PlatformI18n.t("workshop:claude_is_working_type_your_next_note_and_tap_to_f332da0e"); },
+  get SAVE_DRAFT_TITLE() { return globalThis.PlatformI18n.t("workshop:save_this_text_as_a_draft_ctrl_enter_it_stays_he_631b8c69"); },
   SEND_TITLE: 'Send (Ctrl+Enter)',
   // #920's hint used to be a LINE under the box, because the keystroke does
   // two different things and nothing else said which. It is the one circle's
@@ -207,24 +204,24 @@ const DevChat = {
   // copy-drift guard that fails if they diverge.
   MODELS: {
     'claude-sonnet-5-5': {
-      label: 'Sonnet 5.5',
+      get label() { return globalThis.PlatformI18n.t("workshop:sonnet_5_5_5c097071"); },
       changeSize: {
-        short: 'simple, small changes',
-        long: 'One small thing at a time: a text tweak, a colour, a single file.',
+        get short() { return globalThis.PlatformI18n.t("workshop:simple_small_changes_5ee9833e"); },
+        get long() { return globalThis.PlatformI18n.t("workshop:one_small_thing_at_a_time_a_text_tweak_a_colour__8cd725de"); },
       },
     },
     'claude-opus-5-5': {
-      label: 'Opus 5.5',
+      get label() { return globalThis.PlatformI18n.t("workshop:opus_5_5_18966c1a"); },
       changeSize: {
-        short: 'general coding work',
+        get short() { return globalThis.PlatformI18n.t("workshop:general_coding_work_1f87a9d1"); },
         long: 'Anything from a quick fix to a multi-file feature, a refactor, or debugging that needs real digging.',
       },
     },
     'claude-fable-5-1': {
-      label: 'Fable 5.1',
+      get label() { return globalThis.PlatformI18n.t("workshop:fable_5_1_38b613ef"); },
       changeSize: {
-        short: 'design, taste, and difficult coding',
-        long: 'Design and taste (how a screen looks, reads, and feels) plus the most difficult coding work.',
+        get short() { return globalThis.PlatformI18n.t("workshop:design_taste_and_difficult_coding_0a600e95"); },
+        get long() { return globalThis.PlatformI18n.t("workshop:design_and_taste_how_a_screen_looks_reads_and_fe_0af1af6a"); },
       },
     },
   },
@@ -360,14 +357,14 @@ const DevChat = {
     // that shows a cost renders it. "about" carries the estimate; what a
     // typical change IS stays defined once, in the server's TYPICAL_CHANGE
     // profile, which the admin screen prints.
-    const perChange = money ? `about ${money} for a typical change` : '';
+    const perChange = money ? globalThis.PlatformI18n.t("workshop:about_value1_for_a_typical_change_5688e8c5", { value1: money }) : '';
     return {
       note,
       // The bare amount, for arithmetic and tests. Not for display on its
       // own: render `compact` or `full`.
       estimate: money,
       // "general coding work · about $1.55 for a typical change (estimate)"
-      full: [note, perChange ? `${perChange} (estimate)` : ''].filter(Boolean).join(' · '),
+      full: [note, perChange ? globalThis.PlatformI18n.t("workshop:value1_estimate_87c20fa9", { value1: perChange }) : ''].filter(Boolean).join(' · '),
       // The same sentence, minus the explicit label, for the one line a
       // closed native control shows.
       compact: [note, perChange].filter(Boolean).join(' · '),
@@ -431,7 +428,7 @@ const DevChat = {
         value: `${OPENROUTER_MODEL_PREFIX}${id}`,
         label: label || `${model?.name || id}${cost?.compact ? ` · ${cost.compact}` : ''}`,
         // The secondary hint, not part of the label (#2569).
-        title: 'Runs on your OpenRouter key',
+        get title() { return globalThis.PlatformI18n.t("workshop:runs_on_your_openrouter_key_4d10fe09"); },
         ...(disabled ? { disabled: true } : null),
       });
     };
@@ -447,7 +444,7 @@ const DevChat = {
       options.push({
         value: `${ANTHROPIC_MODEL_PREFIX}${id}`,
         label: cost.compact ? `${label} · ${cost.compact}` : label,
-        title: 'Runs on the platform Claude allowance, or your own Anthropic key',
+        get title() { return globalThis.PlatformI18n.t("workshop:runs_on_the_platform_claude_allowance_or_your_ow_09d5f4d7"); },
       });
     }
 
@@ -462,8 +459,8 @@ const DevChat = {
     // 4. The door to the full catalog, still last.
     options.push({
       value: OPENROUTER_MORE_VALUE,
-      label: 'Add more OpenRouter models…',
-      title: 'Browse every model your OpenRouter key can reach',
+      get label() { return globalThis.PlatformI18n.t("workshop:add_more_openrouter_models_c46a3c83"); },
+      get title() { return globalThis.PlatformI18n.t("workshop:browse_every_model_your_openrouter_key_can_reach_6f4eb153"); },
     });
     return options;
   },
@@ -565,7 +562,7 @@ const DevChat = {
       // Old/incomplete rows should say that they are still loading rather
       // than make the select visually fall into the first real option.
       selectedOpenRouterId = '__loading__';
-      extraIds.unshift({ id: selectedOpenRouterId, label: 'Loading model', disabled: true });
+      extraIds.unshift({ id: selectedOpenRouterId, get label() { return globalThis.PlatformI18n.t("workshop:loading_model_64590e4b"); }, disabled: true });
     }
 
     // The two starting models are the server's curated pair
@@ -593,7 +590,7 @@ const DevChat = {
         return {
           value: `${ANTHROPIC_MODEL_PREFIX}${id}`,
           label: cost.compact ? `${label} · ${cost.compact}` : label,
-          title: 'Runs on the platform Claude allowance, or your own Anthropic key',
+          get title() { return globalThis.PlatformI18n.t("workshop:runs_on_the_platform_claude_allowance_or_your_ow_09d5f4d7"); },
         };
       });
 
@@ -623,7 +620,7 @@ const DevChat = {
       options.splice(Math.max(options.length - 1, 0), 0, {
         value: selected,
         label: model?.name || id,
-        title: 'Runs on your OpenRouter key',
+        get title() { return globalThis.PlatformI18n.t("workshop:runs_on_your_openrouter_key_4d10fe09"); },
       });
     }
     return {
@@ -880,7 +877,7 @@ const DevChat = {
   _activityAgentName(source) {
     return DevChat._activityAgentBackend(source) === 'codex_openrouter'
       ? 'OpenRouter'
-      : 'Claude Code';
+      : globalThis.PlatformI18n.t("workshop:claude_code_246ef8c1");
   },
 
   // #2597: the running row's HEADING stops naming the venue.
@@ -909,7 +906,7 @@ const DevChat = {
     const m = DevChat._RUNNING_VENUE_RE.exec(content);
     if (!m) return null;
     return {
-      text: `Coding agent is running${content.slice(m[0].length)}`,
+      get text() { return globalThis.PlatformI18n.t("workshop:coding_agent_is_running_value1_af71206f", { value1: content.slice(m[0].length) }); },
       caption: DevChat._agentName(DevChat._activityAgentBackend(msg)),
     };
   },
@@ -1267,7 +1264,7 @@ const DevChat = {
     const name = DevChat._agentBackend(DevChat.currentSession) === 'codex_openrouter'
       ? 'OpenRouter'
       : 'Claude';
-    return `${name} is working. Type your next note and tap 💾 to save it for later.`;
+    return globalThis.PlatformI18n.t("workshop:value1_is_working_type_your_next_note_and_tap_to_a3b59411", { value1: name });
   },
 
   _formatOpenRouterPrice(value) {
@@ -1283,34 +1280,34 @@ const DevChat = {
 
   _openRouterModelCostSummary(model) {
     const tier = {
-      free: 'Free',
-      low: 'Low cost',
-      medium: 'Medium cost',
-      high: 'High cost',
-      unknown: 'Price unavailable',
-    }[model?.costTier] || 'Price unavailable';
+      get free() { return globalThis.PlatformI18n.t("workshop:free_f411a1fb"); },
+      get low() { return globalThis.PlatformI18n.t("workshop:low_cost_607264ad"); },
+      get medium() { return globalThis.PlatformI18n.t("workshop:medium_cost_7c196404"); },
+      get high() { return globalThis.PlatformI18n.t("workshop:high_cost_d6d2e413"); },
+      get unknown() { return globalThis.PlatformI18n.t("workshop:price_unavailable_6a9e657b"); },
+    }[model?.costTier] || globalThis.PlatformI18n.t("workshop:price_unavailable_6a9e657b");
     const input = this._formatOpenRouterPrice(model?.inputPricePerMillion);
     const output = this._formatOpenRouterPrice(model?.outputPricePerMillion);
     if (!input && !output) return tier;
-    return `${tier} · ${input || '?'} /M input · ${output || '?'} /M output`;
+    return globalThis.PlatformI18n.t("workshop:value1_value2_m_input_value3_m_output_13d31257", { value1: tier, value2: input || '?', value3: output || '?' });
   },
 
   _openRouterModelOptionLabel(model) {
     const badges = [];
     if (model?.isFavorite) badges.push('★');
-    if (model?.isRecommended) badges.push('Recommended');
+    if (model?.isRecommended) badges.push(globalThis.PlatformI18n.t("workshop:recommended_d70604e8"));
     // #3296: the platform runs some OpenRouter models in Claude Code rather
     // than Codex. Only that exception is named; Codex is every other row.
-    if (model?.harness === 'claude') badges.push('Claude Code');
+    if (model?.harness === 'claude') badges.push(globalThis.PlatformI18n.t("workshop:claude_code_246ef8c1"));
     if (model?.createdAt) {
       const age = Date.now() - Date.parse(model.createdAt);
-      if (Number.isFinite(age) && age >= 0 && age <= 30 * 24 * 60 * 60 * 1000) badges.push('New');
+      if (Number.isFinite(age) && age >= 0 && age <= 30 * 24 * 60 * 60 * 1000) badges.push(globalThis.PlatformI18n.t("workshop:new_18fdd549"));
     }
     const compatibility = model?.compatibility === 'verified'
       ? ' · verified'
       : (model?.compatibility === 'blocked' ? ' · limited' : ' · unverified');
     const badgeText = badges.length ? ` · ${badges.join(' · ')}` : '';
-    return `${model?.name || model?.id || 'Unknown model'}${badgeText}: ${this._openRouterModelCostSummary(model)}${compatibility}`;
+    return `${model?.name || model?.id || globalThis.PlatformI18n.t("workshop:unknown_model_38951853")}${badgeText}: ${this._openRouterModelCostSummary(model)}${compatibility}`;
   },
 
   _openRouterModelsForPicker(models, { query = '', favoritesOnly = false } = {}) {
@@ -1345,11 +1342,11 @@ const DevChat = {
     const refreshed = Date.parse(refreshedAt || '');
     if (!Number.isFinite(refreshed)) return '';
     const seconds = Math.max(0, Math.round((Date.now() - refreshed) / 1000));
-    if (seconds < 60) return 'Updated just now';
+    if (seconds < 60) return globalThis.PlatformI18n.t("workshop:updated_just_now_c5cb2e53");
     const minutes = Math.round(seconds / 60);
-    if (minutes < 60) return `Updated ${minutes}m ago`;
+    if (minutes < 60) return globalThis.PlatformI18n.t("workshop:updated_value1_m_ago_2da5a691", { value1: minutes });
     const hours = Math.round(minutes / 60);
-    return `Updated ${hours}h ago`;
+    return globalThis.PlatformI18n.t("workshop:updated_value1_h_ago_fdacad77", { value1: hours });
   },
 
   async _setOpenRouterModelFavorite(modelId, favorite) {
@@ -1361,18 +1358,18 @@ const DevChat = {
       body: JSON.stringify({ modelId, favorite }),
     });
     const body = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(body.error || 'Could not update that favorite.');
+    if (!response.ok) throw new Error(body.error || globalThis.PlatformI18n.t("workshop:could_not_update_that_favorite_288b961b"));
     return body;
   },
 
   _openRouterModelCompatibilitySummary(model) {
     if (!model) return '';
-    if (model.compatibility === 'verified') return 'Verified for repository coding.';
+    if (model.compatibility === 'verified') return globalThis.PlatformI18n.t("workshop:verified_for_repository_coding_3e7a6d2a");
     if (model.meetsCodexMinimums) {
       return 'OpenRouter advertises coding-tool support and enough context, but this model is not yet verified for repository coding.';
     }
     return model.compatibilityNote
-      || 'OpenRouter exposes this model, but it may lack repository tools or enough context; the turn may fail.';
+      || globalThis.PlatformI18n.t("workshop:openrouter_exposes_this_model_but_it_may_lack_re_c43b50b6");
   },
 
   // Prepare the saved provider for a REAL build action (currently Generate
@@ -1410,7 +1407,7 @@ const DevChat = {
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(body.error || 'Could not check your OpenRouter credential.');
+        throw new Error(body.error || globalThis.PlatformI18n.t("workshop:could_not_check_your_openrouter_credential_6627703e"));
       }
       return body;
     };
@@ -1445,7 +1442,7 @@ const DevChat = {
       if (status.configured !== true || status.status !== 'valid') {
         const err = new Error(
           provisioned.error
-            || `OpenRouter could not be set up automatically (HTTP ${provisionResponse.status}).`,
+            || globalThis.PlatformI18n.t("workshop:openrouter_could_not_be_set_up_automatically_htt_a14a43df", { value1: provisionResponse.status }),
         );
         err.code = provisioned.code || 'provision_failed';
         throw err;
@@ -1459,7 +1456,7 @@ const DevChat = {
     if (typeof App !== 'undefined' && App.user) App.user.openrouterAvailable = true;
     prefs = await readPreferences();
     if (prefs.defaultBackend !== 'codex_openrouter') {
-      throw new Error('OpenRouter was created, but it was not saved as your default. Contact an administrator.');
+      throw new Error(globalThis.PlatformI18n.t("workshop:openrouter_was_created_but_it_was_not_saved_as_y_2a7ec75f"));
     }
     return { ...prefs, openrouterCredentialSource };
   },
@@ -1506,11 +1503,11 @@ const DevChat = {
       const credentialRes = await fetch('/api/me/credentials/openrouter', {
         credentials: 'same-origin',
       });
-      if (!credentialRes.ok) throw new Error('Could not check your OpenRouter key.');
+      if (!credentialRes.ok) throw new Error(globalThis.PlatformI18n.t("workshop:could_not_check_your_openrouter_key_a665eacd"));
       const credential = await credentialRes.json();
       data.credentialConfigured = credential.configured === true && credential.status === 'valid';
     } catch (err) {
-      data.catalogError = err.message || 'Could not check your OpenRouter key.';
+      data.catalogError = err.message || globalThis.PlatformI18n.t("workshop:could_not_check_your_openrouter_key_a665eacd");
       return data;
     }
 
@@ -1519,15 +1516,15 @@ const DevChat = {
     try {
       const { res: modelsRes, body: catalog, err } = await catalogRead;
       if (err) throw err;
-      if (!modelsRes.ok) throw new Error(catalog.error || 'Could not load OpenRouter models.');
+      if (!modelsRes.ok) throw new Error(catalog.error || globalThis.PlatformI18n.t("workshop:could_not_load_openrouter_models_50eb99bd"));
       data.catalogLoaded = true;
       data.models = Array.isArray(catalog.models) ? catalog.models : [];
       data.recommendedModelId = catalog.recommendedModelId || null;
       data.refreshedAt = catalog.refreshedAt || null;
       data.totalModels = Number.isInteger(catalog.totalModels) ? catalog.totalModels : data.models.length;
-      if (!data.models.length) data.catalogError = 'No OpenRouter models are available right now. Try Refresh.';
+      if (!data.models.length) data.catalogError = globalThis.PlatformI18n.t("workshop:no_openrouter_models_are_available_right_now_try_5b544ecc");
     } catch (err) {
-      data.catalogError = err.message || 'Could not load OpenRouter models.';
+      data.catalogError = err.message || globalThis.PlatformI18n.t("workshop:could_not_load_openrouter_models_50eb99bd");
     }
     return data;
   },
@@ -1559,50 +1556,50 @@ const DevChat = {
       <div class="w-full max-w-lg rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-5 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="dc-agent-choice-title">
         <div class="flex items-start gap-3">
           <div class="min-w-0 flex-1">
-            <h2 id="dc-agent-choice-title" class="text-lg font-bold text-zinc-900 dark:text-zinc-100">${openRouterModelOnly ? 'Choose an OpenRouter model' : (mode === 'switch' ? 'Where should this session build?' : 'Where should this build?')}</h2>
-            <p class="mt-1 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">${openRouterModelOnly ? 'Changing the model keeps this branch and conversation, but starts fresh OpenRouter context on the next turn.' : (mode === 'switch' ? 'Switching keeps this branch and conversation, but starts a fresh coding-agent context on the next turn.' : 'Both agents stay available. Your saved default is preselected; this choice is pinned to the new session.')}</p>
+            <h2 id="dc-agent-choice-title" class="text-lg font-bold text-zinc-900 dark:text-zinc-100">${openRouterModelOnly ? globalThis.PlatformI18n.t("workshop:choose_an_openrouter_model_8cf84a2f") : (mode === 'switch' ? globalThis.PlatformI18n.t("workshop:where_should_this_session_build_a1f22996") : globalThis.PlatformI18n.t("workshop:where_should_this_build_964e32bf"))}</h2>
+            <p class="mt-1 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">${openRouterModelOnly ? globalThis.PlatformI18n.t("workshop:changing_the_model_keeps_this_branch_and_convers_e545d0b8") : (mode === 'switch' ? 'Switching keeps this branch and conversation, but starts a fresh coding-agent context on the next turn.' : globalThis.PlatformI18n.t("workshop:both_agents_stay_available_your_saved_default_is_2e494c56"))}</p>
           </div>
-          <button type="button" id="dc-agent-choice-close" class="shrink-0 text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 dark:text-zinc-400" aria-label="Close">✕</button>
+          <button type="button" id="dc-agent-choice-close" class="shrink-0 text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 dark:text-zinc-400" aria-label="${globalThis.PlatformI18n.htmlText("workshop:close_7d9eb7ac")}">✕</button>
         </div>
-        <div class="mt-4 grid gap-2 sm:grid-cols-2 ${openRouterModelOnly ? 'hidden' : ''}" role="radiogroup" aria-label="Session AI">
+        <div class="mt-4 grid gap-2 sm:grid-cols-2 ${openRouterModelOnly ? 'hidden' : ''}" role="radiogroup" aria-label="${globalThis.PlatformI18n.htmlText("workshop:session_ai_1eedac3f")}">
           <button type="button" id="dc-agent-choice-codex" role="radio" class="rounded-lg border p-3 text-left transition-colors">
-            <span class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">Homeroom · OpenRouter</span>
-            <span class="mt-1 block text-xs text-zinc-500 dark:text-zinc-400">Preferred. Use your included credits or personal key, with any available model.</span>
-            ${data.defaultBackend === 'codex_openrouter' ? '<span class="mt-2 inline-block rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:text-violet-300">Saved default</span>' : ''}
+            <span class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">${globalThis.PlatformI18n.htmlText("workshop:homeroom_openrouter_8e3c38ff")}</span>
+            <span class="mt-1 block text-xs text-zinc-500 dark:text-zinc-400">${globalThis.PlatformI18n.htmlText("workshop:preferred_use_your_included_credits_or_personal__8d576d69")}</span>
+            ${data.defaultBackend === 'codex_openrouter' ? `<span class="mt-2 inline-block rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:text-violet-300">${globalThis.PlatformI18n.htmlText("workshop:saved_default_069cb940")}</span>` : ''}
           </button>
           <button type="button" id="dc-agent-choice-claude" role="radio" class="rounded-lg border p-3 text-left transition-colors">
-            <span class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">Homeroom · Claude</span>
-            <span class="mt-1 block text-xs text-zinc-500 dark:text-zinc-400">Use the platform Claude allowance instead.</span>
-            ${data.defaultBackend === 'claude_code' ? '<span class="mt-2 inline-block rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:text-violet-300">Saved default</span>' : ''}
+            <span class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">${globalThis.PlatformI18n.htmlText("workshop:homeroom_claude_512e3c8d")}</span>
+            <span class="mt-1 block text-xs text-zinc-500 dark:text-zinc-400">${globalThis.PlatformI18n.htmlText("workshop:use_the_platform_claude_allowance_instead_33140cf8")}</span>
+            ${data.defaultBackend === 'claude_code' ? `<span class="mt-2 inline-block rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:text-violet-300">${globalThis.PlatformI18n.htmlText("workshop:saved_default_069cb940")}</span>` : ''}
           </button>
         </div>
         <div id="dc-agent-choice-codex-options" class="mt-4 hidden rounded-lg border border-zinc-200 dark:border-zinc-800 p-3">
-          <label for="dc-agent-choice-model" class="block text-xs font-medium text-zinc-700 dark:text-zinc-300">OpenRouter model</label>
+          <label for="dc-agent-choice-model" class="block text-xs font-medium text-zinc-700 dark:text-zinc-300">${globalThis.PlatformI18n.htmlText("workshop:openrouter_model_dd24ac61")}</label>
           <div class="mt-1 flex flex-wrap gap-2">
-            <input id="dc-agent-choice-model-search" type="search" autocomplete="off" placeholder="Filter by model or provider…" class="min-w-0 flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-violet-500">
-            <button type="button" id="dc-agent-choice-favorites-only" aria-pressed="false" class="shrink-0 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300">☆ Favorites</button>
-            <button type="button" id="dc-agent-choice-refresh-models" class="shrink-0 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 disabled:opacity-50">Refresh</button>
+            <input id="dc-agent-choice-model-search" type="search" autocomplete="off" placeholder="${globalThis.PlatformI18n.htmlText("workshop:filter_by_model_or_provider_19c5643b")}" class="min-w-0 flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-violet-500">
+            <button type="button" id="dc-agent-choice-favorites-only" aria-pressed="false" class="shrink-0 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300">${globalThis.PlatformI18n.htmlText("workshop:favorites_c2a2f40a")}</button>
+            <button type="button" id="dc-agent-choice-refresh-models" class="shrink-0 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 disabled:opacity-50">${globalThis.PlatformI18n.htmlText("workshop:refresh_0e916101")}</button>
           </div>
           <div class="mt-2 flex items-stretch gap-2">
             <select id="dc-agent-choice-model" class="min-w-0 flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500"></select>
-            <button type="button" id="dc-agent-choice-star-model" aria-pressed="false" class="shrink-0 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-2 text-lg leading-none text-zinc-700 dark:text-zinc-300 disabled:opacity-50" aria-label="Add selected model to favorites" title="Add selected model to favorites">☆</button>
+            <button type="button" id="dc-agent-choice-star-model" aria-pressed="false" class="shrink-0 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-2 text-lg leading-none text-zinc-700 dark:text-zinc-300 disabled:opacity-50" aria-label="${globalThis.PlatformI18n.htmlText("workshop:add_selected_model_to_favorites_a079bd1c")}" title="${globalThis.PlatformI18n.htmlText("workshop:add_selected_model_to_favorites_a079bd1c")}">☆</button>
           </div>
           <p id="dc-agent-choice-catalog-meta" class="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400"></p>
-          <p class="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">Platform recommendations start in Favorites. Clear the Favorites filter to browse the complete key-visible catalog. Rates are per 1M tokens; actual spend depends on usage.</p>
-          <label for="dc-agent-choice-effort" class="mt-3 block text-xs font-medium text-zinc-700 dark:text-zinc-300">Reasoning effort</label>
+          <p class="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">${globalThis.PlatformI18n.htmlText("workshop:platform_recommendations_start_in_favorites_clea_c27478fa")}</p>
+          <label for="dc-agent-choice-effort" class="mt-3 block text-xs font-medium text-zinc-700 dark:text-zinc-300">${globalThis.PlatformI18n.htmlText("workshop:reasoning_effort_3236aeec")}</label>
           <select id="dc-agent-choice-effort" class="mt-1 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500">
-            <option value="">Default</option>
-            <option value="minimal">Minimal</option>
-            <option value="low">Low</option>
-            <option value="medium">Medium</option>
-            <option value="high">High</option>
-            <option value="xhigh">Extra high</option>
+            <option value="">${globalThis.PlatformI18n.htmlText("workshop:default_21b111cb")}</option>
+            <option value="minimal">${globalThis.PlatformI18n.htmlText("workshop:minimal_057b5de4")}</option>
+            <option value="low">${globalThis.PlatformI18n.htmlText("workshop:low_f793de20")}</option>
+            <option value="medium">${globalThis.PlatformI18n.htmlText("workshop:medium_8e588cd1")}</option>
+            <option value="high">${globalThis.PlatformI18n.htmlText("workshop:high_c4ebc6d4")}</option>
+            <option value="xhigh">${globalThis.PlatformI18n.htmlText("workshop:extra_high_70eb321d")}</option>
           </select>
         </div>
         <p id="dc-agent-choice-status" class="mt-3 min-h-[1.25rem] text-xs leading-relaxed text-zinc-500 dark:text-zinc-400"></p>
         <div class="mt-4 flex flex-wrap justify-end gap-2">
-          <button type="button" id="dc-agent-choice-settings" class="hidden rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800">Open OpenRouter settings</button>
-          <button type="button" id="dc-agent-choice-cancel" class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800">Cancel</button>
+          <button type="button" id="dc-agent-choice-settings" class="hidden rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800">${globalThis.PlatformI18n.htmlText("workshop:open_openrouter_settings_43a49afc")}</button>
+          <button type="button" id="dc-agent-choice-cancel" class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800">${globalThis.PlatformI18n.htmlText("workshop:cancel_19766ed6")}</button>
           <button type="button" id="dc-agent-choice-apply" class="rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"></button>
         </div>
       </div>`;
@@ -1653,11 +1650,11 @@ const DevChat = {
       }
       modelSelect.disabled = visibleModels.length === 0;
       favoritesOnlyButton.setAttribute('aria-pressed', String(favoritesOnly));
-      favoritesOnlyButton.textContent = favoritesOnly ? '★ Favorites' : '☆ Favorites';
+      favoritesOnlyButton.textContent = favoritesOnly ? globalThis.PlatformI18n.t("workshop:favorites_68b313bd") : globalThis.PlatformI18n.t("workshop:favorites_c2a2f40a");
       const age = this._openRouterCatalogAgeText(data.refreshedAt);
       catalogMeta.textContent = visibleModels.length
-        ? `${visibleModels.length} of ${data.totalModels || data.models.length} models${age ? ` · ${age}` : ''}`
-        : `No models match. Clear the search or show all models${age ? ` · ${age}` : ''}`;
+        ? globalThis.PlatformI18n.t("workshop:value1_of_value2_models_value3_097ae2d7", { value1: visibleModels.length, value2: data.totalModels || data.models.length, value3: age ? ` · ${age}` : '' })
+        : globalThis.PlatformI18n.t("workshop:no_models_match_clear_the_search_or_show_all_mod_0a6c4f43", { value1: age ? ` · ${age}` : '' });
       if (!visibleModels.length) {
         starModelButton.disabled = true;
         starModelButton.textContent = '☆';
@@ -1679,13 +1676,13 @@ const DevChat = {
       applyButton.disabled = false;
       const venueName = codex ? 'Homeroom · OpenRouter' : 'Homeroom · Claude';
       applyButton.textContent = openRouterModelOnly
-        ? 'Use this OpenRouter model'
-        : (mode === 'switch' ? `Switch to ${venueName}` : `Build on ${venueName}`);
+        ? globalThis.PlatformI18n.t("workshop:use_this_openrouter_model_e6f6fcab")
+        : (mode === 'switch' ? globalThis.PlatformI18n.t("workshop:switch_to_value1_9a43c556", { value1: venueName }) : globalThis.PlatformI18n.t("workshop:build_on_value1_c3b2d8c2", { value1: venueName }));
 
       if (!codex) {
         status.textContent = data.loadError
-          ? `${data.loadError} Homeroom · Claude is still available.`
-          : 'Homeroom · Claude builds in this chat on your daily Homeroom credits.';
+          ? globalThis.PlatformI18n.t("workshop:value1_homeroom_claude_is_still_available_193bccd5", { value1: data.loadError })
+          : globalThis.PlatformI18n.t("workshop:homeroom_claude_builds_in_this_chat_on_your_dail_93876eb2");
         return;
       }
       if (data.loadError) {
@@ -1694,23 +1691,23 @@ const DevChat = {
         return;
       }
       if (!data.codexAvailable) {
-        status.textContent = 'Homeroom · OpenRouter is not enabled for this account or deployment.';
+        status.textContent = globalThis.PlatformI18n.t("workshop:homeroom_openrouter_is_not_enabled_for_this_acco_c6e07131");
         applyButton.disabled = true;
         return;
       }
       if (!data.credentialConfigured) {
-        status.textContent = data.catalogError || 'Add your OpenRouter API key before choosing OpenRouter.';
-        applyButton.textContent = 'Set up OpenRouter';
+        status.textContent = data.catalogError || globalThis.PlatformI18n.t("workshop:add_your_openrouter_api_key_before_choosing_open_a04975ea");
+        applyButton.textContent = globalThis.PlatformI18n.t("workshop:set_up_openrouter_b9f8c5d0");
         return;
       }
       if (!data.models.length) {
-        status.textContent = data.catalogError || 'No OpenRouter models are available right now. Try Refresh.';
+        status.textContent = data.catalogError || globalThis.PlatformI18n.t("workshop:no_openrouter_models_are_available_right_now_try_5b544ecc");
         applyButton.disabled = true;
         return;
       }
       const model = data.models.find((item) => item.id === selectedModel) || null;
       if (!model) {
-        status.textContent = 'No models match. Clear the search or show all models.';
+        status.textContent = globalThis.PlatformI18n.t("workshop:no_models_match_clear_the_search_or_show_all_mod_e585a81e");
         applyButton.disabled = true;
         starModelButton.disabled = true;
         starModelButton.textContent = '☆';
@@ -1734,7 +1731,7 @@ const DevChat = {
       const reasoningNote = supportsReasoning
         ? ''
         : ' This model does not expose reasoning-effort controls.';
-      status.textContent = `${this._openRouterModelCostSummary(model)}. ${this._openRouterModelCompatibilitySummary(model)}${reasoningNote} This session bills directly to your OpenRouter key.`;
+      status.textContent = globalThis.PlatformI18n.t("workshop:value1_value2_value3_this_session_bills_directly_2c9c4ef4", { value1: this._openRouterModelCostSummary(model), value2: this._openRouterModelCompatibilitySummary(model), value3: reasoningNote });
     };
 
     claudeButton.addEventListener('click', () => { selectedBackend = 'claude_code'; render(); });
@@ -1757,13 +1754,13 @@ const DevChat = {
         renderModelOptions();
         render();
       } catch (err) {
-        status.textContent = err.message || 'Could not update that favorite.';
+        status.textContent = err.message || globalThis.PlatformI18n.t("workshop:could_not_update_that_favorite_288b961b");
         starModelButton.disabled = false;
       }
     });
     refreshModelsButton.addEventListener('click', async () => {
       refreshModelsButton.disabled = true;
-      refreshModelsButton.textContent = 'Refreshing…';
+      refreshModelsButton.textContent = globalThis.PlatformI18n.t("workshop:refreshing_1c0def7b");
       try {
         const fresh = await this._loadCodingAgentChoiceData({ forceRefresh: true });
         if (fresh.loadError || (!fresh.catalogLoaded && fresh.catalogError)) {
@@ -1787,10 +1784,10 @@ const DevChat = {
         renderModelOptions();
         render();
       } catch (err) {
-        status.textContent = err.message || 'Could not refresh OpenRouter models.';
+        status.textContent = err.message || globalThis.PlatformI18n.t("workshop:could_not_refresh_openrouter_models_ad5f3aee");
       } finally {
         refreshModelsButton.disabled = false;
-        refreshModelsButton.textContent = 'Refresh';
+        refreshModelsButton.textContent = globalThis.PlatformI18n.t("workshop:refresh_0e916101");
       }
     });
     effortSelect.addEventListener('change', () => { selectedEffort = effortSelect.value; });
@@ -1909,7 +1906,7 @@ const DevChat = {
       && (choice.reasoningEffort || null) === (current.reasoningEffort || null);
     if (same) {
       if (!quietBusy) {
-        PlatformUI.toast(`${DevChat._agentName(choice.backend)} is already selected for this session.`);
+        PlatformUI.toast(globalThis.PlatformI18n.t("workshop:value1_is_already_selected_for_this_session_8e9a7a53", { value1: DevChat._agentName(choice.backend) }));
       }
       return 'same';
     }
@@ -1925,7 +1922,7 @@ const DevChat = {
       if (!response.ok) {
         const busy = response.status === 409 && /busy/i.test(String(data.error || ''));
         if (!(busy && quietBusy)) {
-          PlatformUI.toast(data.error || 'Could not switch coding agents.');
+          PlatformUI.toast(data.error || globalThis.PlatformI18n.t("workshop:could_not_switch_coding_agents_3fe84174"));
         }
         return busy ? 'busy' : 'failed';
       }
@@ -1939,10 +1936,10 @@ const DevChat = {
       Object.assign(DevChat.currentSession, data.session || {});
       if (data.message) DevChat.messages.push(data.message);
       DevChat.renderChatView();
-      PlatformUI.toast(`This session now uses ${DevChat._agentName(choice.backend)}.`);
+      PlatformUI.toast(globalThis.PlatformI18n.t("workshop:this_session_now_uses_value1_66653827", { value1: DevChat._agentName(choice.backend) }));
       return 'applied';
     } catch {
-      PlatformUI.toast('Network error while switching coding agents.');
+      PlatformUI.toast(globalThis.PlatformI18n.t("workshop:network_error_while_switching_coding_agents_4205cd63"));
       return 'failed';
     }
   },
@@ -1974,7 +1971,7 @@ const DevChat = {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        PlatformUI.toast(data.error || 'Could not switch to the platform agent.');
+        PlatformUI.toast(data.error || globalThis.PlatformI18n.t("workshop:could_not_switch_to_the_platform_agent_253a0924"));
         return;
       }
       if (!DevChat.currentSession || DevChat.currentSession.id !== session.id) return;
@@ -2007,7 +2004,7 @@ const DevChat = {
       // this one: nothing on screen changes when the round trip fails.
       DevChat.renderChatView();
     } catch {
-      PlatformUI.toast('Network error while switching coding agents.');
+      PlatformUI.toast(globalThis.PlatformI18n.t("workshop:network_error_while_switching_coding_agents_4205cd63"));
     }
   },
 
@@ -2132,7 +2129,7 @@ const DevChat = {
     if (DevChat._isOpenRouterSession()) return { kind: 'none', label: '' };
     const agent = DevChat._localAgent;
     if (!agent && DevChat._runner !== 'local') return { kind: 'none', label: '' };
-    const label = agent?.label || DevChat._runnerLabel || 'your machine';
+    const label = agent?.label || DevChat._runnerLabel || globalThis.PlatformI18n.t("workshop:your_machine_44c1d773");
     return { kind: agent ? 'live' : 'past', label };
   },
 
@@ -2143,18 +2140,18 @@ const DevChat = {
   async _handBackToUsernode() {
     const agent = DevChat._localAgent;
     if (!agent || agent.demo) return;
-    const label = agent.label || 'your machine';
-    if (!confirm(`Hand coding turns back to Homeroom?\n\n${label} stops receiving turns for this session. Anything it already committed stays on the branch.`)) return;
+    const label = agent.label || globalThis.PlatformI18n.t("workshop:your_machine_44c1d773");
+    if (!confirm(globalThis.PlatformI18n.t("workshop:hand_coding_turns_back_to_homeroom_value1_stops__78c0abce", { value1: label }))) return;
     try {
       const res = await fetch(`/api/me/local-agents/${encodeURIComponent(agent.leaseId)}`, {
         method: 'DELETE',
         credentials: 'same-origin',
       });
-      if (res.status !== 204 && res.status !== 404) throw new Error('detach failed');
+      if (res.status !== 204 && res.status !== 404) throw new Error(globalThis.PlatformI18n.t("workshop:detach_failed_841edccb"));
       DevChat._localAgent = null;
       DevChat._renderRunnerControls();
     } catch {
-      alert('Could not hand the session back. Try again in a moment.');
+      alert(globalThis.PlatformI18n.t("workshop:could_not_hand_the_session_back_try_again_in_a_m_768a2b9c"));
     }
   },
 
@@ -2192,7 +2189,7 @@ const DevChat = {
   // short guidance directly, but these helpers remain safe for an older
   // cached shell during a rolling update. Nothing measured feeds either one.
 
-  MODEL_GUIDANCE_TOOLTIP: 'A suggestion, not a rule. Any model can attempt any change. Opus is the general coding pick; reach for Fable when design judgment matters or the coding is genuinely difficult. Both cost more per change than Sonnet.',
+  get MODEL_GUIDANCE_TOOLTIP() { return globalThis.PlatformI18n.t("workshop:a_suggestion_not_a_rule_any_model_can_attempt_an_9c1c6d1c"); },
 
   // Plain text for one <option>. Degrades to the bare label when the
   // server sent no guidance (e.g. an older payload).
@@ -2215,7 +2212,7 @@ const DevChat = {
     // "One small thing at a time: …" reads as "best for one small thing
     // at a time: …" once it follows the label.
     const guidance = long.charAt(0).toLowerCase() + long.slice(1);
-    return `${label}: best for ${guidance}`;
+    return globalThis.PlatformI18n.t("workshop:value1_best_for_value2_d5ee1c65", { value1: label, value2: guidance });
   },
 
   // Clears all per-app state. Called when the user leaves an app (via
@@ -2420,7 +2417,7 @@ const DevChat = {
       creditsCard: {
         // #2571: one allowance, one window. The fixture behind ?demo=1 is
         // the weekly cap at its default, so the card names that.
-        error: 'Weekly limit reached ($50.00). Resets Monday 00:00 UTC.',
+        get error() { return globalThis.PlatformI18n.t("workshop:weekly_limit_reached_50_00_resets_monday_00_00_u_2e38f277"); },
         capWindow: 'weekly',
         hasApiKey: !!(window.Settings && Settings.state && Settings.state.hasApiKey),
         globalOut: DevChat._globalBudgetOut(),
@@ -2474,7 +2471,7 @@ const DevChat = {
   _resetWhen(weekly) {
     const RT = typeof window !== 'undefined' && window.ResetTime;
     if (RT) return RT.resetWhen(weekly ? 'weekly' : 'daily');
-    return weekly ? 'Monday 00:00 UTC' : 'at midnight UTC';
+    return weekly ? 'Monday 00:00 UTC' : globalThis.PlatformI18n.t("workshop:at_midnight_utc_85c316cd");
   },
 
   // #1788 gave the allowance two windows and reported whichever was
@@ -2490,15 +2487,15 @@ const DevChat = {
     return {
       weekly,
       // "Today: …" / "This week: …"
-      label: b.windowLabel || (weekly ? 'This week' : 'Today'),
+      label: b.windowLabel || (weekly ? globalThis.PlatformI18n.t("workshop:this_week_8c4eef5a") : globalThis.PlatformI18n.t("workshop:today_2b065c7c")),
       // "…left today" / "…left this week"
-      when: weekly ? 'this week' : 'today',
+      when: weekly ? globalThis.PlatformI18n.t("workshop:this_week_7d76655e") : 'today',
       // "your $50.00 platform weekly limit"
-      limitNoun: weekly ? 'weekly limit' : 'daily limit',
+      limitNoun: weekly ? globalThis.PlatformI18n.t("workshop:weekly_limit_154b7266") : globalThis.PlatformI18n.t("workshop:daily_limit_a1c5fa56"),
       // "your free daily AI credits"
-      creditsNoun: weekly ? 'free weekly AI credits' : 'free daily AI credits',
+      creditsNoun: weekly ? globalThis.PlatformI18n.t("workshop:free_weekly_ai_credits_975a33ff") : globalThis.PlatformI18n.t("workshop:free_daily_ai_credits_b7370aa5"),
       // Fallback for the reset sentence when CreditOptions is absent.
-      resetFallback: `Resets ${DevChat._resetWhen(weekly)}.`,
+      resetFallback: globalThis.PlatformI18n.t("workshop:resets_value1_21e183c2", { value1: DevChat._resetWhen(weekly) }),
     };
   },
 
@@ -2539,13 +2536,13 @@ const DevChat = {
       parts: [...view.parts,
         ...(view.parts.length ? [{ text: ' · ', className: 'text-zinc-500 dark:text-zinc-400' }] : []),
         {
-          text: `this turn ${spend.estimated ? '~' : ''}$${(spend.costCents / 100).toFixed(2)}`,
+          get text() { return globalThis.PlatformI18n.t("workshop:this_turn_value1_value2_b6ca87d7", { value1: spend.estimated ? '~' : '', value2: (spend.costCents / 100).toFixed(2) }); },
           className: 'text-zinc-500 dark:text-zinc-400',
           title: openRouter
-            ? 'Estimated from the model\u2019s OpenRouter list price and the tokens this turn used. OpenRouter\u2019s own usage records determine billing.'
+            ? globalThis.PlatformI18n.t("workshop:estimated_from_the_model_s_openrouter_list_price_dd6ea06c")
             : spend.estimated
-              ? 'Estimated token spend so far. Updates while Claude Code works; final usage determines billing.'
-              : 'Token spend reported by Claude Code for this turn.',
+              ? globalThis.PlatformI18n.t("workshop:estimated_token_spend_so_far_updates_while_claud_9222b827")
+              : globalThis.PlatformI18n.t("workshop:token_spend_reported_by_claude_code_for_this_tur_e6ecb196"),
         },
       ],
     };
@@ -2578,28 +2575,28 @@ const DevChat = {
       if (hasApiKey) {
         const last4 = window.Settings.state.keyLast4 || '••••';
         return {
-          title: 'Platform credits are locked until you connect GitHub or X. Your own Anthropic key remains available.',
+          get title() { return globalThis.PlatformI18n.t("workshop:platform_credits_are_locked_until_you_connect_gi_48069758"); },
           parts: [
-            { text: 'platform credits locked', className: 'text-amber-800 dark:text-amber-400 hover:underline', href: '#settings/linked-accounts' },
+            { get text() { return globalThis.PlatformI18n.t("workshop:platform_credits_locked_20dc15fc"); }, className: 'text-amber-800 dark:text-amber-400 hover:underline', href: '#settings/linked-accounts' },
             { text: ' · ', className: muted },
-            { text: `your key · ${last4}`, className: 'text-emerald-700 dark:text-emerald-400' },
+            { get text() { return globalThis.PlatformI18n.t("workshop:your_key_value1_fad8b53b", { value1: last4 }); }, className: 'text-emerald-700 dark:text-emerald-400' },
           ],
         };
       }
       return {
         title: null,
         parts: [{
-          text: 'verify account · unlock $10/day',
+          get text() { return globalThis.PlatformI18n.t("workshop:verify_account_unlock_10_day_a683560b"); },
           className: 'text-amber-800 dark:text-amber-400 font-medium hover:underline',
           href: '#settings/linked-accounts',
-          title: 'Connect GitHub or X to unlock $10/day',
+          get title() { return globalThis.PlatformI18n.t("workshop:connect_github_or_x_to_unlock_10_day_572ba5fe"); },
         }],
       };
     }
     if (state && state.level === 'unavailable') {
       return hasApiKey
-        ? { title: null, parts: [{ text: 'your key available', className: 'text-emerald-700 dark:text-emerald-400', title: 'Platform credit eligibility is temporarily unavailable; your own key remains available.' }] }
-        : { title: null, parts: [{ text: 'credits temporarily unavailable', className: 'text-amber-800 dark:text-amber-400', title: 'Platform credit eligibility could not be verified. Try again shortly.' }] };
+        ? { title: null, parts: [{ get text() { return globalThis.PlatformI18n.t("workshop:your_key_available_5e90064e"); }, className: 'text-emerald-700 dark:text-emerald-400', get title() { return globalThis.PlatformI18n.t("workshop:platform_credit_eligibility_is_temporarily_unava_ffb8a07a"); } }] }
+        : { title: null, parts: [{ get text() { return globalThis.PlatformI18n.t("workshop:credits_temporarily_unavailable_b028cfa7"); }, className: 'text-amber-800 dark:text-amber-400', get title() { return globalThis.PlatformI18n.t("workshop:platform_credit_eligibility_could_not_be_verifie_286f1ddc"); } }] };
     }
 
     // #1353: no "· $X left" alongside the pair. The remainder is $limit
@@ -2622,7 +2619,7 @@ const DevChat = {
         // Budget fetch hasn't landed yet — static badge until it does.
         return {
           title: null,
-          parts: [{ text: `your key · ${last4}`, className: 'text-emerald-700 dark:text-emerald-400', title: 'Using your Anthropic API key' }],
+          parts: [{ get text() { return globalThis.PlatformI18n.t("workshop:your_key_value1_fad8b53b", { value1: last4 }); }, className: 'text-emerald-700 dark:text-emerald-400', get title() { return globalThis.PlatformI18n.t("workshop:using_your_anthropic_api_key_5861b6d7"); } }],
         };
       }
       const byokCents = DevChat.budget.byokSpentCents || 0;
@@ -2632,19 +2629,19 @@ const DevChat = {
       const pct = Math.min(100, (DevChat.budget.spentCents / DevChat.budget.limitCents) * 100);
       const color = pct > 80 ? 'text-red-700 dark:text-red-400' : pct > 50 ? 'text-yellow-700 dark:text-yellow-400' : 'text-emerald-700 dark:text-emerald-400';
       const parts = [
-        { text: 'limit ', className: muted },
+        { get text() { return globalThis.PlatformI18n.t("workshop:limit_70792dfe"); }, className: muted },
         { text: `$${spent}`, className: color },
         { text: `/$${limit}`, className: muted },
       ];
       if (byokCents > 0) {
         parts.push({ text: ' · ', className: muted });
-        parts.push({ text: `your key $${byok}`, className: 'text-emerald-700 dark:text-emerald-400' });
+        parts.push({ get text() { return globalThis.PlatformI18n.t("workshop:your_key_value1_732ad724", { value1: byok }); }, className: 'text-emerald-700 dark:text-emerald-400' });
       }
       const win = DevChat._creditWindow();
       return {
-        title: `${win.label}: $${spent} of your $${limit} platform ${win.limitNoun}`
-          + (byokCents > 0 ? ` + $${byok} billed to your Anthropic key (…${last4})` : '')
-          + `. The ${win.limitNoun} is used first; your key (…${last4}) takes over once it runs out. `
+        title: globalThis.PlatformI18n.t("workshop:value1_value2_of_your_value3_platform_value4_657d10a1", { value1: win.label, value2: spent, value3: limit, value4: win.limitNoun })
+          + (byokCents > 0 ? globalThis.PlatformI18n.t("workshop:value1_billed_to_your_anthropic_key_value2_34e9a067", { value1: byok, value2: last4 }) : '')
+          + globalThis.PlatformI18n.t("workshop:the_value1_is_used_first_your_key_value2_takes_o_db8a7e64", { value1: win.limitNoun, value2: last4 })
           + (resetTip || win.resetFallback),
         parts,
       };
@@ -2659,8 +2656,7 @@ const DevChat = {
     if (DevChat._creditsExhausted()) {
       const winOut = DevChat._creditWindow();
       return {
-        title: `Your ${winOut.creditsNoun} are used up. ${
-          resetTip || winOut.resetFallback} Or add your own Anthropic API key in Settings to keep working now.`,
+        get title() { return globalThis.PlatformI18n.t("workshop:your_value1_are_used_up_value2_or_add_your_own_a_2c49df8d", { value1: winOut.creditsNoun, value2: resetTip || winOut.resetFallback }); },
         parts: [
           { text: `$${spent}`, className: 'text-red-700 font-semibold dark:text-red-400' },
           { text: `/$${limit}`, className: 'text-red-700 dark:text-red-400' },
@@ -2671,8 +2667,7 @@ const DevChat = {
     const color = pct > 80 ? 'text-red-700 dark:text-red-400' : pct > 50 ? 'text-yellow-700 dark:text-yellow-400' : 'text-emerald-700 dark:text-emerald-400';
     const winOk = DevChat._creditWindow();
     return {
-      title: `${winOk.label}: $${spent} of your $${limit} ${winOk.creditsNoun}. ${
-        resetTip || winOk.resetFallback}`,
+      title: globalThis.PlatformI18n.t("workshop:value1_value2_of_your_value3_value4_value5_ae4e469a", { value1: winOk.label, value2: spent, value3: limit, value4: winOk.creditsNoun, value5: resetTip || winOk.resetFallback }),
       parts: [
         { text: `$${spent}`, className: color },
         { text: `/$${limit}`, className: muted },
@@ -2713,20 +2708,20 @@ const DevChat = {
       : a.limitReset === 'weekly' ? 'weekly'
         : a.limitReset === 'monthly' ? 'monthly' : null;
     const when = cadence === 'daily' ? ' today'
-      : cadence === 'weekly' ? ' this week'
-        : cadence === 'monthly' ? ' this month' : '';
+      : cadence === 'weekly' ? globalThis.PlatformI18n.t("workshop:this_week_8dbf3082")
+        : cadence === 'monthly' ? globalThis.PlatformI18n.t("workshop:this_month_4e849282") : '';
     const pct = hasLimit ? Math.min(100, ((limit - remaining) / limit) * 100) : 0;
     const color = hasLimit && remaining <= 0 ? 'text-red-700 font-semibold dark:text-red-400'
       : pct > 80 ? 'text-red-700 dark:text-red-400'
         : pct > 50 ? 'text-yellow-700 dark:text-yellow-400'
           : 'text-emerald-700 dark:text-emerald-400';
     const owner = a.source === 'usernode_managed'
-      ? 'Your included OpenRouter key'
-      : `Your OpenRouter key${a.last4 ? ` (\u2026${a.last4})` : ''}`;
+      ? globalThis.PlatformI18n.t("workshop:your_included_openrouter_key_26026c10")
+      : globalThis.PlatformI18n.t("workshop:your_openrouter_key_value1_7e08e054", { value1: a.last4 ? ` (\u2026${a.last4})` : '' });
     const allowance = hasLimit
-      ? `$${remaining.toFixed(2)} of its $${limit.toFixed(2)}${cadence ? ` ${cadence}` : ''} allowance left`
-      : `$${remaining.toFixed(2)} left`;
-    const reset = cadence ? ` OpenRouter resets it ${cadence}.` : '';
+      ? globalThis.PlatformI18n.t("workshop:value1_of_its_value2_value3_allowance_left_130686dc", { value1: remaining.toFixed(2), value2: limit.toFixed(2), value3: cadence ? ` ${cadence}` : '' })
+      : globalThis.PlatformI18n.t("workshop:value1_left_1ae1742d", { value1: remaining.toFixed(2) });
+    const reset = cadence ? globalThis.PlatformI18n.t("workshop:openrouter_resets_it_value1_69dfa447", { value1: cadence }) : '';
     // #2666: name the budget. This pill and the platform one occupy the
     // same slot and measure DIFFERENT things — `limit $7.05/$50.00` is the
     // platform's weekly allowance, this is what OpenRouter says is left on
@@ -2744,11 +2739,11 @@ const DevChat = {
     return {
       title: null,
       parts: [
-        { text: 'OpenRouter ', className: 'text-zinc-500 dark:text-zinc-400' },
+        { get text() { return globalThis.PlatformI18n.t("workshop:openrouter_d9063e59"); }, className: 'text-zinc-500 dark:text-zinc-400' },
         {
-          text: `$${remaining.toFixed(2)} left${when}`,
+          get text() { return globalThis.PlatformI18n.t("workshop:value1_left_value2_e83cf68f", { value1: remaining.toFixed(2), value2: when }); },
           className: color,
-          title: `${owner} has ${allowance}.${reset}`,
+          get title() { return globalThis.PlatformI18n.t("workshop:value1_has_value2_value3_1036ef82", { value1: owner, value2: allowance, value3: reset }); },
         },
       ],
     };
@@ -2844,7 +2839,7 @@ const DevChat = {
         tone: 'amber',
         icon: 'person',
         lead: 'Connect GitHub or X to unlock $10/day of Homeroom credits.',
-        tail: ' Either account unlocks the same tier; connecting both does not stack credits.',
+        get tail() { return globalThis.PlatformI18n.t("workshop:either_account_unlocks_the_same_tier_connecting__578bf0b8"); },
         actionsHtml: actions({ verificationRequired: true }),
       };
     }
@@ -2853,8 +2848,8 @@ const DevChat = {
         ...base,
         tone: 'amber',
         icon: null,
-        lead: 'Credit eligibility could not be verified.',
-        tail: ' Try again shortly, or use your own API key or another build venue.',
+        get lead() { return globalThis.PlatformI18n.t("workshop:credit_eligibility_could_not_be_verified_2c764359"); },
+        get tail() { return globalThis.PlatformI18n.t("workshop:try_again_shortly_or_use_your_own_api_key_or_ano_e55ee3d4"); },
         actionsHtml: actions({ verificationRequired: false }),
       };
     }
@@ -2864,16 +2859,16 @@ const DevChat = {
       tone: 'red',
       icon: 'warn',
       lead: userOut
-        ? `You\u2019ve used up ${DevChat._creditWindow().when === 'this week'
-          ? 'this week\u2019s' : 'today\u2019s'} free AI credits.`
-        : 'The platform\u2019s shared daily AI budget is used up.',
+        ? globalThis.PlatformI18n.t("workshop:you_ve_used_up_value1_free_ai_credits_22ca6398", { value1: DevChat._creditWindow().when === 'this week'
+          ? globalThis.PlatformI18n.t("workshop:this_week_s_eedabeb7") : globalThis.PlatformI18n.t("workshop:message_285ac154c0e8") })
+        : globalThis.PlatformI18n.t("workshop:the_platform_s_shared_daily_ai_budget_is_used_up_6128ed78"),
       reset: DevChat._creditResetSentence()
-        || `Free credits reset ${DevChat._resetWhen(DevChat._creditWindow().weekly)}.`,
+        || globalThis.PlatformI18n.t("workshop:free_credits_reset_value1_65176b9b", { value1: DevChat._resetWhen(DevChat._creditWindow().weekly) }),
       resetTitle: state && window.CreditOptions && CreditOptions.resetTitle
         ? CreditOptions.resetTitle(state) : null,
-      tail: ' Or keep working right now ' + (DevChat._externalFlowsAvailable()
-        ? 'on your own Claude or ChatGPT plan, with your own API key, or with a coding tool on your computer.'
-        : 'with your own API key, a coding tool on your computer, or your Claude.ai / ChatGPT subscription.'),
+      tail: globalThis.PlatformI18n.t("workshop:or_keep_working_right_now_8cf5dbb0") + (DevChat._externalFlowsAvailable()
+        ? globalThis.PlatformI18n.t("workshop:on_your_own_claude_or_chatgpt_plan_with_your_own_e08360ea")
+        : globalThis.PlatformI18n.t("workshop:with_your_own_api_key_a_coding_tool_on_your_comp_d32b0f17")),
       actionsHtml: actions({
         hasApiKey: !!(window.Settings && Settings.state && Settings.state.hasApiKey),
         globalOut: !userOut,
@@ -2996,8 +2991,8 @@ const DevChat = {
       resetsAt: reset.toISOString(),
       lowBalancePct: 80,
       capWindow: 'weekly',
-      windowLabel: 'This week',
-      resetLabel: 'Monday 00:00 UTC',
+      get windowLabel() { return globalThis.PlatformI18n.t("workshop:this_week_8c4eef5a"); },
+      resetLabel: globalThis.PlatformI18n.t("core:message_c5ae7b248fc4"),
       dailyApplies: false,
       weeklyApplies: true,
       weeklyLimitCents: 5000,
@@ -3258,9 +3253,9 @@ const DevChat = {
     }
     const reset = DevChat._creditResetSentence();
     const lead = DevChat._globalBudgetOut()
-      ? 'The platform\u2019s shared daily AI budget is used up.'
-      : `You\u2019ve used up ${DevChat._creditWindow().weekly
-        ? 'this week\u2019s' : 'today\u2019s'} free AI credits.`;
+      ? globalThis.PlatformI18n.t("workshop:the_platform_s_shared_daily_ai_budget_is_used_up_6128ed78")
+      : globalThis.PlatformI18n.t("workshop:you_ve_used_up_value1_free_ai_credits_22ca6398", { value1: DevChat._creditWindow().weekly
+        ? globalThis.PlatformI18n.t("workshop:this_week_s_eedabeb7") : globalThis.PlatformI18n.t("workshop:message_285ac154c0e8") });
     return reset ? `${lead} ${reset}` : lead;
   },
 
@@ -3809,7 +3804,7 @@ const DevChat = {
     const flow = DevChat._devFlow;
     const bridge = window.usernode;
     if (!bridge || !bridge.isNative) {
-      flow.notice = 'Finish linking GitHub in the tab that just opened, then come back here.';
+      flow.notice = globalThis.PlatformI18n.t("workshop:finish_linking_github_in_the_tab_that_just_opene_d025c445");
       await DevChat._devFlowEnsureStatus(true);
       return;
     }
@@ -3828,7 +3823,7 @@ const DevChat = {
         accountId: typeof App !== 'undefined' && App.user ? App.user.id : null,
         origin: window.location.origin,
       });
-      flow.notice = 'Finish linking GitHub in your browser, then come back to the app. Sign in with the same Homeroom account if asked.';
+      flow.notice = globalThis.PlatformI18n.t("workshop:finish_linking_github_in_your_browser_then_come__25a2c29e");
     } catch (err) {
       flow.error = err.message;
     }
@@ -3907,7 +3902,7 @@ const DevChat = {
       // this tab at all.
       const text = (flow.status && flow.status.instructions) || '';
       if (!text) {
-        flow.error = 'No instructions to copy yet.';
+        flow.error = globalThis.PlatformI18n.t("workshop:no_instructions_to_copy_yet_bb2553e3");
         DevChat._repaintDevFlow();
         return;
       }
@@ -3916,8 +3911,8 @@ const DevChat = {
         await navigator.clipboard.writeText(text);
         copied = true;
       } catch { copied = false; }
-      if (copied) flow.notice = 'Instructions copied. Paste them into your agent, which will ask what you want to build.';
-      else flow.error = 'Could not reach the clipboard. Open the instructions below and copy them by hand.';
+      if (copied) flow.notice = globalThis.PlatformI18n.t("workshop:instructions_copied_paste_them_into_your_agent_w_ba10b781");
+      else flow.error = globalThis.PlatformI18n.t("workshop:could_not_reach_the_clipboard_open_the_instructi_d629cf85");
       DevChat._repaintDevFlow();
       return;
     }
@@ -3947,8 +3942,8 @@ const DevChat = {
     const brief = input ? String(input.value || '').trim() : '';
     if (!brief) {
       flow.error = box
-        ? 'Say what to build first. The work order needs something to hand your agent.'
-        : 'Describe the change in the message box below first. The work order needs something to hand your agent.';
+        ? globalThis.PlatformI18n.t("workshop:say_what_to_build_first_the_work_order_needs_som_00197121")
+        : globalThis.PlatformI18n.t("workshop:describe_the_change_in_the_message_box_below_fir_1df23a25");
       DevChat._repaintDevFlow();
       // Repainting replaced the node, so focus what is on screen NOW rather
       // than the detached element captured above.
@@ -3976,7 +3971,7 @@ const DevChat = {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        flow.error = data.error || 'Could not prepare the work order.';
+        flow.error = data.error || globalThis.PlatformI18n.t("workshop:could_not_prepare_the_work_order_c365c8c5");
         return;
       }
       // Clear the box: the brief now lives on the work order, and leaving
@@ -3986,10 +3981,10 @@ const DevChat = {
         input.style.height = 'auto';
       }
       flow.notice = data.reused
-        ? 'You already had a work order for this app, so this reuses it.'
-        : 'Work order ready.';
+        ? globalThis.PlatformI18n.t("workshop:you_already_had_a_work_order_for_this_app_so_thi_e7508b0e")
+        : globalThis.PlatformI18n.t("workshop:work_order_ready_e8a8806f");
     } catch (err) {
-      flow.error = `Network error: ${err.message}`;
+      flow.error = globalThis.PlatformI18n.t("workshop:network_error_value1_28b4e24a", { value1: err.message });
     } finally {
       flow.busy = false;
       await DevChat._devFlowEnsureStatus(true);
@@ -4016,7 +4011,7 @@ const DevChat = {
     const slug = DevChat._appSlug();
     const task = flow.status && flow.status.task;
     if (!task) {
-      flow.error = 'No work order to put away.';
+      flow.error = globalThis.PlatformI18n.t("workshop:no_work_order_to_put_away_02ff208b");
       DevChat._repaintDevFlow();
       return;
     }
@@ -4029,13 +4024,13 @@ const DevChat = {
       );
       if (res.ok || res.status === 404) {
         flow.brief = '';
-        flow.notice = 'Work order put away. Say what you want to build instead.';
+        flow.notice = globalThis.PlatformI18n.t("workshop:work_order_put_away_say_what_you_want_to_build_i_ebc28691");
       } else {
         const data = await res.json().catch(() => ({}));
-        flow.error = data.error || 'Could not put that work order away.';
+        flow.error = data.error || globalThis.PlatformI18n.t("workshop:could_not_put_that_work_order_away_358254d4");
       }
     } catch (err) {
-      flow.error = `Network error: ${err.message}`;
+      flow.error = globalThis.PlatformI18n.t("workshop:network_error_value1_28b4e24a", { value1: err.message });
     } finally {
       flow.busy = false;
       await DevChat._devFlowEnsureStatus(true);
@@ -4050,7 +4045,7 @@ const DevChat = {
     const slug = DevChat._appSlug();
     const task = flow.status && flow.status.task;
     if (!task) {
-      flow.error = 'No work order to submit yet.';
+      flow.error = globalThis.PlatformI18n.t("workshop:no_work_order_to_submit_yet_9e01d2ad");
       DevChat._repaintDevFlow();
       return;
     }
@@ -4068,10 +4063,10 @@ const DevChat = {
       );
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        flow.error = data.error || 'Could not submit the branch.';
+        flow.error = data.error || globalThis.PlatformI18n.t("workshop:could_not_submit_the_branch_18f6dcb1");
         return;
       }
-      PlatformUI.toast(`Proposal opened from PR #${data.prNumber || ''}`.trim());
+      PlatformUI.toast(globalThis.PlatformI18n.t("workshop:proposal_opened_from_pr_value1_37bb9960", { value1: data.prNumber || '' }).trim());
       flow.dismissed = true;
       if (data.sessionId) {
         await DevChat.openSession(data.sessionId, { userOpened: true });
@@ -4080,7 +4075,7 @@ const DevChat = {
       }
       await DevChat._devFlowEnsureStatus(true);
     } catch (err) {
-      flow.error = `Network error: ${err.message}`;
+      flow.error = globalThis.PlatformI18n.t("workshop:network_error_value1_28b4e24a", { value1: err.message });
     } finally {
       flow.busy = false;
       DevChat._repaintDevFlow();
@@ -4100,7 +4095,7 @@ const DevChat = {
     const task = flow.status && flow.status.task;
     const target = task && task.targetProposal;
     if (!task || !target || !target.id) {
-      flow.error = 'No proposal to update yet.';
+      flow.error = globalThis.PlatformI18n.t("workshop:no_proposal_to_update_yet_32153fbd");
       DevChat._repaintDevFlow();
       return;
     }
@@ -4122,25 +4117,25 @@ const DevChat = {
         // server's own sentence is the one that names it. Surfaced verbatim
         // rather than flattened into "could not submit", which would leave
         // the user with nothing to do next.
-        flow.error = data.message || data.error || 'Could not submit the update.';
+        flow.error = data.message || data.error || globalThis.PlatformI18n.t("workshop:could_not_submit_the_update_242af299");
         return;
       }
       if (data.unchanged) {
         // Nothing landed, so the card stays: the branch is still the thing
         // the user is waiting on, and dismissing the walkthrough here would
         // take away the only place to press again.
-        flow.notice = 'Nothing new to submit. This session is already on that commit.';
+        flow.notice = globalThis.PlatformI18n.t("workshop:nothing_new_to_submit_this_session_is_already_on_1850b211");
         DevChat._repaintDevFlow();
         return;
       }
       if (data.resumeRequired) {
         // The paused tail: the commit landed, the preview and checks did not
         // start. Saying so is the whole point — silence here looks broken.
-        PlatformUI.toast('Update landed. Reopen this session to rebuild its preview and re-run its checks.');
+        PlatformUI.toast(globalThis.PlatformI18n.t("workshop:update_landed_reopen_this_session_to_rebuild_its_69a50c25"));
       } else if (data.votesCleared) {
-        PlatformUI.toast(`Update submitted: ${data.votesCleared} vote${data.votesCleared === 1 ? '' : 's'} cleared`);
+        PlatformUI.toast(globalThis.PlatformI18n.t("workshop:message_333965457cca", { value1: data.votesCleared, count: data.votesCleared }));
       } else {
-        PlatformUI.toast('Update submitted');
+        PlatformUI.toast(globalThis.PlatformI18n.t("workshop:update_submitted_13b878f0"));
       }
       flow.dismissed = true;
       // Re-open the target — the same session in the continue case, the
@@ -4153,7 +4148,7 @@ const DevChat = {
       }
       return;
     } catch (err) {
-      flow.error = `Network error: ${err.message}`;
+      flow.error = globalThis.PlatformI18n.t("workshop:network_error_value1_28b4e24a", { value1: err.message });
     } finally {
       flow.busy = false;
       DevChat._repaintDevFlow();
@@ -4301,7 +4296,7 @@ const DevChat = {
       });
       const data = await res.json();
       if (!res.ok) {
-        PlatformUI.toast(data.error || 'Failed to create session');
+        PlatformUI.toast(data.error || globalThis.PlatformI18n.t("workshop:failed_to_create_session_ed388a10"));
         return null;
       }
       // /api/auth/me was loaded before a first-use managed key existed.
@@ -4323,7 +4318,7 @@ const DevChat = {
       try { window.Improve?.onSessionCreated?.(data.session, appSlug); } catch {}
       return data.session;
     } catch {
-      PlatformUI.toast('Network error');
+      PlatformUI.toast(globalThis.PlatformI18n.t("workshop:network_error_2a33d984"));
       return null;
     }
   },
@@ -4568,7 +4563,7 @@ const DevChat = {
       }
       if (!silent) {
         const data = await rr.json().catch(() => ({}));
-        PlatformUI.toast(data.error || 'Could not resume this session right now. Try again in a moment.');
+        PlatformUI.toast(data.error || globalThis.PlatformI18n.t("workshop:could_not_resume_this_session_right_now_try_agai_407fc8c6"));
       }
       return false;
     } catch {
@@ -4721,7 +4716,7 @@ const DevChat = {
             session.status = 'active';
           } else {
             const data = await rr.json().catch(() => ({}));
-            PlatformUI.toast(data.error || 'Could not resume this session right now. Try again in a moment.');
+            PlatformUI.toast(data.error || globalThis.PlatformI18n.t("workshop:could_not_resume_this_session_right_now_try_agai_407fc8c6"));
           }
         } catch { /* network blip — fall through; session stays paused */ }
       }
@@ -5111,7 +5106,7 @@ const DevChat = {
 
     DevChat.messages.push({
       role: 'user',
-      content: message || '(attached files)',
+      content: message || globalThis.PlatformI18n.t("workshop:attached_files_dbb67568"),
       created_at: new Date().toISOString(),
       ...(sentAttachments.length ? { attachments: sentAttachments } : {}),
     });
@@ -5182,7 +5177,7 @@ const DevChat = {
           if (openRouterSession) {
             DevChat.messages.push({
               role: 'assistant',
-              content: `**OpenRouter turn could not start.** ${data.error || 'Please try again.'}`,
+              content: globalThis.PlatformI18n.t("workshop:openrouter_turn_could_not_start_value1_8efc8f94", { value1: data.error || globalThis.PlatformI18n.t("workshop:please_try_again_eea4fb33") }),
               created_at: new Date().toISOString(),
             });
             DevChat._finishStreaming();
@@ -5205,7 +5200,7 @@ const DevChat = {
             role: 'assistant',
             content: '',
             creditsCard: {
-              error: data.error || 'They reset Monday 00:00 UTC.',
+              error: data.error || globalThis.PlatformI18n.t("workshop:they_reset_monday_00_00_utc_854c7cda"),
               capWindow: (DevChat.budget || {}).capWindow || 'weekly',
               hasApiKey: !!(window.Settings && Settings.state && Settings.state.hasApiKey),
               globalOut: DevChat._globalBudgetOut(),
@@ -5219,7 +5214,7 @@ const DevChat = {
           // credits" state is visible without waiting for a usage event.
           DevChat.refreshBudget();
         } else {
-          DevChat.messages.push({ role: 'assistant', content: `**Rate limit reached.** ${data.error || 'Try again later.'}`, created_at: new Date().toISOString() });
+          DevChat.messages.push({ role: 'assistant', content: globalThis.PlatformI18n.t("workshop:rate_limit_reached_value1_5d4ab193", { value1: data.error || globalThis.PlatformI18n.t("workshop:try_again_later_ef7fbdb0") }), created_at: new Date().toISOString() });
         }
         DevChat._finishStreaming();
         // #370: the cap rejected the send before any turn ran. Put the
@@ -5250,7 +5245,7 @@ const DevChat = {
         DevChat._removeSpinner();
         DevChat.messages.push({
           role: 'assistant',
-          content: `**Couldn't send message:** ${errText}`,
+          content: globalThis.PlatformI18n.t("workshop:couldn_t_send_message_value1_b3fb31ac", { value1: errText }),
           created_at: new Date().toISOString(),
         });
         DevChat._finishStreaming();
@@ -5410,7 +5405,7 @@ const DevChat = {
               case 'staging_ready':
                 DevChat._removeSpinner();
                 DevChat._deactivateLastStatus();
-                DevChat.messages.push({ role: 'system', content: 'Staging deployed!', stagingUrl: data.url, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8) });
+                DevChat.messages.push({ role: 'system', get content() { return globalThis.PlatformI18n.t("workshop:staging_deployed_82f73d4d"); }, stagingUrl: data.url, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8) });
                 DevChat.renderMessages();
                 DevChat.scrollToBottom();
                 if (data.url) {
@@ -5433,13 +5428,13 @@ const DevChat = {
                 DevChat._deactivateLastStatus();
                 DevChat.messages.push({
                   role: 'system',
-                  content: `Staging build failed: ${data.error || 'unknown error'}`,
+                  content: globalThis.PlatformI18n.t("workshop:staging_build_failed_value1_40812ac8", { value1: data.error || globalThis.PlatformI18n.t("workshop:unknown_error_3e4443e5") }),
                   // #361: a staging_failed event always implies a pushed,
                   // proposable commit, so render the "Changes ready" card
                   // (disabled Preview + working Propose) — not a card-less line.
                   changesReady: true,
                   stagingFailed: true,
-                  stagingErrorName: data.errorName || 'Error',
+                  stagingErrorName: data.errorName || globalThis.PlatformI18n.t("workshop:error_54a0e8c1"),
                   stagingMissingKeys: data.missingKeys || [],
                   prNumber: data.prNumber != null ? data.prNumber : (DevChat.currentSession?.pr_number ?? null),
                   prUrl: data.prUrl || DevChat.currentSession?.pr_url || null,
@@ -5569,7 +5564,7 @@ const DevChat = {
                 DevChat.messages.push(DevChat._copyActivityAgentMetadata({
                   role: 'system',
                   ccLog: data.log,
-                  content: `${DevChat._activityAgentName(data)} log`,
+                  content: globalThis.PlatformI18n.t("workshop:value1_log_d1b592c1", { value1: DevChat._activityAgentName(data) }),
                   created_at: new Date().toISOString(),
                 }, data));
                 DevChat.renderMessages();
@@ -6097,7 +6092,7 @@ const DevChat = {
         // #439: a replayed staging_ready may be resolving an on-demand
         // Preview-click rebuild — open the new URL if its loader is pending.
         AppView.onStagingRebuildResult(sessionId, { url: data.url });
-        DevChat.messages.push({ role: 'system', content: 'Staging deployed!', stagingUrl: data.url, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2, 8) });
+        DevChat.messages.push({ role: 'system', get content() { return globalThis.PlatformI18n.t("workshop:staging_deployed_82f73d4d"); }, stagingUrl: data.url, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2, 8) });
         DevChat.renderMessages();
         DevChat.scrollToBottom();
         if (data.url && DevChat.currentSession) {
@@ -6115,12 +6110,12 @@ const DevChat = {
         AppView.onStagingRebuildResult(sessionId, { failed: true, error: data.error });
         DevChat.messages.push({
           role: 'system',
-          content: `Staging build failed: ${data.error || 'unknown error'}`,
+          content: globalThis.PlatformI18n.t("workshop:staging_build_failed_value1_40812ac8", { value1: data.error || globalThis.PlatformI18n.t("workshop:unknown_error_3e4443e5") }),
           // #361: same as the primary SSE path — a failed staging build still
           // means there's a reviewable commit, so render the card.
           changesReady: true,
           stagingFailed: true,
-          stagingErrorName: data.errorName || 'Error',
+          stagingErrorName: data.errorName || globalThis.PlatformI18n.t("workshop:error_54a0e8c1"),
           stagingMissingKeys: data.missingKeys || [],
           prNumber: data.prNumber != null ? data.prNumber : (DevChat.currentSession?.pr_number ?? null),
           prUrl: data.prUrl || DevChat.currentSession?.pr_url || null,
@@ -6176,7 +6171,7 @@ const DevChat = {
         DevChat.messages.push(DevChat._copyActivityAgentMetadata({
           role: 'system',
           ccLog: data.log,
-          content: `${DevChat._activityAgentName(data)} log`,
+          content: globalThis.PlatformI18n.t("workshop:value1_log_d1b592c1", { value1: DevChat._activityAgentName(data) }),
           created_at: new Date().toISOString(),
         }, data));
         DevChat.renderMessages();
@@ -6254,7 +6249,7 @@ const DevChat = {
     // #3181: the turn stopped before finishing.
     sessionStalled: '⏸️ Session stopped · ',
     autoSolveDone: '🤖 Proposal ready · ',
-    autoSolveFailed: '⚠️ Proposal failed · ',
+    get autoSolveFailed() { return globalThis.PlatformI18n.t("workshop:proposal_failed_879d9cbb"); },
   },
 
   // "Away" = the user can't currently see this page: the browser tab is
@@ -6507,7 +6502,7 @@ const DevChat = {
     const slow = () => {
       const row = DevChat._stoppingRow();
       if (!row) return;
-      row.content = `${row.content.replace(/ \(taking longer than usual\)$/, '')} (taking longer than usual)`;
+      row.content = globalThis.PlatformI18n.t("workshop:value1_taking_longer_than_usual_99e8bc06", { value1: row.content.replace(/ \(taking longer than usual\)$/, '') });
       DevChat._retryStopRequest();
       DevChat.renderMessages();
     };
@@ -6515,7 +6510,7 @@ const DevChat = {
     const stuck = () => {
       const row = DevChat._stoppingRow();
       if (!row) return;
-      row.content = 'Still stopping. The agent isn’t responding.';
+      row.content = globalThis.PlatformI18n.t("workshop:still_stopping_the_agent_isn_t_responding_589b7839");
       row._forceOffered = true;
       DevChat.renderMessages();
     };
@@ -6546,7 +6541,7 @@ const DevChat = {
     if (!sessionId) return;
     if (btn) {
       btn.disabled = true;
-      btn.textContent = 'Forcing…';
+      btn.textContent = globalThis.PlatformI18n.t("workshop:forcing_661331d9");
     }
     let res;
     try {
@@ -6602,7 +6597,7 @@ const DevChat = {
     const mine = !by || by === window.App?.user?.username;
     DevChat.messages.push({
       role: 'system',
-      content: mine ? 'Stopping the agent…' : `@${by} is stopping the agent…`,
+      content: mine ? globalThis.PlatformI18n.t("workshop:stopping_the_agent_18c3ea72") : globalThis.PlatformI18n.t("workshop:value1_is_stopping_the_agent_1098a0c9", { value1: by }),
       created_at: new Date().toISOString(),
       _slug: Math.random().toString(36).slice(2, 8),
       _active: true,
@@ -6755,7 +6750,7 @@ const DevChat = {
     DevChat._clearStoppingState();
     DevChat.messages.push({
       role: 'system',
-      content: 'Couldn’t stop the agent. Please try again.',
+      get content() { return globalThis.PlatformI18n.t("workshop:couldn_t_stop_the_agent_please_try_again_2128f491"); },
       created_at: new Date().toISOString(),
       _slug: Math.random().toString(36).slice(2, 8),
     });
@@ -7041,7 +7036,7 @@ const DevChat = {
     if (!msg) {
       msg = {
         role: 'system',
-        content: 'Claude Code progress',
+        get content() { return globalThis.PlatformI18n.t("workshop:claude_code_progress_4499f5b9"); },
         progressLog: [],
         _progress: true,
         created_at: new Date().toISOString(),
@@ -7061,7 +7056,7 @@ const DevChat = {
     if (!msg) {
       msg = {
         role: 'system',
-        content: 'Claude Code progress',
+        get content() { return globalThis.PlatformI18n.t("workshop:claude_code_progress_4499f5b9"); },
         progressLog: [],
         _progress: true,
         created_at: new Date().toISOString(),
@@ -7345,8 +7340,8 @@ const DevChat = {
 
     const checksNeedAttention = checkState === 'failing' || checkState === 'error';
     const content = session.staging_url
-      ? 'Staging deployed!'
-      : (checksNeedAttention ? 'Changes ready. Checks need attention.' : 'Changes ready.');
+      ? globalThis.PlatformI18n.t("workshop:staging_deployed_82f73d4d")
+      : (checksNeedAttention ? globalThis.PlatformI18n.t("workshop:changes_ready_checks_need_attention_fdd7c148") : globalThis.PlatformI18n.t("workshop:changes_ready_bb8f533e"));
     return [...messages, {
       role: 'system',
       content,
@@ -7444,7 +7439,7 @@ const DevChat = {
       const n = Number(m[1]);
       if (Number.isInteger(n) && n > 0) nums.add(n);
     }
-    const verb = session.status === 'merged' ? 'Closed' : 'Closes';
+    const verb = session.status === 'merged' ? globalThis.PlatformI18n.t("workshop:closed_c21ead06") : globalThis.PlatformI18n.t("workshop:closes_74c21a63");
     return [...nums].sort((a, b) => a - b).map((n) => ({ n, verb }));
   },
 
@@ -7476,7 +7471,7 @@ const DevChat = {
     )) return;
     DevChat.messages.push({
       role: 'system',
-      content: data.text || 'The AI suggests reporting this to the platform',
+      content: data.text || globalThis.PlatformI18n.t("workshop:the_ai_suggests_reporting_this_to_the_platform_ce2c5643"),
       platformIssueDraft: draft,
       created_at: new Date().toISOString(),
       _slug: Math.random().toString(36).slice(2, 8),
@@ -7501,7 +7496,7 @@ const DevChat = {
       );
       const data = await res.json().catch(() => ({}));
       if (!res.ok && res.status !== 409) {
-        PlatformUI.toast(data.error || 'Failed. Try again');
+        PlatformUI.toast(data.error || globalThis.PlatformI18n.t("workshop:failed_try_again_d2fcf463"));
         if (card) card.querySelectorAll('button').forEach((b) => { b.disabled = false; });
         return;
       }
@@ -7518,7 +7513,7 @@ const DevChat = {
         DevChat.renderMessages();
       }
     } catch {
-      PlatformUI.toast('Network error');
+      PlatformUI.toast(globalThis.PlatformI18n.t("workshop:network_error_2a33d984"));
       if (card) card.querySelectorAll('button').forEach((b) => { b.disabled = false; });
     }
   },
@@ -7542,7 +7537,7 @@ const DevChat = {
     // A live row carries the flag from its usage event, a reloaded row
     // from the persisted metadata.
     const approx = (msg.costEstimated || msg.metadata?.costEstimated) ? '~' : '';
-    return ` · reply ${approx}$${(cents / 100).toFixed(3)}`;
+    return globalThis.PlatformI18n.t("workshop:reply_value1_value2_5eb609c5", { value1: approx, value2: (cents / 100).toFixed(3) });
   },
 
   // ── The transcript, as a MODEL ────────────────────────────────────
@@ -7583,7 +7578,7 @@ const DevChat = {
   _elapsedSpec(msg) {
     const fmtEl = typeof formatElapsed === 'function' ? formatElapsed : null;
     if (msg.durationMs != null && fmtEl) {
-      return { kind: 'fixed', label: `(took ${fmtEl(Math.max(0, msg.durationMs))})` };
+      return { kind: 'fixed', get label() { return globalThis.PlatformI18n.t("workshop:took_value1_3b10d750", { value1: fmtEl(Math.max(0, msg.durationMs)) }); } };
     }
     if (msg._active && msg.created_at) {
       const since = new Date(msg.created_at).getTime();
@@ -7591,7 +7586,7 @@ const DevChat = {
       return { kind: 'since', since: Math.min(since, Date.now()) };
     }
     if (msg._elapsedFinalMs != null && fmtEl) {
-      return { kind: 'fixed', label: `(took ${fmtEl(Math.max(0, msg._elapsedFinalMs))})` };
+      return { kind: 'fixed', get label() { return globalThis.PlatformI18n.t("workshop:took_value1_3b10d750", { value1: fmtEl(Math.max(0, msg._elapsedFinalMs)) }); } };
     }
     return null;
   },
@@ -7725,7 +7720,7 @@ const DevChat = {
         // it opens a one-line input scoped to THIS group rather than sending
         // the reader off to the composer to do a form's job.
         escape: num ? null : {
-          label: numeric ? 'Let me type a number' : 'Something else',
+          label: numeric ? globalThis.PlatformI18n.t("workshop:let_me_type_a_number_243395f5") : globalThis.PlatformI18n.t("workshop:something_else_cc728431"),
           open: !!DevChat._qaTypedOpen[gi],
           value: DevChat._qaTyped[gi] || '',
         },
@@ -7908,8 +7903,8 @@ const DevChat = {
             status: DevChat._statusRow(msg, msgIdx, { icon: 'check', elapsed: DevChat._elapsedSpec(msg) }),
             version: msg.specVersion != null ? String(msg.specVersion) : 'latest',
             header: msg.specVersion != null
-              ? `Spec v${msg.specVersion} · ${lineCount} lines`
-              : `Spec drafted · ${lineCount} lines`,
+              ? globalThis.PlatformI18n.t("workshop:spec_v_value1_value2_lines_6f783bc3", { value1: msg.specVersion, value2: lineCount })
+              : globalThis.PlatformI18n.t("workshop:spec_drafted_value1_lines_a2932c6b", { value1: lineCount }),
             snippetHtml: DevChat.renderMarkdown(snippet, { breaks: false }),
           });
           return;
@@ -7941,23 +7936,23 @@ const DevChat = {
           }
           let action = { kind: 'none' };
           if (d.status === 'filed' && d.issueUrl) {
-            action = { kind: 'link', href: d.issueUrl, label: `Reported: issue #${d.issueNumber}` };
+            action = { kind: 'link', href: d.issueUrl, get label() { return globalThis.PlatformI18n.t("workshop:reported_issue_value1_35ae993d", { value1: d.issueNumber }); } };
           } else if (d.status === 'filed') {
-            action = { kind: 'note', text: isAppTarget ? "Filed on this app's repo" : 'Reported to the platform' };
+            action = { kind: 'note', text: isAppTarget ? globalThis.PlatformI18n.t("workshop:filed_on_this_app_s_repo_1ed97672") : globalThis.PlatformI18n.t("workshop:reported_to_the_platform_78211a0b") };
           } else if (d.status === 'dismissed') {
-            action = { kind: 'note', text: 'Dismissed' };
+            action = { kind: 'note', get text() { return globalThis.PlatformI18n.t("workshop:dismissed_9d747277"); } };
           } else if (d.msgId) {
-            action = { kind: 'buttons', confirmLabel: isAppTarget ? 'File issue' : 'Report to platform' };
+            action = { kind: 'buttons', confirmLabel: isAppTarget ? globalThis.PlatformI18n.t("workshop:file_issue_3d9d7728") : globalThis.PlatformI18n.t("workshop:report_to_platform_94c6e210") };
           }
           rows.push({
             t: 'issueDraft', key,
             status: {
               t: 'status', key: `${key}:s`, icon: 'flag',
-              text: msg.content || 'The AI suggests reporting this to the platform',
+              text: msg.content || globalThis.PlatformI18n.t("workshop:the_ai_suggests_reporting_this_to_the_platform_ce2c5643"),
               elapsed: null, stamp,
             },
             msgId: d.msgId || null,
-            destLabel: isAppTarget ? `Issue draft: ${d.appName || 'this app'}` : 'Suggested platform report',
+            destLabel: isAppTarget ? globalThis.PlatformI18n.t("workshop:issue_draft_value1_67ffe8df", { value1: d.appName || globalThis.PlatformI18n.t("workshop:this_app_d2c823cf") }) : globalThis.PlatformI18n.t("workshop:suggested_platform_report_6a7fe4b9"),
             title: d.title || '',
             body, action,
           });
@@ -7983,7 +7978,7 @@ const DevChat = {
             t: 'attached', key,
             details: DevChat._detailsSpec(msg, 'ccrunorphan', DevChat._ccDefaultOpen(msg)),
             icon: 'check',
-            text: `${DevChat._activityAgentName(msg)} output`,
+            get text() { return globalThis.PlatformI18n.t("workshop:value1_output_4c329ffb", { value1: DevChat._activityAgentName(msg) }); },
             elapsed: null, stamp,
             body: {
               kind: 'log',
@@ -8224,7 +8219,7 @@ const DevChat = {
           ? (msgIdx === liveIdx
             ? DevChat.renderMarkdown(content, { cache: false })
             : DevChat.renderMarkdown(content))
-          : '<span style="color:var(--text-muted);font-style:italic">(no visible reply, see reasoning below)</span>',
+          : `<span style="color:var(--text-muted);font-style:italic">${globalThis.PlatformI18n.htmlText("workshop:no_visible_reply_see_reasoning_below_ba36faf2")}</span>`,
         ...(msgIdx === liveIdx ? { live: true } : null),
         ...(isUser ? { attachments: DevChat._attachmentRows(msg) } : null),
         // For any assistant message that carried a [CHAT_ONLY] tag, surface
@@ -8545,12 +8540,12 @@ const DevChat = {
   // ask BEFORE describing a change of your own — and the Mayor answers it
   // directly with its list_github_issues data tool (no session work, no
   // scout dispatch). The rest stay as they were.
-  STARTER_QUICK_REPLIES: [
-    'What issues are open right now?',
-    'Change the colors',
-    'Add a new feature',
-    'Fix something that\'s broken',
-  ],
+  get STARTER_QUICK_REPLIES() { return [
+    globalThis.PlatformI18n.t("workshop:what_issues_are_open_right_now_7ed94806"),
+    globalThis.PlatformI18n.t("workshop:change_the_colors_1c35726a"),
+    globalThis.PlatformI18n.t("workshop:add_a_new_feature_c5c48cab"),
+    globalThis.PlatformI18n.t("workshop:fix_something_that_s_broken_1d09de35"),
+  ]; },
 
   // #1001: the starters above are the ONE pill set that is legitimately
   // generic — there is no conversation yet to be specific about. But a
@@ -8566,7 +8561,7 @@ const DevChat = {
     var s = DevChat.currentSession;
     var n = s && s.created_from_issue_number;
     if (!Number.isInteger(n)) return DevChat.STARTER_QUICK_REPLIES;
-    return ['What does issue #' + n + ' ask for?'].concat(
+    return [globalThis.PlatformI18n.t("workshop:what_does_issue_3bdba27f") + n + globalThis.PlatformI18n.t("workshop:ask_for_55eff1ea")].concat(
       DevChat.STARTER_QUICK_REPLIES.slice(1)
     );
   },
@@ -8581,11 +8576,11 @@ const DevChat = {
   // (code_done / spec_done / chat_generic). The client can't require that
   // module, so tests/quick-reply-fallback.test.js asserts the two copies
   // stay identical.
-  FALLBACK_QUICK_REPLIES: {
-    code_done: ['Propose it to the group', 'Make a tweak', 'What did it change?'],
-    spec_done: ['Build the spec', 'Revise the spec', 'What will this change?'],
-    chat_generic: ['Make a change', 'What issues are open right now?', "What's the current state?"],
-  },
+  get FALLBACK_QUICK_REPLIES() { return {
+    code_done: [globalThis.PlatformI18n.t("workshop:propose_it_to_the_group_7e34d48a"), globalThis.PlatformI18n.t("workshop:make_a_tweak_c71b2f27"), globalThis.PlatformI18n.t("workshop:what_did_it_change_fda4a183")],
+    spec_done: [globalThis.PlatformI18n.t("workshop:build_the_spec_e7430c3a"), globalThis.PlatformI18n.t("workshop:revise_the_spec_aae63010"), globalThis.PlatformI18n.t("workshop:what_will_this_change_fa9d79fb")],
+    chat_generic: [globalThis.PlatformI18n.t("workshop:make_a_change_ca908fd1"), globalThis.PlatformI18n.t("workshop:what_issues_are_open_right_now_7ed94806"), globalThis.PlatformI18n.t("workshop:what_s_the_current_state_c6157228")],
+  }; },
 
   // Same state-derived choice the server's fallbackKindForTurn makes for a
   // 'chat' outcome: a PR means a build landed, else a spec means scout work
@@ -8805,12 +8800,12 @@ const DevChat = {
   // number. `sha: null` is the ordinary case and gets one honest chip.
   _stopLandingChips(landing) {
     const s = landing || {};
-    if (!s.sha) return ['nothing committed'];
+    if (!s.sha) return [globalThis.PlatformI18n.t("workshop:nothing_committed_e1f0c68d")];
     const chips = [s.commits == null
-      ? 'changes committed'
-      : `${s.commits} change${s.commits === 1 ? '' : 's'} committed`];
+      ? globalThis.PlatformI18n.t("workshop:changes_committed_4af14997")
+      : globalThis.PlatformI18n.t("workshop:count_changes_committed_56c0baf1", { count: s.commits })];
     chips.push(s.sha);
-    chips.push(s.pushOk ? 'pushed' : 'not pushed');
+    chips.push(s.pushOk ? 'pushed' : globalThis.PlatformI18n.t("workshop:not_pushed_9acfe9c9"));
     return chips;
   },
 
@@ -8902,7 +8897,7 @@ const DevChat = {
     // behind a small notice so the degradation is obvious and diagnosable.
     if (typeof marked === 'undefined' || typeof DOMPurify === 'undefined') {
       const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      return `<div class="dc-md-fallback-notice">Rich text formatting is unavailable right now, so this is the raw markdown.</div>`
+      return `<div class="dc-md-fallback-notice">${globalThis.PlatformI18n.htmlText("workshop:rich_text_formatting_is_unavailable_right_now_so_3c2ca649")}</div>`
         + `<pre class="dc-md-fallback">${escaped}</pre>`;
     }
 
@@ -8915,7 +8910,7 @@ const DevChat = {
         // scaled issue screenshot itself the link to its original asset, so
         // a click, tap or keyboard activation opens the full-size image.
         if (DevChat._renderImageWithinLink) return image;
-        return `<a class="dc-inline-img-link" href="${escAttr(src)}" target="_blank" rel="noopener noreferrer" aria-label="View image full size">${image}</a>`;
+        return `<a class="dc-inline-img-link" href="${escAttr(src)}" target="_blank" rel="noopener noreferrer" aria-label="${globalThis.PlatformI18n.htmlText("workshop:view_image_full_size_31ee4b81")}">${image}</a>`;
       };
 
       marked.use({
@@ -8978,7 +8973,7 @@ const DevChat = {
             const { ordered, start, items } = token;
             const tag = ordered ? 'ol' : 'ul';
             const cls = ordered ? 'dc-ol' : 'dc-ul';
-            const startAttr = ordered && start !== 1 && start !== '' ? ` start="${start}"` : '';
+            const startAttr = ordered && start !== 1 && start !== '' ? globalThis.PlatformI18n.t("workshop:start_value1_450fb684", { value1: start }) : '';
             let body = '';
             for (const item of items) {
               body += this.listitem(item);
@@ -9550,7 +9545,7 @@ const DevChat = {
   // from the status alone — see ./session-list-store.ts's header for the
   // three rules, and why Archive is gated independently of the rest.
   _sessionRow(s) {
-    const title = s.session_title || s.pr_title || s.branch_name || 'Session';
+    const title = s.session_title || s.pr_title || s.branch_name || globalThis.PlatformI18n.t("workshop:session_6959b415");
     // #1038: this list is the one session surface that never had a working
     // indicator — GET /api/apps/:slug/sessions returns `warm` (a container
     // exists) but no `busy`. The live store supplies it client-side, so the
@@ -9569,15 +9564,15 @@ const DevChat = {
     const actions = [];
     if (s.status === 'promoted' && s.warm) {
       actions.push({
-        key: 'free', label: 'Free worker', busy: 'Freeing…', tone: 'quiet',
-        title: 'Frees the AI worker. The PR stays up for voting.',
+        key: 'free', get label() { return globalThis.PlatformI18n.t("workshop:free_worker_4c863e1f"); }, busy: 'Freeing…', tone: 'quiet',
+        get title() { return globalThis.PlatformI18n.t("workshop:frees_the_ai_worker_the_pr_stays_up_for_voting_66908832"); },
         fn: '_sessionListPause', args: [s.id, 'pause'],
       });
     }
     if (s.status === 'archived') {
       actions.push({
-        key: 'unarchive', label: 'Unarchive', busy: '...', tone: 'go',
-        title: 'Restore this session (reopens the PR)',
+        key: 'unarchive', get label() { return globalThis.PlatformI18n.t("workshop:unarchive_f565318d"); }, busy: '...', tone: 'go',
+        get title() { return globalThis.PlatformI18n.t("workshop:restore_this_session_reopens_the_pr_25aff15e"); },
         fn: '_sessionListUnarchive', args: [s.id],
       });
     }
@@ -9588,8 +9583,8 @@ const DevChat = {
     // the regression this restores.)
     if (s.status === 'active' || s.status === 'promoted' || s.status === 'paused') {
       actions.push({
-        key: 'archive', label: 'Archive', busy: '...', tone: 'danger',
-        title: 'Archive (frees the slot; restorable for a while)',
+        key: 'archive', get label() { return globalThis.PlatformI18n.t("workshop:archive_66f4804e"); }, busy: '...', tone: 'danger',
+        get title() { return globalThis.PlatformI18n.t("workshop:archive_frees_the_slot_restorable_for_a_while_d85937c6"); },
         fn: '_sessionListArchive', args: [s.id, title],
       });
     }
@@ -9679,7 +9674,7 @@ const DevChat = {
       const resp = await fetch(`/api/sessions/${id}/${action}`, { method: 'POST' });
       body = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        PlatformUI.toast(body.error || `Failed to ${action} session`);
+        PlatformUI.toast(body.error || globalThis.PlatformI18n.t("workshop:failed_to_value1_session_e954181b", { value1: action }));
         return null;
       }
     } catch {
@@ -9696,7 +9691,7 @@ const DevChat = {
     await DevChat._reloadSessionList();
     // The row re-renders without the button (warm flips false), so flash the
     // outcome here, where the user just clicked.
-    return body.keptPromoted ? 'Worker freed' : null;
+    return body.keptPromoted ? globalThis.PlatformI18n.t("workshop:worker_freed_3c041c86") : null;
   },
 
   // Archive. Reversible: it frees the active-session slot, tears down
@@ -9705,9 +9700,9 @@ const DevChat = {
   // purges memory). Wording reflects that it's recoverable.
   async _sessionListArchive(id, name) {
     const ok = await ConfirmModal.show({
-      title: `Archive "${name || 'this session'}"?`,
-      message: "This closes the PR and frees the slot. You can Unarchive it later to restore it (chat memory is kept for 30 days).",
-      confirmLabel: 'Archive',
+      get title() { return globalThis.PlatformI18n.t("workshop:archive_value1_091b8974", { value1: name || globalThis.PlatformI18n.t("workshop:this_session_028cdc72") }); },
+      get message() { return globalThis.PlatformI18n.t("workshop:this_closes_the_pr_and_frees_the_slot_you_can_un_65aa731d"); },
+      get confirmLabel() { return globalThis.PlatformI18n.t("workshop:archive_66f4804e"); },
       danger: true,
     });
     if (!ok) return null;
@@ -9717,11 +9712,11 @@ const DevChat = {
       const resp = await fetch(`/api/sessions/${id}/archive`, { method: 'POST' });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        PlatformUI.toast(data.error || 'Failed to archive session');
+        PlatformUI.toast(data.error || globalThis.PlatformI18n.t("workshop:failed_to_archive_session_baa3938e"));
         return null;
       }
     } catch {
-      PlatformUI.toast('Failed to archive session');
+      PlatformUI.toast(globalThis.PlatformI18n.t("workshop:failed_to_archive_session_baa3938e"));
       return null;
     }
     await DevChat._reloadSessionList();
@@ -9736,11 +9731,11 @@ const DevChat = {
       const resp = await fetch(`/api/sessions/${id}/unarchive`, { method: 'POST' });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        PlatformUI.toast(data.error || 'Failed to unarchive session');
+        PlatformUI.toast(data.error || globalThis.PlatformI18n.t("workshop:failed_to_unarchive_session_7843c6d4"));
         return null;
       }
       if (data.ccPurged) {
-        PlatformUI.alert({ title: 'Session restored', message: "Claude's memory had already been cleared, so this picks up as a fresh chat on the same branch." });
+        PlatformUI.alert({ get title() { return globalThis.PlatformI18n.t("workshop:session_restored_e8d1488b"); }, get message() { return globalThis.PlatformI18n.t("workshop:claude_s_memory_had_already_been_cleared_so_this_dac885bd"); } });
       }
     } catch {
       return null;
@@ -9773,9 +9768,9 @@ const DevChat = {
 
   _syncPhaseLabel(phase) {
     switch (phase) {
-      case 'resolving': return 'Resolving merge conflicts with Claude…';
-      case 'pushing': return 'Pushing the merged branch…';
-      default: return 'Syncing with main…'; // starting / merging
+      case 'resolving': return globalThis.PlatformI18n.t("workshop:resolving_merge_conflicts_with_claude_f28fb662");
+      case 'pushing': return globalThis.PlatformI18n.t("workshop:pushing_the_merged_branch_c3312796");
+      default: return globalThis.PlatformI18n.t("workshop:syncing_with_main_07afc841"); // starting / merging
     }
   },
 
@@ -9823,14 +9818,14 @@ const DevChat = {
     // leads with the tense that is true. Everything after it is the same
     // sentence, because the choice on offer is the same one.
     const lead = session?.pending
-      ? 'This change will be built in ' + v.label + '. '
-      : 'Building in ' + v.label + '. ';
+      ? globalThis.PlatformI18n.t("workshop:this_change_will_be_built_in_e8f9f415") + v.label + '. '
+      : globalThis.PlatformI18n.t("workshop:building_in_5c6654dd") + v.label + '. ';
     return {
       id: v.id,
       label: v.label,
       title: lead + v.blurb
-        + ' Pick a different venue: on Homeroom, on your computer, or handed to'
-        + ' Claude Code or Codex on the web.',
+        + globalThis.PlatformI18n.t("workshop:pick_a_different_venue_on_homeroom_on_your_compu_e8f1f9c8")
+        + globalThis.PlatformI18n.t("workshop:claude_code_or_codex_on_the_web_4d547891"),
       // Mid-turn the venue is not changeable: a running turn holds the
       // worker, and moving it under itself is the failure the old
       // `agentSelect.disabled` guarded against. `_chatBusyForPaint` keeps
@@ -9873,7 +9868,7 @@ const DevChat = {
       return {
         sessionId: null,
         busy: false,
-        title: 'New change',
+        get title() { return globalThis.PlatformI18n.t("workshop:new_change_1e986694"); },
         branch: '',
         pr: null,
         prTitle: '',
@@ -9889,14 +9884,14 @@ const DevChat = {
       // set synchronously by _setStreamingUI — which also repaints this
       // strip — so the chip tracks every turn transition without a new hook.
       busy: !!DevChat._composerBusy,
-      title: s.session_title || s.pr_title || s.branch_name || 'Session',
+      title: s.session_title || s.pr_title || s.branch_name || globalThis.PlatformI18n.t("workshop:session_6959b415"),
       branch: s.branch_name || '',
       pr: s.pr_number || null,
       prTitle: s.pr_number
-        ? `Open this change's proposal card (PR #${s.pr_number}). Every change in this chat goes to PR #${s.pr_number}. `
-          + 'Use “Start a new change” for separate work.'
+        ? globalThis.PlatformI18n.t("workshop:open_this_change_s_proposal_card_pr_value1_every_42bc0557", { value1: s.pr_number, value2: s.pr_number })
+          + globalThis.PlatformI18n.t("workshop:use_start_a_new_change_for_separate_work_168195de")
         : '',
-      newChangeTitle: 'This chat is one change → one pull request. A PR opens after the first build.',
+      get newChangeTitle() { return globalThis.PlatformI18n.t("workshop:this_chat_is_one_change_one_pull_request_a_pr_op_8baf2c47"); },
       life: DevChat._headerLife(session),
       venue: DevChat._headerVenue(session),
       // #1904: the strip's ⋯ menu — see _headerActions.
@@ -10084,10 +10079,10 @@ const DevChat = {
       return { kind: 'inflight', message: DevChat._syncPhaseLabel(sync.phase) };
     }
     if (sync && sync.terminal && sync.ok) {
-      return { kind: 'ok', message: sync.message || 'Synced with main.' };
+      return { kind: 'ok', message: sync.message || globalThis.PlatformI18n.t("workshop:synced_with_main_b0c2e4eb") };
     }
     if (sync && sync.terminal && !sync.ok) {
-      return { kind: 'failed', message: sync.message || 'Sync with main failed.', busy };
+      return { kind: 'failed', message: sync.message || globalThis.PlatformI18n.t("workshop:sync_with_main_failed_a8e2903f"), busy };
     }
     return { kind: 'behind', behind, busy };
   },
@@ -10114,8 +10109,8 @@ const DevChat = {
     const slug = DevChat._sessionAppSlug(session);
     return {
       stateLabel: proposed
-        ? `proposed to the group (PR #${session.pr_number})`
-        : `merged (PR #${session.pr_number})`,
+        ? globalThis.PlatformI18n.t("workshop:proposed_to_the_group_pr_value1_85d33294", { value1: session.pr_number })
+        : globalThis.PlatformI18n.t("workshop:merged_pr_value1_3aee9854", { value1: session.pr_number }),
       cardHref: slug && session.id != null
         ? `#app/${slug}/dev/proposals/${session.id}`
         : null,
@@ -10213,7 +10208,7 @@ const DevChat = {
         // inline banner text, never alert().
         DevChat._setSyncTerminal(sessionId, {
           ok: false,
-          message: data.error || `Sync failed (HTTP ${resp.status}).`,
+          message: data.error || globalThis.PlatformI18n.t("workshop:sync_failed_http_value1_b8bb54e8", { value1: resp.status }),
         });
       } else {
         // The POST response is the authoritative final result —
@@ -10228,7 +10223,7 @@ const DevChat = {
         DevChat.renderChatView();
       }
     } catch (err) {
-      DevChat._setSyncTerminal(sessionId, { ok: false, message: `Sync failed: ${err.message}` });
+      DevChat._setSyncTerminal(sessionId, { ok: false, get message() { return globalThis.PlatformI18n.t("workshop:sync_failed_value1_ce418235", { value1: err.message }); } });
     }
   },
 
@@ -10244,7 +10239,7 @@ const DevChat = {
       sessionId: Number(sessionId),
       terminal: true,
       ok: !!ok,
-      message: message || (ok ? 'Synced with main.' : 'Sync with main failed.'),
+      message: message || (ok ? globalThis.PlatformI18n.t("workshop:synced_with_main_b0c2e4eb") : globalThis.PlatformI18n.t("workshop:sync_with_main_failed_a8e2903f")),
       since: Date.now(),
     };
     DevChat._syncState = t;
@@ -10470,10 +10465,10 @@ const DevChat = {
     const unstoppable = notStoppable && !isWrapUp;
     return {
       kind: 'busy',
-      label: unstoppable ? 'Working' : 'Finishing up',
+      label: unstoppable ? globalThis.PlatformI18n.t("workshop:working_a92f0449") : globalThis.PlatformI18n.t("workshop:finishing_up_13f4f85a"),
       title: unstoppable
-        ? 'This turn is still running but can’t be stopped from here'
-        : 'Finishing up…',
+        ? globalThis.PlatformI18n.t("workshop:this_turn_is_still_running_but_can_t_be_stopped__05cd1468")
+        : globalThis.PlatformI18n.t("workshop:finishing_up_4bc99680"),
     };
   },
 
@@ -10878,7 +10873,7 @@ const DevChat = {
     // "(attached files)" stub caption.
     if ((!msg && !atts.length) || DevChat.isStreaming) return;
     if (DevChat.pendingAttachments.some((a) => a.uploading)) {
-      DevChat._setAttachError('Still uploading, one moment…');
+      DevChat._setAttachError(globalThis.PlatformI18n.t("workshop:still_uploading_one_moment_9862aef1"));
       return;
     }
     DevChat._clearComposerField();
@@ -10993,18 +10988,18 @@ const DevChat = {
     const ext = (file.name.toLowerCase().match(/\.([a-z0-9]+)$/) || [])[1] || '';
     if (L.imageExts.includes(ext)) {
       if (file.size > L.maxImageBytes) {
-        return { error: `"${file.name}" is too big. Images max ${Math.round(L.maxImageBytes / 1024 / 1024)} MB.` };
+        return { get error() { return globalThis.PlatformI18n.t("workshop:value1_is_too_big_images_max_value2_mb_0a267b9f", { value1: file.name, value2: Math.round(L.maxImageBytes / 1024 / 1024) }); } };
       }
       return { kind: 'image' };
     }
     if (ext === 'zip') {
       if (file.size > L.maxZipBytes) {
-        return { error: `"${file.name}" is too big. Zip archives max ${Math.round(L.maxZipBytes / 1024 / 1024)} MB.` };
+        return { get error() { return globalThis.PlatformI18n.t("workshop:value1_is_too_big_zip_archives_max_value2_mb_2fc58bb1", { value1: file.name, value2: Math.round(L.maxZipBytes / 1024 / 1024) }); } };
       }
       return { kind: 'zip' };
     }
     if (file.size > L.maxBinaryBytes) {
-      return { error: `"${file.name}" is too big. Files max ${Math.round(L.maxBinaryBytes / 1024 / 1024)} MB.` };
+      return { get error() { return globalThis.PlatformI18n.t("workshop:value1_is_too_big_files_max_value2_mb_3d311c65", { value1: file.name, value2: Math.round(L.maxBinaryBytes / 1024 / 1024) }); } };
     }
     if (file.size <= L.maxTextBytes) {
       try {
@@ -11036,7 +11031,7 @@ const DevChat = {
     const L = DevChat.ATTACH_LIMITS;
     for (const file of Array.from(fileList)) {
       if (DevChat.pendingAttachments.length >= L.maxPerMessage) {
-        DevChat._setAttachError(`Up to ${L.maxPerMessage} files per message.`);
+        DevChat._setAttachError(globalThis.PlatformI18n.t("workshop:up_to_value1_files_per_message_de4b11ca", { value1: L.maxPerMessage }));
         break;
       }
       const classified = await DevChat._classifyFile(file);
@@ -11063,7 +11058,7 @@ const DevChat = {
           body: file,
         });
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data?.error || `Upload failed (HTTP ${res.status})`);
+        if (!res.ok) throw new Error(data?.error || globalThis.PlatformI18n.t("workshop:upload_failed_http_value1_13c8431f", { value1: res.status }));
         entry.id = data.id;
         entry.kind = data.kind;
         entry.meta = data.meta || null;
@@ -11071,7 +11066,7 @@ const DevChat = {
       } catch (err) {
         DevChat.pendingAttachments = DevChat.pendingAttachments.filter((a) => a !== entry);
         if (entry.objectUrl) { try { URL.revokeObjectURL(entry.objectUrl); } catch {} }
-        DevChat._setAttachError(err.message || 'Upload failed');
+        DevChat._setAttachError(err.message || globalThis.PlatformI18n.t("workshop:upload_failed_6efc5d27"));
       }
       DevChat._renderAttachStrip();
     }
@@ -11099,8 +11094,8 @@ const DevChat = {
 
   _humanSize(bytes) {
     const n = Number(bytes) || 0;
-    if (n >= 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
-    if (n >= 1024) return `${Math.round(n / 1024)} KB`;
+    if (n >= 1024 * 1024) return globalThis.PlatformI18n.t("workshop:value1_mb_36c9af23", { value1: (n / 1024 / 1024).toFixed(1) });
+    if (n >= 1024) return globalThis.PlatformI18n.t("workshop:value1_kb_75f92af0", { value1: Math.round(n / 1024) });
     return `${n} B`;
   },
 
@@ -11109,7 +11104,7 @@ const DevChat = {
   _attachKindBadge(a) {
     if (a.kind === 'zip') {
       const count = a.meta && Number.isFinite(Number(a.meta.entryCount))
-        ? ` · ${a.meta.entryCount} files` : '';
+        ? globalThis.PlatformI18n.t("workshop:value1_files_99a7831e", { value1: a.meta.entryCount }) : '';
       return `ZIP${count}`;
     }
     if (a.kind === 'binary') return 'BIN';
@@ -11222,8 +11217,8 @@ const DevChat = {
   // session writes a real list which then takes over (the key EXISTING
   // is what suppresses the demo, so trashing them all sticks).
   _DEMO_SAVED_DRAFTS: [
-    { id: 'demo-draft-1', text: 'Staging demo draft: also make the header sticky when scrolling.', savedAt: '2026-01-01T00:00:00.000Z' },
-    { id: 'demo-draft-2', text: 'Staging demo draft: rename the "Submit" button to "Publish".', savedAt: '2026-01-01T00:01:00.000Z' },
+    { id: 'demo-draft-1', get text() { return globalThis.PlatformI18n.t("workshop:staging_demo_draft_also_make_the_header_sticky_w_2f85ca0c"); }, savedAt: '2026-01-01T00:00:00.000Z' },
+    { id: 'demo-draft-2', get text() { return globalThis.PlatformI18n.t("workshop:staging_demo_draft_rename_the_submit_button_to_p_f9589c91"); }, savedAt: '2026-01-01T00:01:00.000Z' },
   ],
   _wantsDemoDrafts() {
     try {
@@ -11321,7 +11316,7 @@ const DevChat = {
     if (!DevChat._wantsTypedShot()) return;
     const input = document.getElementById('dc-input');
     if (!input || input.value) return;
-    input.value = 'Also widen the meter a little';
+    input.value = globalThis.PlatformI18n.t("workshop:also_widen_the_meter_a_little_a0b3774c");
     DevChat._syncSaveDraftBtn();
   },
 
@@ -11347,7 +11342,7 @@ const DevChat = {
     const input = document.getElementById('dc-input');
     if (!input) return;
     DevChat._draftSentShotApplied = true;
-    input.value = 'Also widen the meter a little';
+    input.value = globalThis.PlatformI18n.t("workshop:also_widen_the_meter_a_little_a0b3774c");
     DevChat._syncSaveDraftBtn();
     const [first] = DevChat._getSavedDrafts(DevChat.currentSession ? DevChat.currentSession.id : 0);
     if (first) DevChat._sendSavedDraft(first.id, { dry: true });
@@ -11707,8 +11702,8 @@ const DevChat = {
 
     if (dropped) {
       DevChat._toast(
-        `That's ${DevChat.MAX_SAVED_DRAFTS} saved drafts. ${dropped} newer `
-        + `${dropped === 1 ? 'draft was' : 'drafts were'} dropped. Send or delete one first.`
+        globalThis.PlatformI18n.t("workshop:that_s_value1_saved_drafts_value2_newer_688b4951", { value1: DevChat.MAX_SAVED_DRAFTS, value2: dropped })
+        + globalThis.PlatformI18n.t("workshop:value1_dropped_send_or_delete_one_first_5b34f381", { value1: dropped === 1 ? globalThis.PlatformI18n.t("workshop:draft_was_40e87045") : globalThis.PlatformI18n.t("workshop:drafts_were_f9ef7cca") })
       );
     }
     await Promise.all([...deletes, ...uploads]);
@@ -11869,7 +11864,7 @@ const DevChat = {
     if (!text) return;
     const drafts = DevChat._getSavedDrafts(session.id);
     if (drafts.length >= DevChat.MAX_SAVED_DRAFTS) {
-      DevChat._toast(`That's ${DevChat.MAX_SAVED_DRAFTS} saved drafts. Send or delete one first`);
+      DevChat._toast(globalThis.PlatformI18n.t("workshop:that_s_value1_saved_drafts_send_or_delete_one_fi_5a7ae1e3", { value1: DevChat.MAX_SAVED_DRAFTS }));
       return;
     }
     const saved = { id: DevChat._newDraftId(), text, savedAt: new Date().toISOString(), synced: false };
@@ -11880,7 +11875,7 @@ const DevChat = {
     DevChat._pushDraftAdd(session.id, saved);
     DevChat._clearComposerField();
     DevChat._renderSavedDrafts();
-    DevChat._toast('Draft saved. Send it whenever you\'re ready');
+    DevChat._toast(globalThis.PlatformI18n.t("workshop:draft_saved_send_it_whenever_you_re_ready_ee16fdc4"));
     if (!DevChat._isCoarsePointer()) { try { input.focus(); } catch {} }
   },
 
@@ -11905,14 +11900,14 @@ const DevChat = {
     const session = DevChat.currentSession;
     if (!session) return;
     if (DevChat.isStreaming) {
-      DevChat._toast('Claude is still working. This will send once the turn finishes');
+      DevChat._toast(globalThis.PlatformI18n.t("workshop:claude_is_still_working_this_will_send_once_the__1b838019"));
       return;
     }
     const drafts = DevChat._getSavedDrafts(session.id);
     const draft = drafts.find((d) => d.id === id);
     if (!draft) return;
     if (DevChat.pendingAttachments.some((a) => a.uploading)) {
-      DevChat._toast('Still uploading a file, one moment…');
+      DevChat._toast(globalThis.PlatformI18n.t("workshop:still_uploading_a_file_one_moment_84c970ba"));
       return;
     }
     const input = document.getElementById('dc-input');
@@ -11934,7 +11929,7 @@ const DevChat = {
     DevChat._pushDraftDelete(session.id, id);
     if (parkedDraft) DevChat._pushDraftAdd(session.id, parkedDraft);
     DevChat._renderSavedDrafts();
-    if (parked && parked !== draft.text) DevChat._toast('Kept what you had typed as another draft');
+    if (parked && parked !== draft.text) DevChat._toast(globalThis.PlatformI18n.t("workshop:kept_what_you_had_typed_as_another_draft_e2f1f1f3"));
     DevChat.sendMessage(draft.text);
   },
 
@@ -11974,7 +11969,7 @@ const DevChat = {
     }
     DevChat._syncSaveDraftBtn();
     DevChat._renderSavedDrafts();
-    if (parked) DevChat._toast('Kept what you had typed as another draft');
+    if (parked) DevChat._toast(globalThis.PlatformI18n.t("workshop:kept_what_you_had_typed_as_another_draft_e2f1f1f3"));
   },
 
   _deleteSavedDraft(id) {
@@ -11988,7 +11983,7 @@ const DevChat = {
     DevChat._addDraftTombstone(session.id, id);
     DevChat._pushDraftDelete(session.id, id);
     DevChat._renderSavedDrafts();
-    DevChat._toast('Draft deleted');
+    DevChat._toast(globalThis.PlatformI18n.t("workshop:draft_deleted_9e979a08"));
   },
 
   // Which session's text the composer field is currently showing, as a
@@ -12448,7 +12443,7 @@ const DevChat = {
       // resumes following new versions; older options carry their number.
       return {
         value: isThisLatest ? 'latest' : String(v.version),
-        label: `v${v.version}${isThisLatest ? ' (latest)' : ''}${built ? ` · ${built}` : ''}${v.pr_number ? ` · PR #${v.pr_number}` : ''}`,
+        get label() { return globalThis.PlatformI18n.t("workshop:v_value1_value2_value3_value4_31919858", { value1: v.version, value2: isThisLatest ? globalThis.PlatformI18n.t("workshop:message_6a47e389bb83") : '', value3: built ? ` · ${built}` : '', value4: v.pr_number ? globalThis.PlatformI18n.t("workshop:pr_value1_13baee31", { value1: v.pr_number }) : '' }); },
       };
     });
 
@@ -12488,8 +12483,8 @@ const DevChat = {
       body = {
         kind: 'empty',
         copy: isOwner
-          ? 'No spec yet. Ask the AI to draft one.'
-          : 'No spec has been shared for this session yet.',
+          ? globalThis.PlatformI18n.t("workshop:no_spec_yet_ask_the_ai_to_draft_one_c163b6e0")
+          : globalThis.PlatformI18n.t("workshop:no_spec_has_been_shared_for_this_session_yet_f3debad7"),
       };
     } else if (split) {
       const tab = DevChat.specViewer.activeTab === 'tech' ? 'tech' : 'user';
@@ -12625,7 +12620,7 @@ const DevChat = {
   // error} shape) so the popover can surface server-side 4xx messages
   // ("User not found", "That user doesn't have access…") inline.
   async _shareSpecToUser(version, username) {
-    if (!DevChat.currentSession || version == null) return { ok: false, error: 'No session' };
+    if (!DevChat.currentSession || version == null) return { ok: false, get error() { return globalThis.PlatformI18n.t("workshop:no_session_64f06c96"); } };
     const sid = DevChat.currentSession.id;
     try {
       const resp = await fetch(`/api/sessions/${sid}/specs/${version}/share-user`, {
@@ -12638,7 +12633,7 @@ const DevChat = {
       if (!resp.ok) return { ok: false, error: data.error || `HTTP ${resp.status}` };
       return data;
     } catch {
-      return { ok: false, error: 'Network error' };
+      return { ok: false, get error() { return globalThis.PlatformI18n.t("workshop:network_error_2a33d984"); } };
     }
   },
 };

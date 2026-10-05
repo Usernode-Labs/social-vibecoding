@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message } from "../../lib/i18n/react";
 /**
  * `#dc-quick-replies` and `#dc-runner` — the two strips above the dev chat's
  * send row — as the only React writers below those hosts.
@@ -42,6 +46,7 @@ export function QuickRepliesView({ replies }: QuickRepliesState) {
 }
 
 export function QuickReplies() {
+  useUiLanguage();
   return <QuickRepliesView {...useStoreState<QuickRepliesState>(quickRepliesStore)} />;
 }
 
@@ -55,6 +60,7 @@ export function QuickReplies() {
  * transcript-era portal host did not.
  */
 export function QuickRepliesBar() {
+  useUiLanguage();
   const { replies } = useStoreState<QuickRepliesState>(quickRepliesStore);
   return (
     <div
@@ -67,27 +73,25 @@ export function QuickRepliesBar() {
 }
 
 const PAST_TITLE = (label: string) =>
-  `The last turn ran on ${label}. That machine has detached, so the next turn runs on Homeroom.`;
+  tr("workshop:the_last_turn_ran_on_value1_that_machine_has_det_5b1abe76", { value1: label });
 
 const LIVE_TITLE = (label: string) =>
-  `Spec and coding turns in this session run on ${label}, using its own Claude subscription. `
+  tr("workshop:spec_and_coding_turns_in_this_session_run_on_val_5646f684", { value1: label })
   + 'A spec turn is read-only; after a coding turn Homeroom still opens the PR, builds the '
-  + 'preview and runs the checks.';
+  + tr("workshop:preview_and_runs_the_checks_bde22531");
 
 export function RunnerControlsView({ kind, label }: RunnerState) {
   if (kind === 'none') return null;
   if (kind === 'past') {
     return (
       <span className="dc-runner-chip dc-runner-chip-past" title={PAST_TITLE(label)}>
-        {`Last turn: ${label}`}
+        <LocalizedValue render={() => (tr("workshop:last_turn_value1_5b1b2270", { value1: label }))} />
       </span>
     );
   }
   return (
     <>
-      <label className="text-xs text-zinc-500 dark:text-zinc-400" htmlFor="dc-runner-select">
-        Run on:
-      </label>
+      <label className="text-xs text-zinc-500 dark:text-zinc-400" htmlFor="dc-runner-select"><Message id="workshop:run_on_f92a747f" /></label>
       {/*
           Picking "Homeroom" is a HAND-BACK, not a selection: the module puts
           the value straight back to `local` and asks for confirmation, because
@@ -106,14 +110,15 @@ export function RunnerControlsView({ kind, label }: RunnerState) {
         }}
       >
         <option value="local">{label}</option>
-        <option value="platform">Homeroom</option>
+        <option value="platform"><Message id="workshop:homeroom_c9149977" /></option>
       </select>
-      <span className="dc-runner-chip" title={LIVE_TITLE(label)}>Running on your machine</span>
+      <span className="dc-runner-chip" title={LIVE_TITLE(label)}><Message id="workshop:running_on_your_machine_4f6942aa" /></span>
     </>
   );
 }
 
 export function RunnerControls() {
+  useUiLanguage();
   return <RunnerControlsView {...useStoreState<RunnerState>(runnerStore)} />;
 }
 

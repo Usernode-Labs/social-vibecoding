@@ -1,3 +1,8 @@
+import { useMessages as useUiLanguage } from "../../../lib/i18n/react";
+import { RichMessage } from "../../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../../lib/i18n/react";
+import { t as tr } from "../../../lib/i18n/runtime";
+import { Message } from "../../../lib/i18n/react";
 /**
  * The Discover block: the admin-curated apps, the most-used apps this viewer
  * doesn't have yet, and the way into the `#apps` directory.
@@ -120,6 +125,7 @@ function CardArt({ icon }: { icon: IconView }) {
  * are the floor.
  */
 function IllustrationArt({ tile }: { tile: DiscoverTileView }) {
+  useUiLanguage();
   const [failed, setFailed] = useState(false);
   const [darkFailed, setDarkFailed] = useState(false);
   const art = tile.illustration;
@@ -129,7 +135,7 @@ function IllustrationArt({ tile }: { tile: DiscoverTileView }) {
   // of tint along one edge. The editor cannot produce one; the API's framing
   // range is wider than the editor's, so the card does not assume it.
   const frame = clampFrame(art);
-  const style = { transform: `translate(${frame.x}%, ${frame.y}%) scale(${frame.zoom})` };
+  const style = { transform: tr("apps:translate_value1_value2_scale_value3_0d241898", { value1: frame.x, value2: frame.y, value3: frame.zoom }) };
   const hasDark = !!art.darkUrl && !darkFailed;
   return <>
     <img src={art.url} alt="" draggable={false}
@@ -183,7 +189,7 @@ export function DiscoverCard({ tile, preview = false, previewTheme }: { tile: Di
     >
       <div className="home-discover-art relative">
         <IllustrationArt key={`${tile.illustration?.url}:${tile.illustration?.darkUrl}`} tile={tile} />
-        <button
+        <LocalizedDynamic element={<button
           type="button"
           disabled={preview}
           tabIndex={preview ? -1 : undefined}
@@ -194,14 +200,14 @@ export function DiscoverCard({ tile, preview = false, previewTheme }: { tile: Di
           }`}
           data-slug={tile.slug}
           data-added={String(added)}
-          title={added ? 'Added. Tap to remove from Shortcuts' : 'Add to Shortcuts'}
-          aria-label={added ? `Remove ${tile.name} from Shortcuts` : `Add ${tile.name} to Shortcuts`}
+          title={added ? tr("apps:added_tap_to_remove_from_shortcuts_6163472a") : tr("apps:add_to_shortcuts_f27a62d8")}
+          aria-label={added ? tr("apps:remove_value1_from_shortcuts_587bd2b7", { value1: tile.name }) : tr("apps:add_value1_to_shortcuts_8feff3b1", { value1: tile.name })}
           aria-pressed={added}
         >
           {added
             ? <CheckIcon className="w-3.5 h-3.5" strokeWidth="3" aria-hidden="true" />
             : <PlusWideIcon className="w-3.5 h-3.5" strokeWidth="3" aria-hidden="true" />}
-        </button>
+        </button>} resolve={() => ({ "title": added ? tr("apps:added_tap_to_remove_from_shortcuts_6163472a") : tr("apps:add_to_shortcuts_f27a62d8"), "aria-label": added ? tr("apps:remove_value1_from_shortcuts_587bd2b7", { value1: tile.name }) : tr("apps:add_value1_to_shortcuts_8feff3b1", { value1: tile.name }) })} />
       </div>
       <div className="flex flex-col gap-0.5 px-2.5 pt-2 pb-2.5">
         {/*
@@ -223,7 +229,7 @@ export function DiscoverCard({ tile, preview = false, previewTheme }: { tile: Di
             4.5:1 on two of the five pastel tints (4.39 and 4.36). */}
         {tile.contributors ? (
           <span className="home-discover-meta pt-0.5 text-[12px] leading-none text-zinc-600 dark:text-zinc-400">
-            {tile.contributors === 1 ? '1 contributor' : `${tile.contributors} contributors`}
+            <LocalizedValue render={() => (tile.contributors === 1 ? tr("apps:1_contributor_cd161e6a") : tr("apps:value1_contributors_14ac6584", { value1: tile.contributors }))} />
           </span>
         ) : null}
       </div>
@@ -326,14 +332,7 @@ export function DiscoverPanel({ view }: { view: DiscoverView }) {
           href="#apps"
           className="home-discover-lane home-discover-empty home-tint-2 flex items-center gap-3"
         >
-          <span className="min-w-0 flex-1">
-            <span className="block text-[15px] font-semibold leading-tight text-zinc-900 dark:text-zinc-100">
-              Nothing to discover right now
-            </span>
-            <span className="block text-[13px] leading-snug text-zinc-600 dark:text-zinc-300">
-              Browse the directory to find an app to try.
-            </span>
-          </span>
+          <span className="min-w-0 flex-1"><RichMessage id="apps:sentence_b1414438bbfc" components={[<span className="block text-[15px] font-semibold leading-tight text-zinc-900 dark:text-zinc-100" />, <span className="block text-[13px] leading-snug text-zinc-600 dark:text-zinc-300" />]} /></span>
           <ChevronRightIcon className="w-5 h-5 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />
         </a>
       )}

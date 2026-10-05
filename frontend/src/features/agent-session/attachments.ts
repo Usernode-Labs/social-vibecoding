@@ -1,3 +1,4 @@
+import { t as tr } from "../../lib/i18n/runtime";
 /**
  * Files attached in the agent-session composer (#2779 follow-up): what can be
  * picked, and how a picked file is described before and after it uploads.
@@ -53,10 +54,10 @@ function megabytes(bytes: number) {
 /** Why a file cannot be attached, in the dev chat's words, or null when it can. */
 export function refusal(name: string, size: number): string | null {
   const kind = pickedKind(name);
-  if (kind === 'image' && size > MAX_IMAGE_BYTES) return `"${name}" is too big. Images max ${megabytes(MAX_IMAGE_BYTES)} MB.`;
-  if (kind === 'zip' && size > MAX_ZIP_BYTES) return `"${name}" is too big. Zip archives max ${megabytes(MAX_ZIP_BYTES)} MB.`;
-  if (kind === 'file' && size > MAX_FILE_BYTES) return `"${name}" is too big. Files max ${megabytes(MAX_FILE_BYTES)} MB.`;
-  if (size <= 0) return `"${name}" is empty.`;
+  if (kind === 'image' && size > MAX_IMAGE_BYTES) return tr("workshop:value1_is_too_big_images_max_value2_mb_0a267b9f", { value1: name, value2: megabytes(MAX_IMAGE_BYTES) });
+  if (kind === 'zip' && size > MAX_ZIP_BYTES) return tr("workshop:value1_is_too_big_zip_archives_max_value2_mb_2fc58bb1", { value1: name, value2: megabytes(MAX_ZIP_BYTES) });
+  if (kind === 'file' && size > MAX_FILE_BYTES) return tr("workshop:value1_is_too_big_files_max_value2_mb_3d311c65", { value1: name, value2: megabytes(MAX_FILE_BYTES) });
+  if (size <= 0) return tr("workshop:value1_is_empty_5b48de2e", { value1: name });
   return null;
 }
 
@@ -70,7 +71,7 @@ export function acceptFiles<T extends { name: string; size: number }>(already: n
   let error: string | null = null;
   for (const file of files) {
     if (already + accepted.length >= MAX_FILES) {
-      error = error || `You can attach up to ${MAX_FILES} files to one message.`;
+      error = error || tr("workshop:you_can_attach_up_to_value1_files_to_one_message_bb5e7a94", { value1: MAX_FILES });
       break;
     }
     const why = refusal(file.name, file.size);
@@ -82,8 +83,8 @@ export function acceptFiles<T extends { name: string; size: number }>(already: n
 
 export function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  if (bytes < 1024 * 1024) return tr("workshop:value1_kb_75f92af0", { value1: Math.round(bytes / 1024) });
+  return tr("workshop:value1_mb_36c9af23", { value1: (bytes / 1024 / 1024).toFixed(1) });
 }
 
 /** The chip's tag: none for an image (it shows a thumbnail), ZIP, or the file's extension. */

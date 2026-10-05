@@ -307,17 +307,17 @@
   // px per module, so its size in the frame is fixed by the scale.
   function solveFour(detected, cssCenters, frameW) {
     const corners = classifyCorners(detected);
-    if (!corners) return { ok: false, reason: 'ambiguous corner assignment' };
+    if (!corners) return { ok: false, get reason() { return globalThis.PlatformI18n.t("core:ambiguous_corner_assignment_82501bdc"); } };
     const keys = ['tl', 'tr', 'bl', 'br'];
     const xPairs = keys.map((k) => ({ css: cssCenters[k].x, frame: corners[k].x }));
     const yPairs = keys.map((k) => ({ css: cssCenters[k].y, frame: corners[k].y }));
     const sx = solveAxis(xPairs);
     const sy = solveAxis(yPairs);
-    if (!sx || !sy) return { ok: false, reason: 'degenerate marker layout' };
+    if (!sx || !sy) return { ok: false, get reason() { return globalThis.PlatformI18n.t("core:degenerate_marker_layout_5d9e3e81"); } };
     if (!(sx.scale > 0) || !(sy.scale > 0)) return { ok: false, reason: 'non-positive scale' };
     // Screen pixels are square — a real capture never skews the axes.
     const ratio = sx.scale / sy.scale;
-    if (ratio < 0.9 || ratio > 1.1) return { ok: false, reason: 'skewed axis scales' };
+    if (ratio < 0.9 || ratio > 1.1) return { ok: false, get reason() { return globalThis.PlatformI18n.t("core:skewed_axis_scales_db34c716"); } };
     const tol = Math.max(4, frameW * 0.01);
     let residual = 0;
     for (const k of keys) {
@@ -368,8 +368,8 @@
   function solveRegistration(detected, cssCenters, frameW, frameH) {
     void frameH;
     const n = Array.isArray(detected) ? detected.length : 0;
-    if (n < 4) return { ok: false, reason: `expected 4 markers, found ${n}` };
-    if (n > MAX_MARKER_CANDIDATES) return { ok: false, reason: `too many marker candidates (${n})` };
+    if (n < 4) return { ok: false, reason: globalThis.PlatformI18n.t("core:expected_4_markers_found_value1_e97c83fe", { value1: n }) };
+    if (n > MAX_MARKER_CANDIDATES) return { ok: false, reason: globalThis.PlatformI18n.t("core:too_many_marker_candidates_value1_950cb36d", { value1: n }) };
     if (n === 4) {
       const one = solveFour(detected, cssCenters, frameW);
       return one.ok ? { ok: true, mapping: one.mapping } : one;
@@ -389,8 +389,8 @@
         }
       }
     }
-    if (!best) return { ok: false, reason: `no consistent set of 4 markers among ${n} candidates` };
-    if (ambiguous) return { ok: false, reason: `ambiguous registration among ${n} candidates` };
+    if (!best) return { ok: false, reason: globalThis.PlatformI18n.t("core:no_consistent_set_of_4_markers_among_value1_cand_fec9a1d7", { value1: n }) };
+    if (ambiguous) return { ok: false, reason: globalThis.PlatformI18n.t("core:ambiguous_registration_among_value1_candidates_1fcf5100", { value1: n }) };
     return { ok: true, mapping: best.mapping };
   }
 
@@ -447,7 +447,7 @@
     const maxFrames = opts.maxFrames ?? REGISTRATION_MAX_FRAMES;
     const now = opts.now || (() => Date.now());
     const started = now();
-    let last = { ok: false, reason: 'No video frame available' };
+    let last = { ok: false, get reason() { return globalThis.PlatformI18n.t("core:no_video_frame_available_daf73126"); } };
     const stats = { read: 0, blank: 0, distinct: 0, width: 0, height: 0 };
     const seen = new Set();
     for (let i = 0; i < maxFrames; i++) {
@@ -470,8 +470,8 @@
     // needs to say WHICH failure it was.
     return {
       ok: false,
-      reason: `${last.reason} (${stats.read} frames at ${stats.width}x${stats.height}, `
-        + `${stats.blank} blank, ${stats.distinct} distinct)`,
+      reason: globalThis.PlatformI18n.t("core:value1_value2_frames_at_value3_x_value4_fbd8f37a", { value1: last.reason, value2: stats.read, value3: stats.width, value4: stats.height })
+        + globalThis.PlatformI18n.t("core:value1_blank_value2_distinct_c09f8e0f", { value1: stats.blank, value2: stats.distinct }),
       stats,
     };
   }
@@ -571,7 +571,7 @@
   // overlay, no notice, the attach buttons disabled and the browser's sharing
   // indicator still on. Only a window/screen share can do that, and a window
   // or screen share is all Firefox offers, so Firefox is where it showed.
-  const TIMED_OUT = Symbol('timed out');
+  const TIMED_OUT = Symbol(globalThis.PlatformI18n.t("core:timed_out_3dcd80f1"));
   function settleWithin(promise, ms, setTimer = setTimeout, clearTimer = clearTimeout) {
     let timer;
     const bound = new Promise((resolve) => { timer = setTimer(() => resolve(TIMED_OUT), ms); });
@@ -706,14 +706,14 @@
       current = next;
       blob = await toBlob(current, 'image/jpeg', 0.85);
     }
-    if (!blob || blob.size > MAX_UPLOAD_BYTES) throw fail('capture_failed', 'Screenshot too large');
+    if (!blob || blob.size > MAX_UPLOAD_BYTES) throw fail('capture_failed', globalThis.PlatformI18n.t("core:screenshot_too_large_ffb7c0e2"));
     return blob;
   }
 
   function blobFromNativeCapture(payload) {
     const invalid = validateNativeCapturePayload(payload);
-    if (invalid === 'too-large') throw fail('too-large', 'Screenshot is larger than 4 MB');
-    if (invalid) throw fail('capture_failed', 'Native screenshot data is invalid');
+    if (invalid === 'too-large') throw fail('too-large', globalThis.PlatformI18n.t("core:screenshot_is_larger_than_4_mb_72edc310"));
+    if (invalid) throw fail('capture_failed', globalThis.PlatformI18n.t("core:native_screenshot_data_is_invalid_62c0bb33"));
     try {
       const binary = atob(payload.base64);
       const bytes = new Uint8Array(binary.length);
@@ -723,7 +723,7 @@
       return blob;
     } catch (err) {
       if (err && err.code) throw err;
-      throw fail('capture_failed', 'Native screenshot data could not be decoded');
+      throw fail('capture_failed', globalThis.PlatformI18n.t("core:native_screenshot_data_could_not_be_decoded_8a407472"));
     }
   }
 
@@ -747,7 +747,7 @@
       image.src = url;
       await new Promise((resolve, reject) => {
         image.onload = resolve;
-        image.onerror = () => reject(new Error('Image decode failed'));
+        image.onerror = () => reject(new Error(globalThis.PlatformI18n.t("core:image_decode_failed_14f58968")));
       });
       return {
         image,
@@ -767,14 +767,14 @@
   // upload contract instead of failing after the user has selected one.
   async function prepareFile(file) {
     if (!isSupportedPickedFile(file)) {
-      throw fail('invalid-type', 'Choose a PNG or JPEG image');
+      throw fail('invalid-type', globalThis.PlatformI18n.t("core:choose_a_png_or_jpeg_image_f7ec599f"));
     }
     if (file.size > 0 && file.size <= MAX_UPLOAD_BYTES) return file;
 
     let source;
     try {
       source = await loadPickedImage(file);
-      if (!(source.width > 0) || !(source.height > 0)) throw new Error('Empty image');
+      if (!(source.width > 0) || !(source.height > 0)) throw new Error(globalThis.PlatformI18n.t("core:empty_image_412a721f"));
       const maxEdge = 2560;
       const scale = Math.min(1, maxEdge / Math.max(source.width, source.height));
       const canvas = document.createElement('canvas');
@@ -784,7 +784,7 @@
       return await exportBlob(canvas);
     } catch (err) {
       if (err && err.code) throw err;
-      throw fail('capture_failed', 'Could not prepare the selected image');
+      throw fail('capture_failed', globalThis.PlatformI18n.t("core:could_not_prepare_the_selected_image_08752329"));
     } finally {
       if (source) source.cleanup();
     }
@@ -825,10 +825,10 @@
       stream = await navigator.mediaDevices.getDisplayMedia(displayMediaOptions());
     } catch (err) {
       const code = classifyDisplayMediaError(err);
-      if (code === 'denied') throw fail('denied', 'Screen capture was declined');
+      if (code === 'denied') throw fail('denied', globalThis.PlatformI18n.t("core:screen_capture_was_declined_49b54a21"));
       // The reason itself is what a bug report needs.
       console.warn('[screenshot] getDisplayMedia failed:', err && err.name, err && err.message);
-      throw fail(code, `Screen capture could not start (${(err && err.name) || 'unknown error'})`);
+      throw fail(code, globalThis.PlatformI18n.t("core:screen_capture_could_not_start_value1_8363af92", { value1: (err && err.name) || globalThis.PlatformI18n.t("core:unknown_error_3e4443e5") }));
     }
 
     const track = stream.getVideoTracks()[0];
@@ -872,7 +872,7 @@
       // selection there is no picture to cut from — and stop the share
       // (cleanup, below) rather than leave the browser's indicator on.
       if (!video.videoWidth) {
-        throw fail('capture_blank', 'The shared window or screen sent no picture');
+        throw fail('capture_blank', globalThis.PlatformI18n.t("core:the_shared_window_or_screen_sent_no_picture_f498cd6c"));
       }
 
       if (typeof opts.onCaptureStart === 'function') opts.onCaptureStart();
@@ -890,7 +890,7 @@
       selection.style.cssText = 'position:absolute;display:none;border:1px solid rgba(255,255,255,0.9);box-shadow:0 0 0 100vmax rgba(0,0,0,0.6);';
       overlay.appendChild(selection);
       const hint = document.createElement('div');
-      hint.textContent = 'Drag to select the area to capture. Esc to cancel';
+      hint.textContent = globalThis.PlatformI18n.t("core:drag_to_select_the_area_to_capture_esc_to_cancel_3384d3a3");
       hint.style.cssText = 'position:absolute;top:16px;left:50%;transform:translateX(-50%);background:rgba(24,24,27,0.92);color:#fff;font:500 13px system-ui,sans-serif;padding:8px 14px;border-radius:9999px;pointer-events:none;max-width:90vw;text-align:center;';
       overlay.appendChild(hint);
 
@@ -1084,7 +1084,7 @@
           clean = grabFrame(video) || clean;
         }
       }
-      if (!clean) throw fail('capture_failed', 'No video frame available');
+      if (!clean) throw fail('capture_failed', globalThis.PlatformI18n.t("core:no_video_frame_available_daf73126"));
       if (tabMode) {
         mapping = directMapping(viewportW, viewportH, clean.width, clean.height);
       } else if (clean.width !== regFrameW || clean.height !== regFrameH) {
@@ -1093,12 +1093,12 @@
         // aspect ratio means the window itself was resized, and the solved
         // mapping no longer applies. Fail closed on that.
         mapping = rescaleMapping(mapping, regFrameW, regFrameH, clean.width, clean.height);
-        if (!mapping) throw fail('register_failed', 'window changed during capture');
+        if (!mapping) throw fail('register_failed', globalThis.PlatformI18n.t("core:window_changed_during_capture_940999c9"));
       }
       stream.getTracks().forEach((t) => t.stop());
 
       const crop = mapping && applyMapping(chosen, mapping, clean.width, clean.height);
-      if (!crop) throw fail('capture_failed', 'Selected area is outside the captured frame');
+      if (!crop) throw fail('capture_failed', globalThis.PlatformI18n.t("core:selected_area_is_outside_the_captured_frame_9e09579a"));
 
       const out = document.createElement('canvas');
       out.width = crop.sw;

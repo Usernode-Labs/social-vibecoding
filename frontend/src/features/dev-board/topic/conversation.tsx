@@ -1,3 +1,4 @@
+import { Message, Localized, message as catalogText } from "../../../lib/i18n/react";
 /**
  * The conversation under a change's card: ONE sheet, the Discussion.
  *
@@ -67,11 +68,11 @@ export function ChangeConversation({ body }: { item: any; body: TopicBody }) {
   const id = Number(body.changeId);
   const av = typeof window !== 'undefined' ? (window as any).AppView : null;
   return (
-    <section className="dev-topic-sheet dev-conversation" data-change-conversation={id} aria-label="Discussion">
-      <h4 className="dev-topic-h">Discussion</h4>
+    <Localized element={<section className="dev-topic-sheet dev-conversation" data-change-conversation={id} aria-label={catalogText("workshop:discussion_5eb6cf64")}>
+      <h4 className="dev-topic-h"><Message id="workshop:discussion_5eb6cf64" /></h4>
       {body.discussion
         ? <p className="dev-topic-note">{body.discussion}</p>
-        : <><p className="dev-topic-note dev-conversation-audience">Visible to the group</p><Discussion id={id} readOnly={!!av?.readOnly} /></>}
-    </section>
+        : <><p className="dev-topic-note dev-conversation-audience"><Message id="workshop:visible_to_the_group_a4a251a5" /></p><Discussion id={id} readOnly={!!av?.readOnly} /></>}
+    </section>} messages={{"aria-label":"workshop:discussion_5eb6cf64"}} />
   );
 }

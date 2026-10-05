@@ -1,3 +1,5 @@
+import { useMessages as useUiLanguage } from "../../../lib/i18n/react";
+import { Message } from "../../../lib/i18n/react";
 /**
  * `#credit-options-modal` — the out-of-credits popup on the
  * Generate-proposal path.
@@ -29,15 +31,14 @@ export function CreditOptionsCard({ view }: { view: CreditOptionsModalView }): R
         {/* `data-credits-close` is app-view.js's: the scrim's delegated
             handler closes on it, and it also fires for a click on the
             backdrop, so the button carries no onClick of its own. */}
-        <Button type="button" data-credits-close="" variant="neutral" ink="neutral" size="sm">
-          Not now
-        </Button>
+        <Button type="button" data-credits-close="" variant="neutral" ink="neutral" size="sm"><Message id="workshop:not_now_a0e63d7c" /></Button>
       </div>
     </div>
   );
 }
 
 export function CreditOptionsModal(): ReactNode {
+  useUiLanguage();
   const { view } = useStoreState<{ view: CreditOptionsModalView | null }>(creditOptionsModalStore);
   if (!view) return null;
   return (

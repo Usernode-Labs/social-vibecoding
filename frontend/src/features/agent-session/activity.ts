@@ -1,3 +1,4 @@
+import { t as tr } from "../../lib/i18n/runtime";
 // What an agent session is doing, as the lists mark it (#2779 follow-up):
 // Recents, the platform mark's Continue rows and Messages all draw the same
 // mark beside a conversation, from the same two fields the server sends.
@@ -20,6 +21,6 @@ export function agentActivity(session: { busy?: boolean; doneUnseen?: boolean } 
 
 /** What a screen reader hears, and the tooltip. */
 export const ACTIVITY_LABEL: Record<Exclude<AgentActivity, null>, string> = {
-  working: 'Working',
-  done: 'Finished',
+  get working() { return tr("workshop:working_a92f0449"); },
+  get done() { return tr("workshop:finished_7804f7a7"); },
 };

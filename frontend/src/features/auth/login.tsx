@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * `#auth-login-screen` — the password form plus the three sub-views that share
  * its card (#1080, step 2 chunk C, screen 2 of 6).
@@ -113,14 +117,14 @@ interface OtpSignup {
 // The set-password step's opening line, one per case. A brand-new account is
 // told that is what is happening: it used to read "Now choose a password for
 // your account" as if the account had been there all along.
-const OTP_PASSWORD_INTRO = 'Code verified. Now choose a password for your account.';
+const OTP_PASSWORD_INTRO = () => tr("auth:code_verified_now_choose_a_password_for_your_acc_c8efa662");
 const OTP_PASSWORD_INTRO_NEW =
-  "Code verified. No account uses this email yet, so we'll create one. Choose a username and a password.";
-const OTP_PASSWORD_INTRO_HANDLE = 'Code verified. Choose a username and a password for your account.';
+  () => tr("auth:code_verified_no_account_uses_this_email_yet_so__85ac0ae3");
+const OTP_PASSWORD_INTRO_HANDLE = () => tr("auth:code_verified_choose_a_username_and_a_password_f_ecde8f50");
 // Said BEFORE the waiting room rather than by it: the person is about to be
 // signed in to a queue, not to the platform.
 const OTP_WAITLIST_NOTE =
-  "New accounts join a short waitlist. After this step you'll wait in the queue, and you'll get in automatically when it's your turn.";
+  () => tr("auth:new_accounts_join_a_short_waitlist_after_this_st_63dedaa2");
 
 /** Which reset path the recovery view offers. */
 type RecoveryPath = 'wallet' | 'email';
@@ -247,9 +251,9 @@ const OFFLINE_NOTICE = `offline-only mb-8 ${alertVariants({ variant: 'notice', d
  * now-spent reset controls: success has moved the person to their next action.
  * SENT_BOX is already the auth screen's durable positive-feedback treatment.
  */
-const RESET_COMPLETE_TITLE = 'Password changed';
+const RESET_COMPLETE_TITLE = () => tr("auth:password_changed_3575725c");
 const RESET_COMPLETE_MSG =
-  'For security, you’ve been signed out everywhere. Sign in with your new password.';
+  () => tr("auth:for_security_you_ve_been_signed_out_everywhere_s_96800712");
 
 /**
  * ── Arriving from a waitlist-release email (#1548) ─────────────────────
@@ -282,7 +286,7 @@ const AUTO_SEND_KEY = 'usernode.signup.otp.v1';
  * here is knowing a code is on its way. The 10-minute figure must match
  * OTP_TTL_MS in src/services/email-signup.js.
  */
-const CODE_SENT_MSG = 'We sent you a code. It expires in 10 minutes.';
+const CODE_SENT_MSG = () => tr("auth:we_sent_you_a_code_it_expires_in_10_minutes_cb9fb854");
 
 /** The resend button while it is held. Whole class literals, both arms. */
 const QUIET_BUTTON_WAITING =
@@ -382,7 +386,7 @@ function inviteFromSegment(seg?: string | null): string | null {
 }
 
 const EXPIRED_MSG =
-  'This reset link is invalid or has expired. Go back to login and request a new one from "Forgot password?".';
+  () => tr("auth:this_reset_link_is_invalid_or_has_expired_go_bac_6e206271");
 
 /**
  * The emailed-reset confirmation is a success state, not ambient status text:
@@ -393,7 +397,7 @@ const SENT_BOX =
   'rounded-lg border border-green-300 bg-green-100 px-3 py-2 text-sm font-medium text-green-800 dark:border-green-800 dark:bg-green-950/60 dark:text-green-300';
 /** Anti-enumeration: the same copy whether or not the address matched. */
 const SENT_MSG =
-  'If that address matches an account, a reset link is on its way. It expires in 30 minutes.';
+  () => tr("auth:if_that_address_matches_an_account_a_reset_link__29851036");
 
 /**
  * The fallback for the two branches where a correct email code cannot sign you
@@ -402,20 +406,20 @@ const SENT_MSG =
  * `src/services/email-signup.js`, which is what a real refusal carries.
  */
 const PASSWORD_ACCOUNT_MSG =
-  'This account signs in with a password. Enter it below to continue.';
+  () => tr("auth:this_account_signs_in_with_a_password_enter_it_b_2c162135");
 
 /** The pre-email copy the frozen markup shipped, and its replacement. */
 const ADMIN_LEAD_SHIPPED =
-  "Accounts here have no email on file, so a password can't be reset automatically from the web.";
+  () => tr("auth:accounts_here_have_no_email_on_file_so_a_passwor_74e5219f");
 /**
  * The confirmed-email fallback copy (#2969): explains why the reset email
  * never arrives, then how to recover. Two sentences, both inside the same
  * warning card — see ADMIN_LEAD_NOTICE_BOX below.
  */
 const ADMIN_LEAD_WITH_EMAIL =
-  'If you did not confirm your email account, you will not receive the reset email.';
+  () => tr("auth:if_you_did_not_confirm_your_email_account_you_wi_135d11aa");
 const ADMIN_LEAD_SUPPORT_INSTRUCTIONS =
-  'If this happens to you, ask Homeroom support team to issue you a temporary password (support@usernodelabs.org).';
+  () => tr("auth:if_this_happens_to_you_ask_homeroom_support_team_fb2de156");
 
 /**
  * The warning-card treatment for ADMIN_LEAD_WITH_EMAIL (#2958): a caution box
@@ -429,6 +433,7 @@ const ADMIN_LEAD_SUPPORT_INSTRUCTIONS =
 const ADMIN_LEAD_NOTICE_BOX = `flex items-start gap-2 ${alertVariants({ variant: 'notice', density: 'compact' })}`;
 
 export function LoginScreen() {
+  useUiLanguage();
   const rootRef = useRef<HTMLElement>(null);
   useVisibilityHiddenClass(rootRef, AUTH_SCREEN_IDS.login, false);
   // The screen's interior mounts on its first reveal, not in the prerender —
@@ -601,7 +606,7 @@ export function LoginScreen() {
       // A mangled link can be refused without a round trip — same message the
       // server would return.
       if (!st.resetToken || !/^[0-9a-f]{64}$/.test(st.resetToken)) {
-        setResetError(EXPIRED_MSG);
+        setResetError(EXPIRED_MSG());
       }
     },
     [ensureResetUi, st],
@@ -689,7 +694,7 @@ export function LoginScreen() {
         // `password-recovery-sent` also paints the post-submit confirmation
         // so the green success box is URL-reachable for screenshots and
         // checks. Display-only, no writes, works in every environment.
-        setEmailResetStatus(shot === 'password-recovery-sent' ? SENT_MSG : null);
+        setEmailResetStatus(shot === 'password-recovery-sent' ? SENT_MSG() : null);
       }
       // `?shot=email-code-password-account#login`: the state an email code
       // hands you when the account can only sign in with its password
@@ -697,7 +702,7 @@ export function LoginScreen() {
       // Reached by typing a code in production, so the link is display-only
       // and writes nothing, which keeps it working in every environment.
       if (!openSignup && shot === 'email-code-password-account') {
-        setLoginError(PASSWORD_ACCOUNT_MSG);
+        setLoginError(PASSWORD_ACCOUNT_MSG());
       }
       if (openSignup) {
         // #signup/<address> from a waitlist-release email. Prefill by ref
@@ -729,7 +734,7 @@ export function LoginScreen() {
           st.otpEmail = shown;
           setOtpEmailEcho(shown);
           otpShowStep('code');
-          setOtpStatus(CODE_SENT_MSG);
+          setOtpStatus(CODE_SENT_MSG());
           const until = alreadySent + RESEND_COOLDOWN_MS;
           setCooldownUntil(until > Date.now() ? until : 0);
         }
@@ -775,7 +780,7 @@ export function LoginScreen() {
       });
       const data = await res.json();
       if (!res.ok) {
-        setLoginError(data.error || 'Login failed');
+        setLoginError(data.error || tr("auth:login_failed_5a96e845"));
         return;
       }
       await finishLogin();
@@ -800,14 +805,14 @@ export function LoginScreen() {
     setOtpDetails(null);
     const email = (explicitEmail || otpEmailInput.current?.value || '').trim().toLowerCase();
     if (!email || !email.includes('@')) {
-      setOtpError('Enter a valid email address');
+      setOtpError(tr("auth:enter_a_valid_email_address_c20ffba2"));
       return;
     }
     if (blockedOffline(setOtpError)) return;
     // Whichever step we end on, the email field should carry the address —
     // a rejected send drops back here and retyping it would be busywork.
     if (otpEmailInput.current) otpEmailInput.current.value = email;
-    setOtpStatus('Sending code...');
+    setOtpStatus(tr("auth:sending_code_d933c30a"));
     try {
       const res = await fetch('/api/auth/otp/request', {
         method: 'POST',
@@ -826,7 +831,7 @@ export function LoginScreen() {
           st.otpEmail = email;
           setOtpEmailEcho(email);
           otpShowStep('code');
-          setOtpError(data.error || 'Too many requests. Wait a moment and try again.');
+          setOtpError(data.error || tr("auth:too_many_requests_wait_a_moment_and_try_again_fa85b243"));
           const retryAfter = Number(res.headers.get('Retry-After'));
           setCooldownUntil(
             Date.now() +
@@ -839,7 +844,7 @@ export function LoginScreen() {
         // Refused (an address the server will not accept, and anything else):
         // the email step, with the address still in the field.
         otpShowStep('email');
-        setOtpError(data.error || 'Could not send a code');
+        setOtpError(data.error || tr("auth:could_not_send_a_code_a2afaee4"));
         return;
       }
       st.otpEmail = email;
@@ -849,12 +854,12 @@ export function LoginScreen() {
       // A standing confirmation, not a flash: somebody who arrived from an
       // invite link never pressed anything, so the screen has to say what it
       // just did on their behalf.
-      setOtpStatus(CODE_SENT_MSG);
+      setOtpStatus(CODE_SENT_MSG());
       setCooldownUntil(Date.now() + RESEND_COOLDOWN_MS);
     } catch {
       setOtpStatus(null);
       otpShowStep('email');
-      setOtpError('Network error');
+      setOtpError(tr("auth:network_error_2a33d984"));
     }
   }, [otpShowStep, st]);
 
@@ -874,7 +879,7 @@ export function LoginScreen() {
     setOtpDetails(null);
     const code = (otpCode.current?.value || '').trim();
     if (!code) {
-      setOtpError('Enter the code from the email');
+      setOtpError(tr("auth:enter_the_code_from_the_email_8bb269bd"));
       return;
     }
     if (blockedOffline(setOtpError)) return;
@@ -899,15 +904,15 @@ export function LoginScreen() {
         if (data.code === 'password_required' || data.code === 'admin_password_required') {
           showLoginBaseView();
           if (username.current) username.current.value = st.otpEmail || '';
-          setLoginError(data.error || PASSWORD_ACCOUNT_MSG);
+          setLoginError(data.error || PASSWORD_ACCOUNT_MSG());
           return;
         }
         // NOT on a 429: the limiter's message already says exactly how long
         // to wait.
         setOtpError(
           res.status === 429
-            ? data.error || 'Too many code attempts. Try again shortly.'
-            : data.error || 'Invalid or expired code.',
+            ? data.error || tr("auth:too_many_code_attempts_try_again_shortly_0c68f9cc")
+            : data.error || tr("auth:invalid_or_expired_code_810983de"),
         );
         return;
       }
@@ -947,15 +952,15 @@ export function LoginScreen() {
     const value = otpNewPassword.current?.value || '';
     const confirm = otpConfirmPassword.current?.value || '';
     if (value.length < 8) {
-      setOtpError('Password must be at least 8 characters');
+      setOtpError(tr("auth:password_must_be_at_least_8_characters_e3b8d09d"));
       return;
     }
     if (value !== confirm) {
-      setOtpError('Passwords do not match');
+      setOtpError(tr("auth:passwords_do_not_match_b6eb82cd"));
       return;
     }
     if (blockedOffline(setOtpError)) return;
-    setOtpStatus('Setting password...');
+    setOtpStatus(tr("auth:setting_password_4c8c566c"));
     try {
       const res = await fetchSessionMint('/api/auth/otp/set-password', {
         method: 'POST',
@@ -977,7 +982,7 @@ export function LoginScreen() {
           otpUsername.current?.focus();
           return;
         }
-        setOtpError(data.error || 'Could not set the password');
+        setOtpError(data.error || tr("auth:could_not_set_the_password_5eedb04b"));
         return;
       }
       setOtpStatus(null);
@@ -995,7 +1000,7 @@ export function LoginScreen() {
     clearConfirmation();
     setWalletError(null);
     if (blockedOffline(setWalletError)) return;
-    setWalletStatus('Verifying identity...');
+    setWalletStatus(tr("auth:verifying_identity_4d6308a7"));
     setWalletControls(false);
 
     const fail = (msg: string) => {
@@ -1016,7 +1021,7 @@ export function LoginScreen() {
       }
 
       if (!st.cachedChallenge) {
-        fail('Could not get challenge from server');
+        fail(tr("auth:could_not_get_challenge_from_server_82ea3be0"));
         return;
       }
 
@@ -1039,7 +1044,7 @@ export function LoginScreen() {
         await finishLogin();
         return;
       }
-      fail(verifyData.error || 'Verification failed');
+      fail(verifyData.error || tr("auth:verification_failed_f0f2383f"));
     } catch (e) {
       st.cachedChallenge = null;
       if (e instanceof NativeLoginPreparationError) {
@@ -1047,8 +1052,8 @@ export function LoginScreen() {
         return;
       }
       const message = e instanceof Error ? e.message : String(e);
-      if (message && message.includes('denied')) fail('Signature request was denied.');
-      else fail('Signature failed: ' + message);
+      if (message && message.includes('denied')) fail(tr("auth:signature_request_was_denied_1431f4c6"));
+      else fail(tr("auth:signature_failed_4cde1d46") + message);
     }
   }, [clearConfirmation, finishLogin, st]);
 
@@ -1060,14 +1065,14 @@ export function LoginScreen() {
     const value = recoveryNewPassword.current?.value || '';
     const confirm = recoveryConfirmPassword.current?.value || '';
     if (value.length < 8) {
-      setRecoveryError('Password must be at least 8 characters');
+      setRecoveryError(tr("auth:password_must_be_at_least_8_characters_e3b8d09d"));
       return;
     }
     if (value !== confirm) {
-      setRecoveryError('Passwords do not match');
+      setRecoveryError(tr("auth:passwords_do_not_match_b6eb82cd"));
       return;
     }
-    setRecoveryStatus('Verifying identity...');
+    setRecoveryStatus(tr("auth:verifying_identity_4d6308a7"));
     try {
       // Get a fresh challenge — the sign-in cached one may be consumed or
       // absent. wallet-check returns one for any linked wallet.
@@ -1080,7 +1085,7 @@ export function LoginScreen() {
       const challenge = checkData.challenge;
       if (!challenge) {
         setRecoveryStatus(null);
-        setRecoveryError('Could not get a challenge from the server');
+        setRecoveryError(tr("auth:could_not_get_a_challenge_from_the_server_3492a295"));
         return;
       }
 
@@ -1099,7 +1104,7 @@ export function LoginScreen() {
       const data = await res.json();
       if (!res.ok) {
         setRecoveryStatus(null);
-        setRecoveryError(data.error || 'Reset failed');
+        setRecoveryError(data.error || tr("auth:reset_failed_089cb45b"));
         return;
       }
       setRecoveryStatus(null);
@@ -1112,9 +1117,9 @@ export function LoginScreen() {
       }
       const message = e instanceof Error ? e.message : String(e);
       if (message && message.includes('denied')) {
-        setRecoveryError('Signature request was denied.');
+        setRecoveryError(tr("auth:signature_request_was_denied_1431f4c6"));
       } else {
-        setRecoveryError('Reset failed: ' + message);
+        setRecoveryError(tr("auth:reset_failed_c9346576") + message);
       }
     }
   }, [clearConfirmation, finishLogin, st]);
@@ -1127,7 +1132,7 @@ export function LoginScreen() {
     if (blockedOffline(setEmailResetError)) return;
     const email = (recoveryEmailInput.current?.value || '').trim();
     if (!email || email.indexOf('@') === -1) {
-      setEmailResetError('Enter the email address on your account');
+      setEmailResetError(tr("auth:enter_the_email_address_on_your_account_fe3064b1"));
       return;
     }
     setBusy('btn-email-reset');
@@ -1139,14 +1144,14 @@ export function LoginScreen() {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setEmailResetError(data.error || 'Could not send the link. Try again in a minute');
+        setEmailResetError(data.error || tr("auth:could_not_send_the_link_try_again_in_a_minute_d2e21ce6"));
         return;
       }
       // Anti-enumeration: the server answers the same whether or not the
       // address matched, and so does this copy.
-      setEmailResetStatus(SENT_MSG);
+      setEmailResetStatus(SENT_MSG());
     } catch {
-      setEmailResetError('Network error');
+      setEmailResetError(tr("auth:network_error_2a33d984"));
     } finally {
       setBusy(null);
     }
@@ -1158,11 +1163,11 @@ export function LoginScreen() {
     const value = resetNewPassword.current?.value || '';
     const confirm = resetConfirmPassword.current?.value || '';
     if (value.length < 8) {
-      setResetError('Password must be at least 8 characters');
+      setResetError(tr("auth:password_must_be_at_least_8_characters_e3b8d09d"));
       return;
     }
     if (value !== confirm) {
-      setResetError('Passwords do not match');
+      setResetError(tr("auth:passwords_do_not_match_b6eb82cd"));
       return;
     }
     setBusy('btn-reset-confirm');
@@ -1174,7 +1179,7 @@ export function LoginScreen() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setResetError(res.status === 401 ? EXPIRED_MSG : data.error || 'Reset failed. Try again');
+        setResetError(res.status === 401 ? EXPIRED_MSG() : data.error || tr("auth:reset_failed_try_again_c426673e"));
         return;
       }
       // The token is single-use and the reset revoked every session on
@@ -1203,7 +1208,7 @@ export function LoginScreen() {
       setPasswordResetComplete(true);
       window.requestAnimationFrame(() => username.current?.focus());
     } catch {
-      setResetError('Network error');
+      setResetError(tr("auth:network_error_2a33d984"));
     } finally {
       setBusy(null);
     }
@@ -1300,9 +1305,9 @@ export function LoginScreen() {
   const heading =
     view === 'otp'
       ? otpStep === 'code'
-        ? 'Check your email'
-        : 'Sign in with email'
-      : 'Sign in';
+        ? tr("auth:check_your_email_77322879")
+        : tr("auth:sign_in_with_email_e6f13c85")
+      : tr("auth:sign_in_bfd402b2");
 
   /*
       #btn-otp-back is ONE control under all three otp steps, so its words are
@@ -1312,10 +1317,10 @@ export function LoginScreen() {
   */
   const backLabel =
     otpStep === 'email'
-      ? 'Sign in with a password'
+      ? tr("auth:sign_in_with_a_password_673a5037")
       : otpStep === 'code'
-        ? 'Wrong address? Go back'
-        : 'Back to login';
+        ? tr("auth:wrong_address_go_back_38b7d40f")
+        : tr("auth:back_to_login_3e3806ff");
 
   return (
     <main
@@ -1396,10 +1401,9 @@ export function LoginScreen() {
               suppress `align-items: stretch`, without which an svg at
               `w-auto` would be stretched to the column's full width.
           */}
-          <Wordmark
-            title="Homeroom"
+          <Localized element={<Wordmark title={catalogText("auth:homeroom_c9149977")}
             className="mx-auto self-center mb-10 h-6 w-auto text-zinc-900 dark:text-zinc-100"
-          />
+          />} messages={{"title":"auth:homeroom_c9149977"}} />
           <h1 className={view === 'recovery' || view === 'reset' ? SCREEN_H1_HIDDEN : SCREEN_H1}>
             {heading}
           </h1>
@@ -1413,21 +1417,13 @@ export function LoginScreen() {
               are the ones that can't work.
           */}
           <div className={OFFLINE_NOTICE}>
-            <h2 className="text-sm font-semibold text-amber-800 dark:text-amber-400">
-              You're offline
-            </h2>
-            <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-              Signing in needs a connection. Your username and password are checked on the server.
-            Reconnect and try again; if you were signed in on this device before, reloading once
-            you're back online will take you straight in.
-            </p>
+            <h2 className="text-sm font-semibold text-amber-800 dark:text-amber-400"><Message id="auth:you_re_offline_050be795" /></h2>
+            <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400"><Message id="auth:signing_in_needs_a_connection_your_username_and__27718c44" /></p>
             <button
               type="button"
               data-offline-retry=""
               className="mt-3 rounded-lg border border-amber-500/50 px-3 py-1.5 text-sm font-medium text-amber-800 dark:text-amber-300 hover:bg-amber-500/10 transition-colors"
-            >
-              Try again
-            </button>
+            ><Message id="auth:try_again_d8b8392e" /></button>
           </div>
           <SessionConfirmationNotice completion={completion} />
           {/* Wallet auth status (shown when native bridge detected) */}
@@ -1446,18 +1442,14 @@ export function LoginScreen() {
                 className="flex items-center justify-center gap-2"
                 onClick={onWalletSignIn}
               >
-                <KeyIcon className="w-5 h-5" />
-                Sign in with Wallet
-              </Button>
+                <KeyIcon className="w-5 h-5" /><Message id="auth:sign_in_with_wallet_16aa8aa3" /></Button>
             </div>
             <div
               id="wallet-divider"
               className={hiddenFirst(!walletControls, 'flex items-center gap-3 text-xs text-zinc-500 dark:text-zinc-400')}
             >
               <div className="flex-1 h-px bg-zinc-300 dark:bg-zinc-800">
-              </div>
-              or
-              <div className="flex-1 h-px bg-zinc-300 dark:bg-zinc-800">
+              </div><Message id="auth:or_7175517a" /><div className="flex-1 h-px bg-zinc-300 dark:bg-zinc-800">
               </div>
             </div>
           </div>
@@ -1497,8 +1489,8 @@ export function LoginScreen() {
               aria-atomic="true"
               className={hiddenLast(!passwordResetComplete, SENT_BOX)}
             >
-              <strong className="block font-semibold">{RESET_COMPLETE_TITLE}</strong>
-              <span className="mt-1 block">{RESET_COMPLETE_MSG}</span>
+              <strong className="block font-semibold">{RESET_COMPLETE_TITLE()}</strong>
+              <span className="mt-1 block">{RESET_COMPLETE_MSG()}</span>
             </div>
             {/*
                 NO PLACEHOLDER ON THESE TWO ROWS. The label above each field is
@@ -1515,9 +1507,7 @@ export function LoginScreen() {
               <label
                 htmlFor="login-username"
                 className={AUTH_LABEL}
-              >
-                Username or email
-              </label>
+              ><Message id="auth:username_or_email_2d4a46f3" /></label>
               <Input
                 ref={username}
                 id="login-username"
@@ -1533,9 +1523,7 @@ export function LoginScreen() {
               <label
                 htmlFor="login-password"
                 className={AUTH_LABEL}
-              >
-                Password
-              </label>
+              ><Message id="auth:password_e7cf3ef4" /></label>
               <PasswordInput
                 ref={password}
                 id="login-password"
@@ -1550,9 +1538,7 @@ export function LoginScreen() {
               {loginError}
               <NativeLoginDetailsLink details={loginDetails} />
             </div>
-            <Button type="submit" data-offline-disabled="" {...SOLID}>
-              Sign in
-            </Button>
+            <Button type="submit" data-offline-disabled="" {...SOLID}><Message id="auth:sign_in_bfd402b2" /></Button>
             <TermsNotice verb="signing in" />
           </form>
           {/*
@@ -1571,14 +1557,10 @@ export function LoginScreen() {
                 e.preventDefault();
                 openRecovery();
               }}
-            >
-              Forgot password?
-            </a>
+            ><Message id="auth:forgot_password_30c1d8d3" /></a>
           </p>
           <p id="otp-link-wrap" className={hiddenLast(!base, 'mt-2.5')}>
-            <a id="otp-link" href="#signup" className={PILL_LINK}>
-              Sign in with an email code
-            </a>
+            <a id="otp-link" href="#signup" className={PILL_LINK}><Message id="auth:sign_in_with_an_email_code_e22bc1b3" /></a>
           </p>
           {/*
               #2979: the password step no longer ends on a tertiary line — the
@@ -1617,10 +1599,7 @@ export function LoginScreen() {
                 seam carrying its own board figure, is what says it.
             */}
             <div id="otp-step-email" className={hiddenFirst(otpStep !== 'email', 'flex flex-col')}>
-              <p className={STEP_P}>
-                We'll email you a 6-digit code to sign in. New here? You'll get
-                an account and a place on the waitlist.
-              </p>
+              <p className={STEP_P}><Message id="auth:we_ll_email_you_a_6_digit_code_to_sign_in_new_he_254ffac1" /></p>
               {/*
                   One field, one card — the same white grouped card the
                   password form above is, so the three sign-in screens are
@@ -1631,17 +1610,14 @@ export function LoginScreen() {
               */}
               <div className={AUTH_CARD}>
                 <div className={AUTH_ROW}>
-                  <label htmlFor="otp-email" className={AUTH_LABEL}>
-                    Email
-                  </label>
-                  <Input
+                  <label htmlFor="otp-email" className={AUTH_LABEL}><Message id="auth:email_969ccbd3" /></label>
+                  <Localized element={<Input
                     ref={otpEmailInput}
                     id="otp-email"
                     type="email"
                     autoComplete="email"
-                    {...AUTHFIELD}
-                    placeholder="you@example.com"
-                  />
+                    {...AUTHFIELD} placeholder={catalogText("auth:you_example_com_53e6cdc3")}
+                  />} messages={{"placeholder":"auth:you_example_com_53e6cdc3"}} />
                 </div>
               </div>
               <Button
@@ -1658,12 +1634,12 @@ export function LoginScreen() {
                   void otpRequestCode();
                 }}
               >
-                {cooldownLeft ? `Email me a code in ${cooldownLeft}s` : 'Email me a code'}
+                <LocalizedValue render={() => (cooldownLeft ? tr("auth:email_me_a_code_in_value1_s_6f7585b0", { value1: cooldownLeft }) : tr("auth:email_me_a_code_88d42039"))} />
               </Button>
             </div>
             <div id="otp-step-code" className={hiddenFirst(otpStep !== 'code', 'flex flex-col')}>
               <p className={STEP_P}>
-                {'Enter the 6-digit code we sent to '}
+                <Message id="auth:enter_the_6_digit_code_we_sent_to_24901047" />
                 <span id="otp-email-echo" className="font-medium text-zinc-700 dark:text-zinc-300">
                   {otpEmailEcho}
                 </span>
@@ -1678,9 +1654,7 @@ export function LoginScreen() {
               */}
               <div className={AUTH_CARD}>
                 <div className={AUTH_ROW}>
-                  <label htmlFor="otp-code" className={AUTH_LABEL}>
-                    6-digit code
-                  </label>
+                  <label htmlFor="otp-code" className={AUTH_LABEL}><Message id="auth:6_digit_code_0d1fa0df" /></label>
                   <Input
                     ref={otpCode}
                     id="otp-code"
@@ -1710,9 +1684,7 @@ export function LoginScreen() {
                   data-offline-disabled=""
                   {...SOLID}
                   onClick={onOtpVerify}
-                >
-                  Verify code
-                </Button>
+                ><Message id="auth:verify_code_7ab83b84" /></Button>
                 <button
                   id="btn-otp-resend"
                   type="button"
@@ -1721,17 +1693,17 @@ export function LoginScreen() {
                   disabled={cooldownLeft > 0}
                   onClick={onOtpResend}
                 >
-                  {cooldownLeft ? `Send a new code in ${cooldownLeft}s` : 'Send a new code'}
+                  <LocalizedValue render={() => (cooldownLeft ? tr("auth:send_a_new_code_in_value1_s_d5144c5d", { value1: cooldownLeft }) : tr("auth:send_a_new_code_9200fc2f"))} />
                 </button>
               </div>
             </div>
             <div id="otp-step-password" className={hiddenFirst(otpStep !== 'password', 'space-y-3')}>
               <p className="text-sm text-zinc-500 dark:text-zinc-400">
                 {otpSignup?.created
-                  ? OTP_PASSWORD_INTRO_NEW
+                  ? OTP_PASSWORD_INTRO_NEW()
                   : otpSignup?.needsUsername
-                    ? OTP_PASSWORD_INTRO_HANDLE
-                    : OTP_PASSWORD_INTRO}
+                    ? OTP_PASSWORD_INTRO_HANDLE()
+                    : OTP_PASSWORD_INTRO()}
               </p>
               {/*
                   QA 2026-09-24 Q12: the handle, asked HERE. An account made by
@@ -1752,10 +1724,8 @@ export function LoginScreen() {
               */}
               {otpSignup?.needsUsername ? (
                 <div>
-                  <label htmlFor="otp-username" className="block text-[15px] font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-                    Username
-                  </label>
-                  <Input
+                  <label htmlFor="otp-username" className="block text-[15px] font-medium text-zinc-500 dark:text-zinc-400 mb-1"><Message id="auth:username_e3b89e9d" /></label>
+                  <Localized element={<Input
                     ref={otpUsername}
                     id="otp-username"
                     type="text"
@@ -1765,44 +1735,37 @@ export function LoginScreen() {
                     aria-describedby="otp-username-public otp-username-hint"
                     aria-invalid={otpUsernameError ? true : undefined}
                     onInput={() => setOtpUsernameError(null)}
-                    {...FIELD}
-                    placeholder="yourname"
-                  />
+                    {...FIELD} placeholder={catalogText("auth:yourname_22f6e396")}
+                  />} messages={{"placeholder":"auth:yourname_22f6e396"}} />
                   <p id="otp-username-public" className={FIELD_HINT}>
-                    {USERNAME_PUBLIC_NOTE}
+                    {USERNAME_PUBLIC_NOTE()}
                   </p>
                   <p id="otp-username-hint" className={otpUsernameError ? FIELD_HINT_ERROR : FIELD_HINT}>
-                    {otpUsernameError || USERNAME_RULE}
+                    {otpUsernameError || USERNAME_RULE()}
                   </p>
                 </div>
               ) : null}
               <div>
-                <label className="block text-[15px] font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-                  New password
-                </label>
-                <PasswordInput
+                <label className="block text-[15px] font-medium text-zinc-500 dark:text-zinc-400 mb-1"><Message id="auth:new_password_3dd9df44" /></label>
+                <Localized element={<PasswordInput
                   ref={otpNewPassword}
                   id="otp-new-password"
                   autoComplete="new-password"
-                  {...FIELD}
-                  placeholder="at least 8 characters"
-                />
+                  {...FIELD} placeholder={catalogText("auth:at_least_8_characters_18fe2158")}
+                />} messages={{"placeholder":"auth:at_least_8_characters_18fe2158"}} />
               </div>
               <div>
-                <label className="block text-[15px] font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-                  Confirm password
-                </label>
-                <PasswordInput
+                <label className="block text-[15px] font-medium text-zinc-500 dark:text-zinc-400 mb-1"><Message id="auth:confirm_password_5ac265f3" /></label>
+                <Localized element={<PasswordInput
                   ref={otpConfirmPassword}
                   id="otp-confirm-password"
                   autoComplete="new-password"
-                  {...FIELD}
-                  placeholder="re-enter password"
-                />
+                  {...FIELD} placeholder={catalogText("auth:re_enter_password_51150f11")}
+                />} messages={{"placeholder":"auth:re_enter_password_51150f11"}} />
               </div>
               {otpSignup?.waitlisted ? (
                 <p id="otp-waitlist-note" className={WAITLIST_NOTE}>
-                  {OTP_WAITLIST_NOTE}
+                  {OTP_WAITLIST_NOTE()}
                 </p>
               ) : null}
               <Button
@@ -1812,7 +1775,7 @@ export function LoginScreen() {
                 {...SOLID}
                 onClick={onOtpSetPassword}
               >
-                {otpSignup?.created ? 'Create account & sign in' : 'Set password & sign in'}
+                <LocalizedValue render={() => (otpSignup?.created ? tr("auth:create_account_sign_in_4aba5727") : tr("auth:set_password_sign_in_1fe34401"))} />
               </Button>
             </div>
             <div id="otp-error" className={hiddenLast(!otpError, ERROR)}>
@@ -1852,39 +1815,29 @@ export function LoginScreen() {
               with the "ask an admin" message as its fallback.
           */}
           <div id="recovery-view" className={hiddenFirst(view !== 'recovery', 'space-y-4')}>
-            <h2 className="text-lg font-bold text-center">
-              Reset your password
-            </h2>
+            <h2 className="text-lg font-bold text-center"><Message id="auth:reset_your_password_59fa4379" /></h2>
             <div
               id="recovery-wallet"
               className={hiddenFirst(!(view === 'recovery' && recoveryPath === 'wallet'), 'space-y-3')}
             >
-              <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                Your wallet is linked to this account. Approve a signature request, then choose a new password.
-              </p>
+              <p className="text-sm text-zinc-500 dark:text-zinc-400"><Message id="auth:your_wallet_is_linked_to_this_account_approve_a__a6b0f8f1" /></p>
               <div>
-                <label className="block text-[15px] font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-                  New password
-                </label>
-                <PasswordInput
+                <label className="block text-[15px] font-medium text-zinc-500 dark:text-zinc-400 mb-1"><Message id="auth:new_password_3dd9df44" /></label>
+                <Localized element={<PasswordInput
                   ref={recoveryNewPassword}
                   id="recovery-new-password"
                   autoComplete="new-password"
-                  {...FIELD}
-                  placeholder="at least 8 characters"
-                />
+                  {...FIELD} placeholder={catalogText("auth:at_least_8_characters_18fe2158")}
+                />} messages={{"placeholder":"auth:at_least_8_characters_18fe2158"}} />
               </div>
               <div>
-                <label className="block text-[15px] font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-                  Confirm new password
-                </label>
-                <PasswordInput
+                <label className="block text-[15px] font-medium text-zinc-500 dark:text-zinc-400 mb-1"><Message id="auth:confirm_new_password_bf000421" /></label>
+                <Localized element={<PasswordInput
                   ref={recoveryConfirmPassword}
                   id="recovery-confirm-password"
                   autoComplete="new-password"
-                  {...FIELD}
-                  placeholder="re-enter new password"
-                />
+                  {...FIELD} placeholder={catalogText("auth:re_enter_new_password_6aec1fc1")}
+                />} messages={{"placeholder":"auth:re_enter_new_password_6aec1fc1"}} />
               </div>
               <div id="recovery-error" className={hiddenLast(!recoveryError, ERROR)}>
                 {recoveryError}
@@ -1892,9 +1845,7 @@ export function LoginScreen() {
               <div id="recovery-status" className={hiddenLast(!recoveryStatus, STATUS)}>
                 {recoveryStatus}
               </div>
-              <Button id="btn-wallet-reset" type="button" {...SOLID} onClick={onWalletReset}>
-                Reset password with your wallet
-              </Button>
+              <Button id="btn-wallet-reset" type="button" {...SOLID} onClick={onWalletReset}><Message id="auth:reset_password_with_your_wallet_49872d87" /></Button>
             </div>
             {/*
                 The emailed-reset request form. Mounted on the first
@@ -1912,19 +1863,16 @@ export function LoginScreen() {
                     place — the success box below the field (dev-chat request:
                     it appeared to render twice).
                 */}
-                <p className={hiddenFirst(!!emailResetStatus, P)}>
-                  Enter the email address on your account and we'll send you a link to choose a new password.
-                </p>
+                <p className={hiddenFirst(!!emailResetStatus, P)}><Message id="auth:enter_the_email_address_on_your_account_and_we_l_016c35d7" /></p>
                 <div>
-                  <label className={LABEL} htmlFor="recovery-email-input">Email</label>
-                  <Input
+                  <label className={LABEL} htmlFor="recovery-email-input"><Message id="auth:email_969ccbd3" /></label>
+                  <Localized element={<Input
                     ref={recoveryEmailInput}
                     id="recovery-email-input"
                     type="email"
                     autoComplete="email"
-                    {...FIELD}
-                    placeholder="you@example.com"
-                  />
+                    {...FIELD} placeholder={catalogText("auth:you_example_com_53e6cdc3")}
+                  />} messages={{"placeholder":"auth:you_example_com_53e6cdc3"}} />
                 </div>
                 <div id="recovery-email-error" className={hiddenLast(!emailResetError, ERROR)}>
                   {emailResetError}
@@ -1938,9 +1886,7 @@ export function LoginScreen() {
                   {...SOLID}
                   disabled={busy === 'btn-email-reset'}
                   onClick={onEmailReset}
-                >
-                  Email me a reset link
-                </Button>
+                ><Message id="auth:email_me_a_reset_link_fd22202a" /></Button>
               </div>
             ) : null}
             <div
@@ -1968,11 +1914,11 @@ export function LoginScreen() {
                 ) : null}
                 {resetUi ? (
                   <div className="space-y-1">
-                    <p>{ADMIN_LEAD_WITH_EMAIL}</p>
-                    <p>{ADMIN_LEAD_SUPPORT_INSTRUCTIONS}</p>
+                    <p>{ADMIN_LEAD_WITH_EMAIL()}</p>
+                    <p>{ADMIN_LEAD_SUPPORT_INSTRUCTIONS()}</p>
                   </div>
                 ) : (
-                  <p className="text-sm text-zinc-500 dark:text-zinc-400">{ADMIN_LEAD_SHIPPED}</p>
+                  <p className="text-sm text-zinc-500 dark:text-zinc-400">{ADMIN_LEAD_SHIPPED()}</p>
                 )}
               </div>
               {resetUi ? null : (
@@ -1981,14 +1927,10 @@ export function LoginScreen() {
                       inline elements must live inside the string expressions —
                       without them the text renders as "atemporary" /
                       "fromSettings" (issue #1158). */}
-                  {'Ask a Homeroom platform admin to issue you a '}
-                  <span className="font-medium text-zinc-700 dark:text-zinc-300">
-                    temporary password
-                  </span>
-                  {". Once you're back in, set a password you choose from "}
-                  <a href="#settings/password" className="text-violet-700 hover:text-violet-400 underline dark:text-violet-400">
-                    Settings → Change password
-                  </a>
+                  <Message id="auth:ask_a_homeroom_platform_admin_to_issue_you_a_2fd80e51" />
+                  <span className="font-medium text-zinc-700 dark:text-zinc-300"><Message id="auth:temporary_password_6e046dd5" /></span>
+                  <Message id="auth:once_you_re_back_in_set_a_password_you_choose_fr_c504acec" />
+                  <a href="#settings/password" className="text-violet-700 hover:text-violet-400 underline dark:text-violet-400"><Message id="auth:settings_change_password_1e424df9" /></a>
                   .
                 </p>
               )}
@@ -1998,9 +1940,7 @@ export function LoginScreen() {
               type="button"
               className="w-full text-sm text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-300"
               onClick={leaveRecovery}
-            >
-              Back to login
-            </button>
+            ><Message id="auth:back_to_login_3e3806ff" /></button>
           </div>
           {/*
               The redeem view the emailed link lands on — a sibling sub-view
@@ -2016,26 +1956,24 @@ export function LoginScreen() {
                 void onResetConfirm();
               }}
             >
-              <h2 className="text-lg font-bold text-center">Choose a new password</h2>
+              <h2 className="text-lg font-bold text-center"><Message id="auth:choose_a_new_password_833b8512" /></h2>
               <div>
-                <label className={LABEL} htmlFor="reset-new-password">New password</label>
-                <PasswordInput
+                <label className={LABEL} htmlFor="reset-new-password"><Message id="auth:new_password_3dd9df44" /></label>
+                <Localized element={<PasswordInput
                   ref={resetNewPassword}
                   id="reset-new-password"
                   autoComplete="new-password"
-                  {...FIELD}
-                  placeholder="at least 8 characters"
-                />
+                  {...FIELD} placeholder={catalogText("auth:at_least_8_characters_18fe2158")}
+                />} messages={{"placeholder":"auth:at_least_8_characters_18fe2158"}} />
               </div>
               <div>
-                <label className={LABEL} htmlFor="reset-confirm-password">Confirm new password</label>
-                <PasswordInput
+                <label className={LABEL} htmlFor="reset-confirm-password"><Message id="auth:confirm_new_password_bf000421" /></label>
+                <Localized element={<PasswordInput
                   ref={resetConfirmPassword}
                   id="reset-confirm-password"
                   autoComplete="new-password"
-                  {...FIELD}
-                  placeholder="re-enter new password"
-                />
+                  {...FIELD} placeholder={catalogText("auth:re_enter_new_password_6aec1fc1")}
+                />} messages={{"placeholder":"auth:re_enter_new_password_6aec1fc1"}} />
               </div>
               <div id="reset-error" className={hiddenLast(!resetError, ERROR)}>
                 {resetError}
@@ -2045,9 +1983,7 @@ export function LoginScreen() {
                 type="submit"
                 {...SOLID}
                 disabled={busy === 'btn-reset-confirm'}
-              >
-                Set new password
-              </Button>
+              ><Message id="auth:set_new_password_6ee6d9db" /></Button>
               <button
                 id="btn-reset-back"
                 type="button"
@@ -2058,9 +1994,7 @@ export function LoginScreen() {
                   location.hash = '#login';
                   showLoginBaseView();
                 }}
-              >
-                Back to login
-              </button>
+              ><Message id="auth:back_to_login_3e3806ff" /></button>
             </form>
           ) : null}
         </div>

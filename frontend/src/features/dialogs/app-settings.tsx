@@ -1,3 +1,8 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { RichMessage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 import { useRef, useState, type FormEvent } from 'react';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -38,22 +43,22 @@ const ACCESS_MODES: Array<{
 }> = [
   {
     id: 'public',
-    title: 'Public',
-    description: 'Everyone can use and build this app.',
+    get title() { return tr("core:public_591935b1"); },
+    get description() { return tr("core:everyone_can_use_and_build_this_app_f4adc90d"); },
     collabVisibility: 'public',
     viewVisibility: 'public',
   },
   {
     id: 'public-invite',
-    title: 'Public, invite-only building',
-    description: 'Everyone can use it. Only collaborators can build it.',
+    get title() { return tr("core:public_invite_only_building_44efa122"); },
+    get description() { return tr("core:everyone_can_use_it_only_collaborators_can_build_33372f28"); },
     collabVisibility: 'private',
     viewVisibility: 'public',
   },
   {
     id: 'private',
-    title: 'Private',
-    description: 'Only collaborators can use or build this app.',
+    get title() { return tr("core:private_c63eb672"); },
+    get description() { return tr("core:only_collaborators_can_use_or_build_this_app_3601d476"); },
     collabVisibility: 'private',
     viewVisibility: 'private',
   },
@@ -72,17 +77,18 @@ function visibilityForAccess(mode: AccessMode) {
 // dashes: it is read aloud as the dialog's status line.
 function blockedCopy(app: AppSettings) {
   if (app.delete_block === 'core') {
-    return 'This is a core platform app. It cannot be deleted from the UI.';
+    return tr("core:this_is_a_core_platform_app_it_cannot_be_deleted_ddb27a0d");
   }
   if (app.delete_block === 'shared') {
     const others = Math.max(0, (app.contributor_count || 0) - 1);
-    return `This app has ${others} other ${others === 1 ? 'contributor' : 'contributors'}, `
-      + 'so no one person can delete it. Deleting a shared app needs the group\'s agreement.';
+    return tr("core:this_app_has_count_other_contributors_6c8bb438", { count: others })
+      + tr("core:so_no_one_person_can_delete_it_deleting_a_shared_6a25cea5");
   }
-  return 'You do not have permission to delete this app.';
+  return tr("core:you_do_not_have_permission_to_delete_this_app_2963ba42");
 }
 
 export function AppSettingsDialog() {
+  useUiLanguage();
   const [app, setApp] = useState<AppSettings | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -115,13 +121,13 @@ export function AppSettingsDialog() {
     try {
       const response = await fetch(`/api/apps/${encodeURIComponent(target)}`);
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Could not load app settings.');
+      if (!response.ok) throw new Error(data.error || tr("core:could_not_load_app_settings_a80c5033"));
       if (current === generation.current) {
         setApp(data.app);
         setAccessDraft(currentAccessMode(data.app));
       }
     } catch (err) {
-      if (current === generation.current) setError(err instanceof Error ? err.message : 'Could not load app settings.');
+      if (current === generation.current) setError(err instanceof Error ? err.message : tr("core:could_not_load_app_settings_a80c5033"));
     } finally {
       if (current === generation.current) setLoading(false);
     }
@@ -173,15 +179,15 @@ export function AppSettingsDialog() {
       const data = await response.json().catch(() => ({}));
       if (response.status === 409) {
         setAccessProposalOpen(true);
-        setAccessMessage('A visibility change is already waiting for approval. See it in the Workshop.');
+        setAccessMessage(tr("core:a_visibility_change_is_already_waiting_for_appro_2be9fbc7"));
         return;
       }
-      if (!response.ok) throw new Error(data.error || 'Could not open the visibility proposal.');
+      if (!response.ok) throw new Error(data.error || tr("core:could_not_open_the_visibility_proposal_858d929c"));
       setAccessProposalOpen(true);
-      setAccessMessage(`Proposal opened (PR #${data.prNumber}). It needs the group's vote before the new access applies.`);
+      setAccessMessage(tr("core:proposal_opened_pr_value1_it_needs_the_group_s_v_3bc7798c", { value1: data.prNumber }));
     } catch (err) {
       setAccessMessageIsError(true);
-      setAccessMessage(err instanceof Error ? err.message : 'Could not open the visibility proposal.');
+      setAccessMessage(err instanceof Error ? err.message : tr("core:could_not_open_the_visibility_proposal_858d929c"));
     } finally {
       pending.current = false;
       setAccessBusy(false);
@@ -205,10 +211,10 @@ export function AppSettingsDialog() {
       });
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
-        throw new Error(data.error || 'Could not delete the app. Try again.');
+        throw new Error(data.error || tr("core:could_not_delete_the_app_try_again_71ccefce"));
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not delete the app. Try again.');
+      setError(err instanceof Error ? err.message : tr("core:could_not_delete_the_app_try_again_71ccefce"));
       return;
     } finally {
       pending.current = false;
@@ -219,14 +225,14 @@ export function AppSettingsDialog() {
     // and returns the viewer to the deleted app's page (#3683).
     dialog.closeForNavigation();
     window.App?.navigateHome?.();
-    window.PlatformUI?.toast?.('App deleted for everyone.');
+    window.PlatformUI?.toast?.(tr("core:app_deleted_for_everyone_3253a651"));
     // Refresh failure must not imply the completed deletion failed.
     Promise.resolve().then(() => window.Home?.load?.()).catch(() => {});
   }
 
   return <DialogRoot id="app-settings-modal" ref={dialog.rootRef} {...dialog.backdropProps}>
     <DialogCard size="sm">
-      <h2 className="text-lg font-bold mb-1">App settings</h2>
+      <h2 className="text-lg font-bold mb-1"><Message id="core:app_settings_d43fb8a9" /></h2>
       <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-4">{app?.name}</p>
       {app?.demo_mode ? <Alert
         id="app-demo-mode-notice"
@@ -234,30 +240,21 @@ export function AppSettingsDialog() {
         variant="notice"
         density="compact"
         className="mb-4"
-      >
-        This app is in demo mode. Proposals and votes from <b>@{app.demo_partner || 'its demo partner'}</b> are
-        synthetic: the app’s creator made them to record how a change is proposed, previewed and merged.
-        {app.approvals_required != null ? <> While demo mode is on, a proposal here merges
-        on {app.approvals_required} approval{app.approvals_required === 1 ? '' : 's'} rather than
-        on the app’s usual timed rules; switching demo mode off puts that back.</> : null}
+      ><Message after={" "} id="core:this_app_is_in_demo_mode_proposals_and_votes_fro_47ec4b55" /><b>@<LocalizedValue render={() => (app.demo_partner || tr("core:its_demo_partner_3ced5b4b"))} /></b><Message before={" "} id="core:are_synthetic_the_app_s_creator_made_them_to_rec_dba4162f" />{app.approvals_required != null ? <Message id="core:demo_approval_rule" values={{ count: app.approvals_required }} /> : null}
       </Alert> : null}
-      {loading ? <p role="status" className="text-sm text-zinc-500 dark:text-zinc-400 mb-4">Loading app settings…</p> : null}
+      {loading ? <p role="status" className="text-sm text-zinc-500 dark:text-zinc-400 mb-4"><Message id="core:loading_app_settings_09f65a5f" /></p> : null}
       {error ? <p role="alert" className="text-sm text-red-700 dark:text-red-400 mb-4">{error}</p> : null}
-      {!loading && !app && error ? <Button onClick={() => void load(slug.current)}>Retry</Button> : null}
+      {!loading && !app && error ? <Button onClick={() => void load(slug.current)}><Message id="core:retry_942087cc" /></Button> : null}
       <section
         id="app-access-section"
         className={`mb-4 ${app?.can_manage && !app.self_hosted ? '' : 'hidden'}`}
       >
-        <h3 className="font-semibold mb-1">Access</h3>
-        <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-1">
-          Choose who can use this app and who can build changes for it.
-        </p>
+        <h3 className="font-semibold mb-1"><Message id="core:access_ec5ba0ab" /></h3>
+        <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-1"><Message id="core:choose_who_can_use_this_app_and_who_can_build_ch_147d2344" /></p>
         {/* Private decides who can open it; every repository is public on
             GitHub (services/github.js createRepo), whichever is chosen. */}
-        <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-3">
-          The code is public on GitHub either way.
-        </p>
-        <div role="radiogroup" aria-label="App access" className="space-y-2">
+        <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-3"><Message id="core:the_code_is_public_on_github_either_way_0a8f9781" /></p>
+        <Localized element={<div role="radiogroup" aria-label={catalogText("core:app_access_869903a4")} className="space-y-2">
           {ACCESS_MODES.map((mode) => {
             const selected = accessDraft === mode.id;
             const current = currentAccess === mode.id;
@@ -278,17 +275,13 @@ export function AppSettingsDialog() {
             >
               <span className="flex items-center justify-between gap-3">
                 <span className="text-sm font-medium">{mode.title}</span>
-                {current ? <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">Current</span> : null}
+                {current ? <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"><Message id="core:current_e0d1b682" /></span> : null}
               </span>
               <span className="mt-0.5 block text-xs text-zinc-500 dark:text-zinc-400">{mode.description}</span>
             </button>;
           })}
-        </div>
-        {!app?.repo_url ? <p className="mt-3 text-sm text-zinc-500 dark:text-zinc-400">
-          This app has no GitHub repository, so its access setting is read-only.
-        </p> : <p className="mt-3 text-xs text-zinc-500 dark:text-zinc-400">
-          Changing access opens a proposal. The new setting applies after the group votes it in and the app redeploys.
-        </p>}
+        </div>} messages={{"aria-label":"core:app_access_869903a4"}} />
+        {!app?.repo_url ? <p className="mt-3 text-sm text-zinc-500 dark:text-zinc-400"><Message id="core:this_app_has_no_github_repository_so_its_access__dafbd77d" /></p> : <p className="mt-3 text-xs text-zinc-500 dark:text-zinc-400"><Message id="core:changing_access_opens_a_proposal_the_new_setting_a8d41738" /></p>}
         <p
           id="app-access-status"
           role={accessMessageIsError ? 'alert' : 'status'}
@@ -302,15 +295,15 @@ export function AppSettingsDialog() {
           disabled={accessBusy || accessProposalOpen || !app?.repo_url || !accessChanged}
           onClick={() => void proposeAccess()}
         >
-          {accessBusy ? 'Opening proposal…' : (accessProposalOpen ? 'Proposal open' : 'Propose access change')}
+          <LocalizedValue render={() => (accessBusy ? tr("core:opening_proposal_d0be2372") : (accessProposalOpen ? tr("core:proposal_open_253ce65d") : tr("core:propose_access_change_8f98e342")))} />
         </Button>
       </section>
       {app && !app.can_delete ? <p id="app-delete-blocked" role="status" className="text-sm mb-4">{blockedCopy(app)}</p> : null}
       <section ref={dangerRef} className="hidden border border-red-300 dark:border-red-800 rounded-lg p-4 mb-4">
-        <h3 className="font-semibold text-red-700 dark:text-red-400 mb-2">Danger zone</h3>
-        <p className="text-sm mb-4">{`Deleting ${app?.name || 'this app'} removes it for everyone, including its app data. This cannot be undone. It does not just remove the icon from your home page.`}</p>
+        <h3 className="font-semibold text-red-700 dark:text-red-400 mb-2"><Message id="core:danger_zone_fd8b8dae" /></h3>
+        <p className="text-sm mb-4"><LocalizedValue render={() => (tr("core:deleting_value1_removes_it_for_everyone_includin_dc8a8c80", { value1: app?.name || tr("core:message_d2c823cf6649") }))} /></p>
         <form onSubmit={remove} className="space-y-3">
-          <label htmlFor="app-delete-name" className="block text-sm">Type <strong>{app?.name}</strong> to confirm deletion.</label>
+          <label htmlFor="app-delete-name" className="block text-sm"><RichMessage id="core:sentence_ffa48c7c9657" values={{ value1: app?.name }} components={[<strong />]} /></label>
           <Input id="app-delete-name" autoComplete="off" value={confirmation} onChange={(e) => setConfirmation(e.target.value)} disabled={busy || !app?.can_delete} />
           {shared ? <label htmlFor="app-delete-shared-ack" className="flex items-start gap-2 cursor-pointer select-none text-sm">
             <input
@@ -322,12 +315,10 @@ export function AppSettingsDialog() {
               disabled={busy}
             />
             <span>
-              {`This app has ${others} other ${others === 1 ? 'contributor' : 'contributors'} who have not agreed to this. `}
-              Delete it anyway as a platform admin. They will be notified.
-            </span>
+              <LocalizedValue render={() => (tr("core:message_b5d60a191c03", { value1: others, count: others }))} /><Message id="core:delete_it_anyway_as_a_platform_admin_they_will_b_6cbf8e7a" /></span>
           </label> : null}
           <Button type="submit" variant="destructive" ink="danger" disabled={busy || !armed}>
-            {busy ? 'Deleting…' : 'Delete app for everyone'}
+            <LocalizedValue render={() => (busy ? tr("core:deleting_43b5894c") : tr("core:delete_app_for_everyone_69c1cc64"))} />
           </Button>
         </form>
       </section>
@@ -340,7 +331,7 @@ export function AppSettingsDialog() {
         ink="neutral"
         disabled={busy}
         onClick={() => dialog.close()}
-      >Close</Button>
+      ><Message id="core:close_7d9eb7ac" /></Button>
     </DialogCard>
   </DialogRoot>;
 }

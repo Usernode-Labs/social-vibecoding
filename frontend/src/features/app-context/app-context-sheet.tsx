@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * #apps-switcher-sheet — the menu behind the header's Homeroom mark (#1443, #2784).
  *
@@ -338,6 +342,7 @@ function MenuRow({
  * the list and its slot goes with it.
  */
 function SessionRow({ row, index }: { row: ContinueRow; index: number }): ReactNode {
+  useUiLanguage();
   const rowRef = useRef<HTMLAnchorElement | null>(null);
   const [round, setRound] = useState(0);
   useEffect(() => {
@@ -346,7 +351,7 @@ function SessionRow({ row, index }: { row: ContinueRow; index: number }): ReactN
     if (!el || !ui?.isTouch() || !ui.swipeActions) return undefined;
     const swipe = ui.swipeActions(el, {
       actions: [{
-        label: 'Archive',
+        get label() { return tr("apps:archive_66f4804e"); },
         destructive: true,
         handler: () => {
           void archiveListedSession(row.sessionId).then((archived) => {
@@ -383,6 +388,7 @@ function SessionRow({ row, index }: { row: ContinueRow; index: number }): ReactN
 
 
 export function AppsSwitcherSheet(): ReactNode {
+  useUiLanguage();
   const { open, adopted, view } = useStoreState(appContextStore);
   // Everything this sheet says about the app comes from ONE store, published
   // by the classic writers that already owned those facts. #2718 adds the
@@ -433,7 +439,7 @@ export function AppsSwitcherSheet(): ReactNode {
   // write when you do not have it. It falls back to the slug and then to a
   // bare "this app", because the menu opens on Home too — where the context
   // is the platform's own self-hosted row and the name may not have landed.
-  const appLabel = name || slug || 'this app';
+  const appLabel = name || slug || tr("apps:this_app_d2c823cf");
 
   const close = useCallback(() => AppContext.close(), []);
 
@@ -544,10 +550,9 @@ export function AppsSwitcherSheet(): ReactNode {
         onClick={close}
       >
       </div>
-      <div
+      <Localized element={<div
         id="apps-switcher-sheet"
-        role="dialog"
-        aria-label="Menu"
+        role="dialog" aria-label={catalogText("apps:menu_99af6606")}
         aria-hidden={open ? undefined : 'true'}
         {...(open ? { 'data-open': '' } : {})}
         className="fixed z-50 flex flex-col dc-lift dc-lift-panel app-context-transition"
@@ -588,15 +593,14 @@ export function AppsSwitcherSheet(): ReactNode {
               {appLabel}
             </span>
           )}
-          <button
+          <Localized element={<button
             id="apps-switcher-close"
             type="button"
-            className="text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 un-touch-target"
-            aria-label="Close"
+            className="text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 un-touch-target" aria-label={catalogText("apps:close_7d9eb7ac")}
             onClick={close}
           >
             <XIcon className="w-5 h-5" />
-          </button>
+          </button>} messages={{"aria-label":"apps:close_7d9eb7ac"}} />
         </div>
         {/* THE APPS STRIP IS GONE (#2718 review).
 
@@ -750,22 +754,21 @@ export function AppsSwitcherSheet(): ReactNode {
               React already owns: `owed` is null in the prerender and arrives
               from the fetch above after the sheet opens.
           */}
-          <MenuRow
+          <Localized element={<MenuRow
             id="app-menu-row-workshop"
             dataContextRow="workshop"
             elRef={workshopRowRef}
             href={slug ? `#app/${encodeURIComponent(slug)}/workshop` : '#'}
-            icon={<UserGroupIcon />}
-            label="Go to community"
+            icon={<UserGroupIcon />} label={catalogText("apps:go_to_community_71141ab7")}
             trailing={owed ? (
-              <span
+              <LocalizedDynamic element={<span
                 id="app-menu-workshop-owed"
-                title={`${owed} to vote`}
-                aria-label={`${owed} to vote`}
+                title={tr("apps:value1_to_vote_18cf7679", { value1: owed })}
+                aria-label={tr("apps:value1_to_vote_18cf7679", { value1: owed })}
                 className="shrink-0 text-[0.8125rem] font-semibold text-violet-700 dark:text-violet-300"
               >
-                {`${owed} to vote`}
-              </span>
+                <LocalizedValue render={() => (tr("apps:value1_to_vote_18cf7679", { value1: owed }))} />
+              </span>} resolve={() => ({ get "title"() { return tr("apps:value1_to_vote_18cf7679", { value1: owed }); }, get "aria-label"() { return tr("apps:value1_to_vote_18cf7679", { value1: owed }); } })} />
             ) : null}
             // It says community, so it opens the hub, not whichever tab
             // the page was last left on (AppView._landOnHub).
@@ -773,7 +776,7 @@ export function AppsSwitcherSheet(): ReactNode {
               if (slug) (window as any).AppView?._landOnHub?.(slug);
               followThenDismiss(e, slug ? `#app/${encodeURIComponent(slug)}/workshop` : '#');
             }}
-          />
+          />} messages={{"label":"apps:go_to_community_71141ab7"}} />
           {/*
               GO TO APP DISCUSSION and INVITE TO COMMUNITY LEFT THE MENU (UI
               overhaul). The project's channel is on its hub now, one row
@@ -791,18 +794,17 @@ export function AppsSwitcherSheet(): ReactNode {
               DevConsole publishes), same method.
           */}
           {showTerminal ? (
-            <MenuRow
+            <Localized element={<MenuRow
               id="improve-row-terminal"
               href="#"
-              icon={<TerminalIcon />}
-              label="Developer terminal"
+              icon={<TerminalIcon />} label={catalogText("apps:developer_terminal_6e8e7317")}
               onClick={(e) => {
                 e.preventDefault();
                 void AppContext.dismissForNav().then(() => {
                   (window as any).Improve?.openTerminal?.();
                 });
               }}
-            />
+            />} messages={{"label":"apps:developer_terminal_6e8e7317"}} />
           ) : null}
           {/*
               ABOUT is the second PANE of this sheet, not a second sheet: the
@@ -824,7 +826,7 @@ export function AppsSwitcherSheet(): ReactNode {
             className={`${ROW} w-full text-left`}
             onClick={() => AppContext.showAbout()}
           >
-            <RowBody icon={<InfoCircleIcon />} label={`About ${appLabel}`} />
+            <LocalizedDynamic element={<RowBody icon={<InfoCircleIcon />} label={tr("apps:about_value1_fd098734", { value1: appLabel })} />} resolve={() => ({ get "label"() { return tr("apps:about_value1_fd098734", { value1: appLabel }); } })} />
           </button>
           {/*
               MORE (it was "Continue", #2779 follow-up, then "Agent
@@ -845,7 +847,7 @@ export function AppsSwitcherSheet(): ReactNode {
               sessions have loaded; the sessions arrive after mount.
           */}
           <div id="app-menu-sessions">
-            <div className={SECTION}>More</div>
+            <div className={SECTION}><Message id="apps:more_d47d7cb0" /></div>
             {readOnly ? null : (
               <button
                 id="improve-row-new-session"
@@ -855,10 +857,9 @@ export function AppsSwitcherSheet(): ReactNode {
               >
                 {/* B8: Ask for a change (above) goes to Homeroom bot; this
                     is building it yourself, with a coding agent. */}
-                <RowBody
+                <Localized element={<RowBody label={catalogText("apps:build_it_yourself_72369f88")}
                   icon={<PlusIcon className="text-violet-600 dark:text-violet-400" />}
-                  label="Build it yourself"
-                />
+                />} messages={{"label":"apps:build_it_yourself_72369f88"}} />
               </button>
             )}
             {continuing.rows.length ? (
@@ -887,9 +888,7 @@ export function AppsSwitcherSheet(): ReactNode {
                       setMessagesFilter('agents');
                       followThenDismiss(e, '#messages');
                     }}
-                  >
-                    Show more
-                    <ChevronRightIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                  ><Message id="apps:show_more_f5c9bd13" /><ChevronRightIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                   </a>
                 ) : null}
               </div>
@@ -912,15 +911,13 @@ export function AppsSwitcherSheet(): ReactNode {
                   openReport({ targetType: 'app', target: slug, label: appLabel });
                 }}
               >
-                <FlagIcon className="w-3.5 h-3.5" aria-hidden="true" />
-                Report app
-              </button>
+                <FlagIcon className="w-3.5 h-3.5" aria-hidden="true" /><Message id="apps:report_app_5cf59a22" /></button>
             </div>
           ) : null}
           </>
           )}
         </nav>
-      </div>
+      </div>} messages={{"aria-label":"apps:menu_99af6606"}} />
       <OverlayScrim panelId="apps-switcher-sheet" backdropId="apps-switcher-overlay" />
     </>
   );

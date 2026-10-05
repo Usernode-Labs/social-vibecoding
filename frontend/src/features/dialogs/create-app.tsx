@@ -1,3 +1,8 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { RichMessage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * Create-project dialog (#create-modal).
  *
@@ -166,10 +171,10 @@ type Step = 'who' | 'invite' | 'kind' | 'start' | 'details' | 'about' | 'approve
  */
 export type TemplateId = 'social-productivity' | 'multimedia-social' | 'game-2d' | 'game-3d';
 export const TEMPLATES: ReadonlyArray<{ key: TemplateId; title: string; caption: string }> = [
-  { key: 'social-productivity', title: 'Social productivity', caption: 'Shared lists that members add tasks to, claim and tick off.' },
-  { key: 'multimedia-social', title: 'Multimedia social', caption: 'A feed of posts with photos, likes and a way to report a post.' },
-  { key: 'game-2d', title: '2D game', caption: 'A canvas game played with keys or touch, with a leaderboard.' },
-  { key: 'game-3d', title: '3D game', caption: 'A 3D scene drawn with WebGL, with controls and a leaderboard.' },
+  { key: 'social-productivity', get title() { return tr("core:social_productivity_de230580"); }, get caption() { return tr("core:shared_lists_that_members_add_tasks_to_claim_and_a1618982"); } },
+  { key: 'multimedia-social', get title() { return tr("core:multimedia_social_ac0656da"); }, get caption() { return tr("core:a_feed_of_posts_with_photos_likes_and_a_way_to_r_a0fe3f6b"); } },
+  { key: 'game-2d', get title() { return tr("core:2d_game_9ab71e11"); }, get caption() { return tr("core:a_canvas_game_played_with_keys_or_touch_with_a_l_8f50a2f4"); } },
+  { key: 'game-3d', get title() { return tr("core:3d_game_0bce0b86"); }, get caption() { return tr("core:a_3d_scene_drawn_with_webgl_with_controls_and_a__43b5d17c"); } },
 ];
 
 /** One person a private community is created with: an account, or an address. */
@@ -222,24 +227,24 @@ export interface RepoOverride {
   yours: string;
 }
 
-const WHO_WORDS: Record<Audience, string> = { solo: 'Just me', invited: 'A private community', open: 'A public community' };
+const WHO_WORDS: Record<Audience, string> = { get solo() { return tr("core:just_me_3a4b4df8"); }, get invited() { return tr("core:a_private_community_afc054d3"); }, get open() { return tr("core:a_public_community_9817c9cb"); } };
 
 function ruleWords(approvers: Approvers, approvals: number | null): string {
-  if (approvers === 'anyone') return 'Members vote';
-  return approvals ? `People I pick, at least ${approvals} yes` : 'People I pick, a majority of them';
+  if (approvers === 'anyone') return tr("core:members_vote_1af60d02");
+  return approvals ? tr("core:people_i_pick_at_least_value1_yes_fbdab3e0", { value1: approvals }) : tr("core:people_i_pick_a_majority_of_them_7a23074b");
 }
 
 /**
  * Every repository is public on GitHub, whoever may open the project, so a
  * line that keeps people out also says the code stays public.
  */
-const CODE_PUBLIC = 'Code stays public on GitHub.';
+const CODE_PUBLIC = () => tr("workshop:code_stays_public_on_github_95b48766");
 
 function visibilityWords(v: NonNullable<RepoManifest['visibility']>): string {
-  if (v.build === 'public' && v.view === 'public') return 'Anyone can find it, join and build';
-  if (v.build === 'private' && v.view === 'public') return `Anyone can see it; only people invited can build. ${CODE_PUBLIC}`;
-  if (v.build === 'public') return 'Anyone can build it';
-  return `Private to the people invited. ${CODE_PUBLIC}`;
+  if (v.build === 'public' && v.view === 'public') return tr("core:anyone_can_find_it_join_and_build_b60d71a1");
+  if (v.build === 'private' && v.view === 'public') return tr("core:anyone_can_see_it_only_people_invited_can_build__968769db", { value1: CODE_PUBLIC() });
+  if (v.build === 'public') return tr("core:anyone_can_build_it_db3c6b97");
+  return tr("core:private_to_the_people_invited_value1_babd0c40", { value1: CODE_PUBLIC() });
 }
 
 /**
@@ -264,11 +269,11 @@ export function repoOverrides(manifest: RepoManifest | null, answers: {
   const out: RepoOverride[] = [];
   const name = answers.name.trim();
   if (manifest.name && name && manifest.name !== name) {
-    out.push({ key: 'name', label: 'Name', repo: manifest.name, yours: name });
+    out.push({ key: 'name', get label() { return tr("core:name_dcd1d522"); }, repo: manifest.name, yours: name });
   }
   const description = answers.description.replace(/\s+/g, ' ').trim();
   if (manifest.description && description && manifest.description !== description) {
-    out.push({ key: 'desc', label: 'What it is', repo: manifest.description, yours: description });
+    out.push({ key: 'desc', get label() { return tr("core:what_it_is_1f36becc"); }, repo: manifest.description, yours: description });
   }
   // An audience is a pair of visibilities (communities.visibilityForAudience):
   // a public community is public to see and to build, Just me and a private
@@ -278,7 +283,7 @@ export function repoOverrides(manifest: RepoManifest | null, answers: {
   if (v && answers.audience) {
     const expected = answers.audience === 'open' ? 'public' : 'private';
     const clash = (v.build != null && v.build !== expected) || (v.view != null && v.view !== expected);
-    if (clash) out.push({ key: 'vis', label: 'Who it’s for', repo: visibilityWords(v), yours: WHO_WORDS[answers.audience] });
+    if (clash) out.push({ key: 'vis', get label() { return tr("core:who_it_s_for_71ef524a"); }, repo: visibilityWords(v), yours: WHO_WORDS[answers.audience] });
   }
   const g = manifest.governance;
   if (g && answers.audience && answers.audience !== 'solo' && answers.approvers) {
@@ -288,7 +293,7 @@ export function repoOverrides(manifest: RepoManifest | null, answers: {
       answers.approvers === 'invited' && answers.approvals === 'atLeast' && n >= 1 ? n : null,
     );
     const theirs = ruleWords(g.approvers, g.approvals);
-    if (mine !== theirs) out.push({ key: 'gov', label: 'Who approves changes', repo: theirs, yours: mine });
+    if (mine !== theirs) out.push({ key: 'gov', get label() { return tr("core:who_approves_changes_e1eac72b"); }, repo: theirs, yours: mine });
   }
   return out;
 }
@@ -394,7 +399,7 @@ export async function postCreateApp(
       body: JSON.stringify(body),
     });
   } catch {
-    return { ok: false, error: 'Network error. Try again.' };
+    return { ok: false, get error() { return tr("core:network_error_try_again_052b478f"); } };
   }
   let data: Record<string, unknown> | null = null;
   try {
@@ -405,7 +410,7 @@ export async function postCreateApp(
   }
   if (res.ok) return { ok: true, data: data || {} };
   if (data && typeof data.error === 'string' && data.error) return { ok: false, error: data.error };
-  return { ok: false, error: `Homeroom couldn’t create the project (${res.status}). Try again in a moment.` };
+  return { ok: false, get error() { return tr("core:homeroom_couldn_t_create_the_project_value1_try__5c63f4a2", { value1: res.status }); } };
 }
 
 /** The inline row under the repo URL: spinner, green tick, or red error. */
@@ -454,9 +459,9 @@ function shotState(): ShotState {
     const described = {
       ...app,
       mode: 'new' as Mode,
-      name: 'Seed swap',
-      brief: 'Neighbours list the seeds they have spare and ask for the ones they want. A swap is agreed in the chat.',
-      description: 'Swap spare seeds with your neighbours',
+      get name() { return tr("core:seed_swap_42a9d04f"); },
+      get brief() { return tr("core:neighbours_list_the_seeds_they_have_spare_and_as_bd4eaf65"); },
+      get description() { return tr("core:swap_spare_seeds_with_your_neighbours_8ffbde85"); },
     };
     if (shot === 'create-group') return { ...open, step: 'invite', audience: 'invited' };
     if (shot === 'create-start') return { ...app, step: 'start', audience: 'open' };
@@ -575,7 +580,7 @@ export const BRIEF_MAX = 4000;
 const BRIEF_FIELD = 'resize-none overflow-y-auto max-h-60 leading-[22px]';
 /** The one caption under "What should it do?": who builds from it. */
 export function briefCaption(botBuild: boolean): string {
-  return botBuild ? 'Homeroom bot builds the first version from this.' : 'This becomes the project’s first request.';
+  return botBuild ? tr("core:homeroom_bot_builds_the_first_version_from_this_e9bd77f4") : tr("core:this_becomes_the_project_s_first_request_2db8af57");
 }
 const DESCRIPTION_COUNT_FROM = 20;
 const DESCRIPTION_LEFT = 'absolute right-4 top-3 text-[13px] tabular-nums';
@@ -584,14 +589,14 @@ const DESCRIPTION_LEFT = 'absolute right-4 top-3 text-[13px] tabular-nums';
 export function descriptionLeft(length: number): string {
   const left = Math.max(0, DESCRIPTION_MAX - length);
   if (left > DESCRIPTION_COUNT_FROM) return '';
-  return `${left} ${left === 1 ? 'character' : 'characters'} left`;
+  return tr("core:count_characters_left_e744cd3b", { count: left });
 }
 
 /** The three audiences, in the order and the words the screen uses. */
 const WHO: ReadonlyArray<{ key: Audience; title: string; caption: string }> = [
-  { key: 'solo', title: 'Just me', caption: 'Only you can open it. Its code is public on GitHub. Invite people or open it up later.' },
-  { key: 'invited', title: 'A private community', caption: 'Only you and the people you invite can open it. Its code is public on GitHub.' },
-  { key: 'open', title: 'A public community', caption: 'Anyone can find it, join and build.' },
+  { key: 'solo', get title() { return tr("core:just_me_3a4b4df8"); }, get caption() { return tr("core:only_you_can_open_it_its_code_is_public_on_githu_38c54066"); } },
+  { key: 'invited', get title() { return tr("core:a_private_community_afc054d3"); }, get caption() { return tr("core:only_you_and_the_people_you_invite_can_open_it_i_f475d200"); } },
+  { key: 'open', get title() { return tr("core:a_public_community_9817c9cb"); }, get caption() { return tr("core:anyone_can_find_it_join_and_build_965fb20c"); } },
 ];
 
 function WhoGlyph({ audience }: { audience: Audience }) {
@@ -630,6 +635,7 @@ function InviteRows({ people, setPeople, inputRef }: {
   setPeople: (next: Invitee[]) => void;
   inputRef: { current: HTMLInputElement | null };
 }) {
+  useUiLanguage();
   const [typing, setTyping] = useState(true);
   const [text, setText] = useState('');
   const [error, setError] = useState('');
@@ -676,7 +682,7 @@ function InviteRows({ people, setPeople, inputRef }: {
     if (!typed) return;
     if (EMAIL_RE.test(typed)) {
       if (people.some((p) => p.kind === 'email' && p.email.toLowerCase() === typed.toLowerCase())) {
-        setError('That email is already on the list.');
+        setError(tr("core:that_email_is_already_on_the_list_5d8caecd"));
         return;
       }
       add({ kind: 'email', email: typed });
@@ -690,12 +696,12 @@ function InviteRows({ people, setPeople, inputRef }: {
     }
     if (searched !== name) return; // still looking; Enter again once the list arrives
     if (people.some((p) => p.kind === 'user' && p.username.toLowerCase() === name.toLowerCase())) {
-      setError(`@${name} is already on the list.`);
+      setError(tr("core:value1_is_already_on_the_list_ea586395", { value1: name }));
       return;
     }
     setError(typed.includes('@') && !typed.startsWith('@')
-      ? 'That doesn’t look like an email address.'
-      : `No one on Homeroom is called @${name}. Check the spelling, or invite them by email.`);
+      ? tr("core:that_doesn_t_look_like_an_email_address_ee587fc4")
+      : tr("core:no_one_on_homeroom_is_called_value1_check_the_sp_0a4f2b02", { value1: name }));
   }
 
   return (
@@ -707,7 +713,7 @@ function InviteRows({ people, setPeople, inputRef }: {
               <span className={AVATAR} aria-hidden="true">{p.username.charAt(0).toUpperCase()}</span>
               <span className="min-w-0 flex-1">
                 <span className={P_TITLE}>{'@' + p.username}</span>
-                {p.friend ? <span className={P_SUB}>Friend</span> : null}
+                {p.friend ? <span className={P_SUB}><Message id="core:friend_acd8f664" /></span> : null}
               </span>
             </>
           ) : (
@@ -720,15 +726,13 @@ function InviteRows({ people, setPeople, inputRef }: {
                   {p.email.slice(0, p.email.indexOf('@') + 1)}<wbr />{p.email.slice(p.email.indexOf('@') + 1)}
                 </span>
               </span>
-              <span className="create-will-invite shrink-0 rounded-full bg-zinc-100 px-2.5 py-0.5 text-xs font-semibold text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200">
-                Will invite
-              </span>
+              <span className="create-will-invite shrink-0 rounded-full bg-zinc-100 px-2.5 py-0.5 text-xs font-semibold text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200"><Message id="core:will_invite_a11e66b0" /></span>
             </>
           )}
-          <button
+          <LocalizedDynamic element={<button
             type="button"
             className={REMOVE}
-            aria-label={`Remove ${p.kind === 'user' ? '@' + p.username : p.email}`}
+            aria-label={tr("core:remove_value1_d2f6b9b7", { value1: p.kind === 'user' ? '@' + p.username : p.email })}
             onClick={() => {
               const next = people.filter((_, j) => j !== i);
               setPeople(next);
@@ -736,22 +740,20 @@ function InviteRows({ people, setPeople, inputRef }: {
             }}
           >
             <XIcon className="h-4 w-4" aria-hidden="true" />
-          </button>
+          </button>} resolve={() => ({ get "aria-label"() { return tr("core:remove_value1_d2f6b9b7", { value1: p.kind === 'user' ? '@' + p.username : p.email }); } })} />
         </div>
       ))}
       {open ? (
         <div className="create-invitee-typing">
           <div className="px-4 py-2">
-            <Input
+            <Localized element={<Input
               id="create-invitees"
               ref={inputRef}
               name="invitees"
               type="text"
               autoComplete="off"
               spellCheck="false"
-              {...FIELD}
-              placeholder="@username or email"
-              aria-label="Add a person by @username or email"
+              {...FIELD} placeholder={catalogText("core:username_or_email_afdb4cac")} aria-label={catalogText("core:add_a_person_by_username_or_email_70d5c35c")}
               role="combobox"
               aria-expanded={suggestions.length > 0}
               aria-controls="create-invitee-suggestions"
@@ -769,7 +771,7 @@ function InviteRows({ people, setPeople, inputRef }: {
                 if (EMAIL_RE.test(typed)) commit();
                 else if (!typed && people.length) setTyping(false);
               }}
-            />
+            />} messages={{"placeholder":"core:username_or_email_afdb4cac","aria-label":"core:add_a_person_by_username_or_email_70d5c35c"}} />
           </div>
           {error ? <p className="px-4 pb-2.5 -mt-0.5 text-[13px] leading-[18px] text-red-700 dark:text-red-400" role="alert">{error}</p> : null}
           {suggestions.length ? (
@@ -787,7 +789,7 @@ function InviteRows({ people, setPeople, inputRef }: {
                   <span className={AVATAR.replace('h-8 w-8', 'h-7 w-7')} aria-hidden="true">{u.username.charAt(0).toUpperCase()}</span>
                   <span className="min-w-0 flex-1">
                     <span className={P_TITLE.replace('font-[650]', 'font-semibold')}>{'@' + u.username}</span>
-                    {u.friend ? <span className={P_SUB}>Friend</span> : null}
+                    {u.friend ? <span className={P_SUB}><Message id="core:friend_acd8f664" /></span> : null}
                   </span>
                 </button>
               ))}
@@ -804,7 +806,7 @@ function InviteRows({ people, setPeople, inputRef }: {
           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full ring-[1.5px] ring-inset ring-current" aria-hidden="true">
             <PlusIcon className="h-4 w-4" />
           </span>
-          {full ? `${MAX_INVITEES} is the most for now` : 'Add another person'}
+          <LocalizedValue render={() => (full ? tr("core:value1_is_the_most_for_now_e3a3d2e6", { value1: MAX_INVITEES }) : tr("core:add_another_person_13080fc3"))} />
         </button>
       )}
     </div>
@@ -816,44 +818,39 @@ function InviteRows({ people, setPeople, inputRef }: {
 function RepoNotice({ overrides, unread }: { overrides: RepoOverride[]; unread: boolean }) {
   if (unread) {
     return (
-      <p id="create-repo-notice" className={CAPTION} data-overrides="unread">
-        Couldn’t read this repo’s dapp.json. Anything it sets still applies once it’s imported.
-      </p>
+      <p id="create-repo-notice" className={CAPTION} data-overrides="unread"><Message id="core:couldn_t_read_this_repo_s_dapp_json_anything_it__eddf958e" /></p>
     );
   }
   if (!overrides.length) {
     return (
-      <p id="create-repo-notice" className={CAPTION} data-overrides="0">
-        Nothing in this repo’s dapp.json changes your answers. They’re written into it when it’s imported.
-      </p>
+      <p id="create-repo-notice" className={CAPTION} data-overrides="0"><Message id="core:nothing_in_this_repo_s_dapp_json_changes_your_an_1dc1644b" /></p>
     );
   }
   return (
     <div id="create-repo-notice" className={CARD + ' px-4 pt-3 pb-3.5 ring-[1.5px] ring-inset ring-violet-600'} data-overrides={String(overrides.length)} role="status">
       <div className="flex items-center gap-2 text-[15px] font-[650] leading-5 text-zinc-900 dark:text-zinc-100">
         <InfoCircleIcon className="h-[18px] w-[18px] shrink-0 text-violet-600 dark:text-violet-400" aria-hidden="true" />
-        <span>This repo already sets some of this</span>
+        <span><Message id="core:this_repo_already_sets_some_of_this_1a99631a" /></span>
       </div>
       <p className="mt-1.5 text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400">
-        {`Its dapp.json decides ${overrides.length === 1 ? 'this one' : `these ${overrides.length}`}, so importing uses the repo’s answer in place of yours:`}
+        <LocalizedValue render={() => (tr("core:its_dapp_json_decides_value1_so_importing_uses_t_933a7426", { value1: overrides.length === 1 ? tr("core:message_5be1b402d626") : tr("core:message_89673524d2ee", { count: overrides.length }) }))} />
       </p>
       <ul className="mt-2.5 flex flex-col gap-2.5">
         {overrides.map((o) => (
           <li key={o.key} className="flex flex-col gap-px" data-override={o.key}>
             <span className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">{o.label}</span>
             <span className="text-[15px] leading-5 text-zinc-900 dark:text-zinc-100">{o.repo}</span>
-            <span className="text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400">{`You chose: ${o.yours}`}</span>
+            <span className="text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400"><LocalizedValue render={() => (tr("core:you_chose_value1_1aaffd87", { value1: o.yours }))} /></span>
           </li>
         ))}
       </ul>
-      <p className="mt-2.5 text-xs text-zinc-500 dark:text-zinc-400">
-        Your other answers are written into the repo. Any of this can be changed later, with a vote.
-      </p>
+      <p className="mt-2.5 text-xs text-zinc-500 dark:text-zinc-400"><Message id="core:your_other_answers_are_written_into_the_repo_any_6b9b67c0" /></p>
     </div>
   );
 }
 
 export function CreateAppDialog() {
+  useUiLanguage();
   const formRef = useRef<HTMLFormElement>(null);
   const nameRef = useRef<HTMLInputElement>(null);
   const briefRef = useRef<HTMLTextAreaElement>(null);
@@ -1089,10 +1086,10 @@ export function CreateAppDialog() {
     if (!stepAnswered) {
       if (step === 'details') {
         if (!name.trim()) {
-          setError('Give your project a name.');
+          setError(tr("core:give_your_project_a_name_c9380487"));
           nameRef.current?.focus();
         } else if (!importing) {
-          setError('Say what it should do, in a sentence or two.');
+          setError(tr("core:say_what_it_should_do_in_a_sentence_or_two_c0d1cec0"));
           briefRef.current?.focus();
         }
       }
@@ -1144,17 +1141,17 @@ export function CreateAppDialog() {
       setImportState('error');
       setStatus({ tone: 'err', text });
     };
-    if (!url) return fail('Paste a GitHub repo URL first.');
+    if (!url) return fail(tr("core:paste_a_github_repo_url_first_764e077b"));
 
     setImportState('checking');
     setRepo(null);
-    setStatus({ tone: 'none', text: 'Checking bot access…', spinner: true });
+    setStatus({ tone: 'none', get text() { return tr("core:checking_bot_access_72a5e391"); }, spinner: true });
 
     let res: Response;
     try {
       res = await fetch(`/api/github/verify-access?url=${encodeURIComponent(url)}`);
     } catch {
-      return fail('Network error. Try again.');
+      return fail(tr("core:network_error_try_again_052b478f"));
     }
 
     let data: Record<string, unknown> = {};
@@ -1163,7 +1160,7 @@ export function CreateAppDialog() {
     } catch {
       /* a non-JSON body is reported through the HTTP status below */
     }
-    if (!res.ok) return fail((data.error as string) || `Check failed (HTTP ${res.status}).`);
+    if (!res.ok) return fail((data.error as string) || tr("core:check_failed_http_value1_92be4e2c", { value1: res.status }));
 
     const fullName = (data.fullName as string) || `${data.owner}/${data.repo}`;
     // {} when the repo has no dapp.json; null when the server could not read it.
@@ -1171,7 +1168,7 @@ export function CreateAppDialog() {
     setRepo(manifest && typeof manifest === 'object' ? manifest : {});
     setRepoUnread(manifest === null);
     setImportState('ok');
-    setStatus({ tone: 'ok', text: `✓ usernode-bot has Write access to ${fullName}.` });
+    setStatus({ tone: 'ok', get text() { return tr("core:usernode_bot_has_write_access_to_value1_0c77d9b7", { value1: fullName }); } });
     // The name step comes next and opens on the repo's own name, unless one
     // was already typed (a later edit is named in the notice).
     const repoName = manifest && typeof manifest === 'object' && typeof manifest.name === 'string' ? manifest.name : '';
@@ -1192,28 +1189,28 @@ export function CreateAppDialog() {
     const trimmed = (nameRef.current?.value || '').trim();
     setError('');
     if (!trimmed) {
-      setError('Give your project a name.');
+      setError(tr("core:give_your_project_a_name_c9380487"));
       return;
     }
     if (!mode) {
-      setError('Choose how you want to start.');
+      setError(tr("core:choose_how_you_want_to_start_0d875d0e"));
       return;
     }
     if (mode === 'template' && !template) {
-      setError('Choose a template.');
+      setError(tr("core:choose_a_template_b02f1422"));
       return;
     }
     const description = importing ? '' : (describeRef.current?.value || '');
     if (!importing) {
-      if (brief.trim().length < BRIEF_MIN) return setError('Say what it should do, in a sentence or two.');
-      if (!description.trim()) return setError('Say what it is in one line.');
+      if (brief.trim().length < BRIEF_MIN) return setError(tr("core:say_what_it_should_do_in_a_sentence_or_two_c0d1cec0"));
+      if (!description.trim()) return setError(tr("core:say_what_it_is_in_one_line_e435361d"));
     }
     const repoUrl = mode === 'import' ? normalizeRepositoryUrlInput() : '';
     // Guard: an import is gated behind a successful check. The server runs
     // the pre-flight again on POST anyway.
     if (importing) {
-      if (!repoUrl) return setError('Paste a GitHub repo URL first.');
-      if (importState !== 'ok') return setError('Click "Check" to verify bot access first.');
+      if (!repoUrl) return setError(tr("core:paste_a_github_repo_url_first_764e077b"));
+      if (importState !== 'ok') return setError(tr("core:click_check_to_verify_bot_access_first_7770c41f"));
     }
 
     const body = createBody({
@@ -1256,8 +1253,8 @@ export function CreateAppDialog() {
         dialog.close();
         window.PlatformUI?.toast?.(
           importing
-            ? 'Your app is being imported. It will appear in your list of apps when it’s ready.'
-            : 'Your app is being created. It will appear in your list of apps when it’s ready.',
+            ? tr("core:your_app_is_being_imported_it_will_appear_in_you_ddc2b198")
+            : tr("core:your_app_is_being_created_it_will_appear_in_your_98425060"),
         );
         (window.Home?.load as (() => void) | undefined)?.();
         return;
@@ -1310,7 +1307,7 @@ export function CreateAppDialog() {
     line = (line || firstSentence(text, DESCRIPTION_MAX)).slice(0, DESCRIPTION_MAX);
     if (describeRef.current) describeRef.current.value = line;
     setDescribe(line);
-    setSuggestNote('Suggested from what it should do. Change it if you like.');
+    setSuggestNote(tr("core:suggested_from_what_it_should_do_change_it_if_yo_bd259833"));
   }
 
   const stepIndex = Math.max(0, steps.indexOf(step)) + 1;
@@ -1358,7 +1355,7 @@ export function CreateAppDialog() {
             // decide what the view says comes next.
             builder={botChat ? 'bot' : (mode !== 'import' ? 'request' : null)}
             audience={audience ?? 'solo'}
-            openLabel={botChat ? 'Open chat' : 'Open project'}
+            openLabel={botChat ? tr("core:open_chat_0600175a") : tr("core:open_project_5e5eba7f")}
             onOpenApp={() => {
               // Both destinations write an address right after the close,
               // so the close must not spend its back-press record: a queued
@@ -1410,7 +1407,7 @@ export function CreateAppDialog() {
                   publishAppStatus({
                     slug,
                     status: 'error',
-                    errorReason: 'Couldn’t reach the server to retry. Try again from the app’s tile.',
+                    get errorReason() { return tr("core:couldn_t_reach_the_server_to_retry_try_again_fro_388a6864"); },
                   });
                 });
             }}
@@ -1419,7 +1416,7 @@ export function CreateAppDialog() {
         ) : (
         <>
         <h2 id="create-title" className="text-[17px] font-semibold text-zinc-900 dark:text-zinc-100 mb-1">
-          {importing ? 'Import a project' : 'New project'}
+          <LocalizedValue render={() => (importing ? tr("core:import_a_project_be2bda4b") : tr("core:new_project_a41eb2bf"))} />
         </h2>
         {/*
             How far the flow has unfolded, and how far it goes for the
@@ -1433,7 +1430,7 @@ export function CreateAppDialog() {
           data-step-index={String(stepIndex)}
           className="text-xs text-zinc-500 dark:text-zinc-400 mb-3"
         >
-          {`Step ${stepIndex} of ${steps.length}`}
+          <LocalizedValue render={() => (tr("core:step_value1_of_value2_015e2b60", { value1: stepIndex, value2: steps.length }))} />
         </p>
         {/*
             Quiet (#23): only when the allowance bears on what happens next,
@@ -1448,10 +1445,7 @@ export function CreateAppDialog() {
               reopens it.
           */}
           <div data-create-step="who" className="space-y-2">
-            <p className={STEP_HEADING}>
-              1. Who is it for?
-              <span className="create-repo-sets-tag" data-repo-tag="vis">{' · the repo sets this'}</span>
-            </p>
+            <p className={STEP_HEADING}><RichMessage id="core:sentence_6a258f8d9f04" components={[<span className="create-repo-sets-tag" data-repo-tag="vis" />]} /></p>
             {WHO.map((choice) => (
               <button
                 key={choice.key}
@@ -1467,7 +1461,7 @@ export function CreateAppDialog() {
                   <span className={CHOICE_CAPTION}>{choice.caption}</span>
                 </span>
                 <ChoiceMarker chosen={audience === choice.key} />
-                <span className={CHOICE_CHANGE}>Change</span>
+                <span className={CHOICE_CHANGE}><Message id="core:change_c0bf75bd" /></span>
               </button>
             ))}
           </div>
@@ -1477,11 +1471,9 @@ export function CreateAppDialog() {
               steps open.
           */}
           <div data-create-step="invite" className="space-y-2">
-            <p className={STEP_HEADING}>{`${numberOf('invite')}. Who do you want to invite?`}</p>
+            <p className={STEP_HEADING}><LocalizedValue render={() => (tr("core:value1_who_do_you_want_to_invite_a5b5d48f", { value1: numberOf('invite') }))} /></p>
             <InviteRows people={people} setPeople={setPeople} inputRef={inviteesRef} />
-            <p className={CAPTION + ' mt-1.5'}>
-              Add people on Homeroom by @username, or type an email to invite someone who isn’t here yet. They get an invite when it’s created.
-            </p>
+            <p className={CAPTION + ' mt-1.5'}><Message id="core:add_people_on_homeroom_by_username_or_type_an_em_8d608591" /></p>
           </div>
           {/*
               What it is: an App, the one kind there is today; Document and
@@ -1489,7 +1481,7 @@ export function CreateAppDialog() {
               the one the screen will keep asking.
           */}
           <div data-create-step="kind" className="space-y-2">
-            <p className={STEP_HEADING}>{`${numberOf('kind')}. What are you making?`}</p>
+            <p className={STEP_HEADING}><LocalizedValue render={() => (tr("core:value1_what_are_you_making_05c10c9c", { value1: numberOf('kind') }))} /></p>
             <button
               type="button"
               data-kind-pill="app"
@@ -1498,28 +1490,19 @@ export function CreateAppDialog() {
               onClick={() => chooseKind('app')}
             >
               <AppWindowIcon className="w-5 h-5 shrink-0 opacity-80" aria-hidden="true" />
-              <span className="min-w-0 flex-1">
-                <span className={CHOICE_TITLE}>App</span>
-                <span className={CHOICE_CAPTION}>Something you build and use together.</span>
-              </span>
+              <span className="min-w-0 flex-1"><RichMessage id="core:sentence_652c3fa17b28" components={[<span className={CHOICE_TITLE} />, <span className={CHOICE_CAPTION} />]} /></span>
               <ChoiceMarker chosen={kind === 'app'} />
-              <span className={CHOICE_CHANGE}>Change</span>
+              <span className={CHOICE_CHANGE}><Message id="core:change_c0bf75bd" /></span>
             </button>
             <div className={SOON + ' create-kind-soon'} data-kind-pill="doc" aria-disabled="true">
               <NewspaperIcon className="w-5 h-5 shrink-0 opacity-50" aria-hidden="true" />
-              <span className="min-w-0 flex-1">
-                <span className={CHOICE_TITLE}>Document</span>
-                <span className={CHOICE_CAPTION}>Pages you write and edit together.</span>
-              </span>
-              <span className={SOON_TAG}>Soon</span>
+              <span className="min-w-0 flex-1"><RichMessage id="core:sentence_61ba83283424" components={[<span className={CHOICE_TITLE} />, <span className={CHOICE_CAPTION} />]} /></span>
+              <span className={SOON_TAG}><Message id="core:soon_cf0ee354" /></span>
             </div>
             <div className={SOON + ' create-kind-soon'} data-kind-pill="video" aria-disabled="true">
               <PlayIcon className="w-5 h-5 shrink-0 opacity-50" aria-hidden="true" />
-              <span className="min-w-0 flex-1">
-                <span className={CHOICE_TITLE}>Video</span>
-                <span className={CHOICE_CAPTION}>A video you make together, from script to cut.</span>
-              </span>
-              <span className={SOON_TAG}>Soon</span>
+              <span className="min-w-0 flex-1"><RichMessage id="core:sentence_d0259739afdb" components={[<span className={CHOICE_TITLE} />, <span className={CHOICE_CAPTION} />]} /></span>
+              <span className={SOON_TAG}><Message id="core:soon_cf0ee354" /></span>
             </div>
           </div>
           {/*
@@ -1532,33 +1515,21 @@ export function CreateAppDialog() {
               chosen starter, or the repo), whose "Change" reopens it.
           */}
           <div data-create-step="start" className="space-y-2">
-            <p className={STEP_HEADING}>{`${numberOf('start')}. How do you want to start?`}</p>
+            <p className={STEP_HEADING}><LocalizedValue render={() => (tr("core:value1_how_do_you_want_to_start_a7e6930e", { value1: numberOf('start') }))} /></p>
             <button
               type="button"
               data-mode-pill="new"
               aria-pressed={mode === 'new'}
               className={CHOICE}
               onClick={() => chooseStart('new')}
-            >
-              <span className="min-w-0 flex-1">
-                <span className={CHOICE_TITLE}>Start from scratch</span>
-                <span className={CHOICE_CAPTION}>An empty app. Describe what you want and build it with the group.</span>
-              </span>
-              <span className={CHOICE_CHANGE}>Change</span>
-            </button>
+            ><RichMessage id="core:sentence_9c64d5efab96" components={[<span className="min-w-0 flex-1" />, <span className={CHOICE_TITLE} />, <span className={CHOICE_CAPTION} />, <span className={CHOICE_CHANGE} />]} /></button>
             <button
               type="button"
               data-mode-pill="template"
               aria-pressed={mode === 'template'}
               className={CHOICE}
               onClick={() => chooseStart('template')}
-            >
-              <span className="min-w-0 flex-1">
-                <span className={CHOICE_TITLE}>Start from a template</span>
-                <span className={CHOICE_CAPTION}>A small working app to make your own.</span>
-              </span>
-              <span className={CHOICE_CHANGE}>Change</span>
-            </button>
+            ><RichMessage id="core:sentence_906fedde4236" components={[<span className="min-w-0 flex-1" />, <span className={CHOICE_TITLE} />, <span className={CHOICE_CAPTION} />, <span className={CHOICE_CHANGE} />]} /></button>
             {/*
                 The starters (#3521), only once "Start from a template" is
                 chosen: rendered behind that state, like the progress view,
@@ -1566,7 +1537,7 @@ export function CreateAppDialog() {
                 picked on arrival; Next stays dimmed until one is.
             */}
             {mode === 'template' ? (
-              <div id="create-template-block" role="group" aria-label="Templates" className="space-y-2 pl-3">
+              <Localized element={<div id="create-template-block" role="group" aria-label={catalogText("core:templates_56b564b7")} className="space-y-2 pl-3">
                 {TEMPLATES.map((choice) => (
                   <button
                     key={choice.key}
@@ -1582,7 +1553,7 @@ export function CreateAppDialog() {
                     </span>
                   </button>
                 ))}
-              </div>
+              </div>} messages={{"aria-label":"core:templates_56b564b7"}} />
             ) : null}
             <button
               type="button"
@@ -1590,21 +1561,13 @@ export function CreateAppDialog() {
               aria-pressed={mode === 'import'}
               className={CHOICE}
               onClick={() => chooseStart('import')}
-            >
-              <span className="min-w-0 flex-1">
-                <span className={CHOICE_TITLE}>Import a GitHub repo</span>
-                <span className={CHOICE_CAPTION}>Bring an app that already exists. First you add our GitHub account, usernode-bot, to the repo.</span>
-              </span>
-              <span className={CHOICE_CHANGE}>Change</span>
-            </button>
+            ><RichMessage id="core:sentence_e804948a1b6c" components={[<span className="min-w-0 flex-1" />, <span className={CHOICE_TITLE} />, <span className={CHOICE_CAPTION} />, <span className={CHOICE_CHANGE} />]} /></button>
             <div id="create-import-block" className="create-import-block">
               <div className={CARD}>
                 <div className={ROW}>
-                  <label htmlFor="import-url" className={LABEL}>
-                    GitHub repo URL
-                  </label>
+                  <label htmlFor="import-url" className={LABEL}><Message id="core:github_repo_url_602cdae8" /></label>
                   <div className="flex items-center gap-2">
-                    <Input
+                    <Localized element={<Input
                       id="import-url"
                       ref={urlRef}
                       name="repoUrl"
@@ -1614,8 +1577,7 @@ export function CreateAppDialog() {
                       spellCheck="false"
                       width="flex"
                       {...FIELD}
-                      className="font-mono text-[15px]"
-                      placeholder="github.com/owner/repo"
+                      className="font-mono text-[15px]" placeholder={catalogText("core:github_com_owner_repo_620c3a93")}
                       onBlur={() => {
                         normalizeRepositoryUrlInput();
                       }}
@@ -1629,7 +1591,7 @@ export function CreateAppDialog() {
                         setStatus(IDLE_STATUS);
                         setRepo(null);
                       }}
-                    />
+                    />} messages={{"placeholder":"core:github_com_owner_repo_620c3a93"}} />
                     <Button
                       type="button"
                       id="import-check"
@@ -1644,7 +1606,7 @@ export function CreateAppDialog() {
                       disabled={importState === 'checking'}
                       onClick={check}
                     >
-                      {importState === 'ok' ? 'Re-check' : 'Check'}
+                      <LocalizedValue render={() => (importState === 'ok' ? tr("core:re_check_24fcca00") : tr("core:check_9d60841e"))} />
                     </Button>
                   </div>
                 </div>
@@ -1656,13 +1618,9 @@ export function CreateAppDialog() {
                   where hydration expects two and React reports #418 — a
                   console error, which fails proposal checks.
               */}
-              <p className={CAPTION + ' create-import-hint mt-1.5'}>
-                {'Invite '}
-                <code className="font-mono text-xs">
+              <p className={CAPTION + ' create-import-hint mt-1.5'}><RichMessage id="core:sentence_7514fbd343db" components={[<code className="font-mono text-xs">
                   usernode-bot
-                </code>
-                {' as a collaborator (Write access on an organization repo).'}
-              </p>
+                </code>]} /></p>
               {/*
                   Inline status row: spinner while checking, green check on
                   ok, red error text on failure. Hidden in idle.
@@ -1675,7 +1633,7 @@ export function CreateAppDialog() {
                 {importState === 'ok' ? (
                   <RepoNotice overrides={overrides} unread={repoUnread} />
                 ) : (
-                  <p className={CAPTION}>Check the repo to see what its dapp.json already sets.</p>
+                  <p className={CAPTION}><Message id="core:check_the_repo_to_see_what_its_dapp_json_already_4578e667" /></p>
                 )}
               </div>
             </div>
@@ -1689,44 +1647,38 @@ export function CreateAppDialog() {
           */}
           <div data-create-step="details" className="space-y-4">
             <p className={STEP_HEADING}>
-              {`${numberOf('details')}. ${importing ? 'What to call it' : 'What to call it and what it should do'}`}
-              <span className="create-repo-sets-tag" data-repo-tag="details">{' · the repo sets this'}</span>
+              {`${numberOf('details')}. ${importing ? tr("core:what_to_call_it_55325bff") : tr("core:what_to_call_it_and_what_it_should_do_5b93bb5c")}`}
+              <span className="create-repo-sets-tag" data-repo-tag="details"><Message id="core:the_repo_sets_this_4961d9e2" /></span>
             </p>
             <div id="create-name-block" className={CARD}>
               <div className={ROW + ' create-name-row'}>
-                <label htmlFor="app-name" className={LABEL}>
-                  Project name
-                </label>
-                <Input
+                <label htmlFor="app-name" className={LABEL}><Message id="core:project_name_25498193" /></label>
+                <Localized element={<Input
                   id="app-name"
                   ref={nameRef}
                   name="name"
                   type="text"
                   autoComplete="off"
-                  {...FIELD}
-                  placeholder="my cool app"
+                  {...FIELD} placeholder={catalogText("core:my_cool_app_60eee939")}
                   onInput={(e) => { setName(e.currentTarget.value); setError(''); }}
-                />
+                />} messages={{"placeholder":"core:my_cool_app_60eee939"}} />
               </div>
               {/* What it should do. It grows with its text (the layout
                   effect above), so its first line never sits under the
                   label, and one caption under it says who builds from it. */}
               <div className={ROW + ' create-brief-row shadow-[inset_0_1px_0_var(--app-sheet-line)]'} data-create-brief="">
-                <label htmlFor="app-brief" className={LABEL}>
-                  What should it do?
-                </label>
-                <Textarea
+                <label htmlFor="app-brief" className={LABEL}><Message id="core:what_should_it_do_1970bec5" /></label>
+                <Localized element={<Textarea
                   id="app-brief"
                   ref={briefRef}
                   name="brief"
                   rows={3}
                   maxLength={BRIEF_MAX}
                   {...FIELD}
-                  className={BRIEF_FIELD}
-                  placeholder="A shared shopping list for our house. Anyone can add items and tick them off."
+                  className={BRIEF_FIELD} placeholder={catalogText("core:a_shared_shopping_list_for_our_house_anyone_can__a674982e")}
                   value={brief}
                   onChange={(e) => { setBrief(e.currentTarget.value); setError(''); }}
-                />
+                />} messages={{"placeholder":"core:a_shared_shopping_list_for_our_house_anyone_can__a674982e"}} />
                 <p className="create-brief-caption pb-1 text-xs text-zinc-500 dark:text-zinc-400">{briefCaption(botBuild)}</p>
               </div>
             </div>
@@ -1742,12 +1694,10 @@ export function CreateAppDialog() {
               An import skips the step: its repo describes it.
           */}
           <div data-create-step="about" className="space-y-2">
-            <p className={STEP_HEADING}>{`${numberOf('about')}. Short description`}</p>
+            <p className={STEP_HEADING}><LocalizedValue render={() => (tr("core:value1_short_description_b99a3495", { value1: numberOf('about') }))} /></p>
             <div className={CARD}>
               <div className={ROW + ' create-describe-row relative'}>
-                <label htmlFor="app-description" className={LABEL}>
-                  What is it?
-                </label>
+                <label htmlFor="app-description" className={LABEL}><Message id="core:what_is_it_bbff7b98" /></label>
                 {describeLeftText ? (
                   <span
                     id="app-description-left"
@@ -1759,7 +1709,7 @@ export function CreateAppDialog() {
                     {describeLeftText}
                   </span>
                 ) : null}
-                <Input
+                <LocalizedDynamic element={<Input
                   id="app-description"
                   ref={describeRef}
                   name="description"
@@ -1768,7 +1718,7 @@ export function CreateAppDialog() {
                   maxLength={DESCRIPTION_MAX}
                   aria-describedby={describeLeftText ? 'app-description-left' : undefined}
                   {...FIELD}
-                  placeholder={suggesting ? 'Suggesting…' : 'Shared shopping list'}
+                  placeholder={suggesting ? tr("core:suggesting_9612c60d") : tr("core:shared_shopping_list_d48f3553")}
                   onInput={(e) => {
                     const value = e.currentTarget.value;
                     suggestion.current.edited = value.trim() !== '';
@@ -1776,21 +1726,19 @@ export function CreateAppDialog() {
                     setSuggestNote('');
                     setError('');
                   }}
-                />
+                />} resolve={() => ({ "placeholder": suggesting ? tr("core:suggesting_9612c60d") : tr("core:shared_shopping_list_d48f3553") })} />
               </div>
             </div>
             <div className="flex items-start justify-between gap-3 px-1">
               <p className="create-describe-note text-xs text-zinc-500 dark:text-zinc-400" role="status">
-                {suggesting ? 'Suggesting…' : (suggestNote || 'One line people see on its page and in Discover.')}
+                <LocalizedValue render={() => (suggesting ? tr("core:suggesting_9612c60d") : (suggestNote || tr("core:one_line_people_see_on_its_page_and_in_discover_5ace347d")))} />
               </p>
               <button
                 type="button"
                 className="create-suggest-again shrink-0 text-xs font-medium text-violet-700 disabled:cursor-not-allowed disabled:opacity-50 dark:text-violet-300"
                 disabled={suggesting}
                 onClick={() => { void suggestDescription(true); }}
-              >
-                Suggest again
-              </button>
+              ><Message id="core:suggest_again_bba9f46c" /></button>
             </div>
           </div>
           {/*
@@ -1805,11 +1753,11 @@ export function CreateAppDialog() {
           */}
           <div data-create-step="approve" className="space-y-2">
             <p className={STEP_HEADING}>
-              {`${numberOf('approve')}. Who approves changes?`}
-              <span className="create-repo-sets-tag" data-repo-tag="gov">{' · the repo sets this'}</span>
+              <LocalizedValue render={() => (tr("core:value1_who_approves_changes_033157a1", { value1: numberOf('approve') }))} />
+              <span className="create-repo-sets-tag" data-repo-tag="gov"><Message id="core:the_repo_sets_this_4961d9e2" /></span>
             </p>
             {repoGov ? (
-              <p className={CAPTION} data-repo-rule="">{`This repo’s dapp.json already sets it: ${repoGov}.`}</p>
+              <p className={CAPTION} data-repo-rule=""><LocalizedValue render={() => (tr("core:this_repo_s_dapp_json_already_sets_it_value1_09a0863a", { value1: repoGov }))} /></p>
             ) : null}
             <div id="create-approve-block" className="space-y-2">
               <button
@@ -1818,26 +1766,16 @@ export function CreateAppDialog() {
                 aria-pressed={approvers === 'anyone'}
                 className={APPROVER_CHOICE}
                 onClick={() => setApprovers('anyone')}
-              >
-                <span className="min-w-0 flex-1">
-                  <span className={CHOICE_TITLE}>Members vote</span>
-                  <span className={CHOICE_CAPTION}>A change merges when most active members say yes, or when nobody objects after a wait.</span>
-                </span>
-              </button>
+              ><RichMessage id="core:sentence_dad38c347639" components={[<span className="min-w-0 flex-1" />, <span className={CHOICE_TITLE} />, <span className={CHOICE_CAPTION} />]} /></button>
               <button
                 type="button"
                 data-approver-pill="invited"
                 aria-pressed={approvers === 'invited'}
                 className={APPROVER_CHOICE}
                 onClick={() => setApprovers('invited')}
-              >
-                <span className="min-w-0 flex-1">
-                  <span className={CHOICE_TITLE}>People I pick</span>
-                  <span className={CHOICE_CAPTION}>Starts with just you. Add approvers later from Members &amp; approvals.</span>
-                </span>
-              </button>
+              ><RichMessage id="core:sentence_559add0ce030" components={[<span className="min-w-0 flex-1" />, <span className={CHOICE_TITLE} />, <span className={CHOICE_CAPTION} />]} /></button>
               <div className="create-approvals-block space-y-2 pt-1">
-                <p className={LABEL}>How many of them must say yes?</p>
+                <p className={LABEL}><Message id="core:how_many_of_them_must_say_yes_5b48a93e" /></p>
                 <div className={RAIL}>
                   <button
                     type="button"
@@ -1845,9 +1783,7 @@ export function CreateAppDialog() {
                     aria-pressed={approvals === 'majority'}
                     className={'create-approvals-pill ' + SEGMENT}
                     onClick={() => setApprovals('majority')}
-                  >
-                    A majority
-                  </button>
+                  ><Message id="core:a_majority_2a0acf0f" /></button>
                   <button
                     type="button"
                     data-approvals-pill="atLeast"
@@ -1857,15 +1793,11 @@ export function CreateAppDialog() {
                       setApprovals('atLeast');
                       setTimeout(() => approvalsNRef.current?.focus(), 0);
                     }}
-                  >
-                    At least a number
-                  </button>
+                  ><Message id="core:at_least_a_number_bad1b3dd" /></button>
                 </div>
                 <div className={CARD + ' create-approvals-n-block'}>
                   <div className={ROW + ' flex items-center gap-3'}>
-                    <label htmlFor="create-approvals-n" className={LABEL + ' flex-1'}>
-                      Yes votes needed
-                    </label>
+                    <label htmlFor="create-approvals-n" className={LABEL + ' flex-1'}><Message id="core:yes_votes_needed_a5e39498" /></label>
                     <Input
                       id="create-approvals-n"
                       ref={approvalsNRef}
@@ -1902,9 +1834,7 @@ export function CreateAppDialog() {
               id="create-cancel"
               className={PILL_SECONDARY}
               onClick={() => dialog.close()}
-            >
-              Cancel
-            </button>
+            ><Message id="core:cancel_19766ed6" /></button>
             <Button
               type="button"
               id="create-next"
@@ -1914,9 +1844,7 @@ export function CreateAppDialog() {
               disabledStyle="block"
               disabled={quotaBlocksCreation || !stepAnswered}
               onClick={next}
-            >
-              Next
-            </Button>
+            ><Message id="core:next_1ff57a29" /></Button>
             {/*
                 QA 2026-09-24 Q5: disabled with a spinner while the POST is
                 in flight. `submitting` starts false, so the first render is
@@ -1933,9 +1861,9 @@ export function CreateAppDialog() {
               aria-busy={submitting || undefined}
             >
               {submitting ? <SpinnerArcIcon className="inline-block h-4 w-4 mr-2 -mt-0.5 align-middle animate-spin" aria-hidden="true" /> : null}
-              {submitting
-                ? (importing ? 'Importing…' : 'Creating…')
-                : (importing ? 'Import' : 'Create')}
+              <LocalizedValue render={() => (submitting
+                ? (importing ? tr("core:importing_c01c4324") : tr("core:creating_c79ed949"))
+                : (importing ? tr("core:import_2cff9baa") : tr("core:create_4759498a")))} />
             </Button>
           </div>
         </form>

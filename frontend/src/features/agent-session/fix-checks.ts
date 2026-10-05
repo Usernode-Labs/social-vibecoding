@@ -1,3 +1,4 @@
+import { t as tr } from "../../lib/i18n/runtime";
 // #3755: an agent chat notices its change's failing checks, and offers to fix
 // them.
 //
@@ -78,13 +79,13 @@ function oneLine(text: string, max = REASON_CHARS) {
 
 /** "PR #88", or the change, before it has a pull request. */
 export function fixChecksWhere(offer: Pick<FixChecksOffer, 'prNumber'>): string {
-  return offer.prNumber ? `PR #${offer.prNumber}` : 'this change';
+  return offer.prNumber ? tr("workshop:pr_value1_e1d02dd7", { value1: offer.prNumber }) : tr("workshop:this_change_119e1359");
 }
 
 /** The offer's heading: "1 check failed on PR #88". */
 export function fixChecksHeading(offer: Pick<FixChecksOffer, 'prNumber' | 'total'>): string {
   const n = offer.total;
-  return `${n} check${n === 1 ? '' : 's'} failed on ${fixChecksWhere(offer)}`;
+  return tr("workshop:count_checks_failed_on_value3_a78a3758", { count: n, value3: fixChecksWhere(offer) });
 }
 
 /**
@@ -95,13 +96,13 @@ export function fixChecksHeading(offer: Pick<FixChecksOffer, 'prNumber' | 'total
 export function fixChecksMessage(offer: FixChecksOffer): string {
   const where = fixChecksWhere(offer);
   const head = offer.total === 1
-    ? `Please fix the failing check on ${where}.`
-    : `Please fix the ${offer.total} failing checks on ${where}.`;
+    ? tr("workshop:please_fix_the_failing_check_on_value1_fdbaec6d", { value1: where })
+    : tr("workshop:please_fix_the_value1_failing_checks_on_value2_d7f4e1d8", { value1: offer.total, value2: where });
   const lines = offer.checks.map((check) => {
     const reason = check.reason ? oneLine(check.reason) : '';
-    return `- "${oneLine(check.name, 200)}"${reason ? `, which reported: ${reason}` : ''}`;
+    return `- "${oneLine(check.name, 200)}"${reason ? tr("workshop:which_reported_value1_46eeac60", { value1: reason }) : ''}`;
   });
   const more = offer.total - offer.checks.length;
-  if (more > 0) lines.push(`- and ${more} more`);
+  if (more > 0) lines.push(tr("workshop:and_value1_more_10bd6526", { value1: more }));
   return [head, '', ...lines].join('\n');
 }

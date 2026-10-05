@@ -1,3 +1,4 @@
+import { t as tr } from "../../../lib/i18n/runtime";
 /**
  * The Needs-you deck's ask route, read as a stream.
  *
@@ -16,7 +17,7 @@ export interface AskStreamResult {
   error?: string;
 }
 
-const GENERIC_FAILURE = 'That did not go through. Try asking again.';
+const GENERIC_FAILURE = () => tr("workshop:that_did_not_go_through_try_asking_again_8c2cf1c7");
 
 /**
  * Read the ask route's SSE body to completion.
@@ -68,7 +69,7 @@ export async function readAskStream(
         model: payload.model,
       };
     } else if (event === 'error') {
-      result = { text: '', error: payload.error || GENERIC_FAILURE };
+      result = { text: '', error: payload.error || GENERIC_FAILURE() };
     }
   };
 

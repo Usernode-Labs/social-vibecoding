@@ -189,9 +189,9 @@ export function init() {
       firstFix.disabled = !hasBoard || !moment.canFix || !Number.isSafeInteger(moment.issueNumber) || moment.issueNumber <= 0;
       firstBoard.disabled = !hasBoard;
       firstFixNote.textContent = firstFix.disabled
-        ? (hasBoard ? 'You need collaborator access to try a fix. You can still explore the board.' : 'This repository does not have an app board you can access here.')
-        : 'Start with a draft you can edit before sending it to the coding agent.';
-      firstNotice.textContent = notice || 'Your request has been posted.';
+        ? (hasBoard ? globalThis.PlatformI18n.t("core:you_need_collaborator_access_to_try_a_fix_you_ca_8b80678b") : globalThis.PlatformI18n.t("core:this_repository_does_not_have_an_app_board_you_c_2453377d"))
+        : globalThis.PlatformI18n.t("core:start_with_a_draft_you_can_edit_before_sending_i_c0b2869c");
+      firstNotice.textContent = notice || globalThis.PlatformI18n.t("core:your_request_has_been_posted_57474c90");
       feedbackForm.classList.add('hidden');
       // A queued first report can land while a filed one's confirmation is
       // up; the moment replaces it rather than stacking under it.
@@ -242,15 +242,15 @@ export function init() {
     const sentChat = document.getElementById('feedback-sent-chat');
     const sentFix = document.getElementById('feedback-sent-fix');
     const sentMine = document.getElementById('feedback-sent-mine');
-    const SENT_LINE = 'Find it on your profile, under Your requests.';
+    const SENT_LINE = globalThis.PlatformI18n.t("core:find_it_on_your_profile_under_your_requests_ca1132f3");
     let sentBot = null;
     const showSent = (title, notice = '', bot = null) => {
       const building = !!bot?.botWillBuild;
       sentBot = building ? bot : null;
-      if (sentTitle) sentTitle.textContent = building ? 'Got it' : title;
+      if (sentTitle) sentTitle.textContent = building ? globalThis.PlatformI18n.t("core:got_it_5ad3dbd1") : title;
       if (sentLine) {
         const minutes = Number(bot?.typicalMinutes) > 0 ? Number(bot.typicalMinutes) : 8;
-        sentLine.textContent = building ? `Homeroom bot is on it, usually about ${minutes} minutes.` : SENT_LINE;
+        sentLine.textContent = building ? globalThis.PlatformI18n.t("core:homeroom_bot_is_on_it_usually_about_value1_minut_5cad6bcb", { value1: minutes }) : SENT_LINE;
       }
       sentChat?.classList.toggle('hidden', !building);
       sentMine?.classList.toggle('hidden', building);
@@ -284,7 +284,7 @@ export function init() {
           await AppView.createPrForIssue(bot.issueNumber);
         }
       } catch (err) {
-        PlatformUI.toast('Could not open a fix just now. You can try again from the request on the board.');
+        PlatformUI.toast(globalThis.PlatformI18n.t("core:could_not_open_a_fix_just_now_you_can_try_again__8d6e4052"));
       }
     });
     // The first-request moment's two ways on write their address before the
@@ -310,7 +310,7 @@ export function init() {
           await AppView.createPrForIssue(moment.issueNumber);
         }
       } catch (err) {
-        PlatformUI.toast('Could not open a fix just now. You can try again from the issue on the board.');
+        PlatformUI.toast(globalThis.PlatformI18n.t("core:could_not_open_a_fix_just_now_you_can_try_again__d1455e92"));
       }
     });
     // #1603: the inline refusal under the description. Rendered empty and
@@ -367,12 +367,11 @@ export function init() {
       // #3230: the reset in the viewer's own clock, the UTC instant on hover.
       const RT = window.ResetTime;
       bountyNote.removeAttribute('title');
-      if (remaining === null) bountyNote.textContent = 'Costs 1 kudos';
+      if (remaining === null) bountyNote.textContent = globalThis.PlatformI18n.t("core:costs_1_kudos_e5b1af65");
       else if (exhausted) {
-        bountyNote.textContent = `You've used all ${limit} kudos this week. Resets ${
-          RT ? RT.resetWhen('weekly') : 'Monday 00:00 UTC'}.`;
+        bountyNote.textContent = globalThis.PlatformI18n.t("core:you_ve_used_all_value1_kudos_this_week_resets_va_85e4feea", { value1: limit, value2: RT ? RT.resetWhen('weekly') : globalThis.PlatformI18n.t("core:message_c5ae7b248fc4") });
         if (RT) bountyNote.title = RT.resetUtc('weekly');
-      } else bountyNote.textContent = `Costs 1 kudos. ${remaining} of ${limit} left this week`;
+      } else bountyNote.textContent = globalThis.PlatformI18n.t("core:costs_1_kudos_value1_of_value2_left_this_week_9334e26d", { value1: remaining, value2: limit });
       bountyRow.classList.remove('hidden');
     };
     // The selected option uses a darker violet on hover so it keeps its
@@ -386,7 +385,7 @@ export function init() {
     // question now, so this is only the refusal. One literal, in one place,
     // because the declared dapp.json check matches on this text — see
     // tests/feedback-target-choice.test.js.
-    const CHOOSE_TARGET_HINT = 'Choose where this goes.';
+    const CHOOSE_TARGET_HINT = globalThis.PlatformI18n.t("core:choose_where_this_goes_cbbf6838");
     // `feedbackBtn.disabled` means BUSY and nothing else: submitting, saved
     // for later, or behind the first-feedback confirmation. Taken by
     // disableSubmit(), and only the path that took it hands it back, with
@@ -513,7 +512,7 @@ export function init() {
     const labelAppTarget = (appData) => {
       const named = !!appData?.name;
       if (feedbackTargetAppName) {
-        feedbackTargetAppName.textContent = named ? appData.name : (appData ? 'This app' : 'No app open');
+        feedbackTargetAppName.textContent = named ? appData.name : (appData ? globalThis.PlatformI18n.t("core:this_app_0982cb17") : globalThis.PlatformI18n.t("core:no_app_open_39a25d79"));
       }
       feedbackTargetAppSub?.classList.toggle('hidden', !named);
     };
@@ -587,7 +586,7 @@ export function init() {
       if (titleGenCount >= TITLE_GEN_MAX_PER_OPEN) return;
       titleGenCount++;
       const seq = ++titleGenSeq;
-      feedbackTitle.placeholder = 'Generating title…';
+      feedbackTitle.placeholder = globalThis.PlatformI18n.t("core:generating_title_bb1bc2e0");
       try {
         const res = await fetch('/api/feedback/title', {
           method: 'POST',
@@ -799,7 +798,7 @@ export function init() {
     // one lives on the field it is about, which is also where the fix is.
     const showDescriptionError = () => {
       if (!feedbackTextError) return;
-      feedbackTextError.textContent = 'Please say what should change.';
+      feedbackTextError.textContent = globalThis.PlatformI18n.t("core:please_say_what_should_change_facd9768");
       feedbackTextError.classList.remove('hidden');
       feedbackText.setAttribute('aria-invalid', 'true');
       feedbackText.setAttribute('aria-describedby', 'feedback-text-error');
@@ -820,17 +819,17 @@ export function init() {
       const full = count >= MAX_SCREENSHOTS;
       const canCapture = nativeCaptureSupported || displayCaptureSupported;
       screenshotLabel.textContent = nativeCaptureSupported
-        ? (count ? 'Take another' : 'Take screenshot')
-        : (count ? 'Attach another' : 'Attach screenshot');
+        ? (count ? globalThis.PlatformI18n.t("core:take_another_c722b626") : globalThis.PlatformI18n.t("core:take_screenshot_9c118198"))
+        : (count ? globalThis.PlatformI18n.t("core:attach_another_3201bd49") : globalThis.PlatformI18n.t("core:attach_screenshot_97ea8f3f"));
       screenshotBtn.classList.toggle('hidden', full || !canCapture);
       screenshotPickerBtn.classList.toggle('hidden', full);
       // #3027: say how many fit, so the second picture is not a guess.
       if (screenshotCount) {
         screenshotCount.textContent = count === 0
-          ? `You can attach up to ${MAX_SCREENSHOTS} images.`
+          ? globalThis.PlatformI18n.t("core:you_can_attach_up_to_value1_images_e8fd7c16", { value1: MAX_SCREENSHOTS })
           : full
-            ? `${count} of ${MAX_SCREENSHOTS} images attached. Remove one to add another.`
-            : `${count} of ${MAX_SCREENSHOTS} images attached.`;
+            ? globalThis.PlatformI18n.t("core:value1_of_value2_images_attached_remove_one_to_a_359cca16", { value1: count, value2: MAX_SCREENSHOTS })
+            : globalThis.PlatformI18n.t("core:value1_of_value2_images_attached_25b47c48", { value1: count, value2: MAX_SCREENSHOTS });
         screenshotCount.classList.remove('hidden');
       }
       screenshotPreview.classList.toggle('hidden', count === 0);
@@ -838,7 +837,7 @@ export function init() {
       // Numbered from what is on screen now, so removing the middle image
       // renumbers the rest rather than leaving a gap in the labels.
       screenshots.forEach((shot, i) => {
-        shot.img.alt = `Image ${i + 1} preview`;
+        shot.img.alt = globalThis.PlatformI18n.t("core:image_value1_preview_7fa51d36", { value1: i + 1 });
         shot.removeBtn.setAttribute('aria-label', `Remove image ${i + 1}`);
       });
     };
@@ -910,7 +909,7 @@ export function init() {
       screenshots.push(shot);
       renderScreenshotThumb(shot);
       paintScreenshotActions();
-      shot.stateEl.textContent = 'Uploading…';
+      shot.stateEl.textContent = globalThis.PlatformI18n.t("core:uploading_5ce44dd7");
       try {
         const res = await uploadScreenshot(blob);
         const data = res.ok ? await res.json() : await res.json().catch(() => ({}));
@@ -922,14 +921,14 @@ export function init() {
           shot.stateEl.textContent = '';
         } else {
           removeScreenshot(shot);
-          showFeedbackNotice(data.error || 'Screenshot upload failed', true);
+          showFeedbackNotice(data.error || globalThis.PlatformI18n.t("core:screenshot_upload_failed_37d67677"), true);
         }
       } catch {
         if (!screenshots.includes(shot)) return;
         // #1054: keep the bytes when the network fails. The outbox uploads
         // them at flush time, and an online submit retries first.
-        shot.stateEl.textContent = "Saved with your feedback. It'll upload when you're back online";
-        showFeedbackNotice("Couldn't upload the screenshot yet. It'll be sent along with your feedback.", false);
+        shot.stateEl.textContent = globalThis.PlatformI18n.t("core:saved_with_your_feedback_it_ll_upload_when_you_r_686bf3cf");
+        showFeedbackNotice(globalThis.PlatformI18n.t("core:couldn_t_upload_the_screenshot_yet_it_ll_be_sent_18fbec0e"), false);
       } finally {
         shot.uploading = false;
       }
@@ -1029,20 +1028,20 @@ export function init() {
         // says the words are still there, because the words are what a user
         // is afraid of losing — the screenshot they can retake (#1284).
         if (err && err.code === 'denied') {
-          showFeedbackNotice('Screen capture was declined. Nothing was attached, and your feedback is safe.', false);
+          showFeedbackNotice(globalThis.PlatformI18n.t("core:screen_capture_was_declined_nothing_was_attached_711a8f21"), false);
         } else if (err && err.code === 'capture_blank') {
           // The share arrived with nothing in it — on a Mac, what window
           // capture hands over when the browser's screen-recording
           // permission is off or has lapsed. Retrying the same way can't help.
-          showFeedbackNotice("The shared window came through blank. On a Mac, allow your browser under System Settings, Privacy & Security, Screen & System Audio Recording, then try again. Your feedback is safe.", true);
+          showFeedbackNotice(globalThis.PlatformI18n.t("core:the_shared_window_came_through_blank_on_a_mac_al_31e33cf0"), true);
         } else if (err && err.code === 'register_failed') {
-          showFeedbackNotice("Couldn't locate this page in the shared window. Keep it fully visible and try again. Your feedback is safe.", true);
+          showFeedbackNotice(globalThis.PlatformI18n.t("core:couldn_t_locate_this_page_in_the_shared_window_k_07770918"), true);
         } else if (err && err.code === 'too-large') {
-          showFeedbackNotice('That screenshot is larger than 4 MB. Your feedback is safe, attach a smaller one.', true);
+          showFeedbackNotice(globalThis.PlatformI18n.t("core:that_screenshot_is_larger_than_4_mb_your_feedbac_8415ed4e"), true);
         } else if (nativeAttempt) {
-          showFeedbackNotice("Couldn't take a screenshot, but your feedback is safe. Choose one from Photos, or just send it as it is.", true);
+          showFeedbackNotice(globalThis.PlatformI18n.t("core:couldn_t_take_a_screenshot_but_your_feedback_is__202f096d"), true);
         } else if (err && err.code !== 'cancelled') {
-          showFeedbackNotice('Screenshot capture failed, but your feedback is safe. Try again, or send it without one.', true);
+          showFeedbackNotice(globalThis.PlatformI18n.t("core:screenshot_capture_failed_but_your_feedback_is_s_cbb879d8"), true);
         }
       } finally {
         // The round trip is over: the page survived it, so the stash has
@@ -1103,16 +1102,16 @@ export function init() {
             await attachScreenshotBlob(blob);
           } catch (err) {
             if (err && err.code === 'invalid-type') {
-              showFeedbackNotice('Choose a PNG or JPEG image.', true);
+              showFeedbackNotice(globalThis.PlatformI18n.t("core:choose_a_png_or_jpeg_image_e861136c"), true);
             } else if (err && err.code === 'too-large') {
-              showFeedbackNotice('That image is larger than 4 MB.', true);
+              showFeedbackNotice(globalThis.PlatformI18n.t("core:that_image_is_larger_than_4_mb_ad3b1f5a"), true);
             } else {
-              showFeedbackNotice("Couldn't attach that image. Please try another.", true);
+              showFeedbackNotice(globalThis.PlatformI18n.t("core:couldn_t_attach_that_image_please_try_another_d3a2ec91"), true);
             }
           }
         }
         if (files.length > taken.length) {
-          showFeedbackNotice(`You can attach up to ${MAX_SCREENSHOTS} images, so only the first ${taken.length === 1 ? 'one was' : `${taken.length} were`} added.`, true);
+          showFeedbackNotice(globalThis.PlatformI18n.t("core:you_can_attach_up_to_value1_images_so_only_the_f_934d92b0", { value1: MAX_SCREENSHOTS, value2: taken.length === 1 ? globalThis.PlatformI18n.t("core:one_was_26c86552") : globalThis.PlatformI18n.t("core:message_db8add639358", { count: taken.length }) }), true);
         }
       } finally {
         clearCaptureDraft();
@@ -1141,10 +1140,10 @@ export function init() {
     // A refused save is always explained — an invisible outbox that silently
     // drops things is worse than the bug this replaces.
     const queueRefusal = (code) => {
-      if (code === 'duplicate') return "You've already saved this message. It'll send once you're back online.";
-      if (code === 'full') return `Only ${window.FeedbackQueue?.MAX_ENTRIES || 10} messages can wait offline at once. The earlier ones send first.`;
-      if (code === 'too-large') return "There isn't room to keep another screenshot offline. Remove it and save the text.";
-      return "Couldn't save this message on this device.";
+      if (code === 'duplicate') return globalThis.PlatformI18n.t("core:you_ve_already_saved_this_message_it_ll_send_onc_7b4e3d99");
+      if (code === 'full') return globalThis.PlatformI18n.t("core:only_value1_messages_can_wait_offline_at_once_th_5cbde0e4", { value1: window.FeedbackQueue?.MAX_ENTRIES || 10 });
+      if (code === 'too-large') return globalThis.PlatformI18n.t("core:there_isn_t_room_to_keep_another_screenshot_offl_ea9c5ee3");
+      return globalThis.PlatformI18n.t("core:couldn_t_save_this_message_on_this_device_6d029fa3");
     };
 
     // The queue status line. One element (#feedback-status) says all three
@@ -1161,17 +1160,16 @@ export function init() {
       // tests/feedback-offline-ui.test.js verifies they exist verbatim here.
       if (offline && n > 0) {
         return n === 1
-          ? "You're offline. 1 message saved on this device is waiting to send. This one will be saved too."
-          : `You're offline. ${n} messages saved on this device are waiting to send. This one will be saved too.`;
+          ? globalThis.PlatformI18n.t("core:you_re_offline_1_message_saved_on_this_device_is_a0310c98")
+          : globalThis.PlatformI18n.t("core:you_re_offline_value1_messages_saved_on_this_dev_063fe799", { value1: n });
       }
       if (offline) {
-        return "You're offline. Your message will be saved on this device and sent automatically "
-          + "when you're back online.";
+        return globalThis.PlatformI18n.t("core:you_re_offline_your_message_will_be_saved_on_thi_e0e024f3");
       }
       if (n > 0) {
         return n === 1
-          ? '1 message saved on this device, sending now.'
-          : `${n} messages saved on this device, sending now.`;
+          ? globalThis.PlatformI18n.t("core:1_message_saved_on_this_device_sending_now_4cdd1eb4")
+          : globalThis.PlatformI18n.t("core:value1_messages_saved_on_this_device_sending_now_59ebde9e", { value1: n });
       }
       return '';
     };
@@ -1184,7 +1182,7 @@ export function init() {
       // #2707: `submitBusy`, not `feedbackBtn.disabled`. They are the same
       // thing again since #2888 made Submit live while the destination row
       // waits, but the busy flag is the one that says what it means.
-      if (!submitBusy) feedbackBtn.textContent = isOfflineNow() ? 'Save for later' : 'Post request';
+      if (!submitBusy) feedbackBtn.textContent = isOfflineNow() ? globalThis.PlatformI18n.t("core:save_for_later_ce3cf1fb") : globalThis.PlatformI18n.t("core:post_request_f070a1ea");
       const owned = feedbackStatus.classList.contains('hidden')
         || (queueLineText && feedbackStatus.textContent === queueLineText);
       if (!owned) return;
@@ -1256,7 +1254,7 @@ export function init() {
     const submitErrorText = (status, error) => {
       if (status >= 500 || !error) {
         try { console.warn('[feedback] submit refused', status, error || '(no message)'); } catch { /* console is optional */ }
-        return "Couldn't file this right now. Please try again later.";
+        return globalThis.PlatformI18n.t("core:couldn_t_file_this_right_now_please_try_again_la_8a663c50");
       }
       return error;
     };
@@ -1269,7 +1267,7 @@ export function init() {
     // somewhere to go, "Your feedback", and a saved one is not there yet.
     const saveForLater = async (body) => {
       if (!window.FeedbackQueue) {
-        showFeedbackNotice('Network error', true);
+        showFeedbackNotice(globalThis.PlatformI18n.t("core:network_error_2a33d984"), true);
         return false;
       }
       try {
@@ -1284,7 +1282,7 @@ export function init() {
         showFeedbackNotice(queueRefusal(err && err.code), true);
         return false;
       }
-      feedbackStatus.textContent = "Saved on this device. We'll send it as soon as you're back online.";
+      feedbackStatus.textContent = globalThis.PlatformI18n.t("core:saved_on_this_device_we_ll_send_it_as_soon_as_yo_8cb916b2");
       feedbackStatus.className = 'text-sm mt-2 text-emerald-700 dark:text-emerald-400';
       feedbackStatus.classList.remove('hidden');
       queueLineText = '';
@@ -1299,7 +1297,7 @@ export function init() {
       resetScreenshotState();
       setComposerLocked(true);
       disableSubmit();
-      feedbackBtn.textContent = 'Saved';
+      feedbackBtn.textContent = globalThis.PlatformI18n.t("core:saved_b5c120b3");
       // This count is the freshest thing anyone knows — invalidate any read
       // that was already in flight so it cannot paint the pre-save figure.
       queueReadSeq += 1;
@@ -1331,8 +1329,8 @@ export function init() {
         onFlushed: (res) => {
           const n = res.sent;
           PlatformUI.toast(n === 1
-            ? 'Your saved feedback has been sent.'
-            : `Your ${n} saved feedback messages have been sent.`);
+            ? globalThis.PlatformI18n.t("core:your_saved_feedback_has_been_sent_1dc75d98")
+            : globalThis.PlatformI18n.t("core:your_value1_saved_feedback_messages_have_been_se_1226730f", { value1: n }));
           const filedApp = res.filed.find((f) => f.target === 'app' && f.appSlug);
           const filedPlatform = res.filed.some((f) => f.target !== 'app');
           if (typeof AppView !== 'undefined' && App.currentTab === 'dev'
@@ -1349,7 +1347,7 @@ export function init() {
             // it, so it was permanently false: a flush that landed on an
             // already-sent composer took the "someone is typing" branch and
             // the confirmation never appeared.
-            else if (feedbackText.readOnly) showFirstFeedback(moment, 'Your saved feedback has been sent.');
+            else if (feedbackText.readOnly) showFirstFeedback(moment, globalThis.PlatformI18n.t("core:your_saved_feedback_has_been_sent_1dc75d98"));
             else pendingFirstFeedback = moment; // Keep the draft being typed intact.
           }
         },
@@ -1383,7 +1381,7 @@ export function init() {
       // #683: a screenshot upload is still in flight — the id isn't known
       // yet, so filing now would silently drop the attachment.
       if (screenshotUploading()) {
-        showFeedbackNotice('Screenshot is still uploading, one moment…', false);
+        showFeedbackNotice(globalThis.PlatformI18n.t("core:screenshot_is_still_uploading_one_moment_7c68e98f"), false);
         return;
       }
       // #732: freeze the title snapshot for this submit — cancel the
@@ -1395,7 +1393,7 @@ export function init() {
       if (titleGenTimer) { clearTimeout(titleGenTimer); titleGenTimer = null; }
       titleGenSeq++;
       feedbackTitle.placeholder = titleIdlePlaceholder;
-      disableSubmit(); feedbackBtn.textContent = 'Posting…';
+      disableSubmit(); feedbackBtn.textContent = globalThis.PlatformI18n.t("core:posting_648a2ef4");
       const submittedPresentation = presentation;
       const submittedBy = App.user?.id;
       const telemetryAttempt = window.UITelemetry?.attempt?.('feedback_submit', {
@@ -1459,8 +1457,8 @@ export function init() {
             body.pageState = pageState.json;
             if (pageState.truncated) body.pageStateTruncated = true;
           } else {
-            stateNotice = " Couldn't collect app state, so it was filed without it.";
-            showFeedbackNotice("Couldn't collect app state, filing without it…", false);
+            stateNotice = globalThis.PlatformI18n.t("core:couldn_t_collect_app_state_so_it_was_filed_witho_32176587");
+            showFeedbackNotice(globalThis.PlatformI18n.t("core:couldn_t_collect_app_state_filing_without_it_32b68e94"), false);
           }
         }
         // #1054: we already know the network is down (the /health probe said
@@ -1474,7 +1472,7 @@ export function init() {
           }
           window.UITelemetry?.outcome?.(telemetryAttempt, 'failure', { errorCode: 'offline' });
           enableSubmit();
-          feedbackBtn.textContent = isOfflineNow() ? 'Save for later' : 'Post request';
+          feedbackBtn.textContent = isOfflineNow() ? globalThis.PlatformI18n.t("core:save_for_later_ce3cf1fb") : globalThis.PlatformI18n.t("core:post_request_f070a1ea");
           return;
         }
         // #1054: the POST is caught on its own — narrowly — so a *transport*
@@ -1499,7 +1497,7 @@ export function init() {
           }
           window.UITelemetry?.outcome?.(telemetryAttempt, 'failure', { errorCode: 'network' });
           enableSubmit();
-          feedbackBtn.textContent = isOfflineNow() ? 'Save for later' : 'Post request';
+          feedbackBtn.textContent = isOfflineNow() ? globalThis.PlatformI18n.t("core:save_for_later_ce3cf1fb") : globalThis.PlatformI18n.t("core:post_request_f070a1ea");
           return;
         }
         const data = await res.json();
@@ -1523,17 +1521,17 @@ export function init() {
           let bountyNotice = '';
           if (data.bounty) {
             if (data.bounty.placed) {
-              bountyNotice = ` Pledged 1 kudos as a bounty. ${data.bounty.remaining} left this week.`;
+              bountyNotice = globalThis.PlatformI18n.t("core:pledged_1_kudos_as_a_bounty_value1_left_this_wee_adc8feba", { value1: data.bounty.remaining });
               // The drawer's Kudos meter must show the number the user
               // just spent down to, not the one they saw before.
               window.Kudos?.Budget?.refresh?.();
             } else {
-              bountyNotice = ` Couldn't add the bounty: ${data.bounty.error || 'the bounty could not be placed'}.`;
+              bountyNotice = globalThis.PlatformI18n.t("core:couldn_t_add_the_bounty_value1_8a025bd4", { value1: data.bounty.error || globalThis.PlatformI18n.t("core:the_bounty_could_not_be_placed_4385cbdb") });
             }
           }
           const postedTo = (target === 'app'
-            ? `Posted to ${AppView?.appData?.name || 'this app'}`
-            : 'Posted to Homeroom');
+            ? globalThis.PlatformI18n.t("core:posted_to_value1_9a52fa26", { value1: AppView?.appData?.name || globalThis.PlatformI18n.t("core:this_app_d2c823cf") })
+            : globalThis.PlatformI18n.t("core:posted_to_homeroom_9a66e036"));
           // Both variants end the first sentence before appending, so the
           // bounty outcome reads as its own sentence either way.
           feedbackStatus.textContent = `${postedTo}.${bountyNotice}${stateNotice}`;
@@ -1557,7 +1555,7 @@ export function init() {
           // already been filed — fixes #32. Both controls are
           // re-enabled when the modal is reopened below.
           setComposerLocked(true);
-          feedbackBtn.textContent = 'Posted';
+          feedbackBtn.textContent = globalThis.PlatformI18n.t("core:posted_afd80c5a");
           // #125: make the new issue show up in this app's "Open Issues"
           // panel without a reload. The server seeds its issues cache and
           // broadcasts an issue_update (handled in connectEvents) for
@@ -1577,7 +1575,7 @@ export function init() {
           }
           // B8: the bot is theirs but does not build here: it went to the group.
           const toGroup = data.homeroomBot && target === 'app'
-            ? `Sent to ${AppView?.appData?.name || 'this app'}'s group as a request` : postedTo;
+            ? globalThis.PlatformI18n.t("core:sent_to_value1_s_group_as_a_request_d63c1594", { value1: AppView?.appData?.name || globalThis.PlatformI18n.t("core:this_app_d2c823cf") }) : postedTo;
           // #3186: the confirmation stays, with "See your requests" in it,
           // instead of closing itself (see showSent above).
           if (!showFirstFeedback(data.firstFeedback, feedbackStatus.textContent)) {
@@ -1596,12 +1594,12 @@ export function init() {
         // Reached only when the request itself completed and something about
         // the RESPONSE was unusable (non-JSON error body from a proxy, say).
         // A transport failure was already handled above, by saving.
-        feedbackStatus.textContent = 'Network error';
+        feedbackStatus.textContent = globalThis.PlatformI18n.t("core:network_error_2a33d984");
         feedbackStatus.className = 'text-sm mt-2 text-red-400';
         feedbackStatus.classList.remove('hidden');
       }
       enableSubmit();
-      feedbackBtn.textContent = isOfflineNow() ? 'Save for later' : 'Post request';
+      feedbackBtn.textContent = isOfflineNow() ? globalThis.PlatformI18n.t("core:save_for_later_ce3cf1fb") : globalThis.PlatformI18n.t("core:post_request_f070a1ea");
     };
 
     // The state half of "open the Send Feedback modal", called by the
@@ -1627,11 +1625,11 @@ export function init() {
       feedbackForm?.classList.remove('hidden');
       // Opening a queued success must not consume a failed outbox draft or
       // start screenshot/title probes behind the confirmation.
-      if (opts.firstFeedback && showFirstFeedback(opts.firstFeedback, 'Your saved request has been posted.')) return;
+      if (opts.firstFeedback && showFirstFeedback(opts.firstFeedback, globalThis.PlatformI18n.t("core:your_saved_request_has_been_posted_7483d94a"))) return;
       // #2707: clear the previous open's question (and #2888 its red) first;
       // the destination branch below asks again when it has to.
       setAwaitingTarget(false);
-      enableSubmit(); feedbackBtn.textContent = 'Post request';
+      enableSubmit(); feedbackBtn.textContent = globalThis.PlatformI18n.t("core:post_request_f070a1ea");
       feedbackStatus.classList.add('hidden');
       // #1603: a refusal from a previous open never greets the next one.
       clearDescriptionError();
@@ -1724,8 +1722,8 @@ export function init() {
           feedbackText.value = p.description || '';
           if (p.title) { feedbackTitle.value = p.title; titleDirty = true; }
           restoreChosenTarget(p.target);
-          feedbackStatus.textContent = `This message couldn't be sent: ${failed.lastError || 'the server rejected it'}.`
-            + ' Your text is back, so edit it and try again.';
+          feedbackStatus.textContent = globalThis.PlatformI18n.t("core:this_message_couldn_t_be_sent_value1_b9365f8d", { value1: failed.lastError || globalThis.PlatformI18n.t("core:the_server_rejected_it_d67996f6") })
+            + globalThis.PlatformI18n.t("core:your_text_is_back_so_edit_it_and_try_again_4cc69b42");
           feedbackStatus.className = 'text-sm mt-2 text-red-400';
           feedbackStatus.classList.remove('hidden');
           queueLineText = '';
@@ -1747,7 +1745,7 @@ export function init() {
             titleDirty = rescued.titleDirty !== false;
           }
           restoreChosenTarget(rescued.target);
-          showFeedbackNotice("The screenshot didn't make it, but your feedback is safe. Here it is again.", false);
+          showFeedbackNotice(globalThis.PlatformI18n.t("core:the_screenshot_didn_t_make_it_but_your_feedback__210b57bc"), false);
           queueLineText = '';
         }
       }
@@ -1824,7 +1822,7 @@ export function init() {
       // same dialog, with the same unanswered row, is about to be presented
       // again.
       if (!captureInFlight) setAwaitingTarget(false);
-      enableSubmit(); feedbackBtn.textContent = 'Post request';
+      enableSubmit(); feedbackBtn.textContent = globalThis.PlatformI18n.t("core:post_request_f070a1ea");
       // #683: cancelling discards the attachments client-side; an already
       // uploaded (now orphaned) row is GC'd server-side after 24h. #3027: not
       // mid-capture, though — with room for several images, the ones already
@@ -1888,7 +1886,7 @@ export function init() {
     if (!readCaptureDraft()) return;
     bootDraftAnnounced = true;
     try {
-      PlatformUI?.toast?.('Your request draft was saved. Reopen Ask for a change to finish it.');
+      PlatformUI?.toast?.(globalThis.PlatformI18n.t("core:your_request_draft_was_saved_reopen_ask_for_a_ch_6b44bdfe"));
     } catch { /* the draft is in the stash either way */ }
   };
   App.noticeRescuedFeedbackDraft();
@@ -1899,7 +1897,7 @@ export function init() {
   // photographed from the code that ships. Display-only: it touches no
   // bridge, uploads nothing and files nothing.
   App._simulateFeedbackCaptureFailure = () => runCapture(
-    async () => { const err = new Error('capture failed'); err.code = 'capture_failed'; throw err; },
+    async () => { const err = new Error(globalThis.PlatformI18n.t("core:capture_failed_f4dcb92b")); err.code = 'capture_failed'; throw err; },
     { nativeAttempt: true },
   );
 
@@ -1931,14 +1929,14 @@ export function init() {
   App._simulateFirstFeedback = () => showFirstFeedback({
     userId: App.user?.id, appSlug: App.currentApp || 'usernode-2d5619',
     issueNumber: 900008, canFix: true,
-  }, 'Your request has been posted.');
+  }, globalThis.PlatformI18n.t("core:your_request_has_been_posted_57474c90"));
 
   // #3186: ?shot=feedback-sent. The composer locks as a real send locks it,
   // and the confirmation reads what a platform report's does. Writes nothing.
   App._simulateFeedbackSent = () => {
     setComposerLocked(true);
     disableSubmit();
-    showSent('Posted to Homeroom');
+    showSent(globalThis.PlatformI18n.t("core:posted_to_homeroom_9a66e036"));
   };
 
   // B8: ?shot=feedback-bot, what a request Homeroom bot builds is answered

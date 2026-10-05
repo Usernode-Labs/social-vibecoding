@@ -1,3 +1,6 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 // The browse-all-apps screen (#apps) as a React island — #1083 chunk F step 1,
 // made STATEFUL by #1191 slice 6 (conversion 3).
 //
@@ -81,11 +84,11 @@ function browse(): any {
 // what a key MEANS (resolveSort, the comparators); this is only the labelling.
 // tests/browse-screen.test.js asserts the two lists never drift apart.
 const SORT_OPTIONS: Array<{ key: string; label: string }> = [
-  { key: 'recommended', label: 'Recommended' },
-  { key: 'users', label: 'Most users' },
-  { key: 'active', label: 'Most active' },
-  { key: 'merged', label: 'Most changes live' },
-  { key: 'new', label: 'Newest' },
+  { key: 'recommended', get label() { return tr("apps:recommended_d70604e8"); } },
+  { key: 'users', get label() { return tr("apps:most_users_125c07d3"); } },
+  { key: 'active', get label() { return tr("apps:most_active_202997c9"); } },
+  { key: 'merged', get label() { return tr("apps:most_changes_live_8c370510"); } },
+  { key: 'new', get label() { return tr("apps:newest_d15efa17"); } },
 ];
 
 // The four filter chips — Browse.FILTERS, labelled. A COPY for the same reason
@@ -93,13 +96,14 @@ const SORT_OPTIONS: Array<{ key: string; label: string }> = [
 // a chip row that prerendered empty and hydrated full would be a mismatch.
 // tests/browse-screen.test.js pins the two lists together.
 const FILTER_CHIPS: Array<{ key: string; label: string }> = [
-  { key: 'all', label: 'All' },
-  { key: 'featured', label: 'Featured' },
-  { key: 'yours', label: 'Joined' },
-  { key: 'new', label: 'New' },
+  { key: 'all', get label() { return tr("apps:all_a52ace42"); } },
+  { key: 'featured', get label() { return tr("apps:featured_c533cafa"); } },
+  { key: 'yours', get label() { return tr("apps:joined_69318b0c"); } },
+  { key: 'new', get label() { return tr("apps:new_18fdd549"); } },
 ];
 
 export function BrowseScreen() {
+  useUiLanguage();
   const screenRef = useRef<HTMLElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   useVisibilityHiddenClass(screenRef, 'browse-screen', false);
@@ -168,13 +172,11 @@ export function BrowseScreen() {
             className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none dark:text-zinc-400"
             aria-hidden="true"
           />
-          <input
+          <Localized element={<input
             ref={inputRef}
             id="browse-search-input"
             type="text"
-            autoComplete="off"
-            placeholder="Search all apps…"
-            aria-label="Search all apps"
+            autoComplete="off" placeholder={catalogText("apps:search_all_apps_7ab778cc")} aria-label={catalogText("apps:search_all_apps_273a9a87")}
             className="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 pl-9 pr-9 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-violet-400 dark:focus:border-violet-600"
             onInput={(e) => browse()?.setQuery(e.currentTarget.value)}
             onKeyDown={(e) => {
@@ -183,16 +185,14 @@ export function BrowseScreen() {
                 clear(false);
               }
             }}
-          />
-          <button
+          />} messages={{"placeholder":"apps:search_all_apps_7ab778cc","aria-label":"apps:search_all_apps_273a9a87"}} />
+          <Localized element={<button
             id="browse-search-clear"
-            className={state.showClear ? CLEAR_CLASS : `hidden ${CLEAR_CLASS}`}
-            title="Clear search"
-            aria-label="Clear search"
+            className={state.showClear ? CLEAR_CLASS : `hidden ${CLEAR_CLASS}`} title={catalogText("apps:clear_search_3b7ea517")} aria-label={catalogText("apps:clear_search_3b7ea517")}
             onClick={() => clear(true)}
           >
             &times;
-          </button>
+          </button>} messages={{"title":"apps:clear_search_3b7ea517","aria-label":"apps:clear_search_3b7ea517"}} />
         </div>
         {/*
             THE FILTER CHIPS (the prototype's scrDiscover): a chip picks WHICH
@@ -205,10 +205,9 @@ export function BrowseScreen() {
             line at 390px, and the rail scrolls rather than wrapping if a
             larger text size does not fit them.
         */}
-        <ChipRail
+        <Localized element={<ChipRail
           id="browse-filter-chips"
-          role="group"
-          aria-label="Filter apps"
+          role="group" aria-label={catalogText("apps:filter_apps_c8be0116")}
           className="mt-2 max-w-xl gap-2 px-0 py-0"
         >
           {FILTER_CHIPS.map((f) => (
@@ -223,7 +222,7 @@ export function BrowseScreen() {
               {f.label}
             </Chip>
           ))}
-        </ChipRail>
+        </ChipRail>} messages={{"aria-label":"apps:filter_apps_c8be0116"}} />
         {/*
             Sort (#1383). Rides the search bar rather than sitting in its own
             strip: both narrow the same list, and one sticky row costs the
@@ -236,18 +235,17 @@ export function BrowseScreen() {
             should be as wide as its longest label, not as wide as the bar).
         */}
         <div id="browse-sort-bar" className="mt-2 flex items-center gap-2 max-w-xl">
-          <Label htmlFor="browse-sort-select" className="shrink-0">Sort</Label>
-          <Select
+          <Label htmlFor="browse-sort-select" className="shrink-0"><Message id="apps:sort_bec69036" /></Label>
+          <Localized element={<Select
             id="browse-sort-select"
-            className="w-auto py-1.5"
-            aria-label="Sort apps"
+            className="w-auto py-1.5" aria-label={catalogText("apps:sort_apps_6dfe7969")}
             value={state.sort}
             onChange={(e) => browse()?.setSort(e.currentTarget.value)}
           >
             {SORT_OPTIONS.map((o) => (
               <option key={o.key} value={o.key}>{o.label}</option>
             ))}
-          </Select>
+          </Select>} messages={{"aria-label":"apps:sort_apps_6dfe7969"}} />
         </div>
       </div>
       {/*
@@ -289,11 +287,10 @@ export function BrowseScreen() {
             ? (
               // #1899: the shared error card, spanning the md+ grid; Retry
               // re-runs the same directory load.
-              <AppsLoadError
-                className="md:col-span-full"
-                title="Couldn't load the app directory"
+              <Localized element={<AppsLoadError
+                className="md:col-span-full" title={catalogText("apps:couldn_t_load_the_app_directory_7a3b13f4")}
                 onRetry={() => browse()?._load?.()}
-              />
+              />} messages={{"title":"apps:couldn_t_load_the_app_directory_7a3b13f4"}} />
             )
             : <BrowseRows rows={state.rows} curated={state.curated} grouped={state.grouped} moreExpanded={state.moreExpanded} />}
         </div>

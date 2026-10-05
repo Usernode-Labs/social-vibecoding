@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../../lib/i18n/react";
+import { t as tr } from "../../../lib/i18n/runtime";
+import { Localized, message as catalogText } from "../../../lib/i18n/react";
 /**
  * `#dev-kanban-board` — the kanban board — as the only React writer below
  * that host. The host stays app-view.js's; the columns, the mobile tab
@@ -112,15 +116,16 @@ function Column(
     slug: string; canPost: boolean; unfolded: boolean;
   },
 ): ReactNode {
+  useUiLanguage();
   // The one open card, by row key. Toggling the open one closes it; opening
   // another closes the first. Survives republishes because it is here and
   // not in the view model.
   const [openKey, setOpenKey] = useState<string | null>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const hasReviewSort = col.key === 'inreview' && !!col.reviewSort;
-  const sortLabel = col.reviewSort === 'priority' ? 'Vote priority' : 'Newest';
+  const sortLabel = col.reviewSort === 'priority' ? tr("workshop:vote_priority_332e1a25") : tr("workshop:newest_d15efa17");
   const nextSort = col.reviewSort === 'priority' ? 'newest' : 'priority';
-  const nextSortLabel = nextSort === 'priority' ? 'Vote priority' : 'Newest';
+  const nextSortLabel = nextSort === 'priority' ? tr("workshop:vote_priority_332e1a25") : tr("workshop:newest_d15efa17");
   const statusTone = col.status?.tone === 'blocked'
     ? 'text-red-700 dark:text-red-300'
     : col.status?.tone === 'progress'
@@ -172,7 +177,7 @@ function Column(
     // Two rows, not four: the point is to show the column is filling, and a
     // full-height stack of placeholders in each of four columns is a busier
     // screen than the one it is standing in for.
-    cards = <CardSkeleton n={2} label={`Loading ${col.title}`} />;
+    cards = <LocalizedDynamic element={<CardSkeleton n={2} label={tr("workshop:loading_value1_988dcc0d", { value1: col.title })} />} resolve={() => ({ get "label"() { return tr("workshop:loading_value1_988dcc0d", { value1: col.title }); } })} />;
   } else if (col.empty) {
     cards = <div className="text-xs text-zinc-500 dark:text-zinc-500 italic py-2">{col.empty}</div>;
   } else {
@@ -224,21 +229,23 @@ function Column(
               : <span className="text-zinc-500 dark:text-zinc-500 font-mono">{`· ${col.count}`}</span>}
           </span>
           {hasReviewSort ? (
-            <Button
+            <LocalizedDynamic element={<Button
               type="button"
               variant="unstyled"
               size="none"
               ink="muted"
-              aria-label={`Sort Waiting for approval: ${sortLabel}. Switch to ${nextSortLabel}.`}
-              title={`${col.reviewSort === 'priority'
-                ? 'Unvoted first, then fewest qualifying votes still needed. Within each vote group, already-qualified proposals follow those still short. Newest breaks ties.'
-                : 'Most recently submitted for review first.'} Click to switch to ${nextSortLabel}.`}
+              aria-label={tr("workshop:sort_waiting_for_approval_value1_switch_to_value_3c947b77", { value1: sortLabel, value2: nextSortLabel })}
+              title={tr("workshop:value1_click_to_switch_to_value2_c6eaa253", { value1: col.reviewSort === 'priority'
+                ? tr("workshop:message_4c8119e7d42e")
+                : tr("workshop:message_54d5b61d5ca9"), value2: nextSortLabel })}
               className="ml-auto inline-flex min-h-[44px] shrink-0 items-center gap-1.5 rounded-lg px-2 text-xs font-medium whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
               onClick={() => callAppView('_setReviewSort', nextSort)}
             >
               <ArrowUpIcon aria-hidden="true" className="h-3.5 w-3.5 rotate-180" />
               {sortLabel}
-            </Button>
+            </Button>} resolve={() => ({ get "aria-label"() { return tr("workshop:sort_waiting_for_approval_value1_switch_to_value_3c947b77", { value1: sortLabel, value2: nextSortLabel }); }, get "title"() { return tr("workshop:value1_click_to_switch_to_value2_c6eaa253", { value1: col.reviewSort === 'priority'
+                ? tr("workshop:message_4c8119e7d42e")
+                : tr("workshop:most_recently_submitted_for_review_first_54d5b61d"), value2: nextSortLabel }); } })} />
           ) : null}
         </div>
       </div>
@@ -258,6 +265,7 @@ function Column(
 }
 
 export function DevKanban(): ReactNode {
+  useUiLanguage();
   const v = useStoreState(devKanbanStore);
   // Wide viewports render every column, exactly as before — including the
   // proposal-checks runner, which asserts in a fixed 1280x800 frame.
@@ -271,16 +279,15 @@ export function DevKanban(): ReactNode {
           and each tab is `flex-1 basis-0`, so `flex` and not `inline-flex`.
           The `border-b` rule it replaces is gone with the underline (#2441).
       */}
-      <div
+      <Localized element={<div
         id="dev-kanban-tabs"
-        role="tablist"
-        aria-label="Board columns"
+        role="tablist" aria-label={catalogText("workshop:board_columns_b0a43b06")}
         className="sm:hidden flex items-stretch gap-0.5 mb-2 rounded-full bg-white dark:bg-zinc-900 p-0.5"
       >
         {v.cols.map((col) => (
           <Tab key={col.key} col={col} active={col.key === v.activeTab} loading={!!v.loading} />
         ))}
-      </div>
+      </div>} messages={{"aria-label":"workshop:board_columns_b0a43b06"}} />
       <div id="dev-kanban" className="flex gap-3 overflow-x-auto pb-2" data-kanban-active={v.activeTab}>
         {v.cols.map((col) => (
           <Column

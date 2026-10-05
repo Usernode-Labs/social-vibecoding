@@ -1,3 +1,6 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { RichMessage } from "../../lib/i18n/react";
+import { Message } from "../../lib/i18n/react";
 /**
  * Board Filters dialog (#board-filters-modal) — Streamlined Concept.
  *
@@ -68,6 +71,7 @@ const FIELD_LABEL_CLS =
   'block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1';
 
 export function BoardFiltersDialog() {
+  useUiLanguage();
   const [priority, setPriority] = useState('');
   const [category, setCategory] = useState('');
   const [assignee, setAssignee] = useState('');
@@ -117,48 +121,30 @@ export function BoardFiltersDialog() {
       {...dialog.backdropProps}
     >
       <DialogCard size="sm">
-        <h2 className="text-lg font-bold mb-1">
-          Filters
-        </h2>
-        <p className="text-xs text-zinc-500 mb-4">
-          All conditions apply together.
-        </p>
+        <h2 className="text-lg font-bold mb-1"><Message id="core:filters_546ebb8e" /></h2>
+        <p className="text-xs text-zinc-500 mb-4"><Message id="core:all_conditions_apply_together_f06b2cce" /></p>
         <div className="space-y-4">
           <div>
-            <label htmlFor="board-filters-priority" className={FIELD_LABEL_CLS}>
-              Priority
-            </label>
+            <label htmlFor="board-filters-priority" className={FIELD_LABEL_CLS}><Message id="core:priority_d60dbba0" /></label>
             <Select
               id="board-filters-priority"
               value={priority}
               onChange={(event) => setPriority(event.target.value)}
             >
-              <option value="">
-                Any priority
-              </option>
-              <option value="high">
-                High
-              </option>
-              <option value="medium">
-                Medium
-              </option>
-              <option value="low">
-                Low
-              </option>
+              <option value=""><Message id="core:any_priority_b335572e" /></option>
+              <option value="high"><Message id="core:high_c4ebc6d4" /></option>
+              <option value="medium"><Message id="core:medium_8e588cd1" /></option>
+              <option value="low"><Message id="core:low_f793de20" /></option>
             </Select>
           </div>
           <div>
-            <label htmlFor="board-filters-category" className={FIELD_LABEL_CLS}>
-              Category
-            </label>
+            <label htmlFor="board-filters-category" className={FIELD_LABEL_CLS}><Message id="core:category_292c06f0" /></label>
             <Select
               id="board-filters-category"
               value={category}
               onChange={(event) => setCategory(event.target.value)}
             >
-              <option value="">
-                Any category
-              </option>
+              <option value=""><Message id="core:any_category_b64819fe" /></option>
               {categories.map((c) => (
                 <option key={c.value} value={c.value}>
                   {c.label}
@@ -167,20 +153,14 @@ export function BoardFiltersDialog() {
             </Select>
           </div>
           <div>
-            <label htmlFor="board-filters-assignee" className={FIELD_LABEL_CLS}>
-              Assignee
-            </label>
+            <label htmlFor="board-filters-assignee" className={FIELD_LABEL_CLS}><Message id="core:assignee_5e20d20e" /></label>
             <Select
               id="board-filters-assignee"
               value={assignee}
               onChange={(event) => setAssignee(event.target.value)}
             >
-              <option value="">
-                Anyone
-              </option>
-              <option value={unassigned}>
-                Nobody yet
-              </option>
+              <option value=""><Message id="core:anyone_8d486bb2" /></option>
+              <option value={unassigned}><Message id="core:nobody_yet_aca29464" /></option>
               {assignees.map((name) => (
                 <option key={name} value={name}>
                   {name}
@@ -192,14 +172,7 @@ export function BoardFiltersDialog() {
             htmlFor="board-filters-needsvote"
             className="flex items-center justify-between gap-3 cursor-pointer select-none"
           >
-            <span className="min-w-0">
-              <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                Waiting on you
-              </span>
-              <span className="block text-xs text-zinc-500">
-                Only proposals you haven’t weighed in on yet
-              </span>
-            </span>
+            <span className="min-w-0"><RichMessage id="core:sentence_0b6e90ca9758" components={[<span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200" />, <span className="block text-xs text-zinc-500" />]} /></span>
             <Switch
               id="board-filters-needsvote"
               checked={needsVote}
@@ -218,14 +191,7 @@ export function BoardFiltersDialog() {
                 htmlFor="board-filters-assignedtome"
                 className="flex items-center justify-between gap-3 cursor-pointer select-none"
               >
-                <span className="min-w-0">
-                  <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                    Assigned to you
-                  </span>
-                  <span className="block text-xs text-zinc-500">
-                    Only items the group voted onto you
-                  </span>
-                </span>
+                <span className="min-w-0"><RichMessage id="core:sentence_7aa6aa2e2ebb" components={[<span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200" />, <span className="block text-xs text-zinc-500" />]} /></span>
                 <Switch
                   id="board-filters-assignedtome"
                   checked={assignedToMe}
@@ -236,14 +202,7 @@ export function BoardFiltersDialog() {
                 htmlFor="board-filters-createdbyme"
                 className="flex items-center justify-between gap-3 cursor-pointer select-none"
               >
-                <span className="min-w-0">
-                  <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                    Created by you
-                  </span>
-                  <span className="block text-xs text-zinc-500">
-                    Only items you opened yourself
-                  </span>
-                </span>
+                <span className="min-w-0"><RichMessage id="core:sentence_b7828f3cd6d4" components={[<span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200" />, <span className="block text-xs text-zinc-500" />]} /></span>
                 <Switch
                   id="board-filters-createdbyme"
                   checked={createdByMe}
@@ -257,9 +216,7 @@ export function BoardFiltersDialog() {
               type="button"
               id="board-filters-done"
               onClick={done}
-            >
-              Done
-            </Button>
+            ><Message id="core:done_11a6767d" /></Button>
           </div>
         </div>
       </DialogCard>

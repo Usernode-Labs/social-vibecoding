@@ -48,14 +48,14 @@
       ? 'Continue work already started on the Homeroom app `' + slug + '`.'
       : 'Create a proposal for the Homeroom app `' + slug + '`.'];
     lines.push('');
-    lines.push('What to build: ' + (hasIssue ? 'issue #' + issue + (title ? ': ' + title : '')
+    lines.push(globalThis.PlatformI18n.t("workshop:what_to_build_afa3b9ca") + (hasIssue ? 'issue #' + issue + (title ? ': ' + title : '')
       : title || '<describe the change here>'));
-    if (hasIssue) lines.push('Read the issue and its discussion before starting, and link the proposal to issue #' + issue + '.');
+    if (hasIssue) lines.push(globalThis.PlatformI18n.t("workshop:read_the_issue_and_its_discussion_before_startin_0af5547a") + issue + '.');
     if (resume) {
       lines.push('');
       lines.push('Continue ' + resume.kind + ' #' + resume.id + ' on branch `' + resume.branch + '`.');
-      lines.push('Read its saved spec and conversation, and start from the current head of that branch.');
-      lines.push('Preserve the existing work. Do not start over or open a second proposal.');
+      lines.push(globalThis.PlatformI18n.t("workshop:read_its_saved_spec_and_conversation_and_start_f_a1c2e54e"));
+      lines.push(globalThis.PlatformI18n.t("workshop:preserve_the_existing_work_do_not_start_over_or__a33c9e9a"));
       if (resume.kind === 'proposal') lines.push('Updating the existing proposal clears its votes and asks reviewers to re-review.');
     }
     return lines.join('\n');
@@ -80,11 +80,11 @@
     if (resume) {
       return ''
         + '<div class="dc-launchpad-resume" data-launchpad-resume="continue">'
-        + '<div class="dc-launchpad-resume-title">Continuing this session’s branch</div>'
-        + '<div class="dc-launchpad-resume-detail">There is work on <code>'
+        + `<div class="dc-launchpad-resume-title">${globalThis.PlatformI18n.htmlText("workshop:continuing_this_session_s_branch_40705c12")}</div>`
+        + `<div class="dc-launchpad-resume-detail">${globalThis.PlatformI18n.htmlText("workshop:there_is_work_on_a9284db0")} <code>`
         + escapeHtml(resume.branch) + '</code> already. The instructions below tell your '
-        + 'agent to start from its current commit, so nothing done here is lost. Copy them '
-        + 'as they are: an agent that starts from the app’s default branch instead would '
+        + globalThis.PlatformI18n.t("workshop:agent_to_start_from_its_current_commit_so_nothin_c0aa9fb6")
+        + globalThis.PlatformI18n.t("workshop:as_they_are_an_agent_that_starts_from_the_app_s__465f3c08")
         + 'rebuild this from scratch.</div>'
         + '</div>';
     }
@@ -92,13 +92,7 @@
     // straight from the start screen (#1350). Say so plainly: there is
     // nothing to resume until the local agent implements the change.
     if (String(s.targetKind || '') === 'new') {
-      return ''
-        + '<div class="dc-launchpad-resume" data-launchpad-resume="new">'
-        + '<div class="dc-launchpad-resume-title">Starting new work</div>'
-        + '<div class="dc-launchpad-resume-detail">Nothing has been built in this session '
-        + 'yet, so there is nothing to resume. Your agent starts from the app’s current '
-        + 'code, implements and tests the change locally, then submits the result to Homeroom.</div>'
-        + '</div>';
+      return `<div class="dc-launchpad-resume" data-launchpad-resume="new"><div class="dc-launchpad-resume-title">${globalThis.PlatformI18n.htmlText("workshop:starting_new_work_adcb830b")}</div><div class="dc-launchpad-resume-detail">${globalThis.PlatformI18n.htmlText("workshop:nothing_has_been_built_in_this_session_yet_so_th_a76d2893")}</div></div>`;
     }
     return '';
   }

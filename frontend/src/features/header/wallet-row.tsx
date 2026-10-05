@@ -1,3 +1,5 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { Message } from "../../lib/i18n/react";
 /**
  * `#account-row-wallet` — the balance readout in the Profile screen's account group.
  * See ./wallet-sheet-store.ts for what the seam carries.
@@ -21,6 +23,7 @@ function controller(): any {
 }
 
 export function WalletRow(): ReactNode {
+  useUiLanguage();
   const s = useStoreState(walletSheetStore);
   return (
     <button
@@ -29,9 +32,7 @@ export function WalletRow(): ReactNode {
       onClick={() => controller()?.openFromRow?.()}
     >
       <WalletIcon className="w-5 h-5 shrink-0" />
-      <span className="text-sm font-medium">
-        Wallet
-      </span>
+      <span className="text-sm font-medium"><Message id="account:wallet_d1c9a01d" /></span>
       {/* Blank until the module has a snapshot — the hand-written row shipped
           this span empty and the prerender has to agree. */}
       <span

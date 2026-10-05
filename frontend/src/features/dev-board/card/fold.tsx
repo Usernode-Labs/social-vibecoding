@@ -1,3 +1,5 @@
+import { RichMessage } from "../../../lib/i18n/react";
+import { Message, Localized, message as catalogText } from "../../../lib/i18n/react";
 /**
  * The card, folded — and the fold that opens it.
  *
@@ -211,9 +213,9 @@ export function FoldMark({ open, onClick }: { open: boolean; onClick?: () => voi
   const glyph = <FoldMarkIcon aria-hidden="true" />;
   if (!open) return <span className="dev-fold-mark" aria-hidden="true">{glyph}</span>;
   return (
-    <button type="button" className="dev-fold-mark un-touch-target" data-open="1" aria-expanded="true" aria-label="Fold the card" onClick={onClick}>
+    <Localized element={<button type="button" className="dev-fold-mark un-touch-target" data-open="1" aria-expanded="true" aria-label={catalogText("workshop:fold_the_card_c7c5ea93")} onClick={onClick}>
       {glyph}
-    </button>
+    </button>} messages={{"aria-label":"workshop:fold_the_card_c7c5ea93"}} />
   );
 }
 
@@ -283,8 +285,8 @@ export function FoldedRow({
         {c.icon ? <CardIcon spec={{ ...c.icon, small: true }} /> : null}
         <span className="dev-ws-row-title">
           {c.title.text}
-          {row.fresh ? <span className="dev-ws-new">new</span> : null}
-          {row.placing ? <span className="dev-ws-placing" title="Being placed into a category">placing…</span> : null}
+          {row.fresh ? <span className="dev-ws-new"><Message id="workshop:new_11507a0e" /></span> : null}
+          {row.placing ? <Localized element={<span className="dev-ws-placing" title={catalogText("workshop:being_placed_into_a_category_ed9b0600")}><Message id="workshop:placing_bc4d96fa" /></span>} messages={{"title":"workshop:being_placed_into_a_category_ed9b0600"}} /> : null}
         </span>
       </span>
       {/* The card's own meta line, node for node: number · author · when,
@@ -383,7 +385,7 @@ export function UnfoldedRow({
   // here, and the button that folds the card.
   const card: DevCardModel = { ...row.card, rail: { ...row.card.rail, chevron: false } };
   const openBtn = placement && href
-    ? <a className="gc-vote-btn dev-ws-open-btn" href={href} data-ws-open-card={row.key}>Open card</a>
+    ? <a className="gc-vote-btn dev-ws-open-btn" href={href} data-ws-open-card={row.key}><Message id="workshop:open_card_4fc58b0e" /></a>
     : undefined;
   return (
     <div className="dev-feed-entry dev-ws-sheet" data-ws-sheet={row.key}>
@@ -400,9 +402,7 @@ export function UnfoldedRow({
         // click guard excludes anchors, so it does not fold the card on its
         // way out. The page link itself rides the pill (#1886) — this is the
         // one destination the pill does not cover.
-        <div className="dev-ws-sheet-actions">
-          <a href={session} className="dev-ws-link" data-ws-open-session={row.key}>Open session ›</a>
-        </div>
+        <div className="dev-ws-sheet-actions"><RichMessage id="workshop:sentence_a4ef49029e02" components={[<a href={session} className="dev-ws-link" data-ws-open-session={row.key} />]} /></div>
       ) : null}
     </div>
   );

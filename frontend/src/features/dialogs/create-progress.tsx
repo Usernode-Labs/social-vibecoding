@@ -1,3 +1,6 @@
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message } from "../../lib/i18n/react";
 /**
  * The create dialog's progress view.
  *
@@ -115,11 +118,11 @@ function headline(
   mode: 'new' | 'import' | 'fork',
   appName: string,
 ): string {
-  if (outcome === 'live') return `${appName} is live`;
-  if (outcome === 'needs-secrets') return 'Almost there';
-  if (outcome === 'failed') return `Couldn’t finish ${appName}`;
-  if (mode === 'fork') return `Remixing ${appName}`;
-  return mode === 'import' ? `Importing ${appName}` : `Creating ${appName}`;
+  if (outcome === 'live') return tr("core:value1_is_live_558192c9", { value1: appName });
+  if (outcome === 'needs-secrets') return tr("core:almost_there_750a358a");
+  if (outcome === 'failed') return tr("core:couldn_t_finish_value1_1f1b4d69", { value1: appName });
+  if (mode === 'fork') return tr("core:remixing_value1_a4e3f0e9", { value1: appName });
+  return mode === 'import' ? tr("core:importing_value1_29346477", { value1: appName }) : tr("core:creating_value1_aadd2bc7", { value1: appName });
 }
 
 /**
@@ -137,17 +140,17 @@ function statusLine(
     // it would build the first version and send it to try, and this line
     // used to send the person off to "see what it shipped with".
     if (builder === 'bot') {
-      return `${appName} is set up. Homeroom bot is building its first version from your description `
-        + 'and will message you when it’s ready to try.';
+      return tr("core:value1_is_set_up_homeroom_bot_is_building_its_fi_26ef8ba0", { value1: appName })
+        + tr("core:and_will_message_you_when_it_s_ready_to_try_7410ba39");
     }
-    if (builder === 'request') return 'Your project is ready. Its first request is waiting on its page.';
-    return 'Your app is running. Open it to see what it shipped with.';
+    if (builder === 'request') return tr("core:your_project_is_ready_its_first_request_is_waiti_b405b8ae");
+    return tr("core:your_app_is_running_open_it_to_see_what_it_shipp_a589a244");
   }
   if (outcome === 'needs-secrets') {
     const keys = progress.missingSecrets || [];
     return keys.length
-      ? `Set ${keys.join(', ')} and your app will finish starting.`
-      : 'Set the required secrets and your app will finish starting.';
+      ? tr("core:set_value1_and_your_app_will_finish_starting_034eb2fd", { value1: keys.join(', ') })
+      : tr("core:set_the_required_secrets_and_your_app_will_finis_c29ccd4e");
   }
   if (outcome === 'failed') {
     // QA 2026-09-24 Q32b: the broadcast reason is the server's own line
@@ -158,25 +161,25 @@ function statusLine(
     // is none (a watchdog timeout, or a process that died before recording
     // one), say what we actually know rather than showing an empty box.
     if (!progress.errorReason) {
-      return 'Setup stopped before your app was running. Retrying usually clears a transient failure.';
+      return tr("core:setup_stopped_before_your_app_was_running_retryi_6595de14");
     }
     const failed = CREATION_STEPS[states.indexOf('failed')]?.key;
     return failed === 'build'
-      ? 'The build didn’t finish. Try again, or ask an admin.'
-      : 'Setup didn’t finish. Try again, or ask an admin.';
+      ? tr("core:the_build_didn_t_finish_try_again_or_ask_an_admi_e5a3039a")
+      : tr("core:setup_didn_t_finish_try_again_or_ask_an_admin_63666f42");
   }
-  return 'This usually takes under a minute. You can close this and keep going. We’ll finish in the background and your app will appear in your apps.';
+  return tr("core:this_usually_takes_under_a_minute_you_can_close__499623ab");
 }
 
 /** The last next step on a project that is Just you: the one vote is yours. */
-const SOLO_APPROVE = 'You approve it, and it goes live.';
+const SOLO_APPROVE = () => tr("workshop:you_approve_it_and_it_goes_live_175d9d0d");
 
 /** The three things to do next, once there is an app to do them to. */
-const NEXT_STEPS = [
-  'Open your app and try what it shipped with.',
-  'Describe a change in chat, and a coding agent writes it.',
-  'Collaborators vote it in, and it goes live.',
-] as const;
+const NEXT_STEPS = () => ([
+  tr("core:open_your_app_and_try_what_it_shipped_with_671fda3a"),
+  tr("core:describe_a_change_in_chat_and_a_coding_agent_wri_86bbaf54"),
+  tr("core:collaborators_vote_it_in_and_it_goes_live_e7f385f9"),
+] as const);
 
 /**
  * What happens next, in the order it happens (#14). The fixed three lines
@@ -195,24 +198,24 @@ export function nextSteps({ builder = null, audience = null, mode = 'new' }: {
   audience?: Audience | null;
   mode?: 'new' | 'import' | 'fork';
 } = {}): readonly string[] {
-  if (mode === 'fork') return [NEXT_STEPS[0], NEXT_STEPS[1], SOLO_APPROVE];
-  const approve = audience === 'solo' ? SOLO_APPROVE
-    : audience ? 'Members vote it in, and it goes live.' : NEXT_STEPS[2];
+  if (mode === 'fork') return [NEXT_STEPS()[0], NEXT_STEPS()[1], SOLO_APPROVE()];
+  const approve = audience === 'solo' ? SOLO_APPROVE()
+    : audience ? tr("core:members_vote_it_in_and_it_goes_live_11f3e23a") : NEXT_STEPS()[2];
   if (builder === 'bot') {
     return [
-      'Homeroom bot builds the first version from your description.',
-      'It messages you in your chat when it’s ready, and asks there if anything is unclear.',
+      tr("core:homeroom_bot_builds_the_first_version_from_your__f7034c44"),
+      tr("core:it_messages_you_in_your_chat_when_it_s_ready_and_aed60f06"),
       approve,
     ];
   }
   if (builder === 'request') {
     return [
-      'Your description is the project’s first request.',
-      'Start a change from it, and a coding agent writes it.',
+      tr("core:your_description_is_the_project_s_first_request_ab4fad37"),
+      tr("core:start_a_change_from_it_and_a_coding_agent_writes_98291a27"),
       approve,
     ];
   }
-  return [NEXT_STEPS[0], NEXT_STEPS[1], approve];
+  return [NEXT_STEPS()[0], NEXT_STEPS()[1], approve];
 }
 
 /**
@@ -223,7 +226,7 @@ export function nextSteps({ builder = null, audience = null, mode = 'new' }: {
  */
 const SURFACES = {
   card: {
-    title: 'text-lg font-bold',
+    get title() { return tr("core:text_lg_font_bold_c67825c4"); },
     steps: 'space-y-2.5',
     // The dialog card is `bg-white dark:bg-zinc-900`, so an inset block
     // must not reach for that same dark tone — it would be invisible
@@ -236,7 +239,7 @@ const SURFACES = {
     primary: {} as const,
   },
   pane: {
-    title: 'text-[17px] font-semibold text-zinc-900 dark:text-zinc-100',
+    get title() { return tr("core:text_17px_font_semibold_text_zinc_900_dark_text__6a4f07fa"); },
     steps: 'space-y-2.5 rounded-2xl bg-white dark:bg-zinc-800 px-4 py-3',
     next: 'rounded-2xl bg-white dark:bg-zinc-800 px-4 py-3',
     actions: 'flex gap-2 pt-1',
@@ -255,7 +258,7 @@ export function CreateProgress({
   progress,
   builder = null,
   audience = null,
-  openLabel = 'Open app',
+  openLabel = tr("core:open_app_e51c6b48"),
   onOpenApp,
   onViewApp,
   onRetry,
@@ -311,9 +314,7 @@ export function CreateProgress({
       */}
       {outcome === 'failed' && progress.errorReason ? (
         <details id="create-progress-details" className="text-xs text-zinc-500 dark:text-zinc-400">
-          <summary className="cursor-pointer select-none font-medium text-zinc-600 dark:text-zinc-300">
-            Details
-          </summary>
+          <summary className="cursor-pointer select-none font-medium text-zinc-600 dark:text-zinc-300"><Message id="core:details_45989de4" /></summary>
           <p className="mt-1.5 font-mono break-words whitespace-pre-wrap text-zinc-600 dark:text-zinc-300">
             {progress.errorReason}
           </p>
@@ -327,9 +328,7 @@ export function CreateProgress({
       */}
       {outcome === 'failed' ? null : (
         <div id="create-progress-next" className={look.next}>
-          <p className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400 mb-2">
-            What happens next
-          </p>
+          <p className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400 mb-2"><Message id="core:what_happens_next_8f9b77e6" /></p>
           <ol className="space-y-1.5">
             {nextSteps({ builder, audience, mode }).map((line, i) => (
               <li key={line} className="flex gap-2 text-sm text-zinc-600 dark:text-zinc-300">
@@ -346,9 +345,7 @@ export function CreateProgress({
           its DM; the app is one press away too, above the footer.
       */}
       {outcome === 'live' && builder === 'bot' && onViewApp ? (
-        <button type="button" id="create-progress-view-app" className={look.secondary} onClick={onViewApp}>
-          Open app
-        </button>
+        <button type="button" id="create-progress-view-app" className={look.secondary} onClick={onViewApp}><Message id="core:open_app_e51c6b48" /></button>
       ) : null}
 
       <div className={look.actions}>
@@ -358,7 +355,7 @@ export function CreateProgress({
           className={look.close}
           onClick={onClose}
         >
-          {outcome === 'pending' ? 'Close' : 'Done'}
+          <LocalizedValue render={() => (outcome === 'pending' ? tr("core:close_7d9eb7ac") : tr("core:done_11a6767d"))} />
         </button>
         {outcome === 'live' ? (
           <Button type="button" id="create-progress-primary" layout="flex" {...look.primary} onClick={onOpenApp}>
@@ -366,14 +363,10 @@ export function CreateProgress({
           </Button>
         ) : null}
         {outcome === 'needs-secrets' ? (
-          <Button type="button" id="create-progress-primary" layout="flex" {...look.primary} onClick={onSetSecrets}>
-            Set secrets
-          </Button>
+          <Button type="button" id="create-progress-primary" layout="flex" {...look.primary} onClick={onSetSecrets}><Message id="core:set_secrets_b123ebdd" /></Button>
         ) : null}
         {outcome === 'failed' ? (
-          <Button type="button" id="create-progress-primary" layout="flex" {...look.primary} onClick={onRetry}>
-            Retry
-          </Button>
+          <Button type="button" id="create-progress-primary" layout="flex" {...look.primary} onClick={onRetry}><Message id="core:retry_942087cc" /></Button>
         ) : null}
       </div>
     </div>

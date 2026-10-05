@@ -1,3 +1,6 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
 /**
  * `#home-apps-more` — "Show all N apps", the collapsed grid's way out.
  *
@@ -37,7 +40,7 @@ export function AppsMoreBody({ moreCount }: { moreCount: number }) {
             home.render();
           }}
         >
-          {`Show all ${moreCount} apps`}
+          <LocalizedValue render={() => (tr("apps:show_all_value1_apps_e3a3273e", { value1: moreCount }))} />
         </button>
       ) : null}
     </div>
@@ -45,6 +48,7 @@ export function AppsMoreBody({ moreCount }: { moreCount: number }) {
 }
 
 export function AppsMore() {
+  useUiLanguage();
   const { moreCount } = useStoreState(chromeStore);
   return <AppsMoreBody moreCount={moreCount} />;
 }

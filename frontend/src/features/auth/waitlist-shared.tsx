@@ -1,3 +1,6 @@
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, RichMessage } from "../../lib/i18n/react";
 /**
  * Shared plumbing for the two waitlist surveys (#1080, step 2 chunk C,
  * screens 5 and 6).
@@ -9,7 +12,7 @@
  * document, shared by whichever screen asks first.
  */
 
-import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
+import { Fragment, useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 
 /**
  * The survey field, in ONE spelling for both screens (#2437).
@@ -87,19 +90,19 @@ export interface WaitlistStatus {
  */
 export const QUEUE_PILL = {
   pending: {
-    label: 'Waiting for confirmation',
+    get label() { return tr("auth:waiting_for_confirmation_6382ba0c"); },
     tint: 'bg-amber-50 dark:bg-amber-900/30 border-amber-200 dark:border-amber-700 text-amber-700 dark:text-amber-300',
-    note: 'Click the link in the email we sent, and your answers below move you up.',
+    get note() { return tr("auth:click_the_link_in_the_email_we_sent_and_your_ans_c43481c4"); },
   },
   confirmed: {
-    label: 'On the waitlist',
+    get label() { return tr("auth:on_the_waitlist_6ff9ad74"); },
     tint: 'bg-violet-50 dark:bg-violet-900/30 border-violet-200 dark:border-violet-700 text-violet-700 dark:text-violet-300',
-    note: 'Your address is confirmed. Answering the questions below moves you up.',
+    get note() { return tr("auth:your_address_is_confirmed_answering_the_question_ce0de72a"); },
   },
   admitted: {
-    label: "You're in",
+    get label() { return tr("auth:you_re_in_0fbb72da"); },
     tint: 'bg-emerald-50 dark:bg-emerald-900/30 border-emerald-200 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300',
-    note: 'Access is open for you. Check your email for the invite.',
+    get note() { return tr("auth:access_is_open_for_you_check_your_email_for_the__c6b0f77b"); },
   },
 } as const;
 
@@ -137,7 +140,7 @@ export function StatusPill({
   const pill = key ? QUEUE_PILL[key] : null;
   const note = !showNote ? null
     : (pill && key === 'admitted' && status?.has_account
-      ? 'Access is open and your account is linked. Sign in any time.'
+      ? tr("auth:access_is_open_and_your_account_is_linked_sign_i_a3dc856b")
       : pill?.note);
   return (
     <div
@@ -398,15 +401,16 @@ export function useSurveyAnswered(token: string | null): boolean {
  * the line names the terms without one, which is also what the prerender
  * draws.
  */
-export function TermsNotice({ verb = 'continuing', className = '' }: { verb?: string; className?: string }) {
+export function TermsNotice({ verb = 'continuing', className = '' }: { verb?: 'continuing' | 'signing in'; className?: string }) {
   const link = useWaitlistOptions()?.terms_link || null;
   return (
     <p className={`text-center text-[13px] text-zinc-500 dark:text-zinc-400 ${className}`}>
-      {`By ${verb}, you agree to Homeroom's `}
-      {link ? (
-        <a href={link} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-zinc-700 dark:hover:text-zinc-200">terms</a>
-      ) : 'terms'}
-      .
+      <RichMessage
+        id={verb === 'signing in' ? 'auth:terms_signing_in' : 'auth:terms_continuing'}
+        components={[link ? (
+          <a href={link} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-zinc-700 dark:hover:text-zinc-200" />
+        ) : <Fragment />]}
+      />
     </p>
   );
 }

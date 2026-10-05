@@ -1,3 +1,5 @@
+import { RichMessage } from "../../lib/i18n/react";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * Send-feedback dialog (#feedback-modal).
  *
@@ -81,12 +83,8 @@ export function FeedbackDialog() {
             particular, when what it posts is a request the members of the
             place it goes can see, vote on and pick up. The line under the
             heading says exactly that. */}
-        <h2 className="text-lg font-bold">
-          Ask for a change
-        </h2>
-        <p className="mt-0.5 mb-4 text-sm text-zinc-600 dark:text-zinc-400">
-          Members can see it, vote on it and pick it up.
-        </p>
+        <h2 className="text-lg font-bold"><Message id="core:ask_for_a_change_f445fc4f" /></h2>
+        <p className="mt-0.5 mb-4 text-sm text-zinc-600 dark:text-zinc-400"><Message id="core:members_can_see_it_vote_on_it_and_pick_it_up_4592a6ed" /></p>
         {/*
             Target toggle: file this feedback against the app being viewed
             or against the Homeroom platform. The "This app" button
@@ -108,9 +106,7 @@ export function FeedbackDialog() {
             option leads with the NAME of the place (the app's, or
             Homeroom), with what it is under it, so the choice is between
             two places a person knows rather than two categories. */}
-        <p id="feedback-target-label" className="mb-1.5 text-sm font-medium text-zinc-900 dark:text-zinc-100">
-          Where should this go?
-        </p>
+        <p id="feedback-target-label" className="mb-1.5 text-sm font-medium text-zinc-900 dark:text-zinc-100"><Message id="core:where_should_this_go_172707af" /></p>
         <div id="feedback-target" className="flex gap-2 mb-3" role="radiogroup" aria-labelledby="feedback-target-label">
           <div className="flex-1 flex flex-col items-center">
             <button
@@ -124,8 +120,8 @@ export function FeedbackDialog() {
               {/* The controller writes the app's name into the first line,
                   and "No app open" when there is none; the second line says
                   what it is, and goes when the first already says it. */}
-              <span id="feedback-target-app-name" className="block truncate text-sm font-semibold">This app</span>
-              <span id="feedback-target-app-sub" className="block truncate text-xs opacity-75">This app</span>
+              <span id="feedback-target-app-name" className="block truncate text-sm font-semibold"><Message id="core:this_app_0982cb17" /></span>
+              <span id="feedback-target-app-sub" className="block truncate text-xs opacity-75"><Message id="core:this_app_0982cb17" /></span>
             </button>
             {/* Caret indicating the selected option; shown/hidden by the controller. */}
             <div
@@ -142,10 +138,7 @@ export function FeedbackDialog() {
               data-feedback-target="platform"
               id="feedback-target-platform"
               className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-left transition-colors"
-            >
-              <span className="block truncate text-sm font-semibold">Homeroom</span>
-              <span className="block truncate text-xs opacity-75">The platform itself</span>
-            </button>
+            ><RichMessage id="core:sentence_65c51315a582" components={[<span className="block truncate text-sm font-semibold" />, <span className="block truncate text-xs opacity-75" />]} /></button>
             <div
               id="feedback-caret-platform"
               className="hidden mt-1 w-0 h-0 border-l-4 border-r-4 border-b-4 border-l-transparent border-r-transparent border-b-violet-600"
@@ -177,18 +170,12 @@ export function FeedbackDialog() {
             Left blank at submit, the server names the issue as before.
         */}
         <div className="mb-2">
-          <Label id="feedback-title-label" htmlFor="feedback-title" className="mb-1">
-            Title
-            <span className="font-normal text-zinc-500 dark:text-zinc-500">
-              {' optional'}
-            </span>
-          </Label>
-          <Input
+          <Label id="feedback-title-label" htmlFor="feedback-title" className="mb-1"><RichMessage id="core:sentence_26f6ea772843" components={[<span className="font-normal text-zinc-500 dark:text-zinc-500" />]} /></Label>
+          <Localized element={<Input
             id="feedback-title"
             type="text"
-            maxLength={200}
-            placeholder="Suggested as you type"
-          />
+            maxLength={200} placeholder={catalogText("core:suggested_as_you_type_d3c5cf47")}
+          />} messages={{"placeholder":"core:suggested_as_you_type_d3c5cf47"}} />
         </div>
         {/*
             #1603: the description was always mandatory — the controller's
@@ -210,18 +197,15 @@ export function FeedbackDialog() {
           {/* "What should change?", which was "Description*" (UI overhaul):
               a question that says what to write, and plainly the one thing
               the request needs, so it carries no asterisk. */}
-          <Label id="feedback-text-label" htmlFor="feedback-text" className="mb-1">
-            What should change?
-          </Label>
-          <Textarea
+          <Label id="feedback-text-label" htmlFor="feedback-text" className="mb-1"><Message id="core:what_should_change_e6cbf7fa" /></Label>
+          <Localized element={<Textarea
             id="feedback-text"
             rows={4}
             maxLength={2000}
-            aria-required="true"
-            placeholder="Describe the change, or the problem you hit"
+            aria-required="true" placeholder={catalogText("core:describe_the_change_or_the_problem_you_hit_1a8ea3fb")}
             className="resize-none"
           >
-          </Textarea>
+          </Textarea>} messages={{"placeholder":"core:describe_the_change_or_the_problem_you_hit_1a8ea3fb"}} />
           <p id="feedback-text-error" role="alert" className="hidden mt-1 text-xs text-red-700 dark:text-red-400">
           </p>
         </div>
@@ -247,16 +231,14 @@ export function FeedbackDialog() {
               className="hidden inline-flex min-h-[48px] items-center gap-1.5 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
             >
               <CameraIcon className="w-3.5 h-3.5" />
-              <span data-screenshot-label="">Attach screenshot</span>
+              <span data-screenshot-label=""><Message id="core:attach_screenshot_97ea8f3f" /></span>
             </button>
             <button
               id="feedback-screenshot-picker-btn"
               type="button"
               className="hidden inline-flex min-h-[48px] items-center gap-1.5 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
             >
-              <PhotoIcon className="w-3.5 h-3.5" />
-              Choose from Photos
-            </button>
+              <PhotoIcon className="w-3.5 h-3.5" /><Message id="core:choose_from_photos_29f14b4f" /></button>
             <input
               id="feedback-screenshot-input"
               type="file"
@@ -285,12 +267,7 @@ export function FeedbackDialog() {
               defaultChecked={true}
               className="accent-violet-500 w-4 h-4 mt-0.5"
             />
-            <span className="text-xs text-zinc-600 dark:text-zinc-400">
-              <span className="font-medium text-zinc-700 dark:text-zinc-300">
-                Include app state:
-              </span>
-              this app can attach a snapshot of its current state to help debugging
-            </span>
+            <span className="text-xs text-zinc-600 dark:text-zinc-400"><RichMessage id="core:sentence_6954da0dc50d" components={[<span className="font-medium text-zinc-700 dark:text-zinc-300" />]} /></span>
           </label>
         </div>
         {/*
@@ -322,10 +299,8 @@ export function FeedbackDialog() {
           <label className="flex items-start gap-2 cursor-pointer select-none">
             <input id="feedback-bounty-checkbox" type="checkbox" className="accent-violet-500 w-4 h-4 mt-0.5" />
             <span className="text-xs text-zinc-600 dark:text-zinc-400">
-              <span className="font-medium text-zinc-700 dark:text-zinc-300">
-                Put a kudos on this
-              </span>
-              {' to thank whoever solves it'}
+              <span className="font-medium text-zinc-700 dark:text-zinc-300"><Message id="core:put_a_kudos_on_this_fc4bcd3c" /></span>
+              <Message id="core:to_thank_whoever_solves_it_1b252eed" />
               <br />
               <span id="feedback-bounty-note" className="text-zinc-500 dark:text-zinc-500">
               </span>
@@ -347,31 +322,21 @@ export function FeedbackDialog() {
             id="feedback-cancel"
             className="flex-1 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
             onClick={() => dialog.close()}
-          >
-            Cancel
-          </button>
-          <Button id="feedback-submit" layout="flex">
-            Post request
-          </Button>
+          ><Message id="core:cancel_19766ed6" /></button>
+          <Button id="feedback-submit" layout="flex"><Message id="core:post_request_f070a1ea" /></Button>
         </div>
         </div>
         <section id="feedback-first-success" className="hidden" aria-labelledby="feedback-first-title" tabIndex={-1}>
-          <h2 id="feedback-first-title" className="text-xl font-bold mb-3">
-            Congratulations on your first request!
-          </h2>
-          <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-4">
-            You’ve helped make this app better. Want to take the next step?
-          </p>
+          <h2 id="feedback-first-title" className="text-xl font-bold mb-3"><Message id="core:congratulations_on_your_first_request_1b7c19bd" /></h2>
+          <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-4"><Message id="core:you_ve_helped_make_this_app_better_want_to_take__6b08ca94" /></p>
           <p id="feedback-first-notice" className="text-sm text-emerald-700 dark:text-emerald-400 mb-4" role="status"></p>
           <div className="flex flex-col gap-3">
-            <Button id="feedback-first-fix" disabledStyle="block" className="min-h-[44px]">Try a fix yourself</Button>
-            <p id="feedback-first-fix-note" className="text-xs text-zinc-500 dark:text-zinc-400">
-              Start with a draft you can edit before sending it to the coding agent.
-            </p>
-            <Button id="feedback-first-board" variant="neutral" ink="neutral" disabledStyle="block" className="min-h-[44px]">See this app’s board</Button>
+            <Button id="feedback-first-fix" disabledStyle="block" className="min-h-[44px]"><Message id="core:try_a_fix_yourself_8f4261e4" /></Button>
+            <p id="feedback-first-fix-note" className="text-xs text-zinc-500 dark:text-zinc-400"><Message id="core:start_with_a_draft_you_can_edit_before_sending_i_c0b2869c" /></p>
+            <Button id="feedback-first-board" variant="neutral" ink="neutral" disabledStyle="block" className="min-h-[44px]"><Message id="core:see_this_app_s_board_22885aca" /></Button>
             {/* #3186: the Me screen's list, where this report now is. */}
-            <Button id="feedback-first-mine" variant="neutral" ink="neutral" className="min-h-[44px]">See your requests</Button>
-            <Button id="feedback-first-done" variant="unstyled" ink="muted" className="min-h-[44px]">Done</Button>
+            <Button id="feedback-first-mine" variant="neutral" ink="neutral" className="min-h-[44px]"><Message id="core:see_your_requests_893fe5b4" /></Button>
+            <Button id="feedback-first-done" variant="unstyled" ink="muted" className="min-h-[44px]"><Message id="core:done_11a6767d" /></Button>
           </div>
         </section>
         {/*
@@ -384,24 +349,18 @@ export function FeedbackDialog() {
             for the reason #feedback-status does.
         */}
         <section id="feedback-sent" className="hidden" aria-labelledby="feedback-sent-title" tabIndex={-1}>
-          <h2 id="feedback-sent-title" className="text-lg font-bold mb-3">
-            Request posted
-          </h2>
+          <h2 id="feedback-sent-title" className="text-lg font-bold mb-3"><Message id="core:request_posted_fa85958e" /></h2>
           <p id="feedback-sent-notice" className="hidden text-sm text-emerald-700 dark:text-emerald-400 mb-2" role="status"></p>
           {/* B8: where Homeroom bot builds it, this says so ("Homeroom bot is
               on it, usually about 8 minutes."), Open chat leads, and building
               it yourself is the small link at the foot. The controller words
               the line and shows the two. */}
-          <p id="feedback-sent-line" className="text-sm text-zinc-600 dark:text-zinc-400 mb-4">
-            Find it on your profile, under Your requests.
-          </p>
+          <p id="feedback-sent-line" className="text-sm text-zinc-600 dark:text-zinc-400 mb-4"><Message id="core:find_it_on_your_profile_under_your_requests_ca1132f3" /></p>
           <div className="flex flex-col gap-3">
-            <Button id="feedback-sent-chat" className="hidden min-h-[44px]">Open chat</Button>
-            <Button id="feedback-sent-mine" variant="neutral" ink="neutral" className="min-h-[44px]">See your requests</Button>
-            <Button id="feedback-sent-done" variant="unstyled" ink="muted" className="min-h-[44px]">Done</Button>
-            <button id="feedback-sent-fix" type="button" className="hidden self-center text-xs text-zinc-500 underline underline-offset-2 dark:text-zinc-400">
-              Build it yourself with a coding agent
-            </button>
+            <Button id="feedback-sent-chat" className="hidden min-h-[44px]"><Message id="core:open_chat_0600175a" /></Button>
+            <Button id="feedback-sent-mine" variant="neutral" ink="neutral" className="min-h-[44px]"><Message id="core:see_your_requests_893fe5b4" /></Button>
+            <Button id="feedback-sent-done" variant="unstyled" ink="muted" className="min-h-[44px]"><Message id="core:done_11a6767d" /></Button>
+            <button id="feedback-sent-fix" type="button" className="hidden self-center text-xs text-zinc-500 underline underline-offset-2 dark:text-zinc-400"><Message id="core:build_it_yourself_with_a_coding_agent_1cf36aa3" /></button>
           </div>
         </section>
       </DialogCard>

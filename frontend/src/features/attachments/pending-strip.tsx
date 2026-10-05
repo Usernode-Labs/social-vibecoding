@@ -1,3 +1,6 @@
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * The pending-upload strip above a composer — the chips and thumbnails for
  * files that are staged but not yet sent.
@@ -53,15 +56,14 @@ function Row({
   const remove = item.uploading ? (
     <span className="dc-attach-uploading">…</span>
   ) : (
-    <button
+    <Localized element={<LocalizedDynamic element={<button
       type="button"
-      className="dc-attach-remove"
-      title="Remove"
-      aria-label={`Remove ${item.name}`}
+      className="dc-attach-remove" title={catalogText("core:remove_c3812fc4")}
+      aria-label={tr("core:remove_value1_d2f6b9b7", { value1: item.name })}
       onClick={() => onRemove(index)}
     >
       ×
-    </button>
+    </button>} resolve={() => ({ get "aria-label"() { return tr("core:remove_value1_d2f6b9b7", { value1: item.name }); } })} />} messages={{"title":"core:remove_c3812fc4"}} />
   );
   if (item.kind === 'image' && item.thumbUrl) {
     return (

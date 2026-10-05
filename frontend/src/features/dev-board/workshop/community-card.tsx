@@ -1,3 +1,9 @@
+import { getLanguage } from "../../../lib/i18n/runtime";
+import { useMessages as useUiLanguage } from "../../../lib/i18n/react";
+import { RichMessage } from "../../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../../lib/i18n/react";
+import { t as tr } from "../../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../../lib/i18n/react";
 /**
  * The project page's hero: what this is, who it is for, and Join, at the top
  * of the project's own Workshop page, above where the app is.
@@ -135,17 +141,17 @@ export function approvalLine(approval: CommunityPayload['approval'] | null | und
   const required = Math.max(1, Number(approval.required) || 1);
   const electorate = Math.max(1, Number(approval.electorate) || 1);
   if (approval.policy === 'invited') {
-    return `Approvers decide: ${plural(required, 'yes vote', 'yes votes')} from ${plural(electorate, 'approver', 'approvers')} to merge a change.`;
+    return tr("workshop:approvers_decide_value1_from_value2_to_merge_a_c_1f77f311", { value1: plural(required, tr("workshop:yes_vote_5b8e1fe6"), tr("workshop:yes_votes_89c988c3")), value2: plural(electorate, 'approver', 'approvers') });
   }
   if (approval.approvals_required != null) {
-    return `A change needs ${plural(required, 'yes vote', 'yes votes')} from members to merge.`;
+    return tr("workshop:a_change_needs_value1_from_members_to_merge_a9e3ebab", { value1: plural(required, tr("workshop:yes_vote_5b8e1fe6"), tr("workshop:yes_votes_89c988c3")) });
   }
-  return `Members vote: a change merges at ${plural(required, 'yes vote', 'yes votes')} (${plural(electorate, 'active member', 'active members')}), or unopposed after a wait.`;
+  return tr("workshop:members_vote_a_change_merges_at_value1_value2_or_e2eb796b", { value1: plural(required, tr("workshop:yes_vote_5b8e1fe6"), tr("workshop:yes_votes_89c988c3")), value2: plural(electorate, tr("workshop:active_member_96ec9ba3"), tr("workshop:active_members_6ed1f2aa")) });
 }
 
 /** "Public community · 12 members"; "Just you" alone, because there is one. */
 export function audienceLine(p: Pick<CommunityPayload, 'audience' | 'audience_label' | 'member_count'>): string {
-  if (p.audience === 'solo') return p.audience_label || 'Just you';
+  if (p.audience === 'solo') return p.audience_label || tr("workshop:just_you_aeed20a9");
   return `${p.audience_label} · ${plural(Number(p.member_count) || 0, 'member', 'members')}`;
 }
 
@@ -156,9 +162,9 @@ export function audienceLine(p: Pick<CommunityPayload, 'audience' | 'audience_la
  */
 export function audienceChangeLine(title: string | null | undefined): string {
   const t = String(title || '');
-  if (/ public$/.test(t)) return 'Making it a public community is waiting for approval';
-  if (/private \(collaborators only\)$/.test(t)) return 'Making it a private community is waiting for approval';
-  return 'A change to who it is for is waiting for approval';
+  if (/ public$/.test(t)) return tr("workshop:making_it_a_public_community_is_waiting_for_appr_7bdc8439");
+  if (/private \(collaborators only\)$/.test(t)) return tr("workshop:making_it_a_private_community_is_waiting_for_app_8103d7b0");
+  return tr("workshop:a_change_to_who_it_is_for_is_waiting_for_approva_86264355");
 }
 
 function AudienceGlyph({ audience }: { audience: Audience }) {
@@ -276,7 +282,7 @@ export function HeroPeople({ members, count, audience, audienceLabel, children }
 export function sparkDay(day: string): string {
   const when = new Date(`${day}T12:00:00`);
   return Number.isNaN(when.getTime()) ? day
-    : when.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+    : when.toLocaleDateString(getLanguage(), { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
 /** The tip's first line: "Sat, Sep 26 · 21 people". */
@@ -310,6 +316,7 @@ const TIP_LINGER_MS = 2500;
  * lists every day's count, and the tip is hidden from it.
  */
 function Spark({ days, peak }: { days: Array<{ day: string; n: number }>; peak: number }) {
+  useUiLanguage();
   const [at, setAt] = useState<number | null>(null);
   const boxRef = useRef<HTMLSpanElement | null>(null);
   const linger = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -329,13 +336,13 @@ function Spark({ days, peak }: { days: Array<{ day: string; n: number }>; peak: 
   const active = at == null ? null : days[at] || null;
   return (
     <span className="dev-ws-hero-spark-wrap">
-      <span
+      <LocalizedDynamic element={<span
         ref={boxRef}
         className="dev-ws-hero-spark"
         data-ws-members-trend=""
         {...(active ? { 'data-ws-spark-active': '' } : {})}
         role="img"
-        aria-label={`People taking part each day, last ${days.length} days: ${days.map((d) => Number(d.n) || 0).join(', ')}`}
+        aria-label={tr("workshop:people_taking_part_each_day_last_value1_days_val_74c0be5e", { value1: days.length, value2: days.map((d) => Number(d.n) || 0).join(', ') })}
         onPointerDown={(e) => {
           stopLinger();
           if (e.pointerType !== 'mouse') {
@@ -365,11 +372,11 @@ function Spark({ days, peak }: { days: Array<{ day: string; n: number }>; peak: 
             />
           );
         })}
-      </span>
+      </span>} resolve={() => ({ get "aria-label"() { return tr("workshop:people_taking_part_each_day_last_value1_days_val_74c0be5e", { value1: days.length, value2: days.map((d) => Number(d.n) || 0).join(', ') }); } })} />
       {active ? (
         <span className="dev-ws-hero-spark-tip" aria-hidden="true" data-ws-spark-tip="">
           <span className="dev-ws-hero-spark-tip-day">{sparkTip(active)}</span>
-          <span className="dev-ws-hero-spark-tip-cap">Who took part, last 14 days</span>
+          <span className="dev-ws-hero-spark-tip-cap"><Message id="workshop:who_took_part_last_14_days_f50e9fea" /></span>
         </span>
       ) : null}
     </span>
@@ -389,19 +396,17 @@ export function HeroActivity({ activity }: { activity: CommunityPayload['activit
   const peak = Math.max(0, ...days.map((d) => Number(d.n) || 0));
   if (!active && !shipped && !peak) {
     return (
-      <p className="dev-ws-hero-line" data-ws-members-trend="" data-ws-trend-empty="">
-        Nobody has been around in the last 14 days.
-      </p>
+      <p className="dev-ws-hero-line" data-ws-members-trend="" data-ws-trend-empty=""><Message id="workshop:nobody_has_been_around_in_the_last_14_days_12d49252" /></p>
     );
   }
   return (
     <div className="dev-ws-hero-activity" data-ws-members-stats="">
       <span className="dev-ws-hero-activity-words">
         <span className="dev-ws-hero-activity-line">
-          {active ? <span data-ws-members-cell="active"><b>{active}</b> active this week</span> : null}
+          {active ? <span data-ws-members-cell="active"><RichMessage id="workshop:sentence_da80fd2ae772" values={{ value1: active }} components={[<b />]} /></span> : null}
           {active && shipped ? ' · ' : null}
-          {shipped ? <span data-ws-members-cell="shipped"><b>{shipped}</b> shipped this month</span> : null}
-          {!active && !shipped ? 'Quiet this week' : null}
+          {shipped ? <span data-ws-members-cell="shipped"><RichMessage id="workshop:sentence_2c8468f92b31" values={{ value1: shipped }} components={[<b />]} /></span> : null}
+          <LocalizedValue render={() => (!active && !shipped ? tr("workshop:quiet_this_week_d1cc51c7") : null)} />
         </span>
       </span>
       {days.length >= 2 ? <Spark days={days} peak={peak} /> : null}
@@ -426,7 +431,7 @@ export async function proposeAudience(slug: string, to: 'public' | 'private'): P
   });
   if (!res.ok && res.status !== 409) {
     const body = await res.json().catch(() => ({}));
-    throw new Error((body && body.error) || 'That did not go through. Try again.');
+    throw new Error((body && body.error) || tr("workshop:that_did_not_go_through_try_again_057c05e0"));
   }
 }
 
@@ -435,9 +440,7 @@ export async function proposeAudience(slug: string, to: 'public' | 'private'): P
  * it: the repository stays public on GitHub (services/github.js createRepo)
  * whatever this setting says.
  */
-export const MAKE_PRIVATE_LINE = 'Only people who are invited can open it and build it. '
-  + 'Its code stays public on GitHub. '
-  + 'Members vote on this first, and it applies once it merges.';
+export const MAKE_PRIVATE_LINE = () => (tr("workshop:only_people_who_are_invited_can_open_it_and_buil_e884af37"));
 
 /**
  * "Make it private", from the hub's ⋯ (../actions-row.tsx DevPlusMenu's
@@ -451,16 +454,16 @@ export async function confirmMakePrivate(slug: string, name: string): Promise<vo
   const ui = (window as any).PlatformUI;
   if (!ui || typeof ui.confirm !== 'function') return;
   const ok = await ui.confirm({
-    title: `Make ${name} a private community?`,
-    message: MAKE_PRIVATE_LINE,
-    confirmLabel: 'Propose making it private',
-    cancelLabel: 'Not now',
+    get title() { return tr("workshop:make_value1_a_private_community_dd501e22", { value1: name }); },
+    message: MAKE_PRIVATE_LINE(),
+    get confirmLabel() { return tr("workshop:propose_making_it_private_9a73a4c5"); },
+    get cancelLabel() { return tr("workshop:not_now_a0e63d7c"); },
   });
   if (!ok) return;
   try {
     await proposeAudience(slug, 'private');
   } catch (err) {
-    ui.toast?.(err instanceof Error ? err.message : 'That did not go through. Try again.');
+    ui.toast?.(err instanceof Error ? err.message : tr("workshop:that_did_not_go_through_try_again_057c05e0"));
     return;
   }
   await reloadCommunity(slug);
@@ -477,6 +480,7 @@ function MakePublic({ slug, name, onOpened }: {
   name: string;
   onOpened: () => void;
 }) {
+  useUiLanguage();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -508,7 +512,7 @@ function MakePublic({ slug, name, onOpened }: {
       setOpen(false);
       onOpened();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'That did not go through. Try again.');
+      setError(err instanceof Error ? err.message : tr("workshop:that_did_not_go_through_try_again_057c05e0"));
     } finally {
       setBusy(false);
     }
@@ -526,21 +530,17 @@ function MakePublic({ slug, name, onOpened }: {
         aria-haspopup="dialog"
         aria-expanded={open}
         onClick={() => { setError(''); setOpen((v) => !v); }}
-      >
-        Make it public
-      </Button>
+      ><Message id="workshop:make_it_public_20c4d94c" /></Button>
       {open ? (
-        <div
+        <LocalizedDynamic element={<div
           ref={popRef}
           className="dev-ws-join-pop"
           role="dialog"
-          aria-label={`Make ${name} a public community?`}
+          aria-label={tr("workshop:make_value1_a_public_community_eb258e65", { value1: name })}
           data-ws-audience-pop=""
         >
-          <p className="dev-ws-ask-q">{`Make ${name} a public community?`}</p>
-          <p className="dev-ws-vote-sub">
-            Anyone can find it on Discover, join, and propose changes. Members vote on this first, and it applies once it merges.
-          </p>
+          <p className="dev-ws-ask-q"><LocalizedValue render={() => (tr("workshop:make_value1_a_public_community_eb258e65", { value1: name }))} /></p>
+          <p className="dev-ws-vote-sub"><Message id="workshop:anyone_can_find_it_on_discover_join_and_propose__1ed5c424" /></p>
           {error ? <p className="dev-ws-audience-error" role="alert" data-ws-audience-error="">{error}</p> : null}
           <div className="dev-ws-answer-row">
             <button
@@ -550,14 +550,10 @@ function MakePublic({ slug, name, onOpened }: {
               autoFocus
               disabled={busy}
               onClick={() => { void propose(); }}
-            >
-              Propose making it public
-            </button>
+            ><Message id="workshop:propose_making_it_public_ba844977" /></button>
           </div>
-          <button type="button" className="dev-ws-vote-later" data-ws-audience-answer="later" onClick={() => setOpen(false)}>
-            Not now
-          </button>
-        </div>
+          <button type="button" className="dev-ws-vote-later" data-ws-audience-answer="later" onClick={() => setOpen(false)}><Message id="workshop:not_now_a0e63d7c" /></button>
+        </div>} resolve={() => ({ get "aria-label"() { return tr("workshop:make_value1_a_public_community_eb258e65", { value1: name }); } })} />
       ) : null}
     </span>
   );
@@ -584,6 +580,7 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false }: {
       platform's own, which is the page you are on. */
   canOpenApp?: boolean;
 }) {
+  useUiLanguage();
   const data = useCommunity(slug);
   const [busy, setBusy] = useState(false);
   // The open Join question, if one is: its answer goes back to whoever asked
@@ -653,9 +650,7 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false }: {
       data-ws-community-open-app=""
       onClick={() => { (window as any).App?.openAppTab?.(slug, 'app'); }}
     >
-      <PlayIcon className="w-3 h-3" aria-hidden="true" />
-      Open app
-    </button>
+      <PlayIcon className="w-3 h-3" aria-hidden="true" /><Message id="workshop:open_app_e51c6b48" /></button>
   ) : null;
   if (!data) {
     return (openApp || menu) ? (
@@ -711,19 +706,17 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false }: {
         aria-expanded={!!asking}
         disabled={busy && !asking}
         onClick={() => { void join(); }}
-      >
-        Join
-      </Button>
+      ><Message id="workshop:join_fd30fe68" /></Button>
       {asking ? (
-        <div
+        <LocalizedDynamic element={<div
           ref={popRef}
           className="dev-ws-join-pop"
           role="dialog"
-          aria-label={`Join ${displayName}?`}
+          aria-label={tr("workshop:join_value1_b4f8b7c8", { value1: displayName })}
           data-ws-join-pop=""
         >
-          <p className="dev-ws-ask-q">Join {displayName}?</p>
-          <p className="dev-ws-vote-sub">Members start changes, file requests, vote and chat here.</p>
+          <p className="dev-ws-ask-q"><Message after={" "} id="workshop:join_fd30fe68" />{displayName}?</p>
+          <p className="dev-ws-vote-sub"><Message id="workshop:members_start_changes_file_requests_vote_and_cha_c37decc6" /></p>
           <div className="dev-ws-answer-row">
             <button
               type="button"
@@ -731,14 +724,10 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false }: {
               data-ws-join-answer="join"
               autoFocus
               onClick={() => asking.answer(true)}
-            >
-              Join
-            </button>
+            ><Message id="workshop:join_fd30fe68" /></button>
           </div>
-          <button type="button" className="dev-ws-vote-later" data-ws-join-answer="later" onClick={() => asking.answer(false)}>
-            Not now
-          </button>
-        </div>
+          <button type="button" className="dev-ws-vote-later" data-ws-join-answer="later" onClick={() => asking.answer(false)}><Message id="workshop:not_now_a0e63d7c" /></button>
+        </div>} resolve={() => ({ get "aria-label"() { return tr("workshop:join_value1_b4f8b7c8", { value1: displayName }); } })} />
       ) : null}
     </span>
   ) : data.is_creator ? null : (
@@ -747,20 +736,18 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false }: {
     // Discover draws. Outlined, not filled: it shares a row with Open app,
     // and a settled state should not be the loudest thing in it. The creator
     // gets none: they cannot leave what they started.
-    <Button
+    <LocalizedDynamic element={<Button
       type="button"
       variant="pillNeutral"
       size="sm"
       ink="neutral"
       className="dev-ws-joined inline-flex items-center gap-1"
       data-ws-community-leave=""
-      title={`Joined. Tap to leave ${displayName}`}
+      title={tr("workshop:joined_tap_to_leave_value1_bebe1ddb", { value1: displayName })}
       disabled={busy}
       onClick={() => { void leave(); }}
     >
-      <CheckIcon className="w-3.5 h-3.5" strokeWidth="3" aria-hidden="true" />
-      Joined
-    </Button>
+      <CheckIcon className="w-3.5 h-3.5" strokeWidth="3" aria-hidden="true" /><Message id="workshop:joined_69318b0c" /></Button>} resolve={() => ({ get "title"() { return tr("workshop:joined_tap_to_leave_value1_bebe1ddb", { value1: displayName }); } })} />
   );
 
   return (
@@ -795,17 +782,14 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false }: {
       <div className="dev-ws-hero-actions">
         {openApp}
         {data.is_member && !solo ? (
-          <Button
+          <Localized element={<Button title={catalogText("workshop:invite_people_with_a_link_214c7ce6")}
             type="button"
             variant="pillNeutral"
             size="sm"
             ink="neutral"
             data-ws-community-invite=""
-            title="Invite people with a link"
             onClick={openInviteLinks}
-          >
-            Invite
-          </Button>
+          ><Message id="workshop:invite_1fd9ae16" /></Button>} messages={{"title":"workshop:invite_people_with_a_link_214c7ce6"}} />
         ) : null}
         {data.can_manage && !data.audience_change && data.audience === 'invited' ? (
           <MakePublic slug={slug} name={displayName} onOpened={() => { void load(); }} />
@@ -846,10 +830,8 @@ export function ShareItCard({ slug, name }: { slug: string; name?: string }) {
   if (!canInvite && !canOpenUp) return null;
   return (
     <section className="dev-ws-strip dev-ws-share" data-ws-share="">
-      <div className="dev-ws-head">
-        <span className="dev-ws-head-title">Share it</span>
-      </div>
-      <p className="dev-ws-strip-text">Invite people to make it a private community, or make it public so anyone can join.</p>
+      <div className="dev-ws-head"><RichMessage id="workshop:sentence_8a3239763589" components={[<span className="dev-ws-head-title" />]} /></div>
+      <p className="dev-ws-strip-text"><Message id="workshop:invite_people_to_make_it_a_private_community_or__5a5fd3b5" /></p>
       <div className="dev-ws-share-actions">
         {canInvite ? (
           <Button
@@ -859,9 +841,7 @@ export function ShareItCard({ slug, name }: { slug: string; name?: string }) {
             ink="neutral"
             data-ws-share-invite=""
             onClick={openInviteLinks}
-          >
-            Invite people
-          </Button>
+          ><Message id="workshop:invite_people_27bf0f2d" /></Button>
         ) : null}
         {canOpenUp ? (
           <MakePublic slug={slug} name={name || data.name || slug} onOpened={() => { void reloadCommunity(slug); }} />
@@ -885,11 +865,9 @@ export function ApprovalRules({ slug }: { slug: string }) {
   if (!data || !data.approval) return null;
   return (
     <section className="dev-ws-strip" data-ws-approval-rules="">
-      <div className="dev-ws-head">
-        <span className="dev-ws-head-title">Approval rules</span>
-      </div>
+      <div className="dev-ws-head"><RichMessage id="workshop:sentence_14d8ef32eb50" components={[<span className="dev-ws-head-title" />]} /></div>
       <p className="dev-ws-rules-line" data-ws-community-rule="">{approvalLine(data.approval)}</p>
-      <p className="dev-ws-rules-sub">Changing a rule is a proposal too, applied once it is voted in.</p>
+      <p className="dev-ws-rules-sub"><Message id="workshop:changing_a_rule_is_a_proposal_too_applied_once_i_ed4c37d5" /></p>
     </section>
   );
 }

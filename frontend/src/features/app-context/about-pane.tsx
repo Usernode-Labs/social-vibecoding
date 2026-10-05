@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * About — the second pane of the app-context sheet (#2718), drawn the way the
  * navigation prototype draws it (nav-prototype.html, `sheetHtml` case
@@ -260,7 +264,7 @@ export function ContributorsFold({ people, total, showAll, onToggle }: {
             >
               <Avatar who={c.who} size="sm" />
               <span className="flex-1 min-w-0 truncate font-medium">{`@${c.who}`}</span>
-              <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">{`${c.merged} live`}</span>
+              <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400"><LocalizedValue render={() => (tr("apps:value1_live_2c4bcb92", { value1: c.merged }))} /></span>
             </a>
           ))}
         </div>
@@ -274,7 +278,7 @@ export function ContributorsFold({ people, total, showAll, onToggle }: {
           className="w-full px-5 min-h-[40px] text-left text-sm font-medium text-violet-700 dark:text-violet-400 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
           onClick={onToggle}
         >
-          {showAll ? 'Show fewer' : `Show all ${total} contributors`}
+          <LocalizedValue render={() => (showAll ? tr("apps:show_fewer_255beb65") : tr("apps:show_all_value1_contributors_3f482bc4", { value1: total }))} />
         </button>
       ) : null}
     </>
@@ -282,6 +286,7 @@ export function ContributorsFold({ people, total, showAll, onToggle }: {
 }
 
 export function AboutPane({ label }: { label: string }): ReactNode {
+  const language = useUiLanguage();
   const {
     slug, target, restricted, repoUrl, canShare, version, iconUrl, iconEmoji, tab, deploying,
   } = useStoreState(improveStore);
@@ -311,7 +316,7 @@ export function AboutPane({ label }: { label: string }): ReactNode {
     const menuItemsFor = home()?.menuItemsFor;
     if (!isApp || !row || typeof menuItemsFor !== 'function') return [];
     try { return menuItemsFor(row) || []; } catch { return []; }
-  }, [isApp, row]);
+  }, [isApp, row, language]);
   const homeScreenItem = items.find((i) => i && (i.key === 'add-to-homescreen' || i.key === 'install'));
   const forkItem = items.find((i) => i && i.key === 'fork');
 
@@ -419,16 +424,16 @@ export function AboutPane({ label }: { label: string }): ReactNode {
           {isApp && lineage ? (
             <p id="app-about-lineage" className="mt-0.5 text-xs text-amber-600 dark:text-amber-400 truncate">
               {lineage.href ? (
-                <a
+                <LocalizedDynamic element={<a
                   href={lineage.href}
                   className="hover:underline"
-                  title={`Remixed from ${lineage.name}: open the original`}
+                  title={tr("apps:remixed_from_value1_open_the_original_29d573e9", { value1: lineage.name })}
                   onClick={() => { void AppContext.dismissForNav(); }}
                 >
-                  {`\u2442 Remixed from ${lineage.name}`}
-                </a>
+                  <LocalizedValue render={() => (tr("apps:remixed_from_value1_9705e65b", { value1: lineage.name }))} />
+                </a>} resolve={() => ({ get "title"() { return tr("apps:remixed_from_value1_open_the_original_29d573e9", { value1: lineage.name }); } })} />
               ) : (
-                <span title="The original app no longer exists">{`\u2442 Remixed from ${lineage.name}`}</span>
+                <Localized element={<span title={catalogText("apps:the_original_app_no_longer_exists_23bafd55")}><LocalizedValue render={() => (tr("apps:remixed_from_value1_9705e65b", { value1: lineage.name }))} /></span>} messages={{"title":"apps:the_original_app_no_longer_exists_23bafd55"}} />
               )}
             </p>
           ) : null}
@@ -442,7 +447,7 @@ export function AboutPane({ label }: { label: string }): ReactNode {
               {pill ? (
                 <span
                   id="app-about-version"
-                  title={[shortSha ? `Version ${shortSha}` : null, updated?.title ? `live since ${updated.title}` : null]
+                  title={[shortSha ? tr("apps:version_value1_d0f3aa75", { value1: shortSha }) : null, updated?.title ? tr("apps:live_since_value1_49010d54", { value1: updated.title }) : null]
                     .filter(Boolean).join(', ') || undefined}
                   className="inline-flex items-center rounded-full bg-zinc-100 dark:bg-zinc-800 px-2 py-0.5 text-xs font-medium text-zinc-500 dark:text-zinc-400 whitespace-nowrap"
                 >
@@ -514,9 +519,9 @@ export function AboutPane({ label }: { label: string }): ReactNode {
             {yours ? (
               <>
                 <CheckIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
-                <span className="truncate">Added</span>
+                <span className="truncate"><Message id="apps:added_6b02e0d3" /></span>
               </>
-            ) : <span className="truncate">Add to Shortcuts</span>}
+            ) : <span className="truncate"><Message id="apps:add_to_shortcuts_f27a62d8" /></span>}
           </button>
         </div>
       ) : null}
@@ -558,28 +563,28 @@ export function AboutPane({ label }: { label: string }): ReactNode {
           (Browse.openContributor).
       */}
       {(isApp || platform) && !restricted ? (
-        <section id="app-about-contributors" aria-label="Contributors">
-          <h4 className={SECTION}>Contributors</h4>
-          {contributors.state === 'loading' ? <p className={NOTE}>Loading contributors…</p> : null}
-          {contributors.state === 'error' ? <p className={NOTE}>Couldn’t load contributors.</p> : null}
-          {contributors.state === 'ready' && !people.length ? <p className={NOTE}>No contributors yet.</p> : null}
+        <Localized element={<section id="app-about-contributors" aria-label={catalogText("apps:contributors_350ad433")}>
+          <h4 className={SECTION}><Message id="apps:contributors_350ad433" /></h4>
+          {contributors.state === 'loading' ? <p className={NOTE}><Message id="apps:loading_contributors_bfaea4c0" /></p> : null}
+          {contributors.state === 'error' ? <p className={NOTE}><Message id="apps:couldn_t_load_contributors_68653b35" /></p> : null}
+          {contributors.state === 'ready' && !people.length ? <p className={NOTE}><Message id="apps:no_contributors_yet_39eb422f" /></p> : null}
           <ContributorsFold
             people={people}
             total={contributors.total || people.length}
             showAll={showAll}
             onToggle={() => setShowAll((v) => !v)}
           />
-        </section>
+        </section>} messages={{"aria-label":"apps:contributors_350ad433"}} />
       ) : null}
 
       {showShare || showHomeScreen || repo || showFork ? (
-        <section id="app-about-more" aria-label="More">
-          <h4 className={SECTION}>More</h4>
+        <Localized element={<section id="app-about-more" aria-label={catalogText("apps:more_d47d7cb0")}>
+          <h4 className={SECTION}><Message id="apps:more_d47d7cb0" /></h4>
           {showShare ? (
-            <ActionRow
+            <LocalizedDynamic element={<ActionRow
               id="improve-row-share"
               icon={<ShareIcon />}
-              label={shareSaid || 'Share'}
+              label={shareSaid || tr("apps:share_29887a5f")}
               onClick={() => {
                 if (!platform) {
                   // The app's live address, in the share dialog the Improve
@@ -590,19 +595,18 @@ export function AboutPane({ label }: { label: string }): ReactNode {
                   return;
                 }
                 void sharePlatform(label).then((how) => {
-                  const said = how === 'copied' ? 'Link copied' : (how === 'failed' ? 'Could not copy the link' : null);
+                  const said = how === 'copied' ? tr("apps:link_copied_d12860c2") : (how === 'failed' ? tr("apps:could_not_copy_the_link_b156f6c7") : null);
                   if (!said) return;
                   setShareSaid(said);
                   window.setTimeout(() => setShareSaid(null), 1800);
                 });
               }}
-            />
+            />} resolve={() => ({ "label": shareSaid || tr("apps:share_29887a5f") })} />
           ) : null}
           {showHomeScreen ? (
-            <ActionRow
+            <Localized element={<ActionRow
               id="app-about-a2hs"
-              icon={<Glyph d={GLYPHS.homeScreen} />}
-              label="Add to home screen"
+              icon={<Glyph d={GLYPHS.homeScreen} />} label={catalogText("apps:add_to_home_screen_1d4b34ef")}
               onClick={() => {
                 if (platform) {
                   setA2hsOpen((v) => !v);
@@ -610,7 +614,7 @@ export function AboutPane({ label }: { label: string }): ReactNode {
                 }
                 if (homeScreenItem) afterDismiss(() => homeScreenItem.run());
               }}
-            />
+            />} messages={{"label":"apps:add_to_home_screen_1d4b34ef"}} />
           ) : null}
           {platform && a2hsOpen && os ? (
             <p id="app-about-a2hs-steps" className={NOTE}>{A2HS_STEPS[os]}</p>
@@ -625,20 +629,19 @@ export function AboutPane({ label }: { label: string }): ReactNode {
               onClick={() => { void AppContext.dismissForNav(); }}
             >
               <Icon><GitHubIcon /></Icon>
-              <span className="flex-1 min-w-0 truncate font-medium">Code</span>
-              <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">Public on GitHub</span>
+              <span className="flex-1 min-w-0 truncate font-medium"><Message id="apps:code_340f4630" /></span>
+              <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400"><Message id="apps:public_on_github_c7bb7b5e" /></span>
             </a>
           ) : null}
           {showFork && forkItem ? (
-            <ActionRow
+            <Localized element={<ActionRow
               id="app-about-fork"
-              icon={<Glyph d={GLYPHS.fork} />}
-              label="Remix"
+              icon={<Glyph d={GLYPHS.fork} />} label={catalogText("apps:remix_f84ed437")}
               sub="Make your own copy"
               onClick={() => afterDismiss(() => forkItem.run())}
-            />
+            />} messages={{"label":"apps:remix_f84ed437"}} />
           ) : null}
-        </section>
+        </section>} messages={{"aria-label":"apps:more_d47d7cb0"}} />
       ) : null}
     </div>
   );

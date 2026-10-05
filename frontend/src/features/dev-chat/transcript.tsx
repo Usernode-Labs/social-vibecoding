@@ -1,3 +1,8 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { RichMessage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * `#dc-messages`' children — the dev chat's transcript.
  * See ./transcript-store.ts for the two stores and why the live bubble has
@@ -136,7 +141,7 @@ function Failure({ r }: { r: Extract<TranscriptRow, { t: 'failure' }> }): ReactN
         <button
           className="dc-force-stop-btn"
           onClick={(e) => controller()?._forceStopTurn?.(e.currentTarget)}
-        >Force stop</button>
+        ><Message id="workshop:force_stop_3112cbbb" /></button>
       ) : null}
       <Stamp text={r.stamp} />
     </div>
@@ -149,6 +154,7 @@ function Failure({ r }: { r: Extract<TranscriptRow, { t: 'failure' }> }): ReactN
  * `_syncElapsedTicker` reads it to decide whether the heartbeat runs at all.
  */
 function Elapsed({ e }: { e: ElapsedSpec }): ReactNode {
+  useUiLanguage();
   const { now } = useStoreState(nowStore);
   if (!e) return null;
   if (e.kind === 'fixed') return <span className="dc-status-elapsed">{e.label}</span>;
@@ -197,7 +203,7 @@ function StatusLine({ r }: { r: Extract<TranscriptRow, { t: 'status' }> }): Reac
         <button
           className="dc-force-stop-btn"
           onClick={(e) => controller()?._forceStopTurn?.(e.currentTarget)}
-        >Force stop</button>
+        ><Message id="workshop:force_stop_3112cbbb" /></button>
       ) : null}
       <Stamp text={r.stamp} />
       <VenueCaption text={r.caption} />
@@ -237,7 +243,7 @@ function CcLog({ r }: { r: Extract<TranscriptRow, { t: 'ccLog' }> }): ReactNode 
       className="dc-cc-log" data-persist-id={r.details.persistId}
       open={open} onToggle={onToggle}
     >
-      <summary className="dc-cc-log-toggle">{`${r.label} log`}</summary>
+      <summary className="dc-cc-log-toggle"><LocalizedValue render={() => (tr("workshop:value1_log_d1b592c1", { value1: r.label }))} /></summary>
       <pre className="dc-cc-log-content">{r.log}</pre>
     </details>
   );
@@ -274,7 +280,7 @@ function ProgressChips(
   return (
     <>
       <span className="dc-cc-current">{p.current}</span>
-      <span className="dc-cc-steps">{p.steps ? `${p.steps} steps` : ''}</span>
+      <span className="dc-cc-steps"><LocalizedValue render={() => (p.steps ? tr("workshop:value1_steps_8a6e44ed", { value1: p.steps }) : '')} /></span>
       <span className="dc-cc-phase">{p.phase}</span>
       <Elapsed e={elapsed} />
     </>
@@ -292,6 +298,7 @@ function ProgressChips(
 function ProgressNote(
   { p }: { p: NonNullable<Extract<TranscriptRow, { t: 'attached' }>['progress']> },
 ): ReactNode {
+  useUiLanguage();
   const { now } = useStoreState(nowStore);
   const w = fmt();
   const countdown = p.countdownTo != null && typeof w.formatCountdown === 'function'
@@ -307,15 +314,14 @@ function ProgressNote(
     : '';
   return (
     <span className="dc-cc-note">
-      <span
-        className="dc-cc-estimate"
-        title="Experimental: a small AI model's rough guess from the progress log. May be wrong."
+      <Localized element={<span
+        className="dc-cc-estimate" title={catalogText("workshop:experimental_a_small_ai_model_s_rough_guess_from_104bce52")}
       >
-        {p.estimate ? `\u2726 AI guess: ${p.estimate}` : ''}
+        <LocalizedValue render={() => (p.estimate ? tr("workshop:ai_guess_value1_f41b3950", { value1: p.estimate }) : '')} />
         {p.estimate && p.countdownTo != null
           ? <span className="dc-cc-countdown" data-countdown-to={p.countdownTo}>{countdown}</span>
           : null}
-      </span>
+      </span>} messages={{"title":"workshop:experimental_a_small_ai_model_s_rough_guess_from_104bce52"}} />
       {p.cohortSince != null
         ? <span className="dc-cc-cohort" data-cohort-since={p.cohortSince}>{hint}</span>
         : null}
@@ -413,16 +419,13 @@ function SpecCard({ r }: { r: Extract<TranscriptRow, { t: 'spec' }> }): ReactNod
       {/* No onClick: `initScrollTracking` delegates click AND keydown on
           `#dc-messages` and reads `data-spec-version` off whichever card was
           hit. The host outlives every repaint of its contents. */}
-      <div
+      <Localized element={<div
         className="dc-spec-preview-card" data-spec-version={r.version}
-        role="button" tabIndex={0} aria-label="Open spec viewer"
+        role="button" tabIndex={0} aria-label={catalogText("workshop:open_spec_viewer_f7ac1ffa")}
       >
-        <div className="dc-spec-preview-header">
-          <span className="dc-spec-preview-title">{r.header}</span>
-          <span className="dc-spec-preview-cta">View full spec →</span>
-        </div>
+        <div className="dc-spec-preview-header"><RichMessage id="workshop:sentence_a86f4d150f84" values={{ value1: r.header }} components={[<span className="dc-spec-preview-title" />, <span className="dc-spec-preview-cta" />]} /></div>
         <Html className="dc-spec-preview-snippet" html={r.snippetHtml} />
-      </div>
+      </div>} messages={{"aria-label":"workshop:open_spec_viewer_f7ac1ffa"}} />
     </>
   );
 }
@@ -453,10 +456,7 @@ function IssueDraftCard({ r }: { r: Extract<TranscriptRow, { t: 'issueDraft' }> 
             className="dc-pi-report" data-persist-id={body.details.persistId}
             open={d.open} onToggle={d.onToggle}
           >
-            <summary className="dc-pi-report-summary">
-              {body.summary}
-              <span className="dc-pi-report-cue">… Show full report</span>
-            </summary>
+            <summary className="dc-pi-report-summary"><RichMessage id="workshop:sentence_3929c35b9c06" values={{ value1: body.summary }} components={[<span className="dc-pi-report-cue" />]} /></summary>
             <div className="dc-pi-report-rest">{body.rest}</div>
           </details>
         ) : null}
@@ -475,7 +475,7 @@ function IssueDraftCard({ r }: { r: Extract<TranscriptRow, { t: 'issueDraft' }> 
               <button className="dc-pr-btn dc-pr-btn-promote"
                 onClick={(e) => resolve('confirm', e.currentTarget)}>{r.action.confirmLabel}</button>
               <button className="dc-pr-btn dc-pr-btn-preview"
-                onClick={(e) => resolve('dismiss', e.currentTarget)}>Dismiss</button>
+                onClick={(e) => resolve('dismiss', e.currentTarget)}><Message id="workshop:dismiss_48845bff" /></button>
             </>
           ) : null}
         </div>
@@ -484,8 +484,8 @@ function IssueDraftCard({ r }: { r: Extract<TranscriptRow, { t: 'issueDraft' }> 
   );
 }
 
-const MERGED_TITLE = 'This change is merged and now live in the app.';
-const PREVIEW_GONE = 'Preview removed after merge. This change is now live in the app';
+const MERGED_TITLE = () => tr("workshop:this_change_is_merged_and_now_live_in_the_app_641fe6a4");
+const PREVIEW_GONE = () => tr("workshop:preview_removed_after_merge_this_change_is_now_l_d4c7d55e");
 
 function ChangesCard({ r, embedded = false, historical = false }: { r: Extract<TranscriptRow, { t: 'changes' }>; embedded?: boolean; historical?: boolean }): ReactNode {
   return (
@@ -504,11 +504,10 @@ function ChangesCard({ r, embedded = false, historical = false }: { r: Extract<T
 function StatusLink({ id, children }: { id: number | null; children: ReactNode }): ReactNode {
   if (!id) return children;
   return (
-    <button
-      type="button" className="dc-pr-status-link" data-open-vote={id}
-      title="Open this proposal's vote page"
+    <Localized element={<button
+      type="button" className="dc-pr-status-link" data-open-vote={id} title={catalogText("workshop:open_this_proposal_s_vote_page_ad08fc94")}
       onClick={() => controller()?.openProposalVote?.(id)}
-    >{children}</button>
+    >{children}</button>} messages={{"title":"workshop:open_this_proposal_s_vote_page_ad08fc94"}} />
   );
 }
 
@@ -525,16 +524,16 @@ function PrCard({ r, embedded = false, historical = false }: { r: Extract<Transc
       <div className="dc-pr-card" id="dc-pr-card">
         <div className="dc-pr-card-header">
           {r.prUrl && !embedded
-            ? <a href={r.prUrl} target="_blank" rel="noreferrer" className="dc-pr-link">{`PR #${r.prNumber}`}</a>
-            : <span style={{ color: 'var(--text-muted)' }}>Changes ready</span>}
+            ? <a href={r.prUrl} target="_blank" rel="noreferrer" className="dc-pr-link"><LocalizedValue render={() => (tr("workshop:pr_value1_e1d02dd7", { value1: r.prNumber }))} /></a>
+            : <span style={{ color: 'var(--text-muted)' }}><Message id="workshop:changes_ready_67d1207f" /></span>}
           {r.title ? <span className="dc-pr-title">{r.title}</span> : null}
           {(r.closes || []).map((c) => (
-            <button
+            <LocalizedDynamic element={<button
               key={c.n} type="button" data-issue-chip={c.n}
               className="dev-badge font-mono bg-violet-500/10 text-violet-700 hover:bg-violet-500/20 dark:text-violet-400"
-              title={`Open request #${c.n}`}
+              title={tr("workshop:open_request_value1_aad1bafa", { value1: c.n })}
               onClick={() => controller()?.openIssueRef?.(c.n)}
-            >{`${c.verb} #${c.n}`}</button>
+            >{`${c.verb} #${c.n}`}</button>} resolve={() => ({ get "title"() { return tr("workshop:open_request_value1_aad1bafa", { value1: c.n }); } })} />
           ))}
           <span style={{ fontSize: '9px', opacity: 0.4, marginLeft: '8px' }}>{r.stamp}</span>
         </div>
@@ -545,20 +544,20 @@ function PrCard({ r, embedded = false, historical = false }: { r: Extract<Transc
           <button
             className="dc-pr-btn dc-pr-btn-preview"
             disabled={!r.preview.enabled}
-            title={r.preview.enabled ? undefined : PREVIEW_GONE}
+            title={r.preview.enabled ? undefined : PREVIEW_GONE()}
             onClick={r.preview.enabled ? () => preview(false, r.preview.url) : undefined}
-          >Preview staging</button>
+          ><Message id="workshop:preview_staging_a5dced81" /></button>
           {r.test ? (
             <button
               className="dc-pr-btn dc-pr-btn-preview"
               disabled={!r.test.enabled}
-              title={r.test.enabled ? undefined : PREVIEW_GONE}
+              title={r.test.enabled ? undefined : PREVIEW_GONE()}
               onClick={r.test.enabled ? () => preview(true, r.test!.url) : undefined}
-            >Test this change</button>
+            ><Message id="workshop:test_this_change_cf4a1f03" /></button>
           ) : null}
           {r.prUrl ? (
             <a href={r.prUrl} target="_blank" rel="noreferrer"
-              className="dc-pr-btn dc-pr-btn-preview" style={{ textDecoration: 'none' }}>View on GitHub</a>
+              className="dc-pr-btn dc-pr-btn-preview" style={{ textDecoration: 'none' }}><Message id="workshop:view_on_github_20672423" /></a>
           ) : null}
           {/* #558: the in-flight state is the MODEL's, not this element's.
               `promotePR` used to disable the button and swap its innerHTML
@@ -573,18 +572,18 @@ function PrCard({ r, embedded = false, historical = false }: { r: Extract<Transc
               title={r.propose.kind === 'ready' ? r.propose.note : undefined}
               onClick={r.propose.kind === 'ready' ? () => controller()?.promotePR?.() : undefined}
             >
-              {r.propose.kind === 'pending'
-                ? <><span className="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>{' Proposing…'}</>
-                : r.propose.kind === 'completed' ? 'Already proposed' : 'Submit for review'}
+              <LocalizedValue render={() => (r.propose?.kind === 'pending'
+                ? <><RichMessage id="workshop:sentence_49aabe9a9dff" components={[<span className="dc-status-icon dc-status-spinner-arc" aria-hidden="true" />]} /></>
+                : r.propose?.kind === 'completed' ? tr("workshop:already_proposed_d2dfe48d") : tr("workshop:submit_for_review_40447e44"))} />
             </button>
           ) : null}
           {r.status2.kind === 'merged'
-            ? <StatusLink id={r.proposalId}><span className="ms-badge ms-badge-violet" title={r.proposalId ? undefined : MERGED_TITLE}>✓ Merged, now live in the app</span></StatusLink>
+            ? <StatusLink id={r.proposalId}><span className="ms-badge ms-badge-violet" title={r.proposalId ? undefined : MERGED_TITLE()}><Message id="workshop:merged_now_live_in_the_app_4ff4a42b" /></span></StatusLink>
             : null}
           {r.status2.kind === 'badge'
             ? <StatusLink id={r.proposalId}><Html as="span" className="contents" html={r.status2.html} /></StatusLink>
             : null}
-        </div> : <p className="dev-topic-note">{r.status2.kind === 'merged' ? 'Merged, now live in the app' : historical ? 'Earlier build result' : 'Build result. Current actions are above.'}</p>}
+        </div> : <p className="dev-topic-note"><LocalizedValue render={() => (r.status2.kind === 'merged' ? tr("workshop:merged_now_live_in_the_app_f1f2ec97") : historical ? tr("workshop:earlier_build_result_1e9a6b8c") : tr("workshop:build_result_current_actions_are_above_f90fac18"))} /></p>}
       </div>
     </>
   );
@@ -599,6 +598,7 @@ function PrCard({ r, embedded = false, historical = false }: { r: Extract<Transc
  * final text into the row model) it renders the model's own html.
  */
 function LiveContent({ rowKey, html }: { rowKey: string; html: string }): ReactNode {
+  useUiLanguage();
   const s = useStoreState(streamStore);
   const live = s.key === rowKey ? s.html : '';
   // `Html`, like every other sink: a transcript republish mid-turn (a
@@ -610,7 +610,7 @@ function LiveContent({ rowKey, html }: { rowKey: string; html: string }): ReactN
 function Bubble({ r }: { r: Extract<TranscriptRow, { t: 'msg' }> }): ReactNode {
   const more = useDetails(r.more ? r.more.details : { persistId: '', defaultOpen: false });
   const reasoning = useDetails(r.reasoning ? r.reasoning.details : { persistId: '', defaultOpen: false });
-  const who = r.who === 'user' ? 'You' : r.who === 'cc' ? 'Claude Code' : 'AI';
+  const who = r.who === 'user' ? tr("workshop:you_08b04193") : r.who === 'cc' ? tr("workshop:claude_code_246ef8c1") : 'AI';
   // "You" is READ, not shown. Side and surface already say whose turn it is —
   // the row is right-aligned and it is the only one drawn as a card — so the
   // word was labelling a thing that labels itself, at the top of every second
@@ -639,22 +639,22 @@ function Bubble({ r }: { r: Extract<TranscriptRow, { t: 'msg' }> }): ReactNode {
           data-persist-id={r.more.details.persistId}
           open={more.open} onToggle={more.onToggle}
         >
-          <summary className="dc-cc-log-toggle">Full output</summary>
+          <summary className="dc-cc-log-toggle"><Message id="workshop:full_output_db094b2a" /></summary>
           <Html className="dc-msg-content" style={MORE_STYLE} html={r.more.html} />
         </details>
       ) : null}
       {r.attachments && r.attachments.length ? (
         <div className="dc-msg-attachments">
           {r.attachments.map((a) => (a.kind === 'image' ? (
-            <a key={a.href} href={a.href} target="_blank" rel="noopener noreferrer" title={`${a.name}: open full size`}>
+            <a key={a.href} href={a.href} target="_blank" rel="noopener noreferrer" title={tr("workshop:value1_open_full_size_94583d19", { value1: a.name })}>
               <img className="dc-msg-att-img" src={a.href} alt={a.name} loading="lazy" />
             </a>
           ) : (
-            <a key={a.href} className="dc-msg-att-chip" href={a.href} download={a.name} title={`Download ${a.name}`}>
+            <LocalizedDynamic element={<a key={a.href} className="dc-msg-att-chip" href={a.href} download={a.name} title={tr("workshop:download_value1_8fe1a08e", { value1: a.name })}>
               <Html as="span" className="contents" html={a.badgeHtml || ''} />
               <span className="dc-attach-name">{a.name}</span>
               <span className="dc-attach-size">{a.size}</span>
-            </a>
+            </a>} resolve={() => ({ get "title"() { return tr("workshop:download_value1_8fe1a08e", { value1: a.name }); } })} />
           )))}
         </div>
       ) : null}
@@ -664,7 +664,7 @@ function Bubble({ r }: { r: Extract<TranscriptRow, { t: 'msg' }> }): ReactNode {
           data-persist-id={r.reasoning.details.persistId}
           open={reasoning.open} onToggle={reasoning.onToggle}
         >
-          <summary className="dc-cc-log-toggle">Agent reasoning (raw)</summary>
+          <summary className="dc-cc-log-toggle"><Message id="workshop:agent_reasoning_raw_d67b53e2" /></summary>
           <pre className="dc-cc-log-content">{r.reasoning.raw}</pre>
         </details>
       ) : null}
@@ -684,27 +684,27 @@ function Bubble({ r }: { r: Extract<TranscriptRow, { t: 'msg' }> }): ReactNode {
                    one republishes the whole transcript per keystroke and
                    takes the caret with it. */
                 <div className="dc-qa-number">
-                  <button
-                    type="button" className="dc-qa-step" aria-label="Less"
+                  <Localized element={<button
+                    type="button" className="dc-qa-step" aria-label={catalogText("workshop:less_ae5239ec")}
                     data-qa-group={gi} data-qa-step="-1"
-                  >{'\u2212'}</button>
-                  <input
+                  >{'\u2212'}</button>} messages={{"aria-label":"workshop:less_ae5239ec"}} />
+                  <LocalizedDynamic element={<input
                     className="dc-qa-number-field" type="text" inputMode="decimal"
-                    aria-label={g.label || 'Value'}
+                    aria-label={g.label || tr("workshop:value_8e37953d")}
                     data-qa-number={gi} defaultValue={g.number.value} key={g.number.value}
                     onBlur={(e) => controller()?._onQaNumberCommit?.(e.currentTarget)}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
                     }}
-                  />
-                  <button
-                    type="button" className="dc-qa-step" aria-label="More"
+                  />} resolve={() => ({ "aria-label": g.label || tr("workshop:value_8e37953d") })} />
+                  <Localized element={<button
+                    type="button" className="dc-qa-step" aria-label={catalogText("workshop:more_d47d7cb0")}
                     data-qa-group={gi} data-qa-step="1"
-                  >{'+'}</button>
+                  >{'+'}</button>} messages={{"aria-label":"workshop:more_d47d7cb0"}} />
                   {/* The default is still NAMED, in the same muted voice the
                       suggested chip uses — a stepper that opens on a value
                       says nothing about whether that value was recommended. */}
-                  <span className="dc-qa-chip-hint">suggested {g.number.suggested}</span>
+                  <span className="dc-qa-chip-hint"><RichMessage id="workshop:sentence_1112f03bdffb" values={{ value1: g.number.suggested }} /></span>
                 </div>
               ) : (
                 <div className="dc-qa-chip-row">
@@ -715,7 +715,7 @@ function Bubble({ r }: { r: Extract<TranscriptRow, { t: 'msg' }> }): ReactNode {
                       data-qa-group={gi} data-qa-answer={ai}
                     >
                       {a.text}
-                      {a.suggested ? <span className="dc-qa-chip-hint">suggested</span> : null}
+                      {a.suggested ? <span className="dc-qa-chip-hint"><Message id="workshop:suggested_8ad70375" /></span> : null}
                     </button>
                   ))}
                   {g.escape ? (
@@ -745,8 +745,8 @@ function Bubble({ r }: { r: Extract<TranscriptRow, { t: 'msg' }> }): ReactNode {
           ))}
           {r.qa.multi ? (
             <div className="dc-qa-actions">
-              <button type="button" className="dc-qa-send" data-qa-send="1">Send answers</button>
-              <button type="button" className="dc-qa-defaults" data-qa-defaults="1">Use the suggested defaults</button>
+              <button type="button" className="dc-qa-send" data-qa-send="1"><Message id="workshop:send_answers_8a785676" /></button>
+              <button type="button" className="dc-qa-defaults" data-qa-defaults="1"><Message id="workshop:use_the_suggested_defaults_7a599865" /></button>
             </div>
           ) : null}
         </div>
@@ -868,6 +868,7 @@ const Row = memo(function Row({ r, embedded = false, historical = false }: RowPr
  * so the declared checks under that id resolve wherever it sits.
  */
 export function DevChatTranscript({ embedded = false }: { embedded?: boolean }): ReactNode {
+  useUiLanguage();
   const s = useStoreState(transcriptStore);
   const latestAt = s.rows.findLastIndex((r) => r.t === 'changes');
   const latest = latestAt >= 0 ? s.rows[latestAt] as Extract<TranscriptRow, { t: 'changes' }> : null;
@@ -882,7 +883,7 @@ export function DevChatTranscript({ embedded = false }: { embedded?: boolean }):
           ChatGPT, and gone the moment the first message arrives. */}
       {s.empty ? (
         <div id="dc-empty-state" className="dc-empty-state">
-          <div className="dc-empty-title">What should this session change?</div>
+          <div className="dc-empty-title"><Message id="workshop:what_should_this_session_change_9a4a6fae" /></div>
         </div>
       ) : null}
       {s.rows.map((r, i) => {

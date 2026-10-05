@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * The connector walkthrough, inline on the dev session page (#2706).
  *
@@ -66,33 +70,32 @@ function ui(): any {
  * this is the one value somebody may need to select by hand.
  */
 function ConnectorUrl({ url }: { url: string }) {
-  const [label, setLabel] = useState('Copy');
+  useUiLanguage();
+  const [label, setLabel] = useState(tr("workshop:copy_e21f935f"));
   return (
     <div className="mt-2 flex min-w-0 items-stretch overflow-hidden rounded-md border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900">
-      <input
+      <Localized element={<input
         readOnly
         data-connector-setup-url="1"
-        value={url}
-        aria-label="Your MCP server URL"
+        value={url} aria-label={catalogText("workshop:your_mcp_server_url_dedcabba")}
         className="min-w-0 flex-1 bg-transparent px-3 py-2 text-xs font-mono text-zinc-700 dark:text-zinc-300 outline-none"
-      />
-      <Button
+      />} messages={{"aria-label":"workshop:your_mcp_server_url_dedcabba"}} />
+      <Localized element={<Button
         type="button"
         layout="shrink"
         variant="unstyled"
         size="none"
         ink="none"
-        className="inline-flex min-h-[44px] min-w-[88px] items-center justify-center border-l border-zinc-200 dark:border-zinc-800 px-3 text-xs font-medium text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-        aria-label="Copy your MCP server URL"
+        className="inline-flex min-h-[44px] min-w-[88px] items-center justify-center border-l border-zinc-200 dark:border-zinc-800 px-3 text-xs font-medium text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors" aria-label={catalogText("workshop:copy_your_mcp_server_url_1a6ac1ae")}
         onClick={async () => {
           const ok = await ui()?.copyText?.(url);
-          setLabel(ok ? 'Copied' : 'Copy failed');
-          if (!ok) ui()?.toast?.('Couldn’t copy. Select the text and copy it manually', { error: true });
-          setTimeout(() => setLabel('Copy'), 1500);
+          setLabel(ok ? tr("workshop:copied_8d525e5f") : tr("workshop:copy_failed_5b50e7a6"));
+          if (!ok) ui()?.toast?.(tr("workshop:couldn_t_copy_select_the_text_and_copy_it_manual_9181be57"), { error: true });
+          setTimeout(() => setLabel(tr("workshop:copy_e21f935f")), 1500);
         }}
       >
         {label}
-      </Button>
+      </Button>} messages={{"aria-label":"workshop:copy_your_mcp_server_url_1a6ac1ae"}} />
     </div>
   );
 }
@@ -101,19 +104,19 @@ export function ConnectorSetupInline({ view }: { view: ConnectorSetupInlineView 
   const { product, url, connected } = view;
   return (
     <div className="dc-launchpad" data-connector-setup={product}>
-      <div className="dc-launchpad-lead">{`Add the Homeroom connector in ${product}`}</div>
+      <div className="dc-launchpad-lead"><LocalizedValue render={() => (tr("workshop:add_the_homeroom_connector_in_value1_9f89073d", { value1: product }))} /></div>
       <p className="dc-launchpad-sub">
-        {connected
+        <LocalizedValue render={() => (connected
           // The status count spans every Claude and ChatGPT account the
           // person has connected, so it can be non-zero while the account
           // they are about to paste into has nothing. Same caveat the
           // walkthrough card carries, said where it can be acted on.
-          ? `You have a connector on another account. A connector belongs to the ${product} account it was added in, so the one you hand this work to needs its own.`
-          : `${product} reads your apps, mints the work order and opens the proposal through this connector. It takes a few minutes, once per account.`}
+          ? tr("workshop:you_have_a_connector_on_another_account_a_connec_4e967fb7", { value1: product })
+          : tr("workshop:value1_reads_your_apps_mints_the_work_order_and__49cb8fb4", { value1: product }))} />
       </p>
 
       <div className="mt-3">
-        <div className="text-xs font-medium text-zinc-600 dark:text-zinc-400">Your MCP server URL</div>
+        <div className="text-xs font-medium text-zinc-600 dark:text-zinc-400"><Message id="workshop:your_mcp_server_url_dedcabba" /></div>
         <ConnectorUrl url={url} />
       </div>
 
@@ -125,7 +128,7 @@ export function ConnectorSetupInline({ view }: { view: ConnectorSetupInlineView 
           that sends people back here thinking it failed: a connector added
           mid-conversation is not in the conversation they added it from. */}
       <p className="mt-3 text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400">
-        {`Then start a NEW ${product} ${product === 'ChatGPT' ? 'chat' : 'conversation'}. A connector you just added is only picked up by a new one, so the chat you were already in will not see it.`}
+        <LocalizedValue render={() => (tr("workshop:then_start_a_new_value1_value2_a_connector_you_j_28025797", { value1: product, value2: product === 'ChatGPT' ? tr("workshop:message_31e06f7d89fe") : tr("workshop:message_8b34dbc2c05e") }))} />
       </p>
 
       <div className="dc-flow-actions">
@@ -138,14 +141,12 @@ export function ConnectorSetupInline({ view }: { view: ConnectorSetupInlineView 
           className="dc-pr-btn dc-flow-action dc-flow-action-primary"
           data-connector-setup-action="done"
           onClick={() => (window as any).DevChat?._devFlowConnectorDone()}
-        >
-          I&rsquo;ve added it. Check again
-        </Button>
+        ><Message id="workshop:i_ve_added_it_check_again_00856300" /></Button>
         {/* Settings keeps the rest of the reference — the Claude Code
             permission rules, Codex, other MCP clients, and the list of what
             is already connected — so the route stays, as a way on rather
             than as the only place the steps exist. */}
-        <a className="dc-pr-btn dc-flow-action" href="#settings/connectors">More connector settings</a>
+        <a className="dc-pr-btn dc-flow-action" href="#settings/connectors"><Message id="workshop:more_connector_settings_3948c404" /></a>
       </div>
     </div>
   );

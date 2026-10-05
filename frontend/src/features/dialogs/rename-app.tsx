@@ -1,3 +1,8 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { RichMessage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * Rename-app dialog (#rename-modal).
  *
@@ -37,6 +42,7 @@ import { useHiddenClass } from '../../lib/legacy-dom';
 import { useDialog } from './use-dialog';
 
 export function RenameAppDialog() {
+  useUiLanguage();
   const inputRef = useRef<HTMLInputElement>(null);
   const errorRef = useRef<HTMLDivElement>(null);
   const [currentName, setCurrentName] = useState('');
@@ -71,9 +77,9 @@ export function RenameAppDialog() {
     const next = (inputRef.current?.value || '').trim();
     const current = (appData.name as string) || '';
 
-    if (!next || next.length < 3) return setError('Name must be at least 3 characters');
-    if (next.length > 64) return setError('Name must be 64 characters or fewer');
-    if (next === current) return setError('New app name must differ from the current one');
+    if (!next || next.length < 3) return setError(tr("core:name_must_be_at_least_3_characters_b822b3ab"));
+    if (next.length > 64) return setError(tr("core:name_must_be_64_characters_or_fewer_0f226e62"));
+    if (next === current) return setError(tr("core:new_app_name_must_differ_from_the_current_one_74aac2a7"));
 
     setBusy(true);
     try {
@@ -88,13 +94,13 @@ export function RenameAppDialog() {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setError(data.error || 'Failed to open rename PR');
+        setError(data.error || tr("core:failed_to_open_rename_pr_7aaaadad"));
         return;
       }
       dialog.close();
       (appView?.refreshDevData as ((reason: string) => void) | undefined)?.('vote');
     } catch {
-      setError('Network error while opening rename PR');
+      setError(tr("core:network_error_while_opening_rename_pr_81bea4dd"));
     } finally {
       setBusy(false);
     }
@@ -107,12 +113,8 @@ export function RenameAppDialog() {
       {...dialog.backdropProps}
     >
       <DialogCard size="sm">
-        <h2 className="text-lg font-bold mb-1">
-          Rename app
-        </h2>
-        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
-          Current app name:
-          <span id="rename-current" className="font-mono text-zinc-500 dark:text-zinc-400">
+        <h2 className="text-lg font-bold mb-1"><Message id="core:rename_app_5689214e" /></h2>
+        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-4"><Message id="core:current_app_name_c0fcdf9d" /><span id="rename-current" className="font-mono text-zinc-500 dark:text-zinc-400">
             {currentName}
           </span>
         </p>
@@ -121,10 +123,8 @@ export function RenameAppDialog() {
             <label
               htmlFor="rename-input"
               className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1"
-            >
-              New app name
-            </label>
-            <Input
+            ><Message id="core:new_app_name_d32b33c7" /></label>
+            <Localized element={<Input
               id="rename-input"
               ref={inputRef}
               type="text"
@@ -134,16 +134,9 @@ export function RenameAppDialog() {
               autoComplete="off"
               box="dialog"
               hint="muted"
-              ring="seamless"
-              placeholder="a better name"
-            />
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-              3–64 characters. This is the app's display name, and the URL won't change. Opens a PR that edits
-              <span className="font-mono">
-                dapp.json
-              </span>
-              ; the rename applies once the PR is voted in and merged.
-            </p>
+              ring="seamless" placeholder={catalogText("core:a_better_name_7e82a74e")}
+            />} messages={{"placeholder":"core:a_better_name_7e82a74e"}} />
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1"><RichMessage id="core:sentence_c88edcf01c85" components={[<span className="font-mono" />]} /></p>
           </div>
           <div id="rename-error" ref={errorRef} className="text-red-700 dark:text-red-400 text-sm hidden">
             {error}
@@ -154,16 +147,14 @@ export function RenameAppDialog() {
               id="rename-cancel"
               className="flex-1 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
               onClick={() => dialog.close()}
-            >
-              Cancel
-            </button>
+            ><Message id="core:cancel_19766ed6" /></button>
             <Button
               type="submit"
               id="rename-submit"
               layout="flex"
               disabled={busy}
             >
-              {busy ? 'Opening PR...' : 'Open PR'}
+              <LocalizedValue render={() => (busy ? tr("core:opening_pr_ea9a0128") : tr("core:open_pr_04c24026"))} />
             </Button>
           </div>
         </form>

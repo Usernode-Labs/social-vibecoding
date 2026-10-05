@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * Recovery for a pre-merge email account's current-season wallet.
  *
@@ -66,12 +70,13 @@ async function readBody(response: Response): Promise<ApiBody> {
 
 function claimError(body: ApiBody): string {
   if (body.code === 'wallet_claim_requires_key_rotation') {
-    return 'That wallet was already installed elsewhere. Moving it safely requires key rotation, which is not available yet.';
+    return tr("core:that_wallet_was_already_installed_elsewhere_movi_ffd5a351");
   }
-  return body.error || 'Could not connect that wallet. Check the email and code, then try again.';
+  return body.error || tr("core:could_not_connect_that_wallet_check_the_email_an_67ae3fc9");
 }
 
 export function WalletRecoveryDialog() {
+  useUiLanguage();
   const emailRef = useRef<HTMLInputElement>(null);
   const codeRef = useRef<HTMLInputElement>(null);
   const targetUserId = useRef<string | null>(null);
@@ -142,7 +147,7 @@ export function WalletRecoveryDialog() {
     const email = emailRef.current?.value.trim().toLowerCase() || '';
     if (!userId || !stillOwns(userId, generation)) return forceClose();
     if (!email || !email.includes('@')) {
-      setError('Enter the email address used by your previous account.');
+      setError(tr("core:enter_the_email_address_used_by_your_previous_ac_ff785d89"));
       return;
     }
 
@@ -159,14 +164,14 @@ export function WalletRecoveryDialog() {
       const body = await readBody(response);
       if (!stillOwns(userId, generation)) return;
       if (!response.ok || body.ok !== true) {
-        setError(body.error || 'Could not send a code. Please try again.');
+        setError(body.error || tr("core:could_not_send_a_code_please_try_again_f98e4216"));
         return;
       }
-      setStatus('Check that email for a six-digit code.');
+      setStatus(tr("core:check_that_email_for_a_six_digit_code_7b4fb67e"));
       codeRef.current?.focus();
     } catch {
       if (stillOwns(userId, generation)) {
-        setError('Could not send a code. Please try again.');
+        setError(tr("core:could_not_send_a_code_please_try_again_f98e4216"));
       }
     } finally {
       if (recoveryGeneration.current === generation) setBusy(null);
@@ -176,7 +181,7 @@ export function WalletRecoveryDialog() {
   async function resumeNativeSession(userId: string, generation: number) {
     const chrome = nativeChrome();
     if (!chrome || typeof chrome.recoverSessionAdmission !== 'function') {
-      setError('Update the Homeroom app to finish connecting this wallet.');
+      setError(tr("core:update_the_homeroom_app_to_finish_connecting_thi_c8602377"));
       return;
     }
 
@@ -184,7 +189,7 @@ export function WalletRecoveryDialog() {
     const result = await chrome.recoverSessionAdmission().catch(() => null);
     if (!stillOwns(userId, generation)) return;
     if (!result) {
-      setError('The wallet is connected, but app sign-in did not finish. Try again.');
+      setError(tr("core:the_wallet_is_connected_but_app_sign_in_did_not__15f8e3c6"));
       return;
     }
     setBusy(null);
@@ -206,11 +211,11 @@ export function WalletRecoveryDialog() {
     const email = emailRef.current?.value.trim().toLowerCase() || '';
     const code = codeRef.current?.value.trim() || '';
     if (!email || !email.includes('@')) {
-      setError('Enter the email address used by your previous account.');
+      setError(tr("core:enter_the_email_address_used_by_your_previous_ac_ff785d89"));
       return;
     }
     if (!/^\d{6}$/.test(code)) {
-      setError('Enter the six-digit code from the email.');
+      setError(tr("core:enter_the_six_digit_code_from_the_email_7863806d"));
       return;
     }
 
@@ -237,11 +242,11 @@ export function WalletRecoveryDialog() {
       }
 
       setClaimed(true);
-      setStatus('Wallet connected. Finishing app sign-in…');
+      setStatus(tr("core:wallet_connected_finishing_app_sign_in_90abc292"));
       await resumeNativeSession(userId, generation);
     } catch {
       if (stillOwns(userId, generation)) {
-        setError('Could not connect that wallet. Please try again.');
+        setError(tr("core:could_not_connect_that_wallet_please_try_again_1a49deb2"));
       }
     } finally {
       if (recoveryGeneration.current === generation) setBusy(null);
@@ -255,20 +260,13 @@ export function WalletRecoveryDialog() {
       {...dialog.backdropProps}
     >
       <DialogCard size="sm">
-        <h2 className="text-lg font-bold mb-1 text-zinc-900 dark:text-zinc-100">
-          Connect your existing wallet
-        </h2>
-        <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-4">
-          No new mobile wallet is available. If you previously joined with email,
-          prove that address to connect its current-season wallet.
-        </p>
+        <h2 className="text-lg font-bold mb-1 text-zinc-900 dark:text-zinc-100"><Message id="core:connect_your_existing_wallet_28e3996e" /></h2>
+        <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-4"><Message id="core:no_new_mobile_wallet_is_available_if_you_previou_666f7692" /></p>
         <form className="space-y-4" onSubmit={claimWallet}>
           <label className="block">
-            <span className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-              Previous account email
-            </span>
+            <span className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1"><Message id="core:previous_account_email_b23674c7" /></span>
             <div className="flex gap-2">
-              <Input
+              <Localized element={<Input
                 ref={emailRef}
                 type="email"
                 autoComplete="email"
@@ -276,9 +274,8 @@ export function WalletRecoveryDialog() {
                 box="dialog"
                 hint="muted"
                 ring="seamless"
-                disabled={claimed}
-                placeholder="you@example.com"
-              />
+                disabled={claimed} placeholder={catalogText("core:you_example_com_53e6cdc3")}
+              />} messages={{"placeholder":"core:you_example_com_53e6cdc3"}} />
               <Button
                 type="button"
                 layout="shrink"
@@ -286,14 +283,12 @@ export function WalletRecoveryDialog() {
                 disabled={busyAction !== null || claimed}
                 onClick={sendCode}
               >
-                {busyAction === 'send' ? 'Sending…' : 'Send code'}
+                <LocalizedValue render={() => (busyAction === 'send' ? tr("core:sending_b8ed5279") : tr("core:send_code_66a5b409"))} />
               </Button>
             </div>
           </label>
           <label className="block">
-            <span className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-              Email code
-            </span>
+            <span className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1"><Message id="core:email_code_0adcdb5d" /></span>
             <Input
               ref={codeRef}
               type="text"
@@ -326,18 +321,16 @@ export function WalletRecoveryDialog() {
               ink="neutral"
               disabled={busyAction !== null}
               onClick={() => dialog.close()}
-            >
-              Cancel
-            </Button>
+            ><Message id="core:cancel_19766ed6" /></Button>
             <Button
               type="submit"
               layout="flex"
               disabledStyle="block"
               disabled={busyAction !== null}
             >
-              {busyAction === 'claim' || busyAction === 'resume'
-                ? 'Connecting…'
-                : claimed ? 'Try again' : 'Connect wallet'}
+              <LocalizedValue render={() => (busyAction === 'claim' || busyAction === 'resume'
+                ? tr("core:connecting_72021eb7")
+                : claimed ? tr("core:try_again_d8b8392e") : tr("core:connect_wallet_7b1f1181"))} />
             </Button>
           </div>
         </form>

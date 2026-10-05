@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../../lib/i18n/react";
+import { t as tr } from "../../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../../lib/i18n/react";
 /**
  * The project page's Discussion tab: the community's channel, whole, in
  * place.
@@ -100,6 +104,7 @@ export function ProjectDiscussion({ slug, name, data }: {
   name: string;
   data: CommunityPayload | null;
 }): ReactNode {
+  useUiLanguage();
   const host = useRef<HTMLDivElement | null>(null);
   const channel = data?.channel || null;
   const mountable = embeddable(channel);
@@ -195,18 +200,18 @@ export function ProjectDiscussion({ slug, name, data }: {
   if (!data) return null;
   if (room) {
     return (
-      <section
+      <LocalizedDynamic element={<section
         className="dev-ws-discussion"
         data-ws-discussion=""
         data-ws-discussion-room={channel?.handle || ''}
-        aria-label={`${name} discussion`}
+        aria-label={tr("workshop:value1_discussion_77d181cd", { value1: name })}
       >
         <EmbeddedConversation conversationId={room} active={onShow} at={roomAt} />
-      </section>
+      </section>} resolve={() => ({ get "aria-label"() { return tr("workshop:value1_discussion_77d181cd", { value1: name }); } })} />
     );
   }
   if (!mountable) {
-    return <p className="dev-ws-week-note" data-ws-discussion-none="">This project has no discussion you can read.</p>;
+    return <p className="dev-ws-week-note" data-ws-discussion-none=""><Message id="workshop:this_project_has_no_discussion_you_can_read_4bad8fd0" /></p>;
   }
   // The section's class says whether a thread is beside the room; the
   // host's own never changes, and its subtree stays the group chat's.
@@ -214,11 +219,11 @@ export function ProjectDiscussion({ slug, name, data }: {
   // group chat brings a message into view here at once when it is already
   // up (GroupChat.revealMessage).
   return (
-    <section
+    <LocalizedDynamic element={<section
       className={`dev-ws-discussion${thread ? ' dev-ws-discussion-threaded' : ''}`}
       data-ws-discussion=""
       data-discussion-app={slug}
-      aria-label={`${name} discussion`}
+      aria-label={tr("workshop:value1_discussion_77d181cd", { value1: name })}
     >
       <div ref={host} className="dev-ws-discussion-host" />
       {thread ? (
@@ -230,18 +235,16 @@ export function ProjectDiscussion({ slug, name, data }: {
           readOnly={readOnly}
           where={name}
           close={(
-            <button
+            <Localized element={<button
               type="button"
-              className="messages-thread-action"
-              aria-label="Close thread"
-              title="Close thread"
+              className="messages-thread-action" aria-label={catalogText("workshop:close_thread_5110caa6")} title={catalogText("workshop:close_thread_5110caa6")}
               onClick={() => setThread(null)}
             >
               <XIcon aria-hidden="true" />
-            </button>
+            </button>} messages={{"aria-label":"workshop:close_thread_5110caa6","title":"workshop:close_thread_5110caa6"}} />
           )}
         />
       ) : null}
-    </section>
+    </section>} resolve={() => ({ get "aria-label"() { return tr("workshop:value1_discussion_77d181cd", { value1: name }); } })} />
   );
 }

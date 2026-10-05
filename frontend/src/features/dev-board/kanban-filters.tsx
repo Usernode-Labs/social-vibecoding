@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * `#dev-kanban-filterbar` — the kanban board's filter strip — as the only
  * React writer below that host.
@@ -78,8 +82,8 @@ const SEARCH_CLS = 'h-8 rounded-full border border-zinc-300 dark:border-zinc-700
  * because "what is mine" is the filter people reach for most.
  */
 const QUICK_FILTERS: Array<{ key: 'assignedToMe' | 'createdByMe'; label: string }> = [
-  { key: 'assignedToMe', label: 'Assigned to you' },
-  { key: 'createdByMe', label: 'Created by you' },
+  { key: 'assignedToMe', get label() { return tr("workshop:assigned_to_you_dbf11bd8"); } },
+  { key: 'createdByMe', get label() { return tr("workshop:created_by_you_39467b6e"); } },
 ];
 
 /**
@@ -212,26 +216,23 @@ export function KanbanFiltersView({
   if (!mounted) return null;
   return (
     <div id="dev-filter-row" ref={rowRef} className="flex flex-wrap items-center gap-2">
-      <input
+      <Localized element={<input
         key={`q${seq}`}
         id="dev-kanban-search"
-        type="search"
-        placeholder="Search cards, comments, or #"
-        defaultValue={q}
-        aria-label="Filter cards"
+        type="search" placeholder={catalogText("workshop:search_cards_comments_or_3ec7eba5")}
+        defaultValue={q} aria-label={catalogText("workshop:filter_cards_7ac548ab")}
         className={SEARCH_CLS}
         onChange={() => controller()?._onKanbanSearchInput?.()}
-      />
-      <button
+      />} messages={{"placeholder":"workshop:search_cards_comments_or_3ec7eba5","aria-label":"workshop:filter_cards_7ac548ab"}} />
+      <Localized element={<button
         id="dev-kanban-filters-btn"
         type="button"
         aria-haspopup="dialog"
-        className={chipCls(count > 0)}
-        title="Filter the board"
+        className={chipCls(count > 0)} title={catalogText("workshop:filter_the_board_4bdcb5bd")}
         onClick={() => controller()?._openKanbanFiltersDialog?.()}
       >
-        {count > 0 ? `Filters (${count})` : 'Filters'}
-      </button>
+        <LocalizedValue render={() => (count > 0 ? tr("workshop:filters_value1_7c635af5", { value1: count }) : tr("workshop:filters_546ebb8e"))} />
+      </button>} messages={{"title":"workshop:filter_the_board_4bdcb5bd"}} />
       {quick ? QUICK_FILTERS.map(({ key, label }) => (
         <button
           key={key}
@@ -246,17 +247,17 @@ export function KanbanFiltersView({
       )) : null}
       <span id="dev-kanban-active-chips" className="contents">
         {chips.map((chip) => (
-          <button
+          <LocalizedDynamic element={<button
             key={chip.key}
             type="button"
             data-filter-chip={chip.key}
             className={chipCls(true)}
-            aria-label={`Remove filter: ${chip.label}`}
+            aria-label={tr("workshop:remove_filter_value1_376234c5", { value1: chip.label })}
             onClick={() => controller()?._dismissKanbanFilter?.(chip.key)}
           >
             {chip.label}
             <span aria-hidden="true">×</span>
-          </button>
+          </button>} resolve={() => ({ get "aria-label"() { return tr("workshop:remove_filter_value1_376234c5", { value1: chip.label }); } })} />
         ))}
       </span>
     </div>
@@ -264,5 +265,6 @@ export function KanbanFiltersView({
 }
 
 export function KanbanFilters() {
+  useUiLanguage();
   return <KanbanFiltersView {...useStoreState<KanbanFiltersState>(kanbanFiltersStore)} />;
 }

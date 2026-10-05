@@ -1,3 +1,5 @@
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
 /**
  * The general chat's quiet card: what a visitor meets when nobody has posted.
  *
@@ -33,18 +35,18 @@ export function QuietCard({ exhausted, canPost, appName, variant = 'app' }: Quie
   return (
     <div className="gc-quiet mx-3 my-3 rounded-2xl bg-zinc-100 px-4 py-4 text-center dark:bg-zinc-800" data-quiet-chat={change ? 'change' : ''}>
       <div className="text-[15px] font-semibold leading-snug text-zinc-900 dark:text-zinc-100">
-        {change
-          ? (exhausted ? 'Nobody has commented on this change yet' : 'It has been quiet on this change lately')
-          : (exhausted ? 'Nobody has said anything here yet' : 'It has been quiet in here lately')}
+        <LocalizedValue render={() => (change
+          ? (exhausted ? tr("workshop:nobody_has_commented_on_this_change_yet_903cd047") : tr("workshop:it_has_been_quiet_on_this_change_lately_9a8db0cf"))
+          : (exhausted ? tr("workshop:nobody_has_said_anything_here_yet_6c5358e4") : tr("workshop:it_has_been_quiet_in_here_lately_c6d444c4")))} />
       </div>
       <div className="mt-1 text-[13px] leading-snug text-zinc-500 dark:text-zinc-400">
-        {change
+        <LocalizedValue render={() => (change
           ? (canPost
-            ? '\u{1F44B} Ask a question, or say what you think of it.'
-            : 'Comments from the group will show up here.')
+            ? tr("workshop:ask_a_question_or_say_what_you_think_of_it_6c64b0ff")
+            : tr("workshop:comments_from_the_group_will_show_up_here_bceea7a3"))
           : (canPost
-            ? `\u{1F44B} Say hi, ask a question, or share what you would like to see next in ${appName}.`
-            : `Messages from the people building ${appName} will show up here.`)}
+            ? tr("workshop:say_hi_ask_a_question_or_share_what_you_would_li_314391d4", { value1: appName })
+            : tr("workshop:messages_from_the_people_building_value1_will_sh_11b46885", { value1: appName })))} />
       </div>
     </div>
   );

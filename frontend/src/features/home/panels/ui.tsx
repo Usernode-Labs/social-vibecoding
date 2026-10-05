@@ -1,3 +1,7 @@
+import { RichMessage } from "../../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../../lib/i18n/react";
+import { t as tr } from "../../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../../lib/i18n/react";
 /**
  * The bordered block every home panel is drawn in, and the controls its bar
  * and footer carry.
@@ -216,21 +220,17 @@ export function SectionHeading({ children, action }: {
  */
 export function BrowseLink() {
   return (
-    <button
+    <Localized element={<button
       type="button"
       id="home-browse-btn"
-      className="home-panel-browse shrink-0 flex items-center gap-1 text-[14px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target"
-      title="Browse every app in the directory"
-      aria-label="Browse all apps"
+      className="home-panel-browse shrink-0 flex items-center gap-1 text-[14px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target" title={catalogText("apps:browse_every_app_in_the_directory_4a51ed1a")} aria-label={catalogText("apps:browse_all_apps_7e578aad")}
       onClick={(e) => {
         e.stopPropagation();
         // Through the hash, so the browse screen gets a real history entry and
         // the OS back gesture returns here.
         window.location.hash = '#apps';
       }}
-    >
-      <span className="whitespace-nowrap">Browse all apps</span>
-    </button>
+    ><RichMessage id="apps:sentence_e51a7b95e5aa" components={[<span className="whitespace-nowrap" />]} /></button>} messages={{"title":"apps:browse_every_app_in_the_directory_4a51ed1a","aria-label":"apps:browse_all_apps_7e578aad"}} />
   );
 }
 
@@ -308,18 +308,14 @@ export function PanelShell({
  */
 export function LeaderboardLink() {
   return (
-    <button
+    <Localized element={<button
       type="button"
-      className="home-panel-lb-browse shrink-0 flex items-center gap-1 text-[14px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target"
-      title="Go to the Challenges tab on the Leaderboard screen"
-      aria-label="Open challenges"
+      className="home-panel-lb-browse shrink-0 flex items-center gap-1 text-[14px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target" title={catalogText("apps:go_to_the_challenges_tab_on_the_leaderboard_scre_5a7c1c89")} aria-label={catalogText("apps:open_challenges_ed0a60f4")}
       onClick={(e) => {
         e.stopPropagation();
         panels()?.goToChallenges?.();
       }}
-    >
-      <span className="whitespace-nowrap">Open challenges</span>
-    </button>
+    ><RichMessage id="apps:sentence_17f7c3535f60" components={[<span className="whitespace-nowrap" />]} /></button>} messages={{"title":"apps:go_to_the_challenges_tab_on_the_leaderboard_scre_5a7c1c89","aria-label":"apps:open_challenges_ed0a60f4"}} />
   );
 }
 
@@ -345,19 +341,19 @@ export function PanelFooter({
   panelKey, total, expanded,
 }: { panelKey: string; total: number; expanded: boolean }) {
   const label = expanded
-    ? 'Show less'
-    : (total ? `See all ${total} challenges` : 'See all challenges');
+    ? tr("apps:show_less_94ea9b1d")
+    : (total ? tr("apps:see_all_value1_challenges_91466890", { value1: total }) : tr("apps:see_all_challenges_15472cc6"));
   // No side inset and no rule above: the block sits on the page ground, so
   // the toggle starts at the heading's left edge like the cards above it, and
   // `pt-2` is the second half of the 14px step from the body's `pb-1.5`.
   return (
     <div className="home-panel-footer flex-none flex items-center gap-2 pt-2">
-      <button
+      <LocalizedDynamic element={<button
         type="button"
         className="home-panel-expand flex items-center gap-1 text-[12px] font-medium text-violet-700 dark:text-violet-400 hover:underline whitespace-nowrap un-touch-target"
         data-panel-key={panelKey}
         aria-expanded={expanded}
-        title={expanded ? 'Collapse this widget' : 'Show every challenge in this widget'}
+        title={expanded ? tr("apps:collapse_this_widget_0e60b376") : tr("apps:show_every_challenge_in_this_widget_5d4e4925")}
         onClick={(e) => {
           e.stopPropagation();
           panels()?.toggleExpanded?.(panelKey);
@@ -369,7 +365,7 @@ export function PanelFooter({
           aria-hidden="true"
         />
         <span className="whitespace-nowrap">{label}</span>
-      </button>
+      </button>} resolve={() => ({ "title": expanded ? tr("apps:collapse_this_widget_0e60b376") : tr("apps:show_every_challenge_in_this_widget_5d4e4925") })} />
     </div>
   );
 }

@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message } from "../../lib/i18n/react";
 /**
  * The first session after an invite: "You're in", then a short tour on the
  * real screens.
@@ -189,6 +193,7 @@ export function cardPlacement(box: Box | null, step: TourStep, viewport: { width
 }
 
 function Tour({ info, steps, onEnd }: { info: FirstSessionInfo; steps: TourStep[]; onEnd: () => void }) {
+  const language = useUiLanguage();
   const [index, setIndex] = useState(0);
   const [measured, setMeasured] = useState<Measured>({ step: -1, box: null });
   const [viewport, setViewport] = useState({ width: window.innerWidth, height: window.innerHeight });
@@ -294,22 +299,22 @@ function Tour({ info, steps, onEnd }: { info: FirstSessionInfo; steps: TourStep[
         className="pointer-events-auto fixed left-4 right-4 mx-auto max-w-md rounded-[20px] bg-white p-4 text-zinc-900 shadow-[0_18px_40px_-16px_rgba(0,0,0,0.6)] dark:bg-zinc-800 dark:text-zinc-100"
         style={card}
       >
-        <p className="text-[12px] font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">{`${index + 1} of ${steps.length}`}</p>
+        <p className="text-[12px] font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400"><LocalizedValue render={() => (tr("auth:value1_of_value2_a48c498b", { value1: index + 1, value2: steps.length }))} /></p>
         <p id="first-session-tour-title" className="mt-0.5 text-[17px] font-semibold leading-snug">{step.title}</p>
         <p className="mt-1 text-[15px] leading-snug text-zinc-600 dark:text-zinc-300">{step.text}</p>
         <div className="mt-3 flex items-center justify-between gap-3">
           {step.last ? <span /> : (
-            <button type="button" onClick={skip} className="py-1.5 text-[15px] font-semibold text-zinc-500 dark:text-zinc-400">Skip</button>
+            <button type="button" onClick={skip} className="py-1.5 text-[15px] font-semibold text-zinc-500 dark:text-zinc-400"><Message id="auth:skip_28d03596" /></button>
           )}
           <div className="flex items-center gap-2.5">
             {index > 0 ? (
-              <button type="button" onClick={() => go(index - 1)} className="rounded-full bg-zinc-100 px-3.5 py-1.5 text-[15px] font-semibold text-zinc-900 dark:bg-zinc-700 dark:text-zinc-100">Back</button>
+              <button type="button" onClick={() => go(index - 1)} className="rounded-full bg-zinc-100 px-3.5 py-1.5 text-[15px] font-semibold text-zinc-900 dark:bg-zinc-700 dark:text-zinc-100"><Message id="auth:back_76900f1b" /></button>
             ) : null}
             {step.tap && !step.last ? (
               <span className="text-[13px] font-semibold text-violet-700 dark:text-violet-400">{step.tap}</span>
             ) : (
               <Button type="button" onClick={() => go(index + 1)} variant="pillAccent" size="sm" ink="solid" className="text-[15px] font-semibold">
-                {step.last ? 'Got it' : 'Next'}
+                <LocalizedValue render={() => (step.last ? tr("auth:got_it_5ad3dbd1") : tr("auth:next_1ff57a29"))} />
               </Button>
             )}
           </div>
@@ -342,27 +347,27 @@ function YoureIn({ info, onGo }: { info: FirstSessionInfo; onGo: () => void }) {
           <span className="app-icon-tile flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-[10px] text-xl" aria-hidden="true">
             {info.iconUrl ? <img src={info.iconUrl} alt="" className="h-full w-full object-cover" /> : (info.iconEmoji || info.name.slice(0, 1))}
           </span>
-          <span className="text-[14px] font-semibold">{`You joined ${info.name}`}</span>
+          <span className="text-[14px] font-semibold"><LocalizedValue render={() => (tr("auth:you_joined_value1_2c933cbb", { value1: info.name }))} /></span>
         </div>
         <p className="mt-4 text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">
-          {who ? `You're in, ${who}!` : 'You\'re in!'}
+          <LocalizedValue render={() => (who ? tr("auth:you_re_in_value1_a139c04b", { value1: who }) : tr("auth:you_re_in_fdc1f013"))} />
         </p>
         <h1 id="first-session-title" className="mt-2.5 text-balance text-[30px] font-extrabold leading-[34px]">
-          {existing ? `Welcome to ${info.name}.` : 'On Homeroom, communities make apps together.'}
+          <LocalizedValue render={() => (existing ? tr("auth:welcome_to_value1_7d0e598b", { value1: info.name }) : tr("auth:on_homeroom_communities_make_apps_together_c8b2a314"))} />
         </h1>
         <p className="mt-2.5 text-pretty text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400">
-          {existing
-            ? `${maker ? `${maker} made it for the group.` : 'It is the group\'s own app.'} Have a look, then say hi.`
-            : 'Anyone using an app can change it. The group decides what goes in.'}
+          <LocalizedValue render={() => (existing
+            ? tr("auth:value1_have_a_look_then_say_hi_b3ab10ba", { value1: maker ? tr("auth:message_c84643d1a352", { maker }) : tr("auth:message_bfe211950aa4") })
+            : tr("auth:anyone_using_an_app_can_change_it_the_group_deci_cc2f9fb7"))} />
         </p>
         {existing ? null : (
           <div className="mt-6 rounded-2xl bg-white p-4 text-left shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
-            <p className="text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">How it works</p>
+            <p className="text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400"><Message id="auth:how_it_works_9c870aa6" /></p>
             <ol className="mt-3 grid gap-2.5">
               {[
-                maker ? `Someone makes an app for their group. ${maker} made this one.` : 'Someone makes an app for their group.',
-                'Anyone in the group can ask for a change. Homeroom bot builds it.',
-                'The group decides what goes in.',
+                maker ? tr("auth:someone_makes_an_app_for_their_group_value1_made_147c32a9", { value1: maker }) : tr("auth:someone_makes_an_app_for_their_group_e4a0ffaf"),
+                tr("auth:anyone_in_the_group_can_ask_for_a_change_homeroo_17eff437"),
+                tr("auth:the_group_decides_what_goes_in_10eefc3d"),
               ].map((line, i) => (
                 <li key={line} className="flex items-start gap-2.5 text-[15px] leading-snug text-zinc-700 dark:text-zinc-200">
                   <span className="mt-px flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full bg-violet-600 text-[12px] font-bold text-white">{i + 1}</span>
@@ -383,7 +388,7 @@ function YoureIn({ info, onGo }: { info: FirstSessionInfo; onGo: () => void }) {
           ink="solidLate"
           className="mt-8 flex items-center justify-center"
         >
-          {`Go to ${info.name}`}
+          <LocalizedValue render={() => (tr("auth:go_to_value1_c3ca0145", { value1: info.name }))} />
         </Button>
       </div>
     </div>
@@ -410,6 +415,7 @@ function viewerName(): string {
 }
 
 export function FirstSession() {
+  const language = useUiLanguage();
   const [mode, setMode] = useState<Mode>({ kind: 'none' });
 
   // An account the story's sheet just made is asked what to make, once,
@@ -459,7 +465,7 @@ export function FirstSession() {
     if (mode.kind !== 'tour') return [];
     const project = { slug: mode.info.slug, name: mode.info.name, conversationId: mode.info.conversationId };
     return mode.path === 'maker' ? makerSteps(project) : invitedSteps(project);
-  }, [mode]);
+  }, [mode, language]);
 
   if (mode.kind === 'make') {
     return (

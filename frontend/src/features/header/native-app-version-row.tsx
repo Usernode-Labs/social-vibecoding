@@ -1,3 +1,5 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { Message } from "../../lib/i18n/react";
 /**
  * The "Mobile app version" row. #1443 put the version rows in the Improve panel's reference footer; the panel retired (#2718 review) and the rows are Settings' About pane, which is the screen you consult rather than act from.
  * See ./native-app-version-store.ts for what the seam carries.
@@ -42,12 +44,11 @@ const ROW = {
 } as const;
 
 export function NativeAppVersionRow(): ReactNode {
+  useUiLanguage();
   const { value } = useStoreState(nativeAppVersionStore);
   return (
     <div id="drawer-row-native-app-version" className={value ? ROW.shown : ROW.hidden}>
-      <span className="drawer-ver-label">
-        Mobile app version
-      </span>
+      <span className="drawer-ver-label"><Message id="account:mobile_app_version_04c1664b" /></span>
       {/* A text child, never `dangerouslySetInnerHTML`: this string comes from
           the native runtime, and the module it replaces used `textContent` for
           exactly that reason. React escapes text children. */}

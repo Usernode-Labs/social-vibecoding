@@ -1,3 +1,8 @@
+import { getLanguage } from "../../lib/i18n/runtime";
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message } from "../../lib/i18n/react";
 /**
  * `#auth-waiting-screen` — the platform-access gate (#1080, step 2 chunk C,
  * screen 4 of 6).
@@ -35,6 +40,7 @@ interface MeUser {
 }
 
 export function WaitingScreen() {
+  useUiLanguage();
   const rootRef = useRef<HTMLElement>(null);
   useVisibilityHiddenClass(rootRef, AUTH_SCREEN_IDS.waiting, false);
   // The screen's interior mounts on its first reveal, not in the prerender —
@@ -92,9 +98,9 @@ export function WaitingScreen() {
         }, 'pop');
         return;
       }
-      setCheckState('Last checked ' + new Date().toLocaleTimeString());
+      setCheckState(tr("auth:last_checked_a0044d86") + new Date().toLocaleTimeString(getLanguage()));
     } catch {
-      setCheckState('Connection issue, will retry');
+      setCheckState(tr("auth:connection_issue_will_retry_77c78259"));
     }
   }, [stopWaitingPoll]);
 
@@ -189,34 +195,28 @@ export function WaitingScreen() {
         <>
       <div className="min-h-full flex items-center justify-center">
         <div className="w-full max-w-sm px-6 py-16 text-center">
-          <h1 className="text-[28px] font-extrabold leading-tight tracking-tight mb-1 text-zinc-900 dark:text-zinc-100">
-            You're in the queue
-          </h1>
-          <p className="text-[15px] text-zinc-500 dark:text-zinc-400 mb-8 italic">
-            Homeroom
-          </p>
+          <h1 className="text-[28px] font-extrabold leading-tight tracking-tight mb-1 text-zinc-900 dark:text-zinc-100"><Message id="auth:you_re_in_the_queue_38c934d4" /></h1>
+          <p className="text-[15px] text-zinc-500 dark:text-zinc-400 mb-8 italic"><Message id="auth:homeroom_c9149977" /></p>
           <div className="rounded-2xl bg-white dark:bg-zinc-900 p-5 text-left space-y-3">
             <p className="text-[17px] leading-snug text-zinc-900 dark:text-zinc-100">
-              {'Your account '}
+              <Message id="auth:your_account_ce511b79" />
               <span id="waiting-who" className="font-semibold">
                 {who}
               </span>
-              {" doesn't have platform access yet. We let people in from the waitlist in batches. You'll get in automatically when your turn comes."}
+              <Message id="auth:doesn_t_have_platform_access_yet_we_let_people_i_5c9eaea2" />
             </p>
-            <p className="text-[15px] text-zinc-500 dark:text-zinc-400">
-              This page checks for you every so often; you can also just come back later.
-            </p>
+            <p className="text-[15px] text-zinc-500 dark:text-zinc-400"><Message id="auth:this_page_checks_for_you_every_so_often_you_can__e57a8cc2" /></p>
             <p id="waiting-check-state" className="text-[15px] text-zinc-500 dark:text-zinc-500">
               {checkState}
             </p>
           </div>
           {queued.length ? (
             <div data-waiting-queued="" className="mt-3 rounded-2xl bg-white dark:bg-zinc-900 p-5 text-left">
-              <p className="text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">When you're let in</p>
+              <p className="text-[15px] font-[650] text-zinc-900 dark:text-zinc-100"><Message id="auth:when_you_re_let_in_7662a01c" /></p>
               <ul className="mt-1 space-y-1 text-[15px] text-zinc-600 dark:text-zinc-300">
                 {queued.map((q) => (
                   <li key={q.name}>
-                    {`You join ${q.name}${q.inviter ? `, from @${q.inviter}'s invite` : ''}.`}
+                    <LocalizedValue render={() => (tr("auth:you_join_value1_value2_742d3c7d", { value1: q.name, value2: q.inviter ? tr("auth:message_c2cc93b976bb", { username: q.inviter }) : '' }))} />
                   </li>
                 ))}
               </ul>
@@ -237,9 +237,7 @@ export function WaitingScreen() {
               id="waiting-logout"
               className="flex h-11 w-full items-center justify-center rounded-full bg-white text-[16px] font-semibold text-zinc-900 shadow-sm hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 transition-colors"
               onClick={onLogout}
-            >
-              Log out
-            </button>
+            ><Message id="auth:log_out_49616145" /></button>
           </div>
         </div>
       </div>

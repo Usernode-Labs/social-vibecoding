@@ -1,3 +1,4 @@
+import { t as tr, htmlText } from "../../../lib/i18n/runtime";
 /**
  * The Dev board's LOADING state, for both surfaces.
  *
@@ -107,7 +108,7 @@ export function CountSkeleton(): ReactNode {
  * column and it is filling". Only the counts are unknown, so only the counts
  * pulse — see `COUNT_BAR` below, the string form of <CountSkeleton/>.
  */
-const KANBAN_COLS = ['Requests', 'Underway', 'Waiting for approval', 'Done'];
+const KANBAN_COLS = () => ([tr("workshop:requests_ada27592"), tr("workshop:underway_1ecd2476"), tr("workshop:waiting_for_approval_10c5739b"), tr("workshop:done_11a6767d")]);
 
 /** <CountSkeleton/> as a string, for the HTML builders below. */
 const COUNT_BAR =
@@ -154,7 +155,7 @@ function cardHtml(i: number): string {
  * `getElementById` for even a frame is not worth the tidiness.
  */
 export function skeletonKanbanHtml(): string {
-  const tabs = KANBAN_COLS.map((title, i) => (
+  const tabs = KANBAN_COLS().map((title, i) => (
     '<div class="dev-kanban-tab flex-1 basis-0 min-w-0 min-h-[44px] px-1 py-1.5 '
     + 'flex flex-col items-center justify-center rounded-full font-semibold '
     + (i === 0 ? SECTION_TAB_ACTIVE : 'text-zinc-500 dark:text-zinc-400')
@@ -164,7 +165,7 @@ export function skeletonKanbanHtml(): string {
     + '</div>'
   )).join('');
 
-  const cols = KANBAN_COLS.map((title, i) => (
+  const cols = KANBAN_COLS().map((title, i) => (
     `<div class="dev-kanban-col${i === 0 ? ' dev-kanban-col-active' : ''}">`
     + '<div class="dev-kanban-col-head text-[0.9375rem] font-semibold '
     + 'text-zinc-500 dark:text-zinc-400 mb-2 px-0.5">'
@@ -175,7 +176,7 @@ export function skeletonKanbanHtml(): string {
     + '</div></div>'
   )).join('');
 
-  return '<div class="sr-only" role="status">Loading the board</div>'
+  return `<div class="sr-only" role="status">${htmlText("workshop:loading_the_board_2b71b8f9")}</div>`
     + '<div class="sm:hidden flex items-stretch gap-0.5 mb-2 rounded-full '
     + `bg-white dark:bg-zinc-900 p-0.5" aria-hidden="true">${tabs}</div>`
     + `<div class="flex gap-3 overflow-x-auto pb-2" aria-hidden="true">${cols}</div>`;
@@ -190,6 +191,6 @@ export function skeletonKanbanHtml(): string {
 export function skeletonListHtml(n: number): string {
   let rows = '';
   for (let i = 0; i < n; i += 1) rows += cardHtml(i);
-  return '<div class="sr-only" role="status">Loading</div>'
+  return `<div class="sr-only" role="status">${htmlText("workshop:loading_dc380888")}</div>`
     + `<div class="space-y-2 animate-pulse" aria-hidden="true">${rows}</div>`;
 }

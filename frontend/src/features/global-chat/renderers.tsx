@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 import { useMemo, useState } from 'react';
 
 import { ChevronDownIcon } from '@/components/ui/icons';
@@ -87,13 +91,13 @@ function first(item: JsonObject, keys: string[], max?: number) {
 
 function rendererLabel(renderer: string) {
   const labels: Record<string, string> = {
-    app: 'App', issue: 'Request', proposal: 'Proposal', session: 'Development',
-    conversation: 'Conversation', notification: 'Notification', profile: 'Profile',
-    leaderboard: 'Leaderboard', challenge: 'Challenge', wallet: 'Wallet',
-    staking: 'Staking', setting: 'Setting', admin_record: 'Admin', status: 'Result',
-    error: 'Error', form: 'Form', grouped_list: 'Results', confirmation: 'Confirmation',
+    get app() { return tr("community:app_0d04bfeb"); }, get issue() { return tr("community:request_59f03d64"); }, get proposal() { return tr("community:proposal_5d42766c"); }, get session() { return tr("community:development_21b6a798"); },
+    get conversation() { return tr("community:conversation_ccca1817"); }, get notification() { return tr("community:notification_7d31b833"); }, get profile() { return tr("community:profile_d696a35b"); },
+    get leaderboard() { return tr("community:leaderboard_31b47121"); }, get challenge() { return tr("community:challenge_27cf1792"); }, get wallet() { return tr("community:wallet_d1c9a01d"); },
+    get staking() { return tr("community:staking_5190ff48"); }, get setting() { return tr("community:setting_818cd8d9"); }, get admin_record() { return tr("community:admin_c1c224b0"); }, get status() { return tr("community:result_6e7d50e8"); },
+    get error() { return tr("community:error_54a0e8c1"); }, get form() { return tr("community:form_2e0e960a"); }, get grouped_list() { return tr("community:results_219c4a6c"); }, get confirmation() { return tr("community:confirmation_d7430705"); },
   };
-  return labels[renderer] || 'Result';
+  return labels[renderer] || tr("community:result_6e7d50e8");
 }
 
 function humanize(value: string) {
@@ -115,13 +119,13 @@ function formattedDate(value: unknown) {
 }
 
 function displayValue(key: string, value: unknown) {
-  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  if (typeof value === 'boolean') return value ? tr("community:yes_85a39ab3") : tr("community:no_1ea442a1");
   if (/activitySecondsLast7Days/.test(key)) {
     const seconds = Number(value);
     if (Number.isFinite(seconds) && seconds >= 0) {
-      if (seconds < 60) return `${Math.round(seconds)} sec`;
-      if (seconds < 3600) return `${Math.round(seconds / 60)} min`;
-      return `${(seconds / 3600).toFixed(seconds < 36_000 ? 1 : 0)} hr`;
+      if (seconds < 60) return tr("community:value1_sec_984d1397", { value1: Math.round(seconds) });
+      if (seconds < 3600) return tr("community:value1_min_af34cffe", { value1: Math.round(seconds / 60) });
+      return tr("community:value1_hr_0bb6d2b1", { value1: (seconds / 3600).toFixed(seconds < 36_000 ? 1 : 0) });
     }
   }
   if (/(?:^|\.)(?:spent|cap|remaining).*usd$/i.test(key)) {
@@ -159,7 +163,7 @@ function itemTitle(result: GlobalChatResult, item: JsonObject) {
   if (result.renderer === 'notification') {
     const kind = text(item.kind, 80);
     const place = first(item, ['appName', 'app_name', 'conversationTitle', 'conversation_title'], 100);
-    const label = notificationCopy(item)?.label || (kind ? humanize(kind) : 'Notification');
+    const label = notificationCopy(item)?.label || (kind ? humanize(kind) : tr("community:notification_7d31b833"));
     return place ? `${label} · ${place}` : label;
   }
   const rendererKeys: Record<string, string[]> = {
@@ -201,26 +205,26 @@ function itemSummary(result: GlobalChatResult, item: JsonObject, title: string) 
 function resultLabel(result: GlobalChatResult) {
   if (result.renderer === 'issue') {
     return /(?:^|\.)github\.issues(?:\.|$)/.test(result.capabilityId)
-      ? 'GitHub issues'
-      : 'Platform issues';
+      ? tr("community:github_issues_b1f5866f")
+      : tr("community:platform_issues_35216768");
   }
-  if (result.capabilityId === 'apps.activity') return 'Recent app activity';
-  if (result.capabilityId === 'messages.for_app') return 'App discussions';
+  if (result.capabilityId === 'apps.activity') return tr("community:recent_app_activity_548cacca");
+  if (result.capabilityId === 'messages.for_app') return tr("community:app_discussions_396aa1f9");
   return rendererLabel(result.renderer);
 }
 
 function emptyResultMessage(result: GlobalChatResult) {
   const messages: Record<string, string> = {
-    app: 'No apps found.',
-    issue: 'No issues found.',
-    proposal: 'No current proposals.',
-    session: 'No active development found.',
-    conversation: 'No conversations found.',
-    notification: 'No notifications found.',
-    leaderboard: 'No leaderboard entries found.',
-    setting: 'No settings found.',
+    get app() { return tr("community:no_apps_found_4a081d54"); },
+    get issue() { return tr("community:no_issues_found_050dc004"); },
+    get proposal() { return tr("community:no_current_proposals_ea84049a"); },
+    get session() { return tr("community:no_active_development_found_0bf8f648"); },
+    get conversation() { return tr("community:no_conversations_found_d444e99d"); },
+    get notification() { return tr("community:no_notifications_found_9dd3c8fb"); },
+    get leaderboard() { return tr("community:no_leaderboard_entries_found_7dfdebc2"); },
+    get setting() { return tr("community:no_settings_found_6e42a971"); },
   };
-  return messages[result.renderer] || 'No results found.';
+  return messages[result.renderer] || tr("community:no_results_found_7ecdbfee");
 }
 
 function humanizeCapability(value: string) {
@@ -230,7 +234,7 @@ function humanizeCapability(value: string) {
     .filter((part) => !['get', 'post', 'put', 'patch', 'delete', 'item'].includes(part))
     .slice(1)
     .join(' ')
-    .replace(/\b\w/g, (letter) => letter.toUpperCase()) || 'this action';
+    .replace(/\b\w/g, (letter) => letter.toUpperCase()) || tr("community:this_action_1aa2b739");
 }
 
 function identifier(item: JsonObject) {
@@ -276,9 +280,9 @@ function directItemActions(
   const payload = object(item.payload);
   if (result.renderer === 'app' && slug) {
     return [
-      itemAction('Details', `About ${targetLabel}`, 'apps.detail', { appSlug: slug }, 'inline'),
-      itemAction('Issues', `Issues for ${targetLabel}`, 'issues.for_app', { appSlug: slug }, 'turn'),
-      itemAction('Discussions', `Discussions in ${targetLabel}`, 'messages.for_app', { appSlug: slug }, 'turn'),
+      itemAction(tr("community:details_45989de4"), tr("community:about_value1_fd098734", { value1: targetLabel }), 'apps.detail', { appSlug: slug }, 'inline'),
+      itemAction(tr("community:issues_666067dd"), tr("community:issues_for_value1_a827d432", { value1: targetLabel }), 'issues.for_app', { appSlug: slug }, 'turn'),
+      itemAction(tr("community:discussions_60157cfc"), tr("community:discussions_in_value1_6df01c46", { value1: targetLabel }), 'messages.for_app', { appSlug: slug }, 'turn'),
     ];
   }
   if (result.renderer === 'issue' && slug) {
@@ -295,13 +299,13 @@ function directItemActions(
     const githubIssueCapability = /(?:^|\.)github\.issues(?:\.|$)/.test(result.capabilityId);
     if (issueNumber && (explicitGithubIssueNumber || githubIssueCapability || !text(item.kind, 80))) {
       return [
-        itemAction('Details', `Open ${targetLabel}`, 'issue.detail', { appSlug: slug, issueNumber }, 'inline'),
-        itemAction('Comments', `Comments on ${targetLabel}`, 'issue.comments', { appSlug: slug, issueNumber }, 'inline'),
+        itemAction(tr("community:details_45989de4"), tr("community:open_value1_839d6dee", { value1: targetLabel }), 'issue.detail', { appSlug: slug, issueNumber }, 'inline'),
+        itemAction(tr("community:comments_355f79f2"), tr("community:comments_on_value1_3f7fe57d", { value1: targetLabel }), 'issue.comments', { appSlug: slug, issueNumber }, 'inline'),
       ];
     }
     if (governanceId) {
       return [itemAction(
-        'Details', `Open ${targetLabel}`, 'governance.detail',
+        tr("community:details_45989de4"), tr("community:open_value1_839d6dee", { value1: targetLabel }), 'governance.detail',
         { appSlug: slug, governanceId }, 'inline',
       )];
     }
@@ -310,34 +314,34 @@ function directItemActions(
     const governanceId = text(item.governanceId || item.governance_id || item.id, 80);
     if (item.proposalType === 'governance' && governanceId) {
       return [itemAction(
-        'Details', `Open ${targetLabel}`, 'governance.detail',
+        tr("community:details_45989de4"), tr("community:open_value1_839d6dee", { value1: targetLabel }), 'governance.detail',
         { appSlug: slug, governanceId }, 'inline',
       )];
     }
     const proposalId = first(item, ['proposalId', 'proposal_id', 'id', 'sessionId', 'session_id'], 80);
     if (proposalId) return [
-      itemAction('Details', `Open ${targetLabel}`, 'proposal.detail', { appSlug: slug, proposalId }, 'inline'),
-      itemAction('Before & after', `Before & after for ${targetLabel}`, 'proposal.shots', { appSlug: slug, proposalId }, 'inline'),
+      itemAction(tr("community:details_45989de4"), tr("community:open_value1_839d6dee", { value1: targetLabel }), 'proposal.detail', { appSlug: slug, proposalId }, 'inline'),
+      itemAction('Before & after', tr("community:before_after_for_value1_4ba43dff", { value1: targetLabel }), 'proposal.shots', { appSlug: slug, proposalId }, 'inline'),
     ];
   }
   if (result.renderer === 'session') {
     const sessionId = first(item, ['sessionId', 'session_id', 'id'], 80);
     if (sessionId) return [
-      itemAction('Details', `Details for ${targetLabel}`, 'session.detail', { sessionId }, 'inline'),
-      itemAction('Checks', `Checks for ${targetLabel}`, 'session.checks', { sessionId }, 'inline'),
+      itemAction(tr("community:details_45989de4"), tr("community:details_for_value1_5d2ce814", { value1: targetLabel }), 'session.detail', { sessionId }, 'inline'),
+      itemAction(tr("community:checks_de07d072"), tr("community:checks_for_value1_e09fee46", { value1: targetLabel }), 'session.checks', { sessionId }, 'inline'),
     ];
   }
   if (result.renderer === 'conversation') {
     if (result.capabilityId === 'messages.for_app') return [];
     const conversationId = first(item, ['conversationId', 'conversation_id', 'id'], 80);
     if (conversationId) return [itemAction(
-      'Details', `Open ${targetLabel}`, 'conversation.detail', { conversationId }, 'inline',
+      tr("community:details_45989de4"), tr("community:open_value1_839d6dee", { value1: targetLabel }), 'conversation.detail', { conversationId }, 'inline',
     )];
   }
   if (result.renderer === 'notification') {
     const notificationId = first(item, ['notificationId', 'notification_id', 'id'], 80);
     if (notificationId) return [itemAction(
-      'Details', `Open ${targetLabel}`, 'notification.detail', { notificationId }, 'inline',
+      tr("community:details_45989de4"), tr("community:open_value1_839d6dee", { value1: targetLabel }), 'notification.detail', { notificationId }, 'inline',
     )];
   }
   if (result.renderer === 'leaderboard') {
@@ -345,17 +349,17 @@ function directItemActions(
     const username = text(item.username, 80);
     return [
       ...(userId ? [itemAction(
-        'Profile', `Profile for ${targetLabel}`, 'leaderboard.profile', { userId }, 'inline',
+        tr("community:profile_d696a35b"), tr("community:profile_for_value1_d58c2634", { value1: targetLabel }), 'leaderboard.profile', { userId }, 'inline',
       )] : []),
       ...(username ? [itemAction(
-        'Merged work', `Merged work by ${targetLabel}`, 'leaderboard.prs', { username }, 'inline',
+        tr("community:merged_work_e49b606e"), tr("community:merged_work_by_value1_b36948e5", { value1: targetLabel }), 'leaderboard.prs', { username }, 'inline',
       )] : []),
     ];
   }
   if (result.renderer === 'setting' && result.capabilityId === 'settings.catalog') {
     const group = text(item.id || item.group, 80);
     if (group && text(item.classicPath, 300)) return [itemAction(
-      'View', `Open ${targetLabel}`, 'settings.inspect', { group }, 'inline',
+      tr("community:view_dcc839a4"), tr("community:open_value1_839d6dee", { value1: targetLabel }), 'settings.inspect', { group }, 'inline',
     )];
   }
   return [];
@@ -443,7 +447,7 @@ function compactMetadata(result: GlobalChatResult, item: JsonObject, title: stri
     if (parts.length === 3) break;
   }
   if (result.renderer === 'notification') {
-    parts.push(item.readAt || item.read_at ? 'Read' : 'Unread');
+    parts.push(item.readAt || item.read_at ? tr("community:read_9b9a8d05") : tr("community:unread_1b9f384c"));
   }
   const date = first(item, ['lastActivityAt', 'last_activity_at', 'updatedAt', 'updated_at', 'createdAt', 'created_at'], 100);
   const renderedDate = formattedDate(date);
@@ -474,48 +478,48 @@ function displayFields(result: GlobalChatResult, item: JsonObject): DisplayField
   if (result.renderer === 'app') {
     if (result.capabilityId === 'apps.activity') {
       add('Messages (7d)', ['messagesLast7Days']);
-      add('Active time (7d)', ['activitySecondsLast7Days']);
-      add('Active users', ['activeUsers', 'active_users']);
-      add('Development', ['activeDevelopment', 'active_development', 'active_sessions']);
+      add(tr("community:active_time_7d_a454349f"), ['activitySecondsLast7Days']);
+      add(tr("community:active_users_d8fc11b0"), ['activeUsers', 'active_users']);
+      add(tr("community:development_21b6a798"), ['activeDevelopment', 'active_development', 'active_sessions']);
     } else {
-      add('Open issues', ['openIssues', 'open_issues']);
-      add('Open proposals', ['openProposals', 'open_proposals', 'open_prs']);
-      add('Active development', ['activeDevelopment', 'active_development', 'active_sessions']);
+      add(tr("community:open_issues_28aa0023"), ['openIssues', 'open_issues']);
+      add(tr("community:open_proposals_23caaccd"), ['openProposals', 'open_proposals', 'open_prs']);
+      add(tr("community:active_development_6e3c9235"), ['activeDevelopment', 'active_development', 'active_sessions']);
     }
   } else if (result.renderer === 'proposal') {
-    add('App', ['appName', 'app_name']);
-    add('Yes', ['yesCount', 'yes_count', 'upCount', 'up_count']);
-    add('No', ['noCount', 'no_count', 'downCount', 'down_count']);
-    add('Checks', ['checkState', 'check_state']);
+    add(tr("community:app_0d04bfeb"), ['appName', 'app_name']);
+    add(tr("community:yes_85a39ab3"), ['yesCount', 'yes_count', 'upCount', 'up_count']);
+    add(tr("community:no_1ea442a1"), ['noCount', 'no_count', 'downCount', 'down_count']);
+    add(tr("community:checks_de07d072"), ['checkState', 'check_state']);
   } else if (result.renderer === 'session') {
-    add('App', ['appName', 'app_name']);
-    add('Checks', ['checkState', 'check_state']);
-    add('Phase', ['checkPhase', 'check_phase']);
+    add(tr("community:app_0d04bfeb"), ['appName', 'app_name']);
+    add(tr("community:checks_de07d072"), ['checkState', 'check_state']);
+    add(tr("community:phase_46342ec1"), ['checkPhase', 'check_phase']);
   } else if (result.renderer === 'conversation') {
-    add('Unread', ['unreadCount', 'unread_count']);
-    add('Members', ['memberCount', 'member_count']);
+    add(tr("community:unread_1b9f384c"), ['unreadCount', 'unread_count']);
+    add(tr("community:members_1044a4c0"), ['memberCount', 'member_count']);
   } else if (result.renderer === 'notification') {
-    add('From', ['sourceUsername', 'source_username']);
+    add(tr("community:from_21819769"), ['sourceUsername', 'source_username']);
     add('PR', ['prNumber', 'pr_number']);
   } else if (result.renderer === 'leaderboard') {
-    add('Kudos', ['kudosReceived', 'kudos_received']);
-    add('PRs recognized', ['prsKudosed', 'prs_kudosed']);
-    add('Merged', ['kudosReceivedPrsMerged', 'kudos_received_prs_merged']);
+    add(tr("community:kudos_51483eb0"), ['kudosReceived', 'kudos_received']);
+    add(tr("community:prs_recognized_512a9981"), ['prsKudosed', 'prs_kudosed']);
+    add(tr("community:merged_bd0a0620"), ['kudosReceivedPrsMerged', 'kudos_received_prs_merged']);
   } else if (result.renderer === 'setting') {
     const spending = text(item.name, 100) === 'Global Chat usage';
     if (spending) {
-      add('Spent this month', ['spentUsd']);
-      add('Monthly cap', ['capUsd']);
-      add('Cap remaining', ['remainingUsd']);
-      add('OpenRouter remaining', ['overallRemainingUsd']);
+      add(tr("community:spent_this_month_26bbf64a"), ['spentUsd']);
+      add(tr("community:monthly_cap_013025a3"), ['capUsd']);
+      add(tr("community:cap_remaining_d6a2ad28"), ['remainingUsd']);
+      add(tr("community:openrouter_remaining_83f16d33"), ['overallRemainingUsd']);
     } else {
-      add('Model', ['profile.model', 'backends.codex_openrouter.model', 'model']);
-      add('Reasoning', ['profile.reasoningEffort', 'reasoningEffort', 'reasoning_effort']);
-      add('Enabled', ['profile.enabled', 'enabled']);
-      add('Spent this month', ['usage.spentUsd', 'spentUsd']);
-      add('Monthly cap', ['usage.capUsd', 'profile.spendCapUsd', 'capUsd']);
-      add('OpenRouter remaining', ['overallRemaining', 'overallRemainingUsd']);
-      add('Backend', ['backend', 'profile.backend']);
+      add(tr("community:model_5e2c614c"), ['profile.model', 'backends.codex_openrouter.model', 'model']);
+      add(tr("community:reasoning_d8211e24"), ['profile.reasoningEffort', 'reasoningEffort', 'reasoning_effort']);
+      add(tr("community:enabled_92c1cdfd"), ['profile.enabled', 'enabled']);
+      add(tr("community:spent_this_month_26bbf64a"), ['usage.spentUsd', 'spentUsd']);
+      add(tr("community:monthly_cap_013025a3"), ['usage.capUsd', 'profile.spendCapUsd', 'capUsd']);
+      add(tr("community:openrouter_remaining_83f16d33"), ['overallRemaining', 'overallRemainingUsd']);
+      add(tr("community:backend_2fb4019a"), ['backend', 'profile.backend']);
     }
     if (fields.length < 4) {
       for (const [key, raw] of Object.entries(item)) {
@@ -538,12 +542,13 @@ function actionTargetLabel(result: GlobalChatResult, item: JsonObject, title: st
   const id = identifier(item)?.value;
   if (!id || title.includes(id)) return title;
   if (result.renderer === 'issue') return `${title} (#${id})`;
-  if (result.renderer === 'proposal') return `${title} (proposal #${id})`;
-  if (result.renderer === 'session') return `${title} (development #${id})`;
+  if (result.renderer === 'proposal') return tr("community:value1_proposal_value2_172b0788", { value1: title, value2: id });
+  if (result.renderer === 'session') return tr("community:value1_development_value2_42e043b3", { value1: title, value2: id });
   return title;
 }
 
 function SettingInstruction({ item, title }: { item: JsonObject; title: string }) {
+  useUiLanguage();
   const [editing, setEditing] = useState(false);
   const [instruction, setInstruction] = useState('');
   const group = text(item.group || item.id, 80);
@@ -555,9 +560,9 @@ function SettingInstruction({ item, title }: { item: JsonObject; title: string }
     setInstruction('');
     setEditing(false);
     void sendGlobalChatMessage(
-      `In the "${title}" settings group (key: ${group}), ${requested}. `
-      + 'Preserve every value I did not ask to change, use only capabilities for this settings group, '
-      + 'and show the exact confirmation before saving.',
+      tr("community:in_the_value1_settings_group_key_value2_value3_e57efdab", { value1: title, value2: group, value3: requested })
+      + tr("community:preserve_every_value_i_did_not_ask_to_change_use_8d4e97f9")
+      + tr("community:and_show_the_exact_confirmation_before_saving_d933434d"),
     );
   }
 
@@ -566,21 +571,19 @@ function SettingInstruction({ item, title }: { item: JsonObject; title: string }
       className="global-chat-setting-instruction"
       onSubmit={(event) => { event.preventDefault(); submit(); }}
     >
-      <input
+      <LocalizedDynamic element={<input
         value={instruction}
         maxLength={500}
         autoFocus
-        aria-label={`Change ${title}`}
-        placeholder={`What should change in ${title}?`}
+        aria-label={tr("community:change_value1_2c7346eb", { value1: title })}
+        placeholder={tr("community:what_should_change_in_value1_915dc563", { value1: title })}
         onChange={(event) => setInstruction(event.target.value)}
-      />
-      <button type="submit" disabled={!instruction.trim()}>Continue</button>
-      <button type="button" onClick={() => setEditing(false)}>Cancel</button>
+      />} resolve={() => ({ get "aria-label"() { return tr("community:change_value1_2c7346eb", { value1: title }); }, get "placeholder"() { return tr("community:what_should_change_in_value1_915dc563", { value1: title }); } })} />
+      <button type="submit" disabled={!instruction.trim()}><Message id="community:continue_31fbef16" /></button>
+      <button type="button" onClick={() => setEditing(false)}><Message id="community:cancel_19766ed6" /></button>
     </form>
   ) : (
-    <button type="button" className="global-chat-setting-edit" onClick={() => setEditing(true)}>
-      Change these settings
-    </button>
+    <button type="button" className="global-chat-setting-edit" onClick={() => setEditing(true)}><Message id="community:change_these_settings_47a0b043" /></button>
   );
 }
 
@@ -592,29 +595,30 @@ const LOCAL_SETTING_EDITORS: Record<string, {
   theme: {
     setting: 'theme', valueKey: 'theme',
     options: [
-      { label: 'System', value: 'system' },
-      { label: 'Light', value: 'light' },
-      { label: 'Dark', value: 'dark' },
+      { get label() { return tr("community:system_6725e7bb"); }, value: 'system' },
+      { get label() { return tr("community:light_dbcd5e7b"); }, value: 'light' },
+      { get label() { return tr("community:dark_60acc53f"); }, value: 'dark' },
     ],
   },
   alerts: {
     setting: 'devAlerts', valueKey: 'devAlerts',
-    options: [{ label: 'On', value: 'true' }, { label: 'Off', value: 'false' }],
+    options: [{ get label() { return tr("community:on_13001175"); }, value: 'true' }, { get label() { return tr("community:off_ca7981b4"); }, value: 'false' }],
   },
   'dev-console': {
     setting: 'devConsoleMode', valueKey: 'devConsoleMode',
     options: [
-      { label: 'Always', value: 'always' },
-      { label: 'Errors only', value: 'errors-only' },
+      { get label() { return tr("community:always_de9f057a"); }, value: 'always' },
+      { get label() { return tr("community:errors_only_30767c16"); }, value: 'errors-only' },
     ],
   },
   'admin-preview': {
     setting: 'adminPreview', valueKey: 'adminPreview',
-    options: [{ label: 'On', value: 'true' }, { label: 'Off', value: 'false' }],
+    options: [{ get label() { return tr("community:on_13001175"); }, value: 'true' }, { get label() { return tr("community:off_ca7981b4"); }, value: 'false' }],
   },
 };
 
 function LocalSettingEditor({ item, title }: { item: JsonObject; title: string }) {
+  useUiLanguage();
   const group = text(item.group || item.id, 80);
   const editor = LOCAL_SETTING_EDITORS[group];
   const initial = editor ? text(item[editor.valueKey], 40) : '';
@@ -635,19 +639,19 @@ function LocalSettingEditor({ item, title }: { item: JsonObject; title: string }
         title,
       );
       const pending = results.find((result) => clientAction(result));
-      if (!pending) throw new Error('The setting update was not returned.');
+      if (!pending) throw new Error(tr("community:the_setting_update_was_not_returned_4df3fa3d"));
       const applied = await runGlobalChatClientAction(pending);
-      if (!applied) throw new Error('Could not apply this setting.');
+      if (!applied) throw new Error(tr("community:could_not_apply_this_setting_46944d3a"));
       setSaved(selected);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Could not save this setting.');
+      setError(reason instanceof Error ? reason.message : tr("community:could_not_save_this_setting_9159403b"));
     } finally {
       setSaving(false);
     }
   }
 
   return (
-    <div className="global-chat-setting-controls" aria-label={`Change ${title}`}>
+    <LocalizedDynamic element={<div className="global-chat-setting-controls" aria-label={tr("community:change_value1_2c7346eb", { value1: title })}>
       <div className="global-chat-inline-actions">
         {editor.options.map((option) => (
           <button
@@ -665,11 +669,11 @@ function LocalSettingEditor({ item, title }: { item: JsonObject; title: string }
           disabled={!selected || selected === saved || saving}
           onClick={() => void save()}
         >
-          {saving ? 'Saving…' : selected === saved ? 'Saved' : 'Save'}
+          <LocalizedValue render={() => (saving ? tr("community:saving_23e39291") : selected === saved ? tr("community:saved_b5c120b3") : tr("community:save_1509f561"))} />
         </button>
       </div>
       {error ? <div className="global-chat-inline-error" role="alert">{error}</div> : null}
-    </div>
+    </div>} resolve={() => ({ get "aria-label"() { return tr("community:change_value1_2c7346eb", { value1: title }); } })} />
   );
 }
 
@@ -684,6 +688,7 @@ function ItemRow({
   nested?: boolean;
   itemSelection?: GlobalChatItemSelection;
 }) {
+  useUiLanguage();
   const [expanded, setExpanded] = useState(nested);
   const [inlineResults, setInlineResults] = useState<Record<string, GlobalChatResult[]>>({});
   const [inlineLoading, setInlineLoading] = useState<string | null>(null);
@@ -723,7 +728,7 @@ function ItemRow({
       );
       setInlineResults((current) => ({ ...current, [action.actionId]: loaded }));
     } catch (reason) {
-      setInlineError(reason instanceof Error ? reason.message : 'Could not load those details.');
+      setInlineError(reason instanceof Error ? reason.message : tr("community:could_not_load_those_details_bb039255"));
     } finally {
       setInlineLoading(null);
     }
@@ -778,8 +783,8 @@ function ItemRow({
             {summary && summary !== title ? <p className="global-chat-item-summary">{summary}</p> : null}
             {fields.length ? (
               <dl className="global-chat-item-fields">
-                {fields.map(({ label, value: fieldValue }) => (
-                  <div key={label}><dt>{label}</dt><dd>{fieldValue}</dd></div>
+                {fields.map(({ label, value: fieldValue }, index) => (
+                  <div key={index}><dt>{label}</dt><dd>{fieldValue}</dd></div>
                 ))}
               </dl>
             ) : null}
@@ -799,18 +804,18 @@ function ItemRow({
                         targetLabel,
                       )}
                   >
-                    {inlineLoading === action.actionId ? 'Loading…' : action.label}
+                    <LocalizedValue render={() => (inlineLoading === action.actionId ? tr("community:loading_ba3bbbe1") : action.label)} />
                   </button>
                 ))}
-                {classicPath ? <button type="button" onClick={() => closeGlobalChat(classicPath)}>Open in Classic</button> : null}
+                {classicPath ? <button type="button" onClick={() => closeGlobalChat(classicPath)}><Message id="community:open_in_classic_58aad219" /></button> : null}
               </div>
             ) : classicPath ? (
               <div className="global-chat-inline-actions">
-                <button type="button" onClick={() => closeGlobalChat(classicPath)}>Open in Classic</button>
+                <button type="button" onClick={() => closeGlobalChat(classicPath)}><Message id="community:open_in_classic_58aad219" /></button>
               </div>
             ) : null}
             {inlineLoading === 'settings.inspect' ? (
-              <div className="global-chat-inline-loading">Loading current settings…</div>
+              <div className="global-chat-inline-loading"><Message id="community:loading_current_settings_81c719a7" /></div>
             ) : null}
             {inlineError ? <div className="global-chat-inline-error" role="alert">{inlineError}</div> : null}
             {Object.values(inlineResults).flat().map((loaded) => (
@@ -839,10 +844,10 @@ function ConfirmationResult({ result, payload }: { result: GlobalChatResult; pay
     ['string', 'number', 'boolean'].includes(typeof value) && text(value, 500)
   )).slice(0, 6) : [];
   if (dismissed) {
-    return <div className="global-chat-confirmation global-chat-confirmation-muted">Cancelled.</div>;
+    return <div className="global-chat-confirmation global-chat-confirmation-muted"><Message id="community:cancelled_4b5ea033" /></div>;
   }
   return (
-    <section className="global-chat-confirmation" aria-label="Confirm action">
+    <Localized element={<section className="global-chat-confirmation" aria-label={catalogText("community:confirm_action_b49a9604")}>
       <div className="min-w-0">
         <strong>{text(payload.title, 100) || humanizeCapability(result.capabilityId)}</strong>
         {previewRows.length ? (
@@ -855,7 +860,7 @@ function ConfirmationResult({ result, payload }: { result: GlobalChatResult; pay
             ))}
           </dl>
         ) : null}
-        {expiresAt ? <p>Confirm before {new Date(expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.</p> : null}
+        {expiresAt ? <p><Message after={" "} id="community:confirm_before_dc4ff380" />{new Date(expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.</p> : null}
       </div>
       <div className="global-chat-inline-actions">
         <button
@@ -864,12 +869,12 @@ function ConfirmationResult({ result, payload }: { result: GlobalChatResult; pay
           disabled={!token || consumed}
           onClick={() => void confirmGlobalChatAction(result, token)}
         >
-          {consumed ? 'Confirmed' : 'Confirm'}
+          <LocalizedValue render={() => (consumed ? tr("community:confirmed_fe00b67b") : tr("community:confirm_eebdd24a"))} />
         </button>
-        {!consumed ? <button type="button" onClick={() => dismissConfirmation(result.id)}>Cancel</button> : null}
-        {result.classicPath ? <button type="button" onClick={() => closeGlobalChat(result.classicPath)}>Open in Classic</button> : null}
+        {!consumed ? <button type="button" onClick={() => dismissConfirmation(result.id)}><Message id="community:cancel_19766ed6" /></button> : null}
+        {result.classicPath ? <button type="button" onClick={() => closeGlobalChat(result.classicPath)}><Message id="community:open_in_classic_58aad219" /></button> : null}
       </div>
-    </section>
+    </section>} messages={{"aria-label":"community:confirm_action_b49a9604"}} />
   );
 }
 
@@ -891,9 +896,9 @@ function ClientActionResult({ result }: { result: GlobalChatResult }) {
         disabled={actionState === 'running' || actionState === 'done'}
         onClick={() => void runGlobalChatClientAction(result)}
       >
-        {actionState === 'running' ? 'Applying…' : actionState === 'done' ? 'Done' : navigation ? 'Open in Classic' : localSetting ? 'Apply' : agentHandoff ? 'Open agent session' : 'Open'}
+        <LocalizedValue render={() => (actionState === 'running' ? tr("community:applying_3329a9bb") : actionState === 'done' ? tr("community:done_11a6767d") : navigation ? tr("community:open_in_classic_58aad219") : localSetting ? tr("community:apply_31e392d1") : agentHandoff ? tr("community:open_agent_session_912e7429") : tr("community:open_ed077f3d"))} />
       </button>
-      {!navigation && !agentHandoff && result.classicPath ? <button type="button" onClick={() => closeGlobalChat(result.classicPath)}>Open in Classic</button> : null}
+      {!navigation && !agentHandoff && result.classicPath ? <button type="button" onClick={() => closeGlobalChat(result.classicPath)}><Message id="community:open_in_classic_58aad219" /></button> : null}
     </div>
   );
 }
@@ -907,6 +912,7 @@ export function GlobalChatResultBlock({
   nested?: boolean;
   itemSelection?: GlobalChatItemSelection;
 }) {
+  useUiLanguage();
   const payload = unwrapped(result);
   const confirmation = object(payload)?.status === 'confirmation_required';
   const action = clientAction(result);
@@ -921,7 +927,7 @@ export function GlobalChatResultBlock({
         data-renderer={result.renderer}
       >
         <header className="global-chat-result-head">
-          <span>{action.transport === 'navigation' ? 'Open in Classic' : 'Ready to apply'}</span>
+          <span><LocalizedValue render={() => (action.transport === 'navigation' ? tr("community:open_in_classic_58aad219") : tr("community:ready_to_apply_8a325d63"))} /></span>
         </header>
         <ClientActionResult result={result} />
       </section>
@@ -935,11 +941,11 @@ export function GlobalChatResultBlock({
         className={`global-chat-result global-chat-result-settings${nested ? ' global-chat-result-nested' : ''}`}
         data-renderer="setting"
       >
-        <header className="global-chat-result-head"><span>Global Chat settings</span></header>
+        <header className="global-chat-result-head"><span><Message id="community:global_chat_settings_458c75ca" /></span></header>
         <GlobalChatSettingsEditor embedded />
         {result.classicPath ? (
           <div className="global-chat-inline-actions global-chat-client-action">
-            <button type="button" onClick={() => closeGlobalChat(result.classicPath)}>Open in Classic</button>
+            <button type="button" onClick={() => closeGlobalChat(result.classicPath)}><Message id="community:open_in_classic_58aad219" /></button>
           </div>
         ) : null}
       </section>
@@ -953,11 +959,11 @@ export function GlobalChatResultBlock({
         className={`global-chat-result global-chat-result-settings${nested ? ' global-chat-result-nested' : ''}`}
         data-renderer="setting"
       >
-        <header className="global-chat-result-head"><span>Development AI settings</span></header>
+        <header className="global-chat-result-head"><span><Message id="community:development_ai_settings_f0ae8065" /></span></header>
         <DevelopmentAISettingsEditor />
         {result.classicPath ? (
           <div className="global-chat-inline-actions global-chat-client-action">
-            <button type="button" onClick={() => closeGlobalChat(result.classicPath)}>Open in Classic</button>
+            <button type="button" onClick={() => closeGlobalChat(result.classicPath)}><Message id="community:open_in_classic_58aad219" /></button>
           </div>
         ) : null}
       </section>
@@ -991,8 +997,7 @@ export function GlobalChatResultBlock({
           type="button"
           className="global-chat-expand"
           onClick={() => setVisibleCount((count) => Math.min(count + pageSize, items.length))}
-        >
-          Show more <ChevronDownIcon className="w-3.5 h-3.5" aria-hidden="true" />
+        ><Message after={" "} id="community:show_more_f5c9bd13" /><ChevronDownIcon className="w-3.5 h-3.5" aria-hidden="true" />
         </button>
       ) : null}
       {!items.length ? (

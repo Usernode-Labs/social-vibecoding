@@ -1,3 +1,4 @@
+import { t as tr } from "../../lib/i18n/runtime";
 /**
  * Shared plumbing for the anonymous shell's six screens (#1080, step 2
  * chunk C).
@@ -37,8 +38,8 @@ export const AUTH_SCREEN_IDS: Record<string, string> = {
  * /api/auth/register and the email-code sign-up's username. The first-run
  * "Choose your username" step says the same thing in its own sentence.
  */
-export const USERNAME_RULE = 'Letters, numbers and underscores, 3 to 32 characters.';
-export const PASSWORD_RULE = 'At least 8 characters.';
+export const USERNAME_RULE = () => tr("auth:letters_numbers_and_underscores_3_to_32_characte_6a0d3673");
+export const PASSWORD_RULE = () => tr("auth:at_least_8_characters_4658b0a8");
 
 /**
  * Said next to every field where a new account types its handle (#3575):
@@ -51,7 +52,7 @@ export const PASSWORD_RULE = 'At least 8 characters.';
  * spells the same words; tests/username-first-choice.test.js holds the two
  * copies together.
  */
-export const USERNAME_PUBLIC_NOTE = 'Your username will be public to other users on Homeroom.';
+export const USERNAME_PUBLIC_NOTE = () => tr("auth:your_username_will_be_public_to_other_users_on_h_3e5c9a34");
 
 /**
  * The attributes every username field carries, so a phone does not
@@ -214,7 +215,7 @@ export function blockedOffline(setError?: (msg: string) => void): boolean {
     offline = false;
   }
   if (!offline) return false;
-  if (setError) setError("You're offline. Signing in needs a connection.");
+  if (setError) setError(tr("auth:you_re_offline_signing_in_needs_a_connection_9b7e6fd0"));
   try {
     legacy().Offline?.nudge();
   } catch {
@@ -343,7 +344,7 @@ export class NativeLoginPreparationError extends Error {
 }
 
 export function sessionMintFailureMessage(error: unknown): string {
-  return error instanceof NativeLoginPreparationError ? error.message : 'Network error';
+  return error instanceof NativeLoginPreparationError ? error.message : tr("auth:network_error_2a33d984");
 }
 
 /**

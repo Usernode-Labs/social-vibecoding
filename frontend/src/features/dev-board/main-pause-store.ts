@@ -1,3 +1,4 @@
+import { t as tr } from "../../lib/i18n/runtime";
 /**
  * The Dev board's "merges are paused" banner, as a view model.
  *
@@ -39,12 +40,12 @@ export const mainPauseStore = createStore<MainPauseState>({
 
 /** The banner's sentence — one spelling, for the frame and its tests. */
 export function mainPauseText(s: Pick<MainPauseState, 'confirming' | 'sha' | 'failingTest'>): string {
-  const since = s.sha ? ` since ${s.sha}` : '';
+  const since = s.sha ? tr("workshop:since_value1_2645c9b6", { value1: s.sha }) : '';
   const test = s.failingTest ? `: ${s.failingTest}` : '';
   if (s.confirming) {
     return `Main’s unit suite failed once${since}${test}. Re-running to confirm. Merges are paused meanwhile, `
-      + 'except for proposals already level with main whose own checks passed.';
+      + tr("workshop:except_for_proposals_already_level_with_main_who_1009822f");
   }
-  return `Merges are paused: main’s unit suite is failing${since}${test}. They resume when a fix lands `
-    + 'or an admin resumes them; a proposal already level with main whose own checks passed still merges.';
+  return tr("workshop:merges_are_paused_main_s_unit_suite_is_failing_v_2cb76a3a", { value1: since, value2: test })
+    + tr("workshop:or_an_admin_resumes_them_a_proposal_already_leve_292c2bd3");
 }

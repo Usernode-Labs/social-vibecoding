@@ -1,3 +1,7 @@
+import { t as tr } from "../../lib/i18n/runtime";
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { RichMessage } from "../../lib/i18n/react";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * `#dc-view`'s children — the dev chat's screen.
  * See ./view-store.ts for what it absorbed and what stays legacy-owned.
@@ -25,8 +29,7 @@ const HINT
   + ' text-xs text-zinc-600 dark:text-zinc-300 shrink-0';
 
 const HINT_TEXT
-  = 'Describe the change you want. When it’s ready, promoting this'
-  + " session's PR is what creates the proposal everyone votes on.";
+  = () => (tr("workshop:describe_the_change_you_want_when_it_s_ready_pro_ac17ac13"));
 
 /** The composer bar's two class runs, as complete literals for Tailwind. */
 const BAR = {
@@ -67,22 +70,24 @@ function paneStyle(p: PaneView): { width: string } | undefined {
 
 /** Keyed by session so switching chats clears results and collapse state. */
 function ChecksSection({ sessionId }: { sessionId: number }): ReactNode {
+  useUiLanguage();
   const [open, setOpen] = useState(true);
   return (
-    <section aria-label="Proposal checks" className="mx-3 mt-3 shrink-0 overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-900">
+    <Localized element={<section aria-label={catalogText("workshop:proposal_checks_9c021e96")} className="mx-3 mt-3 shrink-0 overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-900">
       <button type="button" aria-expanded={open}
         className="flex w-full items-center justify-between gap-3 px-4 py-3 text-sm font-semibold text-zinc-900 dark:text-zinc-100"
         onClick={() => setOpen(!open)}>
-        <span>Proposal checks</span><span aria-hidden="true">{open ? '▴' : '▾'}</span>
+        <span><Message id="workshop:proposal_checks_9c021e96" /></span><span aria-hidden="true">{open ? '▴' : '▾'}</span>
       </button>
       {open ? <div className="max-h-[35dvh] overflow-y-auto overscroll-contain px-4 pb-4 sm:px-5 sm:pb-5">
         <SessionChecksPanel sessionId={sessionId} />
       </div> : null}
-    </section>
+    </section>} messages={{"aria-label":"workshop:proposal_checks_9c021e96"}} />
   );
 }
 
 function DevSessionChecks(): ReactNode {
+  useUiLanguage();
   const s = useStoreState(sessionHeaderStore);
   return s.sessionId && s.pr ? <ChecksSection key={s.sessionId} sessionId={s.sessionId} /> : null;
 }
@@ -91,7 +96,7 @@ function WorkspaceView({ s }: { s: Extract<DevViewState, { kind: 'session' }> })
   return (
     <>
       {/* #194: the one-shot "what a proposal is" hint, above everything. */}
-      {s.proposalHint ? <div className={HINT}>{HINT_TEXT}</div> : null}
+      {s.proposalHint ? <div className={HINT}>{HINT_TEXT()}</div> : null}
       {/* The ELEMENT keeps a CONSTANT className: `PlatformUI.attachScreenFx`
           writes a hairline/blur class onto it once the chat scrolls, and
           React never rewrites a className whose prop has not changed.
@@ -143,26 +148,23 @@ function WorkspaceView({ s }: { s: Extract<DevViewState, { kind: 'session' }> })
             inset is reserved here, on the column. */}
         <div id="dc-tab-chat" className="dc-chat-pane platform-kb-column flex-1 flex flex-col min-h-0">
           {s.returnHint && !s.embedded ? (
-            <aside
-              id="dc-return-hint" aria-label="Returning to dev chat"
+            <Localized element={<aside
+              id="dc-return-hint" aria-label={catalogText("workshop:returning_to_dev_chat_ce1865dd")}
               className="mx-3 mt-3 mb-1 flex flex-col items-stretch gap-3 rounded-xl bg-violet-500/10 p-4 text-sm text-zinc-700 dark:text-zinc-200 shrink-0 sm:flex-row sm:flex-wrap sm:items-center sm:p-3"
             >
               <div className="flex-1 min-w-0 sm:min-w-[12rem]">
-                <p className="font-semibold">You can come back later</p>
+                <p className="font-semibold"><Message id="workshop:you_can_come_back_later_d41ee92f" /></p>
                 {/* Messages, because a change in flight is an agent
                     conversation there (#2770). This named Improve until #2718
                     retired that panel. */}
-                <p className="mt-1">
-                  You can leave this page and return anytime. Open <strong>Messages</strong> to
-                  check your change’s status or find this chat again.
-                </p>
+                <p className="mt-1"><RichMessage id="workshop:sentence_0d017fa2a86d" components={[<strong />]} /></p>
               </div>
               <Button
                 id="dc-return-hint-dismiss" type="button" size="sm" layout="shrink"
                 variant="neutral" ink="muted" className="min-h-[44px] self-end sm:self-auto"
                 onClick={() => window.DevChat?.dismissReturnHint()}
-              >Got it</Button>
-            </aside>
+              ><Message id="workshop:got_it_5ad3dbd1" /></Button>
+            </aside>} messages={{"aria-label":"workshop:returning_to_dev_chat_ce1865dd"}} />
           ) : null}
           {/* #1348: the launchpad is PINNED TO THE TOP of the chat area. It
               stood in the composer's place at the bottom (#1281), which is
@@ -218,10 +220,10 @@ function WorkspaceView({ s }: { s: Extract<DevViewState, { kind: 'session' }> })
             <DevComposer />
           </div>
         </div>
-        <div
+        <Localized element={<div
           id="dc-spec-resizer" className={s.spec.open ? PANE.specResizer.on : PANE.specResizer.off}
-          role="separator" aria-orientation="vertical" aria-label="Resize spec viewer"
-        ></div>
+          role="separator" aria-orientation="vertical" aria-label={catalogText("workshop:resize_spec_viewer_0f90cba2")}
+        ></div>} messages={{"aria-label":"workshop:resize_spec_viewer_0f90cba2"}} />
         {/* The pane's `width` is the DRAG's inline style and its `-open`
             class is this model's; the reader inside it is its own island,
             with its own store — see ./spec-viewer-store.ts. */}
@@ -229,11 +231,11 @@ function WorkspaceView({ s }: { s: Extract<DevViewState, { kind: 'session' }> })
           id="dc-spec-viewer" className={s.spec.open ? PANE.specViewer.on : PANE.specViewer.off}
           style={paneStyle(s.spec)}
         ><SpecViewer /></div>
-        <div
+        <Localized element={<div
           id="dc-staging-resizer"
           className={s.staging.open ? PANE.stagingResizer.on : PANE.stagingResizer.off}
-          role="separator" aria-orientation="vertical" aria-label="Resize staging preview"
-        ></div>
+          role="separator" aria-orientation="vertical" aria-label={catalogText("workshop:resize_staging_preview_b672a029")}
+        ></div>} messages={{"aria-label":"workshop:resize_staging_preview_b672a029"}} />
         {/* #771: a SLOT, not a container. The docked preview is an overlay
             positioned over this element's rect, so it stays empty. */}
         <div
@@ -270,5 +272,6 @@ export function DevChatViewView({ s }: { s: DevViewState }): ReactNode {
 }
 
 export function DevChatView(): ReactNode {
+  useUiLanguage();
   return <DevChatViewView s={useStoreState(devViewStore)} />;
 }

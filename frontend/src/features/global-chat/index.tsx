@@ -1,3 +1,8 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { RichMessage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 
 import {
@@ -46,13 +51,13 @@ function BudgetLabel() {
   const cap = dollars(usage.capUsd);
   const remaining = dollars(snapshot.overallAllowance?.remainingUsd);
   return (
-    <span className="global-chat-budget" title="Global Chat spend this month and overall OpenRouter allowance">
-      Chat {spent}{cap ? ` / ${cap}` : ''}{remaining ? ` · ${remaining} left` : ''}
-    </span>
+    <Localized element={<span className="global-chat-budget" title={catalogText("community:global_chat_spend_this_month_and_overall_openrou_2e24e5ef")}><Message after={" "} id="community:chat_460b3a7d" />{spent}{cap ? ` / ${cap}` : ''}<LocalizedValue render={() => (remaining ? tr("community:value1_left_dd048b18", { value1: remaining }) : '')} />
+    </span>} messages={{"title":"community:global_chat_spend_this_month_and_overall_openrou_2e24e5ef"}} />
   );
 }
 
 function TurnProgress({ progress }: { progress: GlobalChatProgress }) {
+  useUiLanguage();
   const [clock, setClock] = useState(Date.now());
   useEffect(() => {
     const timer = window.setInterval(() => setClock(Date.now()), 1000);
@@ -61,18 +66,18 @@ function TurnProgress({ progress }: { progress: GlobalChatProgress }) {
   const elapsedMs = Math.max(progress.elapsedMs, clock - progress.startedAt);
   const seconds = Math.max(0, Math.floor(elapsedMs / 1000));
   return (
-    <section className="global-chat-progress" aria-label="Global Chat progress">
+    <Localized element={<section className="global-chat-progress" aria-label={catalogText("community:global_chat_progress_59723007")}>
       <div className="global-chat-progress-current">
         <SpinnerArcIcon className="w-4 h-4 animate-spin" aria-hidden="true" />
         <span>{progress.message}</span>
-        <time>{seconds}s</time>
+        <time><RichMessage id="community:sentence_e46818576648" values={{ value1: seconds }} /></time>
       </div>
       <details>
-        <summary>Activity</summary>
+        <summary><Message id="community:activity_38da1505" /></summary>
         <div className="global-chat-progress-details">
-          {progress.model ? <p>Model: {progress.model}</p> : null}
-          {progress.reasoningEffort ? <p>Reasoning: {progress.reasoningEffort} effort</p> : null}
-          {progress.attempt && progress.attempt > 1 ? <p>Attempt: {progress.attempt}</p> : null}
+          {progress.model ? <p><RichMessage id="community:sentence_82f287830bb2" values={{ value1: progress.model }} /></p> : null}
+          {progress.reasoningEffort ? <p><RichMessage id="community:sentence_d012a3d02997" values={{ value1: progress.reasoningEffort }} /></p> : null}
+          {progress.attempt && progress.attempt > 1 ? <p><RichMessage id="community:sentence_c2eb3198fef7" values={{ value1: progress.attempt }} /></p> : null}
           {progress.steps.length ? (
             <ol>
               {progress.steps.map((step, index) => (
@@ -85,16 +90,16 @@ function TurnProgress({ progress }: { progress: GlobalChatProgress }) {
               {progress.operations.map((operation) => (
                 <li key={operation.toolCallId} data-status={operation.status}>
                   {operation.title}
-                  {operation.durationMs != null
-                    ? ` · ${(operation.durationMs / 1000).toFixed(1)}s`
-                    : ''}
+                  <LocalizedValue render={() => (operation.durationMs != null
+                    ? tr("community:value1_s_00cf3855", { value1: (operation.durationMs / 1000).toFixed(1) })
+                    : '')} />
                 </li>
               ))}
             </ul>
           ) : null}
         </div>
       </details>
-    </section>
+    </section>} messages={{"aria-label":"community:global_chat_progress_59723007"}} />
   );
 }
 
@@ -107,6 +112,7 @@ function Suggestions({
   latest: boolean;
   context?: string;
 }) {
+  useUiLanguage();
   const [related, setRelated] = useState<GlobalChatSuggestion | null>(null);
   const holdTimer = useRef<number | null>(null);
   const held = useRef(false);
@@ -139,14 +145,14 @@ function Suggestions({
 
   if (!suggestions.length && !latest) return null;
   return (
-    <div className="global-chat-suggestions" aria-label="Suggested next steps">
+    <Localized element={<div aria-label={catalogText("community:suggested_next_steps_00286bda")} className="global-chat-suggestions">
       {suggestions.map((suggestion) => (
-        <button
+        <LocalizedDynamic element={<button
           key={suggestion.id}
           type="button"
           aria-haspopup={suggestion.relatedSuggestions?.length ? 'menu' : undefined}
           aria-expanded={related?.id === suggestion.id || undefined}
-          title={suggestion.relatedSuggestions?.length ? 'Hold for related options' : undefined}
+          title={suggestion.relatedSuggestions?.length ? tr("community:hold_for_related_options_0b7ba22f") : undefined}
           onPointerDown={(event) => {
             if (event.button === 0) beginHold(suggestion);
           }}
@@ -169,22 +175,20 @@ function Suggestions({
           onClick={() => choose(suggestion)}
         >
           {suggestion.label}
-        </button>
+        </button>} resolve={() => ({ "title": suggestion.relatedSuggestions?.length ? tr("community:hold_for_related_options_0b7ba22f") : undefined })} />
       ))}
       {latest ? (
         <button
           type="button"
           className="global-chat-more-suggestions"
           onClick={() => void requestMoreSuggestions(context)}
-        >
-          More suggestions
-        </button>
+        ><Message id="community:more_suggestions_f9048bba" /></button>
       ) : null}
       {related?.relatedSuggestions?.length ? (
-        <div
+        <LocalizedDynamic element={<div
           className="global-chat-related-suggestions"
           role="menu"
-          aria-label={`More options for ${related.label}`}
+          aria-label={tr("community:more_options_for_value1_98095a61", { value1: related.label })}
         >
           {related.relatedSuggestions.map((suggestion) => (
             <button
@@ -196,9 +200,9 @@ function Suggestions({
               {suggestion.label}
             </button>
           ))}
-        </div>
+        </div>} resolve={() => ({ get "aria-label"() { return tr("community:more_options_for_value1_98095a61", { value1: related.label }); } })} />
       ) : null}
-    </div>
+    </div>} messages={{"aria-label":"community:suggested_next_steps_00286bda"}} />
   );
 }
 
@@ -221,9 +225,9 @@ function AssistantTurn({
         return result ? (
           <GlobalChatResultBlock key={id} result={result} itemSelection={itemSelection} />
         ) : (
-          <div key={id} className="global-chat-result-loading" aria-label="Loading result">
+          <Localized element={<div key={id} className="global-chat-result-loading" aria-label={catalogText("community:loading_result_9f43a300")}>
             <SpinnerArcIcon className="w-4 h-4 animate-spin" aria-hidden="true" />
-          </div>
+          </div>} messages={{"aria-label":"community:loading_result_9f43a300"}} />
         );
       })}
       {!itemSelection ? (
@@ -241,7 +245,7 @@ function FirstUse({ presentation }: { presentation: GlobalChatPresentation }) {
   return (
     <section className="global-chat-first-use">
       <h3>{presentation.message}</h3>
-      <p className="global-chat-suggestion-hint">Hold an option for related suggestions.</p>
+      <p className="global-chat-suggestion-hint"><Message id="community:hold_an_option_for_related_suggestions_eef5dd9b" /></p>
       <Suggestions
         suggestions={presentation.suggestions}
         latest
@@ -252,6 +256,7 @@ function FirstUse({ presentation }: { presentation: GlobalChatPresentation }) {
 }
 
 function Composer({ id }: { id: string }) {
+  useUiLanguage();
   const snapshot = useGlobalChatState();
   const [value, setValue] = useState('');
   const textarea = useRef<HTMLTextAreaElement | null>(null);
@@ -276,15 +281,14 @@ function Composer({ id }: { id: string }) {
     // the composer is always below it, so the band is the composer's to
     // clear, once (the rule Messages' thread follows for its own composer).
     <form className="global-chat-composer platform-safe-bar" onSubmit={submit}>
-      <textarea
+      <Localized element={<LocalizedDynamic element={<textarea
         id={id}
         ref={textarea}
         rows={1}
         maxLength={12_000}
         value={value}
         disabled={!snapshot.bootstrap?.available || snapshot.phase === 'loading'}
-        placeholder={snapshot.bootstrap?.available ? 'Ask Homeroom…' : 'OpenRouter is required'}
-        aria-label="Message Global Chat"
+        placeholder={snapshot.bootstrap?.available ? tr("community:ask_homeroom_eb01e374") : tr("community:openrouter_is_required_350e6861")} aria-label={catalogText("community:message_global_chat_3f4c7744")}
         onChange={(event) => {
           setValue(event.target.value);
           event.currentTarget.style.height = 'auto';
@@ -296,17 +300,17 @@ function Composer({ id }: { id: string }) {
             submit();
           }
         }}
-      />
-      <button
+      />} resolve={() => ({ "placeholder": snapshot.bootstrap?.available ? tr("community:ask_homeroom_eb01e374") : tr("community:openrouter_is_required_350e6861") })} />} messages={{"aria-label":"community:message_global_chat_3f4c7744"}} />
+      <LocalizedDynamic element={<button
         type={sending ? 'button' : 'submit'}
         className="global-chat-send"
         disabled={!sending && !value.trim()}
-        aria-label={sending ? 'Stop response' : 'Send message'}
-        title={sending ? 'Stop' : 'Send'}
+        aria-label={sending ? tr("community:stop_response_d5ca579c") : tr("community:send_message_93a26b1e")}
+        title={sending ? tr("community:stop_cae7d57b") : tr("community:send_f6f4688f")}
         onClick={sending ? stopGlobalChatTurn : undefined}
       >
         {sending ? <span className="global-chat-stop-mark" aria-hidden="true" /> : <ArrowUpIcon className="w-5 h-5" aria-hidden="true" />}
-      </button>
+      </button>} resolve={() => ({ "aria-label": sending ? tr("community:stop_response_d5ca579c") : tr("community:send_message_93a26b1e"), "title": sending ? tr("community:stop_cae7d57b") : tr("community:send_f6f4688f") })} />
     </form>
   );
 }
@@ -316,13 +320,13 @@ function Unavailable() {
   const disabled = snapshot.bootstrap?.unavailableReason === 'global_chat_disabled';
   return (
     <section className="global-chat-unavailable">
-      <h3>{disabled ? 'Enable Global Chat to start' : 'Free-form chat needs OpenRouter'}</h3>
-      <p>{disabled
-        ? 'Global Chat is an optional experimental feature.'
-        : 'The direct options below still work without it.'}</p>
+      <h3><LocalizedValue render={() => (disabled ? tr("community:enable_global_chat_to_start_5ea6248f") : tr("community:free_form_chat_needs_openrouter_e95bbf8e"))} /></h3>
+      <p><LocalizedValue render={() => (disabled
+        ? tr("community:global_chat_is_an_optional_experimental_feature_4bd8b033")
+        : tr("community:the_direct_options_below_still_work_without_it_69033459"))} /></p>
       <div className="global-chat-suggestions">
-        <button type="button" onClick={() => closeGlobalChat(disabled ? '#settings/global-chat' : '#settings/openrouter')}>Open Settings</button>
-        <button type="button" onClick={() => closeGlobalChat()}>Use Classic</button>
+        <button type="button" onClick={() => closeGlobalChat(disabled ? '#settings/global-chat' : '#settings/openrouter')}><Message id="community:open_settings_3f940108" /></button>
+        <button type="button" onClick={() => closeGlobalChat()}><Message id="community:use_classic_56268536" /></button>
       </div>
     </section>
   );
@@ -355,33 +359,29 @@ export function GlobalChatPanel({ embedded = false, headerAction = null }: { emb
     <div className={embedded ? 'global-chat-shell global-chat-embedded' : 'global-chat-shell dc-lift dc-lift-strip'}>
       <header className="global-chat-toolbar">
         <div className="min-w-0">
-          <h2>Chat <span>(experimental)</span></h2>
-          <p>Saved in Messages.</p>
+          <h2><RichMessage id="community:sentence_9fd899c9ba0c" components={[<span />]} /></h2>
+          <p><Message id="community:saved_in_messages_9ca89a80" /></p>
         </div>
         <BudgetLabel />
         {embedded ? null : (
-          <button
+          <Localized element={<button aria-label={catalogText("community:close_chat_3b14c5dc")} title={catalogText("community:close_chat_3b14c5dc")}
             type="button"
             className="global-chat-new"
             onClick={() => closeGlobalChat()}
-            aria-label="Close chat"
-            title="Close chat"
           >
             <XIcon className="w-4 h-4" aria-hidden="true" />
-            <span>Close</span>
-          </button>
+            <span><Message id="community:close_7d9eb7ac" /></span>
+          </button>} messages={{"aria-label":"community:close_chat_3b14c5dc","title":"community:close_chat_3b14c5dc"}} />
         )}
-        <button
+        <Localized element={<button aria-label={catalogText("community:start_a_new_chat_61025e4f")} title={catalogText("community:new_chat_db18382a")}
           type="button"
           className="global-chat-new"
           disabled={snapshot.phase === 'sending'}
           onClick={() => void startNewGlobalChat()}
-          aria-label="Start a new chat"
-          title="New chat"
         >
           <PlusIcon className="w-4 h-4" aria-hidden="true" />
-          <span>New</span>
-        </button>
+          <span><Message id="community:new_18fdd549" /></span>
+        </button>} messages={{"aria-label":"community:start_a_new_chat_61025e4f","title":"community:new_chat_db18382a"}} />
         {headerAction}
       </header>
 
@@ -392,12 +392,10 @@ export function GlobalChatPanel({ embedded = false, headerAction = null }: { emb
           bottom padding with the class's `!important` 0px. */}
       <div ref={scroll} className="global-chat-transcript" aria-live="polite">
         {snapshot.hasMoreHistory ? (
-          <button type="button" className="global-chat-history" onClick={() => void loadOlderGlobalChatMessages()}>
-            Earlier messages
-          </button>
+          <button type="button" className="global-chat-history" onClick={() => void loadOlderGlobalChatMessages()}><Message id="community:earlier_messages_561a197a" /></button>
         ) : null}
         {snapshot.phase === 'booting' || (snapshot.phase === 'loading' && !snapshot.messages.length) ? (
-          <div className="global-chat-loading"><SpinnerArcIcon className="w-5 h-5 animate-spin" aria-hidden="true" /> Loading…</div>
+          <div className="global-chat-loading"><SpinnerArcIcon className="w-5 h-5 animate-spin" aria-hidden="true" /><Message before={" "} id="community:loading_ba3bbbe1" /></div>
         ) : null}
         {snapshot.bootstrap && !snapshot.bootstrap.available ? <Unavailable /> : null}
         {snapshot.bootstrap && !snapshot.messages.length && snapshot.phase !== 'loading' ? (
@@ -418,7 +416,7 @@ export function GlobalChatPanel({ embedded = false, headerAction = null }: { emb
         {snapshot.error ? (
           <div className="global-chat-error" role="alert">
             <span>{snapshot.error}</span>
-            <button type="button" onClick={() => void retryLastGlobalChatRequest()}><ArrowPathIcon className="w-4 h-4" aria-hidden="true" /> Retry</button>
+            <button type="button" onClick={() => void retryLastGlobalChatRequest()}><ArrowPathIcon className="w-4 h-4" aria-hidden="true" /><Message before={" "} id="community:retry_942087cc" /></button>
           </div>
         ) : null}
       </div>
@@ -449,14 +447,13 @@ export function GlobalChatScreen() {
   // of it behind the first. The host starts as 'screen', so the prerendered
   // markup — and hydration — are exactly what they were.
   return (
-    <main
+    <Localized element={<main
       ref={screenRef}
       id="global-chat-screen"
-      className="hidden flex flex-1 min-h-0 overflow-hidden"
-      aria-label="Chat (experimental)"
+      className="hidden flex flex-1 min-h-0 overflow-hidden" aria-label={catalogText("community:chat_experimental_7ca69a8d")}
     >
       {snapshot.host === 'messages' ? null : <GlobalChatPanel />}
-    </main>
+    </main>} messages={{"aria-label":"community:chat_experimental_7ca69a8d"}} />
   );
 }
 

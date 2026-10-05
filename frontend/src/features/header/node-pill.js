@@ -244,29 +244,29 @@ import { mountNodeSheet, unmountNodeSheet } from './node-pill-sheet';
       const nodeNowMs = Number(nowMs) -
         (Number.isFinite(driftMs) ? driftMs : 0);
       const seconds = Math.max(0, Math.floor((nodeNowMs - timestampMs) / 1000));
-      if (seconds < 5) return 'just now';
-      if (seconds < 60) return `${seconds} seconds ago`;
+      if (seconds < 5) return globalThis.PlatformI18n.t("account:just_now_7ddb44d8");
+      if (seconds < 60) return globalThis.PlatformI18n.t("account:value1_seconds_ago_f646af4e", { value1: seconds });
       const minutes = Math.floor(seconds / 60);
       if (minutes < 60) {
-        return `${minutes} minute${minutes === 1 ? '' : 's'} ago`;
+        return globalThis.PlatformI18n.t("account:count_minutes_ago_3d92f208", { count: minutes });
       }
       const hours = Math.floor(minutes / 60);
-      if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+      if (hours < 24) return globalThis.PlatformI18n.t("account:count_hours_ago_0687828c", { count: hours });
       const days = Math.floor(hours / 24);
-      return `${days} day${days === 1 ? '' : 's'} ago`;
+      return globalThis.PlatformI18n.t("account:count_days_ago_0d0d0a84", { count: days });
     },
 
     _warningMessagesFor(s) {
       const warnings = [];
       if (NodePill._readyPeersFor(s) === 0) {
-        warnings.push('No connected peers.');
+        warnings.push(globalThis.PlatformI18n.t("account:no_connected_peers_1ede3d09"));
       }
       if (s.syncStalled === true) {
-        warnings.push('Sync appears stalled.');
+        warnings.push(globalThis.PlatformI18n.t("account:sync_appears_stalled_77634c73"));
       }
       const driftMs = Number(s.clockDriftMs);
       if (Number.isFinite(driftMs) && Math.abs(driftMs) > 5000) {
-        warnings.push('Node clock is out of sync.');
+        warnings.push(globalThis.PlatformI18n.t("account:node_clock_is_out_of_sync_29e9d949"));
       }
       if (s.walletDataHydrating === true) {
         warnings.push('Wallet-data hydration is still running.');
@@ -290,7 +290,7 @@ import { mountNodeSheet, unmountNodeSheet } from './node-pill-sheet';
       panel.className = 'px-4 pb-4';
       const title = document.createElement('div');
       title.className = 'text-lg font-bold py-3';
-      title.textContent = 'Node';
+      title.textContent = globalThis.PlatformI18n.t("account:node_e9337253");
       panel.appendChild(title);
       const bodyEl = document.createElement('div');
       bodyEl.id = 'node-pill-sheet-body';

@@ -1,3 +1,4 @@
+import { t as tr } from "../../lib/i18n/runtime";
 // Start work on a request card opens an UNSENT conversation (store.ts,
 // openDraft). It used to open with only the request's number in its hint:
 // the Mayor learned the request from the session's focus once the first
@@ -42,8 +43,8 @@ export function requestSeed(hint: AgentHint | null | undefined): string {
   const request = draftRequest(hint);
   if (!request) return '';
   return request.title
-    ? `Work on request #${request.number}: "${request.title}"`
-    : `Work on request #${request.number}`;
+    ? tr("workshop:work_on_request_value1_value2_b286dbd8", { value1: request.number, value2: request.title })
+    : tr("workshop:work_on_request_value1_70469a49", { value1: request.number });
 }
 
 // A handed-over message is the user's own request (Global Chat's task) or

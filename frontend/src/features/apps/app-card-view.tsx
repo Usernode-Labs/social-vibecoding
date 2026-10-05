@@ -1,3 +1,4 @@
+import { t as tr } from "../../lib/i18n/runtime";
 /**
  * The React half of the shared app-card primitives (#1191 slice 6, conv. 3).
  *
@@ -105,7 +106,7 @@ export function AppIconLink({
   if (!slug) {
     return <span id={id} data-icon={dataIcon} className={className} aria-hidden="true">{children}</span>;
   }
-  const label = `Open ${name || slug}`;
+  const label = tr("apps:open_value1_839d6dee", { value1: name || slug });
   const cls = `${className || ''} app-icon-link cursor-pointer`;
   if (nested) {
     return (
@@ -168,8 +169,8 @@ export function AppPills({ app, limit }: {
   const vis = chips.length < max ? all.vis : null;
   return (
     <>
-      {chips.map((c) => (
-        <span key={c.label} className={`${CHIP_BASE_CLS} ${c.cls}`} title={c.tip}>{c.label}</span>
+      {chips.map((c, index) => (
+        <span key={index} className={`${CHIP_BASE_CLS} ${c.cls}`} title={c.tip}>{c.label}</span>
       ))}
       {vis ? (
         <span className={VIS_CHIP_CLS} title={vis.tip}>

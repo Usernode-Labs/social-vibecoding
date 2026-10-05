@@ -1,3 +1,8 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { RichMessage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * `#dc-composer-bar`'s children — the dev chat's composer.
  * See ./composer-store.ts for the split and for what stays the module's.
@@ -41,15 +46,14 @@ function controller(): any {
 }
 
 const ATTACH_TITLE
-  = 'Attach files: images (≤4 MB), text/code files (≤200 KB), zip archives (≤20 MB),'
-  + ' or any other file (≤10 MB); up to 4 per message';
+  = () => (tr("workshop:attach_files_images_4_mb_text_code_files_200_kb__7fbbb56d"));
 
 // #920's hint line is gone; its two spellings are these titles. The button
 // and Ctrl/Cmd+Enter perform the same action in every state, so naming it on
 // the control names it for both.
 const SEND_TITLE = 'Send (Ctrl+Enter)';
 const SAVE_TITLE
-  = 'Save this text as a draft (Ctrl+Enter). It stays here until you send it';
+  = () => tr("workshop:save_this_text_as_a_draft_ctrl_enter_it_stays_he_631b8c69");
 
 // The control row's two bare glyph buttons. No box, no border: the CARD is
 // the box now, and a bordered control inside it would draw a second one.
@@ -101,13 +105,10 @@ function SendButton({ send }: { send: ComposerState['send'] }): ReactNode {
   };
   if (send.kind === 'stopping') {
     return (
-      <Button
+      <Localized element={<Button
         {...common} className={SEND_CLASS.stopping}
-        disabled aria-label="Stopping" title="Stopping…"
-      >
-        <span className="dc-send-spinner"></span>
-        <span className="dc-btn-stopping-label">Stopping…</span>
-      </Button>
+        disabled aria-label={catalogText("workshop:stopping_a71ee1d4")} title={catalogText("workshop:stopping_bbe85741")}
+      ><RichMessage id="workshop:sentence_1b280ebe0fb7" components={[<span className="dc-send-spinner" />, <span className="dc-btn-stopping-label" />]} /></Button>} messages={{"aria-label":"workshop:stopping_a71ee1d4","title":"workshop:stopping_bbe85741"}} />
     );
   }
   if (send.kind === 'busy') {
@@ -122,9 +123,9 @@ function SendButton({ send }: { send: ComposerState['send'] }): ReactNode {
   }
   if (send.kind === 'stop') {
     return (
-      <Button {...common} className={SEND_CLASS.stop} aria-label="Stop" title="Stop">
+      <Localized element={<Button {...common} className={SEND_CLASS.stop} aria-label={catalogText("workshop:stop_cae7d57b")} title={catalogText("workshop:stop_cae7d57b")}>
         <span className="dc-stop-icon" aria-hidden="true"></span>
-      </Button>
+      </Button>} messages={{"aria-label":"workshop:stop_cae7d57b","title":"workshop:stop_cae7d57b"}} />
     );
   }
   // A turn is running and the box has text, so the only useful action is to
@@ -132,18 +133,17 @@ function SendButton({ send }: { send: ComposerState['send'] }): ReactNode {
   // blanks the field, which is what hands Stop back.
   if (send.kind === 'save') {
     return (
-      <Button
-        {...common} className={SEND_CLASS.save}
-        aria-label="Save as draft" title={SAVE_TITLE}
+      <Localized element={<Button
+        {...common} className={SEND_CLASS.save} aria-label={catalogText("workshop:save_as_draft_93ca4159")} title={SAVE_TITLE()}
       >
         <SaveDraftIcon width={20} height={20} aria-hidden="true" />
-      </Button>
+      </Button>} messages={{"aria-label":"workshop:save_as_draft_93ca4159"}} />
     );
   }
   return (
-    <Button {...common} className={SEND_CLASS.send} aria-label="Send" title={SEND_TITLE}>
+    <Localized element={<Button {...common} className={SEND_CLASS.send} aria-label={catalogText("workshop:send_f6f4688f")} title={SEND_TITLE}>
       <ArrowUpIcon width={20} height={20} aria-hidden="true" />
-    </Button>
+    </Button>} messages={{"aria-label":"workshop:send_f6f4688f"}} />
   );
 }
 
@@ -156,44 +156,42 @@ function SendButton({ send }: { send: ComposerState['send'] }): ReactNode {
  */
 function SavedDrafts({ rows, busy }: { rows: SavedDraftView[]; busy: boolean }): ReactNode {
   const sendTitle = busy
-    ? 'Claude is still working. You can send this when the turn finishes'
-    : 'Send this draft now';
+    ? tr("workshop:claude_is_still_working_you_can_send_this_when_t_0c707771")
+    : tr("workshop:send_this_draft_now_bc032321");
   return (
     <div id="dc-drafts" className={rows.length ? 'dc-drafts dc-drafts-active' : 'dc-drafts'}>
       {rows.length ? (
         <>
           <div className="dc-drafts-head">
             <span>
-              {`Saved drafts (${rows.length}) `}
-              <span className="dc-drafts-hint">· on all your devices</span>
+              <LocalizedValue render={() => (tr("workshop:saved_drafts_value1_67598d89", { value1: rows.length }))} />
+              <span className="dc-drafts-hint"><Message id="workshop:on_all_your_devices_6b9a8a97" /></span>
             </span>
-            {busy ? <span className="dc-drafts-hint">sending unlocks when Claude finishes</span> : null}
+            {busy ? <span className="dc-drafts-hint"><Message id="workshop:sending_unlocks_when_claude_finishes_88f02e45" /></span> : null}
           </div>
           {rows.map((d) => (
             <div className="dc-draft-row" data-draft-id={d.id} key={d.id}>
               <span className="dc-draft-text" title={d.text}>{d.text}</span>
               <span className="dc-draft-actions">
-                <button
+                <Localized element={<button
                   type="button" className="dc-draft-btn dc-draft-send"
-                  data-draft-action="send" aria-label="Send this draft"
+                  data-draft-action="send" aria-label={catalogText("workshop:send_this_draft_5cda6b94")}
                   disabled={busy} title={sendTitle}
                 >
                   <DraftSendIcon width={14} height={14} aria-hidden="true" />
-                </button>
-                <button
+                </button>} messages={{"aria-label":"workshop:send_this_draft_5cda6b94"}} />
+                <Localized element={<button
                   type="button" className="dc-draft-btn dc-draft-edit"
-                  data-draft-action="edit" aria-label="Edit this draft"
-                  title="Put this draft back in the box to edit"
+                  data-draft-action="edit" aria-label={catalogText("workshop:edit_this_draft_ee815b8c")} title={catalogText("workshop:put_this_draft_back_in_the_box_to_edit_73452e7e")}
                 >
                   <DraftEditIcon width={14} height={14} aria-hidden="true" />
-                </button>
-                <button
+                </button>} messages={{"aria-label":"workshop:edit_this_draft_ee815b8c","title":"workshop:put_this_draft_back_in_the_box_to_edit_73452e7e"}} />
+                <Localized element={<button
                   type="button" className="dc-draft-btn dc-draft-trash"
-                  data-draft-action="trash" aria-label="Delete this draft"
-                  title="Delete this draft"
+                  data-draft-action="trash" aria-label={catalogText("workshop:delete_this_draft_61e54a00")} title={catalogText("workshop:delete_this_draft_61e54a00")}
                 >
                   <DraftTrashIcon width={14} height={14} aria-hidden="true" />
-                </button>
+                </button>} messages={{"aria-label":"workshop:delete_this_draft_61e54a00","title":"workshop:delete_this_draft_61e54a00"}} />
               </span>
             </div>
           ))}
@@ -204,6 +202,7 @@ function SavedDrafts({ rows, busy }: { rows: SavedDraftView[]; busy: boolean }):
 }
 
 export function DevComposerView({ s }: { s: ComposerState }): ReactNode {
+  useUiLanguage();
   const { items } = useStoreState(attachStripStore);
   return (
     <>
@@ -264,12 +263,11 @@ export function DevComposerView({ s }: { s: ComposerState }): ReactNode {
           />
           <div className="dc-card-row">
             <input type="file" id="dc-file-input" className="hidden" multiple />
-            <button
-              type="button" id="dc-attach-btn" title={ATTACH_TITLE}
-              aria-label="Attach files" className={ROW_BTN}
+            <Localized element={<button
+              type="button" id="dc-attach-btn" title={ATTACH_TITLE()} aria-label={catalogText("workshop:attach_files_e697cc1e")} className={ROW_BTN}
             >
               <PlusIcon width={20} height={20} />
-            </button>
+            </button>} messages={{"aria-label":"workshop:attach_files_e697cc1e"}} />
             <BudgetPillBar />
             {s.models ? (
               <div id="dc-venue-detail" className="dc-venue-detail dc-venue-detail-inline">
@@ -281,9 +279,8 @@ export function DevComposerView({ s }: { s: ComposerState }): ReactNode {
                     `title` on each option, available on hover and absent
                     from the list. Option VALUES keep their provider
                     prefixes — that is what the backend resolves. */}
-                <select
-                  id="dc-model-select" className={MODEL_SELECT}
-                  aria-label="Chat model and API key"
+                <Localized element={<select
+                  id="dc-model-select" className={MODEL_SELECT} aria-label={catalogText("workshop:chat_model_and_api_key_de8b21d3")}
                   value={s.models.selected}
                   disabled={s.models.changeDisabled}
                   onChange={(e: ChangeEvent<HTMLSelectElement>) => {
@@ -303,7 +300,7 @@ export function DevComposerView({ s }: { s: ComposerState }): ReactNode {
                       disabled={option.disabled || undefined}
                     >{option.label}</option>
                   ))}
-                </select>
+                </select>} messages={{"aria-label":"workshop:chat_model_and_api_key_de8b21d3"}} />
                 <ChevronDownIcon
                   className="dc-model-caret" width={14} height={14} aria-hidden="true"
                 />
@@ -316,7 +313,7 @@ export function DevComposerView({ s }: { s: ComposerState }): ReactNode {
               <span
                 id="dc-model-pending"
                 className="flex-none whitespace-nowrap text-[11px] text-zinc-500 dark:text-zinc-400"
-              >applies next turn</span>
+              ><Message id="workshop:applies_next_turn_dcff2cac" /></span>
             ) : null}
             <span className="flex-1"></span>
             <SendButton send={s.send} />
@@ -328,5 +325,6 @@ export function DevComposerView({ s }: { s: ComposerState }): ReactNode {
 }
 
 export function DevComposer(): ReactNode {
+  useUiLanguage();
   return <DevComposerView s={useStoreState(composerStore)} />;
 }

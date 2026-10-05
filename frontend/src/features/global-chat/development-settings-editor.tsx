@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message } from "../../lib/i18n/react";
 import { useEffect, useId, useMemo, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -28,7 +32,7 @@ type CodingAgentCatalog = {
 
 async function responseJson<T>(response: Response): Promise<T> {
   const body = await response.json().catch(() => ({})) as T & { error?: string };
-  if (!response.ok) throw new Error(body.error || `Request failed (${response.status}).`);
+  if (!response.ok) throw new Error(body.error || tr("community:request_failed_value1_966aa748", { value1: response.status }));
   return body;
 }
 
@@ -39,6 +43,7 @@ async function responseJson<T>(response: Response): Promise<T> {
  * existing development-chat component.
  */
 export function DevelopmentAISettingsEditor() {
+  useUiLanguage();
   const instanceId = useId();
   const idPrefix = `chat-development-${instanceId}`;
   const [backend, setBackend] = useState('codex_openrouter');
@@ -78,7 +83,7 @@ export function DevelopmentAISettingsEditor() {
         ? String(saved?.model)
         : (catalog.recommendedModelId || nextModels[0]?.id || ''));
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Development AI settings could not be loaded.');
+      setError(reason instanceof Error ? reason.message : tr("community:development_ai_settings_could_not_be_loaded_0392e478"));
     } finally {
       setLoading(false);
     }
@@ -93,11 +98,11 @@ export function DevelopmentAISettingsEditor() {
 
   async function save() {
     if (backend === 'codex_openrouter' && !model) {
-      setError('Choose an OpenRouter model first.');
+      setError(tr("community:choose_an_openrouter_model_first_eb5ba7eb"));
       return;
     }
     setSaving(true);
-    setStatus('Saving…');
+    setStatus(tr("community:saving_23e39291"));
     setError('');
     try {
       await responseJson(await fetch('/api/me/coding-agent', {
@@ -110,37 +115,37 @@ export function DevelopmentAISettingsEditor() {
           : { defaultBackend: 'claude_code' }),
       }));
       setStatus(backend === 'codex_openrouter'
-        ? 'Development AI settings saved.'
-        : 'Claude Code is now the default development AI.');
+        ? tr("community:development_ai_settings_saved_380f9a9e")
+        : tr("community:claude_code_is_now_the_default_development_ai_49bf5516"));
     } catch (reason) {
       setStatus('');
-      setError(reason instanceof Error ? reason.message : 'Development AI settings could not be saved.');
+      setError(reason instanceof Error ? reason.message : tr("community:development_ai_settings_could_not_be_saved_e502d14c"));
     } finally {
       setSaving(false);
     }
   }
 
-  if (loading) return <p className="global-chat-inline-loading">Loading current settings…</p>;
+  if (loading) return <p className="global-chat-inline-loading"><Message id="community:loading_current_settings_81c719a7" /></p>;
 
   return (
     <div className="global-chat-settings-editor global-chat-development-editor">
       {error ? <p role="alert" className="global-chat-inline-error">{error}</p> : null}
       <div>
-        <Label className="mb-1" htmlFor={`${idPrefix}-backend`}>Development AI</Label>
+        <Label className="mb-1" htmlFor={`${idPrefix}-backend`}><Message id="community:development_ai_4e0671b0" /></Label>
         <Select
           id={`${idPrefix}-backend`}
           value={backend}
           onChange={(event) => setBackend(event.target.value)}
         >
-          {available ? <option value="codex_openrouter">OpenRouter</option> : null}
-          <option value="claude_code">Claude Code</option>
+          {available ? <option value="codex_openrouter"><Message id="community:openrouter_eb70c3bc" /></option> : null}
+          <option value="claude_code"><Message id="community:claude_code_246ef8c1" /></option>
         </Select>
       </div>
 
       {backend === 'codex_openrouter' && available ? (
         <>
           <div>
-            <Label className="mb-1" htmlFor={`${idPrefix}-model`}>Model</Label>
+            <Label className="mb-1" htmlFor={`${idPrefix}-model`}><Message id="community:model_5e2c614c" /></Label>
             <Select
               id={`${idPrefix}-model`}
               value={model}
@@ -152,38 +157,38 @@ export function DevelopmentAISettingsEditor() {
             >
               {models.map((item) => (
                 <option key={item.id} value={item.id}>
-                  {item.name || item.id}{item.isRecommended ? ' · Recommended' : ''}{item.isFavorite ? ' · ★' : ''}
+                  {item.name || item.id}<LocalizedValue render={() => (item.isRecommended ? tr("community:recommended_a71fecca") : '')} />{item.isFavorite ? ' · ★' : ''}
                 </option>
               ))}
             </Select>
           </div>
           <div>
-            <Label className="mb-1" htmlFor={`${idPrefix}-reasoning`}>Reasoning effort</Label>
+            <Label className="mb-1" htmlFor={`${idPrefix}-reasoning`}><Message id="community:reasoning_effort_3236aeec" /></Label>
             <Select
               id={`${idPrefix}-reasoning`}
               value={effort}
               disabled={selected?.supportsReasoning !== true}
               onChange={(event) => setEffort(event.target.value)}
             >
-              <option value="">Default</option>
-              <option value="minimal">Minimal</option>
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-              <option value="xhigh">Extra high</option>
+              <option value=""><Message id="community:default_21b111cb" /></option>
+              <option value="minimal"><Message id="community:minimal_057b5de4" /></option>
+              <option value="low"><Message id="community:low_f793de20" /></option>
+              <option value="medium"><Message id="community:medium_8e588cd1" /></option>
+              <option value="high"><Message id="community:high_c4ebc6d4" /></option>
+              <option value="xhigh"><Message id="community:extra_high_70eb321d" /></option>
             </Select>
           </div>
         </>
       ) : null}
 
       {!available ? (
-        <p className="global-chat-inline-loading">OpenRouter development AI is unavailable for this account.</p>
+        <p className="global-chat-inline-loading"><Message id="community:openrouter_development_ai_is_unavailable_for_thi_6a3d38c8" /></p>
       ) : null}
       <Button variant="pillAccent" size="pill" disabled={saving} onClick={() => void save()}>
-        {saving ? 'Saving…' : 'Save development AI'}
+        <LocalizedValue render={() => (saving ? tr("community:saving_23e39291") : tr("community:save_development_ai_d1bd84e5"))} />
       </Button>
       {status ? <p role="status" className="global-chat-setting-status">{status}</p> : null}
-      <p className="global-chat-setting-note">This changes development work only. It does not change the Global Chat model.</p>
+      <p className="global-chat-setting-note"><Message id="community:this_changes_development_work_only_it_does_not_c_f122ec9d" /></p>
     </div>
   );
 }

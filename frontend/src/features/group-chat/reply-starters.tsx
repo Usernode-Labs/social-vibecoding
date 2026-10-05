@@ -1,3 +1,6 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * Reply chips over a project's group chat composer, for somebody who has not
  * said anything there yet.
@@ -43,10 +46,10 @@ import { useStoreState } from '../../lib/use-store-state';
 import { transcriptStore, type TranscriptView } from './transcript-store';
 
 export const REPLY_STARTERS: readonly { label: string; text: string }[] = [
-  { label: '\u{1F44B} Hi!', text: '\u{1F44B} Hi!' },
-  { label: 'Love it!', text: 'Love it!' },
+  { get label() { return tr("workshop:hi_d843dffb"); }, get text() { return tr("workshop:hi_d843dffb"); } },
+  { get label() { return tr("workshop:love_it_e6074c59"); }, get text() { return tr("workshop:love_it_e6074c59"); } },
   // Started, not finished: the caret waits after the space.
-  { label: 'Could it also…', text: 'Could it also ' },
+  { get label() { return tr("workshop:could_it_also_5308dcc7"); }, get text() { return tr("workshop:could_it_also_9443f1e5"); } },
 ];
 
 /** Whether the general chat's transcript calls for the chips (see the header). */
@@ -76,17 +79,18 @@ const CHIP = 'shrink-0 rounded-full border border-violet-200 bg-white px-3 py-1.
 
 export function ReplyStartersView({ onPick }: { onPick: (text: string) => void }) {
   return (
-    <div role="group" aria-label="Start a reply" className="flex gap-2 overflow-x-auto pb-2" data-gc-reply-starters="">
-      {REPLY_STARTERS.map(({ label, text }) => (
-        <button key={label} type="button" className={CHIP} data-gc-reply-starter="" onClick={() => onPick(text)}>
+    <Localized element={<div role="group" aria-label={catalogText("workshop:start_a_reply_11896ce7")} className="flex gap-2 overflow-x-auto pb-2" data-gc-reply-starters="">
+      {REPLY_STARTERS.map(({ label, text }, index) => (
+        <button key={index} type="button" className={CHIP} data-gc-reply-starter="" onClick={() => onPick(text)}>
           {label}
         </button>
       ))}
-    </div>
+    </div>} messages={{"aria-label":"workshop:start_a_reply_11896ce7"}} />
   );
 }
 
 export function ReplyStarters() {
+  useUiLanguage();
   const view = useStoreState(transcriptStore).byKey.main;
   // The view in the store when this composer mounted may be the LAST
   // channel's: the store keeps its rows until group-chat.js publishes this

@@ -1,3 +1,4 @@
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * "via agent" — the small chip a message wears beside its author's name when a
  * coding agent posted it on that person's behalf through the Homeroom MCP
@@ -32,12 +33,9 @@ export function PostedViaChip({ via, className }: {
 }) {
   if (via !== 'agent') return null;
   return (
-    <span
-      className={`gc-posted-via inline-flex shrink-0 items-center gap-0.5 rounded-full border border-violet-200 bg-violet-50 px-1.5 align-middle text-[11px] font-medium leading-4 text-violet-700 dark:border-violet-500/30 dark:bg-violet-500/15 dark:text-violet-300${className ? ` ${className}` : ''}`}
-      title="Posted by a coding agent on this person's behalf"
+    <Localized element={<span
+      className={`gc-posted-via inline-flex shrink-0 items-center gap-0.5 rounded-full border border-violet-200 bg-violet-50 px-1.5 align-middle text-[11px] font-medium leading-4 text-violet-700 dark:border-violet-500/30 dark:bg-violet-500/15 dark:text-violet-300${className ? ` ${className}` : ''}`} title={catalogText("workshop:posted_by_a_coding_agent_on_this_person_s_behalf_7de058b9")}
     >
-      <SparklesIcon className="h-3 w-3" strokeWidth="1.75" aria-hidden="true" />
-      via agent
-    </span>
+      <SparklesIcon className="h-3 w-3" strokeWidth="1.75" aria-hidden="true" /><Message id="workshop:via_agent_ccfbdf4a" /></span>} messages={{"title":"workshop:posted_by_a_coding_agent_on_this_person_s_behalf_7de058b9"}} />
   );
 }

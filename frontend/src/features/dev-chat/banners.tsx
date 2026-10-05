@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message } from "../../lib/i18n/react";
 /**
  * `#dc-banners`' children — the four strips between the dev chat's session
  * header and its panes. See ./banners-store.ts for the split and for why the
@@ -30,7 +34,7 @@ function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).DevChat : null) || null;
 }
 
-const BUSY_TITLE = 'Claude is busy with a turn. Sync will be available when it finishes';
+const BUSY_TITLE = () => tr("workshop:claude_is_busy_with_a_turn_sync_will_be_availabl_f491b432");
 
 const SYNC_BTN
   = 'rounded-md bg-amber-600 hover:bg-amber-500 disabled:opacity-60 disabled:cursor-not-allowed'
@@ -69,7 +73,7 @@ function SyncBanner({ b }: { b: SyncBannerView }): ReactNode {
       <div id="dc-sync-banner" className={SHELL.amber}>
         <SpinnerArcIcon className="w-4 h-4 animate-spin text-amber-800 dark:text-amber-400 shrink-0" />
         <span className="text-amber-800 dark:text-amber-200 flex-1">{b.message}</span>
-        <button id="dc-sync-btn" type="button" disabled className={SYNC_BTN}>Syncing…</button>
+        <button id="dc-sync-btn" type="button" disabled className={SYNC_BTN}><Message id="workshop:syncing_8a046cc9" /></button>
       </div>
     );
   }
@@ -89,8 +93,8 @@ function SyncBanner({ b }: { b: SyncBannerView }): ReactNode {
         <span className="text-amber-800 dark:text-amber-200 flex-1">{b.message}</span>
         <button
           id="dc-sync-btn" type="button" className={SYNC_BTN}
-          disabled={b.busy} title={b.busy ? BUSY_TITLE : undefined} onClick={onSync}
-        >Try again</button>
+          disabled={b.busy} title={b.busy ? BUSY_TITLE() : undefined} onClick={onSync}
+        ><Message id="workshop:try_again_d8b8392e" /></button>
       </div>
     );
   }
@@ -99,14 +103,14 @@ function SyncBanner({ b }: { b: SyncBannerView }): ReactNode {
       {warn}
       {/* One text node with a bold count inside it, as the template wrote it. */}
       <span className="text-amber-800 dark:text-amber-200 flex-1">
-        {'main has moved '}
+        <Message id="workshop:main_has_moved_b6ddb28a" />
         <span className="font-semibold">{b.behind}</span>
-        {` ${b.behind === 1 ? 'commit' : 'commits'} ahead of this branch.`}
+        <LocalizedValue render={() => (tr("workshop:message_5d84351949c4", { count: b.behind }))} />
       </span>
       <button
         id="dc-sync-btn" type="button" className={SYNC_BTN}
-        disabled={b.busy} title={b.busy ? BUSY_TITLE : undefined} onClick={onSync}
-      >Sync with main</button>
+        disabled={b.busy} title={b.busy ? BUSY_TITLE() : undefined} onClick={onSync}
+      ><Message id="workshop:sync_with_main_b055d2cf" /></button>
     </div>
   );
 }
@@ -116,7 +120,7 @@ function NewChangeBanner({ b }: { b: NewChangeBannerView }): ReactNode {
     <div id="dc-new-change-banner" className={SHELL.violet}>
       <PlusThinIcon className="w-4 h-4 text-violet-700 dark:text-violet-400 shrink-0" />
       <span className="text-violet-800 dark:text-violet-200 flex-1">
-        {`This change has been ${b.stateLabel}. New work in this chat is added to the same PR, so start a new change to keep PRs focused.`}
+        <LocalizedValue render={() => (tr("workshop:this_change_has_been_value1_new_work_in_this_cha_6567eca8", { value1: b.stateLabel }))} />
       </span>
       {/* #2602: the way to the card this session became. An ANCHOR, not a
           button: it is a hash navigation, so it middle-clicks and copies
@@ -129,7 +133,7 @@ function NewChangeBanner({ b }: { b: NewChangeBannerView }): ReactNode {
         <a
           id="dc-open-card-link" href={b.cardHref}
           className="col-start-2 justify-self-start sm:col-auto sm:justify-self-auto shrink-0 text-xs font-medium text-violet-800 underline underline-offset-2 hover:text-violet-700 dark:text-violet-200 dark:hover:text-violet-100"
-        >Open proposal card</a>
+        ><Message id="workshop:open_proposal_card_a1b1a77e" /></a>
       ) : null}
       {/* The one primary-filled button on these four strips, so it routes
           through the shell's <Button> — `pill` + `dim60` + `xsText` + `solid`
@@ -140,9 +144,7 @@ function NewChangeBanner({ b }: { b: NewChangeBannerView }): ReactNode {
         variant="pill" disabledStyle="dim60" size="xsText" ink="solid"
         className="col-start-2 justify-self-start sm:col-auto sm:justify-self-auto shrink-0"
         onClick={() => controller()?.startNewChange?.()}
-      >
-        Start a new change
-      </Button>
+      ><Message id="workshop:start_a_new_change_9d63289a" /></Button>
     </div>
   );
 }
@@ -164,6 +166,7 @@ const TOGGLE_CLASS = {
 } as const;
 
 function CreditsBanner({ b }: { b: CreditsBannerView }): ReactNode {
+  useUiLanguage();
   // `CreditOptions.wire` binds one delegated click per element and guards
   // itself with `__creditOptionsWired`, so a ref that runs on every mount is
   // exactly right — and adding a listener is not a DOM write, so the buttons
@@ -220,7 +223,7 @@ function CreditsBanner({ b }: { b: CreditsBannerView }): ReactNode {
         aria-controls={moreId}
         onClick={() => setOpen((v) => !v)}
       >
-        {open ? 'Hide' : 'Details'}
+        <LocalizedValue render={() => (open ? tr("workshop:hide_ac20a57b") : tr("workshop:details_45989de4"))} />
       </button>
       {/* Another module's markup, and a declared check selects into it — so it
           arrives whole, through a host that generates no box so the actions
@@ -236,20 +239,17 @@ function AgentSessionBanner({ b }: { b: AgentSessionBannerView }): ReactNode {
   return (
     <div id="dc-agent-session-banner" className={SHELL.violet}>
       <SparklesIcon className="w-4 h-4 text-violet-700 dark:text-violet-400 shrink-0" />
-      <span className="text-violet-800 dark:text-violet-200 flex-1">
-        This change belongs to one of your agent sessions. Continue there to revise it.
-      </span>
+      <span className="text-violet-800 dark:text-violet-200 flex-1"><Message id="workshop:this_change_belongs_to_one_of_your_agent_session_6a58a7f7" /></span>
       <a
         href={b.href}
         className="col-start-2 justify-self-start sm:col-auto sm:justify-self-auto shrink-0 rounded-full bg-violet-600 px-3 py-1 text-xs font-semibold text-white hover:bg-violet-500"
-      >
-        Continue
-      </a>
+      ><Message id="workshop:continue_31fbef16" /></a>
     </div>
   );
 }
 
 export function DevChatBanners(): ReactNode {
+  useUiLanguage();
   const s = useStoreState(bannersStore);
   return (
     <>

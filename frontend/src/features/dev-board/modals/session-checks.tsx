@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../../lib/i18n/react";
+import { t as tr } from "../../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../../lib/i18n/react";
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { DialogCard } from '@/components/ui/dialog';
@@ -17,13 +21,14 @@ export function SessionCheckResults({ session }: { session: any }): ReactNode {
   return <>
     {verdict ? <ChecksVerdictView v={{ ...verdict, action: null }} /> : null}
     {notes.map((box) => <NoteBoxView key={box.key} box={{ ...box, action: null }} />)}
-    {!verdict && !notes.length ? <p>No check results have been recorded yet.</p> : null}
+    {!verdict && !notes.length ? <p><Message id="workshop:no_check_results_have_been_recorded_yet_f7afe28f" /></p> : null}
     {session.check_state === 'error' && session.check_error_detail
       ? <p className="mt-2 whitespace-pre-wrap break-words">{session.check_error_detail}</p> : null}
   </>;
 }
 
 export function SessionChecksPanel({ sessionId }: { sessionId: number }): ReactNode {
+  useUiLanguage();
   const [session, setSession] = useState<any>(null);
   const [error, setError] = useState('');
   const [rerunning, setRerunning] = useState(false);
@@ -37,7 +42,7 @@ export function SessionChecksPanel({ sessionId }: { sessionId: number }): ReactN
       try {
         const response = await fetch(`/api/sessions/${sessionId}/checks`, { signal: controller.signal });
         const data = await response.json();
-        if (!response.ok) throw new Error(data.error || 'Could not load check results');
+        if (!response.ok) throw new Error(data.error || tr("workshop:could_not_load_check_results_20c2947a"));
         if (!controller.signal.aborted) {
           setSession(data.session);
           setError('');
@@ -68,12 +73,12 @@ export function SessionChecksPanel({ sessionId }: { sessionId: number }): ReactN
     <div className="space-y-4 text-sm leading-relaxed text-zinc-900 dark:text-zinc-100">
       {session ? <p className="text-zinc-500 dark:text-zinc-400 break-words">{session.pr_title || session.session_title}</p> : null}
       {error ? <p role="alert" className="text-red-700 dark:text-red-400">{error}</p> : null}
-      {!session && !error ? <p role="status">Loading checks…</p> : null}
+      {!session && !error ? <p role="status"><Message id="workshop:loading_checks_634e0304" /></p> : null}
       {session ? <div className="min-w-0 [overflow-wrap:anywhere]"><SessionCheckResults session={session} /></div> : null}
       <div className="flex flex-wrap gap-2">
-        <Button variant="neutral" ink="neutral" onClick={() => setRevision((n) => n + 1)}>Refresh results</Button>
+        <Button variant="neutral" ink="neutral" onClick={() => setRevision((n) => n + 1)}><Message id="workshop:refresh_results_04cc9c1a" /></Button>
         {recheck ? <Button disabled={rerunning || recheck.disabled} onClick={rerun}>
-          {rerunning ? 'Re-running…' : recheck.label}
+          <LocalizedValue render={() => (rerunning ? tr("workshop:re_running_6049843f") : recheck.label)} />
         </Button> : null}
       </div>
     </div>
@@ -88,20 +93,19 @@ export function SessionChecks({ sessionId, onClose }: SessionChecksProps): React
     return () => el.close();
   }, []);
   return (
-    <dialog
-      ref={dialog}
-      aria-label="Proposal checks"
+    <Localized element={<dialog
+      ref={dialog} aria-label={catalogText("workshop:proposal_checks_9c021e96")}
       className="m-auto w-[calc(100%-2rem)] max-w-4xl max-h-[85dvh] overflow-y-auto rounded-xl border-0 bg-transparent p-0 text-sm text-zinc-900 dark:text-zinc-100 backdrop:bg-black/60"
       onCancel={(event) => { event.preventDefault(); onClose(); }}
       onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}
     >
       <DialogCard size="md" className="max-w-none space-y-5 sm:p-8">
         <div className="flex items-center justify-between gap-3">
-          <h2 className="text-lg font-bold">Proposal checks</h2>
-          <Button variant="neutral" ink="neutral" onClick={onClose}>Close</Button>
+          <h2 className="text-lg font-bold"><Message id="workshop:proposal_checks_9c021e96" /></h2>
+          <Button variant="neutral" ink="neutral" onClick={onClose}><Message id="workshop:close_7d9eb7ac" /></Button>
         </div>
         <SessionChecksPanel key={sessionId} sessionId={sessionId} />
       </DialogCard>
-    </dialog>
+    </dialog>} messages={{"aria-label":"workshop:proposal_checks_9c021e96"}} />
   );
 }

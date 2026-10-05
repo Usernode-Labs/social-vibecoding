@@ -1,3 +1,6 @@
+import { t as tr } from "../../lib/i18n/runtime";
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * "Find friends" (#3048): a username search at the top of your own Friends
  * section, so adding someone no longer means finding their page first.
@@ -96,9 +99,9 @@ export function FriendSearchResults({
   const q = query.trim();
   if (!q) return null;
   let note: string | null = null;
-  if (failed) note = 'Search isn’t working right now. Check your connection and try again.';
+  if (failed) note = tr("core:search_isn_t_working_right_now_check_your_connec_7892c378");
   else if (loading && !users.length) note = 'Searching…';
-  else if (!loading && !users.length) note = `No one matches “${q}”.`;
+  else if (!loading && !users.length) note = tr("community:no_one_matches_value1_53847d98", { value1: q });
   return (
     <div
       id="profile-friend-search-results"
@@ -133,23 +136,23 @@ export function FriendSearchResults({
 }
 
 export function FriendSearch({ lists }: { lists: FriendSearchLists }): ReactNode {
+  useUiLanguage();
   const [query, setQuery] = useState('');
   const search = useFriendSearch(query);
   return (
     <div id="profile-friend-search" className="mb-3">
       <label className="block">
-        <span className="sr-only">Find friends by username</span>
-        <Input
+        <span className="sr-only"><Message id="core:find_friends_by_username_9cc90f02" /></span>
+        <Localized element={<Input
           id="profile-friend-search-input"
           type="search"
           value={query}
-          onChange={(event) => setQuery(event.target.value.slice(0, 64))}
-          placeholder="Find friends by username"
+          onChange={(event) => setQuery(event.target.value.slice(0, 64))} placeholder={catalogText("core:find_friends_by_username_9cc90f02")}
           autoComplete="off"
           autoCapitalize="none"
           spellCheck={false}
           enterKeyHint="search"
-        />
+        />} messages={{"placeholder":"core:find_friends_by_username_9cc90f02"}} />
       </label>
       <FriendSearchResults
         query={query}

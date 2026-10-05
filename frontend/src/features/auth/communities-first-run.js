@@ -58,13 +58,13 @@
   const SHOT = 'join-communities';
   const SHOT_LIST = [
     { slug: 'homeroom', name: 'Homeroom', icon_emoji: '🏠', self_hosted: true, checked: true,
-      detail: 'Contribute to the Homeroom platform', member_count: 1284 },
-    { slug: 'book-club', name: 'Book club', icon_emoji: '📚', checked: true,
-      detail: 'Invited by @grace', invited_by: 'grace', member_count: 6 },
-    { slug: 'city-garden', name: 'City garden', icon_emoji: '🌱', checked: false,
-      detail: 'Swap seeds and plan the shared plots.', member_count: 41 },
+      get detail() { return globalThis.PlatformI18n.t("auth:contribute_to_the_homeroom_platform_d4e61026"); }, member_count: 1284 },
+    { slug: 'book-club', get name() { return globalThis.PlatformI18n.t("auth:book_club_3193a641"); }, icon_emoji: '📚', checked: true,
+      get detail() { return globalThis.PlatformI18n.t("auth:invited_by_grace_4bb59f09"); }, invited_by: 'grace', member_count: 6 },
+    { slug: 'city-garden', get name() { return globalThis.PlatformI18n.t("auth:city_garden_e7a75ceb"); }, icon_emoji: '🌱', checked: false,
+      get detail() { return globalThis.PlatformI18n.t("auth:swap_seeds_and_plan_the_shared_plots_ff4df84e"); }, member_count: 41 },
     // No description of its own: the row is just the name.
-    { slug: 'pickup-soccer', name: 'Pickup soccer', icon_emoji: '⚽', checked: false, detail: '',
+    { slug: 'pickup-soccer', get name() { return globalThis.PlatformI18n.t("auth:pickup_soccer_fb02ec82"); }, icon_emoji: '⚽', checked: false, detail: '',
       member_count: 12 },
   ];
 
@@ -317,7 +317,7 @@
       figure.setAttribute('aria-hidden', 'true');
       wrap.appendChild(figure);
       wrap.appendChild(el('span', 'sr-only',
-        `${n.toLocaleString('en-US')} ${n === 1 ? 'member' : 'members'}`));
+        globalThis.PlatformI18n.t('community:members_count', { count: n, value1: n.toLocaleString(globalThis.PlatformI18n.getLanguage()) })));
       return wrap;
     },
 
@@ -383,12 +383,12 @@
       panel.appendChild(scroller);
       // A welcome first: this is a new account's first screen after its
       // name and the terms, so it says what the place is before it asks.
-      scroller.appendChild(el('div', 'text-xl font-bold pt-3', 'Welcome to Homeroom!'));
+      scroller.appendChild(el('div', 'text-xl font-bold pt-3', globalThis.PlatformI18n.t("auth:welcome_to_homeroom_7cd980c9")));
       scroller.appendChild(el('p', 'text-sm text-zinc-600 dark:text-zinc-300 mt-1',
-        'Homeroom is a place where communities build the apps they use together.'));
+        globalThis.PlatformI18n.t("auth:homeroom_is_a_place_where_communities_build_the__1fe312b2")));
       scroller.appendChild(el('div',
         'text-[0.9375rem] font-[650] leading-5 text-zinc-900 dark:text-zinc-100 mt-5 mb-2',
-        'What communities do you want to join?'));
+        globalThis.PlatformI18n.t("auth:what_communities_do_you_want_to_join_5197d615")));
 
       // One card of rows, the platform's grouped-list shape: the plane
       // colour, a 20px radius and one inset hairline.
@@ -435,7 +435,7 @@
       }
 
       scroller.appendChild(el('p', 'text-[0.8125rem] text-zinc-500 dark:text-zinc-400 mt-3',
-        'You can join or leave any time from Discover, and start your own private or public community once you are in.'));
+        globalThis.PlatformI18n.t("auth:you_can_join_or_leave_any_time_from_discover_and_8638254d")));
 
       // The foot: the error line and the two answers. Its top edge is a
       // hairline only while there is more of the body below it to scroll
@@ -464,7 +464,7 @@
       const skip = el('button',
         'w-full mt-1 py-2 text-sm font-medium text-zinc-500 hover:text-zinc-800 ' +
         'dark:text-zinc-400 dark:hover:text-zinc-100 disabled:opacity-50',
-        'Skip for now');
+        globalThis.PlatformI18n.t("auth:skip_for_now_b58eb52c"));
       skip.type = 'button';
       skip.setAttribute('data-join-communities-skip', '');
       foot.appendChild(skip);
@@ -481,9 +481,9 @@
         const n = joins([...picked]);
         skip.disabled = busy;
         save.disabled = busy || ticked === 0;
-        save.textContent = ticked === 0 ? 'Pick at least one'
-          : n === 0 ? 'Continue'
-            : `Join ${n} ${n === 1 ? 'community' : 'communities'}`;
+        save.textContent = ticked === 0 ? globalThis.PlatformI18n.t("auth:pick_at_least_one_66875683")
+          : n === 0 ? globalThis.PlatformI18n.t("auth:continue_31fbef16")
+            : globalThis.PlatformI18n.t("auth:message_b8d07c0bf5bf", { value1: n, count: n });
         save.setAttribute('data-picked', String(ticked));
       }
       rows.forEach((paint) => paint());
@@ -517,7 +517,7 @@
           });
           const body = await res.json().catch(() => ({}));
           if (!res.ok && !body.alreadyDone) {
-            status.textContent = body.error || 'Could not join those. Try again.';
+            status.textContent = body.error || globalThis.PlatformI18n.t("auth:could_not_join_those_try_again_cfbbb5fe");
             busy = false;
             paintButton();
             return;
@@ -537,11 +537,11 @@
           // Keeping Homeroom is not a join: nothing to announce for it.
           const n = joins(body.joined || []);
           if (n && window.PlatformUI) {
-            PlatformUI.toast(`You joined ${n} ${n === 1 ? 'community' : 'communities'}.`);
+            PlatformUI.toast(globalThis.PlatformI18n.t("auth:message_aae8b91a5cda", { value1: n, count: n }));
           }
         } catch (err) {
           console.warn('[communities-first-run] answer failed:', err);
-          status.textContent = 'Network error. Try again.';
+          status.textContent = globalThis.PlatformI18n.t("auth:network_error_try_again_052b478f");
           busy = false;
           paintButton();
         }

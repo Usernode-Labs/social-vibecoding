@@ -1,3 +1,7 @@
+import { t as tr } from "../../../lib/i18n/runtime";
+import { useMessages as useUiLanguage } from "../../../lib/i18n/react";
+import { RichMessage } from "../../../lib/i18n/react";
+import { Message } from "../../../lib/i18n/react";
 /**
  * A project's notices, at the head of its Workshop tab: what changed about
  * the project itself lately (GET /api/apps/:slug/notices,
@@ -47,7 +51,7 @@ export type Notices = { settings: SettingsNotice[]; week: WeekNotice | null };
 
 /** "by @ada · 2d ago", or "through a voted change · 2d ago". */
 export function noticeMeta(notice: Pick<SettingsNotice, 'by' | 'at' | 'kind'>): string {
-  const who = notice.by ? `by @${notice.by}` : (notice.kind === 'approver' ? '' : 'through a voted change');
+  const who = notice.by ? tr("workshop:by_value1_363778f7", { value1: notice.by }) : (notice.kind === 'approver' ? '' : tr("workshop:through_a_voted_change_ed6e92ec"));
   const when = notice.at ? agoStamp(notice.at).text : '';
   return [who, when].filter(Boolean).join(' · ');
 }
@@ -61,13 +65,11 @@ export function NoticesPanel({ notices }: { notices: Notices }) {
   if (!hasNotices(notices)) return null;
   return (
     <section className="dev-ws-strip" data-ws-notices="">
-      <div className="dev-ws-head">
-        <span className="dev-ws-head-title">Lately in this project</span>
-      </div>
+      <div className="dev-ws-head"><RichMessage id="workshop:sentence_702899cf9be6" components={[<span className="dev-ws-head-title" />]} /></div>
       <ul className="dev-ws-notices">
         {notices.week ? (
           <li className="dev-ws-notice" data-ws-notice="week">
-            <span className="dev-ws-notice-text"><b>This week.</b> {notices.week.line.replace(/^This week on [^:]+:\s*/, '')}</span>
+            <span className="dev-ws-notice-text"><b><Message id="workshop:this_week_6654dcf5" /></b> {notices.week.line.replace(/^This week on [^:]+:\s*/, '')}</span>
             {notices.week.at ? <span className="dev-ws-notice-meta">{agoStamp(notices.week.at).text}</span> : null}
           </li>
         ) : null}
@@ -84,6 +86,7 @@ export function NoticesPanel({ notices }: { notices: Notices }) {
 
 /** Loads a project's notices and draws the panel when there are any. */
 export function WorkshopNotices({ slug }: { slug: string }) {
+  useUiLanguage();
   const [notices, setNotices] = useState<Notices | null>(null);
   useEffect(() => {
     if (!slug) return undefined;

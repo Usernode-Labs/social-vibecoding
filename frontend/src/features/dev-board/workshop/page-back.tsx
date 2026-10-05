@@ -1,3 +1,5 @@
+import { LocalizedValue, LocalizedDynamic } from "../../../lib/i18n/react";
+import { t as tr } from "../../../lib/i18n/runtime";
 /**
  * THE WAY BACK UP TO A PROJECT'S HUB, drawn inside the page rather than in
  * the header. The header's slot is the project's own (App._backSlotFor); a
@@ -23,16 +25,16 @@ type BackButtonProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'className'
 
 export function PageBackButton({ label, onBack, ...rest }: BackButtonProps): ReactNode {
   return (
-    <button
+    <LocalizedDynamic element={<button
       type="button"
       className="dev-ws-page-back un-touch-target"
       {...rest}
-      aria-label={`Back to ${label}`}
-      title={`Back to ${label}`}
+      aria-label={tr("workshop:back_to_value1_7ff60540", { value1: label })}
+      title={tr("workshop:back_to_value1_7ff60540", { value1: label })}
       onClick={onBack}
     >
       <ChevronLeftIcon className="dev-ws-page-back-glyph" aria-hidden="true" />
-    </button>
+    </button>} resolve={() => ({ get "aria-label"() { return tr("workshop:back_to_value1_7ff60540", { value1: label }); }, get "title"() { return tr("workshop:back_to_value1_7ff60540", { value1: label }); } })} />
   );
 }
 

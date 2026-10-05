@@ -34,7 +34,7 @@ import { aiBudgetStore } from './ai-budget-store.js';
   function money(cents) {
     var n = Number(cents);
     if (!isFinite(n)) return '$0.00';
-    return '$' + (Math.round(n) / 100).toLocaleString('en-US', {
+    return '$' + (Math.round(n) / 100).toLocaleString(globalThis.PlatformI18n.getLanguage(), {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     });
@@ -142,8 +142,8 @@ import { aiBudgetStore } from './ai-budget-store.js';
         var RT = (typeof window !== 'undefined' && window.ResetTime) || null;
         var weeklyReset = s.capWindow === 'weekly';
         var resetText = state ? CO.resetSentence(state)
-          : 'Free credits reset ' + (RT ? RT.resetWhen(weeklyReset ? 'weekly' : 'daily', { at: s.resetsAt })
-            : (weeklyReset ? 'Monday 00:00 UTC' : 'at midnight UTC')) + '.';
+          : globalThis.PlatformI18n.t("account:free_credits_reset_77e8b21d") + (RT ? RT.resetWhen(weeklyReset ? 'weekly' : 'daily', { at: s.resetsAt })
+            : (weeklyReset ? 'Monday 00:00 UTC' : globalThis.PlatformI18n.t("account:at_midnight_utc_85c316cd"))) + '.';
         var resetUtc = state && CO.resetTitle ? CO.resetTitle(state) : null;
         if (resetUtc) resetText = resetText.replace(/\.$/, ' (' + resetUtc + ').');
         // The raw figures ride along for a reader that draws them itself
@@ -164,25 +164,24 @@ import { aiBudgetStore } from './ai-budget-store.js';
         // produce a misleading $0/$0 meter and NaN percentages).
         if (state && state.level === 'locked') {
           var lockedParts = [
-            { bare: true, runs: [{ tone: 'warn', text: 'verify account · unlock $10/day' }] },
+            { bare: true, runs: [{ tone: 'warn', get text() { return globalThis.PlatformI18n.t("account:verify_account_unlock_10_day_a683560b"); } }] },
           ];
           if (s.hasByokKey) {
             lockedParts.push({
-              runs: [{ tone: 'dim', text: '· ' }, { tone: 'byok', text: 'your key available' }],
+              runs: [{ tone: 'dim', text: '· ' }, { tone: 'byok', get text() { return globalThis.PlatformI18n.t("account:your_key_available_5e90064e"); } }],
             });
           }
           show({
-            title: 'Connect GitHub or X in Settings to unlock $10/day. '
-              + (s.hasByokKey ? 'Your own Anthropic key remains available.' : ''),
+            title: globalThis.PlatformI18n.t("core:connect_github_or_x_in_settings_to_unlock_10_day_1f177ff7", { value1: (s.hasByokKey ? globalThis.PlatformI18n.t("account:your_own_anthropic_key_remains_available_926dbe1c") : '') }),
             parts: lockedParts,
           });
           return;
         }
         if (state && state.level === 'unavailable') {
           show({
-            title: 'Credit eligibility could not be verified. Try again shortly.',
+            get title() { return globalThis.PlatformI18n.t("account:credit_eligibility_could_not_be_verified_try_aga_9fe06369"); },
             tone: 'warn',
-            parts: [{ bare: true, runs: [{ tone: 'none', text: 'credits temporarily unavailable' }] }],
+            parts: [{ bare: true, runs: [{ tone: 'none', get text() { return globalThis.PlatformI18n.t("account:credits_temporarily_unavailable_b028cfa7"); } }] }],
           });
           return;
         }
@@ -195,29 +194,24 @@ import { aiBudgetStore } from './ai-budget-store.js';
         // daily or weekly — so the words around them follow the server's
         // window rather than assuming "daily"/"today".
         var weeklyWindow = (state ? state.capWindow : s.capWindow) === 'weekly';
-        var windowAdj = weeklyWindow ? 'weekly' : 'daily';
-        var windowWhen = weeklyWindow ? 'this week’s' : 'today’s';
-
         var tip;
         if (exhausted && s.hasByokKey) {
-          tip = 'Your ' + money(limit) + ' ' + windowAdj + ' allowance is used up. AI turns are now '
-            + 'billed to the Anthropic key you saved in Settings. ' + resetText;
+          tip = globalThis.PlatformI18n.t(weeklyWindow ? 'account:budget_byok_weekly' : 'account:budget_byok_daily', { limit: money(limit) });
         } else if (exhausted) {
-          tip = 'You have used all ' + money(limit) + ' of ' + windowWhen + ' AI allowance. ' + resetText;
+          tip = globalThis.PlatformI18n.t(weeklyWindow ? 'account:budget_exhausted_weekly' : 'account:budget_exhausted_daily', { limit: money(limit) });
         } else {
-          tip = money(spent) + ' of your ' + money(limit) + ' ' + windowAdj + ' AI allowance used ('
-            + money(remaining) + ' left). ' + resetText;
+          tip = globalThis.PlatformI18n.t(weeklyWindow ? 'account:budget_used_weekly' : 'account:budget_used_daily', {
+            spent: money(spent), limit: money(limit), remaining: money(remaining),
+          });
         }
+        tip += ' ' + resetText;
         if (byok > 0) {
-          // Still today's figure: the BYOK tally is the day row's, not the
-          // week's, whichever window the cap above is measuring.
-          tip += ' A further ' + money(byok)
-            + ' today was billed to your own Anthropic key and does not count against the allowance.';
+          tip += ' ' + globalThis.PlatformI18n.t('account:budget_extra_byok', { amount: money(byok) });
         }
 
         var parts = [{
           runs: [
-            { tone: 'dim', text: 'limit ' },
+            { tone: 'dim', get text() { return globalThis.PlatformI18n.t("account:limit_70792dfe"); } },
             { tone: spentTone, text: money(spent) },
             { tone: 'dim', text: '/' + money(limit) },
           ],
@@ -227,7 +221,7 @@ import { aiBudgetStore } from './ai-budget-store.js';
         // before opening one, and a tooltip answers that for nobody on a
         // phone — which is where the drawer is used most.
         var leftLabel = exhausted
-          ? (s.hasByokKey ? '' : 'none left')
+          ? (s.hasByokKey ? '' : globalThis.PlatformI18n.t("account:none_left_b684b475"))
           : money(remaining) + ' left';
         if (leftLabel) {
           parts.push({
@@ -249,7 +243,7 @@ import { aiBudgetStore } from './ai-budget-store.js';
           parts.push({
             runs: [
               { tone: 'dim', text: '· ' },
-              { tone: 'byok', text: 'your key ' + money(byok) },
+              { tone: 'byok', text: globalThis.PlatformI18n.t("account:your_key_08f79e7b") + money(byok) },
             ],
           });
         }
@@ -270,4 +264,9 @@ import { aiBudgetStore } from './ai-budget-store.js';
   // (frontend/scripts/build-shell.mjs), which imports this island's module
   // graph. Same guard as features/notifications/notifications.js.
   if (typeof window !== 'undefined') window.AiCredit = AiCredit;
+  if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+    document.addEventListener('homeroom:language-changed', () => {
+      if (AiCredit.Budget.state) AiCredit.Budget._render();
+    });
+  }
 })();

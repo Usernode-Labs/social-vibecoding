@@ -1,3 +1,5 @@
+import { LocalizedValue, LocalizedDynamic } from "../../../src/lib/i18n/react";
+import { t as tr } from "../../../src/lib/i18n/runtime";
 import * as React from 'react';
 import { cva, type VariantProps } from 'class-variance-authority';
 
@@ -174,7 +176,7 @@ export function ThreadReplySummary({
     >
       {avatars ? <span className="flex -space-x-1" aria-hidden="true">{avatars}</span> : null}
       <span className="text-[0.9375rem] font-bold text-violet-700 dark:text-violet-400">
-        {count} {count === 1 ? 'reply' : 'replies'}
+        {count} <LocalizedValue render={() => (count === 1 ? tr("core:reply_5782b186") : tr("core:replies_b9942782"))} />
       </span>
       {timestamp ? (
         <span className="text-[0.9375rem] text-zinc-500 dark:text-zinc-500">{timestamp}</span>

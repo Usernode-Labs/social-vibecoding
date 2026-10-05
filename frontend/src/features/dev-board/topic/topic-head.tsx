@@ -1,3 +1,8 @@
+import { useMessages as useUiLanguage } from "../../../lib/i18n/react";
+import { RichMessage } from "../../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../../lib/i18n/react";
+import { t as tr } from "../../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../../lib/i18n/react";
 /**
  * `#gc-thread-head` — the opened topic's card and everything under it.
  *
@@ -79,7 +84,7 @@ const TONE: Record<NoteTone, string> = {
   neutral: 'border-zinc-300/40 dark:border-zinc-700/60 bg-zinc-500/5 text-zinc-600 dark:text-zinc-400',
   ok: 'border-emerald-500/30 bg-emerald-500/5 text-emerald-700 dark:text-emerald-500',
   warn: 'border-amber-500/30 bg-amber-500/5 text-amber-800 dark:text-amber-500',
-  error: 'border-red-500/30 bg-red-500/5 text-red-700 dark:text-red-400',
+  get error() { return tr("workshop:border_red_500_30_bg_red_500_5_text_red_700_dark_3bb3892f"); },
 };
 
 /** A prose run, with its `font-medium` spans. See ./model.ts's `TextRun`. */
@@ -141,11 +146,11 @@ function CheckRowView({ r }: { r: CheckRow }): ReactNode {
   const glyphCls = `dev-ledger-check-glyph ${r.pass ? 'text-emerald-700 dark:text-emerald-400' : (r.advisory ? 'text-zinc-500 dark:text-zinc-400' : 'text-red-700 dark:text-red-400')} font-medium`;
   const tags = (
     <>
-      {r.advisory ? <span className="rounded bg-zinc-500/10 px-1 text-[0.65rem] opacity-70">advisory</span> : null}
+      {r.advisory ? <span className="rounded bg-zinc-500/10 px-1 text-[0.65rem] opacity-70"><Message id="workshop:advisory_644c4a77" /></span> : null}
       {r.flaky ? (
-        <span className="dev-check-flaky" title={`Failed about ${r.flaky}% of its recorded runs`}>
-          {`flaky · ${r.flaky}%`}
-        </span>
+        <LocalizedDynamic element={<span className="dev-check-flaky" title={tr("workshop:failed_about_value1_of_its_recorded_runs_289ecc46", { value1: r.flaky })}>
+          <LocalizedValue render={() => (tr("workshop:flaky_value1_ad8d725e", { value1: r.flaky }))} />
+        </span>} resolve={() => ({ get "title"() { return tr("workshop:failed_about_value1_of_its_recorded_runs_289ecc46", { value1: r.flaky }); } })} />
       ) : null}
     </>
   );
@@ -169,11 +174,11 @@ function CheckRowView({ r }: { r: CheckRow }): ReactNode {
           <span className={glyphCls} aria-hidden="true">{r.pass ? '✓' : '✗'}</span>
           <span className="dev-ledger-check-name" title={r.name}>{r.name}</span>
           {tags}
-          <span className="dev-ledger-check-open">{r.pass ? 'Passed on retry' : 'Why it failed'}</span>
+          <span className="dev-ledger-check-open"><LocalizedValue render={() => (r.pass ? tr("workshop:passed_on_retry_467d8dd8") : tr("workshop:why_it_failed_5cba76ed"))} /></span>
         </summary>
         <div className="dev-ledger-why-body">
-          {r.reason || 'failed'}
-          {r.path ? <span className="dev-ledger-why-path">{` · on ${r.path}`}</span> : null}
+          <LocalizedValue render={() => (r.reason || tr("workshop:failed_5d28a90f"))} />
+          {r.path ? <span className="dev-ledger-why-path"><LocalizedValue render={() => (tr("workshop:on_value1_3f7d6499", { value1: r.path }))} /></span> : null}
           {r.errors && r.errors.length ? (
             <ul className="dev-ledger-why-errors">
               {r.errors.map((e, i) => (
@@ -213,7 +218,7 @@ function usePassNames(passesFor: number | null | undefined) {
 function PassNamesPending({ state }: { state: 'idle' | 'loading' | 'failed' }): ReactNode {
   return (
     <li className="dev-passes-pending opacity-70">
-      {state === 'failed' ? 'Could not load the passing checks. Close this and open it again to retry.' : 'Loading passing checks…'}
+      <LocalizedValue render={() => (state === 'failed' ? tr("workshop:could_not_load_the_passing_checks_close_this_and_204c563a") : tr("workshop:loading_passing_checks_39128b25"))} />
     </li>
   );
 }
@@ -238,7 +243,7 @@ export function ChecksVerdictView({ v }: { v: ChecksVerdict }): ReactNode {
       ) : null}
       {v.foldPasses ? (
         <details className="mt-1" onToggle={names.onToggle}>
-          <summary className="cursor-pointer opacity-80">{`Show ${v.passCount ?? v.passes.length} passing checks`}</summary>
+          <summary className="cursor-pointer opacity-80"><LocalizedValue render={() => (tr("workshop:show_value1_passing_checks_dbb1018c", { value1: v.passCount ?? v.passes.length }))} /></summary>
           {passList}
         </details>
       ) : passList}
@@ -354,7 +359,7 @@ function Progress({ p }: { p: LedgerProgress }): ReactNode {
           <Bar ran={u.ran} passed={u.passed} failed={u.failed} expected={u.expected}
             attr="data-unit-progress" value={`${u.ran}/${u.expected ?? '?'}`}
             indeterminate={!u.done && u.ran === 0} />
-          <small className="dev-ledger-progress-unit-k">npm test</small>
+          <small className="dev-ledger-progress-unit-k"><Message id="workshop:npm_test_328e123c" /></small>
         </span>
       ) : null}
     </>
@@ -370,7 +375,7 @@ function Progress({ p }: { p: LedgerProgress }): ReactNode {
  */
 function Roster({ r }: { r: RosterView }): ReactNode {
   if (r.phase === 'hidden') return null;
-  if (r.phase === 'loading') return <span className="dev-ledger-roster">Loading votes…</span>;
+  if (r.phase === 'loading') return <span className="dev-ledger-roster"><Message id="workshop:loading_votes_6bc09740" /></span>;
   // QA 2026-09-24: a side nobody has taken is left out, rather than drawn as
   // "No (0): —". The loaders send an empty string for it; the bare dash is
   // what they sent before, and is still read as empty.
@@ -381,9 +386,9 @@ function Roster({ r }: { r: RosterView }): ReactNode {
     <span className="dev-ledger-roster" data-approved={r.approved ? '1' : undefined}>
       {r.approved ? (
         <>
-          <span className="dev-ledger-lead dev-ledger-lead-ok">Approved</span>
-          {yesNames ? ` by ${yesNames}` : null}
-          {noNames ? <span className="dev-ledger-needs">{` · No: ${noNames}`}</span> : null}
+          <span className="dev-ledger-lead dev-ledger-lead-ok"><Message id="workshop:approved_87b42e40" /></span>
+          <LocalizedValue render={() => (yesNames ? tr("workshop:by_value1_d9ae15c6", { value1: yesNames }) : null)} />
+          {noNames ? <span className="dev-ledger-needs"><LocalizedValue render={() => (tr("workshop:no_value1_abf9ba4f", { value1: noNames }))} /></span> : null}
         </>
       ) : (
         <>
@@ -392,7 +397,7 @@ function Roster({ r }: { r: RosterView }): ReactNode {
               tests/shell-build.test.js guards against. With nobody on
               either side the lead is the whole line: the tally beside it
               already says the count. */}
-          <span className="dev-ledger-lead dev-ledger-lead-vote">{yesNames || noNames ? 'Waiting for votes. ' : 'Waiting for votes.'}</span>
+          <span className="dev-ledger-lead dev-ledger-lead-vote"><LocalizedValue render={() => (yesNames || noNames ? tr("workshop:waiting_for_votes_c3aa33ce") : tr("workshop:waiting_for_votes_24953fcd"))} /></span>
           {yesNames ? <span className="dev-ledger-yes">{`${r.yes!.label}:`}</span> : null}
           {yesNames ? ` ${yesNames}${noNames ? ' · ' : ''}` : null}
           {noNames ? <span className="dev-ledger-no">{`${r.no!.label}:`}</span> : null}
@@ -414,15 +419,13 @@ function Roster({ r }: { r: RosterView }): ReactNode {
 function HelpLinks({ question }: { question: boolean }): ReactNode {
   return (
     <span className="dev-ledger-help voting-help-hint">
-      <button type="button" className="voting-help-link un-touch-target" data-voting-help="">How voting works</button>
+      <button type="button" className="voting-help-link un-touch-target" data-voting-help=""><Message id="workshop:how_voting_works_efec2178" /></button>
       {question ? (
-        <button
+        <Localized element={<button
           type="button"
           className="voting-help-btn un-touch-target"
-          data-voting-help=""
-          aria-label="How voting and merges work"
-          title="How voting and merges work"
-        >?</button>
+          data-voting-help="" aria-label={catalogText("workshop:how_voting_and_merges_work_09191d72")} title={catalogText("workshop:how_voting_and_merges_work_09191d72")}
+        >?</button>} messages={{"aria-label":"workshop:how_voting_and_merges_work_09191d72","title":"workshop:how_voting_and_merges_work_09191d72"}} />
       ) : null}
     </span>
   );
@@ -494,7 +497,7 @@ function LedgerRowBody({ r, help }: { r: LedgerRow; help: boolean }): ReactNode 
           {(r.actions || []).map((a) => <ActionButton key={a.key} a={a} />)}
           {passingCount(r) ? (
             <details className="dev-ledger-passes" onToggle={names.onToggle}>
-              <summary className="gc-vote-btn dev-ledger-passes-btn">{`${passingCount(r)} passing`}</summary>
+              <summary className="gc-vote-btn dev-ledger-passes-btn"><LocalizedValue render={() => (tr("workshop:value1_passing_cee8bbd1", { value1: passingCount(r) }))} /></summary>
               <ul className="dev-ledger-fails">
                 {(r.passes || []).map((c) => <CheckRowView key={c.key} r={c} />)}
                 {r.passesFor ? <PassNamesPending state={names.state} /> : null}
@@ -516,9 +519,7 @@ export function ProposalBody({ b }: { b: NonNullable<TopicBody['proposalBody']> 
         if (b.id != null) call('_setProposalBodyOpen', b.id, e.currentTarget.open);
       }}
     >
-      <summary className="dev-topic-details-summary">
-        Technical details
-      </summary>
+      <summary className="dev-topic-details-summary"><Message id="workshop:technical_details_890ab358" /></summary>
       {/* DevChat.renderMarkdown's output — sanitised where it is built, and
           the same pipeline the issue body above uses. */}
       <Html className="dev-issue-body dev-topic-details-body" html={b.html} />
@@ -535,11 +536,7 @@ function Transcript({ t }: { t: TranscriptSection }): ReactNode {
         data-transcript-toggle={t.id}
         aria-expanded={t.expanded}
         onClick={() => call('toggleTranscript', t.id)}
-      >
-        <span className="st-caret" aria-hidden="true"></span>
-        <span data-transcript-label="">{t.label}</span>
-        <span className="st-readonly-tag">read-only</span>
-      </button>
+      ><RichMessage id="workshop:sentence_b60fb9285166" values={{ value1: t.label }} components={[<span className="st-caret" aria-hidden="true" />, <span data-transcript-label="" />, <span className="st-readonly-tag" />]} /></button>
       {/* The BODY is public/js/session-transcript.js's — a controller host,
           rendered once with a constant className and never looked inside. */}
       <div className="st-body" data-transcript-body={t.id} hidden={!t.expanded}></div>
@@ -548,6 +545,7 @@ function Transcript({ t }: { t: TranscriptSection }): ReactNode {
 }
 
 export function TopicHead({ conversation = false }: { conversation?: boolean }): ReactNode {
+  useUiLanguage();
   const { card, body, item } = useStoreState(topicHeadStore);
   if (!card || !body) return null;
   // `back`: this IS the topic page, whose one back control is the chip at the
@@ -573,7 +571,7 @@ export async function readChangeDetail(item: any, owner: boolean, signal: AbortS
   const demo = av?._demoQS?.() ? '&demo=1' : '';
   const response = await fetch(`${url}?results=failing${demo}`, { signal });
   const payload = await response.json();
-  if (!response.ok) throw new Error(payload.error || 'Could not refresh this change.');
+  if (!response.ok) throw new Error(payload.error || tr("workshop:could_not_refresh_this_change_45fd8966"));
   const session = review ? payload.proposal : payload.session;
   if (review && !signal.aborted) {
     if (owner) av._invalidateVoteRoster(id);
@@ -598,7 +596,7 @@ export function parseExactIssueNumber(value: string): { issue: number | null; er
   if (!/^#?[1-9]\d*$/.test(token)) return { issue: null, error: '' };
   const issue = Number(token.replace(/^#/, ''));
   if (!Number.isSafeInteger(issue) || issue > 2147483647) {
-    return { issue: null, error: `“${token}” is too large to be an issue number.` };
+    return { issue: null, get error() { return tr("workshop:value1_is_too_large_to_be_an_issue_number_06e6986a", { value1: token }); } };
   }
   return { issue, error: '' };
 }
@@ -685,7 +683,7 @@ function IssueIdentity({ label, title }: { label: string; title: string }): Reac
  */
 function AddressedBy({ r }: { r: IssueProposalRef }): ReactNode {
   return (
-    <aside className="dev-change-issues" aria-label="The change addressing this issue">
+    <Localized element={<aside className="dev-change-issues" aria-label={catalogText("workshop:the_change_addressing_this_issue_25446d59")}>
       <h4 className="dev-topic-h">{r.heading}</h4>
       <div className="mt-2">
         <a
@@ -698,7 +696,7 @@ function AddressedBy({ r }: { r: IssueProposalRef }): ReactNode {
           }}
         ><IssueIdentity label={r.label} title={r.title} /><RefChevron /></a>
       </div>
-    </aside>
+    </aside>} messages={{"aria-label":"workshop:the_change_addressing_this_issue_25446d59"}} />
   );
 }
 
@@ -717,6 +715,7 @@ function IssueAssociations({
   editable: boolean;
   onSaved: (issues: number[]) => void;
 }): ReactNode {
+  useUiLanguage();
   const normalized = normalizeLinkedIssues(linkedIssues);
   const signature = normalized.join(', ');
   const [editing, setEditing] = useState(false);
@@ -734,13 +733,13 @@ function IssueAssociations({
   const changed = selectedSignature !== signature;
   const optionsByNumber = new Map([...issueOptions, ...issues].map((issue) => [issue.n, issue]));
   const selectedIssues = selected.map((n) => optionsByNumber.get(n) || {
-    n, title: `Request #${n}`, href: `#${n}`,
+    n, get title() { return tr("workshop:request_value1_8051e8ec", { value1: n }); }, href: `#${n}`,
   });
   const suggestions = filterIssueOptions(query, issueOptions, selected);
   const exact = parseExactIssueNumber(query);
   const exactOption = exact.issue && !selected.includes(exact.issue)
     && !suggestions.some((issue) => issue.n === exact.issue)
-    ? { n: exact.issue, title: 'Add by issue number', href: `#${exact.issue}` } : null;
+    ? { n: exact.issue, get title() { return tr("workshop:add_by_issue_number_2b443a48"); }, href: `#${exact.issue}` } : null;
 
   const openEditor = () => {
     setSelected(normalized);
@@ -758,7 +757,7 @@ function IssueAssociations({
   const addIssue = (issue: number) => {
     if (selected.includes(issue)) return;
     if (selected.length >= MAX_LINKED_ISSUES) {
-      setError(`A change can link at most ${MAX_LINKED_ISSUES} requests.`);
+      setError(tr("workshop:a_change_can_link_at_most_value1_requests_56c876d8", { value1: MAX_LINKED_ISSUES }));
       return;
     }
     setSelected((current) => normalizeLinkedIssues([...current, issue]));
@@ -780,7 +779,7 @@ function IssueAssociations({
     if (suggestions[0]) addIssue(suggestions[0].n);
     else if (exactOption) addIssue(exactOption.n);
     else if (exact.error) setError(exact.error);
-    else setError('Choose a matching issue or enter its issue number.');
+    else setError(tr("workshop:choose_a_matching_issue_or_enter_its_issue_numbe_b44fff6a"));
   };
 
   async function save(event: FormEvent<HTMLFormElement>) {
@@ -795,31 +794,31 @@ function IssueAssociations({
         body: JSON.stringify({ addIssues, removeIssues }),
       });
       const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body.message || body.error || 'Couldn\'t update the requests.');
+      if (!response.ok) throw new Error(body.message || body.error || tr("workshop:couldn_t_update_the_requests_e27c36a5"));
       const saved = Array.isArray(body.linkedIssues) ? body.linkedIssues.map(Number) : selected;
       onSaved(saved);
       setSelected(normalizeLinkedIssues(saved));
       setQuery('');
       setEditing(false);
       setNotice(body.prBodyStatus === 'github_unavailable'
-        ? 'Issues saved. The pull request could not be updated yet; saving again will retry it.'
-        : 'Issues saved.');
+        ? tr("workshop:issues_saved_the_pull_request_could_not_be_updat_9d662574")
+        : tr("workshop:issues_saved_e4df7c31"));
     } catch (err) {
-      setError(err instanceof TypeError ? 'Network error. Try again.' : (err as Error).message);
+      setError(err instanceof TypeError ? tr("workshop:network_error_try_again_052b478f") : (err as Error).message);
     } finally {
       setSaving(false);
     }
   }
 
   return (
-    <aside className="dev-topic-hero-issues" aria-label="Requests this change addresses">
+    <Localized element={<aside className="dev-topic-hero-issues" aria-label={catalogText("workshop:requests_this_change_addresses_8aeab0d8")}>
       {!editing ? (
         <div className="dev-topic-hero-issues-line">
           {/* One line under the summary: "Addresses", then each issue as a
               chip — the number bold, the title after it — in the Needs-you
               chip's accent tint. The chip opens the issue's own page; the
               owner's pencil sits at the line's end. */}
-          <span className="dev-topic-hero-issues-k">Addresses</span>
+          <span className="dev-topic-hero-issues-k"><Message id="workshop:addresses_76179aaf" /></span>
           {issues.length ? issues.map((issue) => (
             <a
               key={issue.n}
@@ -832,7 +831,7 @@ function IssueAssociations({
                 event.preventDefault(); call('openTopic', 'issue', issue.n);
               }}
             ><b>{`#${issue.n}`}</b><span>{issue.title}</span></a>
-          )) : <span className="dev-topic-note">No requests linked yet.</span>}
+          )) : <span className="dev-topic-note"><Message id="workshop:no_requests_linked_yet_a75d0b75" /></span>}
           {editable ? <Button
             type="button"
             variant="unstyled"
@@ -844,73 +843,70 @@ function IssueAssociations({
           >
             {issues.length ? <PencilSquareIcon className="h-4 w-4" aria-hidden="true" />
               : <PlusIcon className="h-4 w-4" aria-hidden="true" />}
-            {issues.length ? 'Edit requests' : 'Add request'}
+            <LocalizedValue render={() => (issues.length ? tr("workshop:edit_requests_8ad9fc8a") : tr("workshop:add_request_a357d065"))} />
           </Button> : null}
         </div>
       ) : null}
       {editing ? <form className="mt-3 space-y-3" data-linked-issues-editor="" onSubmit={save}>
         <div>
           <div className="mb-1.5 flex items-center justify-between gap-3 text-xs font-medium text-zinc-600 dark:text-zinc-400">
-            <span>{`Selected (${selected.length})`}</span>
-            <span>{`${MAX_LINKED_ISSUES - selected.length} remaining`}</span>
+            <span><LocalizedValue render={() => (tr("workshop:selected_value1_50f47361", { value1: selected.length }))} /></span>
+            <span><LocalizedValue render={() => (tr("workshop:value1_remaining_22388be1", { value1: MAX_LINKED_ISSUES - selected.length }))} /></span>
           </div>
           {selectedIssues.length ? <div className="space-y-1.5">{selectedIssues.map((issue) => (
             <div key={issue.n} className="flex min-h-10 items-center gap-3 rounded-xl bg-zinc-100/80 px-3 py-2 dark:bg-zinc-800/80" data-selected-issue={issue.n}>
               <IssueIdentity label={`#${issue.n}`} title={issue.title} />
-              <button
+              <LocalizedDynamic element={<button
                 type="button"
                 className="-mr-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-zinc-500 hover:bg-red-500/10 hover:text-red-700 dark:text-zinc-400 dark:hover:text-red-400"
-                aria-label={`Remove #${issue.n}: ${issue.title}`}
+                aria-label={tr("workshop:remove_value1_value2_2862f4ce", { value1: issue.n, value2: issue.title })}
                 onClick={() => removeIssue(issue.n)}
-              ><XIcon className="h-4 w-4" aria-hidden="true" /></button>
+              ><XIcon className="h-4 w-4" aria-hidden="true" /></button>} resolve={() => ({ get "aria-label"() { return tr("workshop:remove_value1_value2_2862f4ce", { value1: issue.n, value2: issue.title }); } })} />
             </div>
-          ))}</div> : <p className="rounded-xl bg-zinc-100/80 px-3 py-2 text-sm text-zinc-500 dark:bg-zinc-800/80 dark:text-zinc-400">No requests selected.</p>}
+          ))}</div> : <p className="rounded-xl bg-zinc-100/80 px-3 py-2 text-sm text-zinc-500 dark:bg-zinc-800/80 dark:text-zinc-400"><Message id="workshop:no_requests_selected_bb7c4b09" /></p>}
         </div>
         <div>
-          <label htmlFor={`linked-issues-${proposalId}`} className="block text-xs font-medium text-zinc-700 dark:text-zinc-300">
-            Add another request
-          </label>
+          <label htmlFor={`linked-issues-${proposalId}`} className="block text-xs font-medium text-zinc-700 dark:text-zinc-300"><Message id="workshop:add_another_request_471dfa40" /></label>
           <div className="relative mt-1.5">
             <SearchIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />
-            <Input
+            <Localized element={<Input
               id={`linked-issues-${proposalId}`}
               className="pl-10"
               value={query}
               onChange={(event) => { setQuery(event.target.value); setError(''); }}
-              onKeyDown={handleSearchKey}
-              placeholder="Search by number or title"
+              onKeyDown={handleSearchKey} placeholder={catalogText("workshop:search_by_number_or_title_e3dabcce")}
               autoComplete="off"
               autoFocus
-            />
+            />} messages={{"placeholder":"workshop:search_by_number_or_title_e3dabcce"}} />
           </div>
-          {query.trim() ? <div className="mt-2 overflow-hidden rounded-xl bg-zinc-100 dark:bg-zinc-800" aria-label="Matching requests">
+          {query.trim() ? <Localized element={<div className="mt-2 overflow-hidden rounded-xl bg-zinc-100 dark:bg-zinc-800" aria-label={catalogText("workshop:matching_requests_f03bdc5a")}>
             {suggestions.map((issue) => (
-              <button
+              <LocalizedDynamic element={<button
                 key={issue.n}
                 type="button"
                 className="flex min-h-11 w-full items-center gap-3 px-3 py-2 text-left hover:bg-zinc-200 dark:hover:bg-zinc-700"
-                aria-label={`Add #${issue.n}: ${issue.title}`}
+                aria-label={tr("workshop:add_value1_value2_26e43d11", { value1: issue.n, value2: issue.title })}
                 onClick={() => addIssue(issue.n)}
-              ><IssueIdentity label={`#${issue.n}`} title={issue.title} /><PlusIcon className="h-4 w-4 shrink-0 text-violet-600 dark:text-violet-300" aria-hidden="true" /></button>
+              ><IssueIdentity label={`#${issue.n}`} title={issue.title} /><PlusIcon className="h-4 w-4 shrink-0 text-violet-600 dark:text-violet-300" aria-hidden="true" /></button>} resolve={() => ({ get "aria-label"() { return tr("workshop:add_value1_value2_26e43d11", { value1: issue.n, value2: issue.title }); } })} />
             ))}
-            {exactOption ? <button
+            {exactOption ? <LocalizedDynamic element={<button
               type="button"
               className="flex min-h-11 w-full items-center gap-3 px-3 py-2 text-left hover:bg-zinc-200 dark:hover:bg-zinc-700"
-              aria-label={`Add request #${exactOption.n}`}
+              aria-label={tr("workshop:add_request_value1_734c7ea4", { value1: exactOption.n })}
               onClick={() => addIssue(exactOption.n)}
-            ><IssueIdentity label={`#${exactOption.n}`} title={exactOption.title} /><PlusIcon className="h-4 w-4 shrink-0 text-violet-600 dark:text-violet-300" aria-hidden="true" /></button> : null}
-            {!suggestions.length && !exactOption ? <p className="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400">No matching open requests. Enter a request number to add it.</p> : null}
-          </div> : null}
-          <p className="mt-1.5 text-xs text-zinc-500 dark:text-zinc-400">Searches open requests in this project. You can always add one by its number.</p>
+            ><IssueIdentity label={`#${exactOption.n}`} title={exactOption.title} /><PlusIcon className="h-4 w-4 shrink-0 text-violet-600 dark:text-violet-300" aria-hidden="true" /></button>} resolve={() => ({ get "aria-label"() { return tr("workshop:add_request_value1_734c7ea4", { value1: exactOption.n }); } })} /> : null}
+            {!suggestions.length && !exactOption ? <p className="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400"><Message id="workshop:no_matching_open_requests_enter_a_request_number_696292c8" /></p> : null}
+          </div>} messages={{"aria-label":"workshop:matching_requests_f03bdc5a"}} /> : null}
+          <p className="mt-1.5 text-xs text-zinc-500 dark:text-zinc-400"><Message id="workshop:searches_open_requests_in_this_project_you_can_a_00192aaf" /></p>
         </div>
         {error ? <p role="alert" className="text-xs text-red-700 dark:text-red-400">{error}</p> : null}
         <div className="flex justify-end gap-2">
-          <Button type="button" variant="pillNeutral" size="xsText" ink="neutral" onClick={cancelEditor} disabled={saving}>Cancel</Button>
-          <Button type="submit" variant="pillAccent" size="xsText" disabledStyle="dim" disabled={saving || !changed}>{saving ? 'Saving…' : 'Save requests'}</Button>
+          <Button type="button" variant="pillNeutral" size="xsText" ink="neutral" onClick={cancelEditor} disabled={saving}><Message id="workshop:cancel_19766ed6" /></Button>
+          <Button type="submit" variant="pillAccent" size="xsText" disabledStyle="dim" disabled={saving || !changed}><LocalizedValue render={() => (saving ? tr("workshop:saving_23e39291") : tr("workshop:save_requests_e6bcae30"))} /></Button>
         </div>
       </form> : null}
       {!editing && notice ? <p role="status" className="dev-topic-note">{notice}</p> : null}
-    </aside>
+    </aside>} messages={{"aria-label":"workshop:requests_this_change_addresses_8aeab0d8"}} />
   );
 }
 
@@ -964,7 +960,7 @@ function BeforeAfter({ body }: { body: TopicBody }): ReactNode {
     return (
       <p className="dev-topic-hero-shots" data-shots-state={ev.state}>
         <span className="dc-status-spinner-arc" aria-hidden="true"></span>
-        <span>{ev.retrying ? 'Trying the shots again' : 'Taking before & after shots'}</span>
+        <span><LocalizedValue render={() => (ev.retrying ? tr("workshop:trying_the_shots_again_3639916d") : tr("workshop:taking_before_after_shots_064dfdea"))} /></span>
       </p>
     );
   }
@@ -1053,7 +1049,7 @@ function ChangeHero({ id, card, body, linkedIssues, onIssuesSaved }: {
       {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
       <Html className="dev-topic-hero-summary dev-topic-about-body" data-topic-part="summary" html={body.summaryHtml || ''} />
       {body.summaryStale && body.summaryHtml
-        ? <p className="dev-topic-note" role="note">This summary may describe an earlier revision.</p>
+        ? <p className="dev-topic-note" role="note"><Message id="workshop:this_summary_may_describe_an_earlier_revision_52843050" /></p>
         : null}
       {body.tested && id ? <TestedLine id={id} t={body.tested} /> : null}
       {hasIssues ? (
@@ -1106,7 +1102,7 @@ function VoteTally({ v }: { v: NonNullable<StepRow['vote']> }): ReactNode {
     <div className="dev-step-vote">
       <span className="dev-step-vote-bar" aria-hidden="true"><i style={{ width: `${pct}%` }} /></span>
       {v.pill ? <StatusPill s={v.pill} inline /> : null}
-      <span className="dev-step-vote-tally">{`Yes ${v.yes} · No ${v.no}`}</span>
+      <span className="dev-step-vote-tally"><LocalizedValue render={() => (tr("workshop:yes_value1_no_value2_2b93839e", { value1: v.yes, value2: v.no }))} /></span>
       {v.was ? <span className="dev-step-vote-was">{v.was}</span> : null}
     </div>
   );
@@ -1138,13 +1134,11 @@ function StepRowView({ r, help }: { r: StepRow; help: boolean }): ReactNode {
 function HelpQuestion(): ReactNode {
   return (
     <span className="dev-ledger-help voting-help-hint">
-      <button
+      <Localized element={<button
         type="button"
         className="voting-help-btn un-touch-target"
-        data-voting-help=""
-        aria-label="How voting and merges work"
-        title="How voting and merges work"
-      >?</button>
+        data-voting-help="" aria-label={catalogText("workshop:how_voting_and_merges_work_09191d72")} title={catalogText("workshop:how_voting_and_merges_work_09191d72")}
+      >?</button>} messages={{"aria-label":"workshop:how_voting_and_merges_work_09191d72","title":"workshop:how_voting_and_merges_work_09191d72"}} />
     </span>
   );
 }
@@ -1183,19 +1177,19 @@ function RunPanel({ run, id }: { run: StepRun; id: string }): ReactNode {
   const c = run.checks;
   const checksValue = c && c.ran
     ? (c.done
-      ? `${fmtCount(c.passed)} passed${c.failed ? ` · ${c.failed} failed` : ''}`
-      : `${fmtCount(c.ran)} / ${c.expected ? fmtCount(c.expected) : '?'}${c.failed ? ` · ${c.failed} failed` : ''}`)
-    : (run.live ? (run.phase === 'testing' ? 'Starting' : 'After the build') : 'Did not run');
+      ? tr("workshop:value1_passed_value2_5603c286", { value1: fmtCount(c.passed), value2: c.failed ? tr("workshop:value1_failed_82f96429", { value1: c.failed }) : '' })
+      : `${fmtCount(c.ran)} / ${c.expected ? fmtCount(c.expected) : '?'}${c.failed ? tr("workshop:value1_failed_82f96429", { value1: c.failed }) : ''}`)
+    : (run.live ? (run.phase === 'testing' ? tr("workshop:starting_aeed4d26") : tr("workshop:after_the_build_49bab695")) : tr("workshop:did_not_run_89e6207d"));
   const u = run.unit;
   const unitPhase = u && !u.done && (u.phase === 'cloning' || u.phase === 'installing') ? u.phase : null;
   const unitValue = !u ? '' : unitPhase ? `${unitPhase.charAt(0).toUpperCase()}${unitPhase.slice(1)}`
-    : u.done ? `${fmtCount(u.passed)} passed${u.failed ? ` · ${u.failed} failed` : ''}`
-      : `${fmtCount(u.ran)} / ${u.expected ? `~${fmtCount(u.expected)}` : '?'}${u.failed ? ` · ${u.failed} failed` : ''}`;
+    : u.done ? tr("workshop:value1_passed_value2_5603c286", { value1: fmtCount(u.passed), value2: u.failed ? tr("workshop:value1_failed_82f96429", { value1: u.failed }) : '' })
+      : `${fmtCount(u.ran)} / ${u.expected ? `~${fmtCount(u.expected)}` : '?'}${u.failed ? tr("workshop:value1_failed_82f96429", { value1: u.failed }) : ''}`;
   return (
     <div className="dev-step-run" id={id}>
       {b ? (
         <div className="dev-step-run-row dev-ledger-progress-build" data-build-step={now ? now.key : 'done'}>
-          <span className="dev-step-run-k">Build</span>
+          <span className="dev-step-run-k"><Message id="workshop:build_bdd254b6" /></span>
           <span className="dev-ledger-build-bar" aria-hidden="true" data-build-progress={`${built}/${b.steps.length}`}>
             {b.steps.map((st) => <span key={st.key} className={`dev-ledger-build-seg is-${st.state}`} data-step={st.key} />)}
           </span>
@@ -1203,13 +1197,13 @@ function RunPanel({ run, id }: { run: StepRun; id: string }): ReactNode {
         </div>
       ) : null}
       <div className="dev-step-run-row" data-checks-progress={c ? `${c.ran}/${c.expected ?? '?'}` : undefined}>
-        <span className="dev-step-run-k">App checks</span>
+        <span className="dev-step-run-k"><Message id="workshop:app_checks_e38b0661" /></span>
         <RunTrack c={c} />
         <span className={`dev-step-run-v${c && c.failed ? ' is-bad' : ''}`}>{checksValue}</span>
       </div>
       {u ? (
         <div className="dev-step-run-row" data-unit-phase={u.phase}>
-          <span className="dev-step-run-k">Unit tests</span>
+          <span className="dev-step-run-k"><Message id="workshop:unit_tests_e6ebeaeb" /></span>
           <RunTrack c={unitPhase ? null : u} busy={!!unitPhase || (!u.done && u.ran === 0)} />
           <span className={`dev-step-run-v${u.failed ? ' is-bad' : ''}`}>{unitValue}</span>
         </div>
@@ -1232,6 +1226,7 @@ function RunPanel({ run, id }: { run: StepRun; id: string }): ReactNode {
  * and a reader's own open or close sticks after that.
  */
 function GateStepView({ r }: { r: StepRow }): ReactNode {
+  useUiLanguage();
   const run = r.run || null;
   const seed = !!(run && run.open);
   const [open, setOpen] = useState(seed);
@@ -1345,13 +1340,13 @@ export function DetailsBody({ prRef, steps, help, html }: {
       {prRef ? (
         <p className="dev-details-pr" data-details-part="pr">
           <span>{prRef.s}</span>
-          {prRef.href ? <a href={prRef.href} target="_blank" rel="noopener">Open on GitHub</a> : null}
+          {prRef.href ? <a href={prRef.href} target="_blank" rel="noopener"><Message id="workshop:open_on_github_03f69885" /></a> : null}
         </p>
       ) : null}
       {steps ? <StepsSheet s={steps} help={help} /> : null}
       {html ? (
         <section className="dev-details-part" data-details-part="description">
-          <h5 className="dev-details-sub">Description</h5>
+          <h5 className="dev-details-sub"><Message id="workshop:description_526e0087" /></h5>
           {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
           <Html className="dev-issue-body dev-topic-details-body" html={html} />
         </section>
@@ -1380,6 +1375,7 @@ function DetailsSheet({ id, prRef, steps, help, html }: {
   help: boolean;
   html: string;
 }): ReactNode {
+  useUiLanguage();
   const [open, setOpen] = useState(() => {
     if (!detailsFromUrl) return false;
     detailsFromUrl = false;
@@ -1413,15 +1409,15 @@ function DetailsSheet({ id, prRef, steps, help, html }: {
   if (typeof document === 'undefined') return null;
   return createPortal(
     <div className="dev-details-scrim" hidden={!open} data-change-details={id} onClick={(event) => { if (event.target === event.currentTarget) setOpen(false); }}>
-      <div ref={card} className="dev-details-card" role="dialog" aria-modal="true" aria-label="Details">
+      <Localized element={<div ref={card} className="dev-details-card" role="dialog" aria-modal="true" aria-label={catalogText("workshop:details_45989de4")}>
         <div className="dev-details-head">
-          <h4 className="dev-topic-h">Details</h4>
-          <button type="button" className="dev-details-close" aria-label="Close" onClick={() => setOpen(false)}>
+          <h4 className="dev-topic-h"><Message id="workshop:details_45989de4" /></h4>
+          <Localized element={<button type="button" className="dev-details-close" aria-label={catalogText("workshop:close_7d9eb7ac")} onClick={() => setOpen(false)}>
             <XIcon className="w-4 h-4" aria-hidden="true" />
-          </button>
+          </button>} messages={{"aria-label":"workshop:close_7d9eb7ac"}} />
         </div>
         <DetailsBody prRef={prRef} steps={steps} help={help} html={html} />
-      </div>
+      </div>} messages={{"aria-label":"workshop:details_45989de4"}} />
     </div>,
     document.body,
   );
@@ -1447,6 +1443,7 @@ function DetailsSheet({ id, prRef, steps, help, html }: {
 export function ChangeDetail({ card: initialCard, body: initialBody, item, owner = false, active = true, conversation = false, back = false }: {
   card: any; body: TopicBody; item?: any; owner?: boolean; active?: boolean; conversation?: boolean; back?: boolean;
 }): ReactNode {
+  useUiLanguage();
   const root = useRef<HTMLDivElement>(null);
   const [loaded, setLoaded] = useState<any>(null);
   const [error, setError] = useState('');
@@ -1529,7 +1526,7 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
   return (
     <div ref={root} className="dev-topic">
       {back ? <TopicBack /> : null}
-      {error ? <p role="alert" className="dev-topic-note">{error} <button className="gc-vote-btn" onClick={() => setRevision((n) => n + 1)}>Retry</button></p> : null}
+      {error ? <p role="alert" className="dev-topic-note">{error} <button className="gc-vote-btn" onClick={() => setRevision((n) => n + 1)}><Message id="workshop:retry_942087cc" /></button></p> : null}
       {changePage ? (
         <>
           <ChangeHero id={id ? Number(id) : null} card={card} body={body} linkedIssues={linkedIssues} onIssuesSaved={applyLinkedIssues} />
@@ -1577,6 +1574,7 @@ function IssueBody(
   html: string;
   editor: NonNullable<TopicBody['issueBodyEditor']>;
 }): ReactNode {
+  useUiLanguage();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(editor.markdown);
   const [html, setHtml] = useState(initialHtml);
@@ -1603,7 +1601,7 @@ function IssueBody(
     const av = typeof window !== 'undefined' ? (window as any).AppView : null;
     const slug = av?.appData?.slug;
     if (!slug) {
-      setError('This request is not available right now.');
+      setError(tr("workshop:this_request_is_not_available_right_now_7640a1e2"));
       return;
     }
     setSaving(true);
@@ -1615,7 +1613,7 @@ function IssueBody(
         body: JSON.stringify({ body: draft }),
       });
       const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.error || 'Couldn’t save the request.');
+      if (!response.ok) throw new Error(result.error || tr("workshop:couldn_t_save_the_request_6fc7c64b"));
       const savedBody = typeof result.body === 'string' ? result.body : draft;
       const rendered = typeof av?._cacheIssueBody === 'function'
         ? av._cacheIssueBody(editor.issue, savedBody)
@@ -1625,7 +1623,7 @@ function IssueBody(
       setEditing(false);
       if (typeof av?._renderTopicHead === 'function') av._renderTopicHead();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Couldn’t save the request.');
+      setError(err instanceof Error ? err.message : tr("workshop:couldn_t_save_the_request_6fc7c64b"));
     } finally {
       setSaving(false);
     }
@@ -1634,18 +1632,16 @@ function IssueBody(
   return (
     <>
       <div className="flex items-center justify-between gap-2">
-        <h4 id="dev-issue-body-heading" className="dev-topic-h">About this request</h4>
+        <h4 id="dev-issue-body-heading" className="dev-topic-h"><Message id="workshop:about_this_request_ce90fcea" /></h4>
         {editor.canEdit && !editing ? (
-          <button
+          <Localized element={<button
             type="button"
-            className="shrink-0 text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-200 transition-colors dark:text-zinc-400"
-            title="Edit this request (you asked for it)"
-            aria-label="Edit request"
+            className="shrink-0 text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-200 transition-colors dark:text-zinc-400" title={catalogText("workshop:edit_this_request_you_asked_for_it_81f01fe7")} aria-label={catalogText("workshop:edit_request_c5a6b24b")}
             data-issue-body-edit={editor.issue}
             onClick={() => { setError(''); setEditing(true); }}
           >
             <PencilSquareIcon className="w-4 h-4" aria-hidden="true" />
-          </button>
+          </button>} messages={{"title":"workshop:edit_this_request_you_asked_for_it_81f01fe7","aria-label":"workshop:edit_request_c5a6b24b"}} />
         ) : null}
       </div>
       {editing ? (
@@ -1665,14 +1661,14 @@ function IssueBody(
           />
           {error ? <p role="alert" className="text-xs text-red-700 dark:text-red-400">{error}</p> : null}
           <div className="flex justify-end gap-2">
-            <Button type="button" variant="pillNeutral" size="xsText" ink="neutral" onClick={cancel} disabled={saving}>Cancel</Button>
-            <Button type="submit" variant="pillAccent" size="xsText" disabledStyle="dim" disabled={saving}>{saving ? 'Saving…' : 'Save body'}</Button>
+            <Button type="button" variant="pillNeutral" size="xsText" ink="neutral" onClick={cancel} disabled={saving}><Message id="workshop:cancel_19766ed6" /></Button>
+            <Button type="submit" variant="pillAccent" size="xsText" disabledStyle="dim" disabled={saving}><LocalizedValue render={() => (saving ? tr("workshop:saving_23e39291") : tr("workshop:save_body_a6a533af"))} /></Button>
           </div>
         </form>
       ) : html ? (
         <Html className="dev-topic-about-body" html={html} />
       ) : editor.canEdit ? (
-        <p className="dev-topic-note">No description yet.</p>
+        <p className="dev-topic-note"><Message id="workshop:no_description_yet_6d962a3d" /></p>
       ) : null}
     </>
   );
@@ -1718,11 +1714,11 @@ export function TopicBodySections({ body }: { body: TopicBody }): ReactNode {
     <>
       {hasAbout ? (
         <section className="dev-topic-sheet dev-topic-about" data-topic-sheet="about">
-          {!issueEditor ? <h4 className="dev-topic-h">{body.aboutTitle || 'About'}</h4> : null}
+          {!issueEditor ? <h4 className="dev-topic-h"><LocalizedValue render={() => (body.aboutTitle || tr("workshop:about_4efca0d1"))} /></h4> : null}
           {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
           {summaryHtml ? (
             <>
-              <h5 className="dev-topic-sub">What changes for you</h5>
+              <h5 className="dev-topic-sub"><Message id="workshop:what_changes_for_you_9a039b11" /></h5>
               <Html className="dev-topic-about-body" html={summaryHtml} />
             </>
           ) : null}
@@ -1737,9 +1733,9 @@ export function TopicBodySections({ body }: { body: TopicBody }): ReactNode {
           ) : null}
           {body.proposalBody ? <ProposalBody b={body.proposalBody} /> : null}
           {body.testing ? <details className="dev-topic-details">
-            <summary className="dev-topic-details-summary">Testing instructions</summary>
+            <summary className="dev-topic-details-summary"><Message id="workshop:testing_instructions_352eb533" /></summary>
             {body.testing.html ? <Html className="dev-issue-body dev-topic-details-body" html={body.testing.html} />
-              : <p className="dev-topic-note">{body.testing.path ? `Testing instructions are recorded in ${body.testing.path}.` : 'No testing instructions have been added yet.'}</p>}
+              : <p className="dev-topic-note"><LocalizedValue render={() => (body.testing?.path ? tr("workshop:testing_instructions_are_recorded_in_value1_eea18521", { value1: body.testing.path }) : tr("workshop:no_testing_instructions_have_been_added_yet_ec26d349"))} /></p>}
           </details> : null}
           {body.note ? <div className="dev-topic-note">{body.note}</div> : null}
           {/* #2603: the votes, in the voters' own words — the same roster

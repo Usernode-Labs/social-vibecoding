@@ -1,3 +1,4 @@
+import { Message } from "../../lib/i18n/react";
 import { Button } from '@/components/ui/button';
 import { CliSetupGuide } from '../settings/cli-setup-guide';
 
@@ -19,12 +20,12 @@ export function OwnToolsGuide({ view }: { view: OwnToolsGuideView }) {
       />
       {view.canImport ? (
         <div className="px-4 pb-4 text-xs text-zinc-500 dark:text-zinc-400">
-          <p>Already built a pull request yourself?</p>
+          <p><Message id="workshop:already_built_a_pull_request_yourself_db643c62" /></p>
           <Button
             type="button" size="sm" variant="neutral" className="mt-2"
             data-launchpad-action="import"
             onClick={() => window.DevChat?._importOwnToolsPr()}
-          >Import Feature from a PR</Button>
+          ><Message id="workshop:import_feature_from_a_pr_06dad1f0" /></Button>
         </div>
       ) : null}
     </div>

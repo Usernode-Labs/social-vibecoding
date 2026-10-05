@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * #header-title — the name of where you are, and nothing else.
  *
@@ -106,6 +110,7 @@ import { communityScopeStore, toggleSwitcher } from '../workshop/community-scope
 const PLATFORM_NAME = 'Homeroom';
 
 export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingElement | null> }) {
+  useUiLanguage();
   const { text, subtitle } = useStoreState(headerTitleStore);
   const { slug, tab, subTab, name, iconUrl, iconEmoji, selfHosted } = useStoreState(improveStore);
   const { screen } = useStoreState(navStore);
@@ -173,7 +178,7 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
           /* THE COMMUNITIES SWITCHER, in the bar (#3271, at every width
              since #852): the grid, "Communities" and the ⌄, opening Your
              communities. */
-          <button
+          <Localized element={<button
             id="header-scope-switch"
             type="button"
             className="pointer-events-auto un-touch-target inline-flex items-center gap-2 min-w-0 max-w-full
@@ -181,20 +186,19 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
             data-community-switch=""
             aria-haspopup="dialog"
             aria-expanded={switcherOpen ? 'true' : 'false'}
-            aria-controls="community-switcher"
-            aria-label="Communities: all of yours, or open one"
+            aria-controls="community-switcher" aria-label={catalogText("account:communities_all_of_yours_or_open_one_a3cd19b1")}
             onClick={(e) => toggleSwitcher('header', e.currentTarget)}
           >
             <Squares2X2Icon className="w-5 h-5 shrink-0" aria-hidden="true" />
-            <span id="header-title-name" className="min-w-0 truncate">Communities</span>
+            <span id="header-title-name" className="min-w-0 truncate"><Message id="account:communities_c864f329" /></span>
             <ChevronDownIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
-          </button>
+          </button>} messages={{"aria-label":"account:communities_all_of_yours_or_open_one_a3cd19b1"}} />
         ) : appSwitch ? (
           /* THE SWITCHER. `pointer-events-auto` because the h1 around it is
              `pointer-events-none` so its overlap never eats a tap meant for a
              control beside it — this is the one part of it that IS a
              control, and only the part the tile and the name cover. */
-          <button
+          <LocalizedDynamic element={<button
             id="header-app-switch"
             type="button"
             className="pointer-events-auto un-touch-target inline-flex items-center gap-2 min-w-0 max-w-full
@@ -203,7 +207,7 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
             aria-haspopup="dialog"
             aria-expanded={switcherOpen ? 'true' : 'false'}
             aria-controls="community-switcher"
-            aria-label={`${name || text}, switch community`}
+            aria-label={tr("account:value1_switch_community_ddf9ca99", { value1: name || text })}
             onClick={(e) => toggleSwitcher('header', e.currentTarget)}
           >
             {tile}
@@ -224,7 +228,7 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
                 : name || text}
             </span>
             <ChevronDownIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
-          </button>
+          </button>} resolve={() => ({ get "aria-label"() { return tr("account:value1_switch_community_ddf9ca99", { value1: name || text }); } })} />
         ) : (
           <span className="min-w-0 flex items-baseline gap-1.5">
             <span id="header-title-name" className="min-w-0 truncate">

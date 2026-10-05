@@ -1,3 +1,6 @@
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * A proposal event in the general chat: put up for a vote, or merged.
  *
@@ -68,49 +71,49 @@ import type { ProposalEvent, TranscriptMessage } from './transcript-store';
 export function eventText(msg: TranscriptMessage): string {
   const ev = msg.event;
   if (!ev) return '';
-  const tally = ev.votes ? ` (${ev.votes} votes)` : '';
-  const votes = ev.votes ? ` with ${ev.votes} votes` : '';
+  const tally = ev.votes ? tr("workshop:value1_votes_782f307d", { value1: ev.votes }) : '';
+  const votes = ev.votes ? tr("workshop:with_value1_votes_74d8028c", { value1: ev.votes }) : '';
   const named = ev.title || 'A change';
   const quoted = ev.title ? `“${ev.title}”` : 'a change';
   // On the change's own page the row names the act, not the change: the
   // title is the page's heading.
-  if (ev.type === 'vote') return `Voted ${ev.vote || 'yes'}${ev.reason ? `: “${ev.reason}”` : ''}`;
+  if (ev.type === 'vote') return tr("workshop:voted_value1_value2_0456bc66", { value1: ev.vote || tr("workshop:message_8a798890fe93"), value2: ev.reason ? `: “${ev.reason}”` : '' });
   if (ev.type === 'notice') return ev.text || '';
-  if (ev.here && ev.type === 'submitted') return 'Asked for approval';
+  if (ev.here && ev.type === 'submitted') return tr("workshop:asked_for_approval_e577d10f");
   if (ev.here && ev.type === 'merged') {
-    if (ev.force) return `An admin made this change live${tally}`;
+    if (ev.force) return tr("workshop:an_admin_made_this_change_live_value1_52456428", { value1: tally });
     if (ev.liveSoon) {
-      if (ev.credits) return `This change was approved and will be live in a few minutes. ${creditsSentence(ev.credits)}`;
-      return `This change was approved${votes} and will be live in a few minutes`;
+      if (ev.credits) return tr("workshop:this_change_was_approved_and_will_be_live_in_a_f_3aefb19b", { value1: creditsSentence(ev.credits) });
+      return tr("workshop:this_change_was_approved_value1_and_will_be_live_40531bda", { value1: votes });
     }
-    if (ev.credits) return `This change is live. ${creditsSentence(ev.credits)}`;
-    return `This change went live${votes}`;
+    if (ev.credits) return tr("workshop:this_change_is_live_value1_bacbf651", { value1: creditsSentence(ev.credits) });
+    return tr("workshop:this_change_went_live_value1_ce8d3c4a", { value1: votes });
   }
-  if (ev.type === 'submitted') return ev.title ? `Asked for approval: ${ev.title}` : 'Asked for approval on a change';
-  if (ev.type === 'weekly') return `This week on ${ev.weekly?.app || 'the app'}`;
-  if (ev.force) return `An admin made ${quoted} live${tally}`;
+  if (ev.type === 'submitted') return ev.title ? tr("workshop:asked_for_approval_value1_5e24903a", { value1: ev.title }) : tr("workshop:asked_for_approval_on_a_change_788d5574");
+  if (ev.type === 'weekly') return tr("workshop:this_week_on_value1_bc004b3e", { value1: ev.weekly?.app || tr("workshop:the_app_ecf6410c") });
+  if (ev.force) return tr("workshop:an_admin_made_value1_live_value2_0690b40b", { value1: quoted, value2: tally });
   // #1688: a change that named its people reads as the sentence it was;
   // the tally moves to the muted tail (see EventRow).
   if (ev.liveSoon) {
-    if (ev.credits) return `${named} was approved and will be live in a few minutes. ${creditsSentence(ev.credits)}`;
-    return `${ev.title ? quoted : named} was approved${votes} and will be live in a few minutes`;
+    if (ev.credits) return tr("workshop:value1_was_approved_and_will_be_live_in_a_few_mi_18ba1f24", { value1: named, value2: creditsSentence(ev.credits) });
+    return tr("workshop:value1_was_approved_value2_and_will_be_live_in_a_bbfc8fa5", { value1: ev.title ? quoted : named, value2: votes });
   }
-  if (ev.credits) return `${named} is live. ${creditsSentence(ev.credits)}`;
-  return `${named} went live${votes}`;
+  if (ev.credits) return tr("workshop:value1_is_live_value2_218d953e", { value1: named, value2: creditsSentence(ev.credits) });
+  return tr("workshop:value1_went_live_value2_8dcfdc7c", { value1: named, value2: votes });
 }
 
 /** "alice", "alice and bob", "alice, bob and carol". */
 function nameList(names: string[]): string {
   if (names.length <= 1) return names.join('');
-  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  return tr("workshop:value1_and_value2_f4780f76", { value1: names.slice(0, -1).join(', '), value2: names[names.length - 1] });
 }
 
 /** "Built by evan, backed by alice and bob, shaped by carol." — the server's own shape (routes/votes.js creditsSentence). */
 export function creditsSentence(c: { author: string; backers: string[]; shapers: string[] }): string {
   const parts: string[] = [];
-  if (c.author) parts.push(`Built by ${c.author}`);
-  if (c.backers.length) parts.push(`${parts.length ? 'backed' : 'Backed'} by ${nameList(c.backers)}`);
-  if (c.shapers.length) parts.push(`${parts.length ? 'shaped' : 'Shaped'} by ${nameList(c.shapers)}`);
+  if (c.author) parts.push(tr("workshop:built_by_value1_9e4ee3c9", { value1: c.author }));
+  if (c.backers.length) parts.push(tr("workshop:value1_by_value2_3cf58aa9", { value1: parts.length ? tr("workshop:message_546536421650") : tr("workshop:backed_2e245c75"), value2: nameList(c.backers) }));
+  if (c.shapers.length) parts.push(tr("workshop:value1_by_value2_3cf58aa9", { value1: parts.length ? tr("workshop:message_0266a143d4d0") : tr("workshop:shaped_e0e058d6"), value2: nameList(c.shapers) }));
   return parts.length ? `${parts.join(', ')}.` : '';
 }
 
@@ -124,7 +127,7 @@ export function eventTail(msg: TranscriptMessage): string {
   const ev = msg.event;
   if (ev && ev.type === 'vote' && ev.earlier) return '· on an earlier version, not counted';
   if (!ev || ev.type !== 'merged' || ev.force || !ev.credits) return '';
-  return ev.votes ? `${ev.votes} votes` : '';
+  return ev.votes ? tr("workshop:value1_votes_3b8df170", { value1: ev.votes }) : '';
 }
 
 /**
@@ -138,40 +141,40 @@ function WeeklyBox({ w }: { w: NonNullable<ProposalEvent['weekly']> }) {
   const moreOpen = w.openTotal - w.open.length;
   return (
     <div className="gc-event-box gc-event-weekly">
-      <div className="gc-weekly-title">{`This week on ${w.app}`}</div>
+      <div className="gc-weekly-title"><LocalizedValue render={() => (tr("workshop:this_week_on_value1_bc004b3e", { value1: w.app }))} /></div>
       <div className="gc-weekly-section">
         <div className="gc-weekly-head gc-weekly-head-live">
-          {w.mergedTotal === 0
-            ? 'Nothing landed this week'
-            : `${w.mergedTotal} ${w.mergedTotal === 1 ? 'change' : 'changes'} went live`}
+          <LocalizedValue render={() => (w.mergedTotal === 0
+            ? tr("workshop:nothing_landed_this_week_871c4020")
+            : tr("workshop:message_e6ef16fa65f2", { value1: w.mergedTotal, count: w.mergedTotal }))} />
         </div>
         {w.merged.map((m, i) => (
           <div key={m.id ?? `m${i}`} className="gc-weekly-line" data-weekly="merged">
             <span className="gc-weekly-line-title">{m.title}</span>
             {m.author ? (
               <span className="gc-weekly-line-who">
-                {` · ${m.author}${m.backers.length ? `, backed by ${nameList(m.backers)}` : ''}`}
+                {` · ${m.author}${m.backers.length ? tr("workshop:backed_by_value1_a1847a08", { value1: nameList(m.backers) }) : ''}`}
               </span>
             ) : null}
           </div>
         ))}
-        {moreMerged > 0 ? <div className="gc-weekly-more">{`and ${moreMerged} more`}</div> : null}
+        {moreMerged > 0 ? <div className="gc-weekly-more"><LocalizedValue render={() => (tr("workshop:and_value1_more_05cce967", { value1: moreMerged }))} /></div> : null}
       </div>
       {w.openTotal > 0 ? (
         <div className="gc-weekly-section">
           <div className="gc-weekly-head gc-weekly-head-open">
-            {w.openTotal === 1 ? 'One change is waiting for approval' : `${w.openTotal} changes are waiting for approval`}
+            <LocalizedValue render={() => (w.openTotal === 1 ? tr("workshop:one_change_is_waiting_for_approval_e7efcf8f") : tr("workshop:value1_changes_are_waiting_for_approval_c2fe896b", { value1: w.openTotal }))} />
           </div>
           {w.open.map((o, i) => (
             <div key={o.id ?? `o${i}`} className="gc-weekly-line" data-weekly="open">
               <span className="gc-weekly-line-title">{o.title}</span>
             </div>
           ))}
-          {moreOpen > 0 ? <div className="gc-weekly-more">{`and ${moreOpen} more`}</div> : null}
+          {moreOpen > 0 ? <div className="gc-weekly-more"><LocalizedValue render={() => (tr("workshop:and_value1_more_05cce967", { value1: moreOpen }))} /></div> : null}
         </div>
       ) : null}
       {w.slug ? (
-        <a className="gc-weekly-door" href={`#app/${w.slug}/dev`}>Open the Workshop ›</a>
+        <a className="gc-weekly-door" href={`#app/${w.slug}/dev`}><Message id="workshop:open_the_workshop_77070886" /></a>
       ) : null}
     </div>
   );
@@ -239,7 +242,7 @@ export const EventRow = memo(function EventRow({ msg }: { msg: TranscriptMessage
       timestamp={<span className="gc-msg-time" title={msg.timeTitle}>{msg.time}</span>}
     >
       {href
-        ? <a className="gc-event-box" href={href} title="Open this change">{box}</a>
+        ? <Localized element={<a className="gc-event-box" href={href} title={catalogText("workshop:open_this_change_51ffebf5")}>{box}</a>} messages={{"title":"workshop:open_this_change_51ffebf5"}} />
         : <div className="gc-event-box">{box}</div>}
     </ChatMessageRow>
   );

@@ -99,29 +99,29 @@ export function appPillsFor(app) {
     const n = app.missingSecrets.length;
     chipDefs.push({
       cls: 'bg-red-500/10 text-red-700 dark:text-red-400',
-      label: 'Missing secrets',
-      tip: `${n} required secret${n === 1 ? '' : 's'} unset. Set values in the app's Secrets panel`,
+      get label() { return globalThis.PlatformI18n.t("apps:missing_secrets_07a10de6"); },
+      tip: globalThis.PlatformI18n.t("apps:count_required_secrets_unset_set_values_in_the_a_e8cc74ac", { count: n }),
     });
   }
   if (openPrs > 0) {
     chipDefs.push({
       cls: 'bg-amber-500/10 text-amber-800 dark:text-amber-400',
-      label: `${openPrs} to vote`,
-      tip: `${openPrs} change${openPrs === 1 ? '' : 's'} awaiting community votes`,
+      get label() { return globalThis.PlatformI18n.t("apps:value1_to_vote_18cf7679", { value1: openPrs }); },
+      tip: globalThis.PlatformI18n.t("apps:count_changes_awaiting_community_votes_01798a30", { count: openPrs }),
     });
   }
   if (activeSessions > 0) {
     chipDefs.push({
       cls: 'bg-sky-500/10 text-sky-700 dark:text-sky-400',
-      label: `${activeSessions} in dev`,
-      tip: `${activeSessions} build session${activeSessions === 1 ? '' : 's'} in progress`,
+      get label() { return globalThis.PlatformI18n.t("apps:value1_in_dev_619cc37d", { value1: activeSessions }); },
+      tip: globalThis.PlatformI18n.t("apps:count_build_sessions_in_progress_87b1473f", { count: activeSessions }),
     });
   }
   if (openIssues > 0) {
     chipDefs.push({
       cls: 'bg-zinc-500/10 text-zinc-600 dark:text-zinc-400',
-      label: `${openIssues} issue${openIssues === 1 ? '' : 's'}`,
-      tip: `${openIssues} open issue${openIssues === 1 ? '' : 's'}`,
+      get label() { return globalThis.PlatformI18n.t("apps:message_a207671c678a", { value1: openIssues, count: openIssues }); },
+      tip: globalThis.PlatformI18n.t("apps:count_open_issues_bdca8800", { count: openIssues }),
     });
   }
   // Visibility chip for non-default settings. View-private dominates (it
@@ -130,14 +130,14 @@ export function appPillsFor(app) {
   const vis = app.view_visibility === 'private'
     ? {
       icon: 'lock',
-      label: 'Private',
-      tip: 'Only members can open and use this app',
+      get label() { return globalThis.PlatformI18n.t("apps:private_c63eb672"); },
+      get tip() { return globalThis.PlatformI18n.t("apps:only_members_can_open_and_use_this_app_463308f1"); },
     }
     : (app.collab_visibility === 'private'
       ? {
         icon: 'mail',
-        label: 'Invite-only build',
-        tip: 'Anyone can use this app; only invited collaborators can build it',
+        get label() { return globalThis.PlatformI18n.t("apps:invite_only_build_2f0dec6f"); },
+        get tip() { return globalThis.PlatformI18n.t("apps:anyone_can_use_this_app_only_invited_collaborato_aff3f869"); },
       }
       : null);
 

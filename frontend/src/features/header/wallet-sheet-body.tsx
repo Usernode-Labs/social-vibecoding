@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * The wallet sheet's body.
  * See ./wallet-sheet-store.ts for what the seam carries.
@@ -54,12 +58,9 @@ const ROW_LINE = 'flex items-center justify-between py-2 border-b border-zinc-10
  * The Android permission's own name never appears here.
  */
 export const BACKGROUND_SERVICE_ACTIVE
-  = 'A background service keeps running so this phone can keep producing blocks'
-  + ' and stay in sync with the network while you are not using the app.'
-  + ' A notification stays visible while it is active.';
+  = () => (tr("account:a_background_service_keeps_running_so_this_phone_ed5d648f"));
 export const BACKGROUND_SERVICE_INACTIVE
-  = 'The background service is not active. This phone is not producing blocks,'
-  + ' so nothing keeps running while you are not using the app.';
+  = () => (tr("account:the_background_service_is_not_active_this_phone__e48315db"));
 
 /** Drawn as the soft warning box, the Node sheet's health notice. */
 function BackgroundServiceNote({ active }: { active: boolean }): ReactNode {
@@ -68,13 +69,13 @@ function BackgroundServiceNote({ active }: { active: boolean }): ReactNode {
       variant="notice" density="compact"
       data-background-service={active ? 'active' : 'inactive'}
     >
-      {active ? BACKGROUND_SERVICE_ACTIVE : BACKGROUND_SERVICE_INACTIVE}
+      {active ? BACKGROUND_SERVICE_ACTIVE() : BACKGROUND_SERVICE_INACTIVE()}
     </Alert>
   );
 }
 
 export const DELEGATION_DISCLOSURE
-  = 'When delegated, you receive half the points you would earn by producing blocks directly from your phone.';
+  = () => tr("account:when_delegated_you_receive_half_the_points_you_w_ddcada4e");
 export const SELF_HOSTED_NODE
   = 'Want to run a node on your own laptop or server and monitor it from your phone?'
   + ' Start the node there using the same account you use on this phone.';
@@ -92,29 +93,27 @@ function StakingCard({ s }: { s: WalletSheetState }): ReactNode {
   // `Alert notice`; every other box is the plain CARD.
   return (
     <section data-block-production className="mb-4 space-y-3">
-      <div className="text-[0.9375rem] font-semibold text-zinc-500 dark:text-zinc-400">
-        Block production
-      </div>
+      <div className="text-[0.9375rem] font-semibold text-zinc-500 dark:text-zinc-400"><Message id="account:block_production_240dbb91" /></div>
       <div data-block-production-card="status" className={CARD}>
         {staking.kind === 'pending' ? (
           // Setup unfinished is NOT "not delegated": it offers a retry.
-          <div className="text-base font-semibold">Wallet setup is still in progress</div>
+          <div className="text-base font-semibold"><Message id="account:wallet_setup_is_still_in_progress_2005085e" /></div>
         ) : (
           <>
             <div className="text-base font-semibold">
-              {staking.kind === 'delegated' ? 'Delegated' : 'Producing blocks on this phone'}
+              <LocalizedValue render={() => (staking.kind === 'delegated' ? tr("account:delegated_dd341e5d") : tr("account:producing_blocks_on_this_phone_6d7375a7"))} />
             </div>
             <div className={MUTED}>
-              {staking.kind === 'delegated'
-                ? 'Block production on this phone is disabled.'
-                : 'Producing blocks directly on this phone earns full points.'}
+              <LocalizedValue render={() => (staking.kind === 'delegated'
+                ? tr("account:block_production_on_this_phone_is_disabled_d42a865a")
+                : tr("account:producing_blocks_directly_on_this_phone_earns_fu_2cc45c90"))} />
             </div>
             {staking.kind === 'delegated' ? (
               <>
                 <div className="mt-2 font-mono text-xs">{staking.delegate}</div>
                 {staking.since ? (
                   <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-                    {`Delegated since ${staking.since}`}
+                    <LocalizedValue render={() => (tr("account:delegated_since_value1_f884d697", { value1: staking.since }))} />
                   </div>
                 ) : null}
               </>
@@ -122,7 +121,7 @@ function StakingCard({ s }: { s: WalletSheetState }): ReactNode {
           </>
         )}
         <div className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">
-          {DELEGATION_DISCLOSURE}
+          {DELEGATION_DISCLOSURE()}
         </div>
       </div>
       <div data-block-production-card="self-hosted" className={CARD}>
@@ -136,13 +135,13 @@ function StakingCard({ s }: { s: WalletSheetState }): ReactNode {
           layout="full" size="narrowBold"
           disabled={s.refreshPending}
           onClick={() => controller()?.retryState?.()}
-        >{s.refreshPending ? 'Retrying…' : 'Retry'}</Button>
+        ><LocalizedValue render={() => (s.refreshPending ? tr("account:retrying_a16c8b1c") : tr("account:retry_942087cc"))} /></Button>
       ) : (
         <Button
           layout="full" size="narrowBold"
           disabled={s.stakingPending}
           onClick={() => controller()?._manageStaking?.()}
-        >{s.stakingPending ? 'Opening…' : 'Manage delegation'}</Button>
+        ><LocalizedValue render={() => (s.stakingPending ? tr("account:opening_c926c2c5") : tr("account:manage_delegation_0f6f168b"))} /></Button>
       )}
     </section>
   );
@@ -174,6 +173,7 @@ function ReceivePanel({ address }: { address: string }): ReactNode {
 }
 
 function SendForm({ onSent }: { onSent: () => void }): ReactNode {
+  useUiLanguage();
   const [to, setTo] = useState('');
   const [amount, setAmount] = useState('');
   const [sending, setSending] = useState(false);
@@ -183,8 +183,8 @@ function SendForm({ onSent }: { onSent: () => void }): ReactNode {
   const submit = async () => {
     const addr = to.trim();
     const n = parseInt(amount.trim(), 10);
-    if (!addr || !addr.startsWith('ut1')) { ui()?.toast?.('Enter a valid ut1… address'); return; }
-    if (!Number.isFinite(n) || n <= 0) { ui()?.toast?.('Enter a positive amount'); return; }
+    if (!addr || !addr.startsWith('ut1')) { ui()?.toast?.(tr("account:enter_a_valid_ut1_address_5f32c4a4")); return; }
+    if (!Number.isFinite(n) || n <= 0) { ui()?.toast?.(tr("account:enter_a_positive_amount_b3284370")); return; }
     setSending(true);
     const ok = await controller()?.sendFromSheet?.(addr, n);
     if (ok) onSent(); else setSending(false);
@@ -192,19 +192,16 @@ function SendForm({ onSent }: { onSent: () => void }): ReactNode {
 
   return (
     <div className="flex flex-col gap-2 p-4 mb-4 rounded-lg border border-zinc-200 dark:border-zinc-800">
-      <input
-        ref={toRef} placeholder="Recipient address (ut1…)" aria-label="Recipient address"
+      <Localized element={<input
+        ref={toRef} placeholder={catalogText("account:recipient_address_ut1_109cc6d5")} aria-label={catalogText("account:recipient_address_454d0391")}
         className={`${FIELD} font-mono`}
         value={to} onChange={(e) => setTo(e.target.value)}
-      />
-      <input
-        placeholder="Amount" aria-label="Amount" inputMode="numeric" className={FIELD}
+      />} messages={{"placeholder":"account:recipient_address_ut1_109cc6d5","aria-label":"account:recipient_address_454d0391"}} />
+      <Localized element={<input placeholder={catalogText("account:amount_49e96d7c")} aria-label={catalogText("account:amount_49e96d7c")} inputMode="numeric" className={FIELD}
         value={amount} onChange={(e) => setAmount(e.target.value)}
-      />
-      <Button size="flushBold" disabled={sending} onClick={submit}>Send</Button>
-      <div className="text-xs text-zinc-500 dark:text-zinc-400">
-        You will confirm this transaction on the next screen.
-      </div>
+      />} messages={{"placeholder":"account:amount_49e96d7c","aria-label":"account:amount_49e96d7c"}} />
+      <Button size="flushBold" disabled={sending} onClick={submit}><Message id="account:send_f6f4688f" /></Button>
+      <div className="text-xs text-zinc-500 dark:text-zinc-400"><Message id="account:you_will_confirm_this_transaction_on_the_next_sc_f4cff83e" /></div>
     </div>
   );
 }
@@ -212,6 +209,7 @@ function SendForm({ onSent }: { onSent: () => void }): ReactNode {
 // ── the body ───────────────────────────────────────────────────────────
 
 export function WalletSheetBody(): ReactNode {
+  useUiLanguage();
   const s = useStoreState(walletSheetStore);
   const [expand, setExpand] = useState<'none' | 'send' | 'receive'>('none');
   return (
@@ -223,28 +221,24 @@ export function WalletSheetBody(): ReactNode {
           <button
             className="text-violet-700 hover:text-violet-400 text-xs font-medium dark:text-violet-400"
             onClick={() => controller()?.copyAddress?.()}
-          >Copy</button>
+          ><Message id="account:copy_e21f935f" /></button>
         ) : null}
       </div>
       <div className="flex gap-2 mb-4">
         <Button
           layout="flex" size="flushBold" disabled={!s.submissionSupported}
           onClick={() => setExpand('send')}
-        >Send</Button>
+        ><Message id="account:send_f6f4688f" /></Button>
         <button
           className="flex-1 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 text-sm font-semibold text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800"
           onClick={() => setExpand('receive')}
-        >Receive</button>
+        ><Message id="account:receive_bac9d15a" /></button>
       </div>
       {!s.walletSupported ? (
-        <div className="mb-4 rounded-lg border border-zinc-200 dark:border-zinc-800 p-3 text-sm text-zinc-500 dark:text-zinc-400">
-          Wallet state is unavailable in this app version.
-        </div>
+        <div className="mb-4 rounded-lg border border-zinc-200 dark:border-zinc-800 p-3 text-sm text-zinc-500 dark:text-zinc-400"><Message id="account:wallet_state_is_unavailable_in_this_app_version_33942b8b" /></div>
       ) : null}
       {!s.submissionSupported ? (
-        <div className="mb-4 rounded-lg border border-zinc-200 dark:border-zinc-800 p-3 text-sm text-zinc-500 dark:text-zinc-400">
-          Transaction submission is unavailable in this app version.
-        </div>
+        <div className="mb-4 rounded-lg border border-zinc-200 dark:border-zinc-800 p-3 text-sm text-zinc-500 dark:text-zinc-400"><Message id="account:transaction_submission_is_unavailable_in_this_ap_912ac960" /></div>
       ) : null}
       {s.stateError ? (
         <div className="mb-4 rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-400">
@@ -256,14 +250,12 @@ export function WalletSheetBody(): ReactNode {
         {expand === 'receive' && s.address ? <ReceivePanel address={s.address} /> : null}
         {expand === 'send' ? <SendForm onSent={() => setExpand('none')} /> : null}
       </div>
-      <div className="text-sm font-semibold text-zinc-500 dark:text-zinc-400 mt-2 mb-1">
-        Recent
-      </div>
+      <div className="text-sm font-semibold text-zinc-500 dark:text-zinc-400 mt-2 mb-1"><Message id="account:recent_690dbe9d" /></div>
       <div>
         {s.receipts == null
-          ? <div className="text-sm text-zinc-500 py-2 dark:text-zinc-400">Loading…</div>
+          ? <div className="text-sm text-zinc-500 py-2 dark:text-zinc-400"><Message id="account:loading_ba3bbbe1" /></div>
           : s.receipts.length === 0
-            ? <div className="text-sm text-zinc-500 py-2 dark:text-zinc-400">No recent transactions yet.</div>
+            ? <div className="text-sm text-zinc-500 py-2 dark:text-zinc-400"><Message id="account:no_recent_transactions_yet_33e015b2" /></div>
             : s.receipts.slice(0, 20).map((r) => (
               <div key={r.key} className={ROW_LINE}>
                 <div className="min-w-0">

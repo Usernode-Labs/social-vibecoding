@@ -29,13 +29,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
+import { build as buildVite } from 'vite';
 
 const require = createRequire(import.meta.url);
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const FRONTEND = path.join(dirname, '..');
 const ROOT = path.join(FRONTEND, '..');
 
-// Catalog completeness is a build requirement, including preview builds.
+// Source coverage and catalog completeness are requirements of every build.
+require(path.join(ROOT, 'scripts/check-ui-messages.js')).checkMessages(ROOT);
+require(path.join(ROOT, 'scripts/server-messages.js')).checkServerMessages(ROOT);
 require(path.join(ROOT, 'scripts/language-packs.js')).buildLanguagePacks(ROOT);
 
 const {
@@ -75,6 +78,16 @@ function runVite(args) {
 // ── Pass 1: the browser bundle ─────────────────────────────────────────
 console.log('[build-shell] pass 1/2 — client bundle');
 runVite(['build']);
+
+// A small independent runtime for the ordinary-user authorization pages. It
+// contains no React shell and is not a service-worker precache dependency.
+await buildVite({
+  configFile: false, root: FRONTEND, publicDir: false,
+  build: {
+    target: 'es2020', outDir: path.join(ROOT, 'public/shell/assets'), emptyOutDir: false,
+    lib: { entry: path.join(FRONTEND, 'src/authorization-i18n.ts'), name: 'HomeroomLanguage', formats: ['iife'], fileName: () => 'authorization-i18n.js' },
+  },
+});
 
 const jsPath = path.join(ROOT, JS_OUTPUT);
 if (!fs.existsSync(jsPath)) fail(`the client build did not emit ${JS_OUTPUT}`);

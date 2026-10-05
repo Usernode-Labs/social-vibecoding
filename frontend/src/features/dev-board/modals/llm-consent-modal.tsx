@@ -1,3 +1,8 @@
+import { useMessages as useUiLanguage } from "../../../lib/i18n/react";
+import { RichMessage } from "../../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../../lib/i18n/react";
+import { t as tr } from "../../../lib/i18n/runtime";
+import { Message } from "../../../lib/i18n/react";
 /**
  * `#llm-consent-modal` — "Allow <app> to use AI?".
  *
@@ -40,7 +45,7 @@ export function LlmConsentCard({ view }: { view: LlmConsentModalView }): ReactNo
   return (
     <DialogCard size="md" relative>
       <h2 className="text-lg font-bold mb-2 text-zinc-900 dark:text-zinc-100">
-        {`Allow ${view.appName} to use AI?`}
+        <LocalizedValue render={() => (tr("workshop:allow_value1_to_use_ai_041ad25f", { value1: view.appName }))} />
       </h2>
       {view.purpose ? (
         <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-3 italic">{`“${view.purpose}”`}</p>
@@ -48,23 +53,15 @@ export function LlmConsentCard({ view }: { view: LlmConsentModalView }): ReactNo
       <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-3">{view.intro}</p>
       {view.capacity.t === 'blocked' ? (
         <Alert variant="notice" density="compact">
-          {view.capacity.eligibilityUnavailable
-            ? 'Credit eligibility could not be checked. Close this dialog and try again shortly.'
+          <LocalizedValue render={() => (view.capacity.t === 'blocked' && view.capacity.eligibilityUnavailable
+            ? tr("workshop:credit_eligibility_could_not_be_checked_close_th_aafb44f0")
             : (
-              <>
-                {'No AI payer is available yet. '}
-                <a className="underline font-medium" href="#settings/linked-accounts">Connect GitHub or X</a>
-                {' to unlock $10/day, or '}
-                <a className="underline font-medium" href="#settings/api-key">add your own Anthropic API key</a>
-                {'.'}
-              </>
-            )}
+              <><RichMessage id="workshop:sentence_f6dfed19c5f7" components={[<a className="underline font-medium" href="#settings/linked-accounts" />, <a className="underline font-medium" href="#settings/api-key" />]} /></>
+            ))} />
         </Alert>
       ) : (
         <>
-          <Label htmlFor="llm-consent-cap" className="mb-1">
-            Daily cap for this app ($ per day)
-          </Label>
+          <Label htmlFor="llm-consent-cap" className="mb-1"><Message id="workshop:daily_cap_for_this_app_per_day_f19ab801" /></Label>
           <Input
             id="llm-consent-cap"
             type="number"
@@ -97,9 +94,7 @@ export function LlmConsentCard({ view }: { view: LlmConsentModalView }): ReactNo
           variant="neutral"
           ink="neutral"
           onClick={() => call('_llmConsentDecline')}
-        >
-          Not now
-        </Button>
+        ><Message id="workshop:not_now_a0e63d7c" /></Button>
         <Button
           type="button"
           id="llm-consent-allow"
@@ -107,7 +102,7 @@ export function LlmConsentCard({ view }: { view: LlmConsentModalView }): ReactNo
           disabledStyle="block"
           onClick={() => call('_llmConsentAllow')}
         >
-          {blocked ? 'Unavailable' : 'Allow'}
+          <LocalizedValue render={() => (blocked ? tr("workshop:unavailable_ca184496") : tr("workshop:allow_e213c161"))} />
         </Button>
       </div>
     </DialogCard>
@@ -115,6 +110,7 @@ export function LlmConsentCard({ view }: { view: LlmConsentModalView }): ReactNo
 }
 
 export function LlmConsentModal(): ReactNode {
+  useUiLanguage();
   const { view } = useStoreState<{ view: LlmConsentModalView | null }>(llmConsentModalStore);
   if (!view) return null;
   return (

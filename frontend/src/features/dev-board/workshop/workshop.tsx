@@ -1,3 +1,9 @@
+import { getLanguage as uiLocale } from "../../../lib/i18n/runtime";
+import { useMessages as useUiLanguage } from "../../../lib/i18n/react";
+import { RichMessage } from "../../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../../lib/i18n/react";
+import { t as tr } from "../../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../../lib/i18n/react";
 /**
  * `#dev-workshop` — the Dev screen's lander, as the only React writer below
  * that host. The host ELEMENT stays app-view.js's (`_repaintDevBody`
@@ -189,10 +195,10 @@ export function pageParent(tab: TabKey): TabKey {
 
 /** A page's own title. */
 export function pageTitle(tab: TabKey): string {
-  if (tab === 'needs') return 'Needs you';
-  if (tab === 'all') return 'All items';
-  if (tab === 'discussion') return 'Discussion';
-  return 'Workshop';
+  if (tab === 'needs') return tr("workshop:needs_you_74b6abdf");
+  if (tab === 'all') return tr("workshop:all_items_51107686");
+  if (tab === 'discussion') return tr("workshop:discussion_5eb6cf64");
+  return tr("workshop:workshop_c0086f23");
 }
 
 /**
@@ -241,6 +247,7 @@ function Lane({
   onToggle: (key: string) => void;
   themeId: string;
 }): ReactNode {
+  useUiLanguage();
   // "Shipped this week" is the one lane that is a RECORD rather than a
   // question — nothing in it needs anybody — so a theme opens on the work
   // that still wants someone and keeps the record one tap away (#1787). The
@@ -278,22 +285,23 @@ function Lane({
           onToggle={() => onToggle(row.key)}
         />
       ) : null))}
-      {laneOpen && lane.more ? <div className="dev-ws-more">{`+${lane.more} more in this lane`}</div> : null}
+      {laneOpen && lane.more ? <div className="dev-ws-more"><LocalizedValue render={() => (tr("workshop:value1_more_in_this_lane_94a92aaf", { value1: lane.more }))} /></div> : null}
     </div>
   );
 }
 
 function Faces({ people }: { people: string[] }): ReactNode {
+  useUiLanguage();
   const shown = people.slice(0, 4);
   const extra = people.length - shown.length;
   const [open, setOpen] = useState(false);
   if (!people.length) return null;
   return (
     <span className="dev-ws-faces-wrap">
-      <button
+      <LocalizedDynamic element={<button
         type="button"
         className="dev-ws-faces"
-        aria-label={`Who is involved: ${people.join(', ')}`}
+        aria-label={tr("workshop:who_is_involved_value1_dc1fb004", { value1: people.join(', ') })}
         aria-expanded={open}
         onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
       >
@@ -303,7 +311,7 @@ function Faces({ people }: { people: string[] }): ReactNode {
           </span>
         ))}
         {extra > 0 ? <span className="dev-ws-face dev-ws-face-more">{`+${extra}`}</span> : null}
-      </button>
+      </button>} resolve={() => ({ get "aria-label"() { return tr("workshop:who_is_involved_value1_dc1fb004", { value1: people.join(', ') }); } })} />
       {open ? (
         <span className="dev-ws-roster" role="tooltip">
           {people.map((p) => <span key={p} className="dev-ws-roster-row">{p}</span>)}
@@ -327,17 +335,17 @@ function ThemeCard({
   const c = theme.counts;
   const openItems = c.open + c.underway + c.review;
   const chips: ReactNode[] = [];
-  if (c.fresh) chips.push(<span key="fresh" className="dev-ws-cnt dev-ws-cnt-fresh"><b>{`+${c.fresh}`}</b> new</span>);
-  if (c.review) chips.push(<span key="review" className="dev-ws-cnt dev-ws-cnt-review"><span className="dev-ws-dot"></span><b>{c.review}</b> in review</span>);
-  if (c.underway) chips.push(<span key="underway" className="dev-ws-cnt dev-ws-cnt-underway"><span className="dev-ws-dot"></span><b>{c.underway}</b> underway</span>);
-  chips.push(<span key="open" className="dev-ws-cnt"><span className="dev-ws-dot"></span><b>{c.open}</b> open</span>);
-  if (c.shipped) chips.push(<span key="shipped" className="dev-ws-cnt dev-ws-cnt-shipped"><span className="dev-ws-dot"></span><b>{c.shipped}</b> live this week</span>);
+  if (c.fresh) chips.push(<span key="fresh" className="dev-ws-cnt dev-ws-cnt-fresh"><b>{`+${c.fresh}`}</b><Message before={" "} id="workshop:new_11507a0e" /></span>);
+  if (c.review) chips.push(<span key="review" className="dev-ws-cnt dev-ws-cnt-review"><RichMessage id="workshop:sentence_d9dac2efa6a6" values={{ value1: c.review }} components={[<span className="dev-ws-dot" />, <b />]} /></span>);
+  if (c.underway) chips.push(<span key="underway" className="dev-ws-cnt dev-ws-cnt-underway"><RichMessage id="workshop:sentence_5e0dd05ab603" values={{ value1: c.underway }} components={[<span className="dev-ws-dot" />, <b />]} /></span>);
+  chips.push(<span key="open" className="dev-ws-cnt"><RichMessage id="workshop:sentence_83fb58fff811" values={{ value1: c.open }} components={[<span className="dev-ws-dot" />, <b />]} /></span>);
+  if (c.shipped) chips.push(<span key="shipped" className="dev-ws-cnt dev-ws-cnt-shipped"><RichMessage id="workshop:sentence_a23124bb15a4" values={{ value1: c.shipped }} components={[<span className="dev-ws-dot" />, <b />]} /></span>);
 
   // `counts` rather than `rows.length`: the lane caps its rows at
   // WORKSHOP_LANE_MAX, so a theme with twelve underway used to report eight.
   const bits: string[] = [];
-  if (c.underway) bits.push(`${c.underway} underway`);
-  if (c.review) bits.push(`${c.review} in review`);
+  if (c.underway) bits.push(tr("workshop:value1_underway_c1d818fc", { value1: c.underway }));
+  if (c.review) bits.push(tr("workshop:value1_in_review_beb1b902", { value1: c.review }));
   const quietDays = theme.lastActive ? Math.floor((Date.now() - theme.lastActive) / 86400000) : null;
   const hidden = theme.lanes.reduce((n, l) => n + l.more, 0);
   // "nobody building yet" said something this cannot know. The condition is
@@ -348,9 +356,9 @@ function ThemeCard({
   // where the theme shipped something this week it can say that instead, which
   // is the same fact with the history the old line was inventing.
   const idle = c.shipped
-    ? `${c.shipped} went live this week, nothing in progress now`
-    : (quietDays != null && quietDays > 14 ? `quiet for ${quietDays} days` : 'nothing in flight right now');
-  const foot = `${theme.people.length} involved · ${bits.length ? bits.join(' · ') : idle}`;
+    ? tr("workshop:value1_went_live_this_week_nothing_in_progress_n_3278cba9", { value1: c.shipped })
+    : (quietDays != null && quietDays > 14 ? tr("workshop:quiet_for_value1_days_e1b1951b", { value1: quietDays }) : tr("workshop:nothing_in_flight_right_now_9dced2db"));
+  const foot = tr("workshop:value1_involved_value2_c858c0f3", { value1: theme.people.length, value2: bits.length ? bits.join(' · ') : idle });
 
   return (
     <article
@@ -389,8 +397,8 @@ function ThemeCard({
             excluded on purpose — the question the number answers is "how
             much is left in here", and work that landed is not left. */}
         <div className="dev-ws-theme-people">
-          <span className="dev-ws-stat"><b>{theme.people.length}</b>{theme.people.length === 1 ? 'person' : 'people'}</span>
-          <span className="dev-ws-stat"><b>{openItems}</b>{openItems === 1 ? 'item' : 'items'}</span>
+          <span className="dev-ws-stat"><b>{theme.people.length}</b><LocalizedValue render={() => (theme.people.length === 1 ? tr("workshop:person_38a81e87") : tr("workshop:people_c9022680"))} /></span>
+          <span className="dev-ws-stat"><b>{openItems}</b><LocalizedValue render={() => (openItems === 1 ? tr("workshop:item_4a33eacd") : tr("workshop:items_5f3c4f85"))} /></span>
         </div>
         {theme.saying ? (
           <p className="dev-ws-theme-say">{theme.saying}</p>
@@ -419,10 +427,8 @@ function ThemeCard({
               than under whichever lane happened to overflow: the filter it
               applies is the theme's, not a lane's. */}
           <div className="dev-ws-theme-more">
-            {hidden ? <span>{`+${hidden} not shown · `}</span> : null}
-            <button type="button" className="dev-ws-link" onClick={() => callAppView('openBoardForTheme', theme.id)}>
-              Open on Board ›
-            </button>
+            {hidden ? <span><LocalizedValue render={() => (tr("workshop:value1_not_shown_404c1a9c", { value1: hidden }))} /></span> : null}
+            <button type="button" className="dev-ws-link" onClick={() => callAppView('openBoardForTheme', theme.id)}><Message id="workshop:open_on_board_04823bc0" /></button>
           </div>
         </div>
       ) : null}
@@ -445,11 +451,11 @@ function aiFootnote(meta: DevWorkshopView['meta'], written: boolean): string {
       : 'Categories are drafted from the board and re-drafted daily, or sooner when a tenth of the board changes.',
   ];
   const c = meta.coverage;
-  if (c && c.pending) parts.push(`${c.pending} new ${c.pending === 1 ? 'card is' : 'cards are'} being placed.`);
+  if (c && c.pending) parts.push(tr("workshop:value1_new_value2_being_placed_3851a370", { value1: c.pending, value2: c.pending === 1 ? tr("workshop:card_is_0d52e087") : tr("workshop:cards_are_7f4be3ac") }));
   if (c && c.unplaced) {
-    parts.push(`${c.unplaced} ${c.unplaced === 1 ? 'card did' : 'cards did'} not fit a category and ${c.unplaced === 1 ? 'waits' : 'wait'} for the next draft.`);
+    parts.push(tr("workshop:count_value2_not_fit_a_category_and_wait_for_the_b85affce", { count: c.unplaced, value2: c.unplaced === 1 ? tr("workshop:card_did_442c9478") : tr("workshop:cards_did_4d511af2") }));
   }
-  if (meta.lastError) parts.push(`The last attempt failed (${meta.lastError}); it is retried shortly.`);
+  if (meta.lastError) parts.push(tr("workshop:the_last_attempt_failed_value1_it_is_retried_sho_ef904c11", { value1: meta.lastError }));
   return parts.join(' ');
 }
 
@@ -476,9 +482,9 @@ function digestNote(meta: DevWorkshopView['meta'], written: boolean): string {
     // The failure that used to be a log line and a day of silence. Naming it
     // here is what turned "could something be up with the summarizer?" from a
     // question about the database into one the page answers.
-    return `The model\u2019s summary could not be written (${meta.digestError}); it is retried within the hour, and this is worked out from the board meanwhile.`;
+    return tr("workshop:the_model_s_summary_could_not_be_written_value1__5321881f", { value1: meta.digestError });
   }
-  return 'Worked out from the board; the model writes one on the next pass.';
+  return tr("workshop:worked_out_from_the_board_the_model_writes_one_o_b4c0c060");
 }
 
 /**
@@ -527,25 +533,25 @@ function EmptyNote({ filtered, loadFailed, underStartHere = false, onHub = false
   onHub?: boolean;
 }): ReactNode {
   const { readOnly, canCollaborate } = useDevActions();
-  const where = onHub ? '' : ' on the hub';
-  const adds = canCollaborate ? ' to ask for a change or import a PR' : ' to ask for a change';
+  const where = onHub ? '' : tr("workshop:on_the_hub_52691f37");
+  const adds = canCollaborate ? tr("workshop:to_ask_for_a_change_or_import_a_pr_224323cf") : tr("workshop:to_ask_for_a_change_eaa9c127");
   const start = underStartHere ? '.' : '; to make one yourself, use Start a new change in the Homeroom menu.';
   return (
     <div className="text-xs text-zinc-500 dark:text-zinc-400 mb-2" data-ws-empty="">
-      {filtered ? (
-        'Nothing here matches the current search and filters.'
+      <LocalizedValue render={() => (filtered ? (
+        tr("workshop:nothing_here_matches_the_current_search_and_filt_75c13af8")
       ) : (
         <>
-          {loadFailed ? "Couldn't load open requests right now. " : ''}
-          {readOnly ? 'Nothing on the board yet.' : (
+          <LocalizedValue render={() => (loadFailed ? tr("workshop:couldn_t_load_open_requests_right_now_b25d9c8c") : '')} />
+          <LocalizedValue render={() => (readOnly ? tr("workshop:nothing_on_the_board_yet_5e81d262") : (
             <>
-              {'Nothing on the board yet. Press '}
+              <Message id="workshop:nothing_on_the_board_yet_press_b4525cf4" />
               <span className="font-medium text-violet-700 dark:text-violet-400">⋯</span>
               {where + adds + start}
             </>
-          )}
+          ))} />
         </>
-      )}
+      ))} />
     </div>
   );
 }
@@ -588,15 +594,12 @@ function EmptyNote({ filtered, loadFailed, underStartHere = false, onHub = false
  * light and dark alike.
  */
 function StartHereBanner(): ReactNode {
+  useUiLanguage();
   const readOnly = useStoreState(improveStore).readOnly;
   return (
     <section className="dev-ws-strip" data-ws-start-here="">
-      <div className="dev-ws-head">
-        <span className="dev-ws-head-title">Start working on this app</span>
-      </div>
-      <p className="dev-ws-strip-text">
-        Nothing is open and nothing has shipped yet. The first change is yours to start.
-      </p>
+      <div className="dev-ws-head"><RichMessage id="workshop:sentence_60cdc755f4f9" components={[<span className="dev-ws-head-title" />]} /></div>
+      <p className="dev-ws-strip-text"><Message id="workshop:nothing_is_open_and_nothing_has_shipped_yet_the__987f1ed7" /></p>
       {readOnly ? null : (
         <Button
           type="button"
@@ -604,9 +607,7 @@ function StartHereBanner(): ReactNode {
           size="sm"
           className="self-start"
           onClick={() => Improve.startSession()}
-        >
-          Start a new change
-        </Button>
+        ><Message id="workshop:start_a_new_change_9d63289a" /></Button>
       )}
     </section>
   );
@@ -681,9 +682,9 @@ function useThemeReorderMotion(listRef: { current: HTMLElement | null }, themes:
 }
 
 const SORTS: { key: SortKey; label: string }[] = [
-  { key: 'people', label: 'By people' },
-  { key: 'activity', label: 'By activity' },
-  { key: 'open', label: 'By open items' },
+  { key: 'people', get label() { return tr("workshop:by_people_d82937b9"); } },
+  { key: 'activity', get label() { return tr("workshop:by_activity_f5a0ab8b"); } },
+  { key: 'open', get label() { return tr("workshop:by_open_items_e8db0fdc"); } },
 ];
 
 type Dash = NonNullable<DevWorkshopView['dashboard']>;
@@ -704,14 +705,14 @@ function pace(d: Dash): string {
   //
   // With a partial page the honest sentence is the floor and nothing else.
   if (d.partial) {
-    if (!n) return 'Nothing has landed this week.';
-    return `At least ${n} ${n === 1 ? 'change' : 'changes'} landed this week.`;
+    if (!n) return tr("workshop:nothing_has_landed_this_week_50aa5e3e");
+    return tr("workshop:at_least_count_changes_landed_this_week_915dfccd", { count: n });
   }
-  if (!n && !p) return 'Nothing has landed in the last fortnight.';
-  if (!p) return `${n} ${n === 1 ? 'change' : 'changes'} landed this week, the first in a fortnight.`;
-  if (n > p) return `${n} landed this week, up from ${p} the week before.`;
-  if (n < p) return `${n} landed this week, down from ${p} the week before.`;
-  return `${n} landed this week, the same as the week before.`;
+  if (!n && !p) return tr("workshop:nothing_has_landed_in_the_last_fortnight_d6fdd747");
+  if (!p) return tr("workshop:count_changes_landed_this_week_the_first_in_a_fo_f97928cb", { count: n });
+  if (n > p) return tr("workshop:value1_landed_this_week_up_from_value2_the_week__9dd4d535", { value1: n, value2: p });
+  if (n < p) return tr("workshop:value1_landed_this_week_down_from_value2_the_wee_7e8c8cde", { value1: n, value2: p });
+  return tr("workshop:value1_landed_this_week_the_same_as_the_week_bef_b5cca3b6", { value1: n });
 }
 
 /**
@@ -769,22 +770,22 @@ function pace(d: Dash): string {
  */
 function DashTiles({ d }: { d: Dash }): ReactNode {
   const cells: { key: string; n: number; label: string; tone?: string; title?: string }[] = [
-    { key: 'open', n: d.open, label: d.open === 1 ? 'open item' : 'open items' },
-    { key: 'unclaimed', n: d.unclaimed, label: 'nobody on them' },
+    { key: 'open', n: d.open, label: d.open === 1 ? tr("workshop:open_item_7a1b3b9b") : tr("workshop:open_items_fa4e6c39") },
+    { key: 'unclaimed', n: d.unclaimed, get label() { return tr("workshop:nobody_on_them_136f8f9e"); } },
     {
       key: 'votes',
       n: d.votesWaiting,
-      label: d.votesWaiting === 1 ? 'waiting on a vote' : 'waiting on votes',
+      label: d.votesWaiting === 1 ? tr("workshop:waiting_on_a_vote_b9f4e5eb") : tr("workshop:waiting_on_votes_a694af96"),
       tone: d.votesWaiting ? 'warn' : undefined,
     },
     {
       key: 'shipped',
       n: d.shippedWeek,
-      label: 'live this week',
+      get label() { return tr("workshop:live_this_week_9ff808d4"); },
       tone: d.shippedWeek ? 'good' : undefined,
       title: d.partial
-        ? 'At least this many: there is more history than the page loaded.'
-        : 'This calendar week, counted from Monday 00:00 UTC.',
+        ? tr("workshop:at_least_this_many_there_is_more_history_than_th_a0079257")
+        : tr("workshop:this_calendar_week_counted_from_monday_00_00_utc_f2689b42"),
     },
   ];
   return (
@@ -836,7 +837,7 @@ function DashTiles({ d }: { d: Dash }): ReactNode {
 function weekDate(ms: number): string {
   const d = new Date(ms);
   const other = d.getUTCFullYear() !== new Date().getUTCFullYear();
-  return d.toLocaleDateString('en-US', {
+  return d.toLocaleDateString(uiLocale(), {
     month: 'short', day: 'numeric', timeZone: 'UTC', ...(other ? { year: 'numeric' } : {}),
   });
 }
@@ -852,7 +853,7 @@ function weekDate(ms: number): string {
  * from its Monday to NOW, so that is what it says.
  */
 function weekRange(startMs: number, endMs: number, live?: boolean): string {
-  if (live) return `${weekDate(startMs)} → now`;
+  if (live) return tr("workshop:value1_now_8bc5a63f", { value1: weekDate(startMs) });
   // `endMs` is EXCLUSIVE — the next Monday — so the caption names the Sunday
   // before it. Captioning a Monday–Sunday week with two Mondays is the kind
   // of off-by-one a reader notices and cannot explain.
@@ -928,7 +929,7 @@ export function sinceWeeks(
       const live = start >= thisMonday;
       week = {
         key: `week:${start}`,
-        title: live ? 'This week' : '',
+        title: live ? tr("workshop:this_week_8c4eef5a") : '',
         startMs: start,
         endMs: live ? nowMs : start + WEEK_MS,
         live,
@@ -1002,9 +1003,9 @@ export function sinceWeekShown(week: Pick<SinceWeek, 'fresh' | 'seen'>, more: nu
 export function sinceRevealLabel(week: Pick<SinceWeek, 'fresh' | 'seen'>, shown: number): string {
   const next = Math.min(SINCE_STEP, week.fresh.length + week.seen.length - shown);
   const nextNew = Math.max(0, Math.min(next, week.fresh.length - shown));
-  if (nextNew === next) return `Show ${next} more new`;
-  if (!nextNew && !shown) return `Show ${next} you have seen`;
-  return `Show ${next} more`;
+  if (nextNew === next) return tr("workshop:show_value1_more_new_d8e2277b", { value1: next });
+  if (!nextNew && !shown) return tr("workshop:show_value1_you_have_seen_ab3be19a", { value1: next });
+  return tr("workshop:show_value1_more_398301a5", { value1: next });
 }
 
 /**
@@ -1054,8 +1055,7 @@ export function SinceWeekBlock({ week, slug, canPost, openKey, onToggleRow, more
             the figure: a footnote to the line, not a second count of the list. */}
         {week.counts && week.counts.closed ? (
           <span className="dev-ws-since-week-n">
-            {week.counts.partial ? `${week.counts.closed}+` : week.counts.closed} landed
-          </span>
+            {week.counts.partial ? `${week.counts.closed}+` : week.counts.closed}<Message before={" "} id="workshop:landed_78ee12c6" /></span>
         ) : null}
       </h4>
       {week.line ? <p className="dev-ws-since-week-line" data-ws-since-week-line="">{week.line}</p> : null}
@@ -1066,10 +1066,7 @@ export function SinceWeekBlock({ week, slug, canPost, openKey, onToggleRow, more
               to the ones the reader has seen: a mark in the column, not a
               second fold to open (#3524). Counted for the whole week. */}
           {seenShown ? (
-            <div className="dev-ws-since-seen" data-ws-since-seen="">
-              <span className="dev-ws-since-seen-label">Seen before</span>
-              <span className="dev-ws-since-seen-n">{week.seen.length}</span>
-            </div>
+            <div className="dev-ws-since-seen" data-ws-since-seen=""><RichMessage id="workshop:sentence_c43d66fa6ce9" values={{ value1: week.seen.length }} components={[<span className="dev-ws-since-seen-label" />, <span className="dev-ws-since-seen-n" />]} /></div>
           ) : null}
           {week.seen.slice(0, seenShown).map(row)}
           {/* THE WEEK'S ONE REVEAL (#3524): the next few of this week's
@@ -1087,7 +1084,7 @@ export function SinceWeekBlock({ week, slug, canPost, openKey, onToggleRow, more
             >
               <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
               {sinceRevealLabel(week, shown)}
-              {hidden > next ? <span className="dev-ws-since-week-left">{` · ${hidden} left`}</span> : null}
+              {hidden > next ? <span className="dev-ws-since-week-left"><LocalizedValue render={() => (tr("workshop:value1_left_dd048b18", { value1: hidden }))} /></span> : null}
             </button>
           ) : null}
         </div>
@@ -1129,16 +1126,16 @@ function summarise(d: Dash): string {
  */
 function describe(d: Dash): string {
   const parts: string[] = [];
-  const scale = `${d.open} open ${d.open === 1 ? 'item' : 'items'}`
-    + (d.themes ? ` across ${d.themes} ${d.themes === 1 ? 'category' : 'categories'}` : '');
-  parts.push(d.busiest ? `${scale}, most of the movement in ${d.busiest}.` : `${scale}.`);
+  const scale = tr("workshop:count_open_items_d2f219f7", { count: d.open })
+    + (d.themes ? tr("workshop:across_count_categories_54b66d60", { count: d.themes }) : '');
+  parts.push(d.busiest ? tr("workshop:value1_most_of_the_movement_in_value2_e2a738c6", { value1: scale, value2: d.busiest }) : `${scale}.`);
   parts.push(pace(d));
   const waiting: string[] = [];
   if (d.votesWaiting) {
-    waiting.push(`${d.votesWaiting} ${d.votesWaiting === 1 ? 'proposal is' : 'proposals are'} waiting on votes`);
+    waiting.push(tr("workshop:value1_value2_waiting_on_votes_9f681777", { value1: d.votesWaiting, value2: d.votesWaiting === 1 ? tr("workshop:proposal_is_4fd9d46c") : tr("workshop:proposals_are_68f2acd5") }));
   }
   if (d.unclaimed) {
-    waiting.push(`${d.unclaimed} open ${d.unclaimed === 1 ? 'item has nobody on it' : 'items have nobody on them'}`);
+    waiting.push(tr("workshop:value1_open_value2_f0af896f", { value1: d.unclaimed, value2: d.unclaimed === 1 ? tr("workshop:item_has_nobody_on_it_c3f8763b") : tr("workshop:items_have_nobody_on_them_16be4ab6") }));
   }
   if (waiting.length) parts.push(`${waiting.join(' and ').replace(/^./, (c) => c.toUpperCase())}.`);
   return parts.join(' ');
@@ -1146,15 +1143,15 @@ function describe(d: Dash): string {
 
 /** "1 change landed, 2 new proposals" — what moved while you were away. */
 function sinceWords(s: NonNullable<DevWorkshopView['since']>): string {
-  if (!s.rows.length) return 'nothing has changed';
+  if (!s.rows.length) return tr("workshop:nothing_has_changed_cd1b8fbe");
   const bits = [
-    s.shipped ? `${s.shipped} ${s.shipped === 1 ? 'change' : 'changes'} landed` : null,
-    s.opened ? `${s.opened} new ${s.opened === 1 ? 'request' : 'requests'}` : null,
-    s.proposed ? `${s.proposed} new ${s.proposed === 1 ? 'proposal' : 'proposals'}` : null,
+    s.shipped ? tr("workshop:count_changes_landed_d94064fb", { count: s.shipped }) : null,
+    s.opened ? tr("workshop:count_new_requests_ceac2e79", { count: s.opened }) : null,
+    s.proposed ? tr("workshop:count_new_proposals_9f9564be", { count: s.proposed }) : null,
   ].filter(Boolean);
   // `total`, not `rows.length`: the rows are capped for drawing and this
   // sentence describes the whole population the head counts.
-  return bits.length ? bits.join(', ') : `${s.total} ${s.total === 1 ? 'thing' : 'things'} moved`;
+  return bits.length ? bits.join(', ') : tr("workshop:count_things_moved_21994bd5", { count: s.total });
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -1294,7 +1291,7 @@ function legendFor(kind: QueueRow['kind'] | 'done'): Array<[string[], string]> {
   if (kind === 'done') return keys;
   if (kind === 'vote') keys.push([['V'], 'vote']);
   keys.push([['D'], 'description'], [['A'], 'ask'], [['C'], 'comments']);
-  if (kind === 'vote') keys.push([['T'], 'try it']);
+  if (kind === 'vote') keys.push([['T'], tr("workshop:try_it_a8b81981")]);
   keys.push([['M'], 'more']);
   return keys;
 }
@@ -1311,14 +1308,14 @@ function factsFor(row: QueueRow, voted: string | null): Fact[] {
   const out: Fact[] = [];
   const st = row.card.pill ? row.card.pill.state : null;
   if (row.kind === 'vote' && st) {
-    if (voted) out.push({ key: 'voted', tone: 'ok', text: `You voted ${voted}` });
-    out.push({ key: 'tally', tone: undefined, text: `${st.yes} of ${st.majority} yes` });
+    if (voted) out.push({ key: 'voted', tone: 'ok', get text() { return tr("workshop:you_voted_value1_7ff14705", { value1: voted }); } });
+    out.push({ key: 'tally', tone: undefined, get text() { return tr("workshop:value1_of_value2_yes_d3b8fc3a", { value1: st.yes, value2: st.majority }); } });
     if (st.label && !/^Vote\b/.test(st.label)) out.push({ key: 'state', tone: st.tone, text: st.label });
   } else if (row.kind === 'vote' && row.tally) {
     // The Communities feed's rows (#3488): the counts, without a threshold
     // it has not worked out for each project. A zero says nothing.
-    if (voted) out.push({ key: 'voted', tone: 'ok', text: `You voted ${voted}` });
-    const said = [row.tally.yes ? `${row.tally.yes} yes` : '', row.tally.no ? `${row.tally.no} no` : ''].filter(Boolean).join(' · ');
+    if (voted) out.push({ key: 'voted', tone: 'ok', get text() { return tr("workshop:you_voted_value1_7ff14705", { value1: voted }); } });
+    const said = [row.tally.yes ? tr("workshop:value1_yes_367b689d", { value1: row.tally.yes }) : '', row.tally.no ? tr("workshop:value1_no_d4d269a0", { value1: row.tally.no }) : ''].filter(Boolean).join(' · ');
     if (said) out.push({ key: 'tally', tone: undefined, text: said });
   }
   for (const b of row.card.badges) {
@@ -1359,8 +1356,8 @@ export function NeedsVoteForm({ row, slug, side, line, boxRef, onSide, onLine, o
   return (
     <div className="dev-ws-vote-form" data-ws-vote-form="" data-side={side}>
       <VotePicker
-        yes={{ key: 'yes', label: row.yes ? row.yes.label : 'Yes', act: row.yes && row.yes.act ? row.yes.act as ActionRef : undefined }}
-        no={{ key: 'no', label: row.no ? row.no.label : 'No', act: row.no && row.no.act ? row.no.act as ActionRef : undefined }}
+        yes={{ key: 'yes', label: row.yes ? row.yes.label : tr("workshop:yes_85a39ab3"), act: row.yes && row.yes.act ? row.yes.act as ActionRef : undefined }}
+        no={{ key: 'no', label: row.no ? row.no.label : tr("workshop:no_1ea442a1"), act: row.no && row.no.act ? row.no.act as ActionRef : undefined }}
         prior={null}
         side={side}
         line={line}
@@ -1390,10 +1387,10 @@ function tallyLine(row: QueueRow): string {
   if (!st) {
     if (!row.tally) return '';
     const { yes, no } = row.tally;
-    if (!yes && !no) return 'Nobody has voted yet.';
-    return `${yes} yes and ${no} no so far.`;
+    if (!yes && !no) return tr("workshop:nobody_has_voted_yet_ebcab4ea");
+    return tr("workshop:value1_yes_and_value2_no_so_far_e8c8e08a", { value1: yes, value2: no });
   }
-  const said = `${st.yes} of ${st.majority} have said yes so far.`;
+  const said = tr("workshop:value1_of_value2_have_said_yes_so_far_200541ce", { value1: st.yes, value2: st.majority });
   return st.label && !/^Vote\b/.test(st.label) ? `${said} ${st.label}.` : said;
 }
 
@@ -1405,7 +1402,7 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error(`could not load ${src}`));
+    img.onerror = () => reject(new Error(tr("workshop:could_not_load_value1_66e62998", { value1: src })));
     img.src = src;
   });
 }
@@ -1429,7 +1426,7 @@ async function diffPair(before: string | null, after: string | null, protectedSh
     after ? loadImage(visualSrc(after, protectedShots)) : Promise.resolve(null),
   ]);
   const main = b || a;
-  if (!main) throw new Error('no still');
+  if (!main) throw new Error(tr("workshop:no_still_1e3ef5cd"));
   const w = main.naturalWidth;
   const h = main.naturalHeight;
   if (!a || !b || a.naturalWidth !== w || a.naturalHeight !== h || !w || !h) return { w, h, box: null };
@@ -1486,6 +1483,7 @@ function BeforeAfter({ v, near, onFull }: {
   near: boolean;
   onFull: (el: HTMLElement) => void;
 }): ReactNode {
+  useUiLanguage();
   const viewRef = useRef<HTMLDivElement>(null);
   const [side, setSide] = useState<Side>(v.after ? 'after' : 'before');
   const [geo, setGeo] = useState<Geo | null>(null);
@@ -1540,12 +1538,12 @@ function BeforeAfter({ v, near, onFull }: {
     <div className="dev-ws-media" data-ws-media="">
       <div className="dev-ws-media-bar">
         {v.before && v.after ? (
-          <div className="dev-ws-seg" role="group" aria-label="Before or after">
-            <button type="button" className="dev-ws-seg-btn" aria-pressed={side === 'before'} onClick={() => setSide('before')}>Before</button>
-            <button type="button" className="dev-ws-seg-btn" aria-pressed={side === 'after'} onClick={() => setSide('after')}>After</button>
-          </div>
+          <Localized element={<div className="dev-ws-seg" role="group" aria-label={catalogText("workshop:before_or_after_c7cea157")}>
+            <button type="button" className="dev-ws-seg-btn" aria-pressed={side === 'before'} onClick={() => setSide('before')}><Message id="workshop:before_9bb72500" /></button>
+            <button type="button" className="dev-ws-seg-btn" aria-pressed={side === 'after'} onClick={() => setSide('after')}><Message id="workshop:after_7b68fe55" /></button>
+          </div>} messages={{"aria-label":"workshop:before_or_after_c7cea157"}} />
         ) : (
-          <span className="dev-ws-seg dev-ws-seg-one">{v.after ? 'After' : 'Before'}</span>
+          <span className="dev-ws-seg dev-ws-seg-one"><LocalizedValue render={() => (v.after ? tr("workshop:after_7b68fe55") : tr("workshop:before_9bb72500"))} /></span>
         )}
       <button
         type="button"
@@ -1563,18 +1561,18 @@ function BeforeAfter({ v, near, onFull }: {
         data-claim={v.protected ? (v.claim || v.path) : undefined}
         onClick={(e) => onFull(e.currentTarget)}
       >
-        {cropped ? 'Cropped · Full page ↗' : 'Full page ↗'}
+        <LocalizedValue render={() => (cropped ? tr("workshop:cropped_full_page_0eedb345") : tr("workshop:full_page_b77b35fa"))} />
       </button>
       </div>
       <div className="dev-ws-media-view" ref={viewRef}>
         {id && style ? (
-          <img
+          <LocalizedDynamic element={<img
             className="dev-ws-media-img"
             src={visualSrc(id, v.protected === true)}
-            alt={side === 'after' ? 'After the change' : 'Before the change'}
+            alt={side === 'after' ? tr("workshop:after_the_change_d385b9e5") : tr("workshop:before_the_change_90f17c4e")}
             style={style}
             draggable={false}
-          />
+          />} resolve={() => ({ "alt": side === 'after' ? tr("workshop:after_the_change_d385b9e5") : tr("workshop:before_the_change_90f17c4e") })} />
         ) : null}
         {spot ? <span className="dev-ws-media-spot" style={spot} aria-hidden="true" /> : null}
         {geo ? null : <span className="dev-ws-media-wait" aria-hidden="true" />}
@@ -1623,6 +1621,7 @@ function ShotsPicture({ v, near, wide }: {
   near: boolean;
   wide: boolean;
 }): ReactNode {
+  useUiLanguage();
   const viewRef = useRef<HTMLDivElement>(null);
   const [side, setSide] = useState<Side>('after');
   const [view, setView] = useState({ w: 0, h: 0 });
@@ -1670,7 +1669,7 @@ function ShotsPicture({ v, near, wide }: {
         className={which === 'before' ? 'dev-ws-shot-side dev-ws-shot-before' : 'dev-ws-shot-side dev-ws-shot-after'}
         style={place ? { width: W, height: shot.height, transform: `translate(${place.tx}px, ${place.ty}px) scale(${place.scale})` } : undefined}
       >
-        {near && place ? <img src={shot.url} alt={which === 'after' ? 'After the change' : 'Before the change'} draggable={false} /> : null}
+        {near && place ? <LocalizedDynamic element={<img src={shot.url} alt={which === 'after' ? tr("workshop:after_the_change_d385b9e5") : tr("workshop:before_the_change_90f17c4e")} draggable={false} />} resolve={() => ({ "alt": which === 'after' ? tr("workshop:after_the_change_d385b9e5") : tr("workshop:before_the_change_90f17c4e") })} /> : null}
       </span>
     );
   };
@@ -1701,22 +1700,22 @@ function ShotsPicture({ v, near, wide }: {
       </span>
     );
   }) : null);
-  const size = isPhoneScreen(screen) ? 'Phone' : screen.viewport.charAt(0).toUpperCase() + screen.viewport.slice(1);
+  const size = isPhoneScreen(screen) ? tr("workshop:phone_63dceb88") : screen.viewport.charAt(0).toUpperCase() + screen.viewport.slice(1);
   return (
     <div className="dev-ws-media dev-ws-media-shots" data-ws-media="" data-ws-shots="" data-side={side}>
       <div className="dev-ws-media-bar">
-        <div className="dev-ws-seg" role="group" aria-label="Before or after">
-          <button type="button" className="dev-ws-seg-btn dev-ws-seg-before" aria-pressed={side === 'before'} onClick={() => setSide('before')}>Before</button>
-          <button type="button" className="dev-ws-seg-btn dev-ws-seg-after" aria-pressed={side === 'after'} onClick={() => setSide('after')}>After</button>
-        </div>
+        <Localized element={<div className="dev-ws-seg" role="group" aria-label={catalogText("workshop:before_or_after_c7cea157")}>
+          <button type="button" className="dev-ws-seg-btn dev-ws-seg-before" aria-pressed={side === 'before'} onClick={() => setSide('before')}><Message id="workshop:before_9bb72500" /></button>
+          <button type="button" className="dev-ws-seg-btn dev-ws-seg-after" aria-pressed={side === 'after'} onClick={() => setSide('after')}><Message id="workshop:after_7b68fe55" /></button>
+        </div>} messages={{"aria-label":"workshop:before_or_after_c7cea157"}} />
         <span className="dev-ws-media-size">{size}</span>
       </div>
-      <div
+      <LocalizedDynamic element={<div
         className="dev-ws-media-view"
         ref={viewRef}
         role="button"
         tabIndex={0}
-        aria-label={side === 'after' ? 'Show before the change' : 'Show after the change'}
+        aria-label={side === 'after' ? tr("workshop:show_before_the_change_18fee107") : tr("workshop:show_after_the_change_1cd46ba7")}
         onClick={flip}
         onKeyDown={(e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); flip(); } }}
       >
@@ -1725,7 +1724,7 @@ function ShotsPicture({ v, near, wide }: {
         {outlines('before')}
         {outlines('after')}
         {near && place ? null : <span className="dev-ws-media-wait" aria-hidden="true" />}
-      </div>
+      </div>} resolve={() => ({ "aria-label": side === 'after' ? tr("workshop:show_before_the_change_18fee107") : tr("workshop:show_after_the_change_1cd46ba7") })} />
       {changes.length ? (
         <ol className="dev-ws-shot-changes">
           {changes.map((c) => (
@@ -1759,11 +1758,11 @@ function ItemBy({ row }: { row: QueueRow }): ReactNode {
       ) : null}
       <span>
         {isVote ? (
-          <>{row.who ? <b>{row.who}</b> : 'Proposed'}{row.ago ? ` · ${row.who ? 'proposed ' : ''}${row.ago}` : ''}</>
+          <><LocalizedValue render={() => (row.who ? <b>{row.who}</b> : tr("workshop:proposed_9b0c660b"))} />{row.ago ? ` · ${row.who ? 'proposed ' : ''}${row.ago}` : ''}</>
         ) : (
           <>
             {row.number != null ? <b>{`#${row.number}`}</b> : null}
-            {row.who ? <>{row.number != null ? ' · filed by ' : 'Filed by '}<b>{row.who}</b></> : null}
+            {row.who ? <><LocalizedValue render={() => (row.number != null ? tr("workshop:filed_by_59a84f2d") : tr("workshop:filed_by_0294002b"))} /><b>{row.who}</b></> : null}
             {row.ago ? ` · ${row.ago}` : ''}
           </>
         )}
@@ -1817,6 +1816,7 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
   /** Draws the row's project over its by-line, where rows mix projects. */
   renderApp?: (row: QueueRow) => ReactNode;
 }): ReactNode {
+  useUiLanguage();
   const isVote = row.kind === 'vote';
   const href = openHref(rowSlug(row, slug), row.card);
   const title = row.card.title.text || row.card.title.title;
@@ -1862,13 +1862,13 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
         {voted ? (
           <span className="dev-ws-item-done" data-ws-item-done="">
             <CheckIcon className="dev-ws-item-tick" aria-hidden="true" />
-            {`Voted ${voted} · ${wide ? 'press ↓ or scroll' : 'swipe up'} for the next`}
+            <LocalizedValue render={() => (tr("workshop:voted_value1_value2_for_the_next_1acc0f32", { value1: voted, value2: wide ? tr("workshop:message_9415dc7b20e3") : tr("workshop:message_875251734f82") }))} />
           </span>
         ) : (
           <span className="dev-ws-eyebrow">
-            {!isVote ? 'Request'
-              : row.card.attrs && row.card.attrs['data-gov-row'] ? 'Group decision · needs your vote'
-                : 'Proposal · needs your vote'}
+            <LocalizedValue render={() => (!isVote ? tr("workshop:request_59f03d64")
+              : row.card.attrs && row.card.attrs['data-gov-row'] ? tr("workshop:group_decision_needs_your_vote_89b38904")
+                : tr("workshop:proposal_needs_your_vote_59915593"))} />
           </span>
         )}
         {/* #3517: THE WAY BACK, WHERE A PHONE CAN SEE IT. Swiping down was
@@ -1880,9 +1880,9 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
             on a phone it already stands six buttons tall, and every one
             more is a line less for the title and summary above it. */}
         {onPrev && index > 0 ? (
-          <button type="button" className="dev-ws-item-prev" data-ws-item-prev="" aria-label="Previous item" onClick={onPrev}>
+          <Localized element={<button type="button" className="dev-ws-item-prev" data-ws-item-prev="" aria-label={catalogText("workshop:previous_item_81b35f1b")} onClick={onPrev}>
             <ChevronUpIcon className="dev-ws-item-prev-icon" aria-hidden="true" />
-          </button>
+          </button>} messages={{"aria-label":"workshop:previous_item_81b35f1b"}} />
         ) : null}
         <span className="dev-ws-item-of">{`${index + 1} / ${count}`}</span>
       </div>
@@ -1896,7 +1896,7 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
         <p className="dev-ws-item-summary" ref={summaryRef}>{summary}</p>
       ) : (
         <p className="dev-ws-item-summary dev-ws-item-nosummary" ref={summaryRef}>
-          {isVote ? 'No plain-language summary was written for this change.' : 'This request has no description.'}
+          <LocalizedValue render={() => (isVote ? tr("workshop:no_plain_language_summary_was_written_for_this_c_a30cc7d2") : tr("workshop:this_request_has_no_description_d979fb6e"))} />
         </p>
       )}
       {shots && row.visuals ? <ShotsPicture v={row.visuals} near={near} wide={wide} />
@@ -1912,8 +1912,8 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
       {/* The swipe's two hints, last so the item's reading order is
           untouched. Hidden until a drag fades one in (app.css), and
           aria-hidden: the Vote sheet's buttons are the accessible way. */}
-      {swipe ? <span className="dev-ws-swipe-hint dev-ws-swipe-yes" aria-hidden="true">Yes</span> : null}
-      {swipe ? <span className="dev-ws-swipe-hint dev-ws-swipe-no" aria-hidden="true">No</span> : null}
+      {swipe ? <span className="dev-ws-swipe-hint dev-ws-swipe-yes" aria-hidden="true"><Message id="workshop:yes_85a39ab3" /></span> : null}
+      {swipe ? <span className="dev-ws-swipe-hint dev-ws-swipe-no" aria-hidden="true"><Message id="workshop:no_1ea442a1" /></span> : null}
     </section>
   );
 });
@@ -1967,12 +1967,12 @@ function DoneItem({ total, acted, left, leftVotes, onDone, onBack, doneLabel }: 
   doneLabel?: string;
 }): ReactNode {
   const done = Math.max(0, Math.min(total, total - leftVotes));
-  const line = left > 0 ? 'That’s it for now.' : (acted > 0 ? 'That’s it!' : 'You’re all caught up.');
+  const line = left > 0 ? tr("workshop:that_s_it_for_now_d667f89e") : (acted > 0 ? 'That’s it!' : tr("workshop:you_re_all_caught_up_47aa1e80"));
   const parts: string[] = [];
-  if (acted > 0) parts.push(`You voted on ${plural(acted, 'proposal', 'proposals')} this time.`);
-  if (left > 0) parts.push(`You skipped ${left}. ${left === 1 ? 'It stays' : 'They stay'} above if you change your mind.`);
-  else if (acted > 0) parts.push('Nothing else needs you right now.');
-  else parts.push('Every proposal you can vote on has your answer, and every open request has somebody on it.');
+  if (acted > 0) parts.push(tr("workshop:you_voted_on_value1_this_time_23276348", { value1: plural(acted, 'proposal', 'proposals') }));
+  if (left > 0) parts.push(tr("workshop:you_skipped_value1_value2_above_if_you_change_yo_b20df291", { value1: left, value2: left === 1 ? tr("workshop:it_stays_cdcbf419") : tr("workshop:they_stay_c08a35ff") }));
+  else if (acted > 0) parts.push(tr("workshop:nothing_else_needs_you_right_now_e7d62eaa"));
+  else parts.push(tr("workshop:every_proposal_you_can_vote_on_has_your_answer_a_a342de6d"));
   return (
     <section
       className="dev-ws-item dev-ws-needs-done"
@@ -1982,21 +1982,19 @@ function DoneItem({ total, acted, left, leftVotes, onDone, onBack, doneLabel }: 
       data-ws-done-left={left}
     >
       {total ? (
-        <ProgressRing
+        <LocalizedDynamic element={<ProgressRing
           className="dev-ws-done-ring"
           pct={Math.round((done / total) * 100)}
           label={`${done}/${total}`}
-          title={done === total ? `All ${total} open proposals voted on` : `${done} of ${total} open proposals voted on`}
+          title={done === total ? tr("workshop:all_value1_open_proposals_voted_on_7f051d1d", { value1: total }) : tr("workshop:value1_of_value2_open_proposals_voted_on_27ee31ca", { value1: done, value2: total })}
           arcClassName={done === total ? 'stroke-emerald-500' : undefined}
-        />
+        />} resolve={() => ({ "title": done === total ? tr("workshop:all_value1_open_proposals_voted_on_7f051d1d", { value1: total }) : tr("workshop:value1_of_value2_open_proposals_voted_on_27ee31ca", { value1: done, value2: total }) })} />
       ) : null}
       <p className="dev-ws-needs-done-line">{line}</p>
       <p className="dev-ws-needs-done-sub">{parts.join(' ')}</p>
-      <button type="button" className="dev-ws-done-cta" onClick={onDone}>{doneLabel || 'See what changed this week'}</button>
+      <button type="button" className="dev-ws-done-cta" onClick={onDone}><LocalizedValue render={() => (doneLabel || tr("workshop:see_what_changed_this_week_52067632"))} /></button>
       {left > 0 ? (
-        <button type="button" className="dev-ws-done-back" data-ws-done-back="" onClick={onBack}>
-          Back to the first one you skipped
-        </button>
+        <button type="button" className="dev-ws-done-back" data-ws-done-back="" onClick={onBack}><Message id="workshop:back_to_the_first_one_you_skipped_563b1e67" /></button>
       ) : null}
     </section>
   );
@@ -2237,6 +2235,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
   doneLabel?: string;
   renderApp?: (row: QueueRow) => ReactNode;
 }): ReactNode {
+  useUiLanguage();
   const scrollRef = useRef<HTMLDivElement>(null);
   // Whether the route asked to open on the end card. Read once, at mount:
   // the URL does not change for the life of the feed, and a state seed is
@@ -2790,7 +2789,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
     const prior = threads[key] || [];
     setThreads((cur) => ({
       ...cur,
-      [key]: [...prior, { who: 'you', text: q }, { who: 'ai', text: 'Reading the change…', pending: true }],
+      [key]: [...prior, { who: 'you', text: q }, { who: 'ai', get text() { return tr("workshop:reading_the_change_41b7b323"); }, pending: true }],
     }));
     setAsking((cur) => ({ ...cur, [key]: true }));
     setDraft('');
@@ -2830,7 +2829,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
         // and "no model is configured" happened.
         text = (typeof data.error === 'string' && data.error.trim())
           ? data.error.trim()
-          : 'That did not go through. Try asking again.';
+          : tr("workshop:that_did_not_go_through_try_asking_again_8c2cf1c7");
       } else {
         const parsed = await readAskStream(res.body, (sofar) => {
           writeTail({ who: 'ai', text: sofar, pending: true });
@@ -2842,12 +2841,12 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
           text = parsed.text.trim();
         } else {
           failed = true;
-          text = 'That did not go through. Try asking again.';
+          text = tr("workshop:that_did_not_go_through_try_asking_again_8c2cf1c7");
         }
       }
     } catch {
       failed = true;
-      text = 'That did not go through. Check your connection and try again.';
+      text = tr("workshop:that_did_not_go_through_check_your_connection_an_79ee91f3");
     }
 
     writeTail({ who: 'ai', text, failed });
@@ -2864,12 +2863,11 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
    * once so the disabled rule and the classes cannot drift between the two.
    */
   const sendBtn = (
-    <button
+    <Localized element={<button
       type="submit"
-      className="dc-send-btn dc-circle-send dev-ws-ask-send"
-      aria-label="Ask"
+      className="dc-send-btn dc-circle-send dev-ws-ask-send" aria-label={catalogText("workshop:ask_b8c209cd")}
       disabled={!draft.trim() || !target || inFlight}
-    ><ArrowUpIcon className="dev-ws-ask-send-icon" aria-hidden="true" /></button>
+    ><ArrowUpIcon className="dev-ws-ask-send-icon" aria-hidden="true" /></button>} messages={{"aria-label":"workshop:ask_b8c209cd"}} />
   );
 
   /**
@@ -2881,12 +2879,12 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
    */
   const moveRow = (
     <div className="dev-ws-move" data-ws-move-row="">
-      <button type="button" className="dev-ws-move-btn" data-ws-move="prev" aria-label="Previous" disabled={i <= 0} onClick={() => go(-1)}>
+      <Localized element={<button type="button" className="dev-ws-move-btn" data-ws-move="prev" aria-label={catalogText("workshop:previous_a57b08a4")} disabled={i <= 0} onClick={() => go(-1)}>
         <ChevronUpIcon className="dev-ws-move-icon" aria-hidden="true" />
-      </button>
-      <button type="button" className="dev-ws-move-btn" data-ws-move="next" aria-label="Next" disabled={i >= n} onClick={() => go(1)}>
+      </button>} messages={{"aria-label":"workshop:previous_a57b08a4"}} />
+      <Localized element={<button type="button" className="dev-ws-move-btn" data-ws-move="next" aria-label={catalogText("workshop:next_1ff57a29")} disabled={i >= n} onClick={() => go(1)}>
         <ChevronDownIcon className="dev-ws-move-icon" aria-hidden="true" />
-      </button>
+      </button>} messages={{"aria-label":"workshop:next_1ff57a29"}} />
     </div>
   );
 
@@ -2936,7 +2934,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
       </div>
 
       {row ? (
-        <aside className="dev-ws-rail" data-ws-rail="" aria-label="This item" ref={railRef}>
+        <Localized element={<aside className="dev-ws-rail" data-ws-rail="" aria-label={catalogText("workshop:this_item_10ceeb1a")} ref={railRef}>
           {row.kind === 'vote' ? (
             <button
               type="button"
@@ -2948,8 +2946,8 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
               onClick={() => toggleSheet('vote')}
             >
               <span className="dev-ws-rail-ic">{voted ? <CheckIcon aria-hidden="true" /> : <BallotIcon aria-hidden="true" />}</span>
-              <span className="dev-ws-rail-lab">{voted ? `Voted ${voted}` : (sending[row.key] ? 'Sending…' : 'Vote')}</span>
-              <kbd className="dev-ws-rail-key" aria-hidden="true">V</kbd>
+              <span className="dev-ws-rail-lab"><LocalizedValue render={() => (voted ? tr("workshop:voted_value1_aec83eed", { value1: voted }) : (sending[row.key] ? tr("workshop:sending_b8ed5279") : tr("workshop:vote_cd5588db")))} /></span>
+              <kbd className="dev-ws-rail-key" aria-hidden="true"><Message id="workshop:v_de5a6f78" /></kbd>
             </button>
           ) : (
             <button
@@ -2960,7 +2958,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
               onClick={() => answer('yes')}
             >
               <span className="dev-ws-rail-ic"><HandRaisedIcon aria-hidden="true" /></span>
-              <span className="dev-ws-rail-lab">Take it</span>
+              <span className="dev-ws-rail-lab"><Message id="workshop:take_it_9ad65a8b" /></span>
             </button>
           )}
           {/* Everything the card leaves out, the way a short video's words
@@ -2975,8 +2973,8 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
             onClick={() => toggleSheet('description')}
           >
             <span className="dev-ws-rail-ic"><DescriptionIcon aria-hidden="true" /></span>
-            <span className="dev-ws-rail-lab">Description</span>
-            <kbd className="dev-ws-rail-key" aria-hidden="true">D</kbd>
+            <span className="dev-ws-rail-lab"><Message id="workshop:description_526e0087" /></span>
+            <kbd className="dev-ws-rail-key" aria-hidden="true"><Message id="workshop:d_3f39d5c3" /></kbd>
           </button>
           <button
             type="button"
@@ -2987,8 +2985,8 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
             onClick={() => toggleSheet('comments')}
           >
             <span className="dev-ws-rail-ic"><ChatBubbleTailIcon aria-hidden="true" /></span>
-            <span className="dev-ws-rail-lab">{commentCount ? String(commentCount) : 'Comments'}</span>
-            <kbd className="dev-ws-rail-key" aria-hidden="true">C</kbd>
+            <span className="dev-ws-rail-lab"><LocalizedValue render={() => (commentCount ? String(commentCount) : tr("workshop:comments_355f79f2"))} /></span>
+            <kbd className="dev-ws-rail-key" aria-hidden="true"><Message id="workshop:c_6b23c0d5" /></kbd>
           </button>
           <button
             type="button"
@@ -2999,8 +2997,8 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
             onClick={() => toggleSheet('ask')}
           >
             <span className="dev-ws-rail-ic"><SparklesIcon aria-hidden="true" /></span>
-            <span className="dev-ws-rail-lab">Ask</span>
-            <kbd className="dev-ws-rail-key" aria-hidden="true">A</kbd>
+            <span className="dev-ws-rail-lab"><Message id="workshop:ask_b8c209cd" /></span>
+            <kbd className="dev-ws-rail-key" aria-hidden="true"><Message id="workshop:a_559aead0" /></kbd>
           </button>
           {row.kind === 'vote' ? (
             <button
@@ -3012,13 +3010,13 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
               onClick={tryIt}
             >
               <span className="dev-ws-rail-ic"><PlayIcon aria-hidden="true" /></span>
-              <span className="dev-ws-rail-lab">Try it</span>
-              <kbd className="dev-ws-rail-key" aria-hidden="true">T</kbd>
+              <span className="dev-ws-rail-lab"><Message id="workshop:try_it_fe695111" /></span>
+              <kbd className="dev-ws-rail-key" aria-hidden="true"><Message id="workshop:t_e632b709" /></kbd>
             </button>
           ) : null}
           {/* The card's own ⋯ menu, on the rail. Same hook, same class, so
               the delegated handler and the declared checks find it. */}
-          <button
+          <Localized element={<button
             ref={moreRef}
             type="button"
             className="dev-ws-rail-btn dev-ws-rail-more dev-card-menu-btn"
@@ -3026,13 +3024,12 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
             data-card-menu={menuKey}
             data-card-menu-open={cardHref || undefined}
             disabled={!menuKey && !cardHref}
-            aria-haspopup="true"
-            aria-label="More actions"
+            aria-haspopup="true" aria-label={catalogText("workshop:more_actions_f8d46c25")}
           >
             <span className="dev-ws-rail-ic"><EllipsisHorizontalIcon aria-hidden="true" /></span>
-            <span className="dev-ws-rail-lab">More</span>
-            <kbd className="dev-ws-rail-key" aria-hidden="true">M</kbd>
-          </button>
+            <span className="dev-ws-rail-lab"><Message id="workshop:more_d47d7cb0" /></span>
+            <kbd className="dev-ws-rail-key" aria-hidden="true"><Message id="workshop:m_08f27188" /></kbd>
+          </button>} messages={{"aria-label":"workshop:more_actions_f8d46c25"}} />
           {moveRow}
           {/* The vote: the question, where it stands, and the two answers. A
               sheet from the floor on a phone, a popover on this button on a
@@ -3040,7 +3037,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
               closes it. */}
           {row.kind === 'vote' && shown === 'vote' ? (
             <div className="dev-ws-sheet-modal dev-ws-sheet-vote" data-ws-sheet="vote" role="dialog" aria-label={row.ask} {...leavingAttr}>
-              <button type="button" className="dev-ws-scrim" aria-label="Close" onClick={closeSheet} />
+              <Localized element={<button type="button" className="dev-ws-scrim" aria-label={catalogText("workshop:close_7d9eb7ac")} onClick={closeSheet} />} messages={{"aria-label":"workshop:close_7d9eb7ac"}} />
               <div className="dev-ws-sheet-card">
                 <span className="dev-ws-sheet-handle" aria-hidden="true" />
                 <p className="dev-ws-ask-q">{row.ask}</p>
@@ -3068,17 +3065,15 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
                   />
                 ) : (
                   <>
-                    <div className="dev-ws-answer-row">
-                      <a className="dev-ws-answer-btn dev-ws-answer-open" data-ws-answer-open="" href={cardHref}>Open to decide</a>
-                    </div>
-                    <button type="button" className="dev-ws-vote-later" onClick={closeSheet}>Decide later</button>
+                    <div className="dev-ws-answer-row"><RichMessage id="workshop:sentence_15854781e04d" components={[<a className="dev-ws-answer-btn dev-ws-answer-open" data-ws-answer-open="" href={cardHref} />]} /></div>
+                    <button type="button" className="dev-ws-vote-later" onClick={closeSheet}><Message id="workshop:decide_later_892c45a2" /></button>
                   </>
                 )}
-                <p className="dev-ws-keys-hint" aria-hidden="true">Y yes · N no · Enter vote · Esc close</p>
+                <p className="dev-ws-keys-hint" aria-hidden="true"><Message id="workshop:y_yes_n_no_enter_vote_esc_close_9cc9d940" /></p>
               </div>
             </div>
           ) : null}
-        </aside>
+        </aside>} messages={{"aria-label":"workshop:this_item_10ceeb1a"}} />
       ) : (
         /* THE END CARD'S RAIL: the move pair alone, so the way back up is
            where the thumb learned it is, and on a wide window the stage
@@ -3087,9 +3082,9 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
            Only once there are rows to go back to: an empty queue has no
            rail, as before. */
         n ? (
-          <aside className="dev-ws-rail dev-ws-rail-end" data-ws-rail="" aria-label="The end of the feed">
+          <Localized element={<aside className="dev-ws-rail dev-ws-rail-end" data-ws-rail="" aria-label={catalogText("workshop:the_end_of_the_feed_69a2b58f")}>
             {moveRow}
-          </aside>
+          </aside>} messages={{"aria-label":"workshop:the_end_of_the_feed_69a2b58f"}} />
         ) : null
       )}
 
@@ -3114,13 +3109,13 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
           composer is the dev session's own (`.dc-card`), as far as this pane
           needs it — see the note on `sendBtn`. */}
       {row && shown === 'ask' ? (
-      <div className="dev-ws-sheet-modal dev-ws-sheet-ask" data-ws-sheet="ask" role="dialog" aria-label="Ask about this item" {...leavingAttr}>
-      <button type="button" className="dev-ws-scrim" aria-label="Close" onClick={closeSheet} />
+      <Localized element={<div className="dev-ws-sheet-modal dev-ws-sheet-ask" data-ws-sheet="ask" role="dialog" aria-label={catalogText("workshop:ask_about_this_item_d3abf1e4")} {...leavingAttr}>
+      <Localized element={<button type="button" className="dev-ws-scrim" aria-label={catalogText("workshop:close_7d9eb7ac")} onClick={closeSheet} />} messages={{"aria-label":"workshop:close_7d9eb7ac"}} />
       <section className="dev-ws-ask dev-ws-sheet-card" data-ws-ask="">
         <span className="dev-ws-sheet-handle" aria-hidden="true" />
         <div className="dev-ws-sheet-head">
-          <span><span className="dev-ws-sheet-title">{row.kind === 'vote' ? 'Ask about this change' : 'Ask about this request'}</span><span className="dev-ws-sheet-sub">private to you</span></span>
-          <button type="button" className="dev-ws-sheet-x" onClick={closeSheet}>Close</button>
+          <span><span className="dev-ws-sheet-title"><LocalizedValue render={() => (row.kind === 'vote' ? tr("workshop:ask_about_this_change_090fcdb1") : tr("workshop:ask_about_this_request_6b041425"))} /></span><span className="dev-ws-sheet-sub"><Message id="workshop:private_to_you_7720a75f" /></span></span>
+          <button type="button" className="dev-ws-sheet-x" onClick={closeSheet}><Message id="workshop:close_7d9eb7ac" /></button>
         </div>
         <div className="dev-ws-ask-log" data-ws-ask-log="">
           {engaged ? thread.map((m, k) => (
@@ -3135,7 +3130,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
             </p>
           )) : (
             <p className="dev-ws-ask-hint">
-              {target ? 'Ask what this changes, who it affects, or what happens if it goes in. Answered from what the platform knows about it.' : 'There are no details to ask about on this one.'}
+              <LocalizedValue render={() => (target ? tr("workshop:ask_what_this_changes_who_it_affects_or_what_hap_f97a4db5") : tr("workshop:there_are_no_details_to_ask_about_on_this_one_ffe203b6"))} />
             </p>
           )}
         </div>
@@ -3143,22 +3138,24 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
           className="dev-ws-ask-composer dc-card"
           onSubmit={(e) => { e.preventDefault(); ask(); }}
         >
-          <label className="sr-only" htmlFor="dev-ws-ask-input">Ask about this change</label>
+          <label className="sr-only" htmlFor="dev-ws-ask-input"><Message id="workshop:ask_about_this_change_090fcdb1" /></label>
           {/* THE FIELD on a line of its own; the controls row is under it. */}
           <div className="dev-ws-ask-line">
-            <input
+            <LocalizedDynamic element={<input
               id="dev-ws-ask-input"
               className="dev-ws-ask-input"
               type="text"
               value={draft}
               placeholder={
-                !target ? 'No details to ask about on this one'
-                  : inFlight ? 'Reading the change…'
-                    : 'Ask a question…'
+                !target ? tr("workshop:no_details_to_ask_about_on_this_one_323173d3")
+                  : inFlight ? tr("workshop:reading_the_change_41b7b323")
+                    : tr("workshop:ask_a_question_d6a2035c")
               }
               disabled={!target || inFlight}
               onChange={(e) => setDraft(e.target.value)}
-            />
+            />} resolve={() => ({ "placeholder": !target ? tr("workshop:no_details_to_ask_about_on_this_one_323173d3")
+                  : inFlight ? tr("workshop:reading_the_change_41b7b323")
+                    : tr("workshop:ask_a_question_d6a2035c") })} />
           </div>
           {/* THE CONTROLS ROW is there at every width: the model picker, and
               the send circle as the card's last thing. It used to wait for a
@@ -3167,7 +3164,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
           <div className="dev-ws-ask-row">
             {models.list.length ? (
               <span className="dev-ws-ask-model" data-ws-ask-model="">
-                <label className="sr-only" htmlFor="dev-ws-ask-model-select">Model</label>
+                <label className="sr-only" htmlFor="dev-ws-ask-model-select"><Message id="workshop:model_5e2c614c" /></label>
                 <select
                   id="dev-ws-ask-model-select"
                   className="dc-model-select dc-model-name"
@@ -3185,7 +3182,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
           </div>
         </form>
       </section>
-      </div>
+      </div>} messages={{"aria-label":"workshop:ask_about_this_item_d3abf1e4"}} />
       ) : null}
 
       {/* ── Comments: the app's own thread, and an issue's GitHub thread ──
@@ -3193,36 +3190,36 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
           slot is the legacy filler's host, pointed at this sheet when it
           opens. */}
       {row && shown === 'comments' ? (
-      <div className="dev-ws-sheet-modal dev-ws-sheet-comments" data-ws-sheet="comments" role="dialog" aria-label="Comments" {...leavingAttr}>
-      <button type="button" className="dev-ws-scrim" aria-label="Close" onClick={closeSheet} />
+      <Localized element={<div className="dev-ws-sheet-modal dev-ws-sheet-comments" data-ws-sheet="comments" role="dialog" aria-label={catalogText("workshop:comments_355f79f2")} {...leavingAttr}>
+      <Localized element={<button type="button" className="dev-ws-scrim" aria-label={catalogText("workshop:close_7d9eb7ac")} onClick={closeSheet} />} messages={{"aria-label":"workshop:close_7d9eb7ac"}} />
       <section className="dev-ws-sheet-card" data-ws-comments="">
         <span className="dev-ws-sheet-handle" aria-hidden="true" />
         <div className="dev-ws-sheet-head">
-          <span><span className="dev-ws-sheet-title">{commentCount ? `${commentCount} ${commentCount === 1 ? 'comment' : 'comments'}` : 'Comments'}</span><span className="dev-ws-sheet-sub">{row.kind === 'vote' ? 'on this change' : 'on this request'}</span></span>
-          <button type="button" className="dev-ws-sheet-x" onClick={closeSheet}>Close</button>
+          <span><span className="dev-ws-sheet-title"><LocalizedValue render={() => (commentCount ? `${commentCount} ${commentCount === 1 ? 'comment' : 'comments'}` : tr("workshop:comments_355f79f2"))} /></span><span className="dev-ws-sheet-sub"><LocalizedValue render={() => (row.kind === 'vote' ? tr("workshop:on_this_change_f0bbe217") : tr("workshop:on_this_request_b17d3d6f"))} /></span></span>
+          <button type="button" className="dev-ws-sheet-x" onClick={closeSheet}><Message id="workshop:close_7d9eb7ac" /></button>
         </div>
         <div className="dev-ws-sheet-body" ref={commentsRef}>
           {row.commentsFor != null ? <div className="dev-feed-comments" data-comments-for={row.commentsFor} /> : null}
           {row.thread ? (
             <FeedThread slug={rowSlug(row, slug)} type={row.thread.type} refId={row.thread.ref} canPost={canPost} />
           ) : null}
-          {!row.thread && row.commentsFor == null ? <p className="dev-ws-ask-hint">No comments yet.</p> : null}
+          {!row.thread && row.commentsFor == null ? <p className="dev-ws-ask-hint"><Message id="workshop:no_comments_yet_b7cba957" /></p> : null}
         </div>
       </section>
-      </div>
+      </div>} messages={{"aria-label":"workshop:comments_355f79f2"}} />
       ) : null}
 
       {/* ── Description: what the card leaves out ──
           The title, who and when, the facts as chips, the declared changes
           in their own words, and the summary as its own page renders it. */}
       {row && shown === 'description' ? (
-      <div className="dev-ws-sheet-modal dev-ws-sheet-description" data-ws-sheet="description" role="dialog" aria-label="Description" {...leavingAttr}>
-      <button type="button" className="dev-ws-scrim" aria-label="Close" onClick={closeSheet} />
+      <Localized element={<div className="dev-ws-sheet-modal dev-ws-sheet-description" data-ws-sheet="description" role="dialog" aria-label={catalogText("workshop:description_526e0087")} {...leavingAttr}>
+      <Localized element={<button type="button" className="dev-ws-scrim" aria-label={catalogText("workshop:close_7d9eb7ac")} onClick={closeSheet} />} messages={{"aria-label":"workshop:close_7d9eb7ac"}} />
       <section className="dev-ws-sheet-card" data-ws-description="">
         <span className="dev-ws-sheet-handle" aria-hidden="true" />
         <div className="dev-ws-sheet-head">
-          <span><span className="dev-ws-sheet-title">Description</span></span>
-          <button type="button" className="dev-ws-sheet-x" onClick={closeSheet}>Close</button>
+          <span><span className="dev-ws-sheet-title"><Message id="workshop:description_526e0087" /></span></span>
+          <button type="button" className="dev-ws-sheet-x" onClick={closeSheet}><Message id="workshop:close_7d9eb7ac" /></button>
         </div>
         <div className="dev-ws-sheet-body">
           <h3 className="dev-ws-desc-title">{row.card.title.text || row.card.title.title}</h3>
@@ -3234,7 +3231,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
           ) : null}
           {descChanges.length ? (
             <div className="dev-ws-desc-part">
-              <h4 className="dev-ws-desc-head">What changes</h4>
+              <h4 className="dev-ws-desc-head"><Message id="workshop:what_changes_9f036d41" /></h4>
               <ol className="dev-ws-shot-changes dev-ws-desc-changes">
                 {descChanges.map((c) => (
                   <li key={c.n} className="dev-ws-shot-change">
@@ -3246,17 +3243,17 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
             </div>
           ) : null}
           <div className="dev-ws-desc-part">
-            <h4 className="dev-ws-desc-head">{row.kind === 'vote' ? 'Summary' : 'The request'}</h4>
+            <h4 className="dev-ws-desc-head"><LocalizedValue render={() => (row.kind === 'vote' ? tr("workshop:summary_8e76a94a") : tr("workshop:the_request_9c6da702"))} /></h4>
             {row.descriptionHtml ? (
               <Html className="dev-ws-desc-body" html={row.descriptionHtml} />
             ) : (
-              <p className="dev-ws-ask-hint">{row.kind === 'vote' ? 'No plain-language summary was written for this change.' : 'This request has no description.'}</p>
+              <p className="dev-ws-ask-hint"><LocalizedValue render={() => (row.kind === 'vote' ? tr("workshop:no_plain_language_summary_was_written_for_this_c_a30cc7d2") : tr("workshop:this_request_has_no_description_d979fb6e"))} /></p>
             )}
           </div>
-          {cardHref ? <a className="dev-ws-desc-open" href={cardHref}>{row.kind === 'vote' ? 'Open the proposal' : 'Open the request'}</a> : null}
+          {cardHref ? <a className="dev-ws-desc-open" href={cardHref}><LocalizedValue render={() => (row.kind === 'vote' ? tr("workshop:open_the_proposal_7376180d") : tr("workshop:open_the_request_700e4004"))} /></a> : null}
         </div>
       </section>
-      </div>
+      </div>} messages={{"aria-label":"workshop:description_526e0087"}} />
       ) : null}
     </div>
   );
@@ -3273,7 +3270,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
  */
 function GroupStrip({ group }: { group: string }): ReactNode {
   return (
-    <div className="dev-ws-group" role="tablist" aria-label="Group the board by">
+    <Localized element={<div className="dev-ws-group" role="tablist" aria-label={catalogText("workshop:group_the_board_by_b41d0057")}>
       <button
         type="button"
         role="tab"
@@ -3281,9 +3278,7 @@ function GroupStrip({ group }: { group: string }): ReactNode {
         data-ws-group="category"
         aria-selected={group === 'category'}
         onClick={() => callAppView('_setWorkshopGroup', 'category')}
-      >
-        By category
-      </button>
+      ><Message id="workshop:by_category_39a8581a" /></button>
       <button
         type="button"
         role="tab"
@@ -3291,10 +3286,8 @@ function GroupStrip({ group }: { group: string }): ReactNode {
         data-ws-group="stage"
         aria-selected={group === 'stage'}
         onClick={() => callAppView('_setWorkshopGroup', 'stage')}
-      >
-        By stage
-      </button>
-    </div>
+      ><Message id="workshop:by_stage_cc7122d8" /></button>
+    </div>} messages={{"aria-label":"workshop:group_the_board_by_b41d0057"}} />
   );
 }
 
@@ -3556,6 +3549,7 @@ function usePinnedStrip(
 }
 
 export function DevWorkshop(): ReactNode {
+  useUiLanguage();
   const v = useStoreState(devWorkshopStore);
   // THE OPEN APP'S NAME AND ARTWORK, for the hero and the channel below. The
   // same store the header's own tile draws from, so the two cannot disagree
@@ -3741,12 +3735,12 @@ export function DevWorkshop(): ReactNode {
   const countOfThemes = themes.filter((t) => !t.ungrouped).length;
   const groupingNote = [
     `${countOfThemes} ${countOfThemes === 1 ? 'category' : 'categories'}`,
-    v.meta.source === 'category' ? 'grouped by category for now' : '',
-    v.meta.source === 'demo' ? 'staging demo grouping' : '',
+    v.meta.source === 'category' ? tr("workshop:grouped_by_category_for_now_a424bb0e") : '',
+    v.meta.source === 'demo' ? tr("workshop:staging_demo_grouping_1747d748") : '',
     v.meta.pending
       ? (v.meta.pendingStage === 'placement'
-        ? 'placing new cards…'
-        : (v.meta.source === 'ai' ? 're-drafting categories…' : 'drafting categories…'))
+        ? tr("workshop:placing_new_cards_9c8cf9bc")
+        : (v.meta.source === 'ai' ? 're-drafting categories…' : tr("workshop:drafting_categories_7b16700a")))
       : '',
   ].filter(Boolean).join(' · ');
   // Every theme starts SHUT. The first one used to open itself, on the
@@ -3798,7 +3792,7 @@ export function DevWorkshop(): ReactNode {
   // the same note).
   // A week's presses are part of it (#3524): each one mounts rows the
   // fillers have not seen, so the count, not only which weeks, goes in.
-  const openSig = `${Object.values(openRows).join('|')}|since:${sinceExtra}:${Object.entries(sinceMore).map(([at, n]) => `${at}=${n}`).join(',')}|work:${workAll}:${mineAll}`;
+  const openSig = tr("workshop:value1_since_value2_value3_work_value4_value5_849432d9", { value1: Object.values(openRows).join('|'), value2: sinceExtra, value3: Object.entries(sinceMore).map(([at, n]) => `${at}=${n}`).join(','), value4: workAll, value5: mineAll });
   useLayoutEffect(() => {
     const host = hostRef.current;
     if (!host) return;
@@ -3841,7 +3835,7 @@ export function DevWorkshop(): ReactNode {
     });
   }, [v.slug, v.loading, owedRows.length, owedSig, own, app.name, app.iconUrl, app.iconEmoji, app.iconColor, community]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (v.loading) return <div ref={hostRef}><CardSkeleton n={4} label="Loading the workshop" /></div>;
+  if (v.loading) return <div ref={hostRef}><Localized element={<CardSkeleton n={4} label={catalogText("workshop:loading_the_workshop_ab0d3e14")} />} messages={{"label":"workshop:loading_the_workshop_ab0d3e14"}} /></div>;
   const nextUp = v.nextUp && v.nextUp.t === 'card' ? v.nextUp : null;
   const slug = v.slug || '';
   const canPost = !!v.canPost;
@@ -3878,11 +3872,10 @@ export function DevWorkshop(): ReactNode {
   const pageBar = tab === 'all' ? (
     <div className="dev-ws-tabs dev-ws-pagebar" data-ws-pagebar="">
       <div className="dev-ws-tabtrack">
-        <PageBack
-          label="Workshop"
+        <Localized element={<PageBack label={catalogText("workshop:workshop_c0086f23")}
           title={pageTitle(tab)}
           onBack={() => openTab(pageParent(tab))}
-        />
+        />} messages={{"label":"workshop:workshop_c0086f23"}} />
       </div>
     </div>
   ) : null;
@@ -4034,7 +4027,7 @@ export function DevWorkshop(): ReactNode {
       {v.mine && (v.mine.rows.length || v.mine.viewer) ? (
         <section className="dev-ws-strip" data-ws-mine="">
           <div className="dev-ws-head">
-            <span className="dev-ws-head-title">Your work</span>
+            <span className="dev-ws-head-title"><Message id="workshop:your_work_ef14cf0d" /></span>
             {v.mine.count ? <span className="dev-ws-head-n">{v.mine.count}</span> : null}
           </div>
           <div className="dev-ws-lane" data-ws-lane="mine">
@@ -4053,9 +4046,9 @@ export function DevWorkshop(): ReactNode {
                 very tab and whose board has no open item to pick up. */}
             {!v.mine.rows.length ? (
               <p className="text-xs text-zinc-500 dark:text-zinc-400" data-ws-mine-empty="">
-                {actions.readOnly || startHere
-                  ? 'You have no work going on.'
-                  : 'You have no work going on. Pick up an open item in All items, or use Start a new change in the Homeroom menu.'}
+                <LocalizedValue render={() => (actions.readOnly || startHere
+                  ? tr("workshop:you_have_no_work_going_on_23e6b6ea")
+                  : tr("workshop:you_have_no_work_going_on_pick_up_an_open_item_i_a9b4b318"))} />
               </p>
             ) : null}
             {/* THE FIRST THREE on the Workshop tab (#852 review), and the
@@ -4090,7 +4083,7 @@ export function DevWorkshop(): ReactNode {
                 onClick={() => setMineAll(!mineAll)}
               >
                 <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
-                {mineAll ? 'Show less' : `Show ${v.mine.rows.length - WORKSHOP_WORK_FIRST} more`}
+                <LocalizedValue render={() => (mineAll ? tr("workshop:show_less_94ea9b1d") : tr("workshop:show_value1_more_398301a5", { value1: v.mine.rows.length - WORKSHOP_WORK_FIRST }))} />
               </button>
             ) : null}
           </div>
@@ -4109,22 +4102,20 @@ export function DevWorkshop(): ReactNode {
               in it. Every section on this tab wears this now, so the only
               thing that distinguishes them is what they hold. */}
           <div className="dev-ws-head">
-            <span className="dev-ws-head-title">All items</span>
+            <span className="dev-ws-head-title"><Message id="workshop:all_items_51107686" /></span>
             <button
               type="button"
               className="dev-ws-hub-open dev-ws-head-end un-touch-target"
               data-ws-all-open=""
               onClick={() => openTab('all')}
-            >
-              See all
-              {/* #2915: A SEARCH OR FILTER IS WAITING ON ALL ITEMS. It
+            ><Message id="workshop:see_all_d7a8c446" />{/* #2915: A SEARCH OR FILTER IS WAITING ON ALL ITEMS. It
                   narrows that page alone, so from here it is out of sight,
                   and this dot is what says it is still on. The dot is
                   decoration; the words join the button's name. */}
               {v.meta.filtered ? (
                 <>
                   <span className="dev-ws-filter-dot" data-ws-filtered="" aria-hidden="true" />
-                  <span className="sr-only"> (filtered)</span>
+                  <span className="sr-only"><Message before={" "} id="workshop:filtered_ff5bcbf4" /></span>
                 </>
               ) : null}
               <ChevronRightIcon className="w-3.5 h-3.5" aria-hidden="true" />
@@ -4160,9 +4151,7 @@ export function DevWorkshop(): ReactNode {
                   windows below — a heading, then its line — while its
                   missing rule and missing dates keep it from reading as one
                   of them. */}
-              <div className="dev-ws-lead-head">
-                <span className="dev-ws-lead-title">Open items</span>
-              </div>
+              <div className="dev-ws-lead-head"><RichMessage id="workshop:sentence_4d1174526272" components={[<span className="dev-ws-lead-title" />]} /></div>
               <p className="dev-ws-open-line" data-ws-open-line="">
                 {v.dashboard.openLine || summarise(v.dashboard)}
               </p>
@@ -4203,7 +4192,7 @@ export function DevWorkshop(): ReactNode {
               list, drawn small, and disabled rather than absent when there is
               nothing to fold so the row does not reflow. */}
           <div className="dev-ws-since-head" data-ws-since-head="">
-            <span className="dev-ws-since-label">{v.since && !outsider ? 'Since your last visit' : 'Recently'}</span>
+            <span className="dev-ws-since-label"><LocalizedValue render={() => (v.since && !outsider ? tr("workshop:since_your_last_visit_86de0bef") : tr("workshop:recently_f81ae503"))} /></span>
             {v.since ? (
               <>
                 {/* THE WHOLE POPULATION, not the page of it that is drawn.
@@ -4215,9 +4204,7 @@ export function DevWorkshop(): ReactNode {
                   data-ws-since-clear=""
                   disabled={!v.since.rows.length && !sinceUnfolded}
                   onClick={clearSince}
-                >
-                  Clear
-                </button>
+                ><Message id="workshop:clear_83b12c22" /></button>
               </>
             ) : null}
           </div>
@@ -4225,9 +4212,7 @@ export function DevWorkshop(): ReactNode {
             <p className="dev-ws-since-sum" data-ws-since-sum="">{sinceWords(v.since)}</p>
           ) : null}
           {v.since && !v.since.rows.length ? (
-            <p className="dev-ws-week-note" data-ws-since-none="">
-              Nothing has changed since you were last here.
-            </p>
+            <p className="dev-ws-week-note" data-ws-since-none=""><Message id="workshop:nothing_has_changed_since_you_were_last_here_37cbefd3" /></p>
           ) : null}
           {weeks.slice(0, weeksOpen).map((w) => {
             const at = sinceWeekStateKey(w);
@@ -4260,9 +4245,7 @@ export function DevWorkshop(): ReactNode {
             disabled={weeksOpen >= weeks.length}
             onClick={() => setSinceExtra(sinceExtra + 1)}
           >
-            <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
-            Show an earlier week
-            {newFurther ? <span className="dev-ws-since-more-new">{` · ${newFurther} new`}</span> : null}
+            <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" /><Message id="workshop:show_an_earlier_week_604d27ef" />{newFurther ? <span className="dev-ws-since-more-new"><LocalizedValue render={() => (tr("workshop:value1_new_8ae9f0d8", { value1: newFurther }))} /></span> : null}
           </button>
           {/* The floor. `firstWeek` is the project's beginning, which the
               server names beside a complete history (#3293), so the note
@@ -4270,11 +4253,11 @@ export function DevWorkshop(): ReactNode {
               as the list reaches, and only once somebody has walked there. */}
           {weeks.length && weeksOpen >= weeks.length && firstWeek ? (
             <p className="dev-ws-week-note" data-ws-week-start="">
-              {`This project started the week of ${weekDate(firstWeek)}.`}
+              <LocalizedValue render={() => (tr("workshop:this_project_started_the_week_of_value1_16d9ac4f", { value1: weekDate(firstWeek) }))} />
             </p>
           ) : null}
           {weeks.length && weeksOpen >= weeks.length && !firstWeek && sinceExtra > 0 ? (
-            <p className="dev-ws-week-note" data-ws-week-end="">That is as far back as the list goes.</p>
+            <p className="dev-ws-week-note" data-ws-week-end=""><Message id="workshop:that_is_as_far_back_as_the_list_goes_df38d46d" /></p>
           ) : null}
         </section>
       ) : null}
@@ -4373,7 +4356,7 @@ export function DevWorkshop(): ReactNode {
           <>
           <div className="dev-ws-sort">
             {groupingNote ? <span className="dev-ws-eyebrow">{groupingNote}</span> : null}
-            <div className="dev-ws-sort-opts" role="group" aria-label="Order categories">
+            <Localized element={<div className="dev-ws-sort-opts" role="group" aria-label={catalogText("workshop:order_categories_8984e564")}>
               {SORTS.map((s) => (
                 <button
                   key={s.key}
@@ -4385,7 +4368,7 @@ export function DevWorkshop(): ReactNode {
                   {s.label}
                 </button>
               ))}
-            </div>
+            </div>} messages={{"aria-label":"workshop:order_categories_8984e564"}} />
           </div>
           <div className="dev-ws-themes" ref={themesRef}>
             {themes.map((t) => (
@@ -4406,15 +4389,15 @@ export function DevWorkshop(): ReactNode {
               and, on the model's grouping, when it was drafted and how much
               of the board it holds. */}
           <div className="dev-ws-foot-note">
-            {v.meta.source === 'ai'
+            <LocalizedValue render={() => (v.meta.source === 'ai'
               ? aiFootnote(v.meta, !!(v.dashboard && (v.dashboard.cards || v.dashboard.summary)))
               : v.meta.source === 'demo'
-                ? 'Staging demo grouping: in production the categories are drafted by the model from the board.'
+                ? tr("workshop:staging_demo_grouping_in_production_the_categori_f6a6e3fc")
                 : v.meta.pending
-                  ? 'Categories are being drafted from the board now. They replace this grouping when they land.'
+                  ? tr("workshop:categories_are_being_drafted_from_the_board_now__ba34ad80")
                   : v.meta.lastError
-                    ? `The last attempt to draft categories failed (${v.meta.lastError}). Items stay grouped by the categories the group has voted for until the next attempt.`
-                    : 'No AI model is configured, so items are grouped by the categories the group has voted for.'}
+                    ? tr("workshop:the_last_attempt_to_draft_categories_failed_valu_ed5b8ae9", { value1: v.meta.lastError })
+                    : tr("workshop:no_ai_model_is_configured_so_items_are_grouped_b_cd14b697"))} />
           </div>
           </>
           )}

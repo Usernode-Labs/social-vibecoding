@@ -1,3 +1,4 @@
+import { t as tr } from "../../lib/i18n/runtime";
 // The agent-session composer's model picker (#2779): which coding agent the
 // conversation runs on, and on which model. One choice per conversation,
 // changeable at any time: the Mayor answers with it from its next turn, a
@@ -30,17 +31,17 @@ export const OPENROUTER_PREFIX = 'openrouter:';
 
 export const REASONING_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh'] as const;
 const EFFORT_LABELS: Record<string, string> = {
-  minimal: 'Minimal',
-  low: 'Low',
-  medium: 'Medium',
-  high: 'High',
-  xhigh: 'Extra high',
+  get minimal() { return tr("workshop:minimal_057b5de4"); },
+  get low() { return tr("workshop:low_f793de20"); },
+  get medium() { return tr("workshop:medium_8e588cd1"); },
+  get high() { return tr("workshop:high_c4ebc6d4"); },
+  get xhigh() { return tr("workshop:extra_high_70eb321d"); },
 };
 
-const OPENROUTER_TITLE = 'Runs on your OpenRouter key';
+const OPENROUTER_TITLE = () => tr("workshop:runs_on_your_openrouter_key_4d10fe09");
 // #3296: the platform runs some OpenRouter models in Claude Code, not Codex.
-const OPENROUTER_CLAUDE_TITLE = 'Runs on your OpenRouter key, in Claude Code';
-const ANTHROPIC_TITLE = 'Runs on the platform Claude allowance, or your own Anthropic key';
+const OPENROUTER_CLAUDE_TITLE = () => tr("workshop:runs_on_your_openrouter_key_in_claude_code_d4f3d4bc");
+const ANTHROPIC_TITLE = () => tr("workshop:runs_on_the_platform_claude_allowance_or_your_ow_09d5f4d7");
 
 export interface PickerOption {
   value: string;
@@ -88,7 +89,7 @@ export function modelCost(id: string | null | undefined, catalog: ModelCatalog |
     }
   }
   const money = cents == null ? '' : (cents > 0 && cents < 1 ? '<$0.01' : `$${(cents / 100).toFixed(2)}`);
-  const perChange = money ? `about ${money} for a typical change` : '';
+  const perChange = money ? tr("workshop:about_value1_for_a_typical_change_5688e8c5", { value1: money }) : '';
   return { note, perChange, compact: [note, perChange].filter(Boolean).join(' · ') };
 }
 
@@ -187,7 +188,7 @@ export function pickerOptions(catalog: ModelCatalog | null, selected: AgentChoic
   const pushOpenRouter = (id: string | null | undefined) => {
     if (!id) return;
     const model = openRouterModel(catalog, id);
-    const title = model?.harness === 'claude' ? OPENROUTER_CLAUDE_TITLE : OPENROUTER_TITLE;
+    const title = model?.harness === 'claude' ? OPENROUTER_CLAUDE_TITLE() : OPENROUTER_TITLE();
     push(withCost({ value: `${OPENROUTER_PREFIX}${id}`, label: model?.name || id, title }, modelCost(id, catalog, model)));
   };
   const openRouter = !!catalog && catalog.codexAvailable && catalog.openrouter.length > 0;
@@ -200,7 +201,7 @@ export function pickerOptions(catalog: ModelCatalog | null, selected: AgentChoic
   }
   // 2. The Anthropic models.
   for (const model of catalog?.anthropic || []) {
-    push(withCost({ value: `${ANTHROPIC_PREFIX}${model.id}`, label: model.label, title: ANTHROPIC_TITLE }, modelCost(model.id, catalog)));
+    push(withCost({ value: `${ANTHROPIC_PREFIX}${model.id}`, label: model.label, title: ANTHROPIC_TITLE() }, modelCost(model.id, catalog)));
   }
   // 3. What this account already uses: the saved default and the favourites.
   if (openRouter && catalog) {
@@ -214,7 +215,7 @@ export function pickerOptions(catalog: ModelCatalog | null, selected: AgentChoic
     const value = choiceValue(selected);
     if (!seen.has(value)) {
       if (selected.backend === 'codex_openrouter') pushOpenRouter(selected.model);
-      else push(withCost({ value, label: selected.model || 'Claude', title: ANTHROPIC_TITLE }, modelCost(selected.model, catalog)));
+      else push(withCost({ value, label: selected.model || tr("workshop:claude_0615570f"), title: ANTHROPIC_TITLE() }, modelCost(selected.model, catalog)));
     }
   }
   const fallback = catalog ? choiceValue(effectiveChoice(null, catalog)) : null;
@@ -265,7 +266,7 @@ export function effortOptions(catalog: ModelCatalog | null): PickerOption[] {
   const efforts = REASONING_EFFORTS.map((effort): PickerOption => (effort === fallback
     ? { value: '', label: EFFORT_LABELS[effort], isDefault: true }
     : { value: effort, label: EFFORT_LABELS[effort] }));
-  return fallback ? efforts : [{ value: '', label: 'Default', isDefault: true }, ...efforts];
+  return fallback ? efforts : [{ value: '', get label() { return tr("workshop:default_21b111cb"); }, isDefault: true }, ...efforts];
 }
 
 /** The option a choice's effort is: its own, or '' when it follows the default or names it. */

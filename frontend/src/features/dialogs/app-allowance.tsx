@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message } from "../../lib/i18n/react";
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { useStoreState } from '../../lib/use-store-state';
@@ -18,9 +22,9 @@ export interface ServerCapacity {
 }
 
 export function quotaHeadline(quota: AppCreationQuota): string {
-  if (quota.limit === null) return quota.used == null ? 'No app limit' : `${quota.used} ${quota.used === 1 ? 'app' : 'apps'} · no limit`;
-  if (quota.used == null) return `${quota.limit} app slots`;
-  return `${quota.used} of ${quota.limit} app ${quota.limit === 1 ? 'slot' : 'slots'} used`;
+  if (quota.limit === null) return quota.used == null ? tr("core:no_app_limit_9fd7a6f5") : tr("core:count_apps_no_limit_35ac02ea", { count: quota.used });
+  if (quota.used == null) return tr("core:value1_app_slots_c6886501", { value1: quota.limit });
+  return tr("core:value1_of_count_app_slots_used_4b21d99d", { value1: quota.used, count: quota.limit });
 }
 
 /**
@@ -31,7 +35,7 @@ export function quotaHeadline(quota: AppCreationQuota): string {
 export function appSlotsLine(quota: AppCreationQuota | null, requestedAt: string | null): string | null {
   if (!quota) return null;
   const headline = quotaHeadline(quota);
-  return requestedAt && quota.limit !== null ? `${headline} · more requested` : headline;
+  return requestedAt && quota.limit !== null ? tr("core:value1_more_requested_b1f03da0", { value1: headline }) : headline;
 }
 
 /**
@@ -107,8 +111,11 @@ const SURFACE = {
   pane: 'mb-4 rounded-2xl bg-white dark:bg-zinc-800 px-4 py-3',
 } as const;
 
-function plural(n: number, one: string, many: string): string {
-  return `${n} ${n === 1 ? one : many}`;
+function freeSlots(count: number): string {
+  return tr('core:allowance_free_slots', { count });
+}
+function moreApps(count: number): string {
+  return tr('core:allowance_more_apps', { count });
 }
 
 /**
@@ -127,6 +134,7 @@ export function AppAllowance({ id, surface = 'inset', quiet = false }: {
   /** Only when allowanceWorthShowing says so (the create dialog, #23). */
   quiet?: boolean;
 }) {
+  useUiLanguage();
   const { quota, server, requestedAt, loading, error, spent, serverFull } = useAppAllowance();
   const binds = !!quota && serverBinds(quota, server);
   const [busy, setBusy] = useState(false);
@@ -137,7 +145,7 @@ export function AppAllowance({ id, surface = 'inset', quiet = false }: {
     setBusy(true);
     setRequestError('');
     try { await requestMoreApps(); }
-    catch (err: any) { setRequestError(err.message || 'Could not send your request.'); }
+    catch (err: any) { setRequestError(err.message || tr("core:could_not_send_your_request_698d8762")); }
     finally { setBusy(false); }
   };
   return (
@@ -145,16 +153,16 @@ export function AppAllowance({ id, surface = 'inset', quiet = false }: {
       aria-live="polite"
       data-quota-state={!quota ? 'loading' : serverFull ? 'server-full' : spent ? 'spent' : 'available'}>
       <div className="flex items-baseline justify-between gap-3 text-sm">
-        <span className="font-medium text-zinc-700 dark:text-zinc-200">App allowance</span>
+        <span className="font-medium text-zinc-700 dark:text-zinc-200"><Message id="core:app_allowance_aa08e188" /></span>
         <strong className="text-right text-zinc-900 dark:text-zinc-100">
-          {!quota ? 'Checking…' : serverFull ? 'Server is full' : quotaHeadline(quota)}
+          <LocalizedValue render={() => (!quota ? tr("core:checking_ec963ffc") : serverFull ? tr("core:server_is_full_5dcf7840") : quotaHeadline(quota))} />
         </strong>
       </div>
       {quota && !serverFull ? <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-        {quota.limit === null ? 'Admin accounts can create apps without a slot limit.'
-          : quota.remaining == null ? 'Current usage is unavailable.'
-          : `${quota.remaining} ${quota.remaining === 1 ? 'slot' : 'slots'} available. Creating, importing and remixing share this allowance.`}
-        {spent ? ' Request more slots to create another app.' : ''}
+        <LocalizedValue render={() => (quota.limit === null ? tr("core:admin_accounts_can_create_apps_without_a_slot_li_508c8cdb")
+          : quota.remaining == null ? tr("core:current_usage_is_unavailable_78a480af")
+          : tr("core:message_4fa9d295af62", { value1: quota.remaining, count: quota.remaining }))} />
+        <LocalizedValue render={() => (spent ? tr("core:request_more_slots_to_create_another_app_d53a57a6") : '')} />
       </p> : null}
       {/*
           QA 2026-09-24 Q33b: the server-wide cap, when it is the limit this
@@ -167,22 +175,21 @@ export function AppAllowance({ id, surface = 'inset', quiet = false }: {
       {quota && binds && server ? (
         <p id={id ? `${id}-server` : undefined} data-server-full={serverFull ? 'true' : 'false'}
           className={serverFull ? 'mt-1 text-xs text-red-700 dark:text-red-400' : 'mt-1 text-xs text-zinc-500 dark:text-zinc-400'}>
-          {serverFull
-            ? `This server is at its app limit (${server.limit}). Ask an admin to remove an app or raise the limit. `
-              + `Your own allowance: ${quota.limit === null ? 'no limit' : `${plural(quota.remaining ?? 0, 'slot', 'slots')} free`}.`
-            : `This server has room for ${plural(server.remaining, 'more app', 'more apps')} (limit ${server.limit}).`}
+          <LocalizedValue render={() => (serverFull
+            ? tr("core:message_2774f4bec543", { limit: server.limit, allowance: quota.limit === null ? tr('core:allowance_unlimited') : freeSlots(quota.remaining ?? 0) })
+            : tr("core:this_server_has_room_for_value1_limit_value2_d22a3b1c", { value1: moreApps(server.remaining), value2: server.limit }))} />
         </p>
       ) : null}
       {quota && quota.limit !== null && !serverFull ? (
         <div className="mt-2">
           <Button type="button" size="sm" {...REQUEST_BUTTON[surface]} disabled={busy || !!requestedAt} disabledStyle="block" onClick={request}>
-            {busy ? 'Sending…' : requestedAt ? 'Request pending' : 'Request more'}
+            <LocalizedValue render={() => (busy ? tr("core:sending_b8ed5279") : requestedAt ? tr("core:request_pending_bc26ab4d") : tr("core:request_more_339d84f0"))} />
           </Button>
-          {requestedAt ? <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Admins have your request. You’ll be notified when it is reviewed.</p> : null}
+          {requestedAt ? <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400"><Message id="core:admins_have_your_request_you_ll_be_notified_when_68eae4f0" /></p> : null}
         </div>
       ) : null}
       {error || requestError ? <p role="alert" className="mt-2 text-xs text-red-700 dark:text-red-400">{requestError || error}</p> : null}
-      {error ? <Button type="button" size="sm" disabled={loading} onClick={() => void refreshAppAllowance()}>Refresh allowance</Button> : null}
+      {error ? <Button type="button" size="sm" disabled={loading} onClick={() => void refreshAppAllowance()}><Message id="core:refresh_allowance_cf0b3e3d" /></Button> : null}
     </div>
   );
 }

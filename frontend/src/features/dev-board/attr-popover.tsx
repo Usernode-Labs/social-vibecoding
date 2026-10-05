@@ -1,3 +1,6 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message } from "../../lib/i18n/react";
 /**
  * `#attr-popover` — the priority / category / assignee picker — as the only
  * React writer below that host.
@@ -53,15 +56,15 @@ export function AttrOptionRow({ option, field }: { option: AttrOptionView; field
       // row is a real toggle, and on priority/category the check "doubles
       // as my current pick" (see #1187 below).
       aria-pressed={!!option.mine}
-      // #1187: the assignee row is a TOGGLE — clicking the name you already
-      // voted for withdraws it. Priority and category keep the idempotent
-      // re-vote: their check doubles as "my current pick", and un-picking
-      // them was never the reported gap.
-      {...(option.mine && field === 'assignee' ? { title: 'Click again to remove your pick' } : null)}
       onClick={() => {
         if (field === 'assignee' && option.mine) controller()?._withdrawAttrVote?.();
         else controller()?._castAttrVote?.(option.value);
       }}
+      // #1187: the assignee row is a TOGGLE — clicking the name you already
+      // voted for withdraws it. Priority and category keep the idempotent
+      // re-vote: their check doubles as "my current pick", and un-picking
+      // them was never the reported gap.
+      {...(option.mine && field === 'assignee' ? { get title() { return tr("workshop:click_again_to_remove_your_pick_a59a5e40"); } } : null)}
     >
       <span className="attr-opt-label">
         {option.dot ? <span className={`attr-dot ${option.dot}`} /> : null}
@@ -114,9 +117,7 @@ function AddBox({ add, suggestions }: { add: AttrAddView; suggestions: string[] 
           ))}
         </div>
       ) : null}
-      <button type="button" id={add.buttonId} className="attr-pop-addbtn" onClick={submit}>
-        Add
-      </button>
+      <button type="button" id={add.buttonId} className="attr-pop-addbtn" onClick={submit}><Message id="workshop:add_9fd728c6" /></button>
     </div>
   );
 }
@@ -126,10 +127,10 @@ export function AttrPopoverView({
 }: AttrPopoverState) {
   if (phase === 'idle') return null;
   if (phase === 'loading') {
-    return <div className="px-3 py-2 text-xs text-zinc-500 dark:text-zinc-400">Loading…</div>;
+    return <div className="px-3 py-2 text-xs text-zinc-500 dark:text-zinc-400"><Message id="workshop:loading_ba3bbbe1" /></div>;
   }
   if (phase === 'error') {
-    return <div className="px-3 py-2 text-xs text-red-700 dark:text-red-400">Couldn&#39;t load options.</div>;
+    return <div className="px-3 py-2 text-xs text-red-700 dark:text-red-400"><Message id="workshop:couldn_t_load_options_6f3b25bb" /></div>;
   }
   return (
     <>
@@ -158,5 +159,6 @@ export function AttrPopoverView({
 }
 
 export function AttrPopover() {
+  useUiLanguage();
   return <AttrPopoverView {...useStoreState<AttrPopoverState>(attrPopoverStore)} />;
 }

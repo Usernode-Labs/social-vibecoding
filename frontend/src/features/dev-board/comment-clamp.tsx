@@ -1,3 +1,6 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
 /**
  * "Show more" for a long comment — the one implementation both React comment
  * surfaces use (#2556).
@@ -112,7 +115,7 @@ export function ClampedCommentBody({
           // stopping here keeps that true of any host this lands in next.
           onClick={(e) => { e.stopPropagation(); onToggle?.(); }}
         >
-          {expanded ? 'Show less' : 'Show more'}
+          <LocalizedValue render={() => (expanded ? tr("workshop:show_less_94ea9b1d") : tr("workshop:show_more_f5c9bd13"))} />
         </Button>
       ) : null}
     </>
@@ -136,6 +139,7 @@ export function ClampedComment({
   html?: { __html: string };
   children?: ReactNode;
 }) {
+  useUiLanguage();
   const bodyRef = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState(false);
   const [overflowing, setOverflowing] = useState(false);

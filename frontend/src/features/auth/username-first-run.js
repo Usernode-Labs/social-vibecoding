@@ -73,7 +73,7 @@
 
   // The sentence beside the field (#3575). The same words as
   // USERNAME_PUBLIC_NOTE in ./shared.ts.
-  const PUBLIC_NOTE = 'Your username will be public to other users on Homeroom.';
+  const PUBLIC_NOTE = globalThis.PlatformI18n.t("auth:your_username_will_be_public_to_other_users_on_h_3e5c9a34");
 
   const UsernameFirstRun = {
     _presented: false,
@@ -185,7 +185,7 @@
 
       const panel = el('div', 'px-4 pb-5');
       panel.setAttribute('data-choose-username', '');
-      panel.appendChild(el('div', 'text-lg font-bold py-3', 'Choose your username'));
+      panel.appendChild(el('div', 'text-lg font-bold py-3', globalThis.PlatformI18n.t("auth:choose_your_username_f1597938")));
       // The same vocabulary the profile sheet uses for this field
       // (features/profile/profile-edit-sheet.tsx): "your @handle is your
       // sign-in name and your public page address". No promise about
@@ -195,12 +195,11 @@
       // so this line no longer says it a second time.
       panel.appendChild(el('p',
         'text-sm text-zinc-600 dark:text-zinc-400 mb-3',
-        'This is your @handle: your sign-in name and your public page ' +
-        'address. Letters, numbers and underscores, 3 to 32 characters.'));
+        globalThis.PlatformI18n.t("auth:this_is_your_handle_your_sign_in_name_and_your_p_150a3584")));
 
       const label = el('label',
         'block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1',
-        'Username');
+        globalThis.PlatformI18n.t("auth:username_e3b89e9d"));
       label.htmlFor = 'choose-username-input';
       panel.appendChild(label);
 
@@ -214,7 +213,7 @@
       input.maxLength = 32;
       input.spellcheck = false;
       input.setAttribute('autocapitalize', 'none');
-      input.placeholder = 'yourname';
+      input.placeholder = globalThis.PlatformI18n.t("auth:yourname_22f6e396");
       input.setAttribute('aria-describedby', 'choose-username-public');
       panel.appendChild(input);
 
@@ -237,7 +236,7 @@
       const save = el('button',
         'w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 mt-2 ' +
         'text-sm font-medium text-white disabled:opacity-60',
-        'Continue');
+        globalThis.PlatformI18n.t("auth:continue_31fbef16"));
       save.setAttribute('data-choose-username-save', '');
       panel.appendChild(save);
 
@@ -256,7 +255,7 @@
 
       const submit = async () => {
         const username = input.value.trim();
-        if (!username) { setError('Enter a username.'); return; }
+        if (!username) { setError(globalThis.PlatformI18n.t("auth:enter_a_username_78db4f77")); return; }
         if (opts && opts.demo) {
           // The screenshot state writes nothing. Same stance as app.js's
           // ?shot=terms-consent, which presents the sheet with a fixture
@@ -279,7 +278,7 @@
             // Somebody already got through on another tab — the gate is
             // done, so close rather than pinning an error nobody can fix.
             if (body.alreadyChosen) { dismiss(); return; }
-            setError(body.error || 'Could not save that username.');
+            setError(body.error || globalThis.PlatformI18n.t("auth:could_not_save_that_username_64caca65"));
             save.disabled = false;
             input.disabled = false;
             return;
@@ -296,10 +295,10 @@
             try { window.App.resyncCurrentView?.(); } catch (_) {}
           }
           dismiss();
-          if (window.PlatformUI) PlatformUI.toast(`You are @${body.username}.`);
+          if (window.PlatformUI) PlatformUI.toast(globalThis.PlatformI18n.t("auth:you_are_value1_e1c638a2", { value1: body.username }));
         } catch (err) {
           console.warn('[username-first-run] choose failed:', err);
-          setError('Network error. Try again.');
+          setError(globalThis.PlatformI18n.t("auth:network_error_try_again_052b478f"));
           save.disabled = false;
           input.disabled = false;
         }

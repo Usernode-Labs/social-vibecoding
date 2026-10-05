@@ -1,3 +1,6 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * `#gc-spec-side-panel` — the shared-spec reader's contents, as the only React
  * writer below that host.
@@ -48,21 +51,20 @@ function MarkdownBody({ html }: { html: string }) {
 }
 
 function CopyButton() {
-  const [label, setLabel] = useState('Copy markdown');
+  useUiLanguage();
+  const [label, setLabel] = useState(tr("workshop:copy_markdown_7a99a712"));
   return (
-    <button
-      className="gc-spec-panel-copy"
-      aria-label="Copy the whole spec as markdown"
-      title="Copy the whole spec as markdown"
+    <Localized element={<button
+      className="gc-spec-panel-copy" aria-label={catalogText("workshop:copy_the_whole_spec_as_markdown_c07d091d")} title={catalogText("workshop:copy_the_whole_spec_as_markdown_c07d091d")}
       onClick={async () => {
         const ok = await ui()?.copyText?.(controller()?._specPanelRaw);
-        setLabel(ok ? 'Copied!' : 'Copy failed');
-        if (!ok) ui()?.toast?.('Couldn’t copy. Select the text and copy it manually');
-        setTimeout(() => setLabel('Copy markdown'), 1500);
+        setLabel(ok ? 'Copied!' : tr("workshop:copy_failed_5b50e7a6"));
+        if (!ok) ui()?.toast?.(tr("workshop:couldn_t_copy_select_the_text_and_copy_it_manual_9181be57"));
+        setTimeout(() => setLabel(tr("workshop:copy_markdown_7a99a712")), 1500);
       }}
     >
       {label}
-    </button>
+    </button>} messages={{"aria-label":"workshop:copy_the_whole_spec_as_markdown_c07d091d","title":"workshop:copy_the_whole_spec_as_markdown_c07d091d"}} />
   );
 }
 
@@ -76,13 +78,12 @@ export function SpecPanelView({ open, title, subtitle, canCopy, body }: SpecPane
           {subtitle ? <div className="gc-spec-panel-subtitle">{subtitle}</div> : null}
         </div>
         {canCopy ? <CopyButton /> : null}
-        <button
-          className="gc-spec-panel-close"
-          aria-label="Close spec panel"
+        <Localized element={<button
+          className="gc-spec-panel-close" aria-label={catalogText("workshop:close_spec_panel_ff189ab2")}
           onClick={() => controller()?._closeSpecPanel?.()}
         >
           ×
-        </button>
+        </button>} messages={{"aria-label":"workshop:close_spec_panel_ff189ab2"}} />
       </div>
       {body && body.kind === 'markdown'
         ? <MarkdownBody html={body.html} />
@@ -96,5 +97,6 @@ export function SpecPanelView({ open, title, subtitle, canCopy, body }: SpecPane
 }
 
 export function SpecPanel() {
+  useUiLanguage();
   return <SpecPanelView {...useStoreState<SpecPanelState>(specPanelStore)} />;
 }

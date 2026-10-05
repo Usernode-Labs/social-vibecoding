@@ -1,3 +1,6 @@
+import { t as tr } from "../../lib/i18n/runtime";
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * Share dialog (#share-modal).
  *
@@ -66,8 +69,8 @@ export function shareAudience(app: { view_visibility?: unknown; audience?: unkno
 }
 
 export const SHARE_COPY: Readonly<Record<ShareAudience, string>> = Object.freeze({
-  members: 'Only members can open it. Invite people to let them in.',
-  public: 'Anyone with a Homeroom account can open it.',
+  get members() { return tr("core:only_members_can_open_it_invite_people_to_let_th_a75f15f8"); },
+  get public() { return tr("core:anyone_with_a_homeroom_account_can_open_it_791fd9c3"); },
 });
 
 /**
@@ -84,9 +87,10 @@ function openInvitePane(): void {
 }
 
 export function ShareDialog() {
+  useUiLanguage();
   const inputRef = useRef<HTMLInputElement>(null);
   const [href, setHref] = useState('');
-  const [copyLabel, setCopyLabel] = useState('Copy');
+  const [copyLabel, setCopyLabel] = useState(tr("core:copy_e21f935f"));
   const [audience, setAudience] = useState<ShareAudience>('members');
   const flashRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Set by "Invite people" and read once the dialog's exit has landed: the
@@ -102,7 +106,7 @@ export function ShareDialog() {
       const url = raw && window.resolveDevHost ? window.resolveDevHost(raw) : raw;
       if (inputRef.current) inputRef.current.value = url;
       setHref(url);
-      setCopyLabel('Copy');
+      setCopyLabel(tr("core:copy_e21f935f"));
       setTimeout(() => {
         inputRef.current?.focus();
         inputRef.current?.select();
@@ -111,7 +115,7 @@ export function ShareDialog() {
     onClose: () => {
       if (flashRef.current) clearTimeout(flashRef.current);
       flashRef.current = null;
-      setCopyLabel('Copy');
+      setCopyLabel(tr("core:copy_e21f935f"));
       if (inviteNext.current) {
         inviteNext.current = false;
         openInvitePane();
@@ -150,7 +154,7 @@ export function ShareDialog() {
         /* both paths refused — say so on the button */
       }
     }
-    setCopyLabel(ok ? 'Copied!' : 'Copy failed');
+    setCopyLabel(ok ? 'Copied!' : tr("core:copy_failed_5b50e7a6"));
     if (flashRef.current) clearTimeout(flashRef.current);
     flashRef.current = setTimeout(() => setCopyLabel('Copy'), 1500);
   }
@@ -162,30 +166,26 @@ export function ShareDialog() {
       {...dialog.backdropProps}
     >
       <DialogCard size="md" relative>
-        <button
+        <Localized element={<button
           id="share-close"
-          className="absolute top-4 right-4 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200 transition-colors"
-          aria-label="Close share"
+          className="absolute top-4 right-4 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200 transition-colors" aria-label={catalogText("core:close_share_bfc83eec")}
           onClick={() => dialog.close()}
         >
           <XIcon className="w-5 h-5" />
-        </button>
-        <h2 className="text-lg font-bold mb-1 text-zinc-900 dark:text-zinc-100">
-          Share this app
-        </h2>
+        </button>} messages={{"aria-label":"core:close_share_bfc83eec"}} />
+        <h2 className="text-lg font-bold mb-1 text-zinc-900 dark:text-zinc-100"><Message id="core:share_this_app_27b2c870" /></h2>
         <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
           {SHARE_COPY[audience]}
         </p>
         <div className="flex gap-2">
-          <Input
+          <Localized element={<Input
             id="share-url-input"
             ref={inputRef}
             type="text"
             readOnly={true}
             width="flex1"
-            mono
-            aria-label="Share URL"
-          />
+            mono aria-label={catalogText("core:share_url_04db8a9c")}
+          />} messages={{"aria-label":"core:share_url_04db8a9c"}} />
           <Button id="share-copy-btn" className="whitespace-nowrap" onClick={copy}>
             {copyLabel}
           </Button>
@@ -200,9 +200,7 @@ export function ShareDialog() {
               ink="neutral"
               onClick={invite}
             >
-              <UserGroupIcon className="w-4 h-4" aria-hidden="true" />
-              Invite people
-            </Button>
+              <UserGroupIcon className="w-4 h-4" aria-hidden="true" /><Message id="core:invite_people_27bf0f2d" /></Button>
           ) : null}
           <a
             id="share-open-link"
@@ -210,9 +208,7 @@ export function ShareDialog() {
             target="_blank"
             rel="noopener"
             className="text-sm text-violet-700 hover:text-violet-400 transition-colors inline-flex items-center gap-1 dark:text-violet-400"
-          >
-            Open in new tab
-            <ArrowRightIcon className="w-4 h-4" />
+          ><Message id="core:open_in_new_tab_e0af5c0b" /><ArrowRightIcon className="w-4 h-4" />
           </a>
         </div>
       </DialogCard>

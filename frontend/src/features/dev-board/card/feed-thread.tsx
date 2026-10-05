@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../../lib/i18n/react";
+import { t as tr } from "../../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../../lib/i18n/react";
 /**
  * The Activity feed's inline discussion: recent replies under a row, and a box
  * to add one without opening the row.
@@ -188,16 +192,14 @@ export function FeedReplyComposer({
       // must stay in place while somebody writes a reply.
       onClick={(e) => e.stopPropagation()}
     >
-      <Textarea
+      <Localized element={<Textarea
         ref={inputRef}
         rows={1}
         box="activityReply"
         width="flex"
         hint="muted"
         ring={false}
-        className="focus:outline-none focus:ring-1 focus:ring-violet-500"
-        placeholder="Reply…"
-        aria-label="Reply to this item"
+        className="focus:outline-none focus:ring-1 focus:ring-violet-500" placeholder={catalogText("workshop:reply_1d627af0")} aria-label={catalogText("workshop:reply_to_this_item_b8782730")}
         value={draft}
         disabled={posting}
         onChange={(e) => { onDraftChange(e.target.value); syncMenus(); }}
@@ -220,23 +222,21 @@ export function FeedReplyComposer({
           e.preventDefault();
           if (!posting && draft.trim()) void onSubmit();
         }}
-      />
+      />} messages={{"placeholder":"workshop:reply_1d627af0","aria-label":"workshop:reply_to_this_item_b8782730"}} />
       {/* The dev session's send disc: a 36px filled accent circle with the
           up-arrow (app.css `.dev-feed-send`), so every "send" on the platform
           is the same object. */}
-      <Button
+      <Localized element={<Button
         type="submit"
         variant="unstyled"
         disabledStyle="block"
         size="icon"
         ink="none"
         className="dev-feed-send shrink-0 un-touch-target inline-flex items-center justify-center"
-        disabled={posting || !draft.trim()}
-        title="Send reply"
-        aria-label="Send reply"
+        disabled={posting || !draft.trim()} title={catalogText("workshop:send_reply_625aafc3")} aria-label={catalogText("workshop:send_reply_625aafc3")}
       >
         {posting ? '…' : <ArrowUpIcon aria-hidden="true" />}
-      </Button>
+      </Button>} messages={{"title":"workshop:send_reply_625aafc3","aria-label":"workshop:send_reply_625aafc3"}} />
       <FeedMentionMenu
         items={mention.items}
         active={mention.active}
@@ -268,6 +268,7 @@ export function FeedThread({
   refId: number;
   canPost: boolean;
 }): ReactNode {
+  useUiLanguage();
   const key = threadKey(type, refId);
   const all = useStoreState(feedThreadStore);
   const state = all[key] || readThread(key);
@@ -297,7 +298,7 @@ export function FeedThread({
     } catch {
       // A thread that will not load is a quiet row, not an error banner: the
       // card above it is the thing the viewer came for.
-      patchThread(key, { loading: false, loaded: true, error: 'load' });
+      patchThread(key, { loading: false, loaded: true, get error() { return tr("workshop:load_0cf67fc7"); } });
     }
   }, [key, slug, type, refId]);
 
@@ -341,7 +342,7 @@ export function FeedThread({
       // the thread while the box was open.
       await load();
     } catch {
-      patchThread(key, { posting: false, error: 'post' });
+      patchThread(key, { posting: false, get error() { return tr("workshop:post_72231043"); } });
     }
   }, [draft, key, slug, type, refId, load]);
 
@@ -354,14 +355,12 @@ export function FeedThread({
           the box. It used to sit under the bubbles, reading as a footer. */}
       {hidden > 0 ? (
         <div className="dev-feed-earlier text-xs text-zinc-400 dark:text-zinc-500">
-          {`${hidden} earlier ${hidden === 1 ? 'reply' : 'replies'}`}
+          <LocalizedValue render={() => (tr("workshop:message_0df86de73c09", { value1: hidden, count: hidden }))} />
         </div>
       ) : null}
       {state.messages.map((m) => <MessageLine key={m.id} m={m} />)}
       {state.error === 'post' ? (
-        <div className="text-xs text-rose-600 dark:text-rose-400">
-          That didn’t send. Try again, or open the item to reply there.
-        </div>
+        <div className="text-xs text-rose-600 dark:text-rose-400"><Message id="workshop:that_didn_t_send_try_again_or_open_the_item_to_r_d9f86b49" /></div>
       ) : null}
       {canPost ? (
         <FeedReplyComposer

@@ -1,3 +1,5 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { Message } from "../../lib/i18n/react";
 /**
  * The AI-credit row in Settings → Anthropic API key, as the only writer
  * below `#drawer-row-ai-budget`. See ./ai-budget-store.ts for the split.
@@ -108,10 +110,11 @@ export function AiBudgetMeter({ view }: { view: AiBudgetState['view'] }): ReactN
 
 /** The whole row: its own `hidden`, its label, and the slot the meter fills. */
 export function AiBudgetRow(): ReactNode {
+  useUiLanguage();
   const { view, hidden } = useStoreState<AiBudgetState>(aiBudgetStore);
   return (
     <div id="drawer-row-ai-budget" className={hidden ? `${ROW} hidden` : ROW}>
-      <span className="font-medium text-zinc-700 dark:text-zinc-300">AI credit</span>
+      <span className="font-medium text-zinc-700 dark:text-zinc-300"><Message id="account:ai_credit_d7efdf04" /></span>
       <span id="ai-budget-slot" className="ml-auto grow min-w-0 text-right">
         <AiBudgetMeter view={view} />
       </span>

@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * `#app-list` — the launcher grid, as the only React writer below that node.
  *
@@ -206,9 +210,9 @@ function AppCardTile({ app, style, yours, live }: {
       data-locked={String(app.locked)}
       tabIndex={0}
       role="button"
-      aria-label={live ? `${app.name}, ${LIVE_APP_LABEL}` : app.name}
+      aria-label={live ? `${app.name}, ${LIVE_APP_LABEL()}` : app.name}
       aria-haspopup="menu"
-      title={`${app.name}. Hold or right-click for app actions`}
+      title={tr("core:value1_hold_or_right_click_for_app_actions_1bf24369", { value1: app.name })}
       {...(app.demo ? { 'data-demo': 'true' } : null)}
       {...(yours ? { 'data-yours': 'true' } : null)}
       {...(live ? { 'data-live': 'true' } : null)}
@@ -284,13 +288,13 @@ function AppCardTile({ app, style, yours, live }: {
           <AppIcon icon={app.icon} />
         </div>
         {app.forkName ? (
-          <span
+          <LocalizedDynamic element={<span
             className="fork-tag absolute -bottom-1 -left-1 w-5 h-5 flex items-center justify-center rounded-full bg-amber-500 text-white text-xs font-bold shadow-sm"
-            title={`Remixed from ${app.forkName}`}
-            aria-label={`Remixed from ${app.forkName}`}
+            title={tr("apps:remixed_from_value1_7e6472dc", { value1: app.forkName })}
+            aria-label={tr("apps:remixed_from_value1_7e6472dc", { value1: app.forkName })}
           >
             ⑂
-          </span>
+          </span>} resolve={() => ({ get "title"() { return tr("apps:remixed_from_value1_7e6472dc", { value1: app.forkName }); }, get "aria-label"() { return tr("apps:remixed_from_value1_7e6472dc", { value1: app.forkName }); } })} />
         ) : null}
         {/* #2902: still loaded — opening it resumes it as it was left. */}
         {live ? <LiveAppDot className="app-card-live-dot" /> : null}
@@ -302,16 +306,16 @@ function AppCardTile({ app, style, yours, live }: {
             the fork tag (bottom-left) and the live dot (top-right) leave.
         */}
         {app.audience !== 'open' ? (
-          <span
+          <LocalizedDynamic element={<span
             className="app-card-stage absolute -bottom-1 -right-1 w-5 h-5 flex items-center justify-center rounded-full bg-white text-zinc-600 shadow-[0_0_0_1.5px_var(--app-sheet-line)] dark:bg-zinc-800 dark:text-zinc-300"
             data-stage={app.audience}
-            title={app.audience === 'invited' ? 'Private community' : 'Just you'}
-            aria-label={app.audience === 'invited' ? 'Private community' : 'Just you'}
+            title={app.audience === 'invited' ? tr("apps:private_community_cbb6e031") : tr("apps:just_you_aeed20a9")}
+            aria-label={app.audience === 'invited' ? tr("apps:private_community_cbb6e031") : tr("apps:just_you_aeed20a9")}
           >
             {app.audience === 'invited'
               ? <UserGroupIcon className="w-3 h-3" aria-hidden="true" />
               : <LockIcon className="w-3 h-3" aria-hidden="true" />}
-          </span>
+          </span>} resolve={() => ({ "title": app.audience === 'invited' ? tr("apps:private_community_cbb6e031") : tr("apps:just_you_aeed20a9"), "aria-label": app.audience === 'invited' ? tr("apps:private_community_cbb6e031") : tr("apps:just_you_aeed20a9") })} />
         ) : null}
       </div>
       <div className="w-full min-w-0">
@@ -324,15 +328,13 @@ function AppCardTile({ app, style, yours, live }: {
             >
               {app.statusLabel}
             </p>
-            <button
+            <LocalizedDynamic element={<button
               type="button"
               className={RETRY_BTN}
               data-slug={app.slug}
-              aria-label={`Retry ${app.name}`}
+              aria-label={tr("apps:retry_value1_8b58737c", { value1: app.name })}
               onClick={(e) => { e.stopPropagation(); controller()?._onRetry?.(app.slug, e.currentTarget); }}
-            >
-              Retry
-            </button>
+            ><Message id="apps:retry_942087cc" /></button>} resolve={() => ({ get "aria-label"() { return tr("apps:retry_value1_8b58737c", { value1: app.name }); } })} />
           </div>
         ) : app.statusLabel ? (
           <p
@@ -378,12 +380,13 @@ export function AppsEmptyNote() {
       data-home-apps-empty=""
       className="col-span-full flex items-center justify-center px-4 py-8 text-center text-sm text-zinc-500 dark:text-zinc-400"
     >
-      {NO_APPS_YET}
+      {NO_APPS_YET()}
     </div>
   );
 }
 
 export function AppGrid() {
+  useUiLanguage();
   const state = useStoreState(gridStore);
   const live = useLiveAppSlugs();
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -471,20 +474,19 @@ export function AppGrid() {
       ) : null}
       {state.emptyQuery !== null ? (
         <div className="col-span-full py-10 text-center text-sm text-zinc-500 dark:text-zinc-400">
-          {`No apps match “${state.emptyQuery}”. Clear the search and try `}
-          <span className="text-violet-700 dark:text-violet-400">Discover</span>
-          {' below.'}
+          <LocalizedValue render={() => (tr("apps:no_apps_match_value1_clear_the_search_and_try_f79055c1", { value1: state.emptyQuery }))} />
+          <span className="text-violet-700 dark:text-violet-400"><Message id="apps:discover_d4a33d5b" /></span>
+          <Message id="apps:below_4932a3b0" />
         </div>
       ) : null}
       {state.resultsHeading ? (
         <div className="home-section-header col-span-full">{state.resultsHeading}</div>
       ) : null}
       {!state.ready && !state.notice ? (
-        <TileSkeleton
-          n={SKELETON_TILES}
-          label="Loading your apps"
+        <Localized element={<TileSkeleton
+          n={SKELETON_TILES} label={catalogText("apps:loading_your_apps_402e4084")}
           className="col-span-full grid grid-cols-4 gap-1.5 sm:gap-2"
-        />
+        />} messages={{"label":"apps:loading_your_apps_402e4084"}} />
       ) : null}
       {empty ? <AppsEmptyNote /> : null}
       {state.items.map((item) => (

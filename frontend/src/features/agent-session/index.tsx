@@ -1,3 +1,8 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { RichMessage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 import {
   memo,
   useCallback,
@@ -247,13 +252,12 @@ export function OpenAppButton({ target }: { target: { slug: string; name: string
   }, [target]);
   if (!target) return null;
   return (
-    <button
+    <Localized element={<LocalizedDynamic element={<button
       type="button"
       data-agent-session-open-app
       data-open-app={target.slug}
       className="hidden lg:inline-flex shrink-0 items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-1 [@container(max-width:32rem)]:px-2 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
-      title={`Open ${target.name || target.slug} with this chat docked beside it`}
-      aria-label="Open app"
+      title={tr("workshop:open_value1_with_this_chat_docked_beside_it_2b156f1c", { value1: target.name || target.slug })} aria-label={catalogText("workshop:open_app_e51c6b48")}
       onClick={open}
     >
       <AppWindowIcon className="h-3.5 w-3.5" aria-hidden="true" />
@@ -261,8 +265,8 @@ export function OpenAppButton({ target }: { target: { slug: string; name: string
           1024px screen) the words go and the window mark stays, so the row
           still fits on one line without squeezing the pills that name things
           down to nothing. The row is the container (SessionBar). */}
-      <span className="truncate [@container(max-width:32rem)]:hidden">Open app</span>
-    </button>
+      <span className="truncate [@container(max-width:32rem)]:hidden"><Message id="workshop:open_app_e51c6b48" /></span>
+    </button>} resolve={() => ({ get "title"() { return tr("workshop:open_value1_with_this_chat_docked_beside_it_2b156f1c", { value1: target.name || target.slug }); } })} />} messages={{"aria-label":"workshop:open_app_e51c6b48"}} />
   );
 }
 
@@ -279,7 +283,7 @@ function statusTone(status: string | null | undefined) {
 }
 
 function changeRef(change: AgentChange) {
-  return change.prNumber ? `PR #${change.prNumber}` : `Change ${change.id}`;
+  return change.prNumber ? tr("workshop:pr_value1_e1d02dd7", { value1: change.prNumber }) : tr("workshop:change_value1_2c7346eb", { value1: change.id });
 }
 
 // ── Header ─────────────────────────────────────────────────────────────
@@ -331,17 +335,16 @@ function SessionBar({ session, about, embedded, action }: {
   // The row is `min-w-0`, so whatever it holds it cannot widen the panel
   // (#3016). The Messages pane's title is a line of its own above it rather
   // than a sibling the pills wrap around.
-  const focusTitle = 'The app this conversation is about when a request does not name one. The agent moves it when you ask.';
+  const focusTitle = tr("workshop:the_app_this_conversation_is_about_when_a_reques_4b65656e");
   const changeText = active
     ? changeStatusLabel(active.status, building)
-    : 'No change yet';
+    : tr("workshop:no_change_yet_9b02a086");
   return (
     <div className="border-b border-zinc-200 px-4 py-2 dark:border-zinc-800" data-agent-session-bar>
       {embedded ? (
         <div className="mb-2 min-w-0">
-          <h2 className="truncate text-base font-semibold text-zinc-900 dark:text-zinc-100">{session?.title || 'New session'}</h2>
-          <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">
-            Agent session{about?.focusApp?.name ? ` · started from ${about.focusApp.name}` : ''}
+          <h2 className="truncate text-base font-semibold text-zinc-900 dark:text-zinc-100"><LocalizedValue render={() => (session?.title || tr("workshop:new_session_cffdba22"))} /></h2>
+          <p className="truncate text-xs text-zinc-500 dark:text-zinc-400"><Message id="workshop:agent_session_da3d3fb8" /><LocalizedValue render={() => (about?.focusApp?.name ? tr("workshop:started_from_value1_3ff9d513", { value1: about.focusApp.name }) : '')} />
           </p>
         </div>
       ) : null}
@@ -363,7 +366,7 @@ function SessionBar({ session, about, embedded, action }: {
               iconEmoji={about.focusApp.iconEmoji}
             />
           ) : null}
-          <span className="min-w-0 max-w-[7rem] truncate">{about?.focusApp?.name || 'Any app'}</span>
+          <span className="min-w-0 max-w-[7rem] truncate"><LocalizedValue render={() => (about?.focusApp?.name || tr("workshop:any_app_3e99f65d"))} /></span>
         </span>
         <span
           data-agent-session-change-pill
@@ -371,7 +374,7 @@ function SessionBar({ session, about, embedded, action }: {
           title={changeText}
         >
           <span className="min-w-0 truncate">
-            {active ? changeStatusLabel(active.status, building) : 'No change yet'}
+            <LocalizedValue render={() => (active ? changeStatusLabel(active.status, building) : tr("workshop:no_change_yet_9b02a086"))} />
           </span>
         </span>
         <button
@@ -381,9 +384,7 @@ function SessionBar({ session, about, embedded, action }: {
           onClick={() => setDrawerOpen(true)}
           disabled={!session}
           aria-haspopup="dialog"
-        >
-          Changes · {count}
-        </button>
+        ><RichMessage id="workshop:sentence_2c0111acbf9d" values={{ value1: count }} /></button>
         <OpenAppButton target={target} />
         {action}
         <SessionMenu session={session} />
@@ -397,14 +398,13 @@ function SessionBar({ session, about, embedded, action }: {
  * Unarchive. Nothing to act on while the conversation is unsent.
  */
 function SessionMenu({ session }: { session: AgentSession | null }) {
+  useUiLanguage();
   const [open, setOpen] = useState(false);
   return (
-    <button
+    <Localized element={<button
       type="button"
       data-agent-session-menu
-      className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-zinc-700 hover:bg-zinc-200 hover:text-zinc-900 disabled:opacity-40 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
-      aria-label="Session actions"
-      title="Session actions"
+      className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-zinc-700 hover:bg-zinc-200 hover:text-zinc-900 disabled:opacity-40 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-100" aria-label={catalogText("workshop:session_actions_742ab447")} title={catalogText("workshop:session_actions_742ab447")}
       aria-haspopup="menu"
       aria-expanded={open}
       disabled={!session}
@@ -416,12 +416,12 @@ function SessionMenu({ session }: { session: AgentSession | null }) {
         void menu.call(window.PlatformUI, {
           anchorEl: event.currentTarget,
           items: [
-            { label: 'Rename…', handler: () => { void renameCurrentSession(); } },
+            { get label() { return tr("workshop:rename_6fa62b3d"); }, handler: () => { void renameCurrentSession(); } },
             archived
-              ? { label: 'Unarchive', title: 'Bring this session back to your lists', handler: () => { void unarchiveCurrentSession(); } }
+              ? { get label() { return tr("workshop:unarchive_f565318d"); }, get title() { return tr("workshop:bring_this_session_back_to_your_lists_447bdb68"); }, handler: () => { void unarchiveCurrentSession(); } }
               : {
-                label: 'Archive',
-                title: 'Hide this session from your lists and pause its change',
+                get label() { return tr("workshop:archive_66f4804e"); },
+                get title() { return tr("workshop:hide_this_session_from_your_lists_and_pause_its__a04bfbf7"); },
                 destructive: true,
                 handler: () => { void archiveCurrentSession(); },
               },
@@ -430,7 +430,7 @@ function SessionMenu({ session }: { session: AgentSession | null }) {
       }}
     >
       <EllipsisHorizontalIcon className="h-4 w-4" aria-hidden="true" />
-    </button>
+    </button>} messages={{"aria-label":"workshop:session_actions_742ab447","title":"workshop:session_actions_742ab447"}} />
   );
 }
 
@@ -444,6 +444,7 @@ function SessionMenu({ session }: { session: AgentSession | null }) {
  * a refused card is never confirmed a second time.
  */
 function JoinToRetry({ card, join }: { card: CardView; join: { slug: string; name: string } }) {
+  useUiLanguage();
   const [state, setState] = useState<'idle' | 'busy' | 'joined' | 'failed'>('idle');
   const onJoin = async () => {
     if (state === 'busy' || state === 'joined') return;
@@ -458,17 +459,14 @@ function JoinToRetry({ card, join }: { card: CardView; join: { slug: string; nam
     }
     if (!ok) { setState('failed'); return; }
     setState('joined');
-    void sendAgentMessage(`I joined ${join.name}. Please try "${card.title}" again.`);
+    void sendAgentMessage(tr("workshop:i_joined_value1_please_try_value2_again_549f0e48", { value1: join.name, value2: card.title }));
   };
   return (
     <div className="mt-3 flex flex-col gap-2" data-agent-session-join={join.slug}>
-      <p className="text-sm text-zinc-700 dark:text-zinc-300">
-        Only members of {join.name} can do this. Join it, and the agent will try again.
-      </p>
+      <p className="text-sm text-zinc-700 dark:text-zinc-300"><RichMessage id="workshop:sentence_1b493f9a507b" values={{ value1: join.name }} /></p>
       {state === 'joined' ? (
         <p className="inline-flex items-center gap-1.5 text-sm font-semibold text-zinc-600 dark:text-zinc-300" data-agent-session-joined="">
-          <CheckIcon className="h-4 w-4 shrink-0" aria-hidden="true" /> Joined. Asked the agent to try again.
-        </p>
+          <CheckIcon className="h-4 w-4 shrink-0" aria-hidden="true" /><Message before={" "} id="workshop:joined_asked_the_agent_to_try_again_4adb34dc" /></p>
       ) : (
         <div className="flex flex-wrap items-center gap-2">
           <Button
@@ -480,10 +478,9 @@ function JoinToRetry({ card, join }: { card: CardView; join: { slug: string; nam
             disabled={state === 'busy'}
             onClick={() => { void onJoin(); }}
           >
-            {state === 'busy' ? <SpinnerArcIcon className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
-            Join {join.name}
+            {state === 'busy' ? <SpinnerArcIcon className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}<Message after={" "} id="workshop:join_fd30fe68" />{join.name}
           </Button>
-          {state === 'failed' ? <span className="text-sm text-red-700 dark:text-red-300">That did not work. Try again.</span> : null}
+          {state === 'failed' ? <span className="text-sm text-red-700 dark:text-red-300"><Message id="workshop:that_did_not_work_try_again_d38eba7d" /></span> : null}
         </div>
       )}
     </div>
@@ -495,17 +492,17 @@ function Card({ card, live = false }: { card: CardView; live?: boolean }) {
   const deciding = decidingId === card.id;
   const pending = card.status === 'pending';
   return (
-    <section
+    <LocalizedDynamic element={<section
       className={`agent-session-card mt-3 rounded-2xl border bg-white p-4 dark:bg-zinc-900 ${pending ? 'border-violet-300 dark:border-violet-800' : 'border-zinc-200 dark:border-zinc-800'}`}
-      aria-label={`Confirm: ${card.title}`}
+      aria-label={tr("workshop:confirm_value1_31bd64c8", { value1: card.title })}
       data-agent-session-card={card.status}
     >
-      {pending ? <p className="mb-1 text-xs font-semibold text-violet-700 dark:text-violet-300">Needs your OK</p> : null}
+      {pending ? <p className="mb-1 text-xs font-semibold text-violet-700 dark:text-violet-300"><Message id="workshop:needs_your_ok_4e9f2de3" /></p> : null}
       <h3 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">{card.title}</h3>
       {card.rows.length ? (
         <dl className="mt-2 grid grid-cols-[auto,1fr] gap-x-4 gap-y-1 text-sm">
-          {card.rows.map(([label, value]) => (
-            <div key={label} className="contents">
+          {card.rows.map(([label, value], index) => (
+            <div key={index} className="contents">
               <dt className="text-zinc-500 dark:text-zinc-400">{label}</dt>
               <dd className="min-w-0 break-words text-zinc-900 dark:text-zinc-100">{value}</dd>
             </div>
@@ -523,9 +520,7 @@ function Card({ card, live = false }: { card: CardView; live?: boolean }) {
             disabled={!!decidingId}
             onClick={() => void decideCard(card.id, 'confirm')}
           >
-            {deciding ? <SpinnerArcIcon className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
-            Confirm
-          </Button>
+            {deciding ? <SpinnerArcIcon className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}<Message id="workshop:confirm_eebdd24a" /></Button>
           <Button
             type="button"
             data-agent-session-dismiss
@@ -534,28 +529,26 @@ function Card({ card, live = false }: { card: CardView; live?: boolean }) {
             ink="neutral"
             disabled={!!decidingId}
             onClick={() => void decideCard(card.id, 'dismiss')}
-          >
-            Not now
-          </Button>
+          ><Message id="workshop:not_now_a0e63d7c" /></Button>
         </div>
       ) : null}
-      {live ? <p className="mt-3 text-xs text-zinc-500 dark:text-zinc-400">Waiting for the agent to finish…</p> : null}
+      {live ? <p className="mt-3 text-xs text-zinc-500 dark:text-zinc-400"><Message id="workshop:waiting_for_the_agent_to_finish_ac1be248" /></p> : null}
       {card.status === 'running' ? (
-        <p className="mt-3 inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300"><SpinnerArcIcon className="h-4 w-4 animate-spin" aria-hidden="true" /> Running…</p>
+        <p className="mt-3 inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300"><SpinnerArcIcon className="h-4 w-4 animate-spin" aria-hidden="true" /><Message before={" "} id="workshop:running_46c54136" /></p>
       ) : null}
       {card.status === 'done' ? (
         <p className="mt-3 inline-flex items-start gap-1.5 text-sm font-semibold text-emerald-700 dark:text-emerald-300">
-          <CheckIcon className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" /> Confirmed{card.outcome ? ` · ${card.outcome}` : ''}
+          <CheckIcon className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" /><Message before={" "} id="workshop:confirmed_fe00b67b" />{card.outcome ? ` · ${card.outcome}` : ''}
         </p>
       ) : null}
       {card.status === 'failed' && card.join ? (
         <JoinToRetry card={card} join={card.join} />
       ) : card.status === 'failed' ? (
-        <p className="mt-3 text-sm font-semibold text-red-700 dark:text-red-300">Did not go through{card.outcome ? `: ${card.outcome}` : '.'}</p>
+        <p className="mt-3 text-sm font-semibold text-red-700 dark:text-red-300"><Message id="workshop:did_not_go_through_e2260c51" />{card.outcome ? `: ${card.outcome}` : '.'}</p>
       ) : null}
-      {card.status === 'dismissed' ? <p className="mt-3 text-sm text-zinc-500 dark:text-zinc-400">Dismissed. Nothing was changed.</p> : null}
-      {card.status === 'expired' ? <p className="mt-3 text-sm text-zinc-500 dark:text-zinc-400">This confirmation expired. Ask again for a fresh one.</p> : null}
-    </section>
+      {card.status === 'dismissed' ? <p className="mt-3 text-sm text-zinc-500 dark:text-zinc-400"><Message id="workshop:dismissed_nothing_was_changed_b419471c" /></p> : null}
+      {card.status === 'expired' ? <p className="mt-3 text-sm text-zinc-500 dark:text-zinc-400"><Message id="workshop:this_confirmation_expired_ask_again_for_a_fresh__6474e30d" /></p> : null}
+    </section>} resolve={() => ({ get "aria-label"() { return tr("workshop:confirm_value1_31bd64c8", { value1: card.title }); } })} />
   );
 }
 
@@ -577,9 +570,7 @@ const Item = memo(function Item({ item, sessionId = null }: { item: TranscriptIt
     case 'mayor':
       return (
         <article data-agent-session-mayor>
-          <p className="mb-1 text-xs font-semibold text-emerald-700 dark:text-emerald-400">
-            Agent
-            {item.cost ? (
+          <p className="mb-1 text-xs font-semibold text-emerald-700 dark:text-emerald-400"><Message id="workshop:agent_11b39c93" />{item.cost ? (
               <span className="font-normal text-zinc-500 dark:text-zinc-400" data-agent-session-reply-cost>{` · ${item.cost}`}</span>
             ) : null}
           </p>
@@ -615,9 +606,7 @@ const Item = memo(function Item({ item, sessionId = null }: { item: TranscriptIt
             className="text-sm font-semibold text-violet-700 hover:underline dark:text-violet-300"
             data-agent-session-retry-turn
             onClick={() => { void retryTurn(); }}
-          >
-            Retry
-          </button>
+          ><Message id="workshop:retry_942087cc" /></button>
         </div>
       );
     }
@@ -660,14 +649,14 @@ export function RunCard({ run }: { run: RunItem }) {
     caption: run.agent || undefined,
     elapsed: running
       ? (turn.startedAt ? { kind: 'since', since: turn.startedAt } : null)
-      : duration ? { kind: 'fixed', label: `(took ${duration})` } : null,
+      : duration ? { kind: 'fixed', get label() { return tr("workshop:took_value1_3b10d750", { value1: duration }); } } : null,
     stamp: '',
     progress: running && turn.progress
       ? { current: turn.progress, steps: run.log.length, phase: '', estimate: '', countdownTo: null, cohortSince: null }
       : undefined,
     body: html
       ? { kind: 'md', html }
-      : { kind: 'log', persistId: `agent-run-log-${run.key}`, text: run.output || logText || (running ? 'Starting…' : 'No output.') },
+      : { kind: 'log', persistId: `agent-run-log-${run.key}`, text: run.output || logText || (running ? tr("workshop:starting_bbe5fc3b") : tr("workshop:no_output_dfdba897")) },
   };
   return (
     <div data-agent-session-run={run.status} data-agent-session-run-mode={run.mode}>
@@ -683,7 +672,7 @@ const CHECK_TONE: Record<string, string> = {
   passing: 'text-green-700 dark:text-green-400',
   failing: 'text-red-700 dark:text-red-300',
   running: 'text-zinc-500 dark:text-zinc-400',
-  error: 'text-amber-700 dark:text-amber-300',
+  get error() { return tr("workshop:text_amber_700_dark_text_amber_300_0918d99e"); },
   skipped: 'text-zinc-500 dark:text-zinc-400',
 };
 // Why checks were skipped, as text under the line rather than a tooltip: a
@@ -742,11 +731,11 @@ export function PreviewCardView({ item, change, wide, action, busy }: {
   busy: boolean;
 }) {
   const prNumber = item.prNumber || change?.prNumber || null;
-  const heading = item.failed ? 'The preview failed to build' : 'Preview ready';
+  const heading = item.failed ? tr("workshop:the_preview_failed_to_build_54cde3a6") : tr("workshop:preview_ready_954fcf76");
   if (item.superseded) {
     return (
       <section className="rounded-2xl border border-zinc-200 px-3 py-2 dark:border-zinc-800" data-agent-session-preview="superseded">
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">{heading} · Superseded by a newer preview</p>
+        <p className="text-sm text-zinc-500 dark:text-zinc-400"><RichMessage id="workshop:sentence_bb639fc28652" values={{ value1: heading }} /></p>
       </section>
     );
   }
@@ -766,22 +755,21 @@ export function PreviewCardView({ item, change, wide, action, busy }: {
         <p className={`text-sm font-medium ${item.failed ? 'text-red-700 dark:text-red-300' : 'text-zinc-800 dark:text-zinc-100'}`}>{heading}</p>
         {inVote || merged ? (
           <span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-700 dark:bg-violet-950/60 dark:text-violet-300" data-agent-session-preview-status>
-            {merged ? 'Live' : 'Waiting for approval'}
+            <LocalizedValue render={() => (merged ? tr("workshop:live_b64ac05f") : tr("workshop:waiting_for_approval_10c5739b"))} />
           </span>
         ) : null}
         {checks ? (
-          <button
+          <Localized element={<button
             type="button"
             className={`ml-auto inline-flex items-center gap-1 rounded text-xs hover:underline ${CHECK_TONE[checks.key]}`}
-            data-agent-session-checks={checks.key}
-            title="See each check and its result"
+            data-agent-session-checks={checks.key} title={catalogText("workshop:see_each_check_and_its_result_bb977a75")}
             onClick={() => { if (item.changeId != null) window.AppView?.openSessionChecks?.(item.changeId); }}
           >
             {checks.key === 'running'
               ? <SpinnerArcIcon className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
               : checks.key === 'passing' ? <CheckIcon className="h-3.5 w-3.5" aria-hidden="true" /> : null}
             {checks.text}
-          </button>
+          </button>} messages={{"title":"workshop:see_each_check_and_its_result_bb977a75"}} />
         ) : null}
       </div>
       {item.failed && item.error ? <p className="mt-1 line-clamp-2 text-xs text-zinc-600 dark:text-zinc-400">{item.error}</p> : null}
@@ -790,7 +778,7 @@ export function PreviewCardView({ item, change, wide, action, busy }: {
         {item.failed ? (
           item.changeId != null ? (
             <button type="button" className={CARD_BUTTON} disabled={busy} onClick={() => void retryStaging(item.changeId as number)} data-agent-session-preview-retry>
-              {action === 'retry' ? 'Retrying…' : 'Retry'}
+              <LocalizedValue render={() => (action === 'retry' ? tr("workshop:retrying_a16c8b1c") : tr("workshop:retry_942087cc"))} />
             </button>
           ) : null
         ) : item.url && item.changeId != null ? (
@@ -799,19 +787,15 @@ export function PreviewCardView({ item, change, wide, action, busy }: {
             className={CARD_BUTTON}
             onClick={() => showPreview({ changeId: item.changeId as number, url: item.url as string, prNumber }, wide)}
             data-agent-session-preview-open
-          >
-            Open preview
-          </button>
+          ><Message id="workshop:open_preview_f7afe3dd" /></button>
         ) : item.url ? (
           // A build no change owns has nothing to open the platform's preview
           // with (it is opened by change): its address, as it always was.
-          <a className={CARD_BUTTON} href={item.url} target="_blank" rel="noopener noreferrer" data-agent-session-preview-open>
-            Open preview
-          </a>
+          <a className={CARD_BUTTON} href={item.url} target="_blank" rel="noopener noreferrer" data-agent-session-preview-open><Message id="workshop:open_preview_f7afe3dd" /></a>
         ) : null}
         {changeHref ? (
           <a className={CARD_BUTTON} href={changeHref} data-agent-session-preview-change>
-            {inVote || merged ? 'View change' : 'Open draft change'}
+            <LocalizedValue render={() => (inVote || merged ? tr("workshop:view_change_e21db8b8") : tr("workshop:open_draft_change_f07d6423"))} />
           </a>
         ) : null}
         {proposable && item.changeId != null ? (
@@ -825,16 +809,15 @@ export function PreviewCardView({ item, change, wide, action, busy }: {
           />
         ) : null}
         {checks && (checks.key === 'failing' || checks.key === 'error') && item.changeId != null && !merged ? (
-          <button
+          <Localized element={<button title={catalogText("workshop:rebuild_the_preview_if_needed_and_run_the_automa_56acc3ca")}
             type="button"
             className={CARD_BUTTON}
             disabled={busy}
-            title="Rebuild the preview if needed and run the automated checks again, on the same commit"
             onClick={() => void recheckChange(item.changeId as number)}
             data-agent-session-preview-recheck
           >
-            {action === 'recheck' ? 'Re-running…' : 'Re-run checks'}
-          </button>
+            <LocalizedValue render={() => (action === 'recheck' ? tr("workshop:re_running_6049843f") : tr("workshop:re_run_checks_9df526d3"))} />
+          </button>} messages={{"title":"workshop:rebuild_the_preview_if_needed_and_run_the_automa_56acc3ca"}} />
         ) : null}
       </div>
     </section>
@@ -848,6 +831,7 @@ export function PreviewCardView({ item, change, wide, action, busy }: {
  * the staging card's count.
  */
 function FixChecksCard({ offer }: { offer: FixChecksOffer }) {
+  useUiLanguage();
   const [asked, setAsked] = useState(false);
   return (
     <FixChecksCardView
@@ -872,9 +856,8 @@ export function FixChecksCardView({ offer, asking = false, onFix, onSee }: {
 }) {
   const more = offer.total - offer.checks.length;
   return (
-    <section
-      className="rounded-2xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900"
-      aria-label="Failing checks"
+    <Localized element={<section
+      className="rounded-2xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900" aria-label={catalogText("workshop:failing_checks_1e97e84a")}
       data-agent-session-fix-checks={offer.changeId}
     >
       <h3 className="text-base font-semibold text-zinc-900 dark:text-zinc-100" data-agent-session-fix-checks-heading>
@@ -888,10 +871,8 @@ export function FixChecksCardView({ offer, asking = false, onFix, onSee }: {
           </li>
         ))}
       </ul>
-      {more > 0 ? <p className="mt-2 text-[13px] text-zinc-600 dark:text-zinc-400">And {more} more.</p> : null}
-      <p className="mt-2 text-[13px] text-zinc-600 dark:text-zinc-400">
-        Checks have to pass before the change can merge. The agent can read what failed and fix it.
-      </p>
+      {more > 0 ? <p className="mt-2 text-[13px] text-zinc-600 dark:text-zinc-400"><RichMessage id="workshop:sentence_0c1731d0c6f7" values={{ value1: more }} /></p> : null}
+      <p className="mt-2 text-[13px] text-zinc-600 dark:text-zinc-400"><Message id="workshop:checks_have_to_pass_before_the_change_can_merge__e8a6d4b6" /></p>
       <div className="mt-3 flex flex-wrap gap-2">
         <Button
           type="button"
@@ -902,9 +883,7 @@ export function FixChecksCardView({ offer, asking = false, onFix, onSee }: {
           disabled={asking}
           onClick={onFix}
         >
-          {asking ? <SpinnerArcIcon className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
-          Fix it
-        </Button>
+          {asking ? <SpinnerArcIcon className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}<Message id="workshop:fix_it_8c6c8d92" /></Button>
         <Button
           type="button"
           data-agent-session-fix-checks-see
@@ -912,11 +891,9 @@ export function FixChecksCardView({ offer, asking = false, onFix, onSee }: {
           disabledStyle="dim"
           ink="neutral"
           onClick={onSee}
-        >
-          See checks
-        </Button>
+        ><Message id="workshop:see_checks_abff9256" /></Button>
       </div>
-    </section>
+    </section>} messages={{"aria-label":"workshop:failing_checks_1e97e84a"}} />
   );
 }
 
@@ -925,14 +902,14 @@ export function SpecCard({ item }: { item: Extract<TranscriptItem, { kind: 'spec
   const snippet = useMemo(() => (item.preview ? markdown(item.preview, false) : null), [item.preview]);
   const snippetInner = useInnerHtml(snippet || '');
   const open = () => { if (item.changeId) void openSpec(item.changeId, item.version); };
-  const title = `Spec${item.version ? ` v${item.version}` : ''}${item.lines ? ` · ${item.lines} lines` : ''}`;
+  const title = `Spec${item.version ? ` v${item.version}` : ''}${item.lines ? tr("workshop:value1_lines_3887fbfa", { value1: item.lines }) : ''}`;
   return (
-    <div
+    <LocalizedDynamic element={<div
       className="dc-spec-preview-card"
       data-agent-session-spec={item.version ?? 'latest'}
       role="button"
       tabIndex={0}
-      aria-label={`Open ${title}`}
+      aria-label={tr("workshop:open_value1_839d6dee", { value1: title })}
       onClick={open}
       onKeyDown={(event) => {
         if (event.key === 'Enter' || event.key === ' ') {
@@ -941,14 +918,11 @@ export function SpecCard({ item }: { item: Extract<TranscriptItem, { kind: 'spec
         }
       }}
     >
-      <div className="dc-spec-preview-header">
-        <span className="dc-spec-preview-title">{title}</span>
-        <span className="dc-spec-preview-cta">View full spec →</span>
-      </div>
+      <div className="dc-spec-preview-header"><RichMessage id="workshop:sentence_a86f4d150f84" values={{ value1: title }} components={[<span className="dc-spec-preview-title" />, <span className="dc-spec-preview-cta" />]} /></div>
       {snippet
         ? <div className="dc-spec-preview-snippet" dangerouslySetInnerHTML={snippetInner} />
         : item.preview ? <div className="dc-spec-preview-snippet">{item.preview}</div> : null}
-    </div>
+    </div>} resolve={() => ({ get "aria-label"() { return tr("workshop:open_value1_839d6dee", { value1: title }); } })} />
   );
 }
 
@@ -1007,12 +981,12 @@ export function SpecBody({ text, tab, split, onTab }: {
   return (
     <>
       {split.preamble ? <div className="dc-spec-viewer-preamble"><SpecMarkdown text={split.preamble} /></div> : null}
-      <div className="dc-spec-viewer-tabs" role="tablist" aria-label="Spec sections">
-        <SpecTabButton tab="user" active={tab} label="User-facing" onTab={onTab} />
-        <SpecTabButton tab="tech" active={tab} label="Technical" onTab={onTab} />
-      </div>
+      <Localized element={<div className="dc-spec-viewer-tabs" role="tablist" aria-label={catalogText("workshop:spec_sections_2c81579b")}>
+        <Localized element={<SpecTabButton tab="user" active={tab} label={catalogText("workshop:user_facing_9f6f005f")} onTab={onTab} />} messages={{"label":"workshop:user_facing_9f6f005f"}} />
+        <Localized element={<SpecTabButton tab="tech" active={tab} label={catalogText("workshop:technical_e851504f")} onTab={onTab} />} messages={{"label":"workshop:technical_e851504f"}} />
+      </div>} messages={{"aria-label":"workshop:spec_sections_2c81579b"}} />
       <div role="tabpanel" data-agent-session-spec-half={tab}>
-        {half ? <SpecMarkdown text={half} tagged /> : <p className="dc-spec-tab-empty">Nothing in this section.</p>}
+        {half ? <SpecMarkdown text={half} tagged /> : <p className="dc-spec-tab-empty"><Message id="workshop:nothing_in_this_section_04506069" /></p>}
       </div>
     </>
   );
@@ -1027,32 +1001,31 @@ function SpecContent({ sheet }: { sheet: SpecSheetState }) {
     <>
       <header className="flex items-center gap-2 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
         <div className="min-w-0 flex-1">
-          <h2 className="truncate text-lg font-semibold text-zinc-900 dark:text-zinc-100">Spec</h2>
+          <h2 className="truncate text-lg font-semibold text-zinc-900 dark:text-zinc-100"><Message id="workshop:spec_9bdc1337" /></h2>
           {change ? <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">{change.title || changeRef(change)}{change.appName ? ` · ${change.appName}` : ''}</p> : null}
         </div>
         {sheet.versions.length > 1 ? (
           <span className="dc-venue-detail-inline">
-            <select
-              className="dc-model-select rounded text-[13px] text-zinc-900 focus:outline-none focus:ring-2 focus:ring-violet-500 dark:text-zinc-100"
-              aria-label="Spec version"
+            <Localized element={<select
+              className="dc-model-select rounded text-[13px] text-zinc-900 focus:outline-none focus:ring-2 focus:ring-violet-500 dark:text-zinc-100" aria-label={catalogText("workshop:spec_version_cd76c4ed")}
               value={sheet.version ?? ''}
               onChange={(event) => void openSpec(sheet.changeId, Number(event.currentTarget.value))}
             >
               {sheet.versions.map((v) => <option key={v} value={v}>{`v${v}`}</option>)}
-            </select>
+            </select>} messages={{"aria-label":"workshop:spec_version_cd76c4ed"}} />
             <ChevronDownIcon className="dc-model-caret" width={14} height={14} aria-hidden="true" />
           </span>
         ) : sheet.version ? <span className="text-xs font-semibold text-zinc-500">{`v${sheet.version}`}</span> : null}
-        <button type="button" className="rounded-full p-1.5 text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800" aria-label="Close" onClick={closeSpec}>
+        <Localized element={<button type="button" className="rounded-full p-1.5 text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800" aria-label={catalogText("workshop:close_7d9eb7ac")} onClick={closeSpec}>
           <XIcon className="h-5 w-5" aria-hidden="true" />
-        </button>
+        </button>} messages={{"aria-label":"workshop:close_7d9eb7ac"}} />
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
         {sheet.phase === 'loading' ? (
-          <div className="flex items-center gap-2 text-sm text-zinc-500"><SpinnerArcIcon className="h-5 w-5 animate-spin" aria-hidden="true" /> Loading…</div>
+          <div className="flex items-center gap-2 text-sm text-zinc-500"><SpinnerArcIcon className="h-5 w-5 animate-spin" aria-hidden="true" /><Message before={" "} id="workshop:loading_ba3bbbe1" /></div>
         ) : null}
         {sheet.phase === 'error' ? <p role="alert" className="text-sm text-red-700 dark:text-red-300">{sheet.error}</p> : null}
-        {sheet.phase === 'ready' && !sheet.text ? <p className="text-sm text-zinc-500 dark:text-zinc-400">This change has no spec yet.</p> : null}
+        {sheet.phase === 'ready' && !sheet.text ? <p className="text-sm text-zinc-500 dark:text-zinc-400"><Message id="workshop:this_change_has_no_spec_yet_8a67e380" /></p> : null}
         {sheet.phase === 'ready' && sheet.text ? <SpecBody text={sheet.text} tab={sheet.tab} split={split} onTab={setSpecTab} /> : null}
       </div>
     </>
@@ -1074,15 +1047,14 @@ function SpecSheet({ sheet }: { sheet: SpecSheetState }) {
       data-agent-session-spec-cover={cover ? '' : undefined}
       onClick={(event) => { if (event.target === event.currentTarget) closeSpec(); }}
     >
-      <section
-        role="dialog"
-        aria-label="Spec"
+      <Localized element={<section
+        role="dialog" aria-label={catalogText("workshop:spec_9bdc1337")}
         className={cover
           ? 'platform-safe-bar flex h-full w-full flex-col bg-white dark:bg-zinc-900'
           : 'platform-safe-bar mt-auto flex max-h-[92%] w-full flex-col rounded-t-3xl bg-white shadow-xl dark:bg-zinc-900 sm:mt-0 sm:h-full sm:max-h-none sm:rounded-none'}
       >
         <SpecContent sheet={sheet} />
-      </section>
+      </section>} messages={{"aria-label":"workshop:spec_9bdc1337"}} />
     </div>
   );
 }
@@ -1104,10 +1076,10 @@ function PaneTabs({ tab }: { tab: PaneTab }) {
     </button>
   );
   return (
-    <div role="tablist" aria-label="Side pane" className="flex shrink-0 gap-1 border-b border-zinc-200 px-2 dark:border-zinc-800">
-      {button('spec', 'Spec')}
-      {button('preview', 'Preview')}
-    </div>
+    <Localized element={<div role="tablist" aria-label={catalogText("workshop:side_pane_b03fed8a")} className="flex shrink-0 gap-1 border-b border-zinc-200 px-2 dark:border-zinc-800">
+      {button('spec', tr("workshop:spec_9bdc1337"))}
+      {button('preview', tr("workshop:preview_324b134f"))}
+    </div>} messages={{"aria-label":"workshop:side_pane_b03fed8a"}} />
   );
 }
 
@@ -1133,6 +1105,7 @@ function SidePane({ sheet, preview, tab, containerRef }: {
   tab: PaneTab;
   containerRef: { current: HTMLDivElement | null };
 }) {
+  useUiLanguage();
   const floor = preview ? PREVIEW_MIN_WIDTH : SPEC_MIN_WIDTH;
   const [width, setWidth] = useState(SPEC_DEFAULT_WIDTH);
   const paneRef = useRef<HTMLElement | null>(null);
@@ -1195,10 +1168,10 @@ function SidePane({ sheet, preview, tab, containerRef }: {
 
   return (
     <>
-      <div
+      <LocalizedDynamic element={<div
         role="separator"
         aria-orientation="vertical"
-        aria-label={showing === 'preview' ? 'Resize the preview' : 'Resize the spec'}
+        aria-label={showing === 'preview' ? tr("workshop:resize_the_preview_a339b452") : tr("workshop:resize_the_spec_8d339fc5")}
         aria-valuenow={width}
         aria-valuemin={floor}
         tabIndex={0}
@@ -1206,10 +1179,10 @@ function SidePane({ sheet, preview, tab, containerRef }: {
         data-agent-session-spec-resizer
         onPointerDown={onPointerDown}
         onKeyDown={onKeyDown}
-      />
-      <aside
+      />} resolve={() => ({ "aria-label": showing === 'preview' ? tr("workshop:resize_the_preview_a339b452") : tr("workshop:resize_the_spec_8d339fc5") })} />
+      <LocalizedDynamic element={<aside
         ref={paneRef}
-        aria-label={showing === 'preview' ? 'Preview' : 'Spec'}
+        aria-label={showing === 'preview' ? tr("workshop:preview_324b134f") : tr("workshop:spec_9bdc1337")}
         className={`flex min-h-0 ${preview ? 'min-w-[320px]' : 'min-w-[280px]'} max-w-[calc(100%-324px)] shrink-0 flex-col bg-white dark:bg-zinc-900`}
         style={{ width }}
         data-agent-session-side-pane={showing}
@@ -1231,7 +1204,7 @@ function SidePane({ sheet, preview, tab, containerRef }: {
             data-agent-session-preview-slot={preview.changeId}
           />
         ) : null}
-      </aside>
+      </aside>} resolve={() => ({ "aria-label": showing === 'preview' ? tr("workshop:preview_324b134f") : tr("workshop:spec_9bdc1337") })} />
     </>
   );
 }
@@ -1276,18 +1249,16 @@ function OutboxRows() {
           <UserMessage text={item.shown} className={item.status === 'sending' ? 'opacity-80' : ''} />
           {item.status === 'failed' ? (
             <div className="flex max-w-[85%] flex-wrap items-center justify-end gap-x-3 gap-y-1 text-[13px]" role="alert">
-              <span className="text-red-700 dark:text-red-300" data-agent-session-outbox-error>{item.error || 'This was not sent.'}</span>
+              <span className="text-red-700 dark:text-red-300" data-agent-session-outbox-error><LocalizedValue render={() => (item.error || tr("workshop:this_was_not_sent_84a7caf6"))} /></span>
               {item.message || item.attachmentKeys.length ? (
-                <button
+                <LocalizedDynamic element={<button
                   type="button"
                   className={`${action} text-violet-700 dark:text-violet-300`}
                   disabled={busy}
-                  title={busy ? 'The agent is still working. You can send this when it finishes' : 'Send this again'}
+                  title={busy ? tr("workshop:the_agent_is_still_working_you_can_send_this_whe_33721340") : tr("workshop:send_this_again_b0148d2a")}
                   data-agent-session-outbox-retry
                   onClick={() => retryOutbox(item.clientId)}
-                >
-                  Retry
-                </button>
+                ><Message id="workshop:retry_942087cc" /></button>} resolve={() => ({ "title": busy ? tr("workshop:the_agent_is_still_working_you_can_send_this_whe_33721340") : tr("workshop:send_this_again_b0148d2a") })} />
               ) : null}
               {item.message ? (
                 <button
@@ -1298,18 +1269,14 @@ function OutboxRows() {
                     const text = editOutbox(item.clientId);
                     if (text) fillComposer(text);
                   }}
-                >
-                  Edit
-                </button>
+                ><Message id="workshop:edit_464c4ffd" /></button>
               ) : null}
               <button
                 type="button"
                 className={`${action} text-zinc-500 dark:text-zinc-400`}
                 data-agent-session-outbox-discard
                 onClick={() => discardOutbox(item.clientId)}
-              >
-                Discard
-              </button>
+              ><Message id="workshop:discard_eb1a70e3" /></button>
             </div>
           ) : null}
         </div>
@@ -1319,6 +1286,7 @@ function OutboxRows() {
 }
 
 function LiveTurn({ runShown }: { runShown: boolean }) {
+  const language = useUiLanguage();
   // The one reader of the streamed text on this screen (with FollowOutput):
   // it re-renders once per frame of a reply, and nothing around it does.
   const turn = useAgentSessionSelector((s) => s.turn);
@@ -1337,7 +1305,7 @@ function LiveTurn({ runShown }: { runShown: boolean }) {
   const cards = useMemo(() => {
     const actions = new Map(actionList.map((action) => [action.id, action]));
     return turn.cards.map((card) => cardView(card, actions));
-  }, [turn.cards, actionList]);
+  }, [turn.cards, actionList, language]);
   if (!turn.running) return null;
   const seconds = turn.startedAt ? Math.max(0, Math.round((clock - turn.startedAt) / 1000)) : 0;
   // A running build draws its own card with the progress and the clock.
@@ -1346,13 +1314,13 @@ function LiveTurn({ runShown }: { runShown: boolean }) {
   const status = turn.stopping
     ? 'Stopping…'
     : turn.phase === 'cc'
-      ? (turn.progress || turn.activity || 'The coding agent is working')
-      : (turn.activity || (turn.phase === 'mayor2' ? 'Wrapping up' : ''));
+      ? (turn.progress || turn.activity || tr("workshop:the_coding_agent_is_working_904061ed"))
+      : (turn.activity || (turn.phase === 'mayor2' ? tr("workshop:wrapping_up_bd1b2e04") : ''));
   return (
     <>
       {said || working ? (
         <article data-agent-session-live>
-          <p className="mb-1 text-xs font-semibold text-emerald-700 dark:text-emerald-400">Agent</p>
+          <p className="mb-1 text-xs font-semibold text-emerald-700 dark:text-emerald-400"><Message id="workshop:agent_11b39c93" /></p>
           {turn.streamText ? <MayorText text={turn.streamText} /> : null}
           {cards.map((card) => <Card key={card.id} card={card} live />)}
           {working ? (
@@ -1362,8 +1330,8 @@ function LiveTurn({ runShown }: { runShown: boolean }) {
               aria-live="polite"
             >
               <TypingDots />
-              {status ? <span className="min-w-0 truncate">{status}</span> : <span className="sr-only">The agent is thinking</span>}
-              {turn.phase === 'cc' ? <span className="shrink-0 tabular-nums text-xs">{Math.floor(seconds / 60)}m {seconds % 60}s</span> : null}
+              {status ? <span className="min-w-0 truncate">{status}</span> : <span className="sr-only"><Message id="workshop:the_agent_is_thinking_fd240a29" /></span>}
+              {turn.phase === 'cc' ? <span className="shrink-0 tabular-nums text-xs">{Math.floor(seconds / 60)}<Message after={" "} id="workshop:m_62c66a7a" />{seconds % 60}<Message id="workshop:s_043a7187" /></span> : null}
             </div>
           ) : null}
         </article>
@@ -1373,10 +1341,10 @@ function LiveTurn({ runShown }: { runShown: boolean }) {
 }
 
 const CAPTURE_STEPS: Record<string, string> = {
-  provisioning: 'Preparing the before and after builds',
-  exploring: 'Finding the screens to capture',
-  replaying: 'Replaying the flow on both builds',
-  reviewing: 'Saving the captures',
+  get provisioning() { return tr("workshop:preparing_the_before_and_after_builds_0eabfe30"); },
+  get exploring() { return tr("workshop:finding_the_screens_to_capture_2b3d6354"); },
+  get replaying() { return tr("workshop:replaying_the_flow_on_both_builds_bde60d99"); },
+  get reviewing() { return tr("workshop:saving_the_captures_449bf477"); },
 };
 
 /**
@@ -1386,6 +1354,7 @@ const CAPTURE_STEPS: Record<string, string> = {
  * proposal's Rerun starts it again.
  */
 export function PreviewCapture({ change }: { change: AgentChange }) {
+  useUiLanguage();
   const capture = change.previewCapture;
   const [clock, setClock] = useState(Date.now());
   const [stopping, setStopping] = useState(false);
@@ -1411,10 +1380,10 @@ export function PreviewCapture({ change }: { change: AgentChange }) {
     >
       <SpinnerArcIcon className="h-4 w-4 shrink-0 animate-spin" aria-hidden="true" />
       <span className="min-w-0 truncate">
-        <span className="font-medium text-zinc-700 dark:text-zinc-200">Capturing previews</span>
+        <span className="font-medium text-zinc-700 dark:text-zinc-200"><Message id="workshop:capturing_previews_9fe36c99" /></span>
         {CAPTURE_STEPS[capture.state] ? ` · ${CAPTURE_STEPS[capture.state]}` : ''}
       </span>
-      {seconds != null ? <span className="shrink-0 tabular-nums text-xs">{Math.floor(seconds / 60)}m {seconds % 60}s</span> : null}
+      {seconds != null ? <span className="shrink-0 tabular-nums text-xs">{Math.floor(seconds / 60)}<Message after={" "} id="workshop:m_62c66a7a" />{seconds % 60}<Message id="workshop:s_043a7187" /></span> : null}
       <Button
         type="button"
         data-agent-session-capture-stop
@@ -1426,7 +1395,7 @@ export function PreviewCapture({ change }: { change: AgentChange }) {
         disabled={stopping}
         onClick={() => void stop()}
       >
-        {stopping ? 'Stopping…' : 'Stop'}
+        <LocalizedValue render={() => (stopping ? tr("workshop:stopping_bbe85741") : tr("workshop:stop_cae7d57b"))} />
       </Button>
     </div>
   );
@@ -1447,14 +1416,12 @@ function EmptyState({ about, request }: { about: About; request: DraftRequest | 
         <span className="mb-3 inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300">
           <SparklesIcon className="h-6 w-6" aria-hidden="true" />
         </span>
-        <h3 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">{`Request #${request.number}`}</h3>
+        <h3 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100"><LocalizedValue render={() => (tr("workshop:request_value1_8051e8ec", { value1: request.number }))} /></h3>
         {request.title ? (
           <p className="mt-1 max-w-sm text-base font-medium text-zinc-800 dark:text-zinc-100" data-agent-session-request-title>{request.title}</p>
         ) : null}
         <p className="mt-2 max-w-sm text-sm text-zinc-600 dark:text-zinc-300">
-          {app ? <>On <strong>{app}</strong>. </> : null}
-          Send the message below to start. The agent reads the request, plans the change with you, and asks the group for approval when you say so.
-        </p>
+          {app ? <><Message after={" "} id="workshop:on_13001175" /><strong>{app}</strong>. </> : null}<Message id="workshop:send_the_message_below_to_start_the_agent_reads__3f32278f" /></p>
       </section>
     );
   }
@@ -1463,11 +1430,9 @@ function EmptyState({ about, request }: { about: About; request: DraftRequest | 
       <span className="mb-3 inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300">
         <SparklesIcon className="h-6 w-6" aria-hidden="true" />
       </span>
-      <h3 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">New agent session</h3>
+      <h3 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100"><Message id="workshop:new_agent_session_7c1058b0" /></h3>
       <p className="mt-1 max-w-sm text-sm text-zinc-600 dark:text-zinc-300">
-        {app ? <>Started from <strong>{app}</strong>. </> : null}
-        Start a change on any app. The agent plans it, builds it, and asks the group for approval when you say so.
-      </p>
+        {app ? <><Message after={" "} id="workshop:started_from_621f7974" /><strong>{app}</strong>. </> : null}<Message id="workshop:start_a_change_on_any_app_the_agent_plans_it_bui_71f8aaa0" /></p>
     </section>
   );
 }
@@ -1480,12 +1445,12 @@ function starters(about: About, request: DraftRequest | null) {
   if (request) return [];
   const app = about?.focusApp?.name || null;
   const context = (about?.focusContext || {}) as { proposalId?: number };
-  const first = context.proposalId ? ['Tell me about this change'] : [];
+  const first = context.proposalId ? [tr("workshop:tell_me_about_this_change_e0cb01a1")] : [];
   return [
     ...first,
-    app ? `What's open on ${app}?` : 'What could I work on?',
-    'Add a feature',
-    'Fix a bug',
+    app ? tr("workshop:what_s_open_on_value1_bd3eeda2", { value1: app }) : tr("workshop:what_could_i_work_on_23fde4e6"),
+    tr("workshop:add_a_feature_ad1a0237"),
+    tr("workshop:fix_a_bug_09a2cbd7"),
   ].slice(0, 3);
 }
 
@@ -1555,7 +1520,7 @@ function useModelChoice() {
     : null;
   return {
     ready: !!(options.length && current),
-    label: selected ? selected.label : 'Model',
+    label: selected ? selected.label : tr("workshop:model_5e2c614c"),
     // #3079: the pill names the thinking level after the model, for a model
     // that takes one: its own level, or the default it follows. Nothing when
     // none is known, never a "Default" placeholder (model-choice.ts).
@@ -1578,8 +1543,8 @@ function useCredit(): CreditView | null {
   return mounted ? creditView(figures) : null;
 }
 
-const BUSY_PLACEHOLDER = 'The agent is working. Type your next message and save it for later.';
-const SAVE_TITLE = 'Save this as a draft (Enter). It stays here until you send it';
+const BUSY_PLACEHOLDER = () => tr("workshop:the_agent_is_working_type_your_next_message_and__694d8359");
+const SAVE_TITLE = () => tr("workshop:save_this_as_a_draft_enter_it_stays_here_until_y_5a0363b6");
 
 /**
  * The saved drafts above the composer (the dev chat's #798 list, per account):
@@ -1597,17 +1562,16 @@ export function SavedDrafts({ drafts, busy, onSend, onEdit }: {
     + 'hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent '
     + 'dark:text-zinc-400 dark:hover:bg-zinc-800';
   return (
-    <section
-      aria-label="Saved drafts"
+    <Localized element={<section aria-label={catalogText("workshop:saved_drafts_ec135ea5")}
       className="mb-2 max-h-40 overflow-y-auto rounded-2xl bg-zinc-100 p-1.5 dark:bg-zinc-800/70"
       data-agent-session-drafts={drafts.length}
     >
       <p className="flex flex-wrap items-baseline gap-x-1.5 px-2 pb-1 text-[11px] text-zinc-500 dark:text-zinc-400">
-        <span className="font-semibold uppercase tracking-wide">{`Saved drafts (${drafts.length})`}</span>
-        <span>· on all your devices</span>
+        <span className="font-semibold uppercase tracking-wide"><LocalizedValue render={() => (tr("workshop:saved_drafts_value1_998ef4bf", { value1: drafts.length }))} /></span>
+        <span><Message id="workshop:on_all_your_devices_6b9a8a97" /></span>
         {busy
-          ? <span className="ml-auto">sending unlocks when the agent finishes</span>
-          : <span className="ml-auto font-semibold text-violet-700 dark:text-violet-300" data-agent-session-drafts-ready>Ready to send</span>}
+          ? <span className="ml-auto"><Message id="workshop:sending_unlocks_when_the_agent_finishes_c38de88e" /></span>
+          : <span className="ml-auto font-semibold text-violet-700 dark:text-violet-300" data-agent-session-drafts-ready><Message id="workshop:ready_to_send_77311249" /></span>}
       </p>
       <ul className="flex flex-col gap-1">
         {drafts.map((draft) => (
@@ -1617,41 +1581,36 @@ export function SavedDrafts({ drafts, busy, onSend, onEdit }: {
             data-agent-session-draft={draft.id}
           >
             <span className="min-w-0 flex-1 truncate text-sm text-zinc-700 dark:text-zinc-200" title={draft.text}>{draft.text}</span>
-            <button
+            <Localized element={<LocalizedDynamic element={<button
               type="button"
-              className={`${button} hover:text-emerald-700 dark:hover:text-emerald-400`}
-              aria-label="Send this draft"
-              title={busy ? 'The agent is still working. You can send this when it finishes' : 'Send this draft now'}
+              className={`${button} hover:text-emerald-700 dark:hover:text-emerald-400`} aria-label={catalogText("workshop:send_this_draft_5cda6b94")}
+              title={busy ? tr("workshop:the_agent_is_still_working_you_can_send_this_whe_33721340") : tr("workshop:send_this_draft_now_bc032321")}
               disabled={busy}
               data-agent-session-draft-send
               onClick={() => onSend(draft)}
             >
               <DraftSendIcon width={16} height={16} aria-hidden="true" />
-            </button>
-            <button
+            </button>} resolve={() => ({ "title": busy ? tr("workshop:the_agent_is_still_working_you_can_send_this_whe_33721340") : tr("workshop:send_this_draft_now_bc032321") })} />} messages={{"aria-label":"workshop:send_this_draft_5cda6b94"}} />
+            <Localized element={<button
               type="button"
-              className={`${button} hover:text-violet-700 dark:hover:text-violet-300`}
-              aria-label="Edit this draft"
-              title="Put this draft back in the box to edit"
+              className={`${button} hover:text-violet-700 dark:hover:text-violet-300`} aria-label={catalogText("workshop:edit_this_draft_ee815b8c")} title={catalogText("workshop:put_this_draft_back_in_the_box_to_edit_73452e7e")}
               data-agent-session-draft-edit
               onClick={() => onEdit(draft)}
             >
               <DraftEditIcon width={16} height={16} aria-hidden="true" />
-            </button>
-            <button
+            </button>} messages={{"aria-label":"workshop:edit_this_draft_ee815b8c","title":"workshop:put_this_draft_back_in_the_box_to_edit_73452e7e"}} />
+            <Localized element={<button
               type="button"
-              className={`${button} hover:text-red-700 dark:hover:text-red-300`}
-              aria-label="Delete this draft"
-              title="Delete this draft"
+              className={`${button} hover:text-red-700 dark:hover:text-red-300`} aria-label={catalogText("workshop:delete_this_draft_61e54a00")} title={catalogText("workshop:delete_this_draft_61e54a00")}
               data-agent-session-draft-delete
               onClick={() => deleteSavedDraft(draft.id)}
             >
               <DraftTrashIcon width={16} height={16} aria-hidden="true" />
-            </button>
+            </button>} messages={{"aria-label":"workshop:delete_this_draft_61e54a00","title":"workshop:delete_this_draft_61e54a00"}} />
           </li>
         ))}
       </ul>
-    </section>
+    </section>} messages={{"aria-label":"workshop:saved_drafts_ec135ea5"}} />
   );
 }
 
@@ -1670,6 +1629,7 @@ export function StopStatus({ turn, onStop }: {
   turn: { running: boolean; stopping: boolean; stopRequestedAt: number | null; stopPending: boolean; stopError: string | null };
   onStop: () => void;
 }) {
+  useUiLanguage();
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     if (!turn.running || !turn.stopping) return undefined;
@@ -1681,15 +1641,16 @@ export function StopStatus({ turn, onStop }: {
   const slow = !!turn.stopRequestedAt && now - turn.stopRequestedAt >= 3000;
   return (
     <div data-agent-session-stop-status className="flex flex-wrap items-center gap-2 px-3 py-2 text-[13px] text-zinc-600 dark:text-zinc-300" role="status">
-      <span className="min-w-0 flex-1">{turn.stopError || (slow ? 'Stopping is taking longer than expected.' : 'Stopping the agent…')}</span>
+      <span className="min-w-0 flex-1"><LocalizedValue render={() => (turn.stopError || (slow ? tr("workshop:stopping_is_taking_longer_than_expected_d767c8b1") : tr("workshop:stopping_the_agent_18c3ea72")))} /></span>
       {turn.stopError || slow ? (
-        <Button type="button" variant="pillNeutral" ink="neutral" size="sm" disabledStyle="dim" disabled={turn.stopPending} onClick={() => onStop()}>Retry stop</Button>
+        <Button type="button" variant="pillNeutral" ink="neutral" size="sm" disabledStyle="dim" disabled={turn.stopPending} onClick={() => onStop()}><Message id="workshop:retry_stop_f992ca23" /></Button>
       ) : null}
     </div>
   );
 }
 
 function Composer({ id }: { id: string }) {
+  useUiLanguage();
   // The fields the box draws from, and not the streamed text: a reply
   // arriving does not re-render the box being typed in.
   const snapshot = useAgentSessionPick((s) => ({
@@ -1797,8 +1758,8 @@ function Composer({ id }: { id: string }) {
   }, [fill]);
 
   const placeholder = archived
-    ? 'This session is archived.'
-    : running ? BUSY_PLACEHOLDER : 'Describe a change to any app in plain English. No coding needed.';
+    ? tr("workshop:this_session_is_archived_9b13cfc1")
+    : running ? BUSY_PLACEHOLDER() : tr("workshop:describe_a_change_to_any_app_in_plain_english_no_34b8c998");
 
   // The field grows with what it holds, typed or put back. Empty, it is as
   // tall as its hint, which wraps on a phone and was cut off mid-line under
@@ -1880,8 +1841,8 @@ function Composer({ id }: { id: string }) {
     <div className="platform-safe-bar shrink-0 px-3 pt-1">
     {archived ? (
       <p className="mb-2 flex flex-wrap items-center gap-2 rounded-2xl bg-zinc-100 px-3 py-2 text-sm text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200" data-agent-session-archived>
-        <span className="min-w-0 flex-1">This session is archived. Unarchive it to keep going.</span>
-        <button type="button" className={CARD_BUTTON} onClick={() => void unarchiveCurrentSession()}>Unarchive</button>
+        <span className="min-w-0 flex-1"><Message id="workshop:this_session_is_archived_unarchive_it_to_keep_go_ee9b41f2" /></span>
+        <button type="button" className={CARD_BUTTON} onClick={() => void unarchiveCurrentSession()}><Message id="workshop:unarchive_f565318d" /></button>
       </p>
     ) : null}
     <SavedDrafts drafts={snapshot.drafts} busy={running} onSend={onSendDraft} onEdit={onEditDraft} />
@@ -1915,19 +1876,16 @@ function Composer({ id }: { id: string }) {
         // Said in words, above what is typed, the moment it applies: while
         // the Mayor works, Enter and the button keep this as a draft. It is
         // not sent, and nothing sends it on its own.
-        <p className="px-2 text-[13px] text-zinc-600 dark:text-zinc-300" data-agent-session-save-note>
-          The agent is still working, so this will be <span className="font-semibold">saved as a draft, not sent</span>. Send it from your drafts when it finishes.
-        </p>
+        <p className="px-2 text-[13px] text-zinc-600 dark:text-zinc-300" data-agent-session-save-note><RichMessage id="workshop:sentence_120b979a6f6f" components={[<span className="font-semibold" />]} /></p>
       ) : null}
-      <textarea
+      <Localized element={<textarea
         ref={input}
         id={id}
         rows={1}
         maxLength={20_000}
         value={value}
         disabled={archived || snapshot.phase === 'loading'}
-        placeholder={placeholder}
-        aria-label="Message the agent"
+        placeholder={placeholder} aria-label={catalogText("workshop:message_the_agent_826dad84")}
         className="agent-session-composer-input max-h-36 min-h-[2.5rem] w-full resize-none bg-transparent px-2 py-1.5 text-base text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100 dark:placeholder:text-zinc-400"
         onChange={(event) => update(event.target.value)}
         onPaste={(event) => {
@@ -1940,25 +1898,23 @@ function Composer({ id }: { id: string }) {
             submit();
           }
         }}
-      />
+      />} messages={{"aria-label":"workshop:message_the_agent_826dad84"}} />
       {/* #3574: the row is a size container so the model pill can tighten
           its padding on the narrowest phones (composer-parts.tsx ModelPill).
           Its width is the composer's, never its contents'. */}
       <div className="flex items-center gap-2 [container-type:inline-size]">
         {/* One picker, no menu of our own: a phone's own file picker already
             offers the photo library, the camera and files. */}
-        <button
+        <Localized element={<button
           ref={attach}
           type="button"
-          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-zinc-800 hover:bg-zinc-200 disabled:opacity-60 dark:bg-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-600"
-          aria-label="Attach photos or files"
-          title="Attach photos or files"
+          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-zinc-800 hover:bg-zinc-200 disabled:opacity-60 dark:bg-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-600" aria-label={catalogText("workshop:attach_photos_or_files_6ce50e27")} title={catalogText("workshop:attach_photos_or_files_6ce50e27")}
           disabled={archived || snapshot.phase === 'loading'}
           data-agent-session-attach
           onClick={() => picker.current?.click()}
         >
           <PaperclipIcon className="h-5 w-5" aria-hidden="true" />
-        </button>
+        </button>} messages={{"aria-label":"workshop:attach_photos_or_files_6ce50e27","title":"workshop:attach_photos_or_files_6ce50e27"}} />
         <input
           ref={picker}
           type="file"
@@ -1994,11 +1950,11 @@ function Composer({ id }: { id: string }) {
         {credit && kind !== 'save' ? <CreditPill credit={credit} onOpen={() => openSheet('homeroom')} /> : <div className="min-w-0 flex-1" />}
         {kind === 'save' ? (
           <>
-          <Button type="button" variant="pillDanger" ink="dangerTint" size="icon" className="inline-flex h-10 w-10 shrink-0 items-center justify-center" aria-label="Stop" title="Stop"
+          <Localized element={<Button type="button" variant="pillDanger" ink="dangerTint" size="icon" className="inline-flex h-10 w-10 shrink-0 items-center justify-center" aria-label={catalogText("workshop:stop_cae7d57b")} title={catalogText("workshop:stop_cae7d57b")}
             disabled={snapshot.turnPhase === 'mayor2'} onClick={() => { void stopAgentTurn(); }}>
             <span className="h-3.5 w-3.5 rounded-sm bg-current" aria-hidden="true" />
-          </Button>
-          <Button
+          </Button>} messages={{"aria-label":"workshop:stop_cae7d57b","title":"workshop:stop_cae7d57b"}} />
+          <Localized element={<Button
             key="save"
             type="submit"
             data-agent-session-send="save"
@@ -2006,16 +1962,15 @@ function Composer({ id }: { id: string }) {
             ink="solid"
             // Words, not a round button in Send's place: a green circle read
             // as Send, and the message went to the drafts instead.
-            className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-full bg-emerald-600 px-3.5 text-sm font-semibold hover:bg-emerald-700"
-            aria-label="Save as draft"
-            title={SAVE_TITLE}
+            className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-full bg-emerald-600 px-3.5 text-sm font-semibold hover:bg-emerald-700" aria-label={catalogText("workshop:save_as_draft_93ca4159")}
+            title={SAVE_TITLE()}
           >
             <SaveDraftIcon width={18} height={18} aria-hidden="true" />
-            <span>Save draft</span>
-          </Button>
+            <span><Message id="workshop:save_draft_3de10010" /></span>
+          </Button>} messages={{"aria-label":"workshop:save_as_draft_93ca4159"}} />
           </>
         ) : (
-          <Button
+          <LocalizedDynamic element={<Button
             key="send"
             type={running ? 'button' : 'submit'}
             data-agent-session-send={kind}
@@ -2025,14 +1980,16 @@ function Composer({ id }: { id: string }) {
             ink={running ? 'dangerTint' : 'solid'}
             className="inline-flex h-10 w-10 shrink-0 items-center justify-center"
             disabled={running ? (snapshot.stopping || snapshot.turnPhase === 'mayor2') : (!sendable || uploading)}
-            aria-label={running ? 'Stop' : uploading ? 'Send (waiting for files to upload)' : 'Send'}
+            aria-label={running ? tr("workshop:stop_cae7d57b") : uploading ? tr("workshop:send_waiting_for_files_to_upload_ca541482") : tr("workshop:send_f6f4688f")}
             title={running
-              ? (snapshot.turnPhase === 'mayor2' ? 'The wrap-up cannot be stopped' : 'Stop')
-              : uploading ? 'Waiting for your files to upload' : 'Send'}
+              ? (snapshot.turnPhase === 'mayor2' ? tr("workshop:the_wrap_up_cannot_be_stopped_b3f278e6") : tr("workshop:stop_cae7d57b"))
+              : uploading ? tr("workshop:waiting_for_your_files_to_upload_33fa022e") : tr("workshop:send_f6f4688f")}
             onClick={running ? () => void stopAgentTurn() : undefined}
           >
             {running ? <span className="h-3.5 w-3.5 rounded-sm bg-current" aria-hidden="true" /> : <ArrowUpIcon className="h-5 w-5" aria-hidden="true" />}
-          </Button>
+          </Button>} resolve={() => ({ "aria-label": running ? tr("workshop:stop_cae7d57b") : uploading ? tr("workshop:send_waiting_for_files_to_upload_ca541482") : tr("workshop:send_f6f4688f"), "title": running
+              ? (snapshot.turnPhase === 'mayor2' ? tr("workshop:the_wrap_up_cannot_be_stopped_b3f278e6") : tr("workshop:stop_cae7d57b"))
+              : uploading ? tr("workshop:waiting_for_your_files_to_upload_33fa022e") : tr("workshop:send_f6f4688f") })} />
         )}
       </div>
       {sheetOpen ? (
@@ -2072,29 +2029,28 @@ export function ChangesDrawer({ session }: { session: AgentSession }) {
       data-agent-session-drawer
       onClick={(event) => { if (event.target === event.currentTarget) setDrawerOpen(false); }}
     >
-      <section
-        role="dialog"
-        aria-label="Changes in this session"
+      <Localized element={<section
+        role="dialog" aria-label={catalogText("workshop:changes_in_this_session_214ae1be")}
         className="platform-safe-bar max-h-[85%] w-full overflow-y-auto rounded-t-3xl bg-white p-4 shadow-xl dark:bg-zinc-900 sm:h-full sm:max-h-none sm:max-w-sm sm:rounded-none"
       >
         <header className="mb-3 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">Changes in this session</h2>
-          <button type="button" className="rounded-full p-1.5 text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800" aria-label="Close" onClick={() => setDrawerOpen(false)}>
+          <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100"><Message id="workshop:changes_in_this_session_214ae1be" /></h2>
+          <Localized element={<button type="button" className="rounded-full p-1.5 text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800" aria-label={catalogText("workshop:close_7d9eb7ac")} onClick={() => setDrawerOpen(false)}>
             <XIcon className="h-5 w-5" aria-hidden="true" />
-          </button>
+          </button>} messages={{"aria-label":"workshop:close_7d9eb7ac"}} />
         </header>
-        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">Active</h3>
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500"><Message id="workshop:active_92340695" /></h3>
         {active ? (
           <div className="rounded-2xl bg-zinc-50 p-3 dark:bg-zinc-800/60" data-agent-session-active-change>
             <div className="flex items-start gap-2">
               <AppMark name={active.appName} slug={active.appSlug} />
               <div className="min-w-0 flex-1">
                 <p className="font-semibold text-zinc-900 dark:text-zinc-100">{active.title || changeRef(active)}</p>
-                <p className="text-xs text-zinc-500 dark:text-zinc-400">{active.appName || active.appSlug} · {changeRef(active)}{active.prNumber ? ` (change ${active.id})` : ''}</p>
+                <p className="text-xs text-zinc-500 dark:text-zinc-400">{active.appName || active.appSlug} · {changeRef(active)}<LocalizedValue render={() => (active.prNumber ? tr("workshop:change_value1_c8e2cdb5", { value1: active.id }) : '')} /></p>
               </div>
               <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${statusTone(active.status)}`}>{changeStatusLabel(active.status)}</span>
             </div>
-            {active.checkState ? <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">Checks: {active.checkState}</p> : null}
+            {active.checkState ? <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300"><RichMessage id="workshop:sentence_dac2f1af9598" values={{ value1: active.checkState }} /></p> : null}
             {active.checkState === 'skipped'
               ? <p className={CHECK_REASON} data-agent-session-checks-reason>{skippedChecksReason(active.checkSkipReason)}</p> : null}
             <div className="mt-3 flex flex-wrap gap-2">
@@ -2105,34 +2061,28 @@ export function ChangesDrawer({ session }: { session: AgentSession }) {
                   variant="pillAccent"
                   ink="solid"
                   onClick={() => showPreview({ changeId: active.id, url: active.stagingUrl as string, prNumber: active.prNumber ?? null }, wide)}
-                >
-                  Open preview
-                </Button>
+                ><Message id="workshop:open_preview_f7afe3dd" /></Button>
               ) : null}
               <button
                 type="button"
                 data-agent-session-open-spec
                 className="rounded-full bg-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-800 hover:bg-zinc-300 dark:bg-zinc-700 dark:text-zinc-100"
                 onClick={() => void openSpec(active.id)}
-              >
-                Spec
-              </button>
+              ><Message id="workshop:spec_9bdc1337" /></button>
               {active.appSlug ? (
                 <a
                   className="rounded-full bg-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-800 hover:bg-zinc-300 dark:bg-zinc-700 dark:text-zinc-100"
                   href={`#app/${encodeURIComponent(active.appSlug)}/dev/proposals/${active.id}`}
-                >
-                  Proposal page
-                </a>
+                ><Message id="workshop:proposal_page_4ada49ae" /></a>
               ) : null}
             </div>
           </div>
         ) : (
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">No active change. Ask the agent to start one.</p>
+          <p className="text-sm text-zinc-500 dark:text-zinc-400"><Message id="workshop:no_active_change_ask_the_agent_to_start_one_1c121f26" /></p>
         )}
         {others.length ? (
           <>
-            <h3 className="mb-2 mt-5 text-xs font-semibold uppercase tracking-wide text-zinc-500">Earlier in this session</h3>
+            <h3 className="mb-2 mt-5 text-xs font-semibold uppercase tracking-wide text-zinc-500"><Message id="workshop:earlier_in_this_session_a7987b13" /></h3>
             <ul className="divide-y divide-zinc-200 dark:divide-zinc-800">
               {others.map((change) => (
                 <li key={change.id} className="flex items-center gap-2 py-2" data-agent-session-earlier-change={change.id}>
@@ -2143,16 +2093,14 @@ export function ChangesDrawer({ session }: { session: AgentSession }) {
                   </div>
                   <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${statusTone(change.status)}`}>{changeStatusLabel(change.status)}</span>
                   {!closed.has(change.status || '') ? (
-                    <button type="button" className="shrink-0 text-sm font-semibold text-violet-700 hover:underline dark:text-violet-300" onClick={() => void switchActiveChange(change.id)}>
-                      Switch to
-                    </button>
+                    <button type="button" className="shrink-0 text-sm font-semibold text-violet-700 hover:underline dark:text-violet-300" onClick={() => void switchActiveChange(change.id)}><Message id="workshop:switch_to_71b71bcf" /></button>
                   ) : null}
                 </li>
               ))}
             </ul>
           </>
         ) : null}
-      </section>
+      </section>} messages={{"aria-label":"workshop:changes_in_this_session_214ae1be"}} />
     </div>
   );
 }
@@ -2204,6 +2152,7 @@ function FollowOutput({ scroll, stick, count }: {
  * discussion pane carries in that place.
  */
 export function AgentSessionPanel({ embedded = false, headerAction = null }: { embedded?: boolean; headerAction?: ReactNode }) {
+  const language = useUiLanguage();
   // Everything the panel draws except the live turn, which LiveTurn and
   // FollowOutput read for themselves: a frame of streamed text does not
   // re-render the panel.
@@ -2233,7 +2182,7 @@ export function AgentSessionPanel({ embedded = false, headerAction = null }: { e
   const liveRun = snapshot.running && snapshot.turnPhase === 'cc';
   const items = useMemo(
     () => buildTranscript(snapshot.messages, snapshot.actions, Date.now(), { liveRun }),
-    [snapshot.messages, snapshot.actions, liveRun],
+    [snapshot.messages, snapshot.actions, liveRun, language],
   );
   const runShown = items.some((item) => item.kind === 'run' && item.status === 'running');
   // #3755: the active change's checks failed and nothing is working: the
@@ -2243,7 +2192,7 @@ export function AgentSessionPanel({ embedded = false, headerAction = null }: { e
     busy: snapshot.running || !!snapshot.session?.busy,
     messages: snapshot.messages,
     unsent: snapshot.outbox,
-  }) : null), [snapshot.phase, snapshot.session, snapshot.running, snapshot.messages, snapshot.outbox]);
+  }) : null), [snapshot.phase, snapshot.session, snapshot.running, snapshot.messages, snapshot.outbox, language]);
 
   // The run card's clock is the dev chat's (`nowStore`), whose heartbeat only
   // beats inside the dev chat's own transcript; beat it here while a run is
@@ -2306,7 +2255,7 @@ export function AgentSessionPanel({ embedded = false, headerAction = null }: { e
         <SessionBar session={snapshot.session} about={about} embedded={embedded} action={headerAction} />
         <div ref={scroll} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4 [overflow-wrap:anywhere]" aria-live="polite" onScroll={onScroll}>
           {snapshot.phase === 'loading' ? (
-            <div className="flex items-center gap-2 text-sm text-zinc-500"><SpinnerArcIcon className="h-5 w-5 animate-spin" aria-hidden="true" /> Loading…</div>
+            <div className="flex items-center gap-2 text-sm text-zinc-500"><SpinnerArcIcon className="h-5 w-5 animate-spin" aria-hidden="true" /><Message before={" "} id="workshop:loading_ba3bbbe1" /></div>
           ) : null}
           {empty ? <EmptyState about={about} request={request} /> : null}
           {items.map((item) => <Item key={item.key} item={item} sessionId={snapshot.id} />)}
@@ -2350,14 +2299,13 @@ export function AgentSessionScreen() {
   }, [snapshot.open]);
 
   return (
-    <main
+    <Localized element={<main
       ref={screenRef}
       id="agent-session-screen"
-      className="hidden flex flex-1 min-h-0 overflow-hidden"
-      aria-label="Agent session"
+      className="hidden flex flex-1 min-h-0 overflow-hidden" aria-label={catalogText("workshop:agent_session_da3d3fb8")}
     >
       {snapshot.open && snapshot.host === 'screen' ? <AgentSessionPanel /> : null}
-    </main>
+    </main>} messages={{"aria-label":"workshop:agent_session_da3d3fb8"}} />
   );
 }
 

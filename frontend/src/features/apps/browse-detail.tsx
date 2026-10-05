@@ -1,3 +1,6 @@
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * The browse screen's level-2 page (#1191 slice 6, conversion 3).
  *
@@ -134,10 +137,9 @@ function ContributorRow({ row }: { row: ContributorRowView }): ReactNode {
       titleClassName="font-medium"
       subtitle={row.meta}
       trailing={(
-        <div
-          className={`shrink-0 inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${row.pillTint}`}
-          title="Their changes that went live in this app"
-        >{`${row.merged} live`}</div>
+        <Localized element={<div
+          className={`shrink-0 inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${row.pillTint}`} title={catalogText("apps:their_changes_that_went_live_in_this_app_7f55ad3f")}
+        ><LocalizedValue render={() => (tr("apps:value1_live_2c4bcb92", { value1: row.merged }))} /></div>} messages={{"title":"apps:their_changes_that_went_live_in_this_app_7f55ad3f"}} />
       )}
     />
   );
@@ -148,15 +150,12 @@ function Contributors({ view }: { view: ContributorsView }): ReactNode {
     <GroupedList id="browse-detail-contributors" className={CARD_SPACING}>
       {/* The heading paints in every state (including loading) so the page
           doesn't jump when the fetch lands. */}
-      <h3
-        className={`relative px-4 py-2.5 text-sm font-semibold text-zinc-900 dark:text-zinc-100 ${HEAD_RULE}`}
-        title="The app&rsquo;s creator, its members, and everyone with a change that went live in it"
-      >
-        Contributors
-        {view.count == null ? null : (
+      <Localized element={<h3
+        className={`relative px-4 py-2.5 text-sm font-semibold text-zinc-900 dark:text-zinc-100 ${HEAD_RULE}`} title={catalogText("apps:the_app_s_creator_its_members_and_everyone_with__12ecfb76")}
+      ><Message id="apps:contributors_350ad433" />{view.count == null ? null : (
           <span className="text-zinc-500 dark:text-zinc-500 font-normal">{` · ${view.count}`}</span>
         )}
-      </h3>
+      </h3>} messages={{"title":"apps:the_app_s_creator_its_members_and_everyone_with__12ecfb76"}} />
       {view.note ? <p className={NOTE_CLASS}>{view.note}</p> : null}
       {view.rows.length ? (
         // The rows keep their own wrapper: ListRow's hairline is
@@ -186,7 +185,7 @@ function Contributors({ view }: { view: ContributorsView }): ReactNode {
 function Missing(): ReactNode {
   return (
     <div className="text-sm text-zinc-500 dark:text-zinc-400">
-      <p className="mb-3">That app isn&rsquo;t available.</p>
+      <p className="mb-3"><Message id="apps:that_app_isn_t_available_565f61ca" /></p>
       {/* #1036: a real anchor, so a modified click stays the browser's. */}
       <a
         id="browse-detail-back"
@@ -198,7 +197,7 @@ function Missing(): ReactNode {
           e.preventDefault();
           location.hash = '#apps';
         }}
-      >&larr; Back to all apps</a>
+      ><Message id="apps:back_to_all_apps_20b5eca3" /></a>
     </div>
   );
 }
@@ -235,22 +234,22 @@ function Ready({ view }: { view: Extract<DetailView, { state: 'ready' }> }): Rea
           {view.forkedFrom ? (
             <p id="browse-detail-fork" className="mt-1 text-xs text-amber-600 dark:text-amber-400 truncate">
               {view.forkedFrom.href ? (
-                <a
+                <LocalizedDynamic element={<a
                   href={view.forkedFrom.href}
                   className="hover:underline"
-                  title={`Remixed from ${view.forkedFrom.name}: open the original`}
+                  title={tr("apps:remixed_from_value1_open_the_original_29d573e9", { value1: view.forkedFrom?.name || '' })}
                 >
-                  {`\u2442 Remixed from ${view.forkedFrom.name}`}
-                </a>
+                  <LocalizedValue render={() => (tr("apps:remixed_from_value1_9705e65b", { value1: view.forkedFrom?.name || '' }))} />
+                </a>} resolve={() => ({ get "title"() { return tr("apps:remixed_from_value1_open_the_original_29d573e9", { value1: view.forkedFrom?.name || '' }); } })} />
               ) : (
-                <span className="opacity-90" title="The original app no longer exists">
-                  {`\u2442 Remixed from ${view.forkedFrom.name}`}
-                </span>
+                <Localized element={<span className="opacity-90" title={catalogText("apps:the_original_app_no_longer_exists_23bafd55")}>
+                  <LocalizedValue render={() => (tr("apps:remixed_from_value1_9705e65b", { value1: view.forkedFrom?.name || '' }))} />
+                </span>} messages={{"title":"apps:the_original_app_no_longer_exists_23bafd55"}} />
               )}
             </p>
           ) : null}
           {view.updatedRel ? (
-            <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{`Updated ${view.updatedRel}`}</p>
+            <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400"><LocalizedValue render={() => (tr("apps:updated_value1_0041faff", { value1: view.updatedRel }))} /></p>
           ) : null}
           {hasAppPills(view.app) ? (
             <div className="flex flex-wrap items-center gap-1 mt-2">
@@ -299,7 +298,7 @@ function Ready({ view }: { view: Extract<DetailView, { state: 'ready' }> }): Rea
       {view.actions.length || view.canShare ? (
         <GroupedList className={CARD_SPACING}>
           {view.canShare ? (
-            <ListRow
+            <Localized element={<ListRow
               as="button"
               id="browse-detail-share"
               inset="text"
@@ -307,10 +306,9 @@ function Ready({ view }: { view: Extract<DetailView, { state: 'ready' }> }): Rea
               // The action rows' own weight and ink (see them just below):
               // Share is one more entry in the same list, not a headline.
               titleClassName="font-normal text-zinc-700 dark:text-zinc-200"
-              tooltip="Share a link to this app"
-              title="Share"
+              tooltip="Share a link to this app" title={catalogText("apps:share_29887a5f")}
               onClick={() => controller()?.shareDetailApp(view.app)}
-            />
+            />} messages={{"title":"apps:share_29887a5f"}} />
           ) : null}
           {view.actions.map((a) => (
             <ListRow
@@ -344,11 +342,11 @@ function Ready({ view }: { view: Extract<DetailView, { state: 'ready' }> }): Rea
 export function BrowseDetail({ detail }: { detail: DetailView | null }): ReactNode {
   if (!detail) return null;
   if (detail.state === 'loading') {
-    return <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading&hellip;</p>;
+    return <p className="text-sm text-zinc-500 dark:text-zinc-400"><Message id="apps:loading_ba3bbbe1" /></p>;
   }
   if (detail.state === 'blocked') return <div className={NOTE_CLASS}>
-    <p>You blocked this app. Unblock it to open it again.</p>
-    <a href="#settings/blocked-apps" className="text-violet-600 dark:text-violet-400 underline">Open blocked apps in Settings</a>
+    <p><Message id="apps:you_blocked_this_app_unblock_it_to_open_it_again_33360de6" /></p>
+    <a href="#settings/blocked-apps" className="text-violet-600 dark:text-violet-400 underline"><Message id="apps:open_blocked_apps_in_settings_ff2f11f2" /></a>
   </div>;
   if (detail.state === 'missing') return <Missing />;
   return <Ready key={detail.slug} view={detail} />;

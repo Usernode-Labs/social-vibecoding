@@ -1,3 +1,8 @@
+import { getLanguage as uiLocale } from "../../lib/i18n/runtime";
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * `#home-getting-started` — the Getting started card on top of Home
  * (communities, stage 5), which since evan's "one list" decision
@@ -198,27 +203,27 @@ const SHOTS = [
 ] as const;
 type Shot = typeof SHOTS[number];
 
-const CITY_GARDEN: GettingStartedApp = { slug: 'city-garden', name: 'City garden' };
+const CITY_GARDEN: GettingStartedApp = { slug: 'city-garden', get name() { return tr("apps:city_garden_e7a75ceb"); } };
 
 // The fixtures' steps, in the order and words evan set the season up with.
 // Rewards are the admin's prose, as the server would send them.
 const FIXTURE_STEPS: Array<Omit<GettingStartedStep, 'done' | 'earned_points'>> = [
-  { id: 'tour', kind: 'tour', action: 'tour', title: 'Take the 1-minute tour', detail: 'See how Homeroom works.', href: null, reward: null },
+  { id: 'tour', kind: 'tour', action: 'tour', get title() { return tr("apps:take_the_1_minute_tour_bba6b95d"); }, get detail() { return tr("apps:see_how_homeroom_works_08f7b5c5"); }, href: null, reward: null },
   {
     id: 'challenge-41', kind: 'challenge', action: 'join', challenge_id: 41, event_id: 7,
-    title: 'Join a community', detail: 'Find people to build with.', href: '#apps', reward: '500 pts',
+    get title() { return tr("apps:join_a_community_540dc95d"); }, get detail() { return tr("apps:find_people_to_build_with_4e763e4d"); }, href: '#apps', reward: '500 pts',
   },
   {
     id: 'challenge-42', kind: 'challenge', action: 'try', challenge_id: 42, event_id: 7,
-    title: 'Try an app', detail: 'Open an app and try it.', href: null, reward: '500 pts',
+    get title() { return tr("apps:try_an_app_e2aa1647"); }, get detail() { return tr("apps:open_an_app_and_try_it_3508cfac"); }, href: null, reward: '500 pts',
   },
   {
     id: 'challenge-43', kind: 'challenge', action: 'vote', challenge_id: 43, event_id: 7,
-    title: 'Vote on an app', detail: 'Help decide what goes live next.', href: null, reward: '250 pts',
+    get title() { return tr("apps:vote_on_an_app_f901a671"); }, get detail() { return tr("apps:help_decide_what_goes_live_next_d4ce5696"); }, href: null, reward: '250 pts',
   },
   {
     id: 'challenge-44', kind: 'challenge', action: 'suggest', challenge_id: 44, event_id: 7,
-    title: 'Send feedback', detail: 'Tell a community what would make it better.',
+    get title() { return tr("apps:send_feedback_8235980b"); }, get detail() { return tr("apps:tell_a_community_what_would_make_it_better_62ca21a7"); },
     href: null, reward: '250 pts',
   },
 ];
@@ -226,10 +231,10 @@ const FIXTURE_STEPS: Array<Omit<GettingStartedStep, 'done' | 'earned_points'>> =
 // Five, the number the staging demo's locked Challenges block counts
 // (`?demo=1&challenges=locked`, src/routes/home-panels.js), so the card and
 // the block under it agree when a shot draws both.
-const FIXTURE_UNLOCKS = {
+const FIXTURE_UNLOCKS = () => ({
   count: 5,
-  names: ['Make your first change', 'Get a change live', 'Invite a friend', 'Start a community'],
-};
+  names: [tr("apps:make_your_first_change_f1fd4ce0"), tr("apps:get_a_change_live_3ab62f77"), tr("apps:invite_a_friend_1efe5a1a"), tr("apps:start_a_community_2d211bb9")],
+});
 
 function fixture(doneIds: string[], vote: VoteTarget['kind'] = 'needs'): GettingStartedModel {
   const steps = FIXTURE_STEPS.map((s) => {
@@ -248,7 +253,7 @@ function fixture(doneIds: string[], vote: VoteTarget['kind'] = 'needs'): Getting
     done,
     total: steps.length,
     earned_points: steps.reduce((sum, s) => sum + s.earned_points, 0),
-    unlocks: FIXTURE_UNLOCKS,
+    unlocks: FIXTURE_UNLOCKS(),
     needs_join: !joined,
     app: joined ? CITY_GARDEN : null,
     vote: joined ? { kind: vote, app: CITY_GARDEN, count: vote === 'needs' ? 1 : 0 } : null,
@@ -273,13 +278,13 @@ export const SHOT_MODELS: Record<Shot, GettingStartedModel> = {
 export const SHOT_MODEL = SHOT_MODELS['getting-started'];
 
 function pts(n: number): string {
-  return `${Math.round(n).toLocaleString('en-US')} pts`;
+  return tr("apps:value1_pts_7157c665", { value1: Math.round(n).toLocaleString(uiLocale()) });
 }
 
 /** "1 of 5 done · 500 pts earned"; no points clause while nothing has paid. */
 export function counterText(model: Pick<GettingStartedModel, 'done' | 'total' | 'earned_points'>): string {
   const earned = Number(model.earned_points) || 0;
-  return `${model.done} of ${model.total} done${earned > 0 ? ` · ${pts(earned)} earned` : ''}`;
+  return tr("apps:value1_of_value2_done_value3_9778615f", { value1: model.done, value2: model.total, value3: earned > 0 ? tr("apps:value1_earned_aa2b5722", { value1: pts(earned) }) : '' });
 }
 
 /**
@@ -289,18 +294,18 @@ export function counterText(model: Pick<GettingStartedModel, 'done' | 'total' | 
 export function unlockText(model: Pick<GettingStartedModel, 'done' | 'total' | 'unlocks' | 'complete'>): string | null {
   const n = Math.floor(Number(model.unlocks && model.unlocks.count) || 0);
   if (model.complete || n < 1) return null;
-  const what = n === 1 ? '1 more challenge' : `${n} more challenges`;
+  const what = n === 1 ? tr("apps:1_more_challenge_9543140b") : tr("apps:value1_more_challenges_2878cdf4", { value1: n });
   const left = model.total - model.done;
-  if (left === 1) return `One more step unlocks ${what}`;
-  if (left === 2) return `Two more steps unlock ${what}`;
-  return `Finish all ${model.total} to unlock ${what}`;
+  if (left === 1) return tr("apps:one_more_step_unlocks_value1_c04f7b26", { value1: what });
+  if (left === 2) return tr("apps:two_more_steps_unlock_value1_cbba2269", { value1: what });
+  return tr("apps:finish_all_value1_to_unlock_value2_c7ebc9f2", { value1: model.total, value2: what });
 }
 
 /** The done state's one line: "6 challenges unlocked". */
 export function unlockedLabel(count: number): string | null {
   const n = Math.floor(Number(count) || 0);
   if (n < 1) return null;
-  return n === 1 ? '1 challenge unlocked' : `${n} challenges unlocked`;
+  return n === 1 ? tr("apps:1_challenge_unlocked_3ba0ccd8") : tr("apps:value1_challenges_unlocked_336132ab", { value1: n });
 }
 
 /** The first step not done: the one the card points at. */
@@ -319,13 +324,13 @@ export function nextStepId(model: Pick<GettingStartedModel, 'steps'>): string | 
  */
 export function rewardText(step: Pick<GettingStartedStep, 'kind' | 'done' | 'reward' | 'earned_points'>):
   { text: string; tone: 'reward' | 'earned' | 'quiet' } | null {
-  if (step.kind === 'tour') return { text: 'No points · ticks when you finish or skip it', tone: 'quiet' };
+  if (step.kind === 'tour') return { get text() { return tr("apps:no_points_ticks_when_you_finish_or_skip_it_28756da6"); }, tone: 'quiet' };
   const earned = Number(step.earned_points) || 0;
-  if (step.done) return earned > 0 ? { text: `+${pts(earned)} earned`, tone: 'earned' } : null;
+  if (step.done) return earned > 0 ? { get text() { return tr("apps:value1_earned_ffee980e", { value1: pts(earned) }); }, tone: 'earned' } : null;
   const s = String(step.reward == null ? '' : step.reward).trim();
   if (!s) return null;
-  if (/^[\d][\d.,]*$/.test(s)) return { text: `Earns ${s} pts`, tone: 'reward' };
-  if (/^[\d][\d.,]*\s*(pts?|points?)$/i.test(s)) return { text: `Earns ${s}`, tone: 'reward' };
+  if (/^[\d][\d.,]*$/.test(s)) return { get text() { return tr("apps:earns_value1_pts_6009c826", { value1: s }); }, tone: 'reward' };
+  if (/^[\d][\d.,]*\s*(pts?|points?)$/i.test(s)) return { get text() { return tr("apps:earns_value1_6dd8e9da", { value1: s }); }, tone: 'reward' };
   return { text: s, tone: 'reward' };
 }
 
@@ -352,7 +357,7 @@ export interface StepButtonView {
   go: StepGo;
 }
 
-const plural = (n: number) => (n === 1 ? '1 change is' : `${n} changes are`);
+const plural = (n: number) => (n === 1 ? tr("apps:1_change_is_5351727b") : tr("apps:value1_changes_are_84d85381", { value1: n }));
 
 /**
  * What does not tick Join, said on its row while it is to do: the
@@ -373,7 +378,7 @@ export function joinDetail(detail: string): string {
 // make is open to everyone): the three go to Discover, never a lock.
 const DISCOVER_GO: StepGo = { to: 'hash', href: '#apps' };
 const DISCOVER_BUTTON: StepButtonView = {
-  short: 'Discover', long: 'Find an app on Discover', aria: 'Find an app on Discover', app: null, arrow: true,
+  get short() { return tr("apps:discover_d4a33d5b"); }, get long() { return tr("apps:find_an_app_on_discover_655f7561"); }, get aria() { return tr("apps:find_an_app_on_discover_655f7561"); }, app: null, arrow: true,
   go: DISCOVER_GO,
 };
 
@@ -394,31 +399,31 @@ export function stepView(
     case 'tour':
       return {
         detail: step.detail,
-        button: { short: 'Start', long: 'Take the tour', aria: 'Start the tour', app: null, arrow: false, go: { to: 'tour' } },
+        button: { get short() { return tr("apps:start_e4bb9f1e"); }, get long() { return tr("apps:take_the_tour_a83c4366"); }, get aria() { return tr("apps:start_the_tour_7fe6de12"); }, app: null, arrow: false, go: { to: 'tour' } },
       };
     case 'join':
       return {
         detail: joinDetail(step.detail),
         button: {
-          short: 'Join', long: 'Find a community', aria: 'Find a community', app: null, arrow: true,
+          get short() { return tr("apps:join_fd30fe68"); }, long: 'Find a community', aria: 'Find a community', app: null, arrow: true,
           go: { to: 'hash', href: step.href || '#apps' },
         },
       };
     case 'try':
     case 'vote':
     case 'suggest':
-      if (model.needs_join === true) return { detail: 'Join a community first.', button: null };
+      if (model.needs_join === true) return { get detail() { return tr("apps:join_a_community_first_530b9471"); }, button: null };
       if (!app) {
         const detail = step.action === 'try'
-          ? `Find an app on Discover and spend ${secs} seconds in it.`
+          ? tr("apps:find_an_app_on_discover_and_spend_value1_seconds_b20c1abb", { value1: secs })
           : step.action === 'vote'
-            ? 'Find an app on Discover and see what people are building.'
-            : 'Find an app on Discover and tell its builders what would make it better.';
+            ? tr("apps:find_an_app_on_discover_and_see_what_people_are__16d6149d")
+            : tr("apps:find_an_app_on_discover_and_tell_its_builders_wh_ab786473");
         return { detail, button: DISCOVER_BUTTON };
       }
       break;
     default: {
-      const label = String(step.cta || '').trim() || 'Open';
+      const label = String(step.cta || '').trim() || tr("apps:open_ed077f3d");
       return {
         detail: step.detail,
         button: step.href
@@ -428,33 +433,33 @@ export function stepView(
     }
   }
   if (step.action === 'try') {
-    const long = `Try ${app.name}`;
+    const long = tr("apps:try_value1_1476d70d", { value1: app.name });
     return {
-      detail: `Spend ${secs} seconds in ${app.name}.`,
-      button: { short: 'Try', long, aria: long, app, arrow: true, go: { to: 'app', slug: app.slug } },
+      detail: tr("apps:spend_value1_seconds_in_value2_e463fe2f", { value1: secs, value2: app.name }),
+      button: { get short() { return tr("apps:try_85d6c071"); }, long, aria: long, app, arrow: true, go: { to: 'app', slug: app.slug } },
     };
   }
   if (step.action === 'suggest') {
-    const long = `Suggest a change to ${app.name}`;
+    const long = tr("apps:suggest_a_change_to_value1_79733430", { value1: app.name });
     return {
-      detail: `Tell ${app.name}’s builders what would make it better.`,
-      button: { short: 'Suggest', long, aria: long, app, arrow: true, go: { to: 'feedback', slug: app.slug } },
+      detail: tr("apps:tell_value1_s_builders_what_would_make_it_better_a82c363f", { value1: app.name }),
+      button: { get short() { return tr("apps:suggest_4effad82"); }, long, aria: long, app, arrow: true, go: { to: 'feedback', slug: app.slug } },
     };
   }
   const vote = model.vote || { kind: 'workshop' as const, app, count: 0 };
   if (vote.kind === 'needs') {
-    const long = `Vote in ${vote.app.name}`;
+    const long = tr("apps:vote_in_value1_79a478aa", { value1: vote.app.name });
     return {
       detail: vote.app.slug === app.slug
-        ? `${plural(vote.count)} waiting in ${app.name}.`
-        : `Nothing in ${app.name} yet; ${plural(vote.count)} waiting in ${vote.app.name}.`,
-      button: { short: 'Vote', long, aria: long, app: vote.app, arrow: true, go: { to: 'needs', slug: vote.app.slug } },
+        ? tr("apps:value1_waiting_in_value2_268ce1ca", { value1: plural(vote.count), value2: app.name })
+        : tr("apps:nothing_in_value1_yet_value2_waiting_in_value3_f4285741", { value1: app.name, value2: plural(vote.count), value3: vote.app.name }),
+      button: { get short() { return tr("apps:vote_cd5588db"); }, long, aria: long, app: vote.app, arrow: true, go: { to: 'needs', slug: vote.app.slug } },
     };
   }
-  const long = `See what ${vote.app.name} is building`;
+  const long = tr("apps:see_what_value1_is_building_8255aa44", { value1: vote.app.name });
   return {
-    detail: 'Nothing is waiting for approval yet. See what people are building.',
-    button: { short: 'Look', long, aria: long, app: vote.app, arrow: true, go: { to: 'workshop', slug: vote.app.slug } },
+    get detail() { return tr("apps:nothing_is_waiting_for_approval_yet_see_what_peo_cb15bff5"); },
+    button: { get short() { return tr("apps:look_a0de5719"); }, long, aria: long, app: vote.app, arrow: true, go: { to: 'workshop', slug: vote.app.slug } },
   };
 }
 
@@ -631,24 +636,22 @@ function Header({ title, model, onClose, celebrate = false }: {
           {/* Done, the points read as won: "+1,500 pts" in the earned green. */}
           {celebrate && earned > 0 ? (
             <>
-              {`${model.done} of ${model.total} done · `}
+              <LocalizedValue render={() => (tr("apps:value1_of_value2_done_e6d9922b", { value1: model.done, value2: model.total }))} />
               <span className="font-semibold text-emerald-700 dark:text-emerald-400">{`+${pts(earned)}`}</span>
-              {' earned'}
+              <Message id="apps:earned_57a9ebf8" />
             </>
           ) : counterText(model)}
         </div>
       </div>
       {onClose ? (
-        <button
+        <Localized element={<button
           type="button"
-          className="-mr-1 -mt-1 flex h-8 w-8 items-center justify-center rounded-full text-zinc-500 hover:bg-zinc-500/10 dark:text-zinc-400"
-          aria-label="Close Getting started"
-          title="Close"
+          className="-mr-1 -mt-1 flex h-8 w-8 items-center justify-center rounded-full text-zinc-500 hover:bg-zinc-500/10 dark:text-zinc-400" aria-label={catalogText("apps:close_getting_started_708e0875")} title={catalogText("apps:close_7d9eb7ac")}
           data-getting-started-close=""
           onClick={onClose}
         >
           <XIcon className="h-4 w-4" aria-hidden="true" />
-        </button>
+        </button>} messages={{"aria-label":"apps:close_getting_started_708e0875","title":"apps:close_7d9eb7ac"}} />
       ) : null}
     </div>
   );
@@ -697,7 +700,7 @@ function Progress({ model, onGo }: { model: GettingStartedModel; onGo: (go: Step
   const foot = unlockText(model);
   return (
     <>
-      <Header title="Getting started" model={model} onClose={null} />
+      <Localized element={<Header title={catalogText("apps:getting_started_831d0f72")} model={model} onClose={null} />} messages={{"title":"apps:getting_started_831d0f72"}} />
       <Segments model={model} />
       <div className="divide-y divide-[color:var(--app-sheet-line)] pt-1">
         {model.steps.map((step) => (
@@ -723,7 +726,7 @@ function Done({ model, onClose }: { model: GettingStartedModel; onClose: () => v
   const label = unlockedLabel(model.unlocks.count);
   return (
     <>
-      <Header title="You’re all set" model={model} onClose={onClose} celebrate />
+      <Localized element={<Header title={catalogText("apps:you_re_all_set_f195f8e2")} model={model} onClose={onClose} celebrate />} messages={{"title":"apps:you_re_all_set_f195f8e2"}} />
       <Segments model={model} />
       {label ? (
         <div
@@ -745,9 +748,7 @@ function Done({ model, onClose }: { model: GettingStartedModel; onClose: () => v
           ink="solid"
           data-getting-started-see=""
           onClick={() => { location.hash = '#leaderboard/challenges'; }}
-        >
-          See challenges
-          <ChevronRightIcon className="-mr-1 h-[15px] w-[15px]" strokeWidth="2.8" aria-hidden="true" />
+        ><Message id="apps:see_challenges_859f7c55" /><ChevronRightIcon className="-mr-1 h-[15px] w-[15px]" strokeWidth="2.8" aria-hidden="true" />
         </Button>
       </div>
     </>
@@ -755,6 +756,7 @@ function Done({ model, onClose }: { model: GettingStartedModel; onClose: () => v
 }
 
 export function GettingStarted() {
+  useUiLanguage();
   const rootRef = useRef<HTMLElement | null>(null);
   const [model, setModel] = useState<GettingStartedModel | null>(null);
   const homeVisible = useVisibility('home-screen', true);
@@ -822,7 +824,7 @@ export function GettingStarted() {
   const go = (target: StepGo) => { void followStep(target, { fixture: isShot(shot()) }); };
 
   return (
-    <section ref={rootRef} id="home-getting-started" className="hidden px-3 pb-2 pt-3" aria-label="Getting started">
+    <Localized element={<section ref={rootRef} id="home-getting-started" className="hidden px-3 pb-2 pt-3" aria-label={catalogText("apps:getting_started_831d0f72")}>
       {model ? (
         <GroupedList
           tone="plane"
@@ -835,6 +837,6 @@ export function GettingStarted() {
             : <Progress model={model} onGo={go} />}
         </GroupedList>
       ) : null}
-    </section>
+    </section>} messages={{"aria-label":"apps:getting_started_831d0f72"}} />
   );
 }

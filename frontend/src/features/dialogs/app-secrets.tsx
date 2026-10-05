@@ -1,3 +1,4 @@
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * App-secrets dialog (#app-secrets-modal).
  *
@@ -67,25 +68,20 @@ export function AppSecretsDialog() {
       {...dialog.backdropProps}
     >
       <DialogCard size="lg" relative scroll>
-        <button
+        <Localized element={<button
           id="app-secrets-close"
-          className="absolute top-4 right-4 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200 transition-colors"
-          aria-label="Close"
+          className="absolute top-4 right-4 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200 transition-colors" aria-label={catalogText("core:close_7d9eb7ac")}
           onClick={() => Secrets.close()}
         >
           <XIcon className="w-5 h-5" />
-        </button>
+        </button>} messages={{"aria-label":"core:close_7d9eb7ac"}} />
         {/*
             Title + subtitle are set by Secrets.render(): the same modal is
             "App secrets" for a child app and "Platform variables" for the
             platform's own row, where a change lands on the next deploy.
         */}
-        <h2 id="app-secrets-title" className="text-lg font-bold mb-1 text-zinc-900 dark:text-zinc-100">
-          App secrets
-        </h2>
-        <p id="app-secrets-subtitle" className="text-sm text-zinc-600 dark:text-zinc-400 mb-4">
-          Environment variables this app declares in
-          <code className="text-xs">
+        <h2 id="app-secrets-title" className="text-lg font-bold mb-1 text-zinc-900 dark:text-zinc-100"><Message id="core:app_secrets_fbd64919" /></h2>
+        <p id="app-secrets-subtitle" className="text-sm text-zinc-600 dark:text-zinc-400 mb-4"><Message id="core:environment_variables_this_app_declares_in_8dd490a4" /><code className="text-xs">
             dapp.json
           </code>
           .
@@ -114,11 +110,7 @@ export function AppSecretsDialog() {
         <div
           id="app-secrets-footer"
           className="mt-4 pt-4 border-t border-zinc-200 dark:border-zinc-800 text-xs text-zinc-500 dark:text-zinc-400 hidden"
-        >
-          Changes apply on the next deploy. Admins can
-          <button id="app-secrets-redeploy" className="text-violet-700 hover:text-violet-400 underline dark:text-violet-400">
-            redeploy now
-          </button>
+        ><Message id="core:changes_apply_on_the_next_deploy_admins_can_6b54eb13" /><button id="app-secrets-redeploy" className="text-violet-700 hover:text-violet-400 underline dark:text-violet-400"><Message id="core:redeploy_now_5d0d3c0a" /></button>
           .
         </div>
       </DialogCard>

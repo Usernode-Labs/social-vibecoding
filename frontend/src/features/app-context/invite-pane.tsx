@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * Invite — the third pane of the app-context sheet: a link to this project
  * that anyone can use to join it (/invite/<token>,
@@ -78,33 +82,33 @@ const USE_CHOICES = [1, 5, 10, 25, 50, 100, NO_LIMIT];
 /** The sentence under the link. */
 export function linkSentence(link: Pick<InviteLink, 'expiresAt' | 'maxUses' | 'uses'>, grant: string, now = Date.now()): string {
   const who = grant === 'collaborator'
-    ? 'Anyone with this link can join and build with you.'
-    : 'Anyone with this link can join.';
-  if (link.expiresAt == null && link.maxUses == null) return `${who} It works until you turn it off.`;
+    ? tr("apps:anyone_with_this_link_can_join_and_build_with_yo_14dcc368")
+    : tr("apps:anyone_with_this_link_can_join_f3b51368");
+  if (link.expiresAt == null && link.maxUses == null) return tr("apps:value1_it_works_until_you_turn_it_off_00f04b7b", { value1: who });
   const days = link.expiresAt == null ? null : daysUntil(link.expiresAt, now);
-  const when = days == null ? 'It has no end date' : days <= 1 ? 'It expires within a day' : `It expires in ${days} days`;
+  const when = days == null ? tr("apps:it_has_no_end_date_4feb5001") : days <= 1 ? tr("apps:it_expires_within_a_day_46a0d7e2") : tr("apps:it_expires_in_value1_days_22f7b48e", { value1: days });
   if (link.maxUses == null) return `${who} ${when}.`;
   // Before anyone has used it, the number it was made for; after, what is
   // left of it.
   const count = link.uses ? Math.max(0, link.maxUses - link.uses) : link.maxUses;
   const more = link.uses ? ' more' : '';
-  return `${who} ${when} and works for ${count}${more} ${count === 1 ? 'person' : 'people'}.`;
+  return tr("apps:value1_value2_and_works_for_count_value4_people_8af220ef", { value1: who, value2: when, count: count, value4: more });
 }
 
 /** "3 of 25 used · 5 days left", for a row of Your links. */
 export function linkDetail(link: Pick<InviteLink, 'expiresAt' | 'maxUses' | 'uses'>, now = Date.now()): string {
-  const used = link.maxUses == null ? `${link.uses} joined` : `${link.uses} of ${link.maxUses} used`;
-  if (link.expiresAt == null) return `${used} · no end date`;
+  const used = link.maxUses == null ? tr("apps:value1_joined_9ccfce0f", { value1: link.uses }) : tr("apps:value1_of_value2_used_baced1a0", { value1: link.uses, value2: link.maxUses });
+  if (link.expiresAt == null) return tr("apps:value1_no_end_date_b85e817d", { value1: used });
   const days = daysUntil(link.expiresAt, now);
-  return `${used} · ${days <= 1 ? 'under a day left' : `${days} days left`}`;
+  return `${used} · ${days <= 1 ? tr("apps:under_a_day_left_add5bd90") : tr("apps:value1_days_left_14f91809", { value1: days })}`;
 }
 
 /** The line about people new to Homeroom. */
 export function newcomerLine(skipsLeft: number | null): string {
   if (skipsLeft && skipsLeft > 0) {
-    return `You can let ${skipsLeft} ${skipsLeft === 1 ? 'person' : 'people'} new to Homeroom skip the waitlist.`;
+    return tr("apps:you_can_let_count_people_new_to_homeroom_skip_th_3fad3e4e", { count: skipsLeft });
   }
-  return 'Someone new to Homeroom joins the waitlist first, and this project when they are let in.';
+  return tr("apps:someone_new_to_homeroom_joins_the_waitlist_first_cda30a49");
 }
 
 function absolute(path: string): string {
@@ -114,11 +118,12 @@ function absolute(path: string): string {
 async function api(url: string, init?: RequestInit): Promise<any> {
   const res = await fetch(url, { credentials: 'same-origin', ...init });
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body?.error || 'Something went wrong. Try again.');
+  if (!res.ok) throw new Error(body?.error || tr("apps:something_went_wrong_try_again_4def98c8"));
   return body;
 }
 
 export function InvitePane({ slug, label }: { slug: string | null; label: string }) {
+  useUiLanguage();
   const [state, setState] = useState<InviteState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -158,12 +163,12 @@ export function InvitePane({ slug, label }: { slug: string | null; label: string
       setCopied(true);
       setTimeout(() => setCopied(false), 1600);
     } catch {
-      setError('Could not copy. Press and hold the link to copy it.');
+      setError(tr("apps:could_not_copy_press_and_hold_the_link_to_copy_i_dac2f281"));
     }
   };
   const share = async () => {
     if (!url || typeof navigator.share !== 'function') return;
-    try { await navigator.share({ title: `Join ${label} on Homeroom`, url }); } catch { /* dismissed */ }
+    try { await navigator.share({ get title() { return tr("apps:join_value1_on_homeroom_f4436c83", { value1: label }); }, url }); } catch { /* dismissed */ }
   };
   const make = async () => {
     if (!base) return;
@@ -196,11 +201,11 @@ export function InvitePane({ slug, label }: { slug: string | null; label: string
     }
   };
 
-  if (!slug) return <div id="app-invite-pane"><p className={NOTE}>Open a project to invite people to it.</p></div>;
+  if (!slug) return <div id="app-invite-pane"><p className={NOTE}><Message id="apps:open_a_project_to_invite_people_to_it_96c1e967" /></p></div>;
   if (!state) {
     return (
       <div id="app-invite-pane">
-        <p className={NOTE}>{error || 'Making your link…'}</p>
+        <p className={NOTE}><LocalizedValue render={() => (error || tr("apps:making_your_link_cb9ae30b"))} /></p>
       </div>
     );
   }
@@ -208,9 +213,9 @@ export function InvitePane({ slug, label }: { slug: string | null; label: string
     return (
       <div id="app-invite-pane">
         <p className={NOTE}>
-          {state.grant === 'collaborator'
-            ? `Only the people building ${label} can invite others to it.`
-            : `Join ${label} to invite people to it.`}
+          <LocalizedValue render={() => (state.grant === 'collaborator'
+            ? tr("apps:only_the_people_building_value1_can_invite_other_f7b43cca", { value1: label })
+            : tr("apps:join_value1_to_invite_people_to_it_5a22e9d5", { value1: label }))} />
         </p>
       </div>
     );
@@ -221,19 +226,18 @@ export function InvitePane({ slug, label }: { slug: string | null; label: string
     <div id="app-invite-pane" className="pb-2">
       <div className="px-5 pt-1">
         <div className="text-[0.9375rem] font-semibold text-zinc-900 dark:text-zinc-100">
-          {`Invite people to ${label}`}
+          <LocalizedValue render={() => (tr("apps:invite_people_to_value1_847cd1ff", { value1: label }))} />
         </div>
       </div>
       {current ? (
         <>
           <div className="px-5 pt-3">
-            <Input
+            <Localized element={<Input
               id="app-invite-url"
               readOnly
-              value={url}
-              aria-label="Invite link"
+              value={url} aria-label={catalogText("apps:invite_link_826c2722")}
               onFocus={(e) => e.currentTarget.select()}
-            />
+            />} messages={{"aria-label":"apps:invite_link_826c2722"}} />
           </div>
           <p id="app-invite-sentence" className="px-5 pt-2 text-[0.8125rem] leading-snug text-zinc-600 dark:text-zinc-300">
             {linkSentence(current, state.grant)}
@@ -241,12 +245,12 @@ export function InvitePane({ slug, label }: { slug: string | null; label: string
           <div className="flex items-stretch gap-2 px-5 pt-3">
             <button id="app-invite-copy" type="button" className={PRIMARY} onClick={copy}>
               <CopyIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
-              <span className="truncate">{copied ? 'Copied' : 'Copy link'}</span>
+              <span className="truncate"><LocalizedValue render={() => (copied ? tr("apps:copied_8d525e5f") : tr("apps:copy_link_dbf362d4"))} /></span>
             </button>
             {canShare ? (
               <button id="app-invite-share" type="button" className={SECONDARY} onClick={share}>
                 <ShareIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
-                <span className="truncate">Share</span>
+                <span className="truncate"><Message id="apps:share_29887a5f" /></span>
               </button>
             ) : null}
           </div>
@@ -265,26 +269,24 @@ export function InvitePane({ slug, label }: { slug: string | null; label: string
       {changing ? (
         <div id="app-invite-change" className="px-5 pt-4 space-y-3">
           <label className="block text-sm text-zinc-700 dark:text-zinc-200">
-            <span className="block pb-1">Expires after</span>
+            <span className="block pb-1"><Message id="apps:expires_after_a5e4b9f5" /></span>
             <Select value={String(days)} onChange={(e) => setDays(Number(e.target.value))}>
               {DAY_CHOICES.filter((d) => d === NO_LIMIT || (d >= state.limits.minDays && d <= state.limits.maxDays)).map((d) => (
-                <option key={d} value={d}>{d === NO_LIMIT ? 'Until you turn it off' : d === 1 ? '1 day' : `${d} days`}</option>
+                <option key={d} value={d}><LocalizedValue render={() => (d === NO_LIMIT ? tr("apps:until_you_turn_it_off_e8a440c9") : d === 1 ? tr("apps:1_day_fa665d95") : tr("apps:value1_days_f766f83d", { value1: d }))} /></option>
               ))}
             </Select>
           </label>
           <label className="block text-sm text-zinc-700 dark:text-zinc-200">
-            <span className="block pb-1">Works for</span>
+            <span className="block pb-1"><Message id="apps:works_for_dd8110e9" /></span>
             <Select value={String(uses)} onChange={(e) => setUses(Number(e.target.value))}>
               {USE_CHOICES.filter((n) => n === NO_LIMIT || (n >= state.limits.minUses && n <= state.limits.maxUses)).map((n) => (
-                <option key={n} value={n}>{n === NO_LIMIT ? 'Anyone with the link' : n === 1 ? '1 person' : `${n} people`}</option>
+                <option key={n} value={n}><LocalizedValue render={() => (n === NO_LIMIT ? tr("apps:anyone_with_the_link_5b7f7017") : n === 1 ? tr("apps:1_person_de545d07") : tr("apps:value1_people_80ea6fd0", { value1: n }))} /></option>
               ))}
             </Select>
           </label>
           <div className="flex items-stretch gap-2">
-            <button type="button" className={SECONDARY} onClick={() => setChanging(false)}>Cancel</button>
-            <button id="app-invite-make" type="button" className={PRIMARY} disabled={busy} onClick={make}>
-              Make new link
-            </button>
+            <button type="button" className={SECONDARY} onClick={() => setChanging(false)}><Message id="apps:cancel_19766ed6" /></button>
+            <button id="app-invite-make" type="button" className={PRIMARY} disabled={busy} onClick={make}><Message id="apps:make_new_link_7630d846" /></button>
           </div>
         </div>
       ) : (
@@ -293,20 +295,18 @@ export function InvitePane({ slug, label }: { slug: string | null; label: string
           type="button"
           className="w-full px-5 min-h-[40px] text-left text-sm font-medium text-violet-700 dark:text-violet-400 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
           onClick={() => setChanging(true)}
-        >
-          Change how long or how many
-        </button>
+        ><Message id="apps:change_how_long_or_how_many_20fabfc1" /></button>
       )}
 
       {state.links.length ? (
         <div id="app-invite-links">
-          <h4 className={SECTION}>{state.manages ? 'Live links' : 'Your links'}</h4>
+          <h4 className={SECTION}><LocalizedValue render={() => (state.manages ? tr("apps:live_links_3401ecef") : tr("apps:your_links_219ee7d1"))} /></h4>
           {state.links.map((link) => (
             <div key={link.id} className={ROW} data-invite-link={link.id}>
               <span className="flex-1 min-w-0">
                 <span className="block truncate">{linkDetail(link)}</span>
                 {!link.mine && link.createdBy ? (
-                  <span className="block truncate text-xs text-zinc-500 dark:text-zinc-400">{`by @${link.createdBy}`}</span>
+                  <span className="block truncate text-xs text-zinc-500 dark:text-zinc-400"><LocalizedValue render={() => (tr("apps:by_value1_363778f7", { value1: link.createdBy }))} /></span>
                 ) : null}
               </span>
               <button
@@ -314,9 +314,7 @@ export function InvitePane({ slug, label }: { slug: string | null; label: string
                 className="shrink-0 text-sm font-medium text-red-600 dark:text-red-400 hover:underline disabled:opacity-50"
                 disabled={busy}
                 onClick={() => turnOff(link)}
-              >
-                Turn off
-              </button>
+              ><Message id="apps:turn_off_06f0e210" /></button>
             </div>
           ))}
         </div>

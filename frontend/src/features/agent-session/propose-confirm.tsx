@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * "Propose to group" on a staging card (#3032): the confirmation is a small
  * panel under the button, the way the dev board's vote picker is, rather
@@ -32,13 +36,13 @@ const POP_HEIGHT = 170;
 /** The title route's own cap (MANUAL_SESSION_TITLE_MAX in src/routes/sessions.js). */
 export const PROPOSE_TITLE_MAX = 256;
 
-export const PROPOSE_QUESTION = 'Put this up for the group’s vote?';
+export const PROPOSE_QUESTION = () => tr("workshop:put_this_up_for_the_group_s_vote_d55f9306");
 
 /** The line under the question: which change, and what happens on the way. */
 export function proposeLine(title: string | null | undefined, prNumber: number | null | undefined): string {
-  const name = (title || '').trim() || 'This change';
-  const pr = prNumber ? ` (PR #${prNumber})` : '';
-  return `“${name}”${pr} goes to the vote. Its preview and checks run again on the way.`;
+  const name = (title || '').trim() || tr("workshop:this_change_9ed68ba8");
+  const pr = prNumber ? tr("workshop:pr_value1_700c53a1", { value1: prNumber }) : '';
+  return tr("workshop:value1_value2_goes_to_the_vote_its_preview_and_c_9e741892", { value1: name, value2: pr });
 }
 
 /** The title as the server stores it: one line, runs of space made one. */
@@ -64,36 +68,33 @@ export function ProposeConfirmPanel({ draft, prNumber, headId, goRef, onDraft, o
 }) {
   return (
     <>
-      <div className="dev-vote-switch-label" id={headId}>{PROPOSE_QUESTION}</div>
+      <div className="dev-vote-switch-label" id={headId}>{PROPOSE_QUESTION()}</div>
       <label className="dev-vote-reason">
-        <span className="dev-vote-reason-label">Proposal title</span>
-        <input
+        <span className="dev-vote-reason-label"><Message id="workshop:proposal_title_f85d9e1a" /></span>
+        <Localized element={<input
           type="text"
           className="dev-vote-reason-box"
           value={draft}
-          maxLength={PROPOSE_TITLE_MAX}
-          placeholder="This change"
+          maxLength={PROPOSE_TITLE_MAX} placeholder={catalogText("workshop:this_change_9ed68ba8")}
           data-agent-session-propose-title
           onChange={(event) => onDraft(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === 'Enter') { event.preventDefault(); onPropose(); }
           }}
-        />
+        />} messages={{"placeholder":"workshop:this_change_9ed68ba8"}} />
       </label>
       <p className="px-1 pt-2 text-[13px] leading-snug text-zinc-600 dark:text-zinc-300" data-agent-session-propose-line>
         {proposeLine(draft, prNumber)}
       </p>
       <div className="dev-vote-reason-actions">
-        <button type="button" className="dev-vote-reason-cancel" onClick={onCancel}>Cancel</button>
+        <button type="button" className="dev-vote-reason-cancel" onClick={onCancel}><Message id="workshop:cancel_19766ed6" /></button>
         <button
           ref={goRef}
           type="button"
           className="dev-vote-reason-send dev-vote-reason-send-yes"
           data-agent-session-propose-confirm
           onClick={onPropose}
-        >
-          Propose
-        </button>
+        ><Message id="workshop:propose_1cbd9e71" /></button>
       </div>
     </>
   );
@@ -110,6 +111,7 @@ export function ProposeButton({ changeId, title, prNumber, className, busy, prop
   busy: boolean;
   proposing: boolean;
 }) {
+  useUiLanguage();
   const [open, setOpen] = useState(false);
   const [rect, setRect] = useState<AnchorRect | null>(null);
   const [sheetEl, setSheetEl] = useState<HTMLElement | null>(null);
@@ -220,7 +222,7 @@ export function ProposeButton({ changeId, title, prNumber, className, busy, prop
         onClick={toggle}
         data-agent-session-preview-propose
       >
-        {proposing ? 'Proposing…' : 'Propose to group'}
+        <LocalizedValue render={() => (proposing ? tr("workshop:proposing_adf1e986") : tr("workshop:propose_to_group_053e7048"))} />
       </button>
       {pos ? createPortal(
         <div

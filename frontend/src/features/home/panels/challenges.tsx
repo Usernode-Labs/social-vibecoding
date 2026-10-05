@@ -1,3 +1,4 @@
+import { Message, Localized, message as catalogText } from "../../../lib/i18n/react";
 /**
  * The Challenges block: what the group is working towards.
  *
@@ -138,15 +139,11 @@ export function ChallengesPanel({ view }: { view: ChallengesView }) {
     return (
       <PanelShell panelKey={view.key} expanded={false} plate="none" stamps={{ rows: 0 }}>
         <div className="home-panel-body">
-          <button
+          <Localized element={<button
             type="button"
-            className="home-panel-rows home-panel-row flex w-full items-center text-left text-[13px] text-zinc-500 dark:text-zinc-400 cursor-pointer hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-violet-500"
-            title="Go to the Challenges tab on the Leaderboard screen"
-            aria-label="No challenges are running right now. Go to the Challenges tab on the Leaderboard screen"
+            className="home-panel-rows home-panel-row flex w-full items-center text-left text-[13px] text-zinc-500 dark:text-zinc-400 cursor-pointer hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-violet-500" title={catalogText("apps:go_to_the_challenges_tab_on_the_leaderboard_scre_5a7c1c89")} aria-label={catalogText("apps:no_challenges_are_running_right_now_go_to_the_ch_56376c8a")}
             onClick={() => panels()?.goToChallenges?.()}
-          >
-            No challenges are running right now
-          </button>
+          ><Message id="apps:no_challenges_are_running_right_now_85bac9da" /></button>} messages={{"title":"apps:go_to_the_challenges_tab_on_the_leaderboard_scre_5a7c1c89","aria-label":"apps:no_challenges_are_running_right_now_go_to_the_ch_56376c8a"}} />
         </div>
       </PanelShell>
     );

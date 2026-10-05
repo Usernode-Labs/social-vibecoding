@@ -1,3 +1,4 @@
+import { t as tr } from "../../lib/i18n/runtime";
 // The rows under "More" in the Homeroom menu (#2779 follow-up; it was
 // "Continue" until the UI overhaul, then "Agent sessions"): your agent
 // sessions, so going back to one is a tap from anywhere. Pure, so tests can
@@ -83,10 +84,10 @@ export function agentSub(app: string | null, detail: string): string {
 
 function agentDetail(session: ContinueAgentSession): string {
   const change = session.activeChange;
-  if (!change) return 'Agent session';
-  if (change.status === 'promoted') return 'Waiting for approval';
-  if (change.status === 'merged') return 'Live';
-  return 'In progress';
+  if (!change) return tr("apps:agent_session_da3d3fb8");
+  if (change.status === 'promoted') return tr("apps:waiting_for_approval_10c5739b");
+  if (change.status === 'merged') return tr("core:live_b64ac05f");
+  return tr("apps:in_progress_c1f88e9d");
 }
 
 export function continueRows(
@@ -105,7 +106,7 @@ export function continueRows(
       key: `agent:${session.id}`,
       sessionId: session.id,
       href: `#messages/agent/${session.id}`,
-      title: session.title || (session.activeChange && session.activeChange.title) || 'Agent session',
+      title: session.title || (session.activeChange && session.activeChange.title) || tr("apps:agent_session_da3d3fb8"),
       detail: agentDetail(session),
       sub: agentSub(agentApp(session), agentDetail(session)),
       activity: agentActivity(session),

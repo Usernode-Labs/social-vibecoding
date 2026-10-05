@@ -69,16 +69,16 @@ const Secrets = {
     // imperatively here.
     redeploy?.addEventListener('click', async () => {
       if (!Secrets.currentSlug) return;
-      Secrets.setStatus('Triggering redeploy…', 'info');
+      Secrets.setStatus(globalThis.PlatformI18n.t("core:triggering_redeploy_92e38e4a"), 'info');
       try {
         const res = await fetch(`/api/apps/${Secrets.currentSlug}/redeploy`, { method: 'POST' });
         if (!res.ok) {
           const { error } = await res.json().catch(() => ({}));
           throw new Error(error || `HTTP ${res.status}`);
         }
-        Secrets.setStatus('Redeploy started. Watch the version pill.', 'ok');
+        Secrets.setStatus(globalThis.PlatformI18n.t("core:redeploy_started_watch_the_version_pill_c62e73bb"), 'ok');
       } catch (err) {
-        Secrets.setStatus(`Redeploy failed: ${err.message}`, 'err');
+        Secrets.setStatus(globalThis.PlatformI18n.t("core:redeploy_failed_value1_99d664df", { value1: err.message }), 'err');
       }
     });
   },
@@ -135,7 +135,7 @@ const Secrets = {
     Secrets.declareOpen = !!opts.declare;
     const list = document.getElementById('app-secrets-list');
     if (!list) return;
-    list.innerHTML = '<p class="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>';
+    list.innerHTML = `<p class="text-sm text-zinc-500 dark:text-zinc-400">${globalThis.PlatformI18n.htmlText("core:loading_ba3bbbe1")}</p>`;
     Secrets.setStatus('', '');
     try {
       const res = await fetch(`/api/apps/${slug}/secrets`);
@@ -151,7 +151,7 @@ const Secrets = {
           ?.scrollIntoView({ block: 'start' });
       }
     } catch (err) {
-      list.innerHTML = `<p class="text-sm text-red-700 dark:text-red-400">Failed to load: ${escapeHtml(err.message)}</p>`;
+      list.innerHTML = `<p class="text-sm text-red-700 dark:text-red-400">${globalThis.PlatformI18n.htmlText("core:failed_to_load_value0_4a24175c", { value0: err.message })}</p>`;
     }
   },
 
@@ -186,16 +186,16 @@ const Secrets = {
   // falling back to a committed default and "deploy-managed, not yours to
   // set" look identical without it.
   STATE_BADGES: {
-    set: { label: 'Set', cls: 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300' },
-    unset: { label: 'Not set', cls: 'bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400' },
-    managed: { label: 'Deploy-managed', cls: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300' },
-    orphan: { label: 'No longer declared', cls: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300' },
-    proposed: { label: 'Waiting for approval', cls: 'bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300' },
+    set: { get label() { return globalThis.PlatformI18n.t("core:set_b6f6f3ad"); }, cls: 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300' },
+    unset: { get label() { return globalThis.PlatformI18n.t("core:not_set_4895f731"); }, cls: 'bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400' },
+    managed: { get label() { return globalThis.PlatformI18n.t("core:deploy_managed_fe835fe0"); }, cls: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300' },
+    orphan: { get label() { return globalThis.PlatformI18n.t("core:no_longer_declared_d9865b55"); }, cls: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300' },
+    proposed: { get label() { return globalThis.PlatformI18n.t("core:waiting_for_approval_10c5739b"); }, cls: 'bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300' },
   },
 
   // The group heading the server files GitHub-Actions rows under. Kept in
   // sync with GITHUB_ACTIONS_GROUP in src/routes/apps.js.
-  GITHUB_GROUP: 'GitHub Actions secrets (platform repo)',
+  get GITHUB_GROUP() { return globalThis.PlatformI18n.t("core:github_actions_secrets_platform_repo_818b1bec"); },
 
   render(data) {
     Secrets.currentData = data;
@@ -219,15 +219,12 @@ const Secrets = {
     footer?.classList.toggle('hidden', !showFooter);
 
     if (title) {
-      title.textContent = isPlatform ? 'Platform variables' : 'App secrets';
+      title.textContent = isPlatform ? globalThis.PlatformI18n.t("core:platform_variables_d570a27e") : globalThis.PlatformI18n.t("core:app_secrets_fbd64919");
     }
     if (subtitle) {
       subtitle.innerHTML = isPlatform
-        ? 'The platform\'s own environment variables, declared in its '
-          + '<code class="text-xs">dapp.json</code>. '
-          + '<span class="font-semibold text-zinc-700 dark:text-zinc-300">A change here is not live '
-          + 'immediately: it is applied by the platform\'s next deploy.</span>'
-        : 'Environment variables this app declares in <code class="text-xs">dapp.json</code>.';
+        ? `${globalThis.PlatformI18n.htmlText("core:the_platform_s_own_environment_variables_declare_6131d995")} <code class="text-xs">dapp.json</code>. <span class="font-semibold text-zinc-700 dark:text-zinc-300">${globalThis.PlatformI18n.htmlText("core:a_change_here_is_not_live_immediately_it_is_appl_a0209fbf")}</span>`
+        : `${globalThis.PlatformI18n.htmlText("core:environment_variables_this_app_declares_in_8dd490a4")} <code class="text-xs">dapp.json</code>.`;
     }
 
     // Pre-first-deploy: there is no manifest snapshot to list declared
@@ -236,8 +233,7 @@ const Secrets = {
     // someone opening this panel needs to see (and not open twice).
     const manifestNotice = data.manifestKnown ? '' : `
         <p class="text-sm text-zinc-500 dark:text-zinc-400 mb-3">
-          No manifest snapshot yet. Once this app's first deploy completes the
-          declared secrets show up here.
+          ${globalThis.PlatformI18n.htmlText("core:no_manifest_snapshot_yet_once_this_app_s_first_d_b2bdf58e")}
         </p>`;
     if (!data.manifestKnown && (!data.secrets || !data.secrets.length)) {
       list.innerHTML = manifestNotice;
@@ -247,12 +243,10 @@ const Secrets = {
     if (!data.secrets || !data.secrets.length) {
       list.innerHTML = isPlatform
         ? `<p class="text-sm text-zinc-500 dark:text-zinc-400">
-             No platform variables are declared yet. Use “New variable” below to
-             declare the first one.
+             ${globalThis.PlatformI18n.htmlText("core:no_platform_variables_are_declared_yet_use_new_v_8f9e6c78")}
            </p>`
         : `<p class="text-sm text-zinc-500 dark:text-zinc-400">
-             This app's <code class="text-xs">dapp.json</code> doesn't declare any
-             secrets yet. Use “New secret” below to declare the first one.
+             ${globalThis.PlatformI18n.htmlText("core:this_app_s_0ef16aec")} <code class="text-xs">dapp.json</code> ${globalThis.PlatformI18n.htmlText("core:doesn_t_declare_any_secrets_yet_use_new_secret_b_de76e19e")}
            </p>`;
       Secrets.renderDeclareSection(data);
       return;
@@ -315,32 +309,29 @@ const Secrets = {
   groupNoteHtml(group, data) {
     if (group !== Secrets.GITHUB_GROUP) return '';
     const gh = data.githubSecrets || {};
-    const where = 'Read-only. Change these in the repo\'s '
-      + '<span class="font-medium">Settings → Secrets and variables → Actions</span> on GitHub. '
-      + 'GitHub never returns a secret\'s value to anyone, so only the name and when it last '
-      + 'changed can be shown here.';
+    const where = `${globalThis.PlatformI18n.htmlText("core:read_only_change_these_in_the_repo_s_769f154c")} <span class="font-medium">${globalThis.PlatformI18n.htmlText("core:settings_secrets_and_variables_actions_2d73f2ef")}</span> ${globalThis.PlatformI18n.htmlText("core:on_github_github_never_returns_a_secret_s_value__76c3f8f6")}`;
     if (gh.state === 'unavailable') {
       return `<p class="text-xs text-amber-800 dark:text-amber-400 mb-2">${
-        escapeHtml(gh.reason || 'Couldn\'t read the platform repo\'s Actions secrets.')}</p>`;
+        escapeHtml(gh.reason || globalThis.PlatformI18n.t("core:couldn_t_read_the_platform_repo_s_actions_secret_d28e4bf8"))}</p>`;
     }
     if (gh.state === 'ok' && !gh.count) {
-      return `<p class="text-xs text-zinc-500 dark:text-zinc-400 mb-2">No Actions secrets on this repo. ${where}</p>`;
+      return `<p class="text-xs text-zinc-500 dark:text-zinc-400 mb-2">${globalThis.PlatformI18n.htmlText("core:no_actions_secrets_on_this_repo")} ${where}</p>`;
     }
     return `<p class="text-xs text-zinc-500 dark:text-zinc-400 mb-2">${where}${
-      gh.staged ? ' <span class="italic">(Staging preview: this list is demo data.)</span>' : ''}</p>`;
+      gh.staged ? ` <span class="italic">${globalThis.PlatformI18n.htmlText("core:staging_preview_this_list_is_demo_data_930485c3")}</span>` : ''}</p>`;
   },
 
   renderRow(s, canWrite) {
     const isGithubRow = s.source === 'github-actions';
     const isProposed = s.state === 'proposed';
     const requiredBadge = s.required
-      ? `<span class="text-[0.65rem] uppercase font-bold text-red-700 dark:text-red-400">required</span>`
+      ? `<span class="text-[0.65rem] uppercase font-bold text-red-700 dark:text-red-400">${globalThis.PlatformI18n.htmlText("core:required_d0a36305")}</span>`
       : '';
     const sensitiveBadge = s.sensitive && !isGithubRow
-      ? `<span class="text-[0.65rem] uppercase font-bold text-amber-800 dark:text-amber-300" title="value never shown after save">sensitive</span>`
+      ? `<span class="text-[0.65rem] uppercase font-bold text-amber-800 dark:text-amber-300" title="${globalThis.PlatformI18n.htmlText("core:value_never_shown_after_save_d7ce6649")}">${globalThis.PlatformI18n.htmlText("core:sensitive_2d5e8600")}</span>`
       : '';
     const orphanBadge = s.orphan
-      ? `<span class="text-[0.65rem] uppercase font-bold text-zinc-500 dark:text-zinc-400">orphan</span>`
+      ? `<span class="text-[0.65rem] uppercase font-bold text-zinc-500 dark:text-zinc-400">${globalThis.PlatformI18n.htmlText("core:orphan_88f6811a")}</span>`
       : '';
     // Present only on the platform-variables view; ordinary app secrets
     // send no `state` and keep exactly the badges they always had — except
@@ -355,34 +346,32 @@ const Secrets = {
       // Names + timestamps are the entire API surface here (see the header
       // comment), so there is deliberately no value, no last-4, and no
       // "reveal" affordance to offer — not even to an admin.
-      valueDisplay = `<span class="text-xs text-zinc-600 dark:text-zinc-400">Set on GitHub${
-        s.updatedAt ? ` · updated ${escapeHtml(Secrets.formatDate(s.updatedAt))}` : ''}</span>`;
+      valueDisplay = `<span class="text-xs text-zinc-600 dark:text-zinc-400">${globalThis.PlatformI18n.htmlText("core:set_on_github_value0_d30b5633", { value0: s.updatedAt ? globalThis.PlatformI18n.t("core:updated_value1_4a05f376", { value1: Secrets.formatDate(s.updatedAt) }) : '' })}</span>`;
     } else if (isProposed) {
       valueDisplay = s.hasValue
-        ? `<span class="text-xs text-violet-700 dark:text-violet-300">value included${
-          s.valueLast4 ? ` (…${escapeHtml(s.valueLast4)})` : ''}, applied when the proposal merges</span>`
-        : '<span class="text-xs text-zinc-500 dark:text-zinc-400">declaration only, no value proposed</span>';
+        ? `<span class="text-xs text-violet-700 dark:text-violet-300">${globalThis.PlatformI18n.htmlText("core:value_included_value0_applied_when_the_proposal__06bbc07a", { value0: s.valueLast4 ? ` (…${s.valueLast4})` : '' })}</span>`
+        : `<span class="text-xs text-zinc-500 dark:text-zinc-400">${globalThis.PlatformI18n.htmlText("core:declaration_only_no_value_proposed_8c4c8583")}</span>`;
     } else if (s.hasValue && s.value != null) {
       // A non-private platform variable whose plaintext the server was
       // willing to return (admins only). Showing it in full is the point of
       // marking a variable non-private.
       valueDisplay = `<code class="text-xs font-mono text-zinc-700 dark:text-zinc-300 break-all">${escapeHtml(s.value)}</code>`;
     } else if (s.hasValue && s.private && s.state) {
-      valueDisplay = '<span class="text-xs text-zinc-500 dark:text-zinc-400 font-mono">•••••••• (private, never displayed)</span>';
+      valueDisplay = `<span class="text-xs text-zinc-500 dark:text-zinc-400 font-mono">${globalThis.PlatformI18n.htmlText("core:private_never_displayed_95098d11")}</span>`;
     } else if (s.hasValue && s.state === 'set' && !s.private && s.valueLast4 == null) {
       // Stored, but the plaintext couldn't be decrypted (rotated
       // JWT_SECRET, corrupt row). listView() degrades to this rather than
       // erroring the whole panel, so say so instead of rendering "set".
-      valueDisplay = '<span class="text-xs text-amber-800 dark:text-amber-400">set, but the stored value could not be read</span>';
+      valueDisplay = `<span class="text-xs text-amber-800 dark:text-amber-400">${globalThis.PlatformI18n.htmlText("core:set_but_the_stored_value_could_not_be_read_d84f2010")}</span>`;
     } else if (s.hasValue) {
-      const last4 = s.valueLast4 ? `…${escapeHtml(s.valueLast4)}` : '••••••••';
-      valueDisplay = `<span class="font-mono text-xs text-emerald-700 dark:text-emerald-400">set ${last4}</span>`;
+      const last4 = s.valueLast4 ? `…${s.valueLast4}` : '••••••••';
+      valueDisplay = `<span class="font-mono text-xs text-emerald-700 dark:text-emerald-400">${globalThis.PlatformI18n.htmlText("core:set_value0_b1bb6066", { value0: last4 })}</span>`;
     } else if (s.required && !s.unwritable) {
-      valueDisplay = `<span class="text-xs font-medium text-red-700 dark:text-red-400">missing, deploys are blocked</span>`;
+      valueDisplay = `<span class="text-xs font-medium text-red-700 dark:text-red-400">${globalThis.PlatformI18n.htmlText("core:missing_deploys_are_blocked_ee1b26d9")}</span>`;
     } else if (s.default != null) {
-      valueDisplay = `<span class="font-mono text-xs text-zinc-500 dark:text-zinc-400">default: ${escapeHtml(s.default)}</span>`;
+      valueDisplay = `<span class="font-mono text-xs text-zinc-500 dark:text-zinc-400">${globalThis.PlatformI18n.htmlText("core:default_value0_591e75df", { value0: s.default })}</span>`;
     } else {
-      valueDisplay = `<span class="text-xs text-zinc-500 dark:text-zinc-400">not set</span>`;
+      valueDisplay = `<span class="text-xs text-zinc-500 dark:text-zinc-400">${globalThis.PlatformI18n.htmlText("core:not_set_1aef9399")}</span>`;
     }
 
     const setVerb = s.hasValue ? 'replace' : 'set';
@@ -393,23 +382,22 @@ const Secrets = {
       <button data-action="set" data-key="${escapeAttr(s.key)}" data-sensitive="${sensitiveAttr}"
         class="text-xs px-2 py-1 rounded bg-violet-600 hover:bg-violet-500 text-white">${setVerb}</button>
       ${s.hasValue ? `<button data-action="clear" data-key="${escapeAttr(s.key)}"
-        class="text-xs px-2 py-1 rounded border border-red-400 text-red-700 hover:bg-red-50 dark:hover:bg-red-950 dark:text-red-400">clear</button>` : ''}
+        class="text-xs px-2 py-1 rounded border border-red-400 text-red-700 hover:bg-red-50 dark:hover:bg-red-950 dark:text-red-400">${globalThis.PlatformI18n.htmlText("core:clear_913a4cb9")}</button>` : ''}
     `;
     // Vote path (everyone): muted outline styling so admins reach for
     // direct first by default, but can opt into the vote flow per row.
     const proposeButtons = `
       <button data-action="propose-set" data-key="${escapeAttr(s.key)}" data-sensitive="${sensitiveAttr}"
-        class="text-xs px-2 py-1 rounded border border-violet-400 text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-950">propose ${setVerb}</button>
+        class="text-xs px-2 py-1 rounded border border-violet-400 text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-950">${globalThis.PlatformI18n.htmlText("core:propose_value2_b4c9a0f6", { value2: setVerb })}</button>
       ${s.hasValue ? `<button data-action="propose-clear" data-key="${escapeAttr(s.key)}"
-        class="text-xs px-2 py-1 rounded border border-red-300 text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950">propose clear</button>` : ''}
+        class="text-xs px-2 py-1 rounded border border-red-300 text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950">${globalThis.PlatformI18n.htmlText("core:propose_clear_0fb1baa2")}</button>` : ''}
     `;
     // A row whose key isn't declared yet gets a link to the declaration
     // proposal and nothing else: there is no manifest entry for a value
     // change to attach to, and the value already rides on that proposal.
     const proposalLink = (p) => (p
       ? `<a href="#/app/${escapeAttr(Secrets.currentSlug || '')}" data-action="view-proposal"
-           class="text-xs px-2 py-1 rounded border border-violet-400 text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-950">View proposal${
-  p.prNumber ? ` #${escapeHtml(String(p.prNumber))}` : ''}</a>`
+           class="text-xs px-2 py-1 rounded border border-violet-400 text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-950">${globalThis.PlatformI18n.htmlText("core:view_proposal_value1_83693615", { value1: p.prNumber ? ` #${escapeHtml(String(p.prNumber))}` : '' })}</a>`
       : '');
     // An `unwritable` row gets NEITHER path. Its value comes from a GitHub
     // secret at deploy time and the server refuses both the direct write and
@@ -426,8 +414,7 @@ const Secrets = {
         : proposeButtons;
     }
 
-    const alsoGithub = (g) => `Also a GitHub Actions secret on the platform repo${
-      g.updatedAt ? ` · updated ${escapeHtml(Secrets.formatDate(g.updatedAt))}` : ''}.`;
+    const alsoGithub = (g) => globalThis.PlatformI18n.t("core:also_a_github_actions_secret_on_the_platform_rep_7e665b37", { value1: g.updatedAt ? globalThis.PlatformI18n.t("core:updated_value1_4a05f376", { value1: escapeHtml(Secrets.formatDate(g.updatedAt)) }) : '' });
 
     return `
       <div class="py-3 border-b border-zinc-200 dark:border-zinc-800 last:border-b-0">
@@ -440,23 +427,20 @@ const Secrets = {
         </div>
         ${s.description ? `<p class="text-xs text-zinc-500 dark:text-zinc-400 mb-2">${escapeHtml(s.description)}</p>` : ''}
         ${isGithubRow ? `<p class="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
-          Stored as an Actions secret on the platform repo. Its value can't be shown, because GitHub's
-          API never returns one. Change it in the repo's Settings → Secrets and variables →
-          Actions.</p>` : ''}
+          ${globalThis.PlatformI18n.htmlText("core:stored_as_an_actions_secret_on_the_platform_repo_6e9da594")}</p>` : ''}
         ${!isGithubRow && s.unwritable ? `<p class="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
-          Set by the deploy from a GitHub secret. It can't be edited here.</p>` : ''}
+          ${globalThis.PlatformI18n.htmlText("core:set_by_the_deploy_from_a_github_secret_it_can_t__a1daa1aa")}</p>` : ''}
         ${!isGithubRow && s.githubSecret ? `<p class="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
           ${alsoGithub(s.githubSecret)}</p>` : ''}
         ${isProposed ? `<p class="text-xs text-violet-700 dark:text-violet-300 mb-2">
-          Not declared yet. A change adding it to <code class="text-[0.65rem]">dapp.json</code>
-          is waiting for approval${s.pending && s.pending.proposedBy
-    ? ` (opened by ${escapeHtml(s.pending.proposedBy)})` : ''}.</p>` : ''}
+          ${globalThis.PlatformI18n.htmlText("core:not_declared_yet_a_change_adding_it_to_a519d8ea")} <code class="text-[0.65rem]">dapp.json</code>
+          ${globalThis.PlatformI18n.htmlText("core:is_waiting_for_approval_value0_adf4696b", { value0: s.pending && s.pending.proposedBy
+    ? globalThis.PlatformI18n.t("core:opened_by_value1_3ef3d7ab", { value1: escapeHtml(s.pending.proposedBy) }) : '' })}</p>` : ''}
         ${!isProposed && s.pending ? `<p class="text-xs text-violet-700 dark:text-violet-300 mb-2">
-          Value set · its declaration is waiting for approval${s.pending.prNumber
-    ? ` (PR #${escapeHtml(String(s.pending.prNumber))})` : ''}.</p>` : ''}
+          ${globalThis.PlatformI18n.htmlText("core:value_set_its_declaration_is_waiting_for_approva_6cb76a48", { value0: s.pending.prNumber
+    ? globalThis.PlatformI18n.t("core:pr_value1_700c53a1", { value1: escapeHtml(String(s.pending.prNumber)) }) : '' })}</p>` : ''}
         ${s.state === 'orphan' ? `<p class="text-xs text-amber-800 dark:text-amber-400 mb-2">
-          No longer declared in <code class="text-[0.65rem]">dapp.json</code>. Its value is kept so a
-          rollback still works, so clear it once you're sure.</p>` : ''}
+          ${globalThis.PlatformI18n.htmlText("core:no_longer_declared_in_895dc423")} <code class="text-[0.65rem]">dapp.json</code>${globalThis.PlatformI18n.htmlText("core:its_value_is_kept_so_a_rollback_still_works_so_c_c761409a")}</p>` : ''}
         <div class="flex items-center gap-2 flex-wrap">
           ${valueDisplay}
           <span class="flex-1"></span>
@@ -471,7 +455,7 @@ const Secrets = {
     try {
       const d = new Date(iso);
       if (Number.isNaN(d.getTime())) return String(iso);
-      return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+      return d.toLocaleDateString(globalThis.PlatformI18n.getLanguage(), { year: 'numeric', month: 'short', day: 'numeric' });
     } catch {
       return String(iso);
     }
@@ -507,12 +491,12 @@ const Secrets = {
         <div class="border-t border-zinc-200 dark:border-zinc-800 pt-3">
           <button id="app-secrets-declare-open"
             class="text-xs px-2.5 py-1.5 rounded bg-violet-600 hover:bg-violet-500 text-white font-medium">
-            + New ${noun}</button>
+            ${globalThis.PlatformI18n.htmlText("core:new_value0_57a9d30e", { value0: noun })}</button>
           <span class="ml-2 text-xs text-zinc-500 dark:text-zinc-400">${blocked
-    ? escapeHtml(data.declareDisabledReason || 'Unavailable right now.')
+    ? escapeHtml(data.declareDisabledReason || globalThis.PlatformI18n.t("core:unavailable_right_now_2cb2c126"))
     : (canWrite
-      ? 'Declares it in dapp.json (a proposal) and stores your value now.'
-      : 'Declaration and value wait for approval together.')}</span>
+      ? globalThis.PlatformI18n.t("core:declares_it_in_dapp_json_a_proposal_and_stores_y_ecc75307")
+      : globalThis.PlatformI18n.t("core:declaration_and_value_wait_for_approval_together_6c8b2282"))}</span>
         </div>`;
       document.getElementById('app-secrets-declare-open')?.addEventListener('click', () => {
         Secrets.declareOpen = true;
@@ -540,67 +524,63 @@ const Secrets = {
     host.innerHTML = `
       <div class="border-t border-zinc-200 dark:border-zinc-800 pt-3">
         <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-2">
-          New ${isPlatform ? 'platform variable' : 'app secret'}</h3>
+          ${globalThis.PlatformI18n.htmlText("core:new_value0_642f9e9b", { value0: isPlatform ? globalThis.PlatformI18n.t("core:platform_variable_b25b19bb") : globalThis.PlatformI18n.t("core:app_secret_409e5ad7") })}</h3>
         ${blocked ? `<p id="app-secrets-declare-blocked"
           class="text-xs text-amber-800 dark:text-amber-400 mb-2">${
-  escapeHtml(data.declareDisabledReason || 'New variables can\'t be declared right now.')}</p>` : ''}
+  escapeHtml(data.declareDisabledReason || globalThis.PlatformI18n.t("core:new_variables_can_t_be_declared_right_now_cf07d984"))}</p>` : ''}
         <div class="space-y-2">
           <div>
-            <label class="${lbl}" for="decl-key">Key</label>
-            <input id="decl-key" class="${input} font-mono" placeholder="MY_NEW_TOKEN"
+            <label class="${lbl}" for="decl-key">${globalThis.PlatformI18n.htmlText("core:key_99a52df3")}</label>
+            <input id="decl-key" class="${input} font-mono" placeholder="${globalThis.PlatformI18n.htmlText("core:my_new_token_66d5b2c1")}"
               autocapitalize="characters" autocomplete="off" spellcheck="false">
-            <p class="${help}">UPPER_SNAKE_CASE: the name your code reads from the environment.</p>
+            <p class="${help}">${globalThis.PlatformI18n.htmlText("core:upper_snake_case_the_name_your_code_reads_from_t_6a69b602")}</p>
           </div>
           <div>
-            <label class="${lbl}" for="decl-description">Description</label>
-            <input id="decl-description" class="${input}" placeholder="What this value is and where to get it">
+            <label class="${lbl}" for="decl-description">${globalThis.PlatformI18n.htmlText("core:description_526e0087")}</label>
+            <input id="decl-description" class="${input}" placeholder="${globalThis.PlatformI18n.htmlText("core:what_this_value_is_and_where_to_get_it_cb663adf")}">
           </div>
           <div>
-            <label class="${lbl}" for="decl-value">Value</label>
-            <input id="decl-value" class="${input} font-mono" placeholder="leave blank to declare only"
+            <label class="${lbl}" for="decl-value">${globalThis.PlatformI18n.htmlText("core:value_8e37953d")}</label>
+            <input id="decl-value" class="${input} font-mono" placeholder="${globalThis.PlatformI18n.htmlText("core:leave_blank_to_declare_only_453d7d74")}"
               autocomplete="off" spellcheck="false">
             <p class="${help}">${canWrite
-    ? 'Stored as soon as you submit. Optional if you give a default below.'
-    : 'Held encrypted and stored when the proposal merges. Optional if you give a default below.'}</p>
+    ? globalThis.PlatformI18n.t("core:stored_as_soon_as_you_submit_optional_if_you_giv_f30fc98e")
+    : globalThis.PlatformI18n.t("core:held_encrypted_and_stored_when_the_proposal_merg_17a9bed5")}</p>
           </div>
           <div class="flex items-center gap-4 pt-0.5">
             <label class="flex items-center gap-1.5 text-xs text-zinc-700 dark:text-zinc-300">
-              <input type="checkbox" id="decl-required" class="rounded"> Required
+              <input type="checkbox" id="decl-required" class="rounded"> ${globalThis.PlatformI18n.htmlText("core:required_4850b174")}
             </label>
             <label class="flex items-center gap-1.5 text-xs text-zinc-700 dark:text-zinc-300">
-              <input type="checkbox" id="decl-private" class="rounded"> Private
+              <input type="checkbox" id="decl-private" class="rounded"> ${globalThis.PlatformI18n.htmlText("core:private_c63eb672")}
             </label>
           </div>
-          <p class="${help}">Required blocks deploys until it has a value. Private means encrypted at
-            rest and never displayed again${isPlatform ? '' : ', and never copied into PR previews'}.</p>
+          <p class="${help}">${globalThis.PlatformI18n.htmlText("core:required_blocks_deploys_until_it_has_a_value_pri_3890be15", { value12: isPlatform ? '' : globalThis.PlatformI18n.t("core:message_f704c2eea21c") })}</p>
           <div>
-            <label class="${lbl}" for="decl-default">Default</label>
-            <input id="decl-default" class="${input} font-mono" placeholder="optional">
+            <label class="${lbl}" for="decl-default">${globalThis.PlatformI18n.htmlText("core:default_21b111cb")}</label>
+            <input id="decl-default" class="${input} font-mono" placeholder="${globalThis.PlatformI18n.htmlText("core:optional_ec91fdd9")}">
             <p class="${help}">${isPlatform
-    ? 'Documents the fallback your code already uses. The platform\'s deploy does not apply it, so set a value above if the variable really needs one.'
-    : 'Used at deploy time when no value is stored.'}</p>
+    ? globalThis.PlatformI18n.t("core:documents_the_fallback_your_code_already_uses_th_3e65014c")
+    : globalThis.PlatformI18n.t("core:used_at_deploy_time_when_no_value_is_stored_c534d9cb")}</p>
           </div>
           ${isPlatform ? `
           <div>
-            <label class="${lbl}" for="decl-group">Group</label>
-            <input id="decl-group" class="${input}" list="decl-group-options" placeholder="General">
+            <label class="${lbl}" for="decl-group">${globalThis.PlatformI18n.htmlText("core:group_34ca0e76")}</label>
+            <input id="decl-group" class="${input}" list="decl-group-options" placeholder="${globalThis.PlatformI18n.htmlText("core:general_c910d474")}">
             <datalist id="decl-group-options">${groups.map((g) => `<option value="${escapeAttr(g)}"></option>`).join('')}</datalist>
-            <p class="${help}">The heading this row files under in this panel.</p>
+            <p class="${help}">${globalThis.PlatformI18n.htmlText("core:the_heading_this_row_files_under_in_this_panel_29efebbb")}</p>
           </div>` : `
           <div>
-            <label class="${lbl}" for="decl-staging-default">Staging default</label>
-            <input id="decl-staging-default" class="${input} font-mono" placeholder="optional">
-            <p class="${help}">What PR previews use. A required + private secret needs one (or a
-              default), otherwise no preview of this app can boot.</p>
+            <label class="${lbl}" for="decl-staging-default">${globalThis.PlatformI18n.htmlText("core:staging_default_504b5f39")}</label>
+            <input id="decl-staging-default" class="${input} font-mono" placeholder="${globalThis.PlatformI18n.htmlText("core:optional_ec91fdd9")}">
+            <p class="${help}">${globalThis.PlatformI18n.htmlText("core:what_pr_previews_use_a_required_private_secret_n_bc24fbb7")}</p>
           </div>`}
         </div>
         <div class="flex items-center gap-2 mt-3">
           <button id="app-secrets-declare-submit" ${blocked ? 'disabled' : ''}
-            class="text-xs px-2.5 py-1.5 rounded bg-violet-600 hover:bg-violet-500 text-white font-medium ${
-  blocked ? 'opacity-50 cursor-not-allowed' : ''}">${
-  canWrite ? 'Add &amp; set value' : 'Propose new ' + noun}</button>
+            class="text-xs px-2.5 py-1.5 rounded bg-violet-600 hover:bg-violet-500 text-white font-medium ${blocked ? 'opacity-50 cursor-not-allowed' : ''}">${canWrite ? globalThis.PlatformI18n.t("core:add_amp_set_value_35f96694") : globalThis.PlatformI18n.t("core:propose_new_bbd2ee2f") + noun}</button>
           <button id="app-secrets-declare-cancel"
-            class="text-xs px-2.5 py-1.5 rounded border border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300">Cancel</button>
+            class="text-xs px-2.5 py-1.5 rounded border border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300">${globalThis.PlatformI18n.htmlText("core:cancel_19766ed6")}</button>
         </div>
       </div>`;
 
@@ -619,20 +599,19 @@ const Secrets = {
   // the form looks submittable. The server stays authoritative.
   validateDeclaration(f, isPlatform) {
     if (!/^[A-Z][A-Z0-9_]{0,127}$/.test(f.key)) {
-      return 'Key must be UPPER_SNAKE_CASE (letters, digits and underscores).';
+      return globalThis.PlatformI18n.t("core:key_must_be_upper_snake_case_letters_digits_and__7b8ea689");
     }
     if (f.required && !f.value && !f.default) {
-      return 'A required variable needs either a value or a default.';
+      return globalThis.PlatformI18n.t("core:a_required_variable_needs_either_a_value_or_a_de_c06e02a6");
     }
     if (!isPlatform && f.required && f.private && !f.stagingDefault && !f.default) {
-      return "PR previews of this app won't boot without a staging default for a required private secret.";
+      return globalThis.PlatformI18n.t("core:pr_previews_of_this_app_won_t_boot_without_a_sta_86401def");
     }
     // Same .env-representability rule platform-env.validateValue enforces
     // server-side: a single quote or a bare CR can't survive the
     // single-quoted line the platform's deploy writes.
     if (isPlatform && f.value && /['\r]/.test(f.value)) {
-      return "Values can't contain a single quote or a carriage return. They wouldn't survive being "
-        + "written to the platform's .env file.";
+      return globalThis.PlatformI18n.t("core:values_can_t_contain_a_single_quote_or_a_carriag_732695af");
     }
     return null;
   },
@@ -641,7 +620,7 @@ const Secrets = {
     // Belt to the disabled button's braces: the server would 503 anyway,
     // but saying why here beats a generic failure line.
     if (data.canDeclare === false) {
-      Secrets.setStatus(data.declareDisabledReason || 'New variables can\'t be declared right now.', 'err');
+      Secrets.setStatus(data.declareDisabledReason || globalThis.PlatformI18n.t("core:new_variables_can_t_be_declared_right_now_cf07d984"), 'err');
       return;
     }
     const isPlatform = data.scope === 'platform';
@@ -665,7 +644,7 @@ const Secrets = {
 
     const submit = document.getElementById('app-secrets-declare-submit');
     if (submit) submit.disabled = true;
-    Secrets.setStatus(`Opening a proposal for ${fields.key}…`, 'info');
+    Secrets.setStatus(globalThis.PlatformI18n.t("core:opening_a_proposal_for_value1_6678090b", { value1: fields.key }), 'info');
     try {
       const res = await fetch(`/api/apps/${Secrets.currentSlug}/secret-declaration-pr`, {
         method: 'POST',
@@ -675,18 +654,18 @@ const Secrets = {
       const payload = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(payload.error || `HTTP ${res.status}`);
       Secrets.declareOpen = false;
-      const opened = `Proposal opened for ${fields.key}${payload.prNumber ? ` (PR #${payload.prNumber})` : ''}.`;
+      const opened = globalThis.PlatformI18n.t("core:proposal_opened_for_value1_value2_fb087900", { value1: fields.key, value2: payload.prNumber ? globalThis.PlatformI18n.t("core:pr_value1_700c53a1", { value1: payload.prNumber }) : '' });
       Secrets.setStatus(`${opened} ${payload.valueApplied
-        ? 'Your value is stored; the declaration still needs a merge vote.'
-        : 'Vote on it in the group chat panel. The value applies when it merges.'}`, 'ok');
+        ? globalThis.PlatformI18n.t("core:your_value_is_stored_the_declaration_still_needs_eafa3e50")
+        : globalThis.PlatformI18n.t("core:vote_on_it_in_the_group_chat_panel_the_value_app_174cbdbd")}`, 'ok');
       Secrets.notifyDevChatRefresh();
       await Secrets.open(Secrets.currentSlug);
       // open() clears the status line, so re-post the outcome after it.
       Secrets.setStatus(`${opened} ${payload.valueApplied
-        ? 'Your value is stored; the declaration still needs a merge vote.'
-        : 'Vote on it in the group chat panel. The value applies when it merges.'}`, 'ok');
+        ? globalThis.PlatformI18n.t("core:your_value_is_stored_the_declaration_still_needs_eafa3e50")
+        : globalThis.PlatformI18n.t("core:vote_on_it_in_the_group_chat_panel_the_value_app_174cbdbd")}`, 'ok');
     } catch (err) {
-      Secrets.setStatus(`Failed: ${err.message}`, 'err');
+      Secrets.setStatus(globalThis.PlatformI18n.t("core:failed_value1_c9a5148f", { value1: err.message }), 'err');
     } finally {
       if (submit) submit.disabled = false;
     }
@@ -694,13 +673,13 @@ const Secrets = {
 
   async handleSet(key, sensitive) {
     const value = await PlatformUI.prompt({
-      title: `Set ${key}`,
-      message: sensitive ? 'This value is sensitive: it is encrypted at rest and never shown again.' : undefined,
-      placeholder: 'value',
-      confirmLabel: 'Save',
+      get title() { return globalThis.PlatformI18n.t("core:set_value1_55e7bccc", { value1: key }); },
+      message: sensitive ? globalThis.PlatformI18n.t("core:this_value_is_sensitive_it_is_encrypted_at_rest__2103461f") : undefined,
+      get placeholder() { return globalThis.PlatformI18n.t("core:value_cd42404d"); },
+      get confirmLabel() { return globalThis.PlatformI18n.t("core:save_1509f561"); },
     });
     if (value == null || !value.length) return;
-    Secrets.setStatus(`Setting ${key}…`, 'info');
+    Secrets.setStatus(globalThis.PlatformI18n.t("core:setting_value1_50c9409d", { value1: key }), 'info');
     try {
       const res = await fetch(`/api/apps/${Secrets.currentSlug}/secrets/${encodeURIComponent(key)}`, {
         method: 'PUT',
@@ -711,40 +690,40 @@ const Secrets = {
         const { error } = await res.json().catch(() => ({}));
         throw new Error(error || `HTTP ${res.status}`);
       }
-      Secrets.setStatus(`Saved ${key}.`, 'ok');
+      Secrets.setStatus(globalThis.PlatformI18n.t("core:saved_value1_25b0f064", { value1: key }), 'ok');
       Secrets.notifyDevChatRefresh();
       await Secrets.open(Secrets.currentSlug);
     } catch (err) {
-      Secrets.setStatus(`Failed to set ${key}: ${err.message}`, 'err');
+      Secrets.setStatus(globalThis.PlatformI18n.t("core:failed_to_set_value1_value2_0ee9a95f", { value1: key, value2: err.message }), 'err');
     }
   },
 
   async handleClear(key) {
-    if (!await PlatformUI.confirm({ title: `Clear ${key}?`, confirmLabel: 'Clear', danger: true })) return;
-    Secrets.setStatus(`Clearing ${key}…`, 'info');
+    if (!await PlatformUI.confirm({ get title() { return globalThis.PlatformI18n.t("core:clear_value1_c6d6200e", { value1: key }); }, get confirmLabel() { return globalThis.PlatformI18n.t("core:clear_83b12c22"); }, danger: true })) return;
+    Secrets.setStatus(globalThis.PlatformI18n.t("core:clearing_value1_f06c3e24", { value1: key }), 'info');
     try {
       const res = await fetch(`/api/apps/${Secrets.currentSlug}/secrets/${encodeURIComponent(key)}`, { method: 'DELETE' });
       if (!res.ok) {
         const { error } = await res.json().catch(() => ({}));
         throw new Error(error || `HTTP ${res.status}`);
       }
-      Secrets.setStatus(`Cleared ${key}.`, 'ok');
+      Secrets.setStatus(globalThis.PlatformI18n.t("core:cleared_value1_73e1cf5d", { value1: key }), 'ok');
       Secrets.notifyDevChatRefresh();
       await Secrets.open(Secrets.currentSlug);
     } catch (err) {
-      Secrets.setStatus(`Failed to clear ${key}: ${err.message}`, 'err');
+      Secrets.setStatus(globalThis.PlatformI18n.t("core:failed_to_clear_value1_value2_9dd3e124", { value1: key, value2: err.message }), 'err');
     }
   },
 
   async handleProposeSet(key, sensitive) {
     const value = await PlatformUI.prompt({
-      title: `Propose setting ${key}`,
-      message: (sensitive ? 'This value is sensitive. ' : '') + 'A majority of active users must vote up before this applies.',
-      placeholder: 'value',
-      confirmLabel: 'Propose',
+      get title() { return globalThis.PlatformI18n.t("core:propose_setting_value1_c65ef30a", { value1: key }); },
+      message: (sensitive ? globalThis.PlatformI18n.t("core:this_value_is_sensitive_7edd08e6") : '') + globalThis.PlatformI18n.t("core:a_majority_of_active_users_must_vote_up_before_t_44ca47fc"),
+      get placeholder() { return globalThis.PlatformI18n.t("core:value_cd42404d"); },
+      get confirmLabel() { return globalThis.PlatformI18n.t("core:propose_1cbd9e71"); },
     });
     if (value == null || !value.length) return;
-    Secrets.setStatus(`Opening proposal for ${key}…`, 'info');
+    Secrets.setStatus(globalThis.PlatformI18n.t("core:opening_proposal_for_value1_763366b9", { value1: key }), 'info');
     try {
       const res = await fetch(`/api/apps/${Secrets.currentSlug}/issues`, {
         method: 'POST',
@@ -758,15 +737,15 @@ const Secrets = {
         const { error } = await res.json().catch(() => ({}));
         throw new Error(error || `HTTP ${res.status}`);
       }
-      Secrets.setStatus(`Proposal opened. Vote in the group chat tab.`, 'ok');
+      Secrets.setStatus(globalThis.PlatformI18n.t("core:proposal_opened_vote_in_the_group_chat_tab_20b2e510"), 'ok');
     } catch (err) {
-      Secrets.setStatus(`Failed: ${err.message}`, 'err');
+      Secrets.setStatus(globalThis.PlatformI18n.t("core:failed_value1_c9a5148f", { value1: err.message }), 'err');
     }
   },
 
   async handleProposeClear(key) {
-    if (!await PlatformUI.confirm({ title: `Propose removing ${key}?`, confirmLabel: 'Propose', danger: true })) return;
-    Secrets.setStatus(`Opening proposal for ${key}…`, 'info');
+    if (!await PlatformUI.confirm({ get title() { return globalThis.PlatformI18n.t("core:propose_removing_value1_d41a10aa", { value1: key }); }, get confirmLabel() { return globalThis.PlatformI18n.t("core:propose_1cbd9e71"); }, danger: true })) return;
+    Secrets.setStatus(globalThis.PlatformI18n.t("core:opening_proposal_for_value1_763366b9", { value1: key }), 'info');
     try {
       const res = await fetch(`/api/apps/${Secrets.currentSlug}/issues`, {
         method: 'POST',
@@ -780,9 +759,9 @@ const Secrets = {
         const { error } = await res.json().catch(() => ({}));
         throw new Error(error || `HTTP ${res.status}`);
       }
-      Secrets.setStatus(`Proposal opened. Vote in the group chat tab.`, 'ok');
+      Secrets.setStatus(globalThis.PlatformI18n.t("core:proposal_opened_vote_in_the_group_chat_tab_20b2e510"), 'ok');
     } catch (err) {
-      Secrets.setStatus(`Failed: ${err.message}`, 'err');
+      Secrets.setStatus(globalThis.PlatformI18n.t("core:failed_value1_c9a5148f", { value1: err.message }), 'err');
     }
   },
 

@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../../lib/i18n/react";
+import { t as tr } from "../../../lib/i18n/runtime";
+import { Localized, message as catalogText } from "../../../lib/i18n/react";
 /**
  * The "‹ Workshop" chip: a Workshop topic's one back control (#2916).
  *
@@ -83,21 +87,22 @@ function onBackClick(event: MouseEvent<HTMLAnchorElement>): void {
 }
 
 /** One chip: the destination's name behind the chevron. */
-function TopicChip({ href, label }: { href: string; label: 'Messages' | 'Workshop' }): ReactNode {
+function TopicChip({ href, label }: { href: string; label: string }): ReactNode {
   return (
-    <a
+    <LocalizedDynamic element={<a
       className="dev-topic-back un-touch-target"
       href={href}
-      aria-label={`Back to ${label}`}
+      aria-label={tr("workshop:back_to_value1_7ff60540", { value1: label })}
       onClick={onBackClick}
     >
       <ChevronLeftIcon className="dev-topic-back-icon" aria-hidden="true" />
       <span>{label}</span>
-    </a>
+    </a>} resolve={() => ({ get "aria-label"() { return tr("workshop:back_to_value1_7ff60540", { value1: label }); } })} />
   );
 }
 
 export function TopicBack(): ReactNode {
+  useUiLanguage();
   const { slug, tab, subTab, boardView, topicOrigin } = useStoreState(improveStore);
   const href = topicBackHref({ slug, tab, subTab, boardView, topicOrigin });
   if (!href) return null;
@@ -110,7 +115,7 @@ export function TopicBack(): ReactNode {
   return (
     <div className="dev-topic-backs">
       {back}
-      <TopicChip href={workshop} label="Workshop" />
+      <Localized element={<TopicChip href={workshop} label={catalogText("workshop:workshop_c0086f23")} />} messages={{"label":"workshop:workshop_c0086f23"}} />
     </div>
   );
 }

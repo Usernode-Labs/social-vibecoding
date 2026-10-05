@@ -1,3 +1,8 @@
+import { useMessages as useUiLanguage } from "../../../lib/i18n/react";
+import { RichMessage } from "../../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../../lib/i18n/react";
+import { t as tr } from "../../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../../lib/i18n/react";
 /**
  * The Dev board card — every band of it — rendered from a `DevCardModel`.
  *
@@ -176,6 +181,7 @@ export function Chevron(): ReactNode {
  * stays `AppView.statusPillState`'s; this only draws it.
  */
 export function StatusPill({ s, inline }: { s: StatusPillState; inline?: boolean }): ReactNode {
+  useUiLanguage();
   const { now } = useStoreState(cardNowStore);
   if (!s || !s.label) return null;
   let fills: ReactNode = null;
@@ -205,14 +211,14 @@ export function StatusPill({ s, inline }: { s: StatusPillState; inline?: boolean
   // The 30s tick: re-derive the countdown label from the store's `now`;
   // before the first tick the baked label carries the paint.
   const label = s.countdown && now > 0
-    ? `${s.reject ? 'Set aside' : 'Goes live'} in ${fmtCountdown(s.countdown - now)}${s.suffix || ''}`
+    ? tr("workshop:value1_in_value2_value3_4b7b4adb", { value1: s.reject ? tr("workshop:set_aside_c5b8d818") : tr("workshop:goes_live_c773921d"), value2: fmtCountdown(s.countdown - now), value3: s.suffix || '' })
     : s.label;
   const extra = Array.isArray(s.reasons) ? Math.max(0, s.reasons.length - 1) : 0;
   const titleParts: string[] = [];
   if (s.title) titleParts.push(s.title);
   else if (s.reasons && s.reasons[0]) titleParts.push(s.reasons[0].detail);
   if (s.tier === 2 && extra > 0) {
-    titleParts.push(`and ${extra} more reason${extra === 1 ? '' : 's'}, open for details`);
+    titleParts.push(tr("workshop:and_count_more_reasons_open_for_details_1f988c59", { count: extra }));
   }
   const cd = s.countdown ? (s.reject ? ' gc-reject-countdown' : ' gc-merge-countdown') : '';
   // An OPEN vote is the bar's own tone on a board card — accent blue, with an
@@ -235,17 +241,17 @@ export function StatusPill({ s, inline }: { s: StatusPillState; inline?: boolean
         {s.spinner ? <Spinner /> : null}
         {label}
         {s.advisory > 0 ? (
-          <span
+          <LocalizedDynamic element={<span
             className="gc-vote-count-suffix"
-            title={`${s.advisory} advisory vote${s.advisory === 1 ? '' : 's'} from non-approvers, so they don't count toward merging`}
-          >{`+${s.advisory}`}</span>
+            title={tr("workshop:message_54c21595a2a0", { value1: s.advisory, count: s.advisory })}
+          >{`+${s.advisory}`}</span>} resolve={() => ({ get "title"() { return tr("workshop:message_54c21595a2a0", { value1: s.advisory, count: s.advisory }); } })} />
         ) : null}
         {s.lock ? (
-          <span
+          <LocalizedDynamic element={<span
             className="gc-vote-count-lock"
             aria-hidden="true"
-            title={s.lockTitle || 'This change needs a Yes from another member. It won’t merge on a timer: it needs real Yes votes to reach the app’s normal threshold.'}
-          >{'\u{1F512}'}</span>
+            title={s.lockTitle || tr("workshop:this_change_needs_a_yes_from_another_member_it_w_f63caea3")}
+          >{'\u{1F512}'}</span>} resolve={() => ({ "title": s.lockTitle || tr("workshop:this_change_needs_a_yes_from_another_member_it_w_f63caea3") })} />
         ) : null}
       </span>
     </span>
@@ -269,15 +275,14 @@ export function StatusPill({ s, inline }: { s: StatusPillState; inline?: boolean
 export function Preview({ spec }: { spec: PreviewSpec }): ReactNode {
   if (spec.state === 'live') {
     return (
-      <button
+      <Localized element={<button
         type="button"
-        className={`gc-vote-btn gc-vote-btn-preview${spec.iconOnly ? ' gc-vote-btn-icon' : ''}`}
-        aria-label="Open preview"
+        className={`gc-vote-btn gc-vote-btn-preview${spec.iconOnly ? ' gc-vote-btn-icon' : ''}`} aria-label={catalogText("workshop:open_preview_f7afe3dd")}
         title={spec.title}
         onClick={() => call({ fn: 'swapToStagingForSession', args: [spec.sessionId, spec.url] })}
       >
-        {spec.iconOnly ? <EyeIcon aria-hidden="true" /> : <><EyeIcon aria-hidden="true" />{'Preview'}</>}
-      </button>
+        {spec.iconOnly ? <EyeIcon aria-hidden="true" /> : <><EyeIcon aria-hidden="true" /><Message id="workshop:preview_324b134f" /></>}
+      </button>} messages={{"aria-label":"workshop:open_preview_f7afe3dd"}} />
     );
   }
   if (spec.state === 'building') {
@@ -299,23 +304,23 @@ export function Preview({ spec }: { spec: PreviewSpec }): ReactNode {
           title={spec.title}
         >
           <Spinner />
-          {'Preview building…'}
+          <Message id="workshop:preview_building_adafcfa1" />
         </button>
       );
     }
     return (
-      <span className="gc-vote-btn gc-vote-btn-icon gc-checks-running-badge" role="img" aria-label="Preview building" title={spec.title}>
+      <Localized element={<span className="gc-vote-btn gc-vote-btn-icon gc-checks-running-badge" role="img" aria-label={catalogText("workshop:preview_building_8dd53c94")} title={spec.title}>
         <Spinner />
-      </span>
+      </span>} messages={{"aria-label":"workshop:preview_building_8dd53c94"}} />
     );
   }
   if (!spec.iconOnly) {
-    return <span className="gc-conflict-badge" title={spec.title}>Preview unavailable</span>;
+    return <span className="gc-conflict-badge" title={spec.title}><Message id="workshop:preview_unavailable_b99fa6c0" /></span>;
   }
   return (
-    <span className="gc-vote-btn gc-vote-btn-icon gc-conflict-badge" role="img" aria-label="Preview unavailable" title={spec.title}>
+    <Localized element={<span className="gc-vote-btn gc-vote-btn-icon gc-conflict-badge" role="img" aria-label={catalogText("workshop:preview_unavailable_b99fa6c0")} title={spec.title}>
       <EyeOffIcon aria-hidden="true" />
-    </span>
+    </span>} messages={{"aria-label":"workshop:preview_unavailable_b99fa6c0"}} />
   );
 }
 
@@ -345,11 +350,10 @@ export function Badge({ b }: { b: BadgeSpec }): ReactNode {
     case 'chat':
       // Rendered at 0 too, wearing `hidden`, so a live bump has a target.
       return (
-        <span
+        <Localized element={<span
           className={`dev-chat-badge dev-badge ${b.count ? 'bg-violet-500/10 text-violet-700 dark:text-violet-400' : 'hidden bg-zinc-500/10 text-zinc-500 dark:text-zinc-400'}`}
-          data-count={b.count}
-          title="Messages in this thread"
-        >{`\u{1F4AC} ${b.count}`}</span>
+          data-count={b.count} title={catalogText("workshop:messages_in_this_thread_26b93e8e")}
+        >{`\u{1F4AC} ${b.count}`}</span>} messages={{"title":"workshop:messages_in_this_thread_26b93e8e"}} />
       );
     case 'attr': {
       const count = b.count > 1 ? <span className="opacity-60">{`·${b.count}`}</span> : null;
@@ -479,6 +483,7 @@ export const BADGE_MAX = 4;
 const VOTE_ARITY: Record<string, number> = { castVote: 3, castIssueVote: 2 };
 
 export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): ReactNode {
+  useUiLanguage();
   const [open, setOpen] = useState(false);
   const [rect, setRect] = useState<{ top: number; bottom: number; right: number } | null>(null);
   // The switch's side while the picker is up: Yes by default, the viewer's
@@ -584,8 +589,8 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
       if (typeof pu.actionSheet === 'function') {
         pu.actionSheet({
           actions: [
-            { label: `✓  ${prior === 'yes' ? 'Still yes' : 'Yes'}${tally(yes) ? ` (${tally(yes)})` : ''}`, handler: () => pickTouch(yes) },
-            { label: `✕  ${prior === 'yes' ? 'Not this time' : 'No'}${tally(no) ? ` (${tally(no)})` : ''}`, handler: () => pickTouch(no) },
+            { label: `✓  ${prior === 'yes' ? tr("workshop:still_yes_1ab9570b") : tr("workshop:yes_85a39ab3")}${tally(yes) ? ` (${tally(yes)})` : ''}`, handler: () => pickTouch(yes) },
+            { label: `✕  ${prior === 'yes' ? tr("workshop:not_this_time_6f3efa36") : tr("workshop:no_1ea442a1")}${tally(no) ? ` (${tally(no)})` : ''}`, handler: () => pickTouch(no) },
           ],
         });
         return;
@@ -624,15 +629,15 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
     const h = popRef.current?.scrollHeight;
     if (h && h !== measuredH) setMeasuredH(h);
   }, [open, side, measuredH]);
-  const face = mine === 'yes' ? 'Yes' : (mine === 'no' ? 'No' : (prior === 'yes' ? 'Still yes?' : 'Vote'));
+  const face = mine === 'yes' ? tr("workshop:yes_85a39ab3") : (mine === 'no' ? tr("workshop:no_1ea442a1") : (prior === 'yes' ? tr("workshop:still_yes_afebce06") : tr("workshop:vote_cd5588db")));
   // A governance apply in flight disables the pair; the one button goes
   // inert with them, wearing the spec's own explanation.
   const disabled = !!(yes.disabled || no.disabled);
   const title = disabled && yes.title ? yes.title : mine
-    ? `You voted ${face}. Press to change your vote.`
+    ? tr("workshop:you_voted_value1_press_to_change_your_vote_62a3f46b", { value1: face })
     : prior === 'yes'
-      ? `You said yes to an earlier version. One tap carries it onto this one.`
-      : `Cast your vote · Yes ${tally(yes)} · No ${tally(no)}`;
+      ? tr("workshop:you_said_yes_to_an_earlier_version_one_tap_carri_6f7b1c56")
+      : tr("workshop:cast_your_vote_yes_value1_no_value2_b230807c", { value1: tally(yes), value2: tally(no) });
   // The popover's frame: the switch, the box and the buttons (no box on a
   // governance vote). Placed from the button's rect each render by
   // lib/anchor-popover.ts — the helper the Homeroom menu shares — exactly as
@@ -686,23 +691,22 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
     />
   );
   const popover = open && pos ? createPortal(
-    <div
+    <Localized element={<div
       ref={popRef}
       className="dev-vote-pop"
-      role="dialog"
-      aria-label="Your vote"
+      role="dialog" aria-label={catalogText("workshop:your_vote_24638ec5")}
       data-side={side}
       style={{ top: `${pos.top}px`, left: `${pos.left}px`, maxHeight: popMaxH ? `${popMaxH}px` : undefined, overflowY: popMaxH ? 'auto' : undefined }}
       onClick={(ev) => ev.stopPropagation()}
     >
       {picker}
-    </div>,
+    </div>} messages={{"aria-label":"workshop:your_vote_24638ec5"}} />,
     document.body,
   ) : null;
   const sheet = sheetEl ? createPortal(
-    <div className="dev-vote-sheet" role="dialog" aria-label="Your vote" data-vote-sheet="" data-side={side}>
+    <Localized element={<div className="dev-vote-sheet" role="dialog" aria-label={catalogText("workshop:your_vote_24638ec5")} data-vote-sheet="" data-side={side}>
       {picker}
-    </div>,
+    </div>} messages={{"aria-label":"workshop:your_vote_24638ec5"}} />,
     sheetEl,
   ) : null;
   // B7: a change on a project that is just the viewer's, whose Yes is the
@@ -711,17 +715,17 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
   if (yes.approve && yes.act?.fn === 'castVote') {
     const approved = mine === 'yes';
     return (
-      <button
+      <LocalizedDynamic element={<button
         type="button"
         className={`dev-vote-btn dev-vote-btn-approve${approved ? ' dev-vote-btn-yes' : ''}`}
         data-vote-btn={approved ? 'approved' : 'approve'}
-        title={approved ? 'You approved it.' : 'Approve it, and it goes live.'}
+        title={approved ? tr("workshop:you_approved_it_62187898") : tr("workshop:approve_it_and_it_goes_live_c7e1a60d")}
         disabled={disabled || approved}
         onClick={(e) => { e.stopPropagation(); send(yes, null); }}
       >
         {approved ? <CheckIcon aria-hidden="true" /> : null}
-        {approved ? 'Approved' : 'Approve'}
-      </button>
+        <LocalizedValue render={() => (approved ? tr("workshop:approved_87b42e40") : tr("workshop:approve_6007acbe"))} />
+      </button>} resolve={() => ({ "title": approved ? tr("workshop:you_approved_it_62187898") : tr("workshop:approve_it_and_it_goes_live_c7e1a60d") })} />
     );
   }
   return (
@@ -789,9 +793,9 @@ export function VotePicker({
   const headId = `${reasonId}-head`;
   return (
     <>
-      <div className="dev-vote-switch-label" id={headId}>Your vote</div>
+      <div className="dev-vote-switch-label" id={headId}><Message id="workshop:your_vote_24638ec5" /></div>
       {uncounted ? (
-        <p className="dev-vote-uncounted" data-vote-uncounted="">Test account: this vote won’t count.</p>
+        <p className="dev-vote-uncounted" data-vote-uncounted=""><Message id="workshop:test_account_this_vote_won_t_count_1684af4e" /></p>
       ) : null}
       <div className="dev-vote-switch" role="group" aria-labelledby={headId}>
         <button
@@ -803,7 +807,7 @@ export function VotePicker({
           onClick={() => onSide('yes')}
         >
           <CheckIcon aria-hidden="true" />
-          {prior === 'yes' ? 'Still yes' : 'Yes'}
+          <LocalizedValue render={() => (prior === 'yes' ? tr("workshop:still_yes_1ab9570b") : tr("workshop:yes_85a39ab3"))} />
           <span className="dev-vote-n">{tally(yes)}</span>
         </button>
         <button
@@ -815,39 +819,39 @@ export function VotePicker({
           onClick={() => onSide('no')}
         >
           <XIcon aria-hidden="true" />
-          {prior === 'yes' ? 'Not this time' : 'No'}
+          <LocalizedValue render={() => (prior === 'yes' ? tr("workshop:not_this_time_6f3efa36") : tr("workshop:no_1ea442a1"))} />
           <span className="dev-vote-n">{tally(no)}</span>
         </button>
       </div>
       {withLine ? (
         <div className="dev-vote-reason" data-vote-reason={side}>
           <label className="dev-vote-reason-label" htmlFor={reasonId}>
-            {yesOn
-              ? (solo ? 'Add a note, if you like.' : 'Add a line for the group, if you like.')
-              : 'What’s not working for you? One line is plenty.'}
+            <LocalizedValue render={() => (yesOn
+              ? (solo ? tr("workshop:add_a_note_if_you_like_26ddba34") : tr("workshop:add_a_line_for_the_group_if_you_like_59929382"))
+              : tr("workshop:what_s_not_working_for_you_one_line_is_plenty_11f2da00"))} />
           </label>
-          <textarea
+          <LocalizedDynamic element={<textarea
             id={reasonId}
             ref={boxRef}
             className="dev-vote-reason-box"
             rows={2}
             maxLength={280}
-            placeholder={yesOn ? 'What do you like about it?' : 'What would you want to change?'}
+            placeholder={yesOn ? tr("workshop:what_do_you_like_about_it_141b9255") : tr("workshop:what_would_you_want_to_change_fd339413")}
             value={line}
             onChange={(ev) => onLine(ev.target.value)}
             onKeyDown={onBoxKey}
-          />
+          />} resolve={() => ({ "placeholder": yesOn ? tr("workshop:what_do_you_like_about_it_141b9255") : tr("workshop:what_would_you_want_to_change_fd339413") })} />
         </div>
       ) : null}
       <div className="dev-vote-reason-actions">
-        <button type="button" className="dev-vote-reason-cancel" onClick={onCancel}>Cancel</button>
+        <button type="button" className="dev-vote-reason-cancel" onClick={onCancel}><Message id="workshop:cancel_19766ed6" /></button>
         <button
           type="button"
           className={`dev-vote-reason-send dev-vote-reason-send-${side}`}
           disabled={withLine && !yesOn && !trimmed}
           onClick={onSend}
         >
-          {yesOn ? 'Vote yes' : 'Vote no'}
+          <LocalizedValue render={() => (yesOn ? tr("workshop:vote_yes_d0f291d1") : tr("workshop:vote_no_f89fa765"))} />
         </button>
       </div>
     </>
@@ -861,6 +865,7 @@ export function isVoteSpec(a: ActionSpec, side: 'yes' | 'no'): boolean {
 
 /** One action pill; the kudos slot and the Explore pill are its two specials. */
 export function ActionButton({ a, fold, hidden }: { a: ActionSpec; fold?: number; hidden?: boolean }): ReactNode {
+  useUiLanguage();
   const { enabled } = useStoreState(aiEnabledStore);
   // `data-fold` marks a pill the one-line band may hide; every pill carries
   // one but the kudos host.
@@ -877,18 +882,15 @@ export function ActionButton({ a, fold, hidden }: { a: ActionSpec; fold?: number
     // through aiEnabledStore — the store replaces the
     // `_applyExploreChatAvailability` DOM pass for card pills.
     return (
-      <button
+      <LocalizedDynamic element={<button
         type="button"
         className={`gc-vote-btn gc-explore-chat-btn${enabled ? '' : ' opacity-50 cursor-not-allowed'}`}
         disabled={!enabled}
         {...foldAttrs}
         data-proposal-id={a.explore}
-        title={enabled ? a.title : "AI chat isn't configured on this deployment."}
+        title={enabled ? a.title : tr("workshop:ai_chat_isn_t_configured_on_this_deployment_c0c4d18c")}
         onClick={(e) => call({ fn: 'exploreProposalInDevChat', args: [a.explore!] }, e.currentTarget)}
-      >
-        <span aria-hidden="true">{'✨'}</span>
-        {' Explore in a coding agent'}
-      </button>
+      ><RichMessage id="workshop:sentence_a705a1b3709b" components={[<span aria-hidden="true" />]} /></button>} resolve={() => ({ "title": enabled ? a.title : tr("workshop:ai_chat_isn_t_configured_on_this_deployment_c0c4d18c") })} />
     );
   }
   // `data-act` is the name of the AppView method this pill calls.
@@ -932,16 +934,14 @@ export function ActionButton({ a, fold, hidden }: { a: ActionSpec; fold?: number
  */
 export function MenuTrigger({ menuKey }: { menuKey: string }): ReactNode {
   return (
-    <button
+    <Localized element={<button
       type="button"
       className="gc-vote-btn gc-vote-btn-icon dev-card-menu-btn"
       data-card-menu={menuKey}
-      aria-haspopup="true"
-      aria-label="More actions"
-      title="More actions"
+      aria-haspopup="true" aria-label={catalogText("workshop:more_actions_f8d46c25")} title={catalogText("workshop:more_actions_f8d46c25")}
     >
       <Bars3Icon aria-hidden="true" />
-    </button>
+    </button>} messages={{"aria-label":"workshop:more_actions_f8d46c25","title":"workshop:more_actions_f8d46c25"}} />
   );
 }
 
@@ -983,9 +983,9 @@ export function TitleContent({ t }: { t: TitleSpec }): ReactNode {
     };
     return (
       <div className="flex flex-wrap items-center gap-2">
-        <Input
+        <LocalizedDynamic element={<Input
           id={`dev-${kind}-title-input`}
-          aria-label={session ? 'Proposal title' : 'Request title'}
+          aria-label={session ? tr("workshop:proposal_title_f85d9e1a") : tr("workshop:request_title_6db74c94")}
           type="text"
           maxLength={session ? 256 : 200}
           defaultValue={t.editing.initial}
@@ -993,9 +993,9 @@ export function TitleContent({ t }: { t: TitleSpec }): ReactNode {
           width="flex"
           box="tight"
           onKeyDown={onKeyDown}
-        />
-        <button type="button" className="gc-vote-btn" onClick={() => call({ fn: save, args: [n] })}>Save</button>
-        <button type="button" className="gc-vote-btn" onClick={() => call({ fn: cancel })}>Cancel</button>
+        />} resolve={() => ({ "aria-label": session ? tr("workshop:proposal_title_f85d9e1a") : tr("workshop:request_title_6db74c94") })} />
+        <button type="button" className="gc-vote-btn" onClick={() => call({ fn: save, args: [n] })}><Message id="workshop:save_1509f561" /></button>
+        <button type="button" className="gc-vote-btn" onClick={() => call({ fn: cancel })}><Message id="workshop:cancel_19766ed6" /></button>
         <span id={`dev-${kind}-title-error`} className="w-full text-xs text-red-400 hidden"></span>
       </div>
     );
@@ -1014,18 +1014,17 @@ export function TitleContent({ t }: { t: TitleSpec }): ReactNode {
       {t.trail ? <span className={t.trail.cls}>{` · ${t.trail.s}`}</span> : null}
       {edit ? (
         <>
-          <button
+          <Localized element={<LocalizedDynamic element={<button
             type="button"
             className="align-middle text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-200 transition-colors dark:text-zinc-400"
-            title={editSession ? 'Edit this proposal title' : "Edit this request's title (you asked for it)"}
-            aria-label="Edit title"
+            title={editSession ? tr("workshop:edit_this_proposal_title_b93cd2dc") : tr("workshop:edit_this_request_s_title_you_asked_for_it_cd8e1cf3")} aria-label={catalogText("workshop:edit_title_176a4421")}
             onClick={() => call({
               fn: editSession ? 'beginSessionTitleEdit' : 'beginIssueTitleEdit',
               args: [editId],
             })}
           >
             <PencilSquareIcon className="w-3.5 h-3.5 inline -mt-0.5" aria-hidden="true" />
-          </button>
+          </button>} resolve={() => ({ "title": editSession ? tr("workshop:edit_this_proposal_title_b93cd2dc") : tr("workshop:edit_this_request_s_title_you_asked_for_it_cd8e1cf3") })} />} messages={{"aria-label":"workshop:edit_title_176a4421"}} />
         </>
       ) : null}
     </>
@@ -1065,6 +1064,7 @@ const REQ_TONE: Record<string, string> = {
 // change page's steps carry none either, so the two read alike.
 
 function RequirementsRow({ x }: { x: Extract<ExtraSpec, { t: 'requirements' }> }): ReactNode {
+  useUiLanguage();
   const [open, setOpen] = useState(x.open);
   // The model's seed as of the previous render, so the effect below can tell
   // a false→true FLIP from a repaint that merely still says true.
@@ -1148,24 +1148,24 @@ function IllustrationPreviewRow({ x }: { x: Extract<ExtraSpec, { t: 'illustratio
           className={`${cardTintClass(art.tint) || ''} overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-700`}
           style={{ background: cardTintClass(art.tint) ? 'var(--tone-50)' : undefined }}
         >
-          <img
+          <LocalizedDynamic element={<img
             src={art.url}
-            alt={`${which === 'proposed' ? 'Proposed' : 'Current'} featured illustration`}
+            alt={tr("workshop:value1_featured_illustration_747c7c23", { value1: which === 'proposed' ? tr("workshop:proposed_9b0c660b") : tr("workshop:current_e0d1b682") })}
             loading="lazy"
             className="block h-24 w-full object-cover"
-          />
+          />} resolve={() => ({ get "alt"() { return tr("workshop:value1_featured_illustration_747c7c23", { value1: which === 'proposed' ? tr("workshop:proposed_9b0c660b") : tr("workshop:current_e0d1b682") }); } })} />
         </div>
       ) : (
         <div className="flex h-24 items-center justify-center rounded-lg border border-dashed border-zinc-300 text-[0.7rem] text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
-          {which === 'proposed' && x.remove ? 'Removed, the app icon shows instead' : 'No illustration, the app icon shows'}
+          <LocalizedValue render={() => (which === 'proposed' && x.remove ? tr("workshop:removed_the_app_icon_shows_instead_b656eb3b") : tr("workshop:no_illustration_the_app_icon_shows_1a203c8e"))} />
         </div>
       )}
     </figure>
   );
   return (
     <div className="mt-2 flex gap-3 px-0.5" data-illustration-preview="1">
-      {side('Current', 'current', x.current)}
-      {side('Proposed', 'proposed', x.proposed)}
+      {side(tr("workshop:current_e0d1b682"), 'current', x.current)}
+      {side(tr("workshop:proposed_9b0c660b"), 'proposed', x.proposed)}
     </div>
   );
 }
@@ -1183,17 +1183,17 @@ function ExtraRow({ x }: { x: ExtraSpec }): ReactNode {
   // The topic-view-only admin claim list, with its per-claim clear control.
   return (
     <div className="mt-1 flex flex-wrap items-center gap-1 px-0.5 text-[0.65rem] text-zinc-500 dark:text-zinc-400">
-      {'Claims:'}
+      <Message id="workshop:claims_8b3788ec" />
       {x.claims.map((c) => (
         <span key={c.userId} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-700 dark:text-sky-400">
           {c.username}
-          <button
+          <LocalizedDynamic element={<button
             type="button"
             className="hover:text-sky-700 dark:hover:text-sky-300 dark:text-sky-400"
-            title={`Release ${c.username}'s claim (admin)`}
-            aria-label={`Release ${c.username}'s claim (admin)`}
+            title={tr("workshop:release_value1_s_claim_admin_9dc96ea1", { value1: c.username })}
+            aria-label={tr("workshop:release_value1_s_claim_admin_9dc96ea1", { value1: c.username })}
             onClick={() => call({ fn: 'clearIssueClaim', args: [c.issue, c.userId] })}
-          ><span aria-hidden="true">{'×'}</span></button>
+          ><span aria-hidden="true">{'×'}</span></button>} resolve={() => ({ get "title"() { return tr("workshop:release_value1_s_claim_admin_9dc96ea1", { value1: c.username }); }, get "aria-label"() { return tr("workshop:release_value1_s_claim_admin_9dc96ea1", { value1: c.username }); } })} />
         </span>
       ))}
     </div>

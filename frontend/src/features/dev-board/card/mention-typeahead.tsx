@@ -1,3 +1,5 @@
+import { t as tr } from "../../../lib/i18n/runtime";
+import { Localized, message as catalogText } from "../../../lib/i18n/react";
 /**
  * `@name` suggestions for the Activity feed's reply box (#2145).
  *
@@ -178,7 +180,7 @@ function prefixAskerFor(slug: string): PrefixLookup<string> {
   if (!asker) {
     asker = prefixLookup(async (query: string) => {
       const res = await fetch(`${mentionSuggestionsPath(slug)}?q=${encodeURIComponent(query)}`);
-      if (!res.ok) throw new Error(`mention lookup ${res.status}`);
+      if (!res.ok) throw new Error(tr("workshop:mention_lookup_value1_f88a93ff", { value1: res.status }));
       const data = await res.json();
       return Array.isArray(data?.users)
         ? data.users.map((u: any) => String((u && u.username) || '')).filter(Boolean)
@@ -426,13 +428,12 @@ export function FeedMentionMenu({
   if (!items.length) return null;
   const me = viewerName();
   return (
-    <div
+    <Localized element={<div
       ref={menuRef}
       className={below
         ? 'gc-mention-menu dev-feed-mention-menu dev-feed-mention-menu-below'
         : 'gc-mention-menu dev-feed-mention-menu'}
-      role="listbox"
-      aria-label="Mention someone"
+      role="listbox" aria-label={catalogText("workshop:mention_someone_e5efb963")}
       data-feed-mention-menu=""
       // mousedown, not click, and prevented — the field keeps focus, so the
       // list is still open when the pick lands (a blur would close it first).
@@ -450,6 +451,6 @@ export function FeedMentionMenu({
         items={items.map((username) => ({ username, you: username.toLowerCase() === me }))}
         active={active}
       />
-    </div>
+    </div>} messages={{"aria-label":"workshop:mention_someone_e5efb963"}} />
   );
 }

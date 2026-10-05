@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * `#dev-actions` — the Dev screen's toolbar: the shared Board/Workshop filter
  * strip — and `DevPlusMenu`, the ⋯ (it was the "+") and its menu.
@@ -242,6 +246,7 @@ export function DevPlusMenu({
   inHero = false,
   onMakePrivate = null,
 }: DevActionsRowProps): ReactNode {
+  useUiLanguage();
   const [editingIllustration, setEditingIllustration] = useState(false);
   const [suggesting, setSuggesting] = useState(false);
   useEffect(() => {
@@ -272,8 +277,8 @@ export function DevPlusMenu({
       replaces the node's attributes wholesale, so the two owners do not meet.
   */
   const plusLabel = readOnly
-    ? 'Remix: make your own copy'
-    : 'Ask for a change, import a PR or manage this app';
+    ? tr("workshop:remix_make_your_own_copy_4824fcaa")
+    : tr("workshop:ask_for_a_change_import_a_pr_or_manage_this_app_762a87fd");
   return (
     <>
   {/* The native modal reparents its card under body. Portal there too so React's delegated events stay on the card's ancestor. */}
@@ -338,91 +343,78 @@ export function DevPlusMenu({
             */}
             {/* B8: Ask for a change leads (it goes to Homeroom bot, or to
                 the group as a request); building it yourself is second. */}
-            <PlusRow
+            <Localized element={<PlusRow title={catalogText("workshop:ask_for_a_change_f445fc4f")}
               data-plus="issue"
               icon={<LightBulbIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-              title="Ask for a change"
               sub="Report a problem or idea without building it yourself"
-            />
-            <PlusRow
+            />} messages={{"title":"workshop:ask_for_a_change_f445fc4f"}} />
+            <Localized element={<PlusRow title={catalogText("workshop:build_it_yourself_72369f88")}
               data-plus="new-change"
               icon={<PencilSparklesIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-              title="Build it yourself"
               sub="With a coding agent, then ask for approval"
               onClick={() => { callAppView('_closePlusMenu'); void Improve.startSession(); }}
-            />
+            />} messages={{"title":"workshop:build_it_yourself_72369f88"}} />
             {canCollaborate ? (
-              <PlusRow
+              <Localized element={<PlusRow title={catalogText("workshop:import_feature_from_a_pr_06dad1f0")}
                 data-plus="import-pr"
                 icon={<GitHubIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-                title="Import Feature from a PR"
                 sub={(
-                  <>
-                    Your computer &middot; your own tools. You have already built it, so
-                    there is no chat for this one
-                  </>
+                  <><Message id="workshop:your_computer_your_own_tools_you_have_already_bu_c719bea7" /></>
                 )}
                 dividerCls={PLUS_ROW_DIVIDER_CLS}
-              />
+              />} messages={{"title":"workshop:import_feature_from_a_pr_06dad1f0"}} />
             ) : null}
-            <PlusMenuHeading
-              label="Settings &amp; rules"
+            <Localized element={<PlusMenuHeading label={catalogText("workshop:settings_rules_e129531f")}
               groupKey="settings"
               divider={true}
-            />
+            />} messages={{"label":"workshop:settings_rules_e129531f"}} />
             {onMakePrivate ? (
-              <PlusRow
+              <Localized element={<PlusRow title={catalogText("workshop:make_it_private_6aeba826")}
                 data-plus="make-private"
                 icon={<LockIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-                title="Make it private"
                 sub="Only invited people can open and build it. Code stays public on GitHub."
                 // It renders after the menu was wired (once the community
                 // read answers), so it closes the menu itself.
                 onClick={() => { callAppView('_closePlusMenu'); onMakePrivate(); }}
-              />
+              />} messages={{"title":"workshop:make_it_private_6aeba826"}} />
             ) : null}
             {typeof window !== 'undefined' && ((window.AppView?.appData?.can_manage && !selfHosted)
               || window.AppView?.appData?.can_delete
-              || window.AppView?.appData?.delete_block === 'shared') ? <PlusRow
+              || window.AppView?.appData?.delete_block === 'shared') ? <Localized element={<PlusRow title={catalogText("workshop:app_settings_d43fb8a9")}
               data-plus="app-settings"
               icon={<KeyIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-              title="App settings"
               sub="Manage who can use and build this app"
-            /> : null}
-            {canManageIllustration ? <PlusRow
+            />} messages={{"title":"workshop:app_settings_d43fb8a9"}} /> : null}
+            {canManageIllustration ? <Localized element={<PlusRow title={catalogText("workshop:featured_illustration_2ad772c7")}
               data-plus="featured-illustration"
               icon={<PencilSquareIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-              title="Featured illustration"
               sub="Preview and adjust the Discover card image"
               onClick={() => setEditingIllustration(true)}
-            /> : null}
+            />} messages={{"title":"workshop:featured_illustration_2ad772c7"}} /> : null}
             {showsMembers ? (
               <>
                 {selfHosted ? (
-                  <PlusRow
+                  <Localized element={<PlusRow title={catalogText("workshop:proposal_approvals_47c05975")}
                     data-plus="members"
                     icon={<UserGroupIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-                    title="Proposal approvals"
                     sub="Who approves proposals and how many approvals are needed"
-                  />
+                  />} messages={{"title":"workshop:proposal_approvals_47c05975"}} />
                 ) : (
-                  <PlusRow
+                  <Localized element={<PlusRow title={catalogText("workshop:members_approvals_7988f96b")}
                     data-plus="members"
                     icon={<UserGroupIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-                    title="Members &amp; approvals"
                     sub="Manage collaborators, app admins and proposal approvals"
-                  />
+                  />} messages={{"title":"workshop:members_approvals_7988f96b"}} />
                 )}
               </>
             ) : null}
-            <PlusRow
+            <Localized element={<PlusRow title={catalogText("workshop:app_display_name_4258ff17")}
               data-plus="rename"
               icon={<PencilSquareIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-              title="App display name"
               sub="Renames are proposals, applied once voted in"
               dividerCls={showsMembers ? PLUS_ROW_DIVIDER_CLS : ''}
-            />
-            <PlusRow
+            />} messages={{"title":"workshop:app_display_name_4258ff17"}} />
+            <LocalizedDynamic element={<PlusRow
               data-plus="secrets"
               icon={<KeyIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
               titleNode={(
@@ -430,7 +422,7 @@ export function DevPlusMenu({
                   data-plus-title
                   className="flex items-center gap-2 text-sm font-medium text-zinc-800 dark:text-zinc-200"
                 >
-                  {selfHosted ? 'Platform variables' : 'App secrets'}
+                  <LocalizedValue render={() => (selfHosted ? tr("workshop:platform_variables_d570a27e") : tr("workshop:app_secrets_fbd64919"))} />
                   {/* Filled by AppView.refreshDevChatSecretsState() — a
                       legacy-owned leaf, so it renders empty and React never
                       writes its text again. */}
@@ -441,31 +433,31 @@ export function DevPlusMenu({
                 </span>
               )}
               sub={selfHosted
-                ? "The platform's own env, applied on its next deploy"
-                : 'Set or update secret values'}
+                ? tr("workshop:the_platform_s_own_env_applied_on_its_next_deplo_9c29cd69")
+                : tr("workshop:set_or_update_secret_values_8cfef26a")}
               dividerCls={PLUS_ROW_DIVIDER_CLS}
-            />
+            />} resolve={() => ({ "sub": selfHosted
+                ? tr("workshop:the_platform_s_own_env_applied_on_its_next_deplo_9c29cd69")
+                : tr("workshop:set_or_update_secret_values_8cfef26a") })} />
           </>
         )}
         {suggestTarget ? (
-          <PlusRow
+          <Localized element={<LocalizedDynamic element={<PlusRow title={catalogText("workshop:suggest_this_back_02ddfeec")}
             data-plus="suggest-back"
             icon={<ArrowUpTrayIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-            title="Suggest this back"
-            sub={`Send your changes to ${suggestTarget.name} as a proposal`}
+            sub={tr("workshop:send_your_changes_to_value1_as_a_proposal_9e5be617", { value1: suggestTarget.name })}
             dividerCls={readOnly ? '' : PLUS_ROW_DIVIDER_CLS}
             onClick={() => { callAppView('_closePlusMenu'); setSuggesting(true); }}
-          />
+          />} resolve={() => ({ get "sub"() { return tr("workshop:send_your_changes_to_value1_as_a_proposal_9e5be617", { value1: suggestTarget.name }); } })} />} messages={{"title":"workshop:suggest_this_back_02ddfeec"}} />
         ) : null}
 
         {selfHosted ? null : (
-          <PlusRow
+          <Localized element={<PlusRow title={catalogText("workshop:remix_f84ed437")}
             data-plus="fork"
             icon={<AppWindowIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-            title="Remix"
             sub="Make your own copy"
             dividerCls={readOnly ? '' : PLUS_ROW_DIVIDER_CLS}
-          />
+          />} messages={{"title":"workshop:remix_f84ed437"}} />
         )}
       </div>
     </div>

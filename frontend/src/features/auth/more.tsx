@@ -1,3 +1,8 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { RichMessage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * `#auth-more-screen` — the stage-2 waitlist survey (#1080, step 2 chunk C,
  * screen 6 of 6).
@@ -232,14 +237,12 @@ function SignupEmail({ email }: { email: string }) {
     <p
       id="more-signup-email"
       className={`text-xs text-zinc-500 dark:text-zinc-400 break-words${email ? '' : ' hidden'}`}
-    >
-      {'Registered with '}
-      <span className="font-medium text-zinc-700 dark:text-zinc-200">{email}</span>
-    </p>
+    ><RichMessage id="auth:sentence_425b58b82fce" values={{ value1: email }} components={[<span className="font-medium text-zinc-700 dark:text-zinc-200" />]} /></p>
   );
 }
 
 export function MoreScreen() {
+  useUiLanguage();
   const rootRef = useRef<HTMLElement>(null);
   useVisibilityHiddenClass(rootRef, AUTH_SCREEN_IDS.more, false);
   // The screen's interior mounts on its first reveal, not in the prerender —
@@ -253,7 +256,7 @@ export function MoreScreen() {
   // 'throttled' is a rate-limited load — the token may be perfectly fine, so
   // it gets its own copy instead of the bad-link notice (#1296).
   const [status, setStatus] = useState<'idle' | 'invalid' | 'throttled' | 'ready'>('idle');
-  const [retryText, setRetryText] = useState('a few minutes');
+  const [retryText, setRetryText] = useState(tr("auth:a_few_minutes_6b65e18c"));
   const [opts, setOpts] = useState<WaitlistOptions | null>(null);
   const [tools, setTools] = useState<string[]>([]);
   const [lossHad, setLossHad] = useState<string | null>(null);
@@ -320,13 +323,13 @@ export function MoreScreen() {
     } catch {
       outcome = null;
     }
-    if (outcome === 'ok') return { text: 'Account verified. Thanks.', tone: 'ok' };
+    if (outcome === 'ok') return { get text() { return tr("auth:account_verified_thanks_f9672d49"); }, tone: 'ok' };
     if (outcome === 'failed' || outcome === 'denied' || outcome === 'unavailable') {
       return {
         text:
           outcome === 'unavailable'
-            ? 'That sign-in is not available yet.'
-            : 'Could not verify that account. Please try again.',
+            ? tr("auth:that_sign_in_is_not_available_yet_ba89341a")
+            : tr("auth:could_not_verify_that_account_please_try_again_734a4a0e"),
         tone: 'warn',
       };
     }
@@ -393,7 +396,7 @@ export function MoreScreen() {
   const loadMore = useCallback(async () => {
     const value = token.current;
     if (!value) {
-      setStatus('invalid');
+      setStatus("invalid");
       return;
     }
     const [loaded, res] = await Promise.all([
@@ -409,19 +412,19 @@ export function MoreScreen() {
         const secs = Number(body?.retryAfterSeconds);
         if (Number.isFinite(secs) && secs > 0) {
           const mins = Math.ceil(secs / 60);
-          setRetryText(mins > 1 ? `about ${mins} minutes` : 'about a minute');
+          setRetryText(mins > 1 ? tr("auth:about_value1_minutes_130de651", { value1: mins }) : 'about a minute');
         } else {
-          setRetryText('a few minutes');
+          setRetryText(tr("auth:a_few_minutes_6b65e18c"));
         }
-        setStatus('throttled');
+        setStatus("throttled");
         return;
       }
-      setStatus('invalid');
+      setStatus("invalid");
       return;
     }
     const data: MorePayload | null = await res.json().catch(() => null);
     if (!data || !data.ok) {
-      setStatus('invalid');
+      setStatus("invalid");
       return;
     }
     // The options have to be in the DOM before the stored answers are assigned:
@@ -433,7 +436,7 @@ export function MoreScreen() {
       setOpts(loaded);
     });
     render(data);
-    setStatus('ready');
+    setStatus("ready");
   }, [render]);
 
   /**
@@ -572,7 +575,7 @@ export function MoreScreen() {
       // answer a question that only matters once. Every question stays
       // optional — this asks for one of them, not for any particular one.
       if (!hasAnyAnswer(answers)) {
-        setMsg({ text: 'Answer at least one question before saving.', tone: 'warn' });
+        setMsg({ get text() { return tr("auth:answer_at_least_one_question_before_saving_5cc82682"); }, tone: 'warn' });
         return;
       }
 
@@ -598,12 +601,12 @@ export function MoreScreen() {
           clearDraft(value);
         } else {
           setMsg({
-            text: (data && data.error) || 'Something went wrong. Try again.',
+            text: (data && data.error) || tr("auth:something_went_wrong_try_again_4def98c8"),
             tone: 'error',
           });
         }
       } catch {
-        setMsg({ text: 'Connection issue. Try again.', tone: 'error' });
+        setMsg({ get text() { return tr("auth:connection_issue_try_again_842c1cfa"); }, tone: 'error' });
       }
       setSaving(false);
     },
@@ -654,31 +657,22 @@ export function MoreScreen() {
         href="#landing"
         className="fixed left-4 z-10 text-sm text-zinc-500 dark:text-zinc-400 hover:text-violet-400"
         style={{ top: 'calc(env(safe-area-inset-top, 0px) + 1rem)' }}
-      >
-        &larr; Back
-      </a>
+      ><Message id="auth:back_aceb696a" /></a>
       <div className="max-w-2xl mx-auto px-6 py-16">
         <p
           className={hiddenLast(
             saved,
             'text-xs font-semibold uppercase tracking-widest text-violet-700 dark:text-violet-400',
           )}
-        >
-          Optional (moves you up the list)
-        </p>
-        <h1 className={hiddenLast(saved, 'mt-1 text-2xl font-bold')}>
-          Want in sooner?
-        </h1>
+        ><Message id="auth:optional_moves_you_up_the_list_423b909a" /></p>
+        <h1 className={hiddenLast(saved, 'mt-1 text-2xl font-bold')}><Message id="auth:want_in_sooner_ed295e20" /></h1>
         {/*
             #1541: two sentences, from four. The middle one said the same
             thing twice ("the answers we actually read" and "worth more than
             the order you signed up in"), and "every one is optional" is
             already the label directly above this heading.
         */}
-        <p className={hiddenLast(saved, 'mt-3 text-sm text-zinc-500 dark:text-zinc-400')}>
-          Four questions, about three minutes. These are what we read when we
-        pick the next group, and you can come back and add to them any time.
-        </p>
+        <p className={hiddenLast(saved, 'mt-3 text-sm text-zinc-500 dark:text-zinc-400')}><Message id="auth:four_questions_about_three_minutes_these_are_wha_e11f707d" /></p>
         {/* Bad/expired token state — also hosts the rate-limited copy */}
         {/*
             `startHidden` rather than `hiddenFirst`: both put `hidden` at the
@@ -695,19 +689,9 @@ export function MoreScreen() {
           className="mt-6"
         >
           {status === 'throttled' ? (
-            <>
-              Your link is fine, we&rsquo;re limiting requests from your
-              address right now. Try again in {retryText}, or just reopen the
-              link from your waitlist email then.
-            </>
+            <><RichMessage id="auth:sentence_7ec939e9afce" values={{ value1: retryText }} /></>
           ) : (
-            <>
-              {"This link doesn't look right. Use the one from your waitlist email, or "}
-              <a href="#landing" className="underline">
-                join the waitlist
-              </a>
-              {' first.'}
-            </>
+            <><RichMessage id="auth:sentence_d0fd4ee58317" components={[<a href="#landing" className="underline" />]} /></>
           )}
         </Alert>
         <form
@@ -724,18 +708,12 @@ export function MoreScreen() {
               it used to be required. Joining takes an email now; this is one
               of the things that helps you move up instead. */}
           <div>
-            <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500 mb-1.5">
-              Question 1 of 4
-            </p>
+            <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500 mb-1.5"><Message id="auth:question_1_of_4_78da2374" /></p>
             <label
               htmlFor="more-made-url"
               className={SURVEY_LABEL}
-            >
-              Link something you&rsquo;ve made
-            </label>
-            <p className={SURVEY_HINT}>
-              A repo, a site, a bot, a mod, a newsletter, a spreadsheet that runs your fantasy league. Built with AI counts, we care that it exists, not how you made it.
-            </p>
+            ><Message id="auth:link_something_you_ve_made_665c7928" /></label>
+            <p className={SURVEY_HINT}><Message id="auth:a_repo_a_site_a_bot_a_mod_a_newsletter_a_spreads_dbf3f8a8" /></p>
             {/*
                 Every field on this screen and on `#waitlist` spreads
                 SURVEY_FIELD — the `authWhite` box, the dialogs' placeholder
@@ -745,7 +723,7 @@ export function MoreScreen() {
                 four questions deep on a scrolling page, the field's own edge
                 is the only thing showing where an answer goes.
             */}
-            <Input
+            <Localized element={<Input
               ref={madeUrl}
               id="more-made-url"
               type="text"
@@ -753,49 +731,38 @@ export function MoreScreen() {
               autoCapitalize="none"
               autoCorrect="off"
               spellCheck={false}
-              maxLength={2000}
-              placeholder="https://"
+              maxLength={2000} placeholder={catalogText("auth:https_66dfeeed")}
               onBlur={normalizeMadeUrlInput}
               {...SURVEY_FIELD}
-            />
-            <Input
+            />} messages={{"placeholder":"auth:https_66dfeeed"}} />
+            <Localized element={<Input
               ref={madeNote}
               id="more-made-note"
               type="text"
-              maxLength={140}
-              placeholder="What is it, in one line? (optional)"
+              maxLength={140} placeholder={catalogText("auth:what_is_it_in_one_line_optional_d184900d")}
               {...SURVEY_FIELD}
               spacing="mt2"
-            />
+            />} messages={{"placeholder":"auth:what_is_it_in_one_line_optional_d184900d"}} />
           </div>
           {/* 5 · The group */}
           <div>
-            <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500 mb-1.5">
-              Question 2 of 4
-            </p>
-            <label className={SURVEY_LABEL}>
-              Tell us about a group you&rsquo;re part of that could use its own app.
-            </label>
-            <p className={SURVEY_HINT_WIDE}>
-              A team, a server, a club, a group chat, a co-op, a band, a league, a neighbourhood. Not a hypothetical one, a real group you&rsquo;re actually in.
-            </p>
-            <Input
+            <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500 mb-1.5"><Message id="auth:question_2_of_4_47725e59" /></p>
+            <label className={SURVEY_LABEL}><Message id="auth:tell_us_about_a_group_you_re_part_of_that_could__739e82fd" /></label>
+            <p className={SURVEY_HINT_WIDE}><Message id="auth:a_team_a_server_a_club_a_group_chat_a_co_op_a_ba_c4967ba5" /></p>
+            <Localized element={<Input
               ref={groupName}
               id="more-group-name"
               type="text"
-              maxLength={255}
-              placeholder="A 200-person Discord for indie game devs in Lagos"
+              maxLength={255} placeholder={catalogText("auth:a_200_person_discord_for_indie_game_devs_in_lago_caaf0b9a")}
               {...SURVEY_FIELD}
-            />
+            />} messages={{"placeholder":"auth:a_200_person_discord_for_indie_game_devs_in_lago_caaf0b9a"}} />
             <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
               <Select
                 ref={groupSize}
                 id="more-group-size"
                 {...SURVEY_SELECT}
               >
-                <option value="">
-                  Roughly how many people?
-                </option>
+                <option value=""><Message id="auth:roughly_how_many_people_2fd13cf4" /></option>
                 {optionList(opts?.group_sizes)}
               </Select>
               <Select
@@ -803,43 +770,32 @@ export function MoreScreen() {
                 id="more-group-role"
                 {...SURVEY_SELECT}
               >
-                <option value="">
-                  Your role in it
-                </option>
+                <option value=""><Message id="auth:your_role_in_it_bce77572" /></option>
                 {optionList(opts?.group_roles)}
               </Select>
             </div>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-3 mb-1.5">
-              What does it run on today? (pick any)
-            </p>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-3 mb-1.5"><Message id="auth:what_does_it_run_on_today_pick_any_05cf9e3b" /></p>
             <MultiChipRow
               id="more-group-tools"
               options={opts?.group_tools || {}}
               value={tools}
               onToggle={toggleTool}
             />
-            <Textarea
+            <Localized element={<Textarea
               ref={groupNeed}
               id="more-group-need"
               rows={3}
               onInput={(e) => autoGrow(e.currentTarget)}
-              maxLength={800}
-              placeholder="What would its own app do that those tools can't? Money, membership, voting, scheduling, reputation, records…"
+              maxLength={800} placeholder={catalogText("auth:what_would_its_own_app_do_that_those_tools_can_t_4aa08c67")}
               {...SURVEY_FIELD}
               spacing="mt3"
-            />
+            />} messages={{"placeholder":"auth:what_would_its_own_app_do_that_those_tools_can_t_4aa08c67"}} />
           </div>
           {/* 6 · The loss */}
           <div>
-            <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500 mb-1.5">
-              Question 3 of 4
-            </p>
-            <label className={SURVEY_LABEL}>
-              Ever had a tool you relied on get killed, paywalled, or ruined?
-            </label>
-            <p className={SURVEY_HINT_WIDE}>
-              An app, a platform, a service, a game, a community. The kind of thing that made you look for something like this in the first place.
-            </p>
+            <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500 mb-1.5"><Message id="auth:question_3_of_4_22d25b63" /></p>
+            <label className={SURVEY_LABEL}><Message id="auth:ever_had_a_tool_you_relied_on_get_killed_paywall_0b40200a" /></label>
+            <p className={SURVEY_HINT_WIDE}><Message id="auth:an_app_a_platform_a_service_a_game_a_community_t_d1788054" /></p>
             <ChipRow
               id="more-loss-had"
               options={opts?.loss_answers || {}}
@@ -850,45 +806,35 @@ export function MoreScreen() {
               id="more-loss-detail"
               className={hiddenFirst(lossDetailHidden, 'mt-3 space-y-2')}
             >
-              <Input
+              <Localized element={<Input
                 ref={lossProduct}
                 id="more-loss-product"
                 type="text"
-                maxLength={255}
-                placeholder="Which one? Google Reader, a Discord server, a game's private servers, an API…"
+                maxLength={255} placeholder={catalogText("auth:which_one_google_reader_a_discord_server_a_game__a6dbd4f6")}
                 {...SURVEY_FIELD}
-              />
-              <p className="text-xs text-zinc-500 dark:text-zinc-400 pt-1">
-                What happened? (pick any)
-              </p>
+              />} messages={{"placeholder":"auth:which_one_google_reader_a_discord_server_a_game__a6dbd4f6"}} />
+              <p className="text-xs text-zinc-500 dark:text-zinc-400 pt-1"><Message id="auth:what_happened_pick_any_93f9edf3" /></p>
               <MultiChipRow
                 id="more-loss-kinds"
                 options={opts?.loss_kinds || {}}
                 value={lossKinds}
                 onToggle={toggleLossKind}
               />
-              <Textarea
+              <Localized element={<Textarea
                 ref={lossStory}
                 id="more-loss-story"
                 rows={3}
                 onInput={(e) => autoGrow(e.currentTarget)}
-                maxLength={800}
-                placeholder="What happened, and what did you do next? Where did everyone go? Did you move them somewhere? Rebuild it? Give up?"
+                maxLength={800} placeholder={catalogText("auth:what_happened_and_what_did_you_do_next_where_did_02b6aaee")}
                 {...SURVEY_FIELD}
-              />
+              />} messages={{"placeholder":"auth:what_happened_and_what_did_you_do_next_where_did_02b6aaee"}} />
             </div>
           </div>
           {/* 7 · Handles */}
           <div>
-            <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500 mb-1.5">
-              Question 4 of 4
-            </p>
-            <label className={SURVEY_LABEL}>
-              Where else are you?
-            </label>
-            <p className={SURVEY_HINT_WIDE}>
-              Connecting an account proves you&rsquo;re a person with a history, which is most of what gets a signup read quickly. It confirms the account is yours and nothing else, so follow us if you want to, but we won&rsquo;t claim we checked.
-            </p>
+            <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500 mb-1.5"><Message id="auth:question_4_of_4_5578a462" /></p>
+            <label className={SURVEY_LABEL}><Message id="auth:where_else_are_you_034e9a23" /></label>
+            <p className={SURVEY_HINT_WIDE}><Message id="auth:connecting_an_account_proves_you_re_a_person_wit_d836e90f" /></p>
             {/*
                 GitHub / X / LinkedIn: a verified pill when connected, a connect
                 link when the platform has OAuth creds for the provider, nothing
@@ -949,44 +895,40 @@ export function MoreScreen() {
                     rel="noopener noreferrer"
                     onClick={() => saveDraft(token.current, snapshotDraft())}
                   >
-                    {'Connect ' + label}
+                    {tr("core:connect_value1_60c78691", { value1: label })}
                   </a>
                 ) : null,
               )}
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <Input
+              <Localized element={<Input
                 ref={farcaster}
                 id="more-handle-farcaster"
                 type="text"
-                maxLength={255}
-                placeholder="Farcaster (@handle)"
+                maxLength={255} placeholder={catalogText("auth:farcaster_handle_83ef8aac")}
                 {...SURVEY_FIELD}
-              />
-              <Input
+              />} messages={{"placeholder":"auth:farcaster_handle_83ef8aac"}} />
+              <Localized element={<Input
                 ref={discord}
                 id="more-handle-discord"
                 type="text"
-                maxLength={255}
-                placeholder="Discord (username)"
+                maxLength={255} placeholder={catalogText("auth:discord_username_878fb2c0")}
                 {...SURVEY_FIELD}
-              />
-              <Input
+              />} messages={{"placeholder":"auth:discord_username_878fb2c0"}} />
+              <Localized element={<Input
                 ref={telegram}
                 id="more-handle-telegram"
                 type="text"
-                maxLength={255}
-                placeholder="Telegram (@handle)"
+                maxLength={255} placeholder={catalogText("auth:telegram_handle_8cd2882b")}
                 {...SURVEY_FIELD}
-              />
-              <Input
+              />} messages={{"placeholder":"auth:telegram_handle_8cd2882b"}} />
+              <Localized element={<Input
                 ref={other}
                 id="more-handle-other"
                 type="text"
-                maxLength={255}
-                placeholder="Anywhere else: Twitch, YouTube, Mastodon…"
+                maxLength={255} placeholder={catalogText("auth:anywhere_else_twitch_youtube_mastodon_337d6b5c")}
                 {...SURVEY_FIELD}
-              />
+              />} messages={{"placeholder":"auth:anywhere_else_twitch_youtube_mastodon_337d6b5c"}} />
             </div>
             {/*
                 Follow along. The links come from WAITLIST_FOLLOW_*_URL, so a
@@ -1018,7 +960,7 @@ export function MoreScreen() {
                     rel="noopener noreferrer"
                     className="inline-flex items-center rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-200 hover:border-zinc-400 dark:hover:border-zinc-500"
                   >
-                    {'Follow on ' + label}
+                    {tr("auth:follow_on_1d1aabbc") + label}
                   </a>
                 ) : null,
               )}
@@ -1034,9 +976,7 @@ export function MoreScreen() {
                 id="more-followed"
                 type="checkbox"
                 className="mt-0.5 size-4 shrink-0 rounded accent-violet-600"
-              />
-              I followed along
-            </label>
+              /><Message id="auth:i_followed_along_b2d319f3" /></label>
           </div>
           {/* 8 · Friends. The typed-address rows that used to live here sent
               nothing and attributed nothing; this is a real link, and a join
@@ -1044,27 +984,20 @@ export function MoreScreen() {
               renders empty until the load effect fills it, so the first
               render still matches the prerender. */}
           <div>
-            <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500 mb-1.5">
-              One more thing
-            </p>
+            <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500 mb-1.5"><Message id="auth:one_more_thing_7e5b5850" /></p>
             <label
               htmlFor="more-invite-url"
               className={SURVEY_LABEL}
-            >
-              Bring someone you&rsquo;d build with
-            </label>
-            <p className={SURVEY_HINT_WIDE}>
-              We try to admit people together. Things are more fun with people you know. Share your link, and if they join we&rsquo;ll connect your applications so we can try to bring you in together.
-            </p>
+            ><Message id="auth:bring_someone_you_d_build_with_aa5717fc" /></label>
+            <p className={SURVEY_HINT_WIDE}><Message id="auth:we_try_to_admit_people_together_things_are_more__2fc0cf9d" /></p>
             <div className="flex gap-2">
-              <input
+              <Localized element={<input
                 id="more-invite-url"
                 type="text"
                 readOnly={true}
-                value={inviteUrl}
-                placeholder="Your link appears here"
+                value={inviteUrl} placeholder={catalogText("auth:your_link_appears_here_051f6b96")}
                 className="w-full rounded-lg bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono text-zinc-700 dark:text-zinc-200 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
-              />
+              />} messages={{"placeholder":"auth:your_link_appears_here_051f6b96"}} />
               <Button
                 type="button"
                 id="more-invite-copy"
@@ -1072,14 +1005,14 @@ export function MoreScreen() {
                 size="narrow"
                 onClick={onCopyInvite}
               >
-                {copied ? 'Copied' : 'Copy'}
+                <LocalizedValue render={() => (copied ? tr("auth:copied_8d525e5f") : tr("auth:copy_e21f935f"))} />
               </Button>
             </div>
             <div id="more-invite-joined" className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
               {inviteCount > 0 ? (
                 <>
                   <span className="font-medium text-zinc-700 dark:text-zinc-200">
-                    {`${inviteCount} ${inviteCount === 1 ? 'person' : 'people'} from your invite joined 🎉 `}
+                    <LocalizedValue render={() => (tr("auth:message_375defc9006f", { value1: inviteCount, count: inviteCount }))} />
                   </span>
                   {inviteEmails.join(', ')}
                 </>
@@ -1093,15 +1026,11 @@ export function MoreScreen() {
               disabled={saving}
               disabledStyle="dim"
               size="xl"
-            >
-              Save my answers
-            </Button>
+            ><Message id="auth:save_my_answers_96f733b5" /></Button>
             <p id="more-msg" className={msgClass(msg ? msg.tone : null)}>
               {msg ? msg.text : null}
             </p>
-            <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-3">
-              A blank answer just means we have less to go on, and nothing here is required.
-            </p>
+            <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-3"><Message id="auth:a_blank_answer_just_means_we_have_less_to_go_on__dd26b2e5" /></p>
           </div>
         </form>
         {/*
@@ -1111,19 +1040,9 @@ export function MoreScreen() {
         */}
         <div id="more-saved" className={hiddenFirst(!saved, 'mt-6')}>
           <div className="rounded-lg border border-emerald-200 dark:border-emerald-500/30 bg-emerald-50 dark:bg-emerald-500/10 p-5">
-            <h2 className="text-xl font-bold text-emerald-700 dark:text-emerald-400">
-              Saved, thanks &#127881;
-            </h2>
-            <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">
-              These are the answers we actually read when we pick the next
-            group. Your spot is safe either way, and we&rsquo;ll email you when
-            it opens.
-            </p>
-            <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">
-              Thought of something later? The link in your waitlist email
-            reopens this form, and answers merge, so nothing you already typed
-            is lost.
-            </p>
+            <h2 className="text-xl font-bold text-emerald-700 dark:text-emerald-400"><Message id="auth:saved_thanks_9463f811" /></h2>
+            <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300"><Message id="auth:these_are_the_answers_we_actually_read_when_we_p_ce5fa800" /></p>
+            <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400"><Message id="auth:thought_of_something_later_the_link_in_your_wait_a1aa5011" /></p>
           </div>
           <div className="mt-4 flex flex-wrap items-center gap-3">
             <Button
@@ -1133,16 +1052,12 @@ export function MoreScreen() {
               ink="neutral"
               size="narrow"
               onClick={onEditAgain}
-            >
-              Edit my answers
-            </Button>
+            ><Message id="auth:edit_my_answers_bf4399b6" /></Button>
             <a
               id="more-saved-back"
               href="#landing"
               className="text-sm text-zinc-500 dark:text-zinc-400 hover:text-violet-400"
-            >
-              Back to Homeroom
-            </a>
+            ><Message id="auth:back_to_homeroom_3bf10be6" /></a>
           </div>
         </div>
       </div>

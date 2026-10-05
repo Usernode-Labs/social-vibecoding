@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 import { openReport } from '../dialogs/report';
 /**
  * `#gc-messages` — the group chat transcript, as the only React writer below
@@ -174,6 +178,7 @@ function AttachmentBadge({ badge }: { badge: string | null }) {
 }
 
 function AttachmentImage({ att }: { att: Attachment }) {
+  useUiLanguage();
   // A staging clone copies chat_messages but not attachment bytes
   // (staging:private), so a thumbnail whose blob is gone degrades to a plain
   // chip rather than a broken-image icon. The module used to rewrite the
@@ -195,7 +200,7 @@ function AttachmentImage({ att }: { att: Attachment }) {
         href={att.url}
         target="_blank"
         rel="noopener"
-        title={`${att.name}: open full size`}
+        title={tr("workshop:value1_open_full_size_94583d19", { value1: att.name })}
         data-image-open=""
         onClick={(event) => openInViewer(event, () => setViewing(true))}
       >
@@ -215,29 +220,29 @@ function AttachmentImage({ att }: { att: Attachment }) {
 function AttachmentChip({ att }: { att: Attachment }) {
   const size = <span className="dc-attach-size">{att.size}</span>;
   const download = (
-    <a
+    <LocalizedDynamic element={<a
       className="gc-att-action"
       href={att.url}
       download={att.name}
-      title={`Download ${att.name}`}
-      aria-label={`Download ${att.name}`}
+      title={tr("workshop:download_value1_8fe1a08e", { value1: att.name })}
+      aria-label={tr("workshop:download_value1_8fe1a08e", { value1: att.name })}
     >
       <span aria-hidden="true">↓</span>
-    </a>
+    </a>} resolve={() => ({ get "title"() { return tr("workshop:download_value1_8fe1a08e", { value1: att.name }); }, get "aria-label"() { return tr("workshop:download_value1_8fe1a08e", { value1: att.name }); } })} />
   );
   if (att.kind === 'markdown') {
     return (
       <span className="dc-msg-att-chip">
         <AttachmentBadge badge={att.badge} />
-        <button
+        <LocalizedDynamic element={<button
           type="button"
           className="dc-attach-name gc-att-open"
           data-att-md={att.url}
           data-att-name={att.name}
-          title={`View ${att.name}`}
+          title={tr("workshop:view_value1_9f68c44b", { value1: att.name })}
         >
           {att.name}
-        </button>
+        </button>} resolve={() => ({ get "title"() { return tr("workshop:view_value1_9f68c44b", { value1: att.name }); } })} />
         {size}
         {download}
       </span>
@@ -249,30 +254,28 @@ function AttachmentChip({ att }: { att: Attachment }) {
         <AttachmentBadge badge={att.badge} />
         <span className="dc-attach-name">{att.name}</span>
         {size}
-        <a
+        <LocalizedDynamic element={<a
           className="gc-att-action"
           href={`${att.url}/view`}
           target="_blank"
           rel="noopener"
-          title={`Open sandboxed preview of ${att.name}`}
-        >
-          Preview
-        </a>
+          title={tr("workshop:open_sandboxed_preview_of_value1_1563c057", { value1: att.name })}
+        ><Message id="workshop:preview_324b134f" /></a>} resolve={() => ({ get "title"() { return tr("workshop:open_sandboxed_preview_of_value1_1563c057", { value1: att.name }); } })} />
         {download}
       </span>
     );
   }
   return (
-    <a
+    <LocalizedDynamic element={<a
       className="dc-msg-att-chip"
       href={att.url}
       download={att.name}
-      title={`Download ${att.name}`}
+      title={tr("workshop:download_value1_8fe1a08e", { value1: att.name })}
     >
       <AttachmentBadge badge={att.badge} />
       <span className="dc-attach-name">{att.name}</span>
       {size}
-    </a>
+    </a>} resolve={() => ({ get "title"() { return tr("workshop:download_value1_8fe1a08e", { value1: att.name }); } })} />
   );
 }
 
@@ -360,28 +363,28 @@ function RowActions({ msg }: { msg: TranscriptMessage }) {
   return (
     <>
       {msg.showEdit ? (
-        <button type="button" className="gc-msg-edit" title="Edit" aria-label="Edit message" tabIndex={-1}>
+        <Localized element={<button type="button" className="gc-msg-edit" title={catalogText("workshop:edit_464c4ffd")} aria-label={catalogText("workshop:edit_message_9757ccd5")} tabIndex={-1}>
           {'\u270F\uFE0F'}
-        </button>
+        </button>} messages={{"title":"workshop:edit_464c4ffd","aria-label":"workshop:edit_message_9757ccd5"}} />
       ) : null}
       {msg.showBookmark ? (
-        <button
+        <LocalizedDynamic element={<button
           type="button"
           className={saved ? 'gc-msg-save gc-msg-saved' : 'gc-msg-save'}
-          title={saved ? 'Saved. Click to unsave' : 'Save to your notifications'}
-          aria-label={saved ? 'Unsave message' : 'Save message'}
+          title={saved ? tr("workshop:saved_click_to_unsave_5c8c40fa") : tr("workshop:save_to_your_notifications_ccd643dc")}
+          aria-label={saved ? tr("workshop:unsave_message_a92fa23a") : tr("workshop:save_message_46dc28c2")}
           aria-pressed={saved}
         >
           {/* Solid when saved, outline when not — the state lives in the SHAPE,
               which is legible at 12px and in a screenshot. Not one path with
               its fill flipped; see the note in @/components/ui/icons.tsx. */}
           {saved ? <BookmarkSolidIcon /> : <BookmarkIcon strokeWidth="1.5" />}
-        </button>
+        </button>} resolve={() => ({ "title": saved ? tr("workshop:saved_click_to_unsave_5c8c40fa") : tr("workshop:save_to_your_notifications_ccd643dc"), "aria-label": saved ? tr("workshop:unsave_message_a92fa23a") : tr("workshop:save_message_46dc28c2") })} />
       ) : null}
       {msg.showReact ? (
-        <button type="button" className="gc-react-add" title="React" aria-label="Add reaction" tabIndex={-1}>
+        <Localized element={<button type="button" className="gc-react-add" title={catalogText("workshop:react_01fad993")} aria-label={catalogText("workshop:add_reaction_d97239a6")} tabIndex={-1}>
           {'\u{1F642}'}
-        </button>
+        </button>} messages={{"title":"workshop:react_01fad993","aria-label":"workshop:add_reaction_d97239a6"}} />
       ) : null}
     </>
   );
@@ -425,7 +428,7 @@ export const SystemRow = memo(function SystemRow({ msg }: { msg: TranscriptMessa
     >
       <span className="gc-msg-system-text">{msg.systemText}</span>
       {msg.repeat && msg.repeat > 1 ? (
-        <span className="gc-msg-system-repeat" title={`Posted ${msg.repeat} times in a row; this is the latest`}>{` · ×${msg.repeat}`}</span>
+        <LocalizedDynamic element={<span className="gc-msg-system-repeat" title={tr("workshop:posted_value1_times_in_a_row_this_is_the_latest_e2108d1f", { value1: msg.repeat })}>{` · ×${msg.repeat}`}</span>} resolve={() => ({ get "title"() { return tr("workshop:posted_value1_times_in_a_row_this_is_the_latest_e2108d1f", { value1: msg.repeat }); } })} />
       ) : null}
       {/*
           The controls host, rendered once as an empty span with a constant
@@ -479,6 +482,7 @@ export const SystemRow = memo(function SystemRow({ msg }: { msg: TranscriptMessa
  * address bookkeeping, the fetch and every failure wording stay in the module.
  */
 export const SpecShareRow = memo(function SpecShareRow({ msg }: { msg: TranscriptMessage }) {
+  useUiLanguage();
   const [loading, setLoading] = useState(false);
   const spec = msg.specShare;
   if (!spec) return null;
@@ -496,9 +500,9 @@ export const SpecShareRow = memo(function SpecShareRow({ msg }: { msg: Transcrip
         <span className="gc-msg-time" title={msg.timeTitle}>{msg.time}</span>
       </div>
       <div className="gc-spec-card-attribution">
-        {'Shared by '}
+        <Message id="workshop:shared_by_6761047d" />
         <strong>{spec.sharedBy}</strong>
-        {` · v${spec.version}`}
+        <LocalizedValue render={() => (tr("workshop:v_value1_f1797a51", { value1: spec.version }))} />
         {spec.built ? ` · ${spec.built}` : null}
         {spec.prNumber ? (
           <>
@@ -508,7 +512,7 @@ export const SpecShareRow = memo(function SpecShareRow({ msg }: { msg: Transcrip
               href="#"
               data-pr={spec.prNumber}
             >
-              {`PR #${spec.prNumber}`}
+              <LocalizedValue render={() => (tr("workshop:pr_value1_e1d02dd7", { value1: spec.prNumber }))} />
             </a>
           </>
         ) : null}
@@ -533,7 +537,7 @@ export const SpecShareRow = memo(function SpecShareRow({ msg }: { msg: Transcrip
             }
           }}
         >
-          {loading ? 'Loading…' : 'View full spec'}
+          <LocalizedValue render={() => (loading ? tr("workshop:loading_ba3bbbe1") : tr("workshop:view_full_spec_49225c07"))} />
         </button>
       </div>
       <Reactions msg={msg} />
@@ -578,6 +582,7 @@ function MessageActions({ msg, surface, onReportMessage }: {
   surface: 'main' | 'thread';
   onReportMessage: () => void;
 }) {
+  useUiLanguage();
   const [picker, setPicker] = useState<'above' | 'below' | null>(null);
   const [menu, setMenu] = useState<'above' | 'below' | null>(null);
   const bar = useRef<HTMLDivElement>(null);
@@ -634,52 +639,52 @@ export function messageMenuItems(
   const items: MenuItem[] = [];
   // B9: hand one of your own messages to Homeroom bot, in your words.
   if (surface === 'main' && msg.canAskBot) {
-    items.push({ key: 'ask-bot', label: 'Make this a request', icon: ChatIcon, onSelect: () => { void chat?.makeBotRequest?.(id); } });
+    items.push({ key: 'ask-bot', get label() { return tr("workshop:make_this_a_request_2d2309e8"); }, icon: ChatIcon, onSelect: () => { void chat?.makeBotRequest?.(id); } });
   }
   if (surface === 'main' && msg.canThread) {
-    items.push({ key: 'thread', label: msg.thread ? 'View thread' : 'Reply in thread', icon: ThreadIcon, onSelect: () => chat?.openReplyThread?.(id) });
+    items.push({ key: 'thread', label: msg.thread ? tr("workshop:view_thread_9c322305") : tr("workshop:reply_in_thread_a2367327"), icon: ThreadIcon, onSelect: () => chat?.openReplyThread?.(id) });
   }
-  if (msg.showEdit) items.push({ key: 'edit', label: 'Edit message', icon: PencilSquareIcon, onSelect: () => chat?._startEdit?.(id) });
-  if (msg.text) items.push({ key: 'copy', label: 'Copy text', icon: CopyIcon, onSelect: () => { void copyToClipboard(msg.text || '', 'Message text copied'); } });
+  if (msg.showEdit) items.push({ key: 'edit', get label() { return tr("workshop:edit_message_9757ccd5"); }, icon: PencilSquareIcon, onSelect: () => chat?._startEdit?.(id) });
+  if (msg.text) items.push({ key: 'copy', get label() { return tr("workshop:copy_text_b0ac9cea"); }, icon: CopyIcon, onSelect: () => { void copyToClipboard(msg.text || '', tr("workshop:message_text_copied_1ff13082")); } });
   const link = chat?.messageAddress?.(id);
-  if (link) items.push({ key: 'link', label: 'Copy link to message', icon: LinkIcon, onSelect: () => { void copyToClipboard(absoluteLink(link), 'Link copied'); } });
+  if (link) items.push({ key: 'link', get label() { return tr("workshop:copy_link_to_message_fc091522"); }, icon: LinkIcon, onSelect: () => { void copyToClipboard(absoluteLink(link), tr("workshop:link_copied_d12860c2")); } });
   if (!msg.mine && surface === 'main') {
     items.push({
-      key: 'unread', label: 'Mark unread', icon: EnvelopeIcon,
-      onSelect: () => { Promise.resolve(chat?.markUnread?.(id)).then(() => toast('Marked unread')).catch(() => toast('Couldn’t mark this unread.')); },
+      key: 'unread', get label() { return tr("workshop:mark_unread_54b4e3f2"); }, icon: EnvelopeIcon,
+      onSelect: () => { Promise.resolve(chat?.markUnread?.(id)).then(() => toast(tr("workshop:marked_unread_43523e7b"))).catch(() => toast(tr("workshop:couldn_t_mark_this_unread_7dafe955"))); },
     });
   }
   if (msg.mine && msg.kind === 'message') {
     items.push({
-      key: 'delete', label: 'Delete message', icon: DraftTrashIcon, danger: true, separated: true,
+      key: 'delete', get label() { return tr("workshop:delete_message_87e7176a"); }, icon: DraftTrashIcon, danger: true, separated: true,
       // QA 2026-09-24 Q15: the app's confirm dialog, not window.confirm().
       onSelect: () => {
         void confirmAction({
-          title: 'Delete this message?',
-          message: 'Everyone will see “Message deleted” in its place. This can’t be undone.',
-          confirmLabel: 'Delete',
+          get title() { return tr("workshop:delete_this_message_8f6e2cda"); },
+          get message() { return tr("workshop:everyone_will_see_message_deleted_in_its_place_t_03e4f87d"); },
+          get confirmLabel() { return tr("workshop:delete_e2d0a549"); },
           danger: true,
         }).then((ok) => {
           if (!ok) return;
-          Promise.resolve(chat?.deleteMessage?.(id)).catch(() => toast('Couldn’t delete this message.'));
+          Promise.resolve(chat?.deleteMessage?.(id)).catch(() => toast(tr("workshop:couldn_t_delete_this_message_ac227630")));
         });
       },
     });
   } else if (!msg.mine && msg.senderId && msg.kind === 'message') {
-    items.push({ key: 'report', label: 'Report message', icon: FlagIcon, separated: true, onSelect: onReportMessage });
+    items.push({ key: 'report', get label() { return tr("workshop:report_message_0a1e3c52"); }, icon: FlagIcon, separated: true, onSelect: onReportMessage });
     items.push({
-      key: 'block', label: `Block @${msg.username}`, icon: NoSymbolIcon, danger: true,
+      key: 'block', get label() { return tr("workshop:block_value1_1cff48c9", { value1: msg.username }); }, icon: NoSymbolIcon, danger: true,
       onSelect: () => {
         const senderId = msg.senderId;
         if (!senderId) return;
         void confirmAction({
-          title: `Block @${msg.username}?`,
-          message: 'Their messages in Messages and app discussions will be hidden.',
-          confirmLabel: 'Block',
+          get title() { return tr("workshop:block_value1_b9dfdc7d", { value1: msg.username }); },
+          get message() { return tr("workshop:their_messages_in_messages_and_app_discussions_w_e887b75d"); },
+          get confirmLabel() { return tr("workshop:block_211d0bb8"); },
           danger: true,
         }).then((ok) => {
           if (!ok) return;
-          setUserBlocked(senderId, true).catch((error) => window.alert(error instanceof Error ? error.message : 'Couldn’t block this person.'));
+          setUserBlocked(senderId, true).catch((error) => window.alert(error instanceof Error ? error.message : tr("workshop:couldn_t_block_this_person_3b1a2797")));
         });
       },
     });
@@ -703,17 +708,18 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
   /** #2387: this row's reply thread is the one open beside the channel, which lights its chip. */
   threadOpen?: boolean;
 }) {
+  useUiLanguage();
   const [sheet, setSheet] = useState(false);
   const recents = useRecentReactions();
   const chat = controller();
   const live = !msg.deleted && !!msg.id;
   const longPress = useLongPress(() => setSheet(true), { disabled: !live });
-  const reportMessage = () => msg.id && openReport({ targetType: 'app_message', target: msg.id, label: `Message from @${msg.username}`, userId: msg.senderId });
+  const reportMessage = () => msg.id && openReport({ targetType: 'app_message', target: msg.id, get label() { return tr("workshop:message_from_value1_aaa83410", { value1: msg.username }); }, userId: msg.senderId });
   const reacted = (emoji: string) => msg.reactions.some((r) => r.emoji === emoji && r.mine);
   const items = live ? messageMenuItems(msg, surface, reportMessage) : [];
   const sheetItems: MenuItem[] = live ? [
-    ...(!chat?._readOnly?.() ? [{ key: 'reply', label: 'Reply', icon: ReplyArrowIcon, onSelect: () => chat?.replyToMessage?.(msg.id, surface) }] : []),
-    ...(msg.showBookmark ? [{ key: 'save', label: msg.bookmarked ? 'Unsave' : 'Save', icon: msg.bookmarked ? BookmarkSolidIcon : BookmarkIcon, onSelect: () => chat?.toggleBookmark?.(msg.id) }] : []),
+    ...(!chat?._readOnly?.() ? [{ key: 'reply', get label() { return tr("workshop:reply_c253f451"); }, icon: ReplyArrowIcon, onSelect: () => chat?.replyToMessage?.(msg.id, surface) }] : []),
+    ...(msg.showBookmark ? [{ key: 'save', label: msg.bookmarked ? tr("workshop:unsave_51883bd8") : tr("workshop:save_1509f561"), icon: msg.bookmarked ? BookmarkSolidIcon : BookmarkIcon, onSelect: () => chat?.toggleBookmark?.(msg.id) }] : []),
     ...items,
   ] : [];
   return (
@@ -734,7 +740,7 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
       )}
       name={(
         <>
-          {msg.unread ? <span className="gc-unread-dot" aria-label="Unread mention" /> : null}
+          {msg.unread ? <Localized element={<span className="gc-unread-dot" aria-label={catalogText("workshop:unread_mention_550b2211")} />} messages={{"aria-label":"workshop:unread_mention_550b2211"}} /> : null}
           <span className={msg.mine ? 'gc-msg-username-self' : undefined}>{msg.username}</span>
           <PostedViaChip via={msg.postedVia} className="ml-1.5" />
         </>
@@ -743,13 +749,13 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
         <>
           <span className="gc-msg-time" title={msg.timeTitle}>{msg.time}</span>
           {msg.editedTitle && !msg.deleted ? (
-            <span className="gc-msg-edited" title={msg.editedTitle}>edited</span>
+            <span className="gc-msg-edited" title={msg.editedTitle}><Message id="workshop:edited_1fb9f409" /></span>
           ) : null}
         </>
       )}
       actions={live ? <MessageActions msg={msg} surface={surface} onReportMessage={reportMessage} /> : undefined}
     >
-      {msg.deleted ? <p className="gc-msg-deleted-text">Message deleted</p> : (
+      {msg.deleted ? <p className="gc-msg-deleted-text"><Message id="workshop:message_deleted_7e94d4b9" /></p> : (
         <>
           {msg.quote ? <QuoteBlock quote={msg.quote} /> : null}
           <Body html={msg.bodyHtml} />
@@ -777,7 +783,7 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
             />
           ) : null}
           {grouped && msg.editedTitle ? (
-            <span className="gc-msg-edited" title={msg.editedTitle}>edited</span>
+            <span className="gc-msg-edited" title={msg.editedTitle}><Message id="workshop:edited_1fb9f409" /></span>
           ) : null}
           <Reactions msg={msg} />
           {/* B9: the card under your own message that asked Homeroom bot, yours alone. */}
@@ -834,6 +840,7 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
  * control, an empty/loading line) are data.
  */
 export function Transcript({ source = 'main' }: { source?: string }) {
+  useUiLanguage();
   const state = useStoreState(transcriptStore);
   const view = state.byKey[source];
 
@@ -1024,7 +1031,7 @@ export function TranscriptRows({ view, source }: {
       const replies = rows.length - i - 1;
       drawn.push(
         <div key="reply-count" className="gc-reply-count">
-          <span>{replies ? `${replies} ${replies === 1 ? 'reply' : 'replies'}` : 'No replies yet'}</span>
+          <span><LocalizedValue render={() => (replies ? `${replies} ${replies === 1 ? 'reply' : 'replies'}` : tr("workshop:no_replies_yet_c106d94d"))} /></span>
         </div>,
       );
     }
@@ -1038,9 +1045,7 @@ export function TranscriptRows({ view, source }: {
             id="gc-thread-earlier"
             className="gc-vote-btn"
             onClick={() => controller()?.loadThreadHistoryForOpen?.()}
-          >
-            Load earlier
-          </button>
+          ><Message id="workshop:load_earlier_58851b32" /></button>
         </div>
       ) : null}
       {/* Derived at render from the rows, like the quiet card above, rather
@@ -1064,9 +1069,7 @@ export function TranscriptRows({ view, source }: {
             size="xsText"
             ink="neutral"
             onClick={() => (main ? controller()?.loadHistory?.() : controller()?.loadThreadHistoryForOpen?.())}
-          >
-            Try again
-          </Button>
+          ><Message id="workshop:try_again_d8b8392e" /></Button>
         </div>
       ) : null}
       {drawn}

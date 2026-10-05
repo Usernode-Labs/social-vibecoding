@@ -1,3 +1,8 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { RichMessage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message } from "../../lib/i18n/react";
 // Where an agent session's work gets built (#2779 follow-up, #3078): here,
 // by the Mayor on Homeroom credits, or handed to Claude Code or Codex on the
 // web, which build on the person's own plan and push to their fork.
@@ -120,9 +125,9 @@ function lead(agent: HandoffAgent, target: HandoffTarget | null): string {
   const label = AGENT_LABELS[agent];
   const product = AGENT_PRODUCT[agent];
   const lands = target?.change
-    ? 'its work comes back as an update to this change'
-    : `its work comes back as a new change${target?.appName ? ` on ${target.appName}` : ''}`;
-  return `${label} builds on your own ${product} plan and pushes to your fork of the app; ${lands}. No Homeroom credits.`;
+    ? tr("workshop:its_work_comes_back_as_an_update_to_this_change_05556cf6")
+    : tr("workshop:its_work_comes_back_as_a_new_change_value1_ac5619c2", { value1: target?.appName ? tr("workshop:on_value1_0435a2df", { value1: target.appName }) : '' });
+  return tr("workshop:value1_builds_on_your_own_value2_plan_and_pushes_3dce633f", { value1: label, value2: product, value3: lands });
 }
 
 /**
@@ -149,11 +154,11 @@ export function handoffChecks(status: HandoffStatus | null, agent: HandoffAgent)
   const fork = byKey('fork');
   const last = byKey('handoff');
   const checks: HandoffCheck[] = [
-    { key: 'github', label: 'GitHub linked', done: github?.state === 'done', current: github?.state === 'current', detail: github?.detail || '', actions: github?.actions || [] },
-    { key: 'fork', label: 'Fork ready', done: fork?.state === 'done', current: fork?.state === 'current', detail: fork?.detail || '', actions: fork?.actions || [] },
+    { key: 'github', get label() { return tr("workshop:github_linked_d9230da6"); }, done: github?.state === 'done', current: github?.state === 'current', detail: github?.detail || '', actions: github?.actions || [] },
+    { key: 'fork', get label() { return tr("workshop:fork_ready_b6e98a3d"); }, done: fork?.state === 'done', current: fork?.state === 'current', detail: fork?.detail || '', actions: fork?.actions || [] },
     {
       key: 'connector',
-      label: `Homeroom connected in ${AGENT_PRODUCT[agent]}`,
+      get label() { return tr("workshop:homeroom_connected_in_value1_103a9d40", { value1: AGENT_PRODUCT[agent] }); },
       done: connected,
       current: !connected && last?.state === 'current',
       detail: connected ? '' : (last?.detail || ''),
@@ -172,6 +177,7 @@ export function handoffChecks(status: HandoffStatus | null, agent: HandoffAgent)
  * this same tab, so there is one hand-off, not two.
  */
 export function HandoffPanel({ agent, onClose }: { agent: HandoffAgent; onClose: () => void }) {
+  useUiLanguage();
   const snapshot = useAgentSessionPick((s) => ({ session: s.session, draft: s.draft }));
   const about = snapshot.session || snapshot.draft;
   const active = snapshot.session?.activeChange || null;
@@ -190,7 +196,7 @@ export function HandoffPanel({ agent, onClose }: { agent: HandoffAgent; onClose:
     setError('');
     void api.handoffStatus(target.slug, target.change ? { id: target.change.id, kind: target.change.kind } : null)
       .then((next) => { if (live) setStatus(next); })
-      .catch((failure) => { if (live) setError(failure instanceof Error ? failure.message : 'Could not check where the hand-off stands.'); });
+      .catch((failure) => { if (live) setError(failure instanceof Error ? failure.message : tr("workshop:could_not_check_where_the_hand_off_stands_a5cf8c9a")); });
     return () => { live = false; };
   }, [targetKey, revision]);
 
@@ -209,7 +215,7 @@ export function HandoffPanel({ agent, onClose }: { agent: HandoffAgent; onClose:
   const ready = checks.length > 0 && checks.every((check) => check.done);
   const instructions = status && typeof status.instructions === 'string' ? status.instructions : '';
   const unavailable = status && status.available === false
-    ? (devFlowSelect()?.unavailableNote(status.reason) || 'Handing work to Claude Code or Codex is unavailable right now.')
+    ? (devFlowSelect()?.unavailableNote(status.reason) || tr("workshop:handing_work_to_claude_code_or_codex_is_unavaila_7000e999"))
     : '';
 
   const act = (action: FlowAction) => {
@@ -225,19 +231,17 @@ export function HandoffPanel({ agent, onClose }: { agent: HandoffAgent; onClose:
     const copying = instructions ? window.PlatformUI?.copyText?.(instructions) : undefined;
     void Promise.resolve(copying).then((ok) => {
       setManual(!ok);
-      setNotice(ok ? `Copied. Paste it into the new ${label} session.` : 'Could not copy. Copy the instructions below by hand, then paste them into the new session.');
+      setNotice(ok ? tr("workshop:copied_paste_it_into_the_new_value1_session_4be70fd7", { value1: label }) : tr("workshop:could_not_copy_copy_the_instructions_below_by_ha_0b27a677"));
     });
   };
 
   return (
     <div className="flex flex-col gap-3 text-sm text-zinc-900 dark:text-zinc-100" data-agent-session-handoff={agent}>
       {target ? <p className="px-1 leading-snug text-zinc-600 dark:text-zinc-300">{lead(agent, target)}</p> : (
-        <p className="px-1 leading-snug text-zinc-600 dark:text-zinc-300" data-agent-session-handoff-empty>
-          There is nothing to hand over yet. Tell the agent which app to change first, then come back here.
-        </p>
+        <p className="px-1 leading-snug text-zinc-600 dark:text-zinc-300" data-agent-session-handoff-empty><Message id="workshop:there_is_nothing_to_hand_over_yet_tell_the_agent_f28b1284" /></p>
       )}
       {error ? <p role="alert" className="px-1 text-red-700 dark:text-red-300">{error}</p> : null}
-      {target && !status && !error ? <p role="status" className="px-1 text-zinc-500 dark:text-zinc-400">Checking where you are…</p> : null}
+      {target && !status && !error ? <p role="status" className="px-1 text-zinc-500 dark:text-zinc-400"><Message id="workshop:checking_where_you_are_7c1f4492" /></p> : null}
       {unavailable ? <p className="px-1 text-zinc-600 dark:text-zinc-300" data-agent-session-handoff-unavailable>{unavailable}</p> : null}
       {checks.length ? (
         <ul className="overflow-hidden rounded-2xl bg-white dark:bg-zinc-800" data-agent-session-handoff-steps>
@@ -258,7 +262,7 @@ export function HandoffPanel({ agent, onClose }: { agent: HandoffAgent; onClose:
                   {check.done ? <CheckIcon className="h-3.5 w-3.5" /> : null}
                 </span>
                 <span className={`flex-1 font-medium ${check.done || check.current ? '' : 'text-zinc-500 dark:text-zinc-400'}`}>{check.label}</span>
-                <span className="sr-only">{check.done ? 'Done' : 'Not done yet'}</span>
+                <span className="sr-only"><LocalizedValue render={() => (check.done ? tr("workshop:done_11a6767d") : tr("workshop:not_done_yet_2cb1983a"))} /></span>
               </div>
               {check.current && !check.done ? (
                 <div className="mt-1.5 pl-8">
@@ -297,31 +301,26 @@ export function HandoffPanel({ agent, onClose }: { agent: HandoffAgent; onClose:
       ) : null}
       {connector && !ready ? (
         <section className="space-y-3 rounded-2xl bg-white p-3 dark:bg-zinc-800" data-agent-session-handoff-connector={product}>
-          <p className="font-semibold">{`Add the Homeroom connector in ${product}`}</p>
-          <p className="text-zinc-600 dark:text-zinc-300">
-            {'Your MCP server URL: '}
-            <code className="break-all rounded bg-zinc-100 px-1 py-0.5 text-xs dark:bg-zinc-900">{typeof window === 'undefined' ? '/mcp' : `${window.location.origin}/mcp`}</code>
-          </p>
+          <p className="font-semibold"><LocalizedValue render={() => (tr("workshop:add_the_homeroom_connector_in_value1_9f89073d", { value1: product }))} /></p>
+          <p className="text-zinc-600 dark:text-zinc-300"><RichMessage id="workshop:sentence_97206e6bdfe2" components={[<code className="break-all rounded bg-zinc-100 px-1 py-0.5 text-xs dark:bg-zinc-900">{typeof window === 'undefined' ? '/mcp' : `${window.location.origin}/mcp`}</code>]} /></p>
           {product === 'ChatGPT' ? <ChatgptSetupSteps /> : <ClaudeSetupSteps />}
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
-            {`Then start a new ${product} conversation: one you already had open will not see a connector added after it started.`}
+            <LocalizedValue render={() => (tr("workshop:then_start_a_new_value1_conversation_one_you_alr_e0776bb0", { value1: product }))} />
           </p>
           <div className="flex flex-wrap gap-2">
-            <button type="button" className={ACTION_PRIMARY} onClick={() => { setConnector(false); setRevision((n) => n + 1); }}>
-              I&rsquo;ve added it. Check again
-            </button>
-            <a className={ACTION} href="#settings/connectors" onClick={onClose}>More connector settings</a>
+            <button type="button" className={ACTION_PRIMARY} onClick={() => { setConnector(false); setRevision((n) => n + 1); }}><Message id="workshop:i_ve_added_it_check_again_00856300" /></button>
+            <a className={ACTION} href="#settings/connectors" onClick={onClose}><Message id="workshop:more_connector_settings_3948c404" /></a>
           </div>
         </section>
       ) : null}
       {ready ? (
         <>
           <div className="rounded-2xl bg-white px-4 py-3 dark:bg-zinc-800" data-agent-session-handoff-ready>
-            <p className="font-semibold">Handed over with the instructions</p>
+            <p className="font-semibold"><Message id="workshop:handed_over_with_the_instructions_622beda4" /></p>
             <p className="mt-0.5 text-[13px] leading-snug text-zinc-600 dark:text-zinc-300">
-              {status?.specCarried && active?.title
-                ? `This chat's spec: "${active.title}"`
-                : status?.specCarried ? 'This chat\'s spec' : `No spec yet, so ${label} will ask what to build.`}
+              <LocalizedValue render={() => (status?.specCarried && active?.title
+                ? tr("workshop:this_chat_s_spec_value1_ec7b7833", { value1: active.title })
+                : status?.specCarried ? tr("workshop:this_chat_s_spec_c7dcdf1c") : tr("workshop:no_spec_yet_so_value1_will_ask_what_to_build_9c863226", { value1: label }))} />
             </p>
           </div>
           <a
@@ -332,15 +331,15 @@ export function HandoffPanel({ agent, onClose }: { agent: HandoffAgent; onClose:
             data-agent-session-handoff-action="copy-open"
             onClick={copyAndOpen}
           >
-            {`Copy instructions and open ${label}`}
+            <LocalizedValue render={() => (tr("workshop:copy_instructions_and_open_value1_f3854c37", { value1: label }))} />
           </a>
-          <p className="px-1 text-center text-[13px] text-zinc-500 dark:text-zinc-400">Paste into the new session. It starts building straight away.</p>
+          <p className="px-1 text-center text-[13px] text-zinc-500 dark:text-zinc-400"><Message id="workshop:paste_into_the_new_session_it_starts_building_st_9464110b" /></p>
         </>
       ) : null}
       {notice ? <p role="status" className={`px-1 ${manual ? 'text-amber-700 dark:text-amber-400' : 'text-emerald-700 dark:text-emerald-400'}`}>{notice}</p> : null}
       {ready && instructions ? (
         <details className="rounded-2xl bg-white px-4 py-3 dark:bg-zinc-800" open={manual}>
-          <summary className="cursor-pointer font-semibold">Instructions</summary>
+          <summary className="cursor-pointer font-semibold"><Message id="workshop:instructions_934652dc" /></summary>
           <pre className="mt-2 max-h-60 select-all overflow-y-auto whitespace-pre-wrap break-words text-xs text-zinc-700 dark:text-zinc-300" data-agent-session-handoff-instructions>{instructions}</pre>
         </details>
       ) : null}
@@ -385,7 +384,7 @@ export function creditsView(refusal: CreditsRefusal, context: {
   co?: CreditOptionsApi | null;
 } = {}): { lead: string; intro: string; rows: CreditRow[] } {
   const co = context.co === undefined ? creditOptions() : context.co;
-  if (!co) return { lead: refusal.error || 'Your Homeroom credits are used up.', intro: '', rows: [] };
+  if (!co) return { lead: refusal.error || tr("workshop:your_homeroom_credits_are_used_up_30b8db63"), intro: '', rows: [] };
   const state = {
     ...co.creditState(context.budget || null),
     hasApiKey: !!context.hasApiKey,
@@ -441,9 +440,7 @@ export function CreditsCardView({ refusal, view }: { refusal: CreditsRefusal; vi
           </li>
         ))}
       </ul>
-      <button type="button" className="mt-3 text-sm font-semibold text-zinc-600 hover:underline dark:text-zinc-300" onClick={() => dismissCredits()}>
-        Dismiss
-      </button>
+      <button type="button" className="mt-3 text-sm font-semibold text-zinc-600 hover:underline dark:text-zinc-300" onClick={() => dismissCredits()}><Message id="workshop:dismiss_48845bff" /></button>
     </section>
   );
 }

@@ -1,3 +1,6 @@
+import { t as tr } from "../../lib/i18n/runtime";
+import { RichMessage } from "../../lib/i18n/react";
+import { Message } from "../../lib/i18n/react";
 /**
  * "How voting & merges work" — the read-only popover the `?` button and the
  * inline "How voting works" link open — as the only React writer below
@@ -39,59 +42,32 @@ export interface VotingHelpProps {
 export function VotingHelp({ live }: VotingHelpProps) {
   return (
     <>
-      <div className="attr-pop-head">How voting &amp; merges work</div>
+      <div className="attr-pop-head"><Message id="workshop:how_voting_merges_work_d4cc816d" /></div>
       {live ? (
         <div className="vh-live">
-          <div className="vh-live-title">This proposal, right now</div>
+          <div className="vh-live-title"><Message id="workshop:this_proposal_right_now_0de6c6f8" /></div>
           <div className="vh-live-body">{live}</div>
         </div>
       ) : null}
       <div className="vh-rules">
         <ul className="voting-help-rules">
+          <li><Message id="workshop:only_people_who_ve_actually_used_the_app_recentl_a7e043a1" /></li>
           <li>
-            Only people who’ve actually used the app recently count as voters. The
-            number of Yes votes needed scales with how many active testers there are.
+            {tr("workshop:a_proposal_with_clear_support_and_no_objections__5551b6da")}
+            <strong><Message id="workshop:quiet_is_taken_as_a_nod_a656745a" /></strong><Message id="workshop:so_speak_up_if_something_bothers_you_0fa50b4c" /></li>
+          <li><Message id="workshop:the_more_support_a_proposal_has_the_shorter_the__34578a68" /></li>
+          <li>
+            <strong><Message id="workshop:no_1ea442a1" /></strong>
+            {tr("workshop:votes_make_a_proposal_harder_to_pass_they_raise__54cfebd8")}
           </li>
           <li>
-            {'A proposal with clear support and no objections goes live on its own after a '
-              + 'short visibility window (a few days), so everyone has a chance to look. '}
-            <strong>Quiet is taken as a nod</strong>
-            , so speak up if something bothers you.
+            <Message id="workshop:if_enough_people_vote_no_the_proposal_ac79c0de" />
+            <strong><Message id="workshop:needs_a_conversation_27390ff5" /></strong>
+            {tr("workshop:the_timer_turns_off_and_it_needs_a_straight_majo_850900b4")}
           </li>
-          <li>
-            The more support a proposal has, the shorter the wait. A clear majority
-            merges almost immediately; thin, unopposed support waits longer.
-          </li>
-          <li>
-            <strong>No</strong>
-            {' votes make a proposal harder to pass: they raise the number of Yes votes '
-              + 'needed and lengthen the wait.'}
-          </li>
-          <li>
-            {'If enough people vote No, the proposal '}
-            <strong>needs a conversation</strong>
-            {'. The timer turns off and it needs a straight majority of Yes votes to go '
-              + 'live, so talk it through.'}
-          </li>
-          <li>
-            A proposal with more No than Yes and little support is set aside after a
-            countdown (“Set aside in …”). Nothing is lost: it can come back as a new
-            proposal.
-          </li>
-          <li>
-            {'Even after winning the vote, a proposal only merges once its '}
-            <strong>automated checks pass</strong>
-            {' and it’s '}
-            <strong>up to date with the main app</strong>
-            . Locked apps also need an admin’s Yes.
-          </li>
-          <li>
-            {'Apps can customize these rules: restricting approvals to '}
-            <strong>invited approvers</strong>
-            {' (everyone else’s votes stay visible but advisory) and/or requiring a fixed '}
-            <strong>“at least N approvals”</strong>
-            {' instead of the timed majority system.'}
-          </li>
+          <li><Message id="workshop:a_proposal_with_more_no_than_yes_and_little_supp_3650e889" /></li>
+          <li><RichMessage id="workshop:sentence_31913ee94403" components={[<strong />, <strong />]} /></li>
+          <li><RichMessage id="workshop:sentence_ef713f900417" components={[<strong />, <strong />]} /></li>
         </ul>
       </div>
     </>

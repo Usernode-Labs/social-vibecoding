@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * Right after "Make it" (./make.tsx): something to give, and one thing to
  * do with it.
@@ -91,19 +95,19 @@ export function waitingPlan(fv: FirstVersion): WaitingPlan | null {
 }
 
 /** Over the plan: it is the one thing on the screen that waits on them. */
-export const PLAN_LABEL = 'Needs you';
+export const PLAN_LABEL = () => tr("workshop:needs_you_74b6abdf");
 
 /** Under the plan, until Build it is tapped. */
 export function planNote(name: string): string {
-  return `Homeroom bot starts building ${name} when you tap Build it.`;
+  return tr("auth:homeroom_bot_starts_building_value1_when_you_tap_98ef5703", { value1: name });
 }
 
 /** "Step 2 of 7: Read the description", or what to say without a build. */
 export function buildLine(fv: FirstVersion, appStatus: string | null, botBuilds = true): string {
-  if (fv && fv.ready) return 'Version one is ready to try.';
-  if (fv && fv.step && fv.of) return `Step ${fv.step} of ${fv.of}${fv.stepName ? `: ${fv.stepName}` : ''}`;
-  if (appStatus === 'creating') return 'Setting it up…';
-  return botBuilds ? 'Homeroom bot builds it from your description.' : 'Your description is its first request.';
+  if (fv && fv.ready) return tr("auth:version_one_is_ready_to_try_bbe53bf2");
+  if (fv && fv.step && fv.of) return tr("auth:step_value1_of_value2_value3_8acfce48", { value1: fv.step, value2: fv.of, value3: fv.stepName ? `: ${fv.stepName}` : '' });
+  if (appStatus === 'creating') return tr("auth:setting_it_up_a5a8341a");
+  return botBuilds ? tr("auth:homeroom_bot_builds_it_from_your_description_594b8440") : tr("auth:your_description_is_its_first_request_e08683bb");
 }
 
 /**
@@ -112,11 +116,11 @@ export function buildLine(fv: FirstVersion, appStatus: string | null, botBuilds 
  * plan waits, that nothing happens until they say so.
  */
 export function buildNote(botBuilds: boolean, minutes: number | null = null, planWaits = false): string {
-  if (!botBuilds) return 'You or anyone you invite can build it from there.';
+  if (!botBuilds) return tr("auth:you_or_anyone_you_invite_can_build_it_from_there_f3222583");
   if (planWaits) return 'Homeroom bot is waiting for your go-ahead.';
   return minutes && minutes > 0
-    ? `Homeroom bot messages you when it's ready to try, usually in about ${minutes} minutes.`
-    : 'Homeroom bot messages you when it\'s ready to try.';
+    ? tr("auth:homeroom_bot_messages_you_when_it_s_ready_to_try_6b46ca8d", { value1: minutes })
+    : tr("auth:homeroom_bot_messages_you_when_it_s_ready_to_try_87dee6a0");
 }
 
 export type SketchState = 'loading' | 'none' | 'pending' | 'ready' | 'failed';
@@ -124,8 +128,8 @@ export type SketchState = 'loading' | 'none' | 'pending' | 'ready' | 'failed';
 /** Under the sketch: what it is, and what happens to it. */
 export function sketchCaption(name: string, botBuilds: boolean): string {
   return botBuilds
-    ? `A sketch from your description. Homeroom bot builds the real ${name} from it.`
-    : `A sketch from your description. Nothing on it works yet: the real ${name} is built from it, by you or anyone you invite.`;
+    ? tr("auth:a_sketch_from_your_description_homeroom_bot_buil_7cab542f", { value1: name })
+    : tr("auth:a_sketch_from_your_description_nothing_on_it_wor_beb3edff", { value1: name });
 }
 
 // Stop asking after this long: a sketch is drawn in well under a minute.
@@ -194,23 +198,23 @@ function SketchCard({ made, tile, sketch, line, botBuilds, busy, minutes, planWa
       </div>
       <div className="relative h-[380px] overflow-hidden rounded-[14px] bg-zinc-100 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-800">
         {sketch === 'ready' ? (
-          <iframe
-            title={`A sketch of ${made.name}`}
+          <LocalizedDynamic element={<iframe
+            title={tr("auth:a_sketch_of_value1_1b50b7e2", { value1: made.name })}
             src={`/api/apps/${encodeURIComponent(made.slug)}/sketch.html?theme=${dark ? 'dark' : 'light'}`}
             sandbox=""
             referrerPolicy="no-referrer"
             className="h-full w-full border-0"
-          />
+          />} resolve={() => ({ get "title"() { return tr("auth:a_sketch_of_value1_1b50b7e2", { value1: made.name }); } })} />
         ) : (
           <div role="status" className="flex h-full flex-col gap-4 p-5">
-            <p className="pr-16 text-[14px] text-zinc-500 dark:text-zinc-400">{`Sketching ${made.name} from your description…`}</p>
+            <p className="pr-16 text-[14px] text-zinc-500 dark:text-zinc-400"><LocalizedValue render={() => (tr("auth:sketching_value1_from_your_description_b86a752c", { value1: made.name }))} /></p>
             <div className="h-6 w-2/3 animate-pulse rounded-md bg-zinc-200 dark:bg-zinc-700" />
             <div className="h-20 animate-pulse rounded-xl bg-zinc-200 dark:bg-zinc-700" />
             <div className="h-11 w-1/2 animate-pulse rounded-lg bg-zinc-200 dark:bg-zinc-700" />
             <div className="h-24 animate-pulse rounded-xl bg-zinc-200 dark:bg-zinc-700" />
           </div>
         )}
-        <span className="pointer-events-none absolute right-2 top-2 rounded-full bg-black/60 px-2 py-0.5 text-[12px] font-semibold text-white">Sketch</span>
+        <span className="pointer-events-none absolute right-2 top-2 rounded-full bg-black/60 px-2 py-0.5 text-[12px] font-semibold text-white"><Message id="auth:sketch_0f9b002d" /></span>
       </div>
       <p className="px-1 pt-2.5 text-[13px] leading-snug text-zinc-500 dark:text-zinc-400">
         {sketch === 'ready' ? sketchCaption(made.name, botBuilds) : buildNote(botBuilds, minutes, planWaits)}
@@ -219,7 +223,7 @@ function SketchCard({ made, tile, sketch, line, botBuilds, busy, minutes, planWa
   );
 }
 
-const NOTE_DEFAULT = 'Come try it with me!';
+const NOTE_DEFAULT = () => tr("workshop:come_try_it_with_me_6fb15c1a");
 // WP-D: the link works until it is turned off, for anyone it is sent to (0 is
 // no limit, services/community-invites.js NO_LIMIT): the project is the gift.
 const LINK_DAYS = 0;
@@ -234,7 +238,8 @@ function InviteSheet({ made, me, onClose, onSent }: {
   onClose: () => void;
   onSent: (to: string | null) => void;
 }) {
-  const [note, setNote] = useState(made.example?.note || NOTE_DEFAULT);
+  useUiLanguage();
+  const [note, setNote] = useState(made.example?.note || NOTE_DEFAULT());
   const [byName, setByName] = useState(false);
   const [username, setUsername] = useState('');
   const [busy, setBusy] = useState(false);
@@ -282,7 +287,7 @@ function InviteSheet({ made, me, onClose, onSent }: {
       body: JSON.stringify({ days: LINK_DAYS, maxUses: LINK_USES, note: note.trim() || null }),
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.link) { setError(data.error || 'Could not make a link. Try again.'); return null; }
+    if (!res.ok || !data.link) { setError(data.error || tr("auth:could_not_make_a_link_try_again_0fc01e0c")); return null; }
     linkRef.current = `${location.origin}${data.link.path}`;
     return linkRef.current;
   }, [made.slug, note]);
@@ -293,7 +298,7 @@ function InviteSheet({ made, me, onClose, onSent }: {
     try {
       const url = await link();
       if (!url) return;
-      const title = `${me ? `${me} made` : 'Made'} ${made.name}`;
+      const title = `${me ? tr("auth:value1_made_4dd7e32d", { value1: me }) : tr("core:made_45a5300c")} ${made.name}`;
       const nav = navigator as Navigator & { share?: (d: ShareData) => Promise<void> };
       let shared = false;
       if (typeof nav.share === 'function') {
@@ -303,12 +308,12 @@ function InviteSheet({ made, me, onClose, onSent }: {
       }
       if (!shared) {
         await navigator.clipboard.writeText(note.trim() ? `${note.trim()} ${url}` : url);
-        setStatus('Link copied. Paste it in your group chat.');
+        setStatus(tr("auth:link_copied_paste_it_in_your_group_chat_ff1ea727"));
       }
       await postNote();
       onSent(null);
     } catch {
-      setError('Could not share the link. Try again.');
+      setError(tr("auth:could_not_share_the_link_try_again_4954e198"));
     } finally {
       setBusy(false);
     }
@@ -326,12 +331,12 @@ function InviteSheet({ made, me, onClose, onSent }: {
         body: JSON.stringify({ username: handle }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) { setError(data.error || 'Could not invite them.'); return; }
+      if (!res.ok) { setError(data.error || tr("auth:could_not_invite_them_aed7ba18")); return; }
       await postNote();
       setUsername('');
       onSent(`@${handle}`);
     } catch {
-      setError('Network error');
+      setError(tr("auth:network_error_2a33d984"));
     } finally {
       setBusy(false);
     }
@@ -349,61 +354,55 @@ function InviteSheet({ made, me, onClose, onSent }: {
       >
         <div className="mx-auto h-1.5 w-10 rounded-full bg-zinc-300 dark:bg-zinc-700 md:hidden" aria-hidden="true" />
         <div className="mt-3 flex items-center gap-3">
-          <h2 id="first-session-invite-title" className="min-w-0 flex-1 text-[17px] font-semibold">{`Invite people to ${made.name}`}</h2>
-          <button type="button" onClick={onClose} aria-label="Close" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-200 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+          <h2 id="first-session-invite-title" className="min-w-0 flex-1 text-[17px] font-semibold"><LocalizedValue render={() => (tr("auth:invite_people_to_value1_847cd1ff", { value1: made.name }))} /></h2>
+          <Localized element={<button type="button" onClick={onClose} aria-label={catalogText("auth:close_7d9eb7ac")} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-200 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
             <XIcon className="h-4 w-4" aria-hidden="true" />
-          </button>
+          </button>} messages={{"aria-label":"auth:close_7d9eb7ac"}} />
         </div>
-        <p className="mt-4 pb-1.5 text-[13px] text-zinc-500 dark:text-zinc-400">What they'll get</p>
+        <p className="mt-4 pb-1.5 text-[13px] text-zinc-500 dark:text-zinc-400"><Message id="auth:what_they_ll_get_f625566f" /></p>
         <div className="overflow-hidden rounded-2xl bg-white dark:bg-zinc-800">
           <div className="flex items-center gap-3 p-3">
             <span className="app-icon-tile flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-2xl" aria-hidden="true">{tile}</span>
             <div className="min-w-0">
-              <p className="text-[15px] font-semibold leading-snug">{`${me ? `${me} made` : 'Made'} ${made.name}`}</p>
-              <p className="text-[13px] text-zinc-500 dark:text-zinc-400">A link to see it and join the chat</p>
+              <p className="text-[15px] font-semibold leading-snug">{`${me ? tr("auth:value1_made_4dd7e32d", { value1: me }) : tr("core:made_45a5300c")} ${made.name}`}</p>
+              <p className="text-[13px] text-zinc-500 dark:text-zinc-400"><Message id="auth:a_link_to_see_it_and_join_the_chat_bd28e004" /></p>
             </div>
           </div>
           <div className="px-3 pb-2 pt-2.5 shadow-[inset_0_1px_0_var(--app-sheet-line)]">
-            <label htmlFor="first-session-note" className="sr-only">Your note</label>
-            <textarea
+            <label htmlFor="first-session-note" className="sr-only"><Message id="auth:your_note_5331e47d" /></label>
+            <Localized element={<textarea
               id="first-session-note"
               rows={2}
               maxLength={280}
               value={note}
-              onChange={(e) => setNote(e.target.value)}
-              placeholder="Add a note (optional)"
+              onChange={(e) => setNote(e.target.value)} placeholder={catalogText("auth:add_a_note_optional_6bb0c6b3")}
               className="w-full resize-none border-0 bg-transparent p-0 text-[16px] leading-snug placeholder-zinc-500 focus:outline-none"
-            />
+            />} messages={{"placeholder":"auth:add_a_note_optional_6bb0c6b3"}} />
           </div>
         </div>
-        <p className="mt-2 text-[13px] text-zinc-500 dark:text-zinc-400">Your note is also your first message in the group chat.</p>
+        <p className="mt-2 text-[13px] text-zinc-500 dark:text-zinc-400"><Message id="auth:your_note_is_also_your_first_message_in_the_grou_210befcf" /></p>
         <div className="mt-4 flex flex-col gap-2.5">
-          <Button type="button" onClick={() => { void shareLink(); }} disabled={busy} layout="full" variant="pillAccent" size="pillLg" ink="solidLate" className="flex items-center justify-center disabled:opacity-60">
-            Share link
-          </Button>
+          <Button type="button" onClick={() => { void shareLink(); }} disabled={busy} layout="full" variant="pillAccent" size="pillLg" ink="solidLate" className="flex items-center justify-center disabled:opacity-60"><Message id="auth:share_link_712a4823" /></Button>
           {byName ? (
             <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); void sendToUsername(); }}>
-              <input
+              <Localized element={<input
                 autoFocus
                 value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="@username"
+                onChange={(e) => setUsername(e.target.value)} placeholder={catalogText("auth:username_93100fc4")}
                 autoCapitalize="none"
                 autoCorrect="off"
                 spellCheck={false}
                 className="h-11 min-w-0 flex-1 rounded-full border-0 bg-white px-4 text-[16px] placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 dark:bg-zinc-800"
-              />
-              <Button type="submit" disabled={busy || !username.trim()} variant="pillAccent" size="pill" ink="solid" className="disabled:opacity-60">Send</Button>
+              />} messages={{"placeholder":"auth:username_93100fc4"}} />
+              <Button type="submit" disabled={busy || !username.trim()} variant="pillAccent" size="pill" ink="solid" className="disabled:opacity-60"><Message id="auth:send_f6f4688f" /></Button>
             </form>
           ) : (
-            <button type="button" onClick={() => setByName(true)} className="flex h-11 w-full items-center justify-center rounded-full bg-white text-[16px] font-semibold text-zinc-900 shadow-sm hover:bg-zinc-50 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700">
-              Invite by username
-            </button>
+            <button type="button" onClick={() => setByName(true)} className="flex h-11 w-full items-center justify-center rounded-full bg-white text-[16px] font-semibold text-zinc-900 shadow-sm hover:bg-zinc-50 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700"><Message id="auth:invite_by_username_fefe06c7" /></button>
           )}
         </div>
         {status ? <p className="mt-3 text-center text-[14px] text-emerald-700 dark:text-emerald-400">{status}</p> : null}
         {error ? <p role="alert" className="mt-3 text-center text-[14px] text-red-600 dark:text-red-400">{error}</p> : null}
-        <p className="mt-3 text-center text-[13px] text-zinc-500 dark:text-zinc-400">Anyone with the link can join, until you turn it off.</p>
+        <p className="mt-3 text-center text-[13px] text-zinc-500 dark:text-zinc-400"><Message id="auth:anyone_with_the_link_can_join_until_you_turn_it__4635ef3a" /></p>
         {rule ? <p data-first-session-rule="" className="mt-1 text-center text-[13px] text-zinc-500 dark:text-zinc-400">{rule}</p> : null}
       </div>
     </div>
@@ -425,6 +424,7 @@ export function PlanSection({ name, plan, onBuilt, onGone, onChange }: {
   onGone: () => void;
   onChange: () => void;
 }) {
+  useUiLanguage();
   const [pressed, setPressed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const build = useCallback(async (answers: Array<string | null>) => {
@@ -436,14 +436,14 @@ export function PlanSection({ name, plan, onBuilt, onGone, onChange }: {
     } catch (err) {
       if (err instanceof MessagesApiError && err.status === 409) { onGone(); return; }
       setPressed(false);
-      setError('Couldn\'t start building just now. Try again.');
+      setError(tr("auth:couldn_t_start_building_just_now_try_again_b1ee2774"));
       return;
     }
     onBuilt(plan, plan.questions.map((q, i) => answers[i] || q.answers[0] || ''));
   }, [pressed, plan, onBuilt, onGone]);
   return (
     <section data-first-session-plan="open" aria-labelledby="first-session-plan-label" className="mt-4">
-      <p id="first-session-plan-label" className="px-1 pb-1.5 text-[12px] font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">{PLAN_LABEL}</p>
+      <p id="first-session-plan-label" className="px-1 pb-1.5 text-[12px] font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">{PLAN_LABEL()}</p>
       <PlanCardView
         surface="app"
         appName={name}
@@ -476,9 +476,9 @@ export function joinedLine(community: Community): string | null {
   const count = Math.max(others.length, counted);
   if (count <= 0) return null;
   const named = (m: CommunityMember) => m.display_name || m.username;
-  if (count === 1 && others.length === 1) return `✓ ${named(others[0])} joined.`;
-  if (count === 2 && others.length === 2) return `✓ ${named(others[0])} and ${named(others[1])} joined.`;
-  return `✓ ${count} people joined.`;
+  if (count === 1 && others.length === 1) return tr("auth:value1_joined_2fcc8fe7", { value1: named(others[0]) });
+  if (count === 2 && others.length === 2) return tr("auth:value1_and_value2_joined_bbe11f6c", { value1: named(others[0]), value2: named(others[1]) });
+  return tr("auth:value1_people_joined_0e5634f1", { value1: count });
 }
 
 const JOINED_POLL_MS = 10000;
@@ -508,6 +508,7 @@ export function MadeScreen({ made, me, onContinue, onChangePlan }: {
   /** Change something, under the plan: its chat with Homeroom bot, and the plan's message. */
   onChangePlan: (conversationId: number | null, messageId: number | null) => void;
 }) {
+  useUiLanguage();
   const [fv, setFv] = useState<FirstVersion>(null);
   const [appStatus, setAppStatus] = useState<string | null>('creating');
   const [inviting, setInviting] = useState(false);
@@ -593,26 +594,24 @@ export function MadeScreen({ made, me, onContinue, onChangePlan }: {
           </div>
         )}
         <div className="mt-6">
-          <p className="text-[17px] font-semibold">{`Invite people to ${made.name}`}</p>
-          <p className="mt-0.5 text-[14px] leading-snug text-zinc-500 dark:text-zinc-400">They can follow along and chat with you while it's built.</p>
+          <p className="text-[17px] font-semibold"><LocalizedValue render={() => (tr("auth:invite_people_to_value1_847cd1ff", { value1: made.name }))} /></p>
+          <p className="mt-0.5 text-[14px] leading-snug text-zinc-500 dark:text-zinc-400"><Message id="auth:they_can_follow_along_and_chat_with_you_while_it_637651af" /></p>
           {sent ? (
             <p data-first-session-sent={joined ? 'joined' : ''} className="mt-2 text-[14px] font-semibold text-emerald-700 dark:text-emerald-400">
-              {joined || `✓ Invite sent${sentTo ? ` to ${sentTo}` : ''}.`}
+              <LocalizedValue render={() => (joined || tr("auth:invite_sent_value1_d60514ef", { value1: sentTo ? tr("auth:message_bc252627b50b", { recipient: sentTo }) : '' }))} />
             </p>
           ) : null}
         </div>
         <div className="grow" />
         <div className="mt-6 flex flex-col gap-2.5">
-          <Button type="button" onClick={() => setInviting(true)} layout="full" variant="pillAccent" size="pillLg" ink="solidLate" className="flex items-center justify-center">
-            Share invite
-          </Button>
+          <Button type="button" onClick={() => setInviting(true)} layout="full" variant="pillAccent" size="pillLg" ink="solidLate" className="flex items-center justify-center"><Message id="auth:share_invite_a8da10e5" /></Button>
           <button
             type="button"
             data-first-session-continue=""
             onClick={() => onContinue(!sent)}
             className="flex h-11 w-full items-center justify-center rounded-full bg-white text-[16px] font-semibold text-zinc-900 shadow-sm hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
           >
-            {sent ? 'Go to the Homeroom app' : 'Invite people later'}
+            <LocalizedValue render={() => (sent ? tr("auth:go_to_the_homeroom_app_8e0abf15") : tr("auth:invite_people_later_9acf0464"))} />
           </button>
         </div>
       </div>

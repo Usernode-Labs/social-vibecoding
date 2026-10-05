@@ -1,3 +1,4 @@
+import { t as tr } from "../../lib/i18n/runtime";
 /**
  * The in-platform developer console's receiver and ring buffer (#1079 chunk B).
  *
@@ -148,7 +149,7 @@ export class DevConsoleStore {
   countsLabel(): string {
     const by: Record<string, number> = { error: 0, warn: 0, info: 0, log: 0, debug: 0 };
     for (const e of this.entries) by[e.level] = (by[e.level] || 0) + 1;
-    return `${this.entries.length} total · ${by.error} err · ${by.warn} warn`;
+    return tr("workshop:value1_total_value2_err_value3_warn_bbfe4c6b", { value1: this.entries.length, value2: by.error, value3: by.warn });
   }
 
   setFilter(filter: string): void {

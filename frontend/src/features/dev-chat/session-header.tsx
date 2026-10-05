@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * `#dc-session-header`'s children — the dev chat's top strip.
  * See ./session-header-store.ts for what stays the module's and why.
@@ -49,12 +53,12 @@ export function MergeStatusPill({ life }: { life: MergeLife }): ReactNode {
       {life.spinner ? <span className="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span> : null}
       {text}
       {advisory ? (
-        <span
+        <LocalizedDynamic element={<span
           className="ms-advisory"
-          title={`${advisory} advisory vote${advisory === 1 ? '' : 's'} from non-approvers, so they don’t count toward merging`}
+          title={tr("workshop:message_912d74f56f06", { value1: advisory, count: advisory })}
         >
           {`+${advisory}`}
-        </span>
+        </span>} resolve={() => ({ get "title"() { return tr("workshop:message_912d74f56f06", { value1: advisory, count: advisory }); } })} />
       ) : null}
     </span>
   );
@@ -69,7 +73,7 @@ export function MergeStatusPill({ life }: { life: MergeLife }): ReactNode {
  * attributes and the position all stay exactly as `selectorHtml` wrote them.
  */
 function VenueSelect({ venue }: { venue: NonNullable<SessionHeaderState['venue']> }): ReactNode {
-  const busyTitle = 'Wait for the current response to finish before changing where this session is built.';
+  const busyTitle = tr("workshop:wait_for_the_current_response_to_finish_before_c_a9a24e48");
   return (
     <button
       type="button"
@@ -79,7 +83,7 @@ function VenueSelect({ venue }: { venue: NonNullable<SessionHeaderState['venue']
       data-venue-current={venue.id}
       data-venue-busy={venue.disabled ? '1' : undefined}
       aria-haspopup="menu"
-      aria-label={venue.disabled ? `${venue.label}. Unavailable while the agent is thinking.` : undefined}
+      aria-label={venue.disabled ? tr("workshop:value1_unavailable_while_the_agent_is_thinking_4846b2af", { value1: venue.label }) : undefined}
       disabled={venue.disabled}
       title={venue.disabled ? busyTitle : venue.title}
       onClick={venue.disabled
@@ -90,7 +94,7 @@ function VenueSelect({ venue }: { venue: NonNullable<SessionHeaderState['venue']
       {venue.disabled ? (
         <span className="dc-venue-busy" aria-hidden="true">
           <LockIcon className="dc-venue-busy-icon" />
-          <span>Thinking…</span>
+          <span><Message id="workshop:thinking_a02f1cea" /></span>
         </span>
       ) : (
         <span className="dc-venue-caret" aria-hidden="true">{'▾'}</span>
@@ -154,6 +158,7 @@ function VenueSelect({ venue }: { venue: NonNullable<SessionHeaderState['venue']
  * strip falls back to the bare `Building` chip it used to carry.
  */
 function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
+  useUiLanguage();
   const { previewSessionId, previewUrl, previewBuildable, previewActive } = useStoreState(improveStore) as {
     previewSessionId: number | null; previewUrl: string | null;
     previewBuildable: boolean; previewActive: boolean;
@@ -201,9 +206,7 @@ function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
         role="status"
         className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-zinc-100 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300 shrink-0 cursor-default"
       >
-        <span className="h-1.5 w-1.5 rounded-full bg-amber-500 shrink-0" aria-hidden="true" />
-        Building
-      </span>
+        <span className="h-1.5 w-1.5 rounded-full bg-amber-500 shrink-0" aria-hidden="true" /><Message id="workshop:building_87c5912f" /></span>
     );
   }
 
@@ -213,12 +216,11 @@ function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
     + 'text-zinc-700 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-zinc-100 un-touch-target';
 
   return (
-    <span
+    <Localized element={<span
       id="dc-mode-switch"
       ref={trackRef}
       className="relative shrink-0 flex items-center rounded-full bg-zinc-200 p-0.5 dark:bg-zinc-800"
-      role="group"
-      aria-label="Preview or build this change"
+      role="group" aria-label={catalogText("workshop:preview_or_build_this_change_0753805e")}
     >
       {/* THE THUMB. One element for both states, so the fill travels rather
           than one pill vanishing and another appearing. Hidden until the
@@ -234,41 +236,41 @@ function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
           : undefined}
       >
       </span>
-      <button
+      <LocalizedDynamic element={<button
         id="app-eye-btn"
         ref={eyeRef}
         type="button"
         className={seeing ? `${SEG_ON} text-zinc-900` : SEG_OFF}
-        aria-label={previewUrl ? 'Preview this change' : 'Build a preview of this change'}
+        aria-label={previewUrl ? tr("workshop:preview_this_change_3e335718") : tr("workshop:build_a_preview_of_this_change_54d4709b")}
         aria-pressed={seeing ? 'true' : 'false'}
         title={previewUrl
-          ? 'Preview this change on staging'
-          : 'Build a staging preview of this change (it went to sleep, or was never built)'}
+          ? tr("workshop:preview_this_change_on_staging_42900bff")
+          : tr("workshop:build_a_staging_preview_of_this_change_it_went_t_badb6410")}
         onClick={() => {
           if (seeing) return;
           (window as any).AppView?.swapToStagingForSession?.(previewSessionId, previewUrl);
         }}
       >
         <EyeIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
-        {seeing ? <span id="dc-mode-chip">Preview</span> : null}
-      </button>
-      <button
+        {seeing ? <span id="dc-mode-chip"><Message id="workshop:preview_324b134f" /></span> : null}
+      </button>} resolve={() => ({ "aria-label": previewUrl ? tr("workshop:preview_this_change_3e335718") : tr("workshop:build_a_preview_of_this_change_54d4709b"), "title": previewUrl
+          ? tr("workshop:preview_this_change_on_staging_42900bff")
+          : tr("workshop:build_a_staging_preview_of_this_change_it_went_t_badb6410") })} />
+      <Localized element={<button
         id="session-build-btn"
         ref={penRef}
         type="button"
-        className={seeing ? SEG_OFF : `${SEG_ON} text-white`}
-        aria-label="Back to building"
-        aria-pressed={seeing ? 'false' : 'true'}
-        title="Back to the session chat"
+        className={seeing ? SEG_OFF : `${SEG_ON} text-white`} aria-label={catalogText("workshop:back_to_building_790980b3")}
+        aria-pressed={seeing ? 'false' : 'true'} title={catalogText("workshop:back_to_the_session_chat_6437863a")}
         onClick={() => {
           if (!seeing) return;
           (window as any).AppView?.closeStagingOverlay?.();
         }}
       >
         <PencilSparklesIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
-        {!seeing ? <span id="dc-mode-chip">Building</span> : null}
-      </button>
-    </span>
+        {!seeing ? <span id="dc-mode-chip"><Message id="workshop:building_87c5912f" /></span> : null}
+      </button>} messages={{"aria-label":"workshop:back_to_building_790980b3","title":"workshop:back_to_the_session_chat_6437863a"}} />
+    </span>} messages={{"aria-label":"workshop:preview_or_build_this_change_0753805e"}} />
   );
 }
 
@@ -347,10 +349,11 @@ export async function openSessionActionsMenu(
 }
 
 function SessionActionsMenu({ actions }: { actions: SessionAction[] }): ReactNode {
+  useUiLanguage();
   const [open, setOpen] = useState(false);
   if (!actions.length) return null;
   return (
-    <button
+    <Localized element={<button
       type="button"
       id="dc-session-actions"
       className={'shrink-0 inline-flex items-center justify-center h-7 w-7 rounded-full '
@@ -358,9 +361,7 @@ function SessionActionsMenu({ actions }: { actions: SessionAction[] }): ReactNod
         + 'dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-100 un-touch-target'}
       data-session-actions="1"
       aria-haspopup="menu"
-      aria-expanded={open ? 'true' : 'false'}
-      aria-label="Session actions"
-      title="Session actions"
+      aria-expanded={open ? 'true' : 'false'} aria-label={catalogText("workshop:session_actions_742ab447")} title={catalogText("workshop:session_actions_742ab447")}
       onClick={(e: MouseEvent<HTMLButtonElement>) => {
         if (open) return;
         setOpen(true);
@@ -368,11 +369,12 @@ function SessionActionsMenu({ actions }: { actions: SessionAction[] }): ReactNod
       }}
     >
       <EllipsisHorizontalIcon className="w-4 h-4" aria-hidden="true" />
-    </button>
+    </button>} messages={{"aria-label":"workshop:session_actions_742ab447","title":"workshop:session_actions_742ab447"}} />
   );
 }
 
 export function SessionHeader({ embedded = false }: { embedded?: boolean }): ReactNode {
+  useUiLanguage();
   const s = useStoreState(sessionHeaderStore);
   return (
     <>
@@ -404,9 +406,7 @@ export function SessionHeader({ embedded = false }: { embedded?: boolean }): Rea
           className="shrink-0 whitespace-nowrap text-xs text-violet-700 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300"
           title={s.prTitle}
           onClick={() => controller()?.openProposalCard?.()}
-        >
-          Open proposal card
-        </button>
+        ><Message id="workshop:open_proposal_card_a1b1a77e" /></button>
       ) : (
         /* "New change" is the PR link's resting state — it says only "no PR
            yet", and it was taking room from the change's own name on a 375px
@@ -414,7 +414,7 @@ export function SessionHeader({ embedded = false }: { embedded?: boolean }): Rea
            row is the name and the switch, nothing else; hiding it below `sm`
            is the nearest thing to that which still shows it where there is
            room. */
-        <span className="max-sm:hidden shrink-0 whitespace-nowrap text-xs text-zinc-500 dark:text-zinc-400" title={s.newChangeTitle}>New change</span>
+        <span className="max-sm:hidden shrink-0 whitespace-nowrap text-xs text-zinc-500 dark:text-zinc-400" title={s.newChangeTitle}><Message id="workshop:new_change_1e986694" /></span>
       )}
       {/* #1348: where this session is built. It states the venue and opens the
           sheet that changes it. Here it survives the launchpad swap, and it is

@@ -1,3 +1,7 @@
+import { t as tr } from "../../lib/i18n/runtime";
+import { getLanguage } from "../../lib/i18n/runtime";
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * The node detail sheet's body.
  * See ./node-pill-store.ts for what the seam carries.
@@ -29,7 +33,7 @@ import { styleFor } from './node-pill-row';
 const ROW = 'flex items-center justify-between py-2 border-b border-zinc-100 dark:border-zinc-800 text-sm';
 
 /** `—`, not `0`: an unknown height and a height of zero are different facts. */
-const fmt = (n: number | null): string => (n == null ? '—' : Number(n).toLocaleString());
+const fmt = (n: number | null): string => (n == null ? '—' : Number(n).toLocaleString(getLanguage()));
 
 function SheetRow({ label, value }: { label: string; value: string }): ReactNode {
   return (
@@ -72,10 +76,11 @@ function heightLabel(height: number | null, tipAge: string | null): string {
 
 function peersLabel(ready: number | null, total: number | null): string {
   if (ready == null) return '—';
-  return `${fmt(ready)} ready${total != null ? ` / ${fmt(total)} known` : ''}`;
+  return tr("account:value1_ready_value2_83421ae4", { value1: fmt(ready), value2: total != null ? tr("account:value1_known_02e69eec", { value1: fmt(total) }) : '' });
 }
 
 export function NodeSheetBody(): ReactNode {
+  useUiLanguage();
   const s = useStoreState(nodePillStore);
   const style = styleFor(s.status);
   return (
@@ -84,10 +89,10 @@ export function NodeSheetBody(): ReactNode {
         <span className={`w-2.5 h-2.5 rounded-full ${style.dot}`}></span>
         <span className="text-base font-semibold">{style.label}</span>
       </div>
-      <SheetRow label="Chain" value={s.chain || '—'} />
-      <SheetRow label="Your block height" value={heightLabel(s.localBestHeight, s.tipAge)} />
-      <SheetRow label="Network block height" value={fmt(s.networkBestHeight)} />
-      <SheetRow label="Peers" value={peersLabel(s.readyPeers, s.totalPeers)} />
+      <Localized element={<SheetRow label={catalogText("account:chain_dae0896c")} value={s.chain || '—'} />} messages={{"label":"account:chain_dae0896c"}} />
+      <Localized element={<SheetRow label={catalogText("account:your_block_height_54786a54")} value={heightLabel(s.localBestHeight, s.tipAge)} />} messages={{"label":"account:your_block_height_54786a54"}} />
+      <Localized element={<SheetRow label={catalogText("account:network_block_height_fb398f37")} value={fmt(s.networkBestHeight)} />} messages={{"label":"account:network_block_height_fb398f37"}} />
+      <Localized element={<SheetRow label={catalogText("account:peers_64b769bc")} value={peersLabel(s.readyPeers, s.totalPeers)} />} messages={{"label":"account:peers_64b769bc"}} />
       <Warnings messages={s.warnings} />
     </>
   );

@@ -1,3 +1,6 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
 /**
  * What you sent, in an agent chat — and "Show more" when it is long (#3558).
  *
@@ -147,7 +150,7 @@ export function UserMessageBody({
           data-agent-session-user-more
           onClick={onToggle}
         >
-          {expanded ? 'Show less' : 'Show more'}
+          <LocalizedValue render={() => (expanded ? tr("workshop:show_less_94ea9b1d") : tr("workshop:show_more_f5c9bd13"))} />
         </Button>
       ) : null}
     </div>
@@ -165,6 +168,7 @@ export function UserMessageBody({
  * it gets a box.
  */
 export function UserMessage({ text, className = '' }: { text: string; className?: string }) {
+  useUiLanguage();
   const bubbleRef = useRef<HTMLDivElement>(null);
   const textRef = useRef<HTMLParagraphElement>(null);
   const [expanded, setExpanded] = useState(false);

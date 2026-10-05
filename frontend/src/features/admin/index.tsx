@@ -147,7 +147,7 @@ export function AdminScreen() {
   // DOMContentLoaded handler app.js registers.
 
   return (
-    <main
+    <main lang="en" dir="ltr"
       ref={screenRef}
       id="admin-screen"
       className="hidden flex-1 overflow-y-auto platform-safe-scroll"

@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * "What do you want to make?": the first thing an account made from the
  * signed-out story is asked (../auth/story.tsx sets the session's
@@ -45,6 +49,7 @@ export function MakeScreen({ who, onMade, onLookAround }: {
   onMade: (made: Made) => void;
   onLookAround: () => void;
 }) {
+  useUiLanguage();
   const [brief, setBrief] = useState('');
   const [name, setName] = useState('');
   const [picked, setPicked] = useState<Example | null>(null);
@@ -84,7 +89,7 @@ export function MakeScreen({ who, onMade, onLookAround }: {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.app) {
-        setError(data.error || (res.status === 429 ? 'Too many new projects for now. Try again later.' : 'Could not make it. Try again.'));
+        setError(data.error || (res.status === 429 ? tr("auth:too_many_new_projects_for_now_try_again_later_8330f8f8") : tr("auth:could_not_make_it_try_again_5e3aa3d7")));
         return;
       }
       onMade({
@@ -96,7 +101,7 @@ export function MakeScreen({ who, onMade, onLookAround }: {
         conversationId: Number(data.homeroomBot?.conversationId) || null,
       });
     } catch {
-      setError('Network error');
+      setError(tr("auth:network_error_2a33d984"));
     } finally {
       setBusy(false);
     }
@@ -119,15 +124,13 @@ export function MakeScreen({ who, onMade, onLookAround }: {
       >
         <div className="text-center">
           <p className="mt-4 text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">
-            {who ? `Hi ${who}!` : 'You\'re in!'}
+            <LocalizedValue render={() => (who ? tr("auth:hi_value1_c7a0a63b", { value1: who }) : tr("auth:you_re_in_fdc1f013"))} />
           </p>
-          <h1 id="first-session-make-title" className="mt-2.5 text-balance text-[30px] font-extrabold leading-[34px]">What do you want to make?</h1>
-          <p className="mt-2.5 text-pretty text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400">
-            Describe it for your group. Homeroom bot builds the first version while you invite your people.
-          </p>
+          <h1 id="first-session-make-title" className="mt-2.5 text-balance text-[30px] font-extrabold leading-[34px]"><Message id="auth:what_do_you_want_to_make_b89d3779" /></h1>
+          <p className="mt-2.5 text-pretty text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400"><Message id="auth:describe_it_for_your_group_homeroom_bot_builds_t_7a130336" /></p>
         </div>
-        <p className="mt-6 pb-2 text-[13px] text-zinc-500 dark:text-zinc-400">Start from an example</p>
-        <div className="grid grid-cols-3 gap-2" role="group" aria-label="Examples">
+        <p className="mt-6 pb-2 text-[13px] text-zinc-500 dark:text-zinc-400"><Message id="auth:start_from_an_example_eed6e395" /></p>
+        <Localized element={<div className="grid grid-cols-3 gap-2" role="group" aria-label={catalogText("auth:examples_e68ee04d")}>
           {EXAMPLES.map((e) => {
             const on = picked?.key === e.key;
             return (
@@ -144,32 +147,30 @@ export function MakeScreen({ who, onMade, onLookAround }: {
               </button>
             );
           })}
-        </div>
+        </div>} messages={{"aria-label":"auth:examples_e68ee04d"}} />
         <div className="mt-4 overflow-hidden rounded-2xl bg-white shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
           <div className={FIELD}>
-            <label htmlFor="first-session-brief" className={LABEL}>What should it do?</label>
-            <textarea
+            <label htmlFor="first-session-brief" className={LABEL}><Message id="auth:what_should_it_do_1970bec5" /></label>
+            <Localized element={<textarea
               ref={briefRef}
               id="first-session-brief"
               rows={3}
               value={brief}
-              onChange={(e) => { setBrief(e.target.value); setError(null); }}
-              placeholder="A tracker for our weekly miles…"
+              onChange={(e) => { setBrief(e.target.value); setError(null); }} placeholder={catalogText("auth:a_tracker_for_our_weekly_miles_c88112fb")}
               className={`${INPUT} resize-none leading-[22px]`}
-            />
+            />} messages={{"placeholder":"auth:a_tracker_for_our_weekly_miles_c88112fb"}} />
           </div>
           <div className={FIELD}>
-            <label htmlFor="first-session-name" className={LABEL}>What should we call it?</label>
-            <input
+            <label htmlFor="first-session-name" className={LABEL}><Message id="auth:what_should_we_call_it_38fea306" /></label>
+            <Localized element={<input
               id="first-session-name"
               type="text"
               autoComplete="off"
               value={name}
-              onChange={(e) => { setName(e.target.value); setError(null); }}
-              placeholder="Sunday Run Club"
+              onChange={(e) => { setName(e.target.value); setError(null); }} placeholder={catalogText("auth:sunday_run_club_fd6fcdde")}
               className={INPUT}
-            />
-            <p className="pb-1 text-xs text-zinc-500 dark:text-zinc-400">It's your group's name too. You can change it later.</p>
+            />} messages={{"placeholder":"auth:sunday_run_club_fd6fcdde"}} />
+            <p className="pb-1 text-xs text-zinc-500 dark:text-zinc-400"><Message id="auth:it_s_your_group_s_name_too_you_can_change_it_lat_7b0ae061" /></p>
           </div>
         </div>
         {error ? <p role="alert" className="mt-3 text-[14px] text-red-600 dark:text-red-400">{error}</p> : null}
@@ -183,11 +184,11 @@ export function MakeScreen({ who, onMade, onLookAround }: {
           ink="solidLate"
           className="mt-6 flex items-center justify-center disabled:opacity-50"
         >
-          {busy ? 'Making it…' : 'Make it'}
+          <LocalizedValue render={() => (busy ? tr("auth:making_it_06eeb53a") : tr("auth:make_it_4ce7dbfb"))} />
         </Button>
         <p className="mt-3 text-center text-[15px] text-zinc-500 dark:text-zinc-400">
-          {'Not sure yet? '}
-          <button type="button" onClick={onLookAround} className="font-medium text-violet-700 hover:underline dark:text-violet-400">Look around first</button>
+          <Message id="auth:not_sure_yet_da1ff327" />
+          <button type="button" onClick={onLookAround} className="font-medium text-violet-700 hover:underline dark:text-violet-400"><Message id="auth:look_around_first_a8f0ccff" /></button>
         </p>
       </form>
     </div>

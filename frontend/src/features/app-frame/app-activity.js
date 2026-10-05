@@ -492,7 +492,7 @@ export class EngagedAppUsage {
     const expired = new Promise((_, reject) => {
       timeout = this.setTimeout?.(() => {
         try { controller?.abort(); } catch { /* already settled */ }
-        reject(new Error('activity upload timed out'));
+        reject(new Error(globalThis.PlatformI18n.t("apps:activity_upload_timed_out_9764bee6")));
       }, this.fetchTimeoutMs);
     });
     try {

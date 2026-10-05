@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../../lib/i18n/react";
+import { t as tr } from "../../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../../lib/i18n/react";
 /**
  * `#auto-session-modal` — the Generate-proposal confirmation.
  *
@@ -77,6 +81,7 @@ export function AutoSessionModelPicker({
   onCancel,
   onUse,
 }: ModelPickerProps): ReactNode {
+  useUiLanguage();
   const [query, setQuery] = useState('');
   const [draftId, setDraftId] = useState(selectedId);
   const matches = proposalModelMatches(view.options, query, draftId, view.openRouter === true);
@@ -93,59 +98,47 @@ export function AutoSessionModelPicker({
       aria-labelledby="auto-session-picker-title"
     >
       <div className="mb-1 flex items-center gap-2">
-        <Button
+        <Localized element={<Button
           type="button"
           variant="unstyled"
           size="icon"
-          ink="none"
-          aria-label="Back to proposal summary"
+          ink="none" aria-label={catalogText("workshop:back_to_proposal_summary_6dc7edf5")}
           onClick={onBack}
           className="-ml-2 rounded-lg p-2 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
         >
           <ChevronLeftIcon className="h-5 w-5" aria-hidden="true" />
-        </Button>
-        <h2 id="auto-session-picker-title" className="text-lg font-bold text-zinc-900 dark:text-zinc-100">
-          Choose a model
-        </h2>
+        </Button>} messages={{"aria-label":"workshop:back_to_proposal_summary_6dc7edf5"}} />
+        <h2 id="auto-session-picker-title" className="text-lg font-bold text-zinc-900 dark:text-zinc-100"><Message id="workshop:choose_a_model_78a7ab5e" /></h2>
       </div>
-      <p className="mb-4 text-sm text-zinc-600 dark:text-zinc-400">
-        Recommended models are shown first. Search only if you need another model.
-      </p>
+      <p className="mb-4 text-sm text-zinc-600 dark:text-zinc-400"><Message id="workshop:recommended_models_are_shown_first_search_only_i_5629f677" /></p>
 
       {view.personalOpenRouterKey === true ? (
         <div className="mb-4 flex items-start gap-2 rounded-lg border border-violet-200 bg-violet-50 p-3 text-xs leading-relaxed text-zinc-700 dark:border-violet-800 dark:bg-violet-950/40 dark:text-zinc-300">
           <InfoCircleIcon className="mt-0.5 h-4 w-4 shrink-0 text-violet-700 dark:text-violet-300" aria-hidden="true" />
           <div>
-            <strong className="block font-semibold text-zinc-900 dark:text-zinc-100">
-              Using your own OpenRouter key
-            </strong>
-            <p className="mt-0.5">
-              Model availability follows your OpenRouter privacy settings. To exclude providers that may train on your data, review those settings.
-            </p>
+            <strong className="block font-semibold text-zinc-900 dark:text-zinc-100"><Message id="workshop:using_your_own_openrouter_key_63b91e91" /></strong>
+            <p className="mt-0.5"><Message id="workshop:model_availability_follows_your_openrouter_priva_e52a7343" /></p>
             <a
               href="https://openrouter.ai/settings/privacy"
               target="_blank"
               rel="noopener noreferrer"
               className="mt-1 inline-block font-semibold text-violet-700 underline decoration-violet-300 underline-offset-2 hover:text-violet-600 dark:text-violet-300 dark:hover:text-violet-200"
-            >
-              Review privacy settings
-            </a>
+            ><Message id="workshop:review_privacy_settings_8e90656f" /></a>
           </div>
         </div>
       ) : null}
 
-      <Label htmlFor="auto-session-model-search" className="sr-only">Search models</Label>
-      <Input
+      <Label htmlFor="auto-session-model-search" className="sr-only"><Message id="workshop:search_models_10421935" /></Label>
+      <Localized element={<Input
         id="auto-session-model-search"
         type="search"
         value={query}
         onChange={(event) => setQuery(event.currentTarget.value)}
-        autoComplete="off"
-        placeholder="Search all available models…"
+        autoComplete="off" placeholder={catalogText("workshop:search_all_available_models_0d33b95c")}
         width="full"
-      />
+      />} messages={{"placeholder":"workshop:search_all_available_models_0d33b95c"}} />
 
-      <div className="mt-4 max-h-80 space-y-2 overflow-y-auto pr-1" role="radiogroup" aria-label="Available models">
+      <Localized element={<div className="mt-4 max-h-80 space-y-2 overflow-y-auto pr-1" role="radiogroup" aria-label={catalogText("workshop:available_models_9dbfd047")}>
         {visible.map((option) => {
           const selected = option.id === draftId;
           return (
@@ -184,36 +177,37 @@ export function AutoSessionModelPicker({
         })}
         {!visible.length ? (
           <p className="rounded-lg bg-zinc-50 px-3 py-5 text-center text-sm text-zinc-500 dark:bg-zinc-800/60 dark:text-zinc-400">
-            {searching ? 'No models match that search.' : 'No recommended models are available.'}
+            <LocalizedValue render={() => (searching ? tr("workshop:no_models_match_that_search_36deb3d0") : tr("workshop:no_recommended_models_are_available_7c1a2d84"))} />
           </p>
         ) : null}
-      </div>
+      </div>} messages={{"aria-label":"workshop:available_models_9dbfd047"}} />
 
       {matches.length > MAX_VISIBLE_MODELS ? (
         <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
-          {`Showing the first ${MAX_VISIBLE_MODELS} of ${matches.length} matches. Keep typing to narrow the list.`}
+          <LocalizedValue render={() => (tr("workshop:showing_the_first_value1_of_value2_matches_keep__c9d39882", { value1: MAX_VISIBLE_MODELS, value2: matches.length }))} />
         </p>
       ) : null}
 
       <div className="mt-5 flex justify-end gap-2">
-        <Button type="button" variant="neutral" ink="neutral" onClick={onCancel}>Cancel</Button>
-        <Button
+        <Button type="button" variant="neutral" ink="neutral" onClick={onCancel}><Message id="workshop:cancel_19766ed6" /></Button>
+        <LocalizedDynamic element={<Button
           type="button"
           disabled={!draft}
-          aria-label={draft ? `Use ${draft.name}` : 'Use this model'}
-          title={draft ? `Use ${draft.name}` : undefined}
+          aria-label={draft ? tr("workshop:use_value1_a302a96d", { value1: draft.name }) : tr("workshop:use_this_model_1f2ba25a")}
+          title={draft ? tr("workshop:use_value1_a302a96d", { value1: draft.name }) : undefined}
           onClick={() => draft && onUse(draft.id)}
         >
           <span className="block max-w-36 truncate sm:max-w-52">
-            {draft ? `Use ${draft.name}` : 'Use this model'}
+            <LocalizedValue render={() => (draft ? tr("workshop:use_value1_a302a96d", { value1: draft.name }) : tr("workshop:use_this_model_1f2ba25a"))} />
           </span>
-        </Button>
+        </Button>} resolve={() => ({ "aria-label": draft ? tr("workshop:use_value1_a302a96d", { value1: draft.name }) : tr("workshop:use_this_model_1f2ba25a"), "title": draft ? tr("workshop:use_value1_a302a96d", { value1: draft.name }) : undefined })} />
       </div>
     </DialogCard>
   );
 }
 
 export function AutoSessionCard({ view }: { view: AutoSessionModalView }): ReactNode {
+  useUiLanguage();
   const [chosen, setChosen] = useState(view.preselect);
   const [choosing, setChoosing] = useState(false);
   const option = view.options.find((item) => item.id === chosen) || null;
@@ -242,14 +236,14 @@ export function AutoSessionCard({ view }: { view: AutoSessionModalView }): React
       aria-labelledby="auto-session-title"
     >
       <h2 id="auto-session-title" className="mb-2 text-lg font-bold text-zinc-900 dark:text-zinc-100">
-        {`Generate proposal for issue #${view.issueNumber}?`}
+        <LocalizedValue render={() => (tr("workshop:generate_proposal_for_issue_value1_ad87ef22", { value1: view.issueNumber }))} />
       </h2>
       <p className="mb-4 text-sm text-zinc-600 dark:text-zinc-400">{view.intro}</p>
 
       {option ? (
         <div className="mb-3 flex items-center gap-4 rounded-lg bg-zinc-100 p-4 dark:bg-zinc-800">
           <div className="min-w-0 flex-1">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Model</p>
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400"><Message id="workshop:model_5e2c614c" /></p>
             <p className="mt-0.5 break-words text-sm font-semibold text-zinc-900 dark:text-zinc-100">{option.name}</p>
             <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">{option.summary}</p>
           </div>
@@ -261,9 +255,7 @@ export function AutoSessionCard({ view }: { view: AutoSessionModalView }): React
               ink="none"
               onClick={() => setChoosing(true)}
               className="shrink-0 font-semibold text-violet-700 hover:text-violet-600 dark:text-violet-300 dark:hover:text-violet-200"
-            >
-              Change model
-            </Button>
+            ><Message id="workshop:change_model_d9a95536" /></Button>
           ) : null}
         </div>
       ) : null}
@@ -282,23 +274,20 @@ export function AutoSessionCard({ view }: { view: AutoSessionModalView }): React
           variant="neutral"
           ink="neutral"
           onClick={() => call('_autoSessionCancel')}
-        >
-          Cancel
-        </Button>
+        ><Message id="workshop:cancel_19766ed6" /></Button>
         <Button
           type="button"
           data-role="confirm"
           disabled={!option}
           onClick={() => call('_autoSessionConfirm', option?.id || '')}
-        >
-          Generate proposal
-        </Button>
+        ><Message id="workshop:generate_proposal_41613e50" /></Button>
       </div>
     </DialogCard>
   );
 }
 
 export function AutoSessionModal(): ReactNode {
+  useUiLanguage();
   const { view } = useStoreState<{ view: AutoSessionModalView | null }>(autoSessionModalStore);
   if (!view) return null;
   // The centring wrapper carries `data-modal-backdrop`, which is what

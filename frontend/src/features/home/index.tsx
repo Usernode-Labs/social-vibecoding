@@ -1,3 +1,4 @@
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * The home screen — `#home-screen`, the launcher grid a signed-in viewer lands
  * on (#1083 chunk F, step 4; the last of the chunk's four regions).
@@ -152,22 +153,18 @@ export function HomeScreen() {
               className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none dark:text-zinc-400"
               aria-hidden="true"
             />
-            <input
+            <Localized element={<input
               id="home-search-input"
               type="text"
-              autoComplete="off"
-              placeholder="Search your apps…"
-              aria-label="Search your apps"
+              autoComplete="off" placeholder={catalogText("apps:search_your_apps_0a886cb3")} aria-label={catalogText("apps:search_your_apps_bb8dcb07")}
               className="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 pl-9 pr-9 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-violet-400 dark:focus:border-violet-600"
-            />
-            <button
+            />} messages={{"placeholder":"apps:search_your_apps_0a886cb3","aria-label":"apps:search_your_apps_bb8dcb07"}} />
+            <Localized element={<button
               id="home-search-clear"
-              className="hidden absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-200 hover:bg-zinc-500/10 text-base leading-none dark:text-zinc-400"
-              title="Clear search"
-              aria-label="Clear search"
+              className="hidden absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-200 hover:bg-zinc-500/10 text-base leading-none dark:text-zinc-400" title={catalogText("apps:clear_search_3b7ea517")} aria-label={catalogText("apps:clear_search_3b7ea517")}
             >
               &times;
-            </button>
+            </button>} messages={{"title":"apps:clear_search_3b7ea517","aria-label":"apps:clear_search_3b7ea517"}} />
           </div>
         </div>
       </div>
@@ -260,7 +257,7 @@ export function HomeScreen() {
               "Add to Shortcuts", the browse screen's badge), because two
               names for one collection is worse than either.
           */}
-          <SectionHeading>Shortcuts</SectionHeading>
+          <SectionHeading><Message id="apps:shortcuts_46e978d0" /></SectionHeading>
           <AppGrid />
           {/*
               "Show all N apps" — revealed by Home.render() only when the

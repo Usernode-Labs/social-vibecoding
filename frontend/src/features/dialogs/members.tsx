@@ -1,3 +1,5 @@
+import { RichMessage } from "../../lib/i18n/react";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * Members, approvers & governance dialog (#members-modal).
  *
@@ -59,29 +61,24 @@ export function MembersDialog() {
             on the self-app (whose only sections are the approval ones),
             "Members & approvals" everywhere else.
         */}
-        <h2 id="members-modal-title" className="text-lg font-bold mb-4">
-          Members &amp; approvals
-        </h2>
+        <h2 id="members-modal-title" className="text-lg font-bold mb-4"><Message id="core:members_approvals_7988f96b" /></h2>
         <div id="members-load-error" className="hidden text-sm text-red-700 dark:text-red-400 mb-4">
         </div>
         <div id="members-invite-section" className="hidden mb-4">
           <label
             htmlFor="members-invite-input"
             className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1"
-          >
-            Invite a user
-          </label>
+          ><Message id="core:invite_a_user_320de51a" /></label>
           <div className="relative">
-            <Input
+            <Localized element={<Input
               id="members-invite-input"
               type="text"
               autoComplete="off"
               spellCheck="false"
               box="dialog"
               hint="muted"
-              ring="seamless"
-              placeholder="username"
-            />
+              ring="seamless" placeholder={catalogText("core:username_16f78a7d")}
+            />} messages={{"placeholder":"core:username_16f78a7d"}} />
             {/* Typeahead dropdown (GET /api/users/search) */}
             <div
               id="members-invite-suggestions"
@@ -93,9 +90,7 @@ export function MembersDialog() {
           </div>
         </div>
         <div id="members-list-section" className="hidden mb-4">
-          <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-            Collaborators
-          </p>
+          <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1"><Message id="core:collaborators_439c0bdd" /></p>
           <div
             id="members-list"
             className="max-h-56 overflow-y-auto divide-y divide-zinc-100 dark:divide-zinc-800 rounded-lg border border-zinc-200 dark:border-zinc-800"
@@ -111,50 +106,36 @@ export function MembersDialog() {
           id="members-governance-section"
           className="hidden space-y-3 mb-4 pt-3 border-t border-zinc-200 dark:border-zinc-800"
         >
-          <p className="text-sm font-semibold">
-            Proposal approvals
-          </p>
+          <p className="text-sm font-semibold"><Message id="core:proposal_approvals_47c05975" /></p>
           <div>
-            <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-              Who can approve proposals
-            </label>
+            <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1"><Message id="core:who_can_approve_proposals_f8b49580" /></label>
             <div className="flex p-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-sm font-medium">
               <button
                 type="button"
                 data-m-approver-policy="anyone"
                 className="members-vis-pill flex-1 rounded-md px-3 py-1.5 transition-colors"
-              >
-                Everyone
-              </button>
+              ><Message id="core:everyone_da2e5dc5" /></button>
               <button
                 type="button"
                 data-m-approver-policy="invited"
                 className="members-vis-pill flex-1 rounded-md px-3 py-1.5 transition-colors"
-              >
-                Invited approvers
-              </button>
+              ><Message id="core:invited_approvers_3b27d31f" /></button>
             </div>
           </div>
           <div>
-            <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-              How many approvals are needed
-            </label>
+            <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1"><Message id="core:how_many_approvals_are_needed_6df6c760" /></label>
             <div className="flex items-center gap-2">
               <div className="flex p-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-sm font-medium flex-1">
                 <button
                   type="button"
                   data-m-approvals-mode="default"
                   className="members-vis-pill flex-1 rounded-md px-3 py-1.5 transition-colors"
-                >
-                  Time &amp; majority
-                </button>
+                ><Message id="core:time_majority_cef18a8b" /></button>
                 <button
                   type="button"
                   data-m-approvals-mode="at_least"
                   className="members-vis-pill flex-1 rounded-md px-3 py-1.5 transition-colors"
-                >
-                  At least
-                </button>
+                ><Message id="core:at_least_3251982c" /></button>
               </div>
               <Input
                 id="members-approvals-n"
@@ -171,13 +152,9 @@ export function MembersDialog() {
                 id="members-approvals-propose"
                 layout="hidden"
                 size="sm"
-              >
-                Propose
-              </Button>
+              ><Message id="core:propose_1cbd9e71" /></Button>
             </div>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-              Changes open a proposal that is voted on under the current rules.
-            </p>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1"><Message id="core:changes_open_a_proposal_that_is_voted_on_under_t_2a75856d" /></p>
           </div>
           {/*
               Initial-approvers draft step: revealed when "Invited approvers"
@@ -189,24 +166,21 @@ export function MembersDialog() {
             id="members-initial-approvers"
             className="hidden space-y-2 rounded-lg border border-zinc-200 dark:border-zinc-800 p-3"
           >
-            <p className="text-sm font-medium">
-              Initial approvers
-            </p>
+            <p className="text-sm font-medium"><Message id="core:initial_approvers_cd980f85" /></p>
             <p id="members-initial-approvers-status" className="text-xs text-zinc-500 dark:text-zinc-400">
             </p>
             <div id="members-initial-approvers-list" className="space-y-1">
             </div>
             <div className="relative">
-              <Input
+              <Localized element={<Input
                 id="members-initial-approver-input"
                 type="text"
                 autoComplete="off"
                 spellCheck="false"
                 box="dialog"
                 hint="muted"
-                ring="seamless"
-                placeholder="add approvers to invite (optional)"
-              />
+                ring="seamless" placeholder={catalogText("core:add_approvers_to_invite_optional_6ffc85f8")}
+              />} messages={{"placeholder":"core:add_approvers_to_invite_optional_6ffc85f8"}} />
               <div
                 id="members-initial-approver-suggestions"
                 className="hidden absolute left-0 right-0 top-full mt-1 z-10 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-xl overflow-hidden"
@@ -219,16 +193,12 @@ export function MembersDialog() {
                 id="members-initial-approvers-propose"
                 layout="flex"
                 size="sm"
-              >
-                Propose
-              </Button>
+              ><Message id="core:propose_1cbd9e71" /></Button>
               <button
                 type="button"
                 id="members-initial-approvers-cancel"
                 className="flex-1 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-1.5 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
-              >
-                Cancel
-              </button>
+              ><Message id="core:cancel_19766ed6" /></button>
             </div>
           </div>
           <div id="members-governance-error" className="text-red-700 dark:text-red-400 text-sm hidden">
@@ -244,28 +214,23 @@ export function MembersDialog() {
             don't apply there, so "No approvers yet" only misled.
         */}
         <div id="members-approvers-section" className="hidden mb-4">
-          <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-            Approvers
-          </p>
+          <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1"><Message id="core:approvers_97ecaec1" /></p>
           <div
             id="members-approvers-list"
             className="max-h-56 overflow-y-auto divide-y divide-zinc-100 dark:divide-zinc-800 rounded-lg border border-zinc-200 dark:border-zinc-800"
           >
           </div>
-          <p id="members-approvers-dormant-note" className="hidden text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-            Approvers only take effect when &ldquo;Who can approve proposals&rdquo; is set to Invited approvers.
-          </p>
+          <p id="members-approvers-dormant-note" className="hidden text-xs text-zinc-500 dark:text-zinc-400 mt-1"><Message id="core:approvers_only_take_effect_when_who_can_approve__97279397" /></p>
           <div id="members-approver-invite" className="hidden relative mt-2">
-            <Input
+            <Localized element={<Input
               id="members-approver-invite-input"
               type="text"
               autoComplete="off"
               spellCheck="false"
               box="dialog"
               hint="muted"
-              ring="seamless"
-              placeholder="invite an approver by username"
-            />
+              ring="seamless" placeholder={catalogText("core:invite_an_approver_by_username_a9754aab")}
+            />} messages={{"placeholder":"core:invite_an_approver_by_username_a9754aab"}} />
             <div
               id="members-approver-suggestions"
               className="hidden absolute left-0 right-0 top-full mt-1 z-10 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-xl overflow-hidden"
@@ -285,9 +250,7 @@ export function MembersDialog() {
             self_hosted apps.
         */}
         <div id="members-appadmins-section" className="hidden mb-4">
-          <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-            App admins
-          </p>
+          <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1"><Message id="core:app_admins_8cb33dc2" /></p>
           <div
             id="members-appadmins-list"
             className="max-h-56 overflow-y-auto divide-y divide-zinc-100 dark:divide-zinc-800 rounded-lg border border-zinc-200 dark:border-zinc-800"
@@ -295,16 +258,15 @@ export function MembersDialog() {
           </div>
           <div id="members-appadmins-edit" className="hidden mt-2">
             <div className="relative">
-              <Input
+              <Localized element={<Input
                 id="members-appadmins-input"
                 type="text"
                 autoComplete="off"
                 spellCheck="false"
                 box="dialog"
                 hint="muted"
-                ring="seamless"
-                placeholder="add an admin by username"
-              />
+                ring="seamless" placeholder={catalogText("core:add_an_admin_by_username_b06974ed")}
+              />} messages={{"placeholder":"core:add_an_admin_by_username_b06974ed"}} />
               <div
                 id="members-appadmins-suggestions"
                 className="hidden absolute left-0 right-0 top-full mt-1 z-10 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-xl overflow-hidden"
@@ -319,32 +281,22 @@ export function MembersDialog() {
                   layout="flex"
                   size="sm"
                   className="disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  Propose
-                </Button>
+                ><Message id="core:propose_1cbd9e71" /></Button>
                 <button
                   type="button"
                   id="members-appadmins-cancel"
                   className="flex-1 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-1.5 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
-                >
-                  Cancel
-                </button>
+                ><Message id="core:cancel_19766ed6" /></button>
               </div>
             </div>
           </div>
           <p id="members-appadmins-status" className="text-sm mt-2 hidden">
           </p>
-          <p id="members-appadmins-note" className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-            Set in
-            <code>
+          <p id="members-appadmins-note" className="text-xs text-zinc-500 dark:text-zinc-400 mt-1"><RichMessage id="core:sentence_44b20238ac02" components={[<code>
               dapp.json
-            </code>
-            . To change them, open a pull request that edits the
-            <code>
+            </code>, <code>
               admins
-            </code>
-            list. That proposal needs real Yes votes and won&rsquo;t merge on a timer.
-          </p>
+            </code>]} /></p>
         </div>
         <div className="flex gap-3">
           <button
@@ -352,9 +304,7 @@ export function MembersDialog() {
             id="members-close"
             className="flex-1 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
             onClick={() => dialog.close()}
-          >
-            Close
-          </button>
+          ><Message id="core:close_7d9eb7ac" /></button>
         </div>
       </DialogCard>
     </DialogRoot>

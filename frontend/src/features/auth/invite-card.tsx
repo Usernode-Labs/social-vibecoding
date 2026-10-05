@@ -1,3 +1,6 @@
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * "Made for you": the landing screen of a visitor who opened an invite link
  * (/invite/<token>, src/services/community-invites.js) while signed out.
@@ -64,10 +67,10 @@ export type InvitePreview = {
 };
 
 const DEAD: Record<string, string> = {
-  expired: 'This invite link has expired. Ask whoever sent it for a new one.',
-  revoked: 'This invite link was turned off. Ask whoever sent it for a new one.',
-  used_up: 'This invite link has been used as many times as it allows. Ask whoever sent it for a new one.',
-  unknown: 'This invite link does not work. Check it was copied whole.',
+  get expired() { return tr("auth:this_invite_link_has_expired_ask_whoever_sent_it_812957db"); },
+  get revoked() { return tr("auth:this_invite_link_was_turned_off_ask_whoever_sent_57960a18"); },
+  get used_up() { return tr("auth:this_invite_link_has_been_used_as_many_times_as__cbb0b453"); },
+  get unknown() { return tr("auth:this_invite_link_does_not_work_check_it_was_copi_6e4897fb"); },
 };
 
 // The pieces share the landing's card: white on the wallpaper, the sheet
@@ -83,7 +86,7 @@ export function inviteTokenFrom(pathname: string): string | null {
 /** "@ada invited you to join Game Corner." */
 export function invitedLine(preview: InvitePreview): string {
   const name = preview.project?.name || 'a project';
-  return preview.inviter ? `@${preview.inviter} invited you to join ${name}.` : `You are invited to join ${name}.`;
+  return preview.inviter ? tr("auth:value1_invited_you_to_join_value2_bc5783a2", { value1: preview.inviter, value2: name }) : tr("auth:you_are_invited_to_join_value1_c9e4f9c4", { value1: name });
 }
 
 /**
@@ -107,7 +110,7 @@ export function madeLine(preview: InvitePreview): string {
   const name = preview.project?.name || 'a project';
   if (preview.inviterMadeIt && preview.inviterName) {
     const community = madeForName(preview);
-    return community ? `${preview.inviterName} made this for ${community}` : `${preview.inviterName} made ${name}`;
+    return community ? tr("auth:value1_made_this_for_value2_fed31a94", { value1: preview.inviterName, value2: community }) : tr("auth:value1_made_value2_4169495a", { value1: preview.inviterName, value2: name });
   }
   return invitedLine(preview);
 }
@@ -118,21 +121,21 @@ export function madeLine(preview: InvitePreview): string {
  */
 export function seenLine(preview: InvitePreview): string {
   const who = preview.inviterName || (preview.inviter ? `@${preview.inviter}` : '');
-  return who ? `${who} will see that you joined.` : '';
+  return who ? tr("auth:value1_will_see_that_you_joined_be28467a", { value1: who }) : '';
 }
 
 /** "12 people are in it." or '' for none. */
 export function membersLine(count: number | undefined): string {
   if (!count) return '';
-  return `${count} ${count === 1 ? 'person is' : 'people are'} in it.`;
+  return tr("auth:value1_value2_in_it_dfd9873f", { value1: count, value2: count === 1 ? tr("auth:person_is_df584934") : tr("auth:people_are_210a756d") });
 }
 
 /** The line under the headline: "and invited you to join · 4 people are in it". */
 export function underLine(preview: InvitePreview): string {
   const count = preview.memberCount || 0;
-  const members = count ? `${count} ${count === 1 ? 'person is' : 'people are'} in it` : '';
+  const members = count ? tr("auth:value1_value2_in_it_b82ddb01", { value1: count, value2: count === 1 ? tr("auth:person_is_df584934") : tr("auth:people_are_210a756d") }) : '';
   if (preview.inviterMadeIt && preview.inviterName) {
-    return members ? `and invited you to join · ${members}` : 'and invited you to join';
+    return members ? tr("auth:and_invited_you_to_join_value1_bd734752", { value1: members }) : tr("auth:and_invited_you_to_join_4bb49335");
   }
   return members ? `${members}.` : '';
 }
@@ -201,14 +204,14 @@ function Picture({ project }: { project: NonNullable<InvitePreview['project']> }
     const dark = typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
     return (
       <div data-landing-invite-picture="sketch" className="relative mx-4 mt-3 h-[340px] overflow-hidden rounded-[20px] bg-white dark:bg-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)]">
-        <iframe
-          title={`A sketch of ${project.name}`}
+        <LocalizedDynamic element={<iframe
+          title={tr("auth:a_sketch_of_value1_1b50b7e2", { value1: project.name })}
           src={`${picture.url}?theme=${dark ? 'dark' : 'light'}`}
           sandbox=""
           referrerPolicy="no-referrer"
           className="h-full w-full border-0"
-        />
-        <span className="pointer-events-none absolute right-2 top-2 rounded-full bg-black/60 px-2 py-0.5 text-[12px] font-semibold text-white">Sketch</span>
+        />} resolve={() => ({ get "title"() { return tr("auth:a_sketch_of_value1_1b50b7e2", { value1: project.name }); } })} />
+        <span className="pointer-events-none absolute right-2 top-2 rounded-full bg-black/60 px-2 py-0.5 text-[12px] font-semibold text-white"><Message id="auth:sketch_0f9b002d" /></span>
       </div>
     );
   }
@@ -240,7 +243,7 @@ function Picture({ project }: { project: NonNullable<InvitePreview['project']> }
  */
 export function InvitePending() {
   return (
-    <SkeletonGroup label="Opening your invite" data-landing-invite="pending">
+    <Localized element={<SkeletonGroup label={catalogText("auth:opening_your_invite_251d92ca")} data-landing-invite="pending">
       <div className={`${CARD} mt-4 flex items-center gap-3`}>
         <Skeleton shape="block" className="h-12 w-12 rounded-xl" />
         <div className="min-w-0 flex-1">
@@ -249,7 +252,7 @@ export function InvitePending() {
         </div>
       </div>
       <div className={`${CARD} mt-3 h-[340px]`} />
-    </SkeletonGroup>
+    </SkeletonGroup>} messages={{"label":"auth:opening_your_invite_251d92ca"}} />
   );
 }
 
@@ -280,7 +283,7 @@ export function MadeForYou({ preview, primaryClass, onJoin }: {
       className={primaryClass}
       onClick={(e) => { e.preventDefault(); onJoin(); }}
     >
-      {`Join ${project.name}`}
+      <LocalizedValue render={() => (tr("auth:join_value1_8a9b2690", { value1: project.name }))} />
     </a>
   );
   const seenNote = seen
@@ -301,7 +304,7 @@ export function MadeForYou({ preview, primaryClass, onJoin }: {
       {preview.note ? (
         <section data-landing-invite-join="" className={`${CARD} mt-3`}>
           <p data-landing-invite-note="" className="rounded-2xl bg-violet-500/10 px-4 py-3 text-[15px] leading-snug text-zinc-700 dark:text-zinc-200">
-            <span className="font-medium">{`${preview.inviterName || (preview.inviter ? `@${preview.inviter}` : 'They')}:`}</span>
+            <span className="font-medium">{`${preview.inviterName || (preview.inviter ? `@${preview.inviter}` : tr("auth:they_a32efbd9"))}:`}</span>
             {` “${preview.note}”`}
           </p>
           <div className="mt-4">{join}</div>

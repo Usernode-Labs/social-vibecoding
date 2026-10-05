@@ -1,3 +1,5 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 
 /**
  * The Dev board's frame, converted from the `innerHTML` template that used to
@@ -179,24 +181,22 @@ function useBodyInitial(): { __html: string } {
  * `href: null` — no app open — renders nothing rather than a dead card.
  */
 function DiscussionCard({ cardCls, cardHoverCls }: { cardCls: string; cardHoverCls: string }) {
+  useUiLanguage();
   const mode = useDevViewMode();
   const { href, preview } = useStoreState<DiscussionState>(discussionStore);
   if (mode !== 'kanban' || !href) return null;
   return (
     <div className="px-3 pt-2">
-      <a
+      <Localized element={<a
         id="dev-chat-card"
         href={href}
-        className={`${cardCls} ${cardHoverCls}`}
-        title="Open the app's general chat"
+        className={`${cardCls} ${cardHoverCls}`} title={catalogText("workshop:open_the_app_s_general_chat_13b530c2")}
       >
         <span className="w-9 h-9 rounded-lg bg-violet-600/15 text-violet-700 flex items-center justify-center shrink-0 dark:text-violet-400">
           <ChatIcon className="w-5 h-5" aria-hidden="true" />
         </span>
         <span className="flex-1 min-w-0">
-          <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
-            General discussion
-          </span>
+          <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200"><Message id="workshop:general_discussion_ed371a6a" /></span>
           {/* The last thing said in it, or the standing description until the
               one request for it lands. RENDERED, not an innerHTML host: the
               card it replaces had `#dev-chat-card-preview` written into by
@@ -210,7 +210,7 @@ function DiscussionCard({ cardCls, cardHoverCls }: { cardCls: string; cardHoverC
           </span>
         </span>
         <ChevronRightIcon className="w-4 h-4 text-zinc-500 dark:text-zinc-500 shrink-0" aria-hidden="true" />
-      </a>
+      </a>} messages={{"title":"workshop:open_the_app_s_general_chat_13b530c2"}} />
     </div>
   );
 }
@@ -225,6 +225,7 @@ function DiscussionCard({ cardCls, cardHoverCls }: { cardCls: string; cardHoverC
  * there is one resume path and one toast.
  */
 function MainPauseNotice(): ReactNode {
+  useUiLanguage();
   const s = useStoreState<MainPauseState>(mainPauseStore);
   const btnRef = useRef<HTMLButtonElement>(null);
   if (!s.paused) return null;
@@ -241,17 +242,14 @@ function MainPauseNotice(): ReactNode {
       <div className="flex items-start gap-3">
         <span className="flex-1 min-w-0">{mainPauseText(s)}</span>
         {s.canResume && !s.confirming ? (
-          <Button
+          <Localized element={<Button
             ref={btnRef}
             variant="neutral"
             ink="neutral"
             size="xs"
             className="shrink-0"
-            onClick={resume}
-            title="Resume merges on this app while main’s unit suite is red. The pause returns if a later merge fails the suite again."
-          >
-            Resume merges
-          </Button>
+            onClick={resume} title={catalogText("workshop:resume_merges_on_this_app_while_main_s_unit_suit_d13bc974")}
+          ><Message id="workshop:resume_merges_f5abf8e0" /></Button>} messages={{"title":"workshop:resume_merges_on_this_app_while_main_s_unit_suit_d13bc974"}} />
         ) : null}
       </div>
     </Alert>
@@ -268,6 +266,7 @@ function MainPauseNotice(): ReactNode {
  * carries it when it is on github.com.
  */
 function ReleaseStallNotice(): ReactNode {
+  useUiLanguage();
   const s = useStoreState<ReleaseStallState>(releaseStallStore);
   if (!s.stalled) return null;
   return (
@@ -288,9 +287,7 @@ function ReleaseStallNotice(): ReactNode {
               target="_blank"
               rel="noopener noreferrer"
               className="ml-1 underline underline-offset-2"
-            >
-              Open the workflow run
-            </a>
+            ><Message id="workshop:open_the_workflow_run_74455b92" /></a>
           ) : null}
         </span>
       </div>
@@ -308,6 +305,7 @@ export function DevBoardFrame({
   cardCls,
   cardHoverCls,
 }: DevBoardFrameProps) {
+  useUiLanguage();
   const mainPaused = useStoreState<MainPauseState>(mainPauseStore).paused;
   const releaseStalled = useStoreState<ReleaseStallState>(releaseStallStore).stalled;
   // The toolbar's home depends on the surface — see the DevActionsRow render

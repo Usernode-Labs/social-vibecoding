@@ -1,3 +1,4 @@
+import { t as tr } from "../../lib/i18n/runtime";
 import { useSyncExternalStore } from 'react';
 
 import { hasPlatformViewer, whenPlatformViewer } from '../../lib/platform-viewer';
@@ -145,9 +146,9 @@ function progressOperations(value: unknown): GlobalChatProgressOperation[] {
 
 function applyProgressEvent(event: Record<string, unknown>) {
   publish((current) => {
-    const existing = current.progress || {
+    const existing: GlobalChatProgress = current.progress || {
       phase: 'understanding',
-      message: 'Understanding your request…',
+      get message() { return tr("community:understanding_your_request_a69b173a"); },
       model: null,
       reasoningEffort: null,
       elapsedMs: 0,
@@ -299,7 +300,7 @@ async function recoverInterruptedTurn(
   return false;
 }
 
-function errorText(error: unknown, fallback = 'Global Chat could not complete that request.') {
+function errorText(error: unknown, fallback = tr("community:global_chat_could_not_complete_that_request_971c26dd")) {
   return error instanceof Error && error.message ? error.message : fallback;
 }
 
@@ -353,7 +354,7 @@ export async function initializeGlobalChat({ force = false } = {}): Promise<Glob
     // A boot-time 401 is expected before app.js has established the session.
     // sv:authed retries it; keep Classic untouched and do not surface a dead
     // feature error in the header.
-    if (state.open) publish({ phase: 'error', error: errorText(error, 'Global Chat is unavailable.') });
+    if (state.open) publish({ phase: 'error', error: errorText(error, tr("community:global_chat_is_unavailable_a0e6b0b3")) });
     return null;
   }).finally(() => {
     bootstrapPromise = null;
@@ -420,7 +421,7 @@ async function loadThread(thread: GlobalChatThread, version: number) {
   } catch (error) {
     if (version !== navigationVersion
         || state.bootstrap?.thread?.id !== thread.id) return;
-    publish({ phase: 'error', error: errorText(error, 'Could not load this chat.') });
+    publish({ phase: 'error', error: errorText(error, tr("community:could_not_load_this_chat_76fd44e0")) });
   }
 }
 
@@ -481,7 +482,7 @@ export async function openGlobalChat({ threadId = null, host = 'screen' }: {
     await loadThread(thread, version);
   } catch (error) {
     if (version !== navigationVersion) return;
-    publish({ phase: 'error', error: errorText(error, 'Could not load this chat.') });
+    publish({ phase: 'error', error: errorText(error, tr("community:could_not_load_this_chat_76fd44e0")) });
   }
   if (version !== navigationVersion) return;
   void refreshGlobalChatUsage();
@@ -531,7 +532,7 @@ export function closeGlobalChat(classicPath?: string | null) {
 }
 
 function appendOptimisticUser(text: string) {
-  const title = text.replace(/\s+/g, ' ').trim().slice(0, 120) || 'New chat';
+  const title = text.replace(/\s+/g, ' ').trim().slice(0, 120) || tr("community:new_chat_db18382a");
   const message: GlobalChatMessage = {
     id: `local-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     threadId: state.bootstrap?.thread?.id || '',
@@ -593,7 +594,7 @@ async function runTurn({ text, more = false, topic }: {
   if (!boot || state.phase === 'sending') return;
   const thread = boot.thread;
   if (!boot.profiles.globalChat.enabled || !thread) {
-    publish({ error: 'Enable experimental Global Chat in Settings first.' });
+    publish({ get error() { return tr("community:enable_experimental_global_chat_in_settings_firs_7f52fc3a"); } });
     return;
   }
   // Curated More pages are zero-model server actions and remain useful before
@@ -601,29 +602,29 @@ async function runTurn({ text, more = false, topic }: {
   // server returns the normal model-unavailable explanation for generated
   // suggestions. Free-form turns still require a configured model up front.
   if (!boot.available && !more) {
-    publish({ error: 'Add or claim an OpenRouter key in Settings to use Global Chat.' });
+    publish({ get error() { return tr("community:add_or_claim_an_openrouter_key_in_settings_to_us_3d3f4209"); } });
     return;
   }
   const messageBoundary = lastPersistedMessageId(state.messages);
   const retryRequest: RetryRequest = more
     ? { kind: 'more', text, ...(topic ? { topic } : {}) }
     : { kind: 'turn', text };
-  appendOptimisticUser(more ? 'More suggestions' : text);
+  appendOptimisticUser(more ? tr("community:more_suggestions_f9048bba") : text);
   const controller = new AbortController();
   activeAbort = controller;
   publish({
     phase: 'sending',
-    activity: more ? 'Loading options…' : 'Thinking…',
+    activity: more ? tr("community:loading_options_deb4c8ee") : 'Thinking…',
     progress: more ? null : {
       phase: 'understanding',
-      message: 'Understanding your request…',
+      get message() { return tr("community:understanding_your_request_a69b173a"); },
       model: boot.profiles.globalChat.model,
       reasoningEffort: boot.profiles.globalChat.reasoningEffort,
       elapsedMs: 0,
       startedAt: Date.now(),
       steps: [{
         phase: 'understanding',
-        message: 'Understanding your request…',
+        get message() { return tr("community:understanding_your_request_a69b173a"); },
         elapsedMs: 0,
       }],
       operations: [],
@@ -652,7 +653,7 @@ async function runTurn({ text, more = false, topic }: {
           applyToolProgress(event, event.status === 'failed' ? 'failed' : 'completed');
         } else if (event.type === 'confirmation.required') {
           publish((current) => current.bootstrap?.thread?.id === thread.id
-            ? { activity: 'Preparing confirmation…' }
+            ? { get activity() { return tr("community:preparing_confirmation_883525a6"); } }
             : {});
         } else if (event.type === 'result.attached' && event.result) {
           const attached = event.result as GlobalChatResult;
@@ -687,7 +688,7 @@ async function runTurn({ text, more = false, topic }: {
             : {});
         } else if (event.type === 'turn.failed') {
           completed = true;
-          const message = typeof event.message === 'string' ? event.message : 'That request could not be completed.';
+          const message = typeof event.message === 'string' ? event.message : tr("community:that_request_could_not_be_completed_b6428269");
           const assistantMessage = event.assistantMessage as GlobalChatMessage | null | undefined;
           publish((current) => current.bootstrap?.thread?.id === thread.id
             ? {
@@ -710,7 +711,7 @@ async function runTurn({ text, more = false, topic }: {
         ? { activity: 'Reconnecting…', progress: current.progress ? {
           ...current.progress,
           phase: 'reconnecting',
-          message: 'Reconnecting to the saved turn…',
+          get message() { return tr("community:reconnecting_to_the_saved_turn_d539058a"); },
         } : null }
         : {});
       completed = await recoverInterruptedTurn(
@@ -722,7 +723,7 @@ async function runTurn({ text, more = false, topic }: {
             phase: 'error',
             activity: '',
             progress: null,
-            error: 'The connection was interrupted before an answer was saved. Please try again.',
+            get error() { return tr("community:the_connection_was_interrupted_before_an_answer__b4b35150"); },
             retryRequest,
             messages: current.messages.map((item) => item.pending ? { ...item, pending: false } : item),
           }
@@ -747,7 +748,7 @@ async function runTurn({ text, more = false, topic }: {
         ? { activity: 'Reconnecting…', progress: current.progress ? {
           ...current.progress,
           phase: 'reconnecting',
-          message: 'Reconnecting to the saved turn…',
+          get message() { return tr("community:reconnecting_to_the_saved_turn_d539058a"); },
         } : null }
         : {});
       completed = await recoverInterruptedTurn(
@@ -797,7 +798,7 @@ async function runDirectAction({
   if (!boot || state.phase === 'sending') return;
   const thread = boot.thread;
   if (!boot.profiles.globalChat.enabled || !thread) {
-    publish({ error: 'Enable experimental Global Chat in Settings first.' });
+    publish({ get error() { return tr("community:enable_experimental_global_chat_in_settings_firs_7f52fc3a"); } });
     return;
   }
   const messageBoundary = lastPersistedMessageId(state.messages);
@@ -859,7 +860,7 @@ async function runDirectAction({
           ? {
             phase: 'error',
             activity: '',
-            error: errorText(error, 'That direct action could not be completed.'),
+            error: errorText(error, tr("community:that_direct_action_could_not_be_completed_8a210e3c")),
             retryRequest,
             messages: current.messages.map((item) => item.pending ? { ...item, pending: false } : item),
           }
@@ -904,7 +905,7 @@ export async function loadGlobalChatInlineResults(
   targetLabel?: string,
 ) {
   const threadId = state.bootstrap?.thread?.id;
-  if (!threadId) throw new Error('Open a Global Chat first.');
+  if (!threadId) throw new Error(tr("community:open_a_global_chat_first_4c5e70bf"));
   const response = await api.executeInlineAction(threadId, {
     actionId,
     parameters,
@@ -914,7 +915,7 @@ export async function loadGlobalChatInlineResults(
 }
 
 export async function requestMoreSuggestions(topic?: string) {
-  await runTurn({ text: 'More suggestions', more: true, topic });
+  await runTurn({ get text() { return tr("community:more_suggestions_f9048bba"); }, more: true, topic });
 }
 
 export async function retryLastGlobalChatRequest() {
@@ -958,7 +959,7 @@ export async function loadOlderGlobalChatMessages() {
     }));
   } catch (error) {
     if (state.bootstrap?.thread?.id !== threadId) return;
-    publish({ phase: 'error', error: errorText(error, 'Could not load earlier messages.') });
+    publish({ phase: 'error', error: errorText(error, tr("community:could_not_load_earlier_messages_ee351717")) });
   }
 }
 
@@ -1005,7 +1006,7 @@ export async function startNewGlobalChat() {
     focusComposer();
   } catch (error) {
     if (version !== navigationVersion) return;
-    publish({ phase: 'error', error: errorText(error, 'Could not start a new chat.') });
+    publish({ phase: 'error', error: errorText(error, tr("community:could_not_start_a_new_chat_2b52c735")) });
   }
 }
 
@@ -1085,7 +1086,7 @@ export async function confirmGlobalChatAction(result: GlobalChatResult, token: s
       ? {
         phase: 'error',
         activity: '',
-        error: errorText(error, 'That action could not be completed.'),
+        error: errorText(error, tr("community:that_action_could_not_be_completed_a74c00a4")),
       }
       : {});
   } finally {
@@ -1119,17 +1120,17 @@ export function clientAction(result: GlobalChatResult): Record<string, unknown> 
 function clientActionUrl(action: Record<string, unknown>): string {
   const template = String(action.pathTemplate || '');
   if (!template.startsWith('/') || template.startsWith('//') || template.includes('://')) {
-    throw new Error('That browser action is unavailable.');
+    throw new Error(tr("community:that_browser_action_is_unavailable_3e4ec423"));
   }
   const input = object(action.input) || {};
   const pathParameters = object(input.pathParameters) || {};
   const path = template.replace(/:([A-Za-z][A-Za-z0-9_]*)/g, (_match, name: string) => {
     const value = pathParameters[name];
-    if (value == null) throw new Error('That browser action is missing its target.');
+    if (value == null) throw new Error(tr("community:that_browser_action_is_missing_its_target_0b45526d"));
     return encodeURIComponent(String(value));
   });
   const url = new URL(path, window.location.origin);
-  if (url.origin !== window.location.origin) throw new Error('That browser action is unavailable.');
+  if (url.origin !== window.location.origin) throw new Error(tr("community:that_browser_action_is_unavailable_3e4ec423"));
   const query = Array.isArray(input.query) ? input.query : [];
   for (const entry of query) {
     const pair = object(entry);
@@ -1196,7 +1197,7 @@ function applyLocalSetting(action: Record<string, unknown>) {
     window.location.reload();
     return;
   }
-  throw new Error('That local setting is unavailable.');
+  throw new Error(tr("community:that_local_setting_is_unavailable_e2db0db0"));
 }
 
 export async function runGlobalChatClientAction(result: GlobalChatResult) {
@@ -1213,7 +1214,7 @@ export async function runGlobalChatClientAction(result: GlobalChatResult) {
     const hint = agentHandoffHint(action);
     if (!hint) {
       publish((current) => ({
-        error: 'That development handoff is missing its app.',
+        get error() { return tr("community:that_development_handoff_is_missing_its_app_092a42de"); },
         clientActionStates: { ...current.clientActionStates, [result.id]: 'error' },
       }));
       return false;
@@ -1240,7 +1241,7 @@ export async function runGlobalChatClientAction(result: GlobalChatResult) {
     const method = String(action.method || 'GET').toUpperCase();
     const transport = String(action.transport || '');
     if (!['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
-      throw new Error('That browser action is unavailable.');
+      throw new Error(tr("community:that_browser_action_is_unavailable_3e4ec423"));
     }
     if (method === 'GET') {
       window.open(url, '_blank', 'noopener,noreferrer');
@@ -1254,7 +1255,7 @@ export async function runGlobalChatClientAction(result: GlobalChatResult) {
       });
       if (!response.ok) {
         const body = await response.json().catch(() => ({})) as { error?: string };
-        throw new Error(body.error || `Action failed (${response.status}).`);
+        throw new Error(body.error || tr("community:action_failed_value1_661ab5fd", { value1: response.status }));
       }
       if (transport === 'development_handoff') {
         publish((current) => ({
@@ -1272,7 +1273,7 @@ export async function runGlobalChatClientAction(result: GlobalChatResult) {
     return true;
   } catch (error) {
     publish((current) => ({
-      error: errorText(error, 'That browser action could not be completed.'),
+      error: errorText(error, tr("community:that_browser_action_could_not_be_completed_7129557c")),
       clientActionStates: { ...current.clientActionStates, [result.id]: 'error' },
     }));
     return false;

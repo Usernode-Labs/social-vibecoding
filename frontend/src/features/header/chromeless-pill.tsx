@@ -1,3 +1,6 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { RichMessage } from "../../lib/i18n/react";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * #chromeless-pill — the floating "Open in Homeroom" affordance shown while the
  * platform header is hidden (`/app/<slug>/full`). App._mountChromelessPill /
@@ -39,6 +42,7 @@ const PILL_STYLE: CSSProperties = {
 const GLYPH_STYLE: CSSProperties = { fontSize: '11px', opacity: 0.75 };
 
 export function ChromelessPill() {
+  useUiLanguage();
   // Published by App.setChromeless. Unpublished reads as undefined, which
   // useVisibility resolves to this `false` — i.e. the shipped markup, which
   // had no pill in it at all.
@@ -48,10 +52,9 @@ export function ChromelessPill() {
   if (!chromeless) return null;
 
   return (
-    <a
+    <Localized element={<a
       id="chromeless-pill"
-      href="#"
-      aria-label="Open this app on Homeroom"
+      href="#" aria-label={catalogText("account:open_this_app_on_homeroom_85068025")}
       style={{ ...PILL_STYLE, opacity: hover ? 1 : 0.85 }}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
@@ -64,11 +67,6 @@ export function ChromelessPill() {
           window.App?.openAppTab?.(slug, 'app');
         }
       }}
-    >
-      <span>Open in Homeroom</span>
-      <span style={GLYPH_STYLE} aria-hidden="true">
-        {'↗'}
-      </span>
-    </a>
+    ><RichMessage id="account:sentence_768b4afc7786" components={[<span />, <span style={GLYPH_STYLE} aria-hidden="true" />]} /></a>} messages={{"aria-label":"account:open_this_app_on_homeroom_85068025"}} />
   );
 }

@@ -90,7 +90,7 @@ const MembersDialog = {
       console.warn('[members] openMembersModal called with no app loaded');
       const loadError = document.getElementById('members-load-error');
       if (loadError) {
-        loadError.textContent = 'This app is still loading. Open Members & approvals again in a moment.';
+        loadError.textContent = globalThis.PlatformI18n.t("core:this_app_is_still_loading_open_members_approvals_825ae7f6");
         loadError.className = 'text-sm text-red-400 mb-4';
       }
       return;
@@ -99,7 +99,7 @@ const MembersDialog = {
     // the heading matches the "+" menu item's "Proposal approvals" label.
     const modalTitle = document.getElementById('members-modal-title');
     if (modalTitle) {
-      modalTitle.textContent = appData.self_hosted ? 'Proposal approvals' : 'Members & approvals';
+      modalTitle.textContent = appData.self_hosted ? globalThis.PlatformI18n.t("core:proposal_approvals_47c05975") : globalThis.PlatformI18n.t("core:members_approvals_7988f96b");
     }
     const loadError = document.getElementById('members-load-error');
     if (loadError) {
@@ -126,7 +126,7 @@ const MembersDialog = {
           .forEach((p) => { p.disabled = !appData.repo_url; });
         if (!appData.repo_url) {
           if (govStatus) {
-            govStatus.textContent = 'Approval-settings changes are proposed as a dapp.json pull request, and this app has no GitHub repository, so they\'re unavailable.';
+            govStatus.textContent = globalThis.PlatformI18n.t("core:approval_settings_changes_are_proposed_as_a_dapp_5ba7bc9f");
             govStatus.className = 'text-sm text-zinc-500 dark:text-zinc-400';
             govStatus.classList.remove('hidden');
           }
@@ -392,14 +392,14 @@ const MembersDialog = {
   async loadCollaborators() {
     const list = document.getElementById('members-list');
     if (!list || !AppView.appData) return;
-    list.innerHTML = '<div class="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400">Loading…</div>';
+    list.innerHTML = `<div class="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400">${globalThis.PlatformI18n.htmlText("core:loading_ba3bbbe1")}</div>`;
     try {
       const res = await fetch(`/api/apps/${AppView.appData.slug}/collaborators`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       AppView._renderCollaborators(data.collaborators || []);
     } catch (err) {
-      list.innerHTML = `<div class="px-3 py-2 text-sm text-red-400">Failed to load members: ${escapeHtml(err.message)}</div>`;
+      list.innerHTML = `<div class="px-3 py-2 text-sm text-red-400">${globalThis.PlatformI18n.htmlText("core:failed_to_load_members_value0_077006bc", { value0: err.message })}</div>`;
     }
   },
 
@@ -409,19 +409,19 @@ const MembersDialog = {
     const me = (typeof App !== 'undefined' && App.user) ? App.user : {};
     const canManage = !!AppView.appData?.can_manage;
     if (!rows.length) {
-      list.innerHTML = '<div class="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400">No collaborators yet.</div>';
+      list.innerHTML = `<div class="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400">${globalThis.PlatformI18n.htmlText("core:no_collaborators_yet_609c3f96")}</div>`;
       return;
     }
     list.innerHTML = rows.map((r) => {
       const pending = r.status === 'invited';
       const tag = r.isCreator
-        ? '<span class="text-[0.65rem] text-violet-700 font-medium ml-1 dark:text-violet-400">creator</span>'
-        : (pending ? '<span class="text-[0.65rem] text-amber-800 font-medium ml-1 dark:text-amber-300">invited</span>' : '');
+        ? `<span class="text-[0.65rem] text-violet-700 font-medium ml-1 dark:text-violet-400">${globalThis.PlatformI18n.htmlText("core:creator_bc6bfd84")}</span>`
+        : (pending ? `<span class="text-[0.65rem] text-amber-800 font-medium ml-1 dark:text-amber-300">${globalThis.PlatformI18n.htmlText("core:invited_307128ff")}</span>` : '');
       // Remove/revoke: creator/admin for anyone but the creator; users
       // may remove themselves (leave). Mirrors the server rules.
       const canRemove = !r.isCreator && (canManage || r.userId === me.id);
       const removeBtn = canRemove
-        ? `<button data-remove-user="${r.userId}" class="text-xs text-zinc-500 hover:text-red-500 px-2 py-1 dark:text-zinc-400" title="${pending ? 'Revoke invite' : (r.userId === me.id ? 'Leave app' : 'Remove')}">${pending ? 'Revoke' : (r.userId === me.id ? 'Leave' : 'Remove')}</button>`
+        ? `<button data-remove-user="${r.userId}" class="text-xs text-zinc-500 hover:text-red-500 px-2 py-1 dark:text-zinc-400" title="${pending ? globalThis.PlatformI18n.t("core:revoke_invite_3e19d958") : (r.userId === me.id ? globalThis.PlatformI18n.t("core:leave_app_7d814576") : globalThis.PlatformI18n.t("core:remove_c3812fc4"))}">${pending ? globalThis.PlatformI18n.t("core:revoke_87e6d00b") : (r.userId === me.id ? globalThis.PlatformI18n.t("core:leave_fc6e4a40") : globalThis.PlatformI18n.t("core:remove_c3812fc4"))}</button>`
         : '';
       return `<div class="flex items-center justify-between px-3 py-2 ${pending ? 'opacity-70' : ''}">
         <span class="text-sm text-zinc-700 dark:text-zinc-300 truncate">@${escapeHtml(r.username)}${tag}</span>
@@ -450,7 +450,7 @@ const MembersDialog = {
           }
           AppView.loadCollaborators();
         } catch (err) {
-          PlatformUI.toast(`Remove failed: ${err.message}`);
+          PlatformUI.toast(globalThis.PlatformI18n.t("core:remove_failed_value1_075872ff", { value1: err.message }));
           btn.disabled = false;
         }
       });
@@ -486,7 +486,7 @@ const MembersDialog = {
     const status = document.getElementById('members-invite-status');
     const input = document.getElementById('members-invite-input');
     AppView._hideInviteSuggestions();
-    if (status) { status.textContent = 'Inviting…'; status.className = 'text-sm mt-2'; }
+    if (status) { status.textContent = globalThis.PlatformI18n.t("core:inviting_a4c2059a"); status.className = 'text-sm mt-2'; }
     try {
       const res = await fetch(`/api/apps/${AppView.appData.slug}/invites`, {
         method: 'POST',
@@ -496,7 +496,7 @@ const MembersDialog = {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       if (status) {
-        status.textContent = `✓ Invited @${data.username || username}`;
+        status.textContent = globalThis.PlatformI18n.t("core:invited_value1_acbcd723", { value1: data.username || username });
         status.className = 'text-sm mt-2 import-status--ok';
       }
       if (input) input.value = '';
@@ -558,7 +558,7 @@ const MembersDialog = {
     if (proposeBtn) proposeBtn.classList.toggle('hidden', !showN);
     const govStatus = document.getElementById('members-governance-error');
     if (govStatus && showN) {
-      govStatus.textContent = 'Set the number of approvals, then tap Propose.';
+      govStatus.textContent = globalThis.PlatformI18n.t("core:set_the_number_of_approvals_then_tap_propose_1d9d847b");
       govStatus.className = 'text-sm text-zinc-500 dark:text-zinc-400';
     }
   },
@@ -591,14 +591,14 @@ const MembersDialog = {
       const roster = ((AppView._approversData && AppView._approversData.approvers) || [])
         .filter((r) => r.status === 'member');
       if (roster.length) {
-        statusLine.textContent = `Current approvers stay in place: ${roster.map((r) => `@${r.username}`).join(', ')}. Add more people to invite below (optional).`;
+        statusLine.textContent = globalThis.PlatformI18n.t("core:current_approvers_stay_in_place_value1_add_more__1cff8b86", { value1: roster.map((r) => `@${r.username}`).join(', ') });
       } else if (appData.self_hosted) {
-        statusLine.textContent = 'Platform admins can approve proposals until invited approvers are added. Pick some below.';
+        statusLine.textContent = globalThis.PlatformI18n.t("core:platform_admins_can_approve_proposals_until_invi_fb01420f");
       } else if (AppView._approversData && AppView._approversData.creatorId != null
                  && AppView._approversData.creatorId !== me.id) {
-        statusLine.textContent = 'The app\'s creator will automatically become the first approver. Add more people to invite below (optional).';
+        statusLine.textContent = globalThis.PlatformI18n.t("core:the_app_s_creator_will_automatically_become_the__74ee88db");
       } else {
-        statusLine.textContent = 'You\'ll automatically become this app\'s first approver. Add more people to invite below (optional).';
+        statusLine.textContent = globalThis.PlatformI18n.t("core:you_ll_automatically_become_this_app_s_first_app_1179708e");
       }
     }
     const input = document.getElementById('members-initial-approver-input');
@@ -607,7 +607,7 @@ const MembersDialog = {
     AppView._hideInitialApproverSuggestions();
     const govStatus = document.getElementById('members-governance-error');
     if (govStatus) {
-      govStatus.textContent = 'Review the initial approvers, then tap Propose.';
+      govStatus.textContent = globalThis.PlatformI18n.t("core:review_the_initial_approvers_then_tap_propose_659c89a3");
       govStatus.className = 'text-sm text-zinc-500 dark:text-zinc-400';
     }
   },
@@ -624,8 +624,8 @@ const MembersDialog = {
     if (!list) return;
     list.innerHTML = AppView._govDraftApprovers.map((u) =>
       `<div class="flex items-center justify-between px-3 py-1.5 rounded-lg bg-zinc-100 dark:bg-zinc-800">
-        <span class="text-sm text-zinc-700 dark:text-zinc-300 truncate">@${escapeHtml(u)}<span class="text-[0.65rem] text-amber-800 font-medium ml-1 dark:text-amber-300">will be invited</span></span>
-        <button type="button" data-remove-draft-approver="${escapeAttr(u)}" class="text-xs text-zinc-500 hover:text-red-500 px-2 py-1 dark:text-zinc-400">Remove</button>
+        <span class="text-sm text-zinc-700 dark:text-zinc-300 truncate">@${escapeHtml(u)}<span class="text-[0.65rem] text-amber-800 font-medium ml-1 dark:text-amber-300">${globalThis.PlatformI18n.htmlText("core:will_be_invited_81a5e160")}</span></span>
+        <button type="button" data-remove-draft-approver="${escapeAttr(u)}" class="text-xs text-zinc-500 hover:text-red-500 px-2 py-1 dark:text-zinc-400">${globalThis.PlatformI18n.htmlText("core:remove_c3812fc4")}</button>
       </div>`
     ).join('');
     list.querySelectorAll('[data-remove-draft-approver]').forEach((btn) => {
@@ -698,9 +698,9 @@ const MembersDialog = {
     // The initial-approvers step's Propose button IS the explicit
     // consent (skipConfirm) — every other path keeps the dialog.
     if (!skipConfirm && !await PlatformUI.confirm({
-      title: 'Open an approval-settings proposal?',
-      message: 'Changing the approval settings opens a proposal that is voted on under the current rules. The change applies after the vote passes and the app redeploys.',
-      confirmLabel: 'Open proposal',
+      get title() { return globalThis.PlatformI18n.t("core:open_an_approval_settings_proposal_800fa5b1"); },
+      get message() { return globalThis.PlatformI18n.t("core:changing_the_approval_settings_opens_a_proposal__a19db787"); },
+      get confirmLabel() { return globalThis.PlatformI18n.t("core:open_proposal_61cbb645"); },
     })) {
       // The pill click already painted the tapped mode (see
       // _showMembersGovModeDraft) — snap back to the app's real settings.
@@ -722,14 +722,14 @@ const MembersDialog = {
       const data = await res.json().catch(() => ({}));
       if (res.status === 409) {
         AppView._renderMembersGovPills();
-        setStatus('A change to who runs this app is already waiting for approval. See it in the Workshop.', false);
+        setStatus(globalThis.PlatformI18n.t("core:a_change_to_who_runs_this_app_is_already_waiting_9c1013d8"), false);
         return;
       }
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       AppView._hideInitialApproversDraft();
-      let msg = `Proposal opened (PR #${data.prNumber}). It needs the group's vote in the Dev tab's vote panel before the new settings apply.`;
+      let msg = globalThis.PlatformI18n.t("core:proposal_opened_pr_value1_it_needs_the_group_s_v_8d4cd3d2", { value1: data.prNumber });
       if (Array.isArray(data.inviteWarnings) && data.inviteWarnings.length) {
-        msg += ` Some approver invites could not be sent: ${data.inviteWarnings.join('; ')}.`;
+        msg += globalThis.PlatformI18n.t("core:some_approver_invites_could_not_be_sent_value1_ad2c4074", { value1: data.inviteWarnings.join('; ') });
       }
       setStatus(msg, false);
       // Freshly-sent approver invites should appear in the roster right
@@ -739,7 +739,7 @@ const MembersDialog = {
       // No proposal opened — the draft highlight would misreport the
       // app's settings, so repaint from the real ones.
       AppView._renderMembersGovPills();
-      setStatus(`Could not open the governance proposal: ${err.message}`, true);
+      setStatus(globalThis.PlatformI18n.t("core:could_not_open_the_governance_proposal_value1_3e898841", { value1: err.message }), true);
     }
   },
 
@@ -781,7 +781,7 @@ const MembersDialog = {
       AppView._renderAppAdmins(data);
     } catch (err) {
       section.classList.remove('hidden');
-      list.innerHTML = `<div class="px-3 py-2 text-sm text-red-400">Failed to load app admins: ${escapeHtml(err.message)}</div>`;
+      list.innerHTML = `<div class="px-3 py-2 text-sm text-red-400">${globalThis.PlatformI18n.htmlText("core:failed_to_load_app_admins_value0_31e9d681", { value0: err.message })}</div>`;
     }
   },
 
@@ -858,10 +858,10 @@ const MembersDialog = {
     const declaredLower = new Set(declared.map((u) => u.toLowerCase()));
     const rowCls = 'flex items-center justify-between gap-2 px-3 py-2 text-sm';
     const removeBtn = (u) => (canEdit
-      ? `<button type="button" data-remove-appadmin="${escapeAttr(u)}" class="text-xs text-zinc-500 hover:text-red-500 px-2 py-1 shrink-0 dark:text-zinc-400">Remove</button>`
+      ? `<button type="button" data-remove-appadmin="${escapeAttr(u)}" class="text-xs text-zinc-500 hover:text-red-500 px-2 py-1 shrink-0 dark:text-zinc-400">${globalThis.PlatformI18n.htmlText("core:remove_c3812fc4")}</button>`
       : '');
     const undoBtn = (u) =>
-      `<button type="button" data-restore-appadmin="${escapeAttr(u)}" class="text-xs text-zinc-500 hover:text-violet-500 px-2 py-1 shrink-0 dark:text-zinc-400">Undo</button>`;
+      `<button type="button" data-restore-appadmin="${escapeAttr(u)}" class="text-xs text-zinc-500 hover:text-violet-500 px-2 py-1 shrink-0 dark:text-zinc-400">${globalThis.PlatformI18n.htmlText("core:undo_a8283ade")}</button>`;
 
     const rows = [];
     for (const name of declared) {
@@ -871,8 +871,8 @@ const MembersDialog = {
       // hasn't signed up yet, and it starts working on the next deploy
       // once they do.
       const tag = resolvedLower.has(lower)
-        ? '<span class="text-[0.65rem] font-semibold uppercase tracking-wide text-violet-700 dark:text-violet-400">Admin</span>'
-        : '<span class="text-[0.65rem] text-zinc-500 dark:text-zinc-400" title="Declared in dapp.json but no account with this username exists yet">not a registered user</span>';
+        ? `<span class="text-[0.65rem] font-semibold uppercase tracking-wide text-violet-700 dark:text-violet-400">${globalThis.PlatformI18n.htmlText("core:admin_c1c224b0")}</span>`
+        : `<span class="text-[0.65rem] text-zinc-500 dark:text-zinc-400" title="${globalThis.PlatformI18n.htmlText("core:declared_in_dapp_json_but_no_account_with_this_u_5389eb2b")}">${globalThis.PlatformI18n.htmlText("core:not_a_registered_user_e965527f")}</span>`;
       if (draftLower.has(lower)) {
         rows.push(
           `<div class="${rowCls}${resolvedLower.has(lower) ? '' : ' opacity-60'}"><span class="truncate">@${escapeHtml(name)}</span>`
@@ -882,7 +882,7 @@ const MembersDialog = {
         // Staged removal: struck through, nothing has happened yet.
         rows.push(
           `<div class="${rowCls} opacity-60"><span class="truncate line-through">@${escapeHtml(name)}</span>`
-          + '<span class="flex items-center gap-1 shrink-0"><span class="text-[0.65rem] text-red-700 font-medium dark:text-red-400">will be removed</span>'
+          + `<span class="flex items-center gap-1 shrink-0"><span class="text-[0.65rem] text-red-700 font-medium dark:text-red-400">${globalThis.PlatformI18n.htmlText("core:will_be_removed_0ea5069c")}</span>`
           + `${canEdit ? undoBtn(name) : ''}</span></div>`
         );
       }
@@ -897,14 +897,14 @@ const MembersDialog = {
       const known = resolvedLower.has(lower)
         || (AppView._appAdminsKnown && AppView._appAdminsKnown.has(lower));
       const note = known ? ''
-        : '<span class="text-[0.65rem] text-zinc-500 dark:text-zinc-400" title="No account with this username yet. They\'ll become an admin once they sign up and the app next deploys">no account yet</span>';
+        : `<span class="text-[0.65rem] text-zinc-500 dark:text-zinc-400" title="${globalThis.PlatformI18n.htmlText("core:no_account_with_this_username_yet_they_ll_become_da811219")}">${globalThis.PlatformI18n.htmlText("core:no_account_yet_80e13391")}</span>`;
       rows.push(
         `<div class="${rowCls}"><span class="truncate">@${escapeHtml(name)}</span>`
-        + `<span class="flex items-center gap-1 shrink-0"><span class="text-[0.65rem] text-amber-800 font-medium dark:text-amber-300">will be added</span>${note}${removeBtn(name)}</span></div>`
+        + `<span class="flex items-center gap-1 shrink-0"><span class="text-[0.65rem] text-amber-800 font-medium dark:text-amber-300">${globalThis.PlatformI18n.htmlText("core:will_be_added_d203828d")}</span>${note}${removeBtn(name)}</span></div>`
       );
     }
     if (!rows.length) {
-      rows.push('<div class="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400">No app admins yet. App admins can manage this app\'s settings and force-merge its proposals.</div>');
+      rows.push(`<div class="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400">${globalThis.PlatformI18n.htmlText("core:no_app_admins_yet_app_admins_can_manage_this_app_f1f06da2")}</div>`);
     }
     list.innerHTML = rows.join('');
     list.querySelectorAll('[data-remove-appadmin]').forEach((btn) => {
@@ -932,17 +932,17 @@ const MembersDialog = {
     const note = document.getElementById('members-appadmins-note');
     if (note) {
       note.innerHTML = editable
-        ? 'Changes are proposed as a pull request editing <code>dapp.json</code>&rsquo;s <code>admins</code> list. It needs real Yes votes and won&rsquo;t merge on a timer.'
-        : 'Set in <code>dapp.json</code>. To change them, open a pull request that edits the <code>admins</code> list. That proposal needs real Yes votes and won&rsquo;t merge on a timer.';
+        ? `${globalThis.PlatformI18n.htmlText("core:changes_are_proposed_as_a_pull_request_editing_5fd16200")} <code>dapp.json</code>${globalThis.PlatformI18n.htmlText("core:rsquo_s_2374a6f0")} <code>admins</code> ${globalThis.PlatformI18n.htmlText("core:list_it_needs_real_yes_votes_and_won_rsquo_t_mer_38a536f0")}`
+        : `${globalThis.PlatformI18n.htmlText("core:set_in_9bcd943b")} <code>dapp.json</code>${globalThis.PlatformI18n.htmlText("core:to_change_them_open_a_pull_request_that_edits_th_ecfb37c1")} <code>admins</code> ${globalThis.PlatformI18n.htmlText("core:list_that_proposal_needs_real_yes_votes_and_won__48070cd6")}`;
     }
 
     // Default status: the open-proposal pointer or the no-repo hint.
     // Callers wanting a custom message (Propose result) overwrite after
     // rendering.
     if (editable && d.openProposal) {
-      AppView._setAppAdminsStatus('A change to the app\'s admins is already waiting for approval. See it in the Workshop.', false);
+      AppView._setAppAdminsStatus(globalThis.PlatformI18n.t("core:a_change_to_the_app_s_admins_is_already_waiting__4b63e2f2"), false);
     } else if (editable && noRepo) {
-      AppView._setAppAdminsStatus('Admin changes are proposed as a dapp.json pull request, and this app has no GitHub repository, so they\'re unavailable.', false);
+      AppView._setAppAdminsStatus(globalThis.PlatformI18n.t("core:admin_changes_are_proposed_as_a_dapp_json_pull_r_82b47d0c"), false);
     } else {
       AppView._setAppAdminsStatus('', false);
     }
@@ -958,7 +958,7 @@ const MembersDialog = {
       // Mirrors the server-side MAX_APP_ADMINS cap (app-manifest.js).
       if (draft.length >= 20) {
         AppView._renderAppAdmins();
-        AppView._setAppAdminsStatus('An app can declare at most 20 admins.', true);
+        AppView._setAppAdminsStatus(globalThis.PlatformI18n.t("core:an_app_can_declare_at_most_20_admins_c5d265f9"), true);
         return;
       }
       draft.push(name);
@@ -1019,12 +1019,12 @@ const MembersDialog = {
 
     const emptying = !draft.length && declared.length > 0;
     const message = emptying
-      ? 'This removes every app admin. Only the creator and platform admins will be able to manage the app. The change opens a proposal that needs real Yes votes and won\'t merge on a timer.'
+      ? globalThis.PlatformI18n.t("core:this_removes_every_app_admin_only_the_creator_an_619798cc")
       : 'Changing who administers this app opens a proposal. Because it grants app-level power, it will not merge on a timer: it needs real Yes votes to reach the app\'s normal threshold, and only a platform admin can force-merge it.';
     if (!await PlatformUI.confirm({
-      title: 'Open an app-admins proposal?',
+      get title() { return globalThis.PlatformI18n.t("core:open_an_app_admins_proposal_f30d5353"); },
       message,
-      confirmLabel: 'Open proposal',
+      get confirmLabel() { return globalThis.PlatformI18n.t("core:open_proposal_61cbb645"); },
     })) return;
 
     try {
@@ -1052,17 +1052,17 @@ const MembersDialog = {
       }
       AppView._appAdminsDraft = [...declared];
       AppView._renderAppAdmins();
-      AppView._setAppAdminsStatus(`Proposal opened (PR #${data.prNumber}). It needs the group's vote in the Dev tab before the new admins apply.`, false);
+      AppView._setAppAdminsStatus(globalThis.PlatformI18n.t("core:proposal_opened_pr_value1_it_needs_the_group_s_v_15ac08f0", { value1: data.prNumber }), false);
     } catch (err) {
       // No proposal opened — keep the draft so nothing typed is lost.
-      AppView._setAppAdminsStatus(`Could not open the admins proposal: ${err.message}`, true);
+      AppView._setAppAdminsStatus(globalThis.PlatformI18n.t("core:could_not_open_the_admins_proposal_value1_d959d0f2", { value1: err.message }), true);
     }
   },
 
   async loadApprovers() {
     const list = document.getElementById('members-approvers-list');
     if (!list || !AppView.appData) return;
-    list.innerHTML = '<div class="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400">Loading…</div>';
+    list.innerHTML = `<div class="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400">${globalThis.PlatformI18n.htmlText("core:loading_ba3bbbe1")}</div>`;
     try {
       const res = await fetch(`/api/apps/${AppView.appData.slug}/approvers`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1073,7 +1073,7 @@ const MembersDialog = {
       // Reveal the section so the failure isn't silently hidden.
       const section = document.getElementById('members-approvers-section');
       if (section) section.classList.remove('hidden');
-      list.innerHTML = `<div class="px-3 py-2 text-sm text-red-400">Failed to load approvers: ${escapeHtml(err.message)}</div>`;
+      list.innerHTML = `<div class="px-3 py-2 text-sm text-red-400">${globalThis.PlatformI18n.htmlText("core:failed_to_load_approvers_value0_2d8b3c05", { value0: err.message })}</div>`;
     }
   },
 
@@ -1096,20 +1096,20 @@ const MembersDialog = {
       // Only visible when the policy is 'invited' — honest about the
       // merge gate's empty-roster fallback (services/governance.js:
       // full admins act as the approver set).
-      list.innerHTML = '<div class="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400">No approvers yet. Platform admins can approve proposals until an approver is added.</div>';
+      list.innerHTML = `<div class="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400">${globalThis.PlatformI18n.htmlText("core:no_approvers_yet_platform_admins_can_approve_pro_be084f5e")}</div>`;
       return;
     }
     const canManage = !!AppView.appData?.can_manage;
     list.innerHTML = rows.map((r) => {
       const pending = r.status === 'invited';
       const tag = pending
-        ? '<span class="text-[0.65rem] text-amber-800 font-medium ml-1 dark:text-amber-300">invited</span>'
-        : '<span class="text-[0.65rem] text-violet-700 font-medium ml-1 dark:text-violet-400">approver</span>';
+        ? `<span class="text-[0.65rem] text-amber-800 font-medium ml-1 dark:text-amber-300">${globalThis.PlatformI18n.htmlText("core:invited_307128ff")}</span>`
+        : `<span class="text-[0.65rem] text-violet-700 font-medium ml-1 dark:text-violet-400">${globalThis.PlatformI18n.htmlText("core:approver_7a023df6")}</span>`;
       // Remove/revoke: creator/admin for anyone; approvers may remove
       // themselves (leave). Mirrors the server rules.
       const canRemove = canManage || r.userId === me.id;
       const removeBtn = canRemove
-        ? `<button data-remove-approver="${r.userId}" class="text-xs text-zinc-500 hover:text-red-500 px-2 py-1 dark:text-zinc-400" title="${pending ? 'Revoke invite' : (r.userId === me.id ? 'Stop being an approver' : 'Remove')}">${pending ? 'Revoke' : (r.userId === me.id ? 'Leave' : 'Remove')}</button>`
+        ? `<button data-remove-approver="${r.userId}" class="text-xs text-zinc-500 hover:text-red-500 px-2 py-1 dark:text-zinc-400" title="${pending ? globalThis.PlatformI18n.t("core:revoke_invite_3e19d958") : (r.userId === me.id ? globalThis.PlatformI18n.t("core:stop_being_an_approver_f7e82d28") : globalThis.PlatformI18n.t("core:remove_c3812fc4"))}">${pending ? globalThis.PlatformI18n.t("core:revoke_87e6d00b") : (r.userId === me.id ? globalThis.PlatformI18n.t("core:leave_fc6e4a40") : globalThis.PlatformI18n.t("core:remove_c3812fc4"))}</button>`
         : '';
       return `<div class="flex items-center justify-between px-3 py-2 ${pending ? 'opacity-70' : ''}">
         <span class="text-sm text-zinc-700 dark:text-zinc-300 truncate">@${escapeHtml(r.username)}${tag}</span>
@@ -1128,7 +1128,7 @@ const MembersDialog = {
           if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
           AppView.loadApprovers();
         } catch (err) {
-          PlatformUI.toast(`Remove failed: ${err.message}`);
+          PlatformUI.toast(globalThis.PlatformI18n.t("core:remove_failed_value1_075872ff", { value1: err.message }));
           btn.disabled = false;
         }
       });
@@ -1164,7 +1164,7 @@ const MembersDialog = {
     const status = document.getElementById('members-approver-status');
     const input = document.getElementById('members-approver-invite-input');
     AppView._hideApproverSuggestions();
-    if (status) { status.textContent = 'Inviting…'; status.className = 'text-sm mt-2'; }
+    if (status) { status.textContent = globalThis.PlatformI18n.t("core:inviting_a4c2059a"); status.className = 'text-sm mt-2'; }
     try {
       const res = await fetch(`/api/apps/${AppView.appData.slug}/approver-invites`, {
         method: 'POST',
@@ -1174,7 +1174,7 @@ const MembersDialog = {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       if (status) {
-        status.textContent = `✓ Invited @${data.username || username} as an approver`;
+        status.textContent = globalThis.PlatformI18n.t("core:invited_value1_as_an_approver_aa828f18", { value1: data.username || username });
         status.className = 'text-sm mt-2 import-status--ok';
       }
       if (input) input.value = '';

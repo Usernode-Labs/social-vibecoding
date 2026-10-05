@@ -1,3 +1,4 @@
+import { t as tr } from "../../lib/i18n/runtime";
 /**
  * The one sentence an empty app list says (#2564).
  *
@@ -15,4 +16,4 @@
  * "Discover" is capitalised because it names the section directly below the
  * launcher, which is where the sentence is pointing.
  */
-export const NO_APPS_YET = 'No apps added yet. Find apps to add in the Discover section.';
+export const NO_APPS_YET = () => tr("apps:no_apps_added_yet_find_apps_to_add_in_the_discov_fe1bc941");

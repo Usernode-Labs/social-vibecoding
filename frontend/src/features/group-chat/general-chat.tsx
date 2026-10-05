@@ -1,3 +1,7 @@
+import { RichMessage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * The general chat pane — the message stream, the status line, the composer
  * and the spec side-panel's slot — as the only React writer below
@@ -70,11 +74,7 @@ export function GeneralChat({ introAppName, readOnly, notice, maxLength }: Gener
               be clutter.
           */}
           {introAppName ? (
-            <div className="mx-3 mt-3 px-4 py-3 rounded-2xl bg-violet-500/10 text-[15px] leading-snug text-zinc-700 dark:text-zinc-200">
-              {'This is where everyone using '}
-              <span className="font-medium">{introAppName}</span>
-              {' talks and votes on proposed changes to it.'}
-            </div>
+            <div className="mx-3 mt-3 px-4 py-3 rounded-2xl bg-violet-500/10 text-[15px] leading-snug text-zinc-700 dark:text-zinc-200"><RichMessage id="workshop:sentence_223c6d41842d" values={{ value1: introAppName }} components={[<span className="font-medium" />]} /></div>
           ) : null}
           <div id="gc-messages" className="flex-1 overflow-y-auto py-2 space-y-0.5" />
           <StatusLine
@@ -91,7 +91,7 @@ export function GeneralChat({ introAppName, readOnly, notice, maxLength }: Gener
           <div className={`shrink-0 px-3 pt-1 pb-2 ${SAFE_BAR}`}>
             {readOnly ? (
               <div className="px-3 py-2 text-xs text-zinc-500 dark:text-zinc-400 text-center" data-gc-readonly-notice="">
-                {notice || 'You\u2019re viewing this app\u2019s dev space read-only. Only collaborators can post.'}
+                <LocalizedValue render={() => (notice || tr("workshop:you_re_viewing_this_app_s_dev_space_read_only_on_03a69a60"))} />
               </div>
             ) : (
               <>
@@ -100,23 +100,21 @@ export function GeneralChat({ introAppName, readOnly, notice, maxLength }: Gener
                     fills the box below; it does not send. */}
                 <ReplyStarters />
                 <ComposerSlots scope="general" />
-                <ComposerForm
+                <Localized element={<ComposerForm
                   scope="general"
-                  fill
-                  placeholder="Type a message..."
+                  fill placeholder={catalogText("workshop:type_a_message_69518e68")}
                   maxLength={maxLength}
-                />
+                />} messages={{"placeholder":"workshop:type_a_message_69518e68"}} />
               </>
             )}
           </div>
         </div>
-        <div
+        <Localized element={<div
           id="gc-spec-resizer"
           className="gc-spec-resizer"
           role="separator"
-          aria-orientation="vertical"
-          aria-label="Resize spec panel"
-        />
+          aria-orientation="vertical" aria-label={catalogText("workshop:resize_spec_panel_55a5d1c7")}
+        />} messages={{"aria-label":"workshop:resize_spec_panel_55a5d1c7"}} />
         <div id="gc-spec-side-panel" className="gc-spec-side-panel" />
       </div>
     </div>

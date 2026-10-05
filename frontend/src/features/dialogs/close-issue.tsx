@@ -1,3 +1,7 @@
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { RichMessage } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * Close-issue dialog (#close-issue-modal).
  *
@@ -37,6 +41,7 @@ import { useHiddenClass } from '../../lib/legacy-dom';
 import { useDialog } from './use-dialog';
 
 export function CloseIssueDialog() {
+  useUiLanguage();
   const reasonRef = useRef<HTMLTextAreaElement>(null);
   const errorRef = useRef<HTMLDivElement>(null);
   const targetRef = useRef<number | string | null>(null);
@@ -88,11 +93,11 @@ export function CloseIssueDialog() {
       });
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
-        setError(data.error || `Proposal failed (HTTP ${resp.status}).`);
+        setError(data.error || tr("core:proposal_failed_http_value1_50fc0d24", { value1: resp.status }));
         return;
       }
     } catch (fetchErr) {
-      setError(`Proposal failed: ${(fetchErr as Error).message}`);
+      setError(tr("core:proposal_failed_value1_e5010b8d", { value1: (fetchErr as Error).message }));
       return;
     } finally {
       setBusy(false);
@@ -122,42 +127,30 @@ export function CloseIssueDialog() {
       {...dialog.backdropProps}
     >
       <DialogCard size="sm">
-        <h2 className="text-lg font-bold mb-1">
-          Propose closing issue
-          <span id="close-issue-number" className="font-mono">
+        <h2 className="text-lg font-bold mb-1"><Message id="core:propose_closing_issue_1ec69dee" /><span id="close-issue-number" className="font-mono">
             {`#${issueNumber}`}
           </span>
           ?
         </h2>
-        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
-          This opens a group vote. If it passes, the issue is closed here and on GitHub.
-        </p>
+        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-4"><Message id="core:this_opens_a_group_vote_if_it_passes_the_issue_i_4b009e37" /></p>
         <form id="close-issue-form" className="space-y-4" onSubmit={submit}>
           <div>
             <label
               htmlFor="close-issue-reason"
               className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1"
-            >
-              Why should this issue be closed?
-              <span className="font-normal">
-                (optional)
-              </span>
-            </label>
-            <Textarea
+            ><RichMessage id="core:sentence_7502139d873c" components={[<span className="font-normal" />]} /></label>
+            <Localized element={<Textarea
               id="close-issue-reason"
               ref={reasonRef}
               rows={3}
               maxLength={2000}
               box="dialog"
               hint="muted"
-              ring="seamless"
-              placeholder="e.g. obsolete, duplicate, already fixed…"
+              ring="seamless" placeholder={catalogText("core:e_g_obsolete_duplicate_already_fixed_1895a8df")}
               onKeyDown={onReasonKeyDown}
             >
-            </Textarea>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-              Posted publicly on the GitHub issue when the vote passes.
-            </p>
+            </Textarea>} messages={{"placeholder":"core:e_g_obsolete_duplicate_already_fixed_1895a8df"}} />
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1"><Message id="core:posted_publicly_on_the_github_issue_when_the_vot_3feed84a" /></p>
           </div>
           <div id="close-issue-error" ref={errorRef} className="text-red-700 dark:text-red-400 text-sm hidden">
             {error}
@@ -168,17 +161,13 @@ export function CloseIssueDialog() {
               id="close-issue-cancel"
               className="flex-1 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
               onClick={() => dialog.close()}
-            >
-              Cancel
-            </button>
+            ><Message id="core:cancel_19766ed6" /></button>
             <Button
               type="submit"
               id="close-issue-submit"
               layout="flex"
               disabled={busy}
-            >
-              Propose close
-            </Button>
+            ><Message id="core:propose_close_92973843" /></Button>
           </div>
         </form>
       </DialogCard>

@@ -1,3 +1,9 @@
+import { getLanguage } from "../../lib/i18n/runtime";
+import { useMessages as useUiLanguage } from "../../lib/i18n/react";
+import { RichMessage } from "../../lib/i18n/react";
+import { LocalizedValue, LocalizedDynamic } from "../../lib/i18n/react";
+import { t as tr } from "../../lib/i18n/runtime";
+import { Message, Localized, message as catalogText } from "../../lib/i18n/react";
 /**
  * `#auth-waitlist-screen` — the stage-1 waitlist survey (#1080, step 2 chunk C,
  * screen 5 of 6).
@@ -186,7 +192,7 @@ function formatJoinedOn(iso: string | null | undefined): string {
   const at = new Date(iso);
   if (Number.isNaN(at.getTime())) return '';
   try {
-    return at.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
+    return at.toLocaleDateString(getLanguage(), { day: 'numeric', month: 'long', year: 'numeric' });
   } catch {
     return '';
   }
@@ -204,9 +210,10 @@ function formatJoinedOn(iso: string | null | undefined): string {
  * One string for both sites, because two copies is how the two stop
  * agreeing with each other and with the rule.
  */
-const CODE_CAP_NOTE = 'You can ask for up to 10 codes a day.';
+const CODE_CAP_NOTE = () => tr("auth:you_can_ask_for_up_to_10_codes_a_day_97f154cb");
 
 export function WaitlistScreen() {
+  useUiLanguage();
   const rootRef = useRef<HTMLElement>(null);
   useVisibilityHiddenClass(rootRef, AUTH_SCREEN_IDS.waitlist, false);
   // The screen's interior mounts on its first reveal, not in the prerender —
@@ -515,7 +522,7 @@ export function WaitlistScreen() {
       // branch being reachable at all.
       setSentTo('');
       setRequestNote({
-        text: 'We can\u2019t find that address on the waitlist. Check the spelling, or join with it.',
+        get text() { return tr("auth:we_can_t_find_that_address_on_the_waitlist_check_5bbf39ef"); },
         tone: 'error',
       });
       setNotFound(true);
@@ -556,7 +563,7 @@ export function WaitlistScreen() {
     // Mirror into the tab title so the Flutter WebView's AppBar follows the
     // screen, same as the landing header does for the landing page.
     try {
-      document.title = 'Join the waitlist';
+      document.title = tr("auth:join_the_waitlist_6a16124b");
     } catch {
       /* ignore */
     }
@@ -601,7 +608,7 @@ export function WaitlistScreen() {
       // Client preflight mirroring the server's stage-1 rules. Only the
       // address is required now, so this is the only miss worth catching
       // without a round trip.
-      if (!emailVal) return setMsg({ text: 'Please enter your email.', tone: 'error' });
+      if (!emailVal) return setMsg({ get text() { return tr("auth:please_enter_your_email_2401f704"); }, tone: 'error' });
 
       setSubmitting(true);
       try {
@@ -670,12 +677,12 @@ export function WaitlistScreen() {
           }
         } else {
           setMsg({
-            text: (data && data.error) || 'Something went wrong. Try again.',
+            text: (data && data.error) || tr("auth:something_went_wrong_try_again_4def98c8"),
             tone: 'error',
           });
         }
       } catch {
-        setMsg({ text: 'Connection issue. Try again.', tone: 'error' });
+        setMsg({ get text() { return tr("auth:connection_issue_try_again_842c1cfa"); }, tone: 'error' });
       }
       setSubmitting(false);
     },
@@ -739,7 +746,7 @@ export function WaitlistScreen() {
     if (resending || cooldownLeft > 0) return;
     const emailVal = confirmAddress();
     if (!emailVal) {
-      return setResendNote({ text: 'Enter your email address first.', tone: 'error' });
+      return setResendNote({ get text() { return tr("auth:enter_your_email_address_first_e30416d7"); }, tone: 'error' });
     }
     setResending(true);
     setResendNote(null);
@@ -753,7 +760,7 @@ export function WaitlistScreen() {
       if (res.ok) {
         setResendNote({
           text: (data && data.message)
-            || 'If that address is on our waitlist, a six-digit code is on its way.',
+            || tr("auth:if_that_address_is_on_our_waitlist_a_six_digit_c_73a8ce95"),
           tone: 'ok',
         });
         // Name the address the confirm copy is about, now that we have one.
@@ -761,12 +768,12 @@ export function WaitlistScreen() {
         startCooldown();
       } else {
         setResendNote({
-          text: (data && data.error) || 'Something went wrong. Try again.',
+          text: (data && data.error) || tr("auth:something_went_wrong_try_again_4def98c8"),
           tone: 'error',
         });
       }
     } catch {
-      setResendNote({ text: 'Connection issue. Try again.', tone: 'error' });
+      setResendNote({ get text() { return tr("auth:connection_issue_try_again_842c1cfa"); }, tone: 'error' });
     }
     setResending(false);
   }, [confirmAddress, cooldownLeft, resending, startCooldown]);
@@ -798,7 +805,7 @@ export function WaitlistScreen() {
     if (resending || cooldownLeft > 0) return;
     const emailVal = confirmAddress();
     if (!emailVal) {
-      return setRequestNote({ text: 'Enter your email address first.', tone: 'error' });
+      return setRequestNote({ get text() { return tr("auth:enter_your_email_address_first_e30416d7"); }, tone: 'error' });
     }
     setRequestNote(null);
     setNotFound(false);
@@ -824,7 +831,7 @@ export function WaitlistScreen() {
 
     if (known && !known.onList) {
       setRequestNote({
-        text: 'We can\u2019t find that address on the waitlist. Check the spelling, or join with it.',
+        get text() { return tr("auth:we_can_t_find_that_address_on_the_waitlist_check_5bbf39ef"); },
         tone: 'error',
       });
       setNotFound(true);
@@ -860,7 +867,7 @@ export function WaitlistScreen() {
       if (res.ok) {
         setResendNote({
           text: (data && data.message)
-            || 'If that address is on our waitlist, a six-digit code is on its way.',
+            || tr("auth:if_that_address_is_on_our_waitlist_a_six_digit_c_73a8ce95"),
           tone: 'ok',
         });
         // Name the address the next step's copy is about, now that we have one.
@@ -871,11 +878,11 @@ export function WaitlistScreen() {
         return;
       }
       setRequestNote({
-        text: (data && data.error) || 'Something went wrong. Try again.',
+        text: (data && data.error) || tr("auth:something_went_wrong_try_again_4def98c8"),
         tone: 'error',
       });
     } catch {
-      setRequestNote({ text: 'Connection issue. Try again.', tone: 'error' });
+      setRequestNote({ get text() { return tr("auth:connection_issue_try_again_842c1cfa"); }, tone: 'error' });
     }
     setResending(false);
   }, [confirmAddress, cooldownLeft, goToCodeStep, resending, startCooldown]);
@@ -893,7 +900,7 @@ export function WaitlistScreen() {
   const onHaveCode = useCallback(() => {
     const emailVal = confirmAddress();
     if (!emailVal) {
-      return setRequestNote({ text: 'Enter your email address first.', tone: 'error' });
+      return setRequestNote({ get text() { return tr("auth:enter_your_email_address_first_e30416d7"); }, tone: 'error' });
     }
     setRequestNote(null);
     setNotFound(false);
@@ -969,10 +976,10 @@ export function WaitlistScreen() {
     // deliberately says nothing.
     if (codeOnly && !confirmAddress()) {
       backToAddress();
-      return setMsg({ text: 'Enter the email address you joined with first.', tone: 'error' });
+      return setMsg({ get text() { return tr("auth:enter_the_email_address_you_joined_with_first_c8ba572a"); }, tone: 'error' });
     }
     if (!/^[0-9]{6}$/.test(codeVal)) {
-      return setMsg({ text: 'Enter the six-digit code from your email.', tone: 'error' });
+      return setMsg({ get text() { return tr("auth:enter_the_six_digit_code_from_your_email_039484a5"); }, tone: 'error' });
     }
     busy.current = true;
     setSubmitting(true);
@@ -1001,10 +1008,10 @@ export function WaitlistScreen() {
         // offer worth making to somebody already off it.
         setOffer(!next?.admitted);
       } else {
-        setMsg({ text: (data && data.error) || 'That code did not work.', tone: 'error' });
+        setMsg({ text: (data && data.error) || tr("auth:that_code_did_not_work_672d58c6"), tone: 'error' });
       }
     } catch {
-      setMsg({ text: 'Connection issue. Try again.', tone: 'error' });
+      setMsg({ get text() { return tr("auth:connection_issue_try_again_842c1cfa"); }, tone: 'error' });
     }
     busy.current = false;
     setSubmitting(false);
@@ -1075,24 +1082,22 @@ export function WaitlistScreen() {
             'text-xs font-semibold uppercase tracking-widest text-violet-700 dark:text-violet-400',
           )}
         >
-          {confirmed
-            ? (codeOnly ? 'Your status' : 'All done')
+          <LocalizedValue render={() => (confirmed
+            ? (codeOnly ? tr("auth:your_status_7a7f2d0a") : tr("auth:all_done_e9eeba4c"))
             : joined
               ? codeOnly
                 ? flowStep === 'code'
-                  ? 'Step 2 of 2 · Enter your code'
-                  : 'Step 1 of 2 · Your email address'
-                : 'Step 1 complete · Joined the waitlist'
-              : 'Step 1 of 2 · Your email'}
+                  ? tr("auth:step_2_of_2_enter_your_code_cc1f8faf")
+                  : tr("auth:step_1_of_2_your_email_address_80021f69")
+                : tr("auth:step_1_complete_joined_the_waitlist_61e5347e")
+              : tr("auth:step_1_of_2_your_email_fb1a1e9d"))} />
         </p>
         {/*
             The pitch. It answers "why would I join", so it belongs to step 1
             only — after the join it is four blocks of answered question sitting
             on top of the one instruction that still matters.
         */}
-        <h1 className={hiddenLast(joined, 'mt-1 text-2xl font-bold')}>
-          Join the waitlist
-        </h1>
+        <h1 className={hiddenLast(joined, 'mt-1 text-2xl font-bold')}><Message id="auth:join_the_waitlist_6a16124b" /></h1>
         {/*
             #1541: the same four facts, as a lead and a list.
 
@@ -1103,30 +1108,18 @@ export function WaitlistScreen() {
             are four separate claims, and a reader scanning for "what is this
             and what does joining cost me" was having to take them as prose.
         */}
-        <p className={hiddenLast(joined, 'mt-3 text-sm text-zinc-500 dark:text-zinc-400')}>
-          Describe the app you want in chat, an AI builds it, and the group
-        votes the changes in.
-        </p>
+        <p className={hiddenLast(joined, 'mt-3 text-sm text-zinc-500 dark:text-zinc-400')}><Message id="auth:describe_the_app_you_want_in_chat_an_ai_builds_i_a1a28305" /></p>
         <ul
           className={hiddenLast(
             joined,
             'mt-3 space-y-1.5 text-sm text-zinc-500 dark:text-zinc-400 list-disc pl-5',
           )}
         >
-          <li>
-            Every app in the directory was built here, by the people who use it.
-          </li>
-          <li>
-            They run on the Homeroom chain, and contributors own a share of what
-          they build.
-          </li>
-          <li>
-            Access opens in batches. The public apps are open to everyone now.
-          </li>
+          <li><Message id="auth:every_app_in_the_directory_was_built_here_by_the_575b2040" /></li>
+          <li><Message id="auth:they_run_on_the_homeroom_chain_and_contributors__84f4afd8" /></li>
+          <li><Message id="auth:access_opens_in_batches_the_public_apps_are_open_ae0be859" /></li>
         </ul>
-        <p className={hiddenLast(joined, 'mt-3 text-sm font-medium text-zinc-700 dark:text-zinc-200')}>
-          Just your email to join.
-        </p>
+        <p className={hiddenLast(joined, 'mt-3 text-sm font-medium text-zinc-700 dark:text-zinc-200')}><Message id="auth:just_your_email_to_join_724854c7" /></p>
         {/*
             Stage-1 waitlist survey (two-stage waitlist, ported from the
             original topochain waitlist): email, something you've made,
@@ -1143,15 +1136,11 @@ export function WaitlistScreen() {
             <label htmlFor="waitlist-email" className={SURVEY_LABEL}>
               {/* #1877: the marker sits a hair off the word rather than
                   touching it, and is hidden from screen readers — the input's
-                  own `required` is what announces the field as required. */}
-              Your email address
-              <span className="ml-0.5 text-red-700 dark:text-red-400" aria-hidden="true">
+                  own `required` is what announces the field as required. */}<Message id="auth:your_email_address_3fa7c5ef" /><span className="ml-0.5 text-red-700 dark:text-red-400" aria-hidden="true">
                 *
               </span>
             </label>
-            <p className={SURVEY_HINT}>
-              We only email you when your spot comes up. No newsletter.
-            </p>
+            <p className={SURVEY_HINT}><Message id="auth:we_only_email_you_when_your_spot_comes_up_no_new_801d0e84" /></p>
             {/*
                 Every field on this screen and on `#more` spreads SURVEY_FIELD
                 — the `authWhite` box, the dialogs' placeholder colour and the
@@ -1159,30 +1148,22 @@ export function WaitlistScreen() {
                 (#2437). The note on that constant says why these screens take
                 that box and not sign-in's box-less `card` one.
             */}
-            <Input
+            <Localized element={<Input
               ref={email}
               id="waitlist-email"
               type="email"
               required={true}
-              maxLength={255}
-              placeholder="you@example.com"
+              maxLength={255} placeholder={catalogText("auth:you_example_com_53e6cdc3")}
               autoComplete="email"
               {...SURVEY_FIELD}
-            />
+            />} messages={{"placeholder":"auth:you_example_com_53e6cdc3"}} />
           </div>
           <div>
             {/* #1877: JSX drops the line break between a label's text and the
                 span after it, so without its own margin "Optional" rendered
                 glued to the word ("CountryOptional"). */}
-            <label className={SURVEY_LABEL} htmlFor="waitlist-country">
-              Country
-              <span className="ml-1.5 text-xs text-zinc-500 font-normal dark:text-zinc-400">
-                Optional
-              </span>
-            </label>
-            <p className={SURVEY_HINT}>
-              We&rsquo;re building early groups across different regions.
-            </p>
+            <label className={SURVEY_LABEL} htmlFor="waitlist-country"><RichMessage id="auth:sentence_574686d97451" components={[<span className="ml-1.5 text-xs text-zinc-500 font-normal dark:text-zinc-400" />]} /></label>
+            <p className={SURVEY_HINT}><Message id="auth:we_re_building_early_groups_across_different_reg_dbd2e3df" /></p>
             {/*
                 #1529: the focused state COLOURS the border rather than making
                 it transparent.
@@ -1202,9 +1183,7 @@ export function WaitlistScreen() {
               id="waitlist-country"
               {...SURVEY_SELECT}
             >
-              <option value="">
-                Select a country&hellip;
-              </option>
+              <option value=""><Message id="auth:select_a_country_cf315a0a" /></option>
               {/* One flat alphabetical list of all 249 ISO 3166-1 countries
                   and territories. It was six <optgroup> region buckets until
                   #1527: they left ~200 places unselectable and hid the ones
@@ -1215,15 +1194,8 @@ export function WaitlistScreen() {
             </Select>
           </div>
           <div>
-            <label className={SURVEY_LABEL}>
-              How did you find us?
-              <span className="ml-1.5 text-xs text-zinc-500 font-normal dark:text-zinc-400">
-                Optional
-              </span>
-            </label>
-            <p className={SURVEY_HINT}>
-              Pick the closest one.
-            </p>
+            <label className={SURVEY_LABEL}><RichMessage id="auth:sentence_58830a3f1ac5" components={[<span className="ml-1.5 text-xs text-zinc-500 font-normal dark:text-zinc-400" />]} /></label>
+            <p className={SURVEY_HINT}><Message id="auth:pick_the_closest_one_fceaab95" /></p>
             <ChipRow
               id="waitlist-discovery-chips"
               options={options?.discovery_sources || {}}
@@ -1237,9 +1209,7 @@ export function WaitlistScreen() {
             disabled={submitting}
             disabledStyle="dim"
             size="lg"
-          >
-            Join the waitlist
-          </Button>
+          ><Message id="auth:join_the_waitlist_6a16124b" /></Button>
         </form>
         <p id="waitlist-msg" className={msgClass(msg ? msg.tone : null)}>
           {msg ? msg.text : null}
@@ -1257,15 +1227,13 @@ export function WaitlistScreen() {
             errand people arrive with rather than the mechanism.
         */}
         <p className={hiddenLast(hasSession || joined, 'mt-4 text-sm text-zinc-500 dark:text-zinc-400')}>
-          {'Already joined? '}
+          <Message id="auth:already_joined_5e432059" />
           <button
             id="waitlist-enter-code"
             type="button"
             onClick={onEnterCode}
             className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
-          >
-            Check your status
-          </button>
+          ><Message id="auth:check_your_status_80769ea9" /></button>
         </p>
         {/*
             Acknowledge the saved signup first, then present confirmation.
@@ -1279,11 +1247,11 @@ export function WaitlistScreen() {
                 track. Case 3 needs no branch here — it sets `confirmed`,
                 which hides this line and the whole code block with it.
             */}
-            {codeOnly
-              ? 'Check your status'
+            <LocalizedValue render={() => (codeOnly
+              ? tr("auth:check_your_status_80769ea9")
               : rejoined
-                ? 'You\u2019re already on the waitlist'
-                : "You're on the waitlist!"}
+                ? tr("auth:you_re_already_on_the_waitlist_48a9dbcf")
+                : tr("auth:you_re_on_the_waitlist_68beb36b"))} />
           </h2>
           <p className={hiddenLast(confirmed, 'mt-1 text-sm text-zinc-500 dark:text-zinc-400')}>
             {/*
@@ -1294,13 +1262,13 @@ export function WaitlistScreen() {
                 having been sent: "I already have a code" arrives here with no
                 send behind it.
             */}
-            {codeOnly
+            <LocalizedValue render={() => (codeOnly
               ? flowStep === 'code'
-                ? 'This shows where you stand, and confirms your address if it still needs it.'
-                : 'Enter the address you joined with and we\u2019ll email you a code. It shows where you stand, and confirms your address if it still needs it.'
+                ? tr("auth:this_shows_where_you_stand_and_confirms_your_add_7b6fa909")
+                : tr("auth:enter_the_address_you_joined_with_and_we_ll_emai_e11e42fb")
               : rejoined
-                ? 'Your spot was already saved, so nothing is lost. This address still needs confirming, so use the code below and we\u2019ll email you when your spot opens.'
-                : 'Your signup is saved. Next, confirm your email so we can let you know when your spot opens.'}
+                ? tr("auth:your_spot_was_already_saved_so_nothing_is_lost_t_420bc8d0")
+                : tr("auth:your_signup_is_saved_next_confirm_your_email_so__5243f63a"))} />
           </p>
           {/*
               Confirming by code, for the phone: leaving for the mail app and
@@ -1327,12 +1295,8 @@ export function WaitlistScreen() {
               <label
                 htmlFor="waitlist-confirm-email"
                 className={SURVEY_LABEL}
-              >
-                Your email address
-              </label>
-              <p className={SURVEY_HINT}>
-                Enter the address you joined with. We will email you a six-digit code.
-              </p>
+              ><Message id="auth:your_email_address_3fa7c5ef" /></label>
+              <p className={SURVEY_HINT}><Message id="auth:enter_the_address_you_joined_with_we_will_email__2d560a69" /></p>
               {/*
                   Which address, when this step was reached without a join.
                   Always in the markup and hidden until it is needed: the id is
@@ -1341,12 +1305,11 @@ export function WaitlistScreen() {
                   form's own field still holds the address, so asking again
                   would be asking somebody to retype what they just typed.
               */}
-              <Input
+              <Localized element={<Input
                 ref={confirmEmail}
                 id="waitlist-confirm-email"
                 type="email"
-                maxLength={255}
-                placeholder="you@example.com"
+                maxLength={255} placeholder={catalogText("auth:you_example_com_53e6cdc3")}
                 autoComplete="email"
                 {...SURVEY_FIELD}
                 // `hidden` and the bottom margin are this call site's own, so
@@ -1354,7 +1317,7 @@ export function WaitlistScreen() {
                 // is no `spacing` value for `mb-2`: that group leads the
                 // string, and this one is written after `w-full`.
                 className={hiddenFirst(!codeOnly, 'mb-2')}
-              />
+              />} messages={{"placeholder":"auth:you_example_com_53e6cdc3"}} />
               <Button
                 id="waitlist-request-code"
                 type="button"
@@ -1363,14 +1326,14 @@ export function WaitlistScreen() {
                 size="lg"
                 onClick={onRequestCode}
               >
-                {cooldownLeft > 0
-                  ? `Email me a code (${cooldownLeft}s)`
+                <LocalizedValue render={() => (cooldownLeft > 0
+                  ? tr("auth:email_me_a_code_value1_s_a476dfe6", { value1: cooldownLeft })
                   : resending
-                    ? 'Sending\u2026'
-                    : 'Email me a code'}
+                    ? tr("auth:sending_b8ed5279")
+                    : tr("auth:email_me_a_code_88d42039"))} />
               </Button>
               <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
-                {CODE_CAP_NOTE}
+                {CODE_CAP_NOTE()}
               </p>
               {/*
                   For the reader who arrived from the status mail, which
@@ -1384,9 +1347,7 @@ export function WaitlistScreen() {
                   type="button"
                   onClick={onHaveCode}
                   className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
-                >
-                  I already have a code
-                </button>
+                ><Message id="auth:i_already_have_a_code_a3fccd3d" /></button>
               </p>
               {/*
                   This step's own answer. A request that failed says why here
@@ -1428,9 +1389,7 @@ export function WaitlistScreen() {
                 ink="neutral"
                 className={hiddenLast(!notFound, 'mt-3')}
                 onClick={onJoinInstead}
-              >
-                Join the waitlist
-              </Button>
+              ><Message id="auth:join_the_waitlist_6a16124b" /></Button>
             </div>
             {/*
                 Step 2 (#1876): the six digits. Visible by default, because
@@ -1453,14 +1412,14 @@ export function WaitlistScreen() {
                   onClick={backToAddress}
                   className="text-sm font-medium text-violet-700 dark:text-violet-400 hover:underline"
                 >
-                  {'\u2190 Back to your email address'}
+                  <Message id="auth:back_to_your_email_address_ec93ef96" />
                 </button>
               </p>
               <label
                 htmlFor="waitlist-code"
                 className={SURVEY_LABEL}
               >
-                {codeOnly ? 'Your six-digit code' : 'Step 2 of 2 · Confirm your email'}
+                <LocalizedValue render={() => (codeOnly ? tr("auth:your_six_digit_code_f6fbce89") : tr("auth:step_2_of_2_confirm_your_email_3d47bc37"))} />
               </label>
               <p className={SURVEY_HINT}>
                 {/*
@@ -1473,11 +1432,11 @@ export function WaitlistScreen() {
                     and "the newest email" is the one instruction that
                     matters once more than one code has been asked for.
                 */}
-                {codeOnly && !sentTo
-                  ? 'Enter the six-digit code from your email. Codes work for 15 minutes, so if yours has expired, ask for a new one below.'
+                <LocalizedValue render={() => (codeOnly && !sentTo
+                  ? tr("auth:enter_the_six_digit_code_from_your_email_codes_w_5612dbfc")
                   : sentTo
-                    ? `Check ${sentTo} for a six-digit code, and use the newest email. You can also just click the link in it. Codes work for 15 minutes.`
-                    : 'Check your email for a six-digit code, and use the newest one. You can also just click the link in it. Codes work for 15 minutes.'}
+                    ? tr("auth:check_value1_for_a_six_digit_code_and_use_the_ne_6b8f272d", { value1: sentTo })
+                    : tr("auth:check_your_email_for_a_six_digit_code_and_use_th_88b3c000"))} />
               </p>
               <div className="flex gap-2">
                 <Input
@@ -1502,9 +1461,7 @@ export function WaitlistScreen() {
                   layout="shrink"
                   size="narrow"
                   onClick={onConfirmCode}
-                >
-                  Confirm
-                </Button>
+                ><Message id="auth:confirm_eebdd24a" /></Button>
               </div>
               {/*
                   A new code, for the expired one. The gap is a courtesy that
@@ -1513,7 +1470,7 @@ export function WaitlistScreen() {
                   countdown cannot be read off the page as a membership test.
               */}
               <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
-                {"Didn't get it, or has it expired? "}
+                <Message id="auth:didn_t_get_it_or_has_it_expired_2b2dcce0" />
                 <button
                   id="waitlist-resend"
                   type="button"
@@ -1521,13 +1478,13 @@ export function WaitlistScreen() {
                   onClick={onResend}
                   className="font-medium text-violet-700 dark:text-violet-400 hover:underline disabled:opacity-50 disabled:no-underline disabled:cursor-default"
                 >
-                  {cooldownLeft > 0
-                    ? `Send a new code (${cooldownLeft}s)`
+                  <LocalizedValue render={() => (cooldownLeft > 0
+                    ? tr("auth:send_a_new_code_value1_s_537dffb7", { value1: cooldownLeft })
                     : resending
-                      ? 'Sending\u2026'
-                      : 'Send a new code'}
+                      ? tr("auth:sending_b8ed5279")
+                      : tr("auth:send_a_new_code_9200fc2f"))} />
                 </button>
-                {` ${CODE_CAP_NOTE}`}
+                {` ${CODE_CAP_NOTE()}`}
               </p>
               {/*
                   The resend's own answer. Separate from #waitlist-msg so a
@@ -1577,14 +1534,14 @@ export function WaitlistScreen() {
                 'text-sm font-medium text-emerald-700 dark:text-emerald-400',
               )}
             >
-              {admitted ? "You\u2019re in \ud83c\udf89" : 'You\u2019re on the list \ud83c\udf89'}
+              <LocalizedValue render={() => (admitted ? tr("auth:you_re_in_5e9ff41a") : tr("auth:you_re_on_the_list_18744554"))} />
             </p>
             <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
-              {admitted
+              <LocalizedValue render={() => (admitted
                 ? (status?.has_account
-                  ? 'Your account already has access. Sign in any time.'
-                  : 'Access is open for you. Create your account with this address and you\u2019re straight in.')
-                : 'We\u2019re opening access in small groups. We\u2019ll email you when yours comes up.'}
+                  ? tr("auth:your_account_already_has_access_sign_in_any_time_ec067886")
+                  : tr("auth:access_is_open_for_you_create_your_account_with__3d332faa"))
+                : tr("auth:we_re_opening_access_in_small_groups_we_ll_email_66811d81"))} />
             </p>
             {/*
                 The same three-state vocabulary the stage-2 screen shows, from
@@ -1614,7 +1571,7 @@ export function WaitlistScreen() {
                 'mt-2 text-sm text-zinc-500 dark:text-zinc-400',
               )}
             >
-              {joinedOn ? 'On the list since ' + joinedOn : null}
+              {joinedOn ? tr("auth:on_the_list_since_3949efd4") + joinedOn : null}
             </p>
             {/*
                 Which address that mail goes to (#1537). Always in the markup and
@@ -1631,10 +1588,7 @@ export function WaitlistScreen() {
                 !sentTo,
                 'mt-2 text-sm text-zinc-500 dark:text-zinc-400 break-words',
               )}
-            >
-              {'Registered with '}
-              <span className="font-medium text-zinc-700 dark:text-zinc-200">{sentTo}</span>
-            </p>
+            ><RichMessage id="auth:sentence_425b58b82fce" values={{ value1: sentTo }} components={[<span className="font-medium text-zinc-700 dark:text-zinc-200" />]} /></p>
             {/*
                 The one thing a released signup can act on (#1538). Before
                 this, somebody who lost the "your access is ready" mail was
@@ -1661,7 +1615,7 @@ export function WaitlistScreen() {
                 'mt-3 inline-block rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors',
               )}
             >
-              {status?.has_account ? 'Sign in' : 'Create my account'}
+              <LocalizedValue render={() => (status?.has_account ? tr("auth:sign_in_bfd402b2") : tr("auth:create_my_account_862d3b26"))} />
             </a>
           </div>
           <div
@@ -1673,16 +1627,12 @@ export function WaitlistScreen() {
               'mt-4 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/60 p-4',
             )}
           >
-            <p className="text-xs font-semibold uppercase tracking-widest text-violet-700 dark:text-violet-400">
-              Optional (moves you up the list)
-            </p>
-            <h3 className="mt-1 text-base font-semibold">
-              Want in sooner?
-            </h3>
+            <p className="text-xs font-semibold uppercase tracking-widest text-violet-700 dark:text-violet-400"><Message id="auth:optional_moves_you_up_the_list_423b909a" /></p>
+            <h3 className="mt-1 text-base font-semibold"><Message id="auth:want_in_sooner_ed295e20" /></h3>
             <p className="mt-1.5 text-sm text-zinc-500 dark:text-zinc-400">
-              {surveyAnswered
-                ? 'Your answers are saved. Add to them any time, and they merge, so nothing you already wrote is lost.'
-                : 'Four more questions, about three minutes: the group you\u2019d bring, a tool you\u2019ve lost, where else you are. These are the answers we actually read when we pick the next group.'}
+              <LocalizedValue render={() => (surveyAnswered
+                ? tr("auth:your_answers_are_saved_add_to_them_any_time_and__f3fe96e3")
+                : tr("auth:four_more_questions_about_three_minutes_the_grou_2e156de6"))} />
             </p>
             <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
               <a
@@ -1690,11 +1640,9 @@ export function WaitlistScreen() {
                 href={moreToken ? '#more/' + moreToken : '#landing'}
                 className="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors"
               >
-                {surveyAnswered ? 'Edit my answers' : 'Answer them now'}
+                <LocalizedValue render={() => (surveyAnswered ? tr("auth:edit_my_answers_bf4399b6") : tr("auth:answer_them_now_659e5cb8"))} />
               </a>
-              <span className="text-xs text-zinc-500 dark:text-zinc-400">
-                Or stop here. You&rsquo;re on the list either way, and the link is in your email.
-              </span>
+              <span className="text-xs text-zinc-500 dark:text-zinc-400"><Message id="auth:or_stop_here_you_re_on_the_list_either_way_and_t_b73d9e73" /></span>
             </div>
           </div>
         </div>
@@ -1706,9 +1654,7 @@ export function WaitlistScreen() {
         <p
           id="waitlist-queued"
           className={hiddenFirst(!hasSession, 'mt-8 text-sm text-zinc-500 dark:text-zinc-400')}
-        >
-          You're already on the waitlist. We'll email you when your spot opens.
-        </p>
+        ><Message id="auth:you_re_already_on_the_waitlist_we_ll_email_you_w_4b3c29a8" /></p>
       </div>
         </>
       ) : null}
