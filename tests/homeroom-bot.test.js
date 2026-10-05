@@ -126,6 +126,26 @@ test('classifyIssue: a request whose live build waits or runs is not read again,
   assert.equal(bot.classifyIssue({ issue: { ...issue, state: 'closed' }, lastRun }).reason, 'closed');
 });
 
+test('a failed read is tried once more, a while later, then left until something new happens (#1080)', () => {
+  // gas-lock #2 failed on a provider 400 on 2026-10-04 and was never read
+  // again: a failed run counted as having read the thread.
+  const issue = { number: 2, state: 'open', updatedAt: '2026-10-04T04:00:00Z', createdAt: '2026-10-04T04:00:00Z' };
+  const failedAt = Date.parse('2026-10-04T04:17:57Z');
+  const lastRun = { thread_seen_at: '2026-10-04T04:00:00Z', verdict: 'failed', failed_tries: 1, created_at: new Date(failedAt).toISOString() };
+  const soon = bot.classifyIssue({ issue, lastRun, now: failedAt + 60_000 });
+  assert.equal(soon.reason, 'unchanged', 'not straight away: a fault may still be there');
+  const later = bot.classifyIssue({ issue, lastRun, now: failedAt + bot.FAILED_TRIAGE_RETRY_AFTER_MS });
+  assert.equal(later.eligible, true);
+  assert.equal(later.reason, bot.RETRY_FAILED_REASON);
+  assert.equal(later.priority, 3, 'behind new and changed requests');
+  const twice = bot.classifyIssue({ issue, lastRun: { ...lastRun, failed_tries: 2 }, now: failedAt + 3_600_000 });
+  assert.equal(twice.reason, 'unchanged', 'a second failure on the same thread is final until it changes');
+  const read = bot.classifyIssue({ issue, lastRun: { ...lastRun, verdict: 'person' }, now: failedAt + 3_600_000 });
+  assert.equal(read.reason, 'unchanged', 'a real verdict is a read');
+  const q = SRC.slice(SRC.indexOf('async function lastRunsByIssue'), SRC.indexOf('async function refreshApp'));
+  assert.match(q, /f\.verdict = 'failed'\s+AND f\.thread_seen_at IS NOT DISTINCT FROM r\.thread_seen_at\) AS failed_tries/);
+});
+
 test('the last run says whether a live build is waiting or under way, as the read lane reads it', () => {
   const q = SRC.slice(SRC.indexOf('async function lastRunsByIssue'), SRC.indexOf('async function refreshApp'));
   assert.match(q, /\(mode = 'live' AND verdict = 'ready' AND build_ok IS NULL AND proposal_session_id IS NULL\s+AND \(live_build_waiting_at IS NOT NULL OR build_session_id IS NOT NULL\)\s+AND created_at > NOW\(\) - make_interval\(days => \$2\)\) AS live_building/);

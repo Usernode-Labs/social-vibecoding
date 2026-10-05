@@ -236,13 +236,14 @@ test('nothing is queued when it is off, not ready, the app is paused, or it is t
 
 // ── One queued build ─────────────────────────────────────────────────────
 
-function lane({ issueState = 'open', built = null, app = APP, settings = ON } = {}) {
+function lane({ issueState = 'open', built = null, app = APP, settings = ON, firstVersion = false } = {}) {
   const calls = { queries: [], builds: [], spend: [] };
   const pool = {
     async query(sql, params) {
       const s = String(sql);
       calls.queries.push({ s, params });
       if (/FROM apps WHERE id = \$1/.test(s)) return { rows: app ? [app] : [] };
+      if (/SELECT first_version FROM homeroom_bot_requesters/.test(s)) return { rows: firstVersion ? [{ first_version: true }] : [] };
       return { rows: [], rowCount: 1 };
     },
   };
@@ -287,6 +288,18 @@ test('a claimed build reads the thread as it is now, builds without proposing, a
   // #3654: the last value is the model the build ran on (no default in this config).
   assert.deepEqual(recorded(h).params, [900, true, 'dev/homeroom_bot-s6001', 'c'.repeat(40), 2, null, 0.04, 6001, null, null]);
   assert.deepEqual(h.calls.spend, [4], 'paid from the weekly allowance');
+});
+
+test('a first version\'s shadow build gets its doubled clock and builds as one, as the live lane does (#1080)', async (t) => {
+  // turnly #1 (2026-10-05), a first version, was cut at 20 minutes of 40.
+  bot._resetForTests();
+  const h = lane({ firstVersion: true });
+  assert.equal(await buildWith(t, h), 'shadow_built');
+  const args = h.calls.builds[0];
+  assert.equal(args.turnBudgetMs, 2_400_000, 'FIRST_VERSION_BUILD_TIME_FACTOR times the turn clock');
+  assert.equal(args.firstVersion, true, 'its spec and build decide its look');
+  const asked = h.calls.queries.find((q) => /SELECT first_version FROM homeroom_bot_requesters/.test(q.s));
+  assert.deepEqual(asked.params, [APP.id, 12]);
 });
 
 test('a failed build is recorded with its reason; the lane carries on', async (t) => {

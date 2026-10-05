@@ -319,6 +319,16 @@ const CHECKS_REASON = 'checks_failing';
 // very pass its wake started, which is how a live build a restart
 // interrupted was never looked at again (recipebot #48, run 613).
 const SELF_QUEUED_REASONS = Object.freeze([RESTART_REASON, CHECKS_REASON]);
+// The queue reason of a request whose last triage failed (an unparseable
+// reply, a provider error) and has not been tried again on the same thread.
+// A failed run counted as having read the thread, so the request waited for
+// somebody to post on it: gas-lock #2 failed on a GLM 400 on 2026-10-04 and
+// was never read again. It is retried once, quietly (no second "looking"),
+// after FAILED_TRIAGE_RETRY_AFTER_MS, and a second failure on the same
+// thread is final until something new happens on it.
+const RETRY_FAILED_REASON = 'retry_failed';
+const FAILED_TRIAGE_TRIES = 2;
+const FAILED_TRIAGE_RETRY_AFTER_MS = 30 * 60 * 1000;
 // #3703: what runTriage answers when a row the loop started as a follow-up
 // (beside other work on its app, see "How much at once") no longer has the
 // bot's proposal to follow up on. It touches nothing and is handed back, to
@@ -1150,7 +1160,7 @@ function toMs(value) {
  * has seen only once it is over: read as a change, the request was read
  * again mid-build and built twice (Plant Pal #1 and #3, 2026-10-03).
  */
-function classifyIssue({ issue, threadLastAt = null, busy = false, lastRun = null }) {
+function classifyIssue({ issue, threadLastAt = null, busy = false, lastRun = null, now = Date.now() }) {
   if (!issue || !Number.isInteger(issue.number)) return { eligible: false, reason: 'invalid' };
   if (issue.state && issue.state !== 'open') return { eligible: false, reason: 'closed' };
   if (busy) return { eligible: false, reason: 'in_progress' };
@@ -1162,6 +1172,14 @@ function classifyIssue({ issue, threadLastAt = null, busy = false, lastRun = nul
     if (lastSeenMs && seenMs <= lastSeenMs) {
       if (lastRun.cap_suppressed) {
         return { eligible: false, reason: 'held', cap: lastRun.cap_suppressed, threadSeenAt };
+      }
+      // A failed read is not a read: tried once more, a while later
+      // (RETRY_FAILED_REASON). `failed_tries` counts the failed runs that saw
+      // this same thread (lastRunsByIssue).
+      const failedAt = toMs(lastRun.created_at);
+      if (lastRun.verdict === 'failed' && Number(lastRun.failed_tries || 0) < FAILED_TRIAGE_TRIES
+          && (!failedAt || now - failedAt >= FAILED_TRIAGE_RETRY_AFTER_MS)) {
+        return { eligible: true, reason: RETRY_FAILED_REASON, priority: 3, threadSeenAt };
       }
       return { eligible: false, reason: 'unchanged', threadSeenAt };
     }
@@ -1313,8 +1331,12 @@ async function lastRunsByIssue(pool, appId) {
     `SELECT DISTINCT ON (issue_number) issue_number, thread_seen_at, verdict, cap_suppressed, created_at, mode,
             (mode = 'live' AND verdict = 'ready' AND build_ok IS NULL AND proposal_session_id IS NULL
              AND (live_build_waiting_at IS NOT NULL OR build_session_id IS NOT NULL)
-             AND created_at > NOW() - make_interval(days => $2)) AS live_building
-       FROM homeroom_bot_runs
+             AND created_at > NOW() - make_interval(days => $2)) AS live_building,
+            -- Failed runs that read this same thread (RETRY_FAILED_REASON).
+            (SELECT count(*)::int FROM homeroom_bot_runs f
+              WHERE f.app_id = r.app_id AND f.issue_number = r.issue_number AND f.verdict = 'failed'
+                AND f.thread_seen_at IS NOT DISTINCT FROM r.thread_seen_at) AS failed_tries
+       FROM homeroom_bot_runs r
       WHERE app_id = $1
         AND budget_stop IS DISTINCT FROM 'input tokens'
         AND (error IS NULL OR error NOT LIKE 'collateral:%')
@@ -2492,7 +2514,8 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     }
     // An issue a restart sent back (#3471) was already told the bot is
     // looking; it is not told twice. A backlog pass says nothing yet (#3509).
-    const looked = item.reason === RESTART_REASON || item.reason === APP_AGAIN_REASON ? null : await live.post({
+    const looked = item.reason === RESTART_REASON || item.reason === APP_AGAIN_REASON
+      || item.reason === RETRY_FAILED_REASON ? null : await live.post({
       pool, github, ws: liveD.ws, app, repo, issueNumber,
       kind: 'looking', text: live.lookingText(), sender: bot,
     }).catch((err) => {
@@ -2980,6 +3003,26 @@ function shadowBuildSkipReason(settings, app, config = {}) {
 }
 
 /**
+ * Whether a request is its project's first version, from who it is for
+ * (homeroom_bot_requesters), as buildOne reads it for a live build. The
+ * shadow lane and restart recovery read it the same way, so a first
+ * version's build gets its doubled clock wherever it runs (turnly #1,
+ * 2026-10-05, was cut at 20 minutes of its 40). False on any error.
+ */
+async function isFirstVersionRequest(pool, appId, issueNumber) {
+  if (appId == null || issueNumber == null) return false;
+  try {
+    const { rows: [row] = [] } = await pool.query(
+      'SELECT first_version FROM homeroom_bot_requesters WHERE app_id = $1 AND issue_number = $2',
+      [appId, issueNumber],
+    );
+    return row?.first_version === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * The clocks for one build of `app`: the build turn's, from the turn
  * budget, and the spec's, from its own cap. The platform gets
  * PLATFORM_BUILD_TIME_FACTOR times both, a first version
@@ -3132,16 +3175,19 @@ async function recordBuildSnapshot(pool, {
  */
 async function shadowBuild({
   pool, config, bot, app, repo, issueNumber, issue, seed, parsed, runId,
-  turnBudgetMs, model, specModel = null, deps, presetSpec = null,
+  turnBudgetMs, model, specModel = null, deps, presetSpec = null, firstVersion = false,
 }) {
   const { limits, managedOpenRouter } = deps;
   await recordBuildSnapshot(pool, {
     runId, app, repo, issueNumber, seed, buildNote: parsed.buildNote, github: deps.github, presetSpec,
-    platformRepo: isPlatformRepo(app, config), model, specModel,
+    firstVersion, platformRepo: isPlatformRepo(app, config), model, specModel,
   });
+  // A first version builds as the live lane builds it: its doubled clock,
+  // and the spec and build that decide its look (buildOne).
   const built = await live.buildAndPropose({
     pool, config, bot, app, repo, issueNumber, issue, seed, buildNote: parsed.buildNote,
-    ...buildBudgets(app, config, turnBudgetMs), model, specModel, deps, presetSpec,
+    ...buildBudgets(app, config, turnBudgetMs, { firstVersion }), model, specModel, deps, presetSpec,
+    firstVersion,
     platformRepo: isPlatformRepo(app, config),
     onSession: (session) => pool.query(
       'UPDATE homeroom_bot_runs SET build_session_id = $2 WHERE id = $1', [runId, session.id],
@@ -3261,6 +3307,7 @@ async function runQueuedBuild(pool, config, { bot, claim, settings, deps = {} })
   return shadowBuild({
     pool, config, bot, app, repo, issueNumber, issue, seed,
     parsed: { buildNote: claim.build_note }, runId, turnBudgetMs, presetSpec: claim.build_spec_md || null,
+    firstVersion: await isFirstVersionRequest(pool, app.id, issueNumber),
     model: stageModel(settings, config, 'build'), specModel: stageModel(settings, config, 'spec'),
     deps: {
       worker, agentTurn, limits, managedOpenRouter, sessions, activeWorkers, sessionLifecycle, github,
@@ -3275,6 +3322,10 @@ async function runQueuedBuild(pool, config, { bot, claim, settings, deps = {} })
  */
 async function drainBuilds(pool, config, deps = {}) {
   const out = { started: 0, inFlight: buildsInFlight.size, paused: null };
+  // Shutting down (stop()): nothing new starts on a process about to close
+  // its pool. A build that started anyway failed at dispatch with "Cannot use
+  // a pool after calling end on the pool" (page-turners #2, 2026-10-05).
+  if (stopped) { out.paused = 'stopped'; return out; }
   // A pass is already filling the lane: it runs again when it ends.
   if (buildDrainRunning) { buildDrainAgain = true; return { ...out, busy: true }; }
   buildDrainRunning = true;
@@ -3436,8 +3487,11 @@ async function recoveryDeadline(pool, config, session, activeTurn) {
   const turnMs = 1000 * clampInt(settings?.turnSeconds, DEFAULTS.turnSeconds, MIN_TURN_SECONDS, MAX_TURN_SECONDS);
   const app = { repo_url: session.repo_url };
   let budgets;
-  if (await runOfSession(pool, session.id)) {
-    budgets = buildBudgets(app, config, turnMs);
+  const laneRun = await runOfSession(pool, session.id);
+  if (laneRun) {
+    budgets = buildBudgets(app, config, turnMs, {
+      firstVersion: await isFirstVersionRequest(pool, laneRun.app_id, laneRun.issue_number),
+    });
   } else {
     const liveRun = await liveRunOfSession(pool, session.id);
     if (!liveRun) return startedAt + turnMs; // a triage turn: one turn's budget
@@ -3554,6 +3608,31 @@ async function finishRecoveredTurn({
       await pool.query('UPDATE homeroom_bot_runs SET build_spec_md = $2 WHERE id = $1', [run.id, read.specMd]);
     }
     await handBackRun(pool, run.id, read.ok ? 'the spec is written; the build goes on from it' : read.error);
+    return 'requeued';
+  }
+
+  // A shadow build whose clock a restart ran out (restartRanItOut): not the
+  // build's own failure, so it goes round again from the spec it wrote, as
+  // the live path's does (#3895). The attempt stays spent, so the lane's own
+  // cap (MAX_BUILD_ATTEMPTS) bounds a request deploys keep catching: the
+  // next one that runs out is recorded as below. Before, it was recorded
+  // failed at once (one-minute-civilization #28, pourover #55, 10-03).
+  if (restartRanItOut({ mode: activeTurn?.mode, timedOut, clockLeftMs })
+      && Number(run.build_attempts) < MAX_BUILD_ATTEMPTS) {
+    const spentUsd = await sessionCostUsd(pool, session.id);
+    await pool.query(
+      `UPDATE homeroom_bot_runs r
+          SET build_at = NULL, build_session_id = NULL,
+              build_spec_md = COALESCE(r.build_spec_md, (SELECT spec_md FROM chat_sessions WHERE id = $2))
+        WHERE r.id = $1 AND r.build_ok IS NULL`,
+      [run.id, session.id],
+    );
+    await putAwayRecoveredSession(pool, session, { archive: true });
+    await debitRecovered(pool, session, spentUsd, deps);
+    log.info('homeroom-bot', 'A restart ran a shadow build out of time; it goes round again', {
+      runId: run.id, sessionId: session.id, attempts: Number(run.build_attempts), costUsd: spentUsd,
+    });
+    wakeBuilds();
     return 'requeued';
   }
 
@@ -6341,6 +6420,8 @@ async function runOnce(pool, config, deps = {}) {
       out.retryInMs = githubHold.retryInMs;
       return out;
     }
+    // Shutting down: no refresh and no new work on a pool about to close.
+    if (stopped) { out.paused = 'stopped'; return out; }
     // Take the wakes that arrived before this pass. Ones that arrive DURING
     // it are left for the next, which tick() schedules at once.
     const targeted = [...pendingApps];
@@ -6527,7 +6608,11 @@ function start(config) {
 
 /**
  * Stops both loops. A build already under way runs to its own time limit
- * and records itself; nothing new starts.
+ * and records itself; nothing new starts. server.js calls it first thing on
+ * shutdown, before the pool closes: a pass or lane drain that started after
+ * that read and wrote a closed pool (93 "Cannot use a pool after calling end
+ * on the pool" lines from 10-03 to 10-05, and one live build lost at
+ * dispatch). A turn still running is restart recovery's, as before.
  */
 function stop() {
   stopped = true;
@@ -7351,6 +7436,8 @@ module.exports = {
   liveSayer,
   announceBuilt,
   RESTART_REASON,
+  RETRY_FAILED_REASON,
+  FAILED_TRIAGE_RETRY_AFTER_MS,
   RESTARTED_BUILD_NOTE,
   MAX_RESTARTED_BUILDS,
   restartRanItOut,
@@ -7384,6 +7471,7 @@ module.exports = {
   MAX_BATCH_SIZE,
   // Pure, exported for tests.
   classifyIssue,
+  lastRunsByIssue,
   BLOCKERS,
   capRoomFor,
   simulateCaps,
@@ -7415,6 +7503,7 @@ module.exports = {
   FIRST_VERSION_PENDING_SQL,
   FIRST_VERSION_HOLD,
   firstVersionHolds,
+  isFirstVersionRequest,
   heldForFirstVersion,
   workingNow,
   dmChatSummary,
