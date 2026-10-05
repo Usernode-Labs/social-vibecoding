@@ -17891,6 +17891,23 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
 @media (prefers-reduced-motion: no-preference) {
   .dev-ws-hero .dev-ws-hero-member .dev-ws-join-pop { transform-origin: calc(100% - 32px) 0; }
 }
+/* ── Opened from an invite link (#3700, invite-offer.ts) ──
+   Who invited them, their note, and one Join as the screen's primary
+   button, first in the hero, so the decision sits on the page it is about
+   and is on screen without scrolling on a phone. A card on the hero's
+   ground, in the Join question's own surface. The button fills the card,
+   and a question a refusal asks hangs from its right edge as from the row's
+   Join. */
+.dev-ws-invite {
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 14px;
+  border-radius: 18px;
+  background-color: var(--dc-sheet);
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+}
+.dev-ws-invite-from { margin: 0; font-size: 16px; line-height: 21px; font-weight: 650; color: var(--text-primary); }
+.dev-ws-invite-note { margin: 0; font-size: 15px; line-height: 21px; color: var(--text-primary); }
+.dev-ws-invite-seen { margin: 0; text-align: center; font-size: 13px; line-height: 18px; color: var(--text-muted); }
 
 /* ── The hub's discussion preview (hub-cards.tsx) ──
    The channel card's own look, cut to its last two messages with no
