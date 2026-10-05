@@ -32,6 +32,7 @@ import './admin-features.tsx';
 import './admin-limits.tsx';
 import './admin-welcome-dm.tsx';
 import './admin-users.tsx';
+import './admin-test-accounts.tsx';
 import './admin-support.tsx';
 import './admin-reports.tsx';
 import './admin-rollover.tsx';

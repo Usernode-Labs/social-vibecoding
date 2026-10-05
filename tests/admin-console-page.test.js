@@ -147,6 +147,8 @@ test('the console island imports every admin module, console first', () => {
     'admin-status', 'admin-storage',
     // Support: one user's account, points, events, kudos and history.
     'admin-support',
+    // Test accounts: make, list and retire first-time-user test accounts.
+    'admin-test-accounts',
     'admin-topochain', 'admin-users',
     // Welcome messages: the group and first message somebody let in gets.
     'admin-welcome-dm',
