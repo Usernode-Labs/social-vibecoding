@@ -1354,9 +1354,9 @@
       "expectSelector": "#browse-list[data-sort=\"users\"]:not(:has(h2)):not(:has(.browse-row[data-slug=\"directory-sample-demo\"])):not(:has(.browse-row[data-slug=\"directory-sample-broken\"])) button[aria-controls=\"browse-more-apps\"][aria-expanded=\"false\"]"
     },
     {
-      "name": "Show more keeps demo and broken directory apps reachable (#1523)",
+      "name": "Show more keeps demo and broken apps reachable (#1523); an updated app has no re-review tag (#3911)",
       "path": "/?demo=1&curation=1&sort=recommended&shot=browse-more#apps",
-      "expectSelector": "#browse-more-apps:has([data-directory-state=\"demo\"]) [data-directory-state=\"broken\"]",
+      "expectSelector": "#browse-list:has(h2~.browse-row[data-slug=\"directory-sample-updated\"][data-directory-state=\"outdated\"] .browse-row-meta>:first-child:not(.text-xs)) #browse-more-apps:has([data-directory-state=\"demo\"]) [data-directory-state=\"broken\"]",
       "expectText": "Show less"
     },
     {
