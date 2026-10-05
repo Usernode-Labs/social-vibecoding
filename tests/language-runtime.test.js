@@ -59,6 +59,23 @@ test('corrupt or wrong-release resources are rejected before activation', async 
   assert.equal(api.getLanguage(), 'en');
 });
 
+test('HTTP contexts without SubtleCrypto still load verified packs and reject corrupt ones', async t => {
+  const cryptoDescriptor = Object.getOwnPropertyDescriptor(global, 'crypto');
+  Object.defineProperty(global, 'crypto', { configurable: true, value: {} });
+  t.after(() => {
+    if (cryptoDescriptor) Object.defineProperty(global, 'crypto', cryptoDescriptor);
+    else delete global.crypto;
+  });
+  const { api } = runtime(t);
+  assert.equal(await api.changeLanguage('es'), true);
+  assert.equal(api.t('language.title'), 'Idioma');
+  assert.equal(await api.changeLanguage('ar'), true);
+  assert.equal(api.getLanguage(), 'ar');
+  global.fetch = async () => new Response('{"language.title":"wrong release"}');
+  await assert.rejects(api.changeLanguage('fr'), /version mismatch/);
+  assert.equal(api.getLanguage(), 'ar');
+});
+
 test('a slow earlier selection cannot replace the latest language or save it late', async t => {
   const { api } = runtime(t);
   let release;

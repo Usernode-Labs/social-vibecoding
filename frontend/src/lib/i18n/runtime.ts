@@ -1,4 +1,5 @@
 import { createInstance, type TOptions } from 'i18next';
+import { sha256 } from '@noble/hashes/sha2.js';
 import catalogs from './catalogs.generated.json';
 import { languageDirection, resolveLanguage, type Language } from './locale';
 
@@ -57,7 +58,12 @@ async function fetchPack(language: Language, namespace: string): Promise<void> {
       const response = await fetch(entry.url, { credentials: 'same-origin', signal: controller.signal, redirect: 'error' });
       if (!response.ok) throw new Error('Language pack unavailable');
       const bytes = await response.arrayBuffer();
-      const digest = await crypto.subtle.digest('SHA-256', bytes);
+      // HTTP previews and self-hosted installations do not expose SubtleCrypto.
+      // Still verify the exact bytes there; do not silently skip integrity.
+      const subtle = globalThis.crypto?.subtle;
+      const digest = subtle
+        ? await subtle.digest('SHA-256', bytes)
+        : sha256(new Uint8Array(bytes));
       const actual = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
       if (actual !== entry.hash) throw new Error('Language pack version mismatch');
       const messages = JSON.parse(new TextDecoder().decode(bytes));
