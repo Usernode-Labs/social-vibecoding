@@ -183,6 +183,9 @@ type DetailView = {
   eyebrow: string | null;
   goal: string;
   task: string | null;
+  // #3253/#3248: under the task, what the scoring rule counts (a proposal
+  // once it is put to the vote; nothing past a counted measure's target).
+  countNote?: string | null;
   // The template's illustration slug and an upload's tone, for the artwork
   // well (see DetailPage).
   illustration: string | null;
@@ -254,6 +257,7 @@ const PAGE_BODY = 'flex flex-col gap-3.5 pb-8';
 const EYEBROW = 'min-w-0 truncate text-[0.8125rem] font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-400';
 const PAGE_TITLE = 'text-[1.625rem] font-semibold leading-tight tracking-tight text-balance text-zinc-900 dark:text-zinc-100';
 const PROSE = 'text-sm text-zinc-600 dark:text-zinc-400';
+const NOTE = 'text-[0.8125rem] text-zinc-500 dark:text-zinc-400';
 // The artwork well: the registry's tone class sets `--tint-art` for both
 // themes, so the one background reads it in either.
 const WELL = 'flex h-56 w-full items-center justify-center rounded-2xl bg-[var(--tint-art)]';
@@ -652,6 +656,7 @@ export function DetailPage({ view }: { view: DetailView }): ReactNode {
           cadence={view.cadence}
         />
         {view.task ? <p className={PROSE}>{view.task}</p> : null}
+        {view.countNote ? <p className={NOTE}>{view.countNote}</p> : null}
       </div>
       <ArtworkWell slug={view.illustration} tone={view.illustrationTone} />
       <ProgressRail
