@@ -233,6 +233,11 @@ const RESEND_COOLDOWN_MS = 60 * 1000;
 // panel's and the cover's own 200ms, and a frame for the last of it to paint.
 export const HAND_OFF_MS = 240;
 
+// How long a close takes before the screen that opened the sheet drops it:
+// the panel's slide down and the dim's fade (200ms), and a frame. Dropped at
+// once, it was gone in a frame while it had slid up (iOS app, 5 Oct 2026).
+export const CLOSE_MS = 240;
+
 /**
  * Whether the sheet may put the caret in a step's field by itself. On a
  * touch screen a field focused from code raises the keyboard in the app's
@@ -406,6 +411,9 @@ export function SignInSheet({
   const [shown, setShown] = useState(false);
   // On its way to the make screen (`handOff`).
   const [leaving, setLeaving] = useState(false);
+  // On its way down after the ✕, the dim, or Escape (`requestClose`).
+  const [closing, setClosing] = useState(false);
+  const closeTimer = useRef<number | null>(null);
   const completion = useSessionConfirmation();
   const { finishLogin: confirmSession, clear: clearConfirmation } = completion;
   const firstField = useRef<HTMLInputElement>(null);
@@ -434,10 +442,27 @@ export function SignInSheet({
   const identifierPrefill = useRef('');
 
   useEffect(() => {
-    if (!open) { setShown(false); setLeaving(false); return undefined; }
+    if (!open) { setShown(false); setLeaving(false); setClosing(false); return undefined; }
     const raf = requestAnimationFrame(() => setShown(true));
     return () => cancelAnimationFrame(raf);
   }, [open]);
+
+  // Closed: down the way it came up, and only then gone. The keys go down
+  // with it rather than after it, and a second tap on the fading dim is
+  // the same close.
+  const requestClose = useCallback(() => {
+    if (closeTimer.current != null) return;
+    const active = document.activeElement as HTMLElement | null;
+    if (active && panelRef.current?.contains(active)) active.blur();
+    if (prefersReducedMotion()) { onClose(); return; }
+    setClosing(true);
+    setShown(false);
+    closeTimer.current = window.setTimeout(() => { closeTimer.current = null; onClose(); }, CLOSE_MS);
+  }, [onClose]);
+  useEffect(() => () => {
+    if (closeTimer.current != null) window.clearTimeout(closeTimer.current);
+    closeTimer.current = null;
+  }, []);
 
   // A fresh start each time it opens: the address stays, the rest goes. Back
   // from a provider, it opens where that left off.
@@ -480,10 +505,10 @@ export function SignInSheet({
   // for the make screen, which is a sign-in already under way.
   useEffect(() => {
     if (!open || leaving) return undefined;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') requestClose(); };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [open, leaving, onClose]);
+  }, [open, leaving, requestClose]);
 
   // The resend's countdown.
   useEffect(() => {
@@ -761,10 +786,10 @@ export function SignInSheet({
   const panelState = leaving
     ? 'pointer-events-none translate-y-full md:-translate-x-1/2 md:-translate-y-1/2 md:opacity-0'
     : shown ? 'translate-y-0 md:-translate-x-1/2 md:-translate-y-1/2' : 'translate-y-full md:-translate-x-1/2 md:-translate-y-1/2';
-  const close = leaving ? undefined : onClose;
+  const close = leaving ? undefined : requestClose;
 
   return (
-    <div data-sign-in-sheet={step} data-sign-in-sheet-leaving={leaving ? '' : undefined} className="fixed inset-0 z-50">
+    <div data-sign-in-sheet={step} data-sign-in-sheet-leaving={leaving ? '' : undefined} data-sign-in-sheet-closing={closing ? '' : undefined} className="fixed inset-0 z-50">
       {/* The dim takes no pan, so a drag on it does not scroll the story
           behind (the kit's backdrop rule); its tap still closes. */}
       <div
