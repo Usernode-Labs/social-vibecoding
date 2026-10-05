@@ -758,6 +758,46 @@ test('visibleApps: the search narrows, the sort orders, and they compose', () =>
     'the order changed, the filtered SET did not');
 });
 
+// ── The search also matches the app's creator ──────────────────────
+
+test('matchesQuery: name, slug, creator username and display name, case-insensitively', () => {
+  const { Browse } = makeBrowse();
+  const a = app({ slug: 'chess-1a2b', name: 'Chess Arena',
+    creator_username: 'alice', creator_display_name: 'Alice Wonder' });
+  assert.equal(Browse.matchesQuery(a, 'CHESS'), true, 'the name, as Home did');
+  assert.equal(Browse.matchesQuery(a, '1a2b'), true, 'the slug, as Home did');
+  assert.equal(Browse.matchesQuery(a, 'alice'), true, 'the creator username');
+  assert.equal(Browse.matchesQuery(a, 'Wonder'), true, 'the creator display name');
+  assert.equal(Browse.matchesQuery(a, 'bob'), false, 'a stranger matches nothing');
+});
+
+test('matchesQuery: an empty query matches everything; absent creator fields never match', () => {
+  const { Browse } = makeBrowse();
+  const bare = app({ slug: 'chess-1a2b', name: 'Chess Arena' });
+  assert.equal(Browse.matchesQuery(bare, ''), true);
+  assert.equal(Browse.matchesQuery(bare, '   '), true, 'whitespace-only is still the default view');
+  assert.equal(Browse.matchesQuery(bare, 'alice'), false,
+    'no creator fields on the record, no creator match');
+  assert.equal(Browse.matchesQuery(app({ slug: 'x', name: 'X', creator_username: 'amy', creator_display_name: null }), 'amy'), true,
+    'a username without a display name still matches');
+});
+
+test('visibleApps: searching the creator finds their apps, alongside the name match', () => {
+  const { Browse } = makeBrowse();
+  Browse._apps = [
+    app({ slug: 'chess-1a2b', name: 'Chess Arena',
+      creator_username: 'alice', creator_display_name: 'Alice Wonder' }),
+    app({ slug: 'puzzle-3c4d', name: 'Puzzle Chain', creator_username: 'bob' }),
+  ];
+  Browse._query = 'alice';
+  assert.deepEqual(Browse.visibleApps().map((a) => a.slug), ['chess-1a2b']);
+  Browse._query = 'BOB';
+  assert.deepEqual(Browse.visibleApps().map((a) => a.slug), ['puzzle-3c4d']);
+  Browse._query = 'chess';
+  assert.deepEqual(Browse.visibleApps().map((a) => a.slug), ['chess-1a2b'],
+    'the name match is unchanged');
+});
+
 // ── render ───────────────────────────────────────────────────────
 
 test('rowView: an app-store row — icon, name, meta, Join state', () => {
@@ -937,6 +977,29 @@ test('metaLine: a zero aggregate is dropped, not rendered as "0"', () => {
   assert.equal(Browse.metaLine(quiet, 'merged'), '2 users');
   assert.match(Browse.metaLine(app({ merged_prs: 1 }), 'merged'), /1 change live/,
     'and the one that is there is pluralised');
+});
+
+test('metaLine: the creator segment rides second, and is dropped when there is no name', () => {
+  const { Browse } = makeBrowse();
+  const ago = (h) => new Date(Date.now() - h * 3600 * 1000).toISOString();
+  const base = { active_users: 12, last_deploy_at: ago(3), created_at: ago(5) };
+  assert.equal(
+    Browse.metaLine(app({ ...base, creator_username: 'alice', creator_display_name: 'Alice Wonder' })),
+    '12 users · by Alice Wonder · Updated 3h ago',
+    'the display name wins, the users count still leads'
+  );
+  assert.match(
+    Browse.metaLine(app({ ...base, creator_username: 'alice' })),
+    /^12 users · by alice · Updated 3h ago$/,
+    'no display name, the username stands in'
+  );
+  assert.equal(
+    Browse.metaLine(app({ ...base, creator_username: 'alice' }), 'new'),
+    '12 users · by alice · Created 5h ago',
+    'the segment rides in every sort, after the count it sorts by'
+  );
+  assert.equal(Browse.metaLine(app(base)), '12 users · Updated 3h ago',
+    'no creator on the record, the line is exactly what it was');
 });
 
 test('metaLine: the rows carry the line the store says they were sorted with', () => {

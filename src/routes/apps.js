@@ -626,8 +626,21 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           COALESCE(dev.merged_prs, 0) AS merged_prs,
           COALESCE(dev.merged_prs_recent, 0) AS merged_prs_recent,
           dev.last_merged_at AS last_merged_at,
-          COALESCE(iss.open_issues, 0) AS open_issues
+          COALESCE(iss.open_issues, 0) AS open_issues,
+          -- Who made the app, for Discover's search and each row's meta
+          -- line ("by Alice"). Read-only display data: usernames are
+          -- public on this platform (the leaderboard lists profiles by
+          -- them), and the detail endpoint already names the creator
+          -- through its Contributors card. username is NOT NULL, so a
+          -- matched join always yields at least that; display_name is
+          -- nullable and the client falls back to the username when unset.
+          creator.username AS creator_username,
+          creator.display_name AS creator_display_name
         FROM apps a
+        -- Forward-only LEFT JOIN for the creator columns above: a row
+        -- whose creator cannot be resolved (created_by is NULL after a
+        -- ON DELETE SET NULL) keeps its place in the list with NULLs.
+        LEFT JOIN users creator ON creator.id = a.created_by
         LEFT JOIN (
           SELECT app_id, COUNT(*) AS cnt
           FROM chat_messages

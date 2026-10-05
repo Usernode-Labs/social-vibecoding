@@ -159,13 +159,6 @@
     {
       "source": "src/routes/apps.js",
       "kind": "structural-template",
-      "fingerprint": "1012d07842e867c85087",
-      "count": 1,
-      "preview": "` SELECT ${appAccess.nonSecretAppColumnList('a')}, COALESCE(msg_counts.cnt, 0) AS message_count, COALESCE(activity.total_seconds, 0) AS total_seconds, COALESCE("
-    },
-    {
-      "source": "src/routes/apps.js",
-      "kind": "structural-template",
       "fingerprint": "186bdc9221b3dd99e2f1",
       "count": 1,
       "preview": "`SELECT ${appAccess.ACCESS_COLUMNS}, name, repo_url, LEFT(manifest_snapshot->>'description', 280) AS description FROM apps WHERE slug = $1 AND (NOT self_hosted "
@@ -190,6 +183,13 @@
       "fingerprint": "c6b99ca4735605a08367",
       "count": 1,
       "preview": "`SELECT ${appAccess.nonSecretAppColumnList()}, ${communities.audienceSql('apps', '(SELECT COUNT(*) FROM community_members m WHERE m.community_id = apps.communit"
+    },
+    {
+      "source": "src/routes/apps.js",
+      "kind": "structural-template",
+      "fingerprint": "ff76754f2357e617f22b",
+      "count": 1,
+      "preview": "` SELECT ${appAccess.nonSecretAppColumnList('a')}, COALESCE(msg_counts.cnt, 0) AS message_count, COALESCE(activity.total_seconds, 0) AS total_seconds, COALESCE("
     },
     {
       "source": "src/routes/chat.js",

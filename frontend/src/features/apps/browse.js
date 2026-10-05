@@ -31,7 +31,8 @@
 // ./app-card-view.tsx, off the same descriptor functions the home grid's strings
 // are built from. The rest is still Home's, reached through the global,
 // because each one reads Home's loaded-app list or the viewer's permissions:
-// isYours, matchesQuery, toggleAdded, menuItemsFor.
+// isYours, toggleAdded, menuItemsFor — and the matcher, which Browse now
+// wraps to add the creator's name (Home's own stays name-and-slug).
 //
 // WHAT THIS FILE DOES NOW (#1191 slice 6, conversion 3): every decision, and
 // no markup. The sort, the search filter, the level derivation, the two
@@ -652,12 +653,26 @@ const Browse = {
   // The rows for the current chip and query. The chip picks the set first
   // (filterApps), then the sort orders it, then the search narrows it. The
   // search covers every app the chip admits (home's own search is scoped to
-  // "Your apps"), reusing Home's matcher so both fields behave identically.
-  // The three compose, and searching never changes the order.
+  // "Your apps"), through Browse's own matcher below — Home's, extended to
+  // the creator. The three compose, and searching never changes the order.
   visibleApps() {
     const pool = Browse.filterApps(Browse._apps, Browse._filter);
     const sorted = Browse.sortApps(pool, Browse._sort);
-    return sorted.filter((a) => Home.matchesQuery(a, Browse._query));
+    return sorted.filter((a) => Browse.matchesQuery(a, Browse._query));
+  },
+
+  // Browse's matcher: Home's case-insensitive name/slug match, extended to
+  // the creator's display name and username, which GET /api/apps now
+  // carries on the list payload — so typing the person who made an app
+  // finds it. Home.matchesQuery is NOT edited: the home grid's search stays
+  // name-and-slug only. Absent creator fields never match; an empty or
+  // whitespace-only query still matches everything, because Home's half
+  // answers true for it. Pure — unit-tested.
+  matchesQuery(app, query) {
+    if (Home.matchesQuery(app, query)) return true;
+    const q = String(query || '').trim().toLowerCase();
+    return String(app?.creator_display_name || '').toLowerCase().includes(q)
+      || String(app?.creator_username || '').toLowerCase().includes(q);
   },
 
   // ── Row rendering ─────────────────────────────────────────────────
@@ -670,12 +685,14 @@ const Browse = {
   // It ADAPTS to the current sort (#1383), so the number a row was ranked by
   // is the number the row shows — a list ordered by merged proposals whose
   // rows only mention users reads as unsorted. The user count leads in every
-  // variant: it is the one figure people scan for.
+  // variant: it is the one figure people scan for. The creator's name rides
+  // second in every variant ("by Alice"), so a search that matched on it is
+  // visible in the row it matched.
   //
-  //   recommended / users   12 users · Updated 3d ago
-  //   active                12 users · 4 merged in 30d · Updated 3d ago
-  //   merged                12 users · 37 changes merged · Updated 3d ago
-  //   new                   12 users · Created 5d ago
+  //   recommended / users   12 users · by Alice · Updated 3d ago
+  //   active                12 users · by Alice · 4 merged in 30d · Updated 3d ago
+  //   merged                12 users · by Alice · 37 changes merged · Updated 3d ago
+  //   new                   12 users · by Alice · Created 5d ago
   //
   // A zero-merge app omits the merge segment rather than printing "0 merged",
   // which reads as a defect rather than as an absence.
@@ -686,6 +703,11 @@ const Browse = {
     const bits = [];
     const users = parseInt(app.active_users || 0, 10) || 0;
     bits.push(`${users} user${users === 1 ? '' : 's'}`);
+    // Who made it: the display name when the person set one, else the
+    // username. Absent — a deleted creator, a row whose join missed —
+    // omits the segment, the same way a zero-merge one does.
+    const creator = app.creator_display_name || app.creator_username;
+    if (creator) bits.push(`by ${creator}`);
     if (sort === 'active') {
       const recent = parseInt(app.merged_prs_recent || 0, 10) || 0;
       if (recent > 0) bits.push(`${recent} live in 30d`);
