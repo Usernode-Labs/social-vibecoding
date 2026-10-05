@@ -1,0 +1,2626 @@
+{
+  "the_original_app_no_longer_exists_23bafd55": {
+    "text": "原始應用程式不再存在",
+    "source": "23bafd55a1b3363f0742dc558b1b01624b186cf40306b7d49cee75aecf68c61e"
+  },
+  "added_6b02e0d3": {
+    "text": "新增",
+    "source": "6b02e0d363a4af1c95eef50364bb0202c8b250aa05a48a69e68fd7787b4b0632"
+  },
+  "add_to_shortcuts_f27a62d8": {
+    "text": "新增到短片",
+    "source": "f27a62d8a8124c457c8ab218c39ee0f3ca0ea6112df8cbedd131e2f5f0c5821c"
+  },
+  "contributors_350ad433": {
+    "text": "捐助者",
+    "source": "350ad433c42fe8cecdb38439f33947ea04c43fe819455772fd3c03b85c389f16"
+  },
+  "loading_contributors_bfaea4c0": {
+    "text": "負載參與者...",
+    "source": "bfaea4c0e7e6ca9aeb164dbdcd372417e856b076df290145972d8d1e6bb74d61"
+  },
+  "couldn_t_load_contributors_68653b35": {
+    "text": "不能負擔捐助者。",
+    "source": "68653b35c7cb02a716a2b7bc1b3a293d10b051b52cf4f4601fe5a85402fb33e6"
+  },
+  "no_contributors_yet_39eb422f": {
+    "text": "還沒有參與者。",
+    "source": "39eb422faf09012f4bd1f9128c63b897ea56970acc145aa82dcd64c553b4e4d3"
+  },
+  "more_d47d7cb0": {
+    "text": "更多",
+    "source": "d47d7cb0e4f8fd2be5ee07826694c18917d83ca77d0a01698582d05f432db996"
+  },
+  "add_to_home_screen_1d4b34ef": {
+    "text": "新增到主螢幕",
+    "source": "1d4b34eff080b359d6a1564945ffde72503f6764459c3e1a73c1ef7750b86718"
+  },
+  "code_340f4630": {
+    "text": "程式碼",
+    "source": "340f463033e0fd5ddeabb922df4d4f1b5747494d0f5ed9894f13b6e13ca831f5"
+  },
+  "public_on_github_c7bb7b5e": {
+    "text": "在GitHub上",
+    "source": "c7bb7b5eaadc4f833ab95c355dd504350c15d4146d0c51407d8a09d74d6d2200"
+  },
+  "remix_f84ed437": {
+    "text": "雷米克",
+    "source": "f84ed4375595ff56536a50d853f9efa4897ac6e815aad3b94a8ac263e92736ef"
+  },
+  "menu_99af6606": {
+    "text": "選單",
+    "source": "99af6606ff9d6cd5154d4d4e9c21e325086d3e904677cdb41d363c8a3480f862"
+  },
+  "close_7d9eb7ac": {
+    "text": "關閉",
+    "source": "7d9eb7acb13e24625c404401d8e88b2350e32162455885f18276cf802f7701ed"
+  },
+  "go_to_community_71141ab7": {
+    "text": "去社群",
+    "source": "71141ab734364eef147c3166398fdf5e6bba90a257b66526c8441f6296f1b33e"
+  },
+  "developer_terminal_6e8e7317": {
+    "text": "開發者終端",
+    "source": "6e8e7317a257dd20e993357ba0f12eeb73b295e98c6e3cc5ba0ef776e945a2b0"
+  },
+  "build_it_yourself_72369f88": {
+    "text": "自己建造",
+    "source": "72369f88c9f11b25fcd904b6d341a8a5fba3f574b8b4e5f0a608713514bad729"
+  },
+  "show_more_f5c9bd13": {
+    "text": "顯示更多",
+    "source": "f5c9bd131486e793ee105bd81f001fc25cdc2dac9c1d9f636ac7d43a10efc7e6"
+  },
+  "report_app_5cf59a22": {
+    "text": "報告應用",
+    "source": "5cf59a220d296b6811fd8fc4af3d64841ec1f4fd59cac97d7f1172490fc84f3e"
+  },
+  "open_a_project_to_invite_people_to_it_96c1e967": {
+    "text": "開啟一個專案,邀請人們參加。",
+    "source": "96c1e967884766fe60b3dea9f02356d0a02e9eb4ff1bd1ca8054db9f5cac994a"
+  },
+  "invite_link_826c2722": {
+    "text": "邀請連結",
+    "source": "826c272260db2d1f1a6d33fb290c5ba7b709a18c39fefb05e3e874ec4d002718"
+  },
+  "share_29887a5f": {
+    "text": "分享",
+    "source": "29887a5ff9846ccc23327565a07e17fa6dcaea6211f1898ae825f84ae38f4223"
+  },
+  "expires_after_a5e4b9f5": {
+    "text": "結束後",
+    "source": "a5e4b9f547aa371fc3e620e21f4410d03efd49899576bcbc3cd325263279906a"
+  },
+  "works_for_dd8110e9": {
+    "text": "工作為",
+    "source": "dd8110e9995750511aab7758a74b910efbe9c688750edc477cfd06e711bc3a07"
+  },
+  "cancel_19766ed6": {
+    "text": "取消",
+    "source": "19766ed6ccb2f4a32778eed80d1928d2c87a18d7c275ccb163ec6709d3eb2e27"
+  },
+  "make_new_link_7630d846": {
+    "text": "建立新連結",
+    "source": "7630d846adbcfabe9185a349757b0891e0b6ee4a3d9e4522635cd08912cd40a4"
+  },
+  "change_how_long_or_how_many_20fabfc1": {
+    "text": "改變多久或多久",
+    "source": "20fabfc1aba11ef454288f0268073d76944aac3c5e08394d9b92c3b274c74fad"
+  },
+  "turn_off_06f0e210": {
+    "text": "轉開",
+    "source": "06f0e210b27d4d6215fba1ac31899dd4e95c6281888e2f107cfd19ed1dfda23f"
+  },
+  "still_open_ccde2b49": {
+    "text": "仍然開放",
+    "source": "ccde2b49c25621d58791d470bf6c0042e42f1bb4da161f1ece89801af32707d9"
+  },
+  "their_changes_that_went_live_in_this_app_7f55ad3f": {
+    "text": "在此應用程式中可用的更改",
+    "source": "7f55ad3f3440b8a14be8bd2cff1542b1923b5cd327d6509ce29b0ec95769b77c"
+  },
+  "the_app_s_creator_its_members_and_everyone_with__12ecfb76": {
+    "text": "應用程式的創始人,其成員,以及所有在應用程式中可用的變更的人",
+    "source": "12ecfb762a0d770406a750613437b0ecc8a7ccf277d37588c7594945e8490339"
+  },
+  "that_app_isn_t_available_565f61ca": {
+    "text": "這個應用程式不適用。",
+    "source": "565f61ca273da3a6c3d0b13285b394cbdb077c2545b597678f67297fbd2f9df5"
+  },
+  "back_to_all_apps_20b5eca3": {
+    "text": "← 回到所有應用程式",
+    "source": "20b5eca321cdc0c0a724fed4063cb8f0acf1fc1d7b2c9182b4aafff9fdbe47f4"
+  },
+  "loading_ba3bbbe1": {
+    "text": "載入中…",
+    "source": "ba3bbbe10d8bef66441c88536ce7b8e724e2829b59a3da658654f4961cd61ae5"
+  },
+  "you_blocked_this_app_unblock_it_to_open_it_again_33360de6": {
+    "text": "您已阻止了此應用程式. 解鎖它以重新開啟它。",
+    "source": "33360de6152b77561768dd9a22793687e506cb8eea1b3df261fbb9a9b0b3713e"
+  },
+  "open_blocked_apps_in_settings_ff2f11f2": {
+    "text": "在 Settings 中開啟阻止的應用程式",
+    "source": "ff2f11f2518647a3b6913b5c65e60bce0711cbaadc95214bc7f7ca9f57fbb6ea"
+  },
+  "reviewed_working_apps_362d52d1": {
+    "text": "改編工作應用程式",
+    "source": "362d52d19d368cb461d95e28130a2dd59bf939b20cfa3bfbe679eea33437c0f2"
+  },
+  "not_yet_reviewed_ba0dc155": {
+    "text": "尚未審查",
+    "source": "ba0dc1555f4de3f60a698381bf2b9db8639342a2aaccac8ace3b3f17e85b7ded"
+  },
+  "demos_and_apps_needing_fixes_setup_or_an_icon_ar_31110925": {
+    "text": "需要修復、設定或圖示的示例和應用程式仍然可在下方和搜尋中找到。",
+    "source": "311109259b13b49cf85372357b4dc5ca28ff641e2e17b4aa41fefc474297bb89"
+  },
+  "search_all_apps_7ab778cc": {
+    "text": "搜尋所有應用程式",
+    "source": "7ab778cc2c78b81d1eef6abd8ca5e3fc7441c7571b141a18af323fa8f03323a5"
+  },
+  "search_all_apps_273a9a87": {
+    "text": "搜尋所有應用程式",
+    "source": "273a9a8737870c81e5040fa282149528de30a345c4c7a4162cee90af147f84be"
+  },
+  "clear_search_3b7ea517": {
+    "text": "清晰的搜尋",
+    "source": "3b7ea51793e9d906afa06afb86252abb48e1125cc96a7f5efabcfd8597ea183a"
+  },
+  "filter_apps_c8be0116": {
+    "text": "過濾應用程式",
+    "source": "c8be01160de85357e8cfa6a5a314f0c4287fafe9f127733c72bb229abd1deb27"
+  },
+  "sort_bec69036": {
+    "text": "色彩",
+    "source": "bec69036aa27e7fab7d44cad3909477b76631c39ba46fd7841ea71aae7e5a735"
+  },
+  "sort_apps_6dfe7969": {
+    "text": "選擇應用程式",
+    "source": "6dfe7969708d8474c11d9ac058b04ffb3fb9a71a238e449b535ada830ac5c629"
+  },
+  "couldn_t_load_the_app_directory_7a3b13f4": {
+    "text": "無法下載應用程式目錄",
+    "source": "7a3b13f4bd7cf95ed4ba3859803ed2191f9d3b5bfc1126e3762567cfad51d464"
+  },
+  "featured_illustration_2ad772c7": {
+    "text": "包含的影象",
+    "source": "2ad772c77441a4303726738c251a5a8cf19cb0a193c0008313570d75f3bbc45c"
+  },
+  "preview_on_discover_5d0fbea2": {
+    "text": "預告片《發現》",
+    "source": "5d0fbea21a2fa89d8826c746b94ddb583478f1c063fe41110e47cd6010a5ec23"
+  },
+  "preview_theme_8bc94986": {
+    "text": "提前主題",
+    "source": "8bc94986dcd4e3ca05325a0a343344c61ff5ba558d36d1b548df7d69e5ce57b6"
+  },
+  "illustration_framing_drag_to_move_scroll_or_pinc_c84117df": {
+    "text": "影象框架:拖動移動,滾動或點動,射擊金鑰到滑動",
+    "source": "c84117df25ab45ffc1edb4c64820d6302d1dc3f0f3be13e4df5aeeffeb42c610"
+  },
+  "upload_featured_illustration_f64bc5ff": {
+    "text": "載入影象",
+    "source": "f64bc5fff81f7bc30b9f85eb26c5f44fef60f155a09e629f4ab503f50f30d08f"
+  },
+  "png_jpeg_or_webp_up_to_20_mb_88d30953": {
+    "text": "PNG、JPEG 或 WebP,高達 20 MB。",
+    "source": "88d30953b392cf3a7286b50c616ccc85917d08890da03bd5fbeb33e7ba48ef42"
+  },
+  "use_light_image_in_both_themes_4ae3065e": {
+    "text": "使用光明影象在兩個主題",
+    "source": "4ae3065ee837e6f8929daa2bb87c0d696016efa9886dc5802cc485963657dc6e"
+  },
+  "use_images_with_the_same_dimensions_framing_and__167f0740": {
+    "text": "使用相同尺寸的影象. 框架和顏色在兩個主題上共享。",
+    "source": "167f0740471403a4357559b0f9e9708d1f1795637e3ef84896c2c1f7d0a207b0"
+  },
+  "drag_the_card_to_move_the_image_scroll_or_pinch__228e373c": {
+    "text": "拖動卡以移動影象. Scroll 或 pinch to zoom. Zoom",
+    "source": "228e373c60ee971f53bf3e1e72de75a6238208909e6f65227850f818b3d9de51"
+  },
+  "card_colour_32fcd150": {
+    "text": "卡片顏色",
+    "source": "32fcd1507a366673414fbb1296029eaea0d5c5fe2799a622325ffb1ff2f47f78"
+  },
+  "reset_position_8cebff87": {
+    "text": "重新定位",
+    "source": "8cebff8711824e090200cc93eab22fdcde720e4b0d4c3098b1209621e85ebfc7"
+  },
+  "use_app_icon_694d7da2": {
+    "text": "使用 app icon",
+    "source": "694d7da26cc136151957ab3b0f70818879e67cbfccacd97b5039224b30632f78"
+  },
+  "loading_preview_c4cf2b2c": {
+    "text": "載入預覽...",
+    "source": "c4cf2b2ccb5d8dec9a0412c84a7c04c739ff0b298eb83d02bd8cabde8663dd7f"
+  },
+  "proposing_opens_a_governance_card_on_the_board_t_c32ac785": {
+    "text": "提議在董事會上開啟一個治理卡,當團體投票時,該變更適用。",
+    "source": "c32ac785d106693d8ed4aabfabef058c2e400e47aa449eef9ec23116f18902ba"
+  },
+  "done_11a6767d": {
+    "text": "完成",
+    "source": "11a6767d5674c7e45f7e00dc525762275b3a48491ad6045427d2609cc496c516"
+  },
+  "try_again_d8b8392e": {
+    "text": "再次嘗試",
+    "source": "d8b8392e2c542950ca64867168e4ef87d4ad606882d5898f826b51c6d553988f"
+  },
+  "retry_942087cc": {
+    "text": "重試",
+    "source": "942087cc2d41e01304b7195558d093d10c72af8e838c7556d6a02d471ee71852"
+  },
+  "discover_d4a33d5b": {
+    "text": "探索",
+    "source": "d4a33d5b78bccebe3f16843dc30e6c0f73b4eb6efb4e7114ddfebde7fa2c9954"
+  },
+  "below_4932a3b0": {
+    "text": "下面。",
+    "source": "4932a3b0906329d0a7142c3697d7c0854d8e3d560d6f9a8cf9c991d0b8a936ac"
+  },
+  "loading_your_apps_402e4084": {
+    "text": "載入您的應用程式",
+    "source": "402e40849fc5815ae5e8eb7463f6d63c86985b410a4b849f01f3e578d0926170"
+  },
+  "earned_57a9ebf8": {
+    "text": "獲利",
+    "source": "57a9ebf817722ac7110745e7d29dd9360ed622a5bb544478b96007524d4bccb3"
+  },
+  "close_getting_started_708e0875": {
+    "text": "接近開始",
+    "source": "708e08754f044bb9fa42a8c005ece573ab6eda6c3cf6d3d9b3a52390dad708db"
+  },
+  "getting_started_831d0f72": {
+    "text": "開始的",
+    "source": "831d0f72d242b7d12d4ef15123d43145e97e95be5aba57cd150e434159aae202"
+  },
+  "you_re_all_set_f195f8e2": {
+    "text": "你們都設定了",
+    "source": "f195f8e226312c3a037876bcb3239b351f94840c0ca0a09c300e88c294cc1322"
+  },
+  "see_challenges_859f7c55": {
+    "text": "看挑戰",
+    "source": "859f7c553fab09d6fe01f9e905dd7bc0b0a8cec0374aa0f4821c1e100603fb10"
+  },
+  "search_your_apps_0a886cb3": {
+    "text": "尋找你的應用程式",
+    "source": "0a886cb38c01c6570c63aeec062951201aeb2114c07ec3a0bb451d5e1c7a4450"
+  },
+  "search_your_apps_bb8dcb07": {
+    "text": "尋找你的應用",
+    "source": "bb8dcb0741ebf599fcf18b7467fd5c385ceea79b6b4c226516c9a0778e7246a6"
+  },
+  "shortcuts_46e978d0": {
+    "text": "短片",
+    "source": "46e978d0c19397c7d0318f6440950c15e046f5841a0feb03c35fdc68e1dfc68a"
+  },
+  "go_to_the_challenges_tab_on_the_leaderboard_scre_5a7c1c89": {
+    "text": "進入 Leaderboard 螢幕上的挑戰選項卡",
+    "source": "5a7c1c89f718d40d9148dfedf6686c15e8aab6f7c1f5883b4127db8076b19ee3"
+  },
+  "no_challenges_are_running_right_now_go_to_the_ch_56376c8a": {
+    "text": "目前沒有挑戰正在執行. 在 Leaderboard 螢幕上的挑戰選項卡",
+    "source": "56376c8a71ffea8c3750875c33bf31e27bb463903f69b9a250cb55fb9adaaed5"
+  },
+  "no_challenges_are_running_right_now_85bac9da": {
+    "text": "目前沒有挑戰",
+    "source": "85bac9dab6d139b4f1fa5c49f8f135fd8ae5674862d3bab11fb679923fcf202b"
+  },
+  "challenges_40b9c8f4": {
+    "text": "挑戰",
+    "source": "40b9c8f444870eff94e260ea77c034c0078841842fedb9ba3cfe9e83b4ffb313"
+  },
+  "browse_every_app_in_the_directory_4a51ed1a": {
+    "text": "在目錄中瀏覽每個應用程式",
+    "source": "4a51ed1a4fded188d6fa6096c9ef0514c4fcd8fdc0909ad3a8b0b67778571cdb"
+  },
+  "browse_all_apps_7e578aad": {
+    "text": "瀏覽所有應用",
+    "source": "7e578aad2a39f0e87c2aacccdaade1b32963b82631e6928ac40cfe02f5393276"
+  },
+  "open_challenges_ed0a60f4": {
+    "text": "開放挑戰",
+    "source": "ed0a60f493af254539ece9181abd7e0b4b785551d3755f73bf7cd6371b21a336"
+  },
+  "skip_28d03596": {
+    "text": "滑雪",
+    "source": "28d03596d24eeb4eab2d6fe21ca1cb95be7cb1fa6f92933db05e2cc4f4cdfa06"
+  },
+  "back_76900f1b": {
+    "text": "返回",
+    "source": "76900f1bfd16c8d4dd3d25e6f46638d7165aee23883ccea6bfe071c514421769"
+  },
+  "are_you_sure_you_can_reopen_this_from_settings_3ed51ef8": {
+    "text": "您可以從 Settings 重新開啟此專案。",
+    "source": "3ed51ef81266a37e2c9e822aa70770a7158fbacd7eb23c34d33f3b2da930e120"
+  },
+  "keep_going_9d7fd0e0": {
+    "text": "繼續走",
+    "source": "9d7fd0e0bd0ac15500730fda0e9103d7e4c7dbcdadff9a2db43f262ff1e24d38"
+  },
+  "skip_the_tour_62762c9e": {
+    "text": "跳過巡迴演出",
+    "source": "62762c9e757987356642ccf3981540084658c94c10b13ac2bb35eaf0c597dc5b"
+  },
+  "remove_from_widget_92ca7041": {
+    "text": "從 widget 移除",
+    "source": "92ca70414886ddc6d4fe37199e6b034c116054c290635e2d91c3daae142bbd87"
+  },
+  "homeroom_widget_dc7a1834": {
+    "text": "Homeroom Widget 外掛",
+    "source": "dc7a18349b9dc67edd86fffbc1ca0f87e76afc29450409ec6103fdb273c77f94"
+  },
+  "how_to_add_the_widget_to_your_home_screen_a620bda2": {
+    "text": "如何將 widget 新增到您的主螢幕",
+    "source": "a620bda2cb56a53085b9b1c9ee569930b0128734a989b81954bad505b74a4b12"
+  },
+  "close_the_widget_section_5adf01ec": {
+    "text": "關閉 widget 部分",
+    "source": "5adf01ecc7ed335a7850d9aa43525eb3c2fe545e759026fe31e9dc8cdc841eb6"
+  },
+  "add_the_widget_to_your_home_screen_4f16f8b1": {
+    "text": "將 widget 新增到您的主螢幕:",
+    "source": "4f16f8b1e6dabc1b7b5ebde1cfdec04aef4e5137541a1811a3b7a34d5aa5d370"
+  },
+  "touch_and_hold_an_empty_area_of_your_iphone_home_8bd609ce": {
+    "text": "點選並保持您的 iPhone 主螢幕的空白區域,點選",
+    "source": "8bd609ce7162b5249c348de748b83abd7fa2921263520c37e5d2bc9f83bf0f78"
+  },
+  "edit_464c4ffd": {
+    "text": "編輯",
+    "source": "464c4ffd019e1e9691dcf0537c797353ef2b1c1d4833d3d463e5b74ae4547344"
+  },
+  "add_widget_94a893fb": {
+    "text": "新增 Widget",
+    "source": "94a893fb82435029d88ec31f0f5c4458fd2e1077b88d4d69ed38ddded8f6ab20"
+  },
+  "or_the_1fedcd80": {
+    "text": "(或其",
+    "source": "1fedcd8096001c01a2f489ddbbb54e2f10bf910c254a9ec6691d1aee54d73c5c"
+  },
+  "search_for_ccd8cc50": {
+    "text": "( ) 尋找",
+    "source": "ccd8cc506fbcc0a32b54fb768598cd09fad7882c0be237ecb698f0964e7d786a"
+  },
+  "homeroom_c9149977": {
+    "text": "第Homeroom章",
+    "source": "c91499775f13ea080fe340d005a43a58a009f086d0c9cca82ba629ff8a375af3"
+  },
+  "pick_a_size_and_tap_597f8790": {
+    "text": ",選擇一個尺寸和點選",
+    "source": "597f87904aa509ace40219981511bdcbb9304273892f28d7cea25d0133b2088c"
+  },
+  "the_apps_below_appear_on_it_automatically_d6bb79de": {
+    "text": "下面的應用程式會自動出現。",
+    "source": "d6bb79de543eff21971dd1e0a711f7e92c900b19c42fd73fe4387ef2004db6e2"
+  },
+  "ask_for_a_change_f445fc4f": {
+    "text": "請求改變",
+    "source": "f445fc4ffc97bebfefcff8c21ab69e5b2ccd9089e0cbf8366d99de3caf3e02f0"
+  },
+  "there_is_a_new_version_available_click_here_to_g_0b55f203": {
+    "text": "有一個新版本可用. 點選此處獲取新版本。",
+    "source": "0b55f203cd658edf2252510f0ed0d3afe88adba5c53ae08f8accb404c27094fb"
+  },
+  "this_app_has_a_new_version_click_here_to_reload__a839b5b6": {
+    "text": "這個應用程式有一個新的版本. 點選此處重新載入它。",
+    "source": "a839b5b67d23b3408b4d77c9b6b4e9a331dbecc032d12bc20421f8a498628fbc"
+  },
+  "unread_activity_d1b1f643": {
+    "text": "未閱讀活動",
+    "source": "d1b1f643e8e8fb56a4fdd49a7ca7a46a796f92f7677d1f23b5a63f0fda37992b"
+  },
+  "loading_challenges_57889351": {
+    "text": "充電挑戰",
+    "source": "578893517d8f797acc6a6fb9ae8d1d8417bdc3df89136012a5f3aac39a450043"
+  },
+  "no_challenges_for_this_event_yet_c41e3642": {
+    "text": "目前還沒有對此次活動提出任何挑戰。",
+    "source": "c41e3642020dac2a1cb97ca8795a984438808e56af5c4da50f5a34162a8fa23a"
+  },
+  "go_to_first_challenges_fca78871": {
+    "text": "走向初步挑戰",
+    "source": "fca78871e16595b1897282d696e40846efb7ace32f194393acfec93e4025996a"
+  },
+  "checking_your_block_production_status_74e131fc": {
+    "text": "檢查您的區塊生產狀態",
+    "source": "74e131fcf793e9465b64c9bde1a331c6cab0d9c9a1e396ecde71653d815cd19f"
+  },
+  "loading_participants_465f5114": {
+    "text": "充電參與者",
+    "source": "465f51143d939bd940d5152886b11553f06ed023a498d5fd25381ad32c743644"
+  },
+  "no_participants_yet_8987d03b": {
+    "text": "目前還沒有參與者。",
+    "source": "8987d03b2dae88c45689851be796060912d25dc45276f8e724f10206a596365c"
+  },
+  "non_podium_ed04dd0b": {
+    "text": "(非主持人)",
+    "source": "ed04dd0b60605fce598b5538e4ecd8f83b464248ca2f64a20c53f1b2e30522ad"
+  },
+  "see_your_feedback_b474570b": {
+    "text": "檢視您的反饋",
+    "source": "b474570b8f9ec5ae22ecf27bce34f0038fcaf6933c43d70a870b27e0fcecf7d2"
+  },
+  "loading_the_profile_078e5640": {
+    "text": "載入個人資料",
+    "source": "078e56406a85b06cadc0142df7873df12a0fac805bf14759d15fb85a1878fef0"
+  },
+  "activities_4d0076e6": {
+    "text": "活動",
+    "source": "4d0076e6b4c71059f0403fbdebc3a4079e4eb2124cb19b3c6be54ff9c0a30d06"
+  },
+  "no_activities_recorded_0aab8957": {
+    "text": "沒有記錄活動。",
+    "source": "0aab895730ecab10d7a919000b2e1fa7cf5edfda3df767a82998bce917583868"
+  },
+  "no_event_selected_7718c83d": {
+    "text": "沒有選擇的活動。",
+    "source": "7718c83da9b61f924a0c8e36eef06cdd18aaa3112d8b595bc385c3eddba45b35"
+  },
+  "nothing_is_running_right_now_so_this_shows_the_m_86b8da11": {
+    "text": "目前沒有什麼正在執行,所以這表明最新的事件。",
+    "source": "86b8da11caa6c080ce127ee63361d3748d0905be8bea2cdfe34f1c0d6ec5cca6"
+  },
+  "event_4e1f49a9": {
+    "text": "事件",
+    "source": "4e1f49a9c8ae8a158434e647c0c410352d718984a4fcd144d26cca3c394caa02"
+  },
+  "past_seasons_e9c5ec65": {
+    "text": "過去的季節",
+    "source": "e9c5ec65c67bf66600e96f795a2f4858fd30591926190a0c51d80cf1c6ae1c34"
+  },
+  "loading_past_seasons_f4963c98": {
+    "text": "過去季節充電",
+    "source": "f4963c98b0f1e517f8bd722195a4653db6b7cffcc9f3e0364ecab92227d9e40e"
+  },
+  "event_winners_4643be1b": {
+    "text": "事件獲勝者",
+    "source": "4643be1b5b94a0d9f2557a6e9bc3f5ab02d7e168cc1086af2c204a13d329f988"
+  },
+  "loading_the_leaderboard_44f14e7f": {
+    "text": "載入領先板",
+    "source": "44f14e7f2fca70375d04c752436c50316c82496273293095dca58880f4043f72"
+  },
+  "top_users_431b557c": {
+    "text": "← 頂級使用者",
+    "source": "431b557cc55b148f0decc213a7d0ef9d612c842456bd778ecedd6575c38a8c33"
+  },
+  "all_changes_this_user_has_proposed_newest_first_9c6ebf68": {
+    "text": "此使用者提出的所有更改,最新的首先。",
+    "source": "9c6ebf6831e4787c0a2db835d2b62529d5fb3feb7d81c87cdc824f4cf6366c82"
+  },
+  "kudos_on_changes_that_aren_t_live_yet_not_counte_aa06f1c0": {
+    "text": "關於尚未活著的變化,尚未計算到排名",
+    "source": "aa06f1c02e4c294169cef1dfeecf0dc0c33255610bdecc80b0baa7e2a0234741"
+  },
+  "kudos_earned_on_live_changes_8afe2780": {
+    "text": "Kudos在現場變革中賺錢",
+    "source": "8afe27808d741b0144073ab5a60b1400b6aad81cb55ef75a634ccf5bee89c98d"
+  },
+  "open_on_github_03f69885": {
+    "text": "在GitHub上開啟",
+    "source": "03f69885814b5b7aa5e4758e46733da443a237e2ec63488bddd230f501ff166a"
+  },
+  "kudos_earned_on_live_changes_the_leaderboard_ran_584f39b2": {
+    "text": "Kudos在現場的變化中獲益:領先排行榜排名得分",
+    "source": "584f39b2a09800aa6e62272d21b4b6eb1917756458f6dd82d9307c080ecc9e2d"
+  },
+  "no_changes_proposed_yet_e8eb63b5": {
+    "text": "尚未提出任何變更。",
+    "source": "e8eb63b556bd89f83b1db5f45c125b87f6a3e0418e652d9d207345dbcaf25d13"
+  },
+  "view_challenges_fa7e81e5": {
+    "text": "觀看挑戰",
+    "source": "fa7e81e589450aea52062200c89967420c1a9c6cc62dd2b0b421b65c411765ec"
+  },
+  "excluded_from_podium_ranking_07f1600c": {
+    "text": "被排除在舞臺排名中",
+    "source": "07f1600ce404bb1992442c06c823053282b3ee20c8e500e8afa72086c88b3d47"
+  },
+  "non_podium_759e30d5": {
+    "text": "非波迪",
+    "source": "759e30d5f0c26032ed9e92e4bab4c92af7867a4a14b24d4dd26c38aaecb12925"
+  },
+  "prev_73912999": {
+    "text": "預告片",
+    "source": "73912999faf42cb37adc0db937015cfbb2554170d72329b88ad86bf62a75cd98"
+  },
+  "next_1ff57a29": {
+    "text": "下一步",
+    "source": "1ff57a29d7c9d11bdf61c1b80f2b289b44c1ea844824d4b94a0d52b6ba5fc858"
+  },
+  "loading_the_standings_4eda8afa": {
+    "text": "載入站點",
+    "source": "4eda8afa5988735114b583df51c6dabdbab1b50d6bf179f1f8dc09dfdf3fc500"
+  },
+  "no_data_5118ec56": {
+    "text": "沒有資料。",
+    "source": "5118ec56d3b0c4c6df6071f28023a35c9fb4c544d2c463bd02537aaeea3a706f"
+  },
+  "the_leaderboard_for_this_event_isn_t_public_yet_d3810d93": {
+    "text": "此次活動的領導板尚未公開。",
+    "source": "d3810d93ec2a82c59d3321f3d57e0efd5a240d0f605e6c8c211e17a365bbe123"
+  },
+  "loading_activities_8d272db6": {
+    "text": "充電活動...",
+    "source": "8d272db6230ff7cc7c116dd87bd2ac1538d6b9302d2048ada356938730598ad8"
+  },
+  "no_activities_recorded_for_this_event_b7f206f1": {
+    "text": "此活動沒有記錄的活動。",
+    "source": "b7f206f1f4b6bb2f25dc04aff91266012a95a2c7700e9a5463bfbd06e3ca37d1"
+  },
+  "loading_epoch_breakdown_38866881": {
+    "text": "充電時期的破壞...",
+    "source": "388668814e7d03539ac0b3aef51df095b68d42b56c1bf986caa9b8a1cd094129"
+  },
+  "no_epoch_data_for_this_event_dbf4c6ce": {
+    "text": "此事件沒有歷史資料。",
+    "source": "dbf4c6ced94901ef3b66f7b82364a638e0b56d6a68413f797cacdb716e828010"
+  },
+  "epoch_fff7a2d7": {
+    "text": "時代",
+    "source": "fff7a2d7d622340f33ac12b81e308320067f9989605317e63cdf3776d4a9a67e"
+  },
+  "won_slots_32dbf5c2": {
+    "text": "贏得斯洛特",
+    "source": "32dbf5c2c0ed80c1e91eb7f642277e72eca14ddb7efd83f1b70d35c2a3895bb1"
+  },
+  "produced_3b22f22b": {
+    "text": "生產",
+    "source": "3b22f22b5d1cb8d73f82b11c09941da70102d340e468646bf9842a356a19fcb9"
+  },
+  "success_rate_49da60f8": {
+    "text": "成功率",
+    "source": "49da60f8a292ccc447ce5fca1d3e5b7d0425b9add0540947aa60d125fe9b06a6"
+  },
+  "loading_your_profile_dc371220": {
+    "text": "把你的個人資料...",
+    "source": "dc371220304b2d263b6ab658fbf4cecc2be13342858fb1576cd8b98e572dd052"
+  },
+  "rank_a4130d7d": {
+    "text": "排名",
+    "source": "a4130d7d2c3a137f362d28ba21eedd525b7e42e7551c3e62817b048c9a0bd425"
+  },
+  "total_points_82d73caa": {
+    "text": "總點",
+    "source": "82d73caab4e292cab3858c17064605a169a2696f6f8c5d0d34120fe3a7adf314"
+  },
+  "produced_blocks_4898d66e": {
+    "text": "生產區塊",
+    "source": "4898d66e6095dbee24a531ae34b0707f1b2e2ba1e842869903d610d62ba53a61"
+  },
+  "client_success_rate_f58196ac": {
+    "text": "客戶成功率",
+    "source": "f58196ac5387b35e3b2f3e309cc8f5289ee696c2a7de76397c3d94c71a48db0f"
+  },
+  "canonical_success_rate_56b13819": {
+    "text": "Canonical 成功率",
+    "source": "56b13819e539698c5604de65eb7619e64cf7830d081a02b342d5d3d1ba00d882"
+  },
+  "your_profile_528d89ad": {
+    "text": "你的個人資料",
+    "source": "528d89ad72cba22e2d9d116befd3bb96a519f06b5f1147a2348d29fa6d1a2cbd"
+  },
+  "epoch_breakdown_0cdc9208": {
+    "text": "時代崩潰",
+    "source": "0cdc9208a4ada9215389119ab699f19bafe79640736902f64a728152a19752cb"
+  },
+  "token_allocation_withheld_4c0588c2": {
+    "text": "托克分配中斷",
+    "source": "4c0588c235e82ee4dd15a4ae966adefcf6768548e0ef4ab7504e0d042ef4b945"
+  },
+  "review_and_accept_the_terms_to_see_your_token_al_bb500d85": {
+    "text": "檢視並接受條款,以檢視您的代幣分配。",
+    "source": "bb500d85e5d8e9696c36bd2f68ce003f0d5a0f37524eea272f5f9a86a1ea8842"
+  },
+  "review_terms_ed6792b6": {
+    "text": "審查條款",
+    "source": "ed6792b6a98ed25eadc09a5715b691993dce4d6ec93c90c2aeeec8d8afb209f5"
+  },
+  "your_share_of_the_season_s_token_pool_allocation_b3b0dbd5": {
+    "text": "您的股票是季節的彩票游泳池. 授權是暫時的,並受計劃條款的約束。",
+    "source": "b3b0dbd5865115f2f48aa5afaddd9bcf431903453bf4d00b254da4eb7fefc649"
+  },
+  "reveal_36b830bd": {
+    "text": "揭露",
+    "source": "36b830bdb447f8c758a9b58f190eed468c4bd53e9c7662ee19bca9c53d3a3e3d"
+  },
+  "your_standing_12e847da": {
+    "text": "你的站點",
+    "source": "12e847dadcc2ba95876e480ae7a9c93ccfb9296fb3a6218886cf407fe54751f8"
+  },
+  "points_by_event_7e48df61": {
+    "text": "事件分數",
+    "source": "7e48df61a571857f7ed7ad957749ec7a894f84612077ec275dbaedf5990c7f27"
+  },
+  "app_a172cedc": {
+    "text": "應用",
+    "source": "a172cedcae47474b615c54d510a5d84a8dea3032e958587430b413538be3f333"
+  },
+  "apps_d56f6359": {
+    "text": "應用程式",
+    "source": "d56f6359d240f69e4164425b599d08869574fc013b9e5727951048914db12c5b"
+  },
+  "member_e31ab643": {
+    "text": "會員",
+    "source": "e31ab643c44f7a0ec824b59d1194d60dac334200d845e61d2d289daa0f087ea4"
+  },
+  "members_17373ca1": {
+    "text": "成員",
+    "source": "17373ca1c7634a4be4a13861a891abd975ec916caab8f3dcf5142fa4997d0b96"
+  },
+  "live_247610f4": {
+    "text": "生活",
+    "source": "247610f4dedd4ab7247d07dbda19c81ca9817f85820742cad49d407ffae9e4ed"
+  },
+  "resume_d640c742": {
+    "text": "回覆",
+    "source": "d640c7421da066618a39daf4266da5f61f66a9b1afcd626481b831a17064965d"
+  },
+  "open_ed077f3d": {
+    "text": "開放",
+    "source": "ed077f3d8125d60dca1979c7133601bd187d47c73ed9975028f677e49e709942"
+  },
+  "spinning_up_7a0d6a5c": {
+    "text": "旋轉上...",
+    "source": "7a0d6a5c7579b584382b959a814bbd13de2c3d48e4938b20bcc5a07cb3b446c4"
+  },
+  "not_running_9e3856ee": {
+    "text": "不要跑",
+    "source": "9e3856eef37c48e551fcb274637d0d3499eec816116e0a3aa509990a59a49040"
+  },
+  "unavailable_ca184496": {
+    "text": "不可用",
+    "source": "ca184496974204a0bd3fd4925e0540bc4b0df6fcc232994d29754272b7183812"
+  },
+  "value1_live_2c4bcb92": {
+    "text": "{{value1}} 直播",
+    "source": "2c4bcb928a0e92d49483763155f10fad2bb556cbda72ccbc255f5cae35334bf8"
+  },
+  "show_fewer_255beb65": {
+    "text": "顯示少",
+    "source": "255beb6510e7827d37ec1cd22d080f910888ae00f29374dd9545c8b3d1fce43a"
+  },
+  "show_all_value1_contributors_3f482bc4": {
+    "text": "顯示所有 {{value1}} 參與者",
+    "source": "3f482bc4de14526e01c1f00a7035fa5bf4b9353a4e334ecc19d22ee08f141838"
+  },
+  "remixed_from_value1_open_the_original_29d573e9": {
+    "text": "從 {{value1}} 提交: 開啟原始",
+    "source": "29d573e9fc931fb0945a6f516b134bbdd6472fc1556388b51e69158544693e0c"
+  },
+  "remixed_from_value1_9705e65b": {
+    "text": " ⁇  回覆 {{value1}}",
+    "source": "9705e65b03f4f781094a9d2ef67585fab5880e2cfe354f9f0e9614209e568c91"
+  },
+  "archive_66f4804e": {
+    "text": "檔案",
+    "source": "66f4804ee23ddc092d1bae43cb88186aa541187fff7c1cc8a4aa17e59a9f4123"
+  },
+  "value1_to_vote_18cf7679": {
+    "text": "{{value1}} 投票",
+    "source": "18cf76796ad8d928c25fb70a7f0f672c79e084d66c0e335410fcf8adf3ae697b"
+  },
+  "about_value1_fd098734": {
+    "text": "關於 {{value1}}",
+    "source": "fd098734868bb53a6ce59f58c8c7b28bb35a865d7bad3fa75d345d39b2872c51"
+  },
+  "agent_session_da3d3fb8": {
+    "text": "代理會議",
+    "source": "da3d3fb8f5983aa4a93c71fb29e22a58a9f1fbcf2b15bb11ca32eff3d7630d9f"
+  },
+  "could_not_copy_press_and_hold_the_link_to_copy_i_dac2f281": {
+    "text": "不能複製,點選並保持連結來複制。",
+    "source": "dac2f2810ad1415ef06f5fdddc2a63b2ca622a7ca6de308868b4541688c8cf45"
+  },
+  "join_value1_on_homeroom_f4436c83": {
+    "text": "加入 {{value1}} 在 Homeroom 上",
+    "source": "f4436c83f2912c99359e5b65601056d543aaa7de3e55a8469d22f53461f2a9f1"
+  },
+  "making_your_link_cb9ae30b": {
+    "text": "建立你的連結......",
+    "source": "cb9ae30b022eac6d96db28b1c6d5da0b828aa7263d0dfecc1693d84b2106e6cb"
+  },
+  "only_the_people_building_value1_can_invite_other_f7b43cca": {
+    "text": "只有人建造{{value1}}可以邀請其他人。",
+    "source": "f7b43cca71a122828437fbcd3394a20b2ee865c7a4c693adf8ed910c59a7d5f1"
+  },
+  "join_value1_to_invite_people_to_it_5a22e9d5": {
+    "text": "加入 {{value1}} 邀請人們參加。",
+    "source": "5a22e9d54d8f3ad6baa828341dbfa21073a8d8fd04debedb58b1ea67aadafe94"
+  },
+  "invite_people_to_value1_847cd1ff": {
+    "text": "邀請人到 {{value1}}",
+    "source": "847cd1ffa6141386347d514163bc66db57fe1c558548b2c73ccc9e8f3d17f19a"
+  },
+  "copied_8d525e5f": {
+    "text": "複製",
+    "source": "8d525e5f158b9afe05f3122af363ac67763bdc4e1395b46597b320c289766ce3"
+  },
+  "copy_link_dbf362d4": {
+    "text": "複製連結",
+    "source": "dbf362d4f210c780513a9258278d4d07abe8a224f84ba7ad775d819039342e77"
+  },
+  "until_you_turn_it_off_e8a440c9": {
+    "text": "直到你開啟它",
+    "source": "e8a440c9d25398d2ef15132c077aa314b4a65308463d0a407fb1065481dc80a7"
+  },
+  "value1_days_f766f83d": {
+    "text": "{{value1}} 天",
+    "source": "f766f83db1f4c4edda2645cdddb382f7fc5c94aa8283645ef84841ea29cb91bf"
+  },
+  "anyone_with_the_link_5b7f7017": {
+    "text": "任何人與連結",
+    "source": "5b7f701785be58f468f02335ce1cf992f11bd06d5be6ca4d926375207e360c82"
+  },
+  "value1_people_80ea6fd0": {
+    "text": "{{value1}} 人",
+    "source": "80ea6fd0a9b32560c56470696f5ccf96e97649167fcd76785f1ec9973157fca9"
+  },
+  "live_links_3401ecef": {
+    "text": "直播左",
+    "source": "3401ecef8e5ceb6a65851b119cb7ea3cc70389d99d87bd65e2dfb4c4c9aad91c"
+  },
+  "your_links_219ee7d1": {
+    "text": "你的左",
+    "source": "219ee7d1ee3f648afd81a93448f82a714c3b615b34f8573d43bd164db2748e1f"
+  },
+  "by_value1_363778f7": {
+    "text": "由 @{{value1}}",
+    "source": "363778f7384cd4e264593302776bc396ee7d91dc0d5095a3aed877112710e730"
+  },
+  "missing_secrets_07a10de6": {
+    "text": "失去的秘密",
+    "source": "07a10de69bbb151e4c76a546684f21da76f08d23bfd8235006715a92068b61d8"
+  },
+  "value1_in_dev_619cc37d": {
+    "text": "{{value1}} 在 dev 中",
+    "source": "619cc37d9dfd89a533d72c0a3cc35f5ec3e2f863e05e56a7b043299feb8cbb46"
+  },
+  "value1_issue_value2_20c44712": {
+    "text": "{{value1}} 發行{{value2}}",
+    "source": "20c447123c986109ce119fa09c01258f54299785bd7655016276f73add918c40"
+  },
+  "private_c63eb672": {
+    "text": "私人",
+    "source": "c63eb6720c6e88493897548d3620d45e539d18574465f7b26fdddcbade044ee2"
+  },
+  "invite_only_build_2f0dec6f": {
+    "text": "單獨建造",
+    "source": "2f0dec6ffec8e42bfde3db65d6a1967be12f4baec0d0ce7cd970c254097adc27"
+  },
+  "updated_value1_0041faff": {
+    "text": "更新 {{value1}}",
+    "source": "0041fafff42a54637d737a1fc8ebb26ca99e715a5a236333d5c4898a4d4931cf"
+  },
+  "join_value1_8a9b2690": {
+    "text": "加入 {{value1}}",
+    "source": "8a9b269098d35e7ee5cee970dbdda96ae29fcb6bb4d38045b0cefad3e7bcdcea"
+  },
+  "joined_69318b0c": {
+    "text": "加入",
+    "source": "69318b0c6a928e7e61624740d7382f513070ab28aa832b1da1d5e16995ae6a8b"
+  },
+  "join_fd30fe68": {
+    "text": "加入",
+    "source": "fd30fe681b4b2d9e55f851cb34641f907401aa43e9d80f5b1e14ce714ef00497"
+  },
+  "show_less_94ea9b1d": {
+    "text": "顯示少",
+    "source": "94ea9b1d33a02975ea6b71d6cf87d461a48de07869c047b5daeb1654e9d539f8"
+  },
+  "show_more_value1_951897cf": {
+    "text": "檢視更多({{value1}})",
+    "source": "951897cfddb9787a8dfef1bbb51727e442e1b832ed7166bd2dc673376605eb19"
+  },
+  "recommended_d70604e8": {
+    "text": "推薦",
+    "source": "d70604e8430461372849bbd123d85771e11423870a507e8fa4650a7e9a5a50ef"
+  },
+  "most_users_125c07d3": {
+    "text": "大多數使用者",
+    "source": "125c07d3ad934401b55f04446238c542786dc1b605734f3d9331567e13ca7686"
+  },
+  "most_active_202997c9": {
+    "text": "最活躍的",
+    "source": "202997c941cad8e4ddc8244c3878b3836796f7e46afbef76cc4e206a28985505"
+  },
+  "most_changes_live_8c370510": {
+    "text": "大多數變化活著",
+    "source": "8c3705100bb46c4f83f51512be9757cbbd57117980b07fb59c5c8fe5aa97485e"
+  },
+  "newest_d15efa17": {
+    "text": "最新",
+    "source": "d15efa178cf65ae16596a270671aa320bc9d2a5f18d78ecc5d479f73b3ffd51e"
+  },
+  "all_a52ace42": {
+    "text": "所有",
+    "source": "a52ace420f2175d08b1577a1bea5445e36801229c074ef9ed6c55a73401fd9c2"
+  },
+  "featured_c533cafa": {
+    "text": "特徵",
+    "source": "c533cafab69e4033784a7d3857a806e551a95fee2ce47207bdd9a5528a24fb25"
+  },
+  "new_18fdd549": {
+    "text": "新",
+    "source": "18fdd549b2ed367ac0c74cbec1214644728515b30edbcb78e7d322757a7c8359"
+  },
+  "link_copied_d12860c2": {
+    "text": "連結複製",
+    "source": "d12860c21e78baa522ac743ecfbd77fb9cf4558e581e0e54afcace23b3ce1849"
+  },
+  "couldn_t_copy_the_link_da5f2273": {
+    "text": "不能複製連結",
+    "source": "da5f22732bfa6140e61d73402df22b6ce2d97cac4d8114ff0bbdf8e32320c944"
+  },
+  "light_dbcd5e7b": {
+    "text": "光明",
+    "source": "dbcd5e7bb7a0f538810de44c3efbd813037ee3fa358747bb71fa58e157af45f7"
+  },
+  "dark_60acc53f": {
+    "text": "黑暗",
+    "source": "60acc53f13a5d1bf115878c4a785e9a43e8286c4139a8402a6ac7d23966f9153"
+  },
+  "replace_light_image_949e4fd9": {
+    "text": "替換光影象",
+    "source": "949e4fd959141c86fe7be7d84f5ecb3c51391b456e4250abf52df25ca35f9f2a"
+  },
+  "upload_light_image_e98556da": {
+    "text": "上傳光線影象",
+    "source": "e98556da7093f15d6bb36a62a1613640ae6647db5d40c9282416d5ae076733d3"
+  },
+  "replace_dark_image_14e9fa2a": {
+    "text": "替換黑暗影象",
+    "source": "14e9fa2acfe0817af53bd2c3f94e6be3150ad7d9083977a039ead9d638074e9b"
+  },
+  "upload_dark_image_7ba6c144": {
+    "text": "下載黑暗影象",
+    "source": "7ba6c14441c3a4cbee17367b8d5ed011d029071612b8e1fed396f8615ffead9e"
+  },
+  "please_wait_4660a983": {
+    "text": "請等...",
+    "source": "4660a983366f710126b2dbf35dd89c7ea89eb7efdbe55b68dede11aa6aef705b"
+  },
+  "propose_change_0a123612": {
+    "text": "提出變革",
+    "source": "0a12361265ae673161f24a9305fe9e828539750afdb585d35e6bfd6f37a2cb5c"
+  },
+  "remixed_from_value1_7e6472dc": {
+    "text": "回覆 {{value1}}",
+    "source": "7e6472dc1639e6a56d28d669973b986784e98abf63162b462375ae3e7f31f2fb"
+  },
+  "private_community_cbb6e031": {
+    "text": "私人社群",
+    "source": "cbb6e03143153940d60b396a1930d790299d190338d5caee412a16d55e3ec2a2"
+  },
+  "just_you_aeed20a9": {
+    "text": "只有你",
+    "source": "aeed20a96ee36e83c67fdca5fdee4bb5522ec06cec7c86b5d2984860ec560942"
+  },
+  "retry_value1_8b58737c": {
+    "text": "返回 {{value1}}",
+    "source": "8b58737cffff161511102b0c5ec075f8af659d433068a020422009ba90eef2d0"
+  },
+  "no_apps_match_value1_clear_the_search_and_try_f79055c1": {
+    "text": "沒有應用程式匹配“{{value1}}”。 清除搜尋並嘗試",
+    "source": "f79055c15ccae9c6c3c217ed2768355841179a71dd82fdbd711596ccf40aa255"
+  },
+  "show_all_value1_apps_e3a3273e": {
+    "text": "顯示所有 {{value1}} 應用程式",
+    "source": "e3a3273ef1c2be42e5554ff76c551d9d8c2aba1292a5ef844a929aa7034654a7"
+  },
+  "start_a_new_project_a72ef427": {
+    "text": "啟動新專案",
+    "source": "a72ef4274a75450d2f66fb9e1f495d9dd8a8629700def37a90c6fb2367ab0bb1"
+  },
+  "take_the_1_minute_tour_bba6b95d": {
+    "text": "1分鐘之旅",
+    "source": "bba6b95db89d80cdf0def54f65ecc0250e8ba246c045bf47df7cdcc0a601965b"
+  },
+  "join_a_community_540dc95d": {
+    "text": "加入社群",
+    "source": "540dc95d726e83c30fe4ecbad31369f5fe45ac9ed73b8380b46fec17d5361251"
+  },
+  "try_an_app_e2aa1647": {
+    "text": "嘗試一個應用",
+    "source": "e2aa164752f16ff828e065b2ccfb65f966903ce3f62267a48efa671c2e480450"
+  },
+  "vote_on_an_app_f901a671": {
+    "text": "投票在一個應用程式",
+    "source": "f901a67163248bda11e2b205e5784f323c33528b7c0e0baa7da01ba73304ee7e"
+  },
+  "send_feedback_8235980b": {
+    "text": "傳送Feedback",
+    "source": "8235980b80addfc790ff8e275e29ac9049155c5f7506c8f4a5c012aeb25677b4"
+  },
+  "no_points_ticks_when_you_finish_or_skip_it_28756da6": {
+    "text": "沒有點 · 點,當你完成或跳過它",
+    "source": "28756da6477738662d529d1736c9f2cf660f3a5b310bc77f45625483d0f94cad"
+  },
+  "value1_earned_ffee980e": {
+    "text": "+{{value1}} 獲取",
+    "source": "ffee980ebabf99150de01704d042622a70d983ad3c5f33c2403881a70362964a"
+  },
+  "earns_value1_pts_6009c826": {
+    "text": "首頁 〉外文書 〉文學 〉文學 〉 Earns {{value1}} pts",
+    "source": "6009c826c07562d012aada53de26b219dd6ff4c176cdd50a6f8c2491418628a0"
+  },
+  "earns_value1_6dd8e9da": {
+    "text": "第{{value1}}章",
+    "source": "6dd8e9da3722a8e542e0384290c7a3542d4e6dbe38675224fc074c91c9ca9800"
+  },
+  "value1_of_value2_done_e6d9922b": {
+    "text": "{{value1}} 的 {{value2}} 完成 ·",
+    "source": "e6d9922b6d41169814ce0ea5a79f8239a943538007d1df1ea3b9a82f281d2834"
+  },
+  "first_challenges_79462a6d": {
+    "text": "第一個挑戰",
+    "source": "79462a6dcc46819ddab47253c01f5abbfc2cd69578d2b1d4c0c2e59310e0b63b"
+  },
+  "this_week_8c4eef5a": {
+    "text": "本週",
+    "source": "8c4eef5ab2532515ef24a662db70f6e5b8063c7f924342b2a463f763f1091634"
+  },
+  "always_open_67b6ffc1": {
+    "text": "總是開放",
+    "source": "67b6ffc1ed06f760507f823966d16dbf760e1fc2196937d6732606e40159142e"
+  },
+  "season_challenges_ba3646b8": {
+    "text": "季節挑戰",
+    "source": "ba3646b8091fae789c40f8ba8581315af64217e6e0e95eb411f2c2ada62ae972"
+  },
+  "couldn_t_load_your_apps_7760f958": {
+    "text": "無法載入您的應用程式",
+    "source": "7760f9584546ff2c7ef9344a3caeffe49e4bdd14102abaf866faa57fed5c4f8c"
+  },
+  "couldn_t_save_your_home_screen_layout_6803063f": {
+    "text": "無法儲存您的家庭螢幕布局。",
+    "source": "6803063f2577d47d1931e284ddbc346d5c49a7307ff92502b1f02851e7fbe9f3"
+  },
+  "added_to_shortcuts_b33a5645": {
+    "text": "新增到短片",
+    "source": "b33a5645553181c54a5ee0e3e8d29a4cf89b241df289b6db08fffb22fd639003"
+  },
+  "removed_from_shortcuts_2609cc87": {
+    "text": "從短片中刪除",
+    "source": "2609cc87550578300b60e67fce10ba5975582ed4da0aadd43d22a83423732d52"
+  },
+  "update_failed_value1_12b48108": {
+    "text": "更新失敗: {{value1}}",
+    "source": "12b4810864d83161dc6d94b9c7b755a38ca9783aebbf9d5394c6b882bed40ef9"
+  },
+  "leave_value1_too_832483c6": {
+    "text": "留下{{value1}}也是嗎?",
+    "source": "832483c68f7534ca40f30c46890a796c90c4714e69e328d9d53336d953a7bcfe"
+  },
+  "it_s_off_your_home_screen_leaving_also_ends_your_82eb7adc": {
+    "text": "離開也結束了你的訪問,直到有人邀請你回來。",
+    "source": "82eb7adc0b002be35b47abec41d2268cffd6f47d027dc47d690c43aa7b09cc50"
+  },
+  "it_s_off_your_home_screen_you_can_stay_a_member__445d2b7b": {
+    "text": "您可以留成會員,或者離開並停止提議和投票其變更。",
+    "source": "445d2b7bf0d874a9f1ead41690bf4c941a28791aafb73f537241ad4c40d05972"
+  },
+  "leave_fc6e4a40": {
+    "text": "放下",
+    "source": "fc6e4a408d56be9670c14ee7be21e1a39c93c2df82f7c95975485e90ca6371c3"
+  },
+  "stay_a_member_adf7ddb0": {
+    "text": "成為會員",
+    "source": "adf7ddb026b6d246a7940eaeabf68718ed148f6c85fe8093ca2ecc138bb8567f"
+  },
+  "leave_value1_3c3762d8": {
+    "text": "留下{{value1}}?",
+    "source": "3c3762d87ff653555f192b387fb81a7594a9e423b644e39d1db48ddf06275dc6"
+  },
+  "you_will_lose_access_to_it_until_someone_invites_f4657707": {
+    "text": "你會失去訪問它,直到有人邀請你回來。",
+    "source": "f46577073a987427cb2b8ef3632fab6e9218c682d9008ea488548611c24e2ca2"
+  },
+  "you_won_t_be_able_to_propose_or_vote_on_its_chan_76f4c961": {
+    "text": "您將無法提議或投票其更改,直到您再次加入。",
+    "source": "76f4c9611ea3e3795cc8bd8cc1d6d6edb9abde4726453e27b6410d0acd4c29fb"
+  },
+  "joined_value1_e8fe29ad": {
+    "text": "加入 {{value1}}",
+    "source": "e8fe29adc2efd66e76727c1213d68ade80e3d093ebfd344d773398bb0ad91663"
+  },
+  "left_value1_4939aed4": {
+    "text": "左 {{value1}}",
+    "source": "4939aed4321cef901f0af13c09c51412c0e0196204947b1a9e5532c713253adb"
+  },
+  "couldn_t_value1_value2_4f61ecc2": {
+    "text": "不能 {{value1}}: {{value2}}",
+    "source": "4f61ecc28027faafab99e53d5d1379e7def807b70ea84455f5bc12d2e39ed9d2"
+  },
+  "check_finished_no_details_returned_f8f389c8": {
+    "text": "檢查完成(沒有詳細資訊返回)。",
+    "source": "f8f389c8082896a6cd990a4c940e38c6654d01b24fbefe833d6a37644bbbc740"
+  },
+  "latest_commit_is_already_running_31dd0244": {
+    "text": "最後的承諾已經在執行",
+    "source": "31dd024434e8f047992525e511f47fb502cdef03f51063c3b763af2aab59ad95"
+  },
+  "force_a_rebuild_anyway_useful_if_env_vars_or_pla_bd6cee94": {
+    "text": "是否強迫重建?(如果 env vars 或平臺程式碼更改有用)",
+    "source": "bd6cee9410002cf881060d983f3e8e50909fe82febdf38d804e0ae4fdf5349da"
+  },
+  "rebuild_95aefb08": {
+    "text": "重建",
+    "source": "95aefb081ecee7a82b75cfcc7f48457aec0e456134a6bb5d349fbbda293fcaca"
+  },
+  "rebuild_started_watch_the_version_pill_ec6bfafe": {
+    "text": "重新啟動. 檢視版本的藥片。",
+    "source": "ec6bfafe168f9cc5d229d3546e63e28da8ab49dcfa18192465c8f5a61922be18"
+  },
+  "rebuild_kickoff_failed_value1_0b8a0cb9": {
+    "text": "重建 kickoff 失敗: {{value1}}",
+    "source": "0b8a0cb9c5a53e98b1f36939eea207e2e7c5ad30c617b10c83c90d6291ec4af2"
+  },
+  "redeployed_to_value1_11a97193": {
+    "text": "重定向到{{value1}}.",
+    "source": "11a97193da72782118bb174024294045d325383fe540cd240d1bb7a8d7d03d40"
+  },
+  "a_redeploy_is_already_in_progress_for_this_app_dd1c3827": {
+    "text": "目前,該應用程式正在進行重新部署。",
+    "source": "dd1c3827354aa90f4e3727db8dbb71dfce5fe85bdd24a2a6276f9305ecd2119a"
+  },
+  "recorded_current_sha_value1_future_drift_will_tr_4181ea15": {
+    "text": "記錄了目前的SHA({{value1}})。未來流動將引發重新部署。",
+    "source": "4181ea1539ce11d025951c7f9885c0a05c2379c943b28ae5e91a289e2e99fa8a"
+  },
+  "couldn_t_reach_github_value1_16a4d0a6": {
+    "text": "無法訪問 GitHub: {{value1}}",
+    "source": "16a4d0a696cc932817d84ae713edd8a6303a434749c3e3a17713a1009d282c0d"
+  },
+  "this_app_has_an_invalid_repo_url_59d18350": {
+    "text": "此應用程式具有無效的 repo URL。",
+    "source": "59d1835019d0ff4675228539bc917ace2f77748354f68de1ab30651cf618b94a"
+  },
+  "drift_detected_value1_value2_but_redeploy_failed_f98d5c7f": {
+    "text": "Drift 被發現({{value1}} → {{value2}})但重新部署失敗: {{value3}}",
+    "source": "f98d5c7fdd38047acfe14dbeee0232a7c4dfec578ea853679caf54a747d5fe35"
+  },
+  "check_finished_value1_9b7eb3d4": {
+    "text": "檢視完成: {{value1}}",
+    "source": "9b7eb3d44c8f95e7b7128741418fe1155ac0df65b79097c26eb495338349f326"
+  },
+  "remove_from_widget_failed_value1_2a1ec08f": {
+    "text": "從錯誤的 widget 刪除: {{value1}}",
+    "source": "2a1ec08ffd0d62667d28e6818fe4536a9ba82cb3051ed13d20b13d3d63a6c59c"
+  },
+  "widget_reorder_failed_value1_95343002": {
+    "text": "Widget 重新訂單失敗: {{value1}}",
+    "source": "953430023d6323f85f90d1084e1733fce9bf0a85ccabff05e9042f7909eb77fb"
+  },
+  "app_details_2945df36": {
+    "text": "應用細節",
+    "source": "2945df36c2f9ae72c9b3544c186eabfdf6fc8d11cf29fd73d9951cf8b09439fa"
+  },
+  "version_status_and_everything_you_can_do_with_th_168fca22": {
+    "text": "版本,狀態和所有你可以用這個應用程式做的事情",
+    "source": "168fca22a24b5b822b419c94f645659252c9f820a7fc510dbf5f4b1acb80b2d5"
+  },
+  "view_on_github_20672423": {
+    "text": "在GitHub上檢視",
+    "source": "20672423d71690888afb7caa922ea2a23592d49346341b1eee292de65189a296"
+  },
+  "open_this_app_s_repository_47420127": {
+    "text": "開啟該應用程式的儲存庫",
+    "source": "47420127ad801bd03a109db471edee3c5670cdc5c51c7dd73045367a59414314"
+  },
+  "remove_from_shortcuts_7d2c796a": {
+    "text": "從短片中刪除",
+    "source": "7d2c796abba9f5f517c0059e629905b794de4918ee9d4c595d27e928867f67d5"
+  },
+  "show_this_app_in_shortcuts_again_you_keep_your_b_393927d3": {
+    "text": "在 Shortcuts 中再次顯示此應用程式. 您可以以任何方式保持您的建築師訪問。",
+    "source": "393927d3925c6ac2f401e502e18d41cf1baf7cbc8bd4187988281d5ce79d1157"
+  },
+  "hide_this_app_from_shortcuts_it_stays_live_and_y_6da0b02e": {
+    "text": "隱藏這個應用程式從 Shortcuts. 它仍然活著,你保持你的建築師訪問。",
+    "source": "6da0b02e80417256b97baf2198f5e942c9e56714d2a3acec8d2b31d8ad5bec29"
+  },
+  "notifications_78801183": {
+    "text": "通知",
+    "source": "788011833a5a0f22db90c91e8eb7bd8e9f5cd423354ff5ef8c338e7895f44ba9"
+  },
+  "choose_what_this_app_can_notify_you_about_here_a_db366294": {
+    "text": "選擇這個應用程式可以通知你,在這裡和你的手機上。",
+    "source": "db3662941126db5dc2f78b59a7bfdcb77803b11d10ddbdb96ae46bc6a51b38af"
+  },
+  "edit_in_homeroom_widget_f2cea8ea": {
+    "text": "在 Homeroom widget 中編輯",
+    "source": "f2cea8eab2c7cb6d01a76bcdc57e7115b5732dc4fa128ab149ab24abd0e4346a"
+  },
+  "add_to_homeroom_widget_840e433d": {
+    "text": "加入 Homeroom Widget",
+    "source": "840e433d107b60a2187460081c1cd37e685a33fdff646200fe688a796a16148f"
+  },
+  "add_to_phone_home_screen_7f2215b7": {
+    "text": "新增到電話主螢幕",
+    "source": "7f2215b752c1f495422ad281e862f81d92cc883f63267ee09eb99a00ecd103cb"
+  },
+  "add_to_home_screen_e1090dd0": {
+    "text": "新增到主螢幕",
+    "source": "e1090dd0b82630c892138365dec0cff9d071c4f56fdace83e680c5ab8f53dec9"
+  },
+  "put_this_app_on_your_phone_s_home_screen_with_it_aa056c2d": {
+    "text": "將此應用程式放在手機的主螢幕上,用自己的圖示",
+    "source": "aa056c2d2dfff5e5fd3a70b0201e802fdb616ed6fded832158f47de473d073df"
+  },
+  "view_build_log_796ae067": {
+    "text": "檢視建立日誌",
+    "source": "796ae067cc65247b1ca3579f831a87d4a49e57835636af71fb6a4106240bb732"
+  },
+  "see_why_the_last_build_deploy_failed_3d582f8c": {
+    "text": "看看為什麼最後的建築/部署失敗了",
+    "source": "3d582f8c55ba89d811130165765f5e4074454d19aceed3df44774fecea221544"
+  },
+  "check_for_updates_f26f3275": {
+    "text": "檢視更新",
+    "source": "f26f3275e735bdf6268532ca7cbea3887c9adad21d8df74e84b2bc7791475c0d"
+  },
+  "make_your_own_copy_82bb5bb8": {
+    "text": "做自己的副本",
+    "source": "82bb5bb897a289f90180a30a283b884a02a67c5488371286ddab47ce658642dd"
+  },
+  "unlock_app_4a0650c5": {
+    "text": "解鎖應用",
+    "source": "4a0650c5df18adf8a8409fab010d66e71dc43d7a5794ecd4555af7a8a8b70770"
+  },
+  "lock_app_a4bab675": {
+    "text": "關閉應用",
+    "source": "a4bab675c89865df941f6fd84fc84145f2fe9b543f6ca66c0631af57519d31ac"
+  },
+  "app_locked_merges_also_need_an_admin_yes_vote_cl_63c8cfb2": {
+    "text": "應用程式鎖定:合併也需要一個管理員投票是的。",
+    "source": "63c8cfb28df36e957a50aad078eec837edfabfa4ca0a52cea4c13587c9d9e850"
+  },
+  "lock_this_app_an_admin_yes_vote_will_also_be_req_d271ebb7": {
+    "text": "關閉此應用程式. 管理員的“是”投票也將被要求合併變更。",
+    "source": "d271ebb794e3c431982fab8911c4b0d4576c90537d7d851eb8d80b9813035eb7"
+  },
+  "app_settings_d43fb8a9": {
+    "text": "App 設定",
+    "source": "d43fb8a961ff2d1f037995587ed8883ac4b733ecaf1b0b74201123ada13df810"
+  },
+  "add_to_home_screen_failed_value1_bd5a832b": {
+    "text": "新增到主螢幕失敗: {{value1}}",
+    "source": "bd5a832b08376a9c12e9dd83b60fdf0e4205535d2f1736d228e3efd32d412689"
+  },
+  "checking_ec963ffc": {
+    "text": "檢查...",
+    "source": "ec963ffc911b840134fc738b41a8bb0493489c402a4a761efd36c16dea7d984b"
+  },
+  "check_failed_http_value1_7967e9da": {
+    "text": "檢視失敗(HTTP {{value1}})",
+    "source": "7967e9da55a17446771fec767788b1754063e2cd798d075823932d602ecf02ec"
+  },
+  "check_failed_value1_bb6ebbbf": {
+    "text": "檢視失敗: {{value1}}",
+    "source": "bb6ebbbf9ab14009f1e95052c3e47b39cc5c4ebb4f53b1bff87ce5bbe060f50c"
+  },
+  "lock_toggle_failed_http_value1_633d234b": {
+    "text": "鎖定失敗(HTTP {{value1}})",
+    "source": "633d234b2d1dd0a3d99151cb2f39c2d818d4c50729d710bbcb7a79ce140ebb30"
+  },
+  "lock_toggle_failed_value1_105b3a81": {
+    "text": "Lock toggle 失敗: {{value1}}",
+    "source": "105b3a81a4baf99a7f44fc317a659c6ec26c51e97329e7959bae73ac2dcef80e"
+  },
+  "added_tap_to_remove_from_shortcuts_6163472a": {
+    "text": "新增. 點選從短片中刪除",
+    "source": "6163472aedd9a4c3cbadee5e67a6771666cc0ba0733b0bb9358df94a66ec1aa4"
+  },
+  "remove_value1_from_shortcuts_587bd2b7": {
+    "text": "刪除 {{value1}} 從 短片",
+    "source": "587bd2b75984cfcf814e5e6faa3cb64738c950fef5a6dca645cd5f1c6967a269"
+  },
+  "add_value1_to_shortcuts_8feff3b1": {
+    "text": "新增 {{value1}} 到 短片",
+    "source": "8feff3b155def8374dff8ccfa0a65c784be29008f2e57174f3a4e44368b7f929"
+  },
+  "value1_contributors_14ac6584": {
+    "text": "{{value1}} 參與者",
+    "source": "14ac6584842a4edafebb8fe656d36803bb3f61e98dcf9ad8733c1de2ee9a5206"
+  },
+  "collapse_this_widget_0e60b376": {
+    "text": "破壞這個 widget",
+    "source": "0e60b3763fd34f07c81f4306119cd362559e00cc32e510ec86dfe48055da4eaa"
+  },
+  "show_every_challenge_in_this_widget_5d4e4925": {
+    "text": "在這個 widget 中顯示每個挑戰",
+    "source": "5d4e4925f0de5c65828ff70691476175805dcab1d0923840277bc21c4ad066b9"
+  },
+  "finish_a6c7a84b": {
+    "text": "結束",
+    "source": "a6c7a84baa6750fce33f7512acd6793e53def1d228b5f2efb8074b42648424fc"
+  },
+  "communities_c864f329": {
+    "text": "社群",
+    "source": "c864f329f5dde534613448895303d0a62f17af46b75ab16cb6c8170a120d1293"
+  },
+  "the_homeroom_menu_7997f48e": {
+    "text": "Homeroom 選單",
+    "source": "7997f48ef125e073c607300afbec521a12967b3b7e638d28d0b68df94fd57ac7"
+  },
+  "replay_this_any_time_c8c5e398": {
+    "text": "隨時重複此",
+    "source": "c8c5e3987bdbf1d7248a633e9c683d9877cd3306927cbb43809f31afbe76f325"
+  },
+  "remove_value1_from_widget_5bf56c53": {
+    "text": "刪除 {{value1}} 從 widget",
+    "source": "5bf56c53005fda3d02ef0287281b21c097f0c9fc836dacc379f2582d517af333"
+  },
+  "session_value1_f839c61d": {
+    "text": "會議 #{{value1}}",
+    "source": "f839c61d31718b73af884fe7cb33fcd5a2f282974a92d8864c1d8e802421ea2a"
+  },
+  "work_order_value1_f44b65e0": {
+    "text": "工作訂單 #{{value1}}",
+    "source": "f44b65e0b06ac15a9d26276f39bc0cbb1c013ba66534447f9c4da22bf5700e9b"
+  },
+  "working_a92f0449": {
+    "text": "工作",
+    "source": "a92f0449a9f7235bf69dc2e8ff7070bfae3f00ec8f8f26e5457a9beac53466ac"
+  },
+  "handed_off_b60c5435": {
+    "text": "放手",
+    "source": "b60c5435c0503adb5bd57fb70668c183231a5f3bd9a06871a2a75fbfd4be0d33"
+  },
+  "needs_you_74b6abdf": {
+    "text": "需要你",
+    "source": "74b6abdf59690fdffec2059089487cd63658249da5301cbf065e9977518fbd8f"
+  },
+  "ready_5fa7aac5": {
+    "text": "準備好",
+    "source": "5fa7aac5375c5815787fba3f49559f9b45b14023147ce0652803387974144e5f"
+  },
+  "couldn_t_load_past_seasons_try_again_later_e10d7f6a": {
+    "text": "過去的季節無法充電,後來再試一次。",
+    "source": "e10d7f6ad6f4cb83697c53f8334f23f48b85e2b2334bbe147b64b6b48f0fdbfb"
+  },
+  "no_season_has_ended_yet_when_one_does_its_winner_c3902236": {
+    "text": "賽季還沒有結束,當有人這樣做時,獲勝者在這裡列出。",
+    "source": "c3902236b02007dbc5471aa42cbdbd5a851d0368a99f0b8c9ec686953375963e"
+  },
+  "value1_no_winner_73b8fc1b": {
+    "text": "{{value1}} · 沒有獲勝者",
+    "source": "73b8fc1b731ba68143d88b80d08d722aaf6b59ee9d2737fe3b8bfdb8eb08c1a5"
+  },
+  "kudos_51483eb0": {
+    "text": "庫德斯",
+    "source": "51483eb0b6d593009a02ce75240e6d94327c29cd0934297fce4025e12128ced0"
+  },
+  "standings_c7342049": {
+    "text": "站點",
+    "source": "c7342049e69be4aad2ccaf5eeb2e767dc3907bb2f83dcf1323c9ad378ec0b7ee"
+  },
+  "history_0e769600": {
+    "text": "歷史",
+    "source": "0e769600933790607b2a13b33ddfade0fa17810eb62c3b28ee23e59516516491"
+  },
+  "load_more_ac8991ef": {
+    "text": "載入更多",
+    "source": "ac8991ef01019cf55a2426194a05959e0cb886333f1a332ff4f442320d165400"
+  },
+  "bounty_721152d9": {
+    "text": "獎金",
+    "source": "721152d9d7ea07f8d55b35ff2d6e7eb6b471d8ac2be01262bca7dceb13ec8a76"
+  },
+  "yes_8a798890": {
+    "text": "是的",
+    "source": "8a798890fe93817163b10b5f7bd2ca4d25d84c52739a645a889c173eee7d9d3d"
+  },
+  "no_9390298f": {
+    "text": "不",
+    "source": "9390298f3fb0c5b160498935d79cb139aef28e1c47358b4bbba61862b9c26e59"
+  },
+  "prs_7c22b63e": {
+    "text": "PRS",
+    "source": "7c22b63e87e79f056329d15cbe3a5361e5bbf067312bd53cb77fb7688766fd25"
+  },
+  "users_7dfb4cf6": {
+    "text": "使用者",
+    "source": "7dfb4cf67742cb0660305e56ef816c53fcec892cae7f6ee39b75f34e659d672c"
+  },
+  "top_changes_0af147a3": {
+    "text": "頂級變化",
+    "source": "0af147a38677ad4aa0c4e473d9369dba3ed5d630ab7b616dd4d750bf0b831563"
+  },
+  "top_users_60541946": {
+    "text": "頂級使用者",
+    "source": "6054194689135af33a5f946aaf225eab32a4a8dc513229b6ee0449a5f2a3a4fa"
+  },
+  "my_history_ca28b082": {
+    "text": "我的歷史",
+    "source": "ca28b082f7dfd694a83b604c208bb3e9dc0a7eaed91ef5e6b82ea204a5bbbf90"
+  },
+  "all_time_074daba2": {
+    "text": "全日制",
+    "source": "074daba2b30cffe720f2ba5a7682047ecdafda08ecb587ed927676d2f831390c"
+  },
+  "couldn_t_load_leaderboard_try_again_later_7bc1236d": {
+    "text": "不能載入領先板,以後再試一次。",
+    "source": "7bc1236df73cd9698f0b5d6c1e89cb9ccafd439c1d5caa0a933cb2afd4165845"
+  },
+  "user_not_found_f412be43": {
+    "text": "使用者找不到。",
+    "source": "f412be43147ccd563e87e3f4053fa0377a3530f92a020085cea35b4cd04f0e93"
+  },
+  "couldn_t_load_this_profile_try_again_later_b7d988f8": {
+    "text": "我無法上傳這個個人資料,然後再試一次。",
+    "source": "b7d988f80c80e5a0d12d02eda76d36849714d4d449a6e87834e895f8378099f9"
+  },
+  "their_changes_that_went_live_bbfb1b32": {
+    "text": "已可用的變化",
+    "source": "bbfb1b32c087a1e4b237535ea40e8c261b36d94a94101c47c2f3fc2165e0cb5b"
+  },
+  "value1_change_value2_made_07ad6a7a": {
+    "text": "{{value1}} 改變{{value2}} 完成",
+    "source": "07ad6a7a7b54d970c10954f1517e01c7c4ee33ac8678c85945eaa91e14598046"
+  },
+  "everything_they_put_up_for_the_group_including_o_4df8f313": {
+    "text": "他們為團體設定的一切,包括開放和關閉的變更",
+    "source": "4df8f313e9914c52de68e5f50cd95a0e457da2a25a22eff955e8abd0ad42c4b1"
+  },
+  "untitled_change_63cb7c2e": {
+    "text": "無名變革",
+    "source": "63cb7c2ea609efb07ecc941b74706f69d81bbe8349cb98f2549a8d4a4eefde91"
+  },
+  "going_live_9a87940f": {
+    "text": "去活著",
+    "source": "9a87940f878e828d7f5ee599fa59151493d3f724366028628b48fb3439c472a8"
+  },
+  "closed_c3eefb58": {
+    "text": "關閉",
+    "source": "c3eefb58d7c42440a9d4abec51d629544d635a6d936ff3c4d3fca96d611b3cf3"
+  },
+  "open_2348f998": {
+    "text": "開放",
+    "source": "2348f998744212575d85959674f9607ab26f67708a917157472832386337c904"
+  },
+  "kudos_b17818b9": {
+    "text": "此分類上一篇",
+    "source": "b17818b9c5c2c1c518ac7a0dc5765cb6ba4d1166dd5412420d33eb06be98e19f"
+  },
+  "votes_c77d8b2d": {
+    "text": " ⁇ ️投票",
+    "source": "c77d8b2d14d318fb8fa91b64387b33312fca05f90028fdca2a22b4b4086008f0"
+  },
+  "couldn_t_load_your_history_try_again_later_fb29df29": {
+    "text": "無法載入你的歷史,再試一次。",
+    "source": "fb29df29f91e2a333a99c6d3e425de7dc52c3e786a51356571335e4c6b0624fb"
+  },
+  "nothing_here_yet_kudos_bounty_pledges_and_votes__86124e94": {
+    "text": "此分類上一篇: Kudos, bounty promises, and votes you give will appear here",
+    "source": "86124e945718278c2e1e6ef64e567db39740a9060fbc5b0f9f4cf81a183c0666"
+  },
+  "awarded_to_value1_value2_592c52b4": {
+    "text": "被授予 {{value1}}{{value2}}",
+    "source": "592c52b41817b3c42c742bcaf073e3957914de63ebe9d90d14a1855d561660dd"
+  },
+  "voided_df6a068a": {
+    "text": "流浪",
+    "source": "df6a068ab74af34949387b4ebffe6bf4522fa77748496844f7a49d8dd03e9bbb"
+  },
+  "your_own_change_closed_this_request_so_the_pledg_b15a274e": {
+    "text": "您自己的更改關閉了這個請求,所以承諾回到了您的每週補貼。",
+    "source": "b15a274ed63acea199c30611971514cdb4d3ba458cd67f8bf2d18710cd438c61"
+  },
+  "current_vote_03c73be0": {
+    "text": "目前投票",
+    "source": "03c73be04aafae7aa2d081685d0b32a60551b11d5e671e294083a43edff020ea"
+  },
+  "value1_change_value2_given_kudos_e21eb4ed": {
+    "text": "{{value1}} 改變{{value2}} 給予的 kudos",
+    "source": "e21eb4edbe2650c5c009aa5c82c63715714cfed907fd98d78ecbd4be2841ea05"
+  },
+  "active_on_value1_app_value2_bc479391": {
+    "text": "活躍於 {{value1}} app{{value2}}",
+    "source": "bc479391513d583f5ee11d97674d258494c7b34999f2cb5e3fe36041a5b65f88"
+  },
+  "value1_taking_part_16f8dbd2": {
+    "text": "{{value1}} 參加",
+    "source": "16f8dbd2a00c1da80adeae6bd05d23fd3306b0fd7279861851debeb82cf3f550"
+  },
+  "value1_of_value2_value3_226fde89": {
+    "text": "{{value1}} 的 {{value2}} {{value3}}",
+    "source": "226fde897231c3ea94465af46569f8f70c4a3aa98c60444e3b2e4be82330188a"
+  },
+  "completed_22a970d2": {
+    "text": "完成",
+    "source": "22a970d2e5b1cc233e462be7c7b64e135a275bb09d83d87683bf4236c43113a1"
+  },
+  "could_not_check_your_block_production_status_b619a319": {
+    "text": "無法檢查您的區塊生產狀態",
+    "source": "b619a319f21d9c3c6d79e7b07f18c540308fd00009b2936e0e6f76a8b521b0dc"
+  },
+  "check_your_connection_and_try_again_481859b6": {
+    "text": "檢查您的連線,然後再試一次。",
+    "source": "481859b689b0d0d9de1e27b3a0a25004f32d7624f412f8f80e0188cb3e3d54f2"
+  },
+  "or_produce_blocks_on_this_phone_49131518": {
+    "text": "或在手機上建立區塊",
+    "source": "49131518f56226b805c9cffa5974b5ff3dd35172275f0f9770ce3752ef760372"
+  },
+  "producing_directly_on_this_phone_earns_full_poin_969e4ca2": {
+    "text": "直接在這個手機上生產,賺了完整的點。",
+    "source": "969e4ca22435b442287dedfa0a8b8561ad55962413fcf9053518e165adf59375"
+  },
+  "choose_how_to_produce_blocks_bbee698a": {
+    "text": "選擇如何製作區塊",
+    "source": "bbee698a7cc8fae487955dfd3aaf76f4ca004c274f5d92916aadced8cd332181"
+  },
+  "delegate_recommended_4725f1a3": {
+    "text": "主持人(推薦)",
+    "source": "4725f1a3fa8444b934fe7157e82b7d9ceda6f75592b1c75af54173e0251c71b4"
+  },
+  "manage_delegation_0f6f168b": {
+    "text": "管理代表團",
+    "source": "0f6f168b12bf55aceaebef005b0b40a2039be55f48a8813a6b2f48800d4217d8"
+  },
+  "wallet_requested_85761edd": {
+    "text": "錢包要求",
+    "source": "85761edd90790e60f049c6ebdaf5f119ef633e9f31b69b03c6dec8cfce5d8cdb"
+  },
+  "not_available_yet_787406dd": {
+    "text": "尚未可用",
+    "source": "787406ddea2a10a482aadb0a7af672d2621eef25af4aba9af33d4ae4ed135509"
+  },
+  "you_can_request_a_wallet_once_your_account_has_p_fe9d8e4c": {
+    "text": "您可以要求一筆錢包,一旦您的帳戶有平臺訪問。",
+    "source": "fe9d8e4cbb00015addd3b28a76646c325c6da278b53dd4f2eea58ace913b4e75"
+  },
+  "first_request_a_wallet_db0883e6": {
+    "text": "首先,請求錢包。",
+    "source": "db0883e64fbbcf90a70ca02ead0a46d5c3f4fedb9d83c46b7eb52f7d7446f13b"
+  },
+  "requesting_1db9285a": {
+    "text": "請求...",
+    "source": "1db9285ae3d0c338610fca0fee19b05d37c9cfd54b6cf4233aea03e92f7c7990"
+  },
+  "request_a_wallet_86002c33": {
+    "text": "請求錢包",
+    "source": "86002c337e70702ec94802e9ff28f93a154a93e8879fe91921b1b67def1a66d9"
+  },
+  "request_sent_an_admin_will_release_your_keys_ac5d16ce": {
+    "text": "請求傳送. 管理員將釋放您的金鑰",
+    "source": "ac5d16ce13d3a3387a70ef320f4ed1e04fd1427694f7f1418bb519e321db6bd8"
+  },
+  "request_failed_cfce761b": {
+    "text": "請求失敗",
+    "source": "cfce761befa84073c2ea0d29bc3f3d647c985faa02d80854eada5312a7cc24a1"
+  },
+  "value1_pts_so_far_a81abd75": {
+    "text": "{{value1}} 到目前為止",
+    "source": "a81abd755efd0a051db0047d55943fb63beb3fc257adf88d8b5918f3c36e2da2"
+  },
+  "extra_points_c1419df1": {
+    "text": "額外點",
+    "source": "c1419df1f12e6658807bb126cfc075b851f539d8ffb8b9e5cc369cb8a0d4461c"
+  },
+  "vrf_won_slots_6ba86e99": {
+    "text": "VRF贏得斯洛特",
+    "source": "6ba86e99b0293a5793a9f150bb3a00d1d8485d0e0595c1961dae2b4196120140"
+  },
+  "no_events_2197f620": {
+    "text": "沒有事件",
+    "source": "2197f6207922f4c874531e989af842ab8ceeea3afb6873a3306ed26d22a9a049"
+  },
+  "could_not_load_activities_b56e7348": {
+    "text": "不能負載活動。",
+    "source": "b56e73484c630657208acefebc827e12a415779f0e0593a466c0e557eb9e31b5"
+  },
+  "no_identifier_available_for_this_row_54990277": {
+    "text": "此行沒有可用的身份證。",
+    "source": "54990277b0a0518d57187b3784b83ef4fd0f29536a5aea8af2797a1fa5f52993"
+  },
+  "could_not_load_the_epoch_breakdown_f5f39922": {
+    "text": "不能負擔時代的破裂。",
+    "source": "f5f3992296c9b5c07813ce9d8d5be12998000aed2560eb5ef6cadd0339855ff9"
+  },
+  "the_epoch_breakdown_is_per_event_pick_a_single_e_8d47d61c": {
+    "text": "這個時代的破裂是每個事件,選擇一個事件在上面看到它。",
+    "source": "8d47d61ca79ebcf90b56709517b1e0e7ee84753d79c4979fb031c759af4825b2"
+  },
+  "no_wallet_linked_for_this_row_5439198e": {
+    "text": "沒有錢包連線到這個行。",
+    "source": "5439198e671338441ea0072883f8d07366b15f3c7d142d0924358c6b2b31e0ce"
+  },
+  "could_not_load_your_profile_fd2a9a95": {
+    "text": "無法上傳您的個人資料。",
+    "source": "fd2a9a955861683974ac47fa81e9e8de672142368719dbe5c1ba98081ceb6cdd"
+  },
+  "value1_of_value2_challenges_done_54942000": {
+    "text": "{{value1}} 的 {{value2}} 完成的挑戰",
+    "source": "5494200020638e622b5ebfadf3cd8a4a30074b7b27ffc6655a13a2149eeeb1d6"
+  },
+  "open_value1_s_details_034e5763": {
+    "text": "開啟 {{value1}} 的詳細資訊",
+    "source": "034e5763a346bcb8ddf44f7b71e221d4be8fa06dbe8f7af07810ace2cb6131ae"
+  },
+  "page_value1_of_value2_value3_total_36665061": {
+    "text": "頁面 {{value1}} 的 {{value2}} · {{value3}} 總",
+    "source": "366650618e02a1e833cf5497c290d1dc888890da35e7aa40b15fa84610e82bb6"
+  },
+  "sentence_22046666d2d9": {
+    "text": "透過投票時,影象變更。 <0> 開啟提案</0>",
+    "source": "22046666d2d937a36aa9d478e18b1c8a299bc0d5bf112d6888c6c65bfeb471ea"
+  },
+  "sentence_08aea6e52077": {
+    "text": "這個影象的變化已經等待了團體的投票,一旦解決,就可以提議另一個。 <0> 開啟提案</0>",
+    "source": "08aea6e52077d96e377e0c075b609622e4a114c56e68c36c3eabbbe5266872bb"
+  },
+  "sentence_b1414438bbfc": {
+    "text": "<0>現在找不到什麼</0><1>瀏覽目錄以找到一個應用程式要嘗試。</1>",
+    "source": "b1414438bbfca1acc676789a8bd275a5fe53fd653c67d8270c26fc989295c6e5"
+  },
+  "sentence_e51a7b95e5aa": {
+    "text": "<0>Browse 所有應用程式</0>",
+    "source": "e51a7b95e5aafc482d4a10c98ac37b07c86950b3b2412ca523b4240c464eede7"
+  },
+  "sentence_17f7c3535f60": {
+    "text": "<0>開放挑戰</0>",
+    "source": "17f7c3535f60628415e3e49255e50936a8bfe45b655f0a0781a1de0c9b804055"
+  },
+  "sentence_50cbcb667143": {
+    "text": "{{value1}}<0>(連結不可用)</0>",
+    "source": "50cbcb6671433330f8aa9566b5696cf3764de3bec3604c5c4d42eb9dead9fddb"
+  },
+  "sentence_1eb3c0c9aaf7": {
+    "text": "全季站點:本賽季每場公共活動,結合。 選擇上面的單一活動,只需檢視其結果。",
+    "source": "1eb3c0c9aaf7ea3f53cb3359507e071b71e9df2834ce52757addde1865749f1e"
+  },
+  "sentence_5724100daa2c": {
+    "text": "尚未列入領先板 {{value1}}",
+    "source": "5724100daa2cb91805870dfd0a58d22bebe469f5b90611f33ce4f43229cddbc7"
+  },
+  "sentence_d11021bbd3c7": {
+    "text": "<0>Token分配</0><1>{{value1}}</1>",
+    "source": "d11021bbd3c71be1c2dadc5d67bbd802427c0a055a15c2e10f1775e293517ab5"
+  },
+  "it_has_a_yes_vote_9e51da49": {
+    "text": "有投票是的",
+    "source": "9e51da49c4b66551015641d06b84348a0a785705750e104e5cb8817fc6e3cb72"
+  },
+  "an_admin_votes_yes_f374f906": {
+    "text": "主持人投票是",
+    "source": "f374f90622d1e5ad6e5ccc9ca14c598b2c02321cfb48db8a7a57805aeb9504f5"
+  },
+  "its_checks_pass_85bea711": {
+    "text": "他的檢查過渡",
+    "source": "85bea71171514426bd771a1a903f30f718e0ec14cb4a8302a82c16ccdafe0670"
+  },
+  "its_members_can_suggest_a_change_58c89ae4": {
+    "text": "其成員可以提出變革",
+    "source": "58c89ae4f45c82afbd6360bf7d845dee4f926514b471d435ad83e9a83e498bca"
+  },
+  "anyone_can_suggest_a_change_3083fce2": {
+    "text": "任何人都可以提出變革",
+    "source": "3083fce226d217a81cc7ce84888cd00ceaf1bb7c7a78d83f6cd6746d75abf0b6"
+  },
+  "built_by_the_group_one_approved_change_at_a_time_de81fe73": {
+    "text": "由團體構建,一個同時批准的變化。",
+    "source": "de81fe7380ca474e4ec7f2b3ae6926a60f4392b2a69a4f0a5e358856632e8120"
+  },
+  "the_app_s_9d9b617e": {
+    "text": "應用程式的",
+    "source": "9d9b617e7c95361d982a4f414d6b786d519204500f46bb4b6bbd722314feb7d9"
+  },
+  "this_menu_is_the_same_one_every_app_has_df83d740": {
+    "text": "這個選單是每個應用程式都有相同的。",
+    "source": "df83d740833ad8550f7d44decc19febefdc8356f31232c4d3d70699a2d9c73fc"
+  },
+  "the_platform_is_built_the_same_way_as_the_apps_o_e7fc2475": {
+    "text": "平臺建成與其應用程式相同:每個對選項卡、鐘聲或研討會的更改都是建議、批准的,一旦其檢查透過,就活著。",
+    "source": "e7fc247575356186e5af875d8b40150dd443cdcfd6805c01af70311851fa3f48"
+  },
+  "its_members_can_suggest_b6212546": {
+    "text": "其成員可以建議",
+    "source": "b62125466e59634c700495e26dfec159f0a9adeb4de68d88277f7864bb9488cb"
+  },
+  "anyone_can_suggest_35f21e7f": {
+    "text": "任何人都可以建議",
+    "source": "35f21e7f7c2513ab07ecb3c7f23dbfff49d7505dcabb05b94dd329b1b68ac26d"
+  },
+  "the_platform_s_958bdcd1": {
+    "text": "平臺的",
+    "source": "958bdcd193d511923326f6a827a3d25b58fd4802b670e186103a1bf53000a498"
+  },
+  "could_not_copy_the_link_b156f6c7": {
+    "text": "不能複製連結",
+    "source": "b156f6c7963c25eb4cf8606d4d28f13a323c3fddcdb5830c3c853d86f165a900"
+  },
+  "this_app_d2c823cf": {
+    "text": "這個應用",
+    "source": "d2c823cf6649d9cf0ade2e16cc34d1692c76641f03a5214ca084df612f84089e"
+  },
+  "waiting_for_approval_10c5739b": {
+    "text": "等待批准",
+    "source": "10c5739b95bdf361bfc01dfe5c095102bef36b3e27002327192d0c6a368aeb22"
+  },
+  "in_progress_c1f88e9d": {
+    "text": "進展中",
+    "source": "c1f88e9d6c4145cf0530ae020155384d5688d70ed82a07a35d783bbc4b32238c"
+  },
+  "anyone_with_this_link_can_join_and_build_with_yo_14dcc368": {
+    "text": "任何有此連結的人都可以加入並與您建立。",
+    "source": "14dcc3688b86cf91bc9b59ede2a8fdd61fc31e75c3025ce7e58248609acd4ce8"
+  },
+  "anyone_with_this_link_can_join_f3b51368": {
+    "text": "這個連結的人可以加入。",
+    "source": "f3b51368e5c6cc4b0ce2b0b19586a3ac18e546583e81ebb8a829012edb05bfc7"
+  },
+  "it_has_no_end_date_4feb5001": {
+    "text": "沒有結束日期",
+    "source": "4feb50013e73eb433762e1673daeca721eeb59067c0e5d43dfb25b921439c08d"
+  },
+  "it_expires_within_a_day_46a0d7e2": {
+    "text": "它在一天內消失",
+    "source": "46a0d7e2a139364cb713e0961057c5c08ff705fe8b8a64aef79901902d88c1bb"
+  },
+  "under_a_day_left_add5bd90": {
+    "text": "在留下的一天",
+    "source": "add5bd905e1bb066c375ba2240658263ef766c013069c7def8049e6a1813377c"
+  },
+  "someone_new_to_homeroom_joins_the_waitlist_first_cda30a49": {
+    "text": "到Homeroom的新人首先加入等待列表,當他們被放入時,這個專案。",
+    "source": "cda30a490efb86b0e0a64e49bab56549179a17bd84eebec3352f114e9cd59124"
+  },
+  "something_went_wrong_try_again_4def98c8": {
+    "text": "有些事情沒事,再試一次。",
+    "source": "4def98c892406e31099ba18e5d6a60db12420dd723a27a5ab77235d20adb0beb"
+  },
+  "activity_upload_timed_out_9764bee6": {
+    "text": "活動上傳時間",
+    "source": "9764bee673f4000cf84ac4ae53aea8248a1ea470c4c7da29d279e18e1006cf2c"
+  },
+  "only_members_can_open_and_use_this_app_463308f1": {
+    "text": "只有會員才能開啟並使用此應用程式。",
+    "source": "463308f18d58080176cb875d6675a6a54f6fe9df6c15495510ed049ef766f201"
+  },
+  "anyone_can_use_this_app_only_invited_collaborato_aff3f869": {
+    "text": "任何人都可以使用這個應用程式;只有邀請的合作伙伴才能建立它。",
+    "source": "aff3f8694597e283210254357d728938fe05a793fa72c0e64310704a596b65d5"
+  },
+  "reviewed_working_eef07e09": {
+    "text": "重定向工作",
+    "source": "eef07e09347682c1d78c7e263380cf1952a3d0aee46de438c0b33218bba8b92e"
+  },
+  "awaiting_secrets_a7841a8b": {
+    "text": "等待秘密",
+    "source": "a7841a8b087f1ac4ab666c2eb1b8a196e7521b0dd640ad737aeaf21feefb395b"
+  },
+  "just_now_7ddb44d8": {
+    "text": "現在就",
+    "source": "7ddb44d8a533a7535d85cedddf35d7f3414632ad4e10a0d7ca697723e1d97993"
+  },
+  "could_not_load_the_illustration_reopen_the_edito_9c5e15b1": {
+    "text": "無法載入影象,重新開啟編輯器,再試一次。",
+    "source": "9c5e15b1a8354ee5088dc70956c4404a3d5560cf40b4d019b9eae04454906d34"
+  },
+  "could_not_save_try_again_fe32924b": {
+    "text": "沒辦法,再試一次。",
+    "source": "fe32924b26f09c2f47c6ab6dada5f098265abfcd0d47addfa8425bb56eea374f"
+  },
+  "city_garden_e7a75ceb": {
+    "text": "城市花園",
+    "source": "e7a75ceb9c3c3c843605c7362cf2bcf9751f508d56fa4c40e41c3416be66a061"
+  },
+  "see_how_homeroom_works_08f7b5c5": {
+    "text": "看看Homeroom是如何工作的。",
+    "source": "08f7b5c58b3ce150fbc25f289d75b8c51d0769408d95802fbf99b94f7afbcfa9"
+  },
+  "find_people_to_build_with_4e763e4d": {
+    "text": "找人和他們一起建造。",
+    "source": "4e763e4d56a5234e98eda500d03cde5098b7c72b69d10be5f1f42b6dffa3319a"
+  },
+  "open_an_app_and_try_it_3508cfac": {
+    "text": "開啟一個應用程式,然後嘗試。",
+    "source": "3508cfacbbb366d4d9beaa0a0a02d7123b1a7fbd6f8b9d99bf9505977d8626d5"
+  },
+  "help_decide_what_goes_live_next_d4ce5696": {
+    "text": "幫助決定下一個生活。",
+    "source": "d4ce5696ac6292a43fd5f6c0dcad57da3ea7fdf36affa2085eb0d177f89809e9"
+  },
+  "tell_a_community_what_would_make_it_better_62ca21a7": {
+    "text": "告訴一個社群什麼會讓它更好。",
+    "source": "62ca21a787a6564cdec8a4a6ec744141836732bb114e2beddce71ccf4bffbcbb"
+  },
+  "find_an_app_on_discover_655f7561": {
+    "text": "在 Discover 上找到應用程式",
+    "source": "655f756113e24c5b25074b136b19871c28fe4bc621007e01329e29886137d35f"
+  },
+  "take_the_tour_a83c4366": {
+    "text": "帶走之旅",
+    "source": "a83c4366d2dfe50aa8ba4853438972b87a771b0e8a590e095ced47c61e51547d"
+  },
+  "start_the_tour_7fe6de12": {
+    "text": "開啟巡迴演出",
+    "source": "7fe6de12951d30be97b82dbff2ff82664aabf84dddfaa4ce67ac0c3faaf3c5cd"
+  },
+  "join_a_community_first_530b9471": {
+    "text": "首先加入一個社群。",
+    "source": "530b94719ce353bb61000cbaa999a0eca2cd11fd0e089252817af8128696043f"
+  },
+  "find_an_app_on_discover_and_see_what_people_are__16d6149d": {
+    "text": "在 Discover 上找到一個應用程式,看看人們正在建造什麼。",
+    "source": "16d6149d3bcdcaa4f238f5edbbd636a422bba1efee063c78e764fc04369002a1"
+  },
+  "find_an_app_on_discover_and_tell_its_builders_wh_ab786473": {
+    "text": "在 Discover 上找到一個應用程式,並告訴它的構建者什麼會使它更好。",
+    "source": "ab786473c4cad6370039f9f79fd209cc40138a679bf46b42a97d68bd7dc9dbff"
+  },
+  "nothing_is_waiting_for_approval_yet_see_what_peo_cb15bff5": {
+    "text": "沒有什麼等待批准,看看人們正在建造什麼。",
+    "source": "cb15bff5cec465db373bd99c0446c6a478c07669b44127fbf81d9ead9dc24e51"
+  },
+  "not_started_ba35f0c4": {
+    "text": "沒有開始",
+    "source": "ba35f0c47d862763dafa955d6716942f79b8bfe1d01d5968520db6f9ba665f6f"
+  },
+  "done_in_first_challenges_b5d2171d": {
+    "text": "上一篇: 第一次挑戰",
+    "source": "b5d2171d969b5b81a2229d321a0a6b5fc6396ff89b1e80d71b8d5f89bffc8520"
+  },
+  "you_re_offline_apps_you_ve_opened_before_will_ap_8e9794bf": {
+    "text": "您是離線的. 您之前開啟的應用程式,一旦該裝置載入了它們,就會在這裡出現。",
+    "source": "8e9794bfbad1feab6e86e84384d9d0ca04b626c1e3cf5dd5ba7d65b69ef04d9e"
+  },
+  "spinning_up_995aa30f": {
+    "text": "旋轉上...",
+    "source": "995aa30f212ab9e95c1056fd28ee755bcd9ee704164306cc57fa296fbced3454"
+  },
+  "openexternal_is_unavailable_23e6e2bb": {
+    "text": "openExternal 不可用",
+    "source": "23e6e2bbc621503c718247719f2d22fa4154a4998d49aed4aca408b0ffa72bc6"
+  },
+  "view_your_app_allowance_or_request_more_slots_87d3fd44": {
+    "text": "檢視您的應用程式補貼或請求更多插槽。",
+    "source": "87d3fd448f8212c59bf00ebee662164332946bc5e2ad98bb72d60f519ec92c8c"
+  },
+  "see_all_challenges_15472cc6": {
+    "text": "檢視所有挑戰",
+    "source": "15472cc62be4b5955c5ba7692719ba487ea5bee487cfd30da5c6bcf7c0c8f71f"
+  },
+  "homeroom_is_made_of_communities_that_build_proje_8de9b85d": {
+    "text": "Homeroom是由共同構建專案的社群組成的,其中任何人都可以提出變革,而團體則投票,一個社群就是你,一個私人社群或一個公共社群。",
+    "source": "8de9b85dcf142fa7d7afde09ccf3f3f2259b431bbe5a683006c7d17f245bfe3c"
+  },
+  "the_apps_you_keep_close_a_small_mark_says_where__b2818e47": {
+    "text": "一個小標誌說每個人都住在哪裡:一個私人社群的人,一個鎖定一個只是你的。",
+    "source": "b2818e47d9359a23f361115bd60af6aef5b764c8d68a6b52c4ed97d4012e5565"
+  },
+  "inside_any_app_this_mark_opens_its_menu_tap_it_o_ebb6493f": {
+    "text": "在任何應用程式中,此標誌開啟其選單. 鍵入它,或鍵入下一個以開啟它。",
+    "source": "ebb6493f4e1dbe1d7ec6baec786fb1382329b0d9cc96974817e5c7fb14161df5"
+  },
+  "tell_homeroom_bot_what_should_change_it_builds_i_c8bedd37": {
+    "text": "告訴Homeroom機器人應該改變什麼. 它為您構建它,或者將其轉移到組作為請求. 要用編碼代理自己構建它,點選“自己構建它”。",
+    "source": "c8bedd37319fc8f2e2cd7e38cb3c8ebecf04f993d9bccfb3a5fab1a6ad8703fb"
+  },
+  "you_can_replay_this_tour_any_time_from_settings__85bceb55": {
+    "text": "您可以隨時從 Settings 重新播放此巡迴演出,在您的個人資料上。",
+    "source": "85bceb550e502977001a34902fb88cec859f2636a5980aae1acdc1c4bd966180"
+  },
+  "a_new_version_of_the_platform_is_downloading_the_2e8d453f": {
+    "text": "平臺的新版本正在下載,重新載入一旦準備好,就會出現。",
+    "source": "2e8d453f929672ede340e390ed2a0e0b3c2c560a55de8e0436f5917e7c83f246"
+  },
+  "a_new_version_of_the_platform_is_being_built_128723ce": {
+    "text": "正在建造平臺的新版本。",
+    "source": "128723ce6f353f82a4685f49aabfc183d38ad7e8920e57f01fd55ded096474f7"
+  },
+  "a_new_version_of_this_app_is_being_built_ac0584d3": {
+    "text": "這個應用程式的新版本正在建設中。",
+    "source": "ac0584d35dcd47851ef8314c20028383581095def9ed76a7f15ec247e8e873e8"
+  },
+  "claude_code_246ef8c1": {
+    "text": "第Claude Code章",
+    "source": "246ef8c1130d56f5d9df740a4b26c033a8b9c064daba9bb0a052d18993e87373"
+  },
+  "no_winner_was_recorded_5350b73b": {
+    "text": "沒有獲勝者被記錄",
+    "source": "5350b73b0939247c529e548ff167e51b5b9160709a5210c3f32bd703a0cc2f82"
+  },
+  "you_took_part_72cf40d6": {
+    "text": "你參加了",
+    "source": "72cf40d6bcc47370b36b6a2d10e9d235afa3f7367704ce75e82c485dc9b33616"
+  },
+  "only_collaborators_can_give_kudos_d875ad37": {
+    "text": "只有合作伙伴可以提供庫多斯",
+    "source": "d875ad37a1168cbefa29cfc71cc44b0e7c5274b773e8e11d9565049868e26b97"
+  },
+  "you_can_t_give_kudos_to_your_own_change_c147332b": {
+    "text": "你不能給自己改變的庫多斯",
+    "source": "c147332b459a5768e4f6d559e4e5c1ea01234a6cd09a799986cf948268cf5e81"
+  },
+  "credited_via_a_bounty_award_so_it_can_t_be_retra_81b87a63": {
+    "text": "透過獎金授予,所以不能退出",
+    "source": "81b87a632f82eca0d7292544883302c7abc253abe6431f0c9c6263fb719c4675"
+  },
+  "you_gave_kudos_to_this_change_click_again_to_ret_cbf8396b": {
+    "text": "你給了這個改變的庫多斯. 再次點選退出",
+    "source": "cbf8396b6dc9a240f51a39f67901361931584df37fb44ff1fe6d585141a21717"
+  },
+  "everything_you_ve_given_kudos_bounty_pledges_and_2cb5f0f9": {
+    "text": "你所得到的一切:庫多斯,獎勵承諾和投票,最新的第一,只有你能看到這一點。",
+    "source": "2cb5f0f93d3c5fe0f030068fc3a660cd874386c0526da79f8492d93b94fbb7c1"
+  },
+  "deleted_user_c9cc0c29": {
+    "text": "刪除使用者",
+    "source": "c9cc0c29299830993359af5407ab9bd376febe945d318e804c822e8df940dfae"
+  },
+  "secret_change_c4d94bb1": {
+    "text": "秘密變化",
+    "source": "c4d94bb16850950b007270fa443cd2d572182c0d4531b41fa9f3e2fcbfba08f5"
+  },
+  "close_issue_ae84bc5f": {
+    "text": "接近問題",
+    "source": "ae84bc5f1da7faa233470bc62d9bfce2919e4fb6b027ab9899b6ffa31f190b99"
+  },
+  "maintenance_campaign_88540564": {
+    "text": "維護活動",
+    "source": "88540564338abd3d5e4ce0d260642215cc94a53a4d5d77dd9b43a87db7643e21"
+  },
+  "finish_getting_started_on_home_to_see_them_bddc84b2": {
+    "text": "結束 開始在家看到他們",
+    "source": "bddc84b27bdc64386db992559d18540b923ac0ac0dd17e8776821e213c8439e0"
+  },
+  "api_error_b2ff3a8f": {
+    "text": "API 錯誤",
+    "source": "b2ff3a8f3697a0e48b8881e54682f5ed91b1af21bb770fd09dcfe8e65e77e789"
+  },
+  "this_season_2f34b355": {
+    "text": "本賽季",
+    "source": "2f34b35503ca51d1909d7823602ba5cd9b3362d9a5e1226eba2e2d2799a61637"
+  },
+  "finish_getting_started_to_unlock_the_rest_of_the_2ab652a3": {
+    "text": "結局開始開啟剩餘的季節。",
+    "source": "2ab652a3132908407a13e83726170bb5be7de2c4be43aac36690a8a93ce32229"
+  },
+  "only_for_phones_that_can_stay_on_a_background_se_81f5c171": {
+    "text": "僅適用於可以停留的手機. 背景服務繼續執行持久通知,它使用更多的電池和資料,而Android必須讓應用程式在背景下無限執行,並設定準確的警報。",
+    "source": "81f5c171b332580d754f8cc5aa60525987dd24a87870a812e7718a69432e0cbf"
+  },
+  "your_stake_is_delegated_to_homeroom_s_block_prod_48e5428c": {
+    "text": "您的股票被委託到Homeroom的區塊生產伺服器,所以沒有什麼在您的手機上執行。當委託時,您將獲得半分的積分,您將透過直接從您的手機生產區塊。",
+    "source": "48e5428c6bf029d64745c5f2000e4d42d0f1a3ff5735ae6aeb13697072eee2dd"
+  },
+  "an_admin_releases_wallet_keys_in_batches_once_yo_a2883512": {
+    "text": "管理員在包中釋出錢包鑰匙,一旦你的錢包被髮布,請回到這裡,選擇你的區塊是如何製作的。",
+    "source": "a28835121615ac0eb09e0159e6d85ed607039a0af6a7de1f2d81fd2321e009c5"
+  },
+  "producing_blocks_needs_a_wallet_with_producer_ke_f56b6e59": {
+    "text": "生產區塊需要一個配有生產者鑰匙的錢包. 請求一個和一個管理員將釋放你的鑰匙在包。",
+    "source": "f56b6e59caff5670f2b9009225a957c1003e6832b969b5b536b0156509dbc6d7"
+  },
+  "active_now_0c32f71c": {
+    "text": "現在活躍",
+    "source": "0c32f71c4caed50d9b9a268d59bcad14f1ed3e4a971fb774f1f3ea4d45b2e6ec"
+  },
+  "season_points_035c8057": {
+    "text": "季節點",
+    "source": "035c805770530e15e6d85e9766cdd0edc188545c05d5cae1f722e055816d9e17"
+  },
+  "blocks_produced_029e436b": {
+    "text": "製作的區塊",
+    "source": "029e436b187eef38d6528b969e41e5d504fdd8fd655090df2fb06465b3d13f8a"
+  },
+  "something_went_wrong_reaching_the_app_directory__99f7f59c": {
+    "text": "到達應用程式目錄時,發生了一些錯誤,請檢查您的連線並再次嘗試。",
+    "source": "99f7f59c11c325f6e0aa9d4c87724eb22e292c4b8a052606a63246f81ce03866"
+  },
+  "no_apps_added_yet_find_apps_to_add_in_the_discov_fe1bc941": {
+    "text": "尚未新增應用程式 查詢在 Discover 部分新增的應用程式。",
+    "source": "fe1bc94109f3ee8051fe67e930778c6e44c572bc91849ea15d20770381c8dbe8"
+  },
+  "new_project_a41eb2bf": {
+    "text": "新專案",
+    "source": "a41eb2bf7245d3bcca0c66f7b9a2c8b30a6cf975fc4bed8297811b2777956280"
+  },
+  "drag_tiles_to_reorder_drag_cards_from_shortcuts__5c065445": {
+    "text": "拖板重新訂購. 拖卡從短片在這裡新增它們。",
+    "source": "5c06544534883fd551efc124660597478c799b8096c11a0aaebebebcfaf84351"
+  },
+  "standings_update_every_few_hours_points_from_cha_59f9b6c4": {
+    "text": "站點每隔幾個小時更新;您剛剛完成的挑戰中的點在下一個更新中出現。",
+    "source": "59f9b6c4514afd50fc56df57c94fd88cc35d4fed5e81457dfe6c61cae38f1f56"
+  },
+  "all_apps_01bed311": {
+    "text": "所有應用",
+    "source": "01bed311e7d0c963a5f8afe3dd3c99c8140d887d92c602b94b9309fa51b32723"
+  },
+  "failed_to_load_apps_e46b87db": {
+    "text": "失敗下載應用程式",
+    "source": "e46b87db96b068c6faecd5be75cd0dd4f1f732c3c0ee0e184a4c0d408ac7835b"
+  },
+  "no_featured_apps_yet_613b1f22": {
+    "text": "目前還沒有應用程式。",
+    "source": "613b1f22722c66c5e0dd264592bee21ff4b5747698c181bdb10e8e77e001f3f1"
+  },
+  "you_haven_t_joined_anything_yet_join_apps_from_a_5895dba0": {
+    "text": "你還沒有加入任何東西. 加入所有應用程式。",
+    "source": "5895dba0aa49e359611252facac8ea8700dc0fae8c7db4fb1cf9f818623e4ea3"
+  },
+  "no_apps_to_show_yet_aa1dc7d4": {
+    "text": "目前尚未顯示的應用程式",
+    "source": "aa1dc7d4a04d3e466d4e28fbcea2e3fc191aa23ab9ea0be42847e9a672ca0d8f"
+  },
+  "no_deadline_4cee0239": {
+    "text": "沒有期限",
+    "source": "4cee02390191d1f084e38b7d4dc1b930de8553265f4ab8f0d171c30e492ee71e"
+  },
+  "unknown_error_3e4443e5": {
+    "text": "未知錯誤",
+    "source": "3e4443e52275a9a092994d93853ea05b985abc67238b4b482c7b90b3a76e6098"
+  },
+  "skipped_not_the_widget_mechanism_030e6eb3": {
+    "text": "超越,而不是 widget 機制",
+    "source": "030e6eb336a705b6f61e29e97d9545bd5efeceb59da0de2eb2586358bb678b77"
+  },
+  "skipped_no_shortcut_bridge_a16137b8": {
+    "text": "滑雪,沒有短暫的橋樑",
+    "source": "a16137b8ae0fb4d01f64203b7a43cb1791cfbac25f18ad19f007ce42dd061e7b"
+  },
+  "nothing_to_send_ad7a5965": {
+    "text": "沒有什麼可以傳送",
+    "source": "ad7a5965d5e4630dc0d386037381366c42ef5bc283fbc38d4d89daf5ae3af5d9"
+  },
+  "weekly_kudos_quota_exceeded_1a098775": {
+    "text": "每週的庫多斯定額已經超過了。",
+    "source": "1a098775ff26fdfe4bc06cdd5eb8826c66f489846bbf21e3eb3a2ab943b20187"
+  },
+  "you_can_t_give_kudos_to_your_own_change_8ff163a3": {
+    "text": "你不能為自己的改變付出代價。",
+    "source": "8ff163a3e1340116ad72db7e676f884fc4bec0627e5b2a04d40339d73ddef52d"
+  },
+  "you_already_gave_kudos_to_this_change_03a23755": {
+    "text": "你已經給了這個變革的庫多斯。",
+    "source": "03a23755b6a3aca4dd52154a0cd9cfb022faa48692e2cb033cf4f56cedf93a00"
+  },
+  "this_change_isn_t_eligible_for_kudos_ba733a61": {
+    "text": "這種變化不適用於庫多斯。",
+    "source": "ba733a612671ce3e30f90a76bbbda51793a9bd97e83fb7c232af44641bb1025b"
+  },
+  "failed_to_give_kudos_try_again_e8adf142": {
+    "text": "失敗了,再試了嗎?",
+    "source": "e8adf142e0e974a5abd616d8f529003af04079aacc0b9a8c03f8bf553ff94c77"
+  },
+  "network_error_giving_kudos_bec56a18": {
+    "text": "網路錯誤提供庫多斯。",
+    "source": "bec56a1877e0b1e80af41a15fb74dfe7092ebee9d70a86e7a35d466143ba3a30"
+  },
+  "no_kudos_to_retract_161752a2": {
+    "text": "沒有庫多斯退出。",
+    "source": "161752a2cc332af24671efae56676674a0c3718a5dc788c0a1b4ad0b978ccff3"
+  },
+  "failed_to_retract_kudos_try_again_f79f5a87": {
+    "text": "未能撤回庫德斯,再試一次。",
+    "source": "f79f5a87a4e30d7675a4f64c6178dd2d13e2cd25d54f3b2a7b83cd43ffcb8b49"
+  },
+  "network_error_retracting_kudos_9cfb2450": {
+    "text": "網路錯誤撤回庫多斯。",
+    "source": "9cfb245068336b06e2b16c357bac98fd1e27b0ecd64f09a506e1b4ad0c32bce1"
+  },
+  "this_week_a9bcfba0": {
+    "text": "本週",
+    "source": "a9bcfba0ebd1cf96c5898b469ce3f810b4081ee9603fb28ce0e0e50af5cc9bd8"
+  },
+  "when_someone_gives_a_change_kudos_it_shows_up_he_2f483424": {
+    "text": "當有人給出一個改變的庫多斯時,它在這裡出現。",
+    "source": "2f4834241da25e5f5b7a16e3f5831a67b9fd633df6b4b8642f6f6f0ff7e27853"
+  },
+  "when_someone_gets_kudos_on_a_change_they_made_th_79233c2b": {
+    "text": "有人因自己做出的變更獲得讚賞後，就會顯示在這裡。",
+    "source": "79233c2bd93b8a18806a7a1dd3517ffebbc48da0c210e670240e83641f43f978"
+  },
+  "active_on_020de972": {
+    "text": "活躍在:",
+    "source": "020de97288c8f1219f817bddcbc1fbfc96e905d58b15b3a6911fc72bb59b7c72"
+  },
+  "failed_to_load_challenges_e3bed3a9": {
+    "text": "未能承擔挑戰。",
+    "source": "e3bed3a97bf3c8cd5c41e8edbf4324dec34e9d4ec5397166f8737b812cfb00c9"
+  },
+  "counting_now_5c6c0ea5": {
+    "text": "現在計算",
+    "source": "5c6c0ea5f8f48b34e7ff31fd7f439a39b76744a84e5fb066005a51b81b4256d5"
+  },
+  "failed_to_load_the_breakdown_54ab326c": {
+    "text": "無法充電破裂。",
+    "source": "54ab326cee25922083b58f6c16e0f5cf0be052ce223aff25a21e2af29b302305"
+  },
+  "producing_blocks_on_the_phone_itself_is_availabl_97066173": {
+    "text": "手機上的區塊製作僅在Android應用程式中可用。",
+    "source": "970661733d9f2f39ecc47918cf33c3b2f4849fa8617b9c68c32e4cf20f0f247a"
+  },
+  "delegation_is_managed_from_the_wallet_in_the_hom_58d3bd9f": {
+    "text": "在 Homeroom 應用程式中從錢包中管理代表團,如果尚未提供,請更新該應用程式。",
+    "source": "58d3bd9f71f8737b4f08d9f5e261b5554e1156795093ae6b16f8457cdc4c84bf"
+  },
+  "delegation_is_managed_from_your_wallet_in_the_ho_24a679a6": {
+    "text": "代表團從你的錢包管理在Homeroom應用程式中,在那裡開啟這個挑戰。",
+    "source": "24a679a6c38d85515f03530646cfe9cc2665bb7d1e7fbb2da1188e853249f71d"
+  },
+  "show_more_71e579d3": {
+    "text": "顯示更多 →",
+    "source": "71e579d3e2eef21f0f7cc82ae3880021fd3d9a4ab243cb4b848e44df2b0971a2"
+  },
+  "failed_to_load_this_profile_e363ddd7": {
+    "text": "無法上傳這個個人資料。",
+    "source": "e363ddd72bc9759e14db075c7804cdcecfe68ec21a0ffd37fe182d12783ffd09"
+  },
+  "failed_to_load_this_event_f0c7d194": {
+    "text": "未能充電這個事件。",
+    "source": "f0c7d1947f77eacf5431627ed3d722fe292e68ad8c5aa3f371cbe38a20bf8706"
+  },
+  "no_events_have_been_published_yet_baed0bc4": {
+    "text": "目前尚未公佈任何事件。",
+    "source": "baed0bc4f2d734cbcecb8da3e9b046c1028b44d30a8a6ce7a3739fb7968949d7"
+  },
+  "failed_to_load_the_leaderboard_db88a437": {
+    "text": "無法充電領袖板。",
+    "source": "db88a437deaff8dbcb5f71b45a13086e038d678dd9cd3d7fb6d200f033592dbc"
+  },
+  "value1_and_value2_f4780f76": {
+    "text": "{{value1}} 和 {{value2}}",
+    "source": "f4780f76354cc77c3f4da4f7dd8b2af692cb084537b16663ffb1c87fdde83f97"
+  },
+  "value1_and_value2_e09cf1fd": {
+    "text": "{{value1}} 和 {{value2}}",
+    "source": "e09cf1fdffca67730650b1da105cd3f67abdc5138ca0028484cf18db033ead89"
+  },
+  "one_of_value1_invited_approvers_votes_yes_24299137": {
+    "text": "{{value1}} 名邀請人投票贊成",
+    "source": "24299137fe69cc65d5e47a87e8145e96310e9867c5a679f3bfdfcc46a211c900"
+  },
+  "value1_of_value2_invited_approvers_vote_yes_268909fb": {
+    "text": "{{value1}} 的 {{value2}} 被邀請支持者 投票 是",
+    "source": "268909fbb800f38b278827c2362d7918e64a59cdf54128581d3e781b3589f83c"
+  },
+  "it_has_value1_yes_votes_e0ad056f": {
+    "text": "已有 {{value1}} 票 是",
+    "source": "e0ad056f33b12da643de5a30d5d65edec32d90850abe30015b1f9121751f493a"
+  },
+  "value1_invited_approvers_back_it_in_a_vote_6d55ff80": {
+    "text": "{{value1}} 被邀請的批准者在投票中返回",
+    "source": "6d55ff8051c51ac25d09fe253819bfd08fd2150a0eff8028cebfaefbcbe2a808"
+  },
+  "value1_active_members_back_it_in_a_vote_5e4429fe": {
+    "text": "{{value1}} 活躍的會員在投票中支援它",
+    "source": "5e4429fe8337a2c11b58afa9768fbcaf86bf82f534ea0314132b3f1565c5766e"
+  },
+  "value1_it_goes_live_once_value2_2f85f4b4": {
+    "text": "{{value1}};它再活一次{{value2}}。",
+    "source": "2f85f4b4fe2989c43bf80ad77e2568d055a3ea5e57b7c817ba8ba50721e56fa3"
+  },
+  "the_platform_is_built_the_same_way_as_the_apps_o_3ccd0ff9": {
+    "text": "該平臺是相同的方式構建的應用程式在它: {{value1}} 一個變化到",
+    "source": "3ccd0ff9b41410c57dc45c21832786ea3527e08a57fa156c8af494dab466eec3"
+  },
+  "tabs_the_bell_or_the_workshop_and_it_goes_live_o_390748f6": {
+    "text": "標籤,鐘聲或研討會,並將直播一次{{value1}}.",
+    "source": "390748f62e1f3f8e3959130d7574de7438a823716678697e89aca0ab9e4c4fd5"
+  },
+  "version_value1_d0f3aa75": {
+    "text": "版本 {{value1}}",
+    "source": "d0f3aa750b348afa96bc5a1fe9ac4bb77e0200612da4169391a49470eb28faa0"
+  },
+  "live_since_value1_49010d54": {
+    "text": "生活自{{value1}}",
+    "source": "49010d541b380d62550d4c217cb71529ceaa6d47857413c75d82b147b30f94d7"
+  },
+  "value1_it_works_until_you_turn_it_off_00f04b7b": {
+    "text": "{{value1}} 它工作,直到你開啟它。",
+    "source": "00f04b7bf00718eb324602ec798759f967d5da1b19c83e71369586fcc786c779"
+  },
+  "it_expires_in_value1_days_22f7b48e": {
+    "text": "它在{{value1}}天內終止",
+    "source": "22f7b48e16f355421d88b6447f3854a6b552873ea583996fbba5ae440fbdb6ec"
+  },
+  "value1_joined_9ccfce0f": {
+    "text": "{{value1}} 加入",
+    "source": "9ccfce0f4473c302371bdbebca4399b31c6dcdfbb4efa4fa613c23b4a31eeb95"
+  },
+  "value1_of_value2_used_baced1a0": {
+    "text": "{{value1}} 的 {{value2}} 使用",
+    "source": "baced1a05e0de8142fb99dc678bb348f7f2493b3e5a9db4a0949689df765a358"
+  },
+  "value1_no_end_date_b85e817d": {
+    "text": "{{value1}} · 沒有終止日期",
+    "source": "b85e817dc40efeffc75fa79302e80c491a8baa74eb92fa57655a74a13edeb0dc"
+  },
+  "value1_days_left_14f91809": {
+    "text": "{{value1}} 天留下",
+    "source": "14f91809997e96daabda2fcaadb2ef538375d45dd081ae753afb032883a40725"
+  },
+  "open_value1_839d6dee": {
+    "text": "開放 {{value1}}",
+    "source": "839d6deea6a76ef29639a4d6c49033675994c1403db287710415ae314aa71fd4"
+  },
+  "no_featured_apps_match_value1_4804bb1f": {
+    "text": "沒有包含的應用程式匹配“{{value1}}”。",
+    "source": "4804bb1f8ccabb702771051f11e58f3009b05e15474ece38b03385f37559fd9a"
+  },
+  "nothing_you_ve_joined_matches_value1_c848cf2f": {
+    "text": "沒有什麼你加入了比賽“{{value1}}”。",
+    "source": "c848cf2fd36dd61a005afa9d8b85a307b2a4f6ac73d333740d6b016b992b5374"
+  },
+  "no_new_apps_match_value1_c6174cc6": {
+    "text": "沒有新的應用程式匹配“{{value1}}”。",
+    "source": "c6174cc66e535b6c4adbf15becfa35b343d522bd9efcf0581a1cc2dbb0aecc98"
+  },
+  "no_apps_match_value1_fa32af34": {
+    "text": "沒有應用程式匹配“{{value1}}”。",
+    "source": "fa32af34a95cef778acdf14bc156669c56b9659843a612d71f36dac586fb99e5"
+  },
+  "value1_live_in_30d_ef3807c9": {
+    "text": "{{value1}} 直播 30d",
+    "source": "ef3807c9a2a58069b709c29f8fdd3391db7ebbaa333b862c29f78bd7289904fe"
+  },
+  "created_value1_54213967": {
+    "text": "建立{{value1}}",
+    "source": "54213967154a390d7b64754f94c6cc830a1c251995eeec1b202d5db8a2a172b7"
+  },
+  "joined_tap_to_leave_value1_bebe1ddb": {
+    "text": "加入. 點選離開 {{value1}}",
+    "source": "bebe1ddbf20e22ad79c0ba4328b0f1be165fecd871c6fc084c881afeda7311d4"
+  },
+  "value1_m_ago_28f5747c": {
+    "text": "{{value1}}米前",
+    "source": "28f5747c07dd5f0d96a6006c9574a2800a7148a1799395961352fa20d22c5432"
+  },
+  "value1_h_ago_51452941": {
+    "text": "{{value1}}小時前",
+    "source": "51452941c07c1b8216a8e88429c8a173d2b74e1278522dcd72a7f7b11abd31a1"
+  },
+  "value1_d_ago_0dc906ea": {
+    "text": "{{value1}}d 前",
+    "source": "0dc906eaa41dba3409c6ad057c872811ca0df68da1b764d30113786602fe5c19"
+  },
+  "value1_mo_ago_9a0a3ce4": {
+    "text": "{{value1}} 天前",
+    "source": "9a0a3ce45dc1172f74bc7c0dc522238e1345e460513adf710f8c0994fd8b8c19"
+  },
+  "value1_y_ago_d5d09ed0": {
+    "text": "{{value1}}年前",
+    "source": "d5d09ed0537d0067178e53c8127b72874060c2977e5a633d75aacb4754dab044"
+  },
+  "value1_view_app_quota_value2_3e0d5aae": {
+    "text": "{{value1}}. 檢視應用量. {{value2}}",
+    "source": "3e0d5aae5ddf50b9133d3493406a9e6270d531bfcfdd470b01e83731c525f35e"
+  },
+  "value1_pts_7157c665": {
+    "text": "第{{value1}}章",
+    "source": "7157c6652b326c4be1d96822077faebc18b9eb661656fdb7bea965795e29b1dd"
+  },
+  "value1_earned_aa2b5722": {
+    "text": "· {{value1}} 獲取",
+    "source": "aa2b572269505573ab08d9b4dd6996916678f246f2f3a2fc40e3f77c134546c1"
+  },
+  "value1_of_value2_done_value3_9778615f": {
+    "text": "{{value1}} 的 {{value2}} 已完成{{value3}}",
+    "source": "9778615f0c0abe5b26f83c072c507b9fdcd5a4c5d0115d69760ab229d4150bcd"
+  },
+  "value1_more_challenges_2878cdf4": {
+    "text": "{{value1}} 更多挑戰",
+    "source": "2878cdf45f9c70df9299c8ad71e92d8d1fb919fc41ad2c4b74066a2a2d4b2160"
+  },
+  "one_more_step_unlocks_value1_c04f7b26": {
+    "text": "一步再開啟{{value1}}",
+    "source": "c04f7b266de6e64c61b23728e5934cc62c5d20d762afc3cfd05dd3821ce4526e"
+  },
+  "two_more_steps_unlock_value1_cbba2269": {
+    "text": "另外兩步解鎖{{value1}}",
+    "source": "cbba226943f19395c345cff65deb8a67c9a0fbcd18bd9c6335f1d7053158d2b4"
+  },
+  "finish_all_value1_to_unlock_value2_c7ebc9f2": {
+    "text": "完成所有 {{value1}} 到 解鎖 {{value2}}",
+    "source": "c7ebc9f2c26220db281b6e6286d0a4396b508d002e36efcb690cbfed53baeac8"
+  },
+  "value1_challenges_unlocked_336132ab": {
+    "text": "{{value1}} 挑戰 開啟",
+    "source": "336132ab7c896d5352cd530a2726d79c81962a961400176f127bfa0a2fef2a45"
+  },
+  "value1_changes_are_84d85381": {
+    "text": "第{{value1}}章 改變了",
+    "source": "84d8538167180aa6581079a753e30eb576107adef2df3521297e75a61fb4b0d6"
+  },
+  "find_an_app_on_discover_and_spend_value1_seconds_b20c1abb": {
+    "text": "在 Discover 中找到一個應用程式,並在它中花費{{value1}}秒。",
+    "source": "b20c1abb78e84d360e8ffe668bb2fea4a4c2d4bd1abc1a9a5718c11597de53bf"
+  },
+  "try_value1_1476d70d": {
+    "text": "第{{value1}}章",
+    "source": "1476d70d1ec7a65d3aacaaaa1cf96d18dab51e741495a118ce3f0ac11572c771"
+  },
+  "spend_value1_seconds_in_value2_e463fe2f": {
+    "text": "花了{{value1}}秒在{{value2}}秒。",
+    "source": "e463fe2f0495a335bb20102c5133d6d3e9296b1ce7d7e37af72b33add17d3680"
+  },
+  "suggest_a_change_to_value1_79733430": {
+    "text": "提議轉換到{{value1}}",
+    "source": "797334309060045b19defcdc1c70d6e4b6765c8e8a877491797f8718d9fc4eb9"
+  },
+  "tell_value1_s_builders_what_would_make_it_better_a82c363f": {
+    "text": "告訴{{value1}}的建築師什麼會使它更好。",
+    "source": "a82c363f31af4ce241b34fd195b7f90e67505f38d54a747388eb3c8ef8fbaa0e"
+  },
+  "vote_in_value1_79a478aa": {
+    "text": "投票{{value1}}",
+    "source": "79a478aae2e889c170612e3116d8c434db40baee3f157bb58ac756293a99a20d"
+  },
+  "value1_waiting_in_value2_268ce1ca": {
+    "text": "{{value1}}等待在{{value2}}。",
+    "source": "268ce1caa3c855d42399684f360551b9f0dbadd6d3be990a037e8655906b3408"
+  },
+  "nothing_in_value1_yet_value2_waiting_in_value3_f4285741": {
+    "text": "沒有在{{value1}}到目前為止;{{value2}}等待在{{value3}}。",
+    "source": "f4285741719456f649ba1e28bc4eb7e0593ac019af659286b773a4c8a894f80f"
+  },
+  "see_what_value1_is_building_8255aa44": {
+    "text": "第{{value1}}章 要做什麼",
+    "source": "8255aa4426a2b5785a7e67fee9d076cb25256c832e805211511af86bd79adbd7"
+  },
+  "value1_of_value2_a48c498b": {
+    "text": "{{value1}} 的 {{value2}}",
+    "source": "a48c498b8725d18149f047b1fbf554c6a90eab8b0c99d17ab0cb15bc0b44e646"
+  },
+  "value1_pts_left_83d21081": {
+    "text": "· {{value1}} pts 留下",
+    "source": "83d210814e3298e53991b07c95354d8b510511dcfe0bbea50fd65d4babd4dfb1"
+  },
+  "earned_value1_pts_bb32d65a": {
+    "text": "獲取 {{value1}} pts",
+    "source": "bb32d65aec921f37976c47012d9c17b8daa77900e9103c6432d86a270d4df530"
+  },
+  "done_in_value1_e6213234": {
+    "text": "第{{value1}}章",
+    "source": "e62132344f2aa3e8c62ca97b668a7d429e0e1c6bace36d40a8844748d882c428"
+  },
+  "value1_h_left_1000363c": {
+    "text": "第{{value1}}章 留下",
+    "source": "1000363c7f98053216e25fbf3c853b93abe139237dd280cbd82f82d2c8a2f9b3"
+  },
+  "value1_d_left_eacaadd0": {
+    "text": "{{value1}}d 留下",
+    "source": "eacaadd04ce1d31573f14a746d2630bde0849b092b871c5f9d89a2fba5206226"
+  },
+  "tile_value1_value2_value3_92f614f1": {
+    "text": "此分類上一篇: {{value1}} {{value2}} {{value3}}",
+    "source": "92f614f10f7306c0f94de79598dcb41a4d52954705c6268140ea08edb677a907"
+  },
+  "value1_refused_1a17ab43": {
+    "text": "{{value1}} 被拒絕",
+    "source": "1a17ab438418c1e85a9d0d41510063f9547ed2d22967fab9a03c9edd870b6ded"
+  },
+  "sent_value1_value2_a2f490ea": {
+    "text": "傳送 {{value1}}{{value2}}",
+    "source": "a2f490ea9867b83d763e606e9aad43b30eb59db5598c7d40a1aa7db392ff3216"
+  },
+  "repeat_value1_minmax_0_1fr_d6544cfc": {
+    "text": "重複({{value1}}, minmax(0, 1fr))",
+    "source": "d6544cfcffb6b65919c2a9fd71855cc2f2cc641c291937adcee5b2260354e53b"
+  },
+  "translate_value1_value2_scale_value3_0d241898": {
+    "text": "翻譯({{value1}}%,{{value2}}%) 規模({{value3}})",
+    "source": "0d241898f686b26a7822b9f07491c5e4c037e6a31adb6d48d7cf34115ae58a13"
+  },
+  "see_all_value1_challenges_91466890": {
+    "text": "檢視全部 {{value1}} 個挑戰",
+    "source": "91466890072a69defb8772f9786a751a9d0409af06b4a5e6a1d23ad42a4ec07e"
+  },
+  "ended_value1_92d6547f": {
+    "text": "第{{value1}}章 結束",
+    "source": "92d6547f50769d60dde489eb7f9979fbeb93e0ee7ee20082321022c4a51d6fff"
+  },
+  "value1_won_with_value2_pts_658cf64f": {
+    "text": "{{value1}} 贏得 {{value2}} 票",
+    "source": "658cf64f62e2195f7d6f10b484a66e6f8d0016155051075f3bbb9d19aabe4d85"
+  },
+  "you_finished_value1_b842119a": {
+    "text": "已完成 #{{value1}}",
+    "source": "b842119a26fa0eacd4be2f8844c25ec833f1cdf16e8b4a8cba21e11e29f822a0"
+  },
+  "thank_value1_for_putting_this_up_a8c6683d": {
+    "text": "第{{value1}}章 謝謝你",
+    "source": "a8c6683d7b88f6564b75b4e803ac758b5d25d26608713a9ffb5e9c30e8bd81ea"
+  },
+  "resets_value1_value2_b3572e8e": {
+    "text": "重定向 {{value1}}({{value2}})",
+    "source": "b3572e8ed1adef4c47056fadff223988731153b710844a0759fb88ed1156b7b9"
+  },
+  "value1_of_value2_thanks_and_value3_of_value4_bou_3b01d5d0": {
+    "text": "{{value1}} out of {{value2}} thanks and {{value3}} out of {{value4}} bounties left this week. {{value5}}",
+    "source": "3b01d5d0c255e42a58abc68c33d85006698daed851dd08925c1496473c9261bf"
+  },
+  "value1_of_value2_kudos_left_this_week_value3_e96c6226": {
+    "text": "{{value1}} out of {{value2}} kudos left this week. {{value3}}",
+    "source": "e96c62266869b8370f5ed8444f2036ff8535390dcfd4494f20c5f70d525b9a8a"
+  },
+  "value1_kudos_per_week_resets_value2_give_them_to_a9768348": {
+    "text": "{{value1}} kudos per week, resets {{value2}}. 給他們你欣賞的變化。",
+    "source": "a9768348bd9b6da3f1e11290b2fc1e6f826ec3c7d9267d10e5b07e8931b6ed04"
+  },
+  "no_kudos_value1_yet_bb85e124": {
+    "text": "第{{value1}}章 沒有人",
+    "source": "bb85e12468be146d429135e616836c501fbab5c1376228fbb2da3760e69fa748"
+  },
+  "value1_on_live_changes_97f02fa8": {
+    "text": "{{value1}} 在現場變更",
+    "source": "97f02fa8cdb7d2d6f65314b8ae69eb8a5b43d70d1bcf62bcb9f83f8eec290f84"
+  },
+  "pledged_kudos_on_issue_value1_47c4b926": {
+    "text": " ??   ??   ??   ??   ??  #{{value1}}",
+    "source": "47c4b9260a651e6779e0cbd126de93b17b313b2a42191b8ca82383da0bfc92a5"
+  },
+  "request_value1_8051e8ec": {
+    "text": "請求 #{{value1}}",
+    "source": "8051e8ec89b01dc15ba7b5d1c6befdbae6c5f82fccfa527329ea465b906b2d8e"
+  },
+  "value1_not_live_yet_851229a1": {
+    "text": "第{{value1}}章 還不活",
+    "source": "851229a1fa7fdd05c9d1269c5c4c9978a6dcf3f56ba794ff75d40933f7d01651"
+  },
+  "value1_challenges_unlock_after_getting_started_63dabca3": {
+    "text": "{{value1}} 挑戰開啟 開始後",
+    "source": "63dabca39bf60d76c5d729c66306a019db625dfcd4b25d22686cdba3b7c3ebe5"
+  },
+  "value1_and_value2_more_5cec6b8d": {
+    "text": "{{value1}} 和 {{value2}} 更多",
+    "source": "5cec6b8d9bb45776b265c155d2acf4adf36700ab45cd808f9487f85b8e058c3e"
+  },
+  "value1_pts_you_ce94bc4b": {
+    "text": "{{value1}} pts · 你",
+    "source": "ce94bc4bedf7c758869432da37af42c261d6e7d34c222f054a2a4435fa429795"
+  },
+  "value1_pts_earned_not_in_the_standings_yet_8e992f4c": {
+    "text": "{{value1}} pts 獲取,尚未在站點",
+    "source": "8e992f4c498dfa75655e29538ad3c0634b72afecd08f90c7be571fae1d7aac46"
+  },
+  "value1_value2_done_01a53bd7": {
+    "text": "{{value1}}/{{value2}} 完成",
+    "source": "01a53bd74ca0e811a8b0d054713ae9347b6a76c44bdcaba2601aeb4d7627263e"
+  },
+  "next_count_value1_a0d85a7b": {
+    "text": "下一篇 {{value1}}",
+    "source": "a0d85a7b02b5a85b2ca559dd7440e854e0d4532354018718b894826172a153a0"
+  },
+  "last_count_value1_9b335da2": {
+    "text": "最後一集 {{value1}}",
+    "source": "9b335da21e75e76d037dd84e52da60a51aca4929a80f471a2be0182917a55f2e"
+  },
+  "done_in_this_event_value1_cf02d62d": {
+    "text": "在此活動中完成 · {{value1}}",
+    "source": "cf02d62db6758c2583b843f47353c9788c3734faf3cecc04f2a93751945916e9"
+  },
+  "participants_value1_0d7965bb": {
+    "text": "參與者 · {{value1}}",
+    "source": "0d7965bb923e54bdc76555dae12f7e7a879ccfca422e6e4a05dd229a552f3688"
+  },
+  "value1_pts_between_them_1d105419": {
+    "text": "{{value1}} pts 其中",
+    "source": "1d105419dc25349d6b170ff3feb0d5079105f4ccaf807be6681db3af2f941914"
+  },
+  "show_all_value1_3e158828": {
+    "text": "檢視全部 {{value1}}",
+    "source": "3e1588283097825b98e1267b4c21d658a57e57b8e23bec25636367e5af002dfe"
+  },
+  "value1_taking_part_f64802c1": {
+    "text": "· {{value1}} 參加",
+    "source": "f64802c1dcef65d7dc6676155c06c022d1a9c1e6a91a04b5b6fdd96147c28315"
+  },
+  "app_actions_2c496ac4": {
+    "text": "App 行動",
+    "source": "2c496ac4ee78b6a6a7cfc15d6b2832194a765198ba216e7dcd31661e5e6c7682"
+  },
+  "remixed_from_value0_d032f9fa": {
+    "text": "回覆 {{value0}}",
+    "source": "d032f9fa7099522bbcd1a18e67e8f7c35e801ae2d0bf4512aac36ba06e5fe34e"
+  },
+  "updated_value0_8f124f40": {
+    "text": "更新{{value0}}",
+    "source": "8f124f40e9bee7ac9d034effaeb6835fd6655ba0e4bdf545c5c3bc9a34a2b48e"
+  },
+  "make_your_first_change_f1fd4ce0": {
+    "text": "做你的第一個改變",
+    "source": "f1fd4ce069ec516c9a4a298a1aeb99e855af4a71598c70b9c2ea3df0ed968f35"
+  },
+  "get_a_change_live_3ab62f77": {
+    "text": "活著的改變",
+    "source": "3ab62f77990a4ba2d1eab8b50ed537ab58fdaaf1e0a391e98db4eb5e9f2bf871"
+  },
+  "drag_a_card_from_shortcuts_here_or_use_its_menu__8b10b75c": {
+    "text": "在這裡(或使用其選單)從短片中提取一個卡,並將其新增到您的主螢幕上的Homeroom widget。",
+    "source": "8b10b75c491d2a2d13a00080a88677b503605ca7761218c5d65a8f2d0bdc559b"
+  },
+  "error_54a0e8c1": {
+    "text": "錯誤",
+    "source": "54a0e8c17ebb21a11f8a25b8042786ef7efe52441e6cc87e92c67e0c4c0c6e78"
+  },
+  "creator_88447b83": {
+    "text": "創造者",
+    "source": "88447b83090cded58b10214c752813d476fa21c8c1d8dcbccbd2e2676231aab9"
+  },
+  "member_7c968fb7": {
+    "text": "會員",
+    "source": "7c968fb71f50e335442b35062a35620a508bbd0bd3ee7888deff2490636a5311"
+  },
+  "start_e4bb9f1e": {
+    "text": "開始",
+    "source": "e4bb9f1ece9af9264a3b9e3913bbdb2cf497457167b14ced5f85688bfde74644"
+  },
+  "try_85d6c071": {
+    "text": "嘗試",
+    "source": "85d6c0718cfecca1bd0f61cb166ad7982f506e1acd6eb6938727aabe5f050c6d"
+  },
+  "suggest_4effad82": {
+    "text": "建議",
+    "source": "4effad823b048b0440dbeff42665f60a6ddec8e121c378966ed7c074a512c51f"
+  },
+  "vote_cd5588db": {
+    "text": "投票",
+    "source": "cd5588db6fc6fb44dd76b006202f9efa2ba5d715272a1ae06fb3c805e6a25289"
+  },
+  "look_a0de5719": {
+    "text": "看",
+    "source": "a0de5719f595fbf5ffe3b6d594962c0a9c25083f1b13363efa57264ae21f93a0"
+  },
+  "invite_a_friend_1efe5a1a": {
+    "text": "邀請一個朋友",
+    "source": "1efe5a1a01e29ccb7ad4ca865dcc15844e95b05d62594d21b41e1b758376c82f"
+  },
+  "start_a_community_2d211bb9": {
+    "text": "開始一個社群",
+    "source": "2d211bb9165ad21ab62be0eda7e71e2b050cde804c411cd13760c6202b208880"
+  },
+  "widget_7dd7a28c": {
+    "text": "威士忌",
+    "source": "7dd7a28c2ff9e308abc831e0a6dce95d11600be10982a969048948a21a40879b"
+  },
+  "season_bad2b893": {
+    "text": "季節",
+    "source": "bad2b893e5a466919e6513c50ff6623b1d3a115ee0d2db5f0baa650357dac2d7"
+  },
+  "rename_3064d79a": {
+    "text": "名稱",
+    "source": "3064d79a295cefe4b384b8fe5cb29fd6b06d7eb1ad94b8895f4148039d06b330"
+  },
+  "started_ecbc89cd": {
+    "text": "開始",
+    "source": "ecbc89cd37a037342e740f9e0e0633a70180a2279b0157c9a823fce729f4bd77"
+  },
+  "challenge_27cf1792": {
+    "text": "挑戰",
+    "source": "27cf1792f7bb4da955117bb4a15cb33f4e4705984cacfac9055a2884b061e4e1"
+  },
+  "leaderboard_31b47121": {
+    "text": "領先板",
+    "source": "31b471215872634299bc844f90c0493a24f6db1f00dca395175da335c4c0ca1d"
+  },
+  "go_6cc8519b": {
+    "text": "去",
+    "source": "6cc8519b91584e8bd435d63341e0838a99721948718b1c9c1e9c358c64ba992a"
+  },
+  "participants_0e27279b": {
+    "text": "參與者",
+    "source": "0e27279b3302db0448a2acf5d923ffb09b75270c2e957bfb93f54815d2146aa4"
+  },
+  "anonymous_e7a8aa2d": {
+    "text": "匿名",
+    "source": "e7a8aa2df7e5d0b233da615af4e7fef148bec39aef1709da0a80391ad0316563"
+  },
+  "user_b512d97e": {
+    "text": "使用者",
+    "source": "b512d97e7cbf97c273e4db073bbb547aa65a84589227f8f3d9e4a72b9372a24d"
+  },
+  "points_77deabe2": {
+    "text": "點點",
+    "source": "77deabe238de2f6dddc88c17dbe14221918571838d8fc1228843f9387b0b69f7"
+  },
+  "1_day_fa665d95": {
+    "text": "1天",
+    "source": "fa665d95d29e83bc8dc7afc598bc4d3329e56628d5304eb7ca7502fe4a4f03c0"
+  },
+  "1_person_de545d07": {
+    "text": "1人",
+    "source": "de545d070f6355bc5829624b10d5ba1ab10dda067c0cc1372eca1c1d248a6452"
+  },
+  "1_more_challenge_9543140b": {
+    "text": "1 更多挑戰",
+    "source": "9543140b8a72c7a5897c179e10fa0d4923f0563c224d577b615f408a15335dbb"
+  },
+  "1_challenge_unlocked_3ba0ccd8": {
+    "text": "1 挑戰解鎖",
+    "source": "3ba0ccd82cda07432546a49478f8bc90a9bf32469210d6678f2e0d6664ec783e"
+  },
+  "1_change_is_5351727b": {
+    "text": "第1章 變了",
+    "source": "5351727b5e47dd94f414cdf7dd874baa21ecfa1aad7aca91fd9de39103696021"
+  },
+  "1_contributor_cd161e6a": {
+    "text": "1 貢獻者",
+    "source": "cd161e6a952b95ea1b18e0ccec672b288fd99ffc2783d24db975afc8445da330"
+  },
+  "1_challenge_unlocks_after_getting_started_0ca7c51b": {
+    "text": "1 挑戰開啟 開始後",
+    "source": "0ca7c51bcff9170fcdb22688d16b69ba03ea1d367c5b1200e0ced56d5fe42150"
+  },
+  "message_58393216032b": {
+    "text": "加入",
+    "source": "58393216032be6257784ac0c6a73efb2a084e27b4cfff1e6acee7b7e6ab93b10"
+  },
+  "message_af193190b8d3": {
+    "text": "離開",
+    "source": "af193190b8d3cd14103e20e900378a2b76414ff6428065f3f8539b3577b22fdf"
+  },
+  "message_c5ae7b248fc4": {
+    "text": "星期一 00:00 UTC",
+    "source": "c5ae7b248fc4652eb63f3b46632959218264f95ba1da7bd2a08ca56874138e29"
+  },
+  "value1_value2_and_works_for_count_value4_people_8af220ef_other": {
+    "text": "{{value1}} {{value2}} 和為 {{count}}{{value4}} 人工作。",
+    "source": "8af220efd057ec7cbf6ffe9a50a94dd04cf098100d0a9a17d53519035581c319"
+  },
+  "you_can_let_count_people_new_to_homeroom_skip_th_3fad3e4e_other": {
+    "text": "你可以讓 {{count}} 個新人 Homeroom 跳過等待列表。",
+    "source": "3fad3e4e91a9370ef9657d59f239b0dd90c471ad2fa9264d2d1424de7ba4ce7d"
+  },
+  "count_required_secrets_unset_set_values_in_the_a_e8cc74ac_other": {
+    "text": "{{count}} 所需的秘密 unset. 在應用程式的秘密面板中設定值",
+    "source": "e8cc74acb4c2cdd1ecba2cff47ef933980c2db70f8ddd040b3b57ab76321bfcf"
+  },
+  "count_changes_awaiting_community_votes_01798a30_other": {
+    "text": "{{count}} 等待社群投票的變化",
+    "source": "01798a3019346af5c180b11fd63c03feae4c23d9748f82e21c46255d0c9205fd"
+  },
+  "count_build_sessions_in_progress_87b1473f_other": {
+    "text": "{{count}} 建立會議進展",
+    "source": "87b1473f2d2b0433784a343d50bd6ed99aae31ff93496cdb6d12e08e628c6cb4"
+  },
+  "count_open_issues_bdca8800_other": {
+    "text": "{{count}} 開放問題",
+    "source": "bdca8800194c9b6f0911cbff638a039984dbc0b9e1a7f5ed448d9ad300d5a1f0"
+  },
+  "count_users_b89ce7bf_other": {
+    "text": "{{count}} 使用者",
+    "source": "b89ce7bf0c2c3f72f0cc6bfca58261b1116612e837a1940097805dfbe18752e2"
+  },
+  "count_changes_live_c5341db9_other": {
+    "text": "{{count}} 變化 直播",
+    "source": "c5341db9f4fff317c210e1c271ba5ea92dfe84f6e53591b6ade22c91b963a664"
+  },
+  "show_all_count_contributors_1f9f766a_other": {
+    "text": "顯示所有 {{count}} 名參與者",
+    "source": "1f9f766a8c24fbcd83bcef79d4181f9c71c49091d026f8838335961e05054839"
+  },
+  "count_votes_8ce57030_other": {
+    "text": "{{count}} 投票",
+    "source": "8ce57030b104a6f2f6837b98c2d90abecb4b1cc8abed2924537888d6f3663429"
+  },
+  "count_results_b6c504e0_other": {
+    "text": "{{count}} 結果",
+    "source": "b6c504e026b5ce26d311387d0885b0333745e48ae5a4dde038fac2dd23aaf218"
+  },
+  "message_a207671c678a_other": {
+    "text": "{{value1}} 問題",
+    "source": "387543a0acfabf056610a259a558b121d01c3a96803d1bbd8c7d565e4930bb39"
+  },
+  "message_ff2b4b6c6147_other": {
+    "text": "{{value1}} 所做的變化",
+    "source": "547fce5a2ef58b0c798e033f10bb25f1642355b745f99ea0bcb743cc488187ed"
+  },
+  "message_18cc59f1fb77_other": {
+    "text": "{{value1}} 交換給庫多斯",
+    "source": "d87c562b3bc43c3782e501e5d10ce86d6e4c483ba1ba2fc38bb09b531f2733ea"
+  },
+  "message_0578756e9eff_other": {
+    "text": "活躍在 {{value1}} 應用程式",
+    "source": "830e7651fad836db300a958863260e75dc93ee5eb3a438529dfdb7eaab4e30b2"
+  }
+}
