@@ -212,9 +212,17 @@ test('each header counts its group and gives its clock', () => {
     ],
   });
   pane._renderGrid();
+  // #3989: This week's header names the moment its cap starts again — the
+  // clock it counts down to, which is the sooner of the card's own end and
+  // Monday 00:00 UTC.
+  const weekClock = (() => {
+    const weekEnd = pane._weekEnd();
+    const own = new Date(Date.now() + 71 * 3600000).toISOString();
+    return Date.parse(weekEnd) < Date.parse(own) ? weekEnd : own;
+  })();
   assert.deepEqual(headers(gridOf(store)), {
     setup: { meta: '2/2 done', allDone: true, collapsed: true },
-    week: { meta: '1/4 · 3d left', allDone: false, collapsed: false },
+    week: { meta: `1/4 · 3d left · ${pane._endsText(weekClock)}`, allDone: false, collapsed: false },
     always: { meta: '0/2 · no deadline', allDone: false, collapsed: false },
     other: { meta: '0/1 · 6d left', allDone: false, collapsed: false },
   }, 'Always open never borrows the event’s end; Season challenges does');
@@ -237,7 +245,8 @@ test('First challenges has no clock; This week falls back to the event’s end; 
   const weekEnd = pane._weekEnd();
   const eventEnd = inHours(47);
   const sooner = Date.parse(weekEnd) < Date.parse(eventEnd) ? weekEnd : eventEnd;
-  assert.equal(h.week.meta, `0/2 · ${pane._timeLeft(sooner)}`, 'the event’s end, or the week’s if sooner');
+  assert.equal(h.week.meta, `0/2 · ${pane._timeLeft(sooner)} · ${pane._endsText(sooner)}`,
+    'the event’s end, or the week’s if sooner, and the moment either way');
   assert.equal(h.always.meta, '0/2 · 5d left', 'an organiser’s own end date gives Always open a clock');
 
   context.selectedEvent = () => ({ id: 10, ends_at: inHours(-2) });
@@ -245,7 +254,7 @@ test('First challenges has no clock; This week falls back to the event’s end; 
   assert.equal(headers(gridOf(store)).week.meta, '0/2 · no deadline', 'an ended event is no clock');
   delete context.selectedEvent;
   pane._renderGrid();
-  assert.equal(headers(gridOf(store)).week.meta, `0/2 · ${pane._timeLeft(weekEnd)}`,
+  assert.equal(headers(gridOf(store)).week.meta, `0/2 · ${pane._timeLeft(weekEnd)} · ${pane._endsText(weekEnd)}`,
     'no event known: the week still ends on Monday, so This week still has a clock');
 });
 
@@ -383,6 +392,9 @@ test('#3203: the page says when the challenge ends, as a moment, and the header 
   const weekEnds = pane._endsText(pane._weekEnd());
   assert.match(weekEnds, /^ends Mon \d+ \w+, 00:00$/);
   assert.equal(groupOf(grid, 'week').metaTitle, pane._cap(weekEnds), 'the header’s clock as a moment');
+  // #3989: the same moment rides the visible meta line, not only the tooltip.
+  assert.equal(groupOf(grid, 'week').meta, `1/2 · ${pane._timeLeft(pane._weekEnd())} · ${weekEnds}`,
+    'the header’s own line names the moment where a tooltip is never shown');
   assert.equal(groupOf(grid, 'always').metaTitle, null, 'no deadline, no tooltip');
   assert.equal(groupOf(grid, 'other').metaTitle, 'Ends Mon 12 Oct, 02:00');
 

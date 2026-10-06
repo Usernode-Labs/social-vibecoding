@@ -640,10 +640,11 @@ const TopochainChallenges = {
   // One group's header, from its challenges: how many are done, whether all
   // are, the clock, and the meta string composed from them: "2/2 done" for a
   // finished group, "1/3" for First challenges (which has no clock), "1/4 · 3d left"
-  // or "0/2 · no deadline" for the rest. `left` is the time-left words alone,
-  // or null (First challenges, a finished group, no deadline); the detail page's eyebrow
-  // reads it. `ends` is the same clock as a moment ("ends Mon 12 Oct, 02:00",
-  // _endsText), or null exactly when `left` is.
+  // or "0/2 · no deadline" for the rest — a This week group gains the moment
+  // the week ends ("· ends Mon 12 Oct, 02:00", #3989). `left` is the time-left
+  // words alone, or null (First challenges, a finished group, no deadline);
+  // the detail page's eyebrow reads it. `ends` is the same clock as a moment
+  // ("ends Mon 12 Oct, 02:00", _endsText), or null exactly when `left` is.
   _groupSummary(key, challenges) {
     const list = Array.isArray(challenges) ? challenges : [];
     const total = list.length;
@@ -656,6 +657,9 @@ const TopochainChallenges = {
     if (allDone) meta = `${total}/${total} done`;
     else if (key === 'setup') meta = `${done}/${total}`;
     else meta = `${done}/${total} · ${left || 'no deadline'}`;
+    // #3989: the This week header names the moment its cap starts again, the
+    // one "3d left" counts down to, where a hover tooltip is never shown.
+    if (key === 'week' && ends) meta += ` · ${ends}`;
     return { done, total, allDone, left, ends, meta };
   },
 
