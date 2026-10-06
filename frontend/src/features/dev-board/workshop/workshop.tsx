@@ -42,7 +42,7 @@
  * link on the open card.
  */
 
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { memo, useCallback, useEffect, useInsertionEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -3467,8 +3467,23 @@ function useStripInsets(
       return undefined;
     }
     const measure = () => {
+      // EVERY READ, THEN EVERY WRITE, and the header's foot with them. A
+      // custom property inherits, so one that changes on `.dev-ws` or on
+      // #dev-workshop makes the browser re-apply the stylesheet to everything
+      // under it at the next question it is asked: about 9,000 elements and
+      // 75ms on the board with every card open. `usePinnedStrip` publishes
+      // the foot itself, in a later effect, and asks about the strip on its
+      // next line; published only there, a page's first frame paid for the
+      // board three times over (these properties, then the foot, after the
+      // pass that drew it). Published here as well, in the same breath as the
+      // other three, it is twice, and `usePinnedStrip` finds the value it was
+      // about to write already there.
+      const foot = headerFoot(host);
       const n = bar.getBoundingClientRect();
       const p = pane.getBoundingClientRect();
+      const cssHost = offsetHost(host);
+      if (foot == null) cssHost.style.removeProperty(HEAD_FOOT_PROP);
+      else cssHost.style.setProperty(HEAD_FOOT_PROP, `${Math.round(foot)}px`);
       if (!n.width || !p.width) return;
       host.style.setProperty('--dev-ws-head-top', `${Math.round(n.height) + WS_GAP_PX}px`);
       host.style.setProperty('--dev-ws-band-left', `${Math.round(p.left - n.left)}px`);
@@ -3604,9 +3619,19 @@ function usePinnedStrip(
  *
  * Neither host is this component's node: #dev-workshop is the mount point
  * public/js/app-view.js creates, #dev-forum-scroll the frame's scroller. So
- * the classes go on with classList in a layout effect, before paint, and no
- * rendered className is involved (frontend/src/lib/legacy-dom.ts says why
- * that matters). They come off when the component unmounts.
+ * the classes go on with classList, before paint, and no rendered className
+ * is involved (frontend/src/lib/legacy-dom.ts says why that matters). They
+ * come off when the component unmounts.
+ *
+ * AS EARLY AS THE COMMIT ALLOWS. Putting a class on a host is itself one pass
+ * over everything under it, and a layout effect here runs AFTER the layout
+ * effects of the cards this commit just mounted, whose first measurement has
+ * already made the browser draw the board once. Set there, the class made it
+ * draw the board again. An insertion effect runs before any layout effect of
+ * the commit, so the class is in place for that first pass and costs nothing
+ * of its own. The root is not attached yet on the very first mount, so the
+ * layout effect stays for that case, and does nothing when the insertion
+ * effect has already said the same.
  *
  * A body replaced WITHOUT unmounting this component takes #dev-workshop, and
  * its two classes, with it. The scroller outlives that, which is why the
@@ -3617,22 +3642,28 @@ const HOST_HAS_BOARD = 'dev-ws-has-board';
 const HOST_ON_NEEDS = 'dev-ws-on-needs';
 const SCROLLER_HAS_BAND = 'dev-ws-has-band';
 
+function syncWorkshopHosts(el: HTMLElement | null, band: boolean, board: boolean, needs: boolean): void {
+  if (!el) return;
+  const workshop = el.closest('#dev-workshop');
+  if (workshop) {
+    workshop.classList.toggle(HOST_HAS_BOARD, board);
+    workshop.classList.toggle(HOST_ON_NEEDS, needs);
+  }
+  const scroller = el.closest('#dev-forum-scroll');
+  if (scroller) scroller.classList.toggle(SCROLLER_HAS_BAND, band);
+}
+
 function useWorkshopHostState(
   hostRef: React.RefObject<HTMLDivElement | null>,
   band: boolean,
   board: boolean,
   needs: boolean,
 ): void {
+  useInsertionEffect(() => {
+    syncWorkshopHosts(hostRef.current, band, board, needs);
+  }, [hostRef, band, board, needs]);
   useLayoutEffect(() => {
-    const el = hostRef.current;
-    if (!el) return;
-    const workshop = el.closest('#dev-workshop');
-    if (workshop) {
-      workshop.classList.toggle(HOST_HAS_BOARD, board);
-      workshop.classList.toggle(HOST_ON_NEEDS, needs);
-    }
-    const scroller = el.closest('#dev-forum-scroll');
-    if (scroller) scroller.classList.toggle(SCROLLER_HAS_BAND, band);
+    syncWorkshopHosts(hostRef.current, band, board, needs);
   }, [hostRef, band, board, needs]);
   // The way out is its own effect, so a tab or a pane changing above does not
   // take the classes off and put them straight back on.

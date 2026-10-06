@@ -6274,6 +6274,14 @@ body:has(#platform-header.hidden) #app-frame-host {
   animation: dc-spin 0.8s linear infinite;
   vertical-align: -2px;
 }
+/* Still, for someone who has asked for less motion. The arc with its gap
+   says "in flight" without turning, the label beside it names what is, and
+   the header's cog already holds still under the same setting. A board can
+   carry dozens of these at once (41 on this repository's own, every card
+   open), most of them in cards scrolled out of view. */
+@media (prefers-reduced-motion: reduce) {
+  .dc-status-spinner-arc { animation: none; }
+}
 
 /* Completed state — explicit green check so a glance at the chat tells
    the user which steps finished. Kept at the same box dimensions as
@@ -8563,6 +8571,12 @@ span.gc-vote-btn-icon { cursor: default; }
   background: var(--state-progress);
   opacity: 0.75;
   animation: ping 1s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+/* A vote can stay open for days, and this ring pulses for as long as it does.
+   Under reduced motion it rests where it starts, on the dot, as the
+   `motion-safe:animate-ping` rings in Messages do. */
+@media (prefers-reduced-motion: reduce) {
+  .gc-vote-count-dot-ping { animation: none; }
 }
 .gc-vote-count-dot-core {
   position: relative;

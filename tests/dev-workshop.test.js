@@ -3269,6 +3269,15 @@ test('what app.css reads off the page\'s hosts is a class, never a :has() that l
   const band = cls('SCROLLER_HAS_BAND');
   assert.match(WORKSHOP, /const workshop = el\.closest\('#dev-workshop'\);\s*if \(workshop\) \{\s*workshop\.classList\.toggle\(HOST_HAS_BOARD, board\);\s*workshop\.classList\.toggle\(HOST_ON_NEEDS, needs\);\s*\}/);
   assert.match(WORKSHOP, /const scroller = el\.closest\('#dev-forum-scroll'\);\s*if \(scroller\) scroller\.classList\.toggle\(SCROLLER_HAS_BAND, band\);/);
+  // AS EARLY AS THE COMMIT ALLOWS. Putting a class on a host is one pass over
+  // everything under it. A layout effect on the Workshop runs after the layout
+  // effects of the cards the same commit mounted, and their first measurement
+  // has already drawn the board; the class then drew it a second time (9,000
+  // elements, 72ms, measured). An insertion effect runs before every layout
+  // effect of the commit, so the first pass already has the class. The root
+  // is not attached on the very first mount, which the layout effect covers.
+  assert.match(WORKSHOP, /import \{[^}]*\buseInsertionEffect\b[^}]*\} from 'react';/);
+  assert.match(WORKSHOP, /useInsertionEffect\(\(\) => \{\s*syncWorkshopHosts\(hostRef\.current, band, board, needs\);\s*\}, \[hostRef, band, board, needs\]\);\s*useLayoutEffect\(\(\) => \{\s*syncWorkshopHosts\(hostRef\.current, band, board, needs\);\s*\}, \[hostRef, band, board, needs\]\);/);
   // ...and takes them off on the way out, in an effect of its own so that a
   // tab change does not remove and re-add them.
   assert.match(WORKSHOP, /return \(\) => \{\s*if \(workshop\) workshop\.classList\.remove\(HOST_HAS_BOARD, HOST_ON_NEEDS\);\s*if \(scroller\) scroller\.classList\.remove\(SCROLLER_HAS_BAND\);\s*\};\s*\}, \[hostRef\]\);/);
@@ -5519,6 +5528,47 @@ test('the strip insets re-measure on every render, or a grouping switch leaves t
     'and the properties are cleared where the strip does not stick, not left stale');
   assert.match(body, /ro\.observe\(bar\);/);
   assert.match(body, /ro\.observe\(pane\);/);
+});
+
+test('what the strip measures is published in one go: every read, then every write', () => {
+  // A custom property INHERITS. One that changes on `.dev-ws` or on
+  // #dev-workshop makes the browser re-apply the stylesheet to everything
+  // under it at the next layout question: measured on the board with every
+  // card open, any such change is about 77ms, used or not.
+  //
+  // The strip's three properties and the header's foot were published by two
+  // hooks, each asking a question right after the other's write, so a page's
+  // first frame paid for the board three times after the pass that drew it.
+  // `useStripInsets` now reads the foot with its own two boxes and writes all
+  // four together; `usePinnedStrip` still publishes the foot on every scroll
+  // frame, and on the first one finds the value it was about to write.
+  const hook = WORKSHOP.slice(WORKSHOP.indexOf('function useStripInsets('));
+  const body = hook.slice(0, hook.indexOf('\n}\n'));
+  assert.match(body,
+    /const foot = headerFoot\(host\);\s*const n = bar\.getBoundingClientRect\(\);\s*const p = pane\.getBoundingClientRect\(\);\s*const cssHost = offsetHost\(host\);\s*if \(foot == null\) cssHost\.style\.removeProperty\(HEAD_FOOT_PROP\);\s*else cssHost\.style\.setProperty\(HEAD_FOOT_PROP, `\$\{Math\.round\(foot\)\}px`\);\s*if \(!n\.width \|\| !p\.width\) return;\s*host\.style\.setProperty\('--dev-ws-head-top'/,
+    'the foot is read before anything is written, and written with the strip\'s own three');
+  // Nothing is read back after the first write.
+  const writes = body.slice(body.indexOf('cssHost.style.removeProperty(HEAD_FOOT_PROP)'), body.indexOf('measure();'));
+  assert.doesNotMatch(writes, /getBoundingClientRect|getComputedStyle|offset(?:Top|Left|Width|Height)\b|client(?:Width|Height)\b/);
+  // The foot's other publisher is unchanged (tests/project-page-opens-at-head.test.js).
+  const pinned = WORKSHOP.slice(WORKSHOP.indexOf('function usePinnedStrip('));
+  assert.match(pinned.slice(0, pinned.indexOf('\n}\n')), /const foot = headerFoot\(host\);/);
+});
+
+test('the board\'s in-flight marks hold still for a reader who asked for less motion', () => {
+  // The arc beside "Checks running…", the ring on a vote that is open, and
+  // the chip on an issue whose proposal is being drafted. They run for as
+  // long as the state lasts, a vote for days, and a board carries dozens (71
+  // on this repository's own with every card open, 68 of them scrolled out of
+  // view). The header's cog already rests under this setting; these did not.
+  //
+  // It is also what lets a browser that draws without a GPU, like the one the
+  // declared checks run in, ask for a still page: there, one running
+  // animation of any size costs about a fifth of a core per open window.
+  const rules = CSS.replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.match(rules, /\.dc-status-spinner-arc \{[^}]*animation: dc-spin 0\.8s linear infinite;[^}]*\}\s*@media \(prefers-reduced-motion: reduce\) \{\s*\.dc-status-spinner-arc \{ animation: none; \}\s*\}/);
+  assert.match(rules, /\.gc-vote-count-dot-ping \{[^}]*animation: ping 1s[^}]*\}\s*@media \(prefers-reduced-motion: reduce\) \{\s*\.gc-vote-count-dot-ping \{ animation: none; \}\s*\}/);
+  assert.match(read('frontend/src/features/dev-board/card/dev-card.tsx'), /spec\.pulse \? ' motion-safe:animate-pulse' : ''/);
 });
 
 test('the Workshop keeps no swatch of its own — it imports the one the threads use', () => {
