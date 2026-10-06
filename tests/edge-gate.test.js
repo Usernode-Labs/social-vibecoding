@@ -112,7 +112,8 @@ const fakePool = {
       state.redeemed.add(params[0]);
       return { rows: [{ jti: params[0] }] };
     }
-    if (/SELECT id, username, usernode_pubkey, locale, is_synthetic FROM users WHERE id/.test(sql)) {
+    // (The provisional-handle column: services/edge-gate.js mintIdentity.)
+    if (/SELECT id, username, usernode_pubkey, locale, is_synthetic,\s+username_provisional_since IS NOT NULL AS provisional\s+FROM users WHERE id/.test(sql)) {
       return { rows: [{ id: params[0], username: `u${params[0]}`, usernode_pubkey: null, locale: 'en', is_synthetic: false }] };
     }
     if (/SELECT id FROM users WHERE username = \$1/.test(sql)) {

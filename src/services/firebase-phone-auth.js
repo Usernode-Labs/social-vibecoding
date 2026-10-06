@@ -4,9 +4,12 @@
  * Firebase Phone Auth sign-in and sign-up, beside the email code
  * (services/email-signup.js) and Apple/Google (services/sign-in-providers.js).
  *
- * API-ONLY STAGE: four endpoints under routes/phone-auth.js, no screen
- * changes. The sign-in-sheet stage routes these exactly like the email
- * code's and the native OAuth endpoints' JSON answers.
+ * Endpoints under routes/phone-auth.js. An invite link's Join sheet
+ * (frontend/src/features/auth/sign-in-sheet.tsx, `phone`) starts with them
+ * whenever they are offered, because an invite makes a private member and a
+ * private member signs up with a phone (community-invites.js
+ * joinAsPrivateMember). The answers are shaped exactly like the email
+ * code's and the native OAuth endpoints' JSON.
  *
  * SET UP IN THE ENVIRONMENT, NOT THE DATABASE. Nothing lives in the admin
  * console: the two knobs are platform variables (dapp.json platform_env,
@@ -30,7 +33,8 @@
  *      This leg needs the WEB API KEY, never a service account, and
  *      a web caller's request carries an app-verification token, the
  *      answer to a reCAPTCHA whose site key GET recaptchaParams names
- *      (recaptchaSiteKey, served at GET /api/auth/phone/recaptcha). A
+ *      (recaptchaSiteKey, served at GET /api/auth/phone/recaptcha; the
+ *      shell earns it in frontend/src/features/auth/recaptcha.ts). A
  *      missing or refused one is recaptcha_required. The page's host must
  *      be one of the Firebase project's authorized domains for the answer
  *      to count. The server never sends the SMS itself — Firebase does, at
@@ -504,6 +508,108 @@ async function signIn(pool, claims, { createSession } = {}) {
   return result;
 }
 
+// ── A name, not a username ──────────────────────────────────────────────
+//
+// An invite's Join asks a newcomer for "Your name" and a phone number, and
+// no username (frontend/src/features/auth/sign-in-sheet.tsx). The name is
+// the account's display name, as the profile keeps it (routes/profile.js
+// MAX_DISPLAY_NAME), and a PROVISIONAL handle is picked from it
+// (usernames.handlesFromName, users.username_provisional_since) for the
+// private group to see, so a phone sign-up never stops at "Pick a
+// username". Public places ask for a real one first. An invite to a public
+// community, or a client that sends no name, gets the username step.
+
+const MAX_NAME = 40;
+
+/** A typed name as the profile would keep it, or null. */
+function cleanName(raw) {
+  if (typeof raw !== 'string') return null;
+  const value = raw.replace(/\s+/g, ' ').trim();
+  if (!value || value.length > MAX_NAME || /[\u0000-\u001f\u007f]/.test(value)) return null;
+  return value;
+}
+
+/**
+ * Finish a new phone account (signIn's `next: 'username'`) with the name
+ * its person typed: the first free handle handlesFromName offers, through
+ * sign-in-providers.js's completeUsername (the same continuation, spent the
+ * same way, the session minted the same way), and the name as the display
+ * name. Returns completeUsername's { session, user }, or null when every
+ * handle tried was taken, which leaves the username step as it was.
+ */
+async function finishWithName(pool, { signupToken, name, createSession }) {
+  const providers = require('./sign-in-providers');
+  const usernames = require('./usernames');
+  for (const handle of usernames.handlesFromName(name)) {
+    let done;
+    try {
+      done = await providers.completeUsername(pool, { signupToken, username: handle, createSession });
+    } catch (error) {
+      if (error instanceof providers.SignInProviderError
+          && (error.code === 'username_taken' || error.code === 'invalid_username')) continue;
+      throw error;
+    }
+    await pool.query(
+      `UPDATE users
+          SET display_name = CASE WHEN display_name IS NULL OR display_name = '' THEN $2 ELSE display_name END,
+              username_provisional_since = NOW(),
+              updated_at = NOW()
+        WHERE id = $1`,
+      [done.user.id, name]
+    );
+    return done;
+  }
+  return null;
+}
+
+// ── A phone for an account that has none ────────────────────────────────
+
+/**
+ * Link verified phone claims to `userId`, an account that is signed in
+ * already (routes/phone-auth.js /api/auth/phone-link/*): somebody who made
+ * their account by email, still waiting, adds the phone a private member
+ * needs (community-invites.js joinAsPrivateMember). The table's own rules
+ * hold: one account per number, one number per account. Returns
+ * { linked: true, already } and refuses with
+ *   phone_in_use          the number, or its Firebase identity, is another
+ *                         account's;
+ *   phone_already_linked  this account has a different number (409).
+ */
+async function linkPhone(pool, claims, userId) {
+  if (!claims || typeof claims.uid !== 'string' || !claims.uid
+      || typeof claims.phoneNumber !== 'string' || !claims.phoneNumber) {
+    throw badToken();
+  }
+  const inUse = () => new PhoneAuthError('phone_in_use', 'That phone number already has an account.');
+  return withTransaction(pool, async (client) => {
+    const { rows: mine } = await client.query(
+      'SELECT firebase_uid FROM user_phone_identities WHERE user_id = $1 FOR UPDATE',
+      [userId]
+    );
+    if (mine[0]) {
+      if (mine[0].firebase_uid === claims.uid) return { linked: true, already: true };
+      throw new PhoneAuthError('phone_already_linked', 'This account already has a phone number.', 409);
+    }
+    const { rows: theirs } = await client.query(
+      'SELECT 1 FROM user_phone_identities WHERE firebase_uid = $1 OR phone_e164 = $2',
+      [claims.uid, claims.phoneNumber]
+    );
+    if (theirs.length) throw inUse();
+    try {
+      await client.query(
+        `INSERT INTO user_phone_identities (user_id, firebase_uid, phone_e164, last_used_at)
+         VALUES ($1, $2, $3, NOW())`,
+        [userId, claims.uid, claims.phoneNumber]
+      );
+    } catch (error) {
+      // Lost a race for the number or the identity.
+      if (error && error.code === '23505') throw inUse();
+      throw error;
+    }
+    return { linked: true, already: false };
+  });
+}
+
 module.exports = {
   SIGNUP_TTL_MS,
   PhoneAuthError,
@@ -515,4 +621,8 @@ module.exports = {
   verifyIdToken,
   cleanupExpired,
   signIn,
+  MAX_NAME,
+  cleanName,
+  finishWithName,
+  linkPhone,
 };

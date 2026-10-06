@@ -201,9 +201,21 @@ function isSpaDocumentPath(pathname) {
     || /^\/invite\/[A-Za-z0-9_-]{22}$/.test(pathname);
 }
 
+/**
+ * A PRIVATE MEMBER (users.private_member_since in schema.sql): an invite
+ * link let them into its community before they were let in. The gate lets
+ * them through like an account with access: they use their communities'
+ * apps, hubs, chats and Homeroom bot. What they may not do yet is make apps
+ * of their own, and that is the app allowance's refusal (services/app-
+ * allowance.js), not the gate's. Letting them in ends the tier by itself.
+ */
+function isPrivateMember(row) {
+  return !!row && !row.has_platform_access && !row.is_admin && row.private_member_since != null;
+}
+
 // Returns true when it handled the response (caller must return).
 function enforcePlatformAccessGate(req, res, user) {
-  if (user.hasPlatformAccess || user.isAdmin) return false;
+  if (user.hasPlatformAccess || user.isAdmin || user.privateMember) return false;
   if (GATE_OPEN_PATHS.some((p) => req.path.startsWith(p))) return false;
   if (req.path.startsWith('/api/')) {
     res.status(403).json({
@@ -336,7 +348,7 @@ function authMiddleware(config) {
     if (cookieToken) {
       try {
         const { rows } = await pool.query(
-          `SELECT s.user_id, s.expires_at, s.created_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.session_bridge_enabled, u.locale, u.has_platform_access, u.is_synthetic,
+          `SELECT s.user_id, s.expires_at, s.created_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.session_bridge_enabled, u.private_member_since, u.locale, u.has_platform_access, u.is_synthetic,
              ${nativeWebSessionIsLive('s')} AS native_session_valid
            FROM sessions s JOIN users u ON s.user_id = u.id
            WHERE s.token = $1`,
@@ -418,6 +430,9 @@ function authMiddleware(config) {
             // Platform-access gate (onboarding flow alignment): FALSE for
             // new signups until an admin releases them off the waitlist.
             hasPlatformAccess: !!rows[0].has_platform_access,
+            // A private member: an invite link let them into its community
+            // before they were let in (users.private_member_since).
+            privateMember: isPrivateMember(rows[0]),
           };
           // Placed after the staging identity-switch block: that path replaces
           // the cookie outright, so renewing the credential it is discarding
@@ -495,7 +510,7 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res) {
   let userRow;
   try {
     const { rows } = await pool.query(
-      'SELECT id, username, is_admin, admin_readonly, app_quota, ai_progress_estimate, session_bridge_enabled, locale, has_platform_access FROM users WHERE id = $1',
+      'SELECT id, username, is_admin, admin_readonly, app_quota, private_member_since, ai_progress_estimate, session_bridge_enabled, locale, has_platform_access FROM users WHERE id = $1',
       [payload.id]
     );
     userRow = rows[0];
@@ -551,6 +566,7 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res) {
     sessionBridgeEnabled: !!userRow.session_bridge_enabled,
     locale: userRow.locale || null,
     hasPlatformAccess: !!userRow.has_platform_access,
+    privateMember: isPrivateMember(userRow),
   };
 }
 

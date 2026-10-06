@@ -352,7 +352,7 @@
       "key": "FIREBASE_PHONE_AUTH_ENABLED",
       "group": "Phone sign-in",
       "default": "false",
-      "description": "Offers phone-number sign-in and sign-up through Firebase Phone Auth (POST /api/auth/phone/*, APIs only). Requires FIREBASE_WEB_API_KEY plus the same Firebase project credentials mobile push uses; unset (or false) leaves every phone endpoint answering 404 not_offered."
+      "description": "Phone-number sign-in and sign-up through Firebase Phone Auth (/api/auth/phone/*). While offered, an invite's Join starts with a phone and a private member must have one. Needs FIREBASE_WEB_API_KEY, the Firebase credentials mobile push uses, and the site's host among the project's authorized domains (reCAPTCHA). Unset or false: phone endpoints answer 404 not_offered and invites sign up by email."
     },
     {
       "key": "FIREBASE_WEB_API_KEY",
@@ -617,13 +617,6 @@
       "group": "Waitlist",
       "required": false,
       "description": "Overrides the origin the waitlist connect callback URLs are built from. Unset it is this deployment's canonical origin; it is http://localhost:<PORT> only when USERNODE_LOCAL_DEV=1 marks a local run, so a missing variable cannot yield a callback that works only on a laptop. Change it and you must register the matching callback with GitHub, X and LinkedIn, which all validate redirect_uri first."
-    },
-    {
-      "key": "INVITE_TREE_BUDGETS",
-      "group": "Waitlist",
-      "required": false,
-      "default": "10",
-      "description": "Lifetime waitlist skips by invite-tree generation, comma-separated: the first number is for people let off the waitlist by hand, the next for the people their links let in, and so on, with none past the end. The default, 10, is ten each and no chaining. An empty or unreadable value falls back to 10. Whether links skip the waitlist at all is switched in Admin → Waitlist."
     },
     {
       "key": "USERNODE_OPENROUTER_MANAGEMENT_API_KEY",
@@ -4063,10 +4056,10 @@
       "expectText": "non-podium"
     },
     {
-      "name": "Admin Waitlist is a first-class menu section (#1179), with its Invites panel loaded",
+      "name": "Admin Waitlist is a first-class menu section (#1179), with its Landing panel loaded",
       "path": "/#admin/waitlist",
-      "expectSelector": "#admin-topo-content:has(#admin-topo-wl-invites-usage):has(#admin-topo-wl-search)",
-      "expectText": "Invite links"
+      "expectSelector": "#admin-topo-content:has(#admin-topo-wl-story .text-xs):has(#admin-topo-wl-search)",
+      "expectText": "Signed-out visitors"
     },
     {
       "name": "Admin Waitlist says where a signup is in words, not the route's name (#1544)",
