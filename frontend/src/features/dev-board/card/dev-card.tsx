@@ -1054,6 +1054,12 @@ export function TitleContent({ t }: { t: TitleSpec }): ReactNode {
 // click below a line that read like everything else. A reader who closes it
 // after that keeps it closed: the re-seed fires on the transition, not on
 // every repaint while the condition holds.
+//
+// The seed is also true at mount for a viewer who has already voted (the
+// model opens the list for them), so the steps are spread out as the card
+// arrives; and when a non-voter casts their vote, `hasVoted` flips and the
+// list opens at that moment. Closing it again keeps it closed, the same as
+// any other fold the reader chose.
 const REQ_MARK: Record<string, string> = {
   done: '✓', active: '', waiting: '!', blocked: '✕', pending: '·',
 };

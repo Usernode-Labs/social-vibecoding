@@ -13585,10 +13585,11 @@ const AppView = {
       detail: at >= 0 ? lines[at] : null,
       done: s.done,
       total: s.total,
-      // Shut unless the step it is stuck on is one THIS viewer can clear.
-      // Not remembered per viewer: a remembered "closed" would hide the one
-      // case the rule exists for.
-      open: s.needsViewer,
+      // Open when the step it is stuck on is one THIS viewer can clear, and
+      // when this viewer has voted: they have taken part, and the list is how
+      // they follow where the change goes next. Not remembered per viewer: a
+      // remembered "closed" would hide the one case the rule exists for.
+      open: s.needsViewer || viewer.hasVoted,
       gates: live.map((g, i) => ({
         key: g.key, label: g.label, actor: g.actor, state: g.state,
         note: lines[i],

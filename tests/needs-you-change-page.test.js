@@ -429,6 +429,42 @@ test('a step the recording did not reach takes what the columns already know', (
   assert.equal(spec.headline, 'Waiting for your approval', 'the current step is still the vote');
 });
 
+// The opening rule: the strip opens for the person who can clear the stuck
+// step, and also for a viewer who has voted — they took part, and the list
+// is how they follow where the change goes next. Someone for whom nothing on
+// the row is theirs still reads the folded headline line.
+test('the strip opens by default for a viewer who has voted, and the headline does not move', () => {
+  const av = context();
+  // A voter on a proposal still collecting votes: the steps spread out.
+  // `hasVoted` is "has cast one", so a No opens it too.
+  assert.equal(av.requirementsSpec({ ...PR, my_vote: 'yes' }).open, true, 'a voter sees the steps spread out');
+  assert.equal(av.requirementsSpec({ ...PR, my_vote: 'no' }).open, true, 'a No has taken part too');
+  // A missing vote is still theirs to clear: the strip opened for that
+  // viewer before, and still does.
+  const theirs = av.requirementsSpec(PR);
+  assert.equal(theirs.open, true, 'the missing vote opens the strip for the non-voter');
+  assert.equal(theirs.headline, 'Waiting for your approval');
+  // A voter on a row whose current step is an automatic one reads it open.
+  const busy = (myVote) => ({ ...PR, my_vote: myVote, integration: { blockReasons: ['integrating'] }, integration_conflict_paths: ['a.js'],
+    mergeRequirements: { gates: gates({ approvals: { state: 'done' }, integration: { state: 'active', detail: { note: 'conflicts with main in 1 file; the platform will resolve it' } }, checks: { state: 'pending' } }), evaluated: true, provisional: false } });
+  const busySpec = av.requirementsSpec(busy('yes'));
+  assert.equal(busySpec.open, true, 'the strip stays open while an automatic step runs');
+  // Only the open state follows the vote; the headline says whose turn it
+  // is, and says the same to both viewers.
+  const idleSpec = av.requirementsSpec(busy(undefined));
+  assert.equal(idleSpec.open, false, 'a non-voter on the automatic step keeps the folded line');
+  assert.equal(idleSpec.headline, busySpec.headline);
+  assert.equal(busySpec.headline, 'Nothing needs you');
+  // Nothing on this row is a non-voter's: still folded, exactly as before.
+  const later = { ...PR, mergeRequirements: { gates: gates({ approvals: { state: 'done' } }), evaluated: true, provisional: false } };
+  const folded = av.requirementsSpec(later);
+  assert.equal(folded.open, false, 'a non-voter keeps the folded headline line');
+  assert.equal(folded.headline, 'Checking what this needs');
+  assert.equal(av.requirementsSpec({ ...later, my_vote: 'yes' }).open, true, 'a voter on the same row reads it open');
+  assert.equal(av.requirementsSpec({ ...later, my_vote: 'yes' }).headline, folded.headline,
+    'the headline does not move for a voter');
+});
+
 // #3234: the threshold counts active members live, so it can move while the
 // vote is open. The vote step says so beside the counts when it has; a row
 // whose number has not moved, or that predates the stamp, says nothing.
