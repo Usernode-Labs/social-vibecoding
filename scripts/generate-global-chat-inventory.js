@@ -71,7 +71,7 @@ const FILE_EXEMPTIONS = new Map([
 ]);
 
 const PATH_EXEMPTIONS = [
-  [/^\/(?:app-icons|avatars|illustrations|issue-images|visuals|challenge-illustrations)\//, 'binary asset delivery rather than an interactive control'],
+  [/^\/(?:app-icons|avatars|illustrations|issue-images|issue-videos|visuals|challenge-illustrations)\//, 'binary asset delivery rather than an interactive control'],
   [/^\/reports\//, 'public immutable share document'],
   [/^\/\.well-known\//, 'protocol discovery metadata'],
   [/^\/api\/connect\/oauth\/(?:register|token|revoke)$/, 'OAuth protocol endpoint represented by connector Settings'],

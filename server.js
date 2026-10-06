@@ -56,6 +56,7 @@ const { visualsRoutes } = require('./src/routes/visuals');
 const { shotsRoutes } = require('./src/routes/shots');
 const { appIconRoutes } = require('./src/routes/app-icons');
 const { issueImageRoutes } = require('./src/routes/issue-images');
+const { issueVideoRoutes } = require('./src/routes/issue-videos');
 const { avatarRoutes } = require('./src/routes/avatars');
 const { profileRoutes } = require('./src/routes/profile');
 const { stakingRoutes } = require('./src/routes/staking');
@@ -498,6 +499,12 @@ app.use(appIconRoutes(config));
 // GitHub's camo proxy fetches the issue-body embeds anonymously; access
 // control is the unguessable 32-hex screenshot id.
 app.use(issueImageRoutes(config));
+
+// Issue-attached video clips (#3940). Public for the same reason as the
+// screenshots above: the issue-body link, the in-app player and the
+// coding agents fetch it anonymously; access control is the unguessable
+// 32-hex clip id.
+app.use(issueVideoRoutes(config));
 
 // Profile pictures (#982). Public for the same reason as app-icons: the
 // profile screen and the hamburger drawer load them with plain <img>
@@ -5392,6 +5399,20 @@ function startSessionAutoPauseSweeper(config) {
       if (rowCount) log.info('server', 'GC\'d orphaned issue screenshots', { count: rowCount });
     } catch (err) {
       log.warn('server', 'Orphaned-screenshot sweep failed', { err: err.message });
+    }
+
+    // Same sweep for feedback video clips (#3940): a 50 MB bytea is worth
+    // reclaiming even more urgently than a screenshot. Linked rows live
+    // forever with their issue.
+    try {
+      const { rowCount } = await pool.query(
+        `DELETE FROM issue_videos
+          WHERE issue_number IS NULL
+            AND created_at < NOW() - INTERVAL '24 hours'`
+      );
+      if (rowCount) log.info('server', 'GC\'d orphaned issue videos', { count: rowCount });
+    } catch (err) {
+      log.warn('server', 'Orphaned-video sweep failed', { err: err.message });
     }
 
     // Same sweep for group-chat attachments (#694): uploads never linked

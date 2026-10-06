@@ -215,7 +215,7 @@ function setup({ dispatch, storeArtifacts } = {}) {
         calls.resets += 1;
         return { origins: { ...ORIGINS }, ...provenance };
       },
-      cleanupPair: async () => { calls.cleaned += 1; order.push('cleanup'); },
+      cleanupPair: async () => { calls.cleaned += 1; order.push('cleanup'); return { cleaned: true, errors: [] }; },
     },
     identities: {
       mintShotsAuthTokens: async () => { calls.minted += 1; return { ...TOKENS }; },
@@ -395,6 +395,8 @@ test('every declared change saved publishes the ready files, tears the builds do
   assert.equal(verified.traceSummary.runs, 1);
   assert.equal(verified.traceSummary.planSource, 'shots_agent');
   assert.equal(verified.traceSummary.terminalFailureClass, null);
+  assert.equal(verified.traceSummary.cleanupComplete, true);
+  assert.equal(verified.traceSummary.cleanupVersion, require('../src/services/shots-environment').RESOURCE_CLEANUP_VERSION);
   assert.equal(verified.traceSummary.artifactBytes,
     stored.artifacts.reduce((sum, file) => sum + file.bytes, 0));
 
@@ -405,6 +407,16 @@ test('every declared change saved publishes the ready files, tears the builds do
     'persist_exploration', 'exploring', 'register_control', 'agent_exploration',
     'persist_shots', 'store_artifacts', 'cleanup', 'verify',
   ]);
+});
+
+test('useful shots publish with cleanup pending when teardown leaves a runtime', async () => {
+  const fixture = setup();
+  fixture.dependencies.environment.cleanupPair = async () => ({ cleaned: false, errors: ['API unavailable'] });
+  const result = await execute(fixture);
+  assert.equal(result.state, 'verified');
+  const trace = fixture.transitions.at(-1).patch.traceSummary;
+  assert.equal(trace.cleanupComplete, false);
+  assert.equal(trace.cleanupVersion, null);
 });
 
 test('one change saved and another skipped still publishes, with the skip and its reason', async () => {

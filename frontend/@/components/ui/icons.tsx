@@ -590,6 +590,13 @@ export const PhotoIcon = stroked(
   'M3 16.5l5.25-5.25a2.25 2.25 0 013.182 0L15 14.818m-1.5-1.5 1.068-1.068a2.25 2.25 0 013.182 0L21 15.5m-18 3.75h18A2.25 2.25 0 0023.25 17V6.75A2.25 2.25 0 0021 4.5H3A2.25 2.25 0 00.75 6.75V17A2.25 2.25 0 003 19.25z',
 );
 
+// #3940: the feedback modal's "Add video" option. Heroicons v2
+// video-camera (24 outline), like the rest of the file.
+export const VideoCameraIcon = stroked(
+  'VideoCameraIcon',
+  'M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z',
+);
+
 /**
  * #1280: saving a message. The outline/solid PAIR is the point — this is the
  * only glyph in the set that has to render two states, and hollow-versus-

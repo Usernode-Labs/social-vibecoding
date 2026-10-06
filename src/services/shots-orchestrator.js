@@ -1279,12 +1279,12 @@ async function executeRun(config, options, injected = {}) {
     addTiming(metrics, 'artifactPersist', artifactPersistStartedAt);
     metrics.artifactBytes = summary.files.reduce((sum, file) => sum + file.bytes, 0);
 
-    // Tear the before/after builds down before the shots become visible, so
-    // no published run can leave private fixture runtimes live.
+    // Attempt teardown before publication. A failed cleanup remains pending
+    // for terminal recovery without discarding the useful shots.
     failurePhase = 'cleanup';
     stage(failurePhase);
     const cleanupStartedAt = Date.now();
-    await deps.environment.cleanupPair(config, pair);
+    const cleanupResult = await deps.environment.cleanupPair(config, pair);
     addTiming(metrics, 'cleanup', cleanupStartedAt);
     pair = null;
     const finalTrace = traceSummary(metrics, {
@@ -1292,6 +1292,10 @@ async function executeRun(config, options, injected = {}) {
       runs: 1,
       stories: summary.verdict.stories,
       terminalFailureClass: null,
+      // Publishing useful shots must not hide an incomplete resource cleanup.
+      // Terminal recovery retries failures; old unversioned markers are rechecked.
+      cleanupComplete: cleanupResult?.cleaned === true,
+      cleanupVersion: cleanupResult?.cleaned === true ? environment.RESOURCE_CLEANUP_VERSION : null,
     });
     failurePhase = 'verify';
     stage(failurePhase);

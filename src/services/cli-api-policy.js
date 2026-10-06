@@ -125,6 +125,13 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   { method: 'GET', pattern: '/api/apps/:slug/messages' },
   { method: 'POST', pattern: '/api/apps/:slug/messages' },
   { method: 'POST', pattern: '/api/apps/:slug/issues' },
+  // create_request's screenshots: one image upload, the same route the
+  // feedback dialog uses. On the list because an upload decides nothing: it
+  // stores one sniffed PNG or JPEG of at most 4 MB owned by the caller, under
+  // the per-user upload limiter, and a row no request ever links is deleted
+  // after 24 hours. Only the issues route above can put it on the board, and
+  // only for the caller who uploaded it.
+  { method: 'POST', pattern: '/api/feedback/screenshot' },
   { method: 'GET', pattern: '/api/sessions/:id' },
   { method: 'GET', pattern: '/api/sessions/:id/status' },
   { method: 'GET', pattern: '/api/sessions/:id/spec' },
