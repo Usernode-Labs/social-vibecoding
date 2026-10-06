@@ -149,6 +149,20 @@ test('isDue: honours the backoff, a live claim, and never picks up a failed reco
   assert.equal(FQ.isDue({ nextAttemptAt: 0, sendingSince: now - 5 * 60_000 }, now), true);
 });
 
+test('isDue: force drops the schedule but keeps the failed and live-claim guards', () => {
+  const FQ = load();
+  const now = 1_000_000;
+  // #3996: the backoff is what a Send now tap overrides.
+  assert.equal(FQ.isDue({ nextAttemptAt: now + 5 * 60_000, status: 'pending' }, now, true), true);
+  assert.equal(FQ.isDue({ nextAttemptAt: now + 5 * 60_000, status: 'pending' }, now), false);
+  // A failed record is never due — that is the hand-back contract, not a delay.
+  assert.equal(FQ.isDue({ nextAttemptAt: 0, status: 'failed' }, now, true), false);
+  // A live claim survives force: two tabs must never file the same message twice.
+  assert.equal(FQ.isDue({ nextAttemptAt: 0, sendingSince: now - 1000 }, now, true), false);
+  // A stale claim (a tab closed mid-flight) is taken over, forced or not.
+  assert.equal(FQ.isDue({ nextAttemptAt: now + 5 * 60_000, sendingSince: now - 5 * 60_000 }, now, true), true);
+});
+
 // ── enqueue / pending ────────────────────────────────────────────────
 
 test('enqueue: keeps the payload and stamps a queuedAt the server can print', async () => {
@@ -289,6 +303,76 @@ test('flush: concurrent callers share one pass, so nothing is filed twice', asyn
   const [a, b] = await Promise.all([FQ.flush('reconnect'), FQ.flush('timer')]);
   assert.equal(calls.length, 1, 'one POST for one queued message');
   assert.equal(a, b, 'the second caller awaited the in-flight pass');
+  assert.equal((await FQ.pending()).length, 0);
+});
+
+// ── #3996: the manual, forced flush (the dialog's Send now) ──────────
+
+test('flush: a forced pass sends through the backoff and honours the claim and failure guards', async () => {
+  const FQ = load();
+  const waiting = await FQ.enqueue(entry({ description: 'stuck behind the backoff' }));
+  const claimed = await FQ.enqueue(entry({ description: 'another tab is sending me' }));
+  const refused = await FQ.enqueue(entry({ description: 'the server refused me for good' }));
+  const now = Date.now();
+  waiting.nextAttemptAt = now + 5 * 60_000; // minutes away: the schedule is what force drops
+  claimed.sendingSince = now - 1000;        // a live claim from another tab
+  refused.status = 'failed';                // handed back to the user, never retried
+
+  const calls = stubFetch({ status: 200 });
+  const res = await FQ.flush('manual', { force: true });
+
+  assert.equal(res.sent, 1);
+  assert.equal(res.reason, 'manual');
+  assert.equal(JSON.parse(calls[0].body).description, 'stuck behind the backoff');
+  const left = await FQ.pending();
+  assert.deepEqual(left.map((r) => r.id), [claimed.id],
+    'the claimed record is left to the tab that owns it');
+  assert.notEqual(await FQ.takeFailed(), null,
+    'a failed record is still there for the dialog to hand back');
+  assert.equal((await FQ.takeFailed()), null, 'the hand-back removes it, exactly once');
+});
+
+test('flush: a forced call during an in-flight pass runs its own forced pass after it', async () => {
+  const FQ = load();
+  await FQ.enqueue(entry({ description: 'due now' }));
+  const later = await FQ.enqueue(entry({ description: 'backing off' }));
+  later.nextAttemptAt = Date.now() + 10 * 60_000; // the schedule skips it, as a backoff would
+
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const calls = [];
+  const realFetch = global.fetch;
+  global.fetch = async (url, opts) => {
+    calls.push({ url: String(url), body: opts && opts.body });
+    if (calls.length === 1) await gate; // hold the automatic pass open mid-send
+    return { ok: true, status: 200, json: async () => ({}) };
+  };
+  try {
+    const auto = FQ.flush('timer');
+    // The automatic pass is mid-send. The manual tap lands while it runs.
+    const manual = FQ.flush('manual', { force: true });
+    release();
+    const [autoRes, manualRes] = await Promise.all([auto, manual]);
+
+    assert.equal(autoRes.sent, 1, 'the running pass sent only what was due');
+    assert.equal(manualRes.sent, 1, 'the forced pass sent the record the schedule had skipped');
+    assert.equal(manualRes.reason, 'manual');
+    assert.equal((await FQ.pending()).length, 0);
+    assert.equal(JSON.parse(calls[1].body).description, 'backing off');
+  } finally {
+    global.fetch = realFetch;
+  }
+});
+
+test('flush: an unforced caller shares a running forced pass, and never starts a second one', async () => {
+  const FQ = load();
+  await FQ.enqueue(entry());
+  const calls = stubFetch({ status: 200 });
+
+  const manual = FQ.flush('manual', { force: true });
+  const timer = FQ.flush('timer');
+  assert.equal(await manual, await timer, 'the timer awaited the forced pass already running');
+  assert.equal(calls.length, 1, 'one POST for one queued message');
   assert.equal((await FQ.pending()).length, 0);
 });
 

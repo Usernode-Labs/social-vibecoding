@@ -1222,6 +1222,11 @@ export function init() {
     // count already waiting, or nothing at all.
     let queueLineText = '';
     let queuePendingCount = 0;
+    // #3996: true while a forced send (Send now) is running. The waiting line
+    // becomes the plain "sending now" sentence this line already used, with
+    // no button beside it; the guard in sendQueuedNow() makes a second tap a
+    // no-op either way.
+    let queueSendInFlight = false;
 
     const queueStatusLine = () => {
       const offline = isOfflineNow();
@@ -1239,12 +1244,28 @@ export function init() {
           + "when you're back online.";
       }
       if (n > 0) {
+        // #3996: "waiting to send" while the automatic retry schedule holds —
+        // the honest word for what the queue is doing between backoff waits,
+        // where "sending now" could sit for minutes — and "sending now", the
+        // words the line already used, while a Send now pass is running.
         return n === 1
-          ? '1 message saved on this device, sending now.'
-          : `${n} messages saved on this device, sending now.`;
+          ? (queueSendInFlight
+            ? '1 message saved on this device, sending now.'
+            : '1 message saved on this device, waiting to send.')
+          : (queueSendInFlight
+            ? `${n} messages saved on this device, sending now.`
+            : `${n} messages saved on this device, waiting to send.`);
       }
       return '';
     };
+
+    // #3996: the Send now action, inside the waiting line. The sentence is
+    // the information, the button is the action — a small inline text button
+    // in the dialog's violet action accent, not a second large button beside
+    // Cancel and Post request. Complete literal classes, so Tailwind's scan
+    // of this file compiles them.
+    const SEND_NOW_CLASSES = 'text-xs font-medium text-violet-600 underline underline-offset-2 '
+      + 'dark:text-violet-400';
 
     // Repaint the hint and the button label. Never overwrites a submit
     // outcome ("Thanks! Filed against…", an error, the saved confirmation):
@@ -1264,10 +1285,31 @@ export function init() {
         queueLineText = '';
         return;
       }
-      feedbackStatus.textContent = line;
+      // #3996: the online waiting line is two nodes on the module-owned host
+      // — the sentence, then the Send now button — assembled as elements,
+      // never as a markup string.
+      // Offline there is nothing to send to yet (the automatic send on
+      // reconnect covers it), and while a forced pass runs the line is the
+      // plain "sending now" sentence with the button absent.
+      const withButton = !isOfflineNow() && !queueSendInFlight && queuePendingCount > 0;
+      if (withButton) {
+        feedbackStatus.textContent = '';
+        feedbackStatus.appendChild(document.createTextNode(`${line} `));
+        const sendNow = document.createElement('button');
+        sendNow.type = 'button';
+        sendNow.id = 'feedback-send-now';
+        sendNow.textContent = 'Send now';
+        sendNow.className = SEND_NOW_CLASSES;
+        feedbackStatus.appendChild(sendNow);
+      } else {
+        feedbackStatus.textContent = line;
+      }
       feedbackStatus.className = 'text-sm mt-2 text-zinc-500 dark:text-zinc-400';
       feedbackStatus.classList.remove('hidden');
-      queueLineText = line;
+      // The line's own textContent — sentence plus the button's label when it
+      // is there — is what the ownership check compares against, so a submit
+      // outcome still suppresses the queue line exactly as before.
+      queueLineText = feedbackStatus.textContent;
     };
 
     // The header's speech-bubble carries a small violet dot while anything is
@@ -1313,6 +1355,40 @@ export function init() {
         if (!modal.classList.contains('hidden')) paintQueueState();
       });
     };
+
+    // #3996: Send now. A tap flushes the outbox immediately, ignoring the
+    // automatic retry schedule, so a message stuck behind a long backoff does
+    // not have to be retyped. The line becomes the "sending now" sentence the
+    // dialog already used, with the button absent; when the pass returns,
+    // refreshQueueState() repaints whatever the store now holds — empty, with
+    // the existing onFlushed confirmation toast — or back to "waiting to
+    // send" if the network refused it again, so it can be tried once more.
+    const sendQueuedNow = () => {
+      if (!window.FeedbackQueue || queueSendInFlight) return;
+      // Only while there is something waiting and somewhere to send it to:
+      // offline the tap could only fail, and the automatic send on reconnect
+      // already covers that case.
+      if (isOfflineNow() || !(queuePendingCount > 0)) return;
+      queueSendInFlight = true;
+      paintQueueState();
+      Promise.resolve(window.FeedbackQueue.flush('manual', { force: true }))
+        .catch(() => { /* the repaint below shows whatever the store holds */ })
+        .then(() => {
+          queueSendInFlight = false;
+          refreshQueueState();
+        });
+    };
+
+    // The button is rebuilt on every repaint of the line, so the listener
+    // lives on #feedback-status — the React-constant host the controller
+    // owns — and survives the line being replaced under it.
+    feedbackStatus.addEventListener('click', (e) => {
+      const target = e.target;
+      if (target && typeof target.closest === 'function' && target.closest('#feedback-send-now')) {
+        e.preventDefault();
+        sendQueuedNow();
+      }
+    });
 
     // QA 2026-09-24: what a refused submit says. A 5xx is the server's own
     // trouble (no GitHub token configured, GitHub refusing the issue, a

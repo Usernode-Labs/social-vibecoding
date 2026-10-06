@@ -134,12 +134,19 @@
     try { return new Date(t).toISOString(); } catch (err) { return null; }
   }
 
-  function isDue(record, nowMs) {
+  // `force` (#3996, the dialog's Send now) drops only the SCHEDULE guard:
+  // the backoff is a courtesy to the network, not a promise to the user, and
+  // the tap says send it now. A `failed` record is still never due — that is
+  // the hand-back contract, not a delay — and a record claimed by a live
+  // flush is still left alone, so two tabs can never file the same message
+  // twice no matter how the pass was asked for.
+  function isDue(record, nowMs, force) {
     if (!record || record.status === 'failed') return false;
     const claimed = Number(record.sendingSince) || 0;
     // Claimed by a live flush (this tab's or another's) — leave it alone
     // until the claim goes stale.
     if (claimed && nowMs - claimed < CLAIM_STALE_MS) return false;
+    if (force) return true;
     return (Number(record.nextAttemptAt) || 0) <= nowMs;
   }
 
@@ -410,11 +417,11 @@
     }
   }
 
-  async function flushOnce(reason) {
+  async function flushOnce(reason, opts) {
     if (flushDisabled) return { sent: 0, failed: 0, remaining: 0, filed: [] };
     const s = await ensureStore();
     const all = mine(await s.all());
-    const due = all.filter((r) => isDue(r, nowMs()));
+    const due = all.filter((r) => isDue(r, nowMs(), !!(opts && opts.force)));
     const result = { sent: 0, failed: 0, remaining: 0, filed: [], reason: reason || null };
 
     // Strictly sequential: two issues filed at once from a phone that just
@@ -585,13 +592,23 @@
     },
 
     // Single-flight. Concurrent callers (reconnect + timer landing together)
-    // share the one in-flight pass rather than racing it.
-    flush(reason) {
-      if (flushing) return flushing;
-      flushing = flushOnce(reason)
+    // share the one in-flight pass rather than racing it. A forced call
+    // (`opts.force`, #3996 — the dialog's Send now) that lands while a pass
+    // is running waits for that pass and then runs a forced pass of its own:
+    // the running one may have skipped a record that was not yet due, and the
+    // tap should not wait out the backoff. The completion clears `flushing`
+    // only while it is still the tracked pass, so a forced chain queued
+    // behind a running one is not nulled by that running one's exit.
+    flush(reason, opts) {
+      const force = !!(opts && opts.force);
+      if (flushing && !force) return flushing;
+      const prior = flushing ? flushing.catch(() => {}) : Promise.resolve();
+      const tracked = prior
+        .then(() => flushOnce(reason, force ? { force: true } : undefined))
         .catch((err) => ({ sent: 0, failed: 0, remaining: 0, filed: [], error: (err && err.message) || 'flush failed' }))
-        .then((res) => { flushing = null; return res; });
-      return flushing;
+        .then((res) => { if (flushing === tracked) flushing = null; return res; });
+      flushing = tracked;
+      return tracked;
     },
 
     // Display-only seeding for the ?shot=feedback-queued screenshot link.

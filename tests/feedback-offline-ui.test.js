@@ -231,6 +231,48 @@ test('the dot travels through the visibility store, not a classList write', () =
   assert.match(markTsx, /ref=\{dotRef\}\n\s+id="feedback-queue-dot"/);
 });
 
+test('the online waiting line offers Send now, wired to a forced flush (#3996)', () => {
+  // The online sentence says what the queue is really doing between backoff
+  // waits, where "sending now" could sit for minutes — and the action sits
+  // beside the sentence, in the line the dialog already used for this state.
+  assert.match(feedbackJs, /1 message saved on this device, waiting to send\./);
+  assert.match(feedbackJs, /messages saved on this device, waiting to send\./);
+  const sendNow = feedbackJs.slice(feedbackJs.indexOf('const SEND_NOW_CLASSES'));
+  assert.ok(sendNow.length > 0, 'located the Send now button build');
+  assert.match(sendNow, /id = 'feedback-send-now'/);
+  assert.match(sendNow, /textContent = 'Send now'/);
+  assert.match(sendNow, /sendNow\.type = 'button'/);
+  // Built as nodes on the module-owned host, never an innerHTML string.
+  assert.match(sendNow, /createTextNode/);
+  assert.doesNotMatch(sendNow, /innerHTML/);
+  const sendQueuedNow = feedbackJs.slice(feedbackJs.indexOf('const sendQueuedNow'));
+  assert.ok(sendQueuedNow.length > 0, 'located sendQueuedNow');
+  assert.match(sendQueuedNow, /flush\('manual', \{ force: true \}\)/,
+    'the tap ignores the automatic retry schedule');
+  assert.match(sendQueuedNow, /queueSendInFlight/, 'a second tap cannot start a second forced pass');
+  assert.match(sendQueuedNow, /refreshQueueState\(\)/,
+    'the line repaints from the store when the pass returns');
+  // The button is rebuilt on every repaint, so the click is delegated on the
+  // React-constant host and survives the line being replaced under it.
+  assert.match(feedbackJs, /feedbackStatus\.addEventListener\('click'/);
+  // The offline and dapp-checked sentences are untouched.
+  assert.match(feedbackJs, /1 message saved on this device is waiting to send\. This one will be saved too\./);
+  assert.match(feedbackJs, /saved on this device and sent automatically/);
+});
+
+test('the queue dot opens the Send feedback dialog', () => {
+  const dot = markTsx.slice(markTsx.indexOf('id="feedback-queue-dot"'));
+  assert.match(dot, /onClick=/);
+  assert.ok(dot.indexOf('stopPropagation()') < dot.indexOf('openFeedbackModal'),
+    'the mark\'s own toggle must not also fire');
+  assert.match(dot, /AppContext\?\.close\?\.\(\)/, 'the Homeroom menu closes first, as the bell closes');
+  assert.match(dot, /openFeedbackModal\?\.\(\)/);
+  // It is still the same node: hidden at rest, positioned on the tile, and
+  // reached through the visibility store only.
+  assert.match(dot.slice(0, 300), /className="hidden absolute/);
+  assert.match(markTsx, /useVisibilityHiddenClass\(dotRef, 'feedback-queue-dot', false\)/);
+});
+
 test('the queue module loads before app.js and is precached', () => {
   // Through assetUrl(): the src is build-scoped in a deployed document
   // (frontend/src/lib/asset-url.ts).

@@ -181,11 +181,25 @@ export function PlatformMark() {
           height={26}
           className="platform-mark-tile w-[26px] h-[26px] rounded-[7px] shrink-0"
         />
-        {/* Bottom-LEFT: an unsent feedback draft, waiting for a connection. */}
+        {/* Bottom-LEFT: an unsent feedback draft, waiting for a connection.
+            #3996: it is no longer only a signal — tapping it opens the Send
+            feedback dialog, where the waiting line and its Send now button
+            are. React runs this handler on the way up before the mark
+            button's, and stopPropagation keeps the mark's own toggle from
+            also firing; closing the menu first mirrors what the bell does
+            when it opens another panel. Tapping the rest of the mark still
+            opens the Homeroom menu, and keyboard users reach the dialog
+            through that menu's "Give feedback" row, as today. */}
         <span
           ref={dotRef}
           id="feedback-queue-dot"
           className="hidden absolute -bottom-0.5 -left-0.5 w-2 h-2 rounded-full bg-amber-400"
+          onClick={(e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            (window as unknown as { AppContext?: { close?: () => void } }).AppContext?.close?.();
+            (window as unknown as { App?: { openFeedbackModal?: () => void } }).App?.openFeedbackModal?.();
+          }}
         />
         {/* Top-RIGHT: one of your changes is building right now. A live fact, true only
             while it is true, so it needs no dismissal and carries no count —
