@@ -160,6 +160,10 @@ export function init() {
     };
     const feedbackBtn = document.getElementById('feedback-submit');
     const feedbackStatus = document.getElementById('feedback-status');
+    // #3997: the "Send now" link under the queue line. feedback.tsx renders
+    // it once, shipping `hidden`; this module owns every later class and
+    // disabled write, exactly as it owns #feedback-status beside it.
+    const feedbackSendNow = document.getElementById('feedback-send-now');
     const feedbackForm = document.getElementById('feedback-form');
     const firstSuccess = document.getElementById('feedback-first-success');
     const firstNotice = document.getElementById('feedback-first-notice');
@@ -1222,6 +1226,11 @@ export function init() {
     // count already waiting, or nothing at all.
     let queueLineText = '';
     let queuePendingCount = 0;
+    // #3997: true from the tap on "Send now" until the manual flush it started
+    // resolves. paintQueueState folds it into the link's `disabled` so an
+    // onChange repaint that lands mid-flush cannot re-enable it for a
+    // second tap into a pass already sending.
+    let sendNowInFlight = false;
 
     const queueStatusLine = () => {
       const offline = isOfflineNow();
@@ -1246,6 +1255,19 @@ export function init() {
       return '';
     };
 
+    // #3997: the "Send now" link under the line. It is visible only while the
+    // line is owned by the queue and says messages are waiting while the
+    // device is online — never under a submit outcome or the saved
+    // confirmation, and never while offline, where the queue's own automatic
+    // send on reconnect is the behaviour. `disabled` follows the same two
+    // flags the line does: submitBusy (a submit in flight), plus this
+    // module's own in-flight manual push.
+    const paintSendNow = (visible) => {
+      if (!feedbackSendNow) return;
+      feedbackSendNow.classList.toggle('hidden', !visible);
+      feedbackSendNow.disabled = submitBusy || sendNowInFlight;
+    };
+
     // Repaint the hint and the button label. Never overwrites a submit
     // outcome ("Thanks! Filed against…", an error, the saved confirmation):
     // that is the newer and more specific thing to say, so the line is only
@@ -1257,17 +1279,28 @@ export function init() {
       if (!submitBusy) feedbackBtn.textContent = isOfflineNow() ? 'Save for later' : 'Post request';
       const owned = feedbackStatus.classList.contains('hidden')
         || (queueLineText && feedbackStatus.textContent === queueLineText);
-      if (!owned) return;
+      if (!owned) {
+        // A submit outcome or the saved confirmation owns the line: the link
+        // goes with it, so it is never under "Thanks! Filed against…".
+        paintSendNow(false);
+        return;
+      }
       const line = queueStatusLine();
       if (!line) {
         feedbackStatus.classList.add('hidden');
         queueLineText = '';
+        paintSendNow(false);
         return;
       }
       feedbackStatus.textContent = line;
       feedbackStatus.className = 'text-sm mt-2 text-zinc-500 dark:text-zinc-400';
       feedbackStatus.classList.remove('hidden');
       queueLineText = line;
+      // The online "sending now." wording is the one state the link answers:
+      // something is waiting and this device could send it. The offline
+      // lines pin connectivity, so the link hides there and the queue keeps
+      // its automatic send on reconnect.
+      paintSendNow(!isOfflineNow() && queuePendingCount > 0);
     };
 
     // The header's speech-bubble carries a small violet dot while anything is
@@ -1313,6 +1346,28 @@ export function init() {
         if (!modal.classList.contains('hidden')) paintQueueState();
       });
     };
+
+    // #3997: "Send now" — a manual push of the outbox, for a message whose
+    // automatic retry is still sitting on its backoff schedule while the
+    // device is online. It is the queue's own flush with 'manual', not a
+    // second send path: single-flight means a push landing while an
+    // automatic pass is running joins that pass, and the cross-tab claim
+    // still decides what this tab may send, so nothing can file twice. A
+    // failure is classified and rescheduled by the ordinary path; the
+    // repaint below reads the new count through the sequenced read (never a
+    // direct count() — that read is pinned to exactly one call site) and the
+    // link comes back for another try while anything is still waiting.
+    feedbackSendNow?.addEventListener('click', async () => {
+      if (!window.FeedbackQueue || feedbackSendNow.disabled) return;
+      sendNowInFlight = true;
+      feedbackSendNow.disabled = true;
+      try {
+        await window.FeedbackQueue.flush('manual');
+      } finally {
+        sendNowInFlight = false;
+        refreshQueueState();
+      }
+    });
 
     // QA 2026-09-24: what a refused submit says. A 5xx is the server's own
     // trouble (no GitHub token configured, GitHub refusing the issue, a

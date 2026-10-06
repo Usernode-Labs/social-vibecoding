@@ -342,6 +342,20 @@ export function FeedbackDialog() {
         </div>
         <div id="feedback-status" className="text-sm mt-2 hidden">
         </div>
+        {/*
+            #3997: the offline outbox's "Send now" link, shown by the
+            controller only while saved messages are waiting AND the device is
+            online — the push for a message whose automatic retry is still on
+            its slow backoff schedule. It is the dialog's small action link,
+            the underlined style #feedback-sent-fix uses, never a competing
+            button beside "Post request"; "Send now" matches the "sending
+            now." wording the status line itself uses for this state. Ships
+            `hidden` like every island node the controller owns — this module
+            renders it once and never touches it again.
+        */}
+        <button id="feedback-send-now" type="button" className="hidden mt-2 text-xs text-zinc-500 underline underline-offset-2 dark:text-zinc-400">
+          Send now
+        </button>
         <div className="flex gap-3 mt-4">
           {/*
               The controller's success and save-for-later paths still close

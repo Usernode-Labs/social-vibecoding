@@ -149,6 +149,24 @@ test('isDue: honours the backoff, a live claim, and never picks up a failed reco
   assert.equal(FQ.isDue({ nextAttemptAt: 0, sendingSince: now - 5 * 60_000 }, now), true);
 });
 
+test('isDue: a manual flush ignores the backoff, and only the backoff (#3997)', () => {
+  const FQ = load();
+  const now = 1_000_000;
+  // A message waiting on its backoff schedule: the timer would leave it, a
+  // person pressing "Send now" is not waiting for the timer.
+  assert.equal(FQ.isDue({ nextAttemptAt: now + 60_000, status: 'pending' }, now, true), true);
+  assert.equal(FQ.isDue({ nextAttemptAt: now + 60_000, status: 'pending' }, now), false);
+  // The failed and live-claim checks still hold on a manual pass — a push
+  // must not resurrect a refused record or file one another tab is sending.
+  assert.equal(FQ.isDue({ nextAttemptAt: 0, status: 'failed' }, now, true), false);
+  assert.equal(FQ.isDue({ nextAttemptAt: 0, sendingSince: now - 1000 }, now, true), false);
+  // A stale claim is taken over either way.
+  assert.equal(
+    FQ.isDue({ nextAttemptAt: now + 60_000, sendingSince: now - 5 * 60_000 }, now, true),
+    true,
+  );
+});
+
 // ── enqueue / pending ────────────────────────────────────────────────
 
 test('enqueue: keeps the payload and stamps a queuedAt the server can print', async () => {
@@ -290,6 +308,37 @@ test('flush: concurrent callers share one pass, so nothing is filed twice', asyn
   assert.equal(calls.length, 1, 'one POST for one queued message');
   assert.equal(a, b, 'the second caller awaited the in-flight pass');
   assert.equal((await FQ.pending()).length, 0);
+});
+
+test("flush('manual'): pushes a message whose automatic retry is still waiting (#3997)", async () => {
+  const FQ = load();
+  await FQ.enqueue(entry());
+  stubFetch({ status: 500 });
+  await FQ.flush();
+  const [waiting] = await FQ.pending();
+  assert.ok(waiting.nextAttemptAt > Date.now(), 'the timer would not send it yet');
+
+  const calls = stubFetch({ status: 200 });
+  const res = await FQ.flush('manual');
+  assert.equal(res.sent, 1, 'the manual push did not wait out the backoff');
+  assert.equal(calls.length, 1);
+  assert.deepEqual(await FQ.pending(), []);
+});
+
+test("flush('manual'): a failure on the push reschedules through the ordinary path", async () => {
+  const FQ = load();
+  await FQ.enqueue(entry());
+  stubFetch({ status: 500 });
+  await FQ.flush(); // first failure: attempt 1, backoff 60s
+  stubFetch({ status: 500 });
+
+  const res = await FQ.flush('manual');
+  assert.equal(res.sent, 0);
+  const [rec] = await FQ.pending();
+  assert.equal(rec.attempts, 2, 'the manual push counts like any other attempt');
+  assert.equal(rec.status, 'pending', 'still on its retry schedule, not failed');
+  assert.equal(rec.sendingSince, null, 'the claim is released');
+  assert.ok(rec.nextAttemptAt > Date.now(), 'and backs off again');
 });
 
 test('flush: a screenshot is uploaded first and its id attached to the submit', async () => {

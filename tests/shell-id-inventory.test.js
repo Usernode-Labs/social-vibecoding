@@ -323,6 +323,11 @@ const ADDED_IDS = {
   'feedback-sent-line': 'B8: the line under the filed-request confirmation\'s heading, worded by the controller: "Find it on your profile…", or "Homeroom bot is on it, usually about 8 minutes."',
   'feedback-sent-chat': 'B8: Open chat, the confirmation\'s main button when Homeroom bot builds the request: the chat where its card is.',
   'feedback-sent-fix': 'B8: the confirmation\'s small "Build it yourself with a coding agent" link, for somebody who could start a change there.',
+  // #3997: the offline outbox's "Send now" link, under #feedback-status. The
+  // controller (feedback-controller.js) shows it only while saved messages
+  // are waiting and the device is online; ships hidden like every island
+  // node the controller owns.
+  'feedback-send-now': '#3997: the Send Feedback dialog\'s small "Send now" link, pushing the offline outbox straight away when a saved message is waiting while the device is online. Same underlined small-action style as #feedback-sent-fix.',
   // #3230: the spend card's reset line, rewritten by Settings._refreshSpend()
   // in the viewer's own clock (it prerenders the server's UTC boundary).
   'settings-spend-reset': '#3230 spend card reset line, localized at reveal',

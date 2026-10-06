@@ -173,6 +173,58 @@ test('a stale count read cannot paint over a newer one', () => {
   assert.equal(feedbackJs.match(/FeedbackQueue\.count\(\)/g).length, 1);
 });
 
+// ── #3997: the queue line's "Send now" link ──────────────────────────
+
+test('the queue line has a Send now link, shipped hidden like the rest of the island', () => {
+  const markup = read('frontend', 'src', 'features', 'dialogs', 'feedback.tsx');
+  const node = markup.slice(markup.indexOf('id="feedback-send-now"'));
+  assert.ok(node.length > 0, 'the button exists in the dialog markup');
+  // An island's initial render emits exactly the empty/hidden markup the
+  // hand-written shell had; the controller owns every later write.
+  assert.match(node.slice(0, 300),
+    /className="hidden mt-2 text-xs text-zinc-500 underline underline-offset-2 dark:text-zinc-400"/,
+    'ships hidden, in the dialog\'s small underlined action-link style');
+  assert.match(node.slice(0, 400), /Send now/,
+    'the word matches the "sending now." wording the status line already uses');
+  // It sits directly under the queue status line — where the waiting count
+  // is already shown — and before the Post request row.
+  assert.ok(
+    markup.indexOf('id="feedback-status"') < markup.indexOf('id="feedback-send-now"')
+      && markup.indexOf('id="feedback-send-now"') < markup.indexOf('id="feedback-cancel"'),
+    'the link is under #feedback-status, ahead of the action row',
+  );
+});
+
+test('the Send now link is painted by the queue line\'s own painter', () => {
+  assert.match(feedbackJs,
+    /const feedbackSendNow = document\.getElementById\('feedback-send-now'\);/,
+    'grabbed beside #feedback-status, by the controller that owns the line');
+  const paint = feedbackJs.slice(
+    feedbackJs.indexOf('const paintSendNow = (visible)'),
+    feedbackJs.indexOf('const paintQueueDot'),
+  );
+  assert.match(paint, /submitBusy \|\| sendNowInFlight/,
+    'disabled follows the #2707 busy flag, plus the link\'s own in-flight push');
+  assert.match(paint, /queuePendingCount > 0/, 'visible only while messages are waiting');
+  assert.match(paint, /!isOfflineNow\(\) && queuePendingCount > 0/,
+    'never while offline, where the queue keeps its automatic send on reconnect');
+  assert.match(paint, /paintSendNow\(false\);\s*return;/,
+    'hidden with the line whenever a submit outcome or the saved confirmation owns it');
+});
+
+test('the Send now link pushes the queue with a manual flush, then repaints', () => {
+  const click = feedbackJs.slice(feedbackJs.indexOf("feedbackSendNow?.addEventListener('click'"));
+  assert.ok(click.length > 0, 'the link is wired');
+  assert.match(click.slice(0, 800), /if \(!window\.FeedbackQueue \|\| feedbackSendNow\.disabled\) return;/,
+    'a disabled link does nothing — no second push into a pass already sending');
+  assert.match(click.slice(0, 800), /window\.FeedbackQueue\.flush\('manual'\)/,
+    'the queue\'s own flush, not a second send path');
+  assert.match(click.slice(0, 800), /refreshQueueState\(\)/,
+    'the repaint goes through the sequenced read, not a direct count()');
+  assert.equal(feedbackJs.match(/FeedbackQueue\.count\(\)/g).length, 1,
+    'still exactly one place reads the count');
+});
+
 test('the queued shot seeds the store before it pins connectivity', () => {
   // Order matters: forceOffline() dispatches usernode:offline-change, whose
   // handler reads the count — it must see the seeded queue, not the device's.

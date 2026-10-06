@@ -134,12 +134,19 @@
     try { return new Date(t).toISOString(); } catch (err) { return null; }
   }
 
-  function isDue(record, nowMs) {
+  // `manual` (a 'manual' flush, the dialog's "Send now" link, #3997) ignores
+  // the backoff schedule — a person pressing the link is not waiting for the
+  // timer — but keeps every other check: a failed record is never retried
+  // (it is takeFailed's business), and a record another tab is actively
+  // sending is still left alone, so a manual push cannot file a message
+  // twice.
+  function isDue(record, nowMs, manual) {
     if (!record || record.status === 'failed') return false;
     const claimed = Number(record.sendingSince) || 0;
     // Claimed by a live flush (this tab's or another's) — leave it alone
     // until the claim goes stale.
     if (claimed && nowMs - claimed < CLAIM_STALE_MS) return false;
+    if (manual) return true;
     return (Number(record.nextAttemptAt) || 0) <= nowMs;
   }
 
@@ -414,7 +421,10 @@
     if (flushDisabled) return { sent: 0, failed: 0, remaining: 0, filed: [] };
     const s = await ensureStore();
     const all = mine(await s.all());
-    const due = all.filter((r) => isDue(r, nowMs()));
+    // A 'manual' flush (the dialog's "Send now" link) counts a record due
+    // whatever its backoff says; every other reason waits it out.
+    const manual = reason === 'manual';
+    const due = all.filter((r) => isDue(r, nowMs(), manual));
     const result = { sent: 0, failed: 0, remaining: 0, filed: [], reason: reason || null };
 
     // Strictly sequential: two issues filed at once from a phone that just
