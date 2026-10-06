@@ -87,7 +87,10 @@ export function standingView(state) {
   if (state.status !== 'ready' || !state.ranking) return null;
   const r = state.ranking;
   const points = Number(r.total_points || 0);
-  const pending = standingIsEmpty(r) ? Number(state.pending || 0) : 0;
+  // `pending` is the GAP: what the ledger has credited that the standings do
+  // not show yet, empty standing or not (#4017) — around the weekly reset the
+  // ranked card too can sit below what was earned while the snapshot lags.
+  const pending = Number(state.pending || 0);
   if (standingIsEmpty(r) && pending <= 0) return null;
   return {
     season: r.season_name || 'This season',
@@ -119,15 +122,21 @@ const MyStanding = {
         fetchData('/challenges-api/me/breakdown?season_id=active&include_activity=0&include_progress=0')
           .catch(() => null),
       ]);
-      // Only when the standings have nothing for the viewer: ask the ledger
-      // whether challenge points are waiting for the next snapshot. An
-      // existing read, scoped to the season the ranking resolved.
+      // Ask the ledger what the viewer's challenge completions earned,
+      // whether the standings show it or not (#4017): an empty standing is
+      // not the only lag case, a ranked one can sit below the ledger too
+      // around the weekly reset. The read is the same existing one, scoped
+      // to the season the ranking resolved, and what is stored is the GAP —
+      // the standings' share of the ledger is already on the card, so the
+      // line names only the missing difference. A clamp, not a sum: a
+      // standings total that already carries every point (or more, from
+      // sources the per-challenge ledger does not see) draws no line.
       let pending = 0;
-      if (ranking && standingIsEmpty(ranking) && ranking.season_id) {
+      if (ranking && ranking.season_id) {
         const challenges = await fetchData(
           `/challenges-api/challenges?season_id=${encodeURIComponent(ranking.season_id)}`
         ).catch(() => null);
-        pending = ledgerPoints(challenges);
+        pending = Math.max(0, ledgerPoints(challenges) - Number(ranking.total_points || 0));
       }
       if (token !== MyStanding._token) return;
       myStandingStore.set({ status: 'ready', ranking, breakdown, pending, revealed: readRevealed() });
