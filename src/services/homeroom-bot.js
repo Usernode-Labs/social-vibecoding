@@ -7026,6 +7026,9 @@ async function adminPayload(pool, config, {
     // #3624 stage 2: what runs now, and what the DM's answers cost.
     workingNow: await workingNow(pool, settings),
     dmChat: await dmChatSummary(pool),
+    // Before it is on for everyone: whether it is working, over the last
+    // week (homeroom-bot-health.js).
+    health: await require('./homeroom-bot-health').rolloutHealth(pool, { botUsername: BOT_USERNAME }),
   };
 }
 

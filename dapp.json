@@ -4138,9 +4138,9 @@
       "expectText": "Estimates are per-token pricing times a typical change"
     },
     {
-      "name": "Homeroom bot dashboard renders its verdict table and mode (#2684)",
+      "name": "Homeroom bot dashboard renders its verdict table and mode (#2684) under its rollout health: proposals merged, time to a proposal, questions waiting, failed turns and DM answers, with the week's failed answers",
       "path": "/#admin/homeroom-bot",
-      "expectSelector": "#admin-homeroom-bot-table",
+      "expectSelector": "#admin-homeroom-bot:has(#admin-homeroom-bot-rollout-rows [data-rollout=\"chat\"]):has(#admin-homeroom-bot-rollout-failures) #admin-homeroom-bot-table",
       "expectText": "Verdict"
     },
     {
