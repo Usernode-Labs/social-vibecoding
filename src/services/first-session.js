@@ -161,6 +161,37 @@ async function asksWhatToMake(pool, userId) {
   }
 }
 
+/**
+ * What the account told us on the waitlist that its group's own app should
+ * do: the stage-2 survey's "What would its own app do that those tools
+ * can't?" (answers.group.need, services/waitlist-questions.js). "What do you
+ * want to make?" opens with it in "What should it do?" (#4040).
+ *
+ * Only the waitlist row linked to the account (waitlist.linkUserByEmail,
+ * when an email-code or provider sign-up uses the row's address): the
+ * waitlist is keyed by email, and a link is the platform's own word that
+ * the two are the same person. An email-code sign-up with no waitlist row
+ * has none. Null for no row, an empty answer, or a read that fails, and the
+ * screen is then the plain one. Never throws: GET /api/auth/me reads it.
+ */
+async function waitlistIdea(pool, userId) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT NULLIF(BTRIM(answers->'group'->>'need'), '') AS idea
+         FROM waitlist_signups
+        WHERE linked_user_id = $1
+        ORDER BY submitted_at DESC
+        LIMIT 1`,
+      [userId]
+    );
+    const idea = rows[0]?.idea;
+    return typeof idea === 'string' && idea ? idea : null;
+  } catch (err) {
+    log.warn('first-session', 'Could not read the waitlist answer', { userId, err: err.message });
+    return null;
+  }
+}
+
 module.exports = {
   STORY_KEY,
   readStorySetting,
@@ -171,4 +202,5 @@ module.exports = {
   answerJoinScreenByMaking,
   answerJoinScreenByLookingAround,
   asksWhatToMake,
+  waitlistIdea,
 };

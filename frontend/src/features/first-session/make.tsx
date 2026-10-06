@@ -5,14 +5,26 @@
  * once the shell has signed them in).
  *
  * Two questions, the New project dialog's own (create-app.tsx), cut down:
- * what it should do, then what to call it — the name is the group's and
- * the project's, since a community and its one project share a name. The
- * three examples (./examples.ts) fill both fields. "Make it" creates a
- * private community through the same POST /api/apps the dialog uses
- * (audience 'invited', no invitees yet: inviting comes next), with
- * `from: 'first-session'`, and Homeroom bot builds the first version from
- * the description. The Create app wizard stays as it is, behind the Create
- * button.
+ * what it should do, then what to call it — the name is the community's and
+ * the project's, since a community and its one project share a name. "Make
+ * it" creates a private community through the same POST /api/apps the
+ * dialog uses (audience 'invited', no invitees yet: inviting comes next),
+ * with `from: 'first-session'`, and Homeroom bot builds the first version
+ * from the description. The Create app wizard stays as it is, behind the
+ * Create button.
+ *
+ * WHAT IT OPENS WITH (#4038, #4040; canvas C2-make and C2b-make-waitlist,
+ * 6 Oct 2026). A title and the one thing: no line under the title.
+ *   - Four tiles that look like buttons: the three examples (./examples.ts)
+ *     and "Your own idea". The first example is chosen when the screen
+ *     opens, both fields filled with its words, so the screen shows what an
+ *     answer looks like and "Make it" works at once. Another example swaps
+ *     its words in; "Your own idea" empties both fields and puts the caret
+ *     in "What should it do?".
+ *   - When they told us on the waitlist what their group's app should do
+ *     (`waitlistIdea` on GET /api/auth/me, services/first-session.js), that
+ *     answer is in "What should it do?" instead, the name is left to them,
+ *     and the examples step back to a row of chips under the fields.
  *
  * "Look around first" is the quiet way out: Home, with nothing asked. It is
  * an answer, like Make it: until one of the two, the question is still the
@@ -63,7 +75,7 @@
  * whole screen and only the reveal does anything.
  *
  * An example is a starting point, not a choice that sticks: typing words of
- * their own into "What should it do?" lets go of the example (its chip is no
+ * their own into "What should it do?" lets go of the example (its tile is no
  * longer marked, and Make it no longer sends its description), and the name
  * it filled in stays theirs to keep or change.
  */
@@ -71,6 +83,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { DraftEditIcon } from '@/components/ui/icons';
 import { Wordmark } from '@/components/ui/wordmark';
 
 import { useKeyboardSurface } from '../../lib/keyboard-surface';
@@ -94,8 +107,16 @@ const INPUT = 'w-full border-0 bg-transparent px-0 py-1 text-[17px] text-zinc-90
 // Where the bar and the form start, and where they settle (see the header).
 const ARRIVING = 'translate-y-6 opacity-0 transition-[transform,opacity] duration-300 ease-out motion-reduce:transition-none';
 const ARRIVED = 'translate-y-0 opacity-100 transition-[transform,opacity] duration-300 ease-out motion-reduce:transition-none';
-const HINT = 'pb-1 text-xs text-zinc-500 dark:text-zinc-400';
 const NEEDED = 'pb-1 text-xs text-red-600 dark:text-red-400';
+// The tiles and chips are buttons and look it: a white face lifted off the
+// wallpaper by a soft shadow, with a hairline, or the accent's ring when chosen.
+const LIFT = 'bg-white transition-transform active:scale-[0.98] motion-reduce:transition-none dark:bg-zinc-900';
+const RING_OFF = 'shadow-[0_1px_3px_rgba(0,0,0,0.1),inset_0_0_0_1px_var(--app-sheet-line)]';
+const RING_ON = 'shadow-[0_1px_3px_rgba(0,0,0,0.1),inset_0_0_0_2px_var(--accent)]';
+const TILE = `flex min-h-16 items-center gap-2.5 rounded-2xl px-3 py-2 text-left ${LIFT}`;
+const TILE_FACE = 'flex h-10 w-10 shrink-0 items-center justify-center rounded-[11px]';
+const TILE_LABEL = 'min-w-0 flex-1 text-[15px] font-semibold leading-[19px]';
+const CHIP = `flex h-10 items-center gap-1.5 rounded-full pl-2.5 pr-3.5 text-[15px] font-semibold ${LIFT}`;
 
 export type Missing = 'brief' | 'name' | null;
 
@@ -113,6 +134,17 @@ export function neededLine(missing: Missing, brief: string): string | null {
   return null;
 }
 
+/**
+ * What the screen opens with: their waitlist answer with no name and no
+ * example chosen, or else the first example, chosen and filled in.
+ */
+export function openingAnswers(idea: string | null | undefined): { brief: string; name: string; picked: Example | null } {
+  const said = typeof idea === 'string' ? idea.trim() : '';
+  if (said) return { brief: said, name: '', picked: null };
+  const first = EXAMPLES[0];
+  return { brief: first.brief, name: first.name, picked: first };
+}
+
 /** The device's IANA time zone ("Europe/London"), or null where it cannot be read. */
 export function deviceTimeZone(): string | null {
   try {
@@ -123,14 +155,21 @@ export function deviceTimeZone(): string | null {
   }
 }
 
-export function MakeScreen({ who, onMade, onLookAround }: {
+export function MakeScreen({ who, idea = null, onMade, onLookAround }: {
   who: string;
+  /** What they told us on the waitlist the app should do, or null. */
+  idea?: string | null;
   onMade: (made: Made) => void;
   onLookAround: () => void;
 }) {
-  const [brief, setBrief] = useState('');
-  const [name, setName] = useState('');
-  const [picked, setPicked] = useState<Example | null>(null);
+  // Decided once, when the screen opens: what they type later is theirs.
+  const [opening] = useState(() => openingAnswers(idea));
+  const fromWaitlist = !opening.picked;
+  const [brief, setBrief] = useState(opening.brief);
+  const [name, setName] = useState(opening.name);
+  const [picked, setPicked] = useState<Example | null>(opening.picked);
+  // "Your own idea" was pressed: its tile is the chosen one.
+  const [own, setOwn] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // The answer a press of "Make it" found missing, said under its field
@@ -155,10 +194,23 @@ export function MakeScreen({ who, onMade, onLookAround }: {
 
   const pick = useCallback((e: Example) => {
     setPicked(e);
+    setOwn(false);
     setBrief(e.brief);
     setName(e.name);
     setError(null);
     setMissing(null);
+  }, []);
+
+  // Empty fields for words of their own, with the caret where they begin
+  // (inside the press, so a phone raises its keys).
+  const startOwn = useCallback(() => {
+    setPicked(null);
+    setOwn(true);
+    setBrief('');
+    setName('');
+    setError(null);
+    setMissing(null);
+    briefRef.current?.focus({ preventScroll: true });
   }, []);
 
   const make = useCallback(async () => {
@@ -211,6 +263,55 @@ export function MakeScreen({ who, onMade, onLookAround }: {
   }, [busy, picked, brief, name, onMade]);
   const needed = neededLine(missing, brief);
 
+  const fields = (
+    <div className={`${fromWaitlist ? 'mt-7' : 'mt-3.5'} overflow-hidden rounded-2xl bg-white shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900`}>
+      <div className={FIELD}>
+        <label htmlFor="first-session-brief" className={LABEL}>What should it do?</label>
+        <textarea
+          ref={briefRef}
+          id="first-session-brief"
+          rows={3}
+          value={brief}
+          enterKeyHint="next"
+          aria-describedby={missing === 'brief' ? 'first-session-brief-needed' : undefined}
+          onChange={(e) => {
+            const next = e.target.value;
+            setBrief(next);
+            // Their own words let go of the example.
+            if (picked && next !== picked.brief) setPicked(null);
+            setError(null);
+            setMissing(null);
+          }}
+          onKeyDown={(e) => {
+            // Return goes on to the name, as the key says; Shift+Return is a new line.
+            if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return;
+            e.preventDefault();
+            nameRef.current?.focus({ preventScroll: true });
+          }}
+          placeholder="For example, a sign-up sheet for our book club"
+          className={`${INPUT} resize-none leading-[22px]`}
+        />
+        {missing === 'brief' ? <p id="first-session-brief-needed" role="alert" className={NEEDED}>{needed}</p> : null}
+      </div>
+      <div className={FIELD}>
+        <label htmlFor="first-session-name" className={LABEL}>What should we call it?</label>
+        <input
+          ref={nameRef}
+          id="first-session-name"
+          type="text"
+          autoComplete="off"
+          enterKeyHint="go"
+          value={name}
+          aria-describedby={missing === 'name' ? 'first-session-name-needed' : undefined}
+          onChange={(e) => { setName(e.target.value); setError(null); setMissing(null); }}
+          placeholder="For example, Sunday Run Club"
+          className={INPUT}
+        />
+        {missing === 'name' ? <p id="first-session-name-needed" role="alert" className={NEEDED}>{needed}</p> : null}
+      </div>
+    </div>
+  );
+
   return (
     <div
       role="dialog"
@@ -233,81 +334,69 @@ export function MakeScreen({ who, onMade, onLookAround }: {
           onSubmit={(e) => { e.preventDefault(); void make(); }}
         >
           <div className="text-center">
-            <p className="mt-4 text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">
-              {who ? `Hi ${who}!` : 'You\'re in!'}
-            </p>
+            {who ? (
+              <p className="mt-4 text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">{`Hi ${who}`}</p>
+            ) : null}
             <h1 id="first-session-make-title" className="mt-2.5 text-balance text-[30px] font-extrabold leading-[34px]">What do you want to make?</h1>
-            <p className="mt-2.5 text-pretty text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400">
-              Describe it for your group. Homeroom bot builds the first version while you invite your people.
-            </p>
           </div>
-          <p className="mt-6 pb-2 text-[13px] text-zinc-500 dark:text-zinc-400">Start from an example</p>
-          <div className="grid grid-cols-3 gap-2" role="group" aria-label="Examples">
-            {EXAMPLES.map((e) => {
-              const on = picked?.key === e.key;
-              return (
+          {fromWaitlist ? (
+            <>
+              {fields}
+              <p className="mt-[18px] pb-2 text-[13px] text-zinc-500 dark:text-zinc-400">Or start from an example</p>
+              <div className="flex flex-wrap gap-2" role="group" aria-label="Examples">
+                {EXAMPLES.map((e) => {
+                  const on = picked?.key === e.key;
+                  return (
+                    <button
+                      key={e.key}
+                      type="button"
+                      aria-pressed={on}
+                      data-first-session-example={e.key}
+                      onClick={() => pick(e)}
+                      className={`${CHIP} ${on ? RING_ON : RING_OFF}`}
+                    >
+                      <span className="text-[18px]" aria-hidden="true">{e.emoji}</span>
+                      {e.short}
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="mt-7 grid grid-cols-2 gap-2" role="group" aria-label="Start from">
+                {EXAMPLES.map((e) => {
+                  const on = picked?.key === e.key;
+                  return (
+                    <button
+                      key={e.key}
+                      type="button"
+                      aria-pressed={on}
+                      data-first-session-example={e.key}
+                      onClick={() => pick(e)}
+                      className={`${TILE} ${on ? RING_ON : RING_OFF}`}
+                    >
+                      <span className={`app-icon-tile ${TILE_FACE} text-[22px]`} aria-hidden="true">{e.emoji}</span>
+                      <span className={TILE_LABEL}>{e.short}</span>
+                    </button>
+                  );
+                })}
                 <button
-                  key={e.key}
                   type="button"
-                  aria-pressed={on}
-                  data-first-session-example={e.key}
-                  onClick={() => pick(e)}
-                  className={`relative flex flex-col items-center gap-1.5 rounded-2xl bg-white px-1 pb-2.5 pt-3 text-center dark:bg-zinc-900 ${on ? 'shadow-[inset_0_0_0_2px_var(--accent)]' : 'shadow-[inset_0_0_0_1px_var(--app-sheet-line)]'}`}
+                  aria-pressed={own}
+                  data-first-session-own=""
+                  onClick={startOwn}
+                  className={`${TILE} ${own ? RING_ON : RING_OFF}`}
                 >
-                  <span className="app-icon-tile flex h-11 w-11 items-center justify-center rounded-xl text-2xl" aria-hidden="true">{e.emoji}</span>
-                  <span className="text-[13px] font-semibold leading-tight">{e.short}</span>
+                  <span className={`${TILE_FACE} bg-violet-50 text-violet-700 dark:bg-violet-500/10 dark:text-violet-300`} aria-hidden="true">
+                    <DraftEditIcon className="h-5 w-5" />
+                  </span>
+                  <span className={TILE_LABEL}>Your own idea</span>
                 </button>
-              );
-            })}
-          </div>
-          <div className="mt-4 overflow-hidden rounded-2xl bg-white shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
-            <div className={FIELD}>
-              <label htmlFor="first-session-brief" className={LABEL}>What should it do?</label>
-              <textarea
-                ref={briefRef}
-                id="first-session-brief"
-                rows={3}
-                value={brief}
-                enterKeyHint="next"
-                aria-describedby={missing === 'brief' ? 'first-session-brief-needed' : undefined}
-                onChange={(e) => {
-                  const next = e.target.value;
-                  setBrief(next);
-                  // Their own words let go of the example.
-                  if (picked && next !== picked.brief) setPicked(null);
-                  setError(null);
-                  setMissing(null);
-                }}
-                onKeyDown={(e) => {
-                  // Return goes on to the name, as the key says; Shift+Return is a new line.
-                  if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return;
-                  e.preventDefault();
-                  nameRef.current?.focus({ preventScroll: true });
-                }}
-                placeholder="A tracker for our weekly miles…"
-                className={`${INPUT} resize-none leading-[22px]`}
-              />
-              {missing === 'brief' ? <p id="first-session-brief-needed" role="alert" className={NEEDED}>{needed}</p> : null}
-            </div>
-            <div className={FIELD}>
-              <label htmlFor="first-session-name" className={LABEL}>What should we call it?</label>
-              <input
-                ref={nameRef}
-                id="first-session-name"
-                type="text"
-                autoComplete="off"
-                enterKeyHint="go"
-                value={name}
-                aria-describedby="first-session-name-hint"
-                onChange={(e) => { setName(e.target.value); setError(null); setMissing(null); }}
-                placeholder="For example, Sunday Run Club"
-                className={INPUT}
-              />
-              {missing === 'name'
-                ? <p id="first-session-name-hint" role="alert" className={NEEDED}>{needed}</p>
-                : <p id="first-session-name-hint" className={HINT}>It's your group's name too. You can change it later.</p>}
-            </div>
-          </div>
+              </div>
+              {fields}
+            </>
+          )}
           {error ? <p role="alert" className="mt-3 text-[14px] text-red-600 dark:text-red-400">{error}</p> : null}
           <div className="grow" />
           <Button

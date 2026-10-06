@@ -90,7 +90,7 @@ export function firstVersionStage(body: unknown): FirstVersionStage {
 
 type Legacy = {
   App?: {
-    user?: { id?: number; username?: string; displayName?: string | null; needsCommunitiesChoice?: boolean } | null;
+    user?: { id?: number; username?: string; displayName?: string | null; needsCommunitiesChoice?: boolean; waitlistIdea?: string | null } | null;
     saveSessionSnapshot?: (user: unknown) => void;
     navigateHome?: (opts?: unknown) => void;
     navigateToApp?: (slug: string, tab: string) => unknown;
@@ -697,6 +697,12 @@ function viewerName(): string {
   return user?.displayName || user?.username || '';
 }
 
+/** What they told us on the waitlist the app should do (GET /api/auth/me), or null. */
+function waitlistIdea(): string | null {
+  const idea = legacy().App?.user?.waitlistIdea;
+  return typeof idea === 'string' && idea.trim() ? idea.trim() : null;
+}
+
 export function FirstSession() {
   const [mode, setMode] = useState<Mode>({ kind: 'none' });
 
@@ -782,6 +788,7 @@ export function FirstSession() {
     return (
       <MakeScreen
         who={viewerName()}
+        idea={waitlistIdea()}
         // POST /api/apps answered the question as it made the project.
         onMade={(made) => { noteAnswered(); setMode({ kind: 'made', made }); }}
         onLookAround={() => {

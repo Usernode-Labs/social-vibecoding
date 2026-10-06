@@ -156,9 +156,95 @@ test('"Make it" makes a private community through the dialog\'s own route', () =
   assert.match(make, /from: 'first-session',/);
   assert.match(make, /export const BRIEF_MIN = 10;/);
   assert.match(read('frontend/src/features/dialogs/create-app.tsx'), /BRIEF_MIN = 10/);
-  for (const words of ['What do you want to make?', 'What should it do?', 'What should we call it?', 'It\'s your group\'s name too. You can change it later.', 'Look around first']) {
+  for (const words of ['What do you want to make?', 'What should it do?', 'What should we call it?', 'Your own idea', 'Or start from an example', 'Not sure yet? ', 'Look around first']) {
     assert.ok(make.includes(words), words);
   }
+});
+
+// #4038 and #4040 (canvas C2-make, C2b-make-waitlist, 6 Oct 2026): a title and
+// the one thing. No line under the title (it also said Homeroom bot builds
+// while you invite, which is not so: the plan waits until the tour ends), no
+// line under the name, and no "!".
+test('the make screen says only its question: no line under the title or the name, and "Hi <name>" without "!"', () => {
+  const make = read(`${DIR}/make.tsx`);
+  for (const gone of ['Describe it for your group', 'while you invite', 'It\'s your group\'s name too', 'You\'re in!']) {
+    assert.ok(!make.includes(gone), `no longer says: ${gone}`);
+  }
+  const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Jordan', onMade() {}, onLookAround() {} });
+  assert.doesNotMatch(html, /tart from an example/, 'the tiles need no label');
+  assert.match(html, />Hi Jordan<\/p>/);
+  assert.doesNotMatch(html, /!/, 'no "!" anywhere on the screen');
+  // The title is followed by the tiles, with nothing between.
+  assert.match(html, /What do you want to make\?<\/h1><\/div><div class="mt-7 grid grid-cols-2 gap-2" role="group"/);
+  // No name, no kicker.
+  const nameless = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: '', onMade() {}, onLookAround() {} });
+  assert.doesNotMatch(nameless, />Hi\b/);
+});
+
+test('it opens on the first example, chosen and filled in; their waitlist answer instead when they gave one', () => {
+  const { openingAnswers } = loadTsx(`${DIR}/make.tsx`);
+  const { EXAMPLES } = loadTsx(`${DIR}/examples.ts`);
+  const plain = openingAnswers(null);
+  assert.equal(plain.picked.key, 'run');
+  assert.equal(plain.brief, EXAMPLES[0].brief);
+  assert.equal(plain.name, EXAMPLES[0].name);
+  assert.deepEqual(openingAnswers('   '), plain, 'an empty answer is no answer');
+  assert.deepEqual(openingAnswers('  A tracker for my run club  '), { brief: 'A tracker for my run club', name: '', picked: null });
+});
+
+test('four tiles that look like buttons: the three examples and "Your own idea", the first chosen', () => {
+  const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Jordan', onMade() {}, onLookAround() {} });
+  const tiles = [...html.matchAll(/<button type="button" aria-pressed="(true|false)" data-first-session-(example="(\w+)"|own="")[^>]*class="([^"]*)"/g)];
+  assert.deepEqual(tiles.map((m) => m[3] || 'own'), ['run', 'poll', 'trip', 'own']);
+  assert.deepEqual(tiles.map((m) => m[1]), ['true', 'false', 'false', 'false']);
+  for (const m of tiles) {
+    assert.match(m[4], /flex min-h-16 items-center/, 'at least 64px, taller when a label wraps on a narrow phone');
+    assert.match(m[4], /shadow-\[0_1px_3px_rgba\(0,0,0,0\.1\),inset_0_0_0_(1px_var\(--app-sheet-line\)|2px_var\(--accent\))\]/, 'lifted, with a hairline or the accent ring');
+  }
+  assert.match(tiles[0][4], /inset_0_0_0_2px_var\(--accent\)/, 'the chosen one has the ring');
+  assert.match(html, />Your own idea<\/span>/);
+  // Both fields hold the first example's words.
+  const { EXAMPLES } = loadTsx(`${DIR}/examples.ts`);
+  assert.ok(html.includes(`>${EXAMPLES[0].brief.replace(/'/g, '&#x27;')}</textarea>`), 'the brief is filled');
+  assert.match(html, new RegExp(`id="first-session-name"[^>]*value="${EXAMPLES[0].name}"`));
+  assert.doesNotMatch(html, /Or start from an example/);
+});
+
+test('with a waitlist answer: "What should it do?" holds it, the name is theirs to give, and the examples are chips under the fields', () => {
+  const idea = 'A tracker for my run club, so we can see who keeps up with their weekly miles';
+  const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Jordan', idea, onMade() {}, onLookAround() {} });
+  assert.ok(html.includes(`>${idea}</textarea>`));
+  assert.match(html, /id="first-session-name"[^>]*value=""/);
+  assert.match(html, /placeholder="For example, Sunday Run Club"/);
+  // The fields first, then the chips, none of them chosen, and no "Your own idea".
+  assert.ok(html.indexOf('id="first-session-brief"') < html.indexOf('Or start from an example'));
+  const chips = [...html.matchAll(/<button type="button" aria-pressed="(true|false)" data-first-session-example="(\w+)"[^>]*class="([^"]*)"/g)];
+  assert.deepEqual(chips.map((m) => m[2]), ['run', 'poll', 'trip']);
+  assert.ok(chips.every((m) => m[1] === 'false'));
+  assert.ok(chips.every((m) => /rounded-full/.test(m[3])), 'pills');
+  assert.ok(html.indexOf('Or start from an example') < html.indexOf('data-first-session-example="run"'));
+  assert.doesNotMatch(html, /data-first-session-own|Your own idea/);
+  // The island hands it over from the account (GET /api/auth/me).
+  const island = read(`${DIR}/index.tsx`);
+  assert.match(island, /const idea = legacy\(\)\.App\?\.user\?\.waitlistIdea;/);
+  assert.match(island, /<MakeScreen\s+who=\{viewerName\(\)\}\s+idea=\{waitlistIdea\(\)\}/);
+});
+
+test('the waitlist answer is the linked row\'s "What would its own app do", read only while the question is owed', async () => {
+  const ok = fakePool([[{ idea: 'A tracker for my run club' }]]);
+  assert.equal(await firstSession.waitlistIdea(ok, 7), 'A tracker for my run club');
+  assert.match(ok.calls[0].sql, /NULLIF\(BTRIM\(answers->'group'->>'need'\), ''\) AS idea/);
+  assert.match(ok.calls[0].sql, /FROM waitlist_signups\s+WHERE linked_user_id = \$1/);
+  assert.deepEqual(ok.calls[0].params, [7]);
+  // No row (an email-code sign-up makes none), no answer, or a failed read: the plain screen.
+  assert.equal(await firstSession.waitlistIdea(fakePool([[]]), 7), null);
+  assert.equal(await firstSession.waitlistIdea(fakePool([[{ idea: null }]]), 7), null);
+  assert.equal(await firstSession.waitlistIdea(fakePool([new Error('boom')]), 7), null);
+  // The key the stage-2 survey stores it under.
+  assert.match(read('src/services/waitlist-questions.js'), /const groupNeed = str\(body\?\.group_need, 800\);\s+if \(groupNeed\) group\.need = groupNeed;/);
+  const auth = read('src/routes/auth.js');
+  assert.match(auth, /if \(storyFirstSession\) waitlistIdea = await firstSession\.waitlistIdea\(pool, req\.user\.id\);/);
+  assert.match(auth, /storyFirstSession,\s+\/\/[^\n]*\n(?:\s+\/\/[^\n]*\n)*\s+waitlistIdea,/);
 });
 
 // Production run, iOS app, 5 Oct 2026: the keyboard's next chevron did not
@@ -185,7 +271,7 @@ test('"Make it" looks pale only while making: a press with an answer missing goe
   assert.doesNotMatch(src, /disabled=\{!valid/);
   // (preventScroll since 5 Oct 2026: the keyboard surface reveals the field, with Make it.)
   assert.match(src, /const gap = missingAnswer\(brief, name\);\s+if \(gap\) \{\s+setMissing\(gap\);\s+\(gap === 'brief' \? briefRef\.current : nameRef\.current\)\?\.focus\(\{ preventScroll: true \}\);\s+return;\s+\}/);
-  assert.match(src, /\{missing === 'name'\s+\? <p id="first-session-name-hint" role="alert" className=\{NEEDED\}>\{needed\}<\/p>/);
+  assert.match(src, /\{missing === 'name' \? <p id="first-session-name-needed" role="alert" className=\{NEEDED\}>\{needed\}<\/p> : null\}/);
   // The placeholder reads as an example, not as a name already given.
   assert.match(src, /placeholder="For example, Sunday Run Club"/);
   assert.doesNotMatch(src, /placeholder="Sunday Run Club"/);
@@ -258,7 +344,7 @@ test('typing their own words into "What should it do?" lets go of the example; t
   // and its brief untouched.
   assert.match(src, /const example = picked && brief\.trim\(\) === picked\.brief \? picked : null;/);
   // The name field is not cleared by letting go of the example.
-  const onChange = src.slice(src.indexOf('const next = e.target.value;'), src.indexOf('placeholder="A tracker'));
+  const onChange = src.slice(src.indexOf('const next = e.target.value;'), src.indexOf('placeholder="For example, a sign-up'));
   assert.doesNotMatch(onChange, /setName\(/);
 
   // Executed against a React it can step by hand: pick an example, type over
@@ -309,6 +395,66 @@ test('typing their own words into "What should it do?" lets go of the example; t
   brief(tree).props.onChange({ target: { value: brief(tree).props.value } });
   tree = draw();
   assert.equal(chips(tree).filter((c) => c.props['aria-pressed']).length, 1, 'the same text is not their own words');
+});
+
+// #4038: the examples did not look like something to tap, and there was no
+// choice for an idea of their own.
+test('another example swaps its words in; "Your own idea" empties both fields and puts the caret in the first', () => {
+  let slots = [];
+  let at = 0;
+  const real = require(require.resolve('react', { paths: [path.join(ROOT, 'frontend')] }));
+  const React = {
+    ...real,
+    useState(init) {
+      const k = at++;
+      if (!(k in slots)) slots[k] = typeof init === 'function' ? init() : init;
+      return [slots[k], (v) => { slots[k] = typeof v === 'function' ? v(slots[k]) : v; }];
+    },
+    useRef(init) { const k = at++; if (!(k in slots)) slots[k] = { current: init }; return slots[k]; },
+    useCallback(fn) { at++; return fn; },
+    useEffect() { at++; },
+    useLayoutEffect() { at++; },
+  };
+  const { MakeScreen } = loadTsx(`${DIR}/make.tsx`, { stubs: { react: React } });
+  const { EXAMPLES } = loadTsx(`${DIR}/examples.ts`);
+  const draw = () => { at = 0; return MakeScreen({ who: 'Jordan', onMade() {}, onLookAround() {} }); };
+  const find = (node, test, out = []) => {
+    if (!node || typeof node !== 'object') return out;
+    if (Array.isArray(node)) { node.forEach((n) => find(n, test, out)); return out; }
+    if (node.props && test(node)) out.push(node);
+    if (node.props) find(node.props.children, test, out);
+    return out;
+  };
+  const examples = (tree) => find(tree, (n) => n.props['data-first-session-example'] !== undefined);
+  const ownTile = (tree) => find(tree, (n) => n.props['data-first-session-own'] !== undefined)[0];
+  const brief = (tree) => find(tree, (n) => n.type === 'textarea')[0];
+  const nameField = (tree) => find(tree, (n) => n.props.id === 'first-session-name')[0];
+  let tree = draw();
+  assert.equal(brief(tree).props.value, EXAMPLES[0].brief, 'opens on the run tracker');
+  examples(tree)[2].props.onClick();
+  tree = draw();
+  assert.equal(brief(tree).props.value, EXAMPLES[2].brief);
+  assert.equal(nameField(tree).props.value, EXAMPLES[2].name);
+  assert.deepEqual(examples(tree).map((c) => c.props['aria-pressed']), [false, false, true]);
+  assert.equal(ownTile(tree).props['aria-pressed'], false);
+  // "Your own idea": both fields empty, its tile chosen, the caret in the first.
+  let focused = null;
+  brief(tree).ref.current = { focus(opts) { focused = opts; } };
+  ownTile(tree).props.onClick();
+  tree = draw();
+  assert.equal(brief(tree).props.value, '');
+  assert.equal(nameField(tree).props.value, '');
+  assert.equal(ownTile(tree).props['aria-pressed'], true);
+  assert.deepEqual(examples(tree).map((c) => c.props['aria-pressed']), [false, false, false]);
+  assert.deepEqual(focused, { preventScroll: true });
+  // Typing keeps it theirs; an example taken afterwards takes the ring back.
+  brief(tree).props.onChange({ target: { value: 'A sign-up sheet for our book club' } });
+  tree = draw();
+  assert.equal(ownTile(tree).props['aria-pressed'], true);
+  examples(tree)[1].props.onClick();
+  tree = draw();
+  assert.equal(ownTile(tree).props['aria-pressed'], false);
+  assert.equal(brief(tree).props.value, EXAMPLES[1].brief);
 });
 
 test('the make screen sends the device\'s time zone with Make it, so the sketch\'s today is the maker\'s', () => {
