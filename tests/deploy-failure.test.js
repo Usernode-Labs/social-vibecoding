@@ -103,6 +103,29 @@ test('record() carries stage/reason/log plus timestamp and sha', () => {
   assert.ok(!Number.isNaN(new Date(rec.at).getTime()));
 });
 
+// #4092: the retry-limit refusal classifies the recorded failure as the
+// app's or the platform's from its stage, so a person stuck at three
+// attempts can tell a bad build from a pipeline fault.
+test('causeOf maps the build/boot stages to the app', () => {
+  for (const stage of ['build', 'start', 'healthcheck', 'database']) {
+    assert.equal(deployFailure.causeOf(stage), 'app', stage);
+  }
+});
+
+test('causeOf maps clone/repo/timeout/other to the platform or pipeline', () => {
+  for (const stage of ['clone', 'repo', 'timeout', 'other']) {
+    assert.equal(deployFailure.causeOf(stage), 'platform', stage);
+  }
+});
+
+test('causeOf returns null for unknown or missing stages so clients omit the line', () => {
+  assert.equal(deployFailure.causeOf('deploy'), null);
+  assert.equal(deployFailure.causeOf(''), null);
+  assert.equal(deployFailure.causeOf(undefined), null);
+  assert.equal(deployFailure.causeOf(null), null);
+  assert.equal(deployFailure.causeOf(42), null);
+});
+
 test('syntheticRecord() shapes watchdog/kickoff failures', () => {
   const rec = deployFailure.syntheticRecord('timeout', 'App creation timed out after 5 minutes');
   assert.equal(rec.stage, 'timeout');

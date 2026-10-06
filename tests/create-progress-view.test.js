@@ -272,3 +272,63 @@ test('the inset panel does not paint itself the dialog card\'s own background', 
     'invisible against the card in dark mode');
   assert.match(panel[1], /dark:bg-zinc-800/, 'use the dialog\'s existing inset tone');
 });
+
+// ── The refused retry's detail block (#4092) ───────────────────────
+//
+// A retry refused at the limit carries the recorded failure; when the
+// onRetry callback publishes it as retryLimited, the failed view gains a
+// short block: the limit, the last failure and its age, the classification
+// line, and either the View build log button or the explicit no-log line.
+
+const RETRY_LIMITED = {
+  count: 3,
+  max: 3,
+  reason: 'fatal: expected flush after ref listing',
+  at: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
+  cause: 'platform',
+  hasLog: false,
+};
+
+test('a refused retry adds the limit, failure, classification and no-log lines', () => {
+  const t = text({ status: 'error', retryLimited: RETRY_LIMITED });
+  assert.ok(t.includes('Retry limit reached (3 of 3).'), t);
+  assert.ok(t.includes('Last failure, 2h ago: fatal: expected flush after ref listing'), t);
+  assert.ok(t.includes('This looks like a platform or pipeline issue.'), t);
+  assert.ok(t.includes('No build log was captured.'), t);
+});
+
+test('the block is marked with its id and cause, and sits between the report and the actions', () => {
+  const out = html({ status: 'error', retryLimited: RETRY_LIMITED });
+  assert.match(out, /id="create-progress-retry-limit"[^>]*data-cause="platform"/);
+  assert.ok(out.indexOf('id="create-progress-steps"') < out.indexOf('create-progress-retry-limit'),
+    'the block sits under the report');
+  assert.ok(out.indexOf('create-progress-retry-limit') < out.indexOf('id="create-progress-close"'),
+    'and above the footer actions');
+});
+
+test('a captured log becomes a View build log button instead of the no-log line', () => {
+  const out = html({ status: 'error', retryLimited: { ...RETRY_LIMITED, hasLog: true } });
+  const t = out.replace(/<[^>]*>/g, ' ');
+  assert.ok(t.includes('View build log'), t);
+  assert.doesNotMatch(t, /No build log was captured/);
+  assert.match(out, /<button type="button"[^>]*>View build log<\/button>/);
+});
+
+test('an app-stage refusal shows the app classification wording', () => {
+  const t = text({ status: 'error', retryLimited: { ...RETRY_LIMITED, cause: 'app' } });
+  assert.ok(t.includes('This looks like an app issue (build or startup).'), t);
+  assert.doesNotMatch(t, /platform or pipeline/);
+});
+
+test('an unknown cause omits the classification line rather than guessing', () => {
+  const t = text({ status: 'error', retryLimited: { ...RETRY_LIMITED, cause: null } });
+  assert.doesNotMatch(t, /This looks like/);
+});
+
+test('without retryLimited the failed view is unchanged', () => {
+  const out = html({ status: 'error', phase: 'build', errorReason: 'Build failed: no Dockerfile' });
+  assert.doesNotMatch(out, /create-progress-retry-limit/);
+  assert.doesNotMatch(out, /Retry limit reached/);
+  // And a pending view never shows it either.
+  assert.doesNotMatch(html({ phase: 'build' }), /create-progress-retry-limit/);
+});

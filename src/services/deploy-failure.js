@@ -254,11 +254,30 @@ function asRecord(value) {
   return value && typeof value === 'object' ? value : null;
 }
 
+// Whether a recorded failure's stage reads as the APP's fault (its build
+// or boot went wrong) or the PLATFORM's (the pipeline never got to the
+// app: the clone, the repo, a timeout). The retry-limit refusal (#4092)
+// shows one classification line built from this, so a person stuck at
+// three attempts can tell a bad Dockerfile from an infra outage. Derived
+// at read time from the stage vocabulary this module already documents —
+// no new stored field. An unknown or missing stage returns null so
+// clients omit the line rather than guess.
+const APP_CAUSE_STAGES = new Set(['build', 'start', 'healthcheck', 'database']);
+const PLATFORM_CAUSE_STAGES = new Set(['clone', 'repo', 'timeout', 'other']);
+
+function causeOf(stage) {
+  if (typeof stage !== 'string') return null;
+  if (APP_CAUSE_STAGES.has(stage)) return 'app';
+  if (PLATFORM_CAUSE_STAGES.has(stage)) return 'platform';
+  return null;
+}
+
 module.exports = {
   classify,
   record,
   syntheticRecord,
   sameIncident,
+  causeOf,
   summarizeBootFailure,
   bootFailureIsInfrastructure,
   truncateLog,

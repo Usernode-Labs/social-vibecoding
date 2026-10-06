@@ -30,9 +30,12 @@
  * @typedef {'database'|'repository'|'build'|'deploy'} CreationPhase
  * @typedef {'pending'|'live'|'needs-secrets'|'failed'} CreationOutcome
  * @typedef {'idle'|'active'|'done'|'failed'} StepState
+ * @typedef {{ count: number, max: number, reason: string|null, at: string|null,
+ *             cause: 'app'|'platform'|null, hasLog: boolean }} RetryLimitedDetail
  * @typedef {{ slug: string|null, status: string|null, phase: CreationPhase|null,
  *             url: string|null, errorReason: string|null,
- *             missingSecrets: string[]|null }} CreationProgressState
+ *             missingSecrets: string[]|null,
+ *             retryLimited: RetryLimitedDetail|null }} CreationProgressState
  */
 
 import { createStore } from '../../lib/plain-store.js';
@@ -57,6 +60,9 @@ export const INITIAL_CREATION_PROGRESS = /** @type {CreationProgressState} */ ({
   url: null,
   errorReason: null,
   missingSecrets: null,
+  // A refused retry's detail (#4092), set only by the onRetry callback when
+  // POST /retry answers 429; every watch/stop/reset clears it again.
+  retryLimited: null,
 });
 
 export const creationProgressStore = createStore(INITIAL_CREATION_PROGRESS);
@@ -97,6 +103,10 @@ export function publishAppStatus(data) {
     url: data.url || state.url,
     errorReason: data.errorReason || state.errorReason,
     missingSecrets: data.missingSecrets || state.missingSecrets,
+    // retryLimited folds by presence rather than truthiness: a refusal
+    // clears it explicitly with null, and an absent field leaves any
+    // earlier one alone like the fields above.
+    retryLimited: data.retryLimited === undefined ? state.retryLimited : (data.retryLimited || null),
   });
 }
 

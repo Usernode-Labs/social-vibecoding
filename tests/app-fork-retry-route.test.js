@@ -202,6 +202,86 @@ test('a missing source stops an uncopied fork retry with an actionable reason', 
   }
 });
 
+// #4092: a retry refused at the limit carries the recorded failure, so the
+// surfaces that press Retry can explain the refusal instead of the user
+// staring at a bare count.
+test('a retry at the limit answers 429 with the last failure, its cause and the budget', async () => {
+  const failure = {
+    stage: 'clone',
+    reason: 'fatal: expected flush after ref listing',
+    log: '',
+    at: '2026-10-06T09:00:00.000Z',
+    sha: null,
+  };
+  failedApp = app({ retry_count: 3, last_failure: failure });
+  const server = await startServer();
+  try {
+    const { res, body } = await post(server, '/api/apps/forked-app/retry');
+    assert.equal(res.status, 429);
+    assert.equal(body.retry_count, 3);
+    assert.equal(body.max_retry_count, 3);
+    assert.deepEqual(body.last_failure, failure);
+    assert.equal(body.cause, 'platform',
+      'a clone-stage failure reads as the platform or pipeline, not the app');
+    assert.match(body.error, /Retry limit reached \(3\)/,
+      'the existing error line stays as the anchor');
+    assert.ok(!queries.some((q) => /retry_count = retry_count \+ 1/.test(q.sql)),
+      'a refused retry does not consume the budget');
+    assert.equal(forkCalls.length, 0);
+  } finally {
+    server.close();
+  }
+});
+
+test('an app-stage recorded failure classifies as the app in the refusal', async () => {
+  failedApp = app({
+    retry_count: 3,
+    last_failure: {
+      stage: 'build',
+      reason: 'Build failed: no Dockerfile',
+      log: 'Step 1/4 : FROM node:20-alpine',
+      at: '2026-10-06T09:00:00.000Z',
+      sha: null,
+    },
+  });
+  const server = await startServer();
+  try {
+    const { res, body } = await post(server, '/api/apps/forked-app/retry');
+    assert.equal(res.status, 429);
+    assert.equal(body.cause, 'app');
+    assert.ok(body.last_failure.log, 'the captured log rides along');
+  } finally {
+    server.close();
+  }
+});
+
+test('a legacy string last_failure is withheld rather than guessed at', async () => {
+  failedApp = app({ retry_count: 3, last_failure: 'fatal: expected flush after ref listing' });
+  const server = await startServer();
+  try {
+    const { res, body } = await post(server, '/api/apps/forked-app/retry');
+    assert.equal(res.status, 429);
+    assert.equal(body.last_failure, null);
+    assert.equal(body.cause, null);
+  } finally {
+    server.close();
+  }
+});
+
+test('an admin passes the limit branch and the retry starts as usual', async () => {
+  failedApp = app({ retry_count: 3 });
+  currentUser = { id: 5, username: 'fork-owner', canAdminWrite: true };
+  const server = await startServer();
+  try {
+    const { res, body } = await post(server, '/api/apps/forked-app/retry');
+    assert.equal(res.status, 200);
+    assert.deepEqual(body, { ok: true });
+    assert.ok(queries.some((q) => /retry_count = retry_count \+ 1/.test(q.sql)));
+  } finally {
+    server.close();
+  }
+});
+
 test('forking a source still being created is refused before a fork row is inserted', async () => {
   failedApp = null;
   sourceApp = source({ status: 'creating' });

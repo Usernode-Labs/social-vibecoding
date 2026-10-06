@@ -2391,3 +2391,82 @@ test('grid tile: Retry sits beside "Error" and the card is not greyed', () => {
   assert.match(other.match(/class="(app-card [^"]*)"/)[1], /cursor-not-allowed grayscale-\[0\.75\]/);
   assert.doesNotMatch(other, /retry-btn/);
 });
+
+// ── The refused retry's toast message (#4092) ──────────────────────
+//
+// POST /api/apps/:slug/retry answers 429 once the three attempts are gone,
+// and both Retry surfaces used to throw that answer away. The refusal now
+// carries the recorded failure, and Home.composeRetryRefusal composes the
+// toast that explains it: the limit, the last failure and its age, one
+// classification line, and the build-log pointer — or the explicit
+// "no build log" line, which is itself the answer to "is it my fault?".
+
+const twoHoursAgo = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
+const PIPELINE_FAILURE = {
+  stage: 'clone',
+  reason: 'fatal: expected flush after ref listing',
+  log: '',
+  at: twoHoursAgo,
+  sha: null,
+};
+
+test('the refusal toast names the limit, the last failure, its age and the classification', () => {
+  const Home = makeHome({ id: ME, canAdminWrite: false });
+  const msg = Home.composeRetryRefusal({
+    retry_count: 3,
+    max_retry_count: 3,
+    last_failure: PIPELINE_FAILURE,
+    cause: 'platform',
+  });
+  assert.ok(msg.includes('Retry limit reached (3 of 3).'), msg);
+  assert.ok(msg.includes(`Last failure, 2h ago: fatal: expected flush after ref listing`), msg);
+  assert.ok(msg.includes('This looks like a platform or pipeline issue.'), msg);
+  assert.ok(msg.includes('No build log was captured.'), msg);
+});
+
+test('the refusal toast points at View build log when a log was captured', () => {
+  const Home = makeHome({ id: ME, canAdminWrite: false });
+  const msg = Home.composeRetryRefusal({
+    retry_count: 3,
+    max_retry_count: 3,
+    last_failure: { ...PIPELINE_FAILURE, log: 'fatal: expected flush after ref listing' },
+    cause: 'platform',
+  });
+  assert.ok(msg.includes('choose "View build log"'), msg);
+  assert.ok(!msg.includes('No build log was captured.'), msg);
+});
+
+test('an app-stage failure reads as an app issue', () => {
+  const Home = makeHome({ id: ME, canAdminWrite: false });
+  const msg = Home.composeRetryRefusal({
+    retry_count: 2,
+    max_retry_count: 3,
+    last_failure: { ...PIPELINE_FAILURE, stage: 'build', reason: 'Build failed: no Dockerfile' },
+    cause: 'app',
+  });
+  assert.ok(msg.includes('This looks like an app issue (build or startup).'), msg);
+  assert.ok(msg.includes('Retry limit reached (2 of 3).'), msg);
+});
+
+test('with no failure record the toast degrades to the limit and the no-log line', () => {
+  const Home = makeHome({ id: ME, canAdminWrite: false });
+  const msg = Home.composeRetryRefusal({
+    retry_count: 3, max_retry_count: 3, last_failure: null, cause: null,
+  });
+  assert.ok(msg.includes('Retry limit reached (3 of 3).'), msg);
+  assert.ok(msg.includes('No build log was captured.'), msg);
+  assert.ok(!msg.includes('Last failure'), msg);
+  assert.ok(!msg.includes('This looks like'), 'no classification without a cause');
+});
+
+test('an unparseable timestamp falls back to the locale string rather than "NaN ago"', () => {
+  const Home = makeHome({ id: ME, canAdminWrite: false });
+  const msg = Home.composeRetryRefusal({
+    retry_count: 3,
+    max_retry_count: 3,
+    last_failure: { ...PIPELINE_FAILURE, at: 'not-a-date' },
+    cause: 'platform',
+  });
+  assert.ok(msg.includes('Last failure:'), 'the comma form is reserved for a known time');
+  assert.ok(!msg.includes('NaN'), msg);
+});

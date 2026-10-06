@@ -1406,7 +1406,33 @@ export function CreateAppDialog() {
               // broadcasting phases again.
               watchCreation(slug);
               void fetch(`/api/apps/${encodeURIComponent(slug)}/retry`, { method: 'POST' })
-                .then(() => (window.Home?.load as (() => void) | undefined)?.())
+                .then(async (res) => {
+                  if (res.ok) {
+                    (window.Home?.load as (() => void) | undefined)?.();
+                    return;
+                  }
+                  // #4092: the retry-limit refusal carries the recorded
+                  // failure. Publish it so the failed view explains itself
+                  // instead of the refusal vanishing; any other non-ok
+                  // status is left to the status poll, as before.
+                  const data = await res.json().catch(() => ({}));
+                  if (res.status !== 429) return;
+                  const failure = data.last_failure && typeof data.last_failure === 'object'
+                    ? data.last_failure : null;
+                  publishAppStatus({
+                    slug,
+                    status: 'error',
+                    errorReason: failure?.reason || null,
+                    retryLimited: {
+                      count: data.retry_count,
+                      max: data.max_retry_count,
+                      reason: failure?.reason || null,
+                      at: failure?.at || null,
+                      cause: data.cause || null,
+                      hasLog: !!(failure?.log && String(failure.log).trim()),
+                    },
+                  });
+                })
                 .catch(() => {
                   publishAppStatus({
                     slug,

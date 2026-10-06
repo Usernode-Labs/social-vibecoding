@@ -255,6 +255,15 @@ declare global {
       _syncStagingDockGeometry?(): void;
       [key: string]: unknown;
     };
+    /**
+     * public/js/build-log.js — the build log panel involved users open from
+     * the card menu and the app page. The create dialog's retry-limit block
+     * opens it for the failed app (#4092).
+     */
+    BuildLog?: {
+      open(slug: string): void;
+      [key: string]: unknown;
+    };
     /** features/home/home.js — refreshed after app creation. */
     Home?: {
       load?(): void;

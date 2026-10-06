@@ -3214,8 +3214,23 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       }
 
       if (appRow.retry_count >= MAX_RETRY_COUNT && !req.user.canAdminWrite) {
+        // #4092: this refusal used to be the bare error string, and every
+        // client threw it away, so a tile that had used its attempts made
+        // Retry look dead. Carry what the app knows — the recorded failure,
+        // how much of the budget is gone and whether the stage reads as the
+        // app's or the platform's — so the surfaces that press Retry can
+        // explain the refusal. The record rides only past canManageApp
+        // above, the same gate GET /api/apps/:slug applies to lastFailure.
+        // Legacy rows whose last_failure is not an object degrade to null.
+        const lastFailure = appRow.last_failure && typeof appRow.last_failure === 'object'
+          ? appRow.last_failure
+          : null;
         return res.status(429).json({
           error: `Retry limit reached (${MAX_RETRY_COUNT}). Ask an admin to investigate.`,
+          retry_count: appRow.retry_count,
+          max_retry_count: MAX_RETRY_COUNT,
+          last_failure: lastFailure,
+          cause: lastFailure ? deployFailure.causeOf(lastFailure.stage) : null,
         });
       }
 

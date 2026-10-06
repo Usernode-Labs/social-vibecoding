@@ -1299,8 +1299,42 @@ const Home = {
   // can carry its own handler as a prop.
   async _onRetry(slug, btn) {
     if (btn) btn.textContent = '...';
-    await fetch(`/api/apps/${slug}/retry`, { method: 'POST' });
-    Home.load();
+    await Home._requestRetry(slug);
+  },
+
+  // The message for a refused retry (#4092). Pure, so a Node test can assert
+  // the lines: the limit, the last recorded failure and its age, one line
+  // saying whether the failure reads as the app's or the platform's, and the
+  // pointer to the build log — or, when none was captured, the explicit
+  // statement of that, which is itself the answer to "is it my fault?".
+  composeRetryRefusal(data) {
+    const count = Number(data && data.retry_count);
+    const max = Number(data && data.max_retry_count);
+    const lines = [
+      `Retry limit reached (${Number.isFinite(count) ? count : '?'} of ${Number.isFinite(max) ? max : '?'}).`,
+    ];
+    const failure = data && data.last_failure && typeof data.last_failure === 'object'
+      ? data.last_failure : null;
+    if (failure) {
+      // Build log's "2h ago" buckets; a timestamp that will not parse at all
+      // reads as no timestamp rather than "Invalid Date".
+      const parsed = failure.at ? new Date(failure.at) : null;
+      const when = formatRelativeTime(failure.at)
+        || (parsed && !Number.isNaN(parsed.getTime()) ? parsed.toLocaleString() : null);
+      const reason = String(failure.reason || '').trim();
+      lines.push(`Last failure${when ? `, ${when}` : ''}: ${reason || 'no reason was recorded'}`);
+    }
+    if (data && data.cause === 'app') {
+      lines.push('This looks like an app issue (build or startup).');
+    } else if (data && data.cause === 'platform') {
+      lines.push('This looks like a platform or pipeline issue.');
+    }
+    if (failure && String(failure.log || '').trim()) {
+      lines.push('Use the app’s menu and choose "View build log".');
+    } else {
+      lines.push('No build log was captured.');
+    }
+    return lines.join('\n');
   },
 
   // ── The home screen's Improve button (#1367) ───────────────────────
@@ -4364,9 +4398,30 @@ const Home = {
     return Home.toggleAdded(app.slug, next);
   },
 
+  // One shared POST behind both Retry surfaces (#4092): the errored tile's
+  // button and the card menu's item. The 429 refusal used to be thrown away,
+  // so a tile that had used its three attempts made Retry look dead — the
+  // press did nothing visible. The refusal now carries the recorded failure
+  // and the toast explains it; any other non-ok status falls back to
+  // data.error, the same pattern _menuCheckUpdates uses. Home.load() still
+  // runs after every attempt, as before.
+  async _requestRetry(slug) {
+    try {
+      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/retry`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        PlatformUI.toast(res.status === 429
+          ? Home.composeRetryRefusal(data)
+          : (data.error || `Retry failed (HTTP ${res.status})`));
+      }
+    } catch (err) {
+      PlatformUI.toast(`Retry failed: ${err.message}`);
+    }
+    await Home.load();
+  },
+
   async _menuRetry(app) {
-    await fetch(`/api/apps/${app.slug}/retry`, { method: 'POST' });
-    Home.load();
+    await Home._requestRetry(app.slug);
   },
 
   async _menuCheckUpdates(app, itemEl) {

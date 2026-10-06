@@ -123,6 +123,24 @@ function headline(
 }
 
 /**
+ * The compact "2h ago" buckets build-log.js's blRelTime uses, kept local for
+ * the same reason that file kept its own copy: the pure component must not
+ * reach for a global, and load order does not matter. Null for missing or
+ * unparseable input, so the caller can fall back to the locale string.
+ */
+function retryRelTime(at: string | null | undefined): string | null {
+  if (!at) return null;
+  const t = new Date(at);
+  if (Number.isNaN(t.getTime())) return null;
+  const seconds = Math.floor((Date.now() - t.getTime()) / 1000);
+  if (seconds < 60) return 'just now';
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+  if (seconds < 86400 * 30) return `${Math.floor(seconds / 86400)}d ago`;
+  return `${Math.floor(seconds / (86400 * 30))}mo ago`;
+}
+
+/**
  * The one line under the steps. It is the `aria-live` region, so it is
  * also what a screen reader hears as the state moves.
  */
@@ -265,6 +283,12 @@ export function CreateProgress({
   const outcome = outcomeOf(progress.status);
   const states = stepStates(progress);
   const look = SURFACES[surface];
+  // The refused-retry block's "2h ago" segment, in Build log's buckets,
+  // falling back to the locale string when the timestamp will not parse.
+  const failureWhen = progress.retryLimited
+    ? (retryRelTime(progress.retryLimited.at)
+      || (progress.retryLimited.at ? new Date(progress.retryLimited.at).toLocaleString() : null))
+    : null;
 
   return (
     <div id="create-progress" className="space-y-4">
@@ -318,6 +342,50 @@ export function CreateProgress({
             {progress.errorReason}
           </p>
         </details>
+      ) : null}
+
+      {/*
+          #4092: a retry refused at the limit carries the recorded failure.
+          The block answers "why won't it start, and is it my fault?" at the
+          moment Retry stops working — the same detail the home tile's toast
+          shows, with room for the real View build log button. Drawn with the
+          surface's inset treatment so it reads as a note, not a new panel.
+      */}
+      {progress.retryLimited && outcome === 'failed' ? (
+        <div
+          id="create-progress-retry-limit"
+          data-cause={progress.retryLimited.cause || undefined}
+          className={`${look.next} text-xs text-zinc-600 dark:text-zinc-300`}
+        >
+          <p className="font-semibold text-zinc-900 dark:text-zinc-100">
+            {`Retry limit reached (${progress.retryLimited.count} of ${progress.retryLimited.max}).`}
+          </p>
+          {progress.retryLimited.reason ? (
+            <p className="mt-1.5 break-words">
+              {`Last failure${failureWhen ? `, ${failureWhen}` : ''}: ${progress.retryLimited.reason}`}
+            </p>
+          ) : null}
+          {progress.retryLimited.cause === 'app' ? (
+            <p className="mt-1.5">This looks like an app issue (build or startup).</p>
+          ) : null}
+          {progress.retryLimited.cause === 'platform' ? (
+            <p className="mt-1.5">This looks like a platform or pipeline issue.</p>
+          ) : null}
+          {progress.retryLimited.hasLog ? (
+            <button
+              type="button"
+              className="mt-2 rounded-lg bg-zinc-200 hover:bg-zinc-300 dark:bg-zinc-700 dark:hover:bg-zinc-600 px-3 py-1.5 text-xs font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
+              onClick={() => {
+                const open = window.BuildLog?.open;
+                if (progress.slug && open) open(progress.slug);
+              }}
+            >
+              View build log
+            </button>
+          ) : (
+            <p className="mt-1.5">No build log was captured.</p>
+          )}
+        </div>
       ) : null}
 
       {/*
