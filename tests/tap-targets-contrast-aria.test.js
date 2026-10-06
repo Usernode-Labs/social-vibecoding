@@ -165,7 +165,9 @@ test('Q19: each small control named by the audit wears a hit-slop', () => {
   has(ui, new RegExp(`className="home-panel-browse [^"]*${KIT}"`), 'Browse all apps');
   has(ui, new RegExp(`className="home-panel-lb-browse [^"]*${KIT}"`), 'Open challenges');
   has(ui, new RegExp(`className="home-panel-expand [^"]*${KIT}"`), 'See all N challenges');
-  has('frontend/src/features/home/panels/discover.tsx', new RegExp(`card-add-btn absolute [^$]*${KIT} \\$\\{`), 'the Discover +');
+  // #4020: the Discover control is a worded pill now, not a bare + badge;
+  // the pin keeps requiring the hit-slop class so it cannot silently drop.
+  has('frontend/src/features/home/panels/discover.tsx', new RegExp(`card-add-btn absolute top-1\\.5 right-1\\.5 h-6 px-2 [^$]*${KIT} \\$\\{`), 'the Discover Add pill');
   for (const f of ['grants-list.tsx', 'app-permissions-list.tsx', 'cli-tokens-list.tsx']) {
     has(`frontend/src/features/settings/${f}`, /bg-red-50 [^"]*touch-target-32"/, `Revoke in ${f}`);
   }

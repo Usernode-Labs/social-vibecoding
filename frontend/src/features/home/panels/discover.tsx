@@ -68,7 +68,7 @@
 
 import { type KeyboardEvent, useEffect, useRef, useState } from 'react';
 
-import { CheckIcon, ChevronRightIcon, PlusWideIcon } from '@/components/ui/icons';
+import { CheckIcon, ChevronRightIcon } from '@/components/ui/icons';
 
 import { clampFrame } from '../../../lib/illustration-framing';
 
@@ -187,9 +187,14 @@ export function DiscoverCard({ tile, preview = false, previewTheme }: { tile: Di
           type="button"
           disabled={preview}
           tabIndex={preview ? -1 : undefined}
-          className={`card-add-btn absolute top-1.5 right-1.5 w-6 h-6 flex items-center justify-center rounded-full border shadow-sm transition-colors un-touch-target ${
+          // A worded pill, not a bare + badge (#4020): the icon alone never
+          // said add-to-what. The words are the same ones the rest of the app
+          // uses for this action, and the settled state is dark green ink on
+          // a pale tint rather than a filled pill, so the done thing is not
+          // the loudest thing on the card.
+          className={`card-add-btn absolute top-1.5 right-1.5 h-6 px-2 gap-1 flex items-center rounded-full border shadow-sm transition-colors text-[11px] font-semibold whitespace-nowrap un-touch-target ${
             added
-              ? 'bg-emerald-500 border-emerald-500 text-white'
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-700 dark:bg-emerald-500/15 dark:border-emerald-500/30 dark:text-emerald-300'
               : 'bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-600 text-violet-700 dark:text-violet-400 hover:border-violet-400'
           }`}
           data-slug={tile.slug}
@@ -199,8 +204,8 @@ export function DiscoverCard({ tile, preview = false, previewTheme }: { tile: Di
           aria-pressed={added}
         >
           {added
-            ? <CheckIcon className="w-3.5 h-3.5" strokeWidth="3" aria-hidden="true" />
-            : <PlusWideIcon className="w-3.5 h-3.5" strokeWidth="3" aria-hidden="true" />}
+            ? (<><CheckIcon className="w-3 h-3" strokeWidth="3" aria-hidden="true" /><span>Added</span></>)
+            : <span>Add</span>}
         </button>
       </div>
       <div className="flex flex-col gap-0.5 px-2.5 pt-2 pb-2.5">

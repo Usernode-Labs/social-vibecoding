@@ -2370,7 +2370,8 @@ test('every window.<global> the widgets read is actually published', () => {
 
 test('the Discover widget renders the curated cards when Home is reachable', () => {
   const featured = [
-    { slug: 'alpha', name: 'Alpha', icon_emoji: '🅰', featured: true },
+    { slug: 'alpha', name: 'Alpha', icon_emoji: '🅰', featured: true,
+      manifest_snapshot: { description: 'Alpha is a start page of widgets, links and notes.' } },
     { slug: 'beta', name: 'Beta', featured: true },
   ];
   const { html } = renderBlock('discover', {
@@ -2386,6 +2387,15 @@ test('the Discover widget renders the curated cards when Home is reachable', () 
   assert.doesNotMatch(html, /home-discover-tile\b/, 'the grid tile is retired, not renamed in place');
   assert.match(html, /Browse all apps/, 'and the browse control is always there');
   assert.doesNotMatch(html, /Nothing to discover/);
+
+  // A card says what the app is FOR: the manifest's own one-line description
+  // renders under the name when the snapshot carries one, and a card without
+  // a description draws nothing rather than a filler sentence (#4020).
+  assert.match(html, /home-discover-blurb[^>]*>Alpha is a start page of widgets, links and notes\./,
+    'the manifest description under the name');
+  const betaAt = html.indexOf('data-slug="beta"');
+  assert.ok(betaAt > 0, 'beta renders after alpha');
+  assert.doesNotMatch(html.slice(betaAt), /home-discover-blurb/, 'no invented sentence on a bare card');
 
   // With Home genuinely absent it still renders — the note, not a crash.
   const bare = renderBlock('discover').html;
