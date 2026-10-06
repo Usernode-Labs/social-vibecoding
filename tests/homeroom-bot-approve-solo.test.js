@@ -120,3 +120,18 @@ test('B7: Approve is one tap, the viewer\'s own Yes, and reads Approved once it 
   const card = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/dev-board/card/dev-card.tsx'), 'utf8');
   assert.match(card, /onClick=\{\(e\) => \{ e\.stopPropagation\(\); send\(yes, null\); \}\}/, 'one tap, no line asked for');
 });
+
+test('B7: the one-tap Approve is busy under its own verb while the vote is in flight', () => {
+  const card = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/dev-board/card/dev-card.tsx'), 'utf8');
+  const fn = card.slice(
+    card.indexOf('if (yes.approve && yes.act?.fn'),
+    card.indexOf('return (\n    <>\n      <button'),
+  );
+  assert.ok(fn.length > 0, 'the Approve branch is where the busy face rides');
+  assert.match(fn, /className=\{`dev-vote-btn dev-vote-btn-approve\$\{approved \? ' dev-vote-btn-yes' : ''\}\$\{pending \? ' dev-vote-btn-pending' : ''\}`\}/,
+    'the busy class is ADDED to the Approve pill');
+  assert.match(fn, /aria-busy=\{pending \? 'true' : undefined\}/);
+  assert.match(fn, /disabled=\{disabled \|\| approved \|\| pending\}/, 'a second tap stays off while it works');
+  assert.match(fn, /pending \? <SpinnerArcIcon className="animate-spin" aria-hidden="true" \/>/, "the shell's spinner, no new parts");
+  assert.match(fn, /pending \? 'Approving…' : \(approved \? 'Approved' : 'Approve'\)/, 'Approving… in flight, the steady faces untouched');
+});

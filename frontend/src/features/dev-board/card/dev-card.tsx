@@ -51,7 +51,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 
-import { Bars3Icon, CheckIcon, ChevronDownIcon, ChevronRightIcon, EyeIcon, EyeOffIcon, Glyph, PencilSquareIcon, XIcon } from '@/components/ui/icons';
+import { Bars3Icon, CheckIcon, ChevronDownIcon, ChevronRightIcon, EyeIcon, EyeOffIcon, Glyph, PencilSquareIcon, SpinnerArcIcon, XIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 import { useStoreState } from '../../../lib/use-store-state';
 import { clampPopoverHeight, placeUnderAnchor } from '../../../lib/anchor-popover';
@@ -75,15 +75,17 @@ import type {
 /** Layout-timed on the client; a no-op under the server renderer, warning-free. */
 const useIsoLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect;
 
-/** Dispatch a named call back into app-view.js. Unknown names are a no-op. */
-function call(ref: ActionRef | undefined, node?: HTMLElement): void {
-  if (!ref) return;
+/** Dispatch a named call back into app-view.js. Unknown names are a no-op.
+ * The dispatch's own return value comes back: a real vote call is async, so
+ * it arrives as a promise the busy face waits on (VoteButton.beginPending). */
+function call(ref: ActionRef | undefined, node?: HTMLElement): unknown {
+  if (!ref) return undefined;
   const av = typeof window !== 'undefined' ? (window as any).AppView : null;
   const fn = av && av[ref.fn];
-  if (typeof fn !== 'function') return;
+  if (typeof fn !== 'function') return undefined;
   const args: unknown[] = [...(ref.args || [])];
   if (node) args.push(node);
-  fn.apply(av, args);
+  return fn.apply(av, args);
 }
 
 /**
@@ -495,6 +497,11 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
   // and landed ON the Vote button when it flipped above one. The guess is
   // only the first paint; the layout effect re-places it from this number.
   const [measuredH, setMeasuredH] = useState<number | null>(null);
+  // The busy face (#3986): true the frame a vote is dispatched, so a slow
+  // round trip is not ten seconds of nothing. Cleared by the effect below —
+  // the board repainting with the viewer's vote, or the dispatched promise
+  // settling without one.
+  const [pending, setPending] = useState(false);
   const sheetRef = useRef<{ dismiss: () => void } | null>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
@@ -542,15 +549,27 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
     const args = [...(a.act.args || [])];
     const positional = VOTE_ARITY[a.act.fn] ?? 3;
     while (args.length < positional) args.push(null);
-    call({ fn: a.act.fn, args: [...args, { reason }] });
+    beginPending(call({ fn: a.act.fn, args: [...args, { reason }] }));
+  };
+  // The busy face: set only when the dispatch really went out — a real vote
+  // call is async, so it answers as a promise; a no-op (no AppView, an
+  // unknown fn name) returns undefined, and a dead button can never strand
+  // the busy face. Cleared when the dispatched promise settles without the
+  // board having painted the vote: a refusal, a network failure, or a
+  // backed-out line prompt. The failure itself still reports the way it did.
+  const beginPending = (res: unknown) => {
+    if (!res || typeof (res as PromiseLike<unknown>).then !== 'function') return;
+    setPending(true);
+    void Promise.resolve(res).then(() => setPending(false), () => setPending(false));
   };
   // The fallback's rows are the native action sheet's, and the line is then
   // asked for by castVote itself through the kit's prompt card — the one
   // path left where the box is not inline, and only where no sheet can be
-  // presented at all.
+  // presented at all. A backed-out prompt settles false and clears pending.
   const pickTouch = (a: ActionSpec) => {
     shut();
-    call(a.act);
+    if (!isVote) { call(a.act); return; }
+    beginPending(call(a.act));
   };
   // The touch picker: a kit bottom sheet holding the same panel. The element
   // handed to the kit is the portal's target; the kit reparents it into its
@@ -624,6 +643,16 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
     const h = popRef.current?.scrollHeight;
     if (h && h !== measuredH) setMeasuredH(h);
   }, [open, side, measuredH]);
+  // Pending clears the frame the board repaints with the viewer's vote:
+  // `_cardVoteButtonSpecs` puts `gc-vote-active` on from `pr.my_vote`, which
+  // castVote's optimistic paint lands within a paint and castIssueVote's
+  // refresh brings back after its round trip. A re-click on the side already
+  // cast finds the class already there and clears on the same pass, so the
+  // busy face never paints there.
+  useEffect(() => {
+    if (!pending) return;
+    if (/\bgc-vote-active\b/.test(yes.cls || '') || /\bgc-vote-active\b/.test(no.cls || '')) setPending(false);
+  }, [pending, yes.cls, no.cls]);
   const face = mine === 'yes' ? 'Yes' : (mine === 'no' ? 'No' : (prior === 'yes' ? 'Still yes?' : 'Vote'));
   // A governance apply in flight disables the pair; the one button goes
   // inert with them, wearing the spec's own explanation.
@@ -713,14 +742,15 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
     return (
       <button
         type="button"
-        className={`dev-vote-btn dev-vote-btn-approve${approved ? ' dev-vote-btn-yes' : ''}`}
+        className={`dev-vote-btn dev-vote-btn-approve${approved ? ' dev-vote-btn-yes' : ''}${pending ? ' dev-vote-btn-pending' : ''}`}
         data-vote-btn={approved ? 'approved' : 'approve'}
         title={approved ? 'You approved it.' : 'Approve it, and it goes live.'}
-        disabled={disabled || approved}
+        aria-busy={pending ? 'true' : undefined}
+        disabled={disabled || approved || pending}
         onClick={(e) => { e.stopPropagation(); send(yes, null); }}
       >
-        {approved ? <CheckIcon aria-hidden="true" /> : null}
-        {approved ? 'Approved' : 'Approve'}
+        {pending ? <SpinnerArcIcon className="animate-spin" aria-hidden="true" /> : approved ? <CheckIcon aria-hidden="true" /> : null}
+        {pending ? 'Approving…' : (approved ? 'Approved' : 'Approve')}
       </button>
     );
   }
@@ -729,18 +759,28 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
       <button
         ref={btnRef}
         type="button"
-        className={`dev-vote-btn${mine ? ` dev-vote-btn-${mine}` : (prior === 'yes' ? ' dev-vote-btn-prior' : '')}`}
+        className={`dev-vote-btn${pending ? ' dev-vote-btn-pending' : ''}${mine ? ` dev-vote-btn-${mine}` : (prior === 'yes' ? ' dev-vote-btn-prior' : '')}`}
         data-vote-btn={mine || (prior === 'yes' ? 'prior-yes' : 'open')}
         aria-haspopup="dialog"
         aria-expanded={open || !!sheetEl ? 'true' : undefined}
+        aria-busy={pending ? 'true' : undefined}
         title={title}
-        disabled={disabled}
+        disabled={disabled || pending}
         onClick={toggle}
       >
-        {mine === 'yes' ? <CheckIcon aria-hidden="true" /> : null}
-        {mine === 'no' ? <XIcon aria-hidden="true" /> : null}
-        {face}
-        <ChevronDownIcon className="dev-vote-caret" aria-hidden="true" />
+        {pending ? (
+          <>
+            <SpinnerArcIcon className="animate-spin" aria-hidden="true" />
+            Voting…
+          </>
+        ) : (
+          <>
+            {mine === 'yes' ? <CheckIcon aria-hidden="true" /> : null}
+            {mine === 'no' ? <XIcon aria-hidden="true" /> : null}
+            {face}
+            <ChevronDownIcon className="dev-vote-caret" aria-hidden="true" />
+          </>
+        )}
       </button>
       {popover}
       {sheet}

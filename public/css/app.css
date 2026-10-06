@@ -14557,6 +14557,10 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 /* "Still yes?": the viewer's Yes was on an earlier version of the proposal
    (#1688). Amber, because it is a question the card is asking them. */
 .dev-vote-btn-prior, .dev-vote-btn-prior:hover { background: var(--state-attention-bg); color: var(--state-attention); }
+/* While a vote is in flight the pill is one working state (#3986): the flat
+   accent, no hover tint, the spinner inside it. Placed after the prior,
+   yes and no faces so the busy look wins on a button wearing any of them. */
+.dev-vote-btn-pending, .dev-vote-btn-pending:hover { background: var(--accent); color: var(--accent-ink); cursor: default; }
 /* The roster's lines (#1688): each voter's sentence under the names, and the
    earlier-version note under those. */
 .dev-ledger-reason { display: block; padding-left: 12px; font-size: 12.5px; color: var(--text-muted); }

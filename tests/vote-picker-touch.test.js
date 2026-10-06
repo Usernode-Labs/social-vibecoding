@@ -189,6 +189,62 @@ test('the switch has two filled states, the popover one even inset, and the shee
   assert.doesNotMatch(block, /#[0-9a-f]{3,6}\b|rgb\(/i, 'tokens only');
 });
 
+// ── The busy face (#3986) ─────────────────────────────────────────────
+
+test('pending is set on a real dispatch only, and cleared by the active class or the settle', () => {
+  // The dispatch's own return value comes back through `call`: a real vote
+  // call is async, so it answers as a promise; a no-op (no AppView, an
+  // unknown fn name) returns undefined and a dead button can never strand
+  // the busy face.
+  assert.match(SRC, /return fn\.apply\(av, args\);/, 'the dispatch answers with its own value');
+  const fn = SRC.slice(SRC.indexOf('export function VoteButton('), SRC.indexOf('export function VotePicker('));
+  assert.match(fn, /beginPending\(call\(\{ fn: a\.act\.fn, args: \[\.\.\.args, \{ reason \}\] \}\)\);/,
+    'send: the busy face rides the dispatched promise');
+  assert.match(fn, /const pickTouch = \(a: ActionSpec\) => \{\s*shut\(\);\s*if \(!isVote\) \{ call\(a\.act\); return; \}\s*beginPending\(call\(a\.act\)\);\s*\};/,
+    'the fallback rows dispatch the same way, and a backed-out line prompt settles false');
+  assert.match(fn, /if \(!res \|\| typeof \(res as PromiseLike<unknown>\)\.then !== 'function'\) return;\s*setPending\(true\);/,
+    'a thenable turns the busy face on; undefined never does');
+  assert.match(fn, /Promise\.resolve\(res\)\.then\(\(\) => setPending\(false\), \(\) => setPending\(false\)\);/,
+    'and a settle without the vote clears it — the failure reports the way it did');
+  // The other way out: the board repainting with the viewer's vote. A
+  // re-click on the side already cast finds the class already there and
+  // clears on the same pass, so the busy face never paints there.
+  assert.match(fn, /if \(!pending\) return;\s*if \(\/\\bgc-vote-active\\b\/\.test\(yes\.cls \|\| ''\) \|\| \/\\bgc-vote-active\\b\/\.test\(no\.cls \|\| ''\)\) setPending\(false\);/,
+    'cleared the frame the board repaints with the vote counted');
+});
+
+test('the busy face: spinner, "Voting…", no caret, disabled, and the steady faces untouched', () => {
+  const fn = SRC.slice(SRC.indexOf('export function VoteButton('), SRC.indexOf('export function VotePicker('));
+  assert.match(fn, /className=\{`dev-vote-btn\$\{pending \? ' dev-vote-btn-pending' : ''\}/,
+    'the busy class is ADDED to the face, never replacing it');
+  assert.match(fn, /data-vote-btn=\{mine \|\| \(prior === 'yes' \? 'prior-yes' : 'open'\)\}/,
+    'the selector the declared checks use does not move');
+  assert.match(fn, /aria-busy=\{pending \? 'true' : undefined\}/);
+  assert.match(fn, /disabled=\{disabled \|\| pending\}/, 're-clicks stay off the UI side too');
+  assert.match(fn, /disabled=\{disabled \|\| approved \|\| pending\}/, 'the one-tap Approve keeps its own disable');
+  assert.match(fn, /pending \? <SpinnerArcIcon className="animate-spin" aria-hidden="true" \/>/,
+    "the shell's spinning arc; the spin is the caller's");
+  assert.match(fn, /Voting…/, 'the busy label');
+  assert.match(fn, /'Approving…'/, 'the one-tap Approve is busy under its own verb');
+  const busyAt = fn.indexOf('{pending ? (');
+  assert.ok(busyAt > -1, 'the busy face is its own branch');
+  const busyEnd = fn.indexOf(') : (', busyAt);
+  const busy = fn.slice(busyAt, busyEnd);
+  assert.doesNotMatch(busy, /ChevronDownIcon|dev-vote-caret/, 'while busy there is nothing left to open');
+  const steady = fn.slice(busyEnd, fn.indexOf('</button>', busyAt));
+  assert.match(steady, /<ChevronDownIcon className="dev-vote-caret" aria-hidden="true" \/>/, 'the steady faces keep their caret');
+});
+
+test('the busy look: the flat accent on the pill and its hover, after the faces it must beat', () => {
+  const rule = (sel) => (new RegExp(`\\n${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\{([^}]*)\\}`).exec(CSS) || [])[1] || '';
+  const busy = rule('.dev-vote-btn-pending, .dev-vote-btn-pending:hover');
+  assert.match(busy, /background: var\(--accent\)/, 'the pill\'s plain accent look');
+  assert.match(busy, /color: var\(--accent-ink\)/, 'its own ink back — a changed vote wears the tint otherwise');
+  assert.match(busy, /cursor: default/, 'nothing left to click');
+  assert.ok(CSS.indexOf('.dev-vote-btn-pending') > CSS.indexOf('.dev-vote-btn-prior'),
+    'after the prior, yes and no faces, so the busy look wins on a button wearing any of them');
+});
+
 // ── Test accounts ─────────────────────────────────────────────────────
 
 test('a test account\'s vote on an app a real person made says, in one line, that it will not count', () => {
