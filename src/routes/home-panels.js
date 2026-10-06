@@ -807,6 +807,13 @@ const PANEL_REGISTRY = [
 
 const PANEL_KEYS = new Set(PANEL_REGISTRY.map((p) => p.key));
 
+// A PRIVATE MEMBER's Home (middleware/auth.js isPrivateMember) is their
+// communities' apps, Discover (they use public apps; they do not vote on
+// them, services/communities.js privateVoteRefusal) and the waitlist card:
+// no Challenges, and no Create app, which they cannot do yet. The client
+// hides a section whose panel is not in the answer.
+const PRIVATE_MEMBER_PANELS = new Set(['discover']);
+
 function panelRegistryPublic() {
   return PANEL_REGISTRY.map((p) => ({
     key: p.key,
@@ -836,6 +843,7 @@ function homePanelRoutes() {
       const variant = typeof req.query.challenges === 'string' ? req.query.challenges : '';
       const panels = [];
       for (const panel of PANEL_REGISTRY) {
+        if (req.user.privateMember && !PRIVATE_MEMBER_PANELS.has(panel.key)) continue;
         const expanded = expandKey === panel.key;
         try {
           const data = demo && panel.demo

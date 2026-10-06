@@ -570,7 +570,7 @@ function PrCard({ r, embedded = false, historical = false }: { r: Extract<Transc
               className="dc-pr-btn dc-pr-btn-promote"
               disabled={r.propose.kind !== 'ready'}
               aria-busy={r.propose.kind === 'pending' ? 'true' : undefined}
-              title={r.propose.kind === 'ready' ? r.propose.note : undefined}
+              title={r.propose.kind === 'ready' || r.propose.kind === 'empty' ? r.propose.note : undefined}
               onClick={r.propose.kind === 'ready' ? () => controller()?.promotePR?.() : undefined}
             >
               {r.propose.kind === 'pending'

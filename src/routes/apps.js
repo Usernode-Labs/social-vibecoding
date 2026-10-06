@@ -29,6 +29,7 @@ const approverInvites = require('../services/approver-invites');
 const contributors = require('../services/contributors');
 const discoveryCuration = require('../services/discovery-curation');
 const communities = require('../services/communities');
+const usernames = require('../services/usernames');
 const challengeScorer = require('../services/topochain/challenge-scorer');
 const governance = require('../services/governance');
 const activeUsers = require('../services/active-users');
@@ -3495,6 +3496,11 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         return res.status(404).json({ error: 'App not found' });
       }
       if (joined) {
+        // A public community never shows a provisional handle: pick a
+        // username first (usernames.js USERNAME_REQUIRED).
+        if (app.view_visibility === 'public' && await usernames.isProvisional(pool, req.user.id)) {
+          return res.status(409).json(usernames.USERNAME_REQUIRED);
+        }
         await communities.join(pool, app, req.user.id);
         // "Find people to build with" counts the join now, not on the
         // rule's next pass (#3564; challengeScorer.scoreOnJoin). Never

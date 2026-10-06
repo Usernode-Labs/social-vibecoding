@@ -10,6 +10,8 @@ Inside a Homeroom hosted dev-chat worker, use the supplied `declare_visible_chan
 commit on the assigned branch, and finish the turn. The platform harness owns
 push, PR creation, staging, checks, and the before/after shots there.
 
+This workflow's `proposal_*` tools come from the local `social_vibecoding` MCP server. If the hosted Homeroom connector is connected and the local `social_vibecoding` MCP server is not, do not set up the CLI to get them: implement in the checkout and hand the change in through the connector's `prepare_work` → `submit_work` path instead, as its work order describes. That path needs a linked GitHub account; if `prepare_work` answers `github_not_linked`, tell the user rather than falling back to the CLI.
+
 Use `production` unless the user explicitly requests `local`. Read `../usernode-api/SKILL.md` before performing setup, authentication, or generic Homeroom API calls.
 
 ## Complete the lifecycle

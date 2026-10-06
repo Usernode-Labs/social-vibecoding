@@ -52,7 +52,7 @@ import { Wordmark } from '@/components/ui/wordmark';
 import { joinPicture, JoinedPicture } from './joined-picture';
 import { type Made, MakeScreen } from './make';
 import { MadeScreen, madeAppOf, madeAppUrl } from './made';
-import { type FirstVersionStage, invitedSteps, makerSteps, type TourScreen, type TourStep } from './tour-steps';
+import { type FirstVersionStage, invitedSteps, makerSteps, privateSteps, type TourScreen, type TourStep } from './tour-steps';
 
 export type FirstSessionInfo = {
   slug: string;
@@ -90,7 +90,12 @@ export function firstVersionStage(body: unknown): FirstVersionStage {
 
 type Legacy = {
   App?: {
-    user?: { id?: number; username?: string; displayName?: string | null; needsCommunitiesChoice?: boolean; waitlistIdea?: string | null } | null;
+    user?: {
+      id?: number; username?: string; displayName?: string | null; needsCommunitiesChoice?: boolean; privateMember?: boolean;
+      waitlistIdea?: string | null;
+    } | null;
+    _privateHomeVisited?: () => boolean;
+    _notePrivateHome?: () => void;
     saveSessionSnapshot?: (user: unknown) => void;
     navigateHome?: (opts?: unknown) => void;
     navigateToApp?: (slug: string, tab: string) => unknown;
@@ -629,7 +634,7 @@ export type Mode =
   | { kind: 'welcome'; info: FirstSessionInfo }
   | { kind: 'make'; shot?: MakeShot }
   | { kind: 'made'; made: Made }
-  | { kind: 'tour'; info: FirstSessionInfo; path: 'invited' | 'maker' };
+  | { kind: 'tour'; info: FirstSessionInfo; path: 'invited' | 'maker' | 'private' };
 
 // Set by the signed-out story's sheet for an account it just made
 // (../auth/landing.tsx): ask it what to make once the shell has signed in.
@@ -763,8 +768,32 @@ export function FirstSession() {
       welcome(info: FirstSessionInfo): boolean {
         if (!info || !info.slug || seen(info.slug)) return false;
         markSeen(info.slug);
+        // A PRIVATE MEMBER lands inside the app the link was for, full
+        // screen, instead of "You're in" and the hub: Homeroom is what the
+        // mark menu's "Go to Homeroom" opens, and its tour (goHome) runs
+        // then. A frame held for the welcome goes.
+        if (legacy().App?.user?.privateMember) {
+          setMode((prev) => (prev.kind === 'held' ? { kind: 'none' } : prev));
+          enterScreen('app', info.slug);
+          return true;
+        }
         setMode({ kind: 'welcome', info });
         return true;
+      },
+      // The mark menu's "Go to Homeroom" for a private member (features/
+      // app-context): Home, and the first time, the four-step tour of it
+      // from the app they were in. From then on the app has its ✕ again
+      // (App._privateHomeVisited, public/js/app.js).
+      goHome(info: { slug?: string | null; name?: string | null }): void {
+        const app = legacy().App;
+        const first = !app?._privateHomeVisited?.();
+        app?._notePrivateHome?.();
+        app?.navigateHome?.();
+        if (!first || !info?.slug) return;
+        rememberCommunity(info.slug);
+        setMode((prev) => (prev.kind === 'none'
+          ? { kind: 'tour', info: { slug: info.slug as string, name: info.name || (info.slug as string) }, path: 'private' }
+          : prev));
       },
       // "You're in"'s frame, drawn before this returns (see the header):
       // App._followInvite asks for it in the tick the signed-in shell starts,
@@ -812,6 +841,7 @@ export function FirstSession() {
     const project = {
       slug: mode.info.slug, name: mode.info.name, conversationId: mode.info.conversationId, firstVersion: mode.info.firstVersion,
     };
+    if (mode.path === 'private') return privateSteps(project);
     return mode.path === 'maker' ? makerSteps(project) : invitedSteps(project);
   }, [mode]);
 

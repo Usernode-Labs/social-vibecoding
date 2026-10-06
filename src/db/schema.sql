@@ -263,13 +263,55 @@ COMMENT ON TABLE native_sign_in_tokens IS 'staging:private';
 CREATE TABLE IF NOT EXISTS oauth_signup_sessions (
   token_hash  VARCHAR(64) PRIMARY KEY CHECK (token_hash ~ '^[0-9a-f]{64}$'),
   user_id     INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
-  provider    TEXT NOT NULL CHECK (provider IN ('apple', 'google')),
+  provider    TEXT NOT NULL CHECK (provider IN ('apple', 'google', 'phone')),
   expires_at  TIMESTAMPTZ NOT NULL,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_oauth_signup_sessions_expires
   ON oauth_signup_sessions (expires_at);
 COMMENT ON TABLE oauth_signup_sessions IS 'staging:private';
+
+-- Phone sign-in rides the same username continuation as Apple and Google
+-- (services/firebase-phone-auth.js). The constraint is named, dropped and
+-- re-added so an existing database widens idempotently; a fresh install
+-- above already carries all three values, so the re-add renames only.
+ALTER TABLE oauth_signup_sessions
+  DROP CONSTRAINT IF EXISTS oauth_signup_sessions_provider_check;
+ALTER TABLE oauth_signup_sessions
+  ADD CONSTRAINT oauth_signup_sessions_provider_check
+  CHECK (provider IN ('apple', 'google', 'phone'));
+
+-- A phone identity, beside Apple and Google (user_oauth_identities) rather
+-- than inside their OAuth contract: its invariants are its own (one account
+-- per number, one identity per account, E.164 shape), and the number is
+-- PII, so this table is private like its sibling. firebase_uid is the
+-- stable subject the next sign-in finds; the number is the human-facing
+-- key. Nothing on the platform derives an account from the number — the
+-- number is how the person proves themselves to Firebase, not how we look
+-- them up.
+CREATE TABLE IF NOT EXISTS user_phone_identities (
+  id           BIGSERIAL PRIMARY KEY,
+  user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  firebase_uid TEXT NOT NULL UNIQUE CHECK (char_length(firebase_uid) BETWEEN 1 AND 128),
+  phone_e164   VARCHAR(16) NOT NULL UNIQUE CHECK (phone_e164 ~ '^\+[1-9][0-9]{1,14}$'),
+  last_used_at TIMESTAMPTZ,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_user_phone_identities_user
+  ON user_phone_identities (user_id);
+COMMENT ON TABLE user_phone_identities IS 'staging:private';
+
+-- A phone sign-in's ID token is spent once: its hash, kept until the token
+-- itself expires. Same rule as native_sign_in_tokens above.
+CREATE TABLE IF NOT EXISTS phone_sign_in_tokens (
+  token_hash VARCHAR(64) PRIMARY KEY CHECK (token_hash ~ '^[0-9a-f]{64}$'),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_phone_sign_in_tokens_expires
+  ON phone_sign_in_tokens (expires_at);
+COMMENT ON TABLE phone_sign_in_tokens IS 'staging:private';
 
 -- Global CLI device authorization and opaque access tokens. These are
 -- deliberately independent from browser sessions and iframe/app identity.
@@ -11591,9 +11633,11 @@ CREATE INDEX IF NOT EXISTS idx_community_invite_redemptions_user
   ON community_invite_redemptions (user_id) WHERE applied_at IS NULL;
 COMMENT ON TABLE community_invite_redemptions IS 'staging:private';
 
--- THE INVITE TREE: who let whom in. On unless an admin switches it off in
--- Admin → Waitlist, which writes the `invite_tree_enabled` platform_settings
--- row (services/community-invites.js; no row is on).
+-- THE INVITE TREE (retired): who a link let past the waitlist, on one of its
+-- maker's skips, while links could do that. Private membership replaced it
+-- (`private_member_since` below), so nothing writes `admitted_by` now, and
+-- the Admin → Waitlist switch it read is gone with its setting row (below).
+-- The columns keep the history: Journey's door for those accounts.
 -- `invite_generation` 0 is "let off the waitlist by us, by hand" (an admin
 -- admitting a waitlist row, or granting an account directly): grantPlatform-
 -- Access writes it only when that grant is what lets them in. 1 is somebody
@@ -11604,6 +11648,27 @@ COMMENT ON TABLE community_invite_redemptions IS 'staging:private';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS admitted_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS invite_generation SMALLINT;
 CREATE INDEX IF NOT EXISTS idx_users_admitted_by ON users (admitted_by) WHERE admitted_by IS NOT NULL;
+-- A PRIVATE MEMBER: somebody without platform access whom an invite link
+-- let into its community straight away, instead of queueing it for the day
+-- they are let in. They use and change their communities' apps, but do not
+-- make apps of their own; they are on the waitlist for that. The tier is
+-- `has_platform_access = FALSE AND private_member_since IS NOT NULL`, so
+-- letting them in (has_platform_access → TRUE, the waitlist's own release)
+-- ends it with no second write, and the triggers on that edge (the
+-- platform community, the welcome DM, queued invites) fire then, not here.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS private_member_since TIMESTAMPTZ;
+-- A PROVISIONAL HANDLE: an invite's phone sign-up gives a name, not a
+-- username, and its handle is made from the name (usernames.handlesFromName)
+-- for the private group that invited them to see. Nothing public may show it:
+-- a public app's identity token, a public community's membership and a
+-- public invite's join all refuse with username_required until the person
+-- picks a username (POST /api/me/username/choose clears this), and the shell
+-- asks for one first. Their name reaches a public place only as a username
+-- they chose.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS username_provisional_since TIMESTAMPTZ;
+-- The retired tree's on/off switch (services/community-invites.js used to read
+-- it). Nothing reads it now; idempotent, so a boot after the first finds none.
+DELETE FROM platform_settings WHERE key = 'invite_tree_enabled';
 
 -- Whether the person who made a link can still grant what it grants: an
 -- admin, or a collaborator where building is by invitation, or a member
@@ -11794,10 +11859,17 @@ CREATE INDEX IF NOT EXISTS idx_users_test_account_created_at
 -- denominator call (services/pr-vote-revision.js countedVotePredicateSql,
 -- services/governance.js, services/active-users.js). LANGUAGE sql and STABLE
 -- so the planner inlines it.
+--
+-- A PRIVATE MEMBER (users.private_member_since, not let in yet) never counts
+-- on a PUBLIC app (view_visibility 'public', a Public community), even one
+-- whose link brought them in: they use public apps, and vote in their own
+-- private groups. Invite links are cheap to make, so this keeps them from
+-- moving a public decision, and out of its denominator. The vote routes
+-- refuse such a vote first (services/communities.js privateVoteRefusal).
 CREATE OR REPLACE FUNCTION counts_toward_outcome(voter_id INTEGER, target_app_id INTEGER)
 RETURNS BOOLEAN
 LANGUAGE sql STABLE AS $$
-  SELECT NOT EXISTS (
+  SELECT (NOT EXISTS (
            SELECT 1 FROM users tv
             WHERE tv.id = voter_id AND tv.test_account_created_at IS NOT NULL
          )
@@ -11805,6 +11877,13 @@ LANGUAGE sql STABLE AS $$
            SELECT 1 FROM apps ta
              JOIN users tc ON tc.id = ta.created_by
             WHERE ta.id = target_app_id AND tc.test_account_created_at IS NOT NULL
+         ))
+     AND NOT EXISTS (
+           SELECT 1 FROM users pv, apps pa
+            WHERE pv.id = voter_id AND pa.id = target_app_id
+              AND pv.private_member_since IS NOT NULL
+              AND NOT pv.has_platform_access AND NOT pv.is_admin
+              AND pa.view_visibility = 'public'
          )
 $$;
 -- The same rule keyed by what was voted on, for the tallies that hold only a
