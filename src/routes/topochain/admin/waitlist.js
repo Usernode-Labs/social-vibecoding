@@ -702,16 +702,67 @@ function waitlistAdminRoutes(config) {
   });
 
   // ── POST /api/v4/admin/users/:id/grant-access ────────────────────────
-  // Direct platform-access grant for an account that never joined the
-  // waitlist. Idempotent. A release by hand like Admit, so the account it
-  // lets in gets the invite tree's generation-0 skips.
+  // Direct platform-access grant. Idempotent: re-granting an account that
+  // already has access changes nothing and sends no mail. A release by
+  // hand like Admit, so the account it lets in gets the invite tree's
+  // generation-0 skips.
+  //
+  // Whichever way someone is let in, the same short "you're in" mail goes
+  // out (#4083), and the row and the account must not disagree. The
+  // account's own email decides how:
+  //   - an UNRELEASED waitlist row for the address is released through
+  //     releaseWaitlistSignup, so the row reads Admitted and the mail
+  //     leaves from the release path's newly_released guard, exactly as
+  //     Admit sends it (grantPlatformAccess again afterwards is the
+  //     backstop for a row that predates its account and was never
+  //     linked; it is a no-op when the release already reached this
+  //     account);
+  //   - a row already released: plain grant, no mail — its mail left when
+  //     the row was released;
+  //   - no row at all: plain grant, and the mail sent directly with
+  //     hasAccount: true, so its button says Sign in;
+  //   - no email address: plain grant, no mail.
   router.post('/api/v4/admin/users/:id/grant-access', adminWriteGate, async (req, res) => {
     try {
       const id = toIntId(req.params.id);
       if (!id) return fail(res, 404, 'User not found.');
-      const { rows } = await pool.query('SELECT id FROM users WHERE id = $1', [id]);
+      const { rows } = await pool.query(
+        'SELECT id, email, has_platform_access FROM users WHERE id = $1',
+        [id]
+      );
       if (!rows.length) return fail(res, 404, 'User not found.');
-      await waitlist.grantPlatformAccess(pool, id, { manualRelease: true });
+      const user = rows[0];
+      if (!user.has_platform_access) {
+        const email = waitlist.normalizeEmail(user.email);
+        let row = null;
+        if (email) {
+          const { rows: signupRows } = await pool.query(
+            'SELECT id, released_at FROM waitlist_signups WHERE email = $1 LIMIT 1',
+            [email]
+          );
+          row = signupRows[0] || null;
+        }
+        if (row && !row.released_at) {
+          const released = await waitlist.releaseWaitlistSignup(pool, row.id);
+          await waitlist.grantPlatformAccess(pool, id, { manualRelease: true });
+          if (released && released.newly_released) {
+            // The account exists and is the one being let in, so the mail
+            // carries Sign in even if the row's own linkage never named it.
+            await sendReleaseMail(
+              { ...released, linked_user_id: released.linked_user_id ?? id },
+              await loadReleaseMailMobile()
+            );
+          }
+        } else {
+          await waitlist.grantPlatformAccess(pool, id, { manualRelease: true });
+          if (!row && email) {
+            await sendReleaseMail(
+              { email, linked_user_id: id, more_token: null },
+              await loadReleaseMailMobile()
+            );
+          }
+        }
+      }
       log.info('topochain-admin', 'Platform access granted directly', { userId: id, adminId: req.user?.id });
       return ok(res, { data: { id, has_platform_access: true } });
     } catch (err) {

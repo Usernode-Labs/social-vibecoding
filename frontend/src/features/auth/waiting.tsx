@@ -205,7 +205,7 @@ export function WaitingScreen() {
               <span id="waiting-who" className="font-semibold">
                 {who}
               </span>
-              {" doesn't have platform access yet. We let people in from the waitlist in batches. You'll get in automatically when your turn comes."}
+              {" doesn't have platform access yet. We let people in a few at a time and email you when your spot is ready."}
             </p>
             <p className="text-[15px] text-zinc-500 dark:text-zinc-400">
               This page checks for you every so often; you can also just come back later.

@@ -739,7 +739,7 @@ async function exchangeCode(pool, config, provider, { code, state }, deps = {}) 
 async function signIn(pool, provider, claims, { createSession }) {
   if (typeof createSession !== 'function') throw new Error('signIn requires createSession');
   await cleanupExpired(pool);
-  return withTransaction(pool, async (client) => {
+  const result = await withTransaction(pool, async (client) => {
     const { rows: linked } = await client.query(
       `SELECT u.id, u.username, u.is_admin, u.admin_readonly, u.needs_username_choice
          FROM user_oauth_identities i
@@ -832,6 +832,17 @@ async function signIn(pool, provider, claims, { createSession }) {
       },
     };
   });
+
+  // #4083: an account the provider just made gets the same automatic
+  // waitlist spot an email-code account gets — the provider vouched for
+  // the address, which is what the spot's confirmed mark records. After
+  // the transaction, best-effort like every post-transaction step here;
+  // ensureWaitlistSpot catches its own failures. `created` is only ever
+  // true when claims.email exists, so the guard needs no check of its own.
+  if (result.created) {
+    await emailSignup.ensureWaitlistSpot(pool, claims.email);
+  }
+  return result;
 }
 
 /**

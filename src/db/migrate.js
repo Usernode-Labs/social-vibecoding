@@ -200,6 +200,7 @@ async function migrate(config) {
   await backfillLinkedIssuesFromPrBodies(pool);
   await backfillProposalIssuerAssignments(pool);
   await backfillUsernameChoiceForEmailHandles(pool);
+  await backfillWaitlistRowsForEmailAccounts(pool);
   await migrateWaitlistCountryCodes(pool);
   // After backfillVotesRequired, which reads the merge announcements.
   await clearAutomatedChannelLines(pool);
@@ -268,6 +269,52 @@ async function backfillUsernameChoiceForEmailHandles(pool) {
     log.info('db', 'Flagged email-as-username accounts for a username choice', {
       count: result.rowCount,
     });
+  }
+  return result.rowCount || 0;
+}
+
+// #4083: only the public join form used to make a waitlist_signups row, so
+// an account made with an email code — or through Apple or Google — never
+// had a spot and never showed up in Admin › Waitlist to be let in. This
+// gives every email-bearing account without access one, once, so the
+// waitlist screen's promise holds for people who are already here.
+//
+// The address filter is the join form's own rule (services/email-signup.js
+// EMAIL_RE, as a Postgres regex), so a junk address on an account cannot
+// mint a row the join endpoint would have refused. Admins and accounts
+// already in are excluded because they are never gated and never waited.
+//
+// Safe to run on every boot, which is what makes it a backfill rather than
+// a one-shot: it can only ever add the rows that are missing, and the
+// NOT EXISTS plus `ON CONFLICT (email) DO NOTHING` mean a row is never
+// duplicated or rewritten.
+//
+// submitted_at carries the account's created_at ON PURPOSE: the queue's
+// only order is oldest submission first, so dating a backfilled spot from
+// the boot would send everyone who already has an account to the back of
+// the line behind yesterday's join-form signups. The confirmed mark comes
+// from the account's own email_confirmed_at, so an address the account
+// never proved shows as unconfirmed, which is the truth the Confirm
+// column exists to show.
+async function backfillWaitlistRowsForEmailAccounts(pool) {
+  const result = await pool.query(
+    `INSERT INTO waitlist_signups (email, submitted_at, confirmed_at, linked_user_id)
+     SELECT lower(u.email), u.created_at,
+            CASE WHEN u.email_confirmed
+                 THEN COALESCE(u.email_confirmed_at, NOW()) END,
+            u.id
+       FROM users u
+      WHERE u.email IS NOT NULL
+        AND u.has_platform_access = FALSE
+        AND u.is_admin = FALSE
+        AND lower(u.email) ~ '^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$'
+        AND NOT EXISTS (
+              SELECT 1 FROM waitlist_signups w
+               WHERE w.email = lower(u.email))
+     ON CONFLICT (email) DO NOTHING`
+  );
+  if (result.rowCount) {
+    log.info('db', 'Gave accounts without access their waitlist spot', { count: result.rowCount });
   }
   return result.rowCount || 0;
 }
@@ -13868,6 +13915,7 @@ module.exports = {
   seedStagingPlatformMail, auditDuplicatePrSessions,
   migrateWaitlistCountryCodes,
   clearAutomatedChannelLines,
+  backfillWaitlistRowsForEmailAccounts,
   backfillProposalIssuerAssignments,
   seedStagingTopicScrollThreads, seedStagingLlmUsage, seedStagingHomeLayout,
   seedStagingAnalyticsCharts, seedStagingSpendDistribution,

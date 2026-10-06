@@ -50,6 +50,8 @@ const {
   releaseWaitlistSignup,
 } = require('../src/services/waitlist');
 
+const { ensureWaitlistSpot } = require('../src/services/email-signup');
+
 // ─── Stateful mock pool ───────────────────────────────────────────────
 //
 // Simulates just the rows/statements waitlist.js touches:
@@ -149,6 +151,15 @@ function makePool(state) {
       const [userId, id] = params;
       const s = [...state.signups.values()].find((r) => r.id === id);
       if (s) s.linked_user_id = userId;
+      return { rowCount: s ? 1 : 0, rows: [] };
+    }
+
+    // ensureWaitlistSpot's confirm stamp on a row it just created
+    // (services/email-signup.js). COALESCE, like every confirm write.
+    if (sql.includes('SET confirmed_at = COALESCE(confirmed_at, NOW()) WHERE email = $1')) {
+      const [email] = params;
+      const s = state.signups.get(email);
+      if (s && s.confirmed_at == null) s.confirmed_at = new Date();
       return { rowCount: s ? 1 : 0, rows: [] };
     }
 
@@ -450,4 +461,64 @@ test('a grant that is not a release by hand gives no generation', async () => {
   await grantPlatformAccess(pool, 43);
   assert.equal(coded.has_platform_access, true);
   assert.equal(coded.invite_generation, null, 'activation codes and genesis wallets carry no skips');
+});
+
+// ─── 7. ensureWaitlistSpot (services/email-signup.js, #4083) ──────────
+//
+// An account made with an email code — or through Apple or Google — used
+// to get no waitlist row at all, so it never showed in Admin › Waitlist to
+// be let in. The helper gives one at sign-up: idempotent by email, marked
+// confirmed when it CREATED the row (the code just proved the mailbox),
+// and never able to fail the sign-up it rides on.
+
+test('ensureWaitlistSpot gives an account without a row a confirmed spot', async () => {
+  const state = makeState();
+  const pool = makePool(state);
+
+  await ensureWaitlistSpot(pool, 'Ada@Example.com');
+  assert.equal(state.signups.size, 1);
+  const row = state.signups.get('ada@example.com');
+  assert.ok(row.confirmed_at, 'the code just proved the mailbox, so the row is born confirmed');
+  assert.equal(row.released_at, null, 'a fresh spot is never released, so the account still waits');
+
+  // Idempotent: a second call is a database-level no-op and re-runs its
+  // confirm stamp harmlessly (COALESCE keeps the first timestamp).
+  const confirmedAt = row.confirmed_at;
+  await ensureWaitlistSpot(pool, 'ada@example.com');
+  assert.equal(state.signups.size, 1);
+  assert.equal(state.signups.get('ada@example.com').confirmed_at, confirmedAt);
+});
+
+test('a row that already existed keeps its own confirmed state', async () => {
+  const state = makeState();
+  const pool = makePool(state);
+
+  const joined = await joinWaitlist(pool, { email: 'joined@example.com' });
+  assert.equal(joined.created, true);
+  const row = state.signups.get('joined@example.com');
+  assert.equal(row.confirmed_at, null, 'the join flow confirms through its own mailed link');
+
+  await ensureWaitlistSpot(pool, 'joined@example.com');
+  assert.equal(row.confirmed_at, null,
+    'a later sign-up does not confirm someone else\'s join');
+  assert.equal(row.linked_user_id, null, 'the spot insert links nobody');
+});
+
+test('a malformed or missing address makes no row', async () => {
+  const state = makeState();
+  const pool = makePool(state);
+
+  await ensureWaitlistSpot(pool, 'not-an-email');
+  await ensureWaitlistSpot(pool, null);
+  await ensureWaitlistSpot(pool, '');
+  assert.equal(state.signups.size, 0);
+});
+
+test('a failed spot insert never fails the caller', async () => {
+  const state = makeState();
+  const pool = makePool(state);
+  pool.query = async () => { throw new Error('boom'); };
+
+  await ensureWaitlistSpot(pool, 'ada@example.com'); // resolves, logs, moves on
+  assert.equal(state.signups.size, 0);
 });

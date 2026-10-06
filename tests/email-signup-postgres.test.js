@@ -23,6 +23,8 @@ const DDL = `
     admin_readonly BOOLEAN NOT NULL DEFAULT FALSE,
     has_platform_access BOOLEAN NOT NULL DEFAULT FALSE,
     platform_access_granted_at TIMESTAMPTZ,
+    -- grantPlatformAccess writes it on a release by hand (#4083's path).
+    invite_generation INTEGER,
     needs_username_choice BOOLEAN NOT NULL DEFAULT FALSE,
     -- Communities, stage 5: the join screen's flag, set by the same INSERT.
     needs_communities_choice BOOLEAN NOT NULL DEFAULT FALSE,
@@ -114,8 +116,31 @@ const DDL = `
   );
   CREATE TABLE waitlist_signups (
     email VARCHAR(255) PRIMARY KEY,
+    -- The columns joinWaitlist writes (services/waitlist.js), so a spot
+    -- created at sign-up takes the same INSERT a join-form row takes.
+    submitted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    ip VARCHAR(45),
+    answers JSONB,
+    more_token VARCHAR(64),
+    invited_by INTEGER,
+    project_invite_id INTEGER,
     linked_user_id INTEGER,
-    released_at TIMESTAMPTZ
+    released_at TIMESTAMPTZ,
+    -- #4083: a spot created at sign-up is born confirmed (the code just
+    -- proved the mailbox), so the column has to exist for the helper.
+    confirmed_at TIMESTAMPTZ
+  );
+  -- The join-form INSERT's project-invite subselect reads this table
+  -- (services/waitlist.js joinWaitlist), and claimEmailInvites writes it;
+  -- empty here, it just has to have the columns both touch.
+  CREATE TABLE app_email_invites (
+    id BIGSERIAL PRIMARY KEY,
+    email VARCHAR(255),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    claimed_at TIMESTAMPTZ,
+    claimed_by INTEGER,
+    invited_by INTEGER,
+    app_id INTEGER
   );
   CREATE TABLE mail_deliveries (
     id BIGSERIAL PRIMARY KEY,
@@ -883,5 +908,90 @@ test('set-password takes the first handle, and a refused one keeps the session',
       delete require.cache[authPath];
       delete require.cache[limitsPath];
     }
+  });
+});
+
+// ─── The waitlist spot (#4083) ──────────────────────────────────────────
+//
+// An account made with an email code used to get no waitlist row, so it
+// never showed in Admin › Waitlist to be let in. verifyCode now inserts
+// one for a created account (ensureWaitlistSpot) BEFORE linkUserByEmail,
+// so the fresh row is linked to the account in the same breath. These
+// tests run the real service against the real Postgres above; the mail
+// and prune steps are stubbed, not the code under test.
+
+// A createSession good enough for the created branch, which never calls
+// it (a fresh account stops at set-password); the shape only has to exist.
+const NO_SESSION = { createSession: async () => ({ token: 'unused' }) };
+
+async function codeFor(pool, email) {
+  const mail = require('../src/services/mail');
+  const originalSend = mail.sendOtpMail;
+  const originalPrune = mail.pruneDeliveries;
+  let code = null;
+  mail.sendOtpMail = async (_config, _email, value) => { code = value; };
+  mail.pruneDeliveries = async () => {};
+  try {
+    const emailSignup = require('../src/services/email-signup');
+    await emailSignup.requestCode(pool, {}, email);
+    return { emailSignup, code };
+  } finally {
+    mail.sendOtpMail = originalSend;
+    mail.pruneDeliveries = originalPrune;
+  }
+}
+
+test('a fresh email-code account gets one confirmed, linked waitlist row and keeps waiting', async (t) => {
+  await withDatabase(t, async (pool) => {
+    const { emailSignup, code } = await codeFor(pool, 'Spot.Holder@example.com');
+    const result = await emailSignup.verifyCode(pool, 'spot.holder@example.com', code, NO_SESSION);
+    assert.equal(result.created, true);
+
+    const account = (await pool.query(
+      'SELECT id, has_platform_access FROM users WHERE email = $1',
+      ['spot.holder@example.com'],
+    )).rows[0];
+
+    const rows = (await pool.query(
+      `SELECT email, confirmed_at, released_at, linked_user_id
+         FROM waitlist_signups WHERE email = $1`,
+      ['spot.holder@example.com'],
+    )).rows;
+    assert.equal(rows.length, 1, 'exactly one waitlist row for the address');
+    assert.ok(rows[0].confirmed_at, 'the code just proved the mailbox, so the row is born confirmed');
+    assert.equal(rows[0].released_at, null, 'a fresh spot is never released');
+    assert.equal(rows[0].linked_user_id, account.id,
+      'the row is linked to the account in the same breath, so Admin shows its name');
+    assert.equal(account.has_platform_access, false, 'a fresh spot grants nothing: the account waits');
+  });
+});
+
+test('an address whose row was released already is let in on the spot, with no second row', async (t) => {
+  await withDatabase(t, async (pool) => {
+    await pool.query(
+      `INSERT INTO waitlist_signups (email, submitted_at, released_at)
+       VALUES ($1, NOW(), NOW())`,
+      ['released@example.com'],
+    );
+
+    const { emailSignup, code } = await codeFor(pool, 'Released@Example.com');
+    const result = await emailSignup.verifyCode(pool, 'released@example.com', code, NO_SESSION);
+    assert.equal(result.created, true);
+
+    const account = (await pool.query(
+      'SELECT id, has_platform_access FROM users WHERE email = $1',
+      ['released@example.com'],
+    )).rows[0];
+
+    const rows = (await pool.query(
+      `SELECT released_at, linked_user_id, confirmed_at
+         FROM waitlist_signups WHERE email = $1`,
+      ['released@example.com'],
+    )).rows;
+    assert.equal(rows.length, 1, 'no second row was made for the address');
+    assert.ok(rows[0].released_at, 'the pre-existing row keeps its release');
+    assert.equal(rows[0].linked_user_id, account.id);
+    assert.equal(account.has_platform_access, true,
+      'linkUserByEmail grants a released address on the spot, as it always did');
   });
 });

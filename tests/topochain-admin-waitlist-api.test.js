@@ -120,8 +120,12 @@ function resetFixtures() {
     },
   ];
   userRows = [
-    { id: 11, username: 'anchor-user', has_platform_access: false },
-    { id: 12, username: 'admitted-user', has_platform_access: true },
+    { id: 11, username: 'anchor-user', email: 'anchor@example.invalid', has_platform_access: false },
+    { id: 12, username: 'admitted-user', email: 'admitted-mailed@example.invalid', has_platform_access: true },
+    // grant-access fixtures (#4083): accounts an admin lets in directly.
+    { id: 13, username: 'released-row', email: 'admitted-silent@example.invalid', has_platform_access: false },
+    { id: 14, username: 'no-row', email: 'nobody@example.invalid', has_platform_access: false },
+    { id: 15, username: 'no-email', email: null, has_platform_access: false },
   ];
   mailRows = [
     // Two deliveries for the same address: the LATEST is what the row
@@ -269,6 +273,49 @@ function handleQuery(rawSql, params = []) {
   if (sql.startsWith('SELECT COUNT(*) FILTER (WHERE invite_generation = 0')) {
     return { rows: [{ roots: 2, through_links: 5 }] };
   }
+
+  // ── grant-access (#4083): the decision table ──
+  if (sql.startsWith('SELECT id, email, has_platform_access FROM users WHERE id = $1')) {
+    const u = userRows.find((r) => r.id === params[0]);
+    return { rows: u ? [{ id: u.id, email: u.email, has_platform_access: u.has_platform_access }] : [] };
+  }
+  if (sql.startsWith('SELECT id, released_at FROM waitlist_signups WHERE email = $1')) {
+    const s = signupRows.find((r) => r.email === params[0]);
+    return { rows: s ? [{ id: s.id, released_at: s.released_at }] : [] };
+  }
+  if (sql.startsWith('WITH prev AS (')) {
+    const s = signupRows.find((r) => r.id === params[0]);
+    if (!s) return { rows: [] };
+    const newly = s.released_at == null;
+    s.released_at = s.released_at || new Date();
+    if (s.linked_user_id == null) {
+      const u = userRows.find((r) => r.email === s.email);
+      if (u) s.linked_user_id = u.id;
+    }
+    return {
+      rows: [{
+        id: s.id, email: s.email, released_at: s.released_at,
+        linked_user_id: s.linked_user_id, more_token: s.more_token ?? null,
+        newly_released: newly,
+      }],
+    };
+  }
+  if (sql.startsWith('SELECT id FROM users WHERE email = $1')) {
+    const u = userRows.find((r) => r.email === params[0]);
+    return { rows: u ? [{ id: u.id }] : [] };
+  }
+  if (sql.startsWith('UPDATE waitlist_signups SET linked_user_id = $1 WHERE id = $2')) {
+    const s = signupRows.find((r) => r.id === params[1]);
+    if (s) s.linked_user_id = params[0];
+    return { rowCount: s ? 1 : 0 };
+  }
+  if (sql.startsWith('UPDATE users SET has_platform_access = TRUE')) {
+    const u = userRows.find((r) => r.id === params[0]);
+    if (u && !u.has_platform_access) u.has_platform_access = true;
+    return { rowCount: u ? 1 : 0 };
+  }
+  // The release mail's store-listing lookup; empty is no published links.
+  if (sql.startsWith('SELECT os, update_url FROM app_version_configs')) return { rows: [] };
 
   throw new Error(`Unhandled mock query: ${sql}`);
 }
@@ -771,4 +818,98 @@ test('only a full admin can switch it, and only to a boolean', async () => {
 
   const again = await get('/api/v4/admin/invite-tree');
   assert.equal(again.body.data.enabled, false, 'the write dropped the cache');
+});
+
+// ─── grant-access: the same email every way in (#4083) ──────────────────
+//
+// A direct access grant used to be silent, so the waitlist screen's
+// promise ("we email you when your spot is ready") was untrue for the
+// accounts it let in. The route now routes the let-in through the row
+// when there is one, and sends the release mail itself when there is
+// not, so every way of letting someone in sends the same short email.
+//
+// grantAccess builds its own app: the mail needs an injected transport
+// (no databaseUrl in the config, so the mailer skips its throttle
+// bookkeeping and this file counts what the transport is handed).
+
+async function grantAccess(id, mailed, role = 'admin') {
+  const app = express();
+  app.use(express.json());
+  app.use(userMiddleware(role));
+  app.use(topochainAdminRoutes({
+    ...(mailed
+      ? { mailTransport: { provider: 'test', send: async (m) => { mailed.push(m); } } }
+      : {}),
+  }));
+  const server = app.listen(0);
+  await new Promise((r) => server.once('listening', r));
+  try {
+    const res = await fetch(
+      `http://127.0.0.1:${server.address().port}/api/v4/admin/users/${id}/grant-access`,
+      { method: 'POST' },
+    );
+    return { status: res.status, body: await res.json() };
+  } finally { server.close(); }
+}
+
+test('grant-access releases an unreleased row for the address and mails the one "you\'re in"', async () => {
+  const mailed = [];
+  const res = await grantAccess(11, mailed);
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body.data, { id: 11, has_platform_access: true }, 'the response body is unchanged');
+
+  // The row went through the release path, not just the account: Admitted,
+  // linked, and exactly one mail, the same kind Admit sends.
+  const row = signupRows.find((r) => r.id === 1);
+  assert.ok(row.released_at, 'the row reads Admitted');
+  assert.equal(row.linked_user_id, 11);
+  assert.equal(userRows.find((u) => u.id === 11).has_platform_access, true);
+  assert.deepEqual(mailed.map((m) => [m.kind, m.to]),
+    [['waitlist_released', 'anchor@example.invalid']]);
+  assert.equal(mailed[0].hasAccount, true, 'the account exists, so the mail says Sign in');
+});
+
+test('grant-access to an account whose row was released earlier mails nothing', async () => {
+  const mailed = [];
+  const res = await grantAccess(13, mailed);
+  assert.equal(res.status, 200);
+  assert.deepEqual(mailed, [], 'its mail left when the row was released');
+  assert.ok(!seenSql.some((s) => s.startsWith('WITH prev AS')), 'no release ran');
+  assert.equal(userRows.find((u) => u.id === 13).has_platform_access, true);
+});
+
+test('grant-access to an account with no waitlist row mails directly, with the Sign in button', async () => {
+  const mailed = [];
+  const res = await grantAccess(14, mailed);
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body.data, { id: 14, has_platform_access: true });
+  assert.equal(userRows.find((u) => u.id === 14).has_platform_access, true);
+  assert.deepEqual(mailed.map((m) => [m.kind, m.to]),
+    [['waitlist_released', 'nobody@example.invalid']]);
+  assert.equal(mailed[0].hasAccount, true);
+  assert.match(mailed[0].url, /login=1/, 'Sign in, not the create-account link');
+  assert.ok(!seenSql.some((s) => s.startsWith('WITH prev AS')), 'no row existed to release');
+});
+
+test('re-granting an account that already has access changes nothing and mails nothing', async () => {
+  const mailed = [];
+  const res = await grantAccess(12, mailed);
+  assert.equal(res.status, 200);
+  assert.deepEqual(mailed, []);
+  assert.ok(!seenSql.some((s) => s.startsWith('UPDATE users')), 'not even a grant ran');
+});
+
+test('grant-access to an account with no email lets it in silently', async () => {
+  const mailed = [];
+  const res = await grantAccess(15, mailed);
+  assert.equal(res.status, 200);
+  assert.deepEqual(mailed, []);
+  assert.equal(userRows.find((u) => u.id === 15).has_platform_access, true);
+});
+
+test('grant-access stays write-admin only and answers 404 for a missing account', async () => {
+  const denied = await grantAccess(11, [], 'readonly');
+  assert.equal(denied.status, 403);
+  const missing = await grantAccess(999, []);
+  assert.equal(missing.status, 404);
 });

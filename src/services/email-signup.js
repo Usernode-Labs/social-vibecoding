@@ -332,6 +332,9 @@ async function verifyCode(pool, rawEmail, rawCode, { createSession } = {}) {
     throw new EmailSignupError('admin_password_required', ADMIN_PASSWORD_REQUIRED_MESSAGE);
   }
   if (result.created) {
+    // #4083: the spot first, so linkUserByEmail links the row it just made
+    // and Admin › Waitlist shows the account name from the start.
+    await ensureWaitlistSpot(pool, email);
     await waitlist.linkUserByEmail(pool, { userId: result.userId, email });
   }
   // The code proved this mailbox, on a new account or an unconfirmed one:
@@ -344,6 +347,48 @@ async function verifyCode(pool, rawEmail, rawCode, { createSession } = {}) {
     result.waitlisted = await isWaitlisted(pool, result.userId);
   }
   return result;
+}
+
+/**
+ * Give a just-created account its waitlist spot (#4083).
+ *
+ * Only the public join form used to make a `waitlist_signups` row, so an
+ * account made with an email code — or through Apple or Google, which make
+ * the same account via insertEmailUser — never appeared in Admin › Waitlist
+ * and could not be let in from there. joinWaitlist is idempotent by email
+ * (`ON CONFLICT (email) DO NOTHING`), so "insert one when there is no row"
+ * is just a call; `created` says whether this call made the row.
+ *
+ * A row this call CREATED is marked confirmed straight away: the code (or
+ * the provider's verified address) just proved the mailbox, which is the
+ * only thing the join flow's confirm link exists to establish. A row that
+ * already existed keeps its own confirmed state — an address can hold a
+ * row from the join form long before anyone signs up, and that row's
+ * confirm mark is that flow's truth, not this one's.
+ *
+ * Best-effort, like linkUserByEmail and claimEmailInvites beside it: a
+ * failed insert is logged and never fails the sign-up. Callers insert the
+ * spot BEFORE linkUserByEmail, so the fresh row is linked to the account
+ * in the same breath and Admin › Waitlist shows the account name at once.
+ * A fresh row is never released, so the linkage grants nothing; the
+ * account keeps waiting.
+ */
+async function ensureWaitlistSpot(pool, email) {
+  const normalized = normalizeEmail(email);
+  if (!normalized) return;
+  try {
+    const joined = await waitlist.joinWaitlist(pool, { email: normalized });
+    if (joined.created) {
+      await pool.query(
+        `UPDATE waitlist_signups
+            SET confirmed_at = COALESCE(confirmed_at, NOW())
+          WHERE email = $1`,
+        [normalized]
+      );
+    }
+  } catch (err) {
+    log.warn('email-signup', 'Waitlist spot insert failed', { message: err.message });
+  }
 }
 
 /**
@@ -485,6 +530,7 @@ module.exports = {
   SIGNUP_TTL_MS,
   // Shared with Apple and Google sign-in (services/sign-in-providers.js),
   // which makes the same account for an address the provider vouched for.
+  ensureWaitlistSpot,
   insertEmailUser,
   normalizeEmail,
   requestCode,

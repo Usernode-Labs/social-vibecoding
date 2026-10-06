@@ -23,6 +23,8 @@ const WAITLIST = fs.readFileSync(
   path.join(ROOT, 'frontend/src/features/auth/waitlist.tsx'), 'utf8');
 const MORE = fs.readFileSync(
   path.join(ROOT, 'frontend/src/features/auth/more.tsx'), 'utf8');
+const WAITING = fs.readFileSync(
+  path.join(ROOT, 'frontend/src/features/auth/waiting.tsx'), 'utf8');
 
 /** Collapse JSX source whitespace so a wrapped sentence still matches. */
 function flat(text) {
@@ -90,4 +92,16 @@ test('want-in-sooner drops the sentence that said it twice', () => {
 
 test('the "Want in sooner?" heading survives, because a check asserts it', () => {
   assert.match(MORE, /Want in sooner\?/);
+});
+
+// The waiting room promised the email, then PR 8 took the promise off it
+// while email-code accounts had no spot and direct grants mailed nobody
+// (#4083). Both are fixed, so the promise is back, and this claim pins it
+// so it cannot quietly disappear again.
+test('the waiting room promises the email again', () => {
+  assert.match(flat(WAITING),
+    /doesn't have platform access yet\. We let people in a few at a time and email you when your spot is ready\./,
+    'the promise is back on the screen, in the app\'s own words');
+  assert.doesNotMatch(flat(WAITING), /You'll get in automatically when your turn comes\./,
+    'the interim sentence is gone, not doubled');
 });
