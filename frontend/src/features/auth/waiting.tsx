@@ -194,7 +194,7 @@ export function WaitingScreen() {
       <div className="min-h-full flex items-center justify-center">
         <div className="w-full max-w-sm px-6 py-16 text-center">
           <h1 className="text-[28px] font-extrabold leading-tight tracking-tight mb-1 text-zinc-900 dark:text-zinc-100">
-            You're in the queue
+            You're on the waitlist
           </h1>
           <p className="text-[15px] text-zinc-500 dark:text-zinc-400 mb-8 italic">
             Homeroom
@@ -205,7 +205,7 @@ export function WaitingScreen() {
               <span id="waiting-who" className="font-semibold">
                 {who}
               </span>
-              {" doesn't have platform access yet. We let people in from the waitlist in batches. You'll get in automatically when your turn comes."}
+              {" doesn't have platform access yet. We let people in from the waitlist a few at a time. Your spot is saved and you'll get access automatically."}
             </p>
             <p className="text-[15px] text-zinc-500 dark:text-zinc-400">
               This page checks for you every so often; you can also just come back later.
@@ -216,7 +216,7 @@ export function WaitingScreen() {
           </div>
           {queued.length ? (
             <div data-waiting-queued="" className="mt-3 rounded-2xl bg-white dark:bg-zinc-900 p-5 text-left">
-              <p className="text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">When you're let in</p>
+              <p className="text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">When you get access</p>
               <ul className="mt-1 space-y-1 text-[15px] text-zinc-600 dark:text-zinc-300">
                 {queued.map((q) => (
                   <li key={q.name}>
