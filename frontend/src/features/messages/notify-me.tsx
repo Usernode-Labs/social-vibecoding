@@ -1,12 +1,11 @@
 import { useState } from 'react';
 
-import { BellIcon } from '@/components/ui/icons';
-
 /*
- * "Notify me when it's ready", under a plan its maker just pressed Build it
- * on (./bot-plan.tsx). 5 October: the person who asked for a first version
- * had no way to say "tell me when it's done", nor to learn that Homeroom bot
- * would.
+ * "Notify me when it's ready", under the line Homeroom bot says once its
+ * maker pressed Build it on a plan, "I'll message you here when it's ready to
+ * try." (./bot-plan.tsx BotPlanFollowUp, #4046). 5 October: the person who
+ * asked for a first version had no way to say "tell me when it's done", nor
+ * to learn that Homeroom bot would.
  *
  * The tap is the only thing that asks for anything, and it asks once:
  *   - in the Homeroom app, NativeChrome.notifyWhenReady (public/js/
@@ -19,9 +18,9 @@ import { BellIcon } from '@/components/ui/icons';
  * Either way the account's "Your builds" pushes are switched back on if they
  * had been switched off, since that is what the tap asks for.
  *
- * Offered only right after Build it is pressed on this device, and never
- * again once chosen here (CHOSEN_KEY, per account): an old plan in the chat
- * does not keep asking.
+ * Offered while the first version is being built, and never again once
+ * chosen here (CHOSEN_KEY, per account): an old plan in the chat does not
+ * keep asking. It is the accent's tint: an action, quieter than Build it.
  */
 
 export type NotifyMeState = 'offer' | 'asking' | 'granted' | 'denied' | 'here';
@@ -94,7 +93,11 @@ export async function askToNotify(host: NotifyMeHost = window as unknown as Noti
   return { state, settings: state === 'denied' && answer?.settings === true };
 }
 
-export function NotifyMe({ userId }: { userId: number | null | undefined }) {
+export function NotifyMe({ userId, quietHere = false }: {
+  userId: number | null | undefined;
+  /** The line above already says "I'll message you here": a browser's answer adds nothing to it. */
+  quietHere?: boolean;
+}) {
   const [state, setState] = useState<NotifyMeState>('offer');
   const [settings, setSettings] = useState(false);
 
@@ -112,17 +115,17 @@ export function NotifyMe({ userId }: { userId: number | null | undefined }) {
       <div className="messages-bot-answers" role="group" aria-label="Notifications">
         <button
           type="button"
-          className="messages-bot-secondary"
+          className="messages-bot-tint"
           data-bot-notify-me=""
           disabled={state === 'asking'}
           onClick={() => { void tap(); }}
         >
-          <BellIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
           <span>Notify me when it’s ready</span>
         </button>
       </div>
     );
   }
+  if (state === 'here' && quietHere) return null;
   const host = window as unknown as NotifyMeHost;
   return (
     <div data-bot-notify-me={state}>

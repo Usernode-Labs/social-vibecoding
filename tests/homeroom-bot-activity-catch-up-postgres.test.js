@@ -475,7 +475,8 @@ test('the Homeroom bot DM gives work already under way its activity card: once, 
       await staging.ensureBotDmFixture(pool, viewer);
       const page = await conversations.listMessages(pool, viewer, conversationId, {});
       const messages = [...(page.messages || page)].sort((a, b) => a.id - b.id);
-      const cards = messages.filter((m) => m.metadata?.homeroomBot?.kind === 'activity');
+      // #4046: the demo's first versions' cards (its plans carry them) are another project's.
+      const cards = messages.filter((m) => m.metadata?.homeroomBot?.kind === 'activity' && m.metadata.homeroomBot.appName === 'Staging demo app');
       assert.deepEqual(cards.map((m) => m.metadata.homeroomBot.issueNumber), [9, 14, 15], 'the new card is the newest');
       const joined = cards[2];
       assert.equal(messages.at(-1).id, joined.id, 'at the end of the DM');

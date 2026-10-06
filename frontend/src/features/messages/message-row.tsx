@@ -14,7 +14,7 @@ import type { ConversationKind, ConversationMessage } from './types';
 import { fileSize, fullTime, MessageMarkdown, ObjectCard, UserAvatar, senderName } from './format';
 import { BotActivityCard, isActivityMessage } from './bot-activity';
 import { BotQuestion, botMeta } from './bot-question';
-import { BotPlanCard, BotTwoQuestions, isPlanMessage, isTwoQuestions } from './bot-plan';
+import { BotPlanCard, BotPlanFollowUp, BotTwoQuestions, isPlanMessage, isTwoQuestions } from './bot-plan';
 import { BotReadyCard, isReadyMessage } from './bot-ready';
 import { LinkEmbeds } from './link-cards';
 import { plainText } from './plain-text';
@@ -84,6 +84,9 @@ export const MessageRow = memo(function MessageRow({
   inThread = false,
   threadOpen = false,
   focused = false,
+  planCardId = null,
+  underPlan = false,
+  hidePrompts = false,
 }: {
   message: ConversationMessage;
   conversationId: number;
@@ -99,6 +102,12 @@ export const MessageRow = memo(function MessageRow({
   threadOpen?: boolean;
   /** The message a link pointed at — flashed once (#2387). */
   focused?: boolean;
+  /** #4046: a plan's request's activity card, whose step the plan carries (./bot-plan.tsx planLayout). */
+  planCardId?: number | null;
+  /** #4046: an activity card under its built plan, drawn as the bot's one line. */
+  underPlan?: boolean;
+  /** #4046: a plan or a question offers its own answers, so questions to tap give way. */
+  hidePrompts?: boolean;
 }) {
   const mine = Number(typeof window !== 'undefined' ? window.App?.user?.id : 0) === message.sender.id;
   const [picker, setPicker] = useState<'above' | 'below' | null>(null);
@@ -247,6 +256,9 @@ export const MessageRow = memo(function MessageRow({
       {message.reply ? <button type="button" className="messages-quote" onClick={() => document.getElementById(`messages-message-${message.reply?.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}><span>{senderName(message.reply.sender)}</span><p>{message.reply.deleted ? 'Message deleted' : plainText(message.reply.content) || 'Attachment'}</p></button> : null}
       {editing ? (
         <div className="messages-edit"><textarea ref={editRef} aria-label="Edit message" value={editValue} onChange={(event) => setEditValue(event.target.value.slice(0, 8000))} rows={2} maxLength={8000} autoFocus onKeyDown={(event) => { if (event.key === 'Escape') setEditing(false); if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void saveEdit(); } }} /><div><button type="button" disabled={busy} onClick={() => void saveEdit()}>Save</button><button type="button" onClick={() => setEditing(false)}>Cancel</button></div></div>
+      ) : isActivityMessage(message) && underPlan ? (
+        // #4046: under its built plan, which carries its step, it is one line.
+        <BotPlanFollowUp message={message} />
       ) : isActivityMessage(message) ? (
         // #3736: the bot's activity card stands in place of its words, which
         // say the same for the inbox preview and the bell (./bot-activity.tsx).
@@ -259,7 +271,7 @@ export const MessageRow = memo(function MessageRow({
       ) : isPlanMessage(message) ? (
         // B6: a first version's plan, and two questions at once, stand in
         // place of their words too (./bot-plan.tsx).
-        <BotPlanCard message={message} conversationId={conversationId} />
+        <BotPlanCard message={message} conversationId={conversationId} cardId={planCardId} />
       ) : isTwoQuestions(message) ? (
         <BotTwoQuestions message={message} conversationId={conversationId} />
       ) : isReadyMessage(message) ? (
@@ -275,7 +287,7 @@ export const MessageRow = memo(function MessageRow({
     <>
       {message.sender.bot && (message.metadata?.homeroomBot?.question || message.metadata?.homeroomBot?.actions?.length)
         && !isTwoQuestions(message) && !isReadyMessage(message)
-        ? <BotQuestion message={message} conversationId={conversationId} /> : null}
+        ? <BotQuestion message={message} conversationId={conversationId} hidePrompts={hidePrompts} /> : null}
       {message.attachments.length ? <div className="messages-attachments">{message.attachments.map((attachment) => <Attachment key={attachment.id} attachment={attachment} />)}</div> : null}
       {message.objects.length ? <div className="messages-object-list">{message.objects.map((object, index) => <ObjectCard key={`${object.type}-${index}`} object={object} />)}</div> : null}
       {/* #3660: a link in the words to one of Homeroom's own pages, as the

@@ -389,9 +389,12 @@ const FIRST_VERSION_NOTE = [
   'plan around the project\'s real members, listed under WHO IS IN THIS PROJECT when known, and around new members',
   'joining later; never around people made up for an example.',
   // B6: the creator sees the plan before anything is built, and taps Build
-  // it or asks for changes (homeroom-bot-dm.js sendPlanCard).
+  // it or asks for changes (homeroom-bot-dm.js sendPlanCard). #4046: its
+  // card is light, so its lines are a few words each ("Log a run for any
+  // day"), not sentences.
   'Its creator sees your plan before anything is built, and taps Build it or asks for changes. So with `ready`, also',
-  'give `plan`: 3 to 5 bullets, each at most 80 characters, saying in their own terms what the first version will do:',
+  'give `plan`: 3 to 5 short lines of a few words each, at most 40 characters, saying in their own terms what the',
+  'first version will do:',
   'what they will see and can do, with no file names, code, colours or jargon. And give `choices`: at most 2 decisions',
   'you would otherwise make yourself that change what they will see or do, each a plain question with 2 to 4 short',
   '`answers`, the one you suggest first. They can tap another; one they leave goes with yours. Only a choice they would',

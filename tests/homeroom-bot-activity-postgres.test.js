@@ -450,8 +450,13 @@ test('the Homeroom bot DM\'s activity cards: one per piece of work, read from it
       const conversationId = await staging.ensureBotDmFixture(pool, viewer);
       await staging.ensureBotDmFixture(pool, viewer);
       const page = await conversations.listMessages(pool, viewer, conversationId, {});
-      const cards = (page.messages || page).filter((m) => m.metadata?.homeroomBot?.kind === 'activity')
+      const all = (page.messages || page).filter((m) => m.metadata?.homeroomBot?.kind === 'activity')
         .sort((a, b) => a.id - b.id);
+      // #4046: and two first versions' cards, which their plans carry.
+      assert.deepEqual(all.map((m) => m.metadata.homeroomBot.appName), [
+        'Staging demo run club', 'Staging demo plants', 'Staging demo app', 'Staging demo app',
+      ]);
+      const cards = all.filter((m) => m.metadata.homeroomBot.appName === 'Staging demo app');
       assert.deepEqual(cards.map((m) => m.metadata.homeroomBot.issueNumber), [9, 14], 'two cards, the one going newest, once');
       // #3870: and a change ready to try, saying what the change is, once,
       // before the cards, so the one being built stays the newest.
@@ -468,6 +473,9 @@ test('the Homeroom bot DM\'s activity cards: one per piece of work, read from it
       assert.deepEqual([going.step, going.of, going.stepName], [3, 6, 'Build it']);
       assert.equal(ended.messageId, cards[0].id);
       assert.equal(ended.outcome, 'proposed');
+      const byId = new Map(demo.cards.map((c) => [c.messageId, c]));
+      assert.deepEqual([byId.get(all[0].id).step, byId.get(all[0].id).typicalMinutes], [4, { from: 10, to: 25 }], 'the built plan\'s, being built');
+      assert.deepEqual([byId.get(all[1].id).step, byId.get(all[1].id).waitingOn], [3, 'them'], 'the waiting plan\'s, waiting on its maker');
       const { rows } = await pool.query('SELECT 1 FROM homeroom_bot_dm_messages WHERE user_id = $1', [viewer.id]);
       assert.equal(rows.length, 0, 'a demo card stands for no request: nothing is recorded or posted');
       assert.deepEqual(await activity.demoCards(pool, other), { cards: [] }, 'another viewer\'s fixture is not theirs');

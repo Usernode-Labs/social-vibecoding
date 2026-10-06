@@ -1,16 +1,16 @@
-// "Notify me when it's ready" on Homeroom bot's plan card (5 October).
+// "Notify me when it's ready" under Homeroom bot's plan (5 October; #4046).
 //
-// After Build it is pressed in the bot's chat, the plan card offers to
-// notify its maker when the first version is ready. This file pins:
+// After Build it is pressed in the bot's chat, the bot's line under the plan
+// offers to notify its maker when the first version is ready. This file pins:
 //
 //   1. NativeChrome.decideReadyPing, the pure rule, and notifyWhenReady, the
 //      tap's door to the permission: the iOS prompt only while undetermined,
 //      Android's own notification permission (never the alarm one), nothing
 //      to ask in a browser, a confirmation when it is allowed already, and
 //      the OS settings page as the way back from a denial.
-//   2. The card's button: offered right after Build it, asks nothing until
-//      it is tapped, says what will happen once it is, and is not offered
-//      again to an account that chose on this device.
+//   2. The button: offered while the first version is being built, asks
+//      nothing until it is tapped, says what will happen once it is, and is
+//      not offered again to an account that chose on this device.
 //
 // Run with: node --test tests/plan-card-notify-me.test.js
 
@@ -196,7 +196,7 @@ test('the card: one button, which asks nothing until it is tapped, then says wha
   globalThis.window = { NativeChrome: { async notifyWhenReady() { asked += 1; return { outcome: 'granted' }; } } };
   try {
     const html = renderToHtml(createElement(mod.NotifyMe, { userId: 7 }));
-    assert.match(html, /<button type="button" class="messages-bot-secondary" data-bot-notify-me="">/);
+    assert.match(html, /<button type="button" class="messages-bot-tint" data-bot-notify-me="">/, '#4046: an action in the accent\'s tint');
     assert.match(html, /<span>Notify me when it’s ready<\/span>/);
     assert.equal(asked, 0, 'drawing it asks nothing');
   } finally {
@@ -249,7 +249,7 @@ test('the tap: the app\'s answer, a browser\'s, and "Your builds" switched back 
   }
 });
 
-test('offered right after Build it, inside the card, and not again once this account chose here', () => {
+test('offered under the bot\'s line while it is being built, and not again once this account chose here', () => {
   const mod = loadTsx('frontend/src/features/messages/notify-me.tsx');
   withStorage(() => {
     assert.equal(mod.notifyMeChosen(7), false);
@@ -264,12 +264,16 @@ test('offered right after Build it, inside the card, and not again once this acc
   const html = renderToHtml(createElement(PlanCardView, {
     appName: 'Flat 4B', plan, state: 'built', footer: createElement('span', { 'data-footer': '' }, 'after'),
   }));
-  assert.match(html, /You chose Build it<\/p><span data-footer="">after<\/span><\/div>$/, 'drawn last, inside the card');
+  assert.match(html, /You chose Build it<\/p><span data-footer="">after<\/span><\/div>$/, 'a footer is drawn last, inside the card');
 
+  // #4046: not on the plan any more but under the bot's line beneath it,
+  // "I'll message you here when it's ready to try." (C8b on the canvas).
   const card = read('frontend/src/features/messages/bot-plan.tsx');
-  assert.match(card, /setPressed\(true\);\s*setOfferNotify\(!notifyMeChosen\(userId\)\);/,
-    'decided when Build it is pressed here, not for every built plan in the chat');
-  assert.match(card, /footer=\{pressed && offerNotify \? <NotifyMe userId=\{userId\} \/> : null\}/);
+  assert.doesNotMatch(card, /footer=/, 'the plan card offers nothing itself');
+  assert.match(card, /const \[offer\] = useState\(\(\) => !notifyMeChosen\(userId\)\);/,
+    'decided when the line is drawn: an account that chose here is not asked again');
+  assert.match(card, /\{offer && card\?\.state !== 'done' \? <div className="mt-2"><NotifyMe userId=\{userId\} quietHere \/><\/div> : null\}/,
+    'only while it is being built');
   const notify = read('frontend/src/features/messages/notify-me.tsx');
   assert.match(notify, /setState\('asking'\);\s*markNotifyMeChosen\(userId\);\s*const answered = await askToNotify\(\);/,
     'chosen on the tap, whatever the answer');

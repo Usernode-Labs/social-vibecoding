@@ -62,11 +62,20 @@ export function requestPlace(meta: HomeroomBotMeta): string {
   return meta.firstVersion ? `${app}’s first-version request` : `${app} request #${meta.issueNumber}`;
 }
 
-export function BotQuestion({ message, conversationId }: { message: ConversationMessage; conversationId: number }) {
+export function BotQuestion({ message, conversationId, hidePrompts = false }: {
+  message: ConversationMessage;
+  conversationId: number;
+  /**
+   * #4046: a plan or a question in the chat offers its own answers now
+   * (./bot-plan.tsx planLayout), so questions to tap give way until it is
+   * answered.
+   */
+  hidePrompts?: boolean;
+}) {
   const meta = botMeta(message);
   // The answer tapped here, until the server's own state comes back.
   const [chosen, setChosen] = useState<string | null>(null);
-  if (meta?.actions?.length) return <BotActions message={message} meta={meta} />;
+  if (meta?.actions?.length) return <BotActions message={message} meta={meta} hidePrompts={hidePrompts} />;
   if (!meta || !meta.question) return null;
   const answers = (meta.answers || []).filter((a) => typeof a === 'string' && a.trim());
   const open = meta.status === 'open' && !chosen && !message.deleted;
@@ -126,7 +135,7 @@ export function BotQuestion({ message, conversationId }: { message: Conversation
  * keeps it that way. A refused press (decided already elsewhere) brings
  * nothing back: that device's choice arrives with the update.
  */
-function BotActions({ message, meta }: { message: ConversationMessage; meta: HomeroomBotMeta }) {
+function BotActions({ message, meta, hidePrompts = false }: { message: ConversationMessage; meta: HomeroomBotMeta; hidePrompts?: boolean }) {
   // The button pressed here, until the server's own state comes back.
   const [pressed, setPressed] = useState<HomeroomBotAction | null>(null);
   const actions = meta.actions || [];
@@ -136,6 +145,8 @@ function BotActions({ message, meta }: { message: ConversationMessage; meta: Hom
   // B5: a question offered to tap reads back as asked, a choice as chosen.
   const chosenAction = actions.find((action) => action.id === meta.chosen) || pressed;
   const prompts = actions.length > 0 && actions.every((action) => action.type === 'prompt');
+  // #4046: one set of suggestions at a time. Asked already, it still says so.
+  if (open && prompts && hidePrompts) return null;
 
   function press(action: HomeroomBotAction) {
     if (action.type === 'open') {
