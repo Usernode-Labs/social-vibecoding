@@ -206,6 +206,13 @@ export interface WaitlistOptions {
    *  an invite's Join asks for a phone number first. Absent or false, the
    *  other ways only. */
   phone_sign_in?: boolean;
+  /** The waitlist can be joined by TEXT (src/services/sms/): an SMS
+   *  transport is configured. The same fail-closed shape as phone_sign_in —
+   *  absent or false, the join form offers the email channel only, so a
+   *  deploy with no SMS configured advertises nothing. A staging preview
+   *  still advertises it (the log transport counts), because the join
+   *  works there; only delivery differs. */
+  sms_signup?: boolean;
 }
 
 let optionsPromise: Promise<WaitlistOptions | null> | null = null;

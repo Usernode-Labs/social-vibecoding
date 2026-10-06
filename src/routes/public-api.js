@@ -48,6 +48,8 @@ const { waitlistIntegratorAuth } = require('../services/waitlist-integrator');
 const waitlist = require('../services/waitlist');
 const questions = require('../services/waitlist-questions');
 const { sendWaitlistJoinMail, sendWaitlistCodeMail } = require('../services/topochain/mailer');
+const { sendWaitlistJoinSms, sendWaitlistCodeSms } = require('../services/sms');
+const smsSelect = require('../services/sms/select');
 const { inviteUrl, siteUrl, waitlistUrl } = require('../services/marketing-links');
 const { loadContributors, shapeContributor } = require('../services/contributors');
 const { listPublicApps, isPublicDirectoryApp, HIDDEN_APP_STATUSES } = require('../services/public-app-directory');
@@ -72,6 +74,18 @@ const RESEND_RESPONSE = Object.freeze({
   ok: true,
   cooldown_seconds: 60,
   message: 'If that address is on our waitlist, a six-digit code is on its '
+    + 'way. It works for 15 minutes.',
+});
+
+// The phone twin of the frozen body above, and frozen for the same reason:
+// the four branches cannot drift apart, and no field may differ by branch.
+// One wording difference is load-bearing - "that number", not "that
+// address" - and it is a constant, so it too says the same thing whoever
+// asks.
+const RESEND_RESPONSE_SMS = Object.freeze({
+  ok: true,
+  cooldown_seconds: 60,
+  message: 'If that number is on our waitlist, a six-digit code is on its '
     + 'way. It works for 15 minutes.',
 });
 
@@ -221,6 +235,12 @@ function publicApiRoutes(config) {
       // only when its four Firebase values are set and the flag is on.
       // Sync on purpose — the gate reads config, not the database.
       phone_sign_in: phoneAuth.offered(config),
+      // Whether the waitlist can be joined by text (services/sms/): offered
+      // only when an SMS transport is actually configured, the same
+      // fail-closed shape as phone_sign_in. `chooseTransport` is the source
+      // of truth, so a preview with only the log transport still advertises
+      // it (the join works, the code is just rendered to the log).
+      sms_signup: Boolean(smsSelect.chooseTransport(process.env).transport),
       terms_link: await currentTermsLink(),
       // The same, from the Homeroom app's own sheets (the bridge's
       // signInWithProvider), once the app's client IDs are saved.
@@ -273,8 +293,26 @@ function publicApiRoutes(config) {
   // no transport is configured).
   router.post('/api/public/waitlist', waitlistIntegratorAuth(config), waitlistJoinLimiter, async (req, res) => {
     const email = waitlist.normalizeEmail(req.body?.email);
-    if (!email) {
-      return res.status(422).json({ error: 'A valid email address is required.' });
+    const phone = waitlist.normalizePhone(req.body?.phone);
+    // Both keys at once is refused: a row carries exactly one, and a second
+    // key later would make "which channel do we use at release?" a second
+    // decision. A present-but-malformed value falls through to the
+    // channel-specific refusal below and discloses nothing.
+    if (email && phone) {
+      return res.status(422).json({
+        error: 'Provide either an email address or a phone number, not both.',
+      });
+    }
+    if (!email && !phone) {
+      // The email-shaped message is kept for the email field's own error;
+      // a phone attempt (a `phone` in the body) gets the phone one so the
+      // form can attribute the error to the field the person filled in.
+      const triedPhone = req.body?.phone != null && req.body.phone !== '';
+      return res.status(422).json({
+        error: triedPhone
+          ? 'A valid phone number is required.'
+          : 'A valid email address is required.',
+      });
     }
     const stage1 = questions.validateStage1(req.body || {});
     if (!stage1.ok) {
@@ -286,6 +324,7 @@ function publicApiRoutes(config) {
     try {
       const { created, moreToken, submittedAt } = await waitlist.joinWaitlist(pool, {
         email,
+        phone,
         // A trusted integrator proxies real people, so its own server
         // address is not the signup's address. Recording the proxy for
         // every agency-sourced row is what this prefers away from; an
@@ -296,21 +335,32 @@ function publicApiRoutes(config) {
         // /waitlist page forwards it here, and the in-app /#waitlist route
         // still reads it from the hash for links minted before the move.
         // An unresolvable code is ignored rather than refused: a stale
-        // link must never block a join.
+        // link must never block a join. A phone join carries none.
         inviteCode: typeof req.body?.invite_code === 'string' ? req.body.invite_code : null,
       });
-      // CASE 1 — a brand new address. Joined, code mailed, step 2 next.
+      // CASE 1 — a brand new key. Joined, code sent, step 2 next. The
+      // channel picks whether that code is mailed or texted; the words
+      // change with it, because "email" in the phone case would be a lie
+      // the reader would act on.
       if (created) {
         log.info('public-api', 'Waitlist join', {});
-        // Best-effort like the mail itself: a code that cannot be minted
-        // must not fail the join, and the one-click link still confirms.
-        const code = await waitlist.issueVerificationCode(pool, email).catch(() => null);
-        sendWaitlistJoinMail(config, email, { moreToken, code }); // fire-and-forget, never throws
+        // Best-effort like the send itself: a code that cannot be minted
+        // must not fail the join.
+        if (phone) {
+          const code = await waitlist.issueVerificationPhoneCode(pool, phone).catch(() => null);
+          sendWaitlistJoinSms(config, phone, { code }); // fire-and-forget, never throws
+        } else {
+          const code = await waitlist.issueVerificationCode(pool, email).catch(() => null);
+          sendWaitlistJoinMail(config, email, { moreToken, code });
+        }
         return res.json({
           ok: true,
-          message: "You're on the waitlist. We'll email you when access opens up.",
-          // Stage-2 capability — present only on the first join.
-          more_token: moreToken,
+          message: phone
+            ? "You're on the waitlist. We'll text you when access opens up."
+            : "You're on the waitlist. We'll email you when access opens up.",
+          // Stage-2 capability — present only on the first join, and only
+          // for an email (the survey is reached by a mailed link).
+          more_token: phone ? null : moreToken,
           ...(disclose
             ? {
               status: signupStatus({
@@ -329,7 +379,9 @@ function publicApiRoutes(config) {
       // code here called into resendConfirmation unconditionally, which
       // deleted a confirmed reader's live code to mint one it then mailed
       // as a status code nobody was waiting for.
-      const row = await waitlist.getSignupByEmail(pool, email);
+      const row = phone
+        ? await waitlist.getSignupByPhone(pool, phone)
+        : await waitlist.getSignupByEmail(pool, email);
       // A row that vanished between the INSERT and this read (an admin
       // deletion mid-request) is the only way this is null. Treat it as
       // case 2's shape: it is the answer that asks for the least and
@@ -338,31 +390,36 @@ function publicApiRoutes(config) {
 
       // CASE 3 — already on the list AND confirmed. There is nothing left
       // for this person to do, so there is nothing to mint, nothing to
-      // delete and nothing to mail. The status block is what lands the
-      // client on the settled panel instead of a code field.
+      // delete and nothing to send.
       if (confirmedRow) {
-        // No address in the log line: which addresses came back is not
-        // something worth writing down to answer a support question.
         log.info('public-api', 'Waitlist re-join, already confirmed', {});
         return res.json({
           ok: true,
-          message: "You're already on the waitlist, and this address is confirmed.",
+          message: phone
+            ? "You're already on the waitlist, and this number is confirmed."
+            : "You're already on the waitlist, and this address is confirmed.",
           more_token: null,
           ...(disclose ? { status: signupStatus(row) } : {}),
         });
       }
 
-      // CASE 2 — on the list, not confirmed. Mail a fresh code, on the
+      // CASE 2 — on the list, not confirmed. Send a fresh code, on the
       // resend kind rather than the join kind: the words a returning
       // person needs are "here is your code", not a second welcome, and
-      // waitlist_joined's one-per-day rule would drop this send anyway.
-      // Fire-and-forget, and the mail throttle plus the reuse window in
-      // resendConfirmation are what bound how often it actually sends.
-      await resendConfirmation(email).catch(() => {});
+      // the join kind's one-per-day rule would drop this send anyway.
+      // Fire-and-forget, and the throttle plus the reuse window are what
+      // bound how often it actually sends.
+      if (phone) {
+        await resendPhoneConfirmation(phone).catch(() => {});
+      } else {
+        await resendConfirmation(email).catch(() => {});
+      }
       return res.json({
         ok: true,
-        message: "You're already on the waitlist. We've sent a fresh six-digit "
-          + 'code to that address.',
+        message: phone
+          ? "You're already on the waitlist. We've sent a fresh six-digit code to that number."
+          : "You're already on the waitlist. We've sent a fresh six-digit "
+            + 'code to that address.',
         more_token: null,
         ...(disclose && row ? { status: signupStatus(row) } : {}),
       });
@@ -435,6 +492,19 @@ function publicApiRoutes(config) {
     });
   }
 
+  // The phone twin of resendConfirmation. Same silence contract, same reuse
+  // window, same one-live-code rule - only the key column and the channel
+  // differ. There is no "confirmed" branch to render: a text has no room for
+  // a status shape, so the code is always just a code.
+  async function resendPhoneConfirmation(phone) {
+    const row = await waitlist.getSignupByPhone(pool, phone);
+    if (!row) return;
+    if (await waitlist.hasReusablePhoneCode(pool, phone).catch(() => false)) return;
+    const code = await waitlist.issueVerificationPhoneCode(pool, phone).catch(() => null);
+    if (!code) return;
+    sendWaitlistCodeSms(config, phone, { code });
+  }
+
   // POST /api/public/waitlist/resend — a new six-digit code for an address
   // that has joined but not confirmed.
   //
@@ -467,21 +537,36 @@ function publicApiRoutes(config) {
   // response TIME differ by branch.
   router.post('/api/public/waitlist/resend', waitlistResendIpLimiter, waitlistResendLimiter, async (req, res) => {
     const email = waitlist.normalizeEmail(req.body?.email);
+    const phone = waitlist.normalizePhone(req.body?.phone);
+    // One key, the same rule the join and its row keep. Both at once is
+    // refused rather than guessed at.
+    if (email && phone) {
+      return res.status(422).json({
+        error: 'Provide either an email address or a phone number, not both.',
+      });
+    }
     // The one refusal, and it discloses nothing: a syntactically invalid
-    // address is not a fact about the waitlist.
-    if (!email) {
-      return res.status(422).json({ error: 'A valid email address is required.' });
+    // key is not a fact about the waitlist. The field the person filled in
+    // picks the wording, as the join route does.
+    if (!email && !phone) {
+      const triedPhone = req.body?.phone != null && req.body.phone !== '';
+      return res.status(422).json({
+        error: triedPhone
+          ? 'A valid phone number is required.'
+          : 'A valid email address is required.',
+      });
     }
     try {
-      await resendConfirmation(email);
+      if (phone) await resendPhoneConfirmation(phone);
+      else await resendConfirmation(email);
     } catch (err) {
       // Deliberately NOT a 500. A failure here is ours, and letting it
       // change the status code would separate "something went wrong for
-      // this address" from "nothing went wrong for that one" — which is the
+      // this key" from "nothing went wrong for that one" — which is the
       // oracle again, by another route. Log it and answer normally.
       log.error('public-api', 'waitlist resend failed', { message: err.message });
     }
-    return res.json(RESEND_RESPONSE);
+    return res.json(phone ? RESEND_RESPONSE_SMS : RESEND_RESPONSE);
   });
 
   // POST /api/public/waitlist/status — where one address stands, by address.
@@ -518,13 +603,26 @@ function publicApiRoutes(config) {
   // not add a query, a cache, or an await to only one of them.
   router.post('/api/public/waitlist/status', waitlistStatusIpLimiter, waitlistStatusLimiter, async (req, res) => {
     const email = waitlist.normalizeEmail(req.body?.email);
-    // The same words /resend refuses with: a syntactically invalid address
-    // is not a fact about the waitlist, so the two surfaces answer it alike.
-    if (!email) {
-      return res.status(422).json({ error: 'A valid email address is required.' });
+    const phone = waitlist.normalizePhone(req.body?.phone);
+    if (email && phone) {
+      return res.status(422).json({
+        error: 'Provide either an email address or a phone number, not both.',
+      });
+    }
+    // The same words /resend refuses with: a syntactically invalid key is
+    // not a fact about the waitlist, so the two surfaces answer it alike.
+    if (!email && !phone) {
+      const triedPhone = req.body?.phone != null && req.body.phone !== '';
+      return res.status(422).json({
+        error: triedPhone
+          ? 'A valid phone number is required.'
+          : 'A valid email address is required.',
+      });
     }
     try {
-      const row = await waitlist.getSignupByEmail(pool, email);
+      const row = phone
+        ? await waitlist.getSignupByPhone(pool, phone)
+        : await waitlist.getSignupByEmail(pool, email);
       if (!row) {
         return res.json({ ok: true, on_list: false, admitted: false, status: null });
       }
@@ -597,16 +695,31 @@ function publicApiRoutes(config) {
   // actually stands.
   router.post('/api/public/waitlist/confirm', waitlistTokenScanLimiter, waitlistCodeConfirmLimiter, waitlistTokenLimiter, async (req, res) => {
     const email = waitlist.normalizeEmail(req.body?.email);
+    const phone = waitlist.normalizePhone(req.body?.phone);
     const code = typeof req.body?.code === 'string' ? req.body.code.trim() : '';
-    if (!email || !/^[0-9]{6}$/.test(code)) {
-      return res.status(422).json({ error: 'Enter the six-digit code from your email.' });
+    // One key per attempt, the same rule the row keeps.
+    if (email && phone) {
+      return res.status(422).json({
+        error: 'Provide either an email address or a phone number, not both.',
+      });
+    }
+    if ((!email && !phone) || !/^[0-9]{6}$/.test(code)) {
+      return res.status(422).json({
+        error: phone
+          ? 'Enter the six-digit code from your text.'
+          : 'Enter the six-digit code from your email.',
+      });
     }
     try {
-      const row = await waitlist.confirmSignupByCode(pool, email, code);
+      const row = phone
+        ? await waitlist.confirmSignupByPhoneCode(pool, phone, code)
+        : await waitlist.confirmSignupByCode(pool, email, code);
       if (!row) {
         return res.status(422).json({ error: 'That code is wrong or has expired. Ask for a new one.' });
       }
-      log.info('public-api', 'Waitlist email confirmed by code', {});
+      log.info('public-api', phone
+        ? 'Waitlist phone confirmed by code'
+        : 'Waitlist email confirmed by code', {});
       // The status block rides along (#1538) so "check my status" is one
       // round trip, not two, and so this surface and /more/:token cannot
       // describe the same row differently — both derive from signupStatus.

@@ -159,7 +159,10 @@ test('a signed-in account adds a phone through routes the waiting room can reach
   // Limiters first, then the same-origin check (tests/same-site-browser.test.js).
   assert.match(routes, /router\.post\(\s+'\/api\/auth\/phone-link\/request',\s+requireOffered,\s+phoneOtpRequestLimiter,\s+phoneOtpRequestPhoneLimiter,\s+sameOriginBrowserOnly,\s+signedIn,/);
   assert.match(routes, /router\.post\(\s+'\/api\/auth\/phone-link\/verify',\s+requireOffered,\s+phoneVerifyLimiter,\s+sameOriginBrowserOnly,\s+signedIn,/);
-  assert.match(routes, /const linked = await phoneAuth\.linkPhone\(pool, claims, req\.user\.id\);\s+const joined = await communityInvites\.joinQueued\(pool, req\.user\.id\);/);
+  // Linking the number also admits a RELEASED waitlist phone row (#SMS),
+  // the phone counterpart of the arrow email sign-up already takes, before
+  // the queued groups are joined.
+  assert.match(routes, /const linked = await phoneAuth\.linkPhone\(pool, claims, req\.user\.id\);[\s\S]*?await waitlist\.linkUserByPhone\(pool, \{ userId: req\.user\.id, phone: claims\.phoneNumber \}\);[\s\S]*?const joined = await communityInvites\.joinQueued\(pool, req\.user\.id\);/);
   // Under /api/auth/, which the platform-access gate leaves open to a waiting
   // account, and outside the pre-login /api/auth/phone/, so the session is read.
   const auth = read('src/middleware/auth.js');

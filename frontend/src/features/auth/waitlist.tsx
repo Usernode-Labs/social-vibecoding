@@ -235,6 +235,22 @@ export function WaitlistScreen() {
   const [discovery, setDiscovery] = useState<string | null>(null);
   const [confirmed, setConfirmed] = useState(false);
   /**
+   * Which contact key the join form is collecting (#SMS). `'email'` is the
+   * prerendered shape, so it is the initial value; the switch is a client
+   * affordance and the field it reveals is `hidden` in the reveal shape
+   * until the fetch says SMS is offered. Never read from state whose
+   * initial value differs by environment — the phone option is simply
+   * hidden when `options.sms_signup` is absent.
+   */
+  const [channel, setChannel] = useState<'email' | 'phone'>('email');
+  /**
+   * The number the confirm step is about, when it went by phone. Its own
+   * state rather than reusing `sentTo`, because the copy that names it is
+   * different ("text you" against "email you") and one string cannot carry
+   * both without a second flag to disambiguate.
+   */
+  const [sentToPhone, setSentToPhone] = useState(false);
+  /**
    * The address the code went to, echoed back in the confirm step AND in the
    * settled `#waitlist-confirmed` panel — "which address did I use?" is the
    * question that panel used to leave open (#1537). Empty at first render, and
@@ -359,6 +375,7 @@ export function WaitlistScreen() {
   const busy = useRef(false);
 
   const email = useRef<HTMLInputElement>(null);
+  const phone = useRef<HTMLInputElement>(null);
   const code = useRef<HTMLInputElement>(null);
   /** The address, when the confirm step was reached without a join. */
   const confirmEmail = useRef<HTMLInputElement>(null);
@@ -427,6 +444,16 @@ export function WaitlistScreen() {
     // `waitlist-joined` by one sentence and is covered by a unit
     // assertion on the lede instead.
     const shotRejoined = shot === 'waitlist-rejoined';
+    // And the eighth (#SMS): the join form itself with the PHONE channel
+    // chosen. A shot of its own because the channel switch and the phone
+    // field only render once somebody has picked a channel, and this is the
+    // one settled state no other shot paints. It writes nothing and joins
+    // nothing, so it stays on the form.
+    const shotPhone = shot === 'waitlist-phone';
+    if (shotPhone) {
+      setMsg(null);
+      setChannel('phone');
+    }
     if (shotJoined || shotConfirmed || shotAdmitted || shotStatus || shotRejoined) {
       setMsg(null);
       setJoined(true);
@@ -548,7 +575,7 @@ export function WaitlistScreen() {
     setHasSession(session);
     // Never resurrect the form over the success state (a re-show after a join,
     // e.g. back-then-forward).
-    if (shotCodeEntry || shotCodeStep || shotAdmitted || shotNotFound || shotRejoined) {
+    if (shotCodeEntry || shotCodeStep || shotAdmitted || shotNotFound || shotRejoined || shotPhone) {
       // A shot has to paint a settled state, and a focus ring is not one.
     } else if (!session && !joined && !shotJoined && !shotConfirmed) {
       email.current?.focus({ preventScroll: true });
@@ -597,11 +624,18 @@ export function WaitlistScreen() {
   const onSubmit = useCallback(
     async (e: React.FormEvent<HTMLFormElement>) => {
       e.preventDefault();
+      const usePhone = channel === 'phone';
       const emailVal = email.current?.value.trim() || '';
-      // Client preflight mirroring the server's stage-1 rules. Only the
-      // address is required now, so this is the only miss worth catching
-      // without a round trip.
-      if (!emailVal) return setMsg({ text: 'Please enter your email.', tone: 'error' });
+      const phoneVal = phone.current?.value.trim() || '';
+      // Client preflight mirroring the server's stage-1 rules. Exactly one
+      // key is required, and which one the form is collecting is the
+      // channel — so this is the only miss worth catching without a round
+      // trip.
+      if (usePhone) {
+        if (!phoneVal) return setMsg({ text: 'Please enter your phone number.', tone: 'error' });
+      } else if (!emailVal) {
+        return setMsg({ text: 'Please enter your email.', tone: 'error' });
+      }
 
       setSubmitting(true);
       try {
@@ -609,7 +643,7 @@ export function WaitlistScreen() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            email: emailVal,
+            ...(usePhone ? { phone: phoneVal } : { email: emailVal }),
             country: country.current?.value || undefined,
             discovery_source: discovery || undefined,
             invite_code: inviteRef.current || undefined,
@@ -619,10 +653,15 @@ export function WaitlistScreen() {
         if (res.ok) {
           setMsg(null);
           setJoined(true);
-          // Lower-cased to match the stored form: the server normalizes before
-          // it writes, so echoing back what was typed would disagree with the
-          // address the stage-2 screen names.
-          setSentTo(emailVal.toLowerCase());
+          // The channel the code went out on, which decides the copy below
+          // and which key the code step posts back.
+          setSentToPhone(usePhone);
+          // An address is lower-cased to match the stored form: the server
+          // normalizes before it writes, so echoing back what was typed would
+          // disagree with the address the stage-2 screen names. A phone join
+          // leaves this empty, so the settled panel's "Registered with" line
+          // stays hidden rather than naming a key it does not have.
+          setSentTo(usePhone ? '' : emailVal.toLowerCase());
           /*
               WHICH of the three cases (#2201) — read off the status block, not
               off `message`. The server's wording is the server's; branching on
@@ -689,10 +728,20 @@ export function WaitlistScreen() {
    * still holds what was typed. Reached any other way there is nothing in it,
    * and #waitlist-confirm-email is where the address comes from instead.
    */
-  const confirmAddress = useCallback(
-    () => (codeOnly ? confirmEmail.current?.value.trim() : email.current?.value.trim()) || '',
-    [codeOnly],
-  );
+  const confirmAddress = useCallback(() => {
+    if (codeOnly) return confirmEmail.current?.value.trim() || '';
+    if (sentToPhone) return phone.current?.value.trim() || '';
+    return email.current?.value.trim() || '';
+  }, [codeOnly, sentToPhone]);
+
+  /**
+   * Which key the code step posts back. The post-join path keeps the
+   * channel it joined with; the check-my-status path is always the address
+   * field (`#waitlist-confirm-email`), which has no phone twin — a number
+   * is confirmed in one press from the join form, so it never needs the
+   * "which address?" step.
+   */
+  const contactKey = sentToPhone && !codeOnly ? 'phone' : 'email';
 
   /**
    * Move to the code step, in state and in the fragment (#1876).
@@ -738,8 +787,12 @@ export function WaitlistScreen() {
   const onResend = useCallback(async () => {
     if (resending || cooldownLeft > 0) return;
     const emailVal = confirmAddress();
+    const usePhone = contactKey === 'phone';
     if (!emailVal) {
-      return setResendNote({ text: 'Enter your email address first.', tone: 'error' });
+      return setResendNote({
+        text: usePhone ? 'Enter your phone number first.' : 'Enter your email address first.',
+        tone: 'error',
+      });
     }
     setResending(true);
     setResendNote(null);
@@ -747,17 +800,20 @@ export function WaitlistScreen() {
       const res = await fetch('/api/public/waitlist/resend', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: emailVal }),
+        body: JSON.stringify(usePhone ? { phone: emailVal } : { email: emailVal }),
       });
       const data = await res.json().catch(() => null);
       if (res.ok) {
         setResendNote({
           text: (data && data.message)
-            || 'If that address is on our waitlist, a six-digit code is on its way.',
+            || (usePhone
+              ? 'If that number is on our waitlist, a six-digit code is on its way.'
+              : 'If that address is on our waitlist, a six-digit code is on its way.'),
           tone: 'ok',
         });
-        // Name the address the confirm copy is about, now that we have one.
-        setSentTo(emailVal.toLowerCase());
+        // Name the key the confirm copy is about, now that we have one. A
+        // phone number does not fill the address line.
+        if (usePhone) setSentToPhone(true); else setSentTo(emailVal.toLowerCase());
         startCooldown();
       } else {
         setResendNote({
@@ -919,6 +975,7 @@ export function WaitlistScreen() {
     setJoined(false);
     setCodeOnly(false);
     setFlowStep('address');
+    setSentToPhone(false);
     if (emailVal && email.current) email.current.value = emailVal;
     try {
       if (location.hash !== '#waitlist') location.hash = '#waitlist';
@@ -942,6 +999,9 @@ export function WaitlistScreen() {
     setMsg(null);
     setJoined(true);
     setCodeOnly(true);
+    // The check-my-status errand is always the address one: it has its own
+    // address step and no phone twin.
+    setSentToPhone(false);
     // At the address step (#1876): nothing has been sent from this device, so
     // there is nothing to type six digits of yet.
     setFlowStep('address');
@@ -967,12 +1027,18 @@ export function WaitlistScreen() {
     // address never travels in a URL. Back to the step that collects one,
     // rather than a POST the server can only refuse in the one shape that
     // deliberately says nothing.
+    const usePhone = contactKey === 'phone';
     if (codeOnly && !confirmAddress()) {
       backToAddress();
       return setMsg({ text: 'Enter the email address you joined with first.', tone: 'error' });
     }
     if (!/^[0-9]{6}$/.test(codeVal)) {
-      return setMsg({ text: 'Enter the six-digit code from your email.', tone: 'error' });
+      return setMsg({
+        text: usePhone
+          ? 'Enter the six-digit code from your text.'
+          : 'Enter the six-digit code from your email.',
+        tone: 'error',
+      });
     }
     busy.current = true;
     setSubmitting(true);
@@ -980,7 +1046,11 @@ export function WaitlistScreen() {
       const res = await fetch('/api/public/waitlist/confirm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: confirmAddress(), code: codeVal }),
+        body: JSON.stringify(
+          usePhone
+            ? { phone: confirmAddress(), code: codeVal }
+            : { email: confirmAddress(), code: codeVal },
+        ),
       });
       const data = await res.json().catch(() => null);
       if (res.ok) {
@@ -1008,7 +1078,7 @@ export function WaitlistScreen() {
     }
     busy.current = false;
     setSubmitting(false);
-  }, [backToAddress, codeOnly, confirmAddress]);
+  }, [backToAddress, codeOnly, confirmAddress, contactKey]);
 
   /**
    * Keep the field to six digits, and confirm as soon as it has them.
@@ -1083,7 +1153,9 @@ export function WaitlistScreen() {
                   ? 'Step 2 of 2 · Enter your code'
                   : 'Step 1 of 2 · Your email address'
                 : 'Step 1 complete · Joined the waitlist'
-              : 'Step 1 of 2 · Your email'}
+              : channel === 'phone'
+                ? 'Step 1 of 2 · Your phone number'
+                : 'Step 1 of 2 · Your email'}
         </p>
         {/*
             The pitch. It answers "why would I join", so it belongs to step 1
@@ -1139,7 +1211,79 @@ export function WaitlistScreen() {
           className={hiddenLast(hasSession || joined, 'mt-8 space-y-5')}
           onSubmit={onSubmit}
         >
-          <div>
+          {/*
+              How to reach you: email or a phone number (#SMS). Rendered
+              unconditionally and `hidden` until the options say SMS is
+              offered (`sms_signup`), which is the same fail-closed shape as
+              the phone sign-in flow — an unconfigured transport advertises
+              nothing. The switch is a `role=group` of two buttons rather
+              than a tab list: it picks which field the form is collecting,
+              it is not a navigation between two panels.
+          */}
+          <div
+            role="group"
+            aria-label="How to reach you"
+            className={
+              options?.sms_signup
+                ? 'inline-flex rounded-lg border border-zinc-300 dark:border-zinc-700 p-0.5'
+                : 'hidden'
+            }
+          >
+            <button
+              id="waitlist-channel-email"
+              type="button"
+              aria-pressed={channel === 'email'}
+              onClick={() => setChannel('email')}
+              className={
+                channel === 'email'
+                  ? 'rounded-md bg-violet-600 px-3 py-1 text-sm font-medium text-white'
+                  : 'rounded-md px-3 py-1 text-sm font-medium text-zinc-600 dark:text-zinc-300'
+              }
+            >
+              Email
+            </button>
+            <button
+              id="waitlist-channel-phone"
+              type="button"
+              aria-pressed={channel === 'phone'}
+              onClick={() => setChannel('phone')}
+              className={
+                channel === 'phone'
+                  ? 'rounded-md bg-violet-600 px-3 py-1 text-sm font-medium text-white'
+                  : 'rounded-md px-3 py-1 text-sm font-medium text-zinc-600 dark:text-zinc-300'
+              }
+            >
+              Phone number
+            </button>
+          </div>
+          {/*
+              The phone field, revealed by the switch. Always in the markup
+              and hidden until both the switch is on it AND SMS is offered,
+              for the same inventory reason every conditional field here
+              keeps: the id is part of the shell's inventory, so rendering it
+              conditionally would take it out of the document.
+          */}
+          <div className={options?.sms_signup && channel === 'phone' ? '' : 'hidden'}>
+            <label htmlFor="waitlist-phone" className={SURVEY_LABEL}>
+              Your phone number
+              <span className="ml-0.5 text-red-700 dark:text-red-400" aria-hidden="true">
+                *
+              </span>
+            </label>
+            <p className={SURVEY_HINT}>
+              We only text you when your spot comes up. No marketing.
+            </p>
+            <Input
+              ref={phone}
+              id="waitlist-phone"
+              type="tel"
+              maxLength={20}
+              placeholder="+1 415 555 0123"
+              autoComplete="tel"
+              {...SURVEY_FIELD}
+            />
+          </div>
+          <div className={options?.sms_signup && channel === 'phone' ? 'hidden' : ''}>
             <label htmlFor="waitlist-email" className={SURVEY_LABEL}>
               {/* #1877: the marker sits a hair off the word rather than
                   touching it, and is hidden from screen readers — the input's
@@ -1300,7 +1444,9 @@ export function WaitlistScreen() {
                 : 'Enter the address you joined with and we\u2019ll email you a code. It shows where you stand, and confirms your address if it still needs it.'
               : rejoined
                 ? 'Your spot was already saved, so nothing is lost. This address still needs confirming, so use the code below and we\u2019ll email you when your spot opens.'
-                : 'Your signup is saved. Next, confirm your email so we can let you know when your spot opens.'}
+                : sentToPhone
+                  ? 'Your signup is saved. Next, confirm your phone number so we can text you when your spot opens.'
+                  : 'Your signup is saved. Next, confirm your email so we can let you know when your spot opens.'}
           </p>
           {/*
               Confirming by code, for the phone: leaving for the mail app and
@@ -1460,7 +1606,11 @@ export function WaitlistScreen() {
                 htmlFor="waitlist-code"
                 className={SURVEY_LABEL}
               >
-                {codeOnly ? 'Your six-digit code' : 'Step 2 of 2 · Confirm your email'}
+                {codeOnly
+                  ? 'Your six-digit code'
+                  : contactKey === 'phone'
+                    ? 'Step 2 of 2 · Confirm your phone'
+                    : 'Step 2 of 2 · Confirm your email'}
               </label>
               <p className={SURVEY_HINT}>
                 {/*
@@ -1475,9 +1625,11 @@ export function WaitlistScreen() {
                 */}
                 {codeOnly && !sentTo
                   ? 'Enter the six-digit code from your email. Codes work for 15 minutes, so if yours has expired, ask for a new one below.'
-                  : sentTo
-                    ? `Check ${sentTo} for a six-digit code, and use the newest email. You can also just click the link in it. Codes work for 15 minutes.`
-                    : 'Check your email for a six-digit code, and use the newest one. You can also just click the link in it. Codes work for 15 minutes.'}
+                  : contactKey === 'phone' && sentToPhone
+                    ? 'Check your text messages for a six-digit code, and use the newest one. Codes work for 15 minutes.'
+                    : sentTo
+                      ? `Check ${sentTo} for a six-digit code, and use the newest email. You can also just click the link in it. Codes work for 15 minutes.`
+                      : 'Check your email for a six-digit code, and use the newest one. You can also just click the link in it. Codes work for 15 minutes.'}
               </p>
               <div className="flex gap-2">
                 <Input

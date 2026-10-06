@@ -78,6 +78,8 @@ const DENIED_TABLES = new Set([
   'cli_access_tokens',   // global CLI bearer hashes and hints
   'cli_auth_audit_events', // security audit trail for CLI credentials
   'cli_auth_rate_limits', // shared security limiter state
+  'sms_deliveries',     // bulk phone-number delivery log (PII)
+  'sms_suppressions',   // phone numbers that opted out or bounced
   'moderation_cases',
   'moderation_reports',
   'moderation_evidence_files',

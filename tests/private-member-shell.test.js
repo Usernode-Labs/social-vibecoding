@@ -146,8 +146,11 @@ test('the waitlist card\'s routes: a code-mailing join behind the email code\'s 
   assert.match(routes, /router\.get\('\/api\/me\/waitlist', async/);
   // Limiters before the same-origin check (tests/same-site-browser.test.js),
   // and only somebody still waiting gets past `waiting`.
-  assert.match(routes, /router\.post\('\/api\/me\/waitlist\/join', drainGuard, otpRequestLimiter, otpRequestEmailLimiter,\s+sameOriginBrowserOnly, waiting,/);
-  assert.match(routes, /router\.post\('\/api\/me\/waitlist\/verify', drainGuard, otpVerifyLimiter,\s+sameOriginBrowserOnly, waiting,/);
+  // The phone channel rides the phone limiters beside the email ones (#SMS),
+  // so a join by text is capped per source and per number exactly as a join
+  // by address is capped per source and per address.
+  assert.match(routes, /router\.post\('\/api\/me\/waitlist\/join', drainGuard,\s+otpRequestLimiter, otpRequestEmailLimiter,\s+phoneOtpRequestLimiter, phoneOtpRequestPhoneLimiter,\s+sameOriginBrowserOnly, waiting,/);
+  assert.match(routes, /router\.post\('\/api\/me\/waitlist\/verify', drainGuard, otpVerifyLimiter, phoneVerifyLimiter,\s+sameOriginBrowserOnly, waiting,/);
   assert.match(routes, /code: 'already_in'/);
   // Behind the session middleware, after the invite routes.
   const server = read('server.js');

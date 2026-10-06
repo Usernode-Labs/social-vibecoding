@@ -188,6 +188,10 @@ async function migrate(config) {
   // seed's 900001 / 900002 fixture accounts).
   await seedStagingProfileCustomization(pool, config);
   await seedStagingPlatformMail(pool);
+  // After it: the SMS fixtures decorate the same waitlist rows and riff on
+  // the same "a preview never delivers" shape, and one of them seeds a
+  // delivery row the admin screen reads back.
+  await seedStagingPlatformSms(pool);
   finishPhase('stagingFixturesMs');
   await sweepInterruptedDbExports(pool);
   await backfillEvents(pool);
@@ -13857,6 +13861,139 @@ async function seedStagingPlatformMail(pool) {
   }
 }
 
+// Staging fixtures for the SMS half of the waitlist (#SMS).
+//
+// Its own function rather than a block in seedStagingPlatformMail, for the
+// same reason seedStagingFirstChallenges has one: it hangs off rows that
+// seed already wrote (the waitlist signups) and off a table the mail seed
+// knows nothing about, so folding it in would have made one function own two
+// ledgers and two sets of reservations.
+//
+// What needs a fixture, and why:
+//
+//   900507  A WAITING, phone-confirmed signup. The phone join state, and the
+//           row the admin screen shows as reachable by text ("by text" in
+//           the Signup column, "Phone confirmed" in Details).
+//   900508  An ADMITTED phone signup with one sms_deliveries row behind it.
+//           sms_deliveries is staging:private, so a clone starts empty and
+//           every admitted row would read "No delivery recorded." without
+//           this - the line that answers "did the text actually leave?".
+//   900509  An ADMITTED phone signup linked to NO account. The sign-up link
+//           state: the release text points at sign-up rather than sign-in
+//           because no account has the number yet.
+//
+// Plus a live phone verification code with the same known literal the email
+// fixtures use (000000), so a tester can walk the code step with no carrier:
+// the number ends in the reserved 555 range, so the code text the flow would
+// normally send can never reach a real handset and the seeded literal is the
+// only way in.
+//
+// Every number is in the reserved +1 555 01xx range - the fictional numbers
+// a US carrier never routes - so nothing here can text a real person even if
+// a future deploy pointed a preview at a live transport by mistake.
+//
+// Idempotent: fixed ids in the 900500+ range with ON CONFLICT (id), and the
+// code row by its own "one live code per number" existence check. A staging
+// preview rebuilds on every push, so a re-run must be a no-op.
+async function seedStagingPlatformSms(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  // Reserved fictional numbers (NANP 555-0100 .. 555-0199).
+  const WAITING_PHONE = '+15550100001';
+  const ADMITTED_PHONE = '+15550100002';
+  const UNLINKED_PHONE = '+15550100003';
+
+  try {
+    // The three signup rows. A row carries exactly one key, so each carries a
+    // phone and a NULL email - which is exactly the shape the CHECK
+    // constraint (waitlist_signups_key_present_check) requires.
+    await pool.query(
+      `INSERT INTO waitlist_signups
+         (id, phone_e164, submitted_at, ip, answers, released_at, linked_user_id,
+          confirmed_at, invited_by)
+       VALUES
+         (900507, $1, NOW() - INTERVAL '9 days', NULL, NULL, NULL, NULL,
+          NOW() - INTERVAL '9 days', NULL),
+         (900508, $2, NOW() - INTERVAL '12 days', NULL, NULL,
+          NOW() - INTERVAL '1 day',
+          (SELECT id FROM users WHERE username = 'staging-demo-user'),
+          NOW() - INTERVAL '12 days', NULL),
+         (900509, $3, NOW() - INTERVAL '11 days', NULL, NULL,
+          NOW() - INTERVAL '2 days', NULL, NOW() - INTERVAL '11 days', NULL)
+       ON CONFLICT (id) DO NOTHING`,
+      [WAITING_PHONE, ADMITTED_PHONE, UNLINKED_PHONE]
+    );
+
+    // Re-assert the state on every boot: ON CONFLICT above means an edit to a
+    // literal only lands on a database that has never seen the row, and the
+    // two admitted rows must stay admitted with the right linkage. Gated on
+    // nothing that a real row would trip, because no real row can carry a
+    // 555-01xx number.
+    await pool.query(
+      `UPDATE waitlist_signups
+          SET confirmed_at = COALESCE(confirmed_at, NOW() - INTERVAL '9 days'),
+              released_at = NULL, linked_user_id = NULL
+        WHERE phone_e164 = $1`,
+      [WAITING_PHONE]
+    );
+    await pool.query(
+      `UPDATE waitlist_signups
+          SET confirmed_at = COALESCE(confirmed_at, NOW() - INTERVAL '12 days'),
+              released_at = COALESCE(released_at, NOW() - INTERVAL '1 day'),
+              linked_user_id = COALESCE(linked_user_id,
+                (SELECT id FROM users WHERE username = 'staging-demo-user'))
+        WHERE phone_e164 = $1`,
+      [ADMITTED_PHONE]
+    );
+    await pool.query(
+      `UPDATE waitlist_signups
+          SET confirmed_at = COALESCE(confirmed_at, NOW() - INTERVAL '11 days'),
+              released_at = COALESCE(released_at, NOW() - INTERVAL '2 days'),
+              linked_user_id = NULL
+        WHERE phone_e164 = $1`,
+      [UNLINKED_PHONE]
+    );
+
+    // The one "you're in" text that left, so the admin row's "Invite text:"
+    // line reads "Sent" instead of "No delivery recorded." - the same reason
+    // seedStagingPlatformMail seeds a waitlist_released mail row.
+    await pool.query(
+      `INSERT INTO sms_deliveries (kind, recipient, provider, status)
+       SELECT 'waitlist_released_sms', $1::text, 'log', 'sent'
+        WHERE NOT EXISTS (
+          SELECT 1 FROM sms_deliveries
+           WHERE recipient = $1::text AND kind = 'waitlist_released_sms'
+             AND status = 'sent'
+        )`,
+      [ADMITTED_PHONE]
+    );
+
+    // A live code for the waiting number, with the known literal. Not a
+    // shortcut through the real check: the app still hashes what was typed
+    // and bcrypt.compares it, still counts attempts, still consumes the row
+    // on success - only the VALUE is known. Same 000000 the email fixtures
+    // use, so a tester types one code everywhere.
+    const demoCodeHash = await bcrypt.hash('000000', 10);
+    await pool.query(
+      `INSERT INTO waitlist_verification_codes (phone_e164, code_hash, expires_at)
+       SELECT $1::text, $2::text, NOW() + INTERVAL '30 days'
+        WHERE NOT EXISTS (
+          SELECT 1 FROM waitlist_verification_codes
+           WHERE phone_e164 = $1::text AND consumed_at IS NULL
+        )`,
+      [WAITING_PHONE, demoCodeHash]
+    );
+
+    log.info('migrate', 'Staging platform-sms fixture seeded', {
+      signups: 3,
+    });
+  } catch (err) {
+    // Same contract as every other staging seed: a fixture failure must
+    // never stop a boot.
+    log.warn('migrate', 'Staging platform-sms seed skipped', { message: err.message });
+  }
+}
+
 // seedStagingTopochain is exported alongside migrate() solely so
 // tests/topochain-staging-seed.test.js can invoke it directly against a
 // mock pool (idempotency/param-flow behaviour, not just a source-text
@@ -13865,7 +14002,7 @@ async function seedStagingPlatformMail(pool) {
 module.exports = {
   migrate, seedStagingTopochain, seedStagingFirstChallenges, seedStagingProfileCustomization,
   seedStagingBotChatRequest,
-  seedStagingPlatformMail, auditDuplicatePrSessions,
+  seedStagingPlatformMail, seedStagingPlatformSms, auditDuplicatePrSessions,
   migrateWaitlistCountryCodes,
   clearAutomatedChannelLines,
   backfillProposalIssuerAssignments,

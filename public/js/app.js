@@ -789,7 +789,7 @@ const App = {
         shot !== 'waitlist-step1' && shot !== 'waitlist-code-entry' &&
         shot !== 'waitlist-code-step' && shot !== 'waitlist-not-found' &&
         shot !== 'waitlist-admitted' && shot !== 'waitlist-status' &&
-        shot !== 'waitlist-rejoined' &&
+        shot !== 'waitlist-rejoined' && shot !== 'waitlist-phone' &&
         shot !== 'waitlist-more' &&
         shot !== 'anon-back' &&
         shot !== 'signup-code-sent' &&
@@ -802,7 +802,7 @@ const App = {
          || shot === 'waitlist-step1' || shot === 'waitlist-code-entry'
          || shot === 'waitlist-code-step' || shot === 'waitlist-not-found'
          || shot === 'waitlist-admitted' || shot === 'waitlist-status'
-         || shot === 'waitlist-rejoined') &&
+         || shot === 'waitlist-rejoined' || shot === 'waitlist-phone') &&
         (!location.hash || location.hash === '#')) {
       try { history.replaceState(null, '', location.search + '#waitlist'); } catch (err) { /* ignore */ }
     }

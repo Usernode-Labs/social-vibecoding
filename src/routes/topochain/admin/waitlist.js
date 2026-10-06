@@ -23,6 +23,7 @@ const waitlist = require('../../../services/waitlist');
 const firstSession = require('../../../services/first-session');
 const { signalsFor } = require('../../../services/waitlist-signals');
 const { sendWaitlistReleaseMail } = require('../../../services/topochain/mailer');
+const { sendWaitlistReleaseSms } = require('../../../services/sms');
 const { loadMobileAppUrls } = require('../../../services/mobile-store-links');
 const { adminWriteGate } = require('./auth');
 const { toIntId } = require('./util');
@@ -32,6 +33,10 @@ function formatSignup(row) {
   return {
     id: Number(row.id),
     email: row.email,
+    // A row is keyed by exactly one of these; the other is null. A phone
+    // row shows the number, and the Details block reads the text's outcome
+    // off `invite_text` instead of `invite_email`.
+    phone_e164: row.phone_e164 ?? null,
     submitted_at: iso(row.submitted_at),
     released_at: iso(row.released_at),
     // NULL after a join means the address never followed the confirm link
@@ -59,6 +64,16 @@ function formatSignup(row) {
         status: row.invite_mail_status,
         created_at: iso(row.invite_mail_at),
         error: row.invite_mail_error ?? null,
+      }
+      : null,
+    // The phone twin of invite_email: what happened to the "you're in" text
+    // for an admitted phone row. Null when nothing was recorded (the
+    // staging-clone shape, since sms_deliveries is staging:private).
+    invite_text: row.invite_text_status
+      ? {
+        status: row.invite_text_status,
+        created_at: iso(row.invite_text_at),
+        error: row.invite_text_error ?? null,
       }
       : null,
     // Two-stage survey payload (versioned JSON — stage 1 at join, stage 2
@@ -144,8 +159,8 @@ function bareHandle(v) {
 // as `found_us` above, so the file matches what the row actually holds
 // rather than a label that can be reworded later.
 const EXPORT_HEADER = [
-  'signup_id', 'email', 'status', 'signed_up_at', 'confirmed_at', 'admitted_at',
-  'x_handle', 'x_handle_source', 'github_handle', 'linkedin_handle',
+  'signup_id', 'email', 'phone', 'status', 'signed_up_at', 'confirmed_at', 'admitted_at',
+  'admitted_notice', 'x_handle', 'x_handle_source', 'github_handle', 'linkedin_handle',
   'farcaster', 'discord', 'telegram', 'other_handle', 'referred_by_handle',
   'account_username', 'has_platform_access', 'came_from_email', 'brought_in',
   'country', 'city', 'found_us', 'found_us_detail', 'made_url', 'made_note',
@@ -162,13 +177,21 @@ function exportRow(r) {
   const loss = plainObject(a.loss);
   const signupX = bareHandle(verified.x);
   const accountX = bareHandle(r.account_x_handle);
+  // The channel the "you're in" notice went out on, as a plain word: a row is
+  // keyed by exactly one of email/phone, so this reads the matching ledger.
+  // Empty for a row still waiting (nothing was sent).
+  const notice = r.released_at
+    ? (r.phone_e164 ? (r.invite_text_status || '') : (r.invite_mail_status || ''))
+    : '';
   return [
     Number(r.id),
     r.email,
+    r.phone_e164 || '',
     r.released_at ? 'admitted' : 'waiting',
     iso(r.submitted_at),
     iso(r.confirmed_at),
     iso(r.released_at),
+    notice,
     signupX || accountX,
     signupX ? 'waitlist' : (accountX ? 'account' : ''),
     bareHandle(verified.github) || bareHandle(r.account_github_handle),
@@ -238,15 +261,19 @@ async function eachLimit(items, limit, fn) {
 // whether a Homeroom account has the address anyway), or `invalid` (the
 // join form's own rule rejects it).
 function formatResolved(entry, signup, account) {
-  if (!entry.email) return { input: entry.input, email: null, match: 'invalid' };
+  const key = entry.phone || entry.email;
+  if (!key) {
+    return { input: entry.input, email: null, phone: null, match: 'invalid' };
+  }
+  const value = { input: entry.input, email: entry.email ?? null, phone: entry.phone ?? null };
   if (signup) {
     return {
-      input: entry.input,
-      email: entry.email,
+      ...value,
       match: signup.released_at ? 'admitted' : 'waiting',
       signup: {
         id: Number(signup.id),
         email: signup.email,
+        phone_e164: signup.phone_e164 ?? null,
         submitted_at: iso(signup.submitted_at),
         released_at: iso(signup.released_at),
         confirmed_at: iso(signup.confirmed_at),
@@ -256,8 +283,7 @@ function formatResolved(entry, signup, account) {
     };
   }
   return {
-    input: entry.input,
-    email: entry.email,
+    ...value,
     match: 'not_found',
     account: account
       ? { username: account.username ?? null, has_platform_access: !!account.has_platform_access }
@@ -282,11 +308,21 @@ function waitlistAdminRoutes(config) {
   const pool = getPool(config);
 
   // "You're in" notification for a row admitting just released — first
-  // release only (re-releases are idempotent no-ops and must not re-email).
-  // Degrades silently when no mail transport is configured; never fails the
-  // release. `mobile` is the store-listing lookup, done once by the caller
-  // so a batch does not repeat it per row.
-  async function sendReleaseMail(released, mobile) {
+  // release only (re-releases are idempotent no-ops and must not re-notify).
+  // Channel-aware: a PHONE row with no email sends a text, everything else
+  // sends the mail. A row is keyed by exactly one, so this is a property of
+  // the row, never a preference to read at release. Degrades silently when
+  // the channel's transport is unconfigured; never fails the release.
+  // `mobile` is the store-listing lookup, done once by the caller so a batch
+  // does not repeat it per row (and unused for a text, which has no room for
+  // install steps).
+  async function sendReleaseNotice(released, mobile) {
+    if (released.phone_e164 && !released.email) {
+      await sendWaitlistReleaseSms(config, released.phone_e164, {
+        hasAccount: released.linked_user_id != null,
+      });
+      return;
+    }
     await sendWaitlistReleaseMail(config, released.email, {
       mobile,
       hasAccount: released.linked_user_id != null,
@@ -352,14 +388,16 @@ function waitlistAdminRoutes(config) {
       const total = countRows[0].c;
 
       const { rows } = await pool.query(
-        `SELECT w.id, w.email, w.submitted_at, w.released_at, w.confirmed_at,
+        `SELECT w.id, w.email, w.phone_e164, w.submitted_at, w.released_at, w.confirmed_at,
                 w.linked_user_id, w.answers, w.invited_by,
                 (SELECT COUNT(*)::int FROM waitlist_signups c WHERE c.invited_by = w.id)
                   AS invited_count,
                 p.email AS invited_by_email,
                 u.username AS linked_username, u.has_platform_access,
                 m.status AS invite_mail_status, m.created_at AS invite_mail_at,
-                m.error AS invite_mail_error
+                m.error AS invite_mail_error,
+                s.status AS invite_text_status, s.created_at AS invite_text_at,
+                s.error AS invite_text_error
            FROM waitlist_signups w
            LEFT JOIN users u ON u.id = w.linked_user_id
            LEFT JOIN waitlist_signups p ON p.id = w.invited_by
@@ -370,6 +408,13 @@ function waitlistAdminRoutes(config) {
               ORDER BY d.created_at DESC, d.id DESC
               LIMIT 1
            ) m ON TRUE
+           LEFT JOIN LATERAL (
+             SELECT sd.status, sd.created_at, sd.error
+               FROM sms_deliveries sd
+              WHERE sd.recipient = w.phone_e164 AND sd.kind = 'waitlist_released_sms'
+              ORDER BY sd.created_at DESC, sd.id DESC
+              LIMIT 1
+           ) s ON TRUE
           ${where.sql}
           ${order}
           LIMIT $1 OFFSET $2`,
@@ -455,14 +500,16 @@ function waitlistAdminRoutes(config) {
     try {
       const where = waitlistWhere(req.query);
       const { rows } = await pool.query(
-        `SELECT w.id, w.email, w.submitted_at, w.released_at, w.confirmed_at,
+        `SELECT w.id, w.email, w.phone_e164, w.submitted_at, w.released_at, w.confirmed_at,
                 w.answers,
                 (SELECT COUNT(*)::int FROM waitlist_signups c WHERE c.invited_by = w.id)
                   AS invited_count,
                 p.email AS invited_by_email,
                 u.username AS linked_username, u.has_platform_access,
                 sx.handle AS account_x_handle,
-                sg.handle AS account_github_handle
+                sg.handle AS account_github_handle,
+                m.status AS invite_mail_status,
+                s.status AS invite_text_status
            FROM waitlist_signups w
            LEFT JOIN users u ON u.id = w.linked_user_id
            LEFT JOIN waitlist_signups p ON p.id = w.invited_by
@@ -470,6 +517,16 @@ function waitlistAdminRoutes(config) {
              ON sx.user_id = w.linked_user_id AND sx.provider = 'x'
            LEFT JOIN user_social_identities sg
              ON sg.user_id = w.linked_user_id AND sg.provider = 'github'
+           LEFT JOIN LATERAL (
+             SELECT d.status FROM mail_deliveries d
+              WHERE d.recipient = w.email AND d.kind = 'waitlist_released'
+              ORDER BY d.created_at DESC, d.id DESC LIMIT 1
+           ) m ON TRUE
+           LEFT JOIN LATERAL (
+             SELECT sd.status FROM sms_deliveries sd
+              WHERE sd.recipient = w.phone_e164 AND sd.kind = 'waitlist_released_sms'
+              ORDER BY sd.created_at DESC, sd.id DESC LIMIT 1
+           ) s ON TRUE
           ${where.sql}
           ORDER BY w.submitted_at DESC, w.id DESC`,
         where.params
@@ -506,7 +563,7 @@ function waitlistAdminRoutes(config) {
         signupId: id, linkedUserId: released.linked_user_id, adminId: req.user?.id,
       });
       if (released.newly_released) {
-        await sendReleaseMail(released, await loadReleaseMailMobile());
+        await sendReleaseNotice(released, await loadReleaseMailMobile());
       }
       return ok(res, {
         data: {
@@ -524,7 +581,8 @@ function waitlistAdminRoutes(config) {
 
   // ── POST /api/v4/admin/waitlist/resolve ───────────────────────────────
   // The batch-admit tool's lookup. Takes `{ text }`, a pasted list of
-  // addresses (see waitlist.parseEmailList for what it accepts), and says
+  // addresses AND/OR phone numbers (see waitlist.parseEmailList for what it
+  // accepts), and says
   // what each one is: a waiting row, an admitted row, no row at all (and
   // whether an account has the address anyway), or not an address. Changes
   // nothing — admitting is the separate bulk-release call, on the ids this
@@ -537,39 +595,56 @@ function waitlistAdminRoutes(config) {
   router.post('/api/v4/admin/waitlist/resolve', adminWriteGate, async (req, res) => {
     try {
       const { entries, skipped, duplicates } = waitlist.parseEmailList(req.body?.text);
-      if (!entries.length) return fail(res, 422, 'No email addresses found in what was pasted.');
+      if (!entries.length) return fail(res, 422, 'No email addresses or phone numbers found in what was pasted.');
       if (entries.length > RESOLVE_MAX) {
-        return fail(res, 422, `Paste at most ${RESOLVE_MAX} addresses at a time (this has ${entries.length}).`);
+        return fail(res, 422, `Paste at most ${RESOLVE_MAX} keys at a time (this has ${entries.length}).`);
       }
+      // A pasted list may be addresses, numbers, or both. Each key is looked
+      // up on ITS OWN column, so the two never cross: an address never
+      // matches a phone row and vice versa.
       const emails = entries.map((e) => e.email).filter(Boolean);
-      const { rows: signups } = emails.length
+      const phones = entries.map((e) => e.phone).filter(Boolean);
+      const { rows: signups } = (emails.length || phones.length)
         ? await pool.query(
-          `SELECT w.id, w.email, w.submitted_at, w.released_at, w.confirmed_at,
+          `SELECT w.id, w.email, w.phone_e164, w.submitted_at, w.released_at, w.confirmed_at,
                   u.username AS linked_username, u.has_platform_access
              FROM waitlist_signups w
              LEFT JOIN users u ON u.id = w.linked_user_id
-            WHERE w.email = ANY($1::text[])`,
-          [emails]
+            WHERE w.email = ANY($1::text[]) OR w.phone_e164 = ANY($2::text[])`,
+          [emails, phones]
         )
         : { rows: [] };
-      const bySignup = new Map(signups.map((s) => [s.email, s]));
-      // Addresses with no row may still belong to an account — somebody who
+      const bySignupEmail = new Map(signups.filter((s) => s.email).map((s) => [s.email, s]));
+      const bySignupPhone = new Map(signups.filter((s) => s.phone_e164).map((s) => [s.phone_e164, s]));
+      // Keys with no row may still belong to an account — somebody who
       // signed up another way. Worth saying: admitting cannot reach them,
-      // and one that already has access needs nothing at all.
-      const missing = emails.filter((e) => !bySignup.has(e));
-      const { rows: accounts } = missing.length
+      // and one that already has access needs nothing at all. An email is
+      // matched on the users table; a number on user_phone_identities.
+      const missingEmails = emails.filter((e) => !bySignupEmail.has(e));
+      const missingPhones = phones.filter((p) => !bySignupPhone.has(p));
+      const { rows: accounts } = missingEmails.length
         ? await pool.query(
           `SELECT lower(email) AS email, username, has_platform_access
              FROM users
             WHERE lower(email) = ANY($1::text[])`,
-          [missing]
+          [missingEmails]
+        )
+        : { rows: [] };
+      const { rows: phoneAccounts } = missingPhones.length
+        ? await pool.query(
+          `SELECT phi.phone_e164, u.username, u.has_platform_access
+             FROM user_phone_identities phi
+             JOIN users u ON u.id = phi.user_id
+            WHERE phi.phone_e164 = ANY($1::text[])`,
+          [missingPhones]
         )
         : { rows: [] };
       const byAccount = new Map(accounts.map((a) => [a.email, a]));
+      const byPhoneAccount = new Map(phoneAccounts.map((a) => [a.phone_e164, a]));
       const data = entries.map((e) => formatResolved(
         e,
-        e.email ? bySignup.get(e.email) : null,
-        e.email ? byAccount.get(e.email) : null,
+        e.phone ? bySignupPhone.get(e.phone) : (e.email ? bySignupEmail.get(e.email) : null),
+        e.phone ? byPhoneAccount.get(e.phone) : (e.email ? byAccount.get(e.email) : null),
       ));
       // `admit_max` travels with the answer so the screen can size its Admit
       // button to the bound bulk-release enforces without a copy of it.
@@ -619,7 +694,7 @@ function waitlistAdminRoutes(config) {
 
       if (fresh.length) {
         const mobile = await loadReleaseMailMobile();
-        await eachLimit(fresh, BULK_MAIL_CONCURRENCY, (released) => sendReleaseMail(released, mobile));
+        await eachLimit(fresh, BULK_MAIL_CONCURRENCY, (released) => sendReleaseNotice(released, mobile));
       }
 
       log.info('topochain-admin', 'Waitlist entries bulk-released', {

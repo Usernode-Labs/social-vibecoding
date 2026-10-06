@@ -34,11 +34,20 @@ import { navStore } from '../nav/nav-store.js';
 type Standing = {
   state: 'none' | 'listed' | 'admitted';
   email: string | null;
+  /** The number on a phone-keyed row; null on an email-keyed one (#SMS). */
+  phone?: string | null;
   accountEmail: string | null;
+  /** The account's own verified number, when it has one — the one-press
+   *  choice, the role accountEmail plays for the email half (#SMS). */
+  accountPhone?: string | null;
   moreToken: string | null;
 };
 
-type Step = { kind: 'join' } | { kind: 'email' } | { kind: 'code'; email: string };
+type Step =
+  | { kind: 'join' }
+  | { kind: 'email' }
+  | { kind: 'phone' }
+  | { kind: 'code'; key: 'email' | 'phone'; to: string };
 
 const STATE_PATH = '/api/me/waitlist';
 const JOIN_PATH = '/api/me/waitlist/join';
@@ -94,19 +103,23 @@ export function WaitlistCardBody({ standing, onListed }: {
 }): ReactNode {
   const [step, setStep] = useState<Step>({ kind: 'join' });
   const [email, setEmail] = useState(standing.accountEmail || '');
+  const [phone, setPhone] = useState(standing.accountPhone || '');
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const own = !!standing.accountEmail && email.trim().toLowerCase() === standing.accountEmail;
+  const ownPhone = !!standing.accountPhone && phone.trim() === standing.accountPhone;
 
-  const join = useCallback(async (address: string) => {
+  // One join path per channel: the body carries the key the server keys the
+  // row on, and a phone join rides the same always-200 join endpoint.
+  const join = useCallback(async (key: 'email' | 'phone', value: string) => {
     setBusy(true);
     setError(null);
     try {
-      const { ok, data } = await post(JOIN_PATH, { email: address });
+      const { ok, data } = await post(JOIN_PATH, key === 'phone' ? { phone: value } : { email: value });
       if (!ok) { setError(data?.error || 'Could not join the waitlist. Try again.'); return; }
-      if (data.next === 'code') { setCode(''); setStep({ kind: 'code', email: data.email }); return; }
+      if (data.next === 'code') { setCode(''); setStep({ kind: 'code', key, to: data.phone || data.email }); return; }
       onListed(data as Standing);
     } catch {
       setError('Could not join the waitlist. Try again.');
@@ -115,11 +128,14 @@ export function WaitlistCardBody({ standing, onListed }: {
     }
   }, [onListed]);
 
-  const verify = useCallback(async (address: string, entered: string) => {
+  const verify = useCallback(async (key: 'email' | 'phone', value: string, entered: string) => {
     setBusy(true);
     setError(null);
     try {
-      const { ok, data } = await post(VERIFY_PATH, { email: address, code: entered });
+      const { ok, data } = await post(
+        VERIFY_PATH,
+        key === 'phone' ? { phone: value, code: entered } : { email: value, code: entered },
+      );
       if (!ok) { setError(data?.error || 'Could not check that code. Try again.'); return; }
       onListed(data as Standing);
     } catch {
@@ -130,15 +146,18 @@ export function WaitlistCardBody({ standing, onListed }: {
   }, [onListed]);
 
   if (standing.state === 'listed') {
+    // A row is keyed by exactly one channel, so the panel names the one it
+    // has: the number for a phone row, the address otherwise (#SMS).
+    const reach = standing.phone
+      ? `We’ll text ${standing.phone} when it’s your turn.`
+      : standing.email
+        ? `You’re on the waitlist. We’ll email ${standing.email} when it’s your turn.`
+        : 'You’re on the waitlist. We’ll email you when it’s your turn.';
     return (
       <div className="flex flex-col gap-2 p-4" data-waitlist-card="listed">
         <Pill />
         <h3 className="text-[17px] font-semibold leading-snug text-zinc-900 dark:text-zinc-100">Make and share your own apps</h3>
-        <p className={BODY}>
-          {standing.email
-            ? `You’re on the waitlist. We’ll email ${standing.email} when it’s your turn.`
-            : 'You’re on the waitlist. We’ll email you when it’s your turn.'}
-        </p>
+        <p className={BODY}>{reach}</p>
         <p className={SMALL}>We let people in from the waitlist in batches. Until then, your group&rsquo;s apps are yours to use and change.</p>
         {standing.moreToken ? <Sooner token={standing.moreToken} /> : null}
       </div>
@@ -146,11 +165,13 @@ export function WaitlistCardBody({ standing, onListed }: {
   }
 
   if (step.kind === 'code') {
-    const submit = (e: FormEvent) => { e.preventDefault(); if (!busy) void verify(step.email, code.trim()); };
+    const submit = (e: FormEvent) => { e.preventDefault(); if (!busy) void verify(step.key, step.to, code.trim()); };
     return (
       <form className="flex flex-col gap-2 p-4" data-waitlist-card="code" onSubmit={submit}>
-        <h3 className="text-[17px] font-semibold leading-snug text-zinc-900 dark:text-zinc-100">Check your email</h3>
-        <p className={BODY}>{`We sent a 6-digit code to ${step.email}. It expires in 15 minutes.`}</p>
+        <h3 className="text-[17px] font-semibold leading-snug text-zinc-900 dark:text-zinc-100">
+          {step.key === 'phone' ? 'Check your text messages' : 'Check your email'}
+        </h3>
+        <p className={BODY}>{`We sent a 6-digit code to ${step.to}. It expires in 15 minutes.`}</p>
         <label htmlFor="home-waitlist-code" className={SURVEY_LABEL}>Code</label>
         <Input
           id="home-waitlist-code"
@@ -166,10 +187,10 @@ export function WaitlistCardBody({ standing, onListed }: {
         </Button>
         <p role="alert" className={msgClass(error ? 'error' : null)}>{error}</p>
         <div className="flex items-center justify-between gap-3">
-          <button type="button" className={`${LINK} min-h-[44px]`} onClick={() => { setError(null); setStep({ kind: 'email' }); }}>
-            Use another email
+          <button type="button" className={`${LINK} min-h-[44px]`} onClick={() => { setError(null); setStep({ kind: step.key }); }}>
+            {step.key === 'phone' ? 'Use another number' : 'Use another email'}
           </button>
-          <button type="button" className={`${SMALL} min-h-[44px] hover:underline`} disabled={busy} onClick={() => void join(step.email)}>
+          <button type="button" className={`${SMALL} min-h-[44px] hover:underline`} disabled={busy} onClick={() => void join(step.key, step.to)}>
             Send a new code
           </button>
         </div>
@@ -177,8 +198,44 @@ export function WaitlistCardBody({ standing, onListed }: {
     );
   }
 
+  if (step.kind === 'phone') {
+    const submit = (e: FormEvent) => { e.preventDefault(); if (!busy) void join('phone', phone.trim()); };
+    return (
+      <form className="flex flex-col gap-2 p-4" data-waitlist-card="phone" onSubmit={submit}>
+        <h3 className="text-[17px] font-semibold leading-snug text-zinc-900 dark:text-zinc-100">Join the waitlist</h3>
+        <p className={BODY}>
+          {standing.accountPhone ? 'With your phone number, or another one.' : 'Add your phone number. We’ll text you a 6-digit code.'}
+        </p>
+        <label htmlFor="home-waitlist-phone" className={SURVEY_LABEL}>Phone number</label>
+        <Input
+          id="home-waitlist-phone"
+          type="tel"
+          autoComplete="tel"
+          maxLength={20}
+          value={phone}
+          onChange={(e) => setPhone(e.target.value)}
+          placeholder="+1 415 555 0123"
+          {...SURVEY_FIELD}
+        />
+        <Button type="submit" variant="pillAccent" size="pill" layout="full" disabled={busy || !phone.trim()} className="mt-1 disabled:opacity-60">
+          {ownPhone ? 'Join the waitlist' : 'Text me a code'}
+        </Button>
+        <p role="alert" className={msgClass(error ? 'error' : null)}>{error}</p>
+        <p className={SMALL}>We use it to tell you when it&rsquo;s your turn. The group doesn&rsquo;t see it.</p>
+        <div className="flex items-center justify-between gap-3">
+          <button type="button" className={`${LINK} min-h-[44px]`} onClick={() => { setError(null); setStep({ kind: 'email' }); }}>
+            Use email instead
+          </button>
+          <button type="button" className={`${LINK} min-h-[44px]`} onClick={() => { setError(null); setStep({ kind: 'join' }); }}>
+            Not now
+          </button>
+        </div>
+      </form>
+    );
+  }
+
   if (step.kind === 'email') {
-    const submit = (e: FormEvent) => { e.preventDefault(); if (!busy) void join(email.trim()); };
+    const submit = (e: FormEvent) => { e.preventDefault(); if (!busy) void join('email', email.trim()); };
     return (
       <form className="flex flex-col gap-2 p-4" data-waitlist-card="email" onSubmit={submit}>
         <h3 className="text-[17px] font-semibold leading-snug text-zinc-900 dark:text-zinc-100">Join the waitlist</h3>
@@ -201,9 +258,14 @@ export function WaitlistCardBody({ standing, onListed }: {
         </Button>
         <p role="alert" className={msgClass(error ? 'error' : null)}>{error}</p>
         <p className={SMALL}>We use it to tell you when it&rsquo;s your turn, and you can sign in with it. The group doesn&rsquo;t see it.</p>
-        <button type="button" className={`${LINK} self-start min-h-[44px]`} onClick={() => { setError(null); setStep({ kind: 'join' }); }}>
-          Not now
-        </button>
+        <div className="flex items-center justify-between gap-3">
+          <button type="button" className={`${LINK} min-h-[44px]`} onClick={() => { setError(null); setStep({ kind: 'phone' }); }}>
+            Use a phone number
+          </button>
+          <button type="button" className={`${LINK} min-h-[44px]`} onClick={() => { setError(null); setStep({ kind: 'join' }); }}>
+            Not now
+          </button>
+        </div>
       </form>
     );
   }

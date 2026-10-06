@@ -4,9 +4,10 @@
  * A private member's waitlist card (services/member-waitlist.js):
  *
  *   GET  /api/me/waitlist          where they stand
- *   POST /api/me/waitlist/join     { email }: joins with the account's own
- *                                  address, or mails a code to another
- *   POST /api/me/waitlist/verify   { email, code }: confirms it and joins
+ *   POST /api/me/waitlist/join     { email } or { phone }: joins with the
+ *                                  account's own address/number, or sends a
+ *                                  code to another
+ *   POST /api/me/waitlist/verify   { email|phone, code }: confirms it and joins
  *
  * Signed in only. Anybody may ask where they stand; joining from here is for
  * an account that is not let in yet, which today is a private member (an
@@ -18,9 +19,13 @@ const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const memberWaitlist = require('../services/member-waitlist');
 const { sendWaitlistCodeMail } = require('../services/topochain/mailer');
+const { sendWaitlistCodeSms } = require('../services/sms');
 const { drainGuard } = require('../services/lifecycle');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
-const { otpRequestLimiter, otpRequestEmailLimiter, otpVerifyLimiter } = require('../middleware/rate-limits');
+const {
+  otpRequestLimiter, otpRequestEmailLimiter, otpVerifyLimiter,
+  phoneOtpRequestLimiter, phoneOtpRequestPhoneLimiter, phoneVerifyLimiter,
+} = require('../middleware/rate-limits');
 
 function fail(res, err, what) {
   if (err instanceof memberWaitlist.MemberWaitlistError) {
@@ -51,34 +56,59 @@ function memberWaitlistRoutes(config) {
     }
   });
 
-  router.post('/api/me/waitlist/join', drainGuard, otpRequestLimiter, otpRequestEmailLimiter,
+  // The join/verify pair serves BOTH channels: which one is decided by which
+  // field the body carries (email or phone), and the send goes out the
+  // matching channel. The phone branch rides the phone rate limiters
+  // (per-number and per-source) the same way the email branch rides the
+  // email ones.
+  router.post('/api/me/waitlist/join', drainGuard,
+    otpRequestLimiter, otpRequestEmailLimiter,
+    phoneOtpRequestLimiter, phoneOtpRequestPhoneLimiter,
     sameOriginBrowserOnly, waiting, async (req, res) => {
+      const phone = typeof req.body?.phone === 'string' && req.body.phone.trim();
       try {
-        const result = await memberWaitlist.join(pool, {
-          userId: req.user.id,
-          rawEmail: req.body?.email,
-          ip: req.ip || null,
-          // Fire-and-forget like every waitlist mail: a mail that fails does
-          // not fail the join, and "New code" sends another.
-          send: (email, code) => {
-            Promise.resolve(sendWaitlistCodeMail(config, email, { code, moreToken: null }))
-              .catch((err) => log.warn('member-waitlist', 'Code mail failed', { message: err.message }));
-          },
-        });
+        const result = phone
+          ? await memberWaitlist.joinByPhone(pool, {
+            userId: req.user.id,
+            rawPhone: req.body?.phone,
+            ip: req.ip || null,
+            // Fire-and-forget like every waitlist send: a text that fails
+            // does not fail the join, and "New code" sends another.
+            send: (to, code) => {
+              Promise.resolve(sendWaitlistCodeSms(config, to, { code }))
+                .catch((err) => log.warn('member-waitlist', 'Code text failed', { message: err.message }));
+            },
+          })
+          : await memberWaitlist.join(pool, {
+            userId: req.user.id,
+            rawEmail: req.body?.email,
+            ip: req.ip || null,
+            send: (email, code) => {
+              Promise.resolve(sendWaitlistCodeMail(config, email, { code, moreToken: null }))
+                .catch((err) => log.warn('member-waitlist', 'Code mail failed', { message: err.message }));
+            },
+          });
         return res.json({ ok: true, ...result });
       } catch (err) {
         return fail(res, err, 'Joining the waitlist');
       }
     });
 
-  router.post('/api/me/waitlist/verify', drainGuard, otpVerifyLimiter,
+  router.post('/api/me/waitlist/verify', drainGuard, otpVerifyLimiter, phoneVerifyLimiter,
     sameOriginBrowserOnly, waiting, async (req, res) => {
+      const phone = typeof req.body?.phone === 'string' && req.body.phone.trim();
       try {
-        const result = await memberWaitlist.verify(pool, {
-          userId: req.user.id,
-          rawEmail: req.body?.email,
-          code: req.body?.code,
-        });
+        const result = phone
+          ? await memberWaitlist.verifyPhone(pool, {
+            userId: req.user.id,
+            rawPhone: req.body?.phone,
+            code: req.body?.code,
+          })
+          : await memberWaitlist.verify(pool, {
+            userId: req.user.id,
+            rawEmail: req.body?.email,
+            code: req.body?.code,
+          });
         return res.json({ ok: true, ...result });
       } catch (err) {
         return fail(res, err, 'Confirming the waitlist email');

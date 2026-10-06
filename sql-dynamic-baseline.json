@@ -677,16 +677,9 @@
     {
       "source": "src/routes/topochain/admin/waitlist.js",
       "kind": "structural-template",
-      "fingerprint": "1bb7fab9edd7b565ffb1",
+      "fingerprint": "180ae5e7530620b66185",
       "count": 1,
-      "preview": "`SELECT w.id, w.email, w.submitted_at, w.released_at, w.confirmed_at, w.linked_user_id, w.answers, w.invited_by, (SELECT COUNT(*)::int FROM waitlist_signups c W"
-    },
-    {
-      "source": "src/routes/topochain/admin/waitlist.js",
-      "kind": "structural-template",
-      "fingerprint": "467be03234670d53569c",
-      "count": 1,
-      "preview": "`SELECT w.id, w.email, w.submitted_at, w.released_at, w.confirmed_at, w.answers, (SELECT COUNT(*)::int FROM waitlist_signups c WHERE c.invited_by = w.id) AS inv"
+      "preview": "`SELECT w.id, w.email, w.phone_e164, w.submitted_at, w.released_at, w.confirmed_at, w.linked_user_id, w.answers, w.invited_by, (SELECT COUNT(*)::int FROM waitli"
     },
     {
       "source": "src/routes/topochain/admin/waitlist.js",
@@ -694,6 +687,13 @@
       "fingerprint": "9ed73e877a98d985dacd",
       "count": 1,
       "preview": "`SELECT COUNT(*)::int AS c FROM waitlist_signups w ${countWhere.sql}`"
+    },
+    {
+      "source": "src/routes/topochain/admin/waitlist.js",
+      "kind": "structural-template",
+      "fingerprint": "d79380dae92ee902fc3b",
+      "count": 1,
+      "preview": "`SELECT w.id, w.email, w.phone_e164, w.submitted_at, w.released_at, w.confirmed_at, w.answers, (SELECT COUNT(*)::int FROM waitlist_signups c WHERE c.invited_by "
     },
     {
       "source": "src/routes/topochain/ingest.js",
@@ -1604,6 +1604,41 @@
       "fingerprint": "952e769794c8bbcad405",
       "count": 1,
       "preview": "`DELETE FROM ${t.sql} WHERE ${quoteIdent(c.name)} = $1::integer`"
+    },
+    {
+      "source": "src/services/waitlist.js",
+      "kind": "structural-template",
+      "fingerprint": "13ca4aab63b8611649fa",
+      "count": 1,
+      "preview": "`UPDATE waitlist_signups SET confirmed_at = COALESCE(confirmed_at, NOW()) WHERE ${column} = $1 RETURNING id, email, phone_e164, submitted_at, confirmed_at, rele"
+    },
+    {
+      "source": "src/services/waitlist.js",
+      "kind": "structural-template",
+      "fingerprint": "40858b2ef4a04e1c4bb1",
+      "count": 1,
+      "preview": "`INSERT INTO waitlist_verification_codes (${column}, code_hash, expires_at) VALUES ($1, $2, NOW() + INTERVAL '${CODE_TTL_MINUTES} minutes')`"
+    },
+    {
+      "source": "src/services/waitlist.js",
+      "kind": "structural-template",
+      "fingerprint": "6685ab7a6d3b9ad6814e",
+      "count": 1,
+      "preview": "`DELETE FROM waitlist_verification_codes WHERE ${column} = $1 AND consumed_at IS NULL`"
+    },
+    {
+      "source": "src/services/waitlist.js",
+      "kind": "structural-template",
+      "fingerprint": "670f990002a1ba4ba305",
+      "count": 1,
+      "preview": "`SELECT 1 FROM waitlist_verification_codes WHERE ${column} = $1 AND consumed_at IS NULL AND attempts = 0 AND expires_at > NOW() AND created_at > NOW() - INTERVA"
+    },
+    {
+      "source": "src/services/waitlist.js",
+      "kind": "structural-template",
+      "fingerprint": "a98715610dbf05df51ac",
+      "count": 1,
+      "preview": "`SELECT id, code_hash, attempts, expires_at FROM waitlist_verification_codes WHERE ${column} = $1 AND consumed_at IS NULL ORDER BY id DESC LIMIT 1`"
     },
     {
       "source": "src/services/workshop-themes.js",

@@ -46,6 +46,7 @@ const T = (offsetDays) => new Date(NOW + offsetDays * DAY);
 let signupRows;
 let userRows;
 let mailRows;
+let smsRows;
 let socialRows;
 
 function resetFixtures() {
@@ -130,6 +131,10 @@ function resetFixtures() {
     // up and report a confirmation mail as the admission mail.
     { id: 72, recipient: 'admitted-silent@example.invalid', kind: 'waitlist_confirm', status: 'sent', created_at: T(-25), error: null },
   ];
+  smsRows = [
+    // One text delivery for the phone-keyed row.
+    { id: 90, recipient: '+15550100001', kind: 'waitlist_released_sms', status: 'sent', created_at: T(-1), error: null },
+  ];
   // Identities connected on the linked ACCOUNTS (not the signup). User 12
   // connected X; user 11 connected GitHub only.
   socialRows = [
@@ -147,11 +152,13 @@ function collapse(sql) {
 // Sniffing the filters means isolating the OUTER WHERE. Two things get in
 // the way: the SELECT list carries the invited_count subquery (whose own
 // WHERE mentions `c.invited_by = w.id`, the very phrase the "brought
-// someone in" filter is recognised by), and the lateral carries its own
-// ORDER BY. So: everything after the lateral closes, up to the last
-// ORDER BY.
+// someone in" filter is recognised by), and each lateral carries its own
+// ORDER BY. So: everything after the LAST lateral closes (`ON TRUE`), up to
+// the outer ORDER BY. Anchor on the last `ON TRUE` because the phone half
+// added a second lateral whose own `ORDER BY` would otherwise be mistaken
+// for the outer one and truncate the slice before the real WHERE.
 function whereHalf(sql) {
-  const lateral = sql.indexOf('m ON TRUE');
+  const lateral = sql.lastIndexOf('ON TRUE');
   const tail = lateral >= 0 ? sql.slice(lateral) : sql;
   const order = tail.lastIndexOf('ORDER BY');
   return order >= 0 ? tail.slice(0, order) : tail;
@@ -195,8 +202,12 @@ function decorate(r) {
   const mail = mailRows
     .filter((m) => m.recipient === r.email && m.kind === 'waitlist_released')
     .sort((a, b) => (b.created_at - a.created_at) || (b.id - a.id))[0] || null;
+  const sms = smsRows
+    .filter((m) => m.recipient === r.phone_e164 && m.kind === 'waitlist_released_sms')
+    .sort((a, b) => (b.created_at - a.created_at) || (b.id - a.id))[0] || null;
   return {
     ...r,
+    phone_e164: r.phone_e164 ?? null,
     invited_count: signupRows.filter((c) => c.invited_by === r.id).length,
     invited_by_email: parent ? parent.email : null,
     linked_username: u ? u.username : null,
@@ -204,6 +215,9 @@ function decorate(r) {
     invite_mail_status: mail ? mail.status : null,
     invite_mail_at: mail ? mail.created_at : null,
     invite_mail_error: mail ? mail.error : null,
+    invite_text_status: sms ? sms.status : null,
+    invite_text_at: sms ? sms.created_at : null,
+    invite_text_error: sms ? sms.error : null,
   };
 }
 
@@ -220,7 +234,9 @@ function handleQuery(rawSql, params = []) {
   // The CSV export: same filters, no pagination, newest signup first, plus
   // the linked account's connected identities.
   if (sql.startsWith('SELECT w.id, w.email') && sql.includes('user_social_identities')) {
-    const where = sql.slice(sql.lastIndexOf("sg.provider = 'github'"), sql.lastIndexOf('ORDER BY'));
+    // Anchor the outer WHERE after the last lateral, for the same reason
+    // whereHalf does: the phone lateral has its own ORDER BY.
+    const where = sql.slice(sql.lastIndexOf('ON TRUE'), sql.lastIndexOf('ORDER BY'));
     let rows = filterRows(where);
     assert.match(sql, /ORDER BY w\.submitted_at DESC, w\.id DESC$/);
     rows = rows.slice().sort((a, b) => (b.submitted_at - a.submitted_at) || (b.id - a.id));
@@ -395,6 +411,49 @@ test('the delivery lookup is scoped to the waitlist_released kind', async () => 
   assert.match(list, /LEFT JOIN LATERAL/);
 });
 
+// ─── The phone half of the same payload (#SMS) ──────────────────────────
+
+test('a phone-keyed row carries phone_e164 and reports its text, and its mail is null', async () => {
+  // Add a phone row AFTER the shared fixtures, so the many ordering
+  // assertions elsewhere are untouched.
+  signupRows.push({
+    id: 6,
+    email: null,
+    phone_e164: '+15550100001',
+    submitted_at: T(-15),
+    released_at: T(-1),
+    confirmed_at: T(-14),
+    linked_user_id: null,
+    invited_by: null,
+    answers: null,
+  });
+
+  const { body } = await get('/api/v4/admin/waitlist');
+  const byId = new Map(body.data.map((r) => [r.id, r]));
+  // The number rides the payload, and the address is null - a row is keyed
+  // by exactly one.
+  assert.equal(byId.get(6).phone_e164, '+15550100001');
+  assert.equal(byId.get(6).email, null);
+  // Its notice is on the text ledger, so invite_text is set and
+  // invite_email is null: the two channels never cross.
+  assert.equal(byId.get(6).invite_email, null);
+  assert.deepEqual(Object.keys(byId.get(6).invite_text).sort(),
+    ['created_at', 'error', 'status']);
+  assert.equal(byId.get(6).invite_text.status, 'sent');
+  assert.equal(byId.get(6).invite_text.error, null);
+  // An email row keeps null phone and null text.
+  assert.equal(byId.get(1).phone_e164, null);
+  assert.equal(byId.get(1).invite_text, null);
+});
+
+test('the text delivery lookup is scoped to waitlist_released_sms on phone_e164', async () => {
+  await get('/api/v4/admin/waitlist');
+  const list = seenSql.find((s) => s.startsWith('SELECT w.id, w.email'));
+  assert.match(list, /FROM sms_deliveries sd/);
+  assert.match(list, /sd\.kind = 'waitlist_released_sms'/);
+  assert.match(list, /sd\.recipient = w\.phone_e164/);
+});
+
 // ─── ?sort=answered ─────────────────────────────────────────────────────
 
 // An admin's manual lens over the same rows, deliberately NOT a ranking:
@@ -530,8 +589,8 @@ test('export-csv downloads every signup, newest first, with a dated filename', a
   const rows = parseCsv(text);
   assert.deepEqual(rows.map((r) => r.signup_id), ['5', '2', '3', '4', '1']);
   assert.equal(text.split('\n')[0], [
-    'signup_id', 'email', 'status', 'signed_up_at', 'confirmed_at', 'admitted_at',
-    'x_handle', 'x_handle_source', 'github_handle', 'linkedin_handle',
+    'signup_id', 'email', 'phone', 'status', 'signed_up_at', 'confirmed_at', 'admitted_at',
+    'admitted_notice', 'x_handle', 'x_handle_source', 'github_handle', 'linkedin_handle',
     'farcaster', 'discord', 'telegram', 'other_handle', 'referred_by_handle',
     'account_username', 'has_platform_access', 'came_from_email', 'brought_in',
     'country', 'city', 'found_us', 'found_us_detail', 'made_url', 'made_note',
