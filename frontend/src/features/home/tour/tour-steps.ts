@@ -115,7 +115,7 @@ export interface TourStep {
  *
  * The join screen asks which communities to join and never says what one
  * does, and the four stops above take it for granted: Shortcuts names a
- * private community's mark, Ask for a change posts a request "the members"
+ * private community's mark, Suggest an improvement posts a request "the members"
  * vote on. So the tour opens on the idea everything after it rests on:
  * communities build projects together, by proposing changes and voting them
  * in. It names the three audiences the way the screen does (AGENTS.md,
@@ -163,16 +163,22 @@ export const TOUR_STEPS: readonly TourStep[] = [
     advanceOn: 'menu-open',
   },
   {
-    // The menu's one button, Ask for a change, in its well
+    // The menu's one button, Suggest an improvement, in its well
     // (`#improve-quick-actions`, ../../improve/actions.tsx). It was Give
     // feedback and New change side by side, and people found both
-    // confusing; the step says what the button does and where making the
-    // change yourself went. B8: the request goes to Homeroom bot, which
-    // builds it (or, where it does not build, it goes to the group), and
-    // making it yourself is Build it yourself.
+    // confusing; the step says what the button does. B8: the request goes
+    // to Homeroom bot, which builds it (or, where it does not build, it
+    // goes to the group).
+    //
+    // NO "BUILD IT YOURSELF" SENTENCE (first-session run-through, 5 Oct
+    // 2026). It said "To build it yourself with a coding agent, tap Build it
+    // yourself", the menu's row under its button; that row, with the whole
+    // Agent chats section, shows only once the viewer has had an agent
+    // session, so the person this tour is for would look for a row they do
+    // not have. The hub's ⋯ and a request's own page still offer it.
     id: 'menu-actions',
-    title: 'Ask for a change',
-    body: 'Tell Homeroom bot what should change. It builds it for you, or passes it to the group as a request. To build it yourself with a coding agent, tap Build it yourself.',
+    title: 'Suggest an improvement',
+    body: 'Tell Homeroom bot what should change. It builds it for you, or passes it to the group as a request.',
     targets: ['#improve-quick-actions', '#improve-row-feedback'],
     needsPanel: true,
   },

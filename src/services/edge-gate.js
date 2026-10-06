@@ -314,17 +314,23 @@ async function redeemOnce(pool, jti, expSeconds) {
 }
 
 // The app identity token for this user and app: the same claims
-// /api/iframe-token signs (server.js), reused for a few minutes.
-async function mintIdentity(pool, appId, uid) {
+// /api/iframe-token signs (server.js), reused for a few minutes. None for a
+// PROVISIONAL handle on a public app (`publicApp`): the person has not
+// picked the username a public place shows (services/usernames.js), so the
+// app sees a visitor until they do, as /api/iframe-token's refusal does.
+async function mintIdentity(pool, appId, uid, { publicApp = false } = {}) {
   const key = `${appId}:${uid}`;
   const hit = identities.get(key);
   if (hit && Date.now() - hit.at < IDENTITY_REUSE_MS) return hit.token;
   const { rows } = await pool.query(
-    'SELECT id, username, usernode_pubkey, locale, is_synthetic FROM users WHERE id = $1',
+    `SELECT id, username, usernode_pubkey, locale, is_synthetic,
+            username_provisional_since IS NOT NULL AS provisional
+       FROM users WHERE id = $1`,
     [uid]
   );
   const user = rows[0];
   if (!user || user.is_synthetic) return null;
+  if (publicApp && user.provisional === true) return null;
   const token = platformJwt.signAppIdentityToken({
     appId,
     user: {
@@ -453,7 +459,7 @@ async function handleAccess(pool, req, res) {
   // request is decided in one place.
   const allow = async ({ identityFor = null, guest = false } = {}) => {
     if (identityFor != null) {
-      const token = await mintIdentity(pool, vis.appId, identityFor);
+      const token = await mintIdentity(pool, vis.appId, identityFor, { publicApp: !vis.viewPrivate });
       if (token) res.set('X-Usernode-Identity', token);
     } else if (guest) {
       res.set('X-Usernode-Identity', guestToken(vis.appId));

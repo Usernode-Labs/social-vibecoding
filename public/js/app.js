@@ -578,6 +578,14 @@ const App = {
       location.reload();
       return;
     }
+    // So is being a private member, for the same reason: it decides the mark
+    // menu, Home's sections and the app's ✕. Being let in off the waitlist
+    // ends it, and the next boot reads the full shell.
+    if (!!user.privateMember !== !!App.user?.privateMember) {
+      App.saveSessionSnapshot(user);
+      location.reload();
+      return;
+    }
     App._sessionFromSnapshot = false;
     if (window.NativeChrome &&
         typeof NativeChrome.prepareIdentityPublication === 'function') {
@@ -677,6 +685,10 @@ const App = {
     App.loadVersion();
     if (window.AuthScreens) AuthScreens.enter();
     App._drainLogoutNotice();
+    // A signed-out document behind the live build moves to it before a
+    // sign-in starts on it (see _moveToLiveShell). Not awaited: the landing
+    // paints now and the answer arrives behind it.
+    App._moveToLiveShell('signed-out');
   },
 
   // Read-and-remove the one-shot sign-out advisory (#1524). Runs after the
@@ -1056,6 +1068,62 @@ const App = {
     App._applyFirstVersionShot();
     App._applyFeedbackShot();
     App._applyAppContextShot();
+    App._applyInviteJoinShot();
+  },
+
+  // #3700: `?shot=invite-join` on a project's page draws it the way an
+  // invite link opens it for somebody not in it yet (App._openInvitePage):
+  // who invited them, and Join, first in its hero. A capture state for the
+  // declared check and the before/after shots, drawn for whoever is
+  // looking, member or not. Its Join follows no link.
+  //
+  // `?shot=invite-preview` is the same for a private community
+  // (App._openInvitePreview): its invite preview, over whatever route the
+  // address names, filled with a made-up community, since the preview reads
+  // nothing of a real one. The island publishes its bridge once it has
+  // mounted, so a boot that gets here first asks again for a moment.
+  _applyInviteJoinShot(attempt) {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot === 'invite-preview') {
+      const island = window.UsernodeReact && window.UsernodeReact.invitePreview;
+      if (!island || typeof island.open !== 'function') {
+        const n = Number(attempt) || 0;
+        if (n < 30) setTimeout(() => App._applyInviteJoinShot(n + 1), 100);
+        return;
+      }
+      island.open({
+        token: null,
+        preview: true,
+        name: 'Sunday Run Club',
+        iconEmoji: '🏃',
+        iconUrl: null,
+        iconColor: null,
+        description: 'Routes, pace groups and who brings the coffee.',
+        memberCount: 6,
+        audienceLabel: 'Private community',
+        inviter: 'maya',
+        inviterName: 'Maya',
+        inviterMadeIt: false,
+        building: false,
+        note: 'Come and vote on what we make next.',
+      });
+      return;
+    }
+    if (shot !== 'invite-join' || !App.currentApp) return;
+    const board = window.UsernodeReact && window.UsernodeReact.devBoard;
+    if (!board || typeof board.publishInviteOffer !== 'function') return;
+    board.publishInviteOffer({
+      token: null,
+      slug: App.currentApp,
+      name: App.currentApp,
+      inviter: 'maya',
+      inviterName: 'Maya',
+      inviterMadeIt: false,
+      building: false,
+      note: 'Come and vote on what we make next.',
+      preview: true,
+    });
   },
 
   // Screenshot-state deep links `?shot=improve` and `?shot=app-context`: open
@@ -1935,6 +2003,216 @@ const App = {
         App._shellAutoReloadSha = null;
         return false;
       }
+    }
+    App._shellReloadStarted = sha;
+    location.reload();
+    return true;
+  },
+
+  // ── A first session runs on the live build ──────────────────────────
+  //
+  // The production run-through of 5 Oct 2026: the Homeroom app had last been
+  // opened twelve hours and several deploys earlier, so its cold launch lost
+  // the 200ms navigation race in public/sw.js, as designed, and ran the
+  // cached build. A brand-new account then signed in on it and got every old
+  // first screen: the sign-in page without its terms line, the blocking
+  // terms dialog, the old Home, and no "What do you want to make?". A force
+  // quit later the same account got the new flow.
+  //
+  // One deploy behind for one load is the accepted cost of that deadline, and
+  // for somebody already signed in it still is: the drawer's row and the
+  // pull-to-refresh upgrade are the recovery, and nothing here touches them.
+  // Two moments are different, because what is on screen then decides what a
+  // new account is asked and records what it agreed to:
+  //
+  //   'signed-out'  the story landing (which is also an invite's page before
+  //                 Join, and holds the sign-in sheet) and the sign-in page.
+  //                 A document that is behind moves to the live build as
+  //                 soon as it knows, unless somebody has started typing on
+  //                 it (an address or a password half typed is not wiped by
+  //                 a reload they did not ask for) or a sign-in has begun
+  //                 here (noteSignInBegun): a request in flight is never cut
+  //                 off. Either way the 'signed-in' move below still runs.
+  //   'signed-in'   a sign-in or sign-up has just succeeded (finishLogin, or
+  //                 the waiting room letting somebody in). The move happens
+  //                 before the signed-in shell starts, so no first-run screen
+  //                 (terms, make, join, tour) is drawn by the old build. The
+  //                 session cookie, the invite link's cookie and this tab's
+  //                 sessionStorage (`usernode:first-session:make`,
+  //                 `usernode:invite-join`) all survive the reload.
+  //
+  // It asks the server itself rather than reading loadVersion's answer.
+  // /api/version is an ordinary API read, so on a cold launch slower than
+  // API_TIMEOUT_MS the worker answers it from its cache, with the previous
+  // visit's sha: the OLD one, which matches the old document. The first
+  // answer said "current" and nothing moved, which is how #1669's boot-time
+  // switch (loadVersion) missed exactly this launch. `cache: 'no-store'`
+  // skips the worker (sw.js: "Explicit session confirmation must reach the
+  // server") as well as the HTTP cache.
+  //
+  // The move is the one the drawer's button makes: the build pulled into the
+  // shell cache first (_ensureShellPrefetch), then a reload, so it lands on
+  // the new build whichever way the navigation race goes. At most one forced
+  // reload per build per tab, on the same sessionStorage latch as #1669's
+  // switch, so the two can never take turns reloading.
+  FRESH_SHELL_CHECK_TIMEOUT_MS: 5000,
+  // How long a move waits for the build to come down. A signed-out screen
+  // that has been up longer than this is no longer "before they can type",
+  // and a sign-in holds its busy button for it; either way the 'signed-in'
+  // move, or the drawer's row, is still there afterwards.
+  FRESH_SHELL_WAIT_MS: 10_000,
+  _signInBegun: false,
+
+  /**
+   * A sign-in has begun on this page: a credential exchange is about to go
+   * out (features/auth/shared.ts: the guard every exchange runs first, and
+   * every session mint), or a provider's trip came back to finish one. The
+   * 'signed-out' move stands down for the rest of this document; the sign-in
+   * finishes here, and the 'signed-in' move follows it.
+   */
+  noteSignInBegun() {
+    App._signInBegun = true;
+  },
+
+  /**
+   * Should this document move itself onto the live build now? Pure: every
+   * input is passed in, so the whole rule is one table. 'upgrade', or the
+   * reason it stays.
+   */
+  freshShellVerdict(input) {
+    const {
+      moment, documentSha, live, controlled, embedded, signedIn, signInBegun, typed, route,
+      latched,
+    } = input || {};
+    // The top window owns the build, as it owns the version poll.
+    if (embedded) return 'side-panel';
+    // No worker: the document came from the network, so it IS the live build.
+    if (!controlled) return 'uncontrolled';
+    // A checkout or a staging preview carries no build to be behind with.
+    if (!documentSha) return 'unstamped';
+    if (!live || !live.sha || live.sha === 'dev') return 'unknown';
+    // Mid-rollout the answer can come from either pod: loadVersion's rule.
+    if (live.deploying) return 'deploying';
+    if (live.sha === documentSha) return 'current';
+    if (latched === live.sha) return 'latched';
+    if (moment === 'signed-in') return 'upgrade';
+    if (moment !== 'signed-out') return 'moment';
+    if (signedIn) return 'signed-in';
+    if (signInBegun) return 'sign-in-begun';
+    // Somebody is typing: their text outranks the move, which the sign-in
+    // they are typing toward makes anyway ('signed-in').
+    if (typed) return 'typed';
+    // The screens with nothing to lose. Not the waitlist's survey, a password
+    // reset or an activation code: those hold answers or a token mid-way.
+    if (!['landing', 'login', 'signup'].includes(route)) return 'route';
+    return 'upgrade';
+  },
+
+  /**
+   * The build the server runs right now, asked past the worker's cache and
+   * the HTTP cache alike: `{ sha, deploying }`, or null when it cannot be
+   * known in time. Null at once, with no request, for a document that cannot
+   * be behind (no worker, no build stamp, the side panel).
+   */
+  async _askLiveBuild() {
+    let timer = null;
+    try {
+      if (App.embeddedPanel || !App.loadedPlatformSha) return null;
+      if (!(navigator.serviceWorker && navigator.serviceWorker.controller)) return null;
+      const abort = typeof AbortController === 'function' ? new AbortController() : null;
+      if (abort) timer = setTimeout(() => abort.abort(), App.FRESH_SHELL_CHECK_TIMEOUT_MS);
+      const res = await fetch('/api/version', {
+        cache: 'no-store',
+        credentials: 'same-origin',
+        signal: abort ? abort.signal : undefined,
+      });
+      if (!res.ok) return null;
+      const info = await res.json();
+      if (!info || typeof info.sha !== 'string') return null;
+      return { sha: info.sha, deploying: !!(info.deployProgress && info.deployProgress.deploying) };
+    } catch {
+      return null;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  },
+
+  _freshShellInputs(moment, live) {
+    let latched = null;
+    try { latched = sessionStorage.getItem(App.SHELL_AUTO_RELOAD_KEY); } catch { latched = null; }
+    let controlled = false;
+    try { controlled = !!(navigator.serviceWorker && navigator.serviceWorker.controller); } catch { /* none */ }
+    const screens = typeof window !== 'undefined' ? window.AuthScreens : null;
+    return {
+      moment,
+      documentSha: App.loadedPlatformSha,
+      live,
+      controlled,
+      embedded: !!App.embeddedPanel,
+      signedIn: !!App.user,
+      signInBegun: !!App._signInBegun,
+      // Only the signed-out move asks: the 'signed-in' one runs from
+      // finishLogin, after the fields have done their job.
+      typed: moment === 'signed-out' ? App._hasUnsavedShellInput() : false,
+      route: screens ? screens._current : null,
+      latched,
+    };
+  },
+
+  /**
+   * Move onto the live build when freshShellVerdict says so. Resolves false
+   * when this document stays as it is. Once it reloads it never resolves, so
+   * a caller that awaits it (finishLogin's busy button, the waiting room's
+   * release) holds still until the page goes.
+   *
+   * `live` is an _askLiveBuild() already in flight, so a sign-in can ask
+   * alongside its own session check instead of after it.
+   */
+  async _moveToLiveShell(moment, live) {
+    try {
+      if (App._shellReloadStarted) return new Promise(() => {});
+      // Screenshot states stay where they were asked to be.
+      try {
+        if (new URLSearchParams(location.search).get('shot')) return false;
+      } catch { /* no address to read */ }
+      const answer = await (live || App._askLiveBuild());
+      if (App.freshShellVerdict(App._freshShellInputs(moment, answer)) !== 'upgrade') return false;
+      const sha = answer.sha;
+      // A sign-in is a moment of its own: a download that failed earlier in
+      // this document is asked for once more. The worker has usually staged
+      // the build behind the navigation by now, so the answer is quick.
+      if (moment === 'signed-in' && App.shellUpdate && App.shellUpdate.sha === sha
+          && App.shellUpdate.state === 'failed') {
+        App.shellUpdate = null;
+      }
+      const state = await new Promise((resolve) => {
+        App._ensureShellPrefetch(sha).then(resolve, () => resolve('failed'));
+        setTimeout(() => resolve('slow'), App.FRESH_SHELL_WAIT_MS);
+      });
+      // #1669's switch may have taken the same download to its own reload.
+      if (App._shellReloadStarted) return new Promise(() => {});
+      // Reloading before the cache holds the build serves the old one back.
+      if (state !== 'ready') return false;
+      // The download took a moment. Ask again: is the screen still one with
+      // nothing to lose, has nobody typed on it, and has nobody started
+      // signing in on it?
+      if (App.freshShellVerdict(App._freshShellInputs(moment, answer)) !== 'upgrade') return false;
+      if (!App._reloadOntoLiveShell(sha)) return false;
+      return new Promise(() => {});
+    } catch {
+      return false;
+    }
+  },
+
+  /** One forced reload per build per tab, on #1669's latch. */
+  _reloadOntoLiveShell(sha) {
+    if (App._shellReloadStarted) return true;
+    try {
+      if (sessionStorage.getItem(App.SHELL_AUTO_RELOAD_KEY) === sha) return false;
+      sessionStorage.setItem(App.SHELL_AUTO_RELOAD_KEY, sha);
+    } catch {
+      // Without a cross-reload latch nothing proves this will not loop.
+      return false;
     }
     App._shellReloadStarted = sha;
     location.reload();
@@ -3637,8 +3915,13 @@ const App = {
     // is showing (the burst's home refresh): an unconditional Home.load()
     // here pulled the whole app list, 670 KB, onto a Workshop nobody had
     // left.
-    if (data.merged && App.currentApp === data.appSlug && App.currentTab === 'app') {
-      AppView.renderAppTab();
+    if (App.currentApp === data.appSlug) {
+      // A first version waiting on its approval is read again past every
+      // cache, now on its App tab and before the next paint anywhere else: a
+      // vote on its project, or the merge, is what changes that screen, and
+      // a render alone repaints the record on hand.
+      const rereading = AppView.recheckFirstVersionNow?.();
+      if (!rereading && data.merged && App.currentTab === 'app') AppView.renderAppTab();
     }
   },
 
@@ -3928,21 +4211,98 @@ const App = {
     return m ? m[1] : null;
   },
 
+  // An invite's own read answered 401 to a shell that thinks it is signed in:
+  // the session it was painted for has ended on the server (expired, signed
+  // out elsewhere, a password reset, the account removed), and the shell
+  // only learned so from this read, as when the service worker answered
+  // /api/auth/me from its cached copy. That is not the link's fault, so it is
+  // never told as one. Drop what the ended session left on this device and
+  // load the invite's address again, which boots signed out onto the link's
+  // own page: its card and Join (first-session run-through, 2026-10-05).
+  //
+  // Once per address a minute. A reload that comes back signed in on the same
+  // stale answer says plainly what happened instead of reloading again, and
+  // so does a browser with no session storage to remember the first try in.
+  _INVITE_SESSION_ENDED_KEY: 'usernode:invite-session-ended',
+  _inviteSessionEnded(address) {
+    let reload = false;
+    try {
+      const prev = JSON.parse(sessionStorage.getItem(App._INVITE_SESSION_ENDED_KEY) || 'null');
+      const recent = !!prev && prev.address === address && Date.now() - Number(prev.at) < 60 * 1000;
+      sessionStorage.setItem(App._INVITE_SESSION_ENDED_KEY, JSON.stringify({ address, at: Date.now() }));
+      reload = !recent;
+    } catch (_) { /* nowhere to note the try: do not risk a reload loop */ }
+    App._dropCachedSession();
+    App._sessionFromSnapshot = false;
+    App._publishBootSession({ signedOut: true });
+    if (!reload) {
+      if (window.PlatformUI && PlatformUI.toast) {
+        PlatformUI.toast('You are signed out. Sign in again to join.', { error: true });
+      }
+      return;
+    }
+    try { history.replaceState(null, '', address); } catch (_) {}
+    location.reload();
+  },
+
   // Follow an invite link as a signed-in account with platform access
   // (services/community-invites.js). Home first, with the invite address
   // replaced so Back or a reload does not ask again; then, if the link is
-  // live and the viewer is not in the project yet, one confirm naming it and
-  // who invited them. In it — just now, or already — opens its hub. A dead
+  // live and the viewer is not in the project yet, the project's own page
+  // when they may already open it (#3700, _openInvitePage), a private
+  // community's invite preview when they may not (_openInvitePreview), else
+  // one confirm naming it and who invited them. Already in it opens its hub;
+  // just let in by this link lands where a Join does (_landJoined). A dead
   // link says why, once.
+  //
+  // A shell painted from the session snapshot has not heard yet whether that
+  // session is alive, and the address is left alone until it has: when
+  // _reconcileSession finds it over, it reloads onto this same address, which
+  // boots signed out onto the invite's own page. Replacing the address first
+  // sent that reload to "/", and the link's 401 was told as "That invite link
+  // does not work." over the ended session's cached Home (2026-10-05).
   async _followInvite(token) {
     App._markNavigationVia?.('handed');
     // The first-run join step waits for this (frontend/src/features/auth/
     // communities-first-run.js): somebody a link is bringing into a group is
     // asked to join it, not what to make. Resolves true once they are in.
     let joinedHere = false;
+    let held = false;
+    let deferred = false;
     let settle = () => {};
     App._inviteFollow = new Promise((resolve) => { settle = resolve; });
     try {
+      const address = `${location.pathname}${location.search || ''}`;
+      // Asked at once, beside the session check, so a live session waits on
+      // no extra round trip for its confirm. Read (and a failure told) below.
+      const standingRead = Promise.resolve()
+        .then(() => fetch(`/api/invite-links/by-token/${encodeURIComponent(token)}`, { credentials: 'same-origin' }))
+        .then(async (res) => ({ status: res.status, standing: await res.json().catch(() => ({})) }));
+      standingRead.catch(() => {});
+      // Signed in from this invite's own page (Join, then the sheet): this
+      // runs in the tick the signed-in shell starts, and the standing that
+      // says whether to welcome them is a request away. "You're in"'s frame
+      // goes up first, drawn before this returns, so Home is never on screen
+      // between the sheet and the welcome (Evan, 5 October 2026; the make
+      // screen's hand-off, #3894, works the same way). The welcome fills it;
+      // any other ending takes it down (_endWelcomeHold).
+      const fromLanding = App._inviteLandingToken === token;
+      App._inviteLandingToken = null;
+      const island = window.UsernodeReact && window.UsernodeReact.firstSession;
+      held = !!(fromLanding && island && typeof island.holdWelcome === 'function' && island.holdWelcome());
+      if (App._sessionFromSnapshot) {
+        // Bounded: a reconcile that settles nothing (it reloads for another
+        // account) must not hold the follow for good. Past it, the link's own
+        // 401 below still catches an ended session.
+        let timer = null;
+        const outcome = await Promise.race([
+          App.bootSession(),
+          new Promise((resolve) => { timer = setTimeout(() => resolve(null), App.BOOT_SESSION_TIMEOUT_MS * 3); }),
+        ]);
+        clearTimeout(timer);
+        // _reconcileSession is reloading onto the invite address.
+        if (outcome && outcome.signedOut) return;
+      }
       try { history.replaceState(null, '', App._rootUrl('')); } catch (_) {}
       App.restoreFromHash();
       const toast = (msg, error) => {
@@ -3962,7 +4322,10 @@ const App = {
       // "You're in" and the first-session tour (features/first-session), for
       // somebody this link has just let into the project. It answers false
       // when it will not show (already shown for this project, or the island
-      // is not there), and they land on the hub as before.
+      // is not there), and they land on the hub as before. Somebody who was
+      // signed in before following the link (the confirm below) had their
+      // account already, unless the join's answer says it is new: a test
+      // account on its first sign-in (routes/community-invites.js).
       const welcome = (standing, slug) => {
         const fs = window.UsernodeReact && window.UsernodeReact.firstSession;
         if (!fs || typeof fs.welcome !== 'function' || !slug) return false;
@@ -3972,20 +4335,33 @@ const App = {
           name: project.name || slug,
           iconEmoji: project.iconEmoji || null,
           iconUrl: project.iconUrl || null,
+          // The picture the invite page showed, and its one line, to fill
+          // "You're in" with the project rather than empty space.
+          description: project.description || null,
+          picture: project.picture || null,
           inviterName: standing.inviterName || standing.inviter || null,
           inviterMadeIt: !!standing.inviterMadeIt,
+          building: !!standing.building,
           newAccount: !!standing.newAccount,
         });
       };
       try {
-        const res = await fetch(`/api/invite-links/by-token/${encodeURIComponent(token)}`, { credentials: 'same-origin' });
-        const standing = await res.json().catch(() => ({}));
+        const { status, standing } = await standingRead;
+        // 401 is the viewer's session, not the link.
+        if (status === 401) { App._inviteSessionEnded(address); return; }
+        // Only the link's own answer says what is wrong with it: 200 with its
+        // state, or 404 for one that never existed. A 500 or a 429 is a read
+        // that did not land, and the link may be fine.
+        if (status !== 200 && status !== 404) { toast('Could not open that invite link. Try again.', true); return; }
         if (standing.mine === 'joined' && standing.slug) {
           joinedHere = true;
           // Joined by the sign-in that brought them here (within the last
           // half hour), not a member reopening an old link.
           const fresh = standing.joinedAt && Date.now() - Date.parse(standing.joinedAt) < 30 * 60 * 1000;
           if (fresh && welcome(standing, standing.slug)) return;
+          // Let in just now, and "You're in" will not show (seen for this
+          // project already, or no island): where a Join lands (#3700).
+          if (fresh) { await App._landJoined(standing.slug); return; }
           openHub(standing.slug);
           return;
         }
@@ -3994,7 +4370,7 @@ const App = {
         const count = standing.memberCount || 0;
         // Who it is from, in the words the invite page uses, then their note.
         const from = standing.inviterMadeIt && standing.inviterName
-          ? `${standing.inviterName} made it and invited you.`
+          ? `${standing.inviterName} ${standing.building ? 'is making' : 'made'} it and invited you.`
           : (standing.inviter ? `@${standing.inviter} invited you.` : 'You were invited.');
         // Join was already pressed on the link's own page, and the person chose
         // "Sign in with a password" from its sheet (features/auth/
@@ -4005,6 +4381,31 @@ const App = {
           pressed = sessionStorage.getItem('usernode:invite-join') === `/invite/${token}`;
           sessionStorage.removeItem('usernode:invite-join');
         } catch (_) { /* asked as before */ }
+        // A confirm is never asked under the held frame, and nor is the
+        // project's page shown under it.
+        if (held && !pressed) { held = false; App._endWelcomeHold(); }
+        // #3700: the community itself rather than a question over Home. Its
+        // own page, in its not-joined state with who invited them and Join
+        // at its head, when the viewer may already open it (the standing's
+        // `page`: a public community). A private community's page is for its
+        // members, and a link makes nobody one until Join, so there it is
+        // the invite preview (the standing's `invitePreview`), drawn from
+        // this standing alone. Either Join follows this link; leaving is Not
+        // now. With neither, the confirm below, as before.
+        const hooks = {
+          welcome: (newAccount, slug) => welcome({ ...standing, newAccount }, slug),
+          settle,
+        };
+        const opened = !pressed && (standing.page
+          ? App._openInvitePage(token, standing, hooks)
+          : !!standing.invitePreview && App._openInvitePreview(token, standing, hooks));
+        if (opened) {
+          // The follow is not over until that Join is pressed: the page
+          // settles App._inviteFollow, so the first-run join step waits on
+          // it as it waited on the confirm.
+          deferred = true;
+          return;
+        }
         const ok = pressed ? true : window.ConfirmModal ? await ConfirmModal.show({
           title: `Join ${name}?`,
           message: from
@@ -4017,10 +4418,17 @@ const App = {
           cancelLabel: 'Not now',
         }) : true;
         if (!ok) return;
-        const joined = await fetch(`/api/invite-links/by-token/${encodeURIComponent(token)}/redeem`, {
+        // A public community asks a provisional handle for a username first
+        // (username-first-run.js publicRetry).
+        const redeem = () => fetch(`/api/invite-links/by-token/${encodeURIComponent(token)}/redeem`, {
           method: 'POST', credentials: 'same-origin',
         });
+        const joined = window.UsernameFirstRun?.publicRetry
+          ? await window.UsernameFirstRun.publicRetry(redeem)
+          : await redeem();
+        if (joined.status === 401) { App._inviteSessionEnded(address); return; }
         const result = await joined.json().catch(() => ({}));
+        if (result.reason === 'username_required') { toast(result.error, true); return; }
         if (!joined.ok || !result.ok) { toast(DEAD[result.reason] || 'Could not join. Try again.', true); return; }
         joinedHere = true;
         // Read Home's challenges again now. Home painted them above, before
@@ -4032,16 +4440,116 @@ const App = {
         // run-through, 2026-10-04).
         if (result.status === 'joined') window.HomePanels?.ensureLoaded?.({ force: true });
         if (result.slug) {
-          if (welcome({ ...standing, newAccount: false }, result.slug)) return;
-          toast(`You joined ${result.name || name}.`);
-          openHub(result.slug);
+          if (welcome({ ...standing, newAccount: result.newAccount === true }, result.slug)) return;
+          await App._landJoined(result.slug);
         }
       } catch (_) {
         toast('Could not open that invite link. Try again.', true);
       }
     } finally {
-      settle(joinedHere);
+      if (!deferred) settle(joinedHere);
+      // The held frame goes, unless "You're in" has taken its place.
+      if (held) App._endWelcomeHold();
     }
+  },
+
+  // "You're in"'s held frame (above), down; a welcome that took its place stays.
+  _endWelcomeHold() {
+    const island = window.UsernodeReact && window.UsernodeReact.firstSession;
+    if (island && typeof island.endHold === 'function') island.endHold();
+  },
+
+  // #3700: open the page of the project a live link is for, as somebody not
+  // in it yet: its hub, in its not-joined state, which shows what they are
+  // asked into (who is here, what it is, Open app to try it first, the last
+  // fortnight, what is being decided), with who invited them and Join first
+  // in its hero (dev-board/workshop/invite-offer.ts). The link's address is
+  // REPLACED by the page's, so Back goes to wherever they were before they
+  // followed it, and a reload is the page. `hooks.settle` resolves
+  // App._inviteFollow when that Join lets them in; `hooks.welcome` opens
+  // "You're in" for an account the join makes new. False, with nothing
+  // done, when the page cannot take the link (no React bridge).
+  _openInvitePage(token, standing, hooks) {
+    const slug = standing && standing.page;
+    const board = window.UsernodeReact && window.UsernodeReact.devBoard;
+    if (!slug || !board || typeof board.publishInviteOffer !== 'function') return false;
+    const project = standing.project || {};
+    board.publishInviteOffer({
+      token,
+      slug,
+      name: project.name || slug,
+      inviter: standing.inviter || null,
+      inviterName: standing.inviterName || null,
+      inviterMadeIt: !!standing.inviterMadeIt,
+      building: !!standing.building,
+      note: standing.note || null,
+      welcome: (hooks && hooks.welcome) || null,
+      settle: (hooks && hooks.settle) || null,
+    });
+    if (typeof AppView !== 'undefined' && AppView._landOnHub) AppView._landOnHub(slug);
+    try {
+      history.replaceState(null, '', App._appUrl(slug, 'dev', null, null, { boardView: 'workshop' }));
+    } catch (_) {}
+    App.restoreFromHash();
+    return true;
+  },
+
+  // #3700: where a Join through an invite lands, from anywhere but the
+  // project's page (whose own Join lands itself, workshop.tsx). Needs you,
+  // at its first card, when votes are already waiting on the new member,
+  // else the hub, with "You're in." said once (`said`: the caller said it,
+  // as the invite preview's Join does). Votes waiting is the Workshop
+  // screen's own count (GET /api/workshop/counts `needs`), read after the
+  // join so the project is one of theirs; a read that fails is the hub.
+  async _landJoined(slug, opts) {
+    if (!slug) return;
+    let owed = false;
+    try {
+      const res = await fetch('/api/workshop/counts', { credentials: 'same-origin' });
+      const body = res.ok ? await res.json() : null;
+      const count = body && body.counts ? body.counts[slug] : null;
+      owed = !!count && Number(count.needs) > 0;
+    } catch (_) { /* the hub */ }
+    const said = !!(opts && opts.said);
+    if (!said && window.PlatformUI && PlatformUI.toast) PlatformUI.toast("You're in.");
+    if (typeof AppView !== 'undefined' && AppView._landOnTab) AppView._landOnTab(slug, owed ? 'needs' : 'status');
+    App.navigateToApp(slug, 'dev');
+  },
+
+  // #3700: a private community's invite preview (features/invite-preview),
+  // for somebody signed in and not in it who followed a live link. Its page
+  // is its members' alone (services/app-access.js), and a link makes nobody
+  // a member until Join, so the preview is drawn from the link's standing
+  // and nothing else: the header in its colour, its icon and name, the
+  // member COUNT, the one-line description, who invited them and their
+  // note, and Join. It reads nothing of the project. It goes over Home's
+  // address (replaced above), so neither the link nor the project is named
+  // in the address bar, Back leaves for wherever they were, and a reload is
+  // Home. Join follows the link; then the shell lands them where a Join
+  // lands. False, with nothing done, without the island.
+  _openInvitePreview(token, standing, hooks) {
+    const island = window.UsernodeReact && window.UsernodeReact.invitePreview;
+    const shown = standing && standing.invitePreview;
+    if (!shown || !island || typeof island.open !== 'function') return false;
+    const project = standing.project || {};
+    return island.open({
+      token,
+      name: project.name || 'this community',
+      iconEmoji: project.iconEmoji || null,
+      iconUrl: project.iconUrl || null,
+      iconColor: shown.iconColor || null,
+      description: project.description || null,
+      memberCount: Number(standing.memberCount) || 0,
+      audienceLabel: shown.audienceLabel || 'Private community',
+      inviter: standing.inviter || null,
+      inviterName: standing.inviterName || null,
+      inviterMadeIt: !!standing.inviterMadeIt,
+      building: !!standing.building,
+      note: standing.note || null,
+      welcome: (hooks && hooks.welcome) || null,
+      settle: (hooks && hooks.settle) || null,
+      land: (slug) => { void App._landJoined(slug, { said: true }); },
+    }) === true;
   },
 
   _deepLinkTarget() {
@@ -4083,7 +4591,9 @@ const App = {
       // Signed out, it is the landing, whose invite card
       // (features/auth/landing.tsx) names the project and offers sign-up;
       // the path is remembered so signing in comes back here. Signed in, it
-      // is followed after a confirm (App._followInvite). A waiting account
+      // is followed (App._followInvite): the project's own page with Join on
+      // it where they may open it, a private community's invite preview
+      // where they may not, else a confirm. A waiting account
       // never reaches this: enterAuthed hands it to the waiting room, which
       // follows the link itself (features/auth/waiting.tsx). A fragment
       // outranks it, as it does a clean app path: #signup and #login are
@@ -4091,6 +4601,8 @@ const App = {
       const inviteToken = rawHash ? null : App._inviteTokenFromPath(location.pathname);
       if (inviteToken && window.AuthScreens) {
         if (!App.user) {
+          // A sign-in from here comes back to this link (_followInvite).
+          App._inviteLandingToken = inviteToken;
           AuthScreens.rememberDeepLink(location.pathname);
           AuthScreens.show('landing');
           return;
@@ -4164,6 +4676,15 @@ const App = {
               return;
             }
           }
+        }
+        // A PRIVATE MEMBER is on the waitlist from inside: their Home's card
+        // links to the "Want in sooner?" questions (#more/<token>, features/
+        // home/waitlist-card.tsx), the screen the join mail links everybody
+        // else to. Its "Back" is #landing, which comes through below as any
+        // stale auth hash does and lands on Home.
+        if (authRoute === 'more' && App.user?.privateMember) {
+          AuthScreens.show('more', authSeg);
+          return;
         }
         if (authRoute) {
           AuthScreens.hideAll();
@@ -5312,6 +5833,8 @@ const App = {
   // render is the prerender's "Me", and the name arrives as an update.
   _syncViewer() {
     window.UsernodeReact?.nav?.setViewer?.(App.user?.username || null);
+    // A private member's mark menu and Home differ (features/nav/nav-store.js).
+    window.UsernodeReact?.nav?.setPrivateMember?.(!!App.user?.privateMember);
   },
 
   // ── #platform-tabs — one place decides ──────────────────────────────
@@ -7198,10 +7721,43 @@ const App = {
   _appNavigationGeneration: 0,
   _appLoad: null,
 
-  async navigateToApp(slug, tab, ref, subTab) {
+  // A provisional handle (an invite's phone sign-up, made from its name)
+  // is for private groups: before a public app or community, ask for a
+  // username (username-first-run.js askForPublic). True to go on. The
+  // audience comes from the launcher's record, or the app's own read; an
+  // unknown one goes on, and the server's refusal stands behind it.
+  async _usernameBeforePublic(slug) {
+    let audience = null;
+    try { audience = AppView.launchRecordFor?.(slug)?.audience || null; } catch (_) {}
+    if (!audience) {
+      try {
+        const res = await fetch(`/api/apps/${encodeURIComponent(slug)}?manifest=summary`);
+        if (res.ok) audience = (await res.json())?.app?.audience || null;
+      } catch (_) { /* the server decides */ }
+    }
+    if (audience !== 'open') return true;
+    return !!(await window.UsernameFirstRun?.askForPublic?.());
+  },
+
+  // navigateToApp for a provisional handle: the ask first, then the same
+  // navigation, marked as asked. Its own function so navigateToApp reads
+  // everything it reads synchronously (the tab press) before any await.
+  async _navigateAfterUsername(slug, tab, ref, subTab) {
+    if (!(await App._usernameBeforePublic(slug))) {
+      // "Not now": stay out. An address that already names the app goes Home.
+      if (location.hash.startsWith(`#app/${slug}`)) App.navigateHome?.();
+      return false;
+    }
+    return App.navigateToApp(slug, tab, ref, subTab, { usernameChecked: true });
+  },
+
+  async navigateToApp(slug, tab, ref, subTab, opts) {
     // The side panel never runs an app — not even to warm its frame. An App
     // tab asked for in there is the running app's job, beside it.
     if (App.embeddedPanel && App._forwardAppTab(slug, tab, ref, subTab)) return false;
+    if (App.user?.usernameProvisional && !opts?.usernameChecked) {
+      return App._navigateAfterUsername(slug, tab, ref, subTab);
+    }
     const generation = ++App._appNavigationGeneration;
     // Clean up whatever app we had mounted. This is a no-op on the first
     // navigation into any app, but without it a direct app-A → app-B
@@ -7600,6 +8156,28 @@ const App = {
     'profile-proposals-screen': ['arrow', '#profile'],
   },
 
+  // ── A private member's way out ───────────────────────────────────────
+  //
+  // A PRIVATE MEMBER (App.user.privateMember: an invite link let them into
+  // its community before they were let in) lands inside that app with no ✕.
+  // The mark menu's "Go to Homeroom" (features/app-context) takes them to
+  // Home and its four-step tour (features/first-session goHome), and from
+  // then on an app has its ✕ like anybody's. Remembered on this device, the
+  // way the tours themselves are.
+  PRIVATE_HOME_PREFIX: 'usernode:private-home:',
+  _privateHomeKey() {
+    return `${App.PRIVATE_HOME_PREFIX}${App.user?.id ?? 'anon'}`;
+  },
+  _privateHomeVisited() {
+    try { return !!localStorage.getItem(App._privateHomeKey()); } catch (_) { return false; }
+  },
+  _notePrivateHome() {
+    try { localStorage.setItem(App._privateHomeKey(), String(Date.now())); } catch (_) { /* private mode */ }
+  },
+  _privateNoClose() {
+    return !!App.user?.privateMember && !App._privateHomeVisited();
+  },
+
   // The slot for a screen, as setBackIcon's own arguments. Anything off the
   // table keeps the house: the auth screens are outside the tab bar entirely,
   // and a screen nobody has classified is better off offering a way out than
@@ -7653,6 +8231,10 @@ const App = {
       // publishes the same 'none', and the two writers have to agree (see
       // above).
       if (App.currentTab !== 'app' || App._selfHostedRoute()) return ['none'];
+      // A PRIVATE MEMBER who has not been to Homeroom yet has no ✕: the app
+      // an invite link landed them in is where they are, and the mark menu's
+      // "Go to Homeroom" is the way on (_privateNoClose).
+      if (App._privateNoClose()) return ['none'];
       // The ✕'s DESTINATION is the page the app was opened from (App.closeApp
       // traverses back to it; this is the href a modified click follows), and
       // Home when there is none. The table holds the glyph; this holds the
@@ -7960,8 +8542,11 @@ const App = {
       // app shows is the close button (#2718). It said 'home' because that was
       // the default for everything that was not Home, and the reset was
       // written before an app had a slot of its own. Its href is where
-      // App.closeApp goes: the page the app was opened from.
-      App.setBackIcon('close', App._closeAppHref());
+      // App.closeApp goes: the page the app was opened from. A private
+      // member's first app has none: the table's own answer for it, so the
+      // two writers agree (_backSlotFor, _privateNoClose).
+      if (App._privateNoClose()) App.setBackIcon(...App._backSlotFor('app-view'));
+      else App.setBackIcon('close', App._closeAppHref());
       AppView.renderAppTab();
       if (opening && AppView.appData?.slug === App.currentApp
           && App._isScreenVisible?.('app-view')) {

@@ -54,6 +54,7 @@ import { resolveIllustration } from '../../lib/challenge-illustrations';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { CHALLENGE_CARD_FACE, ChallengeCard, ChallengeMeta, ProgressRail } from './challenge-card';
+import { ChallengesIntro } from './challenges-intro';
 import { GroupHeader } from './group-header';
 import { LockedChallengesCard } from './locked-challenges-card';
 import { SeasonProgress, type SeasonProgressView } from './season-progress';
@@ -123,6 +124,8 @@ type GroupView = {
   key: string;
   heading: string | null;
   meta?: string | null;
+  // #3203: "Ends Mon 12 Oct, 02:00", the header clock's moment, as its tooltip.
+  metaTitle?: string | null;
   allDone?: boolean;
   collapsed?: boolean;
   cards: CardView[];
@@ -183,11 +186,17 @@ type DetailView = {
   eyebrow: string | null;
   goal: string;
   task: string | null;
+  // #3253/#3248: under the task, what the scoring rule counts (a proposal
+  // once it is put to the vote; nothing past a counted measure's target).
+  countNote?: string | null;
   // The template's illustration slug and an upload's tone, for the artwork
   // well (see DetailPage).
   illustration: string | null;
   illustrationTone: string | null;
   deadline: string | null;
+  // #3203: "ends Mon 12 Oct, 02:00" (TopochainChallenges._endsText), the
+  // moment this challenge closes in the viewer's zone; null when done.
+  ends?: string | null;
   amount: { text: string; earned: boolean } | null;
   state: ChallengeState;
   stateLabel: string;
@@ -254,6 +263,7 @@ const PAGE_BODY = 'flex flex-col gap-3.5 pb-8';
 const EYEBROW = 'min-w-0 truncate text-[0.8125rem] font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-400';
 const PAGE_TITLE = 'text-[1.625rem] font-semibold leading-tight tracking-tight text-balance text-zinc-900 dark:text-zinc-100';
 const PROSE = 'text-sm text-zinc-600 dark:text-zinc-400';
+const NOTE = 'text-[0.8125rem] text-zinc-500 dark:text-zinc-400';
 // The artwork well: the registry's tone class sets `--tint-art` for both
 // themes, so the one background reads it in either.
 const WELL = 'flex h-56 w-full items-center justify-center rounded-2xl bg-[var(--tint-art)]';
@@ -400,6 +410,7 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
           <GroupHeader
             heading={g.heading}
             meta={g.meta}
+            metaTitle={g.metaTitle}
             allDone={!!g.allDone}
             expanded={!g.collapsed}
             controlsId={`tc-se-group-${g.key}`}
@@ -647,11 +658,13 @@ export function DetailPage({ view }: { view: DetailView }): ReactNode {
         <ChallengeMeta
           size="lg"
           deadline={view.deadline}
+          ends={view.ends}
           text={view.amount ? view.amount.text : null}
           earned={!!view.amount?.earned}
           cadence={view.cadence}
         />
         {view.task ? <p className={PROSE}>{view.task}</p> : null}
+        {view.countNote ? <p className={NOTE}>{view.countNote}</p> : null}
       </div>
       <ArtworkWell slug={view.illustration} tone={view.illustrationTone} />
       <ProgressRail
@@ -841,9 +854,15 @@ export function ChallengesPane(): ReactNode {
     <>
       <div id="tc-se-grid" className={state.detail ? 'hidden' : undefined}>
         {/*
-            The viewer's own standing leads the tab, as the prototype's
-            Challenges page does — the points, rank, breakdown and token
-            allocation the Me screen used to carry (./your-standing.tsx).
+            What challenges are for, above everything else on the tab, until
+            the viewer closes it on this device (./challenges-intro.tsx). It
+            is inside the grid so a challenge's page hides it too.
+        */}
+        <ChallengesIntro />
+        {/*
+            The viewer's own standing leads the rest of the tab, as the
+            prototype's Challenges page does — the points, rank, breakdown and
+            token allocation the Me screen used to carry (./your-standing.tsx).
         */}
         <YourStanding />
         <Grid view={state.grid} />

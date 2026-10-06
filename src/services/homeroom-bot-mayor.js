@@ -77,6 +77,7 @@
 // own ledger, scoped to one person, which is a handful of queries here.
 
 const log = require('./logger');
+const { withoutEmDashes } = require('./em-dashes');
 const progressSvc = require('./homeroom-bot-progress');
 
 const MAX_HISTORY = 24;
@@ -231,15 +232,15 @@ const LEADING_NOTE_RE = /^\s*\[(?:about|re|homeroom)\b[^\]\n]{0,200}\]\s*/i;
 
 // The platform's copy has no em dashes (tests/no-em-dash-in-copy.test.js),
 // and the prompt says so, but the model still writes "Sorry about that \u2014
-// that sounds like a bug". A dash with a space on each side is a pause
-// between two clauses, which a comma carries as well; nothing else is touched.
-const SPACED_EM_DASH_RE = /[ \t\u00a0]+\u2014[ \t\u00a0]+/g;
+// that sounds like a bug". Its replies go through the same normaliser as
+// everything else the bot writes for people (em-dashes.js, 5 Oct 2026):
+// "Sorry about that. That sounds like a bug."
 
-/** Pure: a reply's words as they are sent: no leading bracketed note, and no spaced em dash. */
+/** Pure: a reply's words as they are sent: no leading bracketed note, and no em dash. */
 function cleanReply(text) {
   let out = String(text ?? '');
   for (let i = 0; i < 3 && LEADING_NOTE_RE.test(out); i += 1) out = out.replace(LEADING_NOTE_RE, '');
-  return out.replace(SPACED_EM_DASH_RE, ', ').trim();
+  return withoutEmDashes(out).trim();
 }
 
 function dmModule(deps) { return deps.dmSvc || require('./homeroom-bot-dm'); }
@@ -1015,7 +1016,7 @@ async function unknownRequests(pool, ctx, numbers) {
        UNION ALL
        SELECT issue_number, app_id FROM homeroom_bot_runs WHERE issue_number = ANY($2::int[])
        UNION ALL
-       -- A request filed from an app's "Ask for a change" dialog has no twin.
+       -- A request filed from an app's "Suggest an improvement" dialog has no twin.
        SELECT issue_number, app_id FROM feedback_reports WHERE issue_number = ANY($2::int[])
      ) x
       WHERE x.app_id IN (
@@ -1456,7 +1457,8 @@ async function runTool(pool, ctx, name, args) {
         if (!(await canFile(pool, app, user))) {
           return { ok: false, error: `They are not a member of ${app.name || app.slug}, so they cannot file requests there. They can join it from its page.` };
         }
-        const title = clip(String(args.title || '').replace(/\s+/g, ' '), MAX_TITLE_CHARS);
+        // The request's name, on its board and in every message about it.
+        const title = clip(withoutEmDashes(String(args.title || '').replace(/\s+/g, ' ')).replace(/:+$/, ''), MAX_TITLE_CHARS);
         const details = clip(args.details, MAX_DETAILS_CHARS);
         if (title.length < 3) return { ok: false, error: 'The title is too short.' };
         ctx.offer = { app, title, details };
@@ -1580,9 +1582,9 @@ async function askModel(t, { messages, tools, toolChoice, where, attempts = MAX_
         // not to, and with require_parameters OpenRouter then routes only to
         // providers that support it: for GLM 5.3 Flash, one of its thirty
         // (Inceptron), so every 429 and slow answer of that one provider was
-        // the DM's, with nowhere to fail over. Global Chat sends it only to
-        // models that take it (orchestrator.js). A turn runs its calls one by
-        // one either way. `false` would still be sent, and still narrow it.
+        // the DM's, with nowhere to fail over. The transport now sends it only
+        // for true, and nothing asks for that. A turn runs its calls one by
+        // one either way.
         parallelToolCalls: null,
         timeoutMs: REQUEST_TIMEOUT_MS,
         // OpenRouter's session pins a provider. It is this turn's, not the
@@ -2352,7 +2354,7 @@ async function settleOffer(pool, config, {
         requester: {
           userId: user.id, username: user.username, issueTitle: action.title, firstVersion: false, askedText,
           // What dm.hasBot reads, from the signed-in person who tapped File it.
-          isSynthetic: !!user.isSynthetic, hasPlatformAccess: !!user.hasPlatformAccess, isAdmin: !!user.isAdmin,
+          isSynthetic: !!user.isSynthetic, hasPlatformAccess: !!(user.hasPlatformAccess || user.privateMember), isAdmin: !!user.isAdmin,
         },
         deps: { dm },
       });
@@ -2521,7 +2523,7 @@ function commentText(theirs, comment) {
  * Whether `app` has a request numbered `n` that the platform knows of: the
  * same records unknownRequests reads (the platform's own twin, a requester,
  * the bot's queue and runs), and the feedback report of a request filed from
- * the app's "Ask for a change" dialog, which keeps no twin by design
+ * the app's "Suggest an improvement" dialog, which keeps no twin by design
  * (routes/issues.js isIssueAuthor). Reading only the first two, a request
  * filed there was "no request" until the live loop had looked at it, and on
  * an app the bot does not build on it always was.

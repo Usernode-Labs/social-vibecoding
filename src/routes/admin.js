@@ -28,6 +28,7 @@ const platformLimits = require('../services/platform-limit-alerts');
 const githubBudget = require('../services/github-budget');
 const modelCosts = require('../services/model-costs');
 const homeroomBot = require('../services/homeroom-bot');
+const smallChange = require('../services/small-change');
 const shotsExport = require('../services/shots-export');
 const welcomeDm = require('../services/welcome-dm');
 const onboarding = require('../services/onboarding');
@@ -332,6 +333,10 @@ function adminRoutes(config) {
       const [standings, { rows }] = await Promise.all([computeStandings(pool, { seasonId: null }), pool.query(
         `SELECT u.id, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.app_quota_requested_at, u.created_at,
                 u.daily_limit_cents, u.weekly_limit_cents, u.usernode_pubkey,
+                -- #3938: the podium flag the list's inline switch reads and
+                -- flips; the same column the v4 toggle-exclude-podium route
+                -- updates.
+                u.exclude_podium,
                 EXISTS (
                   SELECT 1 FROM user_social_identities identity
                    WHERE identity.user_id = u.id
@@ -1387,6 +1392,19 @@ function adminRoutes(config) {
       res.json({ users: await welcomeDm.searchPeople(pool, req.query.q) });
     } catch (err) {
       log.error('admin', 'Homeroom bot people search failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // The watch-only small-change tag (services/small-change.js): its latest
+  // verdicts with their proposal, and the last week's totals. Read-only, so
+  // it stays on the plain adminMiddleware gate. `reason` is model-written
+  // text about a change, served as JSON data for admins.
+  router.get('/api/admin/small-change-tags', async (req, res) => {
+    try {
+      res.json(await smallChange.adminPayload(pool, { limit: req.query.limit }));
+    } catch (err) {
+      log.error('admin', 'Read small-change tags failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -2684,7 +2702,7 @@ function adminRoutes(config) {
         ? req.query.kind.trim().slice(0, 64)
         : null;
 
-      const [recent, totals] = await Promise.all([
+      const [recent, totals, reports] = await Promise.all([
         pool.query(
           `SELECT id, kind, recipient, provider, status, error, created_at
              FROM mail_deliveries
@@ -2701,12 +2719,13 @@ function adminRoutes(config) {
             GROUP BY status`,
           [kind]
         ),
+        require('../services/mail/reports').readReports(pool),
       ]);
 
       const last24h = {};
       for (const row of totals.rows) last24h[row.status] = row.n;
 
-      res.json({ deliveries: recent.rows, last24h, kind, limit });
+      res.json({ deliveries: recent.rows, last24h, kind, limit, reports });
     } catch (err) {
       log.error('admin', 'mail activity failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });

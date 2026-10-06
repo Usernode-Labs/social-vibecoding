@@ -237,11 +237,13 @@ test('the adapter forwards Messages requests to OpenRouter with the key and stre
   assert.equal(forwarded.body.max_tokens, 64_000);
   assert.deepEqual(forwarded.body.messages, [{ role: 'user', content: 'hi' }]);
   assert.deepEqual(timing.map((event) => event.kind), [
-    'provider_request_start', 'provider_response_headers', 'provider_response_first_byte', 'provider_request_end',
+    'provider_request_start', 'provider_response_headers', 'provider_response_first_byte',
+    'provider_request_result', 'provider_request_end',
   ]);
   assert.equal(timing[0].inputItems, 1);
   assert.equal(timing[0].maxOutputTokens, 64_000);
-  assert.equal(timing[3].outcome, 'ok');
+  assert.deepEqual(timing[3], { kind: 'provider_request_result', requestOrdinal: 1, httpStatus: 200, outcome: 'ok', requestId: 'req-1' });
+  assert.equal(timing[4].outcome, 'ok');
   assert.ok(!JSON.stringify(timing).includes('hi'), 'timing carries sizes and counts, never content');
 
   // Bearer auth is accepted too; count_tokens is forwarded without a cap.
@@ -252,7 +254,7 @@ test('the adapter forwards Messages requests to OpenRouter with the key and stre
   assert.deepEqual(await count.json(), { input_tokens: 42 });
   assert.equal(upstream.seen[1].url, '/api/v1/messages/count_tokens');
   assert.deepEqual(upstream.seen[1].body, { model: GLM, messages: [] });
-  assert.equal(timing.length, 4, 'count_tokens is not a model request');
+  assert.equal(timing.length, 5, 'count_tokens is not a model request');
 
   // Wrong token, wrong route, wrong method: refused locally.
   const denied = await send('/v1/messages', { token: 'guess' });
@@ -267,6 +269,75 @@ test('the adapter forwards Messages requests to OpenRouter with the key and stre
   });
   assert.equal(bad.status, 400);
   assert.equal(upstream.seen.length, 2, 'nothing refused locally reached OpenRouter');
+});
+
+// ── What each request came to (G, 2026-10-05) ───────────────────────────
+
+async function outcomeOf(t, handler) {
+  const upstream = await fakeOpenRouter((record, res) => handler(res));
+  const timing = [];
+  const adapter = await startMessagesAdapter({
+    baseUrl: upstream.base, apiKey: KEY, model: GLM, localToken: 'local-token',
+    onTiming: (event) => timing.push(event),
+  });
+  t.after(async () => { await adapter.close(); await upstream.close(); });
+  const reply = await fetch(`${adapter.baseUrl}/v1/messages`, {
+    method: 'POST',
+    headers: { 'x-api-key': 'local-token', 'content-type': 'application/json' },
+    body: JSON.stringify({ model: 'x', max_tokens: 10, stream: true, messages: [{ role: 'user', content: 'secret prompt' }] }),
+  });
+  const text = await reply.text();
+  return { reply, text, result: timing.find((e) => e.kind === 'provider_request_result'), timing };
+}
+
+test('a streamed reply names its generation and the provider OpenRouter routed it to', async (t) => {
+  const { reply, text, result, timing } = await outcomeOf(t, (res) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream', 'x-request-id': 'req-9' });
+    res.write('event: message_start\ndata: {"type":"message_start","message":{"id":"gen-1759626000-abc","provider":"DeepInfra","model":"z-ai/glm-5.3-flash","usage":{"input_tokens":12}}}\n\n');
+    res.write('event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"an error in the reply text"}}\n\n');
+    res.end('event: message_stop\ndata: {"type":"message_stop"}\n\n');
+  });
+  assert.equal(reply.status, 200);
+  assert.match(text, /an error in the reply text/, 'the reply reaches Claude Code unchanged');
+  assert.deepEqual(result, {
+    kind: 'provider_request_result', requestOrdinal: 1, httpStatus: 200, outcome: 'ok',
+    requestId: 'req-9', generationId: 'gen-1759626000-abc', providerName: 'DeepInfra',
+  });
+  assert.ok(!JSON.stringify(timing).includes('secret prompt') && !JSON.stringify(timing).includes('reply text'),
+    'never content');
+});
+
+test('a refusal says its status, type, provider and a redacted message', async (t) => {
+  // The 2026-10-04 refusal, as OpenRouter's envelope carries it; one that
+  // echoed the key would never print it.
+  const { reply, result } = await outcomeOf(t, (res) => {
+    res.writeHead(400, { 'content-type': 'application/json', 'x-request-id': 'req-400' });
+    res.end(JSON.stringify({ error: {
+      code: 400,
+      message: `messages[6]: tool messages must include a non-empty string tool_call_id (key ${KEY})`,
+      metadata: { provider_name: 'Z.AI', raw: 'upstream detail' },
+    } }));
+  });
+  assert.equal(reply.status, 400, 'still Claude Code\'s to read');
+  assert.equal(result.httpStatus, 400);
+  assert.equal(result.outcome, 'http_error');
+  assert.equal(result.requestId, 'req-400');
+  assert.equal(result.providerName, 'Z.AI');
+  assert.equal(result.errorType, '400');
+  assert.match(result.errorMessage, /^messages\[6\]: tool messages must include a non-empty string tool_call_id/);
+  assert.ok(!result.errorMessage.includes(KEY), 'the key is redacted');
+  assert.match(result.errorMessage, /\*\*\*\*/);
+});
+
+test('an error event inside a stream is reported too', async (t) => {
+  const { result } = await outcomeOf(t, (res) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.write('event: message_start\ndata: {"type":"message_start","message":{"id":"gen-2","model":"m"}}\n\n');
+    res.end('event: error\ndata: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}\n\n');
+  });
+  assert.equal(result.generationId, 'gen-2');
+  assert.equal(result.errorType, 'overloaded_error');
+  assert.equal(result.errorMessage, 'Overloaded');
 });
 
 test('an OpenRouter refusal reaches Claude Code unchanged', async (t) => {

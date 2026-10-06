@@ -26,6 +26,16 @@
 // project of 8 people or fewer, to the rest of its people: one row per
 // discussion that folds later messages into a count in `detail`
 // (services/group-channel-notify.js, which writes and clears it).
+//
+// 5 October (Page Turners): a row about a change, a digest or a first
+// message says what is true NOW, read with the row (LIVE_ROW_COLUMNS_SQL):
+// a "ready to try" whose change went live says Live, a "Waiting for your
+// approval" digest counts only what still waits, and a first message Homeroom
+// bot filed as a request says it asked for a change. A change that is
+// decided settles what the bell still asked about it (settleDecidedChange).
+// The same day, a group's discussion row about a message the bot filed as a
+// request said "@mo_t1006 in Page Turners" over it: it says they asked for a
+// change too (FILED_MESSAGE_JOIN_SQL).
 
 const log = require('./logger');
 const usernames = require('./usernames');
@@ -128,6 +138,50 @@ const FRIEND_REQUEST_PENDING_SQL = `(n.kind = 'friend_request' AND EXISTS (
      AND pending_friend.requester_id = n.source_user_id
      AND pending_friend.status = 'pending'
 ))`;
+
+// 5 October (Page Turners): what a "Waiting for your approval" digest
+// (services/vote-digest.js) counted that still waits on its reader: changes
+// still up for approval, put up before it was sent, in a project they have a
+// stake in (the digest's own PENDING_SQL), not theirs, not voted on by them
+// since, and not in a project they blocked. A digest that named its one
+// change counts only that one. Never more than the digest said: a project
+// pinned since it was sent is not what it counted. Reads `n` (the
+// notification) and is evaluated only for a digest's row.
+const DIGEST_WAITING_SQL = `LEAST((
+  SELECT COUNT(DISTINCT waiting.id)::int FROM chat_sessions waiting
+   WHERE waiting.status = 'promoted'
+     AND COALESCE(waiting.promoted_at, waiting.created_at) <= n.created_at
+     AND (n.session_id IS NULL OR waiting.id = n.session_id)
+     AND waiting.user_id IS DISTINCT FROM n.user_id
+     AND (EXISTS (SELECT 1 FROM app_favorites stake WHERE stake.app_id = waiting.app_id AND stake.user_id = n.user_id)
+          OR EXISTS (SELECT 1 FROM apps made WHERE made.id = waiting.app_id AND made.created_by = n.user_id))
+     AND NOT EXISTS (SELECT 1 FROM user_app_blocks waiting_block
+                      WHERE waiting_block.user_id = n.user_id AND waiting_block.app_id = waiting.app_id)
+     AND NOT EXISTS (SELECT 1 FROM pr_votes waiting_vote
+                      WHERE waiting_vote.session_id = waiting.id AND waiting_vote.user_id = n.user_id)
+), CASE WHEN n.detail ~ '^[0-9]{1,6}$' THEN n.detail::int ELSE 99 END)`;
+
+// The three things a row's subject has become since it was written, read
+// with it (5 October): the status of the change a "ready to try" asked about
+// (`session_status`, cs is chat_sessions on n.session_id), how many of a
+// digest's changes still wait (`digest_waiting`), and the request a joiner's
+// first message, or a message in a group's discussion, became when Homeroom
+// bot filed it (`bot_request_number`, from FILED_MESSAGE_JOIN_SQL). Kept
+// beside the joins they need in every read of the bell: the list, the exact
+// lookup and the live push.
+const LIVE_ROW_COLUMNS_SQL = `cs.status AS session_status,
+            CASE WHEN n.kind = 'vote_digest' THEN ${DIGEST_WAITING_SQL} END AS digest_waiting,
+            bot_request.issue_number AS bot_request_number`;
+// 'filed' and 'group' are a request in the writer's words; 'revise' asked to
+// change one of the bot's changes before it went live. An offer not taken
+// up, a question or a dismissed read is still just what they said. The two
+// kinds of row that are about one person's message in a project's chat: a
+// joiner's first message (to their invite's maker) and a group's discussion
+// (channel_message, to the rest of the group; its message is the newest one
+// folded in).
+const FILED_MESSAGE_JOIN_SQL = `LEFT JOIN chat_bot_requests bot_request
+       ON n.kind IN ('first_message', 'channel_message') AND bot_request.chat_message_id = n.chat_message_id
+      AND bot_request.kind IN ('filed', 'group', 'revise') AND bot_request.issue_number IS NOT NULL`;
 
 function parseMentions(text) {
   if (!text || typeof text !== 'string') return [];
@@ -639,6 +693,10 @@ async function createSessionStalledNotification(pool, { userId, appId, sessionId
 // vote" and fans out to collaborators; this means "your agent did a thing" and
 // goes to one person.
 //
+// Two callers: submit_work (services/external-agent-tasks.js), and the
+// promote route (routes/votes.js) when the owner's agent put the change up
+// for the vote with a bearer token, as the local Homeroom CLI does (#3893).
+//
 // `detail` is which destination it took: 'submitted' (up for a vote) or
 // 'shared' (#1347's in-progress area). Unread-deduped per session AND per
 // detail, so sharing repeatedly onto the same card — which #1347 deliberately
@@ -823,7 +881,8 @@ async function hydrateAndPush(pool, row) {
               n.source_user_id,
               ${FRIEND_REQUEST_PENDING_SQL} AS friend_request_pending,
               n.detail,
-              pv.reason AS vote_reason
+              pv.reason AS vote_reason,
+              ${LIVE_ROW_COLUMNS_SQL}
        FROM notifications n
        LEFT JOIN apps a ON a.id = n.app_id
        LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
@@ -833,6 +892,7 @@ async function hydrateAndPush(pool, row) {
          ON conversation_message.id = n.conversation_message_id
        LEFT JOIN users su ON su.id = n.source_user_id
        LEFT JOIN pr_votes pv ON pv.session_id = n.session_id AND pv.user_id = n.source_user_id
+       ${FILED_MESSAGE_JOIN_SQL}
        WHERE n.id = $1 AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}`,
       [row.id]
     );
@@ -1012,13 +1072,16 @@ async function createAppDeletedNotifications(pool, { appName, appSlug, actorId, 
   return rows;
 }
 
-async function createCollabInviteNotification(pool, { appId, recipientId, inviterId }) {
+// `detail` is 'join' when the invite is to join the project (a private one,
+// where being invited in is how you join it) rather than to build it
+// (services/collab-invites.js); NULL otherwise, as on every row before it.
+async function createCollabInviteNotification(pool, { appId, recipientId, inviterId, detail = null }) {
   if (!recipientId || !appId) return [];
   const { rows } = await pool.query(
-    `INSERT INTO notifications (user_id, app_id, source_user_id, kind)
-     VALUES ($1, $2, $3, 'collab_invite')
-     RETURNING id, user_id, app_id, chat_message_id, source_user_id, kind, created_at`,
-    [recipientId, appId, inviterId || null]
+    `INSERT INTO notifications (user_id, app_id, source_user_id, kind, detail)
+     VALUES ($1, $2, $3, 'collab_invite', $4)
+     RETURNING id, user_id, app_id, chat_message_id, source_user_id, kind, detail, created_at`,
+    [recipientId, appId, inviterId || null, detail || null]
   );
   return rows;
 }
@@ -1072,18 +1135,29 @@ async function createApproverInviteAcceptedNotification(pool, { appId, recipient
 // whether the invite was already accepted/declined in another tab.
 // Each row carries `kind: 'collab' | 'approver'` so the drawer wires
 // the right accept/decline endpoints and copy.
+//
+// A collaborator invite also says what an invite link's page says
+// (services/community-invites.js preview): whether it is an invitation to
+// JOIN the project (`joins`: a private one, where being invited in is how
+// you join; services/collab-invites.js) or only to build it, the inviter's
+// note, and how many people are in it. An approver invite has none of them.
 async function listPendingInvites(pool, userId) {
   if (!userId) return [];
   const { rows } = await pool.query(
     `SELECT 'collab' AS kind, ac.app_id, a.slug AS app_slug, a.name AS app_name,
-            ac.created_at, inv.username AS invited_by
+            ac.created_at, inv.username AS invited_by,
+            (a.view_visibility IS DISTINCT FROM 'public') AS joins,
+            ac.invite_note AS note,
+            (SELECT COUNT(*)::int FROM community_members m
+              WHERE m.community_id = a.community_id) AS member_count
        FROM app_collaborators ac
        JOIN apps a ON a.id = ac.app_id
        LEFT JOIN users inv ON inv.id = ac.invited_by
       WHERE ac.user_id = $1 AND ac.status = 'invited'
      UNION ALL
      SELECT 'approver' AS kind, ap.app_id, a.slug AS app_slug, a.name AS app_name,
-            ap.created_at, inv.username AS invited_by
+            ap.created_at, inv.username AS invited_by,
+            FALSE AS joins, NULL::text AS note, NULL::int AS member_count
        FROM app_approvers ap
        JOIN apps a ON a.id = ap.app_id
        LEFT JOIN users inv ON inv.id = ap.invited_by
@@ -1098,6 +1172,9 @@ async function listPendingInvites(pool, userId) {
     appName: r.app_name,
     invitedBy: r.invited_by,
     createdAt: r.created_at,
+    joins: !!r.joins,
+    note: r.note || null,
+    memberCount: r.member_count == null ? null : Number(r.member_count),
   }));
 }
 
@@ -1185,7 +1262,8 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
             n.source_user_id,
             ${FRIEND_REQUEST_PENDING_SQL} AS friend_request_pending,
             n.detail,
-            pv.reason AS vote_reason
+            pv.reason AS vote_reason,
+            ${LIVE_ROW_COLUMNS_SQL}
      FROM notifications n
      LEFT JOIN apps a ON a.id = n.app_id
      LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
@@ -1195,6 +1273,7 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
        ON conversation_message.id = n.conversation_message_id
      LEFT JOIN users su ON su.id = n.source_user_id
      LEFT JOIN pr_votes pv ON pv.session_id = n.session_id AND pv.user_id = n.source_user_id
+     ${FILED_MESSAGE_JOIN_SQL}
      WHERE n.user_id = $1 AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}
      ${cursorClause}
      ${kindClause}
@@ -1227,7 +1306,8 @@ async function getForUser(pool, userId, id) {
             n.source_user_id,
             ${FRIEND_REQUEST_PENDING_SQL} AS friend_request_pending,
             n.detail,
-            pv.reason AS vote_reason
+            pv.reason AS vote_reason,
+            ${LIVE_ROW_COLUMNS_SQL}
        FROM notifications n
        LEFT JOIN apps a ON a.id = n.app_id
        LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
@@ -1237,6 +1317,7 @@ async function getForUser(pool, userId, id) {
          ON conversation_message.id = n.conversation_message_id
        LEFT JOIN users su ON su.id = n.source_user_id
        LEFT JOIN pr_votes pv ON pv.session_id = n.session_id AND pv.user_id = n.source_user_id
+       ${FILED_MESSAGE_JOIN_SQL}
       WHERE n.id = $1 AND n.user_id = $2 AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}`,
     [id, userId]
   );
@@ -1349,6 +1430,156 @@ async function markReadForAgentSession(pool, userId, agentSessionId) {
 // session-scoped vote dismiss unchanged.
 async function markReadForSession(pool, userId, sessionId) {
   return markReadForAction(pool, userId, 'vote_cast', sessionId);
+}
+
+// 5 October (Page Turners): the asks about a change that its decision
+// answers for everybody. Nobody is asked to vote on it, to say they still
+// back it, or to revive it once it is live or closed, and a digest that
+// named it alone has nothing left to count. "Ready to try" (change_ready) is
+// settled apart, because a change that went live makes it news.
+const DECIDED_ASK_KINDS = Object.freeze(['pr_proposed', 'stale_pr', 'revision_recheck', 'vote_digest']);
+
+/**
+ * "Waiting for your approval" digests that no longer count anything
+ * (DIGEST_WAITING_SQL is 0) are read: of `userIds`, or of the people with a
+ * stake in `appId` (its favoriters and its creator, as the digest reads
+ * them), sent since `since` when given. One of the two scopes is required,
+ * so it never reads every digest on the platform. Resolves the ids of the
+ * people whose bell changed.
+ */
+async function settleVoteDigests(pool, { userIds = null, appId = null, since = null } = {}) {
+  const ids = Array.isArray(userIds)
+    ? [...new Set(userIds.map(Number).filter((id) => Number.isSafeInteger(id) && id > 0))] : null;
+  const app = Number.isSafeInteger(Number(appId)) && Number(appId) > 0 ? Number(appId) : null;
+  if (!(ids && ids.length) && !app) return [];
+  const { rows } = await pool.query(
+    `UPDATE notifications n SET read_at = NOW()
+      WHERE n.kind = 'vote_digest' AND n.read_at IS NULL
+        AND ($1::int[] IS NULL OR n.user_id = ANY($1::int[]))
+        AND ($2::int IS NULL OR n.user_id IN (
+              SELECT stake.user_id FROM app_favorites stake WHERE stake.app_id = $2
+              UNION
+              SELECT made.created_by FROM apps made WHERE made.id = $2 AND made.created_by IS NOT NULL))
+        AND ($3::timestamptz IS NULL OR n.created_at >= $3::timestamptz)
+        AND ${DIGEST_WAITING_SQL} = 0
+      RETURNING n.user_id`,
+    [ids && ids.length ? ids : null, app, since || null]
+  );
+  return [...new Set(rows.map((row) => Number(row.user_id)))];
+}
+
+/**
+ * 5 October (Page Turners): change `sessionId` was decided, live
+ * ('merged') or closed ('archived'), so the bell stops asking about it:
+ *
+ *   - the asks it answered (DECIDED_ASK_KINDS) are read;
+ *   - "ready to try" rows: closed, they are read. Live, the newest one each
+ *     person was sent is the news that it is live (the bell words it Live,
+ *     from the change's status) and is unread again for whoever had not said
+ *     yes to it, who did not see it go; the ones about older versions are
+ *     read. Unread again, never a new row: nothing rings twice;
+ *   - digests of several changes it was the last one waiting in are read.
+ *
+ * Everyone whose bell changed hears `notifications_changed`, which also
+ * re-badges their phone (mobile-push-badge.js). A change still up for
+ * approval (or gone) is left alone. Resolves the ids of the people told.
+ * Callers run it after the change's status is written: the merge
+ * (routes/votes.js), a change carried by another's merge
+ * (included-changes.js) and every close (session-lifecycle.js
+ * finalizeArchivedSession).
+ */
+async function settleDecidedChange(pool, sessionId) {
+  const id = Number(sessionId);
+  if (!Number.isSafeInteger(id) || id <= 0) return [];
+  const { rows: [session] } = await pool.query(
+    `SELECT id, app_id, status, COALESCE(promoted_at, created_at) AS asked_from
+       FROM chat_sessions WHERE id = $1`,
+    [id]
+  );
+  if (!session || (session.status !== 'merged' && session.status !== 'archived')) return [];
+  const touched = new Set();
+  const note = (rows) => { for (const row of rows) touched.add(Number(row.user_id)); };
+
+  note((await pool.query(
+    `UPDATE notifications SET read_at = NOW()
+      WHERE session_id = $1 AND read_at IS NULL AND kind = ANY($2::text[])
+      RETURNING user_id`,
+    [id, DECIDED_ASK_KINDS]
+  )).rows);
+
+  if (session.status === 'merged') {
+    // The newest "ready to try" each person was sent about it.
+    const NEWEST = `n.id = (SELECT MAX(newest.id) FROM notifications newest
+                             WHERE newest.user_id = n.user_id AND newest.session_id = n.session_id
+                               AND newest.kind = 'change_ready')`;
+    note((await pool.query(
+      `UPDATE notifications n SET read_at = NOW()
+        WHERE n.session_id = $1 AND n.kind = 'change_ready' AND n.read_at IS NULL AND NOT (${NEWEST})
+        RETURNING n.user_id`,
+      [id]
+    )).rows);
+    note((await pool.query(
+      `UPDATE notifications n SET read_at = NULL
+        WHERE n.session_id = $1 AND n.kind = 'change_ready' AND n.read_at IS NOT NULL AND ${NEWEST}
+          AND NOT EXISTS (SELECT 1 FROM pr_votes said_yes
+                           WHERE said_yes.session_id = n.session_id AND said_yes.user_id = n.user_id
+                             AND said_yes.vote = 'yes')
+        RETURNING n.user_id`,
+      [id]
+    )).rows);
+  } else {
+    note((await pool.query(
+      `UPDATE notifications SET read_at = NOW()
+        WHERE session_id = $1 AND kind = 'change_ready' AND read_at IS NULL
+        RETURNING user_id`,
+      [id]
+    )).rows);
+  }
+
+  for (const userId of await settleVoteDigests(pool, { appId: session.app_id, since: session.asked_from })) {
+    touched.add(userId);
+  }
+  if (touched.size) {
+    try {
+      const { pushNotificationToUser } = require('./ws');
+      for (const userId of touched) pushNotificationToUser(userId, { type: 'notifications_changed' });
+    } catch (err) {
+      log.warn('notifications', 'settled-change push failed', { sessionId: id, err: err.message });
+    }
+  }
+  return [...touched];
+}
+
+/**
+ * 5 October (Page Turners): message `chatMessageId` in a project's chat was
+ * just filed as a request (homeroom-bot-chat.js record), seconds (a read of
+ * it, or a "Suggest it") after it rang. The rows that told people about it
+ * are pushed again as they read now: the joiner's first message to their
+ * invite's maker ("Asked for a change", not "Said hi"), and the group's
+ * discussion row whose newest message it still is ("@mo asked for a change
+ * in Page Turners"). The client replaces each in place, unread or read as it
+ * was; the push that rang already went. Found through the project's own
+ * people, whose rows the per-user index holds. Never throws.
+ */
+async function refreshFiledMessage(pool, { appId, chatMessageId }) {
+  const app = Number(appId);
+  const message = Number(chatMessageId);
+  if (!Number.isSafeInteger(app) || app <= 0 || !Number.isSafeInteger(message) || message <= 0) return 0;
+  try {
+    const { rows } = await pool.query(
+      `SELECT n.id FROM notifications n
+        WHERE n.kind IN ('first_message', 'channel_message') AND n.chat_message_id = $2 AND n.app_id = $1
+          AND n.user_id IN (SELECT m.user_id FROM apps a
+                              JOIN community_members m ON m.community_id = a.community_id
+                             WHERE a.id = $1)`,
+      [app, message]
+    );
+    for (const row of rows) await hydrateAndPush(pool, row);
+    return rows.length;
+  } catch (err) {
+    log.warn('notifications', 'filed-message refresh failed', { appId: app, err: err.message });
+    return 0;
+  }
 }
 
 // Clear a single notification by the chat message it points at — the
@@ -1553,6 +1784,17 @@ function serialize(row) {
       sourceUserId: row.source_user_id || null,
       friendRequestPending: row.kind === 'friend_request' && !!row.friend_request_pending,
     } : {}),
+    // 5 October: what the row's subject has become (LIVE_ROW_COLUMNS_SQL),
+    // each only on the kind that reads it, so every other row's shape is
+    // unchanged. Where the change a "ready to try" asked about stands now
+    // ('promoted', 'merging', 'merged', 'archived', …); how many of a
+    // digest's changes still wait on its reader; and the request a joiner's
+    // first message, or a group's discussion message, became.
+    ...(row.kind === 'change_ready' ? { sessionStatus: row.session_status || null } : {}),
+    ...(row.kind === 'vote_digest' && row.digest_waiting != null
+      ? { digestWaiting: Number(row.digest_waiting) } : {}),
+    ...(row.kind === 'first_message' || row.kind === 'channel_message'
+      ? { requestNumber: row.bot_request_number != null ? Number(row.bot_request_number) : null } : {}),
   };
 }
 
@@ -1597,6 +1839,10 @@ module.exports = {
   countUnread,
   markRead,
   markReadForSession,
+  settleDecidedChange,
+  settleVoteDigests,
+  refreshFiledMessage,
+  DECIDED_ASK_KINDS,
   markReadForAction,
   markReadForAgentSession,
   markReadForApp,

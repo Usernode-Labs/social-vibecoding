@@ -316,6 +316,13 @@ test('a privileged declared change is explicitly labelled as full admin', () => 
   assert.match(html, /Desktop · seen as a full admin/);
 });
 
+test('a change declared for a guest is labelled as seen by a signed-out visitor', () => {
+  const value = shots();
+  value.claims[0].persona = 'guest';
+  const html = AppView.shotsHtml(value, { sessionId: 42 });
+  assert.match(html, /Desktop · seen as a signed-out visitor/);
+});
+
 test('a still change shows before and after PNGs without suggesting a video', () => {
   const value = shots();
   value.claims[0].animation = 'none';

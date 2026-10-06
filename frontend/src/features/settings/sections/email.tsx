@@ -5,6 +5,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { PasswordInput } from '@/components/ui/password-input';
 
+import { returnKeyHandler } from '../../../lib/return-to-next';
+
 type AccountEmail = {
   email: string | null;
   verified: boolean;
@@ -103,19 +105,23 @@ function EmailForm() {
             ? 'Once verified, use this email to sign in or choose “Forgot password?” on the sign-in screen.'
             : 'Admin accounts cannot use email sign-in or email password recovery. Keep your password safe.'}
         </p>
-        <form className="space-y-3" onSubmit={(event) => { event.preventDefault(); void submit(!!pending); }}>
+        {/* Return in the address goes on to the password when one is asked
+            for, and the last field sends (#3907: no keyboard chevrons). */}
+        <form className="space-y-3" onSubmit={(event) => { event.preventDefault(); void submit(!!pending); }}
+          onKeyDown={returnKeyHandler()}>
           {pending ? <>
             <p className="break-words">Verify {pending}. Your current email stays linked until this succeeds.</p>
             <Label htmlFor="account-email-code">Verification code</Label>
             <Input id="account-email-code" value={code} onChange={(event) => setCode(event.target.value)}
-              inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required disabled={busy} />
+              inputMode="numeric" autoComplete="one-time-code" enterKeyHint="go" pattern="[0-9]{6}" maxLength={6} required disabled={busy} />
           </> : <>
             <Label htmlFor="account-email-address">Email address</Label>
             <Input id="account-email-address" type="email" autoComplete="email" autoCapitalize="none"
+              enterKeyHint={account.passwordRequired ? 'next' : 'send'}
               value={email} onChange={(event) => setEmail(event.target.value)} maxLength={255} required disabled={busy} />
             {account.passwordRequired ? <>
               <Label htmlFor="account-email-password">Current password</Label>
-              <PasswordInput id="account-email-password" autoComplete="current-password" value={password}
+              <PasswordInput id="account-email-password" autoComplete="current-password" enterKeyHint="send" value={password}
                 onChange={(event) => setPassword(event.target.value)} required disabled={busy} />
             </> : null}
           </>}

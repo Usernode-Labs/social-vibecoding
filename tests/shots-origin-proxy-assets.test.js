@@ -13,7 +13,7 @@ const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
 const { spawn } = require('node:child_process');
-const { once } = require('node:events');
+const { closedPromise, waitForReady, stopProxy } = require('./lib/shots-proxy');
 
 async function listen(handler) {
   const server = http.createServer(handler);
@@ -29,18 +29,16 @@ async function startProxy(t, { origins, env }) {
       SHOTS_PROXY_PORT: '0', SHOTS_PROXY_READY: ready, ...env },
     stdio: ['ignore', 'ignore', 'pipe'],
   });
+  const closed = closedPromise(proxy);
   const diagnostics = [];
   proxy.stderr.on('data', (chunk) => diagnostics.push(chunk));
   t.after(async () => {
-    proxy.kill('SIGTERM');
-    await once(proxy, 'close');
+    await stopProxy(proxy, closed);
     fs.rmSync(dir, { recursive: true, force: true });
   });
-  const deadline = Date.now() + 5000;
-  while (!fs.existsSync(ready) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
-  assert.equal(fs.existsSync(ready), true, 'the proxy started');
+  const port = await waitForReady(proxy, ready, { output: () => Buffer.concat(diagnostics).toString() });
   return {
-    port: Number(fs.readFileSync(ready, 'utf8')),
+    port,
     kinds: () => Buffer.concat(diagnostics).toString().trim().split('\n')
       .filter((line) => line.startsWith('__USERNODE_SHOTS_BROWSER__ '))
       .map((line) => JSON.parse(line.slice('__USERNODE_SHOTS_BROWSER__ '.length))),

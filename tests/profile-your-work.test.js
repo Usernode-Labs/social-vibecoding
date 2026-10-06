@@ -9,7 +9,7 @@
 //     tests/me-requests-postgres.test.js);
 //   - what each view says, from ./profile-store.js;
 //   - the screen: hidden and empty in the prerender, one view at a time, the
-//     long groups folded, and Ask for a change at the foot of Your requests;
+//     long groups folded, and Suggest an improvement at the foot of Your requests;
 //   - the router's three addresses.
 //
 // Run with: node --test tests/profile-your-work.test.js
@@ -222,7 +222,7 @@ test('the screen ships hidden and empty, one root for all three views', () => {
   assert.deepEqual(mod.WORK_TITLES, { changes: 'Your changes', requests: 'Your requests', votes: 'Your votes' });
 });
 
-test('each view draws its own groups; long ones fold; Your requests ends on Ask for a change', () => {
+test('each view draws its own groups; long ones fold; Your requests ends on Suggest an improvement', () => {
   const mod = loadTsx(SCREEN);
   const html = () => renderToHtml(createElement(mod.ProfileProposalsScreen, {}));
   const merged = Array.from({ length: 7 }, (_, i) => ({
@@ -244,7 +244,7 @@ test('each view draws its own groups; long ones fold; Your requests ends on Ask 
   out = html();
   assert.match(out, /data-profile-work="requests"/);
   assert.match(out, /Export runs/);
-  assert.match(out, /data-profile-work-ask=""[^>]*>Ask for a change</);
+  assert.match(out, /data-profile-work-ask=""[^>]*>Suggest an improvement</);
   assert.match(read(SCREEN), /onClick=\{\(\) => \{ \(window as any\)\.App\?\.openFeedbackModal\?\.\(\); \}\}/);
 
   mod.profileProposalsStore.set({ kind: 'votes', data: {} });

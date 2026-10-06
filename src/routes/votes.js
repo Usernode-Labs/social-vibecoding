@@ -1392,7 +1392,13 @@ async function annotateDeploymentState(config, pool, app, rows) {
   }
 
   const releaseWatch = require('../services/release-watch');
-  const stall = releaseWatch.describe(app, runningSha);
+  let stall = releaseWatch.describe(app, runningSha);
+  // Several merges, one release: the record can name a commit that never
+  // ran by itself and is already inside the running build. Resolved, though
+  // the poller has not cleared it yet; the column says no stall.
+  if (stall.stalled && await releaseWatch.carriedBy(pool, app.id, stall.sha, runningSha)) {
+    stall = releaseWatch.describe(null);
+  }
   const stalledSha = stall.stalled ? normalizedSha(stall.sha) : null;
   for (const row of prRows) {
     if (!isAfterDeploymentBoundary(row, boundary)) {
@@ -2216,6 +2222,18 @@ function mergedRowSelect() {
          LEFT JOIN chat_sessions inc ON inc.id = cs.included_in_session_id`;
 }
 
+// #3893: whether a promote was sent by the owner's own agent with a bearer
+// token: the local Homeroom CLI's proposal_promote, or a connector's
+// promote_change and submit_work `propose: true`. cli-auth.js sets
+// req.cliAuthenticated for those two token kinds only, never for a browser
+// session. A delegated grant is the platform's own agent session, whose
+// conversation already tells its owner, and the Homeroom bot promotes
+// in-process as itself; neither counts.
+function promotedByOwnersAgent(req) {
+  return req.cliAuthenticated === true && !req.mcpDelegation
+    && !(req.user && req.user.is_synthetic);
+}
+
 function voteRoutes(config) {
   const router = Router();
   const pool = getPool(config);
@@ -2845,6 +2863,25 @@ function voteRoutes(config) {
       } catch (err) {
         log.warn('votes', 'pr_proposed notify failed', { sessionId: session.id, err: err.message });
       }
+
+      // #3893: the fan-out above leaves the proposer out, which is right for
+      // a person pressing Propose and wrong when their agent did it for them
+      // while they were away. submit_work tells them when it opens a
+      // proposal (#1405, connector_submitted); an agent that puts its change
+      // up for the vote here gets the same "Submitted by your agent". Before
+      // this, work proposed through the local Homeroom CLI, promote_change or
+      // `propose: true` reached the vote without a word to its owner.
+      // Unread-deduped per (owner, change), and best-effort like the above.
+      if (promotedByOwnersAgent(req)) {
+        try {
+          const created = await notifications.createConnectorSubmittedNotification(pool, {
+            userId: req.user.id, appId: session.app_id, sessionId: session.id, detail: 'submitted',
+          });
+          if (created.length) await notifications.hydrateAndPush(pool, created[0]);
+        } catch (err) {
+          log.warn('votes', 'connector_submitted notify failed', { sessionId: session.id, err: err.message });
+        }
+      }
     } catch (err) {
       log.error('votes', 'Promote failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -3353,6 +3390,9 @@ function voteRoutes(config) {
       );
       if (!sessionRows.length) return res.status(404).json({ error: 'Promoted session not found' });
       const session = sessionRows[0];
+      // A private member does not vote on a public app (communities.js).
+      const privateRefusal = await communities.privateVoteRefusal(pool, session.app_id, req.user?.id);
+      if (privateRefusal) return res.status(403).json(privateRefusal);
 
       // #2782: the revision as the ROW has it — no GitHub round-trip. This
       // used to be a fresh reconcile, which meant a full `git fetch` of the
@@ -3499,7 +3539,16 @@ function voteRoutes(config) {
       // the nudge is cleared, and it's idempotent (clears only unread rows).
       // Non-fatal: a notification hiccup must never 500 a successful vote.
       try {
-        const cleared = await notifications.markReadForSession(pool, req.user.id, session.id);
+        let cleared = await notifications.markReadForSession(pool, req.user.id, session.id);
+        // 5 October (Page Turners): and a "Waiting for your approval" digest
+        // with nothing left waiting on them, this being the last one. On its
+        // own: a digest that could not be read never loses the push above.
+        try {
+          const settled = await notifications.settleVoteDigests?.(pool, { userIds: [req.user.id] });
+          cleared += Array.isArray(settled) ? settled.length : 0;
+        } catch (err) {
+          log.warn('votes', 'Settling the voter\'s digests failed', { sessionId: session.id, err: err.message });
+        }
         if (cleared > 0) {
           // Fan out to the voter's OTHER tabs/devices so their unread badge
           // syncs without a manual refresh; the acting tab refreshes itself.
@@ -3535,6 +3584,10 @@ function voteRoutes(config) {
         log.debug('votes', 'Vote reason updated', { sessionId: session.id, userId: req.user.id });
         return res.json({ ok: true, merged: false, unchanged: false, reasonUpdated: true, ...readyCard });
       }
+      // 5 Oct: whoever asked Homeroom bot for this change reads their ready
+      // card again, so it says who it still waits on now. One indexed read
+      // when it is not the bot's. Never throws.
+      void require('../services/homeroom-bot-dm').noteVoted(pool, session.id);
 
       const voteLabel = session.pr_title
         ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
@@ -5528,6 +5581,16 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
     } catch (err) {
       log.error('votes', 'Merged notification threw', { sessionId: session.id, err: err.message });
     }
+    // 5 October (Page Turners): the bell stops asking about it. Its "ready
+    // to try" rows say it is live (unread again for whoever had not said
+    // yes), and the vote nudges and digests it answered are read
+    // (notifications.settleDecidedChange). Never a reason the merge fails.
+    try {
+      notifications.settleDecidedChange?.(pool, session.id)
+        ?.catch?.((err) => log.warn('votes', 'Settling the bell after a merge failed', { sessionId: session.id, err: err.message }));
+    } catch (err) {
+      log.warn('votes', 'Settling the bell after a merge threw', { sessionId: session.id, err: err.message });
+    }
     // #3624: a proposal the Homeroom bot built for somebody it talks to in
     // a DM: they hear it is live there (the notification above goes to the
     // proposal's author, which for a bot build is the bot). Never a reason
@@ -6940,6 +7003,15 @@ async function checkAndMerge(config, pool, session, options = {}) {
         });
       } catch (e) {
         log.warn('votes', 'Including the changes a merge carried failed after its deploy failed', {
+          sessionId: session.id, err: e.message,
+        });
+      }
+      // The vote is over all the same: nothing is asked of anybody about it
+      // (notifications.settleDecidedChange). Never a reason this path fails.
+      try {
+        await notifications.settleDecidedChange?.(pool, session.id);
+      } catch (e) {
+        log.warn('votes', 'Settling the bell after a merge whose deploy failed failed', {
           sessionId: session.id, err: e.message,
         });
       }

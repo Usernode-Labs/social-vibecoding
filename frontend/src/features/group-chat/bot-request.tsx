@@ -1,3 +1,4 @@
+import { waitingWords } from '../messages/approval-words';
 import type { BotRequestCard, BotRequestChip, BotRequestState } from './transcript-store';
 
 /*
@@ -8,15 +9,20 @@ import type { BotRequestCard, BotRequestChip, BotRequestState } from './transcri
  * THE CHIP is what everybody in the room sees, first in the message's
  * reactions row: its status, set by the server alone, never a reaction
  * anybody can add or toggle, in the bot's own periwinkle rather than the
- * accent a reaction of yours wears. An emoji with a word, so it does not read
- * as one. Ready is a Try it chip that opens the change's preview for anyone.
- * When the work stops the chip goes; the requester's card and their chat with
- * the bot say why.
+ * accent a reaction of yours wears. An emoji and a sentence that says who has
+ * the message and what it is doing ("Homeroom bot is looking at this"), so
+ * the room can tell from the chip alone that the bot took it. It said one
+ * word ("👀 Reading") until 5 October 2026, when the person who suggested an
+ * idea read it as part of their private card and asked for the group to be
+ * told the bot had it (CHIP_WORDS). Ready is a Try it chip that opens the
+ * change's preview for anyone. When the work stops the chip goes; the
+ * requester's card and their chat with the bot say why.
  *
  * THE CARD is under the requester's own message only, "Only you can see
  * this": what was taken from it and how long it usually takes, or the
  * question it asks first. It is read from their own requests, never from the
- * room's messages, so nobody else's transcript can hold it.
+ * room's messages, so nobody else's transcript can hold it. Just after a
+ * request is filed it also says that the chip is everybody's (SHARED_LINE).
  *
  * The card follows its request (`state`, read from the platform's records
  * each time the card is: homeroom-bot-chat.js cardsOf): building, built and
@@ -24,16 +30,43 @@ import type { BotRequestCard, BotRequestChip, BotRequestState } from './transcri
  * or what stopped it. A fix asked on one of the bot's changes still waiting
  * for approval (`revise`) says it goes into that change, and follows it the
  * same way. Its chip, Fixing, is everybody's: the fix was asked in public.
+ *
+ * A request filed while its project's first version is not live waits for
+ * it (`waiting_first_version`, homeroom-bot.js firstVersionHolds): the card
+ * says so in the DM's words, and the chip says Homeroom bot has it, never
+ * that it is looking at it.
  */
 
-const CHIP_CLASS = 'inline-flex items-center gap-1 rounded-full bg-[color:var(--brand-tint)] px-2.5 py-0.5 text-[0.8125rem] font-semibold text-[color:var(--brand-ink)]';
+// `max-w-full`: on a narrow phone a sentence wraps inside the chip rather
+// than running past the message.
+const CHIP_CLASS = 'inline-flex max-w-full items-center gap-1 rounded-full bg-[color:var(--brand-tint)] px-2.5 py-0.5 text-left text-[0.8125rem] font-semibold text-[color:var(--brand-ink)]';
 
-const CHIP_WORDS: Record<Exclude<BotRequestChip['status'], 'ready'>, { glyph: string; word: string }> = {
-  reading: { glyph: '👀', word: 'Reading' },
-  building: { glyph: '🔨', word: 'Building' },
-  live: { glyph: '✅', word: 'Live' },
-  fixing: { glyph: '🔧', word: 'Fixing' },
-};
+/**
+ * What each chip says (`words`), and what a screen reader hears (`said`)
+ * when the words alone leave out who has it or why it waits. Every chip but
+ * Live names Homeroom bot: the room learns from it that the bot has the
+ * message. Each fits on one line under a message on a 390px phone.
+ */
+export const CHIP_WORDS: Readonly<Record<Exclude<BotRequestChip['status'], 'ready'>, { glyph: string; words: string; said?: string }>> = Object.freeze({
+  reading: { glyph: '👀', words: 'Homeroom bot is looking at this' },
+  building: { glyph: '🔨', words: 'Homeroom bot is building this' },
+  fixing: { glyph: '🔧', words: 'Homeroom bot is fixing this' },
+  waiting_first_version: {
+    glyph: '⏳',
+    words: 'Homeroom bot has this',
+    said: 'Homeroom bot has this, and starts on it once the first version is live',
+  },
+  live: { glyph: '✅', words: 'Live', said: 'Homeroom bot built this, and it’s live' },
+});
+
+/** Pure: what a screen reader hears for a chip (the Try it button says Try it). */
+export function chipLabel(status: Exclude<BotRequestChip['status'], 'ready'>): string {
+  const { words, said } = CHIP_WORDS[status];
+  return said || words;
+}
+
+/** What a request held for its project's first version waits for (the DM card's words). */
+export const FIRST_VERSION_WAIT_LINE = 'Waiting for the first version to go live. I’ll start on this as soon as it does.';
 
 export function BotStatusChip({ chip, mine = false, onTry, onProgress }: {
   chip: BotRequestChip;
@@ -56,17 +89,17 @@ export function BotStatusChip({ chip, mine = false, onTry, onProgress }: {
       </button>
     );
   }
-  const { glyph, word } = CHIP_WORDS[chip.status];
-  const label = `Homeroom bot: ${word}`;
+  const { glyph, words } = CHIP_WORDS[chip.status];
+  const label = chipLabel(chip.status);
   return mine ? (
     <button type="button" className={CHIP_CLASS} data-bot-request={chip.status} aria-label={label} onClick={() => onProgress?.()}>
       <span aria-hidden="true">{glyph}</span>
-      <span>{word}</span>
+      <span>{words}</span>
     </button>
   ) : (
     <span className={CHIP_CLASS} data-bot-request={chip.status} aria-label={label}>
       <span aria-hidden="true">{glyph}</span>
-      <span>{word}</span>
+      <span>{words}</span>
     </span>
   );
 }
@@ -74,27 +107,42 @@ export function BotStatusChip({ chip, mine = false, onTry, onProgress }: {
 /** WP-C: under somebody's first request on a project. */
 export const STAYS_LINE = 'It stays in the project’s requests with your name on it.';
 
-/** Pure: "a", "a and b", "a, b and c". */
-function listWords(items: string[]): string {
-  if (items.length <= 1) return items.join('');
-  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+/**
+ * Under a request the bot has just taken (sharedNow): the card is theirs
+ * alone, but the chip on their message is the room's. 5 October 2026: an
+ * idea suggested with Suggest it read as if it had stayed private.
+ */
+export const SHARED_LINE = 'Everyone here can see Homeroom bot has it.';
+
+// The stages at which a filed request's card still says "Got it": the bot
+// has it and has not started building. Its chip names the bot for the room.
+const JUST_FILED = new Set(['waiting_first_version', 'reading', 'waiting']);
+
+/** Pure: whether a card says that the room can see the bot has it (SHARED_LINE). */
+export function sharedNow(card: BotRequestCard): boolean {
+  return card.kind === 'filed' && !!card.issueNumber && (!card.state?.stage || JUST_FILED.has(card.state.stage));
 }
 
 /**
- * Pure: who a built change still waits on, as the DM's ready card says it
- * (../messages/bot-ready.tsx waitingLine): "Waiting for approval from you
- * and @jordan."
+ * Pure: who a built change still waits on, in the DM's ready card's words
+ * (../messages/approval-words.ts, as ../messages/bot-ready.tsx waitingLine
+ * says it): "Waiting for approval from you and @jordan." when it needs every
+ * one of them, "Needs one more approval from @priya or @mo." when any of
+ * them will do, and nobody named once it has the approvals it needs.
  */
 export function approvalWords(state?: BotRequestState): string {
-  const who = [...(state?.youApprove ? ['you'] : []), ...(state?.waitingOn || []).map((name) => `@${name}`)];
-  if (state?.more) who.push(`${state.more} more`);
-  return who.length ? `Waiting for approval from ${listWords(who)}.` : 'Waiting for approval.';
+  if (state?.missing === 0) return 'It has the approvals it needs.';
+  const words = waitingWords({
+    you: !!state?.youApprove, names: state?.waitingOn || [], more: state?.more, missing: state?.missing, needed: state?.needed,
+  });
+  return words ? `${words}.` : 'Waiting for approval.';
 }
 
 /** Pure: a request the bot builds, where it stands. */
 function filedWords(card: BotRequestCard, stays: string): string {
   const title = card.title || 'your request';
   switch (card.state?.stage) {
+    case 'waiting_first_version': return `Got it: ${title}. ${FIRST_VERSION_WAIT_LINE}${stays}`;
     case 'waiting': return `Got it: ${title}. Waiting for a free builder.${stays}`;
     case 'building': return `Building it now: ${title}.${stays}`;
     case 'question': return 'I have a question about this. It’s in our chat.';
@@ -174,7 +222,7 @@ export interface BotRequestCardActions {
 }
 
 // The stages a request's card offers See progress at: it is still going.
-const GOING = new Set(['reading', 'waiting', 'building', 'checking']);
+const GOING = new Set(['waiting_first_version', 'reading', 'waiting', 'building', 'checking']);
 
 export function BotRequestCardView({ card, actions = {} }: { card: BotRequestCard; actions?: BotRequestCardActions }) {
   const buttons: Array<{ key: string; label: string; primary?: boolean; act?: () => void }> = [];
@@ -216,6 +264,9 @@ export function BotRequestCardView({ card, actions = {} }: { card: BotRequestCar
         <span>Only you can see this</span>
       </div>
       <p className="text-[0.9375rem] leading-[1.35] text-zinc-900 dark:text-zinc-100">{cardWords(card)}</p>
+      {sharedNow(card) ? (
+        <p className="text-[0.8125rem] leading-snug text-zinc-500 dark:text-zinc-400" data-bot-request-shared="">{SHARED_LINE}</p>
+      ) : null}
       {buttons.length ? (
         <div className="messages-bot-answers" role="group" aria-label="Choices">
           {buttons.map((b) => (

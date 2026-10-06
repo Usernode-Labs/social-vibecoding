@@ -38,6 +38,7 @@ const { publicApiRoutes } = require('./src/routes/public-api');
 const { publicProfileRoutes } = require('./src/routes/profiles');
 const { waitlistConnectRoutes } = require('./src/routes/waitlist-connect');
 const { issueRoutes } = require('./src/routes/issues');
+const { requestSpecRoutes } = require('./src/routes/request-specs');
 const { campaignRoutes } = require('./src/routes/campaigns');
 const { adminRoutes } = require('./src/routes/admin');
 const { adminSupportRoutes } = require('./src/routes/admin-support');
@@ -56,6 +57,7 @@ const { visualsRoutes } = require('./src/routes/visuals');
 const { shotsRoutes } = require('./src/routes/shots');
 const { appIconRoutes } = require('./src/routes/app-icons');
 const { issueImageRoutes } = require('./src/routes/issue-images');
+const { issueVideoRoutes } = require('./src/routes/issue-videos');
 const { avatarRoutes } = require('./src/routes/avatars');
 const { profileRoutes } = require('./src/routes/profile');
 const { stakingRoutes } = require('./src/routes/staking');
@@ -91,6 +93,7 @@ const { debugRoutes } = require('./src/routes/debug');
 const { galleryRoutes } = require('./src/routes/gallery');
 const { appInstallRoutes } = require('./src/routes/app-install');
 const communityInviteRoutes = require('./src/routes/community-invites');
+const memberWaitlistRoutes = require('./src/routes/member-waitlist');
 const {
   cliAuthGate,
   cliApiBearerAuth,
@@ -151,6 +154,7 @@ const { getActiveWorkerCount } = require('./src/routes/sessions');
 const { sweepStuckCreatingApps } = require('./src/routes/apps');
 const appAccess = require('./src/services/app-access');
 const platformJwt = require('./src/services/platform-jwt');
+const usernames = require('./src/services/usernames');
 const appHostConfig = require('./src/services/app-host-config');
 const { getPool } = require('./src/db/pool');
 const { createLeadership, withMigrationLock } = require('./src/services/leadership');
@@ -227,6 +231,7 @@ app.use(explorerProxyRoutes(config));
 // route verifies an HMAC before it reads anything, and is off entirely when
 // no secret is configured. src/routes/github-webhook.js carries the rest.
 app.use(githubWebhookRoutes(config));
+app.use(require('./src/routes/mail-webhooks').mailWebhookRoutes(config));
 
 // ── Challenges API (SV web shell) ──────────────────────────────────────────
 // /challenges-api/* used to be a READ-ONLY proxy to the (now retired)
@@ -289,6 +294,14 @@ app.use((req, res, next) => {
   if (req.method === 'POST'
       && /^\/api\/apps\/[^/]+\/pr-import$/.test(req.path)) {
     return express.json({ limit: '512kb' })(req, res, next);
+  }
+  // A spec posted on a request (routes/request-specs.js) may be an HTML
+  // document of up to 600,000 characters (spec-html.js MAX_SPEC_HTML_CHARS),
+  // which JSON escaping makes larger still. The route checks the length
+  // itself and refuses an oversized spec with the numbers.
+  if (req.method === 'POST'
+      && /^\/api\/apps\/[^/]+\/issues\/[^/]+\/spec$/.test(req.path)) {
+    return express.json({ limit: '1mb' })(req, res, next);
   }
   express.json()(req, res, next);
 });
@@ -497,6 +510,12 @@ app.use(appIconRoutes(config));
 // control is the unguessable 32-hex screenshot id.
 app.use(issueImageRoutes(config));
 
+// Issue-attached video clips (#3940). Public for the same reason as the
+// screenshots above: the issue-body link, the in-app player and the
+// coding agents fetch it anonymously; access control is the unguessable
+// 32-hex clip id.
+app.use(issueVideoRoutes(config));
+
 // Profile pictures (#982). Public for the same reason as app-icons: the
 // profile screen and the hamburger drawer load them with plain <img>
 // tags; access control is the unguessable 32-hex avatar id, and the image
@@ -518,6 +537,7 @@ app.use(reportShareRoutes(config));
 // Before authMiddleware: a mail client's one-click POST carries no session,
 // and the HMAC token in the link is the whole of the access check.
 app.use(require('./src/routes/activity-mail').activityMailRoutes(config));
+app.use(require('./src/routes/mail-tracking').mailTrackingRoutes(config));
 require('./src/services/activity-mail').init(config);
 
 // App-stored user files (#752). Public for the same reason as app-icons:
@@ -589,6 +609,11 @@ app.use(mcpBrowserRoutes(config));
 app.use(authRoutes(config));
 // Apple and Google sign-in, and Admin → Sign-in providers, where they are set up.
 app.use(require('./src/routes/sign-in-providers').signInProviderRoutes(config));
+// Firebase phone sign-in and sign-up (routes/phone-auth.js), pre-login
+// (middleware/auth.js PUBLIC_PATHS): fail-closed 404 unless
+// FIREBASE_PHONE_AUTH_ENABLED and its three companion values are set
+// (src/services/firebase-phone-auth.js).
+app.use(require('./src/routes/phone-auth').phoneAuthRoutes(config));
 app.use(credentialRoutes(config));
 app.use(globalChatRoutes(config));
 app.use(appRoutes(config));
@@ -631,6 +656,7 @@ app.use(publicProfileRoutes(config));
 // Anonymous via the '/waitlist/connect/' PUBLIC_PATHS prefix.
 app.use(waitlistConnectRoutes(config));
 app.use(issueRoutes(config));
+app.use(requestSpecRoutes(config));
 app.use(campaignRoutes(config));
 app.use(adminRoutes(config));
 // #3654: the Homeroom bot's benchmark (services/bench/), beside its console.
@@ -756,6 +782,9 @@ app.use(appInstallRoutes(config));
 // `app.get('*')` catch-all, which would otherwise answer the page with a
 // plain index.html and no link preview.
 app.use(communityInviteRoutes(config));
+// A private member's waitlist card (routes/member-waitlist.js): joining the
+// waitlist from inside, with the account's own email or a confirmed one.
+app.use(memberWaitlistRoutes(config));
 
 // Mint the iframe identity token the shell injects into an app iframe.
 //
@@ -809,14 +838,23 @@ app.get('/api/iframe-token', async (req, res) => {
   // when unset. Always present in the payload so app servers never need
   // `'locale' in payload` checks.
   let userLocale = null;
+  let provisionalHandle = false;
   try {
     const { rows } = await pool.query(
-      'SELECT usernode_pubkey, locale FROM users WHERE id = $1',
+      `SELECT usernode_pubkey, locale, username_provisional_since IS NOT NULL AS provisional
+         FROM users WHERE id = $1`,
       [req.user.id]
     );
     usernodePubkey = rows[0]?.usernode_pubkey || null;
     userLocale = rows[0]?.locale || null;
+    provisionalHandle = rows[0]?.provisional === true;
   } catch {}
+  // A provisional handle (an invite's phone sign-up, made from its name)
+  // is for private groups: a public app gets a username the person chose,
+  // and the shell asks for one first (services/usernames.js).
+  if (provisionalHandle && appRow.view_visibility === 'public') {
+    return res.status(409).json(usernames.USERNAME_REQUIRED);
+  }
 
   const tokenUser = {
     id: req.user.id,
@@ -4287,16 +4325,23 @@ async function resumeDetachedTurnInner({
   // #3654: and a benchmark trial's, whose result is the lane's to record.
   // Checked first: a trial's session is never the bot's, but the dev-chat
   // tail must be unreachable for it whatever the bot check says.
+  //
+  // What the clock had left when this recovery took the turn goes to the
+  // bot with the result: a build whose time runs out after a restart reached
+  // it is sent round again, not said to have taken too long
+  // (homeroom-bot.js restartRanItOut).
   const benchTurn = require('./src/services/bench/runner').isBenchSession(session);
   const botTurn = !benchTurn && homeroomBotRecovery().isRecoveredBotSession(session);
   let botTimedOut = false;
   let botClock = null;
+  let botClockLeftMs = null;
   if (botTurn || benchTurn) {
     const deadline = await (benchTurn
       ? require('./src/services/bench/lane').recoveryDeadline(pool, config, session, activeTurn)
       : homeroomBotRecovery().recoveryDeadline(pool, config, session, activeTurn)).catch(() => null);
     if (deadline != null) {
       const botClockMs = Math.max(0, deadline - Date.now());
+      botClockLeftMs = botClockMs;
       botClock = setTimeout(() => {
         botTimedOut = true;
         Promise.resolve(worker.stopTurn(sessionId)).catch(() => {});
@@ -4316,6 +4361,11 @@ async function resumeDetachedTurnInner({
       journal: activeTurn.journal,
       turnId: activeTurn.turnId || null,
       agentBackend: activeTurn.backend || 'claude_code',
+      // The journal's own harness picks its parser (#3296). Without it the
+      // registry falls back to Codex, and a recovered Claude Code turn (every
+      // GLM turn since #3749) came back with no result text, progress or
+      // usage: a recovered spec lost its spec, a triage its verdict.
+      agentHarness: activeTurn.harness || null,
       telemetryComponent: activeTurn.telemetryComponent
         || (activeTurn.mode === 'scout' ? 'coding_agent_scout'
           : activeTurn.mode === 'build' ? 'coding_agent_build' : null),
@@ -4575,7 +4625,7 @@ async function resumeDetachedTurnInner({
 
   if (botTurn) {
     await homeroomBotRecovery().finishRecoveredTurn({
-      pool, session, activeTurn: recoveryActiveTurn, result, timedOut: botTimedOut,
+      pool, session, activeTurn: recoveryActiveTurn, result, timedOut: botTimedOut, clockLeftMs: botClockLeftMs,
     });
     const botCleanup = turnCleanupArgs(recoveryActiveTurn);
     recoveryRetry.requireDurableTurnCleanup(
@@ -4611,9 +4661,11 @@ async function resumeDetachedTurnInner({
       // Persist it the same way runScoutTool does (spec_md + frozen
       // version) so the draft isn't lost with the dead SSE.
       const {
-        stripSpecWrapperFence, persistScoutPublication,
+        captureSpecOutput, persistScoutPublication,
       } = require('./src/routes/sessions');
-      const ccText = stripSpecWrapperFence((result.lastResultText || '').trim());
+      // #3699: an HTML spec is kept as its markdown copy (ccText) plus the document.
+      const capturedSpec = captureSpecOutput(result.lastResultText);
+      const ccText = capturedSpec.text;
       if (ccText) {
         const hadSpec = !!(session.spec_md || '').trim();
         // #786: "spec drafted" pills ride the spec row itself rather than
@@ -4626,6 +4678,7 @@ async function resumeDetachedTurnInner({
           sessionId,
           turnId: recoveryActiveTurn.turnId || null,
           content: ccText,
+          contentHtml: capturedSpec.html,
           hadSpec,
           quickReplies: specPills,
           recovered: true,
@@ -5375,6 +5428,20 @@ function startSessionAutoPauseSweeper(config) {
       if (rowCount) log.info('server', 'GC\'d orphaned issue screenshots', { count: rowCount });
     } catch (err) {
       log.warn('server', 'Orphaned-screenshot sweep failed', { err: err.message });
+    }
+
+    // Same sweep for feedback video clips (#3940): a 50 MB bytea is worth
+    // reclaiming even more urgently than a screenshot. Linked rows live
+    // forever with their issue.
+    try {
+      const { rowCount } = await pool.query(
+        `DELETE FROM issue_videos
+          WHERE issue_number IS NULL
+            AND created_at < NOW() - INTERVAL '24 hours'`
+      );
+      if (rowCount) log.info('server', 'GC\'d orphaned issue videos', { count: rowCount });
+    } catch (err) {
+      log.warn('server', 'Orphaned-video sweep failed', { err: err.message });
     }
 
     // Same sweep for group-chat attachments (#694): uploads never linked
@@ -6143,6 +6210,15 @@ async function cleanup() {
   const agentTurnsEnded = require('./src/services/mayor/agent-turn').interruptLocalTurns({ timeoutMs: 3000 })
     .catch((err) => log.warn('server', 'Interrupting agent turns failed', { err: err.message }));
   require('./src/services/mayor/agent-turn').stopInterruptedTurnSweeper();
+  // The Homeroom bot's loops and its benchmark lane: nothing new is claimed
+  // or dispatched on a process whose pool is about to close. Their turns
+  // already running are restart recovery's to finish.
+  try { require('./src/services/homeroom-bot').stop(); } catch (err) {
+    log.warn('server', 'Stopping the Homeroom bot failed', { err: err.message });
+  }
+  try { require('./src/services/bench/lane').stop(); } catch (err) {
+    log.warn('server', 'Stopping the benchmark lane failed', { err: err.message });
+  }
   const retentionStop = require('./src/services/build-retention').stop();
   const scorerStop = require('./src/services/topochain/challenge-scorer').stop();
   // Stop claiming push jobs immediately. The bounded drain runs in

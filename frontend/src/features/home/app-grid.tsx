@@ -361,7 +361,8 @@ function AppCardTile({ app, style, yours, live }: {
  * replace either: a failed load is `AppsLoadError` with a Retry, and a search
  * that matched nothing names the query. Both mean "something went wrong or is
  * being hidden"; this one means "there is genuinely nothing here yet", which is
- * why it points at Discover rather than offering an action of its own.
+ * why it offers no action of its own: it names the New project tile that
+ * follows it and the Discover section below.
  *
  * `col-span-full` because the item has no placement of its own — every tile on
  * this canvas is placed at an explicit cell and this note is not a tile, so it

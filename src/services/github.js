@@ -1829,7 +1829,9 @@ async function getProposalDiff(owner, repo, basehead, charBudget = PROPOSAL_DIFF
 // #3654: the files a compare touched, with their status and patch, for the
 // Homeroom bot benchmark's diff-scope grader and its judge. One call gives
 // both the list and the diff text (capped like getProposalDiff's), and
-// `complete` says whether GitHub's 300-file page held everything.
+// `complete` says whether GitHub's 300-file page held everything. Also read
+// by the small-change tag (services/small-change.js), which needs the merge
+// base to read dapp.json as the change found it.
 async function compareFiles(owner, repo, basehead, charBudget = 60000) {
   const octokit = await getReadOctokit(owner);
   const { data } = await octokit.rest.repos.compareCommitsWithBasehead({
@@ -1849,7 +1851,10 @@ async function compareFiles(owner, repo, basehead, charBudget = 60000) {
     if (diff.length + block.length > charBudget) { truncated = true; break; }
     diff += block;
   }
-  return { files, diff, truncated, complete: files.length < COMPARE_FILES_CAP, aheadBy: data.ahead_by ?? null };
+  return {
+    files, diff, truncated, complete: files.length < COMPARE_FILES_CAP, aheadBy: data.ahead_by ?? null,
+    mergeBaseSha: data.merge_base_commit?.sha || null,
+  };
 }
 
 // #3654: delete a branch the Homeroom bot benchmark made. Refuses any name

@@ -29,6 +29,7 @@ const approverInvites = require('../services/approver-invites');
 const contributors = require('../services/contributors');
 const discoveryCuration = require('../services/discovery-curation');
 const communities = require('../services/communities');
+const usernames = require('../services/usernames');
 const challengeScorer = require('../services/topochain/challenge-scorer');
 const governance = require('../services/governance');
 const activeUsers = require('../services/active-users');
@@ -242,6 +243,47 @@ const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
 // Catalog samples are stored rows; all app APIs use the same identity.
 const stagingApps = require('../services/staging-apps');
+
+/**
+ * The first version Homeroom bot is building, as a project's hub says it
+ * (GET /api/apps/:slug/community `first_version`): the same state the App
+ * tab and the made screen read (homeroom-bot-dm.js firstVersionState, the
+ * steps of homeroom-bot-progress.js FIRST_VERSION_STEPS), cut to what the
+ * hub draws. Pure.
+ *
+ *   step, of, step_name  "Step 4 of 7: Build it", the step's name exactly
+ *                        as firstVersionState names it for this viewer, so
+ *                        the hub says what the App tab and the made screen
+ *                        say
+ *   ready                built and up for approval: ready to try
+ *   mine                 whose description it is: the viewer's
+ *   creator              whose description it is, by username
+ *   waits_on             'plan' (its plan waits for their Build it) or
+ *                        'question' (it asked them something), for the
+ *                        person whose description it is and nobody else
+ *   conversation_id      their DM with the bot, for theirs alone
+ *   session_id           the change, once it is ready to try
+ *
+ * No build time. Evan, 5 Oct 2026: no average build time for a first
+ * version, which plans first and waits on its maker's answer.
+ */
+function hubFirstVersion(state, viewerId) {
+  if (!state) return null;
+  const mine = viewerId != null && Number(state.userId) === Number(viewerId);
+  const ready = !!state.ready;
+  const sessionId = ready && state.approval ? Number(state.approval.sessionId) : null;
+  return {
+    step: Number.isInteger(state.step) ? state.step : null,
+    of: Number.isInteger(state.of) ? state.of : null,
+    step_name: state.stepName || null,
+    ready,
+    mine,
+    creator: state.creator || null,
+    waits_on: mine && !ready ? (state.plan ? 'plan' : state.question ? 'question' : null) : null,
+    conversation_id: mine ? (Number(state.conversationId) || null) : null,
+    session_id: Number.isInteger(sessionId) && sessionId > 0 ? sessionId : null,
+  };
+}
 
 // SELF-HOSTING.md sub-step 2k: helper for the import-flow guards.
 // Compares a parsed {owner, repo} against config.platformRepoUrl,
@@ -1179,14 +1221,18 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         },
       });
 
-      // The first session's sketch (services/app-sketch.js): started BEFORE
-      // creation, which waits a little for it so the repository's first
-      // commit can carry it. Only from "What do you want to make?", only
-      // with a description to draw from, and never a reason the create fails.
+      // The first session's card of the idea, and with it the project's
+      // icon (services/app-sketch.js): started BEFORE creation, which waits a
+      // little for it so the repository's first commit can carry it. Only
+      // from "What do you want to make?", only with a description to make it
+      // from, and never a reason the create fails. `timeZone` is the maker's
+      // device's, so the card's "today" is theirs (an unknown or invalid zone
+      // reads as UTC there).
       if (req.body.from === 'first-session' && !repoUrlNormalized
           && require('../services/homeroom-bot-dm').normalizeBrief(req.body.brief)) {
         await require('../services/app-sketch').startSketch(pool, {
           app: appRow, user: req.user, brief: req.body.brief,
+          timeZone: typeof req.body.timeZone === 'string' ? req.body.timeZone.slice(0, 64) : null,
         }).catch((err) => log.warn('apps', 'Sketch not started', { appId: appRow.id, err: err.message }));
       }
 
@@ -1235,8 +1281,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       }
 
       // Made from the first session's "What do you want to make?"
-      // (frontend/src/features/first-session): making something answers the
-      // join screen, so it is not put between them and what they made.
+      // (frontend/src/features/first-session): making something answers it,
+      // and the join screen it stood in for, so neither is asked again
+      // (services/first-session.js). Until this, every boot asks it.
       if (req.body.from === 'first-session') {
         await require('../services/first-session').answerJoinScreenByMaking(pool, req.user.id)
           .catch((err) => log.warn('apps', 'Join screen not answered', { userId: req.user.id, err: err.message }));
@@ -1497,9 +1544,11 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
               // Ready to try: the change, and who it waits on, as this
               // viewer reads it (firstVersionApproval).
               ...(state.ready && state.approval ? { approval: state.approval } : {}),
-              // WP-E: about how long a build takes, for "usually about 8
-              // minutes" while it is not ready yet.
-              ...(mine && !state.ready ? { typicalMinutes: await botDm.typicalMinutesCached(pool) } : {}),
+              // No "usually about N minutes" (WP-E used to send the
+              // ordinary request's typical build here): a first version
+              // plans first and waits on its creator's answer, and took 50
+              // minutes in the 5 October run-through against a promise of
+              // 10. The made screen says those steps instead (buildNote).
             };
           }
         } catch (err) {
@@ -1587,63 +1636,31 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
-  // The first session's sketch (services/app-sketch.js). The made screen
-  // polls the status, then frames the page. Anyone who may view the app may
-  // see it; a project without one answers { status: 'none' }.
+  // The first session's card (services/app-sketch.js), which the made
+  // screen polls until it is ready and then draws itself: its emoji, tagline
+  // and points, text only. Anyone who may view the app may see it; a project
+  // without one answers { status: 'none' }, and so does a sketch from before
+  // the card (a page of a screen, no longer shown).
   router.get('/api/apps/:slug/sketch', async (req, res) => {
     try {
       const appSketch = require('../services/app-sketch');
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS);
       if (!app) return res.status(404).json({ error: 'App not found' });
       const row = await appSketch.readSketch(pool, app.id);
-      const status = appSketch.sketchStatus(row);
+      let status = appSketch.sketchStatus(row);
+      const card = status === 'ready' ? appSketch.cardOf(row.design) : null;
+      if (status === 'ready' && !card) status = 'none';
       res.set('Cache-Control', 'no-store');
-      res.json({
-        status,
-        ...(status === 'ready' ? {
-          job: row.design?.job || null,
-          primaryAction: row.design?.primaryAction || null,
-          accentName: row.design?.accentName || null,
-          committed: !!row.committed_at,
-        } : {}),
-      });
-    } catch (err) {
-      log.error('apps', 'Failed to read sketch', { message: err.message });
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-
-  // The sketch as a page of its own, for the made screen's frame. It is
-  // model output from a user's description, so besides being sanitized to
-  // static markup (services/app-sketch.js) it is served sandboxed: no
-  // script, no network, no form, its own opaque origin, framed only here.
-  router.get('/api/apps/:slug/sketch.html', async (req, res) => {
-    try {
-      const appSketch = require('../services/app-sketch');
-      const app = await appAccess.getAppForUser(
-        pool, req.params.slug, req.user, 'view', `${appAccess.ACCESS_COLUMNS}, name`
-      );
-      if (!app) return res.status(404).type('text/plain').send('Not found');
-      const row = await appSketch.readSketch(pool, app.id);
-      if (appSketch.sketchStatus(row) !== 'ready') return res.status(404).type('text/plain').send('Not found');
-      const theme = req.query.theme === 'dark' || req.query.theme === 'light' ? req.query.theme : null;
-      res.set({
-        'Content-Security-Policy': appSketch.SKETCH_CSP,
-        'X-Content-Type-Options': 'nosniff',
-        'Referrer-Policy': 'no-referrer',
-        'Cache-Control': 'no-store',
-      });
-      res.type('html').send(appSketch.sketchDocument({
-        name: app.name || app.slug, design: row.design, html: row.html, theme,
-      }));
+      res.json({ status, ...(card ? { card, committed: !!row.committed_at } : {}) });
       // The admin Journey's first session: the first thing of theirs its
-      // maker is shown (journey-events.js; once per project, makers only).
-      if (req.user?.id) {
+      // maker is shown, the moment the made screen has it to draw
+      // (journey-events.js; once per project, makers only).
+      if (card && req.user?.id) {
         void require('../services/journey-events').noteFirstArtefactShown(pool, { appId: app.id, userId: req.user.id });
       }
     } catch (err) {
-      log.error('apps', 'Failed to render sketch', { message: err.message });
-      res.status(500).type('text/plain').send('Internal server error');
+      log.error('apps', 'Failed to read sketch', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
     }
   });
 
@@ -3396,12 +3413,43 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       const required = gov.approvalsRequired != null
         ? gov.approvalsRequired
         : activeUsers.requiredVotes(electorate.active, 0);
+      // WHAT IT IS. dapp.json's one line when it has one. A project made
+      // from "What should it do?" without a one-liner (the first session's
+      // own words, not an example's) has none until somebody writes one, so
+      // its hub opened on nothing but "Just you" (first-session run-through,
+      // 5 Oct 2026). Its description's first sentence stands in, cut the way
+      // the create dialog's suggestion is when no model answers
+      // (homeroom-bot-dm.js firstSentence). It is the project's first
+      // request, so nobody who can see the project is shown more than that.
+      const botDm = require('../services/homeroom-bot-dm');
+      let description = typeof app.description === 'string' && app.description.trim()
+        ? app.description.replace(/\s+/g, ' ').trim() : null;
+      if (!description && !app.self_hosted) {
+        const { rows: briefRows } = await pool.query(
+          'SELECT brief FROM homeroom_bot_first_versions WHERE app_id = $1',
+          [app.id]
+        );
+        if (briefRows[0]?.brief) description = botDm.firstSentence(briefRows[0].brief, createOptions.DESCRIPTION_MAX) || null;
+      }
+      // WHERE ITS FIRST VERSION STANDS, while Homeroom bot builds it from
+      // that description: the App tab's state (GET /api/apps/:slug
+      // `first_version`), for the hub to say beside who it is for.
+      // Best-effort: a read that fails is no state, never a failed hub.
+      let firstVersion = null;
+      if (!app.self_hosted) {
+        try {
+          const state = await botDm.firstVersionState(pool, app.id, { viewerId: req.user?.id ?? null });
+          firstVersion = hubFirstVersion(state, req.user?.id ?? null);
+        } catch (err) {
+          log.warn('apps', 'Could not read the first version for the hub', { slug: app.slug, message: err.message });
+        }
+      }
       res.json({
         slug: app.slug,
         name: app.name,
-        // dapp.json's one line about what the app is, for the page's hero.
-        description: typeof app.description === 'string' && app.description.trim()
-          ? app.description.replace(/\s+/g, ' ').trim() : null,
+        // What the app is, for the page's hero (above).
+        description,
+        first_version: firstVersion,
         ...membership,
         members,
         channel,
@@ -3448,6 +3496,11 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         return res.status(404).json({ error: 'App not found' });
       }
       if (joined) {
+        // A public community never shows a provisional handle: pick a
+        // username first (usernames.js USERNAME_REQUIRED).
+        if (app.view_visibility === 'public' && await usernames.isProvisional(pool, req.user.id)) {
+          return res.status(409).json(usernames.USERNAME_REQUIRED);
+        }
         await communities.join(pool, app, req.user.id);
         // "Find people to build with" counts the join now, not on the
         // rule's next pass (#3564; challengeScorer.scoreOnJoin). Never
@@ -3672,7 +3725,7 @@ module.exports = {
   // one resolver, so it is pinned there rather than through a route.
   attachForkLineage,
   appRoutes, sweepStuckCreatingApps, accessFlags, canDeleteApp, compactGlobalChatApp,
-  deleteBlockReason, isCoreApp,
+  deleteBlockReason, isCoreApp, hubFirstVersion,
   // #2524: the activity guard and its two bounds, so the contract is
   // unit-testable without standing up the whole app router.
   activitySeconds, ACTIVITY_MAX_PER_POST, ACTIVITY_MAX_PER_DAY,

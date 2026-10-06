@@ -82,9 +82,9 @@
     {
       "source": "src/middleware/auth.js",
       "kind": "structural-template",
-      "fingerprint": "606caceff13d515fd418",
+      "fingerprint": "b0f855e9f99e9e79bc84",
       "count": 1,
-      "preview": "`SELECT s.user_id, s.expires_at, s.created_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.session_bridge_enabled, u.locale"
+      "preview": "`SELECT s.user_id, s.expires_at, s.created_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.session_bridge_enabled, u.privat"
     },
     {
       "source": "src/middleware/topochain-auth.js",
@@ -453,16 +453,9 @@
     {
       "source": "src/routes/sessions.js",
       "kind": "structural-template",
-      "fingerprint": "031bf907bfa049c90235",
+      "fingerprint": "1c821d7ef624ede242e9",
       "count": 1,
-      "preview": "`SELECT version, built_at, commit_sha, pr_number, shared_to_group_at, LENGTH(content) AS char_count, content FROM chat_session_specs s WHERE s.session_id = $1 A"
-    },
-    {
-      "source": "src/routes/sessions.js",
-      "kind": "structural-template",
-      "fingerprint": "2252c6068a154006e298",
-      "count": 1,
-      "preview": "`SELECT s.version, s.content, s.built_at, s.commit_sha, s.pr_number, s.shared_to_group_at FROM chat_session_specs s JOIN chat_sessions cs ON cs.id = s.session_i"
+      "preview": "`SELECT version, built_at, commit_sha, pr_number, shared_to_group_at, LENGTH(content) AS char_count, content, content_html FROM chat_session_specs s WHERE s.ses"
     },
     {
       "source": "src/routes/sessions.js",
@@ -470,6 +463,13 @@
       "fingerprint": "53cbf4a100d8fd060870",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET ${sets.join(', ')} WHERE id = $2`"
+    },
+    {
+      "source": "src/routes/sessions.js",
+      "kind": "structural-template",
+      "fingerprint": "974dbc333f746ae0a00c",
+      "count": 1,
+      "preview": "`SELECT s.version, s.content, s.content_html, s.built_at, s.commit_sha, s.pr_number, s.shared_to_group_at FROM chat_session_specs s JOIN chat_sessions cs ON cs."
     },
     {
       "source": "src/routes/sessions.js",
@@ -747,6 +747,13 @@
     {
       "source": "src/routes/topochain/public.js",
       "kind": "structural-template",
+      "fingerprint": "34540a7d410e6004fc43",
+      "count": 1,
+      "preview": "`SELECT ua.challenge_id, COUNT(*)::int AS credits FROM user_activities ua JOIN challenges c ON c.id = ua.challenge_id LEFT JOIN challenge_templates ct ON ct.id "
+    },
+    {
+      "source": "src/routes/topochain/public.js",
+      "kind": "structural-template",
       "fingerprint": "aff8d6e5f16e400828ea",
       "count": 1,
       "preview": "`SELECT c.id, c.season_event_id, c.challenge_template_id, c.enabled, c.completed, c.goal, c.task, c.reward, c.description, c.requirements, c.schedule_start, c.s"
@@ -932,6 +939,13 @@
       "fingerprint": "cb8be7324b69a371ce8c",
       "count": 1,
       "preview": "`SELECT i.id, i.token, i.community_id, i.app_id, i.created_by, i.max_uses, i.uses, i.expires_at, i.revoked_at, i.note, a.slug, a.name, a.icon_emoji, a.icon_imag"
+    },
+    {
+      "source": "src/services/community-invites.js",
+      "kind": "structural-template",
+      "fingerprint": "de0c5e71ed4f1d86524f",
+      "count": 1,
+      "preview": "`SELECT ${appAccess.ACCESS_COLUMNS}, icon_color FROM apps WHERE id = $1`"
     },
     {
       "source": "src/services/connector-limits.js",
@@ -1216,14 +1230,21 @@
     {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
-      "fingerprint": "14bc9ec7c4bde86c6783",
+      "fingerprint": "4fb03398efe7c9b53166",
+      "count": 1,
+      "preview": "`SELECT n.id, n.kind, n.user_id, n.read_at, n.created_at, n.app_id, a.slug AS app_slug, a.name AS app_name, n.chat_message_id, cm.content AS message_content, cm"
+    },
+    {
+      "source": "src/services/notifications.js",
+      "kind": "structural-template",
+      "fingerprint": "65dd4ea804620e146619",
       "count": 1,
       "preview": "`SELECT n.id, n.kind, n.read_at, n.created_at, n.app_id, a.slug AS app_slug, a.name AS app_name, n.chat_message_id, cm.content AS message_content, cm.thread_typ"
     },
     {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
-      "fingerprint": "91df73aa6c2d685889c8",
+      "fingerprint": "87e998a091a89f5c938b",
       "count": 1,
       "preview": "`SELECT n.id, n.kind, n.read_at, n.created_at, n.app_id, a.slug AS app_slug, a.name AS app_name, n.chat_message_id, cm.content AS message_content, cm.thread_typ"
     },
@@ -1247,13 +1268,6 @@
       "fingerprint": "b83117b670d097e6e2dc",
       "count": 1,
       "preview": "`UPDATE notifications SET read_at = NOW() WHERE user_id = $1 AND ${def.scope} = $2 AND kind = ANY($3) AND read_at IS NULL`"
-    },
-    {
-      "source": "src/services/notifications.js",
-      "kind": "structural-template",
-      "fingerprint": "bf3729bc3cdae40f61c7",
-      "count": 1,
-      "preview": "`SELECT n.id, n.kind, n.user_id, n.read_at, n.created_at, n.app_id, a.slug AS app_slug, a.name AS app_name, n.chat_message_id, cm.content AS message_content, cm"
     },
     {
       "source": "src/services/notifications.js",

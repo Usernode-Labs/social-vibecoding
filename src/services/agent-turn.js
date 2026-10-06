@@ -478,7 +478,7 @@ async function lockAttempt(client, turnUuid) {
 async function completeCodexAttempt({
   pool, turnUuid, status = 'completed', threadId = null, usageTotal = null,
   errorCode = null, errorDetail = null, telemetryComponent = null,
-  telemetryMetrics = null, usageScope = 'thread',
+  telemetryMetrics = null, usageScope = 'thread', routedProvider = null,
 }) {
   if (!turnUuid) return { updated: false, alreadyTerminal: true };
   const client = await pool.connect();
@@ -530,6 +530,9 @@ async function completeCodexAttempt({
       ? estimateRequestedModelCost(delta, row.metadata?.pricing)
       : { costSource: 'unavailable', estimatedCostUsd: null };
     const metadata = row.metadata || {};
+    // A stopped Claude Code turn priced from what its requests streamed
+    // (usageTotalFromResult): a floor, and marked as one.
+    if (usageTotal?.source === 'stream') metadata.usage_source = 'stream_floor';
     if (measuredComponent) {
       metadata.telemetry_component = measuredComponent;
       const errorClassByCode = {
@@ -589,7 +592,8 @@ async function completeCodexAttempt({
          cost_source = $17,
          usage_reset_detected = $18,
          billed_by = 'user_openrouter',
-         metadata = $19::jsonb
+         metadata = $19::jsonb,
+         routed_provider = COALESCE($21, routed_provider)
        WHERE id = $1
          AND (
            status = 'running'
@@ -620,7 +624,8 @@ async function completeCodexAttempt({
        cost != null ? cost.costSource : 'unavailable',
        resetDetected,
        JSON.stringify(metadata),
-       reconcileTerminalUsage],
+       reconcileTerminalUsage,
+       typeof routedProvider === 'string' && routedProvider ? routedProvider.slice(0, 128) : null],
     );
 
     await client.query('COMMIT');
@@ -852,6 +857,7 @@ async function settleRecoveredAgentAttempt({
       threadId: result?.agentThreadId || activeTurn.threadId || null,
       usageTotal: usageTotalFromResult({ ...(result || {}), agentHarness: activeTurn.harness }),
       usageScope: usageScopeForHarness(activeTurn.harness),
+      routedProvider: result?.routedProvider || null,
       telemetryComponent: result?.providerDispatched === true
         ? activeTurn.telemetryComponent || null
         : null,
@@ -922,13 +928,44 @@ function usageTotalFromResult(result) {
       + (finite(r.cachedInputTokens) ? r.cachedInputTokens : 0)
       + (finite(r.cacheWriteInputTokens) ? r.cacheWriteInputTokens : 0);
   }
-  if ((input == null || !Number.isFinite(input)) && (output == null || !Number.isFinite(output))) return null;
+  if ((input == null || !Number.isFinite(input)) && (output == null || !Number.isFinite(output))) {
+    return streamedUsageFloor(r);
+  }
   return {
     inputTokens: input != null && Number.isFinite(input) ? input : null,
     cachedInputTokens: r.cachedInputTokens != null && Number.isFinite(r.cachedInputTokens) ? r.cachedInputTokens : null,
     cacheWriteInputTokens: r.cacheWriteInputTokens != null && Number.isFinite(r.cacheWriteInputTokens) ? r.cacheWriteInputTokens : null,
     outputTokens: output != null && Number.isFinite(output) ? output : null,
     reasoningOutputTokens: r.reasoningOutputTokens != null && Number.isFinite(r.reasoningOutputTokens) ? r.reasoningOutputTokens : null,
+  };
+}
+
+// A Claude Code turn stopped before its result event reports no usage of
+// its own: Claude Code totals a run only there. The worker sums what each of
+// its model calls streamed instead (relayUsage, finalizeHarnessResult), and
+// that is what such a turn is priced from. Before, the ledger recorded it at
+// 0 tokens and 'unavailable', so a build the Homeroom bot's clock stopped
+// cost "about $0" however long it ran (16 such builds in a week), and an
+// included key's allowance was never debited for a stopped turn. A floor:
+// the request in flight at the stop counts only what it had streamed.
+// Inputs are already totalled the way OpenRouter bills them (cached reads
+// a subset). Claude harness only: a Codex turn's totals are a thread's
+// running total, which a per-turn sum would corrupt.
+function streamedUsageFloor(r) {
+  if (registry.resolveOpenRouterHarness(r.agentHarness) !== 'claude') return null;
+  const relay = r.relayUsage;
+  const count = (n) => (Number.isSafeInteger(n) && n >= 0 ? n : null);
+  if (!relay || !(count(relay.requests) > 0)) return null;
+  const input = count(relay.inputTokens);
+  const output = count(relay.outputTokens);
+  if (input == null && output == null) return null;
+  return {
+    inputTokens: input,
+    cachedInputTokens: count(relay.cachedInputTokens),
+    cacheWriteInputTokens: null,
+    outputTokens: output,
+    reasoningOutputTokens: null,
+    source: 'stream',
   };
 }
 

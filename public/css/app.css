@@ -3562,6 +3562,24 @@ html[data-browser-scroller^="auth-"] body :is(
   inset: auto;
   min-height: calc(100dvh - var(--browser-banner-h));
 }
+/* THE STORY'S FOOT CLEARS SAFARI'S TOOLBAR (iPhone 17 simulator, iOS 26
+   Safari, 5 October 2026). "Already have an account? Sign in" under Get
+   started sat behind Safari's bottom toolbar. In a phone browser the landing
+   is the paged document, and Safari 26 draws the page on under its floating
+   toolbar: a fixed box ends above the toolbar (the small viewport), the
+   document runs on beneath it. The page's foot reserved the home indicator
+   (`.platform-safe-scroll`) and 34px of air, and Safari reports no inset for
+   its own toolbar, so the last line could never be scrolled out from under
+   it. `100lvh - 100svh` is that toolbar: the page with it tucked away less
+   the page with it shown (about 98px on an iPhone 17; 0 where no toolbar
+   comes and goes). Reserved under the story's own foot, the end of the page
+   now scrolls clear of the toolbar shown, and of the slimmer bar Safari
+   tucks it into. iOS only: there the toolbar is at the foot. In the
+   Homeroom app and an installed app there is no browser toolbar and no
+   `data-browser-scroller`, so nothing changes. */
+html.un-ios[data-browser-scroller="auth-landing-scroll"] [data-landing-story] {
+  padding-bottom: max(0px, calc(100lvh - 100svh));
+}
 /* The anonymous overlay covered the signed-in shell, including any screen
    painted from the last-session snapshot. In document flow those roots must
    leave the layout too, so visitors see only the anonymous page. */
@@ -6133,6 +6151,9 @@ body:has(#platform-header.hidden) #app-frame-host {
 .dc-inline-img-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .dc-inline-img-link .dc-inline-img { margin: 0; }
 .dc-inline-img { max-width: 100%; max-height: 320px; border-radius: 8px; margin: 6px 0; display: block; }
+/* #3940: the inline issue-video player (issue-body video embeds), beside
+   the images above. Same box, its own controls. */
+.dc-inline-video { max-width: 100%; max-height: 320px; border-radius: 8px; margin: 6px 0; display: block; }
 .dc-table { border-collapse: collapse; margin: 8px 0; width: 100%; font-size: 13px; display: block; overflow-x: auto; }
 .dc-table th, .dc-table td { border: 1px solid var(--border-light); padding: 4px 8px; text-align: left; }
 .dc-table th { font-weight: 600; color: var(--text-primary); background: var(--bg-code-header); }
@@ -13941,9 +13962,8 @@ body.is-offline [data-offline-disabled] {
 
    A LANDED CHANGE is a plain card too. It used to wear an emerald wash and
    a 3px left edge as the feed's "the stream crossed a line" marker; its bar
-   says "✓ Live" and its edge is the quiet grey of a done state (the card's
-   own `[data-edge="neutral"]`), which is the same fact said once instead of
-   three times. */
+   says "✓ Live" and its edge is green (the card's own `[data-edge="ok"]`,
+   #3873), which is the same fact said once instead of three times. */
 :is(#dev-workshop, #dev-kanban) .dev-feed-entry {
   background-color: var(--dc-sheet-fill);
   backdrop-filter: var(--dc-frost);
@@ -15471,6 +15491,98 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .shots-claim-n { flex: none; width: 20px; height: 20px; margin-top: 1px; border-radius: 999px; display: grid; place-items: center;
   font-size: 11px; font-weight: 700; line-height: 1; color: #fff; background: #3f3f46; font-variant-numeric: tabular-nums; }
 .dark .shots-claim-n { color: #18181b; background: #d4d4d8; }
+
+/* An HTML spec's screens (#3699) use the same viewer (AppView._shotsViewerHtml)
+   with three things the card leaves off. Each is radios read by :has(), like
+   the rest of the viewer:
+     - Side by side: a third side option, before and after at once in the
+       same fixed stage, before on the left.
+     - Auto: the spec opens side by side when the viewer has room for that
+       screen's size (420px for a phone screen, 720px for a desktop one) and
+       on After when it has not. A label-less radio that starts checked; any
+       choice replaces it.
+     - Close-up / Whole screen: the radios are here; frontend/src/lib/
+       spec-html.ts lays the frames out, because a frame's scale is a number
+       CSS cannot divide out of a width.
+   A side is a sandboxed frame drawn at its design size and scaled to fit. */
+.spec-frame-side { overflow: hidden; background: #fff; }
+.dark .spec-frame-side { background: #0b0b0c; }
+.spec-frame-side > iframe { position: absolute; left: 0; top: 0; border: 0; transform-origin: 0 0; pointer-events: none; background: transparent; }
+.shots-viewer:has(.shots-side-both:checked) .shots-stage { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 12px; }
+.shots-viewer:has(.shots-side-both:checked) .shots-stage > .shots-flip-side { width: min(calc(50cqw - 6px), calc(100cqh * (var(--shots-shape, 16 / 10)))); }
+.shots-viewer:has(.shots-side-both:checked) .shots-stage > .shots-flip-after { grid-area: 1 / 2; }
+.shots-viewer:has(.shots-side-both:checked) .shots-flip-to { display: none; }
+.shots-viewer:has(.shots-side-both:checked) .shots-flip-chip-after { left: calc(50% + 16px); }
+.shots-viewer:has(.shots-side-both:checked) .shots-stage::after { content: ""; position: absolute; top: 12px; bottom: 12px; left: 50%; width: 1px; background: rgba(24, 24, 27, 0.12); }
+.dark .shots-viewer:has(.shots-side-both:checked) .shots-stage::after { background: rgba(255, 255, 255, 0.14); }
+.shots-viewer:has(.shots-side-both:checked) .shots-seg-both,
+.shots-viewer:has(.shots-zoom-close:checked) .shots-seg-close,
+.shots-viewer:has(.shots-zoom-whole:checked) .shots-seg-whole { background: #fff; color: #1c1c1e; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.14); }
+.dark .shots-viewer:has(.shots-side-both:checked) .shots-seg-both,
+.dark .shots-viewer:has(.shots-zoom-close:checked) .shots-seg-close,
+.dark .shots-viewer:has(.shots-zoom-whole:checked) .shots-seg-whole { background: #3a3a3c; color: #f5f5f7; }
+.shots-viewer:has(.shots-side-both:checked) .shots-change-n { background: linear-gradient(90deg, #dc2626 50%, #16a34a 50%); }
+.shots-viewer:has(.shots-zoom-pick:focus-visible) .shots-seg-zoom { outline: 2px solid var(--accent, #2563eb); outline-offset: 2px; }
+.shots-viewer:has(.shots-zoom-whole:checked) .shots-close-only,
+.shots-viewer:has(.shots-zoom-close:checked) .shots-whole-only { display: none; }
+/* Auto, with no room: After. */
+@container (max-width: 419.98px) {
+  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="phone"] .shots-flip-before { visibility: hidden; }
+  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="phone"] .shots-flip-chip-before,
+  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="phone"] .shots-flip-to-after { display: none; }
+  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="phone"] .shots-seg-after { color: #fff; background: #15803d; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.14); }
+}
+@container (max-width: 719.98px) {
+  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="desktop"] .shots-flip-before { visibility: hidden; }
+  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="desktop"] .shots-flip-chip-before,
+  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="desktop"] .shots-flip-to-after { display: none; }
+  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="desktop"] .shots-seg-after { color: #fff; background: #15803d; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.14); }
+}
+/* Auto, with room: side by side. */
+@container (min-width: 420px) {
+  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="phone"] .shots-stage { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 12px; }
+  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="phone"] .shots-stage > .shots-flip-side { width: min(calc(50cqw - 6px), calc(100cqh * (var(--shots-shape, 16 / 10)))); }
+  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="phone"] .shots-stage > .shots-flip-after { grid-area: 1 / 2; }
+  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="phone"] .shots-flip-to { display: none; }
+  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="phone"] .shots-flip-chip-after { left: calc(50% + 16px); }
+  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="phone"] .shots-change-n { background: linear-gradient(90deg, #dc2626 50%, #16a34a 50%); }
+  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="phone"] .shots-seg-both { background: #fff; color: #1c1c1e; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.14); }
+  .dark .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="phone"] .shots-seg-both { background: #3a3a3c; color: #f5f5f7; }
+}
+@container (min-width: 720px) {
+  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="desktop"] .shots-stage { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 12px; }
+  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="desktop"] .shots-stage > .shots-flip-side { width: min(calc(50cqw - 6px), calc(100cqh * (var(--shots-shape, 16 / 10)))); }
+  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="desktop"] .shots-stage > .shots-flip-after { grid-area: 1 / 2; }
+  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="desktop"] .shots-flip-to { display: none; }
+  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="desktop"] .shots-flip-chip-after { left: calc(50% + 16px); }
+  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="desktop"] .shots-change-n { background: linear-gradient(90deg, #dc2626 50%, #16a34a 50%); }
+  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="desktop"] .shots-seg-both { background: #fff; color: #1c1c1e; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.14); }
+  .dark .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="desktop"] .shots-seg-both { background: #3a3a3c; color: #f5f5f7; }
+}
+/* The spec's toolbar has a third switch, so its labels give way sooner. */
+@container (max-width: 560px) {
+  .shots-viewer-spec .shots-seg-label { display: none; }
+  .shots-viewer-spec .shots-seg-btn { padding: 0 9px; }
+}
+/* The prose around the screens: diagrams and tables written into an HTML
+   spec. A diagram is inline SVG drawn with these few classes, so it follows
+   light and dark mode; a literal fill still works, in one theme. */
+.spec-html figure { margin: 12px 0; }
+.spec-html figure > svg { display: block; width: 100%; max-width: 100%; height: auto; }
+.spec-html figcaption { margin-top: 4px; font-size: 12px; color: var(--text-muted, #68686c); }
+.spec-html .spec-diagram-wrap { overflow-x: auto; border: 1px solid var(--border-light, #e3e3e6); border-radius: 10px; padding: 10px; background: var(--bg-secondary, #f5f5f7); }
+.spec-html svg text { font-family: inherit; fill: var(--text-primary, #0a0a0a); }
+.spec-html svg .spec-muted { fill: var(--text-muted, #68686c); }
+.spec-html svg .spec-box { fill: var(--bg-primary, #fff); stroke: var(--border, #d1d1d6); stroke-width: 1; }
+.spec-html svg .spec-box-changed { fill: var(--bg-primary, #fff); stroke: var(--accent, #0a6ee0); stroke-width: 1.5; }
+.spec-html svg .spec-box-new { fill: var(--accent-tint, rgba(10, 110, 224, 0.08)); stroke: var(--accent, #0a6ee0); stroke-width: 1.5; stroke-dasharray: 4 3; }
+.spec-html svg .spec-line { fill: none; stroke: var(--text-faint, #8e8e93); stroke-width: 1.2; }
+.spec-html svg .spec-arrow { fill: var(--text-faint, #8e8e93); }
+.spec-html svg .spec-accent { fill: var(--accent, #0a6ee0); }
+.spec-html svg .spec-good { fill: #16a34a; }
+.spec-html svg .spec-bad { fill: #dc2626; }
+.spec-html .spec-screens { margin: 12px 0; }
+.spec-html .spec-screens-caption { margin-top: 6px; font-size: 12px; color: var(--text-muted, #68686c); }
 .dev-topic-details { margin-top: 8px; }
 .dev-topic-details-summary {
   display: inline-flex;
@@ -17046,6 +17158,10 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 .dev-ws-hub-open .dev-ws-filter-dot { margin: 0 2px; }
 /* Your work's "Show N more" turns its caret over once it reads "Show less". */
 .dev-ws-hub-work-more { margin-top: 2px; }
+/* First version (hub-cards.tsx FirstVersionCard): the step as the ring the
+   bot's activity cards lead with, then the card's heading and its 15/13
+   pair, laid across like a door but not one. */
+.dev-ws-hub-first-row { display: flex; align-items: center; gap: 12px; min-width: 0; }
 
 /* ── What landed since you were last here (since-summary-card.tsx) ─────
    The hub's first card: the window as the heading, and at the far end Week
@@ -17126,7 +17242,6 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 
 /* ── Approval rules (community-card.tsx ApprovalRules) ─────────────── */
 .dev-ws-rules-line { margin: 0; font-size: 14px; line-height: 1.45; color: var(--text-primary); }
-.dev-ws-rules-sub { margin: 0; font-size: 12.5px; line-height: 1.4; color: var(--text-muted); }
 
 /* ── Swipe to vote, on a phone (#3052) ─────────────────────────────────
    workshop.tsx's `useSwipeVote` is the gesture; this is how it looks. A
@@ -17871,6 +17986,23 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
 @media (prefers-reduced-motion: no-preference) {
   .dev-ws-hero .dev-ws-hero-member .dev-ws-join-pop { transform-origin: calc(100% - 32px) 0; }
 }
+/* ── Opened from an invite link (#3700, invite-offer.ts) ──
+   Who invited them, their note, and one Join as the screen's primary
+   button, first in the hero, so the decision sits on the page it is about
+   and is on screen without scrolling on a phone. A card on the hero's
+   ground, in the Join question's own surface. The button fills the card,
+   and a question a refusal asks hangs from its right edge as from the row's
+   Join. */
+.dev-ws-invite {
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 14px;
+  border-radius: 18px;
+  background-color: var(--dc-sheet);
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+}
+.dev-ws-invite-from { margin: 0; font-size: 16px; line-height: 21px; font-weight: 650; color: var(--text-primary); }
+.dev-ws-invite-note { margin: 0; font-size: 15px; line-height: 21px; color: var(--text-primary); }
+.dev-ws-invite-seen { margin: 0; text-align: center; font-size: 13px; line-height: 18px; color: var(--text-muted); }
 
 /* ── The hub's discussion preview (hub-cards.tsx) ──
    The channel card's own look, cut to its last two messages with no
@@ -18017,6 +18149,44 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
 .dev-ws-discussion-host > * { flex: 1 1 auto; min-height: 0; }
 @media (max-width: 767.98px) {
   .dev-ws-discussion { margin: 0 -4px; }
+}
+/* WITH THE KEYBOARD UP IN A PHONE BROWSER, THE ROOM IS WHAT IS SEEN
+   (iOS Safari, 5 October 2026: an invitee opened a project's Discussion to
+   talk, tapped the message box, and saw a blank cream page with the keys
+   up; no messages, no composer, no header). In a phone browser the page is
+   the scroller (#1518), so this fitted box sits in the document's flow, and
+   the fixed-shell physics every other chat relies on did not hold here:
+   iOS scrolled the page to put the message box over the keys, then the
+   column's keyboard reservation (`.platform-kb-column`, `--un-kb-inset`)
+   lifted the box a keyboard's height again inside a page that had already
+   moved by it, and the kit's pan reset only runs in a bounded shell. What
+   was left on screen was the column's empty padding.
+
+   So while the keyboard is open (`platform-kb-open`, lib/keyboard-open.ts)
+   the room is laid on the band of the page that is actually visible: from
+   the pan (`--platform-vv-top`) to the top of what covers the foot
+   (`--platform-kb-cover`: the keys, and Safari's pill and form bar over
+   them). Its column reserves nothing more, the transcript fills what is
+   left above the composer, and the conversation's own stick-to-bottom
+   (with its keyboard hold, lib/keyboard-hold.ts) keeps the newest line in
+   view as it shrinks. The tab's box keeps its height in the page, so the
+   page under it does not move, and the room drops back into it when the
+   keys go. In the bounded shell (the app, an installed app) none of this
+   applies: there is no `data-browser-scroller`. */
+@media (max-width: 767px) {
+  html[data-browser-scroller].platform-kb-open .dev-ws-discussion {
+    position: fixed;
+    left: 0;
+    right: 0;
+    top: var(--platform-vv-top, 0px);
+    bottom: var(--platform-kb-cover, 0px);
+    z-index: 35;
+    min-height: 0;
+    margin: 0;
+  }
+  html[data-browser-scroller].platform-kb-open .dev-ws-discussion .platform-kb-column {
+    padding-bottom: 0;
+  }
 }
 /* THE COMPOSER'S FOOT IS ALREADY CLEAR. `.platform-safe-bar` adds the tab
    bar's height under every composer, on the rule that inside #app-view the
@@ -18654,50 +18824,54 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
    They were a sentence, and four integers read out as prose is the slowest
    form they can take: the reader parses a clause to learn something a glance
    should give. So they are tiles, on their own ground inside the pane, and
-   the paragraph under them is freed to say the things a number cannot.
-   Two up on a phone, four across from 420px. `auto-fit` rather than a fixed
-   count so the row never leaves one tile stranded on a line of its own. */
+   the paragraph under them is freed to say the things a number cannot. */
 .dev-ws-dash {
   /* ONE RULED ROW, NOT FOUR CARDS. Each figure used to carry the pane's own
      surface, a hairline and the two-layer lift the week cards had — four
      objects inside an object, above a fifth holding the summary line. The
      figures are the pane's content, so they sit on the pane: hairlines
-     between them and nothing else. Two up on a phone, four across from
-     420px, which is the breakpoint they already used. */
+     between them and nothing else.
+     FOUR ACROSS AT EVERY WIDTH (5 Oct 2026). Under 420px they were two up,
+     a 2x2 grid, and the owner asked for one row on an iPhone 13 mini. A
+     phone keeps the row by drawing the figures closer and a size smaller
+     (below), never by cutting a label short: a label wraps instead. At
+     375px the pane's content box is 339px (375, less #dev-body's 4px a
+     side, less the strip's 14px a side), so each column is 84.75px, and
+     the narrowest text column, the third figure's beside its dot, is
+     84.75 - 1 - 8 - 8 - 6 - 5 = 56.75px. In the system font at 11.5px
+     its longest word, "waiting", is about 39px, and every label takes two
+     lines at most; at the wider 14px spacing "waiting on votes" would
+     take three. */
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   margin-top: 4px;
 }
 .dev-ws-dash-cell {
   min-width: 0;
-  padding: 10px 14px;
+  padding: 2px 8px;
   border-left: 1px solid var(--app-sheet-line);
-  border-top: 1px solid var(--app-sheet-line);
   font-size: 11.5px;
   color: var(--text-muted);
   line-height: 1.3;
 }
-.dev-ws-dash-cell:nth-child(2n+1) { border-left: 0; padding-left: 2px; }
-.dev-ws-dash-cell:nth-child(-n+2) { border-top: 0; padding-top: 2px; }
 @media (min-width: 420px) {
-  .dev-ws-dash { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  .dev-ws-dash-cell { border-top: 0; padding-top: 2px; padding-bottom: 2px; }
-  .dev-ws-dash-cell:nth-child(2n+1) {
-    border-left: 1px solid var(--app-sheet-line);
-    padding-left: 14px;
-  }
-  .dev-ws-dash-cell:first-child { border-left: 0; padding-left: 2px; }
-  .dev-ws-dash-cell:last-child { padding-right: 2px; }
+  .dev-ws-dash-cell { padding-left: 14px; padding-right: 14px; }
 }
+.dev-ws-dash-cell:first-child { border-left: 0; padding-left: 2px; }
+.dev-ws-dash-cell:last-child { padding-right: 2px; }
 .dev-ws-dash-cell b {
   display: block;
   /* THE TEXT TOKEN, always. Tone used to be painted on the integer itself —
      a green 6, an amber 3 — which is state carried by hue alone and unread
      by anyone who cannot separate the two, and it put a status colour on
      text where the rest of the product keeps text in text ink. The mark
-     moved to the label; the number is a number. */
-  font-size: 24px; font-weight: 650; line-height: 1.1;
+     moved to the label; the number is a number.
+     20px on a phone, where four share the row; 24px from 420px. */
+  font-size: 20px; font-weight: 650; line-height: 1.1;
   letter-spacing: -.02em; color: var(--text-primary);
+}
+@media (min-width: 420px) {
+  .dev-ws-dash-cell b { font-size: 24px; }
 }
 /* A GRID, not an inline run. The label wraps at phone widths, and under
    `align-items: center` the dot floated to the middle of a two-line label
@@ -19483,6 +19657,42 @@ html.un-kb #platform-tabs {
   }
 }
 
+/* A FULL-SCREEN SURFACE KEEPS ITS FIELD AND ITS BUTTON ABOVE THE KEYS
+   (iPhone 17 simulator, iOS 26 Safari, 5 October 2026). The sign-in sheet's
+   Sign in button sat behind the keyboard with the password field half under
+   the keyboard's floating bar, and the make screen's "Make it" sat under the
+   same bar. Both are `fixed inset-0`, which Safari leaves at the page's full
+   height with the keys, the address pill and the form bar over its foot, and
+   which iOS pans up to reveal a tapped field. The band of the page that is
+   actually visible while the keyboard is open is the pan above it
+   (`--platform-vv-top`, lib/visual-viewport.ts) and `--platform-kb-cover`
+   below it (lib/keyboard-open.ts; the visual viewport ends above the pill
+   and the bar, so whatever iOS draws over the keys is in the cover, and
+   nothing here assumes a height for it).
+
+   - `.platform-kb-surface`, a full-screen column (the make screen): padded
+     into the band, so its bar stays at the top of what is seen and its
+     scroller ends where the keys begin. The ground still paints the whole
+     box, so the pill and the bar float over the screen's own wallpaper.
+   - `.platform-kb-sheet`, a bottom sheet inside a full-screen root (the
+     sign-in sheet): its foot on the band's foot and its height capped to the
+     band, so it rides on the keys and scrolls inside.
+
+   In the Homeroom app the web view itself ends at the keys, so both are 0
+   and nothing moves. Phone only, like the rest of this block. */
+@media (max-width: 767px) {
+  html.platform-kb-open .platform-kb-surface {
+    padding-top: var(--platform-vv-top, 0px);
+    padding-bottom: var(--platform-kb-cover, 0px);
+  }
+  html.platform-kb-open .platform-kb-sheet {
+    bottom: var(--platform-kb-cover, 0px);
+    max-height: calc(100% - var(--platform-vv-top, 0px) - var(--platform-kb-cover, 0px) - 12px);
+    /* The home indicator is behind the keys. */
+    padding-bottom: 1.25rem;
+  }
+}
+
 .platform-tabs {
   /* FIXED TO THE REAL VIEWPORT. `.dev-ws-tabs` above documents the three
      rounds this saves: `sticky` puts a bar's resting place at the mercy of
@@ -19801,6 +20011,15 @@ html.un-ios {
     letter-spacing: -.02em;
     overflow: visible;
     text-overflow: clip;
+  }
+  /* HELD, THE TAB OPENS "Your communities" (#3701, features/workshop/
+     tab-ladder.ts). The browser's own long press on a link would open over
+     it: iOS's preview and callout, and a selection of the label. Android's
+     menu is the `contextmenu` the hold stands down itself. */
+  #platform-tab-workshop {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
   }
 }
 @media (max-width: 374.98px) {

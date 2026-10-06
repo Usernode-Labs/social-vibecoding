@@ -68,7 +68,9 @@ test('the read may answer revise only naming a change it was offered', () => {
   assert.deepEqual(llm.chatAskVerdict({ kind: 'question', title: '', change: '' }, offered), { kind: 'question', title: null, change: null });
   const src = read('src/services/llm.js');
   assert.match(src, /"revise": it asks to fix or change one of the changes above before it goes live\. Set "change" to that change's id\./);
-  assert.match(src, /output_config: \{ format: \{ type: 'json_schema', schema: offered\.length \? CHAT_ASK_REVISE_SCHEMA : CHAT_ASK_SCHEMA \} \}/);
+  assert.match(src, /const schema = offered\.length \? CHAT_ASK_REVISE_SCHEMA : CHAT_ASK_SCHEMA;/);
+  assert.match(src, /helper: 'chat_ask',\s+activeClient,\s+schema,/, 'the same schema is GLM\'s forced tool');
+  assert.match(src, /output_config: \{ format: \{ type: 'json_schema', schema \} \}/, 'and Haiku\'s structured output');
 });
 
 test('where a request stands, from its records', () => {
@@ -144,10 +146,10 @@ test('what the card and the chip say, at every stage', () => {
   assert.match(fixing, /Only you can see this/);
   // Everybody in the room sees the fix asked for on the message.
   assert.match(renderToHtml(createElement(BotStatusChip, { chip: { status: 'fixing', issueNumber: 1, sessionId: 70 } })),
-    /data-bot-request="fixing"[^>]*>.*🔧.*Fixing/);
+    /data-bot-request="fixing"[^>]*>.*🔧.*Homeroom bot is fixing this/);
   // The chat draws the chip, opens the change, and reads its cards again.
   const gc = read('public/js/group-chat.js');
-  assert.match(gc, /\['reading', 'building', 'ready', 'live', 'fixing'\]\.includes\(value\.status\)/);
+  assert.match(gc, /\['reading', 'building', 'ready', 'live', 'fixing', 'waiting_first_version'\]\.includes\(value\.status\)/);
   assert.match(gc, /openBotChange\(sessionId\) \{[\s\S]*?location\.hash = `#app\/\$\{encodeURIComponent\(GroupChat\.appSlug\)\}\/dev\/proposals\/\$\{id\}`;/);
   assert.match(gc, /_followBotCards\(\) \{[\s\S]*?\}, 60 \* 1000\);/);
   assert.match(gc, /window\.addEventListener\('homeroom-bot-work-changed', GroupChat\._botWorkListener\);/,
@@ -268,7 +270,7 @@ test('Flat 4B Chores, against the full PostgreSQL schema', { timeout: 180000 }, 
   const { cardWords } = loadTsx('frontend/src/features/group-chat/bot-request.tsx');
 
   let binsId;
-  await t.test('her earlier request, asked while the first version waits, is filed as before', async () => {
+  await t.test('her earlier request, asked while the first version waits, is filed and waits for it', async () => {
     const text = '@homeroom_bot add a night-before reminder for bin day';
     binsId = await say(sam, text);
     const out = await note(sam, binsId, text, { kind: 'change', title: BINS.title });
@@ -277,7 +279,10 @@ test('Flat 4B Chores, against the full PostgreSQL schema', { timeout: 180000 }, 
     assert.deepEqual(reads.at(-1).changes, [{ id: 'c1', title: 'Chores for two with undo', firstVersion: true }],
       'the read was offered the first version beside filing');
     assert.equal(out.card.kind, 'filed');
-    assert.equal(out.card.state.stage, 'reading');
+    // Nothing else on the project starts until the first version is live
+    // (homeroom-bot.js firstVersionHolds): her card and chip say so.
+    assert.equal(out.card.state.stage, 'waiting_first_version');
+    assert.equal((await metaOf(binsId)).botRequest.status, 'waiting_first_version');
   });
 
   let fixId;
@@ -340,7 +345,7 @@ test('Flat 4B Chores, against the full PostgreSQL schema', { timeout: 180000 }, 
     const sams = { id: sam.id, username: 'sam', hasPlatformAccess: true };
     const n = nextIssue; // the bin-day request
     const binsCard = async () => (await botChat.myRequests(pool, { app, user: sams, deps: deps(null) })).cards.find((c) => c.messageId === binsId);
-    assert.equal((await binsCard()).state.stage, 'reading');
+    assert.equal((await binsCard()).state.stage, 'waiting_first_version', 'still queued behind the first version');
     // Read and built; its change is up and its checks passed. The ready moment was missed.
     const { rows: [built] } = await pool.query(
       `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, session_title, promoted_at, linked_issues, check_state, pr_number)
@@ -372,7 +377,7 @@ test('Flat 4B Chores, against the full PostgreSQL schema', { timeout: 180000 }, 
     const id = await say(sam, text);
     await note(sam, id, text, { kind: 'change', title: 'Add a bathroom rota' });
     const n = nextIssue;
-    assert.equal((await metaOf(id)).botRequest.status, 'reading');
+    assert.equal((await metaOf(id)).botRequest.status, 'waiting_first_version', 'the first version is still not live');
     await pool.query(
       `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_ok, build_error) VALUES ($1, $2, 'live', 'ready', FALSE, 'the build did not finish')`,
       [app.id, n],

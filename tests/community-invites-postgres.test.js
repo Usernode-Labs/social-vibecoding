@@ -61,6 +61,9 @@ async function connectPool() {
       collab_visibility TEXT NOT NULL DEFAULT 'public',
       view_visibility TEXT NOT NULL DEFAULT 'public',
       icon_emoji TEXT, icon_image_id TEXT,
+      -- #3700: what a private community's invite preview reads beyond the
+      -- link (community-invites.js entryFor), and the access check's own.
+      icon_color TEXT, moderation_suspended_at TIMESTAMPTZ,
       manifest_snapshot JSONB, featured_illustration JSONB,
       approver_policy TEXT NOT NULL DEFAULT 'anyone', approvals_required INTEGER,
       locked BOOLEAN NOT NULL DEFAULT FALSE,
@@ -73,7 +76,14 @@ async function connectPool() {
     -- What the page's picture reads (community-invites.js pictureFor).
     CREATE TABLE chat_sessions (
       id SERIAL PRIMARY KEY, app_id INTEGER, merged_at TIMESTAMPTZ,
-      shots_state TEXT, shots_run_id TEXT);
+      shots_state TEXT, shots_run_id TEXT, status TEXT);
+    -- Whether its first version is on its way: "Maya is making …"
+    -- (community-invites.js firstVersionPending).
+    CREATE TABLE homeroom_bot_first_versions (
+      app_id INTEGER PRIMARY KEY, bot_builds BOOLEAN NOT NULL DEFAULT FALSE,
+      status TEXT NOT NULL DEFAULT 'waiting', issue_number INTEGER);
+    CREATE TABLE homeroom_bot_runs (
+      id SERIAL PRIMARY KEY, app_id INTEGER, issue_number INTEGER, proposal_session_id INTEGER);
     CREATE TABLE shot_runs (id TEXT PRIMARY KEY, state TEXT NOT NULL);
     CREATE TABLE shot_artifacts (
       id TEXT PRIMARY KEY, run_id TEXT NOT NULL, story_id TEXT NOT NULL,
@@ -100,6 +110,8 @@ async function connectPool() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       PRIMARY KEY (app_id, user_id));
     CREATE TABLE app_admins (app_id INTEGER NOT NULL, user_id INTEGER NOT NULL);
+    CREATE TABLE user_app_blocks (
+      user_id INTEGER NOT NULL, app_id INTEGER NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
     CREATE TABLE events (
       id SERIAL PRIMARY KEY, user_id INTEGER, app_id INTEGER, session_id INTEGER,
       event_type TEXT, metadata JSONB, created_at TIMESTAMPTZ DEFAULT NOW());
@@ -146,7 +158,6 @@ test('invite links against a real PostgreSQL', async (t) => {
   const app = async (slug) => (await pool.query(`SELECT ${APP_COLUMNS} FROM apps WHERE slug = $1`, [slug])).rows[0];
   const member = async (communityId, userId) => (await pool.query(
     'SELECT 1 FROM community_members WHERE community_id = $1 AND user_id = $2', [communityId, userId])).rows.length === 1;
-  const saved = { budgets: process.env.INVITE_TREE_BUDGETS };
   try {
     let token;
     await t.test('a member makes a link; somebody outside the project cannot', async () => {
@@ -166,6 +177,7 @@ test('invite links against a real PostgreSQL', async (t) => {
         { live: true, name: 'Arena', inviter: 'ada', memberCount: 1 },
       );
       assert.equal(preview.project.slug, undefined, 'the address comes after joining');
+      assert.equal(preview.building, false, 'no first version on its way: made, not being made');
     });
 
     await t.test('somebody with access joins on the spot, pinned like Join; following again spends nothing', async () => {
@@ -190,19 +202,37 @@ test('invite links against a real PostgreSQL', async (t) => {
       assert.equal(rows[0].uses, 1);
     });
 
-    await t.test('somebody still waiting is queued, and letting them in joins them (the trigger)', async () => {
+    await t.test('somebody still waiting joins as a private member, and letting them in keeps them in', async () => {
       const cy = as(3, 'cy', false);
-      const queued = await invites.redeem(pool, { token, user: cy });
-      assert.deepEqual([queued.status, queued.slug, queued.skippedWaitlist], ['queued', null, false]);
-      assert.equal(await member(1, 3), false, 'not before they are let in');
-      assert.deepEqual(await invites.queuedFor(pool, 3), [{ name: 'Arena', inviter: 'ada' }]);
-      assert.equal((await invites.redeem(pool, { token, user: cy })).status, 'queued', 'a second follow is the same row');
+      const joined = await invites.redeem(pool, { token, user: cy });
+      assert.deepEqual([joined.status, joined.slug, joined.privateMember], ['joined', 'arena', true]);
+      assert.equal(await member(1, 3), true, 'in the community now, before they are let in');
+      const tier = await pool.query(
+        'SELECT has_platform_access, private_member_since IS NOT NULL AS private FROM users WHERE id = 3');
+      assert.deepEqual(tier.rows, [{ has_platform_access: false, private: true }], 'still waiting, as a private member');
+      assert.deepEqual(await invites.queuedFor(pool, 3), [], 'nothing left queued');
+      assert.equal((await invites.redeem(pool, { token, user: cy })).status, 'member', 'a second follow spends nothing');
       await waitlist.grantPlatformAccess(pool, 3, { manualRelease: true });
-      assert.equal(await member(1, 3), true, 'joined the moment access was granted');
+      assert.equal(await member(1, 3), true, 'still in once let in');
       const { rows } = await pool.query('SELECT status, applied_at IS NOT NULL AS applied FROM community_invite_redemptions WHERE user_id = 3');
       assert.deepEqual(rows, [{ status: 'joined', applied: true }]);
       const gen = await pool.query('SELECT invite_generation FROM users WHERE id = 3');
       assert.equal(gen.rows[0].invite_generation, 0, 'let off the waitlist by hand is generation 0');
+    });
+
+    await t.test('a redemption queued before private membership is applied when its link is followed again, spending nothing', async () => {
+      const arena = await app('arena');
+      const made = await invites.createInvite(pool, { app: arena, user: ADA });
+      const { rows: [{ id }] } = await pool.query("INSERT INTO users (username) VALUES ('quinn') RETURNING id");
+      await pool.query(
+        "INSERT INTO community_invite_redemptions (invite_id, user_id, status) VALUES ($1, $2, 'queued')", [made.link.id, id]);
+      await pool.query('UPDATE community_invites SET uses = 1 WHERE id = $1', [made.link.id]);
+      const again = await invites.redeem(pool, { token: made.link.token, user: as(id, 'quinn', false) });
+      assert.deepEqual([again.status, again.slug, again.privateMember], ['joined', 'arena', true]);
+      assert.equal(await member(1, id), true);
+      const { rows } = await pool.query('SELECT uses FROM community_invites WHERE id = $1', [made.link.id]);
+      assert.equal(rows[0].uses, 1, 'its use was spent when it was queued');
+      await invites.revokeInvite(pool, { inviteId: made.link.id, user: ADA });
     });
 
     await t.test('a link used as often as it allows is dead, and says only why', async () => {
@@ -219,14 +249,100 @@ test('invite links against a real PostgreSQL', async (t) => {
       const collab = await pool.query('SELECT status, invited_by FROM app_collaborators WHERE app_id = 2 AND user_id = 4');
       assert.deepEqual(collab.rows, [{ status: 'member', invited_by: 1 }]);
       assert.equal(await member(2, 4), true);
-      assert.equal((await invites.redeem(pool, { token: made.link.token, user: as(5, 'eve', false) })).status, 'queued');
+      const eve = await invites.redeem(pool, { token: made.link.token, user: as(5, 'eve', false) });
+      assert.deepEqual([eve.status, eve.privateMember], ['joined', true], 'somebody still waiting joins as a private member');
+      const eveCollab = await pool.query('SELECT status FROM app_collaborators WHERE app_id = 2 AND user_id = 5');
+      assert.deepEqual(eveCollab.rows, [{ status: 'member' }], 'a collaborator like anybody the link lets in');
+      // What turning it off cancels is a redemption still queued: one from
+      // before private membership, or one the link could not grant then.
+      const { rows: [{ id: zed }] } = await pool.query("INSERT INTO users (username) VALUES ('zed') RETURNING id");
+      await pool.query(
+        "INSERT INTO community_invite_redemptions (invite_id, user_id, status) VALUES ($1, $2, 'queued')", [made.link.id, zed]);
       assert.equal((await invites.revokeInvite(pool, { inviteId: made.link.id, user: as(2, 'bo', true) })).status, 404,
         'a stranger cannot, and is not told it exists');
       assert.deepEqual(await invites.revokeInvite(pool, { inviteId: made.link.id, user: ADA }), { ok: true, cancelled: 1 });
+      await waitlist.grantPlatformAccess(pool, zed);
       await waitlist.grantPlatformAccess(pool, 5);
-      const none = await pool.query('SELECT 1 FROM app_collaborators WHERE app_id = 2 AND user_id = 5');
+      const none = await pool.query('SELECT 1 FROM app_collaborators WHERE app_id = 2 AND user_id = $1', [zed]);
       assert.equal(none.rows.length, 0, 'a cancelled invite is not applied on release');
+      assert.equal(await member(2, 5), true, 'and eve, let in, is still in');
       assert.equal((await invites.preview(pool, made.link.token)).reason, 'revoked');
+    });
+
+    await t.test('#3700: a private community\'s live link is an invite preview from the link alone; only Join lets anyone in', async () => {
+      const appAccess = require('../src/services/app-access');
+      const group = await app('book-club');
+      await pool.query(`INSERT INTO users (id, username, has_platform_access) VALUES
+        (13, 'jo', TRUE), (14, 'kit', TRUE), (15, 'lou', TRUE), (16, 'max', TRUE)`);
+      await pool.query(`UPDATE apps SET icon_color = '#2e6660', manifest_snapshot = '{"description":"Our monthly pick"}' WHERE id = 2`);
+      const jo = as(13, 'jo', true);
+      const opens = (user) => appAccess.getAppForUser(pool, 'book-club', user, 'view', appAccess.ACCESS_COLUMNS);
+      const made = await invites.createInvite(pool, { app: group, user: ADA, note: 'Come read' });
+      const usesOf = async () => (await pool.query('SELECT uses FROM community_invites WHERE id = $1', [made.link.id])).rows[0].uses;
+
+      // A non-member, link or no link, is refused by the gates as before.
+      assert.equal(await opens(jo), null, 'the existing view gate 404s a non-member');
+      const standing = await invites.standing(pool, made.link.token, jo);
+      assert.deepEqual([standing.live, standing.mine, standing.slug, standing.page], [true, null, null, null]);
+      assert.deepEqual(standing.invitePreview, { iconColor: '#2e6660', audienceLabel: 'Private community' });
+      assert.deepEqual(
+        [standing.project.name, standing.project.description, standing.inviter, standing.note, standing.memberCount],
+        ['Book Club', 'Our monthly pick', 'ada', 'Come read', (await pool.query('SELECT COUNT(*)::int AS n FROM community_members WHERE community_id = 2')).rows[0].n],
+      );
+      // Only what the link's own preview says: no other member, no item, no
+      // address of the project.
+      const text = JSON.stringify(standing);
+      const { rows: others } = await pool.query(
+        `SELECT u.username FROM community_members m JOIN users u ON u.id = m.user_id
+          WHERE m.community_id = 2 AND u.username <> 'ada'`);
+      assert.ok(others.length > 0, 'the group has members besides its inviter');
+      for (const { username } of others) assert.equal(text.includes(`"${username}"`), false, `${username} is not named`);
+      assert.doesNotMatch(text, /book-club|\/app\//, 'nor the project\'s address');
+      for (const key of ['members', 'items', 'proposals', 'issues', 'channel', 'activity', 'repo_url']) {
+        assert.equal(text.includes(`"${key}"`), false, `no ${key}`);
+      }
+      assert.equal(await opens(jo), null, 'and reading it opened nothing');
+
+      // A link that is not live shows no preview: turned off, expired, used
+      // up, or its maker no longer in the group (deadReason, redeem's rule).
+      const deadly = [
+        ['revoked', async (link) => invites.revokeInvite(pool, { inviteId: link.id, user: ADA })],
+        ['expired', async (link) => pool.query("UPDATE community_invites SET expires_at = NOW() - INTERVAL '1 minute' WHERE id = $1", [link.id])],
+        ['used_up', async (link) => pool.query('UPDATE community_invites SET uses = max_uses WHERE id = $1', [link.id])],
+      ];
+      for (const [reason, kill] of deadly) {
+        const link = (await invites.createInvite(pool, { app: group, user: ADA })).link;
+        await kill(link);
+        const dead = await invites.standing(pool, link.token, jo);
+        assert.deepEqual([dead.live, dead.reason, dead.page, dead.invitePreview, dead.project], [false, reason, null, null, undefined], reason);
+      }
+      await pool.query("INSERT INTO app_collaborators (app_id, user_id, status) VALUES (2, 15, 'member')");
+      await pool.query('INSERT INTO community_members (community_id, user_id) VALUES (2, 15)');
+      const lous = (await invites.createInvite(pool, { app: group, user: as(15, 'lou', true) })).link;
+      await pool.query('DELETE FROM app_collaborators WHERE app_id = 2 AND user_id = 15');
+      const gone = await invites.standing(pool, lous.token, jo);
+      assert.deepEqual([gone.live, gone.reason, gone.invitePreview], [false, 'revoked', null], 'a maker out of the group');
+
+      // A suspended app, or one this viewer blocked: no preview either.
+      await pool.query('UPDATE apps SET moderation_suspended_at = NOW() WHERE id = 2');
+      assert.equal((await invites.standing(pool, made.link.token, as(14, 'kit', true))).invitePreview, null, 'suspended');
+      await pool.query('UPDATE apps SET moderation_suspended_at = NULL WHERE id = 2');
+      await pool.query('INSERT INTO user_app_blocks (user_id, app_id) VALUES (14, 2)');
+      assert.equal((await invites.standing(pool, made.link.token, as(14, 'kit', true))).invitePreview, null, 'blocked');
+
+      // Join through the preview: a use spent, a member, the app open to them.
+      const before = await usesOf();
+      const joined = await invites.redeem(pool, { token: made.link.token, user: jo });
+      assert.deepEqual([joined.status, joined.slug], ['joined', 'book-club']);
+      assert.equal(await usesOf(), before + 1);
+      assert.ok(await opens(jo), 'a member now, through the gate the link did not loosen');
+      // An existing member following it again: the hub, as before.
+      const again = await invites.standing(pool, made.link.token, jo);
+      assert.deepEqual([again.mine, again.slug, again.page, again.invitePreview], ['joined', 'book-club', null, null]);
+      // And a public community's link is still its page.
+      const arenaLink = (await invites.createInvite(pool, { app: await app('arena'), user: ADA })).link;
+      const pub = await invites.standing(pool, arenaLink.token, as(16, 'max', true));
+      assert.deepEqual([pub.page, pub.invitePreview], ['arena', null]);
     });
 
     await t.test('a link dies with its maker\'s standing, and so does a queued invite from it', async () => {
@@ -235,7 +351,11 @@ test('invite links against a real PostgreSQL', async (t) => {
       await pool.query("INSERT INTO community_members (community_id, user_id) VALUES (2, 2) ON CONFLICT DO NOTHING");
       const made = await invites.createInvite(pool, { app: group, user: as(2, 'bo', true) });
       assert.ok(made.ok);
-      assert.equal((await invites.redeem(pool, { token: made.link.token, user: as(7, 'gus', false) })).status, 'queued');
+      const gus = await invites.redeem(pool, { token: made.link.token, user: as(7, 'gus', false) });
+      assert.deepEqual([gus.status, gus.privateMember], ['joined', true], 'gus joins while bo can still grant it');
+      const { rows: [{ id: una }] } = await pool.query("INSERT INTO users (username) VALUES ('una') RETURNING id");
+      await pool.query(
+        "INSERT INTO community_invite_redemptions (invite_id, user_id, status) VALUES ($1, $2, 'queued')", [made.link.id, una]);
       // bo is removed from the group.
       await pool.query('DELETE FROM app_collaborators WHERE app_id = 2 AND user_id = 2');
       assert.deepEqual(await invites.preview(pool, made.link.token), { live: false, reason: 'revoked' });
@@ -244,12 +364,18 @@ test('invite links against a real PostgreSQL', async (t) => {
       const stranger = await pool.query("INSERT INTO users (username, has_platform_access) VALUES ('hal', TRUE) RETURNING id");
       const hal = await invites.redeem(pool, { token: made.link.token, user: as(stranger.rows[0].id, 'hal', true) });
       assert.deepEqual([hal.ok, hal.reason], [false, 'revoked']);
-      await waitlist.grantPlatformAccess(pool, 7);
-      const none = await pool.query('SELECT 1 FROM app_collaborators WHERE app_id = 2 AND user_id = 7');
-      assert.equal(none.rows.length, 0, 'gus, queued on it, is not added on release');
-      // Put gus back on the waitlist for the tree case below.
-      await pool.query('UPDATE users SET has_platform_access = FALSE, invite_generation = NULL WHERE id = 7');
+      // And a queued follow of it from before does not join anybody: not on a
+      // second follow (the link is dead) and not on release.
+      const late = await invites.redeem(pool, { token: made.link.token, user: as(una, 'una', false) });
+      assert.notEqual(late.status, 'joined', 'una, queued on it, is not let in by following it again');
+      await waitlist.grantPlatformAccess(pool, una);
+      const none = await pool.query('SELECT 1 FROM app_collaborators WHERE app_id = 2 AND user_id = $1', [una]);
+      assert.equal(none.rows.length, 0, 'una, queued on it, is not added on release');
+      // Put gus back on the waitlist, out of the group, for the tree case below.
+      await pool.query('UPDATE users SET has_platform_access = FALSE, invite_generation = NULL, private_member_since = NULL WHERE id = 7');
       await pool.query('DELETE FROM community_invite_redemptions WHERE user_id = 7');
+      await pool.query('DELETE FROM app_collaborators WHERE user_id = 7');
+      await pool.query('DELETE FROM community_members WHERE user_id = 7');
     });
 
     await t.test('a link carries its maker\'s note, and its page shows the project: an after-shot, else the card image', async () => {
@@ -321,115 +447,97 @@ test('invite links against a real PostgreSQL', async (t) => {
       assert.equal((await invites.preview(pool, made.link.token)).reason, 'revoked', 'until it is turned off');
     });
 
-    await t.test('WP-D: a project with no shot yet shows its sketch through a live link, and only then', async () => {
+    await t.test('WP-D: a project with no shot yet shows the card of its idea through a live link, and only then', async () => {
       const arena = await app('arena');
       const made = await invites.createInvite(pool, { app: arena, user: ADA, days: 0, maxUses: 0 });
       assert.equal((await invites.preview(pool, made.link.token)).project.picture, null);
-      assert.equal(await invites.sketchPage(pool, made.link.token), null, 'no sketch yet');
       await pool.query(`INSERT INTO app_sketches (app_id, status, created_at) VALUES (1, 'pending', NOW())`);
-      assert.equal((await invites.preview(pool, made.link.token)).project.picture, null, 'one being drawn is not shown');
+      assert.equal((await invites.preview(pool, made.link.token)).project.picture, null, 'one being made is not shown');
+      // A screen mock from before the card is not shown either.
       await pool.query(`UPDATE app_sketches SET status = 'ready', design = $1, html = $2 WHERE app_id = 1`,
-        [JSON.stringify({ job: 'Run the arena', accent: { light: '#c2410c', dark: '#fb923c' } }), '<h1 class="text-title">Arena</h1>']);
+        [JSON.stringify({ job: 'Run the arena' }), '<h1 class="text-title">Arena</h1>']);
+      assert.equal((await invites.preview(pool, made.link.token)).project.picture, null, 'a screen mock is not the card');
+      const card = { kind: 'card', emoji: '🎲', tagline: 'Game night for the arena', points: ['Pick the game', 'See who is in'], source: 'model' };
+      await pool.query(`UPDATE app_sketches SET design = $1, html = NULL WHERE app_id = 1`, [JSON.stringify(card)]);
       const preview = await invites.preview(pool, made.link.token);
-      assert.deepEqual(preview.project.picture, { kind: 'sketch', url: `/api/public/invites/${made.link.token}/sketch.html`, darkUrl: null });
-      const page = await invites.sketchPage(pool, made.link.token, { theme: 'dark' });
-      assert.match(page, /<title>Arena: a sketch<\/title>/);
-      assert.match(page, /<main class="sketch-screen">\n<h1 class="text-title">Arena<\/h1>/);
-      assert.match(page, /:root\{--ground:12 10 9;/, 'in the look it was asked for');
+      assert.deepEqual(preview.project.picture, {
+        kind: 'sketch', url: null, darkUrl: null,
+        card: { emoji: '🎲', tagline: 'Game night for the arena', points: ['Pick the game', 'See who is in'] },
+      });
       await invites.revokeInvite(pool, { inviteId: made.link.id, user: ADA });
-      assert.equal(await invites.sketchPage(pool, made.link.token), null, 'a dead link shows nothing');
+      assert.equal((await invites.preview(pool, made.link.token)).project, undefined, 'a dead link shows nothing');
     });
 
     await t.test('WP-D: what joining means, said from the project\'s real rule', async () => {
       const governance = require('../src/services/governance');
+      // The default rule is said for the vote's own headcount
+      // (active-users.js getActiveUserStats), which reads tables this scratch
+      // schema does not carry: it is stood in for here, and read for real in
+      // tests/username-invite-join-postgres.test.js. The invites still
+      // waiting are counted from app_collaborators, which is here.
+      const votes = require('../src/services/active-users');
+      const realStats = votes.getActiveUserStats;
+      let active = 1;
+      votes.getActiveUserStats = async () => ({ active, majority: Math.floor(active / 2) + 1 });
       const rule = async (patch = {}) => {
         await pool.query(`UPDATE apps SET approver_policy = $1, approvals_required = $2, locked = $3 WHERE id = 1`,
           [patch.policy || 'anyone', patch.n ?? null, !!patch.locked]);
         governance.invalidateGovernance(1);
         return invites.joiningRule(pool, { ...(await app('arena')), locked: !!patch.locked });
       };
-      assert.equal(await rule(), 'With one other person using it, a change goes live when you both say yes, '
-        + 'or 3 days after one of you says yes if the other doesn\'t answer.');
-      assert.equal(await rule({ locked: true }), 'With one other person using it, a change goes live when you both say yes, '
-        + 'or 3 days after one of you says yes if the other doesn\'t answer. An admin has to say yes too.');
-      assert.equal(await rule({ n: 2 }), 'A change goes live once it has 2 yes votes.');
-      assert.equal(await rule({ n: 1, policy: 'invited' }), 'A change goes live once it has a yes from its approvers.');
-      assert.equal(await rule({ policy: 'invited' }), 'A change goes live once its approvers back it.');
-      await rule();
+      try {
+        assert.equal(await rule(), 'With one other person using it, a change goes live when you both say yes, '
+          + 'or 3 days after one of you says yes if the other doesn\'t answer.');
+        assert.equal(await rule({ locked: true }), 'With one other person using it, a change goes live when you both say yes, '
+          + 'or 3 days after one of you says yes if the other doesn\'t answer. An admin has to say yes too.');
+        assert.equal(await rule({ n: 2 }), 'A change goes live once it has 2 yes votes.');
+        assert.equal(await rule({ n: 1, policy: 'invited' }), 'A change goes live once it has a yes from its approvers.');
+        assert.equal(await rule({ policy: 'invited' }), 'A change goes live once its approvers back it.');
+        // First-session run-through, 5 October 2026: the people in it, and
+        // the invites by username still waiting, are counted.
+        active = 2;
+        assert.equal(await rule(), 'With one other person using it, a change goes live when you both say yes, '
+          + 'or 3 days after one of you says yes if the other doesn\'t answer.', 'two: the one other person is in it');
+        await pool.query("INSERT INTO app_collaborators (app_id, user_id, status, invited_by) VALUES (1, 4, 'invited', 1)");
+        assert.equal(await rule(), 'With 3 people in it, counting 1 invited, a change goes live when 2 of you say yes, '
+          + 'or 3 days after the first yes if nobody says no.');
+        await pool.query('DELETE FROM app_collaborators WHERE app_id = 1 AND user_id = 4');
+        active = 6;
+        assert.equal(await rule(), 'With 6 people using it, a change goes live when 3 of you say yes, '
+          + 'or 5 days after the first yes if nobody says no.');
+        assert.equal(await rule({ locked: true }), 'With 6 people using it, a change goes live when 3 of you say yes, '
+          + 'or 5 days after the first yes if nobody says no. An admin has to say yes too.');
+      } finally {
+        votes.getActiveUserStats = realStats;
+        await rule();
+      }
     });
 
-    await t.test('THE TREE, on by default: only a release by hand has skips, and invites do not chain', async () => {
-      process.env.INVITE_TREE_BUDGETS = '1';
-      assert.equal(await invites.treeEnabled(pool), true, 'no setting stored: on');
+    await t.test('no skips past the waitlist: anybody new joins as a private member, whoever made the link', async () => {
       const arena = await app('arena');
-      const generation = async (id) => (await pool.query('SELECT invite_generation FROM users WHERE id = $1', [id])).rows[0].invite_generation;
-
-      // ada had access before the tree: no generation, so no skips, and her
-      // link queues somebody new like it would with the tree off.
-      assert.equal(await invites.skipsLeft(pool, ADA), 0);
-      const adas = await invites.createInvite(pool, { app: arena, user: ADA });
-      const queued = await invites.redeem(pool, { token: adas.link.token, user: as(6, 'fay', false) });
-      assert.deepEqual([queued.status, queued.skippedWaitlist], ['queued', false]);
-      // Admitting her again by hand gives her none: it is not what let her in.
-      await waitlist.grantPlatformAccess(pool, 1, { manualRelease: true });
-      assert.equal(await generation(1), null);
-      // Neither does a grant that is not a release by hand (eve, above).
-      assert.equal(await generation(5), null);
-      assert.equal(await invites.skipsLeft(pool, as(5, 'eve', true)), 0);
-
-      // cy was let off the waitlist by hand: generation 0, with a skip.
+      const newcomer = async (name) => (await pool.query('INSERT INTO users (username) VALUES ($1) RETURNING id', [name])).rows[0].id;
+      const tier = async (id) => (await pool.query(
+        'SELECT has_platform_access, admitted_by, invite_generation, private_member_since IS NOT NULL AS private FROM users WHERE id = $1',
+        [id])).rows[0];
+      // cy was let off the waitlist by hand (generation 0: the tree's ten
+      // skips once), and root is an admin (the tree's unlimited ones).
       const CY = as(3, 'cy', true);
-      assert.equal(await invites.skipsLeft(pool, CY), 1);
-      const cys = await invites.createInvite(pool, { app: arena, user: CY });
-
-      // Switched off in Admin → Waitlist, a skip is not spent: ivy waits.
-      await invites.setTreeEnabled(pool, { enabled: false, actorId: 9 });
-      assert.equal(await invites.skipsLeft(pool, CY), null, 'off: nothing to show');
-      const ivyId = (await pool.query("INSERT INTO users (username) VALUES ('ivy') RETURNING id")).rows[0].id;
-      const ivy = await invites.redeem(pool, { token: cys.link.token, user: as(ivyId, 'ivy', false) });
-      assert.deepEqual([ivy.status, ivy.skippedWaitlist], ['queued', false]);
-      await invites.setTreeEnabled(pool, { enabled: true, actorId: 9 });
-      assert.equal(await invites.skipsLeft(pool, CY), 1, 'nothing was spent while it was off');
-
-      const fay = await invites.redeem(pool, { token: cys.link.token, user: as(6, 'fay', false) });
-      assert.deepEqual([fay.status, fay.skippedWaitlist, fay.slug], ['joined', true, 'arena']);
-      const row = await pool.query('SELECT has_platform_access, admitted_by, invite_generation FROM users WHERE id = 6');
-      assert.deepEqual(row.rows[0], { has_platform_access: true, admitted_by: 3, invite_generation: 1 });
-      assert.equal(await invites.skipsLeft(pool, CY), 0);
-      const gus = await invites.redeem(pool, { token: cys.link.token, user: as(7, 'gus', false) });
-      assert.deepEqual([gus.status, gus.skippedWaitlist], ['queued', false], 'cy\'s one skip is spent');
-
-      // No chaining: fay, whom a link let in, has none of her own.
-      const FAY = as(6, 'fay', true);
-      assert.equal(await invites.skipsLeft(pool, FAY), 0);
-      const fays = await invites.createInvite(pool, { app: arena, user: FAY });
-      const viaFay = await invites.redeem(pool, { token: fays.link.token, user: as(7, 'gus', false) });
-      assert.deepEqual([viaFay.status, viaFay.skippedWaitlist], ['queued', false]);
-      // Admitting her by hand later leaves her where the link put her.
-      await waitlist.grantPlatformAccess(pool, 6, { manualRelease: true });
-      assert.equal(await generation(6), 1);
-
-      // An admin's link has no limit, but it is not a release by hand: the
-      // person it lets in is generation 1, with nothing to give.
       const ROOT = { id: 9, username: 'root', isAdmin: true, hasPlatformAccess: true };
-      assert.equal(await invites.skipsLeft(pool, ROOT), null, 'unlimited: nothing to count down');
-      const roots = await invites.createInvite(pool, { app: arena, user: ROOT });
-      const viaRoot = await invites.redeem(pool, { token: roots.link.token, user: as(7, 'gus', false) });
-      assert.deepEqual([viaRoot.status, viaRoot.skippedWaitlist], ['joined', true]);
-      const gusRow = await pool.query('SELECT admitted_by, invite_generation FROM users WHERE id = 7');
-      assert.deepEqual(gusRow.rows[0], { admitted_by: 9, invite_generation: 1 });
-      assert.equal(await invites.skipsLeft(pool, as(7, 'gus', true)), 0);
-
-      // What the Waitlist screen shows.
-      const shown = await invites.adminPayload(pool);
-      assert.deepEqual(
-        { enabled: shown.enabled, rootSkips: shown.rootSkips, roots: shown.roots, throughLinks: shown.throughLinks, updatedBy: shown.updatedBy },
-        { enabled: true, rootSkips: 1, roots: 1, throughLinks: 2, updatedBy: 'root' },
-        'cy can invite; fay and gus got in through links; root switched it last',
-      );
+      for (const [maker, name] of [[CY, 'nia'], [ROOT, 'ola'], [ADA, 'pia']]) {
+        const link = (await invites.createInvite(pool, { app: arena, user: maker })).link;
+        const id = await newcomer(name);
+        const joined = await invites.redeem(pool, { token: link.token, user: as(id, name, false) });
+        assert.deepEqual([joined.status, joined.slug, joined.privateMember], ['joined', 'arena', true], `${maker.username}'s link`);
+        assert.equal('skippedWaitlist' in joined, false);
+        assert.deepEqual(await tier(id), { has_platform_access: false, admitted_by: null, invite_generation: null, private: true },
+          `${name} waits for the waitlist like anybody else`);
+      }
+      // Letting one in is the waitlist's own release.
+      const { rows: [{ id: nia }] } = await pool.query("SELECT id FROM users WHERE username = 'nia'");
+      await waitlist.grantPlatformAccess(pool, nia, { manualRelease: true });
+      assert.equal((await tier(nia)).has_platform_access, true);
     });
   } finally {
-    process.env.INVITE_TREE_BUDGETS = saved.budgets || '';
     await dropSchema(pool);
   }
 });

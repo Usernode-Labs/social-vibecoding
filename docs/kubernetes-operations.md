@@ -62,9 +62,14 @@ commit, and once (per commit and verdict) records the stall on
 admins. The Dev board shows an amber banner with the workflow run linked until
 the running build catches up. A red run is reported at once; a run still going,
 a run that succeeded without a rollout, or no run at all is reported after
-`RELEASE_GRACE_MS` (default ten minutes). Re-running the failed workflow jobs,
-or the next merge, releases the commit; the poller clears the record on the new
-build's first tick. A token without `actions:read` degrades to the time-based
+`RELEASE_GRACE_MS` (default ten minutes). The workflow runs one push at a time,
+so after a burst of merges the newest one's run waits for the others: a run
+that has not finished is reported only once no run of the workflow on `main`
+has finished for the grace, and a run that succeeded gives the rollout its own
+grace from when it finished. Re-running the failed workflow jobs, or the next
+merge, releases the commit; a build that already carries the recorded commit
+reads as resolved at once, and the poller clears the record on the new build's
+first tick at `main`. A token without `actions:read` degrades to the time-based
 verdict rather than failing.
 
 Nothing in that chain tells open browser tabs about the new build either; the
@@ -113,6 +118,34 @@ working HTTPS even when their Pods are Ready. Existing Ingresses keep their old
 TLS references until reconciled or migrated. The infra runbook
 `docs/23-social-vibecoding-shared-tls.md` includes a read-only migration planner,
 issuance-limit recovery and explicit retirement of legacy Certificates.
+
+## Before/after shots cleanup
+
+Shots recovery retries resource cleanup for every terminal run outcome, including
+superseded cancellations and stale runs. It removes current and legacy base/head
+environments, their disposable databases, and hosted screenshot fixture apps.
+The two-minute recovery poll handles at most 20 terminal cleanup retries, after
+a five-minute grace period. Failed attempts remain pending and move behind runs
+that have not been attempted, so an API outage cannot strand the rest of the queue.
+
+`trace_summary.cleanupComplete` is trusted only with the current
+`cleanupVersion` (2). Earlier versions omitted hosted fixture runtimes; these rows
+are rechecked automatically. Run metadata is retained until cleanup succeeds.
+A successful capture can still publish its shots with cleanup pending.
+
+At startup and every six hours, the retention sweep also checks Kubernetes
+Deployments against their shots/evidence run labels, exact runtime names and run
+state. It removes up to 100 abandoned runtimes per pass, including those whose run
+rows disappeared with a deleted session. It leaves nonterminal runs and resources
+younger than 45 minutes alone. Ordinary apps and proposal previews are excluded.
+The synthetic hosted fixture app id is `2147482999`; its `production` environment
+label does not mean that it is a user's deployed app.
+
+Recovery logs report `cleanupRetried`; retention logs additionally report
+`orphanRuntimesExamined`, `orphanRuntimesRemoved` and `orphanRuntimeFailures`.
+Kubernetes or database read failures abort inventory cleanup without deletion.
+No separate manual cleanup is required for the historical fixture backlog after
+deploying this change; use the normal platform image/chart release path.
 
 ## HTTP keep-alive ordering
 

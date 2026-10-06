@@ -71,7 +71,7 @@ const FILE_EXEMPTIONS = new Map([
 ]);
 
 const PATH_EXEMPTIONS = [
-  [/^\/(?:app-icons|avatars|illustrations|issue-images|visuals|challenge-illustrations)\//, 'binary asset delivery rather than an interactive control'],
+  [/^\/(?:app-icons|avatars|illustrations|issue-images|issue-videos|visuals|challenge-illustrations)\//, 'binary asset delivery rather than an interactive control'],
   [/^\/reports\//, 'public immutable share document'],
   [/^\/\.well-known\//, 'protocol discovery metadata'],
   [/^\/api\/connect\/oauth\/(?:register|token|revoke)$/, 'OAuth protocol endpoint represented by connector Settings'],
@@ -110,6 +110,15 @@ const REVIEWED_ROUTE_EXEMPTIONS = [
     matches: (route) => route.source === 'server.js'
       && ['/admin', '/admin-features', '/dashboard', '/debug', '/gallery', '*'].includes(route.path),
     reason: 'legacy or catch-all document route represented by in-app navigation capabilities',
+  },
+  {
+    matches: (route) => route.source === 'src/routes/mail-tracking.js'
+      && ['/mail/c/:messageId/:linkIndex', '/mail/o/:messageId.gif'].includes(route.path),
+    reason: 'signed sessionless email redirect and image endpoints, never model-visible interactive controls',
+  },
+  {
+    matches: (route) => route.source === 'src/routes/mail-webhooks.js' && route.path === '/api/mail/webhooks/resend',
+    reason: 'provider callback authenticated by a raw-body signature, never a signed-in Classic control',
   },
   {
     matches: (route) => route.source === 'src/routes/activity-mail.js' && route.path === '/mail/unsubscribe',

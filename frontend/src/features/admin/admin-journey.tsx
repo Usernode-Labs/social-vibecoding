@@ -136,7 +136,11 @@ const JUI = Object.freeze({
   cohort: 'inline-flex h-6 items-center rounded-full px-3 text-xs font-medium transition-colors',
   stepper: 'inline-flex h-6 w-6 items-center justify-center rounded-full bg-zinc-100 dark:bg-zinc-800 text-xs text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700 disabled:opacity-40',
   search: 'h-6 w-full sm:w-44 rounded-full border-0 bg-zinc-100 dark:bg-zinc-800 px-3 text-xs text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-500 dark:placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-violet-500',
-  mileGrid: 'grid items-center gap-x-1 gap-y-1.5 grid-cols-[repeat(9,minmax(0,1fr))_2.5rem] sm:grid-cols-[7.5rem_repeat(9,minmax(0,1fr))_2.5rem]',
+  // Nine steps, then the onboard column, then days since.
+  mileGrid: 'grid items-center gap-x-1 gap-y-1.5 grid-cols-[repeat(10,minmax(0,1fr))_2.5rem] sm:grid-cols-[7.5rem_repeat(10,minmax(0,1fr))_2.5rem]',
+  // A column label is a button: tapping it says what the column counts.
+  mileLabel: 'w-full min-w-0 rounded text-center text-[10px] leading-tight tracking-tight text-zinc-500 dark:text-zinc-400 underline decoration-dotted decoration-zinc-400 dark:decoration-zinc-500 underline-offset-2 hover:text-zinc-900 dark:hover:text-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500',
+  mileHelp: 'absolute top-full z-20 mt-1 w-56 max-w-[70vw] rounded-lg bg-zinc-900 dark:bg-zinc-100 px-3 py-2 text-left text-xs font-normal normal-case leading-snug tracking-normal text-white dark:text-zinc-900 shadow-lg',
   // The creation path by week: the week, then one column per step.
   weekGrid: 'grid items-start gap-x-2 gap-y-1 grid-cols-[3.5rem_repeat(5,minmax(0,1fr))]',
   pathStep: 'rounded bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 text-zinc-700 dark:text-zinc-300',
@@ -158,6 +162,9 @@ type MilePerson = {
   userId: number | null; name: string; steps: MileStep[]; furthest: string | null; stuckAt: string | null;
   stuckReason: string | null; daysSince: number; failedAttempts: number; repeatedTaps: number;
   tour: { ended: string; step: number | null; at: string | null } | null;
+  // Getting started: the tour and the season's First challenges, x of n.
+  // `null` without an account; `shown: false` when the card was never drawn.
+  onboard?: { shown: boolean; done: number | null; total: number | null; complete: boolean } | null;
 };
 type Summary = {
   demo?: boolean;
@@ -594,6 +601,69 @@ const STEP_FILL: Record<string, string> = {
 
 const MILE_KEYS = Object.keys(MILE_STEPS);
 
+// What each column counts, said where its label is tapped. Plain words and
+// the evidence behind each, because a three-letter label does not say that
+// "mail" is the provider taking the message, not the inbox getting it.
+const MILE_HELP: Record<string, string> = {
+  admitted: 'Let in from the waitlist.',
+  mail_sent: 'Our mail provider accepted the \u201cYou\u2019re in\u201d mail. That does not prove it reached the inbox.',
+  code_asked: 'A sign-in code was asked for. The mail\u2019s button asks for one as it opens, so this is the first proof the link was followed.',
+  account: 'Account created and finished.',
+  access: 'The account has platform access.',
+  opened: 'Opened Homeroom for the first time.',
+  username: 'Chose a username. No time is recorded for it.',
+  join: 'Answered \u201cWhat communities do you want to join?\u201d, or was not asked (an invite link or the story landing).',
+  first_act: 'The first thing they did themselves: a message, a vote, feedback, a request, a change, using a project or joining a community.',
+  onboard: 'How much of Getting started on Home is done: the tour, then the season\u2019s First challenges. \u2014 means the card was never shown.',
+};
+
+const HELP_KEYS = [...MILE_KEYS, 'onboard'];
+
+/**
+ * A column label that says what its column counts. Tap (or click) opens a
+ * small note under it and tap again, Escape or a tap anywhere else closes
+ * it; a mouse hovering shows the same note. Never a `title`: a phone has no
+ * hover, so the note has to open on a tap.
+ */
+function MileLabel({ id, label, open, onOpen, onClose }: {
+  id: string; label: string; open: 'tap' | 'hover' | null;
+  onOpen: (how: 'tap' | 'hover') => void; onClose: () => void;
+}) {
+  const i = HELP_KEYS.indexOf(id);
+  // Keep the note on the card: the first columns open rightwards, the last
+  // ones leftwards, the middle ones centred under the label.
+  const side = i < 3 ? 'left-0' : i > HELP_KEYS.length - 4 ? 'right-0' : 'left-1/2 -translate-x-1/2';
+  return (
+    <span className="relative min-w-0" data-journey-mile-label={id}>
+      <button type="button" className={JUI.mileLabel} aria-expanded={open != null}
+        aria-controls={open ? `journey-mile-help-${id}` : undefined}
+        onClick={() => (open === 'tap' ? onClose() : onOpen('tap'))}
+        // Over/out rather than enter/leave: the console's sections render
+        // through a portal, where React's synthetic enter/leave did not fire.
+        onPointerOver={(e) => { if (e.pointerType === 'mouse' && !open) onOpen('hover'); }}
+        onPointerOut={(e) => { if (e.pointerType === 'mouse' && open === 'hover') onClose(); }}>
+        {label}
+      </button>
+      {open ? (
+        <span id={`journey-mile-help-${id}`} role="note" className={`${JUI.mileHelp} ${side}`}>{MILE_HELP[id]}</span>
+      ) : null}
+    </span>
+  );
+}
+
+/** The onboard cell: x/n, a dash when the card was never shown. */
+function OnboardCell({ onboard }: { onboard: MilePerson['onboard'] }) {
+  if (!onboard || !onboard.shown) {
+    return <span className="text-center text-[11px] leading-none text-zinc-400 dark:text-zinc-500">{'\u2014'}</span>;
+  }
+  return (
+    <span className={`text-center text-[11px] leading-none tabular-nums ${onboard.complete
+      ? 'text-emerald-700 dark:text-emerald-400' : 'text-zinc-700 dark:text-zinc-300'}`}>
+      {onboard.done}/{onboard.total}
+    </span>
+  );
+}
+
 // The first mile of several cohorts at once ("everyone"): one read per
 // cohort, all or nothing.
 function useMiles(days: string[] | null): { miles: FirstMile[] | null; failed: boolean } {
@@ -631,6 +701,27 @@ function FirstMileCard({ cohorts, scope, onOpen }: { cohorts: Cohorts | null; sc
     return st && (st.state === 'done' || st.state === 'skipped' || st.state === 'unknown');
   }).length;
   const label = (cohort: string) => (cohort === 'other_way' ? 'Came in another way' : `Admitted ${weekLabel(cohort)}`);
+  const onboarded = people.filter((p) => p.onboard && p.onboard.complete).length;
+  // One column note open at a time, and how it opened: a tap keeps it until
+  // the next tap, a hover only while the mouse stays.
+  const [help, setHelp] = useState<{ id: string; how: 'tap' | 'hover' } | null>(null);
+  useEffect(() => {
+    if (!help || help.how !== 'tap') return undefined;
+    const onDown = (e: PointerEvent) => {
+      if (!(e.target instanceof Element) || !e.target.closest('[data-journey-mile-label]')) setHelp(null);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setHelp(null); };
+    document.addEventListener('pointerdown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [help]);
+  const labelFor = (id: string, text: string) => (
+    <MileLabel key={id} id={id} label={text} open={help && help.id === id ? help.how : null}
+      onOpen={(how) => setHelp({ id, how })} onClose={() => setHelp(null)} />
+  );
   return (
     <Card id="admin-journey-mile" title="First mile" note={`admit mail to first act · ${scope.cohort ? 'this cohort' : 'every cohort'}, any week`}>
       {miles ? (n ? (
@@ -647,11 +738,15 @@ function FirstMileCard({ cohorts, scope, onOpen }: { cohorts: Cohorts | null; sc
                   style={{ height: `${Math.max(4, Math.round((passed(key) / n) * 100))}%` }} />
               </div>
             ))}
+            <div className="flex flex-col items-stretch justify-end h-16" data-journey-mile-step="onboard">
+              <span className="text-center text-[11px] leading-none mb-0.5 text-zinc-500 dark:text-zinc-400">{onboarded}</span>
+              <div className="rounded-sm bg-violet-300 dark:bg-violet-400/50"
+                style={{ height: `${Math.max(4, Math.round((onboarded / n) * 100))}%` }} />
+            </div>
             <span />
             <span className="hidden sm:block" />
-            {MILE_KEYS.map((key) => (
-              <span key={key} className="min-w-0 text-center text-[10px] leading-tight tracking-tight text-zinc-500 dark:text-zinc-400">{MILE_SHORT[key] || key}</span>
-            ))}
+            {MILE_KEYS.map((key) => labelFor(key, MILE_SHORT[key] || key))}
+            {labelFor('onboard', 'onboard')}
             <span />
             {groups.map((m) => (
               <div key={m.cohort} className="contents">
@@ -660,13 +755,14 @@ function FirstMileCard({ cohorts, scope, onOpen }: { cohorts: Cohorts | null; sc
                   const done = p.steps.every((st) => st.state === 'done' || st.state === 'skipped' || st.state === 'unknown');
                   return (
                     <div key={`${p.userId ?? p.name}-${i}`} className="contents">
-                      <span className="col-span-10 sm:col-span-1 min-w-0 mt-1 sm:mt-0"><PersonChip person={p} onOpen={onOpen} /></span>
+                      <span className="col-span-11 sm:col-span-1 min-w-0 mt-1 sm:mt-0"><PersonChip person={p} onOpen={onOpen} /></span>
                       {MILE_KEYS.map((key) => {
                         const st = cellOf(p, key);
                         return st
-                          ? <span key={key} title={MILE_STEPS[key]} className={`h-2.5 rounded-sm ${STEP_FILL[st.state] || STEP_FILL.not_yet}`} />
+                          ? <span key={key} className={`h-2.5 rounded-sm ${STEP_FILL[st.state] || STEP_FILL.not_yet}`} />
                           : <span key={key} className="h-2.5 rounded-sm border border-dashed border-zinc-300 dark:border-zinc-600" />;
                       })}
+                      <OnboardCell onboard={p.onboard} />
                       <span className={`text-right text-xs tabular-nums ${p.stuckAt ? 'text-amber-700 dark:text-amber-400' : 'text-emerald-700 dark:text-emerald-400'}`}>
                         {p.stuckAt ? `${p.daysSince} d` : done ? '✓' : ''}
                       </span>

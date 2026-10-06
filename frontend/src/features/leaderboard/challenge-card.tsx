@@ -187,8 +187,10 @@ export function ProgressRail({ state, label, fill, name, counted = false, size =
 // rail. It takes only the room the others leave (basis 0), so on a narrow
 // phone it is what truncates, never the reward. Nothing to say is no line at
 // all, never a stray dot.
-export function ChallengeMeta({ deadline = null, text = null, earned = false, cadence = null, size = 'md' }: {
+export function ChallengeMeta({ deadline = null, ends = null, text = null, earned = false, cadence = null, size = 'md' }: {
   deadline?: string | null;
+  /** #3203: the detail page's "ends Mon 12 Oct, 02:00", after the deadline. */
+  ends?: string | null;
   text?: string | null;
   earned?: boolean;
   cadence?: string | null;
@@ -196,6 +198,7 @@ export function ChallengeMeta({ deadline = null, text = null, earned = false, ca
 }): ReactNode {
   const parts = [
     deadline ? <span key="deadline" className={META_DEADLINE}>{deadline}</span> : null,
+    ends ? <span key="ends" className={META_DEADLINE}>{ends}</span> : null,
     text ? <span key="amount" className={earned ? META_EARNED : META_REWARD}>{text}</span> : null,
     cadence ? <span key="cadence" className={META_CADENCE}>{cadence}</span> : null,
   ].filter(Boolean);

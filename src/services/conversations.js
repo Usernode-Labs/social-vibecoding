@@ -832,8 +832,15 @@ async function serializeConversation(db, user, row, { includeMembers = true } = 
     ? await getMessage(db, user, row.id, row.latest_message_id)
     : null;
   let unread = 0;
+  // The viewer's read cursor, beside the count it is the cursor of: the
+  // client opens a conversation at the first message after it and draws its
+  // "New" line there (frontend/src/features/messages/unread-anchor.ts). 0 is
+  // a member who has read nothing, which countUnread reads the same way; null
+  // is "not yours to know", hidden until acceptance like the count itself.
+  let lastReadMessageId = null;
   if (row.membership_status === 'member' && !row.deleted_peer) {
     unread = await countUnread(db, row.id, user.id, row.last_read_message_id);
+    lastReadMessageId = Number(row.last_read_message_id) || 0;
   }
   // An invitation is a consent envelope, not conversation access. The
   // requester identity is shown so the recipient can decide; roster, peer,
@@ -882,6 +889,7 @@ async function serializeConversation(db, user, row, { includeMembers = true } = 
     // posting. Invitations still use their own update timestamp.
     lastActivityAt: accepted ? (latest?.createdAt || row.created_at) : (row.updated_at || row.created_at),
     unreadCount: unread,
+    lastReadMessageId,
     awaitingAcceptance,
     canSend: row.membership_status === 'member' && row.status === 'active'
       && !(awaitingAcceptance && row.has_messages),

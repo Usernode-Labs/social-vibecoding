@@ -387,7 +387,7 @@ function withDemoProposals(proposals, selfApp, now = Date.now()) {
 // request the viewer asked for, whichever way they asked. Two ways in, one
 // list:
 //
-//   - the Ask for a change dialog, recorded in feedback_reports once the
+//   - the Suggest an improvement dialog, recorded in feedback_reports once the
 //     request exists (a platform request has no app_id there: it is the
 //     self-hosted app's, the repository it was filed into, matched by name);
 //   - a project's board, which records it in `issues` (kind 'general').
@@ -954,11 +954,16 @@ function profileRoutes(config) {
 
       try {
         const { rows } = await pool.query(
-          'SELECT needs_username_choice FROM users WHERE id = $1',
+          `SELECT needs_username_choice, username_provisional_since IS NOT NULL AS provisional
+             FROM users WHERE id = $1`,
           [req.user.id]
         );
         if (!rows.length) return res.status(404).json({ error: 'User not found' });
-        if (!rows[0].needs_username_choice) {
+        // A provisional handle (an invite's phone sign-up, made from the
+        // name it gave) is replaced the same once-only way, the first time
+        // the person goes somewhere public (usernames.replaceProvisionalUsername).
+        const provisional = rows[0].provisional === true && !rows[0].needs_username_choice;
+        if (!rows[0].needs_username_choice && !provisional) {
           // Already chosen — a replayed submit, or a second tab. Not an
           // error the person can act on, so the client treats it as "the
           // gate is done" and closes.
@@ -971,7 +976,9 @@ function profileRoutes(config) {
         const free = await usernames.checkAvailability(pool, next, req.user.id);
         if (!free.available) return res.status(409).json({ error: free.error });
 
-        const result = await usernames.chooseFirstUsername(pool, req.user.id, next);
+        const result = provisional
+          ? await usernames.replaceProvisionalUsername(pool, req.user.id, next)
+          : await usernames.chooseFirstUsername(pool, req.user.id, next);
         // The flag went out from under us between the read and the write —
         // the other tab won. Same answer as above.
         if (!result) {

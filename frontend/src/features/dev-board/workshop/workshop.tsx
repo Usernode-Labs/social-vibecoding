@@ -80,10 +80,11 @@ import { VotePicker } from '../card/dev-card';
 import { ProgressRing } from '@/components/ui/progress-ring';
 import { useWorkshopGroup } from './group-mode-store';
 import { describe as describeCommunity } from '../../workshop/community-scope';
+import { registerLevel } from '../../workshop/tab-ladder';
 import { markNeedsSeen, needsRowKey, unseenNeeds, useNeedsSeen } from '../../workshop/needs-seen';
 import { ApprovalRules, CommunityCard, ShareItCard, canMakePrivate, confirmMakePrivate, useCommunity } from './community-card';
 import { WorkshopNotices } from './notices';
-import { ChannelCard, NeedsCard, NothingToVote, owesVote, YourWorkCard } from './hub-cards';
+import { ChannelCard, FirstVersionCard, NeedsCard, NothingToVote, hubAlone, hubWorkEmpty, owesVote, YourWorkCard } from './hub-cards';
 import { ProjectDiscussion } from './project-discussion';
 import { ProjectBand, type ProjectTabKey } from './project-band';
 import { SinceSummaryCard } from './since-summary-card';
@@ -158,10 +159,10 @@ const EMPTY_SINCE: NonNullable<DevWorkshopView['since']> = {
  * can do (Open app, Invite, the ⋯, Joined), how lively it has been, what
  * landed since you were last here, Needs you, the discussion's last two
  * messages, your work, and Start a new change. DISCUSSION is its channel,
- * whole. NEEDS YOU is one decision per screen. The WORKSHOP is your work in
- * full, what moved since your last visit filed under each week, and All
- * items' numbers, whose See all opens ALL ITEMS: the whole board, with the
- * approval rule every change goes through above its categories. All items is
+ * whole. NEEDS YOU is one decision per screen. The WORKSHOP is, top to
+ * bottom, All items' numbers, whose See all opens ALL ITEMS (the whole
+ * board), the approval rule every change goes through, your work in full,
+ * and what moved since your last visit filed under each week. All items is
  * the one page, with its way back to the Workshop, and the Workshop tab stays
  * lit over it.
  *
@@ -499,24 +500,24 @@ function digestNote(meta: DevWorkshopView['meta'], written: boolean): string {
  * stopped being true: the "+" was only in All items' search row, so on
  * Current status it pointed at nothing on screen, and it has had no propose
  * row since New change moved to Improve (#1490) and then to the Homeroom
- * menu (#2740 review), where it is "Start a new change" under Agent sessions
- * since the UI overhaul — an owner decision this note does not undo. The "+"
+ * menu (#2740 review), an owner decision this note does not undo. The "+"
  * became the hero's ⋯, on the hub, so the note names what it holds (and, on
- * All items, where it is), and sends "make one yourself" to the row that
- * does it, by the name the header gives that menu ("Homeroom menu", the
- * mark's own aria-label).
+ * All items, where it is), and sends "make one yourself" to the ⋯'s own
+ * Build it yourself row. It sent it to the Homeroom menu's until that row
+ * showed only for people who have built something themselves (first-session
+ * run-through, 5 Oct 2026: ../../app-context/app-context-sheet.tsx
+ * AgentChats), so a newcomer would have looked for a row they do not have.
  *
  * Gated on the same facts as what it names: "import a PR" only where the ⋯
  * carries that row (`canCollaborate`), and nothing to press at all for a
- * read-only viewer, whose ⋯ holds Fork alone and whose menu has no Start a
- * new change (both from `AppView.readOnly`, the flag that row and the ⋯'s
- * writable rows are each gated on).
+ * read-only viewer, whose ⋯ holds Fork alone (`AppView.readOnly`, the flag
+ * the ⋯'s writable rows are gated on).
  *
  * UNDER THE START-HERE BANNER it stops at the ⋯. On the hub an empty
  * board is nearly always an app nobody has started, and #2573's banner right
- * above the note carries its own Start a new change button — so sending the reader
- * to the Homeroom menu for the same button would be the note talking past
- * the screen it is on. All items has no banner, so there it says the whole
+ * above the note carries its own Start a new change button, so sending the
+ * reader to a menu for the same thing would be the note talking past the
+ * screen it is on. All items has no banner, so there it says the whole
  * thing.
  */
 function EmptyNote({ filtered, loadFailed, underStartHere = false, onHub = false }: {
@@ -528,8 +529,8 @@ function EmptyNote({ filtered, loadFailed, underStartHere = false, onHub = false
 }): ReactNode {
   const { readOnly, canCollaborate } = useDevActions();
   const where = onHub ? '' : ' on the hub';
-  const adds = canCollaborate ? ' to ask for a change or import a PR' : ' to ask for a change';
-  const start = underStartHere ? '.' : '; to make one yourself, use Start a new change in the Homeroom menu.';
+  const adds = canCollaborate ? ' to suggest an improvement or import a PR' : ' to suggest an improvement';
+  const start = underStartHere ? '.' : '; to make one yourself, use Build it yourself there.';
   return (
     <div className="text-xs text-zinc-500 dark:text-zinc-400 mb-2" data-ws-empty="">
       {filtered ? (
@@ -748,8 +749,10 @@ function pace(d: Dash): string {
  * line — six surfaces inside one surface, which is what made the pane read
  * as a stack of things rather than one answer. They are one ruled row now:
  * hairlines between the figures, no fill of their own, on the pane's own
- * ground. Two up on a phone and four across from 420px, which is the
- * breakpoint they already used.
+ * ground. Four across at every width (5 Oct 2026): they were two up under
+ * 420px, a 2x2 grid on a phone, and a phone now draws them closer together
+ * and a size smaller instead (app.css `.dev-ws-dash`). A label wraps onto a
+ * second line there; it is never cut short.
  *
  * ── THE ORDER IS AN ARGUMENT ──
  * The backlog, then the part of it nobody has taken, then the decision
@@ -3673,6 +3676,32 @@ export function DevWorkshop(): ReactNode {
     callAppView('_saveFeedScroll', v.slug, 0);
     scrollToHead(hostRef.current);
   };
+  // #3701: THE LIT COMMUNITIES TAB ASKS THIS PAGE WHERE IT IS
+  // (../../workshop/tab-ladder.ts). All items is a level below the Workshop
+  // tab, so a press over it comes up to the Workshop, at its top, as a new
+  // entry, the way a tab press pushes one; the page's own way up (openTab)
+  // steps Back instead when the Workshop is the entry below. The host says
+  // where the page scrolls, for the press that takes a tab to its top.
+  const climb = () => {
+    const was = tabRef.current;
+    const next = pageParent(was);
+    setTab(next);
+    callAppView('_setWorkshopTab', next);
+    callAppView('_pushWorkshopTab', v.slug, was, next);
+    callAppView('_saveFeedScroll', v.slug, 0);
+    scrollToHead(hostRef.current);
+  };
+  const climbRef = useRef(climb);
+  climbRef.current = climb;
+  useEffect(() => {
+    if (!v.slug) return undefined;
+    return registerLevel({
+      slug: v.slug,
+      below: () => tabRef.current === 'all',
+      up: () => climbRef.current(),
+      host: () => hostRef.current,
+    });
+  }, [v.slug]);
   // ...AND AGAIN WHEN THE PUBLISH LANDS, which is what the seed alone could
   // not do. The seed runs against whatever the store holds AT MOUNT, and that
   // is EMPTY_WORKSHOP_VIEW: the module publishes `_workshopView()` after its
@@ -3878,7 +3907,20 @@ export function DevWorkshop(): ReactNode {
   // items' search no longer narrows the count, so it is not a condition:
   // #2915.) Named once because the empty note under it reads it too — see
   // EmptyNote.
-  const startHere = !!(v.dashboard && v.dashboard.open === 0 && !v.dashboard.everShipped);
+  //
+  // NOT WHILE HOMEROOM BOT BUILDS ITS FIRST VERSION (the hub's First version
+  // card). Before its description is filed as a request the board is empty
+  // too, and "The first change is yours to start" told its maker to start
+  // the change the bot was already making. The same goes for the hub's
+  // no-items note below.
+  const building = !!(community && community.first_version);
+  const startHere = !!(v.dashboard && v.dashboard.open === 0 && !v.dashboard.everShipped) && !building;
+  // A project nobody else is in (hubAlone): its hub leaves out the zeros a
+  // group's hub says (./hub-cards.tsx NothingToVote, hubWorkEmpty).
+  const alone = hubAlone(community);
+  const workEmpty = hubWorkEmpty({
+    alone, building, startHere, readOnly: !!actions.readOnly, bot: !!(v.mine && v.mine.bot),
+  });
 
   /* ── The band, and on All items its back bar ──
      The four tabs in the community's colour (ProjectBand), leading the
@@ -3963,6 +4005,10 @@ export function DevWorkshop(): ReactNode {
           slug={slug}
           name={app.name || undefined}
           canOpenApp={!actions.selfHosted}
+          // #3700: Join through the invite link this page was opened from
+          // opens Needs you at its first card when votes are already
+          // waiting on the new member, and otherwise stays on this hub.
+          onJoinedByInvite={() => { if (owesVote(v.queue)) openTab('needs'); }}
           menu={(
             <DevPlusMenu
               illustrationApp={actions.illustrationApp}
@@ -3981,13 +4027,19 @@ export function DevWorkshop(): ReactNode {
           )}
         />
       ) : null}
+      {/* ── First version: where Homeroom bot's build stands ──
+          Under the hero while the bot builds the project from its
+          description, so a new project's hub says what it is becoming and
+          how far along it is, and opens the bot's chat when the bot waits on
+          its maker. See ./hub-cards.tsx FirstVersionCard. */}
+      {slug ? <FirstVersionCard slug={slug} data={community} /> : null}
       {/* #2573: ABOVE the empty note, because the two answer different
           questions on the same screen. The note says what the board holds;
           this says what to do about an app nobody has started on, and the
           product decision put it at the top of the page. See
           StartHereBanner for the three conditions. */}
       {startHere ? <StartHereBanner /> : null}
-      {v.emptyNote ? (
+      {v.emptyNote && !building ? (
         <EmptyNote
           filtered={!!v.emptyNote.filtered}
           loadFailed={v.emptyNote.loadFailed}
@@ -4004,18 +4056,20 @@ export function DevWorkshop(): ReactNode {
           project that is just yours and has nobody to talk to yet, the Share
           it card, which is how it grows; your own work, two rows and the
           rest in place; and Start a new change. See ./since-summary-card.tsx
-          and ./hub-cards.tsx. */}
+          and ./hub-cards.tsx. On a project nobody else is in, the vote
+          line and an empty Your work leave the zeros out (`alone`,
+          `workEmpty`). */}
       {slug ? (
         <SinceSummaryCard slug={slug} since={v.since ? v.since.baseline : 0} onMore={() => openTab('workshop')} />
       ) : null}
       {owesVote(v.queue)
         ? <NeedsCard queue={v.queue} slug={slug} canPost={canPost} onOpen={() => openTab('needs')} />
-        : <NothingToVote queue={v.queue} onOpen={() => openTab('needs')} />}
+        : <NothingToVote queue={v.queue} onOpen={() => openTab('needs')} alone={alone} />}
       {slug && community?.audience !== 'solo' ? (
         <ChannelCard slug={slug} name={app.name || slug} data={community} compact onOpen={() => openTab('discussion')} />
       ) : null}
       {slug ? <ShareItCard slug={slug} name={app.name || undefined} /> : null}
-      {v.mine && (v.mine.rows.length || v.mine.viewer) ? (
+      {v.mine && (v.mine.rows.length || (v.mine.viewer && workEmpty)) ? (
         <YourWorkCard
           rows={v.mine.rows}
           slug={slug}
@@ -4024,6 +4078,7 @@ export function DevWorkshop(): ReactNode {
           onToggleRow={(key) => toggleRow('mine', key)}
           all={workAll}
           onAll={() => setWorkAll(!workAll)}
+          empty={workEmpty}
         />
       ) : null}
       {/* Start a new change was the hub's last line; it is the hero's ⋯
@@ -4036,105 +4091,20 @@ export function DevWorkshop(): ReactNode {
         <ProjectDiscussion slug={slug} name={app.name || community?.name || slug} data={community} />
       ) : null}
 
-      {/* ── THE WORKSHOP TAB: how a change gets in, your work, what is open,
+      {/* ── THE WORKSHOP TAB: what is open, how a change gets in, your work,
           what changed ──
-          The approval rules, your own work (its first three, the rest behind
-          a reveal), All items' numbers and its one line (whose head opens All
-          items, the page under this tab), and what moved since your last
-          visit filed under each week's summary. */}
+          All items' numbers and its one line (whose head opens All items,
+          the page under this tab), the approval rules, your own work (its
+          first three, the rest behind a reveal), and what moved since your
+          last visit filed under each week's summary. */}
       {tab === 'workshop' ? (
       <>
-      {/* ── Approval rules: how a change gets in ──
-          The Workshop page's head (#3528): the rule every change on the page
-          below is held to, read before the work it governs. It was the hero's
-          last line, the head of All items for a round (#852), then this
-          page's foot (#3487). */}
-      {slug ? <ApprovalRules slug={slug} /> : null}
-      {/* ── Lately in this project ──
-          What changed about the project itself — this week's card, and
-          settings changed in the last week — which used to be lines in its
-          channel. Only when there is something to say (./notices.tsx). */}
-      {slug ? <WorkshopNotices slug={slug} /> : null}
-      {/* ── Your work, in full ──
-          A returning member's own work gets a pane of its own: a
-          half-finished session of theirs was somewhere down inside a theme,
-          under a heading about the theme. It LEADS the Workshop page: the
-          hub shows its first two rows, and this is where its door goes. */}
-      {v.mine && (v.mine.rows.length || v.mine.viewer) ? (
-        <section className="dev-ws-strip" data-ws-mine="">
-          <div className="dev-ws-head">
-            <span className="dev-ws-head-title">Your work</span>
-            {v.mine.count ? <span className="dev-ws-head-n">{v.mine.count}</span> : null}
-          </div>
-          <div className="dev-ws-lane" data-ws-lane="mine">
-            {/* #2182: the strip does not leave when the viewer has nothing
-                underway. It says so instead, so the pane keeps one shape
-                and the place your work will appear is always the same.
-
-                The way in is START A NEW CHANGE, by the name the Homeroom
-                menu gives it. This said "start something from the + button",
-                and the "+" has no propose row — starting a change is that
-                menu's, an owner decision (#2740 review) — so
-                the line sent a viewer to a menu that could not do what it
-                promised. A read-only viewer has neither door, so is told
-                the fact and nothing to press — and so is a viewer under the
-                start-here banner, whose Start a new change is at the top of this
-                very tab and whose board has no open item to pick up.
-
-                Where Homeroom bot builds for this viewer (`mine.bot`, the
-                door the request pages open: AppView._botDoor), the way in is
-                asking for the change, not building it: a newcomer read the
-                developer path here on a project the bot builds (first-session
-                run-through, 5 Oct 2026). Elsewhere the menu's own name for
-                building it is Build it yourself (B8). */}
-            {!v.mine.rows.length ? (
-              <p className="text-xs text-zinc-500 dark:text-zinc-400" data-ws-mine-empty="">
-                {actions.readOnly || startHere
-                  ? 'You have no work going on.'
-                  : v.mine.bot
-                    ? 'You have no work going on. To change something, tell Homeroom bot, or use Ask for a change in the Homeroom menu.'
-                    : 'You have no work going on. Pick up an open item in All items, or use Build it yourself in the Homeroom menu.'}
-              </p>
-            ) : null}
-            {/* THE FIRST THREE on the Workshop tab (#852 review), and the
-                rest behind Show N more. It was the whole list, which on a
-                busy member's board pushed All items off the screen. */}
-            {v.mine.rows.slice(0, mineAll ? undefined : WORKSHOP_WORK_FIRST).map((row) => (row.t === 'card' ? (
-              <CardRowView
-                key={row.key}
-                row={row}
-                slug={slug}
-                canPost={canPost}
-                open={openRows.mine === row.key}
-                onToggle={() => toggleRow('mine', row.key)}
-              />
-            ) : null))}
-            {/* THE SAME CONTROL AS THE OTHER TWO. This was a left-aligned
-                grey pill (`gc-vote-btn`) while "Show past week" and "Show
-                older" — which do the identical thing one pane up and one
-                pane down — were centred muted text with a caret. Three
-                spellings of one gesture. It is `.dev-ws-reveal` now, and the
-                caret turns over when there is nothing left to reveal, which
-                is what that class already does for the since list.
-                Its hit area is `touch-target-32`, not the kit's 44px one the
-                other two carry (QA 2026-09-24 Q19): it sits 4px under the
-                last row, and a 44px box would take that row's bottom edge. */}
-            {v.mine.rows.length > WORKSHOP_WORK_FIRST ? (
-              <button
-                type="button"
-                className="dev-ws-reveal touch-target-32"
-                data-ws-mine-more=""
-                aria-expanded={mineAll}
-                onClick={() => setMineAll(!mineAll)}
-              >
-                <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
-                {mineAll ? 'Show less' : `Show ${v.mine.rows.length - WORKSHOP_WORK_FIRST} more`}
-              </button>
-            ) : null}
-          </div>
-        </section>
-      ) : null}
-
+      {/* ── All items: the four numbers, then what the open work is about ──
+          THE WORKSHOP PAGE'S HEAD, the owner's order from a phone (5 Oct
+          2026): All items, then the approval rules, then your work. The
+          numbers are what somebody arriving asks first, so they are the
+          first thing on the page, four across in one row at any width. They
+          came third for a round, under the rules and your work (#3528). */}
       {v.dashboard ? (
         <section
           className="dev-ws-strip"
@@ -4227,13 +4197,112 @@ export function DevWorkshop(): ReactNode {
         </section>
       ) : null}
 
+      {/* ── Approval rules: how a change gets in ──
+          Second, under All items' numbers: the rule every change on the page
+          is held to, still read before the work it governs. It was the
+          hero's last line, the head of All items for a round (#852), this
+          page's foot (#3487), then its head (#3528). One line now: the
+          note under it on changing the rules went (5 Oct 2026). */}
+      {slug ? <ApprovalRules slug={slug} /> : null}
+      {/* ── Lately in this project ──
+          What changed about the project itself — this week's card, and
+          settings changed in the last week — which used to be lines in its
+          channel. Only when there is something to say (./notices.tsx).
+          It keeps its place straight under the approval rules, where a
+          change to the rule itself is reported, and above your work. */}
+      {slug ? <WorkshopNotices slug={slug} /> : null}
+      {/* ── Your work, in full ──
+          A returning member's own work gets a pane of its own: a
+          half-finished session of theirs was somewhere down inside a theme,
+          under a heading about the theme. It follows the approval rules on
+          the Workshop page (it led it for a round): the hub shows its first
+          two rows, and this is where its door goes. */}
+      {v.mine && (v.mine.rows.length || v.mine.viewer) ? (
+        <section className="dev-ws-strip" data-ws-mine="">
+          <div className="dev-ws-head">
+            <span className="dev-ws-head-title">Your work</span>
+            {v.mine.count ? <span className="dev-ws-head-n">{v.mine.count}</span> : null}
+          </div>
+          <div className="dev-ws-lane" data-ws-lane="mine">
+            {/* #2182: the strip does not leave when the viewer has nothing
+                underway. It says so instead, so the pane keeps one shape
+                and the place your work will appear is always the same.
+
+                The way in is START A NEW CHANGE, by the name the Homeroom
+                menu gives it. This said "start something from the + button",
+                and the "+" has no propose row — starting a change is that
+                menu's, an owner decision (#2740 review) — so
+                the line sent a viewer to a menu that could not do what it
+                promised. A read-only viewer has neither door, so is told
+                the fact and nothing to press — and so is a viewer under the
+                start-here banner, whose Start a new change is at the top of this
+                very tab and whose board has no open item to pick up.
+
+                Where Homeroom bot builds for this viewer (`mine.bot`, the
+                door the request pages open: AppView._botDoor), the way in is
+                asking for the change, not building it: a newcomer read the
+                developer path here on a project the bot builds (first-session
+                run-through, 5 Oct 2026). Elsewhere the way in is the hub's
+                ⋯, whose Build it yourself (B8) every writer has: the
+                Homeroom menu's shows only once you have had an agent session
+                (../../app-context/app-context-sheet.tsx AgentChats). */}
+            {!v.mine.rows.length ? (
+              <p className="text-xs text-zinc-500 dark:text-zinc-400" data-ws-mine-empty="">
+                {actions.readOnly || startHere
+                  ? 'You have no work going on.'
+                  : v.mine.bot
+                    ? 'You have no work going on. To change something, tell Homeroom bot, or use Suggest an improvement in the Homeroom menu.'
+                    : 'You have no work going on. Pick up an open item in All items, or press ⋯ on the hub and use Build it yourself.'}
+              </p>
+            ) : null}
+            {/* THE FIRST THREE on the Workshop tab (#852 review), and the
+                rest behind Show N more. It was the whole list, which on a
+                busy member's board pushed All items off the screen; All items
+                leads the tab now, and the cap keeps what changed in reach. */}
+            {v.mine.rows.slice(0, mineAll ? undefined : WORKSHOP_WORK_FIRST).map((row) => (row.t === 'card' ? (
+              <CardRowView
+                key={row.key}
+                row={row}
+                slug={slug}
+                canPost={canPost}
+                open={openRows.mine === row.key}
+                onToggle={() => toggleRow('mine', row.key)}
+              />
+            ) : null))}
+            {/* THE SAME CONTROL AS THE OTHER TWO. This was a left-aligned
+                grey pill (`gc-vote-btn`) while "Show past week" and "Show
+                older" — which do the identical thing one pane up and one
+                pane down — were centred muted text with a caret. Three
+                spellings of one gesture. It is `.dev-ws-reveal` now, and the
+                caret turns over when there is nothing left to reveal, which
+                is what that class already does for the since list.
+                Its hit area is `touch-target-32`, not the kit's 44px one the
+                other two carry (QA 2026-09-24 Q19): it sits 4px under the
+                last row, and a 44px box would take that row's bottom edge. */}
+            {v.mine.rows.length > WORKSHOP_WORK_FIRST ? (
+              <button
+                type="button"
+                className="dev-ws-reveal touch-target-32"
+                data-ws-mine-more=""
+                aria-expanded={mineAll}
+                onClick={() => setMineAll(!mineAll)}
+              >
+                <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
+                {mineAll ? 'Show less' : `Show ${v.mine.rows.length - WORKSHOP_WORK_FIRST} more`}
+              </button>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
+
       {/* ── Since your last visit, week by week ──
           The hub's list of what moved and the walk of weekly summaries, as
           one list (see SINCE_FIRST): each week's line, and what moved in it
           under it, a few rows at a time behind ONE control a week (#3524).
-          It follows All items (#852 review): the numbers, then the
-          history behind them. A person who has not joined reads "Recently", as does a
-          first visit, which has no last visit to be since. */}
+          It closes the tab, under your work: the numbers lead the page, and
+          the history behind them comes last (#852 review). A person who has
+          not joined reads "Recently", as does a first visit, which has no
+          last visit to be since. */}
       {v.since || weeks.length ? (
         <section className="dev-ws-strip" data-ws-since="">
           {/* Clear rides the far end of the heading row, as "Mark all read"

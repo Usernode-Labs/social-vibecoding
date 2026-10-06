@@ -1,11 +1,13 @@
 import * as React from 'react';
 import { cva, type VariantProps } from 'class-variance-authority';
 
+import { ChevronDownIcon } from '@/components/ui/icons';
 import { cn } from '@/lib/utils';
 
 /**
  * The conversation widgets: the day separator, the bubble, the named message
- * row, and a thread's reply summary.
+ * row, a thread's reply summary, and what marks the unread: the "New" line,
+ * the banner that counts them and the jump to the latest.
  *
  * ── Two message shapes, because the deck has two conversations ────────
  *
@@ -149,6 +151,116 @@ export function groupsWithPrevious(
   const gap = b.getTime() - a.getTime();
   if (!Number.isFinite(gap) || gap < 0 || gap > GROUP_WINDOW_MS) return false;
   return a.toDateString() === b.toDateString();
+}
+
+/**
+ * The line above the first message the reader has not seen, Slack's and
+ * Discord's "New": a hairline across the transcript with the word at its
+ * trailing end. It asks for the reader's attention, so it is the accent
+ * rather than a muted rule; the day separator above is the muted one.
+ *
+ * `ref` reaches the line itself: the transcript opens with it near the top
+ * and measures it to know when the reader has reached it.
+ */
+export function NewMessagesDivider({
+  className, ref, ...props
+}: React.HTMLAttributes<HTMLDivElement> & { ref?: React.Ref<HTMLDivElement> }) {
+  return (
+    <div
+      ref={ref}
+      role="separator"
+      aria-label="New messages"
+      data-unread-line=""
+      className={cn('flex items-center gap-2 px-4 py-1.5', className)}
+      {...props}
+    >
+      <span aria-hidden="true" className="h-px min-w-0 flex-1 bg-violet-500/60 dark:bg-violet-400/60" />
+      <span aria-hidden="true" className="text-[0.8125rem] font-semibold leading-none text-violet-700 dark:text-violet-400">New</span>
+    </div>
+  );
+}
+
+/*
+ * The two things a transcript draws OVER itself: the banner pinned at its
+ * top and the jump button over its foot. Each stays in the document and is
+ * shown and hidden by opacity and a short slide, both of which run on the
+ * compositor (no size changes, no delay: iOS WebKit holds a delayed or a
+ * width transition on the main thread). Hidden, it is `inert`: no pointer,
+ * no focus, nothing read out. A reader who asked for less motion gets the
+ * change without the slide.
+ */
+const FLOAT_MOTION = 'transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none';
+
+/**
+ * Where those two hang from: a box of no height beside the transcript's
+ * scroller (before it for the top, after it for the foot), as the Homeroom
+ * bot's tray hangs from its own. The scroller keeps its size and its class
+ * string, and nothing is drawn inside it. The box passes taps through; the
+ * control inside takes its own.
+ */
+export function TranscriptOverlay({ edge, children }: { edge: 'top' | 'foot'; children?: React.ReactNode }) {
+  return (
+    <div className="relative z-10 h-0 shrink-0" data-transcript-overlay={edge}>
+      <div className={cn('pointer-events-none absolute inset-x-0 flex justify-center px-4', edge === 'top' ? 'top-2' : 'bottom-3')}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * "3 new messages", over the top of the transcript; a tap takes the reader
+ * to the line. An action with a number that asks for the reader, so it is
+ * the accent, filled (AGENTS.md, "One accent").
+ */
+export function NewMessagesBanner({
+  className, shown, ...props
+}: { shown: boolean } & Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'type'>) {
+  return (
+    <button
+      type="button"
+      inert={!shown}
+      data-unread-banner=""
+      className={cn(
+        'pointer-events-auto rounded-full bg-violet-600 px-3.5 py-1.5 text-[0.8125rem] font-semibold leading-tight text-white shadow-[0_2px_10px_rgba(0,0,0,0.18)]',
+        FLOAT_MOTION,
+        shown ? 'translate-y-0 opacity-100' : 'pointer-events-none -translate-y-2 opacity-0',
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
+/**
+ * Jump to latest: a round disc with a down chevron over the foot of the
+ * transcript, up whenever the reader is not at the bottom (Claude's). The
+ * disc is the language's floating control, white on the sheet; `dot` is the
+ * accent, for messages that arrived while the reader was up the
+ * transcript, and the button's name says how many.
+ */
+export function JumpToLatestButton({
+  className, shown, dot = false, ...props
+}: { shown: boolean; dot?: boolean } & Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'type' | 'children'>) {
+  return (
+    <button
+      type="button"
+      inert={!shown}
+      data-jump-latest=""
+      className={cn(
+        'pointer-events-auto relative flex h-10 w-10 items-center justify-center rounded-full bg-white text-zinc-700 shadow-[0_1px_2px_rgba(0,0,0,0.08),0_4px_14px_rgba(0,0,0,0.14)] dark:bg-zinc-800 dark:text-zinc-200',
+        FLOAT_MOTION,
+        shown ? 'translate-y-0 scale-100 opacity-100' : 'pointer-events-none translate-y-2 scale-90 opacity-0',
+        className,
+      )}
+      {...props}
+    >
+      <ChevronDownIcon aria-hidden="true" className="h-5 w-5" />
+      {dot ? (
+        <span aria-hidden="true" className="absolute right-0.5 top-0.5 h-2.5 w-2.5 rounded-full bg-violet-600 ring-2 ring-white dark:bg-violet-400 dark:ring-zinc-800" />
+      ) : null}
+    </button>
+  );
 }
 
 /**

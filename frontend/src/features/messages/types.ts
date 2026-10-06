@@ -1,3 +1,5 @@
+import type { UnreadMark } from './unread-anchor';
+
 /**
  * `channel` is a room every user is in (#2783) — today only #general. It has
  * no roster (just a count), no owner and no invitations.
@@ -46,6 +48,8 @@ export interface HomeroomBotMeta {
   live?: boolean;
   /** B4: an activity card's request, in the words its person asked for it. */
   askedText?: string;
+  /** #3870: a ready card's change, by its own title (its proposal's). */
+  changeTitle?: string;
   /** B5: the bot's hello, which leads the card it introduces. */
   hello?: string;
   /**
@@ -87,6 +91,14 @@ export interface HomeroomBotReady {
   last: boolean;
   waitingOn: string[];
   more: number;
+  /**
+   * How many more approvals it needed when the card was sent (0 when it had
+   * them), and how many it needs in all (homeroom-bot-dm.js approvalState).
+   * With fewer needed than the people listed, the card says how many and
+   * that any of them will do (./approval-words.ts). Absent on older cards.
+   */
+  missing?: number;
+  needed?: number;
   /**
    * What does not work yet: the declared changes its before & after shots
    * showed failing, after the bot's own fix round (homeroom-bot-dm.js
@@ -220,6 +232,14 @@ export interface HomeroomBotActivity {
   messageId: number;
   state: 'working' | 'done';
   startedAt: string | null;
+  /**
+   * When the work the card's time counts began (services/homeroom-bot-
+   * activity.js workClock): the work, never the wait before it. Null while
+   * nothing has begun, when its time is that wait.
+   */
+  workedFrom: string | null;
+  /** What it waited for before the work began, from `startedAt`, when that wait is worth saying. */
+  waitedFor?: 'first_version' | 'turn';
   links: { request: string | null; proposal: string | null };
   step: number | null;
   of: number | null;
@@ -229,6 +249,35 @@ export interface HomeroomBotActivity {
   endedAt: string | null;
   /** How long the step it is at usually takes, in minutes, when it takes a while. */
   typicalMinutes?: { from: number; to: number };
+}
+
+/**
+ * A ready card's change as it stands now, read with the activity cards
+ * (services/homeroom-bot-dm.js readyStates): `live` (with the button that
+ * opens the app), `going_live`, `closed` without going live, or `open`, up
+ * for approval, with who it still waits on and, once the reader's Yes is
+ * in, what happens next. The card was sent with what was true then.
+ */
+export interface HomeroomBotReadyNow {
+  messageId: number;
+  state: 'open' | 'going_live' | 'live' | 'closed';
+  actions: HomeroomBotAction[];
+  approval?: {
+    missing: number;
+    needed: number;
+    last: boolean;
+    /** The reader's own Yes is in. */
+    approved: boolean;
+    waitingOn: string[];
+    more: number;
+  };
+  goesLive?: HomeroomBotGoesLive;
+}
+
+/** One read of the bot DM's cards: its activity cards and its ready cards. */
+export interface HomeroomBotActivityRead {
+  cards: HomeroomBotActivity[];
+  ready: HomeroomBotReadyNow[];
 }
 
 export interface ConversationMember extends ConversationUser {
@@ -378,6 +427,13 @@ export interface ConversationSummary {
   latestSummary?: string;
   lastActivityAt: string;
   unreadCount: number;
+  /**
+   * The viewer's read cursor, as the server keeps it: the newest message
+   * they have read, 0 when they have read none. Where the conversation opens
+   * and where its "New" line goes (./unread-anchor.ts). Absent for an
+   * invitation, whose unread state is hidden, and from an older server.
+   */
+  lastReadMessageId?: number | null;
   /**
    * QA 2026-09-24 Q2: the viewer asked for this direct conversation and the
    * other person has not accepted yet. One opening message is allowed; after
@@ -551,6 +607,14 @@ export interface MessagesSnapshot {
   listCollapsed: boolean;
   /** #2967: the channels outside Your apps shown, under "Show more". */
   showMoreChannels: boolean;
+  /**
+   * Where reading had stopped in the open conversation when it was opened,
+   * taken from the server before the open reads it, and kept until the
+   * conversation closes: it opens at the first message after it, and the
+   * "New" line stays there while it is open (./unread-anchor.ts). Null when
+   * nothing was unread. Optional so a fixture without it reads as null.
+   */
+  unreadMark?: UnreadMark | null;
 }
 
 export interface ReplyThreadState {

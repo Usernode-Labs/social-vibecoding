@@ -21,6 +21,10 @@ const P = Object.freeze({
 });
 
 const step = (key, state, at = null, note = null) => ({ key, state, at, note });
+// Getting started as the first mile's onboard column reads it: the tour and
+// four First challenges, `done` of `total`.
+const onboard = (done, total = 5) => ({ shown: true, done, total, complete: done === total });
+const NO_CARD = Object.freeze({ shown: false, done: null, total: null, complete: false });
 
 function firstMilePerson(p, steps, extra = {}) {
   const stuck = steps.find((s) => s.state === 'stuck');
@@ -29,7 +33,8 @@ function firstMilePerson(p, steps, extra = {}) {
     signupId: null, userId: p ? p.userId : null, name: p ? p.name : 'j…@example.test', hasAccount: !!p,
     door: 'admitted', steps, furthest: done.length ? done[done.length - 1].key : null,
     stuckAt: stuck ? stuck.key : null, stuckReason: stuck ? stuck.note : null,
-    daysSince: 3, failedAttempts: 0, repeatedTaps: 0, tour: null, welcome: null, ...extra,
+    daysSince: 3, failedAttempts: 0, repeatedTaps: 0, tour: null, welcome: null,
+    onboard: p ? onboard(5) : null, ...extra,
   };
 }
 
@@ -68,20 +73,20 @@ function firstMile(day) {
       step('opened', 'done', '2026-10-05T18:34:00Z'), step('username', 'done'),
       step('join', 'done', '2026-10-05T18:36:00Z', 'joined'),
       step('first_act', 'done', '2026-10-05T18:52:00Z', 'message'),
-    ], { tour: { ended: 'finish', step: 3, at: '2026-10-05T18:40:00Z' } }),
+    ], { tour: { ended: 'finish', step: 3, at: '2026-10-05T18:40:00Z' }, onboard: onboard(3) }),
     firstMilePerson(P.tobi, [
       step('admitted', 'done', D), step('mail_sent', 'done', D), step('code_asked', 'done', '2026-10-06T07:48:00Z'),
       step('account', 'done', '2026-10-06T07:49:00Z'), step('access', 'done', '2026-10-06T07:49:00Z'),
       step('opened', 'done', '2026-10-06T07:51:00Z'), step('username', 'done'),
       step('join', 'done', '2026-10-06T07:52:00Z', 'skipped'),
       step('first_act', 'stuck', null, 'Inside, no act yet'),
-    ], { failedAttempts: 2, repeatedTaps: 1, tour: { ended: 'skip', step: 1, at: '2026-10-06T07:53:00Z' } }),
+    ], { failedAttempts: 2, repeatedTaps: 1, tour: { ended: 'skip', step: 1, at: '2026-10-06T07:53:00Z' }, onboard: onboard(1) }),
     firstMilePerson(P.lena, [
       step('admitted', 'done', D), step('mail_sent', 'done', D), step('code_asked', 'done', '2026-10-05T12:20:00Z'),
       step('account', 'done', '2026-10-05T12:22:00Z'), step('access', 'done', '2026-10-05T12:22:00Z'),
       step('opened', 'done', '2026-10-05T12:25:00Z'), step('username', 'done'),
       step('join', 'stuck', null, 'Join screen shown, not answered'), step('first_act', 'not_yet'),
-    ]),
+    ], { onboard: NO_CARD }),
     firstMilePerson(null, [
       step('admitted', 'done', D), step('mail_sent', 'done', D),
       step('code_asked', 'stuck', null, 'Admitted, never asked for a login code'),

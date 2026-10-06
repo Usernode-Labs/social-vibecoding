@@ -69,32 +69,106 @@ async function setStoryLanding(pool, { enabled, actorId = null }) {
 }
 
 /**
- * A person who started from the story is not asked the join screen ("What
- * communities do you want to join?", services/onboarding.js): the first
- * thing they are asked is what to make. Their account answers it as
- * 'story' the moment it is made from the story's sheet, and a project made
- * from the first session's question answers it as 'made' for anyone who
- * still had it; communities_onboarded_at stays unset either way, so the
- * Getting started card stays out of their first session too. A no-op for
- * anyone who already answered it.
+ * While the story landing is on, a new account is not asked the join screen
+ * ("What communities do you want to join?", services/onboarding.js): it is
+ * asked "What do you want to make?" in that screen's place, however it
+ * signed in. That question is OWED until it is answered, the way the join
+ * screen is: `users.needs_communities_choice` stays TRUE while it is, so
+ * every boot of the signed-in shell for that account (a reload, a new tab,
+ * the phone app reopened, a sign-out and back in) asks it again
+ * (frontend/src/features/auth/communities-first-run.js).
+ *
+ * Being SHOWN it answers nothing. Until 5 Oct 2026 it did: the screen's
+ * start was recorded as the join screen's answer, so a new account that
+ * reloaded before it answered landed on an empty Home and was never asked
+ * again. Two moments now, kept apart:
+ *
+ *   recordStart        the question was put to them, from the story's own
+ *                      sheet ('story') or from any other sign-in
+ *                      ('sign_in'). Kept once, the first time, as
+ *                      `getting_started_seen.first_session`, for the admin
+ *                      Journey page; asking again on a later boot changes
+ *                      nothing.
+ *   answerJoinScreen   they answered it: Make it made a project ('made',
+ *                      routes/apps.js) or they chose "Look around first"
+ *                      ('looked_around', routes/onboarding.js). This is what
+ *                      ends it.
+ *
+ * Journey's join step keeps its meaning: `join_answer` is still how the
+ * first session reached them ('story' or 'sign_in'), and what they said is
+ * `first_session_answer` beside it. A project made with no start recorded
+ * is 'made', as it always was. communities_onboarded_at stays unset either
+ * way, so the Getting started card stays out of their first session too.
+ * Each is a no-op for anyone who already answered.
  */
+async function recordStart(pool, userId, via) {
+  await pool.query(
+    `UPDATE users
+        SET getting_started_seen = COALESCE(getting_started_seen, '{}'::jsonb)
+                                   || jsonb_build_object('first_session', $2::text)
+      WHERE id = $1 AND needs_communities_choice = TRUE
+        AND getting_started_seen->>'first_session' IS NULL`,
+    [userId, via]
+  );
+}
+
 async function answerJoinScreen(pool, userId, answer) {
   await pool.query(
     `UPDATE users
         SET needs_communities_choice = FALSE,
             getting_started_seen = COALESCE(getting_started_seen, '{}'::jsonb)
-                                   || jsonb_build_object('join_answer', $2::text)
+                                   || jsonb_build_object(
+                                        'join_answer', COALESCE(getting_started_seen->>'first_session', $2::text),
+                                        'first_session_answer', $2::text)
       WHERE id = $1 AND needs_communities_choice = TRUE`,
     [userId, answer]
   );
 }
 const answerJoinScreenByMaking = (pool, userId) => answerJoinScreen(pool, userId, 'made');
+const answerJoinScreenByLookingAround = (pool, userId) => answerJoinScreen(pool, userId, 'looked_around');
+
+/**
+ * Is an account that is still due the join screen asked "What do you want
+ * to make?" in its place? While the story landing is on, yes, unless it is
+ * already somewhere: a project of its own, or a community besides the
+ * platform's own (which every account with access is in from the start).
+ * The question stays owed for longer now (until it is answered, above), so
+ * this is what keeps it from being put to somebody who has found their way
+ * in by then: a group they were let into, a project made some other way.
+ * They get the join screen instead, which lists what they are in, ticked.
+ *
+ * A link or an accepted invite answers the join screen itself
+ * (services/community-invites.js), so an invitee is not due it at all;
+ * this is the guard for whatever else gets there first. A read that fails
+ * leaves the story's answer as it was, and never throws: GET /api/auth/me
+ * reads this in the middle of its own profile lookup.
+ */
+async function asksWhatToMake(pool, userId) {
+  if (!(await storyLandingEnabled(pool))) return false;
+  try {
+    const { rows } = await pool.query(
+      `SELECT EXISTS (SELECT 1 FROM apps WHERE created_by = $1)
+              OR EXISTS (SELECT 1
+                           FROM community_members m
+                           JOIN apps a ON a.community_id = m.community_id
+                          WHERE m.user_id = $1 AND NOT a.self_hosted) AS somewhere`,
+      [userId]
+    );
+    return rows[0]?.somewhere !== true;
+  } catch (err) {
+    log.warn('first-session', 'Could not read whether the account is already somewhere', { userId, err: err.message });
+    return true;
+  }
+}
 
 module.exports = {
   STORY_KEY,
   readStorySetting,
   storyLandingEnabled,
   setStoryLanding,
+  recordStart,
   answerJoinScreen,
   answerJoinScreenByMaking,
+  answerJoinScreenByLookingAround,
+  asksWhatToMake,
 };

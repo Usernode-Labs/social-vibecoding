@@ -44,11 +44,16 @@ const hostedFile = process.env.SHOTS_HOSTED_ORIGINS_FILE || '';
 // request comes from: Chromium's --proxy-server cannot carry credentials, so
 // the port is the identity. run-cc.sh names the ports; the verifiers that
 // start this proxy without them get the single shared listener, as before.
-const PERSONAS = Object.freeze(['member', 'read_only_admin', 'full_admin']);
+// The guest is the browser that is not signed in. Its token is optional: the
+// platform mints one only for a view-public child app, as the production
+// edge does for a visitor with no account (services/edge-gate.js), and an
+// empty value leaves the guest with no identity at all.
+const PERSONAS = Object.freeze(['member', 'read_only_admin', 'full_admin', 'guest']);
 const PERSONA_TOKEN_ENV = Object.freeze({
   member: 'SHOTS_MEMBER_TOKEN',
   read_only_admin: 'SHOTS_ADMIN_TOKEN',
   full_admin: 'SHOTS_FULL_ADMIN_TOKEN',
+  guest: 'SHOTS_GUEST_TOKEN',
 });
 function personaPorts() {
   let parsed;
@@ -167,6 +172,41 @@ function forwardPlatformAsset(req, res, target, side) {
   });
   upstream.on('error', () => {
     diagnostic({ kind: 'platform_asset', side, httpStatus: 502 });
+    reject(res, 502);
+  });
+  upstream.end();
+}
+
+// The app's tile on Homeroom's home screen, which a pair's copies do not
+// serve: each side's address answers this path with that side's tile, drawn
+// by the platform from the side's own dapp.json (services/shots-home-tile.js)
+// and fetched with this run's shots token, which never reaches the page.
+const HOME_TILE_PATH = '/__shots/home-tile';
+const RETURNED_TILE_HEADERS = Object.freeze(['content-type', 'content-length', 'cache-control',
+  'content-security-policy', 'x-content-type-options']);
+const shotsRunId = String(process.env.SHOTS_RUN_ID || '');
+const shotsJwt = String(process.env.SHOTS_JWT || '');
+
+function forwardHomeTile(req, res, side) {
+  if (!['GET', 'HEAD'].includes(req.method)) return reject(res, 405);
+  if (!platformAssetsOrigin || !/^[0-9a-f]{32}$/.test(shotsRunId) || !shotsJwt) return reject(res, 404);
+  const source = new URL(`/api/internal/shots/${shotsRunId}/home-tile/${side}`, platformAssetsOrigin);
+  const transport = source.protocol === 'https:' ? https : http;
+  const upstream = transport.request(source, {
+    method: req.method,
+    headers: { authorization: `Bearer ${shotsJwt}`, accept: 'text/html' },
+  }, (tileResponse) => {
+    const status = tileResponse.statusCode || 502;
+    diagnostic({ kind: 'home_tile', side, httpStatus: status });
+    const returned = {};
+    for (const name of RETURNED_TILE_HEADERS) {
+      if (tileResponse.headers[name] != null) returned[name] = tileResponse.headers[name];
+    }
+    res.writeHead(status, returned);
+    tileResponse.pipe(res);
+  });
+  upstream.on('error', () => {
+    diagnostic({ kind: 'home_tile', side, httpStatus: 502 });
     reject(res, 502);
   });
   upstream.end();
@@ -292,6 +332,9 @@ async function handleRequestAsync(persona, req, res) {
   }
   const side = target.origin === originList[0] ? 'base'
     : target.origin === originList[1] ? 'head' : vetted ? 'outside' : 'hosted';
+  if ((side === 'base' || side === 'head') && target.pathname === HOME_TILE_PATH) {
+    return forwardHomeTile(req, res, side);
+  }
   if (routesPlatformAsset(target, req.method)) return forwardPlatformAsset(req, res, target, side);
   const isDocument = req.headers['sec-fetch-dest'] === 'document';
   const ordinal = isDocument ? ++documentOrdinal : null;
@@ -386,11 +429,21 @@ const listening = (target, targetPort) => new Promise((resolve, reject_) => {
 
 // Ready only once every listener is up: the runner starts the browsers as
 // soon as this file exists. It holds the shared port, as it always has.
+// Written whole, then renamed into place: a reader that sees the file must
+// never read it half-written. writeFileSync alone creates it empty first,
+// and a caller polling for it under load read the port as '' (port 0) and
+// was refused (tests/shots-origin-proxy-identity.test.js, 5 October).
+function writeReady(sharedPort) {
+  const partial = `${readyFile}.${process.pid}.tmp`;
+  fs.writeFileSync(partial, String(sharedPort), { mode: 0o600 });
+  fs.renameSync(partial, readyFile);
+}
+
 Promise.all([
   listening(server, port),
   ...personaServers.map(({ server: personaServer, personaPort }) => listening(personaServer, personaPort)),
 ]).then(([sharedPort]) => {
-  if (readyFile) fs.writeFileSync(readyFile, String(sharedPort), { mode: 0o600 });
+  if (readyFile) writeReady(sharedPort);
   // The worker's memory through the turn (shots-memory.js), when the runner
   // asks for it: the proxy lives as long as the turn does.
   const sampleMs = Number(process.env.SHOTS_MEMORY_SAMPLE_MS);

@@ -68,7 +68,7 @@ const { parseRewardPoints } = require('../services/topochain/challenge-rules');
 // single row. It is the most honest signal available today; when a real
 // per-user progress feed lands, THIS is the one function to replace.
 const {
-  resolveProgress, loadOnboarding, challengeCategory, NEWEST_EVENT_BLOCKS_SQL,
+  resolveProgress, loadOnboarding, challengeCategory, NEWEST_EVENT_BLOCKS_SQL, COUNTS_THIS_WEEK_SQL,
   isLocked, gateSummary,
 } = require('../services/topochain/challenge-onboarding');
 
@@ -99,7 +99,8 @@ const DONE_SQL = `
 // (Postgres can't reference a SELECT-list alias from the same SELECT list,
 // so they're substituted in rather than named).
 const MY_COUNT_SQL = `(SELECT COUNT(*) FROM user_activities ua
-              WHERE ua.user_id = $1 AND ua.challenge_id = c.id)`;
+              WHERE ua.user_id = $1 AND ua.challenge_id = c.id
+                AND ${COUNTS_THIS_WEEK_SQL})`;
 // The snapshot read now lives beside resolveProgress, because the challenge
 // LISTS need the same number and a second copy of it is how the tab and Home
 // came to disagree (#2492). This name is kept: profile.js imports it from
@@ -806,6 +807,13 @@ const PANEL_REGISTRY = [
 
 const PANEL_KEYS = new Set(PANEL_REGISTRY.map((p) => p.key));
 
+// A PRIVATE MEMBER's Home (middleware/auth.js isPrivateMember) is their
+// communities' apps, Discover (they use public apps; they do not vote on
+// them, services/communities.js privateVoteRefusal) and the waitlist card:
+// no Challenges, and no Create app, which they cannot do yet. The client
+// hides a section whose panel is not in the answer.
+const PRIVATE_MEMBER_PANELS = new Set(['discover']);
+
 function panelRegistryPublic() {
   return PANEL_REGISTRY.map((p) => ({
     key: p.key,
@@ -835,6 +843,7 @@ function homePanelRoutes() {
       const variant = typeof req.query.challenges === 'string' ? req.query.challenges : '';
       const panels = [];
       for (const panel of PANEL_REGISTRY) {
+        if (req.user.privateMember && !PRIVATE_MEMBER_PANELS.has(panel.key)) continue;
         const expanded = expandKey === panel.key;
         try {
           const data = demo && panel.demo

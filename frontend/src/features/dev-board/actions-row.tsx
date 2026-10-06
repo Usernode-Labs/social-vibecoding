@@ -8,7 +8,7 @@
  * search row, then closed the view-tab strip on every tab; the strip is gone
  * (the hub is one page with doors), so it ends the hero's members row,
  * beside Invite: the project's own menu, on the project's own card, leading
- * with Ask for a change. workshop/workshop.tsx hands `DevPlusMenu` to the
+ * with Suggest an improvement. workshop/workshop.tsx hands `DevPlusMenu` to the
  * hero (`inHero`) and renders this row with `withPlus={false}` in All items'
  * pane head.
  *
@@ -273,7 +273,7 @@ export function DevPlusMenu({
   */
   const plusLabel = readOnly
     ? 'Remix: make your own copy'
-    : 'Ask for a change, import a PR or manage this app';
+    : 'Suggest an improvement, import a PR or manage this app';
   return (
     <>
   {/* The native modal reparents its card under body. Portal there too so React's delegated events stay on the card's ancestor. */}
@@ -336,12 +336,13 @@ export function DevPlusMenu({
                 the ⋯'s now. The Homeroom menu's own action
                 (Improve.startSession), which keeps its row there too.
             */}
-            {/* B8: Ask for a change leads (it goes to Homeroom bot, or to
-                the group as a request); building it yourself is second. */}
+            {/* B8: Suggest an improvement leads (it goes to Homeroom bot,
+                or to the group as a request); building it yourself is
+                second. */}
             <PlusRow
               data-plus="issue"
               icon={<LightBulbIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-              title="Ask for a change"
+              title="Suggest an improvement"
               sub="Report a problem or idea without building it yourself"
             />
             <PlusRow

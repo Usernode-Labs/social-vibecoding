@@ -559,7 +559,7 @@ const CMD = '    ';
 function buildWorkOrder({
   appName, appSlug, upstreamUrl, upstreamSlug, forkUrl, forkCloneUrl, forkRepo,
   forkPageUrl, forkStatus, branch, baseSha, issueNumber, issueNumbers, brief, webPath,
-  taskId, agentLabelText, platformRules, targetProposal, startedFromWalkthrough,
+  taskId, agentLabelText, platformRules, targetProposal, startedFromWalkthrough, specs = [],
 }) {
   // Where the connector is added, for the agent that finds it has none. The
   // page carries the connector URL and the click-by-click steps for both
@@ -814,6 +814,29 @@ function buildWorkOrder({
     brief || '(no description was supplied — ask the user what they want before writing code)',
     '',
   ];
+
+  // The spec the group can read for each request, newest first (posted with
+  // the connector's post_spec, or written by the Homeroom bot or a dev
+  // session). Homeroom's own words, outside the envelope above: which spec,
+  // and how to read it. The text is get_spec's, since a spec outgrows a brief.
+  const reviewedSpecs = Array.isArray(specs) ? specs.filter((x) => x && Number(x.requestNumber) > 0) : [];
+  if (reviewedSpecs.length) {
+    lines.push('THE REVIEWED SPEC');
+    for (const spec of reviewedSpecs) {
+      const by = spec.author && /^[A-Za-z0-9_.-]{1,64}$/.test(spec.author) ? ` by ${spec.author}` : '';
+      const kind = spec.format === 'html' ? 'an HTML spec with before/after screens' : 'a markdown spec';
+      lines.push(`- Request #${spec.requestNumber} has a spec the group can read: version ${spec.version}${by}, ${kind}.`);
+    }
+    lines.push(
+      'Read each one in full with your Homeroom connector before writing code:',
+      ...reviewedSpecs.map((spec) => `${CMD}get_spec  slug "${appSlug}"  requestNumber ${spec.requestNumber}`),
+      'Build to it. Where the code shows part of it cannot work as written, do what',
+      'the request needs, and say in your submit_work description what you changed',
+      'from the spec and why. If there is no Homeroom connector in this session, ask',
+      'the user for the spec rather than building without it.',
+      '',
+    );
+  }
 
   if (update) {
     lines.push(
@@ -1283,8 +1306,9 @@ function buildWorkOrder({
       '   exactly "Controlled test: deliberately block the declared API GET on',
       '   both revisions."',
       '   Each change says, in plain words, what a person will see (claim) and',
-      '   who is signed in: member, read_only_admin, or (for Homeroom controls',
-      '   hidden from view-only admins) full_admin. Add each screen size',
+      '   who is signed in: member, read_only_admin, (for Homeroom controls',
+      '   hidden from view-only admins) full_admin, or guest for what a visitor',
+      '   who is not signed in sees. Add each screen size',
       '   (viewport), the starting path, the real steps, what the finished state',
       '   looks like (checkpoint), the element that matters (focus), whether it',
       '   existed before (baseState), and animation "none", "steps", or',
@@ -1701,6 +1725,7 @@ async function prepareWork(deps, params) {
       const moved = await adoptTaskForSession(pool, existing.id, user.id, originSessionId);
       if (moved) existing.origin_session_id = moved;
       return renderPreparedTask({
+        specs: Array.isArray(params.specs) ? params.specs : [],
         task: existing, app, owner, repo, origin, clientId, clientName,
         prompts, agent, reused: true, targetProposal: update, openProposals,
       });
@@ -1857,6 +1882,7 @@ async function prepareWork(deps, params) {
     const raced = await findOpenTaskByRequest(pool, user.id, app.id, requestKey);
     if (raced) {
       return renderPreparedTask({
+        specs: Array.isArray(params.specs) ? params.specs : [],
         task: raced, app, owner, repo, origin, clientId, clientName,
         prompts, agent, reused: true, targetProposal: update, openProposals,
       });
@@ -1888,6 +1914,7 @@ async function prepareWork(deps, params) {
   }
 
   return renderPreparedTask({
+    specs: Array.isArray(params.specs) ? params.specs : [],
     // The INSERT may not echo every column on a stubbed pool, so the values
     // this call computed are authoritative and the row only supplies the id.
     task: {
@@ -2071,7 +2098,7 @@ async function findOpenProposalsForRequest(pool, appId, issueNumbers, viewerId) 
 // production run rewrite a finished commit.
 function renderPreparedTask({
   task, app, owner, repo, origin, clientId, clientName, prompts,
-  forkStatus, reused, agent: requestedAgent, targetProposal, openProposals,
+  forkStatus, reused, agent: requestedAgent, targetProposal, openProposals, specs = [],
 }) {
   const forkOwner = task.fork_owner;
   const forkRepo = task.fork_repo;
@@ -2128,6 +2155,7 @@ function renderPreparedTask({
     // The browser walkthrough registers its jobs under `usernode-web:<agent>`
     // (routes/dev-flow.js); everything else is a chat assistant's connector.
     startedFromWalkthrough: String(task.client_id || '').startsWith('usernode-web'),
+    specs,
   });
 
   return {

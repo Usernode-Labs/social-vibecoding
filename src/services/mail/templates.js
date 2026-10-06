@@ -14,6 +14,7 @@
 'use strict';
 
 const { PRODUCTION_ORIGIN } = require('../cli-auth-constants');
+const tracking = require('./tracking');
 
 // Minimal HTML escaping — these bodies interpolate an email address, a
 // six-digit code and platform-built URLs, never free user text, but
@@ -313,9 +314,9 @@ function waitlistCode(payload) {
 const RELEASE_CODE_NOTE = 'Opening the link emails you a 6-digit code to sign in with. '
   + 'The code expires in 10 minutes, and you can ask for a new one at any time.';
 
-const RELEASE_HEADLINE = 'AI app-building, now multiplayer.';
+const RELEASE_HEADLINE = 'Make and share small apps with friends and groups.';
 const RELEASE_CAN_DO = [
-  'Vibecode apps solo or with a friend.',
+  'Make an app for you, your friends or your group.',
   'Use and improve apps with others.',
   'Suggest, preview, and vote on changes.',
   'Complete a few early challenges along the way.',
@@ -404,7 +405,7 @@ function waitlistReleased(payload) {
 
   return {
     subject: "You're in. Welcome to Homeroom",
-    preheader: "AI app-building, now multiplayer. Here's how to get started.",
+    preheader: "Make and share small apps with friends and groups. Here's how to get started.",
     text,
     html,
   };
@@ -589,14 +590,14 @@ function buildMessage(kind, payload = {}) {
     ? TEMPLATES[kind]
     : null;
   if (!template) throw new Error(`unknown mail kind: ${kind}`);
-  const { why, preheader, headers, ...message } = template(payload);
-  return {
+  const { why, preheader, headers, ...message } = template(tracking.attributedPayload(kind, payload));
+  return tracking.decorate(kind, {
     ...message,
     html: HTML_SHELL(message.html, why, preheader),
     // Extra mail headers a kind needs (activity mail's List-Unsubscribe);
     // a transport adds them as given.
     ...(headers ? { headers } : {}),
-  };
+  }, payload);
 }
 
 // Every kind this module can render, for the admin console and for tests

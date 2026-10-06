@@ -770,7 +770,8 @@ test('each verdict says its own thing; a verdict held by a cap says only that it
 
   live.buildAndPropose = async () => ({ ok: false, sessionId: 5002, error: 'the build produced no change to propose', costUsd: 0 });
   assert.equal(await build(h, { verdict: 'ready', buildNote: 'x' }), 'build_failed');
-  assert.match(h.posts.at(-1).text, /tried to build this but couldn't finish: the build produced no change to propose/);
+  assert.equal(h.posts.at(-1).text, 'Homeroom bot couldn\'t finish building this: it ended up with no changes to show. '
+    + 'Reply here (or on the GitHub issue) and it will try again.');
 });
 
 
@@ -875,7 +876,7 @@ test('a backlog pass holds silently, and still speaks when it has something to s
 test('a "Triage this app again" item is triaged without the "looking" post, and held quietly', () => {
   assert.equal(bot.APP_AGAIN_REASON, 'app_again');
   assert.match(BOT_SRC, /SELECT \$1, q\.n, 0, 'app_again', \$4/, 'retriageApp queues with that reason');
-  assert.match(BOT_SRC, /const looked = item\.reason === RESTART_REASON \|\| item\.reason === APP_AGAIN_REASON \? null : await live\.post\(/);
+  assert.match(BOT_SRC, /const looked = item\.reason === RESTART_REASON \|\| item\.reason === APP_AGAIN_REASON\n\s+\|\| item\.reason === RETRY_FAILED_REASON \? null : await live\.post\(/);
   assert.match(BOT_SRC, /quietHold: item\.reason === APP_AGAIN_REASON,/);
   // The refresh keeps a priority-0 row's reason, so a comment before the
   // row runs does not turn it back into a "looking" one mid-pass.

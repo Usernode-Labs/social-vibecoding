@@ -153,6 +153,27 @@ export function isMovedActivity(message: ConversationMessage): boolean {
   return isActivityMessage(message) && !!message.metadata?.homeroomBot?.movedTo;
 }
 
+/**
+ * Pure (5 October): where a card's time counts from: when the work began
+ * (services/homeroom-bot-activity.js workClock), never the wait before it;
+ * the card's own start while nothing has begun, when its time is that wait.
+ */
+export function clockFrom(card: HomeroomBotActivity): string | null {
+  return card.workedFrom || card.startedAt;
+}
+
+/**
+ * Pure (5 October): the wait before the work, in words, to follow how long
+ * the work took: "after waiting 46m for the first version", "after waiting
+ * 12m for its turn". Null when there was none worth saying.
+ */
+export function waitedText(card: HomeroomBotActivity): string | null {
+  if (!card.waitedFor || !card.workedFrom) return null;
+  const waited = spanText(card.startedAt, new Date(card.workedFrom));
+  if (!waited || waited === 'under a minute') return null;
+  return `after waiting ${waited} ${card.waitedFor === 'first_version' ? 'for the first version' : 'for its turn'}`;
+}
+
 /** "usually 10 to 25 minutes": how long a step usually takes, or null. */
 export function typicalText(range?: { from: number; to: number } | null): string | null {
   if (!range || !(range.to > 0)) return null;
@@ -232,25 +253,28 @@ export function BotActivityCardView({ meta, card, loaded = false, failed = false
     const stepped = card.step && card.of;
     lead = <ActivityLead step={card.step} of={card.of} stepName={card.stepName} />;
     eyebrow = stepped ? `Step ${card.step} of ${card.of}${card.stepName ? ` · ${card.stepName}` : ''}` : 'Working on it';
-    const elapsed = spanText(card.startedAt, at);
+    // The work's time, not the wait's (clockFrom), with the wait said apart.
+    const elapsed = spanText(clockFrom(card), at);
+    const waited = waitedText(card);
     const usually = typicalText(card.typicalMinutes);
     status = (
       <>
         {project ? <span>{`${project} · `}</span> : null}
         <span role="status">{capitalized(card.doing || 'working on it')}</span>
         {usually ? <span>{` · ${usually}`}</span> : null}
-        {elapsed ? <span>{` · ${elapsed} so far`}</span> : null}
+        {elapsed ? <span>{` · ${elapsed} so far${waited ? `, ${waited}` : ''}`}</span> : null}
       </>
     );
   } else if (card && tone && card.outcome) {
     lead = <ActivityLead tone={tone} />;
     eyebrow = TONE_WORDS[tone];
-    const took = card.endedAt ? spanText(card.startedAt, new Date(card.endedAt)) : null;
+    const took = card.endedAt ? spanText(clockFrom(card), new Date(card.endedAt)) : null;
+    const waited = waitedText(card);
     status = (
       <>
         {project ? <span>{`${project} · `}</span> : null}
         <span role="status">{ACTIVITY_OUTCOME_LABELS[card.outcome]}</span>
-        {took ? <span>{` · took ${took}`}</span> : null}
+        {took ? <span>{` · took ${took}${waited ? `, ${waited}` : ''}`}</span> : null}
       </>
     );
   } else {

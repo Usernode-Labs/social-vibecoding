@@ -1,529 +1,339 @@
 'use strict';
 
 /**
- * The sketch: something of theirs, about half a minute after "Make it".
+ * The sketch: a featured card of the idea, a few seconds after "Make it".
  *
  * Somebody who makes a project in their first session (first-session
- * make.tsx, POST /api/apps with `from: 'first-session'`) is shown a sketch of
- * its main screen while the real app is built, or while it waits for someone
- * to build it. One Haiku call turns the name and the description into
+ * make.tsx, POST /api/apps with `from: 'first-session'`) is shown a card of
+ * it while the real app is built (first-session sketch-card.tsx). It is the
+ * card an app store would feature the idea with, not a picture of the app:
  *
- *   design  the screen's one job and primary action, an accent for each look,
- *           its signature element, the layout top to bottom, and its words;
- *   html    the screen itself, as static markup.
+ *   emoji    the project's icon from now on (saved to it, below);
+ *   tagline  one line, what it is for;
+ *   points   two to four things it will let the group do.
  *
- * ONE VOCABULARY, TWO RENDERINGS. The markup may use only the starter's
- * design kit (btn-primary, list, card, ...) and a short list of Tailwind
- * utilities (SKETCH_CLASSES); sanitizeSketchHtml drops every other tag,
- * attribute and class. That is what lets the same markup render twice and
- * look the same:
- *   - in the made screen, from SKETCH_CSS, plain CSS written here for exactly
- *     that vocabulary (the platform has no Tailwind compiler at run time);
- *   - in the app itself, where getTemplateFiles puts it in place of the
- *     starter's placeholder screen and the app's own Tailwind build compiles
- *     the same class names from its markup.
+ * 5 October 2026, on a phone: the sketch it replaces was a model-written
+ * mock of the app's main screen, framed and scrolling inside the made screen,
+ * about twenty seconds after Make it, and the build was then told to make
+ * that screen. A mock read as the app itself, not as something being made,
+ * and the first version rarely looked like it. The card is structured output
+ * that our own component draws in the platform's look, so it is quicker (a
+ * short reply), safe (text only, rendered by React) and never scrolls.
  *
- * ITS SAMPLES ARE SAMPLES. The model is told today's date and who the
- * creator is, so any date it shows is real and the creator is "You";
- * anyone else is a neutral placeholder ("Flatmate 2"), never an invented
- * name. A sketch that made up flatmates and a date in January had the
- * first version's plan asking whether the made-up flatmates were in the
- * rota. The plan is told the same (homeroom-bot.js FIRST_VERSION_NOTE).
+ * ALWAYS A CARD. The model gets MODEL_WAIT_MS; a refusal, an error, a reply
+ * that is not usable or no model at all gives the card fallbackCard() makes
+ * from the name and the description alone, so the made screen, the
+ * repository's first commit and the icon never wait on it.
  *
- * SAFE TO SHOW. The sketch is model output from a user's description, so it
- * is treated as untrusted HTML: sanitized here (no scripts, no handlers, no
- * links, no URLs at all), served with a sandbox CSP that allows no script and
- * no network (routes/apps.js), and framed with an empty `sandbox` attribute.
+ * ITS ICON IS THE PROJECT'S. The emoji is the model's when it is one emoji
+ * that is fit to be an icon, else the first keyword of KEYWORD_EMOJI the name
+ * or the description has, else DEFAULT_EMOJI. It is saved to apps.icon_emoji
+ * only when the project has no icon yet (an icon somebody set is never
+ * replaced), and written into the new repository's dapp.json `icon` block,
+ * which every deploy reconciles from (app-manifest.js reconcileAppIcon): a
+ * dapp.json without it would clear the icon on the first deploy.
  *
- * WHAT THE BUILD DOES WITH IT. The repository gets design/sketch.html and
- * design/sketch.json, the "## Design" notes are filled from it, and the
- * starter's accent is set to it (contrast-checked). The first version's
- * request names it as the design target (homeroom-bot-dm.js
- * firstVersionIssue), and the build prompts say to keep it.
+ * ITS WORDS ARE THE DESCRIPTION'S. Points say only what the description asks
+ * for. Nobody is invented: the creator is "you", anyone else is "everyone",
+ * "the group" or a word from the subject. Any date is held to the real
+ * calendar where the creator is (services/sketch-dates.js), as the screen
+ * mock's were.
  *
- * Never a reason creation fails: no key, a refusal, a timeout or an unusable
- * reply is a `failed` row, and the made screen shows the build's progress
- * instead, as it did before.
+ * WHAT THE BUILD DOES WITH IT. Nothing to the screen: the card shows none.
+ * The repository gets design/sketch.json (the card, with a note saying what
+ * it is), and the first version's request quotes the tagline and points as a
+ * summary of the description (homeroom-bot-dm.js firstVersionIssue), never
+ * as a design.
+ *
+ * Never a reason creation fails.
  */
 
 const log = require('./logger');
+const sketchDates = require('./sketch-dates');
 
-const SKETCH_MODEL = 'claude-haiku-4-5';
-// How long app creation waits for the sketch before seeding the repository
-// without it (app-creator.js). A late sketch is committed on its own.
+// GLM 5.3 Flash, and Haiku 4.5 when it does not answer in time (llm.js
+// helperMessage); the card row keeps the model that answered.
+const SKETCH_MODEL = 'z-ai/glm-5.3-flash';
+// How long app creation waits for the card before seeding the repository
+// without it (app-creator.js). A late card is committed on its own.
 const SKETCH_WAIT_MS = 30 * 1000;
+// How long the card waits on the model before it is made from the
+// description instead: well inside SKETCH_WAIT_MS, so the first commit has it.
+const MODEL_WAIT_MS = 15 * 1000;
 const LATE_COMMIT_WAIT_MS = 3 * 60 * 1000;
-const HTML_MAX = 24 * 1024;
-// How the page is served (routes/apps.js): sandboxed with nothing allowed,
-// so no script runs and it has an opaque origin; no request leaves it but
-// its inline style; framed only by the platform's own pages.
-const SKETCH_CSP = "sandbox; default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'";
-const MAX_DEPTH = 24;
-
-// ── The vocabulary ───────────────────────────────────────────────────────
-
-const KIT_CLASSES = [
-  'btn-primary', 'btn-secondary', 'field', 'list', 'list-row', 'card', 'section-label',
-  'skeleton', 'state-empty',
-];
-
-// Tailwind 3 utilities, each compiled by the app's own build (its config
-// names the colour tokens and the four type sizes) and written out below as
-// plain CSS for the preview. Spacing is Tailwind's 0.25rem scale.
-const SPACING = { 0: '0', 1: '0.25rem', 2: '0.5rem', 3: '0.75rem', 4: '1rem', 6: '1.5rem', 8: '2rem' };
-const SIZES = { 1: '0.25rem', 2: '0.5rem', 3: '0.75rem', 4: '1rem', 8: '2rem', 10: '2.5rem', 12: '3rem', 16: '4rem' };
-const FRACTIONS = { '1/4': '25%', '1/3': '33.333333%', '1/2': '50%', '2/3': '66.666667%', '3/4': '75%', full: '100%' };
-
-function cls(name) {
-  return `.${name.replace(/[/:.]/g, (c) => `\\${c}`)}`;
-}
-
-function utilityRules() {
-  const rules = [
-    ['text-title', 'font-size:1.75rem;line-height:2.25rem;font-weight:700'],
-    ['text-heading', 'font-size:1.25rem;line-height:1.75rem;font-weight:600'],
-    ['text-body', 'font-size:1rem;line-height:1.5rem'],
-    ['text-small', 'font-size:0.875rem;line-height:1.25rem'],
-    ['font-medium', 'font-weight:500'],
-    ['font-semibold', 'font-weight:600'],
-    ['font-bold', 'font-weight:700'],
-    ['text-center', 'text-align:center'],
-    ['text-right', 'text-align:right'],
-    ['tabular-nums', 'font-variant-numeric:tabular-nums'],
-    ['truncate', 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap'],
-    ['line-through', 'text-decoration-line:line-through'],
-    ['text-fg', 'color:rgb(var(--fg))'],
-    ['text-muted', 'color:rgb(var(--muted))'],
-    ['text-accent', 'color:rgb(var(--accent))'],
-    ['text-on-accent', 'color:rgb(var(--on-accent))'],
-    ['text-danger', 'color:rgb(var(--danger))'],
-    ['bg-ground', 'background-color:rgb(var(--ground))'],
-    ['bg-surface', 'background-color:rgb(var(--surface))'],
-    ['bg-raised', 'background-color:rgb(var(--raised))'],
-    ['bg-line', 'background-color:rgb(var(--line))'],
-    ['bg-accent', 'background-color:rgb(var(--accent))'],
-    ['bg-accent/10', 'background-color:rgb(var(--accent) / 0.1)'],
-    ['bg-accent/20', 'background-color:rgb(var(--accent) / 0.2)'],
-    ['border', 'border-width:1px'],
-    ['border-t', 'border-top-width:1px'],
-    ['border-b', 'border-bottom-width:1px'],
-    ['border-line', 'border-color:rgb(var(--line))'],
-    ['border-accent', 'border-color:rgb(var(--accent))'],
-    ['rounded-md', 'border-radius:0.375rem'],
-    ['rounded-lg', 'border-radius:0.5rem'],
-    ['rounded-xl', 'border-radius:0.75rem'],
-    ['rounded-full', 'border-radius:9999px'],
-    ['flex', 'display:flex'],
-    ['inline-flex', 'display:inline-flex'],
-    ['grid', 'display:grid'],
-    ['flex-col', 'flex-direction:column'],
-    ['flex-wrap', 'flex-wrap:wrap'],
-    ['items-center', 'align-items:center'],
-    ['items-start', 'align-items:flex-start'],
-    ['items-end', 'align-items:flex-end'],
-    ['items-baseline', 'align-items:baseline'],
-    ['justify-between', 'justify-content:space-between'],
-    ['justify-center', 'justify-content:center'],
-    ['justify-end', 'justify-content:flex-end'],
-    ['grow', 'flex-grow:1'],
-    ['shrink-0', 'flex-shrink:0'],
-    ['self-start', 'align-self:flex-start'],
-    ['grid-cols-2', 'grid-template-columns:repeat(2,minmax(0,1fr))'],
-    ['grid-cols-3', 'grid-template-columns:repeat(3,minmax(0,1fr))'],
-    ['grid-cols-4', 'grid-template-columns:repeat(4,minmax(0,1fr))'],
-    ['col-span-2', 'grid-column:span 2 / span 2'],
-    ['min-w-0', 'min-width:0'],
-    ['overflow-hidden', 'overflow:hidden'],
-    ['opacity-60', 'opacity:0.6'],
-    ['ml-auto', 'margin-left:auto'],
-  ];
-  for (const [key, value] of Object.entries(SPACING)) {
-    if (key !== '0') rules.push([`gap-${key}`, `gap:${value}`]);
-    rules.push([`p-${key}`, `padding:${value}`]);
-    rules.push([`px-${key}`, `padding-left:${value};padding-right:${value}`]);
-    rules.push([`py-${key}`, `padding-top:${value};padding-bottom:${value}`]);
-    rules.push([`mt-${key}`, `margin-top:${value}`]);
-    rules.push([`mb-${key}`, `margin-bottom:${value}`]);
-  }
-  for (const [key, value] of Object.entries(SIZES)) {
-    rules.push([`h-${key}`, `height:${value}`]);
-    rules.push([`w-${key}`, `width:${value}`]);
-  }
-  for (const [key, value] of Object.entries(FRACTIONS)) rules.push([`w-${key}`, `width:${value}`]);
-  return rules;
-}
-
-const UTILITY_RULES = Object.freeze(utilityRules());
-const SKETCH_CLASSES = Object.freeze(new Set([...KIT_CLASSES, ...UTILITY_RULES.map(([name]) => name)]));
-
-// The starter's tokens (template.js DESIGN_KIT_CSS), as "R G B" channels.
-const BASE_TOKENS = Object.freeze({
-  light: {
-    ground: '250 250 249', surface: '255 255 255', raised: '245 245 244', fg: '28 25 23',
-    muted: '87 83 78', line: '231 229 228', accent: '15 118 110', 'on-accent': '255 255 255',
-    danger: '185 28 28', 'on-danger': '255 255 255', focus: '13 148 136',
+// A reply is three short lines of JSON.
+const CARD_MAX_TOKENS = 400;
+// The card's shape, for a model that answers through a schema (GLM); the
+// prompt asks Haiku for the same object. parseCardReply checks it either way.
+const CARD_SCHEMA = Object.freeze({
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    emoji: { type: 'string' },
+    tagline: { type: 'string' },
+    points: { type: 'array', items: { type: 'string' } },
   },
-  dark: {
-    ground: '12 10 9', surface: '28 25 23', raised: '41 37 36', fg: '245 245 244',
-    muted: '168 162 158', line: '68 64 60', accent: '45 212 191', 'on-accent': '4 47 46',
-    danger: '248 113 113', 'on-danger': '69 10 10', focus: '94 234 212',
-  },
+  required: ['emoji', 'tagline', 'points'],
 });
 
-// The kit's components (template.js DESIGN_KIT_CSS @apply lists), in plain
-// CSS. Components before utilities, as Tailwind orders them, so `card p-3`
-// means what it means in the app.
-const KIT_CSS = `
-.btn-primary,.btn-secondary{display:inline-flex;min-height:2.75rem;min-width:2.75rem;align-items:center;justify-content:center;gap:0.5rem;border-radius:0.5rem;padding:0 1rem;font-size:1rem;line-height:1.5rem;font-weight:500}
-.btn-primary{background-color:rgb(var(--accent));color:rgb(var(--on-accent))}
-.btn-secondary{border:1px solid rgb(var(--line));background-color:rgb(var(--surface));color:rgb(var(--fg))}
-.field{display:block;min-height:2.75rem;width:100%;border-radius:0.5rem;border:1px solid rgb(var(--line));background-color:rgb(var(--surface));padding:0.5rem 0.75rem;font-size:1rem;line-height:1.5rem;color:rgb(var(--fg))}
-.field::placeholder{color:rgb(var(--muted))}
-.list{overflow:hidden;border-radius:0.75rem;border:1px solid rgb(var(--line));background-color:rgb(var(--surface))}
-.list>*+*{border-top:1px solid rgb(var(--line))}
-.list-row{display:flex;min-height:2.75rem;align-items:center;gap:0.75rem;padding:0.75rem 1rem}
-.card{border-radius:0.75rem;border:1px solid rgb(var(--line));background-color:rgb(var(--surface));padding:1rem}
-.section-label{margin-bottom:0.5rem;padding:0 0.25rem;font-size:0.875rem;line-height:1.25rem;font-weight:500;color:rgb(var(--muted))}
-.skeleton{border-radius:0.375rem;background-color:rgb(var(--line))}
-.state-empty{display:flex;flex-direction:column;align-items:center;gap:0.5rem;padding:2rem 1rem;text-align:center}
-`.trim();
+// What the card holds, in characters: a tagline and a point are each at most
+// two lines of the card at 390px (it shows the points that fit four lines,
+// first-session sketch-card.tsx fitPoints). The model is asked for less.
+const TAGLINE_MAX = 80;
+const POINT_MAX = 72;
+const POINTS_MAX = 4;
+// Said on a fallback card with fewer than two points of its own: true of
+// every first-session project, which is made for a group.
+const SHARED_POINT = 'Shared with the people you invite';
 
-// Tailwind's preflight, the parts this vocabulary meets.
-const PREFLIGHT_CSS = `
-*,::before,::after{box-sizing:border-box;border:0 solid rgb(229 231 235);margin:0;padding:0}
-html{-webkit-text-size-adjust:100%;font-family:ui-sans-serif,system-ui,sans-serif,"Apple Color Emoji","Segoe UI Emoji";line-height:1.5}
-body{background-color:rgb(var(--ground));color:rgb(var(--fg))}
-h1,h2,h3,h4{font-size:inherit;font-weight:inherit}
-ol,ul{list-style:none}
-button,input,select,textarea{font:inherit;color:inherit;background-color:transparent}
-button{cursor:default}
-table{border-collapse:collapse;width:100%}
-hr{border-top-width:1px;border-color:rgb(var(--line))}
-[hidden]{display:none!important}
-.sketch-screen{margin:0 auto;display:flex;max-width:28rem;flex-direction:column;gap:2rem;padding:2.5rem 1rem}
-`.trim();
+// ── The emoji ────────────────────────────────────────────────────────────
 
-const SKETCH_CSS_BODY = [KIT_CSS, ...UTILITY_RULES.map(([name, body]) => `${cls(name)}{${body}}`)].join('\n');
+const DEFAULT_EMOJI = '\u{1F4A1}'; // light bulb: an idea, before it is anything
 
-// ── Colour ───────────────────────────────────────────────────────────────
+// Emoji that would make a poor icon for a group's project, even when asked
+// for: crude, violent or morbid.
+const BLOCKED_EMOJI = new Set(['🖕', '🍆', '🍑', '💦', '💩', '🔫', '💣', '🔪', '🗡️', '🩸', '☠️', '💀', '⚰️', '🪦', '🤬']);
 
-function hexToRgb(hex) {
-  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || '').trim());
-  if (!m) return null;
-  const n = parseInt(m[1], 16);
-  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
-}
-
-function channels(rgb) {
-  return rgb.map((v) => Math.round(v)).join(' ');
-}
-
-function parseChannels(str) {
-  return String(str).split(' ').map(Number);
-}
-
-function luminance([r, g, b]) {
-  const lin = (v) => {
-    const c = v / 255;
-    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-  };
-  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
-}
-
-function contrast(a, b) {
-  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
-  return (hi + 0.05) / (lo + 0.05);
-}
-
-function mix(rgb, toward, amount) {
-  return rgb.map((v, i) => v + (toward[i] - v) * amount);
-}
-
-/**
- * The accent a sketch asks for, made to meet the kit's contrast rule in one
- * look: 4.5:1 on the ground and the surface, and its on-accent text 4.5:1 on
- * it. Darkened (light look) or lightened (dark look) in small steps until it
- * does; null when the colour is unusable. Returns { accent, onAccent } as
- * "R G B" channels.
- */
-function fitAccent(hex, look) {
-  let rgb = hexToRgb(hex);
-  if (!rgb) return null;
-  const base = BASE_TOKENS[look];
-  const ground = parseChannels(base.ground);
-  const surface = parseChannels(base.surface);
-  const toward = look === 'light' ? [0, 0, 0] : [255, 255, 255];
-  const textOptions = look === 'light'
-    ? [[255, 255, 255], parseChannels(BASE_TOKENS.light.fg)]
-    : [parseChannels(BASE_TOKENS.light.fg), [255, 255, 255]];
-  for (let step = 0; step <= 20; step += 1) {
-    const onGround = Math.min(contrast(rgb, ground), contrast(rgb, surface));
-    const text = textOptions.map((t) => [t, contrast(t, rgb)]).sort((a, b) => b[1] - a[1])[0];
-    if (onGround >= 4.5 && text[1] >= 4.5) return { accent: channels(rgb), onAccent: channels(text[0]) };
-    rgb = mix(rgb, toward, 0.08);
+/** One emoji fit to be an icon, normalised to its emoji form; null when `value` is not one. */
+function iconEmoji(value) {
+  if (typeof value !== 'string') return null;
+  const s = value.trim();
+  if (!s || s.length > 16) return null;
+  // At most 16 UTF-16 units, as dapp.json's icon.emoji allows (app-manifest.js
+  // readIcon); a longer one would be dropped by the first deploy.
+  for (const candidate of [s, `${s}\u{FE0F}`]) {
+    if (candidate.length <= 16 && /^\p{RGI_Emoji}$/v.test(candidate)) return BLOCKED_EMOJI.has(candidate) ? null : candidate;
   }
   return null;
 }
 
-/** The token overrides a design asks for, per look: { light: {...}, dark: {...} }. */
-function accentTokens(design) {
-  const out = { light: {}, dark: {} };
-  for (const look of ['light', 'dark']) {
-    const fitted = design?.accent ? fitAccent(design.accent[look], look) : null;
-    if (fitted) {
-      out[look] = { accent: fitted.accent, 'on-accent': fitted.onAccent, focus: fitted.accent };
+// The first rule a project's name matches, else the first its description
+// matches. Specific subjects first, the general ones (plans, lists, homes)
+// last, so "a planner for our lake house" is a tent, not a calendar.
+const KEYWORD_EMOJI = Object.freeze([
+  [/\b(?:run|runs|running|runners?|jog|jogs|jogging|marathons?|parkrun|5k|10k|miles)\b/, '🏃'],
+  [/\b(?:cycling|cyclists?|bikes?|biking|bicycles?)\b/, '🚴'],
+  [/\b(?:swim|swims|swimming|swimmers?)\b/, '🏊'],
+  [/\b(?:hikes?|hiking|trails?|rambl\w*)\b/, '🥾'],
+  [/\b(?:yoga|meditat\w*)\b/, '🧘'],
+  [/\b(?:climb\w*|boulder\w*)\b/, '🧗'],
+  [/\b(?:gym|workouts?|fitness|exercis\w*|weightlifting)\b/, '💪'],
+  [/\b(?:football|soccer)\b/, '⚽'],
+  [/\b(?:basketball)\b/, '🏀'],
+  [/\b(?:tennis|padel|squash|badminton)\b/, '🎾'],
+  [/\b(?:golf)\b/, '⛳'],
+  [/\b(?:books?|reading|novels?|library)\b/, '📚'],
+  [/\b(?:movies?|films?|cinema)\b/, '🎬'],
+  [/\b(?:music|songs?|playlists?|gigs?|concerts?|karaoke|choir)\b/, '🎵'],
+  [/\b(?:board games?|games?|gaming|poker|chess|quiz\w*|trivia)\b/, '🎲'],
+  [/\b(?:polls?|votes?|voting)\b/, '🗳️'],
+  [/\b(?:camp|camping|campsite|tents?|cabins?|lake)\b/, '🏕️'],
+  [/\b(?:ski|skiing|snowboard\w*)\b/, '⛷️'],
+  [/\b(?:beach)\b/, '🏖️'],
+  [/\b(?:trips?|travel\w*|holidays?|vacations?|flights?|getaway)\b/, '✈️'],
+  [/\b(?:pizza)\b/, '🍕'],
+  [/\b(?:coffee|caf[eé])\b/, '☕'],
+  [/\b(?:wine)\b/, '🍷'],
+  [/\b(?:beers?|pubs?)\b/, '🍺'],
+  [/\b(?:recipes?|cook\w*|meals?|dinners?|potluck|bak(?:e|es|ing)|kitchen|food)\b/, '🍳'],
+  [/\b(?:grocer\w*|shopping)\b/, '🛒'],
+  [/\b(?:chores?|cleaning|rota|bins|dishes|hoover\w*|laundry)\b/, '🧹'],
+  [/\b(?:plants?|garden\w*|watering|flowers?|seeds?)\b/, '🪴'],
+  [/\b(?:dogs?|pupp(?:y|ies))\b/, '🐶'],
+  [/\b(?:cats?|kittens?)\b/, '🐱'],
+  [/\b(?:pets?)\b/, '🐾'],
+  [/\b(?:birds?|birding|birdwatching)\b/, '🐦'],
+  [/\b(?:fishing)\b/, '🎣'],
+  [/\b(?:budgets?|expenses?|money|bills?|rent|owes?|owed|splits?|splitting|savings)\b/, '💰'],
+  [/\b(?:birthdays?|party|parties)\b/, '🎉'],
+  [/\b(?:gifts?|presents?|secret santa|wish ?lists?)\b/, '🎁'],
+  [/\b(?:weddings?)\b/, '💍'],
+  [/\b(?:homework|study|studying|exams?|revision|lessons?)\b/, '📝'],
+  [/\b(?:photos?|photography|albums?)\b/, '📷'],
+  [/\b(?:carpool\w*|car share|lift share)\b/, '🚗'],
+  [/\b(?:volunteer\w*|charity|fundrais\w*)\b/, '🤝'],
+  [/\b(?:calendar|schedul\w*|meetups?|events?|rsvps?|planner|availability)\b/, '📅'],
+  [/\b(?:to-?dos?|tasks?|checklists?)\b/, '✅'],
+  [/\b(?:house|household|flat|flatmates?|neighbou?rs?|neighbou?rhood)\b/, '🏡'],
+]);
+
+/** The emoji a project's name, else its description, suggests; DEFAULT_EMOJI when neither does. */
+function keywordEmoji(name, brief) {
+  for (const text of [name, brief]) {
+    const lower = String(text || '').toLowerCase();
+    if (!lower) continue;
+    for (const [re, emoji] of KEYWORD_EMOJI) if (re.test(lower)) return emoji;
+  }
+  return DEFAULT_EMOJI;
+}
+
+/** The card's emoji: the model's when it is fit to be an icon, else the keyword map's. */
+function chooseEmoji(fromModel, { name, brief } = {}) {
+  return iconEmoji(fromModel) || keywordEmoji(name, brief);
+}
+
+// ── The words ────────────────────────────────────────────────────────────
+
+// Emoji drawn as pictures, and the joiners that held them: kept out of the
+// card's words (the icon is the card's one emoji).
+const EMOJI_RE = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B50}\u{2B55}\u{FE0F}\u{200D}]/gu;
+
+// The lower-case words a line may rightly start with (units under a number).
+const LOWER_STARTS = new Set(['km', 'kg', 'mg', 'ml', 'cm', 'mm', 'mi', 'min', 'mins', 'hr', 'hrs', 'sec', 'secs',
+  'am', 'pm', 'lb', 'lbs', 'oz', 'kcal', 'ft', 'vs', 'etc']);
+
+/** Sentence case: a line's first word capitalised when it is all lower case ("iPhone" and "km" stay). */
+function sentenceCase(text) {
+  return String(text || '').replace(/^([a-z])([a-z'’]*)(?![\p{L}\p{N}])/u, (whole, first, rest) => {
+    const word = first + rest;
+    if (LOWER_STARTS.has(word) || (word.length === 1 && word !== 'a')) return whole;
+    return first.toUpperCase() + rest;
+  });
+}
+
+/** `text` cut to `max` characters at a word, with an ellipsis when it was cut. */
+function clipWords(text, max) {
+  if (text.length <= max) return text;
+  let cut = text.slice(0, max - 1);
+  const space = cut.lastIndexOf(' ');
+  if (space > max / 2) cut = cut.slice(0, space);
+  return `${cut.replace(/[\s,;:.\-]+$/, '')}…`;
+}
+
+/**
+ * One line of the card: plain text in sentence case, with no emoji, no
+ * markdown, no em dash, no wrapping quotes and no full stop, at most `max`
+ * characters. '' when nothing is left.
+ */
+function cleanLine(value, max) {
+  if (typeof value !== 'string') return '';
+  let s = value
+    .replace(EMOJI_RE, '')
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/\s*—\s*/g, ', ')
+    .replace(/\*\*|__|`/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^(?:[-*•·>#,;:]+\s*)+/, '')
+    .replace(/[\s,;:]+$/, '')
+    .replace(/^["“”‘]+|["“”]+$/g, '')
+    .replace(/[.。]+$/, '')
+    .trim();
+  s = sentenceCase(s);
+  return s ? clipWords(s, max) : '';
+}
+
+// The words a thing in a list starts with when it could stand as a point of
+// its own ("who's hosting the next meetup", "a countdown to it"), and not
+// ("dishes and hoovering", the rest of one thing).
+const POINT_STARTS = /^(?:who|whose|what|when|where|which|how|a|an|the|our|your|their|everyone|everybody|each|every|all|plus|see|add|log|track|vote|pick|share|keep|get|show|shows|plan|find|chat|post|send|remind|reminders)\b/i;
+
+/**
+ * The description in pieces, for a card made without the model: its
+ * sentences, the asides in brackets, what comes after a colon, and the joins
+ * (", so we can see ...") a sentence is made of. A list after a colon ("the
+ * dates, who sleeps where, and who brings what") is one piece per thing, and
+ * so is a long piece whose every thing after the first could stand alone.
+ */
+function clausesOf(brief) {
+  const text = String(brief || '').replace(EMOJI_RE, '').replace(/\s+/g, ' ').trim();
+  const out = [];
+  const listOf = (piece) => {
+    const items = piece.split(/\s*,\s*(?:and\s+|or\s+)?/).map((s) => s.trim()).filter(Boolean);
+    const last = items[items.length - 1] || '';
+    const and = last.lastIndexOf(' and ');
+    if (items.length > 1 && and > 0 && !/,\s*and\s/.test(piece)) items.splice(-1, 1, last.slice(0, and), last.slice(and + 5));
+    return items;
+  };
+  const push = (raw, isList) => {
+    const clause = raw.replace(/^[\s,;:\-–—]+|[\s,;:.!?\-–—]+$/g, '');
+    if (!clause) return;
+    for (const piece of clause.split(/,\s*(?=(?:so|so that|and so|because|which|where|from|with)\b)/i)) {
+      const trimmed = piece.trim();
+      if (!trimmed) continue;
+      const items = trimmed.includes(',') ? listOf(trimmed) : [trimmed];
+      const standsAlone = items.length > 1 && items.slice(1).every((item) => POINT_STARTS.test(item));
+      if (isList || (trimmed.length > 40 && standsAlone)) out.push(...items);
+      else out.push(trimmed);
+    }
+  };
+  for (const part of text.split(/\s*[()]\s*/)) {
+    for (const sentence of part.split(/(?<=[.!?])\s+|\s*;\s*|\s+[-–—]\s+/)) {
+      const colon = sentence.indexOf(': ');
+      if (colon > 0) {
+        push(sentence.slice(0, colon), false);
+        push(sentence.slice(colon + 2), true);
+      } else {
+        push(sentence, false);
+      }
     }
   }
   return out;
 }
 
-function tokenBlock(selector, tokens) {
-  return `${selector}{${Object.entries(tokens).map(([k, v]) => `--${k}:${v}`).join(';')}}`;
+/** Held to the real calendar where the creator is (services/sketch-dates.js). */
+function checkedDates(text, { today = null, brief = '' } = {}) {
+  return sketchDates.checkSketchDates(text, { today, brief });
 }
 
-/** The preview's whole stylesheet: tokens for the look(s), then the kit and the utilities. */
-function sketchCss(design, theme = null) {
-  const accents = accentTokens(design);
-  const light = { ...BASE_TOKENS.light, ...accents.light };
-  const dark = { ...BASE_TOKENS.dark, ...accents.dark };
-  let tokens;
-  if (theme === 'dark') tokens = tokenBlock(':root', dark);
-  else if (theme === 'light') tokens = tokenBlock(':root', light);
-  else tokens = `${tokenBlock(':root', light)}\n@media (prefers-color-scheme: dark){${tokenBlock(':root', dark)}}`;
-  return [tokens, PREFLIGHT_CSS, SKETCH_CSS_BODY].join('\n');
-}
-
-// ── Sanitizing ───────────────────────────────────────────────────────────
-
-const ALLOWED_TAGS = new Set([
-  'header', 'footer', 'nav', 'section', 'article', 'aside', 'div', 'span', 'p', 'h1', 'h2', 'h3', 'h4',
-  'strong', 'em', 'b', 'i', 'small', 'ul', 'ol', 'li', 'button', 'input', 'textarea', 'select', 'option',
-  'label', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'hr', 'br', 'time', 'figure', 'figcaption',
-]);
-const VOID_TAGS = new Set(['input', 'hr', 'br']);
-// Removed with everything inside them.
-const DROPPED_WITH_CONTENT = new Set([
-  'script', 'style', 'iframe', 'frame', 'frameset', 'object', 'embed', 'svg', 'math', 'template', 'noscript',
-  'head', 'title', 'link', 'meta', 'base', 'canvas', 'audio', 'video', 'picture', 'img', 'source', 'map',
-]);
-const GLOBAL_ATTRS = new Set(['class', 'aria-label', 'aria-hidden', 'role', 'title']);
-const TAG_ATTRS = {
-  input: new Set(['type', 'placeholder', 'value', 'checked', 'disabled', 'readonly', 'min', 'max', 'step']),
-  textarea: new Set(['placeholder', 'rows', 'disabled', 'readonly']),
-  select: new Set(['disabled']),
-  option: new Set(['selected', 'value']),
-  button: new Set(['type', 'disabled']),
-  th: new Set(['colspan']),
-  td: new Set(['colspan']),
-};
-const INPUT_TYPES = new Set(['text', 'number', 'date', 'time', 'email', 'search', 'checkbox', 'radio', 'range', 'tel']);
-const BOOLEAN_ATTRS = new Set(['checked', 'disabled', 'readonly', 'selected', 'aria-hidden']);
-
-const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', '#39': "'" };
-
-function decodeEntities(text) {
-  return text.replace(/&(#x[0-9a-f]{1,6}|#\d{1,7}|[a-z]+\d*);/gi, (whole, name) => {
-    if (name[0] === '#') {
-      const code = name[1] === 'x' || name[1] === 'X' ? parseInt(name.slice(2), 16) : parseInt(name.slice(1), 10);
-      return Number.isFinite(code) && code > 0 && code < 0x110000 ? String.fromCodePoint(code) : '';
-    }
-    return Object.prototype.hasOwnProperty.call(ENTITIES, name.toLowerCase()) ? ENTITIES[name.toLowerCase()] : whole;
-  });
-}
-
-// Emoji drawn as pictures (the benchmark's tells lint counts the same
-// ranges, worker/usernode-bench-capture.js), and the joiners that held them.
-const EMOJI_RE = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B50}\u{2B55}\u{FE0F}\u{200D}]/gu;
-
-function escapeText(text) {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-function escapeAttr(text) {
-  return escapeText(text).replace(/"/g, '&quot;');
-}
-
-const ATTR_RE = /([^\s"'>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
-
-function cleanAttrs(tag, raw) {
+/** Points without repeats, or the tagline again. */
+function distinctPoints(points, tagline) {
+  const seen = new Set([String(tagline || '').toLowerCase()]);
   const out = [];
-  const seen = new Set();
-  for (const m of raw.matchAll(ATTR_RE)) {
-    const name = m[1].toLowerCase();
-    if (seen.has(name)) continue;
-    if (!GLOBAL_ATTRS.has(name) && !(TAG_ATTRS[tag] && TAG_ATTRS[tag].has(name))) continue;
-    seen.add(name);
-    let value = decodeEntities(m[2] ?? m[3] ?? m[4] ?? '');
-    if (name === 'class') {
-      value = [...new Set(value.split(/\s+/).filter((c) => SKETCH_CLASSES.has(c)))].join(' ');
-      if (!value) continue;
-    } else if (name === 'type' && tag === 'input') {
-      value = value.toLowerCase();
-      if (!INPUT_TYPES.has(value)) value = 'text';
-    } else if (name === 'type' && tag === 'button') {
-      value = 'button';
-    } else if (name === 'colspan') {
-      const n = Number.parseInt(value, 10);
-      if (!(n >= 1 && n <= 6)) continue;
-      value = String(n);
-    } else if (name === 'rows') {
-      const n = Number.parseInt(value, 10);
-      if (!(n >= 1 && n <= 12)) continue;
-      value = String(n);
-    }
-    value = value.replace(/[\u0000-\u001f]/g, ' ').replace(EMOJI_RE, '').slice(0, 300);
-    out.push(BOOLEAN_ATTRS.has(name) && name !== 'aria-hidden' ? ` ${name}` : ` ${name}="${escapeAttr(value)}"`);
+  for (const point of points) {
+    const key = point.toLowerCase();
+    if (!point || seen.has(key)) continue;
+    seen.add(key);
+    out.push(point);
   }
-  return out.join('');
+  return out;
 }
-
-const TOKEN_RE = /<!--[\s\S]*?(?:-->|$)|<![^>]*>|<\?[^>]*>|<\/([a-zA-Z][\w-]*)\s*>|<([a-zA-Z][\w-]*)((?:\s+[^\s"'>/=]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*)\s*\/?>|[^<]+|</g;
 
 /**
- * Keep only the sketch vocabulary: allowed tags and attributes, classes from
- * SKETCH_CLASSES, text escaped, every element closed. Scripts, styles,
- * frames, images, SVG and links go with their contents; any other unknown
- * tag goes but its text stays. Never throws.
+ * The card made from the name and the description alone: the description's
+ * first piece as the tagline, the pieces after it as points (with one true
+ * of every project when it has fewer than two), and the keyword map's emoji.
+ * Deterministic, and never null.
  */
-function sanitizeSketchHtml(input) {
-  const html = String(input || '').slice(0, HTML_MAX * 2);
-  const out = [];
-  const stack = [];
-  let dropping = null;
-  let dropDepth = 0;
-  for (const m of html.matchAll(TOKEN_RE)) {
-    const token = m[0];
-    const closeName = m[1] && m[1].toLowerCase();
-    const openName = m[2] && m[2].toLowerCase();
-    if (dropping) {
-      if (openName === dropping && !/\/>$/.test(token)) dropDepth += 1;
-      else if (closeName === dropping) {
-        dropDepth -= 1;
-        if (dropDepth === 0) dropping = null;
-      }
-      continue;
-    }
-    if (token.startsWith('<!') || token.startsWith('<?')) continue;
-    if (openName) {
-      if (DROPPED_WITH_CONTENT.has(openName)) {
-        if (!VOID_TAGS.has(openName) && !/\/>$/.test(token) && !['img', 'link', 'meta', 'base', 'source'].includes(openName)) {
-          dropping = openName;
-          dropDepth = 1;
-        }
-        continue;
-      }
-      if (!ALLOWED_TAGS.has(openName) || stack.length >= MAX_DEPTH) continue;
-      out.push(`<${openName}${cleanAttrs(openName, m[3] || '')}>`);
-      if (!VOID_TAGS.has(openName)) stack.push(openName);
-      continue;
-    }
-    if (closeName) {
-      const at = stack.lastIndexOf(closeName);
-      if (at === -1) continue;
-      while (stack.length > at) out.push(`</${stack.pop()}>`);
-      continue;
-    }
-    // Text, or a stray '<'.
-    const text = (token === '<' ? '<' : decodeEntities(token)).replace(EMOJI_RE, '');
-    if (stack[stack.length - 1] === 'select' && text.trim()) continue;
-    out.push(escapeText(text));
-  }
-  while (stack.length) out.push(`</${stack.pop()}>`);
-  const cleaned = out.join('').replace(/\n{3,}/g, '\n\n').trim();
-  return cleaned.length > HTML_MAX ? '' : cleaned;
+function fallbackCard({ name = '', brief = '', today = null } = {}) {
+  const clauses = clausesOf(checkedDates(brief, { today, brief })).map((c) => cleanLine(c, 400)).filter(Boolean);
+  const tagline = clauses.length ? clipWords(clauses[0], TAGLINE_MAX) : cleanLine(`Made for ${name || 'your group'}`, TAGLINE_MAX);
+  let points = distinctPoints(clauses.slice(1).map((c) => clipWords(c, POINT_MAX)), tagline).slice(0, POINTS_MAX);
+  if (points.length < 2) points = distinctPoints([...points, SHARED_POINT], tagline);
+  return { kind: 'card', emoji: keywordEmoji(name, brief), tagline, points, source: 'fallback' };
 }
 
-/** Visible words in sanitized markup, for "is there anything here". */
-function textOf(html) {
-  return String(html).replace(/<[^>]*>/g, ' ').replace(/&[a-z#0-9]+;/gi, ' ').replace(/\s+/g, ' ').trim();
-}
+// ── The prompt ───────────────────────────────────────────────────────────
 
-// ── The design record ────────────────────────────────────────────────────
+const SKETCH_SYSTEM = `You write the featured card a new app gets while it is being built, like the card an app store features an app with: it sells the IDEA at a glance. It is not a screen of the app and says nothing about its layout or its look, only what it is for and what it will let its group do. A small group of people (friends, a club, a household) will use the app together; its creator described it in their own words.
+
+Respond with ONLY a JSON object, no prose before or after:
+{"emoji": "one emoji", "tagline": "one line", "points": ["a point", "another point"]}
+
+- emoji: ONE emoji for the app's subject, which becomes its icon. An object, animal, food, place or activity from the subject (a running shoe, a book, a film clapper, a tent), not a face, a hand, a flag or a heart.
+- tagline: one line of at most 60 characters saying what the app is for, in plain words. Not its name. No full stop, no quotes.
+- points: 2 to 4 things it will let the group do or see, each at most 40 characters, the most important first. Only what the description asks for or plainly implies, never a feature it does not mention. No full stops.
+- Sentence case: capitalise the first word of the tagline and of each point, and every weekday and month name. No all-caps, no emoji outside "emoji", no markdown, no em dashes.
+- People: the creator (THE CREATOR, given with the description) is "you". Anyone else is "everyone", "the group" or a word from the app's subject (flatmates, players), never an invented personal name. Only a person the description names may appear by that name.
+- Dates: only ones the description gives, said the way it gives them (Every Sunday, The last Thursday of the month). TODAY and a CALENDAR are given: read any date's weekday off the CALENDAR rather than working it out.`;
+
+/**
+ * Today, as the card is told it: the weekday, the date in words, the ISO
+ * date and the time zone it is the date in. That is the creator's own zone
+ * when their device sent one with Make it, and UTC when not.
+ */
+function todayLine(now = new Date(), zone = null) {
+  return sketchDates.todayLine(now, zone);
+}
 
 function oneLine(value, max) {
   return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, max) : '';
 }
 
-/** The model's design object, kept to known fields and sizes; null when it has no job. */
-function normalizeDesign(raw) {
-  if (!raw || typeof raw !== 'object') return null;
-  const job = oneLine(raw.job, 200);
-  if (!job) return null;
-  const hex = (v) => (hexToRgb(v) ? `#${String(v).trim().replace(/^#/, '').toLowerCase()}` : null);
-  const accent = raw.accent && typeof raw.accent === 'object'
-    ? { light: hex(raw.accent.light), dark: hex(raw.accent.dark) }
-    : { light: null, dark: null };
-  const layout = Array.isArray(raw.layout) ? raw.layout.map((l) => oneLine(l, 160)).filter(Boolean).slice(0, 8) : [];
-  const words = {};
-  if (raw.words && typeof raw.words === 'object' && !Array.isArray(raw.words)) {
-    for (const [k, v] of Object.entries(raw.words).slice(0, 12)) {
-      const key = oneLine(k, 40);
-      const value = oneLine(v, 60);
-      if (key && value) words[key] = value;
-    }
-  }
-  return {
-    job,
-    primaryAction: oneLine(raw.primaryAction, 80),
-    accent,
-    accentName: oneLine(raw.accentName, 40),
-    signature: oneLine(raw.signature, 200),
-    layout,
-    words,
-  };
-}
-
-// ── The prompt ───────────────────────────────────────────────────────────
-
-const SKETCH_SYSTEM = `You sketch the main screen of a small web app a group of people will use together, from its name and its creator's description, so its creator sees something of theirs within seconds while the real app is built. The real app will keep your layout, your words and your accent, so decide them well: plain, specific to this app, and useful on a phone.
-
-Respond with ONLY a JSON object, no prose before or after:
-{
-  "design": {
-    "job": "the main screen's one job, in a short sentence",
-    "primaryAction": "the one primary action's label, e.g. Log a run",
-    "accentName": "the accent colour in plain words, e.g. tomato red",
-    "accent": { "light": "#rrggbb", "dark": "#rrggbb" },
-    "signature": "ONE element drawn from the app's subject that a generic app would not have",
-    "layout": ["the screen top to bottom, a few plain lines"],
-    "words": { "the thing": "the exact word the screen uses for it" }
-  },
-  "html": "the screen's markup"
-}
-
-The accent: one colour chosen for this app, with a darker shade for the light look and a lighter one for the dark look. Not teal unless the subject calls for it.
-
-The markup is STATIC HTML for the body of the screen at phone width, filled with example content that is plainly illustrative: never lorem ipsum, and never made-up facts about the group. Rules:
-- Dates: TODAY is given with the description. Any date or weekday the screen shows is today or counted from it (this week, tomorrow, next Monday), never a date you made up.
-- People: show the creator as "You" (THE CREATOR, given with the description, says who that is). Show anyone else by a neutral placeholder from the app's subject plus a number, such as "Flatmate 2" or "Member 3", never an invented personal name. Only a person the description itself names may appear by that name.
-- Every other example (counts, amounts, items) is plain and obviously a sample.
-- Tags: header, section, div, span, p, h1, h2, h3, strong, em, small, ul, ol, li, button, input, textarea, select, option, label, table, thead, tbody, tr, th, td, hr, time. Nothing else: no script, no style, no img, no svg, no links, no style attributes, no ids, no event handlers.
-- Classes: ONLY these, exactly as written. Components: btn-primary (the one primary action, once), btn-secondary, field (inputs), list with list-row children (the usual way to show several things), card (one self-contained thing; never a card inside a card or a list), section-label (a label above a section), skeleton, state-empty. Type: text-title (once, the screen's title), text-heading, text-body, text-small, font-medium, font-semibold, font-bold, text-center, text-right, tabular-nums, truncate, line-through. Colour: text-fg, text-muted, text-accent, text-on-accent, text-danger, bg-surface, bg-raised, bg-line, bg-accent, bg-accent/10, bg-accent/20, border, border-t, border-b, border-line, border-accent, rounded-md, rounded-lg, rounded-xl, rounded-full, opacity-60. Layout: flex, inline-flex, grid, flex-col, flex-wrap, items-center, items-start, items-end, items-baseline, justify-between, justify-center, justify-end, grow, shrink-0, self-start, grid-cols-2, grid-cols-3, grid-cols-4, col-span-2, min-w-0, overflow-hidden, ml-auto, gap-1, gap-2, gap-3, gap-4, gap-6, p-/px-/py-/mt-/mb- with 0, 1, 2, 3, 4, 6 or 8, h- and w- with 1, 2, 3, 4, 8, 10, 12 or 16, w-1/4, w-1/3, w-1/2, w-2/3, w-3/4, w-full.
-- The screen's top-level elements are siblings, spaced by the page (do not wrap everything in one div). Start with a header holding the title and one short line under it in text-muted.
-- No emoji. No uppercase labels. Accent only for the primary action, the signature element and small highlights.
-- At most about 60 elements. A bar or meter is a bg-line rounded-full h-2 track holding a bg-accent rounded-full h-2 fill with a w- fraction.`;
-
-const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September',
-  'October', 'November', 'December'];
-
 /**
- * Today, as the sketch is told it: the weekday, the date in words and the
- * ISO date, in UTC (the creator's own zone is not known here, so at most a
- * day off). A sketch drawn without it dated a chore rota "week of Monday
- * 20 Jan" on Sunday 4 October 2026.
- */
-function todayLine(now = new Date()) {
-  const d = new Date(now);
-  const at = Number.isFinite(d.getTime()) ? d : new Date();
-  const words = `${WEEKDAYS[at.getUTCDay()]} ${at.getUTCDate()} ${MONTHS[at.getUTCMonth()]} ${at.getUTCFullYear()}`;
-  return `${words} (${at.toISOString().slice(0, 10)})`;
-}
-
-/**
- * The creator as the sketch is told them: "Display name (@username)", or
- * "@username" without a display name. Context only: the screen shows them
- * as "You", and the name lets the model tell them apart from anyone their
+ * The creator as the card is told them: "Display name (@username)", or
+ * "@username" without a display name. Context only: the card calls them
+ * "you", and the name lets the model tell them apart from anyone their
  * description names.
  */
 function makerLine(maker) {
@@ -533,19 +343,27 @@ function makerLine(maker) {
   return display && display.toLowerCase() !== username.toLowerCase() ? `${display} (@${username})` : `@${username}`;
 }
 
-function sketchUserPrompt({ name, brief, audience, today = null, maker = null }) {
+function sketchUserPrompt({ name, brief, audience, today = null, zone = null, maker = null }) {
   const creator = makerLine(maker);
+  const now = today || new Date();
   return [
     `APP NAME:\n${String(name || '').slice(0, 120)}`,
     audience ? `WHO IT IS FOR:\n${String(audience).slice(0, 120)}` : null,
-    `TODAY:\n${todayLine(today || new Date())}`,
-    creator ? `THE CREATOR (shown on the screen as "You"):\n${creator}` : null,
+    `TODAY:\n${todayLine(now, zone)}`,
+    `CALENDAR (each weekday's dates, this month and the next two):\n${sketchDates.calendarLines(sketchDates.localToday(now, zone)).join('\n')}`,
+    creator ? `THE CREATOR (called "you" on the card):\n${creator}` : null,
     `WHAT IT SHOULD DO (the creator's words):\n${String(brief || '').slice(0, 4000)}`,
   ].filter(Boolean).join('\n\n');
 }
 
-/** The model's reply as { design, html }, or null when it is not usable. */
-function parseSketchReply(text) {
+/**
+ * The model's reply as a card, or null when it has neither a usable tagline
+ * nor usable points. A piece that is missing or unusable comes from the
+ * fallback card; every line is cleaned and its dates held to the calendar
+ * where the creator is (`today`, sketch-dates.localToday; `brief`, their
+ * description).
+ */
+function parseCardReply(text, { name = '', brief = '', today = null } = {}) {
   const out = String(text || '');
   const first = out.indexOf('{');
   const last = out.lastIndexOf('}');
@@ -556,119 +374,81 @@ function parseSketchReply(text) {
   } catch {
     return null;
   }
-  const design = normalizeDesign(obj.design);
-  const html = sanitizeSketchHtml(obj.html);
-  // Something to look at: a title and a few more words than that.
-  if (!design || textOf(html).split(' ').length < 8) return null;
-  return { design, html };
+  if (!obj || typeof obj !== 'object') return null;
+  const line = (value, max) => cleanLine(checkedDates(cleanLine(value, max), { today, brief }), max);
+  let tagline = line(obj.tagline, TAGLINE_MAX);
+  if (tagline && name && tagline.toLowerCase() === String(name).trim().toLowerCase()) tagline = '';
+  const points = distinctPoints((Array.isArray(obj.points) ? obj.points : []).map((p) => line(p, POINT_MAX)), tagline)
+    .slice(0, POINTS_MAX);
+  if (!tagline && points.length < 2) return null;
+  const fallback = (!tagline || points.length < 2) ? fallbackCard({ name, brief, today }) : null;
+  return {
+    kind: 'card',
+    emoji: chooseEmoji(obj.emoji, { name, brief }),
+    tagline: tagline || fallback.tagline,
+    points: points.length >= 2 ? points : distinctPoints([...points, ...fallback.points], tagline || fallback.tagline).slice(0, POINTS_MAX),
+    source: 'model',
+  };
+}
+
+/**
+ * The card a row holds, as the made screen and an invite draw it:
+ * { emoji, tagline, points }, or null for a row without one (a screen
+ * sketch from before the card, or nothing usable).
+ */
+function cardOf(design) {
+  if (!design || typeof design !== 'object' || design.kind !== 'card') return null;
+  const emoji = iconEmoji(design.emoji) || DEFAULT_EMOJI;
+  const tagline = typeof design.tagline === 'string' ? design.tagline.slice(0, TAGLINE_MAX + 1) : '';
+  const points = Array.isArray(design.points)
+    ? design.points.filter((p) => typeof p === 'string' && p).map((p) => p.slice(0, POINT_MAX + 1)).slice(0, POINTS_MAX)
+    : [];
+  if (!tagline) return null;
+  return { emoji, tagline, points };
 }
 
 // ── Documents ────────────────────────────────────────────────────────────
 
-function escapeHtml(text) {
-  return escapeAttr(String(text ?? ''));
-}
+const RECORD_NOTE = 'The featured card this app\'s creator was shown while it was being made: its emoji (also the app\'s icon, '
+  + 'set in dapp.json), a tagline and a few points that sum up the description in a few words. It is a picture of the '
+  + 'idea, not a design: it shows no screen and sets no layout, words or colours. Build from the description in the '
+  + 'first version\'s request; where the two differ, the description wins.';
 
-/**
- * The sketch as a page of its own: what the made screen frames, and the
- * repository's design/sketch.html. `theme` pins one look; without it the
- * page follows the device.
- */
-function sketchDocument({ name, design, html, theme = null }) {
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeHtml(name)}: a sketch</title>
-<!-- A sketch Homeroom made from this app's description when it was created,
-     so its creator saw something of theirs straight away. Static: nothing on
-     it works. The first version keeps its layout, its words and its accent
-     (design/sketch.json says them in words). -->
-<style>
-${sketchCss(design, theme)}
-</style>
-</head>
-<body>
-<main class="sketch-screen">
-${html}
-</main>
-</body>
-</html>
-`;
-}
-
-/** design/sketch.json: the design record, for the build to adopt. */
+/** design/sketch.json: the card, with what it is. */
 function sketchRecord({ design, model, createdAt }) {
-  const tokens = accentTokens(design);
+  const card = cardOf(design);
   return `${JSON.stringify({
-    note: 'The sketch this app\'s creator was shown when they made it (design/sketch.html). The first version keeps its layout, its words and its accent; any deviation is listed under Assumptions with the reason.',
-    ...design,
-    tokens,
-    model: model || SKETCH_MODEL,
+    note: RECORD_NOTE,
+    kind: 'featured-card',
+    ...card,
+    source: design?.source === 'model' ? 'model' : 'fallback',
+    model: model || null,
     createdAt: createdAt ? new Date(createdAt).toISOString() : null,
   }, null, 2)}\n`;
 }
 
 /**
- * The starter's placeholder screen, replaced by the sketch: the markup that
- * goes between the usernode-starter-notice@1 sentinels of public/index.html.
- * The app's own Tailwind build compiles these class names from it.
+ * A dapp.json (its text) with the card's emoji as its `icon`, or null when it
+ * already has one, or cannot be read: an icon somebody set is never replaced.
  */
-function starterBlock({ name, html }) {
-  return `<div class="flex flex-col items-start gap-2">
-      <p class="rounded-full bg-raised px-3 py-1 text-small font-medium text-muted">A sketch of ${escapeHtml(name)}</p>
-      <p class="text-small text-muted">Homeroom sketched this from the app's description. Nothing on it works yet: to build it, ask Homeroom bot (tap the <strong class="font-semibold text-fg">Homeroom icon</strong>, then <strong class="font-semibold text-fg">Ask for a change</strong>).</p>
-    </div>
-    ${html}`;
-}
-
-/** The kit's token lines, re-pointed at the sketch's accent where it fits. */
-function retokenKitCss(kitCss, design) {
-  const tokens = accentTokens(design);
-  let css = kitCss;
-  for (const look of ['light', 'dark']) {
-    const selector = look === 'light' ? ':root {' : '.dark {';
-    const start = css.indexOf(selector);
-    if (start === -1) continue;
-    const end = css.indexOf('}', start);
-    let block = css.slice(start, end);
-    for (const [key, value] of Object.entries(tokens[look])) {
-      block = block.replace(new RegExp(`(--${key}:\\s*)[0-9 ]+;`), `$1${value};`);
-    }
-    css = css.slice(0, start) + block + css.slice(end);
+function manifestWithIcon(text, emoji) {
+  let manifest;
+  try {
+    manifest = JSON.parse(String(text || ''));
+  } catch {
+    return null;
   }
-  return css;
+  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest) || manifest.icon || !iconEmoji(emoji)) return null;
+  const { description, ...rest } = manifest;
+  return JSON.stringify({ ...(description !== undefined ? { description } : {}), icon: { emoji }, ...rest }, null, 2);
 }
 
 // ── Generation ───────────────────────────────────────────────────────────
 
 const pending = new Map();
-const IS_STAGING = process.env.USERNODE_ENV === 'staging';
-
-/**
- * A staging preview has no model key, so a project made there gets this
- * obviously fake sketch instead, and reviewers can see the screen.
- */
-function stagingDemoSketch(name) {
-  const design = normalizeDesign({
-    job: 'Staging demo: show the week at a glance and add to it',
-    primaryAction: 'Add one',
-    accentName: 'indigo',
-    accent: { light: '#4338ca', dark: '#a5b4fc' },
-    signature: 'Staging demo: a large count for the week',
-    layout: ['Title and one line under it', 'This week\'s count with Add one', 'The latest entries'],
-    words: { entry: 'entry', week: 'this week' },
-  });
-  const html = sanitizeSketchHtml(`
-<header class="flex flex-col gap-1"><h1 class="text-title">${escapeHtml(name)}</h1><p class="text-body text-muted">Staging demo sketch. On Homeroom it is drawn from the app's description.</p></header>
-<section class="card flex items-center justify-between gap-4 bg-accent/10 border-accent"><div><p class="text-small text-muted">This week</p><p class="text-title tabular-nums">12</p></div><button class="btn-primary">Add one</button></section>
-<section><h2 class="section-label">Latest</h2><ul class="list"><li class="list-row justify-between"><span class="text-body">Staging demo entry</span><span class="text-small text-muted">Today</span></li><li class="list-row justify-between"><span class="text-body">Another demo entry</span><span class="text-small text-muted">Tuesday</span></li></ul></section>`);
-  return { design, html };
-}
 
 // A pending row older than this was left by a process that stopped while
-// drawing it; it reads as failed, and nothing waits on it.
+// making it; it reads as failed, and nothing waits on it.
 const STALE_PENDING_MS = 3 * 60 * 1000;
 
 function stillDrawing(row, now = Date.now()) {
@@ -706,68 +486,126 @@ async function makerOf(pool, user) {
   return { username: user?.username || null, displayName: null };
 }
 
-async function generate(pool, { app, user, brief, audience, deps }) {
+/**
+ * The card's emoji as the project's icon, when it has none yet: an icon
+ * somebody set (an emoji or an image) is never replaced. Open home screens
+ * patch the tile in place (public/js/app.js handleAppUpdate). Best effort.
+ */
+async function saveIcon(pool, app, emoji, deps = {}) {
+  try {
+    const { rows } = await pool.query(
+      `UPDATE apps SET icon_emoji = $2
+        WHERE id = $1 AND icon_emoji IS NULL AND icon_image_id IS NULL
+        RETURNING slug, icon_color`,
+      [app.id, emoji]
+    );
+    if (!rows.length) return false;
+    try {
+      (deps.ws || require('./ws')).pushAppUpdate({
+        action: 'icon_changed', appId: app.id, slug: rows[0].slug,
+        iconEmoji: emoji, iconUrl: null, iconColor: rows[0].icon_color || null,
+      });
+    } catch (err) {
+      log.warn('app-sketch', 'Icon broadcast failed', { appId: app.id, err: err.message });
+    }
+    return true;
+  } catch (err) {
+    log.warn('app-sketch', 'Icon not saved', { appId: app.id, err: err.message });
+    return false;
+  }
+}
+
+const TIMED_OUT = Symbol('timed out');
+
+/** `promise`'s answer, or TIMED_OUT after `ms`. */
+function within(promise, ms) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((resolve) => { timer = setTimeout(() => resolve(TIMED_OUT), ms); }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+async function saveCard(pool, { app, card, model, error, deps }) {
+  await pool.query(
+    `UPDATE app_sketches
+        SET status = 'ready', design = $2::jsonb, html = NULL, model = $3, error = $4, ready_at = NOW()
+      WHERE app_id = $1`,
+    [app.id, JSON.stringify(card), model, error]
+  );
+  await saveIcon(pool, app, card.emoji, deps);
+}
+
+async function generate(pool, { app, user, brief, audience, timeZone, deps }) {
   const llm = deps.llm || require('./llm');
   const limits = deps.limits || require('./limits');
-  let result = null;
-  let usage = null;
+  const now = deps.now ? deps.now() : new Date();
+  const today = sketchDates.localToday(now, timeZone);
+  let card = null;
   let model = SKETCH_MODEL;
   let error = null;
-  try {
-    const maker = await makerOf(pool, user);
-    const reply = await llm.generateAppSketch({
-      system: SKETCH_SYSTEM,
-      user: sketchUserPrompt({ name: app.name, brief, audience, today: deps.now ? deps.now() : new Date(), maker }),
-      model: SKETCH_MODEL,
-      telemetryContext: { pool, appId: app.id },
-    });
-    usage = reply.usage || null;
-    model = reply.model || SKETCH_MODEL;
-    result = parseSketchReply(reply.text);
-    if (!result) error = 'unusable_reply';
-  } catch (err) {
-    error = String(err && err.message || 'failed').slice(0, 200);
-  }
-  if (usage) {
+  const recordSpend = async (reply) => {
+    if (!reply || !reply.usage) return;
     try {
-      await limits.recordSpend(pool, user.id, llm.estimateCostCents(usage, model), { byok: false });
+      await limits.recordSpend(pool, user.id, llm.estimateCostCents(reply.usage, reply.model || SKETCH_MODEL), { byok: false });
     } catch (err) {
       log.warn('app-sketch', 'Spend not recorded', { appId: app.id, err: err.message });
     }
+  };
+  try {
+    const maker = await makerOf(pool, user);
+    const call = llm.generateAppSketch({
+      system: SKETCH_SYSTEM,
+      user: sketchUserPrompt({ name: app.name, brief, audience, today: now, zone: timeZone, maker }),
+      model: SKETCH_MODEL,
+      schema: CARD_SCHEMA,
+      maxTokens: CARD_MAX_TOKENS,
+      telemetryContext: { pool, appId: app.id },
+    });
+    const reply = await within(call, deps.modelWaitMs ?? MODEL_WAIT_MS);
+    if (reply === TIMED_OUT) {
+      error = 'timeout';
+      // Paid for all the same, whenever it answers.
+      call.then(recordSpend, () => {});
+    } else {
+      await recordSpend(reply);
+      model = reply.model || SKETCH_MODEL;
+      card = parseCardReply(reply.text, { name: app.name, brief, today });
+      if (!card) error = 'unusable_reply';
+    }
+  } catch (err) {
+    error = String(err && err.message || 'failed').slice(0, 200);
   }
-  if (!result) {
-    await pool.query(
-      `UPDATE app_sketches SET status = 'failed', error = $2, model = $3, ready_at = NOW() WHERE app_id = $1`,
-      [app.id, error, model]
-    );
-    log.warn('app-sketch', 'No sketch', { appId: app.id, error });
-    return null;
+  if (!card) {
+    card = fallbackCard({ name: app.name, brief, today });
+    model = 'fallback';
+    log.warn('app-sketch', 'Card made without the model', { appId: app.id, error });
   }
-  await pool.query(
-    `UPDATE app_sketches
-        SET status = 'ready', design = $2::jsonb, html = $3, model = $4, error = NULL, ready_at = NOW()
-      WHERE app_id = $1`,
-    [app.id, JSON.stringify(result.design), result.html, model]
-  );
-  log.info('app-sketch', 'Sketch ready', { appId: app.id });
+  await saveCard(pool, { app, card, model, error, deps });
+  log.info('app-sketch', 'Card ready', { appId: app.id, source: card.source });
   return readSketch(pool, app.id);
 }
 
 /**
- * Start a project's sketch, once. Returns at once; the work runs on. A
- * project with a sketch row already (a retried create) is left alone.
+ * Start a project's card, once. Returns at once; the work runs on. A project
+ * with a sketch row already (a retried create) is left alone. Without a model
+ * (no key: a staging preview, a local stack) the card is made from the
+ * description on the spot. `timeZone` is the creator's device's IANA zone, so
+ * "today" is theirs; anything else reads as UTC.
  */
-async function startSketch(pool, { app, user, brief, audience = null }, deps = {}) {
+async function startSketch(pool, { app, user, brief, audience = null, timeZone = null }, deps = {}) {
   const llm = deps.llm || require('./llm');
   if (!llm.isEnabled()) {
-    if (!(deps.staging ?? IS_STAGING)) return false;
-    const demo = stagingDemoSketch(app.name);
-    await pool.query(
-      `INSERT INTO app_sketches (app_id, user_id, status, design, html, model, ready_at)
-       VALUES ($1, $2, 'ready', $3::jsonb, $4, 'staging-demo', NOW())
-       ON CONFLICT (app_id) DO NOTHING`,
-      [app.id, user.id, JSON.stringify(demo.design), demo.html]
+    const card = fallbackCard({ name: app.name, brief, today: sketchDates.localToday(deps.now ? deps.now() : new Date(), timeZone) });
+    const { rows } = await pool.query(
+      `INSERT INTO app_sketches (app_id, user_id, status, design, model, ready_at)
+       VALUES ($1, $2, 'ready', $3::jsonb, 'fallback', NOW())
+       ON CONFLICT (app_id) DO NOTHING
+       RETURNING app_id`,
+      [app.id, user.id, JSON.stringify(card)]
     );
+    if (!rows.length) return false;
+    await saveIcon(pool, app, card.emoji, deps);
     return true;
   }
   const { rows } = await pool.query(
@@ -778,8 +616,8 @@ async function startSketch(pool, { app, user, brief, audience = null }, deps = {
     [app.id, user.id]
   );
   if (!rows.length) return false;
-  const work = generate(pool, { app, user, brief, audience, deps }).catch((err) => {
-    log.warn('app-sketch', 'Sketch failed', { appId: app.id, err: err.message });
+  const work = generate(pool, { app, user, brief, audience, timeZone, deps }).catch((err) => {
+    log.warn('app-sketch', 'Card failed', { appId: app.id, err: err.message });
     return null;
   });
   pending.set(app.id, work);
@@ -788,8 +626,8 @@ async function startSketch(pool, { app, user, brief, audience = null }, deps = {
 }
 
 /**
- * The project's sketch once it is ready, waiting up to `ms` for one still
- * being drawn by this process; null when there is none (or not in time).
+ * The project's card once it is ready, waiting up to `ms` for one still
+ * being made by this process; null when there is none (or not in time).
  */
 async function whenReady(pool, appId, ms = SKETCH_WAIT_MS, { pollMs = 1000 } = {}) {
   const deadline = Date.now() + ms;
@@ -800,7 +638,7 @@ async function whenReady(pool, appId, ms = SKETCH_WAIT_MS, { pollMs = 1000 } = {
     clearTimeout(timer);
   }
   let row = await readSketch(pool, appId).catch(() => null);
-  // Drawn by another process (a create retried on another Pod): watch the
+  // Made by another process (a create retried on another Pod): watch the
   // row instead, until the same deadline.
   while (stillDrawing(row) && Date.now() + pollMs <= deadline) {
     await new Promise((resolve) => setTimeout(resolve, pollMs));
@@ -809,10 +647,10 @@ async function whenReady(pool, appId, ms = SKETCH_WAIT_MS, { pollMs = 1000 } = {
   return row && row.status === 'ready' ? row : null;
 }
 
-/** The repository's design files for a ready sketch. */
-function designFiles({ name, sketch }) {
+/** The repository's design file for a ready card: design/sketch.json, or nothing for a row without a card. */
+function designFiles({ sketch }) {
+  if (!sketch || !cardOf(sketch.design)) return [];
   return [
-    { path: 'design/sketch.html', content: sketchDocument({ name, design: sketch.design, html: sketch.html }) },
     { path: 'design/sketch.json', content: sketchRecord({ design: sketch.design, model: sketch.model, createdAt: sketch.ready_at }) },
   ];
 }
@@ -822,50 +660,63 @@ async function markCommitted(pool, appId) {
 }
 
 /**
- * A sketch that missed the repository's first commit: committed on its own
- * when it is ready (the design files only; the starter screen is left as it
- * is). Best effort, never throws.
+ * A card that missed the repository's first commit: committed on its own
+ * when it is ready, design/sketch.json and, when the repository's dapp.json
+ * has no icon yet, the card's emoji as its `icon` (else the next deploy would
+ * clear the icon saved to the project). Best effort, never throws.
  */
 async function commitWhenReady(pool, { appId, name, owner, repo }, deps = {}) {
   try {
     const sketch = await whenReady(pool, appId, LATE_COMMIT_WAIT_MS);
     if (!sketch || sketch.committed_at) return false;
+    const files = designFiles({ sketch });
+    if (!files.length) return false;
     const github = deps.github || require('./github');
-    await github.pushFiles(owner, repo, designFiles({ name, sketch }), {
-      message: `Add the sketch ${name} was made from`,
+    const card = cardOf(sketch.design);
+    const manifest = typeof github.getFileContent === 'function'
+      ? await github.getFileContent(owner, repo, 'dapp.json', 'main').catch(() => null)
+      : null;
+    const withIcon = manifest ? manifestWithIcon(manifest, card.emoji) : null;
+    if (withIcon) files.push({ path: 'dapp.json', content: withIcon });
+    await github.pushFiles(owner, repo, files, {
+      message: `Add the card ${name} was made with`,
     });
     await markCommitted(pool, appId);
     return true;
   } catch (err) {
-    log.warn('app-sketch', 'Late sketch not committed', { appId, err: err.message });
+    log.warn('app-sketch', 'Late card not committed', { appId, err: err.message });
     return false;
   }
 }
 
 module.exports = {
   SKETCH_MODEL,
+  CARD_SCHEMA,
   SKETCH_WAIT_MS,
-  SKETCH_CSP,
-  SKETCH_CLASSES,
+  MODEL_WAIT_MS,
   SKETCH_SYSTEM,
-  BASE_TOKENS,
-  sanitizeSketchHtml,
-  textOf,
-  normalizeDesign,
-  parseSketchReply,
+  DEFAULT_EMOJI,
+  KEYWORD_EMOJI,
+  TAGLINE_MAX,
+  POINT_MAX,
+  POINTS_MAX,
+  SHARED_POINT,
+  iconEmoji,
+  keywordEmoji,
+  chooseEmoji,
+  cleanLine,
+  clausesOf,
+  fallbackCard,
+  parseCardReply,
+  cardOf,
   sketchUserPrompt,
   todayLine,
   makerLine,
-  fitAccent,
-  accentTokens,
-  sketchCss,
-  sketchDocument,
   sketchRecord,
-  starterBlock,
-  retokenKitCss,
+  manifestWithIcon,
   readSketch,
   sketchStatus,
-  stagingDemoSketch,
+  saveIcon,
   startSketch,
   whenReady,
   designFiles,

@@ -38,19 +38,21 @@ const { SUGGEST_REPLIES_TOOL, sanitizeQuickReplies } = require('./tools');
 //                      case, and the only rung that costs nothing extra.
 //   'enforced'         a forced pills-only continuation on the turn's own
 //                      model. Still the Mayor authoring its own pills.
-//   'generated'        a cheap Haiku call, for when the forced call can't
-//                      be made or fails. Different model on purpose.
+//   'generated'        a cheap helper call (GLM 5.3 Flash, Haiku behind
+//                      it), for when the forced call can't be made or
+//                      fails. Different model on purpose.
 //   'static'           the deterministic RECOVERY_PILLS set. Now genuinely
 //                      exceptional rather than the normal outcome.
 //
 // Rungs 2 and 3 are mutually exclusive per turn (3 only runs when 2 threw
-// or timed out), so the worst case adds ~8s — and only AFTER the reply text
+// or timed out), so the worst case adds ~10s — and only AFTER the reply text
 // has streamed, so the user is never waiting on it.
 const QR_ENFORCE = true;          // one-line revert if cost/latency surprises
 
 const QR_ENFORCE_TIMEOUT_MS = 5000;
 
-const QR_GENERATE_TIMEOUT_MS = 3000;
+// Room for GLM's 2.5s (llm.js HELPER_TIME_LIMIT_MS) and Haiku behind it.
+const QR_GENERATE_TIMEOUT_MS = 5000;
 
 // Reject a promise after `ms`, so a slow provider can never hold a turn
 // open. The underlying call is also passed an AbortSignal where the SDK
@@ -200,10 +202,11 @@ async function resolveTurnPills({
     try {
       const payer = await resolvePayer('generated');
       if (!payer) throw new Error('no payer available');
-      const gen = await qrWithTimeout(() => llm.generateQuickReplies({
+      const gen = await qrWithTimeout((signal) => llm.generateQuickReplies({
         rules: QUICK_REPLY_RULES_TEXT,
         context,
         apiKey: payer.apiKey,
+        signal,
         telemetryContext: {
           pool,
           appId: session && session.app_id,

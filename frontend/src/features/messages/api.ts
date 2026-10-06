@@ -6,6 +6,7 @@ import type {
   ConversationUser,
   HomeroomBotActivity,
   HomeroomBotActivityOutcome,
+  HomeroomBotActivityRead,
   HomeroomBotJob,
   HomeroomBotAction,
   HomeroomBotGoesLive,
@@ -14,6 +15,7 @@ import type {
   HomeroomBotPhase,
   HomeroomBotPlan,
   HomeroomBotPlanQuestion,
+  HomeroomBotReadyNow,
   HomeroomBotWork,
   MessageAttachment,
   MessageReaction,
@@ -23,6 +25,7 @@ import type {
   ThreadRootRef,
   UserSearchResult,
 } from './types';
+import { countOf } from './approval-words';
 import type { HomeroomLink } from './homeroom-links';
 import { botRowPreview, plainText } from './plain-text';
 
@@ -62,6 +65,16 @@ export function strictId(value: unknown): number | null {
   if (!/^[1-9]\d*$/.test(raw)) return null;
   const id = Number(raw);
   return Number.isSafeInteger(id) && id <= MAX_ID ? id : null;
+}
+
+/**
+ * A read cursor: a message id, or 0 for "read nothing yet", which a strict
+ * id refuses. Null when the server did not say (an invitation, an older
+ * server), so the conversation opens at its newest message as it always did.
+ */
+function readCursor(value: unknown): number | null {
+  if (value === 0 || value === '0') return 0;
+  return strictId(value);
 }
 
 function dateText(value: unknown): string {
@@ -190,11 +203,16 @@ export function normalizeBotMeta(input: unknown): { homeroomBot: HomeroomBotMeta
   const broken = readyRow && typeof readyRow === 'object'
     ? array(pick(record(readyRow), 'broken')).filter((b): b is string => typeof b === 'string' && !!b.trim()).slice(0, 3)
     : [];
+  // How many more approvals it needed, and in all, when it was sent: absent on older cards.
+  const missing = readyRow && typeof readyRow === 'object' ? countOf(pick(record(readyRow), 'missing')) : null;
+  const needed = readyRow && typeof readyRow === 'object' ? countOf(pick(record(readyRow), 'needed')) : null;
   const ready = readyRow && typeof readyRow === 'object' ? {
     group: pick(record(readyRow), 'group') === true,
     last: pick(record(readyRow), 'last') === true,
     waitingOn: array(pick(record(readyRow), 'waitingOn')).filter((u): u is string => typeof u === 'string' && !!u).slice(0, 3),
     more: Math.max(Number(pick(record(readyRow), 'more')) || 0, 0),
+    ...(missing !== null ? { missing } : {}),
+    ...(needed !== null ? { needed } : {}),
     ...(broken.length ? { broken } : {}),
   } : null;
   const goesLive = normalizeGoesLive(pick(bot, 'goesLive'));
@@ -217,6 +235,7 @@ export function normalizeBotMeta(input: unknown): { homeroomBot: HomeroomBotMeta
       chosen: optional('chosen'),
       startedAt: optional('startedAt'),
       askedText: optional('askedText'),
+      changeTitle: optional('changeTitle'),
       hello: optional('hello'),
       ...(pick(bot, 'live') === true ? { live: true } : {}),
       // B6: a plan, or two questions at once, and how its buttons went.
@@ -420,6 +439,7 @@ export function normalizeConversation(input: unknown): ConversationDetail {
     latestSummary: homeroomBot ? botRowPreview(summary) : summary,
     lastActivityAt: dateText(pick(row, 'lastActivityAt', 'last_activity_at', 'updatedAt', 'updated_at', 'createdAt', 'created_at')),
     unreadCount: Number(pick(row, 'unreadCount', 'unread_count')) || 0,
+    lastReadMessageId: readCursor(pick(row, 'lastReadMessageId', 'last_read_message_id')),
     awaitingAcceptance: kind === 'direct' && pick(row, 'awaitingAcceptance', 'awaiting_acceptance') === true,
     canSend: typeof canSendValue === 'boolean' ? canSendValue : membershipStatus !== 'invited',
     canInvite: bool(pick(row, 'canInvite', 'can_invite'), kind === 'group' && membershipStatus !== 'invited'),
@@ -923,10 +943,15 @@ export function normalizeBotActivity(input: unknown): HomeroomBotActivity[] {
     const typical = record(pick(row, 'typicalMinutes'));
     const from = strictId(pick(typical, 'from'));
     const to = strictId(pick(typical, 'to'));
+    const workedFrom = text(pick(row, 'workedFrom'));
+    const waitedFor = text(pick(row, 'waitedFor'));
     return {
       messageId,
       state: working ? 'working' : 'done',
       startedAt: text(pick(row, 'startedAt')) || null,
+      // The work's own start, never a date that does not read as one.
+      workedFrom: workedFrom && Number.isFinite(Date.parse(workedFrom)) ? workedFrom : null,
+      ...(waitedFor === 'first_version' || waitedFor === 'turn' ? { waitedFor } : {}),
       links: { request: inAppHref(pick(links, 'request')), proposal: inAppHref(pick(links, 'proposal')) },
       step: working && whole ? step : null,
       of: working && whole ? of : null,
@@ -940,13 +965,54 @@ export function normalizeBotActivity(input: unknown): HomeroomBotActivity[] {
   }).filter((card): card is HomeroomBotActivity => !!card);
 }
 
+const READY_NOW_STATES = new Set<HomeroomBotReadyNow['state']>(['open', 'going_live', 'live', 'closed']);
+
+/**
+ * 5 October: the bot DM's ready cards as their changes stand now (services/
+ * homeroom-bot-dm.js readyStates), field by field. One without a message id
+ * or with a state not known here is dropped: its card says what it was sent
+ * with. Counts are whole and not below zero; names are strings.
+ */
+export function normalizeBotReadyNow(input: unknown): HomeroomBotReadyNow[] {
+  return array(pick(record(input), 'ready')).map((entry): HomeroomBotReadyNow | null => {
+    const row = record(entry);
+    const messageId = strictId(pick(row, 'messageId'));
+    const state = text(pick(row, 'state')) as HomeroomBotReadyNow['state'];
+    if (!messageId || !READY_NOW_STATES.has(state)) return null;
+    const approvalRow = pick(row, 'approval');
+    const approval = approvalRow && typeof approvalRow === 'object' && !Array.isArray(approvalRow) ? record(approvalRow) : null;
+    const missing = approval ? countOf(pick(approval, 'missing')) : null;
+    const needed = approval ? countOf(pick(approval, 'needed')) : null;
+    const goesLive = normalizeGoesLive(pick(row, 'goesLive'));
+    return {
+      messageId,
+      state,
+      // Only the live card's button, which opens the app.
+      actions: state === 'live' ? normalizeBotActions(pick(row, 'actions')).filter((action) => action.type === 'open') : [],
+      ...(state === 'open' && approval && missing !== null && needed !== null ? {
+        approval: {
+          missing,
+          needed,
+          last: pick(approval, 'last') === true,
+          approved: pick(approval, 'approved') === true,
+          waitingOn: array(pick(approval, 'waitingOn')).filter((u): u is string => typeof u === 'string' && !!u).slice(0, 3),
+          more: Math.max(Math.floor(Number(pick(approval, 'more')) || 0), 0),
+        },
+      } : {}),
+      ...(state === 'open' && goesLive ? { goesLive } : {}),
+    };
+  }).filter((entry): entry is HomeroomBotReadyNow => !!entry);
+}
+
 /**
  * #3736: how far along each activity card in the signed-in person's bot DM
- * is. A re-read after news passes `fresh`, so the worker's offline copy of
- * an older state never stands in for it (see ReadOptions).
+ * is, and (5 October) where each of its ready cards' changes stands now. A
+ * re-read after news passes `fresh`, so the worker's offline copy of an
+ * older state never stands in for it (see ReadOptions).
  */
-export async function getHomeroomBotActivity(options?: ReadOptions): Promise<HomeroomBotActivity[]> {
-  return normalizeBotActivity(await request<unknown>('/api/conversations/homeroom-bot/activity', readInit(options)));
+export async function getHomeroomBotActivity(options?: ReadOptions): Promise<HomeroomBotActivityRead> {
+  const data = await request<unknown>('/api/conversations/homeroom-bot/activity', readInit(options));
+  return { cards: normalizeBotActivity(data), ready: normalizeBotReadyNow(data) };
 }
 
 /**

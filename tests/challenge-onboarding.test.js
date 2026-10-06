@@ -308,7 +308,7 @@ function makeApp(counts = [0, 0, 0, 0], credits = {}, { viewer = NEWCOMER, user 
     // The per-viewer credit count the challenge lists now attach to EVERY
     // challenge, not only the gate's three. `state.credits` maps a challenge
     // id to how many ledger rows the viewer has on it.
-    if (sql.includes('FROM user_activities') && sql.includes('GROUP BY challenge_id')) {
+    if (sql.includes('FROM user_activities') && /GROUP BY (ua\.)?challenge_id/.test(sql)) {
       const ids = params[1] || [];
       return {
         rows: Object.entries(state.credits || {})

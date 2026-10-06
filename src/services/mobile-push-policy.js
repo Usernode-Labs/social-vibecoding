@@ -84,7 +84,10 @@ function botMomentCopy(detail, message) {
     ready_group: app ? `Your change to ${app} is ready to try` : 'Your change is ready to try',
     ready_broken: app ? `${app} is built, but not everything works yet` : 'Your change is built, but not everything works yet',
     stopped: app ? `${app}: your change stopped. I said why in our chat` : 'Your change stopped. I said why in our chat',
-    stopped_build: app ? `${app}: I couldn't finish building it. A person can pick it up` : 'I couldn\'t finish building it. A person can pick it up',
+    // 5 Oct 2026: what the DM it opens ends with (homeroom-bot-dm.js dmText
+    // 'build_failed'), whose why is there. A reply starts it again; "A person
+    // can pick it up" was a dead end for the person it was for.
+    stopped_build: app ? `${app}: I couldn't finish building it. Reply and I'll try again` : 'I couldn\'t finish building it. Reply and I\'ll try again',
     stopped_blocked: app ? `${app}: I can't build it as written. Tell me more` : 'I can\'t build it as written. Tell me more',
     stopped_person: app ? `${app}: this needs a person to decide` : 'This needs a person to decide',
     stopped_empty: app ? `${app}: I couldn't find anything to build. Tell me more` : 'I couldn\'t find anything to build. Tell me more',
@@ -323,7 +326,17 @@ function buildCopy(kind, context, now) {
         title: app ? `@${actor} said hi in ${app}` : `@${actor} said hi`,
         body: message,
       };
+    // An invite into a private project is to join it (detail 'join',
+    // services/collab-invites.js); the rest are to build one.
     case 'collab_invite':
+      if (detail === 'join') {
+        return {
+          title: actor
+            ? (app ? `@${actor} invited you to join ${app}` : `@${actor} invited you to join them`)
+            : withApp('You have an invite to join'),
+          body: 'Accept or decline in the app',
+        };
+      }
       return {
         title: actor
           ? (app ? `@${actor} wants to build ${app} with you` : `@${actor} wants to build with you`)

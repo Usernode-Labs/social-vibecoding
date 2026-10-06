@@ -111,6 +111,13 @@ if (typeof window !== 'undefined') {
       navStore.set({ viewer: viewer || null });
     },
     /**
+     * Whether the viewer is a private member (nav-store.js): the one writer
+     * is `App._syncViewer()`, beside setViewer.
+     */
+    setPrivateMember(on: boolean) {
+      if (!!on !== navStore.get().privateMember) navStore.set({ privateMember: !!on });
+    },
+    /**
      * Offer `app` above the tab bar until it is resumed or dismissed, or
      * clear the offer with null.
      *

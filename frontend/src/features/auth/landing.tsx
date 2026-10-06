@@ -46,12 +46,17 @@ import { FRAME_THEME_PARAM } from '../app-frame/app-frame-policy.js';
 import {
   AUTH_SCREEN_IDS,
   byId,
+  firstSessionNext,
   fx,
   hasSession,
   hiddenLast,
   isNative,
+  keepReleaseLink,
   legacy,
+  noteSignInBegun,
   type PublicApp,
+  type ReleaseLink,
+  takeReleaseLink,
   useAuthScreensPatch,
   zoomFx,
 } from './shared';
@@ -547,6 +552,35 @@ const CHIPS: readonly { line: string; dot: string }[] = [
   },
 ];
 
+/**
+ * The story's sheet, once a sign-in through it has a session and before the
+ * shell takes over (its `beforeFinish`).
+ *
+ * A new account made from the story is asked what to make next
+ * (../first-session/make.tsx), not which communities to join: the session's
+ * flag says so to the island, and the start is recorded as the story's. So
+ * is an account that already existed and has not answered that question
+ * yet (one an admin made, say, through the password step, or one that saw
+ * it, left without answering and is signing in again); the join step opens
+ * its make screen in the same tick the shell starts
+ * (./communities-first-run.js). Either way the sheet hands off to that
+ * screen (`handOff`) while this runs, so the two read as one movement.
+ * Recording the start answers nothing: the question is asked until Make it
+ * or "Look around first". Anyone else goes where they always have, with no
+ * hand-off.
+ */
+export async function startedFromStory(kind: 'existing' | 'new', handOff: () => Promise<void>): Promise<void> {
+  if (kind !== 'new') {
+    if (await firstSessionNext()) await handOff();
+    return;
+  }
+  try { sessionStorage.setItem('usernode:first-session:make', '1'); } catch { /* the make screen is then skipped */ }
+  await Promise.all([
+    fetch('/api/me/first-session/started', { method: 'POST', credentials: 'same-origin' }).catch(() => {}),
+    handOff(),
+  ]);
+}
+
 export function LandingScreen() {
   const rootRef = useRef<HTMLElement>(null);
   useVisibilityHiddenClass(rootRef, AUTH_SCREEN_IDS.landing, false);
@@ -573,7 +607,10 @@ export function LandingScreen() {
   const [sheet, setSheet] = useState<null | 'join' | 'start' | 'signin'>(null);
   // Back from Apple or Google: where the sheet picks up (./sign-in-sheet.tsx).
   const [resume, setResume] = useState<SignInResume | null>(null);
-  const closeSheet = useCallback(() => { setSheet(null); setResume(null); }, []);
+  // A waitlist "you're in" mail's link (AuthScreens.enter): this story with
+  // the sheet already open, at the step the link asked for.
+  const [release, setRelease] = useState<ReleaseLink | null>(null);
+  const closeSheet = useCallback(() => { setSheet(null); setResume(null); setRelease(null); }, []);
 
   // Both start at the value the prerendered markup shipped with: no session,
   // no app open. `_renderLandingHeader`'s equivalent (refreshHeader) runs on
@@ -642,21 +679,31 @@ export function LandingScreen() {
   const nativeProviders = useNativeSignInProviders(waitlistPayload);
   const nativeSignIn = nativeProviders.length > 0;
   const providers = nativeSignIn ? nativeProviders : webProviders;
+  // An invite makes a private member, who signs up with a phone number
+  // (services/community-invites.js): the Join sheet starts there when the
+  // server offers it.
+  const phoneSignIn = waitlistPayload?.phone_sign_in === true;
   // Back from a provider without a session: reopen the sheet the trip left,
   // the invite's Join on its link, the story's otherwise.
   useEffect(() => {
     const result = takeProviderResult();
     if (!result) return;
+    // The result is read once, so a reload now would lose where this
+    // sign-in had got to.
+    noteSignInBegun();
     setResume(result);
     setSheet(inviteTokenFrom(location.pathname) ? 'join' : 'start');
   }, []);
-  // A new account made from the story is asked what to make next
-  // (../first-session/make.tsx), not which communities to join.
-  const startedFromStory = useCallback(async (kind: 'existing' | 'new') => {
-    if (kind !== 'new') return;
-    try { sessionStorage.setItem('usernode:first-session:make', '1'); } catch { /* the make screen is then skipped */ }
-    await fetch('/api/me/first-session/started', { method: 'POST', credentials: 'same-origin' }).catch(() => {});
-  }, []);
+  // The story switched off while a release link waited for it: no sheet to
+  // open, so the link goes where it always went, the sign-in screen, which
+  // takes the token from here (./login.tsx).
+  useEffect(() => {
+    if (!release || waitlistPayload?.story_landing !== false) return;
+    if (release.token) keepReleaseLink(release);
+    setRelease(null);
+    setSheet(null);
+    location.hash = `#${release.route}`;
+  }, [release, waitlistPayload]);
 
   const clearViewerCover = useCallback(() => {
     st.timers.forEach((t) => clearTimeout(t));
@@ -1012,6 +1059,17 @@ export function LandingScreen() {
 
   const landingOnShow = useCallback(() => {
     refreshHeader();
+    // Arrived by a waitlist "you're in" link: the sheet, open over the story
+    // at the step the link asked for. Read once, so a reload now would lose
+    // it; a sign-in has begun, so the shell does not swap the build in under
+    // it (App.noteSignInBegun).
+    const link = takeReleaseLink();
+    if (link) {
+      noteSignInBegun();
+      setRelease(link);
+      setResume(null);
+      setSheet(link.route === 'signup' ? 'start' : 'signin');
+    }
     if (!st.appsLoaded) {
       st.appsLoaded = true;
       st.appsReady = loadLandingApps();
@@ -1649,12 +1707,18 @@ export function LandingScreen() {
         <SignInSheet
           open={sheet === 'join'}
           title={`Join ${invite!.project!.name}`}
-          intro={providers.length
-            ? 'Sign in or make an account. It takes a minute.'
-            : 'Sign in or make an account with your email. It takes a minute.'}
+          intro={phoneSignIn
+            ? (invite!.project!.public
+              ? 'Just your phone number and a username. No app, no password.'
+              : 'Just your name and phone number. No app, no password.')
+            : providers.length
+              ? 'Sign in or make an account. It takes a minute.'
+              : 'Sign in or make an account with your email. It takes a minute.'}
           followInvite
           providers={providers}
           native={nativeSignIn}
+          phone={phoneSignIn}
+          askName={!invite!.project!.public}
           from="invite"
           returnTo={location.pathname}
           resume={resume}
@@ -1674,6 +1738,7 @@ export function LandingScreen() {
           from={sheet === 'signin' ? 'signin' : 'story'}
           returnTo="/"
           resume={resume}
+          releaseToken={sheet === 'start' ? release?.token ?? null : null}
           beforeFinish={startedFromStory}
           onClose={closeSheet}
           primaryClass={PRIMARY_PILL}

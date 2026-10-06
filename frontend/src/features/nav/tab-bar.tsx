@@ -80,10 +80,11 @@ import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility } from '../../lib/visibility-store';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import {
-  communityScopeStore, goToCommunity, hydrateCommunityScope, toggleSwitcher, warmCommunities,
+  communityScopeStore, hydrateCommunityScope, tabVotes, warmCommunities,
   type CommunityInfo,
 } from '../workshop/community-scope';
 import { CommunitySwitcher } from '../workshop/community-switcher';
+import { createSwitcherHold, pressLitTab } from '../workshop/tab-ladder';
 import { navStore } from './nav-store.js';
 import { clearPeekTimer, clearPeekTimerByMouse, enterPeekByMouse, leavePeekByMouse } from './rail-peek';
 import { RecentsList } from './recents-list';
@@ -228,9 +229,9 @@ function onWorkshopClick(event: React.MouseEvent<HTMLAnchorElement>): void {
  * either that community's tile, in its colour (features/workshop/
  * community-scope.ts says which; lib/community-color.ts what colour), or, on
  * All communities, the tab's own people glyph. The ring is what says the tab
- * can be switched: press it while it is lit and "Your communities" opens.
- * The desktop rail draws no ring (app.css): there the row goes back to All
- * communities, and the header's name is the switcher.
+ * can be switched: hold it and "Your communities" opens (#3701,
+ * ../workshop/tab-ladder.ts). The desktop rail draws no ring (app.css): the
+ * header's name is the switcher there, as it is on a phone.
  *
  * All communities is THE PRERENDER: the scope arrives from localStorage and
  * app.js after the first paint, so the shipped markup and the first client
@@ -259,7 +260,8 @@ function CommunityTabFace({ info }: { info: CommunityInfo | null }) {
 
 /**
  * The votes the tab's community is waiting on you for (All communities: all
- * of them), in the accent, because it asks for you. Only above zero, and
+ * of them, less an unchosen community's: ../workshop/community-scope.ts
+ * `tabVotes`), in the accent, because it asks for you. Only above zero, and
  * never in the prerender (the store starts empty). While it shows, app.css
  * hides the quiet unread-channels count beside it: one number per glyph.
  */
@@ -755,7 +757,9 @@ export function PlatformTabs() {
   useEffect(() => { hydrateCommunityScope(); }, []);
   useEffect(() => (viewer ? warmCommunities() : undefined), [viewer]);
   const scoped = scope.slug ? scope.info[scope.slug] || null : null;
-  const votes = scope.slug ? Number(scoped?.needs) || 0 : Number(scope.totalNeeds) || 0;
+  // Less an unchosen community's votes: the one every account is put in,
+  // until you have taken part there (tabVotes says why).
+  const votes = tabVotes(scope);
   // TWO WAYS TO HAVE NO RAIL, and they are not the same fact. The ROUTE can
   // say there is none (an app, chromeless, signed out) and the VIEWER can
   // fold the one there is (../header/../nav/sidebar-toggle.tsx). The peek
@@ -786,6 +790,19 @@ export function PlatformTabs() {
   useClassToggle(barRef, 'platform-tabs-folded', !railOpen);
   const { enter, leave } = useRailPeek(peek);
   const { box: marker, lit, markerRef, press } = useTabMarker(barRef, tab);
+  // THE COMMUNITIES TAB, HELD on the phone's bar, opens "Your communities"
+  // (#3701, ../workshop/tab-ladder.ts createHold); a short press is the
+  // ladder below. One per bar, its timer and click guard let go on unmount.
+  // Only handlers ride on the tab, so the markup is the prerender's.
+  const [hold] = useState(createSwitcherHold);
+  useEffect(() => () => hold.dispose(), [hold]);
+  const holdProps = {
+    onPointerDown: hold.onPointerDown,
+    onPointerMove: hold.onPointerMove,
+    onPointerUp: hold.onPointerUp,
+    onPointerCancel: hold.onPointerCancel,
+    onContextMenu: hold.onContextMenu,
+  };
   // A plain press on another tab lights it and slides the pill first, and
   // navigates a frame later (useTabMarker's `press`, #3259). A modified click
   // stays the browser's, a second press on a tab still waiting for its route
@@ -798,24 +815,16 @@ export function PlatformTabs() {
       event.preventDefault();
       return;
     }
-    // THE LIT COMMUNITIES TAB. On a phone it opens "Your communities"
-    // (../workshop/community-switcher.tsx) rather than popping to the list:
-    // the tab is a community now, and pressing it again is how you change
-    // which. On the desktop rail it goes back to All communities, the list,
-    // as a sidebar row does; the header's name is the switcher there.
+    // THE LIT COMMUNITIES TAB GOES UP A LEVEL (#3701), the same on the
+    // phone's bar and the desktop rail: from a page below a community's tabs
+    // back to the community, then to the top, then to All communities, whose
+    // own press only scrolls (../workshop/tab-ladder.ts). It used to open
+    // "Your communities" on a phone and go to All communities on the rail.
+    // The switcher is the header's name, and the phone's tab held (`hold`).
     if (key === 'workshop' && lit === 'workshop' && tab === 'workshop') {
-      let wide = false;
-      try { wide = window.matchMedia('(min-width: 768px)').matches; } catch { wide = false; }
-      if (!wide) {
-        event.preventDefault();
-        toggleSwitcher('tab', event.currentTarget);
-        return;
-      }
-      if (scope.slug) {
-        event.preventDefault();
-        goToCommunity(null);
-        return;
-      }
+      event.preventDefault();
+      pressLitTab(screen);
+      return;
     }
     if (key !== lit && press(event.currentTarget, key, () => goToTab(key, href))) {
       event.preventDefault();
@@ -915,6 +924,7 @@ export function PlatformTabs() {
           aria-current={lit === key ? 'page' : undefined}
           aria-label={key === 'workshop' ? communitiesAriaLabel(scoped) : tabLabel(key, label, viewer).ariaLabel}
           onClick={(event) => onTabClick(event, key, href)}
+          {...(key === 'workshop' ? holdProps : {})}
         >
           <span className="platform-tab-mark">
             {key === 'workshop'

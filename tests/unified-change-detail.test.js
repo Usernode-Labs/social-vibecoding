@@ -99,15 +99,15 @@ test('the Review row says what submitting now means, one sentence per condition 
     failing: [{}, /checks are failing\. You can submit it now; it can merge only after a fix passes them/, 'warn'],
     error: [{ check_state: 'error' }, /checks could not run\. You can submit it now; it can merge only once they run and pass/, 'warn'],
     uploaded: [{ proposal_state: 'uploaded', check_state: null }, /uploaded but has not been submitted for checks yet/, 'mute'],
-    draft: [{ proposal_state: 'draft', check_state: null }, /no committed changes to submit yet/, 'mute'],
+    draft: [{ proposal_state: 'draft', check_state: null }, /no committed changes to submit yet/, 'mute', 'empty'],
     running: [{ proposal_state: 'checking', check_state: 'pending' }, /Its checks keep running, and it can merge only once they pass/, 'ok'],
     idle: [{ proposal_state: 'deploying', check_state: 'passing', staging_url: null }, /preview was closed while idle; submitting rebuilds it and runs the checks again/, 'ok'],
     ready: [{ proposal_state: 'ready', check_state: 'passing' }, /^Ready to submit for review\.$/, 'ok'],
   };
   const notes = [];
-  for (const [name, [patch, note, tone]] of Object.entries(cases)) {
+  for (const [name, [patch, note, tone, kind = 'ready']] of Object.entries(cases)) {
     const st = state(patch);
-    assert.equal(st.kind, 'ready', name);
+    assert.equal(st.kind, kind, name);
     assert.match(st.note, note, name);
     assert.equal(st.tone, tone, name);
     assert.equal(reviewRow(patch).text.join(''), st.note, `${name}: the Review row carries it`);
@@ -129,7 +129,7 @@ test('an ordinary session submits whatever its checks say (#2074, #3173)', () =>
     'ready', 'and a build in flight is the same kind of not-yet');
 });
 
-test('a change with nothing committed says so, and the server refuses it (#2379, #3173)', () => {
+test('a change with nothing committed says so, and cannot be submitted (#2379, #3173, #3776)', async () => {
   const av = context();
   const blank = { ...failing, source: null, proposal_state: undefined,
     pr_number: null, staging_url: null, check_state: null, test_results: [] };
@@ -137,12 +137,22 @@ test('a change with nothing committed says so, and the server refuses it (#2379,
   const noChanges = /no committed changes to submit yet/;
 
   // A brand-new session: no pull request, no preview, no check ever started.
-  // The button stays enabled (#3173); the note says what the server's 409
-  // will say, so the refusal is not a surprise.
-  assert.equal(state({}).kind, 'ready');
+  // There is nothing to review, so the button is disabled (#3776) beside the
+  // step that says "Nothing committed yet"; its tooltip and the Review row
+  // carry the same sentence the server's 409 would.
+  assert.equal(state({}).kind, 'empty');
+  assert.equal(state({}).short, 'Nothing committed yet');
   assert.match(state({}).note, noChanges);
-  assert.equal(av._topicViewFor('session', blank).card.actions
-    .find((a) => a.key === 'propose-change').disabled, false, 'the button is not disabled');
+  const view = av._topicViewFor('session', blank);
+  const button = view.card.actions.find((a) => a.key === 'propose-change');
+  assert.equal(button.disabled, true, 'the button is disabled');
+  assert.equal(button.label, 'Submit for review');
+  assert.match(button.title, noChanges);
+  assert.match(row(view, 'review').text.join(''), noChanges);
+  assert.equal(row(view, 'review').tone, 'mute');
+  // runChangeAction refuses it too, so no stale render can submit it.
+  await av.runChangeAction(blank.id, 'promote', blank);
+  assert.equal(av._changeActions.has(Number(blank.id)), false);
   // The checks ran and found the branch level with main.
   assert.match(state({ check_state: 'skipped', check_error_detail: 'branch has no commits beyond main, so there is nothing to test' }).note, noChanges);
 
@@ -150,12 +160,18 @@ test('a change with nothing committed says so, and the server refuses it (#2379,
   for (const patch of [{ check_state: 'pending' }, { pr_number: 12 }, { staging_url: 'https://preview.example' },
     { check_state: 'skipped', check_error_detail: 'GitHub is not configured' }]) {
     assert.doesNotMatch(state(patch).note, noChanges, JSON.stringify(patch));
+    assert.equal(state(patch).kind, 'ready', JSON.stringify(patch));
   }
   // Managed handoffs read the server's revision state; imported PRs have
   // their own contract.
   assert.match(state({ source: 'cli_handoff', proposal_state: 'draft' }).note, noChanges);
+  assert.equal(state({ source: 'cli_handoff', proposal_state: 'draft' }).kind, 'empty');
   assert.match(state({ source: 'cli_handoff', proposal_state: 'uploaded' }).note, /uploaded but has not been submitted/);
+  assert.equal(state({ source: 'cli_handoff', proposal_state: 'uploaded' }).kind, 'ready');
+  // A managed change with commits but no pull request yet is submittable.
+  assert.equal(state({ source: 'cli_handoff', proposal_state: 'ready', check_state: 'passing', staging_url: 'https://p' }).kind, 'ready');
   assert.doesNotMatch(state({ source: 'imported' }).note, noChanges);
+  assert.equal(state({ source: 'imported' }).kind, 'ready');
 });
 
 test('before review the author reads the spec under About this change (#2371)', () => {

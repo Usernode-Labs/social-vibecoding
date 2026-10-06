@@ -129,9 +129,10 @@ async function createApp(config, appRow) {
     if (!repoUrl && github.isEnabled()) {
       try {
         const botUsername = await github.getBotUsername();
-        // The first session's sketch (services/app-sketch.js), if one is
-        // being drawn: waited for a little, so the first commit can carry it
-        // and the starter's screen can be it. No sketch row, no wait.
+        // The first session's card (services/app-sketch.js), if one is
+        // being made: waited for a little, so the first commit can carry it
+        // (design/sketch.json, and its emoji as dapp.json's icon). No sketch
+        // row, no wait.
         const sketch = await appSketch.whenReady(pool, appId).catch(() => null);
 
         // adoptExisting: a Retry after a create that died between the
@@ -156,8 +157,9 @@ async function createApp(config, appRow) {
         if (sketch) {
           await appSketch.markCommitted(pool, appId).catch(() => {});
         } else {
-          // One still being drawn is committed on its own when it is ready
-          // (the design files only). Not awaited; never throws.
+          // One still being made is committed on its own when it is ready
+          // (its file, and dapp.json's icon when it has none). Not awaited;
+          // never throws.
           appSketch.commitWhenReady(pool, { appId, name, owner: botUsername, repo: slug });
         }
       } catch (err) {

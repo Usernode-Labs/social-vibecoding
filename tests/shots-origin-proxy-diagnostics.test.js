@@ -7,7 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
 const { spawn } = require('node:child_process');
-const { once } = require('node:events');
+const { closedPromise, waitForReady, stopProxy } = require('./lib/shots-proxy');
 
 test('shots proxy reports document timing/status without leaking request content', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-proxy-diag-'));
@@ -25,15 +25,11 @@ test('shots proxy reports document timing/status without leaking request content
         SHOTS_PROXY_PORT: '0', SHOTS_PROXY_READY: ready },
       stdio: ['ignore', 'ignore', 'pipe'],
     });
+  const closed = closedPromise(proxy);
   const diagnostics = [];
   proxy.stderr.on('data', (chunk) => diagnostics.push(chunk));
   try {
-    const deadline = Date.now() + 5000;
-    while (!fs.existsSync(ready) && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-    assert.equal(fs.existsSync(ready), true);
-    const proxyPort = Number(fs.readFileSync(ready, 'utf8'));
+    const proxyPort = await waitForReady(proxy, ready, { output: () => Buffer.concat(diagnostics).toString() });
     const response = await new Promise((resolve, reject) => {
       const request = http.request({ hostname: '127.0.0.1', port: proxyPort,
         path: `${origin}/?token=private-token`,
@@ -61,8 +57,7 @@ test('shots proxy reports document timing/status without leaking request content
     assert.ok(lines[1].bodyBytes > 0);
     assert.doesNotMatch(Buffer.concat(diagnostics).toString(), /private-token|private page content/);
   } finally {
-    proxy.kill('SIGTERM');
-    await once(proxy, 'close');
+    await stopProxy(proxy, closed);
     upstream.close();
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -85,6 +80,7 @@ test('shots proxy blocks only the authorized exact API GET while enabled', async
         SHOTS_PROXY_CONTROL_TOKEN: token, SHOTS_PROXY_PORT: '0', SHOTS_PROXY_READY: ready },
       stdio: ['ignore', 'ignore', 'pipe'],
     });
+  const closed = closedPromise(proxy);
   const diagnosticChunks = [];
   proxy.stderr.on('data', (chunk) => diagnosticChunks.push(chunk));
   const send = (port, pathValue, { method = 'GET', body = null, controlToken = '' } = {}) => new Promise((resolve) => {
@@ -98,10 +94,7 @@ test('shots proxy blocks only the authorized exact API GET while enabled', async
     request.end(body == null ? undefined : JSON.stringify(body));
   });
   try {
-    const deadline = Date.now() + 5000;
-    while (!fs.existsSync(ready) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
-    assert.equal(fs.existsSync(ready), true);
-    const port = Number(fs.readFileSync(ready, 'utf8'));
+    const port = await waitForReady(proxy, ready, { output: () => Buffer.concat(diagnosticChunks).toString() });
     const controlPath = '/__usernode_shots_control/request-failure';
     const wanted = '/api/lists/demo?sort=new';
     assert.equal((await send(port, controlPath, { method: 'POST', body: { path: wanted, enabled: true } })).status, 403);
@@ -116,8 +109,7 @@ test('shots proxy blocks only the authorized exact API GET while enabled', async
     assert.doesNotMatch(Buffer.concat(diagnosticChunks).toString(), /sort=new|real upstream response|a{64}/);
     assert.match(Buffer.concat(diagnosticChunks).toString(), /controlled_failure_hit/);
   } finally {
-    proxy.kill('SIGTERM');
-    await once(proxy, 'close');
+    await stopProxy(proxy, closed);
     upstream.close();
     fs.rmSync(dir, { recursive: true, force: true });
   }

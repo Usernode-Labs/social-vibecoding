@@ -426,7 +426,7 @@ const TOUR_STEP = Object.freeze({
  *   COMMUNITY_JOINED   `join`     Discover, where communities are joined
  *   TRY_APPS           `try`      the default app, opened
  *   VOTE_CAST          `vote`     voteTarget: a Needs you, or the Workshop
- *   FEEDBACK_SENT      `suggest`  the "Ask for a change" dialog, for the
+ *   FEEDBACK_SENT      `suggest`  the "Suggest an improvement" dialog, for the
  *   USEFUL_FEEDBACK               default app (the measure "Suggest an
  *                                 improvement" is scored by until an admin
  *                                 rebinds it to FEEDBACK_SENT)

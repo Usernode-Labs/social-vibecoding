@@ -616,12 +616,26 @@ test('builder: snapshots it writes serve the public leaderboard endpoint', async
 
   const { server, base } = await listen(buildApp(topochainPublicRoutes));
   try {
+    // #3887: the default view hides alice (exclude_podium = TRUE), so the
+    // ranked board is three rows — and the rank numbers the shared rule
+    // assigned are untouched (bob still reads 1, sharing with the hidden
+    // alice; nobody shifted).
     const res = await fetch(`${base}/api/v4/leaderboard?season_event_id=100`);
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.equal(body.success, true);
     const board = body.data.leaderboard;
     assert.deepEqual(board.map((r) => [r.rank, Number(r.total_points)]), [
+      [1, 2350], [2, 1250], [3, 500],
+    ]);
+    assert.equal(body.data.non_podium_count, 1, 'the chip counts over the unfiltered scope');
+
+    // Asking for them puts alice back at the front, still sharing rank 1
+    // with bob — an excluded row never consumes a slot, so nobody moved.
+    const incl = await fetch(`${base}/api/v4/leaderboard?season_event_id=100&include_non_podium=1`);
+    assert.equal(incl.status, 200);
+    const inclBody = await incl.json();
+    assert.deepEqual(inclBody.data.leaderboard.map((r) => [r.rank, Number(r.total_points)]), [
       [1, 2500], [1, 2350], [2, 1250], [3, 500],
     ]);
   } finally { server.close(); }

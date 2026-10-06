@@ -178,9 +178,11 @@ const EVENT_TYPES = Object.freeze({
   //                         to its maker (once per project, written by
   //                         journey-events.noteFirstArtefactShown).
   //                         metadata: { artefact, secondsFromCreation }
-  //   invite_opened         a live invite link opened, once per browser
-  //                         (services/invite-activity.js); user_id is the
-  //                         visitor when signed in. metadata: { inviteId, signedIn }
+  //   invite_opened         a live invite link opened, once per person
+  //                         (an account, else a browser) and maker and
+  //                         project (services/invite-activity.js); user_id
+  //                         is the visitor when signed in. metadata:
+  //                         { inviteId, signedIn }
   FIRST_ARTEFACT_SHOWN: 'first_artefact_shown',
   INVITE_OPENED: 'invite_opened',
 });

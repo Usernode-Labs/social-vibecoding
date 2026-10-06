@@ -63,6 +63,90 @@ async function readBounded(stream, limit) {
   return Buffer.concat(chunks);
 }
 
+// What one request came to (G, 2026-10-05): its status, the ids that find
+// it in OpenRouter's own log, the upstream provider when OpenRouter names
+// it, and an error's type and message. Never the request's or reply's
+// content. A 400 "tool messages must include a non-empty string
+// tool_call_id" on 2026-10-04 could not be traced to a provider without it.
+const MAX_OUTCOME_SCAN_BYTES = 64 * 1024;
+const SAFE_ID = /^[a-zA-Z0-9._:-]{1,160}$/;
+const SAFE_PROVIDER = /^[a-zA-Z0-9 ._:/()-]{1,80}$/;
+const SAFE_ERROR_TYPE = /^[a-z0-9_.-]{1,64}$/i;
+
+function safeId(value) {
+  return typeof value === 'string' && SAFE_ID.test(value) ? value : null;
+}
+
+function safeProvider(value) {
+  return typeof value === 'string' && SAFE_PROVIDER.test(value) ? value : null;
+}
+
+// One error envelope, Anthropic's ({ type: 'error', error: { type, message } })
+// or OpenRouter's ({ error: { message, code, metadata: { provider_name } } }),
+// as the fields an outcome carries. The message is clipped and redacted.
+function errorFields(parsed, redact) {
+  const error = parsed?.type === 'error' ? parsed.error : parsed?.error;
+  if (!error || typeof error !== 'object') return {};
+  const out = {};
+  const type = typeof error.type === 'string' ? error.type
+    : (error.code != null ? String(error.code) : null);
+  if (type && SAFE_ERROR_TYPE.test(type)) out.errorType = type;
+  if (typeof error.message === 'string' && error.message) {
+    out.errorMessage = redact(error.message).replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 300);
+  }
+  const provider = safeProvider(error.metadata?.provider_name);
+  if (provider) out.providerName = provider;
+  return out;
+}
+
+// What a reply body says about itself: its message (generation) id and the
+// provider OpenRouter routed it to, from a JSON reply or the first event of
+// a stream, and an error envelope wherever one appears. Fields only.
+function replyFields(parsed, redact) {
+  if (!parsed || typeof parsed !== 'object') return {};
+  if (parsed.type === 'error' || (parsed.error && typeof parsed.error === 'object')) return errorFields(parsed, redact);
+  const message = parsed.type === 'message_start' ? parsed.message : parsed;
+  const out = {};
+  const id = safeId(message?.id);
+  if (id) out.generationId = id;
+  const provider = safeProvider(message?.provider ?? parsed.provider);
+  if (provider) out.providerName = provider;
+  return out;
+}
+
+// Pass a reply through unchanged while reading what replyFields needs from
+// it: a small JSON body whole, or a stream's message_start and error events.
+// Only one event's text is held at a time, and an event longer than
+// MAX_OUTCOME_SCAN_BYTES is dropped unread; the bytes always flow on.
+async function* observeOutcome(body, { streaming, onFields, redact }) {
+  let text = '';
+  let bytes = 0;
+  for await (const chunk of body) {
+    bytes += chunk.length;
+    if (streaming) {
+      text += Buffer.from(chunk).toString();
+      let at;
+      while ((at = text.search(/\r?\n\r?\n/)) >= 0) {
+        const event = text.slice(0, at);
+        text = text.slice(at).replace(/^\r?\n\r?\n/, '');
+        const data = event.split(/\r?\n/).filter(line => line.startsWith('data:'))
+          .map(line => line.slice(5).trimStart()).join('\n');
+        if (data && data.length <= MAX_OUTCOME_SCAN_BYTES
+            && (data.includes('"message_start"') || data.includes('"error"'))) {
+          try { onFields(replyFields(JSON.parse(data), redact)); } catch { /* Not JSON: passes through. */ }
+        }
+      }
+      if (text.length > MAX_OUTCOME_SCAN_BYTES) text = '';
+    } else if (bytes <= MAX_OUTCOME_SCAN_BYTES) {
+      text += Buffer.from(chunk).toString();
+    }
+    yield chunk;
+  }
+  if (!streaming && bytes <= MAX_OUTCOME_SCAN_BYTES && text) {
+    try { onFields(replyFields(JSON.parse(text), redact)); } catch { /* Not JSON. */ }
+  }
+}
+
 // Anthropic's error envelope, so Claude Code reports a refusal in its own
 // words instead of failing to parse one.
 function replyError(res, status, type, message) {
@@ -199,6 +283,9 @@ async function startMessagesAdapter({
   }
   if (!apiKey || !model || !localToken) throw new Error('invalid_request_adapter_config');
   const upstreamBase = base.href.replace(/\/+$/, '');
+  // An error message is the provider's text: never let the turn's key or the
+  // listener's token through, should a provider ever echo a header.
+  const redactOutcome = makeRedactor([apiKey, localToken]);
   const active = new Set();
   let requestOrdinal = 0;
   const emitTiming = (event) => {
@@ -285,6 +372,11 @@ async function startMessagesAdapter({
           httpStatus: response.status,
           durationMs: Math.max(0, Math.round(performance.now() - timing.startedAt)) });
       }
+      if (timing) {
+        timing.result = {
+          requestId: safeId(response.headers.get('x-request-id') || response.headers.get('x-openrouter-request-id')),
+        };
+      }
       const responseHeaders = {};
       const responseConnectionHeaders = new Set(String(response.headers.get('connection') || '')
         .toLowerCase().split(',').map(s => s.trim()));
@@ -300,8 +392,14 @@ async function startMessagesAdapter({
         res.end();
         return;
       }
-      const bodyStream = Readable.fromWeb(response.body);
+      let bodyStream = Readable.fromWeb(response.body);
       if (timing) {
+        const streaming = /text\/event-stream/i.test(String(response.headers.get('content-type') || ''));
+        bodyStream = Readable.from(observeOutcome(bodyStream, {
+          streaming,
+          redact: redactOutcome,
+          onFields: (fields) => { Object.assign(timing.result, fields); },
+        }));
         async function* observeTransfer() {
           for await (const chunk of bodyStream) {
             timing.responseBytes += chunk.length;
@@ -326,6 +424,14 @@ async function startMessagesAdapter({
     } finally {
       if (timing) {
         clearInterval(timing.interval);
+        // What the request came to, before its end: the platform logs a
+        // failed one and keeps the provider for the turn's ledger row.
+        emitTiming({
+          kind: 'provider_request_result', requestOrdinal: timing.ordinal,
+          ...(timing.status != null ? { httpStatus: timing.status } : {}),
+          outcome: timing.outcome,
+          ...Object.fromEntries(Object.entries(timing.result || {}).filter(([, v]) => v != null)),
+        });
         emitTiming({ kind: 'provider_request_end', requestOrdinal: timing.ordinal,
           outcome: timing.outcome, stage: timing.stage,
           ...(timing.status != null ? { httpStatus: timing.status } : {}),
@@ -440,5 +546,5 @@ if (require.main === module) {
 }
 
 module.exports = {
-  startMessagesAdapter, applyTurnPolicy, makeRedactor, claudeChildEnv, runClaude,
+  startMessagesAdapter, applyTurnPolicy, makeRedactor, claudeChildEnv, runClaude, replyFields,
 };

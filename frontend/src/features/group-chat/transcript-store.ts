@@ -99,10 +99,11 @@ export type MessageKind = 'message' | 'system' | 'vote' | 'spec_share';
 /**
  * B9: a request's chip on its message (homeroom-bot-chat.js setStatus).
  * `fixing`: a fix asked for on one of the bot's changes still waiting for
- * approval, until that change is ready again.
+ * approval, until that change is ready again. `waiting_first_version`: a
+ * request held until the project's first version is live.
  */
 export interface BotRequestChip {
-  status: 'reading' | 'building' | 'ready' | 'live' | 'fixing';
+  status: 'reading' | 'building' | 'ready' | 'live' | 'fixing' | 'waiting_first_version';
   issueNumber: number | null;
   sessionId: number | null;
 }
@@ -110,15 +111,20 @@ export interface BotRequestChip {
 /**
  * Where a card's request (or fix) stands now, read from the platform's
  * records whenever the card is (homeroom-bot-chat.js cardsOf, CARD_STAGES).
- * `waitingOn` and `youApprove` say who still has to approve a built change.
+ * `waitingOn` and `youApprove` say who still has to approve a built change,
+ * `missing` how many more approvals it needs (0 once it has them) and
+ * `needed` how many in all, so a change that needs fewer than the people
+ * named says so.
  */
 export interface BotRequestState {
-  stage: 'reading' | 'waiting' | 'building' | 'question' | 'checking' | 'proposed' | 'approved' | 'live'
-    | 'closed' | 'person' | 'stopped' | 'fixing' | 'asked' | 'answered';
+  stage: 'waiting_first_version' | 'reading' | 'waiting' | 'building' | 'question' | 'checking' | 'proposed' | 'approved'
+    | 'live' | 'closed' | 'person' | 'stopped' | 'fixing' | 'asked' | 'answered';
   sessionId?: number;
   youApprove?: boolean;
   waitingOn?: string[];
   more?: number;
+  missing?: number;
+  needed?: number;
 }
 
 /**
@@ -441,6 +447,14 @@ export interface TranscriptLead {
    * thread keeps its flat named rows and centred lines (an issue's page).
    */
   language?: 'chat' | 'flat';
+  /**
+   * The general chat only: where the reader's reading stood when the
+   * channel opened (`GroupChat._takeUnreadMark`), the newest message read
+   * then and how many were unread. The transcript draws its "New" line
+   * above the first message after it, and the pane counts them. Null or
+   * absent with nothing unread.
+   */
+  unread?: { lastReadId: number; count: number } | null;
 }
 
 export interface TranscriptView {
@@ -475,6 +489,14 @@ export const EMPTY_VIEW: TranscriptView = {
 export const INITIAL_TRANSCRIPT: TranscriptState = { ready: false, byKey: {} };
 
 export const transcriptStore = createStore<TranscriptState>(INITIAL_TRANSCRIPT);
+
+/**
+ * How many times a channel has been opened at its "New" line
+ * (mount.ts openAtUnreadLine). The pane's banner counts from the opening, so
+ * where the line sat before the stream was moved to it is not the reader
+ * scrolling onto it (general-chat.tsx).
+ */
+export const unreadOpenings = createStore<{ count: number }>({ count: 0 });
 
 if (typeof window !== 'undefined') {
   (window as unknown as { GroupChatTranscriptStore?: unknown })

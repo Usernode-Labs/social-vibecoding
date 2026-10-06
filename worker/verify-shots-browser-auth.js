@@ -170,7 +170,23 @@ async function main() {
         throw new Error(`${persona} browser failed (${error.message}); proxy exit=${proxy.exitCode}; ${proxyError}`);
       }
     }
-    process.stdout.write('All planner personas retained authenticated sessions and loaded an approved child frame on both private revisions.\n');
+    // The guest browser was never signed in: on both revisions it gets the
+    // page a request with no session gets (a 401 here, which the browser
+    // still renders), never a signed-in one or the app frame.
+    const guestState = JSON.parse(fs.readFileSync(path.join(stateDir, 'guest.json'), 'utf8'));
+    if (guestState.cookies?.length || guestState.origins?.length) {
+      throw new Error('Shots bootstrap gave the guest browser a stored session.');
+    }
+    const guestChecks = origins.map((origin) => ({
+      url: `${origin}/status`,
+      expectedText: 'Sign in',
+      absentText: ['Signed in as', 'Deployed child frame loaded'],
+    }));
+    try { await verifyBrowser(config.mcpServers.browser_guest, guestChecks); }
+    catch (error) {
+      throw new Error(`guest browser failed (${error.message}); proxy exit=${proxy.exitCode}; ${proxyError}`);
+    }
+    process.stdout.write('All planner personas retained authenticated sessions and loaded an approved child frame on both private revisions; the guest stayed signed out.\n');
   } finally {
     if (proxy && proxy.exitCode === null) {
       proxy.kill('SIGTERM');

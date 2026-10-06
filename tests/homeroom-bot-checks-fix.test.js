@@ -397,7 +397,8 @@ test('a failing verdict hook costs an error verdict nothing, and a passing one o
   for (let i = 0; i < 20 && !asked.length; i += 1) await new Promise((r) => setImmediate(r));
   assert.deepEqual(asked.map((s) => s.replace(/\s+/g, ' ').trim()),
     ['SELECT status, check_state, approval_epoch, source, reviewed_head_sha, imported_pr_head_sha, '
-      + 'checks_commit_sha, handoff_head_sha, checks_checked_at, shots_state, shots_run_id, shots_detail, shots_updated_at '
+      + 'checks_commit_sha, handoff_head_sha, checks_checked_at, shots_state, shots_run_id, shots_detail, shots_updated_at, '
+      + 'pr_title, pr_title_fallback, session_title '
       + 'FROM chat_sessions WHERE id = $1']);
   asked.length = 0;
   visuals.noteBotChecksAfterChecks(pool, { id: 5001 }, 'failing');

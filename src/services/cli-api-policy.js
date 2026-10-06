@@ -125,6 +125,22 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   { method: 'GET', pattern: '/api/apps/:slug/messages' },
   { method: 'POST', pattern: '/api/apps/:slug/messages' },
   { method: 'POST', pattern: '/api/apps/:slug/issues' },
+  // create_request's screenshots: one image upload, the same route the
+  // feedback dialog uses. On the list because an upload decides nothing: it
+  // stores one sniffed PNG or JPEG of at most 4 MB owned by the caller, under
+  // the per-user upload limiter, and a row no request ever links is deleted
+  // after 24 hours. Only the issues route above can put it on the board, and
+  // only for the caller who uploaded it.
+  { method: 'POST', pattern: '/api/feedback/screenshot' },
+  // Specs on a request (routes/request-specs.js): post_spec, get_spec and
+  // get_request. A post decides nothing either: it stores the caller's own
+  // plan on the caller's own planning record, behind the same membership and
+  // collaborator gates as filing the request, for the group to read and
+  // discuss; nothing is built or voted on by it. The version read is the spec
+  // card's own route, which serves only what is shared or the caller's own.
+  { method: 'POST', pattern: '/api/apps/:slug/issues/:number/spec' },
+  { method: 'GET', pattern: '/api/apps/:slug/issues/:number/specs' },
+  { method: 'GET', pattern: '/api/sessions/:id/specs/:version' },
   { method: 'GET', pattern: '/api/sessions/:id' },
   { method: 'GET', pattern: '/api/sessions/:id/status' },
   { method: 'GET', pattern: '/api/sessions/:id/spec' },

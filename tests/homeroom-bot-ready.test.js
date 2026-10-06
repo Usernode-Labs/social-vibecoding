@@ -51,7 +51,7 @@ test('B7: Try it always, Approve when their Yes counts, Change something; one fi
 });
 
 test('B7: the card, drawn in every state', () => {
-  const { ReadyCardView, readyTitle, waitingLine, isReadyMessage } = loadTsx('frontend/src/features/messages/bot-ready.tsx');
+  const { ReadyCardView, readyTitle, waitingLine, isReadyMessage, changeLine } = loadTsx('frontend/src/features/messages/bot-ready.tsx');
   const actions = dm.readyActions({ sessionId: 9, epoch: 2, approve: true });
   const meta = {
     kind: 'proposal', appName: 'Plant Pal', appSlug: 'plant-pal', askedText: 'Add a weekly reminder',
@@ -66,6 +66,14 @@ test('B7: the card, drawn in every state', () => {
   assert.match(open, /class="messages-bot-primary" data-bot-ready-action="approve"><span>Approve<\/span>/);
   assert.match(open, /data-bot-ready-action="change"><span>Change something<\/span>/);
   assert.ok(!/Waiting for approval/.test(open), 'a project of one waits on nobody else');
+  // #3870: what the change is, under the title: its own title, else its request's.
+  assert.ok(!/data-bot-ready-change/.test(open), 'nothing to say beyond what they asked');
+  const titled = draw({ meta: { ...meta, changeTitle: 'Weekly watering reminder', issueTitle: 'Reminders' } });
+  assert.match(titled, /data-bot-ready-change="">Weekly watering reminder</);
+  assert.ok(titled.indexOf('Weekly watering reminder') < titled.indexOf('You asked:'), 'what it is, then what they asked');
+  assert.equal(changeLine({ ...meta, askedText: undefined, issueTitle: 'Reminders' }), 'Reminders');
+  assert.equal(changeLine({ ...meta, changeTitle: 'add a weekly reminder.' }), null, 'a title that only repeats what they asked is said once');
+  assert.equal(changeLine({ ...meta, askedText: undefined }), null);
   // Approved: what happens next, never just "You approved it." (4 October).
   assert.match(draw({ state: 'approved', actions: [] }), />You approved it\. It goes live in a minute or two\.</);
   const stale = draw({ state: 'stale', actions: actions.slice(0, 1) });
@@ -156,8 +164,10 @@ test('B7: the approved line, in words, in the reader\'s own week', () => {
   assert.equal(line({ waitingOn: ['sam_t1004'] }), 'You approved it. It goes live when @sam_t1004 approves too.');
   assert.equal(line({ missing: 2, waitingOn: ['ada', 'cy'] }), 'You approved it. It goes live when @ada and @cy approve too.');
   assert.equal(line({ missing: 4, waitingOn: ['ada', 'cy', 'di'], more: 1 }), 'You approved it. It goes live when @ada, @cy, @di and 1 more approve too.');
-  assert.equal(line({ missing: 1, waitingOn: ['ada', 'cy'] }), 'You approved it. It goes live when one more person approves.',
-    'never names two people when one Yes is enough');
+  // Page Turners, 5 October: one Yes of two people's is enough. Both are
+  // named, and "or" says either will do; never "when @ada and @cy approve".
+  assert.equal(line({ missing: 1, waitingOn: ['ada', 'cy'] }), 'You approved it. It goes live after one more approval from @ada or @cy.',
+    'names who can give the one Yes it needs, and that either will do');
   assert.equal(line({ missing: 2, waitingOn: [], at: on(2026, 9, 5) }), 'You approved it. It goes live when 2 more people approve, or tomorrow if nobody objects.');
   assert.equal(line({ missing: 0, at: on(2026, 9, 4, 22) }), 'You approved it. It goes live later today if nobody objects.');
   assert.equal(liveDay(on(2026, 9, 12), sunday, 'en-US'), 'on October 12', 'past the week, its date');
@@ -182,11 +192,13 @@ test('B7: the client reads what happens next from the vote\'s answer and from th
   const meta = normalizeBotMeta({ homeroomBot: { kind: 'proposal', status: 'answered', chosen: 'approve', goesLive: { soon: true } } });
   assert.deepEqual(meta.homeroomBot.goesLive, { soon: true, at: null, missing: 0, waitingOn: [], more: 0 });
   assert.equal('goesLive' in normalizeBotMeta({ homeroomBot: { kind: 'proposal' } }).homeroomBot, false);
+  assert.equal(normalizeBotMeta({ homeroomBot: { kind: 'proposal', changeTitle: 'Sunday reminder' } }).homeroomBot.changeTitle, 'Sunday reminder');
   const api = read('frontend/src/features/messages/api.ts');
   assert.match(api, /if \(response\.ok\) return \{ ok: true, stale: false, epoch, error: null, goesLive: normalizeGoesLive\(pick\(data, 'goesLive'\)\) \};/);
   const card = read('frontend/src/features/messages/bot-ready.tsx');
   assert.match(card, /if \(out\.ok\) \{ setGoesLive\(out\.goesLive \|\| null\); setApproved\(true\);/);
-  assert.match(card, /const next = meta\.goesLive \|\| goesLive \|\| goesLiveFromReady\(meta\.ready\);/);
+  // 5 October: what happens next as read now comes first (readyStates).
+  assert.match(card, /const next = fresh\?\.goesLive \|\| meta\.goesLive \|\| goesLive \|\| goesLiveFromReady\(meta\.ready\);/);
 });
 
 test('B7: "ready to try" in the bell and on the phone, on by default', async () => {
@@ -311,6 +323,7 @@ test('B7: who approves, who is told, and the card, against the full PostgreSQL s
     assert.deepEqual(sent.meta.actions.map((a) => a.id), ['try', 'approve', 'change']);
     assert.equal(sent.meta.actions[1].epoch, 0);
     assert.equal(sent.meta.askedText, 'Remind us on Sundays');
+    assert.equal(sent.meta.changeTitle, 'Sunday reminder', 'the card says what the change is (#3870)');
     assert.match(sent.content, /It's ready to try\. Approve it when you're happy with it, and it goes live\.$/);
     assert.deepEqual(await told(id), [], 'nobody else must approve');
     // A Yes, from the card or anywhere, settles it on every device, and
@@ -331,7 +344,7 @@ test('B7: who approves, who is told, and the card, against the full PostgreSQL s
     assert.deepEqual(await dm.needsYesFrom(pool, state, { except: [ben.id] }), [ada.id]);
     await dm.noteChangeReady(pool, id, { bot: homeroomBot, domain: 'app.example.test' });
     const sent = await card(ben.id, id);
-    assert.deepEqual(sent.meta.ready, { group: true, last: false, waitingOn: ['ada'] });
+    assert.deepEqual(sent.meta.ready, { group: true, last: false, waitingOn: ['ada'], missing: 2, needed: 2 });
     assert.deepEqual(sent.meta.actions.map((a) => a.id), ['try', 'approve', 'change']);
     assert.deepEqual(await told(id), [{ username: 'ada', detail: 'epoch:0', source_user_id: ben.id }]);
     await dm.noteApproversReady(pool, { sessionId: id, epoch: 0, requesterId: ben.id });

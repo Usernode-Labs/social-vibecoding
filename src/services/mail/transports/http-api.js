@@ -53,6 +53,7 @@ function buildPayload(from, to, message) {
     to: [to],
     subject: message.subject,
     text: message.text,
+    ...(message.trackingLinks ? { html: message.html } : {}),
     // A kind's own headers (activity mail's List-Unsubscribe), in the
     // `headers` object Resend takes.
     ...(message.headers ? { headers: { ...message.headers } } : {}),
@@ -101,11 +102,12 @@ function create(env, { sender = null } = {}) {
           throw new Error(`HTTP ${res.status}: ${detail.slice(0, 200)}`);
         }
         // Most providers answer with { id: "..." }. Optional detail:
-        // send() ignores it, sendTest() shows it as the provider's own
+        // send() persists it, sendTest() also shows the provider's own
         // receipt. A non-JSON success body is still a success.
         const body = await res.text().catch(() => '');
         try {
-          const id = (JSON.parse(body) || {}).id;
+          const receipt = JSON.parse(body) || {};
+          const id = receipt.id || receipt.MessageID;
           if (id) return { providerMessageId: String(id).slice(0, 128) };
         } catch { /* not JSON: no receipt, still sent */ }
         return undefined;

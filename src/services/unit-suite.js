@@ -283,7 +283,14 @@ if node -e "const p=require('./package.json');process.exit(p.scripts?.['lint:sql
     echo "unit-suite: SQL validation is configured but PostgreSQL 17 is unavailable" >&2
     exit 91
   fi
-  pg_ctl -D /home/node/pgdata -w -l /tmp/unit-suite-postgres.log start >/dev/null
+  # The repository's own PostgreSQL suites run against this server too, and
+  # each loads the whole schema in one transaction: about 2,830 locks on
+  # 5 October 2026. The default lock table (max_locks_per_transaction 64 for
+  # 100 connections: 6,400) held two such loads at once, so a third running
+  # in parallel failed with "out of shared memory" (53200), and six bot
+  # suites failed together on otherwise healthy changes. 1024 holds about
+  # thirty-six, for some 43 MB more shared memory.
+  pg_ctl -D /home/node/pgdata -w -o "-c max_locks_per_transaction=1024" -l /tmp/unit-suite-postgres.log start >/dev/null
   trap 'pg_ctl -D /home/node/pgdata -m fast stop >/dev/null 2>&1 || true' EXIT
   export SQL_CHECK_CONNECTION_URL=postgres://postgres:postgres@127.0.0.1:5432/postgres
   npm run lint:sql
