@@ -10447,6 +10447,16 @@ BEGIN
     CHECK (status IN ('pending', 'running', 'ok', 'model_fail', 'infra_fail', 'timeout',
                       'not_applicable', 'skipped_cap', 'cancelled', 'awaiting'));
 END $$;
+-- A first version a restart interrupts goes on from where it was, as the
+-- bot's own builds do (services/bench/lane.js "After a restart"):
+-- `checkpoint` keeps what each finished sub-step left (the triage's answer,
+-- the spec, the build's commit), the sessions it opened and which of them a
+-- release already charged to the run. `prior_ms` is the time its earlier
+-- claims ran and `first_started_at` its first claim, so its elapsed time
+-- survives the restart.
+ALTER TABLE bench_trials ADD COLUMN IF NOT EXISTS checkpoint JSONB;
+ALTER TABLE bench_trials ADD COLUMN IF NOT EXISTS prior_ms BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE bench_trials ADD COLUMN IF NOT EXISTS first_started_at TIMESTAMPTZ;
 
 -- The first commit a brief's builds start from, made once per run, task and
 -- pack: today's starter rendered for the app's name, its sketch card, and the
