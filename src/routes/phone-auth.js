@@ -1,0 +1,222 @@
+'use strict';
+
+/**
+ * Firebase Phone Auth sign-in and sign-up (services/firebase-phone-auth.js),
+ * beside the email code (routes/auth.js) and Apple/Google
+ * (routes/sign-in-providers.js):
+ *
+ *   POST /api/auth/phone/request   text a code to a phone number
+ *   POST /api/auth/phone/verify    the code, or an ID token a client SDK
+ *                                  earned with its own Firebase exchange
+ *   POST /api/auth/phone/finish    the username step, for a brand-new account
+ *
+ * API-ONLY STAGE: no screen changes. The answers are shaped exactly like
+ * the email code's and the native OAuth endpoints' JSON, so the
+ * sign-in-sheet stage routes identically (`next`, `created`, the user
+ * block with roleFields).
+ *
+ * The offer gate is fail-closed: any of the four Firebase values missing
+ * (config.js) leaves every endpoint here answering 404 not_offered, and
+ * the waitlist options route advertises the flow as absent.
+ *
+ * Like the OAuth finish route, verify and finish mint sessions, so they
+ * sit in routes/auth.js's SESSION_MINT_PATHS and are refused 409
+ * logout_required over a live session before any credential is consumed.
+ */
+
+const express = require('express');
+const { getPool } = require('../db/pool');
+const log = require('../services/logger');
+const phoneAuth = require('../services/firebase-phone-auth');
+const providers = require('../services/sign-in-providers');
+const communityInvites = require('../services/community-invites');
+const challengeScorer = require('../services/topochain/challenge-scorer');
+const managedOpenRouter = require('../services/openrouter-managed-keys');
+const {
+  otpVerifyLimiter,
+  phoneOtpRequestLimiter,
+  phoneOtpRequestPhoneLimiter,
+  phoneVerifyLimiter,
+} = require('../middleware/rate-limits');
+const { createSession, createSessionCookie, roleFields } = require('./auth');
+
+const SECURE_COOKIE = process.env.NODE_ENV === 'production';
+
+// The verify leg's sessionInfo → the SAME browser's verify call, the way
+// the email code's signup cookie works (routes/auth.js SIGNUP_COOKIE) and
+// the way the OAuth round trip's binder does. Scoped to the phone paths.
+const PHONE_COOKIE_PATH = '/api/auth/phone';
+
+function privateCookie(res, name, value, expiresAt) {
+  res.cookie(name, value, {
+    httpOnly: true,
+    secure: SECURE_COOKIE,
+    sameSite: 'lax',
+    path: PHONE_COOKIE_PATH,
+    expires: expiresAt,
+  });
+}
+
+function clearPrivateCookie(res, name) {
+  res.clearCookie(name, { path: PHONE_COOKIE_PATH });
+}
+
+function fail(res, error, what) {
+  if (error instanceof phoneAuth.PhoneAuthError) {
+    return res.status(error.status).json({ error: error.message, code: error.code });
+  }
+  log.error('phone-auth', `${what} failed`, { message: error.message });
+  return res.status(500).json({ error: 'Internal server error' });
+}
+
+function phoneAuthRoutes(config) {
+  const pool = getPool(config);
+  const router = express.Router();
+
+  function requireOffered(req, res, next) {
+    if (!phoneAuth.offered(config)) {
+      return res.status(404).json({ error: 'That sign-in is not set up.', code: 'not_offered' });
+    }
+    return next();
+  }
+
+  // Requesting a code SENDS A TEXT, so this carries the same two buckets
+  // the email code's request does: per address (here per phone number) so
+  // one person cannot work through a list of victims, and per source so
+  // one IP cannot flood many numbers.
+  router.post(
+    '/api/auth/phone/request',
+    requireOffered,
+    phoneOtpRequestLimiter,
+    phoneOtpRequestPhoneLimiter,
+    async (req, res) => {
+      try {
+        const sent = await phoneAuth.requestCode(
+          config,
+          req.body?.phoneNumber,
+          req.body?.recaptchaToken
+        );
+        return res.json({ ok: true, sessionInfo: sent.sessionInfo });
+      } catch (error) {
+        return fail(res, error, 'Phone code request');
+      }
+    }
+  );
+
+  router.post('/api/auth/phone/verify', requireOffered, phoneVerifyLimiter, async (req, res) => {
+    try {
+      // Either leg lands on the same claims: the server-side exchange
+      // (sessionInfo + code from this browser's own /request), or an ID
+      // token a client's own Firebase SDK earned. Same verifier, same
+      // spent-once guard.
+      const claims = req.body?.idToken
+        ? await phoneAuth.verifyIdToken(pool, config, req.body.idToken)
+        : await (async () => {
+            const exchanged = await phoneAuth.exchangeCode(
+              config,
+              req.body?.sessionInfo,
+              req.body?.code
+            );
+            return phoneAuth.verifyIdToken(pool, config, exchanged.idToken);
+          })();
+      const result = await phoneAuth.signIn(pool, claims, { createSession });
+      if (result.refuse) {
+        return res.status(422).json({
+          error: 'Admin accounts sign in with their password.',
+          code: result.refuse,
+        });
+      }
+
+      // An invite link this visitor opened first is followed as the account
+      // the phone just CREATED, and an existing account follows it only when
+      // this sign-in IS the Join its page asked for — the email code's rule,
+      // word for word (routes/auth.js, where the long comment lives).
+      const consented = result.created || req.body?.followInvite === true;
+      const invite = consented
+        ? await communityInvites.redeemCarried(pool, req, res, result.userId)
+        : (communityInvites.clearInviteCookie(res), null);
+      if (invite && invite.status === 'joined') await challengeScorer.scoreOnJoin(pool, config);
+
+      if (result.created) {
+        // #2568, for the phone-made account the same way: best effort by
+        // construction (ensureIncludedKey never throws).
+        await managedOpenRouter.ensureIncludedKey({
+          pool, userId: result.userId, config, reason: 'signup_phone',
+        });
+      }
+
+      if (result.next === 'signed-in') {
+        createSessionCookie(res, result.session.token, result.session.expiresAt);
+        log.info('phone-auth', 'Phone sign-in signed an account in', {
+          userId: result.userId,
+          created: !!result.created,
+        });
+        return res.json({
+          ok: true,
+          next: 'signed-in',
+          created: !!result.created,
+          user: {
+            id: result.user.id,
+            username: result.user.username,
+            ...roleFields(result.user.isAdmin, result.user.adminReadonly),
+          },
+          ...(invite ? { invite } : {}),
+        });
+      }
+
+      // A brand-new account continues to the username step. The
+      // continuation rides this path-scoped HttpOnly cookie, the way the
+      // email code's signup cookie does.
+      privateCookie(res, 'hr_phone_signup', result.signupToken, result.expiresAt);
+      log.info('phone-auth', 'Phone sign-up created an account, username pending', {
+        userId: result.userId,
+      });
+      return res.json({
+        ok: true,
+        next: 'username',
+        created: !!result.created,
+        ...(invite ? { invite } : {}),
+      });
+    } catch (error) {
+      return fail(res, error, 'Phone verification');
+    }
+  });
+
+  router.post('/api/auth/phone/finish', requireOffered, otpVerifyLimiter, async (req, res) => {
+    try {
+      const done = await providers.completeUsername(pool, {
+        signupToken: req.cookies?.hr_phone_signup,
+        username: typeof req.body?.username === 'string' ? req.body.username : '',
+        createSession,
+      });
+      clearPrivateCookie(res, 'hr_phone_signup');
+      createSessionCookie(res, done.session.token, done.session.expiresAt);
+      log.info('phone-auth', 'Phone sign-up chose a username', { userId: done.user.id });
+      return res.json({
+        ok: true,
+        user: {
+          id: done.user.id,
+          username: done.user.username,
+          ...roleFields(done.user.isAdmin, done.user.adminReadonly),
+        },
+      });
+    } catch (error) {
+      if (error instanceof providers.SignInProviderError) {
+        // Field refusals keep the continuation, so the person fixes the
+        // field and submits again (the email code's and the OAuth finish
+        // route's shape); anything else spends it.
+        if (error.code === 'invalid_username' || error.code === 'username_taken') {
+          return res.status(422).json({ error: error.message, code: error.code, field: 'username' });
+        }
+        clearPrivateCookie(res, 'hr_phone_signup');
+        return res.status(422).json({ error: error.message, code: error.code });
+      }
+      log.error('phone-auth', 'Username step failed', { message: error.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  return router;
+}
+
+module.exports = { phoneAuthRoutes, PHONE_COOKIE_PATH };

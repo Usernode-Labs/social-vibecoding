@@ -263,13 +263,55 @@ COMMENT ON TABLE native_sign_in_tokens IS 'staging:private';
 CREATE TABLE IF NOT EXISTS oauth_signup_sessions (
   token_hash  VARCHAR(64) PRIMARY KEY CHECK (token_hash ~ '^[0-9a-f]{64}$'),
   user_id     INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
-  provider    TEXT NOT NULL CHECK (provider IN ('apple', 'google')),
+  provider    TEXT NOT NULL CHECK (provider IN ('apple', 'google', 'phone')),
   expires_at  TIMESTAMPTZ NOT NULL,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_oauth_signup_sessions_expires
   ON oauth_signup_sessions (expires_at);
 COMMENT ON TABLE oauth_signup_sessions IS 'staging:private';
+
+-- Phone sign-in rides the same username continuation as Apple and Google
+-- (services/firebase-phone-auth.js). The constraint is named, dropped and
+-- re-added so an existing database widens idempotently; a fresh install
+-- above already carries all three values, so the re-add renames only.
+ALTER TABLE oauth_signup_sessions
+  DROP CONSTRAINT IF EXISTS oauth_signup_sessions_provider_check;
+ALTER TABLE oauth_signup_sessions
+  ADD CONSTRAINT oauth_signup_sessions_provider_check
+  CHECK (provider IN ('apple', 'google', 'phone'));
+
+-- A phone identity, beside Apple and Google (user_oauth_identities) rather
+-- than inside their OAuth contract: its invariants are its own (one account
+-- per number, one identity per account, E.164 shape), and the number is
+-- PII, so this table is private like its sibling. firebase_uid is the
+-- stable subject the next sign-in finds; the number is the human-facing
+-- key. Nothing on the platform derives an account from the number — the
+-- number is how the person proves themselves to Firebase, not how we look
+-- them up.
+CREATE TABLE IF NOT EXISTS user_phone_identities (
+  id           BIGSERIAL PRIMARY KEY,
+  user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  firebase_uid TEXT NOT NULL UNIQUE CHECK (char_length(firebase_uid) BETWEEN 1 AND 128),
+  phone_e164   VARCHAR(16) NOT NULL UNIQUE CHECK (phone_e164 ~ '^\+[1-9][0-9]{1,14}$'),
+  last_used_at TIMESTAMPTZ,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_user_phone_identities_user
+  ON user_phone_identities (user_id);
+COMMENT ON TABLE user_phone_identities IS 'staging:private';
+
+-- A phone sign-in's ID token is spent once: its hash, kept until the token
+-- itself expires. Same rule as native_sign_in_tokens above.
+CREATE TABLE IF NOT EXISTS phone_sign_in_tokens (
+  token_hash VARCHAR(64) PRIMARY KEY CHECK (token_hash ~ '^[0-9a-f]{64}$'),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_phone_sign_in_tokens_expires
+  ON phone_sign_in_tokens (expires_at);
+COMMENT ON TABLE phone_sign_in_tokens IS 'staging:private';
 
 -- Global CLI device authorization and opaque access tokens. These are
 -- deliberately independent from browser sessions and iframe/app identity.
