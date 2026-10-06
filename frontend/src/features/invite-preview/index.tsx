@@ -98,7 +98,7 @@ export function InvitePreviewPage({ info, busy, onJoin, onClose }: {
       <div className="mx-auto w-full max-w-xl px-4 pb-8 pt-4">
         <section className="dev-ws-hero" data-ws-invite-preview="">
           <InviteCard offer={info} name={info.name} busy={busy} onJoin={onJoin} />
-          <HeroPeople members={[]} count={info.memberCount} audience="invited" audienceLabel={info.audienceLabel} />
+          <HeroPeople count={info.memberCount} audience="invited" audienceLabel={info.audienceLabel} />
           {info.description ? (
             <p className="dev-ws-hero-desc" data-invite-preview-description="">{info.description}</p>
           ) : null}

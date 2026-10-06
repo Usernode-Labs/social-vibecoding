@@ -18,8 +18,8 @@
 //   - a First version card under the hero says where Homeroom bot's build
 //     stands, in the made screen's and the App tab's words ("Step 4 of 7:
 //     Build it"), and opens the bot's chat when the bot waits on its maker;
-//   - "Nothing more to vote on." is a zero nobody else could change, so a
-//     project nobody else is in leaves it out;
+//   - "Nothing more to vote on." was a zero nobody could act on, so with no
+//     votes owed and no unclaimed requests the hub draws nothing (#4045);
 //   - an empty Your work says how to change something there, or leaves the
 //     hub while the first version or the start-here banner already says
 //     what is next;
@@ -94,11 +94,11 @@ test('a just-you project being built: the step, as a ring and in words, and no b
   assert.doesNotMatch(card(building({ step: null, of: null })), /<svg/, 'no ring without a step');
 });
 
-test('a plan or a question waiting on its maker: Homeroom bot has a plan for you, and Go to chat', () => {
+test('a plan or a question waiting on its maker: Homeroom bot has a plan for you to review, and Go to chat', () => {
   const plan = card(building({ step: 3, step_name: 'Your turn: answer the plan', waits_on: 'plan' }));
   assert.match(plan, /data-ws-first-version="plan"/);
   assert.match(plan, /data-ws-first-version-step="">Step 3 of 7: Your turn: answer the plan</);
-  assert.match(plan, /data-ws-first-version-note="">Homeroom bot has a plan for you\.</);
+  assert.match(plan, /data-ws-first-version-note="">Homeroom bot has a plan for you to review\.</);
   assert.match(plan, /<button[^>]*data-ws-first-version-chat=""[^>]*>Go to chat<\/button>/);
   assert.match(plan, /data-ws-first-version-chat="" class="rounded-full bg-violet-600[^"]*self-start"/,
     'the accent: it is the one thing on the hub that waits on them');
@@ -162,16 +162,14 @@ test('nothing being built, or no record yet: no card', () => {
   assert.equal(hub.FIRST_VERSION_POLL_MS, 15000);
 });
 
-test('"Nothing more to vote on." is a zero on a project nobody else is in', () => {
+test('"Nothing more to vote on." says nothing for any audience, so it is not drawn (#4045)', () => {
   const { NothingToVote, hubAlone } = hub;
-  assert.equal(renderToHtml(createElement(NothingToVote, { queue: [], onOpen: () => {}, alone: true })), '');
+  // An empty queue is a zero everywhere: Just you or a group, nothing.
+  assert.equal(renderToHtml(createElement(NothingToVote, { queue: [], onOpen: () => {} })), '');
   const claims = [{ t: 'card', key: 'r1', kind: 'claim', card: { title: { text: 'Trail maps' } } }];
-  const one = renderToHtml(createElement(NothingToVote, { queue: claims, onOpen: () => {}, alone: true }));
+  const one = renderToHtml(createElement(NothingToVote, { queue: claims, onOpen: () => {} }));
   assert.match(one, /^<p class="dev-ws-week-note" data-ws-hub-needs-none=""><button[^>]*data-ws-hub-needs-requests="">1 request nobody has picked up<\/button><\/p>$/,
-    'a request still waiting is still the way into Needs you');
-  // A project with people in it: as it was (#3408).
-  assert.equal(renderToHtml(createElement(NothingToVote, { queue: [], onOpen: () => {} })),
-    '<p class="dev-ws-week-note" data-ws-hub-needs-none="">Nothing more to vote on.</p>');
+    'a request still waiting is the line, and the way into Needs you');
   assert.equal(hubAlone(community()), true, 'Just you');
   assert.equal(hubAlone(community({ audience: 'open', audience_label: 'Public community', member_count: 1 })), true,
     'a public community nobody has joined yet');
@@ -228,7 +226,8 @@ test('the hub puts the first version under the hero, and stands the start-here p
   assert.match(LANDER, /const building = !!\(community && community\.first_version\);\s*const startHere = !!\(v\.dashboard && v\.dashboard\.open === 0 && !v\.dashboard\.everShipped\) && !building;/);
   assert.match(hubTab, /\{v\.emptyNote && !building \? \(/, 'nor the no-items note');
   assert.match(LANDER, /const alone = hubAlone\(community\);\s*const workEmpty = hubWorkEmpty\(\{\s*alone, building, startHere, readOnly: !!actions\.readOnly, bot: !!\(v\.mine && v\.mine\.bot\),\s*\}\);/);
-  assert.match(hubTab, /<NothingToVote queue=\{v\.queue\} onOpen=\{\(\) => openTab\('needs'\)\} alone=\{alone\} \/>/);
+  assert.match(hubTab, /<NothingToVote queue=\{v\.queue\} onOpen=\{\(\) => openTab\('needs'\)\} \/>/,
+    'with nothing owed and no unclaimed requests, nothing is drawn (#4045)');
   assert.match(hubTab, /\{v\.mine && \(v\.mine\.rows\.length \|\| \(v\.mine\.viewer && workEmpty\)\) \? \(\s*<YourWorkCard[\s\S]{0,400}empty=\{workEmpty\}/);
   // The ring and its row are app.css's, beside the hub's doors.
   assert.match(read('public/css/app.css'), /\.dev-ws-hub-first-row \{ display: flex; align-items: center; gap: 12px; min-width: 0; \}/);

@@ -17,21 +17,23 @@
  *
  * Evan, 5 Oct 2026, on a brand-new project of his own: "The initial hub if
  * no one has joined is really sad." It read "Just you", "Nothing more to
- * vote on." and "Your work · No work in progress." Nobody else can put a
- * vote up there, so the vote line says nothing (`alone` in NothingToVote),
- * and an empty Your work leaves the hub while something else on it already
- * says what is next (hubWorkEmpty). A project with people in it keeps both
- * as they were.
+ * vote on." and "Your work · No work in progress." The vote line said
+ * nothing there, and an empty Your work left the hub while something else
+ * on it already said what is next (hubWorkEmpty). #4045 took the vote line
+ * the rest of the way: with no votes owed and no unclaimed requests nothing
+ * is drawn for any audience, so the quiet line is only ever the requests
+ * door (NothingToVote).
  *
  * Your work is the first two of your items with the rest a press away IN
  * PLACE, because a list you came to the hub to glance at should not send
  * you to another page to see its third row. Needs you and the discussion
  * open their tabs; the Workshop door went with the Workshop becoming a tab.
  *
- * Members & activity was the third card. It is the hero's now (#3268,
- * ./community-card.tsx HeroPeople and HeroActivity): who is here and how
- * lively it has been are part of what the project IS, so they are read
- * where the page starts rather than three cards down.
+ * Members & activity was the third card, then the hero's (#3268,
+ * ./community-card.tsx HeroPeople): who is here is part of what the project
+ * IS, so it is read where the page starts rather than three cards down.
+ * The activity half left the hero with #4045 — on a small community a
+ * weekly count and a fourteen-day chart were decoration.
  *
  * ── The channel lives here now ─────────────────────────────────────────
  *
@@ -331,7 +333,7 @@ export function firstVersionStep(fv: HubFirstVersion): string {
  */
 export function firstVersionNote(fv: HubFirstVersion): string {
   if (fv.ready) return 'Version one is ready to try.';
-  if (fv.waits_on === 'plan') return 'Homeroom bot has a plan for you.';
+  if (fv.waits_on === 'plan') return 'Homeroom bot has a plan for you to review.';
   if (fv.waits_on === 'question') return 'Homeroom bot has a question for you.';
   if (fv.mine) return 'Homeroom bot will message you when it’s ready to try, or if it has any questions.';
   return fv.creator
@@ -523,31 +525,24 @@ export function NeedsCard({ queue, slug, canPost, onOpen }: {
 export const owesVote = (queue: DevWorkshopView['queue']): boolean => queue.some((row) => row.kind === 'vote');
 
 /**
- * NO VOTE OWED (#3408): in the Needs you card's place, one quiet line that
- * says so, instead of a card whose whole content was that nothing waits.
- * Requests nobody has picked up are still the Needs you page's rows, so when
- * there are some the line names them, and that phrase is the way in.
- *
- * ON A PROJECT NOBODY ELSE IS IN (`alone`) there is nobody to put a vote up,
- * so "Nothing more to vote on." is a zero, and a zero says nothing: the line
- * is not drawn, or it is the requests alone when there are some.
+ * NO VOTE OWED (#3408): in the Needs you card's place, the quiet line that
+ * names what still waits — requests nobody has picked up, which are the
+ * group's to pick up rather than yours to answer, and the phrase is the way
+ * into the Needs you page where they are the rows. With no votes owed and no
+ * unclaimed requests there is nothing to say, so nothing is drawn (#4045):
+ * "Nothing more to vote on." was a filler line, and a zero says nothing.
  */
-export function NothingToVote({ queue, onOpen, alone = false }: {
+export function NothingToVote({ queue, onOpen }: {
   queue: DevWorkshopView['queue'];
   onOpen: () => void;
-  /** Nobody but one person is in the project (hubAlone). */
-  alone?: boolean;
 }): ReactNode {
   const claims = queue.filter((row) => row.kind !== 'vote').length;
-  if (alone && !claims) return null;
+  if (!claims) return null;
   return (
     <p className="dev-ws-week-note" data-ws-hub-needs-none="">
-      {alone ? null : claims ? 'Nothing more to vote on · ' : 'Nothing more to vote on.'}
-      {claims ? (
-        <button type="button" className="dev-ws-link un-touch-target" onClick={onOpen} data-ws-hub-needs-requests="">
-          {`${plural(claims, 'request', 'requests')} nobody has picked up`}
-        </button>
-      ) : null}
+      <button type="button" className="dev-ws-link un-touch-target" onClick={onOpen} data-ws-hub-needs-requests="">
+        {`${plural(claims, 'request', 'requests')} nobody has picked up`}
+      </button>
     </p>
   );
 }

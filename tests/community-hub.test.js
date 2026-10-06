@@ -95,8 +95,8 @@ test('a project page is four tabs, Hub, Discussion, Needs you and Workshop, with
   assert.ok(order.every((n) => n >= 0), `all seven on the hub: ${JSON.stringify(order)}`);
   assert.deepEqual([...order].sort((a, b) => a - b), order, 'hero, first version, summary, Needs you, discussion, Share it, your work');
   assert.doesNotMatch(hub, /data-ws-start-change/, 'no Start a new change at its foot');
-  assert.match(hub, /\{owesVote\(v\.queue\)\s*\? <NeedsCard [^\n]*\n\s*: <NothingToVote queue=\{v\.queue\} onOpen=\{\(\) => openTab\('needs'\)\} alone=\{alone\} \/>\}/,
-    'Needs you only while a vote is owed; one quiet line in its place otherwise (#3408), and none on a project nobody else is in');
+  assert.match(hub, /\{owesVote\(v\.queue\)\s*\? <NeedsCard [^\n]*\n\s*: <NothingToVote queue=\{v\.queue\} onOpen=\{\(\) => openTab\('needs'\)\} \/>\}/,
+    'Needs you only while a vote is owed; with none and no unclaimed requests, nothing (#4045)');
   assert.match(hub, /<SinceSummaryCard slug=\{slug\} since=\{v\.since \? v\.since\.baseline : 0\} onMore=\{\(\) => openTab\('workshop'\)\} \/>/,
     'the summary card\'s Week by week is the Workshop tab');
   assert.match(hub, /<ChannelCard slug=\{slug\} name=\{app\.name \|\| slug\} data=\{community\} compact onOpen=\{\(\) => openTab\('discussion'\)\} \/>/,
@@ -203,11 +203,12 @@ test('Needs you opens the queue and counts the votes owed', () => {
   const outsider = renderToHtml(createElement(NeedsCard, { queue: [row('a', 'Dark mode', 'ada')], canPost: false, onOpen: () => {} }));
   assert.match(outsider, /Join to vote on these\./);
   assert.doesNotMatch(needs, /data-ws-hub-needs-none/, 'the door says nothing about an empty queue: it is not drawn then');
-  // #3408: no vote owed, no card. One quiet line says so.
+  // #3408, then #4045: no vote owed, no card. With no requests waiting
+  // either, nothing is drawn at all — for any audience.
   const { NothingToVote, owesVote } = loadTsx(HUB);
   assert.equal(owesVote([]), false);
   const none = renderToHtml(createElement(NothingToVote, { queue: [], onOpen: () => {} }));
-  assert.equal(none, '<p class="dev-ws-week-note" data-ws-hub-needs-none="">Nothing more to vote on.</p>');
+  assert.equal(none, '');
 
   // Members & activity is the hero's since #3268: pinned in
   // tests/community-hub-details.test.js.
