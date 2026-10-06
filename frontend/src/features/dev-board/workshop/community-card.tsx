@@ -99,6 +99,10 @@ export type HubFirstVersion = {
   creator: string | null;
   /** What it waits on from its maker, for them alone. */
   waits_on: 'plan' | 'question' | null;
+  /** The plan that wait is of, while the plan step waits: its bullets and
+      the choices its maker will answer, the suggested one first. Read-only
+      and for every viewer (#4074); the maker answers in their chat. */
+  plan?: { bullets: string[]; questions: { question: string; answers: string[] }[] } | null;
   /** The maker's DM with the bot, for them alone. */
   conversation_id: number | null;
   /** The change, once it is ready to try. */

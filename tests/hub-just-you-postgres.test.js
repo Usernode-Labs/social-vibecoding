@@ -18,7 +18,8 @@
 // the App tab reads (homeroom-bot-dm.js firstVersionState): set up, its plan
 // waiting on its maker (from the bot's own plan path), ready to try, and
 // gone once it is live. Only its maker is told what it waits on from them or
-// handed their chat with the bot.
+// handed their chat with the bot; the plan itself, while it waits, is every
+// viewer's to read (#4074).
 //
 // Run with: TEST_DATABASE_URL=postgres://… node --test tests/hub-just-you-postgres.test.js
 
@@ -129,7 +130,7 @@ test('a just-you project\'s hub: what it is, and where its first version stands'
   };
   const fv = (over) => ({
     step: 1, of: 7, step_name: 'Set up the project', ready: false, mine: true, creator: evan.username,
-    waits_on: null, conversation_id: opened.conversationId, session_id: null, ...over,
+    waits_on: null, plan: null, conversation_id: opened.conversationId, session_id: null, ...over,
   });
   // The step's name as firstVersionState names it for this viewer: what
   // the App tab and the made screen say, whatever a step is called.
@@ -185,8 +186,23 @@ test('a just-you project\'s hub: what it is, and where its first version stands'
     // The bot's own plan path, as the made screen's test drives it.
     const plan = { bullets: ['A list of trails near Geneva', 'Who is coming, and when'], questions: [] };
     assert.equal(await bot.awaitGo(pool, { runId: run.id, app, issueNumber: 1, parsed: { plan }, bot: homeroomBot }), true);
-    assert.deepEqual((await get()).first_version, fv({ step: 3, step_name: await named(evan), waits_on: 'plan' }),
+    assert.deepEqual((await get()).first_version, fv({ step: 3, step_name: await named(evan), waits_on: 'plan', plan: { bullets: plan.bullets, questions: [] } }),
       'named as the App tab names it for its maker, and no build time');
+
+    // #4074: a member of the project reads the plan while it waits, with
+    // nothing of its maker's: not their turn, not their chat. The plan's
+    // own path wrote the bullets (sendPlanCard), not a copy made for here.
+    await pool.query('INSERT INTO community_members (community_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [app.community_id, sam.id]);
+    await pool.query(`INSERT INTO app_collaborators (app_id, user_id, status) VALUES ($1, $2, 'member') ON CONFLICT DO NOTHING`, [app.id, sam.id]);
+    viewer = sam;
+    try {
+      assert.deepEqual((await get()).first_version,
+        fv({ step: 3, step_name: await named(sam), mine: false, waits_on: null, conversation_id: null,
+          plan: { bullets: plan.bullets, questions: [] } }),
+        'the plan read-only for a member, while waits_on and the chat stay the maker\'s alone');
+    } finally {
+      viewer = evan;
+    }
   });
 
   await t.test('ready to try: the change, and no promise of when', async () => {

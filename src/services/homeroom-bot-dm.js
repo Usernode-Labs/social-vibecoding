@@ -3366,7 +3366,10 @@ async function firstVersionState(pool, appId, deps = {}) {
   const found = states.find((s) => Number(s.row.app_id) === Number(row.app_id)
     && Number(s.row.issue_number) === Number(row.issue_number));
   if (found?.state) {
-    // B6: the plan it waits on, for the creator to build from the App tab too.
+    // B6: the plan it waits on, for the creator to build from the App tab
+    // too. The hub carries it for every viewer now (routes/apps.js
+    // hubFirstVersion: a member reads it while its maker decides, #4074);
+    // this is where it attaches, whoever reads the state.
     const plan = found.state.stage === 'plan'
       ? await waitingPlan(pool, { userId: row.user_id, appId: row.app_id, issueNumber: row.issue_number }).catch(() => null)
       : null;

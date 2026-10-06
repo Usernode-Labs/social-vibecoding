@@ -112,6 +112,70 @@ test('a plan or a question waiting on its maker: Homeroom bot has a plan for you
   assert.match(src, /import \{ open as openConversation, openBot \} from '\.\.\/\.\.\/messages\/store';/);
 });
 
+test('#4074: a member reads the plan while its maker answers it, and the maker\'s card is unchanged', () => {
+  // A member's card: the step as the server names it for them, and See the
+  // plan under it. A neutral pill: nothing here waits on them.
+  const member = building({
+    step: 3, step_name: 'Waiting for @evan to answer the plan', mine: false, waits_on: null, conversation_id: null,
+    plan: { bullets: ['A trail list', 'Who is coming'], questions: [] },
+  });
+  const html = card(member);
+  assert.doesNotMatch(html, /data-ws-first-version-chat/, 'the maker answers it, not them');
+  assert.match(html, /<button[^>]*data-ws-first-version-plan=""[^>]*>See the plan<\/button>/);
+  assert.match(html, /data-ws-first-version-plan="" class="rounded-full bg-zinc-100[^"]*self-start"/,
+    'a neutral pill: nothing waits on the reader');
+  // The maker's own card keeps Go to chat and never the pill.
+  const mine = card(building({ step: 3, step_name: 'Your turn: answer the plan', waits_on: 'plan',
+    plan: { bullets: ['A trail list'], questions: [] } }));
+  assert.match(mine, /data-ws-first-version-chat=""[^>]*>Go to chat<\/button>/);
+  assert.doesNotMatch(mine, /data-ws-first-version-plan/, 'no pill for the one whose turn it is');
+  // Ready to try: the change's door, not the plan's. (The plan is gone by
+  // then, but the card reads the payload it is handed.)
+  const ready = card(building({ step: 6, step_name: 'Approval', ready: true, session_id: 3,
+    plan: { bullets: ['A trail list'], questions: [] } }));
+  assert.match(ready, /data-ws-first-version-change=""/);
+  assert.doesNotMatch(ready, /data-ws-first-version-plan/);
+  // No plan in the record (building, the question stage, a plan being
+  // redone): the card as it was, nothing to press.
+  assert.doesNotMatch(card(building()), /data-ws-first-version-plan/);
+  assert.doesNotMatch(card(building({ waits_on: 'question' })), /data-ws-first-version-plan/);
+  // The sheet is wired to the pill: state the card opens and closes it by.
+  const src = read(HUB);
+  assert.match(src, /\{showPlan && fv\.plan \? <FirstVersionPlanSheet plan=\{fv\.plan\} onClose=\{\(\) => setShowPlan\(false\)\} \/>\ : null\}/);
+  assert.match(src, /data-ws-first-version-plan=""\s+onClick=\{\(\) => setShowPlan\(true\)\}/);
+});
+
+test('#4074: the plan sheet is read-only: the bullets, and the choices marked as its maker\'s', () => {
+  const sheet = (over = {}) => renderToHtml(createElement(hub.FirstVersionPlanSheet, {
+    plan: {
+      bullets: ['A weekly run list anyone can join', 'Who is coming, and when'],
+      questions: [{ question: 'Early mornings, or evenings too?', answers: ['Evenings too', 'Early mornings only'] }],
+      ...over,
+    },
+    onClose: () => {},
+  }));
+  const html = sheet();
+  assert.match(html, /^<div class="dev-ws-sheet-modal" role="dialog" aria-label="The plan">/);
+  assert.match(html, /<button type="button" class="dev-ws-scrim" aria-label="Close"><\/button>/,
+    'tapping outside closes it');
+  assert.match(html, /<section class="dev-ws-sheet-card" data-ws-first-version-plan-sheet="">/);
+  assert.match(html, /<span class="dev-ws-sheet-title">The plan<\/span>/);
+  assert.match(html, /<button type="button" class="dev-ws-sheet-x">Close<\/button>/);
+  assert.match(html, /<li>A weekly run list anyone can join<\/li>/);
+  assert.match(html, /<h4 class="dev-ws-desc-head">Its maker will answer these<\/h4>/,
+    'the choices are labelled as the maker\'s, under the small caps heading');
+  assert.match(html, /<p class="[^"]*">Early mornings, or evenings too\?<\/p>/);
+  // The suggested answer first, marked by the word the plan card uses;
+  // spans, not buttons: nothing in the sheet posts.
+  const answers = html.slice(html.indexOf('Early mornings, or evenings too?'));
+  assert.match(answers, /<span class="inline-flex[^"]*bg-\[color:var\(--accent-wash\)\][^"]*"><span>Evenings too<\/span><span class="messages-bot-default">suggested<\/span><\/span>/);
+  assert.match(answers, /<span class="inline-flex[^"]*bg-\[color:var\(--brand-tint\)\][^"]*"><span>Early mornings only<\/span><\/span>/);
+  assert.equal((html.match(/<button/g) || []).length, 2,
+    'the scrim and Close are the only buttons; nothing in the sheet posts');
+  // A plan read that came back with nothing in it draws no sheet.
+  assert.equal(sheet({ bullets: [], questions: [] }), '');
+});
+
 test('ready to try: version one is ready, and See the change opens it', () => {
   const html = card(building({ step: 6, step_name: 'Approval', ready: true, session_id: 990003 }));
   assert.match(html, /data-ws-first-version="ready"/);
@@ -238,20 +302,41 @@ test('the server cuts the bot\'s state to what the hub says, and hands the maker
   const { hubFirstVersion } = require('../src/routes/apps');
   const state = {
     userId: 7, creator: 'evan', conversationId: 41, step: 3, of: 7, stepName: 'Your turn: answer the plan',
-    question: false, ready: false, plan: { bullets: ['A trail list'], actionId: 5 },
+    question: false, ready: false, plan: { bullets: ['A trail list'], actionId: 5, messageId: 6, conversationId: 41 },
   };
   assert.deepEqual(hubFirstVersion(state, 7), {
     step: 3, of: 7, step_name: 'Your turn: answer the plan', ready: false, mine: true, creator: 'evan',
-    waits_on: 'plan', conversation_id: 41, session_id: null,
+    waits_on: 'plan', plan: { bullets: ['A trail list'], questions: [] }, conversation_id: 41, session_id: null,
   }, 'the step named as the state names it, and no build time');
   assert.deepEqual(hubFirstVersion({ ...state, stepName: 'Waiting for @evan to answer the plan' }, 9), {
     step: 3, of: 7, step_name: 'Waiting for @evan to answer the plan', ready: false, mine: false, creator: 'evan',
-    waits_on: null, conversation_id: null, session_id: null,
-  }, 'nobody else is told what it waits on from its maker, or handed their chat');
+    waits_on: null, plan: { bullets: ['A trail list'], questions: [] }, conversation_id: null, session_id: null,
+  }, 'nobody else is told what it waits on from its maker, or handed their chat; the plan they can read (#4074)');
+  // The plan is cut to what the plan card shows, and nothing of the maker's
+  // own ride along: no action to send, no message to find it by.
+  const cut = hubFirstVersion({
+    ...state,
+    plan: {
+      bullets: ['a', 'b', 'c', 'd', 'e', 'f'],
+      questions: [
+        { question: 'q1', answers: ['one', 'two', 'three', 'four', 'five'] },
+        { question: 'q2', answers: ['yes', 'no'] },
+        { question: 'q3', answers: ['yes', 'no'] },
+      ],
+    },
+  }, 9).plan;
+  assert.deepEqual(cut, {
+    bullets: ['a', 'b', 'c', 'd', 'e'],
+    questions: [
+      { question: 'q1', answers: ['one', 'two', 'three', 'four'] },
+      { question: 'q2', answers: ['yes', 'no'] },
+    ],
+  }, 'at most five bullets, two questions, four answers, the suggested one first');
+  assert.doesNotMatch(JSON.stringify(cut), /actionId|messageId|conversationId/, 'nothing of the maker\'s own');
   assert.doesNotMatch(read('src/routes/apps.js').slice(read('src/routes/apps.js').indexOf('function hubFirstVersion('),
     read('src/routes/apps.js').indexOf('function isPlatformRepo(')), /typical/i, 'no build time in the hub\'s cut');
   assert.equal(hubFirstVersion({ ...state, plan: undefined, question: true }, 7).waits_on, 'question');
   const ready = hubFirstVersion({ ...state, plan: undefined, ready: true, step: 6, stepName: 'Approval', approval: { sessionId: 31 } }, 9);
-  assert.deepEqual([ready.ready, ready.session_id, ready.waits_on], [true, 31, null]);
+  assert.deepEqual([ready.ready, ready.session_id, ready.waits_on, ready.plan], [true, 31, null, null]);
   assert.equal(hubFirstVersion(null, 7), null);
 });

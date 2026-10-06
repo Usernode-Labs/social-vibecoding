@@ -261,6 +261,14 @@ const stagingApps = require('../services/staging-apps');
  *   waits_on             'plan' (its plan waits for their Build it) or
  *                        'question' (it asked them something), for the
  *                        person whose description it is and nobody else
+ *   plan                 the plan the first version waits on, while that
+ *                        step waits: its bullets and the choices its maker
+ *                        will answer (suggested first), read-only and for
+ *                        every viewer (#4074). Cut to what the plan card
+ *                        shows (homeroom-bot.js MAX_PLAN_BULLETS and
+ *                        friends); nothing of the maker's own — no
+ *                        actionId, messageId or conversationId, so it can
+ *                        only be read, never sent back through the hub.
  *   conversation_id      their DM with the bot, for theirs alone
  *   session_id           the change, once it is ready to try
  *
@@ -272,6 +280,18 @@ function hubFirstVersion(state, viewerId) {
   const mine = viewerId != null && Number(state.userId) === Number(viewerId);
   const ready = !!state.ready;
   const sessionId = ready && state.approval ? Number(state.approval.sessionId) : null;
+  // #4074: the plan reaches firstVersionState for every viewer while the
+  // plan step waits (waitingPlan reads it from the maker's message), so the
+  // hub carries it through and a member sees what the bot is about to
+  // build while its maker decides. Only the maker's turn to answer it.
+  const plan = state.plan ? {
+    bullets: Array.isArray(state.plan.bullets) ? state.plan.bullets.slice(0, 5) : [],
+    questions: (Array.isArray(state.plan.questions) ? state.plan.questions : []).slice(0, 2)
+      .map((q) => ({
+        question: q?.question ?? null,
+        answers: Array.isArray(q?.answers) ? q.answers.slice(0, 4) : [],
+      })),
+  } : null;
   return {
     step: Number.isInteger(state.step) ? state.step : null,
     of: Number.isInteger(state.of) ? state.of : null,
@@ -280,6 +300,7 @@ function hubFirstVersion(state, viewerId) {
     mine,
     creator: state.creator || null,
     waits_on: mine && !ready ? (state.plan ? 'plan' : state.question ? 'question' : null) : null,
+    plan,
     conversation_id: mine ? (Number(state.conversationId) || null) : null,
     session_id: Number.isInteger(sessionId) && sessionId > 0 ? sessionId : null,
   };

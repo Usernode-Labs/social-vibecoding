@@ -356,8 +356,10 @@ export function firstVersionKind(fv: HubFirstVersion): 'ready' | 'plan' | 'quest
  * When the bot waits on its maker (its plan, for their Build it, or a
  * question), the card says so and "Go to chat" opens their chat with it,
  * where the plan is decided. Ready to try, "See the change" opens the change,
- * where it is tried and approved. Nothing for a project the bot is not
- * building, or once its first version is live.
+ * where it is tried and approved. While the plan itself waits on its maker,
+ * everybody else gets "See the plan": the plan read-only, in the workshop's
+ * own bottom sheet (FirstVersionPlanSheet below). Nothing for a project the
+ * bot is not building, or once its first version is live.
  *
  * No event marks each step, so while the card is on screen the record is
  * read again every FIRST_VERSION_POLL_MS, as the App tab and the made screen
@@ -366,6 +368,7 @@ export function firstVersionKind(fv: HubFirstVersion): 'ready' | 'plan' | 'quest
 export function FirstVersionCard({ slug, data }: { slug: string; data: CommunityPayload | null }): ReactNode {
   const fv = data?.first_version || null;
   const ref = useRef<HTMLElement | null>(null);
+  const [showPlan, setShowPlan] = useState(false);
   const building = !!fv;
   useEffect(() => {
     if (!building || !slug) return undefined;
@@ -425,8 +428,87 @@ export function FirstVersionCard({ slug, data }: { slug: string; data: Community
           See the change
           <ChevronRightIcon className="w-3.5 h-3.5" aria-hidden="true" />
         </a>
+      ) : fv.plan ? (
+        // #4074: a member reads what the bot is about to build while its
+        // maker decides. A neutral pill: nothing here waits on them.
+        <Button
+          type="button"
+          variant="pillNeutral"
+          size="sm"
+          ink="neutral"
+          className="self-start"
+          data-ws-first-version-plan=""
+          onClick={() => setShowPlan(true)}
+        >
+          See the plan
+        </Button>
       ) : null}
+      {showPlan && fv.plan ? <FirstVersionPlanSheet plan={fv.plan} onClose={() => setShowPlan(false)} /> : null}
     </section>
+  );
+}
+
+/**
+ * #4074: the plan a first version waits on, read-only, for a member of the
+ * project while its maker answers it. The workshop's own bottom sheet, as
+ * the Description sheet on the Workshop page (workshop.tsx), the same
+ * classes and the same Close. The bullets read as the plan card in the
+ * maker's chat reads them (messages/bot-plan-view.tsx); the choices are
+ * still pills, the suggested one first with the word the plan card uses
+ * after it, under a small caps heading — their maker answers them, nobody
+ * here. Nothing in the sheet posts, answers or sends anything.
+ */
+export function FirstVersionPlanSheet({ plan, onClose }: {
+  plan: NonNullable<HubFirstVersion['plan']>;
+  onClose: () => void;
+}): ReactNode {
+  if (!plan.bullets.length && !plan.questions.length) return null;
+  return (
+    <div className="dev-ws-sheet-modal" role="dialog" aria-label="The plan">
+      <button type="button" className="dev-ws-scrim" aria-label="Close" onClick={onClose} />
+      <section className="dev-ws-sheet-card" data-ws-first-version-plan-sheet="">
+        <span className="dev-ws-sheet-handle" aria-hidden="true" />
+        <div className="dev-ws-sheet-head">
+          <span><span className="dev-ws-sheet-title">The plan</span></span>
+          <button type="button" className="dev-ws-sheet-x" onClick={onClose}>Close</button>
+        </div>
+        <div className="dev-ws-sheet-body">
+          {plan.bullets.length ? (
+            // Complete literals only: Tailwind's extractor reads source text
+            // (the plan card's own list, already compiled).
+            <ul className="list-disc space-y-1 pl-5 text-[0.9375rem] leading-[1.35] text-zinc-900 dark:text-zinc-100">
+              {plan.bullets.map((bullet) => <li key={bullet}>{bullet}</li>)}
+            </ul>
+          ) : null}
+          {plan.questions.length ? (
+            <div className="space-y-3">
+              <h4 className="dev-ws-desc-head">Its maker will answer these</h4>
+              {plan.questions.map((q) => (
+                <div key={q.question}>
+                  <p className="text-[0.9375rem] font-medium text-zinc-900 dark:text-zinc-100">{q.question}</p>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                    {/* Still pills, the bot-request chip's own classes: nothing
+                        here posts. The suggested answer is first and is marked
+                        by the word, as the plan card marks it. */}
+                    {q.answers.map((answer, j) => (
+                      <span
+                        key={answer}
+                        className={j === 0
+                          ? 'inline-flex max-w-full items-center gap-1.5 rounded-full bg-[color:var(--accent-wash)] px-2.5 py-1 text-left text-[0.8125rem] font-semibold text-[color:var(--accent-wash-ink)]'
+                          : 'inline-flex max-w-full items-center gap-1.5 rounded-full bg-[color:var(--brand-tint)] px-2.5 py-1 text-left text-[0.8125rem] font-semibold text-[color:var(--brand-ink)]'}
+                      >
+                        <span>{answer}</span>
+                        {j === 0 ? <span className="messages-bot-default">suggested</span> : null}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </section>
+    </div>
   );
 }
 
