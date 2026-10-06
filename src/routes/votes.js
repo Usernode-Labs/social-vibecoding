@@ -2696,9 +2696,13 @@ function voteRoutes(config) {
         sessionId: session.id,
         metadata: { prNumber: session.pr_number || null },
       });
-      // #183: return the PR info so the dev-chat staging card can flip
-      // its "Changes ready" header to the PR link without a refetch —
-      // the promote may have just created the PR lazily.
+      // "Sent a proposal" counts this promote now, not on the rule's next
+      // pass (#3985; challengeScorer.scoreOnProposal), so the challenge card
+      // reads done on the next load of the Challenges screen. On the success
+      // path only: the rollbacks above answer 503 before this is reached, so
+      // a promote that did not stick counts nothing. Never throws, so the
+      // promote answers the same either way.
+      await challengeScorer.scoreOnProposal(pool, config);
       res.json({
         ok: true,
         prNumber: session.pr_number || null,

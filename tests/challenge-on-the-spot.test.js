@@ -280,6 +280,46 @@ test('scoreOn is a no-op with scoring off, for a graded measure, or with no rule
   assert.equal(await scorer.scoreOn(failing, ON, ['VOTE_CAST']), null, 'a failure is logged, never thrown into the action');
 });
 
+test('a pass that wrote credits checks the standings before it answers; one that wrote none does not', async () => {
+  const builder = require('../src/services/topochain/snapshot-builder');
+  const real = builder.buildSnapshots;
+  const calls = [];
+  builder.buildSnapshots = async (pool, opts = {}) => { calls.push(opts); return { events: [{}] }; };
+  try {
+    // A credit landed: the same rebuild a scheduled pass takes, right here,
+    // so the card's leaderboard totals and blocks-produced line are current
+    // on the next load (#3985).
+    const voted = [{ user_id: 7, kind: 'pr', ref_id: 31, created_at: new Date(NOW - HOUR), app_name: 'Recipes' }];
+    const wrote = spotPool({
+      ruleRows: [{ id: 1, measure: 'VOTE_CAST' }], challenges: [challengeRow()],
+      candidates: { [scorer.MEASURE_SQL.VOTE_CAST]: voted },
+    });
+    const summary = await scorer.scoreOnVote(wrote, ON, { now: NOW });
+    assert.equal(summary.credits, 1);
+    assert.ok(wrote.seen.includes(scorer.LAST_AGGREGATE_SQL), 'the standings were checked');
+    assert.equal(calls.length, 1, 'and rebuilt');
+    assert.equal(summary.aggregated.events, 1);
+
+    const quiet = spotPool({ ruleRows: [{ id: 1, measure: 'VOTE_CAST' }], challenges: [challengeRow()] });
+    const none = await scorer.scoreOnVote(quiet, ON, { now: NOW });
+    assert.equal(none.credits, 0);
+    assert.equal(calls.length, 1, 'nothing was written, so the rebuild is left to the schedule');
+    assert.equal(quiet.seen.includes(scorer.LAST_AGGREGATE_SQL), false);
+
+    // A failed rebuild is logged and never thrown into the action.
+    const failing = spotPool({
+      fail: 'leaderboard_snapshots', ruleRows: [{ id: 1, measure: 'VOTE_CAST' }], challenges: [challengeRow()],
+      candidates: { [scorer.MEASURE_SQL.VOTE_CAST]: voted },
+    });
+    const out = await scorer.scoreOnVote(failing, ON, { now: NOW });
+    assert.equal(out.credits, 1, 'the credit itself still counts');
+    assert.match(out.aggregate_error, /connection reset/);
+    assert.equal(out.aggregated, undefined);
+  } finally {
+    builder.buildSnapshots = real;
+  }
+});
+
 test('a single completion is scored without the lock, through the same pass as the schedule', async () => {
   const pool = spotPool({
     ruleRows: [{ id: 1, measure: 'VOTE_CAST' }],
@@ -328,12 +368,14 @@ test('every door runs the measures it can complete, and only those', () => {
     vote: ['VOTE_CAST'],
     feedback: ['FEEDBACK_SENT'],
     appTime: ['TRY_APPS'],
+    proposal: ['PROPOSAL_SENT'],
+    connect: ['CONNECT_ACCOUNTS'],
   });
   assert.equal(scorer.JOIN_MEASURES, scorer.ON_THE_SPOT.join);
   const all = Object.values(scorer.ON_THE_SPOT).flat();
   for (const measure of all) assert.equal(rules.MEASURES[measure].graded, false, measure);
-  assert.deepEqual(all.filter((m) => rules.MEASURES[m].counted), ['TRY_APPS'],
-    'the one counted measure on the spot is the one scoreOn locks for');
+  assert.deepEqual(all.filter((m) => rules.MEASURES[m].counted), ['TRY_APPS', 'CONNECT_ACCOUNTS'],
+    'the counted measures on the spot are the ones scoreOn locks for');
   assert.ok(!all.includes('INVITES_JOINED'), 'its "three and no more" waits for the locked schedule');
 });
 
@@ -401,6 +443,28 @@ test('a report counts before the person is answered, on both targets', () => {
   const doors = src.match(/await recordFeedbackReport\(pool, \{[^}]*\}\);\s*(?:\/\/[^\n]*\n\s*)*await challengeScorer\.scoreOnFeedback\(pool, config\);/g) || [];
   assert.equal(doors.length, 2, 'app feedback and platform feedback, each after the receipt it reads');
   assert.equal((src.match(/await challengeScorer\.scoreOnFeedback\(/g) || []).length, 2);
+});
+
+test('promoting a change counts it before the promote answers, on the success path only', () => {
+  const votes = read('src/routes/votes.js');
+  const promote = votes.slice(votes.indexOf("router.post('/api/sessions/:id/promote'"));
+  const body = promote.slice(0, promote.indexOf('const handoffPipeline = require'));
+  assert.match(votes, /require\('\.\.\/services\/topochain\/challenge-scorer'\)/);
+  assert.match(body,
+    /await challengeScorer\.scoreOnProposal\(pool, config\);\s*res\.json\(\{\s*ok: true,\s*prNumber: session\.pr_number \|\| null,/,
+    'a promote: credited before the proposer is answered');
+  assert.ok(body.indexOf('scoreOnProposal') > body.indexOf('GitHub could not mark the pull request ready'),
+    'a promote rolled back for a failed draft transition answers 503 before the door, and counts nothing');
+});
+
+test('linking an account counts on the callback that links it, and only that path', () => {
+  const src = read('src/routes/social-identities.js');
+  assert.match(src, /require\('\.\.\/services\/topochain\/challenge-scorer'\)/);
+  assert.equal((src.match(/scoreOnConnect\(/g) || []).length, 1,
+    'one door: the callback that links a first account');
+  assert.match(src,
+    /if \(result\.outcome === 'linked'\) \{\s*(?:\/\/[^\n]*\n\s*)*await challengeScorer\.scoreOnConnect\(pool, config\);\s*\}\s*return res\.redirect\(302, settingsUrl\(config, status, provider\)\);/,
+    'credited before the settings redirect, behind the outcome that wrote a new identity row');
 });
 
 test('the heartbeat hands the scorer what it needs to find the crossing', () => {

@@ -7,7 +7,9 @@
 // what is tested is what ships: the TRY_APPS, VOTE_CAST and FEEDBACK_SENT
 // statements, the ledger's unique indexes, the scorer's advisory lock, and
 // the doors that call services/topochain/challenge-scorer.js scoreOn: the app
-// heartbeat, a vote on a proposal, a vote on a request, and a report.
+// heartbeat, a vote on a proposal, a vote on a request, a report, a change
+// put up for the vote, and an account linked (proved at the scorer, since the
+// OAuth callback needs a live provider exchange the suite cannot perform).
 //
 // The reports this answers: "Suggested an improvement, but the challenge
 // still says not started", and the First challenges as a whole being slow to
@@ -90,7 +92,9 @@ test('the First challenges count on the spot, against the full PostgreSQL schema
     `INSERT INTO challenge_templates (category, goal, task, reward, metric_type, metric_target) VALUES
        ('ONBOARDING', 'Try an app', 'Open an app and try it', '500 pts', 'apps_tried', 1),
        ('ONBOARDING', 'Vote on a change', 'Vote on a proposal', '300 pts', NULL, NULL),
-       ('ONBOARDING', 'Suggest an improvement', 'Send feedback', '250 pts', NULL, NULL)
+       ('ONBOARDING', 'Suggest an improvement', 'Send feedback', '250 pts', NULL, NULL),
+       ('ONBOARDING', 'Send a proposal', 'Put a change up for the vote', '400 pts', NULL, NULL),
+       ('ONBOARDING', 'Connect your accounts', 'Link X or GitHub', '200 pts', 'accounts', 2)
      RETURNING id, goal`);
   const templateOf = (goal) => templates.find((r) => r.goal === goal);
   const { rows: challengeRows } = await pool.query(
@@ -107,9 +111,13 @@ test('the First challenges count on the spot, against the full PostgreSQL schema
   const tryRule = await rule('Try an app', 'TRY_APPS');
   const voteRule = await rule('Vote on a change', 'VOTE_CAST');
   const feedbackRule = await rule('Suggest an improvement', 'FEEDBACK_SENT');
+  const proposalRule = await rule('Send a proposal', 'PROPOSAL_SENT');
+  const connectRule = await rule('Connect your accounts', 'CONNECT_ACCOUNTS');
   const TRY = challengeOf('Try an app');
   const VOTE = challengeOf('Vote on a change');
   const SUGGEST = challengeOf('Suggest an improvement');
+  const PROPOSE = challengeOf('Send a proposal');
+  const CONNECT = challengeOf('Connect your accounts');
 
   const credits = async (userId, challengeId) => (await pool.query(
     `SELECT points, description, metadata FROM user_activities
@@ -332,6 +340,77 @@ test('the First challenges count on the spot, against the full PostgreSQL schema
     as = early;
     assert.equal((await call('POST', `/api/sessions/${sessionId}/vote`, { vote: 'no', reason: 'Changed my mind' })).status, 200);
     assert.equal((await credits(early.id, VOTE)).length, 1, 'cast again inside the window: counted');
+  });
+
+  // A promotable change of the mover's own: a branch with a PR number and
+  // title already on it, so the promote route's lazy-PR creation is skipped
+  // and, with GitHub switched off in the test process, so is its PR
+  // reconciliation. A staging_url keeps the post-answer preview build from
+  // starting. What is left is the real route: the status write, the chat
+  // line, the event, the door, the answer.
+  const promotable = async () => {
+    const { rows } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, pr_title, pr_number, branch_name, staging_url)
+       VALUES ($1, $2, 'active', 'Make it better', 401, 'promote-door', 'https://staging.test') RETURNING id`,
+      [arena.id, as.id]);
+    return Number(rows[0].id);
+  };
+
+  await t.test('"Send a proposal": a promote counts before it answers, and a re-promote pays once', async () => {
+    as = await user();
+    await communities.join(pool, arena, as.id);
+    const sessionId = await promotable();
+    const got = await call('POST', `/api/sessions/${sessionId}/promote`);
+    assert.equal(got.status, 200, JSON.stringify(got.body));
+    const [credit] = await credits(as.id, PROPOSE);
+    assert.ok(credit, 'credited before the promote answered');
+    assert.equal(Number(credit.points), 400);
+    assert.equal(credit.metadata.kind, 'challenge_completion');
+    assert.equal(credit.metadata.source_key, `session:${sessionId}`);
+    assert.equal(await done(as.id, PROPOSE), true);
+
+    // Unpromote (the session goes back Underway) and propose again: the
+    // credit's source key is one per session, so the second promote writes
+    // nothing more.
+    await pool.query(`UPDATE chat_sessions SET status = 'active' WHERE id = $1`, [sessionId]);
+    const again = await call('POST', `/api/sessions/${sessionId}/promote`);
+    assert.equal(again.status, 200, JSON.stringify(again.body));
+    assert.equal((await credits(as.id, PROPOSE)).length, 1);
+  });
+
+  await t.test('"Connect your accounts": a linked identity is credited by the door, and a held lock defers it', async () => {
+    as = await user();
+    const link = (provider, subject) => pool.query(
+      `INSERT INTO user_social_identities (user_id, provider, provider_subject, handle)
+       VALUES ($1, $2, $3, $4)`, [as.id, provider, subject, `handle-${provider}`]);
+    await link('github', String(900000 + as.id));
+
+    // The counted measure plans only under the tick's advisory lock: while
+    // it is held the door answers busy and pays nothing.
+    const holder = await pool.connect();
+    try {
+      await holder.query('SELECT pg_advisory_lock($1, $2)', [CHALLENGE_SCORER_LOCK, 0]);
+      assert.deepEqual(await scorer.scoreOnConnect(pool, config), { busy: true });
+      assert.deepEqual(await credits(as.id, CONNECT), [], 'never planned outside the lock');
+    } finally {
+      await holder.query('SELECT pg_advisory_unlock($1, $2)', [CHALLENGE_SCORER_LOCK, 0]);
+      holder.release();
+    }
+
+    const summary = await scorer.scoreOnConnect(pool, config);
+    assert.ok(summary && summary.credits >= 1, 'with the lock free, the door pays the link');
+    const [first] = await credits(as.id, CONNECT);
+    assert.ok(first, 'credited on the spot, not on the rule\'s next pass');
+    assert.equal(first.metadata.source_key, 'provider:github');
+    assert.equal(Number(first.points), 100, 'a target of two pays half the reward a unit');
+
+    await link('x', String(800000 + as.id));
+    await scorer.scoreOnConnect(pool, config);
+    const all = await credits(as.id, CONNECT);
+    assert.equal(all.length, 2, 'the second account is the second unit');
+    assert.equal(all[1].metadata.source_key, 'provider:x');
+    assert.equal(Number(all[1].points), 100);
+    assert.equal(all.reduce((sum, c) => sum + Number(c.points), 0), 200, 'and two of two is the whole reward');
   });
 
   await t.test('"Suggest an improvement": a report counts when it is sent, and junk does not', async (st) => {

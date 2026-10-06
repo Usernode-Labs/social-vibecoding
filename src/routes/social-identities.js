@@ -10,6 +10,7 @@ const socialIdentity = require('../services/social-identity');
 const githubLink = require('../services/github-link');
 const xLink = require('../services/x-link');
 const managedOpenRouter = require('../services/openrouter-managed-keys');
+const challengeScorer = require('../services/topochain/challenge-scorer');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 const PROVIDER_ADAPTERS = Object.freeze({ github: githubLink, x: xLink });
@@ -406,6 +407,17 @@ function socialIdentityRoutes(config) {
       log.info('social-identity', 'account verification completed', {
         provider, intent: pending.intent, outcome: result.outcome, userId: req.user.id,
       });
+      // "Connect your accounts" counts a first link now, not on the rule's
+      // next pass (#3985; challengeScorer.scoreOnConnect), so the challenge
+      // card reads done when the settings page opens. Behind the outcome the
+      // service answers with a new identity row: 'refreshed' re-verifies the
+      // same subject without touching linked_at, and 'pending_replacement'
+      // writes nothing until it is confirmed — both stay with the schedule,
+      // which backfills a missing credit either way. Never throws, so the
+      // redirect answers the same whether the pass ran or not.
+      if (result.outcome === 'linked') {
+        await challengeScorer.scoreOnConnect(pool, config);
+      }
       return res.redirect(302, settingsUrl(config, status, provider));
     } catch (err) {
       let status = 'error';

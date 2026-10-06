@@ -140,6 +140,10 @@ const ON_THE_SPOT_TEXT = {
   appTime: ` Using an app also runs it on the spot, the moment somebody's time in an app they did not make `
     + `first reaches ${TRY_APPS_MIN_SECONDS} seconds, so the interval only paces time that crosses the `
     + 'line another way: added up over days, or partly from before the window.',
+  proposal: ' Putting a change up for the vote also runs it on the spot, so the interval only paces '
+    + 'what that pass missed.',
+  connect: ' Linking an account (X or GitHub) also runs it on the spot, so the interval only paces '
+    + 'what that pass missed: a re-verification, a replacement, or a link from before the season.',
 };
 
 function onTheSpot(measureKey) {

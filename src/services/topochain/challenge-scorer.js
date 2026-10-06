@@ -1152,6 +1152,8 @@ async function tick(pool, config, { now = Date.now() } = {}) {
 //                                       (routes/onboarding.js)
 //   a report            FEEDBACK_SENT   routes/feedback.js
 //   an app's heartbeat  TRY_APPS, on the crossing only (scoreOnAppTime)
+//   a change promoted   PROPOSAL_SENT   routes/votes.js (scoreOnProposal)
+//   an account linked   CONNECT_ACCOUNTS routes/social-identities.js (scoreOnConnect)
 //
 // The same guarantees at every door. A no-op when the deployment has
 // switched automatic scoring off (interval 0) — "off" means the admin's Run
@@ -1181,6 +1183,8 @@ const JOIN_MEASURES = Object.freeze(['COMMUNITY_JOINED', 'COMMUNITY_APP_CREATED'
 const VOTE_MEASURES = Object.freeze(['VOTE_CAST']);
 const FEEDBACK_MEASURES = Object.freeze(['FEEDBACK_SENT']);
 const APP_TIME_MEASURES = Object.freeze(['TRY_APPS']);
+const PROPOSAL_MEASURES = Object.freeze(['PROPOSAL_SENT']);
+const CONNECT_MEASURES = Object.freeze(['CONNECT_ACCOUNTS']);
 // Every door and what it runs, as data for the one reader that needs the
 // whole map: the admin's "How it scores" panel (./challenge-anatomy.js),
 // which tells an operator choosing a rule's interval that it is the backstop.
@@ -1189,6 +1193,8 @@ const ON_THE_SPOT = Object.freeze({
   vote: VOTE_MEASURES,
   feedback: FEEDBACK_MEASURES,
   appTime: APP_TIME_MEASURES,
+  proposal: PROPOSAL_MEASURES,
+  connect: CONNECT_MEASURES,
 });
 const ON_THE_SPOT_RULES_SQL = `
   SELECT id, measure FROM challenge_scoring_rules
@@ -1212,7 +1218,24 @@ async function scoreOn(pool, config, measures, { now = Date.now() } = {}) {
       if (lock.rows[0]?.acquired !== true) return { busy: true };
       locked = true;
     }
-    return await score(pool, { now, only: new Set(rows.map((r) => Number(r.id))) });
+    const summary = await score(pool, { now, only: new Set(rows.map((r) => Number(r.id))) });
+    // A credit just written is one the standings may still not show: the
+    // card's blocks-produced line and the leaderboard totals read
+    // leaderboard_snapshots, not the ledger. Run the same rebuild a
+    // scheduled pass takes — a new point when the last one is old, otherwise
+    // the newest one rewritten in place (#3985). Its own catch: the action
+    // must answer the same whether the rebuild happened or not, and the
+    // schedule rewrites the standings on its next beat anyway.
+    if (summary.credits) {
+      try {
+        const aggregated = await maybeAggregate(pool, { hours: aggregateHours(config), now });
+        if (aggregated) summary.aggregated = aggregated;
+      } catch (err) {
+        summary.aggregate_error = err.message;
+        log.warn('challenge-scorer', 'Aggregate after scoring failed', { err: err.message });
+      }
+    }
+    return summary;
   } catch (err) {
     log.warn('challenge-scorer', 'Scoring on the spot failed; the schedule will count it', {
       measures: wanted, err: err.message,
@@ -1234,6 +1257,8 @@ async function scoreOn(pool, config, measures, { now = Date.now() } = {}) {
 const scoreOnJoin = (pool, config, opts) => scoreOn(pool, config, JOIN_MEASURES, opts);
 const scoreOnVote = (pool, config, opts) => scoreOn(pool, config, VOTE_MEASURES, opts);
 const scoreOnFeedback = (pool, config, opts) => scoreOn(pool, config, FEEDBACK_MEASURES, opts);
+const scoreOnProposal = (pool, config, opts) => scoreOn(pool, config, PROPOSAL_MEASURES, opts);
+const scoreOnConnect = (pool, config, opts) => scoreOn(pool, config, CONNECT_MEASURES, opts);
 
 // ── The heartbeat's crossing (#3570) ───────────────────────────────────
 //
@@ -1326,6 +1351,8 @@ module.exports = {
   scoreOnJoin,
   scoreOnVote,
   scoreOnFeedback,
+  scoreOnProposal,
+  scoreOnConnect,
   scoreOnAppTime,
   start,
   stop,
