@@ -4,8 +4,9 @@
 // lands them inside the group's app with no ✕, the mark menu's "Go to
 // Homeroom" is their way on, and its first use runs a four-step tour of a
 // Home that has Discover but no Challenges and no New project, and has the
-// waitlist card. The invite's Join that makes them asks for a phone first
-// (tests/phone-invite-join.test.js). The server half is tests/private-member-postgres.test.js and
+// waitlist card. The invite's Join that makes them asks for a name and a
+// phone first (tests/phone-invite-join.test.js). The server half is
+// tests/private-member-postgres.test.js and
 // tests/community-invites-postgres.test.js.
 
 const test = require('node:test');

@@ -3,11 +3,13 @@
 // An invite's Join with a phone number (#4069's APIs, connected): a private
 // member signs up with a phone, so the Join sheet asks for a name and a
 // phone first whenever phone sign-in is offered (no username: the handle is
-// picked from the name), the endpoints answer a signed-out visitor, the code
-// request carries the reCAPTCHA Firebase asks a web caller for, an account
-// with no verified phone is not made a private member by any of the ways a
-// link is followed, and the waiting room lets such an account add one. The joining itself is pinned against PostgreSQL in
-// tests/private-member-postgres.test.js.
+// picked from the name), the code request carries the reCAPTCHA Firebase
+// asks a web caller for, an account with no verified phone is not made a
+// private member by any of the ways a link is followed, and the waiting room
+// lets such an account add one. The joining itself is pinned against
+// PostgreSQL in tests/private-member-postgres.test.js, and #4069's own fixes
+// (signed-out access, Firebase's error detail, reCAPTCHA) in
+// tests/phone-auth-fixes.test.js.
 //
 // Run with: node --test tests/phone-invite-join.test.js
 
@@ -25,17 +27,6 @@ const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 const SHEET = 'frontend/src/features/auth/sign-in-sheet.tsx';
 
-const FULL_CONFIG = {
-  firebasePhoneAuthEnabled: true,
-  firebaseWebApiKey: 'web-key',
-  firebaseProjectId: 'proj',
-  firebaseServiceAccountJsonB64: 'e30=',
-};
-
-function answer(data, { ok = true, status = 200 } = {}) {
-  return async () => ({ ok, status, json: async () => data });
-}
-
 async function withServer(app, fn) {
   const server = http.createServer(app);
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -45,73 +36,6 @@ async function withServer(app, fn) {
     await new Promise((resolve) => server.close(resolve));
   }
 }
-
-test('a signed-out visitor reaches the phone endpoints, which answer for themselves', async () => {
-  const { authMiddleware } = require('../src/middleware/auth');
-  const { phoneAuthRoutes } = require('../src/routes/phone-auth');
-  const app = express();
-  app.use(express.json());
-  // Mounted the way server.js mounts them: behind the session middleware.
-  app.use(authMiddleware({ databaseUrl: 'postgres://nobody@127.0.0.1:1/none' }));
-  app.use(phoneAuthRoutes({ firebasePhoneAuthEnabled: false }));
-  await withServer(app, async (base) => {
-    for (const [method, route] of [['POST', 'request'], ['POST', 'verify'], ['POST', 'finish'], ['GET', 'recaptcha']]) {
-      const res = await fetch(`${base}/api/auth/phone/${route}`, {
-        method,
-        headers: method === 'POST' ? { 'content-type': 'application/json' } : {},
-        body: method === 'POST' ? '{}' : undefined,
-      });
-      assert.equal(res.status, 404, `${route}: its own not_offered, not the session middleware's 401`);
-      assert.equal((await res.json()).code, 'not_offered');
-    }
-  });
-});
-
-test('Firebase\'s refusals are read with their detail, `CODE : detail`', async () => {
-  await assert.rejects(
-    () => phoneAuth.requestCode(FULL_CONFIG, '+15551234567', 'token', {
-      fetch: answer({ error: { message: 'INVALID_PHONE_NUMBER : Invalid format.' } }, { ok: false, status: 400 }),
-    }),
-    (err) => err.code === 'invalid_phone' && err.status === 422
-  );
-  await assert.rejects(
-    () => phoneAuth.exchangeCode(FULL_CONFIG, 's', '000000', {
-      fetch: answer({ error: { message: 'INVALID_CODE : The SMS code is wrong.' } }, { ok: false, status: 400 }),
-    }),
-    (err) => err.code === 'invalid_or_expired_code'
-  );
-});
-
-test('Firebase refusing the reCAPTCHA is recaptcha_required, a 422 the sheet can say in words', async () => {
-  for (const code of ['MISSING_APP_CREDENTIAL', 'INVALID_APP_CREDENTIAL', 'MISSING_RECAPTCHA_TOKEN', 'INVALID_RECAPTCHA_TOKEN', 'CAPTCHA_CHECK_FAILED']) {
-    await assert.rejects(
-      () => phoneAuth.requestCode(FULL_CONFIG, '+15551234567', null, {
-        fetch: answer({ error: { message: `${code} : details` } }, { ok: false, status: 400 }),
-      }),
-      (err) => err.code === 'recaptcha_required' && err.status === 422 && /person/.test(err.message),
-      code
-    );
-  }
-});
-
-test('the reCAPTCHA site key is the Firebase project\'s own, read once an hour', async () => {
-  await assert.rejects(() => phoneAuth.recaptchaSiteKey({ firebasePhoneAuthEnabled: false }), (err) => err.code === 'not_offered');
-  const config = { ...FULL_CONFIG, firebaseWebApiKey: 'site-key-test' };
-  const asked = [];
-  const fetchKey = async (url) => { asked.push(url); return { ok: true, status: 200, json: async () => ({ recaptchaSiteKey: '6Lc-site' }) }; };
-  let now = 1_000_000;
-  assert.equal(await phoneAuth.recaptchaSiteKey(config, { fetch: fetchKey, now: () => now }), '6Lc-site');
-  assert.equal(await phoneAuth.recaptchaSiteKey(config, { fetch: fetchKey, now: () => now }), '6Lc-site');
-  assert.equal(asked.length, 1, 'kept');
-  assert.match(asked[0], /\/v1\/recaptchaParams\?key=site-key-test$/);
-  now += 61 * 60 * 1000;
-  await phoneAuth.recaptchaSiteKey(config, { fetch: fetchKey, now: () => now });
-  assert.equal(asked.length, 2, 'read again after an hour');
-  await assert.rejects(
-    () => phoneAuth.recaptchaSiteKey({ ...FULL_CONFIG, firebaseWebApiKey: 'no-key' }, { fetch: answer({}) }),
-    (err) => err.code === 'firebase_unreachable' && err.status === 502
-  );
-});
 
 test('every way a link is followed asks for the phone while phone sign-in is offered', () => {
   const offered = /requirePhone: phoneAuth\.offered\(config\)/;

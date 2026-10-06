@@ -609,8 +609,9 @@ app.use(authRoutes(config));
 // Apple and Google sign-in, and Admin → Sign-in providers, where they are set up.
 app.use(require('./src/routes/sign-in-providers').signInProviderRoutes(config));
 // Firebase phone sign-in and sign-up (routes/phone-auth.js), pre-login
-// (middleware/auth.js PUBLIC_PATHS): fail-closed 404 unless FIREBASE_PHONE_AUTH_ENABLED and its three
-// companion values are set (src/services/firebase-phone-auth.js).
+// (middleware/auth.js PUBLIC_PATHS): fail-closed 404 unless
+// FIREBASE_PHONE_AUTH_ENABLED and its three companion values are set
+// (src/services/firebase-phone-auth.js).
 app.use(require('./src/routes/phone-auth').phoneAuthRoutes(config));
 app.use(credentialRoutes(config));
 app.use(globalChatRoutes(config));

@@ -94,7 +94,7 @@ function phoneAuthRoutes(config) {
     return next();
   }
 
-  // The Firebase project's reCAPTCHA site key, for the shell to earn the
+  // The Firebase project's reCAPTCHA site key, for a web client to earn the
   // token the request below carries. Public by nature (it is in every page
   // Firebase's own web SDK serves), so no limiter beyond the service's cache.
   router.get('/api/auth/phone/recaptcha', requireOffered, async (req, res) => {

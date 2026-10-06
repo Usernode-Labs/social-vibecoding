@@ -33,11 +33,12 @@
  *      This leg needs the WEB API KEY, never a service account, and
  *      a web caller's request carries an app-verification token, the
  *      answer to a reCAPTCHA whose site key GET recaptchaParams names
- *      (recaptchaSiteKey; the shell earns it, ../../frontend/src/features/
- *      auth/recaptcha.ts). A missing or refused one is recaptcha_required.
- *      The page's host must be one of the Firebase project's authorized
- *      domains for the answer to count. The server never sends
- *      the SMS itself — Firebase does, at the phone number's carrier.
+ *      (recaptchaSiteKey, served at GET /api/auth/phone/recaptcha; the
+ *      shell earns it in frontend/src/features/auth/recaptcha.ts). A
+ *      missing or refused one is recaptcha_required. The page's host must
+ *      be one of the Firebase project's authorized domains for the answer
+ *      to count. The server never sends the SMS itself — Firebase does, at
+ *      the phone number's carrier.
  *   2. Verify an ID token with the Firebase Admin SDK
  *      (verifyIdToken), which leg 1 hands back and a client that did the
  *      whole exchange with its own Firebase SDK skips straight to. The
