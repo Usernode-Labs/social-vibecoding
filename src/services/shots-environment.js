@@ -25,6 +25,8 @@ const { getPool } = require('../db/pool');
 const IMAGE_RECIPE = 'v1';
 const SHOTS_LABEL = 'social.usernode.io/shots-run';
 const SHOTS_SIDE_LABEL = 'social.usernode.io/shots-side';
+// Earlier recovery marked cleanup complete without removing hosted fixtures.
+const RESOURCE_CLEANUP_VERSION = 2;
 
 class ShotsEnvironmentError extends Error {
   constructor(code, message, detail = null) {
@@ -91,6 +93,21 @@ function hostedFixtureApp(runId) {
     slug: shotsFixtures.hostedAppSlug(runId),
     name: 'Homeroom shots app',
   };
+}
+
+function hostedFixtureRefs(config, runId) {
+  const app = hostedFixtureApp(runId);
+  return [app, { ...app, slug: app.slug.replace(/^homeroom-shots-/, 'homeroom-evidence-') }]
+    .map((fixture) => applicationRuntime.productionRef(config, fixture));
+}
+
+async function removeRuntime(config, ref, options) {
+  const result = await applicationRuntime.remove(config, ref, options);
+  // The Docker adapter reports a surviving container instead of rejecting.
+  if (result?.removed === false) {
+    throw new ShotsEnvironmentError('shots_cleanup_incomplete', result.error || 'Shots runtime is still present.');
+  }
+  return result;
 }
 
 async function hostedFixtureImageRef(config) {
@@ -403,7 +420,7 @@ function runtimeRef(config, pair, side) {
 }
 
 async function stopPair(config, pair, { strict = false } = {}) {
-  const results = await Promise.allSettled(['base', 'head'].map((side) => applicationRuntime.remove(
+  const results = await Promise.allSettled(['base', 'head'].map((side) => removeRuntime(
     config, runtimeRef(config, pair, side), { stopTimeoutSec: docker.STAGING_STOP_GRACE_SEC }
   )));
   const errors = results.filter((result) => result.status === 'rejected').map((result) => result.reason);
@@ -568,7 +585,7 @@ async function cleanupPair(config, pair) {
   const stopped = await stopPair(config, pair).catch((err) => ({ errors: [err] }));
   errors.push(...(stopped.errors || []));
   if (pair.hostedFixtureRef) {
-    await applicationRuntime.remove(config, pair.hostedFixtureRef)
+    await removeRuntime(config, pair.hostedFixtureRef)
       .catch((err) => errors.push(err));
     pair.hostedFixtureDeployment = null;
   }
@@ -592,6 +609,7 @@ module.exports = {
   IMAGE_RECIPE,
   SHOTS_LABEL,
   SHOTS_SIDE_LABEL,
+  RESOURCE_CLEANUP_VERSION,
   ShotsEnvironmentError,
   allSettledValues,
   exactSha,
@@ -601,6 +619,8 @@ module.exports = {
   dockerImageName,
   shotsCapacityEnv,
   hostedFixtureApp,
+  hostedFixtureRefs,
+  removeRuntime,
   hostedFixtureImageRef,
   ensureHostedFixtureRuntime,
   CLONE_ATTEMPTS,
