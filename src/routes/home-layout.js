@@ -99,7 +99,7 @@ async function visibleAppIds(pool, user) {
 // otherwise look like it had nowhere to go).
 async function readLayouts(pool, userId) {
   const { rows } = await pool.query(
-    `SELECT l.cols, l.item_type, l.widget_key, l.grid_col, l.grid_row, a.slug
+    `SELECT l.cols, l.item_type, l.widget_key, l.grid_col, l.grid_row, l.label, a.slug
        FROM user_home_layout l
        LEFT JOIN apps a ON a.id = l.app_id
       WHERE l.user_id = $1
@@ -116,6 +116,9 @@ async function readLayouts(pool, userId) {
       bucket.push({
         type: 'app', slug: r.slug,
         col: Number(r.grid_col), row: Number(r.grid_row),
+        // The tile's own name rides along only when the viewer gave it one;
+        // an unlabeled item keeps the exact shape it always had.
+        ...(r.label ? { label: r.label } : {}),
       });
     }
   }
@@ -171,7 +174,16 @@ function parseItems(raw, cols, appIds) {
       if (seenApps.has(appId)) return { error: 'duplicate app' };
       seenApps.add(appId);
       size = [1, 1];
-      record = { item_type: 'app', app_id: appId, widget_key: null, col, row };
+      // An app tile may carry the viewer's own name for it (the tile alias).
+      // Trim, drop the empty string back to null, and cap at 80 — the same
+      // length the tile's prompt dialog allows, enforced here so a patched
+      // client cannot store a paragraph.
+      let label = null;
+      if (typeof entry.label === 'string') {
+        const trimmed = entry.label.trim().slice(0, 80);
+        if (trimmed) label = trimmed;
+      }
+      record = { item_type: 'app', app_id: appId, widget_key: null, col, row, label };
     } else {
       return { error: 'invalid item type' };
     }
@@ -302,9 +314,9 @@ function homeLayoutRoutes() {
         for (const it of parsed.items) {
           await client.query(
             `INSERT INTO user_home_layout
-               (user_id, cols, item_type, app_id, widget_key, grid_col, grid_row, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
-            [req.user.id, cols, it.item_type, it.app_id, it.widget_key, it.col, it.row]
+               (user_id, cols, item_type, app_id, widget_key, grid_col, grid_row, label, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
+            [req.user.id, cols, it.item_type, it.app_id, it.widget_key, it.col, it.row, it.label]
           );
         }
         await client.query('COMMIT');

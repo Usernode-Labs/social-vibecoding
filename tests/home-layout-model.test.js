@@ -574,6 +574,34 @@ test('toWire emits the shape the route parses, in reading order', () => {
   ]);
 });
 
+// The tile alias (#4027) rides the same wire as the cells. A labeled item
+// carries it; an unlabeled one stays exactly the shape this always wrote —
+// which is what keeps the deepEqual assertions above honest.
+test('toWire carries a tile alias and omits it when there is none', () => {
+  const layout = [
+    { type: 'app', slug: 'a', col: 0, row: 0, label: 'Chess night' },
+    A('b', 1, 0),
+  ];
+  assert.deepEqual(HomeLayout.toWire(layout), [
+    { type: 'app', slug: 'a', col: 0, row: 0, label: 'Chess night' },
+    { type: 'app', slug: 'b', col: 1, row: 0 },
+  ]);
+});
+
+// repair() copies items, so an alias survives every migration pass — the
+// rename must not be erased by a load that also rescues a stranded tile.
+test('repair keeps a tile alias while migrating the layout around it', () => {
+  const stored = [
+    { type: 'app', slug: 'a', col: 0, row: 0, label: 'Chess night' },
+    A('far', 4, 0), // the retired fifth column
+  ];
+  const { layout, changed } = HomeLayout.repair(stored, COLS, ['app:a', 'app:far']);
+  assert.ok(changed);
+  const a = layout.find((it) => it.slug === 'a');
+  assert.equal(a.label, 'Chess night', 'the alias survives the rescue');
+  assert.equal(layout.find((it) => it.slug === 'far').label, undefined);
+});
+
 // ── The retired surface, asserted gone ────────────────────────────────
 
 test('the widget-placement machinery is really gone, not merely unused', () => {

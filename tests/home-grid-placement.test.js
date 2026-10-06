@@ -959,6 +959,78 @@ test('render publishes the template for the grid and clears it for a search', ()
   assert.equal(gridStore.get().view, 'search', 'and the view switches with it');
 });
 
+// ── The tile alias (#4027) ────────────────────────────────────────────
+
+// gridItemView passes the layout item's label into appView, so the published
+// model carries both names: the alias the caption draws and the real name
+// the tooltips keep.
+test('render publishes a stored tile label as the item view\'s alias', () => {
+  const h = makeHome({ width: 390 });
+  const { Home, gridStore } = h;
+  installListEl(h);
+  Home._apps = [app('demo-app')];
+  Home._appsExpanded = true;
+  Home._layouts = {
+    4: [{ type: 'app', slug: 'demo-app', col: 0, row: 0, label: 'Chess night' }],
+  };
+  Home._layoutFetchedAt = Date.now();
+  Home.render();
+  const painted = gridStore.get().items.find((it) => it.app.slug === 'demo-app');
+  assert.equal(painted.app.alias, 'Chess night');
+  assert.equal(painted.app.name, 'demo-app', 'the real name rides along');
+  // And an unlabeled tile is null, not undefined.
+  Home._layouts = { 4: [{ type: 'app', slug: 'demo-app', col: 0, row: 0 }] };
+  Home.render();
+  assert.equal(gridStore.get().items.find((it) => it.app.slug === 'demo-app').app.alias, null);
+});
+
+// The React tile the launcher actually renders: the caption speaks the
+// viewer's own name; the full-width card tooltip and the caption tooltip keep
+// the app's real name, so the alias never hides what the app is; and the
+// aria-label reads the tile as it is drawn — with the ", still open" live
+// suffix intact, which a declared check selects on.
+test('a renamed tile is captioned by its alias; the tooltips keep the real name', () => {
+  const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+  const { INITIAL_GRID } = require('./helpers/home-grid-store');
+  const base = {
+    slug: 'demo-app', name: 'Demo App', status: 'running',
+    icon: { kind: 'letter', letter: 'D' }, locked: false, demo: false,
+    statusLabel: '', isAwaiting: false, isError: false, clickable: true,
+    failureReason: null, showRetry: false, forkName: null, audience: 'open',
+  };
+  const render = (view, liveSlugs = []) => {
+    const state = {
+      ...INITIAL_GRID, ready: true,
+      items: [{ kind: 'card', placement: { col: 0, row: 0, w: 1, h: 1 }, app: view }],
+    };
+    const gridStore = { get: () => state, subscribe: () => () => {} };
+    const { AppGrid } = loadTsx('frontend/src/features/home/app-grid.tsx', {
+      stubs: {
+        './grid-store': { gridStore },
+        '../app-frame/live-apps': {
+          LIVE_APP_LABEL: 'still open',
+          LiveAppDot: () => null,
+          useLiveAppSlugs: () => liveSlugs,
+        },
+      },
+    });
+    return renderToHtml(createElement(AppGrid, {}));
+  };
+  const renamed = render({ ...base, alias: 'Chess night' });
+  assert.match(renamed, /<div class="app-card-title" title="Demo App">Chess night<\/div>/,
+    'the caption draws the alias, the caption tooltip the real name');
+  assert.match(renamed, /aria-label="Chess night"/, 'the screen reader hears what is drawn');
+  assert.match(renamed, /title="Demo App\. Hold or right-click for app actions"/,
+    'the card tooltip keeps the app\'s real name');
+  // A live tile keeps the ", still open" suffix on the DISPLAYED name — the
+  // suffix a declared check selects on.
+  const live = render({ ...base, alias: 'Chess night' }, ['demo-app']);
+  assert.match(live, /aria-label="Chess night, still open"/);
+  const plain = render({ ...base }, ['demo-app']);
+  assert.match(plain, /aria-label="Demo App, still open"/,
+    'an unaliased live tile reads exactly as it always did');
+});
+
 // ── The overlay mirrors the tracks (#968, #975) ───────────────────────
 
 test('the overlay copies the grid’s used row sizes and pads to the canvas', () => {

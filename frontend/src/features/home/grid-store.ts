@@ -64,6 +64,12 @@ export type IconView =
 export interface HomeAppView {
   slug: string;
   name: string;
+  /**
+   * The viewer's own name for THIS tile (#4027, Rename… from the tile menu),
+   * or null when the tile shows the app's real name. Per viewer and per
+   * width-row; `name` is always the real name, which the tooltip keeps.
+   */
+  alias: string | null;
   status: string;
   icon: IconView;
   locked: boolean;

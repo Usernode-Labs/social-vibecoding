@@ -1006,7 +1006,13 @@ const Home = {
   // One app -> the flat facts its tile renders. Every conditional the old
   // template string evaluated inline is resolved HERE, where the `App.user`
   // gates and the status vocabulary already live.
-  appView(app) {
+  //
+  // `alias` is the viewer's own name for THIS tile (Rename…, from the tile
+  // menu), passed by gridItemView from the stored layout item. It is per
+  // viewer and per width-row; the app's real name stays in `name` for the
+  // tooltip, and callers that show the real name (search, the rails) pass
+  // nothing.
+  appView(app, alias = null) {
     const isAwaiting = app.status === 'awaiting_secrets';
     const isError = app.status === 'error';
     const isRunning = app.status === 'running';
@@ -1028,6 +1034,7 @@ const Home = {
     return {
       slug: app.slug,
       name: String(app.name || ''),
+      alias: alias || null,
       status: app.status,
       icon: AppCard.iconViewFor(app),
       locked: !!app.locked,
@@ -1063,7 +1070,9 @@ const Home = {
     // (render()), so every ITEM on this canvas is an app tile.
     const app = (Home._apps || []).find((a) => a.slug === item.slug);
     if (!app) return null;
-    return { kind: 'card', placement, app: Home.appView(app) };
+    // item.label is the viewer's alias for this tile (Rename…); it shows on
+    // the tile only — search and the discovery rails keep the real name.
+    return { kind: 'card', placement, app: Home.appView(app, item.label) };
   },
 
   // Attach / detach the kit's placement recognizer. Split out of _wireCards so
@@ -3596,6 +3605,20 @@ const Home = {
           location.hash = `#apps/${encodeURIComponent(app.slug)}`;
         },
       });
+      // Rename THIS tile (#4027). The alias is a property of the tile on the
+      // current canvas — per viewer, per width — so the menu offers it only
+      // when the app actually has one there. The same menu built for a
+      // discovery rail or a browse list (no tile on the canvas) never offers
+      // it, and those keep the app's real name everywhere they draw.
+      const onCanvas = (Home._layoutCache || [])
+        .some((it) => it.type === 'app' && it.slug === app.slug);
+      if (onCanvas) {
+        items.push({
+          key: 'rename-tile',
+          label: 'Rename…',
+          run: () => Home._menuRenameTile(app),
+        });
+      }
     }
     // The app's source. This was a row in the hamburger drawer's reference
     // footer, revealed by hand from App.navigateToApp when the OPEN app had a
@@ -4355,6 +4378,40 @@ const Home = {
   _menuToggleFavorite(app, desired) {
     const next = typeof desired === 'boolean' ? desired : !app.is_favorited;
     return Home.toggleAdded(app.slug, next);
+  },
+
+  // Rename THIS tile (#4027): the viewer's own name for the tile on the
+  // current canvas, not the app. PlatformUI.prompt is the kit alert's inset
+  // text field, resolving the string or null on Cancel. An empty save clears
+  // the alias back to the app's real name; Cancel changes nothing. The write
+  // goes through the same _persistLayout the drag path uses, so a rejected
+  // write refetches server truth with the same toast and revert.
+  async _menuRenameTile(app) {
+    const cols = Home.currentCols();
+    const current = (Home._layoutCache || [])
+      .find((it) => it.type === 'app' && it.slug === app.slug)?.label || '';
+    const next = await PlatformUI.prompt({
+      title: 'Rename this tile',
+      value: current,
+      placeholder: app.name,
+      confirmLabel: 'Save',
+      maxLength: 80,
+    });
+    if (next == null) return;
+    // Trimmed and capped here to what the route will accept, so the
+    // optimistic repaint matches what the server stores.
+    const label = String(next).trim().slice(0, 80) || null;
+    // A NEW array, not in-place mutation: _layoutCache items are repair()
+    // copies, and _layouts[cols] is reassigned the same way a drop reassigns
+    // it (_onGridPlace).
+    const layout = (Home._layoutCache || []).map((it) => (
+      it.type === 'app' && it.slug === app.slug ? { ...it, label } : it
+    ));
+    Home._layoutCache = layout;
+    if (!Home._layouts) Home._layouts = {};
+    Home._layouts[String(cols)] = layout;
+    Home.render();
+    Home._persistLayout(cols, layout);
   },
 
   async _menuRetry(app) {

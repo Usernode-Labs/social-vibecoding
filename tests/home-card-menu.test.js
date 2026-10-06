@@ -472,6 +472,81 @@ test('menu: favorited app flips the label to Remove', () => {
   assert.equal(fav.label, 'Remove from Shortcuts');
 });
 
+// ── Rename this tile (#4027) ───────────────────────────────────────
+
+// The alias is a property of the TILE on the current canvas — per viewer,
+// per width — so the menu offers it exactly when the app has a tile there.
+// Every exact key list above was written with `_layoutCache` null in this
+// harness, which is the same gate from the other side.
+test('menu: Rename… appears when the app has a tile on the canvas', () => {
+  const Home = makeHome({ id: ME });
+  Home._layoutCache = [{ type: 'app', slug: 'demo-app', col: 0, row: 0 }];
+  const items = Home.menuItemsFor(baseApp());
+  assert.equal(items[1].key, 'rename-tile',
+    'it follows App details, before everything else');
+  assert.equal(items[1].label, 'Rename…');
+
+  // A discovery rail or browse list has no tile on the canvas: no rename,
+  // and the exact lists above stay exact.
+  Home._layoutCache = null;
+  assert.ok(!keys(Home.menuItemsFor(baseApp())).includes('rename-tile'));
+  Home._layoutCache = [{ type: 'app', slug: 'other-app', col: 0, row: 0 }];
+  assert.ok(!keys(Home.menuItemsFor(baseApp())).includes('rename-tile'));
+});
+
+// The handler's contract: the kit prompt pre-filled with the current alias
+// (placeholder the app's real name, Save, 80), a Save writes the label into
+// both the cache and the width it was read from and repaints, an empty save
+// CLEARS it, and Cancel changes nothing.
+test('menu: renaming writes the label through the same persist as a drag', async () => {
+  const env = makeHomeEnv({ id: ME });
+  const { Home, sandbox } = env;
+  const prompts = [];
+  sandbox.PlatformUI = {
+    prompt: async (opts) => { prompts.push(opts); return currentAnswer.pop(); },
+  };
+  sandbox.innerWidth = 1280;
+  Home._layoutCache = [
+    { type: 'app', slug: 'demo-app', col: 0, row: 0, label: 'Old name' },
+    { type: 'app', slug: 'other-app', col: 1, row: 0 },
+  ];
+  Home._layouts = { 4: Home._layoutCache };
+  Home.render = () => { Home.rendered = (Home.rendered || 0) + 1; };
+  const persisted = [];
+  Home._persistLayout = (cols, layout) => { persisted.push([cols, layout]); };
+
+  const app = baseApp();
+
+  // Cancel: nothing changes, not even a repaint.
+  let currentAnswer = [null];
+  await Home._menuRenameTile(app);
+  assert.equal(prompts[0].title, 'Rename this tile');
+  assert.equal(prompts[0].value, 'Old name');
+  assert.equal(prompts[0].placeholder, 'Demo App', 'the placeholder is the app\'s real name');
+  assert.equal(prompts[0].confirmLabel, 'Save');
+  assert.equal(prompts[0].maxLength, 80);
+  assert.deepEqual(
+    Home._layouts[4].map((i) => i.label ?? null), ['Old name', null]);
+  assert.equal(Home.rendered, undefined);
+
+  // Save a new name: the cache and the width both carry it, and the write
+  // goes through _persistLayout — the same toast-and-revert path as a drop.
+  currentAnswer = ['Chess night'];
+  await Home._menuRenameTile(app);
+  assert.equal(Home._layoutCache.find((i) => i.slug === 'demo-app').label, 'Chess night');
+  assert.equal(Home._layouts[4].find((i) => i.slug === 'demo-app').label, 'Chess night');
+  assert.equal(Home._layoutCache.find((i) => i.slug === 'other-app').label, undefined,
+    'the other tile is untouched');
+  assert.deepEqual(persisted, [[4, Home._layouts[4]]]);
+  assert.equal(Home.rendered, 1);
+
+  // An empty save clears the alias back to the app's real name.
+  currentAnswer = ['   '];
+  await Home._menuRenameTile(app);
+  assert.equal(Home._layouts[4].find((i) => i.slug === 'demo-app').label, null);
+  assert.equal(Home.rendered, 2);
+});
+
 test('menu: member apps get a WORKING Remove from Your apps item (#618)', () => {
   // The entry renders for every app so the affordance is always
   // discoverable. #618: membership no longer hard-pins the app —

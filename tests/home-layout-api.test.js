@@ -62,9 +62,9 @@ function makeMockPool(state) {
         return { rows: [] };
       }
       if (/INSERT INTO user_home_layout/i.test(sql)) {
-        const [user_id, cols, item_type, app_id, widget_key, grid_col, grid_row] = params;
+        const [user_id, cols, item_type, app_id, widget_key, grid_col, grid_row, label] = params;
         (state.rows = state.rows || []).push({
-          user_id, cols, item_type, app_id, widget_key, grid_col, grid_row,
+          user_id, cols, item_type, app_id, widget_key, grid_col, grid_row, label,
         });
         return { rows: [] };
       }
@@ -85,7 +85,7 @@ function makeMockPool(state) {
           .filter((r) => r.user_id === params[0])
           .map((r) => ({
             cols: r.cols, item_type: r.item_type, widget_key: r.widget_key,
-            grid_col: r.grid_col, grid_row: r.grid_row,
+            grid_col: r.grid_col, grid_row: r.grid_row, label: r.label ?? null,
             slug: (state.apps || APPS).find((a) => a.id === r.app_id)?.slug || null,
           }));
         return { rows };
@@ -193,6 +193,74 @@ test('GET skips the widget rows a pre-overhaul arrangement still carries', async
   assert.deepEqual(body.layouts['5'], [
     { type: 'app', slug: 'alpha', col: 0, row: 0 },
   ], 'the app tile survives; the widget cells simply are not there');
+});
+
+// ── The tile alias (#4027) ────────────────────────────────────────────
+
+// The viewer's own name for a tile round-trips the table and comes back
+// attached to its item. An unlabeled item stays the exact shape it always
+// had — every deepEqual assertion above leans on that.
+test('a stored label rides GET back onto its item', async () => {
+  const { app, state } = makeApp({}, { user: USER });
+  const { status, body } = await put(app, '/api/home-layout', {
+    cols: 5,
+    items: [{ type: 'app', slug: 'alpha', col: 0, row: 0, label: 'Chess night' }, A('beta', 1, 0)],
+  });
+  assert.equal(status, 200);
+  assert.equal(state.rows[0].label, 'Chess night');
+  assert.equal(state.rows[1].label, null);
+  assert.deepEqual(body.layouts['5'], [
+    { type: 'app', slug: 'alpha', col: 0, row: 0, label: 'Chess night' },
+    { type: 'app', slug: 'beta', col: 1, row: 0 },
+  ]);
+  // And a later write without a label clears it — the empty save in the
+  // prompt dialog.
+  const second = await put(app, '/api/home-layout', {
+    cols: 5,
+    items: [{ type: 'app', slug: 'alpha', col: 0, row: 0, label: '   ' }, A('beta', 1, 0)],
+  });
+  assert.equal(second.status, 200);
+  assert.deepEqual(second.body.layouts['5'], [
+    { type: 'app', slug: 'alpha', col: 0, row: 0 },
+    { type: 'app', slug: 'beta', col: 1, row: 0 },
+  ]);
+});
+
+// The cap the prompt's maxLength only promises: a patched client sending a
+// longer label gets it cut to 80, not a 400 and not a paragraph.
+test('a label is trimmed and capped at 80 characters', async () => {
+  const { app, state } = makeApp({}, { user: USER });
+  const long = `  ${'x'.repeat(100)}  `;
+  const { status, body } = await put(app, '/api/home-layout', {
+    cols: 5,
+    items: [{ type: 'app', slug: 'alpha', col: 0, row: 0, label: long }],
+  });
+  assert.equal(status, 200);
+  assert.equal(state.rows[0].label.length, 80);
+  assert.equal(state.rows[0].label, 'x'.repeat(80));
+  assert.deepEqual(body.layouts['5'], [
+    { type: 'app', slug: 'alpha', col: 0, row: 0, label: 'x'.repeat(80) },
+  ]);
+  // A non-string label is simply no label rather than a crash.
+  await put(app, '/api/home-layout', {
+    cols: 5, items: [{ type: 'app', slug: 'alpha', col: 0, row: 0, label: 42 }],
+  });
+  assert.deepEqual((await get(app, '/api/home-layout')).body.layouts['5'], [
+    { type: 'app', slug: 'alpha', col: 0, row: 0 },
+  ]);
+});
+
+// The alias is a property of the TILE at one width: writing the other width
+// must not disturb it.
+test('a label survives a PUT to the other width', async () => {
+  const { app } = makeApp({}, { user: USER });
+  await put(app, '/api/home-layout', {
+    cols: 5, items: [{ type: 'app', slug: 'alpha', col: 0, row: 0, label: 'Chess night' }],
+  });
+  await put(app, '/api/home-layout', { cols: 4, items: [A('alpha', 1, 1)] });
+  assert.deepEqual((await get(app, '/api/home-layout')).body.layouts['5'], [
+    { type: 'app', slug: 'alpha', col: 0, row: 0, label: 'Chess night' },
+  ]);
 });
 
 // ── PUT: the happy path ───────────────────────────────────────────────

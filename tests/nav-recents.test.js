@@ -325,10 +325,19 @@ test('#2919: the day labels and the fold are drawn in the desktop block only', (
   assert.equal(css.indexOf('.platform-recents-day {'), day + 2, 'drawn once');
   const dayBody = css.slice(day, css.indexOf('}', day));
   assert.match(dayBody, /flex: none;/, 'never squeezed by the scrolling list');
-  assert.match(dayBody, /color: var\(--text-muted\);/);
-  assert.match(dayBody, /font-size: 11px;/);
+  assert.match(dayBody, /color: var\(--text-secondary\);/, 'the secondary ink, readable on both themes');
+  assert.doesNotMatch(dayBody, /opacity/, 'no opacity step on top of the ink');
+  assert.match(dayBody, /font-size: 11\.5px;/);
   assert.doesNotMatch(dayBody, /text-transform/, 'sentence case, unlike the RECENTS heading');
   assert.match(css, /\.platform-recents-head \+ \.platform-recents-day \{\s*padding-top: 2px;\s*\}/);
+  // The Active/Recents headings sit one step up from the day labels, still
+  // small caps — but at a readable size in the secondary ink as well (#4027).
+  const head = css.indexOf('  .platform-recents-head {');
+  assert.ok(head > desktop, 'the heading is drawn in the desktop block too');
+  const headBody = css.slice(head, css.indexOf('}', head));
+  assert.match(headBody, /color: var\(--text-secondary\);/);
+  assert.match(headBody, /font-size: 12px;/);
+  assert.match(headBody, /text-transform: uppercase;/);
   const moreBody = css.slice(more, css.indexOf('}', more));
   assert.match(moreBody, /flex: none;/);
   assert.match(moreBody, /height: 30px;/);

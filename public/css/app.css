@@ -20830,8 +20830,8 @@ html.un-kb #platform-parked {
   .platform-recents-head {
     margin: 0 0 4px;
     padding: 0 12px;
-    color: var(--text-muted);
-    font-size: 10.5px;
+    color: var(--text-secondary);
+    font-size: 12px;
     font-weight: 600;
     letter-spacing: .04em;
     line-height: 1.35;
@@ -20948,15 +20948,14 @@ html.un-kb #platform-parked {
   /* ── RECENTS BY DAY (#2919) ──────────────────────────────────────────
      frontend/src/features/nav/recents.ts (groupRecents) carries the argument.
      A small label before each day that has a row, quieter than the RECENTS
-     heading above it: sentence case, no caps or tracking, and the muted ink
-     taken down a step so the rows stay the thing you read. Less air above
+     heading above it: sentence case, no caps or tracking, in the secondary
+     ink so it stays readable without competing with the rows. Less air above
      the first one, which already sits under the heading. */
   .platform-recents-day {
     flex: none;
     padding: 8px 12px 2px;
-    color: var(--text-muted);
-    opacity: .75;
-    font-size: 11px;
+    color: var(--text-secondary);
+    font-size: 11.5px;
     font-weight: 500;
     letter-spacing: .01em;
     line-height: 1.5;

@@ -553,10 +553,13 @@ const HomeLayout = {
   // The wire shape for PUT /api/home-layout: canvas items only (the server's
   // CHECK constraint rejects row >= MAX_ROWS, and an overflow item has no
   // placement worth remembering — it comes back from the same derivation
-  // next load).
+  // next load). A tile alias rides along only when the viewer gave one, so
+  // an unlabeled item stays byte-identical to the shape this always wrote.
   toWire(layout) {
     return HomeLayout.canvasItems(layout).map((it) => (
-      { type: 'app', slug: it.slug, col: it.col, row: it.row }
+      it.label
+        ? { type: 'app', slug: it.slug, col: it.col, row: it.row, label: it.label }
+        : { type: 'app', slug: it.slug, col: it.col, row: it.row }
     ));
   },
 };

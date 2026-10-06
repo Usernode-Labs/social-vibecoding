@@ -161,6 +161,10 @@ const RETRY_BTN = 'retry-btn relative inline-flex items-center rounded-full bg-v
 function AppCardTile({ app, style, yours, live }: {
   app: HomeAppView; style?: string; yours: boolean; live: boolean;
 }) {
+  // The tile's DISPLAYED name (#4027): the viewer's alias when they renamed
+  // this tile, else the app's real name. The real name stays on the
+  // tooltips — the full-width card and the caption — and in `app.name`.
+  const shown = app.alias || app.name;
   const node = useRef<HTMLDivElement | null>(null);
   const wireRef = useCallback((el: HTMLDivElement | null) => {
     node.current = el;
@@ -206,7 +210,7 @@ function AppCardTile({ app, style, yours, live }: {
       data-locked={String(app.locked)}
       tabIndex={0}
       role="button"
-      aria-label={live ? `${app.name}, ${LIVE_APP_LABEL}` : app.name}
+      aria-label={live ? `${shown}, ${LIVE_APP_LABEL}` : shown}
       aria-haspopup="menu"
       title={`${app.name}. Hold or right-click for app actions`}
       {...(app.demo ? { 'data-demo': 'true' } : null)}
@@ -315,7 +319,7 @@ function AppCardTile({ app, style, yours, live }: {
         ) : null}
       </div>
       <div className="w-full min-w-0">
-        <div className="app-card-title" title={app.name}>{app.name}</div>
+        <div className="app-card-title" title={app.name}>{shown}</div>
         {app.statusLabel && app.showRetry ? (
           <div className="app-card-retry flex items-center justify-center gap-1">
             <p

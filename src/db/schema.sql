@@ -2863,6 +2863,11 @@ CREATE TABLE IF NOT EXISTS user_home_layout (
   widget_key  TEXT,
   grid_col    SMALLINT NOT NULL,
   grid_row    SMALLINT NOT NULL,
+  -- The viewer's own name for THIS tile, at THIS width — "Rename" from the
+  -- tile's long-press menu. Nullable: null (or the empty string, which the
+  -- route trims to null) means the app's real name shows. Never an app_id
+  -- rename, so two viewers can call the same app different things.
+  label       TEXT,
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT user_home_layout_kind CHECK (
     (item_type = 'app' AND app_id IS NOT NULL AND widget_key IS NULL)
@@ -2883,6 +2888,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_user_home_layout_widget
   ON user_home_layout(user_id, cols, widget_key) WHERE widget_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_user_home_layout_read
   ON user_home_layout(user_id, cols);
+ALTER TABLE user_home_layout ADD COLUMN IF NOT EXISTS label TEXT;
 
 -- Admin-curated "Find more apps" row on the home screen. Global (one
 -- ordered list for everyone — no per-user targeting), display-only, and
