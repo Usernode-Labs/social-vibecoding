@@ -1001,10 +1001,8 @@ export function FirstSession() {
   const end = useCallback(() => setMode({ kind: 'none' }), []);
   const steps = useMemo(() => {
     if (mode.kind !== 'tour') return [];
+    if (mode.path === 'look') return lookAroundSteps();
     const project = { slug: mode.info.slug, name: mode.info.name, conversationId: mode.info.conversationId };
-    const project = {
-      slug: mode.info.slug, name: mode.info.name, conversationId: mode.info.conversationId, firstVersion: mode.info.firstVersion,
-    };
     if (mode.path === 'private') return privateSteps(project);
     return mode.path === 'maker' ? makerSteps(project) : invitedSteps(project);
   }, [mode]);
