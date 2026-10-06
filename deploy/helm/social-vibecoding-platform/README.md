@@ -226,6 +226,22 @@ With `secrets.create: false`, provide the same environment-variable keys in
 encrypted values through Argo CD; the existing secrets checksum triggers a
 rollout when chart-managed values change.
 
+To supply a Firebase web API key, add this optional field to the same
+SOPS-encrypted values file's existing `secrets` block:
+
+```yaml
+secrets:
+  firebaseWebApiKey: "<Firebase web API key>"
+```
+
+With `secrets.create: true`, it maps to `FIREBASE_WEB_API_KEY` in the platform
+Secret and reaches the process through the Deployment's `envFrom`. The field
+defaults to an empty string. With `secrets.create: false`, supply
+`FIREBASE_WEB_API_KEY` in `secrets.existingSecret` instead. The existing
+secrets checksum rolls out changes to the chart-managed value. This makes the
+key available in the environment; application code must read it to use it.
+The current Firebase Admin push provider uses the service account above.
+
 `config.domain` is the canonical platform hostname (`USERNODE_DOMAIN`).
 `config.appsDomain` optionally sets a separate suffix for generated apps and
 session previews (`USERNODE_APPS_DOMAIN`). When empty, it defaults to

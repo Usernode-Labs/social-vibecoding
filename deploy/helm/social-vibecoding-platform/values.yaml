@@ -193,6 +193,8 @@ secrets:
   pushEnv: ""
   firebaseProjectId: ""
   firebaseServiceAccountJsonB64: ""
+  # Optional Firebase web API key, supplied through encrypted external values.
+  firebaseWebApiKey: ""
 
 ingress:
   enabled: true
