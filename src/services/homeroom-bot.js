@@ -133,6 +133,11 @@ const KEY_PER_PERSON = 'homeroom_bot_per_person';
 // (homeroom-bot-mayor.js). On by default for the people on the DM list; the
 // switch is there to stop it without taking anybody off the list.
 const KEY_DM_CHAT = 'homeroom_bot_dm_chat';
+// Whether reading a request again continues the conversation that read it
+// last (previousRead), so the model starts from what it already found
+// rather than from the repository. On by default; off reads every time
+// from scratch, as every read did before.
+const KEY_CONTINUE_READS = 'homeroom_bot_continue_reads';
 // Who has the bot: `list`, the people on KEY_DM_USERS and the projects they
 // made (everything above), or `everyone`: every person with platform
 // access, and every project but a paused one and the platform's own
@@ -159,7 +164,7 @@ const SETTING_KEYS = Object.freeze([
   KEY_TURN_SECONDS, KEY_TURN_INPUT_TOKENS, KEY_LIVE_APPS,
   KEY_SHADOW_BUILDS, KEY_BUILD_CONCURRENCY, KEY_SHADOW_BUILD_PLATFORM,
   KEY_DM_USERS, KEY_USER_WEEKLY_CENTS, KEY_LIVE_AT_ONCE, KEY_PER_PERSON, KEY_DM_CHAT,
-  KEY_AUDIENCE, KEY_AUDIENCE_SINCE, KEY_LIVE_PLATFORM, KEY_PROPOSAL_CEILING,
+  KEY_CONTINUE_READS, KEY_AUDIENCE, KEY_AUDIENCE_SINCE, KEY_LIVE_PLATFORM, KEY_PROPOSAL_CEILING,
   ...Object.values(KEY_MODELS),
 ]);
 const MAX_DM_USERS = 50;
@@ -188,6 +193,7 @@ const DEFAULTS = Object.freeze({
   liveAtOnce: 6,
   perPerson: 2,
   dmChat: true,
+  continueReads: true,
   audience: 'list',
   audienceSince: null,
   livePlatform: false,
@@ -313,14 +319,19 @@ const APP_AGAIN_REASON = 'app_again';
 // The queue reason of an issue whose bot proposal's checks settled failing
 // on its current head (noteProposalChecks): a follow-up turn fixes them.
 const CHECKS_REASON = 'checks_failing';
+// The queue reason of a read started over because a person wrote on the
+// request while it ran (interruptRead). It was already told the bot is
+// looking, and it is never started over a second time.
+const READ_AGAIN_REASON = 'read_again';
 // Rows the bot queued for itself rather than for anything on the issue: a
-// restart's (#3471) and a failing check's. The issue has not changed since
-// the bot last looked, which is exactly what a refresh reads as "nothing
-// to do", so a refresh keeps them (and their reason) while the issue is
-// open and nobody else has it. It used to delete a restart's row on the
-// very pass its wake started, which is how a live build a restart
-// interrupted was never looked at again (recipebot #48, run 613).
-const SELF_QUEUED_REASONS = Object.freeze([RESTART_REASON, CHECKS_REASON]);
+// restart's (#3471), a failing check's, and a read started over. The issue
+// has not changed since the bot last looked, which is exactly what a
+// refresh reads as "nothing to do", so a refresh keeps them (and their
+// reason) while the issue is open and nobody else has it. It used to delete
+// a restart's row on the very pass its wake started, which is how a live
+// build a restart interrupted was never looked at again (recipebot #48,
+// run 613).
+const SELF_QUEUED_REASONS = Object.freeze([RESTART_REASON, CHECKS_REASON, READ_AGAIN_REASON]);
 // The queue reason of a request whose last triage failed (an unparseable
 // reply, a provider error) and has not been tried again on the same thread.
 // A failed run counted as having read the thread, so the request waited for
@@ -508,6 +519,7 @@ function parseSettings(rows) {
   const liveAtOnce = clampInt(map.get(KEY_LIVE_AT_ONCE), DEFAULTS.liveAtOnce, 1, MAX_LIVE_AT_ONCE);
   const perPerson = clampInt(map.get(KEY_PER_PERSON), DEFAULTS.perPerson, 1, MAX_PER_PERSON);
   const dmChat = map.get(KEY_DM_CHAT) !== 'off';
+  const continueReads = map.get(KEY_CONTINUE_READS) !== 'off';
   const audience = AUDIENCES.includes(map.get(KEY_AUDIENCE)) ? map.get(KEY_AUDIENCE) : DEFAULTS.audience;
   // Written with the switch (writeSettings); readSettings fills in a switch
   // made some other way.
@@ -518,7 +530,7 @@ function parseSettings(rows) {
   return {
     mode, concurrency, batchSize, pausedApps, liveApps, turnSeconds, turnInputTokens,
     shadowBuilds, buildConcurrency, shadowBuildPlatform, dmUsers, userWeeklyCents,
-    liveAtOnce, perPerson, dmChat, models,
+    liveAtOnce, perPerson, dmChat, continueReads, models,
     audience, audienceSince, livePlatform, proposalCeiling,
     firstVersionApps: [],
     platformSlugs: [],
@@ -656,6 +668,10 @@ function validateSettingsPatch(patch) {
   if (body.dmChat !== undefined) {
     if (typeof body.dmChat !== 'boolean') return { ok: false, error: 'dmChat must be true or false' };
     updates.push([KEY_DM_CHAT, body.dmChat ? 'on' : 'off']);
+  }
+  if (body.continueReads !== undefined) {
+    if (typeof body.continueReads !== 'boolean') return { ok: false, error: 'continueReads must be true or false' };
+    updates.push([KEY_CONTINUE_READS, body.continueReads ? 'on' : 'off']);
   }
   if (body.audience !== undefined) {
     if (!AUDIENCES.includes(body.audience)) return { ok: false, error: 'audience must be list or everyone' };
@@ -1327,6 +1343,23 @@ async function issueHolders(pool, appId) {
   );
   add(created.rows, sessionKind);
   return holders;
+}
+
+/**
+ * When a person last wrote in one request's discussion: threadActivityByIssue
+ * for a single request, read the same way, so a run that records it agrees
+ * with the refresh that compares against it.
+ */
+async function personActivityAt(pool, appId, issueNumber) {
+  const { rows } = await pool.query(
+    `SELECT MAX(m.created_at) AS last_at
+       FROM chat_messages m
+       LEFT JOIN users u ON u.id = m.user_id
+      WHERE m.app_id = $1 AND m.thread_type = 'issue' AND m.thread_ref = $2
+        AND m.msg_type = 'message' AND u.is_synthetic IS NOT TRUE`,
+    [appId, issueNumber],
+  );
+  return rows[0]?.last_at || null;
 }
 
 async function threadActivityByIssue(pool, appId) {
@@ -2323,6 +2356,92 @@ function wasStoppedRecently(sessionId, now = Date.now()) {
   return at != null && now - at <= STOP_SETTLE_MS;
 }
 
+// The triage reads under way in this process, by app and request, from the
+// moment a read loads the request until its turn ends: what interruptRead
+// stops. Only the Pod that runs the loop has any.
+const readsInFlight = new Map();
+// What sends a read back to start over: a person writing in the request's
+// discussion, or its title or description being edited. A claim, a vote or
+// a new request is no change to what the read is reading.
+const INTERRUPTING_ACTIVITY = new Set(['thread', 'updated']);
+
+function readKey(appId, issueNumber) {
+  return `${Number(appId)}:${Number(issueNumber)}`;
+}
+
+/**
+ * Somebody changed a request while the bot was reading it: the read is out
+ * of date before it says anything. It is marked, and its turn stopped if
+ * one is running; runTriage then reads the request again from the start, so
+ * the person gets one answer that covers what they just said instead of an
+ * answer to the old request followed by a second read. A read that was
+ * itself started over is left to finish, so a busy discussion can never
+ * keep the bot from answering. Never throws.
+ */
+function interruptRead({ appId, issueNumber, reason } = {}) {
+  if (!INTERRUPTING_ACTIVITY.has(String(reason))) return false;
+  const read = readsInFlight.get(readKey(appId, issueNumber));
+  if (!read || !read.restartable || read.interrupted) return false;
+  read.interrupted = true;
+  log.info('homeroom-bot', 'A person changed a request while the bot read it; starting the read over', {
+    appId: Number(appId), issueNumber: Number(issueNumber), reason: String(reason), turnRunning: !!read.stop,
+  });
+  if (typeof read.stop === 'function') read.stop();
+  return true;
+}
+
+// The conversation each request was last read in, by app and request, for
+// the next read of it to continue (KEY_CONTINUE_READS). In memory: what a
+// restart of this process forgets is only a saving, since a read with
+// nothing to continue reads afresh as every read did before. It is never
+// continued past a day, a third time in a row, or under another model, so a
+// conversation cannot grow without bound (#3035's 2.7 billion tokens were
+// one conversation that every request of an app was read in).
+const lastReads = new Map();
+const CONTINUE_READ_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const MAX_CONTINUED_READS = 3;
+
+/**
+ * The conversation a read of this request may continue, or null. Taken out
+ * of the map either way: a read that fails leaves nothing to continue, and
+ * the next one reads afresh.
+ */
+function previousRead(appId, issueNumber, { model, now = Date.now() } = {}) {
+  const key = readKey(appId, issueNumber);
+  const last = lastReads.get(key) || null;
+  lastReads.delete(key);
+  if (!last || !last.threadId || last.model !== model) return null;
+  if (now - last.at > CONTINUE_READ_MAX_AGE_MS || last.continued >= MAX_CONTINUED_READS) return null;
+  return last;
+}
+
+/** A read that reached its verdict: the conversation the next read may continue. */
+function rememberRead(appId, issueNumber, { threadId, model, continued = 0, now = Date.now() }) {
+  for (const [key, entry] of lastReads) {
+    if (now - entry.at > CONTINUE_READ_MAX_AGE_MS) lastReads.delete(key);
+  }
+  if (threadId) lastReads.set(readKey(appId, issueNumber), { threadId, model, continued, at: now });
+}
+
+/**
+ * What a read that continues the request's previous one is sent instead of
+ * the whole triage prompt: the request as it stands now, in full, and to
+ * decide again from what it has already read. The instructions and the
+ * reference are earlier in the same conversation; the format is restated
+ * last, as triageClosing does. Pure.
+ */
+function continuedTriagePrompt({ seed, issueNumber }) {
+  return [
+    `==== REQUEST #${issueNumber} HAS CHANGED SINCE YOU READ IT ====`,
+    'Somebody has added to the request you decided earlier in this conversation. Here it is as it stands now, in full: its title, its description, its comments and its discussion.',
+    seed,
+    live.screenshotNote(seed).join('\n').trim() || null,
+    '==== DECIDE IT AGAIN ====',
+    'Decide it again, by the same instructions as before, taking in what is new. You have already read the code it touches: read only what the change needs, and do not repeat reads you made before. The app\'s code may have changed since then, so check any file your verdict depends on rather than relying on memory.',
+    `END YOUR REPLY WITH EXACTLY ONE fenced JSON block in the same format as before, for issue #${issueNumber}, and nothing after it.`,
+  ].filter(Boolean).join('\n\n');
+}
+
 /**
  * What a turn used, from the relay's per-request sum, and what that costs
  * at the turn's catalog price (#3038). Null when the relay saw no request
@@ -2517,7 +2636,9 @@ async function clearStaleTurn(pool, session, { worker, maxAgeMs, now = Date.now(
  * reason the caller stops the whole pass on: the queue is left alone and
  * the loop idles until the week's allowance moves.
  */
-async function runTriage(pool, config, { bot, app, item, mode, settings = null, deps = {} }) {
+async function runTriage(pool, config, {
+  bot, app, item, mode, settings = null, deps = {}, carried = null,
+}) {
   const github = deps.github || require('./github');
   const worker = deps.worker || require('./worker');
   const agentTurn = deps.agentTurn || require('./agent-turn');
@@ -2581,7 +2702,16 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     return { ran: false, reason: 'refused', detail: error, app: app.slug, retryInMs: delayMs, followUp: followUpTurn };
   };
 
+  // This read's entry in readsInFlight, once it has loaded the request, and
+  // what takes it out again: every way out of the read after that point
+  // goes through recordFailure or past the turn.
+  let read = null;
+  const endRead = () => {
+    if (read && readsInFlight.get(readKey(app.id, issueNumber)) === read) readsInFlight.delete(readKey(app.id, issueNumber));
+  };
+
   const recordFailure = async (error, extra = {}, { infra = false } = {}) => {
+    endRead();
     if (REFUSAL_ERRORS.has(error)) return recordRefusal(error);
     // A platform fault the current streak already recorded gets no second
     // row (#3122); the retry is still logged below.
@@ -2613,7 +2743,23 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     return { ran: false, reason: 'budget', detail: budget.reason || null };
   }
 
-  await pool.query('UPDATE homeroom_bot_queue SET started_at = NOW() WHERE id = $1', [item.id]);
+  // Claimed only while it is still queued. A batch is loaded up to a
+  // hundred rows at once and read one by one, so a row the refresh has
+  // removed since (the request was claimed by a person, or closed) would
+  // otherwise be read anyway. The live lane claims its rows itself before
+  // they get here (`claimed`). The row's thread_seen_at is read back with
+  // the claim: the refresh may have moved it on since the batch was loaded.
+  const claim = await pool.query(
+    'UPDATE homeroom_bot_queue SET started_at = NOW() WHERE id = $1 AND (started_at IS NULL OR $2::boolean) RETURNING thread_seen_at',
+    [item.id, !!item.claimed],
+  );
+  if (claim.rowCount === 0) {
+    log.info('homeroom-bot', 'Queue row gone before its read; not reading it', { app: app.slug, issueNumber });
+    return { ran: false, reason: 'gone' };
+  }
+  if (claim.rows?.[0]?.thread_seen_at) {
+    item = { ...item, thread_seen_at: latestOf(item.thread_seen_at, claim.rows[0].thread_seen_at) };
+  }
 
   const fetched = await github.fetchPublicIssue(repo.owner, repo.repo, issueNumber);
   const issue = fetched?.issue || null;
@@ -2684,10 +2830,11 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
       });
       return { ran: false, reason: 'has_proposal' };
     }
-    // An issue a restart sent back (#3471) was already told the bot is
+    // An issue a restart sent back (#3471), or a read started over because
+    // somebody changed the request mid-read, was already told the bot is
     // looking; it is not told twice. A backlog pass says nothing yet (#3509).
     const looked = item.reason === RESTART_REASON || item.reason === APP_AGAIN_REASON
-      || item.reason === RETRY_FAILED_REASON ? null : await live.post({
+      || item.reason === RETRY_FAILED_REASON || item.reason === READ_AGAIN_REASON ? null : await live.post({
       pool, github, ws: liveD.ws, app, repo, issueNumber,
       kind: 'looking', text: live.lookingText(), sender: bot,
     }).catch((err) => {
@@ -2697,8 +2844,9 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     if (looked?.githubCreatedAt) postedAt.push(looked.githubCreatedAt);
     // #3736: and the person it is for gets a card in their DM with the bot
     // that follows this piece of work to its end, told when the request is:
-    // not twice for a restart, and not for a backlog pass. Never throws.
-    if (item.reason !== RESTART_REASON && item.reason !== APP_AGAIN_REASON) {
+    // not twice for a restart or a read started over, and not for a backlog
+    // pass. Never throws.
+    if (item.reason !== RESTART_REASON && item.reason !== APP_AGAIN_REASON && item.reason !== READ_AGAIN_REASON) {
       await activity().startCard(pool, { app, issueNumber, requester, bot, jobKey: item.id, settings, deps: { dm: deps.dm } });
       // B9: the chat message it was asked in, if it was, says it is read.
       await require('./homeroom-bot-chat').noteRequestStatus(pool, { appId: app.id, issueNumber, status: 'reading' });
@@ -2708,6 +2856,27 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     // look runs builds nothing; this look sends a plan of its own.
     await retireWaitingPlans(pool, { appId: app.id, issueNumber, why: 'the request was read again', deps: { dm: deps.dm } });
   }
+  // From here the read has the request as it stands: a person changing it
+  // now sends this read back to start over (interruptRead), once.
+  read = { restartable: item.reason !== READ_AGAIN_REASON, interrupted: false, stop: null };
+  readsInFlight.set(readKey(app.id, issueNumber), read);
+  // What this read has seen, recorded on its run: the newest of the row's
+  // own figure, the issue as fetched, and a person's last word in the
+  // discussion, read BEFORE the thread is loaded so anything it counts is in
+  // what the turn reads. The row's figure alone was the refresh's from when
+  // it queued the request; a message that landed in between was read but
+  // recorded as unread, and the next refresh read the request again for
+  // nothing (#4022 sat in a loaded batch for about twenty minutes). A row
+  // queued with none (an admin's run now, a restart) recorded none, which
+  // the next refresh read as a change.
+  const personAt = await personActivityAt(pool, app.id, issueNumber).catch((err) => {
+    log.warn('homeroom-bot', 'Could not read a request\'s last discussion message', { app: app.slug, issueNumber, err: err.message });
+    return null;
+  });
+  item = {
+    ...item,
+    thread_seen_at: [issue.updatedAt, issue.createdAt, personAt].reduce(latestOf, item.thread_seen_at || null),
+  };
   const seedReadAt = new Date().toISOString();
   const [{ comments = [] } = {}, thread, botUsername] = await Promise.all([
     github.fetchIssueComments(repo.owner, repo.repo, issueNumber).catch(() => ({ comments: [] })),
@@ -2848,17 +3017,42 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
   const budgetTimer = setTimeout(() => spendBudget('wall clock'), turnBudgetMs);
   if (typeof budgetTimer.unref === 'function') budgetTimer.unref();
 
+  // A person changed the request mid-turn (interruptRead): the turn is
+  // stopped the way the wall clock stops it, but it is not a budget stop,
+  // and the read starts over below.
+  const stopForActivity = () => {
+    noteStopped(session.id);
+    if (!stopping) {
+      stopping = Promise.resolve(worker.stopTurn(session.id)).catch((err) => {
+        log.warn('homeroom-bot', 'Stop for new activity failed', { sessionId: session.id, err: err.message });
+      });
+    }
+  };
+
+  // Reading a request again continues the conversation that read it last
+  // (KEY_CONTINUE_READS), unless this read is a different job: a first
+  // version's plan, or its creator's changes to one.
+  const previous = settings?.continueReads !== false && !requester?.firstVersion && !planChange
+    ? previousRead(app.id, issueNumber, { model })
+    : null;
+  // Whether the turn that answered was sent only what changed.
+  let continuedTurn = false;
+
   let routed;
   // The turn's pricing snapshot, as the runtime resolved it, so a turn the
   // ledger could not price is priced from the same catalog (#3038).
   let pricing = null;
-  try {
-    routed = await sessions.runCodexAttemptLoop({
+  // What a turn spent that could not continue its conversation, before the
+  // read went afresh: part of this read, so part of its row.
+  let resumeSpent = null;
+  const turn = (resumeThreadId) => {
+    read.stop = stopForActivity;
+    return sessions.runCodexAttemptLoop({
       pool, session, userId: bot.id, config, isCodexSession: true,
-      turnModel: model, resumeThreadId: null, mode: 'scout',
+      turnModel: model, resumeThreadId, mode: 'scout',
       telemetryComponent: 'homeroom_bot_triage',
       resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
-        pool, session, userId: bot.id, model, resumeThreadId: null, config,
+        pool, session, userId: bot.id, model, resumeThreadId, config,
         // The platform's per-model choice of CLI, as the dev chat's scout
         // makes it (#3296): GLM runs in Claude Code.
         harness: 'auto',
@@ -2866,11 +3060,18 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
       dispatchOnce: (ctx) => {
         pricing = ctx?.pricingSnapshot || pricing;
         // Rendered for what this turn's model can see, as its runtime
-        // resolved it, and recorded as what the turn read.
-        const turnPrompt = triagePromptFor({
+        // resolved it, and recorded as what the turn read: the whole prompt
+        // even for a continued read, so the benchmark replays the request
+        // as it stood.
+        const wholePrompt = triagePromptFor({
           ...promptInput, readsImages: require('./prompts').runtimeReadsImages(ctx),
         });
-        snapshot.texts.prompt = turnPrompt;
+        snapshot.texts.prompt = wholePrompt;
+        // Only a conversation the runtime is resuming is sent only what
+        // changed: one it would not resume (another CLI's, #3296) leaves a
+        // fresh conversation, which needs the whole prompt.
+        continuedTurn = !!resumeThreadId && !!ctx?.resumeSessionId;
+        const turnPrompt = continuedTurn ? continuedTriagePrompt({ seed, issueNumber }) : wholePrompt;
         return worker.execInWorker(session.id, {
           mode: 'scout',
           // No `onUsage` here, deliberately (#3035). Neither agent the bot can
@@ -2896,9 +3097,27 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
       classifyAttemptStatus: ({ failed }) => (failed ? 'failed' : 'completed'),
       containerName,
     });
+  };
+  try {
+    // Changed before the turn could start: there is nothing to stop, only
+    // the request to read again.
+    if (!read.interrupted) {
+      routed = await turn(previous ? previous.threadId : null);
+      // The worker no longer has that conversation (a new worker since): the
+      // runtime asks for a fresh start, which this read makes itself, with
+      // the whole prompt.
+      if (previous && routed?.result?.agentRetryFresh === true && !budgetHit && !read.interrupted) {
+        log.info('homeroom-bot', 'The last read\'s conversation is gone; reading the request afresh', {
+          app: app.slug, issueNumber,
+        });
+        resumeSpent = turnSpend(routed, pricing, agentTurn);
+        routed = await turn(null);
+      }
+    }
   } catch (err) {
     routed = { error: `dispatch: ${err.message}` };
   } finally {
+    read.stop = null;
     clearTimeout(budgetTimer);
     if (stopping) await stopping;
     activeWorkers.delete(session.id);
@@ -2906,6 +3125,8 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     // under a turn in flight is one restart recovery throws away (#1006).
     await pauseIdleSession(pool, session.id);
   }
+  endRead();
+  snapshot.extra.continued = continuedTurn;
 
   // What the turn spent, read ONCE and read null-safely, because both the
   // stopped path and the completed path below need it (#2870). The debit
@@ -2958,6 +3179,29 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     }
   };
   await debit(costUsd);
+  // One row for the whole read: a turn that could not continue its
+  // conversation (debited here), and a read this one started over from
+  // (debited when it stopped), are both part of what this read cost.
+  if (resumeSpent) await debit(resumeSpent.costUsd);
+  for (const spent of [resumeSpent, carried]) {
+    if (!spent) continue;
+    costUsd = addKnown(costUsd, spent.costUsd);
+    usage.inputTokens = addKnown(usage.inputTokens, spent.inputTokens);
+    usage.outputTokens = addKnown(usage.outputTokens, spent.outputTokens);
+  }
+
+  // A person changed the request while this read ran: what it found answers
+  // the request as it was, so it is read again now, from the start and with
+  // what was just said, rather than answered and then read again later. The
+  // row stays this read's (`claimed`), and its reason says it was started
+  // over, so it is not announced twice and not started over again.
+  if (read.interrupted && !budgetHit) {
+    await pool.query('UPDATE homeroom_bot_queue SET reason = $2 WHERE id = $1', [item.id, READ_AGAIN_REASON]);
+    return runTriage(pool, config, {
+      bot, app, item: { ...item, reason: READ_AGAIN_REASON, claimed: true }, mode, settings, deps,
+      carried: { costUsd, ...usage },
+    });
+  }
 
   // The token budget, observed rather than enforced (#2870, #3035). Usage
   // arrives once, when the turn is already over, so there is nothing left
@@ -3094,6 +3338,14 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
   await recordSnapshot(runId);
   await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
   clearRefusals(app.id);
+  // The conversation this verdict was reached in, for the request's next
+  // read to continue (previousRead). A first version is planned afresh.
+  if (!requester?.firstVersion) {
+    rememberRead(app.id, issueNumber, {
+      threadId: result.agentThreadId || null, model,
+      continued: continuedTurn ? (previous?.continued || 0) + 1 : 0,
+    });
+  }
   // A newer verdict on the issue replaces any build still waiting for an
   // older one: the lane builds what the bot thinks now.
   await supersedeQueuedBuilds(pool, { appId: app.id, issueNumber, runId }).catch((err) => {
@@ -6511,6 +6763,8 @@ async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}
           id: pick.id, app_id: pick.app_id, issue_number: pick.issue_number, priority: pick.priority,
           reason: pick.reason, thread_seen_at: pick.thread_seen_at, requested_by: pick.requested_by,
           payer_user_id: pick.payer_user_id || null, followUp: !!pick.followUp,
+          // Claimed just above, so runTriage does not claim it again.
+          claimed: true,
         };
         started.push(track(pool, pick.followUp ? `followup:${Number(pick.id)}` : Number(app.id), {
           lane: 'live', appId: Number(app.id), person: pick.person, issueNumber: Number(pick.issue_number),
@@ -6902,6 +7156,7 @@ function noteIssueActivity({ appId, issueNumber, reason = 'activity' } = {}) {
   const id = Number(appId);
   const n = Number(issueNumber);
   if (!Number.isInteger(id) || id <= 0 || !Number.isInteger(n) || n <= 0) return false;
+  interruptRead({ appId: id, issueNumber: n, reason });
   wake({ appId: id });
   publishWake({ appId: id, issueNumber: n, reason: String(reason).slice(0, 40) });
   return true;
@@ -6933,6 +7188,8 @@ async function noteProposalActivity(pool, { appId, sessionId } = {}) {
 function onBusMessage(data) {
   if (!data || typeof data !== 'object') return false;
   if (data.builds) return wakeBuilds();
+  // The activity may have landed on another Pod than the one reading.
+  if (data.issueNumber != null) interruptRead({ appId: data.appId, issueNumber: data.issueNumber, reason: data.reason });
   return wake({ appId: data.appId, all: !!data.all });
 }
 
@@ -7600,6 +7857,12 @@ module.exports = {
   clearRefusals,
   clearStaleTurn,
   noteStopped,
+  interruptRead,
+  previousRead,
+  rememberRead,
+  continuedTriagePrompt,
+  MAX_CONTINUED_READS,
+  CONTINUE_READ_MAX_AGE_MS,
   wasStoppedRecently,
   actOnVerdict,
   // Live builds in slots of their own, one per project.
@@ -7670,6 +7933,7 @@ module.exports = {
   announceBuilt,
   RESTART_REASON,
   RETRY_FAILED_REASON,
+  READ_AGAIN_REASON,
   FAILED_TRIAGE_RETRY_AFTER_MS,
   RESTARTED_BUILD_NOTE,
   MAX_RESTARTED_BUILDS,
@@ -7721,6 +7985,7 @@ module.exports = {
   KEY_LIVE_AT_ONCE,
   KEY_PER_PERSON,
   KEY_DM_CHAT,
+  KEY_CONTINUE_READS,
   AUDIENCES,
   KEY_AUDIENCE,
   KEY_AUDIENCE_SINCE,
@@ -7752,6 +8017,7 @@ module.exports = {
     lastRefreshAt = 0; triagePromptCache = null; stopped = false; passInFlight = false; lastPass = null;
     appBackoff.clear(); followUpBackoff.clear(); lastRefusals = []; platformFault = null; lastVolumeSweepAt = 0; lastLiveSweepAt = 0;
     inFlight.clear(); budgetPausedUntil = 0; platformSlugsCache = null;
+    readsInFlight.clear(); lastReads.clear();
     liveBuildsInFlight.clear();
     if (timer) clearTimeout(timer);
     timer = null; loopConfig = null; pendingApps.clear(); refreshAllRequested = false; wakeRequested = false;
