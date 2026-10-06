@@ -35,7 +35,10 @@
 //      been dispatched, so any button pressed with the keyboard up still gets
 //      its click;
 //   7. every composer's Send keeps its field focused through the press, the
-//      way Messages' does.
+//      way Messages' does;
+//   8. a tap outside the field puts the keyboard down at the first touch,
+//      while taps that belong to the field (itself, its composer, its
+//      suggestion menus, another field) keep it up.
 //
 // What this cannot do is raise a real keyboard in the app's web view; the
 // numbers below are the iPhone 17 Pro's 874pt screen with a 336pt keyboard.
@@ -53,7 +56,8 @@ const MAIN = read('frontend/src/main.tsx');
 const { physics } = require('../public/usernode-native/v1/native.js');
 const {
   KB_OPEN_CLASS, PHONE_QUERY, KB_SHRINK_MIN, PRESS_WINDOW_MS, CLICK_WAIT_MS,
-  describeFocus, canHoldKeyboard, visibleHeight, keyboardOpen, initKeyboardOpen,
+  describeFocus, canHoldKeyboard, visibleHeight, keyboardOpen, focusedElement,
+  tapOutsideField, initKeyboardOpen,
 } = loadTsx('frontend/src/lib/keyboard-open.ts');
 
 const SCREEN = 874; // iPhone 17 Pro, points
@@ -85,6 +89,19 @@ function harness({ width = WIDTH, height = SCREEN, phone = true, kit = { physics
   };
   const body = { tagName: 'BODY' };
   const doc = { activeElement: body, body, documentElement: root, addEventListener: on('doc') };
+  // The focused field, as the browser has it: one the outside-tap rule can
+  // put down. Its blur is the document's own: focus to the body, and the
+  // focusout that carries it.
+  const holdable = (el) => {
+    if (!el || typeof el !== 'object' || typeof el.blur === 'function') return el;
+    const node = Object.create(el);
+    node.blur = () => {
+      if (doc.activeElement !== node) return;
+      doc.activeElement = body;
+      fire('doc', 'focusout', { relatedTarget: null });
+    };
+    return node;
+  };
   const vv = { height, scale: 1, addEventListener: on('vv') };
   const win = {
     innerHeight: height,
@@ -102,6 +119,8 @@ function harness({ width = WIDTH, height = SCREEN, phone = true, kit = { physics
     get open() { return classes.has(KB_OPEN_CLASS); },
     get toggles() { return toggles; },
     get timers() { return timers.length; },
+    get focused() { return doc.activeElement; },
+    get body() { return body; },
     // Move the clock, running each timer that falls due, in order.
     advance(ms) {
       const end = clock + ms;
@@ -114,8 +133,13 @@ function harness({ width = WIDTH, height = SCREEN, phone = true, kit = { physics
       }
       clock = end;
     },
-    // A finger on the glass, and off it. Pointer and touch events both fire.
-    press() { fire('doc', 'pointerdown'); fire('doc', 'touchstart'); },
+    // A finger on the glass, and off it. Pointer and touch events both fire,
+    // on the element the touch began at, if it named one.
+    press(target, rest) {
+      const event = { target, ...rest };
+      fire('doc', 'pointerdown', event);
+      fire('doc', 'touchstart', event);
+    },
     release() { fire('doc', 'pointerup'); fire('doc', 'touchend'); },
     cancel() { fire('doc', 'pointercancel'); },
     click() { fire('doc', 'click'); },
@@ -125,7 +149,7 @@ function harness({ width = WIDTH, height = SCREEN, phone = true, kit = { physics
         doc.activeElement = body;
         fire('doc', 'focusout', { relatedTarget: el });
       }
-      doc.activeElement = el;
+      doc.activeElement = holdable(el);
       fire('doc', 'focusin', {});
     },
     blur() {
@@ -514,6 +538,165 @@ test('it hears presses on the document in capture, and passively', () => {
     'passive: it must never hold up a scroll');
   assert.match(src, /doc\.addEventListener\('click', onEnd, true\);/,
     'the click in capture, so the settle is queued behind its handlers');
+});
+
+// ── 8. A tap outside the field puts the keyboard down ───────────────────────
+
+test('the decision, per tap: the field, its composer, its menus, anything else', () => {
+  const field = { tagName: 'TEXTAREA' };
+  const button = { tagName: 'BUTTON' };
+  const menu = { tagName: 'DIV', contains: () => true };
+  const form = { tagName: 'FORM', contains: () => true };
+  const composer = { tagName: 'DIV', contains: () => true };
+  const inForm = { tagName: 'TEXTAREA', closest: (sel) => (sel === 'form' ? form : null) };
+  const messagesField = {
+    tagName: 'TEXTAREA',
+    closest: (sel) => (sel === 'form' ? null : sel === '.messages-composer' ? composer : null),
+  };
+  const menuOption = (selector) => ({ tagName: 'BUTTON', closest: (sel) => (sel === selector ? menu : null) });
+  // A target that cannot be read is left to the browser, and so is a press
+  // with no keyboard field focused.
+  assert.equal(tapOutsideField(undefined, field), false);
+  assert.equal(tapOutsideField(button, null), false);
+  // The field itself: the tap places the caret, natively.
+  assert.equal(tapOutsideField(field, field), false);
+  assert.equal(tapOutsideField({ tagName: 'DIV' }, { tagName: 'TEXTAREA', contains: () => true }), false);
+  // Its own form: Send, the attach button, every composer control.
+  assert.equal(tapOutsideField(button, inForm), false);
+  // The suggestion menus that belong to the field, and a label's press,
+  // which puts focus in the control it names.
+  assert.equal(tapOutsideField(menuOption('.gc-mention-menu'), field), false);
+  assert.equal(tapOutsideField(menuOption('[data-feed-mention-menu]'), field), false);
+  assert.equal(tapOutsideField(menuOption('label'), field), false);
+  // The composer where there is no form (Messages'): its own surface.
+  assert.equal(tapOutsideField(button, messagesField), false);
+  // Anything else, with a keyboard field focused: outside.
+  assert.equal(tapOutsideField(button, field), true);
+  assert.equal(tapOutsideField({ tagName: 'DIV' }, field), true);
+  // A form that does not hold the target is not the field's own composer.
+  const elsewhere = { tagName: 'FORM', contains: () => false };
+  assert.equal(tapOutsideField(button, { tagName: 'TEXTAREA', closest: () => elsewhere }), true);
+});
+
+test('the tap reads the field focus really sits in, through shadow roots', () => {
+  const inner = { tagName: 'TEXTAREA' };
+  const host = { tagName: 'X-FIELD', shadowRoot: { activeElement: inner } };
+  assert.equal(focusedElement(host), inner);
+  assert.equal(focusedElement(null), null);
+  assert.equal(focusedElement(inner), inner);
+});
+
+test('a tap on the conversation blurs the field at the first touch, and cancels nothing', () => {
+  const h = typing();
+  const refused = [];
+  h.press({ tagName: 'DIV' }, {
+    preventDefault: () => refused.push('default'),
+    stopPropagation: () => refused.push('propagation'),
+    stopImmediatePropagation: () => refused.push('immediate'),
+  });
+  assert.equal(h.focused, h.body, 'the field let go at the first touch');
+  assert.deepEqual(refused, [], 'the tap was not cancelled: it is still on its way to its click');
+  assert.equal(h.open, true, 'the class holds through the press, as for any blur under a finger');
+});
+
+test('the tap still works: the pressed button gets its click before the settle', () => {
+  const h = typing();
+  h.press({ tagName: 'BUTTON' });
+  assert.equal(h.focused, h.body);
+  h.release();
+  h.click();
+  assert.equal(h.open, true, 'on through the click\'s own handlers');
+  h.advance(0);
+  assert.equal(h.open, false, 'off once the click has been dispatched');
+  assert.equal(h.timers, 0, 'the backstop went with it');
+});
+
+test('taps that belong to the field keep it: itself, its form, its menus', () => {
+  // The field itself.
+  let h = typing();
+  h.press(h.focused);
+  assert.notEqual(h.focused, h.body, 'the tap places the caret, natively');
+  // Its own form.
+  const form = { tagName: 'FORM', contains: () => true };
+  const inForm = { tagName: 'INPUT', type: 'text', closest: (sel) => (sel === 'form' ? form : null) };
+  h = harness();
+  h.focus(inForm);
+  h.resized(SCREEN - KEYBOARD);
+  h.press({ tagName: 'BUTTON' });
+  assert.notEqual(h.focused, h.body, 'a press on Send holds focus by design');
+  // The suggestion menus.
+  const menuTap = (selector) => ({ tagName: 'BUTTON', closest: (sel) => (sel === selector ? { tagName: 'DIV' } : null) });
+  h = typing();
+  h.press(menuTap('.gc-mention-menu'));
+  assert.notEqual(h.focused, h.body, 'the mention menu keeps the composer focused');
+  h = typing();
+  h.press(menuTap('[data-feed-mention-menu]'));
+  assert.notEqual(h.focused, h.body, 'so does the dev feed\'s');
+  h = typing();
+  h.press(menuTap('label'));
+  assert.notEqual(h.focused, h.body, 'so does a label, whose click puts focus in its control');
+});
+
+test('Messages: its composer is no form, so its own surface keeps Send and the suggestion lists', () => {
+  const send = { tagName: 'BUTTON' };
+  const option = { tagName: 'BUTTON' };
+  const composer = { tagName: 'DIV', contains: (node) => node === send || node === option };
+  const field = {
+    tagName: 'TEXTAREA',
+    closest: (sel) => (sel === 'form' ? null : sel === '.messages-composer' ? composer : null),
+  };
+  const h = harness();
+  h.focus(field);
+  h.resized(SCREEN - KEYBOARD);
+  assert.equal(h.open, true);
+  h.press(send);
+  assert.notEqual(h.focused, h.body, 'Send keeps the field focused, as the form composers do');
+  h.press(option);
+  assert.notEqual(h.focused, h.body, 'so does the mention list beside the message box');
+  h.press({ tagName: 'DIV' });
+  assert.equal(h.focused, h.body, 'a tap on the conversation still takes the keyboard down');
+});
+
+test('a hop into another field keeps the keyboard: the native press moves focus', () => {
+  const h = typing();
+  h.press(TEXT_INPUT);
+  assert.notEqual(h.focused, h.body, 'the first field was not blurred out from under the keyboard');
+  h.release();
+  h.focus(TEXT_INPUT);
+  assert.equal(h.open, true, 'and the keyboard follows the focus');
+});
+
+test('a scroll that begins outside the field closes it too: the blur is at the first touch', () => {
+  const h = typing();
+  h.press({ tagName: 'DIV' });
+  assert.equal(h.focused, h.body);
+  h.cancel();
+  h.advance(0);
+  assert.equal(h.open, false, 'a press the scroll took lets go at once');
+});
+
+test('a tap means nothing to the keyboard when no keyboard field is focused', () => {
+  for (const el of [CHECKBOX, BUTTON]) {
+    const h = harness();
+    h.focus(el);
+    h.press({ tagName: 'DIV' });
+    assert.notEqual(h.focused, h.body, `${el.tagName} is not a keyboard field`);
+  }
+  const h = harness();
+  h.press({ tagName: 'DIV' });
+  assert.equal(h.focused, h.body, 'nothing was focused, so nothing blurs');
+  const g = harness({ kit: null });
+  g.focus(TEXTAREA);
+  g.resized(SCREEN - KEYBOARD);
+  g.press({ tagName: 'DIV' });
+  assert.notEqual(g.focused, h.body, 'without the kit there is no answer, so nothing is put down');
+});
+
+test('a press whose target cannot be read is left to the browser', () => {
+  const h = typing();
+  h.press();
+  assert.notEqual(h.focused, h.body, 'no target, no decision');
+  assert.equal(h.timers, 0, 'nothing was held for a click that will not be judged');
 });
 
 // ── 7. Every composer's Send keeps its field focused ────────────────────────

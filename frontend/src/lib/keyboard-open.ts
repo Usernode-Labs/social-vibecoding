@@ -115,6 +115,7 @@ type FocusTarget = {
   disabled?: boolean;
   isContentEditable?: boolean;
   shadowRoot?: { activeElement?: FocusTarget | null } | null;
+  blur?: () => void;
 } | null | undefined;
 
 type FieldDescriptor = {
@@ -129,11 +130,19 @@ type KitLike = {
   physics?: { keyboardCanBeUp?: (input: FieldDescriptor | null) => boolean } | null;
 } | null | undefined;
 
+/** The element focus really sits in, following shadow roots down: what
+ *  describeFocus classifies, and the element the tap-outside checks run
+ *  against. */
+export function focusedElement(el: FocusTarget): FocusTarget {
+  let node = el;
+  while (node && node.shadowRoot && node.shadowRoot.activeElement) node = node.shadowRoot.activeElement;
+  return node ?? null;
+}
+
 /** The kit's descriptor for a focused element (native.js `describe`): focus
  *  inside a shadow root is reported as its host, so follow it down. */
 export function describeFocus(el: FocusTarget, body?: unknown, root?: unknown): FieldDescriptor | null {
-  let node = el;
-  while (node && node.shadowRoot && node.shadowRoot.activeElement) node = node.shadowRoot.activeElement;
+  const node = focusedElement(el);
   if (!node || node === body || node === root || !node.tagName) return null;
   return {
     tag: node.tagName,
@@ -223,6 +232,53 @@ export function keyboardOpen(input: {
   return input.resting - input.height >= KB_SHRINK_MIN;
 }
 
+/** ── A tap outside the field puts the keyboard away ───────────────────
+ *
+ * With the keys up, a tap anywhere on the screen outside the field being
+ * typed in now blurs it, so the keyboard starts down (evan_t1006, 6 Oct
+ * 2026). The tap is not spent on that: it is never cancelled, and the
+ * thing it was aimed at still happens. Taps that belong to the field keep
+ * it: the field itself, the composer controls around it, and the
+ * suggestion menus that accept a press while keeping the composer
+ * focused. */
+
+type ZoneNode = {
+  contains?: (node: unknown) => boolean;
+  closest?: (selector: string) => ZoneNode | null;
+} | null | undefined;
+
+/** Whether a press at `target` should take the keyboard down from the
+ *  keyboard-holding field `focused`. False — the keyboard stays — when the
+ *  tap lands in the field itself, in its own composer (the form around it,
+ *  and where a composer is not a form, its own surface: Messages'), or in
+ *  a suggestion menu that belongs to it. An unreadable target keeps the
+ *  field: a press that cannot be placed is left to the browser. */
+export function tapOutsideField(target: unknown, focused: unknown): boolean {
+  if (!target || typeof target !== 'object' || !focused) return false;
+  const at = target as ZoneNode;
+  const field = focused as ZoneNode;
+  // The @mention, #reference and :emoji menus accept the press on
+  // mousedown with preventDefault() to keep the composer focused; an
+  // explicit blur would undo exactly that. A label's press puts focus in
+  // the control it names, at its click.
+  if (typeof at.closest === 'function'
+    && (at.closest('.gc-mention-menu') || at.closest('[data-feed-mention-menu]') || at.closest('label'))) return false;
+  const inside = (host: ZoneNode, node: ZoneNode) => (
+    !!host && (host === node || (typeof host.contains === 'function' && !!host.contains(node)))
+  );
+  // The field itself: the tap places the caret, natively.
+  if (inside(field, at)) return false;
+  // The field's own composer: Send, the attach button and every composer
+  // control, whose presses already hold focus by design. A composer that
+  // is a form answers closest('form'); Messages' is a div, so its own
+  // surface stands in for one.
+  if (typeof field.closest === 'function') {
+    const zone = field.closest('form') || field.closest('.messages-composer');
+    if (inside(zone, at)) return false;
+  }
+  return true;
+}
+
 type DocLike = {
   activeElement: unknown;
   body?: unknown;
@@ -233,7 +289,7 @@ type DocLike = {
   };
   addEventListener(
     type: string,
-    fn: (event: { relatedTarget?: unknown }) => void,
+    fn: (event: { relatedTarget?: unknown; target?: unknown }) => void,
     options?: boolean | { capture?: boolean; passive?: boolean },
   ): void;
 };
@@ -395,6 +451,25 @@ export function initKeyboardOpen(doc: DocLike, win: WinLike): () => void {
   doc.addEventListener('pointercancel', onEnd, quiet);
   doc.addEventListener('touchcancel', onEnd, quiet);
   doc.addEventListener('click', onEnd, true);
+
+  // A tap outside the field takes the keyboard down, at the first touch —
+  // so a scroll that begins there closes it too. Joined to the press
+  // handlers above, after them: the blur this makes is a blur during a
+  // press, and the class waits for the tap's click, which is never
+  // cancelled — the thing the tap was aimed at still happens.
+  const onOutsideTap = (event: { target?: unknown }) => {
+    if (!event || !event.target) return;
+    const field = focusedElement(doc.activeElement as FocusTarget);
+    if (!canHoldKeyboard(field, win.unNative, doc.body, root)) return;
+    // A hop into another field: the native press moves focus and the
+    // keyboard follows it. Blurring first would put the keys down only to
+    // raise them again.
+    if (canHoldKeyboard(event.target as FocusTarget, win.unNative, doc.body, root)) return;
+    if (!tapOutsideField(event.target, field)) return;
+    try { field?.blur?.(); } catch { /* a field that refuses keeps the keys */ }
+  };
+  doc.addEventListener('pointerdown', onOutsideTap, quiet);
+  doc.addEventListener('touchstart', onOutsideTap, quiet);
   apply();
   return apply;
 }
