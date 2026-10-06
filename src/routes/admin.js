@@ -333,6 +333,10 @@ function adminRoutes(config) {
       const [standings, { rows }] = await Promise.all([computeStandings(pool, { seasonId: null }), pool.query(
         `SELECT u.id, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.app_quota_requested_at, u.created_at,
                 u.daily_limit_cents, u.weekly_limit_cents, u.usernode_pubkey,
+                -- #3938: the podium flag the list's inline switch reads and
+                -- flips; the same column the v4 toggle-exclude-podium route
+                -- updates.
+                u.exclude_podium,
                 EXISTS (
                   SELECT 1 FROM user_social_identities identity
                    WHERE identity.user_id = u.id
