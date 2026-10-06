@@ -33,8 +33,12 @@ export const myStandingStore = createStore({
   status: 'idle',
   ranking: null,
   breakdown: null,
-  /** Challenge points credited to the viewer that the standings do not show yet. */
-  pending: 0,
+  /**
+   * The viewer's earned challenge points for the season, summed from the
+   * ledger. Null when the read failed or has not happened: an unknown sum
+   * must never be read as 0, which would look like agreement.
+   */
+  ledger: null,
   revealed: false,
 });
 
@@ -87,8 +91,17 @@ export function standingView(state) {
   if (state.status !== 'ready' || !state.ranking) return null;
   const r = state.ranking;
   const points = Number(r.total_points || 0);
-  const pending = standingIsEmpty(r) ? Number(state.pending || 0) : 0;
-  if (standingIsEmpty(r) && pending <= 0) return null;
+  // Compare the standings total against the earned ledger whenever the sum
+  // is known, in either direction: the standings move on the snapshot timer
+  // while points are credited at once, and the standings also carry points
+  // challenge rewards do not (block scores at events). A difference smaller
+  // than a whole point counts as agreement — the standings round block
+  // scores to two decimals, the ledger is whole points — so compare at
+  // whole-point precision and never draw a nonsense "0 pts" line. An unread
+  // sum is null, and the card stays silent about a gap rather than guessing.
+  const ledger = typeof state.ledger === 'number' && Number.isFinite(state.ledger) ? state.ledger : null;
+  const gap = ledger === null || Math.abs(ledger - points) < 1 ? 0 : Math.round(ledger - points);
+  if (standingIsEmpty(r) && !gap) return null;
   return {
     season: r.season_name || 'This season',
     sub: r.total_participants
@@ -96,7 +109,11 @@ export function standingView(state) {
       : 'Your standing',
     rank: r.rank ? `#${Number(r.rank)}` : '–',
     detail: `${points.toLocaleString()} pts · you`,
-    pending: pending > 0 ? `${pending.toLocaleString()} pts earned, not in the standings yet` : null,
+    pending: gap > 0
+      ? `${gap.toLocaleString()} pts earned, not in the standings yet`
+      : gap < 0
+        ? `${(-gap).toLocaleString()} pts in the standings, not from challenge rewards`
+        : null,
     note: STANDINGS_UPDATE_NOTE,
     breakdown: breakdownRows(state.breakdown).map((row, i) => ({
       key: `${row.label}:${i}`,
@@ -119,23 +136,26 @@ const MyStanding = {
         fetchData('/challenges-api/me/breakdown?season_id=active&include_activity=0&include_progress=0')
           .catch(() => null),
       ]);
-      // Only when the standings have nothing for the viewer: ask the ledger
-      // whether challenge points are waiting for the next snapshot. An
-      // existing read, scoped to the season the ranking resolved.
-      let pending = 0;
-      if (ranking && standingIsEmpty(ranking) && ranking.season_id) {
+      // Always read the ledger alongside the ranking, scoped to the season
+      // the ranking resolved: comparing the two totals is what lets the card
+      // say which side a difference sits on, whichever way it goes. The read
+      // stays sequential — the season id comes from the ranking response.
+      let ledger = null;
+      if (ranking && ranking.season_id) {
         const challenges = await fetchData(
           `/challenges-api/challenges?season_id=${encodeURIComponent(ranking.season_id)}`
         ).catch(() => null);
-        pending = ledgerPoints(challenges);
+        // A failed read is null, never 0: an unread sum must not look like
+        // agreement between the two totals.
+        if (challenges) ledger = ledgerPoints(challenges);
       }
       if (token !== MyStanding._token) return;
-      myStandingStore.set({ status: 'ready', ranking, breakdown, pending, revealed: readRevealed() });
+      myStandingStore.set({ status: 'ready', ranking, breakdown, ledger, revealed: readRevealed() });
     } catch (_) {
       if (token !== MyStanding._token) return;
       // Signed out (401), no season, or a network fault: the card is an
       // addition to the tab, so it simply is not drawn.
-      myStandingStore.set({ status: 'none', ranking: null, breakdown: null, pending: 0 });
+      myStandingStore.set({ status: 'none', ranking: null, breakdown: null, ledger: null });
     }
   },
 

@@ -28,6 +28,10 @@ type StandingView = {
   sub: string;
   rank: string;
   detail: string;
+  /** Either direction of the gap between the standings total and the earned
+   * challenge points: "earned, not in the standings yet" when the ledger is
+   * ahead, "in the standings, not from challenge rewards" when the standings
+   * are. Null when the two agree or the ledger sum is unknown. */
   pending: string | null;
   note: string;
   breakdown: { key: string; label: string; points: string }[];
