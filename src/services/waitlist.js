@@ -233,6 +233,39 @@ async function getSignupByEmail(pool, email) {
   return rows[0] || null;
 }
 
+// What a person told us they wanted to build, from their own waitlist row:
+// the stage-2 survey's free-text answer to "What would its own app do that
+// those tools can't?" (answers.group.need — waitlist-questions.js, capped
+// at 800 characters). The first-session make screen opens its description
+// box with it, so their first project starts from their own words. Read
+// fresh every time; nothing is copied or saved anywhere else.
+//
+// Accounts are pointed at their row at registration (linkUserByEmail), but
+// some rows predate that linkage, so the read falls back to the email —
+// and only to a row NO account is linked to. email is UNIQUE, so the
+// fallback matches at most one row, and the `linked_user_id IS NULL` guard
+// means a row linked to a different account is never read. An account with
+// no email (users.email is nullable) is matched on linked_user_id alone:
+// `email = NULL` is never true, so a null $2 simply matches nothing there.
+// Returns the trimmed answer, or null when there is no row, no answer, or
+// nothing but whitespace.
+async function waitlistIdeaFor(pool, { userId = null, email = null } = {}) {
+  const normalized = normalizeEmail(email);
+  if (userId == null && !normalized) return null;
+  const { rows } = await pool.query(
+    `SELECT answers
+       FROM waitlist_signups
+      WHERE linked_user_id = $1
+         OR (linked_user_id IS NULL AND email = $2)
+      LIMIT 1`,
+    [userId, normalized]
+  );
+  const need = rows[0] && rows[0].answers && typeof rows[0].answers === 'object'
+    ? rows[0].answers.group?.need
+    : null;
+  return typeof need === 'string' && need.trim() ? need.trim() : null;
+}
+
 // How long a just-issued code stays reusable. Mirrors
 // OTP_REUSE_WINDOW_SECONDS in services/email-signup.js, which solved this
 // exact bug class for the account OTP flow.
@@ -487,6 +520,7 @@ module.exports = {
   joinWaitlist,
   getSignupByMoreToken,
   getSignupByEmail,
+  waitlistIdeaFor,
   hasReusableCode,
   confirmSignupByMoreToken,
   issueVerificationCode,

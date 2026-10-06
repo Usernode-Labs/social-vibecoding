@@ -7,6 +7,10 @@
 // file is the HTTP around them.
 //
 //   GET  /api/me/join-suggestions          what the join screen lists
+//   GET  /api/me/waitlist-idea             the signed-in person's own
+//                                          waitlist idea (the stage-2
+//                                          survey's free-text answer), for
+//                                          the make screen's prefill
 //   POST /api/me/communities               answer it: { join: [slug] }
 //   POST /api/me/first-session/started     "What do you want to make?", asked
 //                                          in its place, was put to them
@@ -35,6 +39,7 @@ const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const onboarding = require('../services/onboarding');
 const firstSession = require('../services/first-session');
+const waitlist = require('../services/waitlist');
 const { acceptInvite } = require('../services/collab-invites');
 const challengeScorer = require('../services/topochain/challenge-scorer');
 const { drainGuard } = require('../services/lifecycle');
@@ -60,6 +65,27 @@ function onboardingRoutes(config) {
       res.json({ communities: list });
     } catch (err) {
       log.error('onboarding', 'join suggestions failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // What they told us on the waitlist: the signed-in person's own row's
+  // stage-2 survey answer (services/waitlist.js, waitlistIdeaFor), which
+  // the make screen opens its description box with. A plain GET like
+  // join-suggestions above — no drainGuard and no sameOriginBrowserOnly,
+  // which guard writes only. req.user carries no email, so it is read off
+  // the account first; the service falls back to it only for a waitlist
+  // row no account is linked to.
+  router.get('/api/me/waitlist-idea', async (req, res) => {
+    try {
+      const { rows } = await pool.query('SELECT email FROM users WHERE id = $1', [req.user.id]);
+      const idea = await waitlist.waitlistIdeaFor(pool, {
+        userId: req.user.id,
+        email: rows[0] ? rows[0].email : null,
+      });
+      res.json({ idea });
+    } catch (err) {
+      log.error('onboarding', 'waitlist idea failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

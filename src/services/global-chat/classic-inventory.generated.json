@@ -7628,6 +7628,21 @@
     },
     {
       "source": "src/routes/onboarding.js",
+      "method": "GET",
+      "path": "/api/me/waitlist-idea",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.get.me.waitlist.idea.f9d299c0",
+      "domain": "apps",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps"
+    },
+    {
+      "source": "src/routes/onboarding.js",
       "method": "POST",
       "path": "/api/me/first-session/started",
       "expression": null,

@@ -142,6 +142,27 @@ export function MakeScreen({ who, onMade, onLookAround }: {
   // The caret for a hardware keyboard; on a phone the first tap raises the
   // keys (without iOS's pan: lib/keyboard-surface.ts takes that tap).
   useEffect(() => { briefRef.current?.focus({ preventScroll: true }); }, []);
+  // What they told us on the waitlist, already in the box (GET
+  // /api/me/waitlist-idea: their own row's stage-2 survey answer). Set only
+  // while the brief is still empty, so a person who has picked an example
+  // or typed by the time the answer lands keeps their words — and it never
+  // masquerades as an example: `picked` stays null, so no chip is marked
+  // and "Make it" sends just the brief. A failed fetch is silent: the
+  // screen opens empty, as it does today.
+  useEffect(() => {
+    let live = true;
+    void (async () => {
+      try {
+        const res = await fetch('/api/me/waitlist-idea', { credentials: 'same-origin' });
+        const data = res.ok ? await res.json().catch(() => null) : null;
+        const idea = data && typeof data.idea === 'string' ? data.idea : '';
+        if (live && idea) {
+          setBrief((prev) => (prev.trim() ? prev : `You said on the waitlist you want to build: ${idea}`));
+        }
+      } catch { /* the screen opens empty, as it does today */ }
+    })();
+    return () => { live = false; };
+  }, []);
   // Taps on the fields without the pan, and the focused field (with Make it
   // when they fit) revealed inside the scroller once the keys are up.
   useKeyboardSurface(scrollerRef);

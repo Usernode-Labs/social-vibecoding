@@ -318,6 +318,169 @@ test('the make screen sends the device\'s time zone with Make it, so the sketch\
   assert.match(read(`${DIR}/make.tsx`), /from: 'first-session',\s+\/\/[^\n]*\n\s+\.\.\.\(timeZone \? \{ timeZone \} : \{\}\),/);
 });
 
+// The waitlist idea: what they told us on the stage-2 survey, already in
+// the box when the make screen opens.
+
+test('waitlistIdeaFor: their own row\'s stage-2 answer, trimmed; the email fallback only for a row no account is linked to', async () => {
+  const waitlist = require('../src/services/waitlist');
+  // The linked row's answer comes back trimmed.
+  let pool = fakePool([[{ answers: { group: { need: '  A tracker for our run club.  ' } } }]]);
+  assert.equal(await waitlist.waitlistIdeaFor(pool, { userId: 7, email: 'maya@example.com' }), 'A tracker for our run club.');
+  assert.deepEqual(pool.calls[0].params, [7, 'maya@example.com']);
+  // The email fallback is in the query, guarded to rows NO account is
+  // linked to: a row linked to a different account is never read.
+  assert.match(pool.calls[0].sql, /WHERE linked_user_id = \$1\s+OR \(linked_user_id IS NULL AND email = \$2\)\s+LIMIT 1/);
+  // An account with no email is matched on linked_user_id alone.
+  pool = fakePool([[{ answers: { group: { need: 'A tracker for our run club.' } } }]]);
+  assert.equal(await waitlist.waitlistIdeaFor(pool, { userId: 7, email: null }), 'A tracker for our run club.');
+  assert.deepEqual(pool.calls[0].params, [7, null]);
+  // Nothing to read from: no query at all.
+  pool = fakePool([]);
+  assert.equal(await waitlist.waitlistIdeaFor(pool, { userId: null, email: null }), null);
+  assert.equal(pool.calls.length, 0);
+  // No row, a row without the answer, an empty answer, whitespace only.
+  pool = fakePool([[], [{ answers: null }], [{ answers: {} }], [{ answers: { group: {} } }],
+    [{ answers: { group: { need: '' } } }], [{ answers: { group: { need: '   ' } } }]]);
+  for (let i = 0; i < 6; i += 1) {
+    assert.equal(await waitlist.waitlistIdeaFor(pool, { userId: 7, email: 'maya@example.com' }), null, `case ${i}`);
+  }
+  // A non-string need (a corrupted row) is null, not whatever it holds.
+  assert.equal(await waitlist.waitlistIdeaFor(fakePool([[{ answers: { group: { need: 42 } } }]]), { userId: 7, email: null }), null);
+});
+
+test('the waitlist idea reaches the make screen: a me-scoped read, and a prefill that never overwrites', () => {
+  const routes = read('src/routes/onboarding.js');
+  assert.match(routes, /const waitlist = require\('\.\.\/services\/waitlist'\);/);
+  assert.match(routes, /router\.get\('\/api\/me\/waitlist-idea', async \(req, res\) => \{/);
+  assert.match(routes, /waitlist\.waitlistIdeaFor\(pool, \{\s+userId: req\.user\.id,\s+email: rows\[0\] \? rows\[0\]\.email : null,\s+\}\);/);
+  assert.match(routes, /res\.json\(\{ idea \}\);/);
+  // The file's own contract for a failure.
+  assert.match(routes, /log\.error\('onboarding', 'waitlist idea failed', \{ message: err\.message \}\);\s+res\.status\(500\)\.json\(\{ error: 'Internal server error' \}\);\s+\}\s+\}\);\s*\n\s*\/\/ The first session's question/);
+  const src = read(`${DIR}/make.tsx`);
+  assert.match(src, /fetch\('\/api\/me\/waitlist-idea', \{ credentials: 'same-origin' \}\)/);
+  // The functional update is the guard: their words win, the prefill is
+  // dropped, and it never masquerades as an example (`picked` untouched).
+  assert.match(src, /setBrief\(\(prev\) => \(prev\.trim\(\) \? prev : `You said on the waitlist you want to build: \$\{idea\}`\)\);/);
+  // A failed fetch is silent.
+  assert.match(src, /const data = res\.ok \? await res\.json\(\)\.catch\(\(\) => null\) : null;/);
+});
+
+test('the waitlist idea prefills the brief, and only while it is still empty', async () => {
+  const real = require(require.resolve('react', { paths: [path.join(ROOT, 'frontend')] }));
+  const find = (node, is, out = []) => {
+    if (!node || typeof node !== 'object') return out;
+    if (Array.isArray(node)) { node.forEach((n) => find(n, is, out)); return out; }
+    if (node.props && is(node)) out.push(node);
+    if (node.props) find(node.props.children, is, out);
+    return out;
+  };
+  const brief = (tree) => find(tree, (n) => n.type === 'textarea')[0];
+  const chips = (tree) => find(tree, (n) => n.props['data-first-session-example'] !== undefined);
+  const raf = globalThis.requestAnimationFrame;
+  const caf = globalThis.cancelAnimationFrame;
+  const realFetch = globalThis.fetch;
+  const tick = () => new Promise((r) => setImmediate(r));
+  // A React whose effects are collected to run by hand — renderToStaticMarkup
+  // never runs them, and the executed test above drops them.
+  const withStub = () => {
+    const slots = [];
+    const effects = [];
+    let at = 0;
+    const React = {
+      ...real,
+      useState(init) {
+        const k = at++;
+        if (!(k in slots)) slots[k] = typeof init === 'function' ? init() : init;
+        return [slots[k], (v) => { slots[k] = typeof v === 'function' ? v(slots[k]) : v; }];
+      },
+      useRef(init) { const k = at++; if (!(k in slots)) slots[k] = { current: init }; return slots[k]; },
+      useCallback(fn) { at++; return fn; },
+      useEffect(fn) { effects.push(fn); },
+      useLayoutEffect() { at++; },
+    };
+    const { MakeScreen } = loadTsx(`${DIR}/make.tsx`, { stubs: { react: React } });
+    const draw = () => { at = 0; return MakeScreen({ who: 'Jordan', onMade() {}, onLookAround() {} }); };
+    return { draw, effects };
+  };
+  const runEffects = (effects) => { for (const fn of effects) fn(); };
+  try {
+    // The arrived-in effect asks the frame loop; Node has none.
+    globalThis.requestAnimationFrame = (fn) => setTimeout(fn, 0);
+    globalThis.cancelAnimationFrame = (id) => clearTimeout(id);
+
+    // The answer lands on an empty box: it is prefilled, and no example
+    // chip is marked by it.
+    globalThis.fetch = async () => ({ ok: true, json: async () => ({ idea: 'A tracker for our run club.' }) });
+    let s = withStub();
+    let tree = s.draw();
+    assert.equal(brief(tree).props.value, '', 'it opens empty');
+    runEffects(s.effects);
+    await tick();
+    tree = s.draw();
+    assert.equal(brief(tree).props.value, 'You said on the waitlist you want to build: A tracker for our run club.');
+    assert.equal(chips(tree).filter((c) => c.props['aria-pressed']).length, 0, 'no chip is marked: not an example');
+
+    // An example picked before the answer arrives: the example's words
+    // stay, the prefill is dropped.
+    let release;
+    globalThis.fetch = () => new Promise((r) => { release = r; });
+    s = withStub();
+    tree = s.draw();
+    runEffects(s.effects);
+    chips(tree)[0].props.onClick();
+    tree = s.draw();
+    const chosen = brief(tree).props.value;
+    assert.ok(chosen, 'the example filled the brief');
+    release({ ok: true, json: async () => ({ idea: 'A tracker for our run club.' }) });
+    await tick();
+    tree = s.draw();
+    assert.equal(brief(tree).props.value, chosen, 'the prefill is dropped, their words stay');
+
+    // Words typed before the answer arrives win the same way.
+    globalThis.fetch = () => new Promise((r) => { release = r; });
+    s = withStub();
+    tree = s.draw();
+    runEffects(s.effects);
+    brief(tree).props.onChange({ target: { value: 'Our little book club, meeting monthly' } });
+    release({ ok: true, json: async () => ({ idea: 'A tracker for our run club.' }) });
+    await tick();
+    tree = s.draw();
+    assert.equal(brief(tree).props.value, 'Our little book club, meeting monthly');
+
+    // A non-OK response, and a fetch that fails, are silent: the box opens
+    // empty, as it does today.
+    globalThis.fetch = async () => ({ ok: false, json: async () => ({ error: 'no' }) });
+    s = withStub();
+    tree = s.draw();
+    runEffects(s.effects);
+    await tick();
+    tree = s.draw();
+    assert.equal(brief(tree).props.value, '');
+    globalThis.fetch = async () => { throw new Error('down'); };
+    s = withStub();
+    tree = s.draw();
+    runEffects(s.effects);
+    await tick();
+    tree = s.draw();
+    assert.equal(brief(tree).props.value, '');
+  } finally {
+    globalThis.requestAnimationFrame = raf;
+    globalThis.cancelAnimationFrame = caf;
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('with no answer yet the static render is byte-for-byte today\'s: an empty box with its placeholder', () => {
+  // Effects never run under renderToStaticMarkup, so this is the first
+  // frame: the declared checks' markup, unchanged.
+  const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Jordan', onMade() {}, onLookAround() {} });
+  const tag = /<textarea[^>]*>/.exec(html)[0];
+  assert.match(tag, /id="first-session-brief"/);
+  assert.match(tag, /placeholder="A tracker for our weekly miles…"/);
+  assert.match(html, /<\/textarea>/);
+  assert.equal(html.indexOf('You said on the waitlist'), -1, 'nothing prefilled before the answer lands');
+});
+
 test('after Make it: the build\'s step, then one invite, and the second button says where it goes', () => {
   const made = loadTsx(`${DIR}/made.tsx`);
   assert.equal(made.buildLine({ step: 2, of: 7, stepName: 'Read the description' }, 'running'), 'Step 2 of 7: Read the description');
