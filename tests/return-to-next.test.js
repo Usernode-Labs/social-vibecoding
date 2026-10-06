@@ -339,7 +339,12 @@ test('Suggest an improvement: Return in the title goes on to the description; ‚å
   });
   const html = renderToHtml(createElement(mod.FeedbackDialog));
   assert.deepEqual(hints(html), [['feedback-title', 'next'], ['feedback-text', null]]);
-  assert.match(read('frontend/src/features/dialogs/feedback.tsx'), /<div id="feedback-form" onKeyDown=\{returnKeyHandler\(\)\}>/);
+  // The dialog scrolls its fields internally with Cancel / Post request
+  // pinned (see #4033): the card takes the kit's scroll variant, the form
+  // wrapper flexes inside it, and the button row follows the scroll body.
+  assert.match(read('frontend/src/features/dialogs/feedback.tsx'), /<DialogCard size="sm" scroll>/);
+  assert.match(read('frontend/src/features/dialogs/feedback.tsx'), /<div id="feedback-form" className="flex-1 min-h-0 flex flex-col" onKeyDown=\{returnKeyHandler\(\)\}>/);
+  assert.match(read('frontend/src/features/dialogs/feedback.tsx'), /<div className="flex-1 overflow-y-auto -mx-2 px-2">[\s\S]*?<div className="flex gap-3 mt-4">/);
   const controller = read('frontend/src/features/dialogs/feedback-controller.js');
   assert.match(controller, /feedbackTitle\.addEventListener\('keydown', \(e\) => \{\s+if \(e\.key === 'Enter' && \(e\.metaKey \|\| e\.ctrlKey\)\)/);
   assert.match(controller, /feedbackText\.addEventListener\('keydown', \(e\) => \{\s+if \(e\.key === 'Enter' && \(e\.metaKey \|\| e\.ctrlKey\)\)/);

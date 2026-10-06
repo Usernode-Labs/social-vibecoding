@@ -74,12 +74,12 @@ export function FeedbackDialog() {
       ref={dialog.rootRef}
       {...dialog.backdropProps}
     >
-      <DialogCard size="sm">
+      <DialogCard size="sm" scroll>
         {/* #3907: Return in the title goes on to the description, where it is
             a new line (the iOS keyboard's chevrons are gone). A handler, not
             markup: nothing here is written, so the controller still owns
             every node inside. ⌘/Ctrl+Enter still posts, from the controller. */}
-        <div id="feedback-form" onKeyDown={returnKeyHandler()}>
+        <div id="feedback-form" className="flex-1 min-h-0 flex flex-col" onKeyDown={returnKeyHandler()}>
         {/* SUGGEST AN IMPROVEMENT, from every way in. It was "Send
             feedback", then "Ask for a change" from the hub's ⋯ (QA
             2026-09-24) and from every way in (UI overhaul); people read
@@ -94,6 +94,16 @@ export function FeedbackDialog() {
         <p className="mt-0.5 mb-4 text-sm text-zinc-600 dark:text-zinc-400">
           Members can see it, vote on it and pick it up.
         </p>
+        {/*
+            The scroll body: everything from the destination picker to the
+            status line scrolls inside the capped card, while the heading
+            above and the Cancel / Post request row below stay put — the
+            same internally-scrolling pattern as the App secrets dialog,
+            with the same guttering (-mx-2 px-2). #feedback-form is
+            flex-col min-h-0, so this flex-1 body is the only thing that
+            shrinks; the button row after it keeps its natural height.
+        */}
+        <div className="flex-1 overflow-y-auto -mx-2 px-2">
         {/*
             Target toggle: file this feedback against the app being viewed
             or against the Homeroom platform. The "This app" button
@@ -370,6 +380,7 @@ export function FeedbackDialog() {
         </div>
         <div id="feedback-status" className="text-sm mt-2 hidden">
         </div>
+        </div>
         <div className="flex gap-3 mt-4">
           {/*
               The controller's success and save-for-later paths still close
@@ -391,7 +402,7 @@ export function FeedbackDialog() {
           </Button>
         </div>
         </div>
-        <section id="feedback-first-success" className="hidden" aria-labelledby="feedback-first-title" tabIndex={-1}>
+        <section id="feedback-first-success" className="hidden flex-1 min-h-0 overflow-y-auto" aria-labelledby="feedback-first-title" tabIndex={-1}>
           <h2 id="feedback-first-title" className="text-xl font-bold mb-3">
             Congratulations on your first request!
           </h2>
@@ -419,7 +430,7 @@ export function FeedbackDialog() {
             with any bounty outcome, so the notice renders empty and hidden
             for the reason #feedback-status does.
         */}
-        <section id="feedback-sent" className="hidden" aria-labelledby="feedback-sent-title" tabIndex={-1}>
+        <section id="feedback-sent" className="hidden flex-1 min-h-0 overflow-y-auto" aria-labelledby="feedback-sent-title" tabIndex={-1}>
           <h2 id="feedback-sent-title" className="text-lg font-bold mb-3">
             Request posted
           </h2>
