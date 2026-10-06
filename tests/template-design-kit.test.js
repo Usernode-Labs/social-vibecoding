@@ -16,9 +16,9 @@
 //      a card, a sentence-case section label, a 4-step type scale, and the
 //      loading, empty and error states.
 //   3. THE SCREEN uses only the kit: no hex, no stock palette, no stock
-//      size, none of the tells the benchmark's lint counts; and its
-//      leaderboard shows honest states (never "No presses yet" for a
-//      failure or while loading).
+//      size, none of the tells the benchmark's lint counts; and since
+//      #4047 it loads no data at all, so it ships no loading, empty or
+//      error state and no script of its own.
 //   4. CLAUDE.md has a "## Design" section the first build fills in.
 //
 // Only newly created repositories get this; existing apps keep what they
@@ -233,68 +233,18 @@ test('the benchmark\'s tells lint finds nothing in a new app\'s source', () => {
   assert.equal(tells.hexColours.count, 0, JSON.stringify(tells.hexColours.values));
 });
 
-// The leaderboard's script, run against a stand-in for its DOM.
-function runLeaderboard(html, fetchImpl) {
-  const els = new Map();
-  const element = (id, hidden = false) => ({
-    id, hidden, textContent: '', className: '', children: [], listeners: {},
-    addEventListener(type, fn) { this.listeners[type] = fn; },
-    replaceChildren(...kids) { this.children = kids; },
-    append(...kids) { this.children.push(...kids); },
-  });
-  for (const [, id, rest] of html.matchAll(/<\w+ id="([\w-]+)"([^>]*)>/g)) els.set(id, element(id, /\bhidden\b/.test(rest)));
-  const script = html.slice(html.lastIndexOf('<script>') + '<script>'.length, html.lastIndexOf('</script>'));
-  const context = vm.createContext({
-    window: { location: { search: '?token=t' } },
-    document: {
-      getElementById: (id) => els.get(id) || null,
-      createElement: (tag) => ({ ...element(null), tag }),
-    },
-    URLSearchParams,
-    fetch: fetchImpl,
-    console,
-  });
-  vm.runInContext(script, context);
-  const shown = () => ['leaderboard-loading', 'leaderboard', 'leaderboard-empty', 'leaderboard-error'].filter((id) => !els.get(id).hidden);
-  return { els, shown };
-}
-const settle = () => new Promise((resolve) => setImmediate(resolve));
-const ok = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
-
-test('the leaderboard shows honest states: loading, then the list, empty only when it is, error on failure', async () => {
+// The leaderboard's honest-states test (#3737) ran the demo script against
+// a stand-in DOM. #4047 removed the Press! demo and with it the screen's
+// only data load, so there is nothing left to run: the screen is static
+// markup. The state components stay in the kit's stylesheet (pinned above)
+// for the real app's first screens, and CLAUDE.md's design rules and the
+// platform conventions carry the honest-states requirement to them.
+test('the starter screen loads no data, so it ships no states and no script', () => {
   const html = file(generate(), 'public/index.html');
-  // Before anything answers: the skeleton, nothing else.
-  let pending;
-  let page = runLeaderboard(html, () => new Promise((resolve) => { pending = resolve; }));
-  assert.deepEqual(page.shown(), ['leaderboard-loading'], 'loading first, never a blank or an empty state');
-  pending({ ok: true, status: 200, json: async () => ({ leaderboard: [] }) });
-  await settle();
-  assert.deepEqual(page.shown(), ['leaderboard-empty'], 'empty once it loaded and found nothing');
-
-  // A failure is the error state, never "No presses yet".
-  for (const failing of [() => Promise.resolve({ ok: false, status: 500, json: async () => ({ error: 'Internal Server Error' }) }),
-    () => Promise.reject(new TypeError('Failed to fetch'))]) {
-    page = runLeaderboard(html, failing);
-    await settle();
-    assert.deepEqual(page.shown(), ['leaderboard-error']);
-  }
-  assert.match(html, /<div id="leaderboard-error"[\s\S]*?Couldn't load the leaderboard[\s\S]*?Pressing still works[\s\S]*?>Retry<\/button>/,
-    'what failed, what still works, and Retry');
-
-  // Retry: the skeleton again, then the data.
-  let calls = 0;
-  page = runLeaderboard(html, () => (calls++ === 0 ? Promise.reject(new Error('offline'))
-    : ok({ leaderboard: [{ username: '<img src=x onerror=alert(1)>', presses: '2' }] })));
-  await settle();
-  assert.deepEqual(page.shown(), ['leaderboard-error']);
-  page.els.get('leaderboard-retry').listeners.click();
-  assert.deepEqual(page.shown(), ['leaderboard-loading']);
-  await settle();
-  assert.deepEqual(page.shown(), ['leaderboard']);
-  const [row] = page.els.get('leaderboard').children;
-  assert.equal(row.children[0].textContent, '1. <img src=x onerror=alert(1)>', 'a name is text, never HTML');
-  assert.equal(page.els.get('count').textContent, '2 presses so far');
-  assert.doesNotMatch(html.slice(html.lastIndexOf('<script>')), /innerHTML/);
+  const body = html.slice(html.indexOf('<body'));
+  assert.doesNotMatch(body, /<script/, 'the body is static markup only; the head keeps the bridge, theme and forwarder scripts');
+  assert.doesNotMatch(body, /fetch\(|leaderboard|press-btn|Press!/, 'no demo endpoints, ids or fetching left');
+  assert.match(body, /usernode-starter-notice@1/, 'the sentinel block survives');
 });
 
 // ── 4. CLAUDE.md's design record ─────────────────────────────────────────

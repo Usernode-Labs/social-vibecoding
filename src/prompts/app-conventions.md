@@ -3207,8 +3207,9 @@ feature):
 ## Starter-template notice — meant to be deleted
 
 Freshly scaffolded apps ship `public/index.html` as a template welcome
-screen — a "Starter template" hero and a "What's already working" card —
-wrapped in sentinel comments:
+screen — a "Starter template" hero with the app's thumbnail tile (the
+icon the app wears on Home) and the plain-English note on how the app is
+being built (ask Homeroom bot) — wrapped in sentinel comments:
 
 - opens with `<!-- usernode-starter-notice@1 … -->`
 - closes with `<!-- /usernode-starter-notice@1 -->`
@@ -3217,14 +3218,16 @@ Unlike the dev-console forwarder block above, this one is **meant to be
 deleted**: the whole screen is placeholder content, not product intent.
 When the user asks for their first real feature, replace the template
 screen rather than building alongside it — remove the sentinel block
-(both comments and everything between them), remove or repurpose the
-"Try the example" card and its demo endpoints (`/api/press`,
-`/api/leaderboard`, the `presses` table) as appropriate, and rewrite the
-scaffolded `README.md` to describe the actual app. Keep the dev-console
-forwarder `<script>` when rewriting the HTML, and the bridge `<script>`
-with the theme `<script>` right after it: the first real version keeps the
-template's light and dark looks and follows the viewer's Homeroom theme
-(see "New apps: a light and a dark look, following the platform").
+(both comments and everything between them), and rewrite the scaffolded
+`README.md` to describe the actual app. Apps created before October 2026
+still carry the older screen, which also had a "What's already working"
+list and a "Try the example" demo: remove that card and its demo
+endpoints (`/api/press`, `/api/leaderboard`, the `presses` table) there
+too. Keep the dev-console forwarder `<script>` when rewriting the HTML,
+and the bridge `<script>` with the theme `<script>` right after it: the
+first real version keeps the template's light and dark looks and follows
+the viewer's Homeroom theme (see "New apps: a light and a dark look,
+following the platform").
 
 ## Platform-level problems & missing capabilities: escalate, don't file workarounds
 
