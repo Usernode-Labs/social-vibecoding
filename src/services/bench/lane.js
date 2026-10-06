@@ -59,6 +59,7 @@ const catalog = require('./catalog');
 const runner = require('./runner');
 const dmSim = require('./dm-sim');
 const taste = require('./taste');
+const progress = require('./progress');
 const snapshots = require('../homeroom-bot-snapshots');
 
 const MAX_CONCURRENCY = 8;
@@ -168,7 +169,10 @@ function attemptsFor(stage, { repeats, repeatStages = null }) {
  */
 const DEFAULT_STAGES = Object.freeze(['triage', 'dm']);
 
-function launcherDefaults({ suites: list = [], coreSuiteId = null } = {}) {
+function launcherDefaults({ suites: all = [], coreSuiteId = null } = {}) {
+  // The App bench studio's suite is launched from the studio, never as the
+  // launcher's default (services/bench/studio.js).
+  const list = all.filter((s) => s.name !== require('./studio').SUITE_NAME);
   const pick = list.find((s) => s.id === coreSuiteId) || list.find((s) => s.frozen_at) || list[0] || null;
   // Ticked by default: the cheap stages (triage, and DM, which is triage
   // turns), so a first Run of every model finishes under the $50 cap. Builds,
@@ -469,6 +473,51 @@ async function cancelRun(pool, runId, deps = {}) {
   return { ok: true };
 }
 
+/**
+ * Cancel one trial (the studio's cancel): a pending one is marked cancelled
+ * at once; a running one has its turn stopped and starts nothing more
+ * (executeTrial's skipCheck), and is recorded cancelled when it ends.
+ * Resolves { ok, status } or a refusal.
+ */
+async function cancelTrial(pool, trialId, deps = {}) {
+  const id = Number(trialId);
+  const { rows: [pending] } = await pool.query(
+    `UPDATE bench_trials SET status = 'cancelled', finished_at = NOW(), error = 'cancelled by an admin'
+      WHERE id = $1 AND status IN ('pending', 'awaiting') RETURNING id`,
+    [id],
+  );
+  if (pending) { wake(); return { ok: true, status: 'cancelled' }; }
+  const f = inFlight.get(id);
+  if (!f) {
+    const { rows: [t] } = await pool.query('SELECT status FROM bench_trials WHERE id = $1', [id]);
+    if (!t) return httpError(404, 'No such trial');
+    return httpError(409, t.status === 'running' ? 'That trial is running on another process' : `That trial is already ${t.status}`);
+  }
+  f.cancelled = true;
+  if (f.sessionId) {
+    const worker = deps.worker || require('../worker');
+    Promise.resolve(worker.stopTurn(f.sessionId)).catch(() => {});
+  }
+  log.info('bench', 'Stopping one trial', { trialId: id });
+  return { ok: true, status: 'stopping' };
+}
+
+/**
+ * A run with work added to it after it ended (a re-run trial, a reference
+ * build handed in): back to `running`, so the lane picks the new trials up.
+ * A cancelled run stays cancelled. Resolves whether the run is open.
+ */
+async function reopenRun(pool, runId) {
+  await pool.query(
+    `UPDATE bench_runs SET status = 'running', finished_at = NULL
+      WHERE id = $1 AND status IN ('done', 'capped')`,
+    [Number(runId)],
+  );
+  const { rows: [open] } = await pool.query('SELECT status FROM bench_runs WHERE id = $1', [Number(runId)]);
+  if (open && ['queued', 'running'].includes(open.status)) { wake(); return true; }
+  return false;
+}
+
 // ── Running a trial ──────────────────────────────────────────────────────
 
 function liveDeps(deps = {}) {
@@ -490,14 +539,48 @@ function liveDeps(deps = {}) {
 async function loadTrialContext(pool, trialId) {
   const { rows: [row] } = await pool.query(
     `SELECT tr.*, t.stage, t.snapshot_id, t.reference, t.tags, t.issue_number AS task_issue,
-            a.id AS app_id, a.slug AS app_slug, a.name AS app_name, a.repo_url, a.self_hosted
+            a.id AS app_id, a.slug AS app_slug, a.name AS app_name, a.repo_url, a.self_hosted,
+            r.baseline_model AS run_baseline, r.kind AS run_kind
        FROM bench_trials tr
        JOIN bench_tasks t ON t.id = tr.task_id
+       JOIN bench_runs r ON r.id = tr.run_id
        LEFT JOIN apps a ON a.id = t.app_id
       WHERE tr.id = $1`,
     [Number(trialId)],
   );
   return row || null;
+}
+
+// The studio's `today` preset (services/bench/studio.js): the live bot's own
+// model for each stage, read when the trial runs.
+const TODAY = 'today';
+
+/**
+ * What a studio trial is given beyond its task: its context pack's guidance
+ * per stage, the model of each turn of a first version, and, for a
+ * reference build, the model its session is stamped with (it runs none).
+ * Empty for every other trial.
+ */
+async function studioContext(pool, config, row, settings) {
+  const bot = require('../homeroom-bot');
+  const out = {};
+  if (row.context_pack_id) {
+    const packs = require('./packs');
+    const pack = await packs.packRow(pool, row.context_pack_id);
+    if (!pack) throw new Error('the trial\'s context pack is gone');
+    out.pack = pack;
+    out.guidance = Object.fromEntries(packs.STAGES.map((st) => [st, packs.guidanceFor(pack, st) || null]));
+  }
+  if (row.model === TODAY) {
+    out.stageModels = {
+      triage: bot.stageModel(settings, config, 'triage'),
+      spec: bot.stageModel(settings, config, 'spec'),
+      build: bot.stageModel(settings, config, 'build'),
+    };
+    if (!out.stageModels.build) throw new Error('no model is set for the bot\'s stages');
+  }
+  if (row.reference_label) out.sessionModel = row.run_baseline || catalog.BASELINE;
+  return out;
 }
 
 /** The trial's session (and branch and base), on its row as soon as they exist. */
@@ -524,6 +607,7 @@ async function executeTrial(pool, config, trialRow, deps = {}) {
   const row = await loadTrialContext(pool, trialRow.id);
   let patch;
   let user = null;
+  let watch = null;
   try {
     if (!row) throw new Error('the trial is gone');
     if (!row.app_id) throw new Error('the task\'s app is gone');
@@ -535,11 +619,25 @@ async function executeTrial(pool, config, trialRow, deps = {}) {
     const settings = await bot.readSettings(pool);
     const app = { id: row.app_id, slug: row.app_slug, name: row.app_name, repo_url: row.repo_url, self_hosted: row.self_hosted };
     const task = { id: row.task_id, stage: row.stage, reference: row.reference || {}, tags: row.tags || {} };
+    const studio = await studioContext(pool, config, row, settings);
+    const model = studio.stageModels ? studio.stageModels.build : row.model;
+    watch = progress.tracker(pool, row.id, { log });
+    const cancelled = () => !!inFlight.get(row.id)?.cancelled;
     patch = await runner.runStage({
-      pool, config, stage: row.stage, task, snapshot, model: row.model, user, app, repo,
-      trial: { id: row.id, run_id: row.run_id, attempt: row.attempt },
+      pool, config, stage: row.stage, task, snapshot, model, user, app, repo,
+      trial: {
+        id: row.id, run_id: row.run_id, attempt: row.attempt,
+        reference_label: row.reference_label || null, capture_sha: row.capture_sha || null,
+        base_sha: row.base_sha || null, build_commits: row.build_commits ?? null,
+      },
       deps: d, budgets: runner.budgetsFor(settings, app, config, row.stage),
       title: `Homeroom benchmark: run ${row.run_id}, trial ${row.id}`,
+      ...studio,
+      onStep: (name) => watch.step(name),
+      onActivity: (line) => watch.note(line),
+      // An admin's cancel of this one trial (cancelTrial): its turn is
+      // stopped there, and nothing after it starts.
+      skipCheck: async () => (cancelled() ? 'cancelled by an admin' : null),
       // Written before the turn runs: restart recovery finds the trial
       // through its session.
       onSession: async (sessionId, where) => {
@@ -548,8 +646,15 @@ async function executeTrial(pool, config, trialRow, deps = {}) {
         await noteSession(pool, row.id, sessionId, where);
       },
     });
+    const skills = watch.skills();
+    if (skills.invoked.length || skills.read.length || row.context_pack_id) {
+      patch.parsed = { ...(patch.parsed || {}), skills };
+    }
+    if (cancelled()) patch = { ...patch, status: 'cancelled', error: 'cancelled by an admin' };
   } catch (err) {
     patch = { status: 'infra_fail', error: `setup: ${err.message}` };
+  } finally {
+    if (watch) await watch.close();
   }
   return recordTrial(pool, { trialRow, row, patch, user, d });
 }
@@ -677,6 +782,7 @@ async function sweepBranches(pool, deps = {}, now = Date.now()) {
        JOIN bench_tasks t ON t.id = tr.task_id
        JOIN apps a ON a.id = t.app_id
       WHERE tr.build_branch IS NOT NULL AND tr.branch_deleted_at IS NULL
+        AND tr.kept_at IS NULL
         AND tr.finished_at < NOW() - make_interval(days => $1)
       ORDER BY tr.id LIMIT 50`,
     [BRANCH_KEEP_DAYS],
@@ -685,6 +791,35 @@ async function sweepBranches(pool, deps = {}, now = Date.now()) {
   for (const r of rows) {
     // eslint-disable-next-line no-await-in-loop
     if (await deleteBranch(pool, github, r.repo_url, r.build_branch, r.id)) n += 1;
+  }
+  // A run's shared first commits (services/bench/scaffold.js), once the run
+  // is over and they are as old as a build's branch may be: a reference
+  // built later would have nothing to start from, and its order says so.
+  const { rows: firsts } = await pool.query(
+    `SELECT sc.id, sc.branch, a.repo_url
+       FROM bench_scaffolds sc
+       JOIN bench_runs r ON r.id = sc.run_id
+       JOIN bench_tasks t ON t.id = sc.task_id
+       JOIN apps a ON a.id = t.app_id
+      WHERE sc.branch IS NOT NULL AND sc.branch_deleted_at IS NULL
+        AND r.status NOT IN ('queued', 'running')
+        AND sc.claimed_at < NOW() - make_interval(days => $1)
+      ORDER BY sc.id LIMIT 50`,
+    [BRANCH_KEEP_DAYS],
+  );
+  const bot = require('../homeroom-bot');
+  for (const r of firsts) {
+    const repo = bot.parseRepo(r.repo_url);
+    if (!repo) continue;
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      await github.deleteBenchBranch(repo.owner, repo.repo, r.branch);
+      // eslint-disable-next-line no-await-in-loop
+      await pool.query('UPDATE bench_scaffolds SET branch_deleted_at = NOW() WHERE id = $1', [r.id]);
+      n += 1;
+    } catch (err) {
+      log.warn('bench', 'Could not delete a first commit\'s branch', { branch: r.branch, err: err.message });
+    }
   }
   return n;
 }
@@ -962,6 +1097,8 @@ async function tick(pool, config, deps = {}) {
     await releaseStale(pool, settings);
     await releaseOrphaned(pool, deps).catch((err) => log.warn('bench', 'Orphaned-trial sweep failed', { err: err.message }));
     await sweepBranches(pool, deps).catch(() => {});
+    // The studio's previews: kept up for their day, then taken down.
+    await require('./studio').sweepPreviews(pool, deps).catch(() => {});
     const { rows: runs } = await pool.query(
       "SELECT * FROM bench_runs WHERE status IN ('queued', 'running') ORDER BY id",
     );
@@ -994,13 +1131,17 @@ async function tick(pool, config, deps = {}) {
         // Its next trial in order, passing over heavy ones while three of
         // its heavy trials are under way.
         const heavyNow = [...inFlight.values()].filter((f) => f.runId === run.id && f.heavy).length;
+        // A studio run builds its briefs side by side, as its launch asked
+        // (concurrency, at most the studio's own limit); any other run takes
+        // three heavy trials at a time.
+        const heavyCap = run.kind === 'studio' ? Math.min(Number(run.concurrency) || 1, MAX_IN_FLIGHT) : MAX_HEAVY_PER_RUN;
         const { rows: [next] } = await pool.query(
           `SELECT tr.id, tr.est_cost_usd::float8 AS est, t.stage
              FROM bench_trials tr JOIN bench_tasks t ON t.id = tr.task_id
             WHERE tr.run_id = $1 AND tr.status = 'pending'
               AND ($2::boolean OR NOT (t.stage = ANY($3::text[])))
             ORDER BY tr.attempt, tr.id LIMIT 1`,
-          [run.id, heavyNow < MAX_HEAVY_PER_RUN, HEAVY_STAGES],
+          [run.id, heavyNow < heavyCap, HEAVY_STAGES],
         );
         if (!next) break;
         const { rows: [money] } = await pool.query(
@@ -1008,7 +1149,9 @@ async function tick(pool, config, deps = {}) {
         );
         const running = [...inFlight.values()].filter((f) => f.runId === run.id);
         const inFlightEst = running.reduce((sum, f) => sum + (f.est || 0), 0);
-        if (!fitsCap({ spentUsd: money.spent, capUsd: money.cap, inFlightEst, nextEst: next.est || 0 })) {
+        // A trial that spends nothing on a model (a capture, a reference
+        // build's screenshots) cannot take the run past its cap.
+        if (Number(next.est) > 0 && !fitsCap({ spentUsd: money.spent, capUsd: money.cap, inFlightEst, nextEst: next.est || 0 })) {
           // Wait for what is under way, then stop the run there.
           if (!running.length) await capRun(pool, run.id);
           out.paused = out.paused || 'cap';
@@ -1141,6 +1284,11 @@ module.exports = {
   MAX_CAP_USD,
   launchRun,
   cancelRun,
+  cancelTrial,
+  reopenRun,
+  TODAY,
+  studioContext,
+  loadTrialContext,
   ORPHAN_GRACE_SECONDS,
   executeTrial,
   recordTrial,

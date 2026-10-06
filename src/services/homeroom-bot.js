@@ -1721,6 +1721,9 @@ function triageClosing(issueNumber) {
  */
 function triagePromptFor({
   seed, issueNumber, firstVersion = false, readsImages = false, decider = null, planChange = null, members = null,
+  // The App bench studio's pack guidance (services/bench/packs.js). The
+  // live bot never passes any, and then the prompt is what it always was.
+  guidance = null,
 }) {
   return [
     seed, live.screenshotNote(seed).join('\n').trim(), triagePrompt(),
@@ -1728,6 +1731,7 @@ function triagePromptFor({
     firstVersion ? membersNote(members) : null,
     firstVersion ? planChangeNote(planChange) : null,
     deciderNote(decider),
+    live.guidanceLines(guidance).join('\n').trim() || null,
     triageReference({ readsImages }), triageClosing(issueNumber),
   ].filter(Boolean).join('\n\n');
 }
@@ -5228,6 +5232,18 @@ function choicesFrom(questions, answers = []) {
 }
 
 /**
+ * Pure (B6): what a first version's build is told its creator chose, added
+ * to the plan's build note once they tap Build it: '' when the plan asked
+ * nothing. The benchmark adds the same line for a creator who taps Build it
+ * without changing anything (services/bench/runner.js firstVersionStage).
+ */
+function creatorChoiceNote(chosen) {
+  return Array.isArray(chosen) && chosen.length
+    ? `\n\nThe creator chose, from the plan they were shown:\n${chosen.map((c) => `- ${c.question} ${c.answer}`).join('\n')}`
+    : '';
+}
+
+/**
  * A first version's ready verdict waits for its creator's Build it, under the
  * plan sent to them. Resolves true when it waits, false when the plan could
  * not be shown to them (it is then built at once, as before plans). Never
@@ -5270,9 +5286,7 @@ async function goAhead(pool, { runId, answers = [] }) {
   );
   if (!run) return { ok: false, why: 'gone' };
   const chosen = choicesFrom(run.plan?.questions, answers);
-  const note = chosen.length
-    ? `\n\nThe creator chose, from the plan they were shown:\n${chosen.map((c) => `- ${c.question} ${c.answer}`).join('\n')}`
-    : '';
+  const note = creatorChoiceNote(chosen);
   const { rows: [went] } = await pool.query(
     `UPDATE homeroom_bot_runs
         SET awaiting_go_at = NULL, live_build_waiting_at = NOW(), build_note = CONCAT(build_note, $2::text),
@@ -7422,6 +7436,7 @@ module.exports = {
   PLAN_WAIT_DAYS,
   planFor,
   choicesFrom,
+  creatorChoiceNote,
   awaitGo,
   goAhead,
   retireWaitingPlans,

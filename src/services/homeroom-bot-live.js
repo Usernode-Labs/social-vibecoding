@@ -307,6 +307,35 @@ function screenshotNote(seed) {
   ];
 }
 
+// The App bench studio's context packs (services/bench/packs.js): guidance
+// an admin adds to the bot's first-version prompts on the benchmark, said
+// under one heading in the triage's, the spec's and the build's. Production
+// never passes any, and then nothing is added: the prompts are byte for byte
+// what they are without this.
+function guidanceLines(guidance) {
+  const text = String(guidance || '').trim();
+  if (!text) return [];
+  return [
+    '',
+    '==== ADDITIONAL GUIDANCE FOR THIS BUILD (from the platform; follow it where it applies) ====',
+    '',
+    text,
+    '',
+    '==== END ADDITIONAL GUIDANCE ====',
+  ];
+}
+
+// A turn's progress lines to its own record (lastActivity) and, for a
+// benchmark trial, to the trial's watch as well (services/bench/progress.js).
+// The caller's listener can never break the turn.
+function teeProgress(progress, onProgress) {
+  if (typeof onProgress !== 'function') return progress.note;
+  return (line) => {
+    progress.note(line);
+    try { onProgress(line); } catch { /* a watcher never stops a turn */ }
+  };
+}
+
 // #3737: `firstVersion` swaps the design brief for a first version's own
 // (services/prompts.js FIRST_VERSION_SPEC_DESIGN_BRIEF); nothing else in the
 // spec prompt changes.
@@ -314,8 +343,10 @@ function screenshotNote(seed) {
 // and diagrams; services/spec-html.js) for apps in config.htmlSpecApps;
 // `platformStyles` says whose stylesheet its screens draw with. The markdown
 // wording below stays the spec for every other case.
-function specPrompt({ seed, buildNote, firstVersion = false, html = false, platformStyles = false }) {
-  if (html) return specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles });
+function specPrompt({
+  seed, buildNote, firstVersion = false, html = false, platformStyles = false, guidance = null,
+}) {
+  if (html) return specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles, guidance });
   return [
     seed,
     '',
@@ -343,6 +374,7 @@ function specPrompt({ seed, buildNote, firstVersion = false, html = false, platf
     '- Written without em dashes: use a comma, a colon or a full stop. The group reads it, and its "User-facing',
     '  changes" half can become the change\'s description.',
     `- ${firstVersion ? FIRST_VERSION_SPEC_DESIGN_BRIEF : SPEC_DESIGN_BRIEF}`,
+    ...guidanceLines(guidance),
     '',
     'Nobody is available to answer questions: this run is unattended, and the build starts as soon as you finish.',
     'Where something is open, make the sensible choice yourself. End the "User-facing changes" half with a',
@@ -368,7 +400,7 @@ function specPrompt({ seed, buildNote, firstVersion = false, html = false, platf
   ].join('\n');
 }
 
-function specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles }) {
+function specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles, guidance = null }) {
   return [
     seed,
     '',
@@ -395,6 +427,7 @@ function specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles }) {
     '- Written without em dashes: use a comma, a colon or a full stop. The group reads it, and its "User-facing',
     '  changes" half can become the change\'s description.',
     `- ${firstVersion ? FIRST_VERSION_SPEC_DESIGN_BRIEF : SPEC_DESIGN_BRIEF}`,
+    ...guidanceLines(guidance),
     '',
     specHtmlContract(platformStyles),
     '',
@@ -1429,7 +1462,7 @@ const FIRST_VERSION_DESIGN_LINES = Object.freeze([
 ]);
 
 function buildPrompt({
-  seed, buildNote, spec = null, platformRepo = false, readsImages = false, firstVersion = false,
+  seed, buildNote, spec = null, platformRepo = false, readsImages = false, firstVersion = false, guidance = null,
 }) {
   const specBlock = spec
     ? [
@@ -1454,6 +1487,7 @@ function buildPrompt({
     clipText(buildNote, 4000) || '(no plan recorded: work from the request itself)',
     ...specBlock,
     ...(firstVersion ? FIRST_VERSION_DESIGN_LINES : []),
+    ...guidanceLines(guidance),
     '',
     // The rules every on-platform build works under (services/build-contract.js):
     // this bot's own list, which the dev chat now shares.
@@ -1582,6 +1616,8 @@ function readSpec(text) {
 async function draftSpec({
   pool, config, bot, session, containerName, seed, buildNote, turnBudgetMs, model, deps,
   specBudgetMs = SPEC_TURN_MAX_MS, telemetryComponent = 'homeroom_bot_spec', firstVersion = false,
+  // The studio's pack guidance and a trial's watch (services/bench/studio.js).
+  guidance = null, onProgress = null,
 }) {
   const { worker, sessions, agentTurn, activeWorkers } = deps;
   const budgetMs = Math.min(turnBudgetMs, specBudgetMs);
@@ -1595,7 +1631,7 @@ async function draftSpec({
   if (typeof timer.unref === 'function') timer.unref();
   activeWorkers.add(session.id);
   const prompt = specPrompt({
-    seed, buildNote, firstVersion,
+    seed, buildNote, firstVersion, guidance,
     html: specHtml.htmlSpecsEnabledFor(config, session.app_slug),
     platformStyles: specHtml.specStylesFor({ slug: session.app_slug, self_hosted: session.app_self_hosted }) === 'platform',
   });
@@ -1620,7 +1656,7 @@ async function draftSpec({
         branchName: session.branch_name,
         ...(ctx || {}),
         telemetryComponent,
-        onProgress: progress.note,
+        onProgress: teeProgress(progress, onProgress),
       }),
       retryPredicate: () => null,
       sendStatus: async () => {},
@@ -1676,6 +1712,12 @@ async function buildAndPropose({
   // #3737: a project's first version, whose spec and build decide and
   // record its look.
   firstVersion = false,
+  // The App bench studio (services/bench/studio.js): a context pack's
+  // guidance for the spec and the build, and a trial's watch of its turns.
+  // Production passes neither.
+  specGuidance = null, buildGuidance = null, onProgress = null,
+  // And which turn is starting, 'spec' then 'build', for the same watch.
+  onStage = null,
   // WP1 (#2): resolves why this build should stop where it is, or null to
   // go on (homeroom-bot.js whyNotBuild). Asked once the plan is written,
   // before the build turn, and again once the build turn is over, just
@@ -1792,6 +1834,7 @@ async function buildAndPropose({
   // went with the restart before it could post it. So it is stored on this
   // session and said below, once, as a spec just written would be.
   if (!presetSpec && specModel && specModel !== model) await stampSessionModel(pool, session, specModel);
+  if (!presetSpec && onStage) { try { await onStage('spec'); } catch { /* a watcher never stops a build */ } }
   spec = presetSpec
     ? {
       ok: true, specMd: String(presetSpec), costUsd: null, preset: true,
@@ -1799,7 +1842,7 @@ async function buildAndPropose({
     }
     : await draftSpec({
       pool, config, bot, session, containerName, seed, buildNote, turnBudgetMs,
-      model: specModel || model, deps, specBudgetMs, firstVersion,
+      model: specModel || model, deps, specBudgetMs, firstVersion, guidance: specGuidance, onProgress,
       ...(telemetry ? { telemetryComponent: telemetry } : {}),
     });
   // The build turn runs the build's model again.
@@ -1851,6 +1894,7 @@ async function buildAndPropose({
     ? deps.seesImages
     : await buildSeesImages({ pool, config, userId: bot.id, model });
 
+  if (onStage) { try { await onStage('build'); } catch { /* a watcher never stops a build */ } }
   // The same wall clock a triage turn has, ended the same way.
   let stopped = false;
   let stopping = null;
@@ -1861,7 +1905,7 @@ async function buildAndPropose({
   if (typeof timer.unref === 'function') timer.unref();
   activeWorkers.add(session.id);
   const prompt = buildPrompt({
-    seed, buildNote, spec: spec.ok ? spec.specMd : null, platformRepo, readsImages, firstVersion,
+    seed, buildNote, spec: spec.ok ? spec.specMd : null, platformRepo, readsImages, firstVersion, guidance: buildGuidance,
   });
   // What the build was last doing, so a turn stopped on its clock says what
   // it was waiting on (#3385): 12 of the first 18 shadow failures were
@@ -1895,7 +1939,7 @@ async function buildAndPropose({
         discardFailedTurn: true,
         ...(ctx || {}),
         telemetryComponent: telemetry || 'homeroom_bot_build',
-        onProgress: progress.note,
+        onProgress: teeProgress(progress, onProgress),
       }),
       retryPredicate: () => null,
       sendStatus: async () => {},
@@ -2020,6 +2064,8 @@ module.exports = {
   buildSeesImages,
   revisionDesignText,
   FIRST_VERSION_DESIGN_LINES,
+  guidanceLines,
+  teeProgress,
   PLATFORM_TEST_NOTE,
   screenshotNote,
   buildAndPropose,

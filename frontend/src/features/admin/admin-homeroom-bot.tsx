@@ -37,7 +37,7 @@ import type { Best, BenchModel } from './admin-homeroom-bench';
 //              Save button per field, and nothing said which.
 //   Benchmark  admin-homeroom-bench.tsx, with places of its own below this
 //              tab's address (/benchmark/runs, /benchmark/runs/<id>,
-//              /benchmark/suites[/<id>]), which it writes while it is the tab
+//              /benchmark/suites[/<id>], /benchmark/studio), which it writes while it is the tab
 //              on screen. Its "Use for <stage>" fills in the model here and
 //              switches to Settings; Save is still pressed by a person. It
 //              reads the model each stage runs on now from this section's
