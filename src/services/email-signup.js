@@ -140,8 +140,8 @@ const USERNAME_INSERT_ATTEMPTS = 3;
  *
  * `username` is an opaque PLACEHOLDER (`member_<hex>`), never the address
  * and, since #3575, never a name derived from it either: the person types
- * their own at the set-password step, which will not finish without one
- * (completePassword below). `needs_username_choice` is TRUE, which is what
+ * their own at the username step, which will not finish without one
+ * (completeSignup below). `needs_username_choice` is TRUE, which is what
  * makes that step ask. `needs_communities_choice` is TRUE for the same
  * reason one step later: a new account is asked which communities to join
  * before its first Home (communities, stage 5; src/services/onboarding.js).
@@ -266,6 +266,8 @@ async function verifyCode(pool, rawEmail, rawCode, { createSession } = {}) {
       };
     }
 
+    // Everything below has no password: a new account, or one the code
+    // proves the mailbox of (`proved`, which claims the address's invites).
     let created = false;
     if (!user) {
       const unusablePasswordHash = await bcrypt.hash(
@@ -277,8 +279,8 @@ async function verifyCode(pool, rawEmail, rawCode, { createSession } = {}) {
       // up by email code wore their own address in front of everyone else
       // on the platform. What goes in now is an opaque placeholder (#3575:
       // not a name derived from the local part either), and the row is
-      // marked `needs_username_choice`, so the set-password step asks for
-      // the handle and refuses to finish without one.
+      // marked `needs_username_choice`, so the username step asks for the
+      // handle and refuses to finish without one.
       //
       // The flag, not the string, is what drives the ask: the server
       // knows this account has never chosen, and no client has to infer it
@@ -297,6 +299,28 @@ async function verifyCode(pool, rawEmail, rawCode, { createSession } = {}) {
       );
     }
 
+    // No password to choose any more: an account that already has its
+    // username is signed in on the code alone, as a password account is
+    // above, and for the same reason.
+    if (user.needs_username_choice !== true) {
+      if (typeof createSession !== 'function') {
+        throw new Error('verifyCode requires createSession to sign an existing account in');
+      }
+      const session = await createSession(client, user.id);
+      return {
+        next: 'signed-in',
+        proved: true,
+        session,
+        userId: user.id,
+        user: {
+          id: user.id,
+          username: user.username,
+          isAdmin: !!user.is_admin,
+          adminReadonly: !!user.admin_readonly,
+        },
+      };
+    }
+
     const signupToken = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + SIGNUP_TTL_MS);
     await client.query(
@@ -309,16 +333,17 @@ async function verifyCode(pool, rawEmail, rawCode, { createSession } = {}) {
       [tokenHash(signupToken), user.id, expiresAt]
     );
     return {
-      next: 'set-password',
+      next: 'username',
+      proved: true,
       signupToken,
       expiresAt,
       userId: user.id,
       created,
       // QA 2026-09-24 Q12: the account still owes a choice of handle, so the
-      // password step asks for it rather than the person meeting a name
-      // they never chose in the waiting room. #3575: asked with an EMPTY
-      // field — there is no suggestion any more (see usernames.js).
-      needsUsernameChoice: user.needs_username_choice === true,
+      // next step asks for it rather than the person meeting a name they
+      // never chose in the waiting room. #3575: asked with an EMPTY field —
+      // there is no suggestion any more (see usernames.js).
+      needsUsernameChoice: true,
     };
   });
 
@@ -334,13 +359,13 @@ async function verifyCode(pool, rawEmail, rawCode, { createSession } = {}) {
   if (result.created) {
     await waitlist.linkUserByEmail(pool, { userId: result.userId, email });
   }
-  // The code proved this mailbox, on a new account or an unconfirmed one:
-  // any project invites waiting on the address become this account's.
+  // The code proved this mailbox, on an account without a password: any
+  // project invites waiting on the address become this account's.
   // Best-effort, and it never throws.
-  if (result.next === 'set-password') {
+  if (result.proved) {
     await require('./email-invites').claimEmailInvites(pool, { userId: result.userId, email });
   }
-  if (result.next === 'set-password') {
+  if (result.next === 'username') {
     result.waitlisted = await isWaitlisted(pool, result.userId);
   }
   return result;
@@ -367,7 +392,7 @@ async function isWaitlisted(pool, userId) {
 }
 
 /**
- * Set the password and the first handle, then sign in.
+ * Set the first handle, then sign in.
  *
  * `username` is REQUIRED for an account that has never chosen one (#3575)
  * and ignored for an account that has. QA 2026-09-24 Q12 made the
@@ -381,11 +406,17 @@ async function isWaitlisted(pool, userId) {
  * takes the same path POST /api/me/username/choose does (validateUsername,
  * checkAvailability, chooseFirstUsername's `needs_username_choice` guard).
  *
+ * `password` is OPTIONAL. Sign-up no longer asks for one: the email code
+ * signs the account in every time, as it does Apple and Google accounts,
+ * and "Forgot password?" adds one for anyone who wants it. A shell cached
+ * from before still sends one, and it is set exactly as it always was, so a
+ * password somebody typed is a password that works.
+ *
  * Every username refusal — missing, malformed or taken — is raised BEFORE
  * the signup session is spent, so the person fixes the field and submits
  * again with the same cookie.
  */
-async function completePassword(pool, { signupToken, password, username = null, createSession }) {
+async function completeSignup(pool, { signupToken, password = null, username = null, createSession }) {
   if (typeof signupToken !== 'string' || !/^[a-f0-9]{64}$/.test(signupToken)) {
     throw new EmailSignupError('invalid_signup_session', 'Your signup session expired. Request a new code.');
   }
@@ -395,10 +426,13 @@ async function completePassword(pool, { signupToken, password, username = null, 
     if (!check.ok) throw new EmailSignupError('invalid_username', check.error);
     chosen = check.value;
   }
-  if (typeof password !== 'string' || password.length < 8) {
-    throw new EmailSignupError('invalid_password', 'Password must be at least 8 characters.');
+  let passwordHash = null;
+  if (password != null && password !== '') {
+    if (typeof password !== 'string' || password.length < 8) {
+      throw new EmailSignupError('invalid_password', 'Password must be at least 8 characters.');
+    }
+    passwordHash = await bcrypt.hash(password, 12);
   }
-  const passwordHash = await bcrypt.hash(password, 12);
 
   let result;
   try {
@@ -435,10 +469,12 @@ async function completePassword(pool, { signupToken, password, username = null, 
       await client.query('DELETE FROM web_signup_sessions WHERE token_hash = $1', [tokenHash(signupToken)]);
       if (signup.is_admin || signup.password_set) return { invalid: true };
 
-      await client.query(
-        'UPDATE users SET password = $1, password_set = TRUE WHERE id = $2',
-        [passwordHash, signup.user_id]
-      );
+      if (passwordHash) {
+        await client.query(
+          'UPDATE users SET password = $1, password_set = TRUE WHERE id = $2',
+          [passwordHash, signup.user_id]
+        );
+      }
       let handle = signup.username;
       if (choosing) {
         const taken = await usernames.chooseFirstUsername(client, signup.user_id, chosen);
@@ -489,5 +525,5 @@ module.exports = {
   normalizeEmail,
   requestCode,
   verifyCode,
-  completePassword,
+  completeSignup,
 };

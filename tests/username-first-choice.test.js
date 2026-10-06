@@ -307,8 +307,8 @@ test('the username is an opaque placeholder, never derived from the address (#35
   assert.match(signupJs, /let candidate = usernames\.placeholderUsername\(\);/);
 });
 
-test('set-password will not finish a new account without a handle (#3575)', () => {
-  const complete = signupJs.slice(signupJs.indexOf('async function completePassword'));
+test('the username step will not finish a new account without a handle (#3575)', () => {
+  const complete = signupJs.slice(signupJs.indexOf('async function completeSignup'));
   const required = complete.indexOf('if (!chosen && signup.needs_username_choice === true) {');
   const spend = complete.indexOf('DELETE FROM web_signup_sessions');
   assert.ok(required > 0 && required < spend,

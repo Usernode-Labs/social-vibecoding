@@ -102,34 +102,28 @@ const RECOVERY_ROUTE = 'login/forgot';
 const RECOVERY_ENTRY = 'loginRecovery';
 
 /** Step within `#otp-view`. */
-type OtpStep = 'email' | 'code' | 'password';
+type OtpStep = 'email' | 'code' | 'username';
 
 /**
  * What /api/auth/otp/verify said about the account behind a verified code,
- * for the set-password step (QA 2026-09-24 Q12). Null until a code verifies,
+ * for the username step (QA 2026-09-24 Q12). Null until a code verifies,
  * and for a server that predates the fields, which then reads exactly as it
  * always did.
  */
 interface OtpSignup {
   /** The code just CREATED the account: no account used this address. */
   created: boolean;
-  /**
-   * The account has never chosen its handle, so this step asks for it, with
-   * an empty field (#3575: the server no longer suggests one, and will not
-   * finish the step without it).
-   */
-  needsUsername: boolean;
   /** It will land in the waiting room; null when the server could not tell. */
   waitlisted: boolean | null;
 }
 
-// The set-password step's opening line, one per case. A brand-new account is
-// told that is what is happening: it used to read "Now choose a password for
-// your account" as if the account had been there all along.
-const OTP_PASSWORD_INTRO = 'Code verified. Now choose a password for your account.';
-const OTP_PASSWORD_INTRO_NEW =
-  "Code verified. No account uses this email yet, so we'll create one. Choose a username and a password.";
-const OTP_PASSWORD_INTRO_HANDLE = 'Code verified. Choose a username and a password for your account.';
+// The username step's opening line, one per case. A brand-new account is
+// told that is what is happening, rather than reading as if the account had
+// been there all along. There is no password to choose: the email code signs
+// the account in every time.
+const OTP_USERNAME_INTRO = 'Code verified. Choose a username for your account.';
+const OTP_USERNAME_INTRO_NEW =
+  "Code verified. No account uses this email yet, so we'll create one. Choose a username.";
 // Said BEFORE the waiting room rather than by it: the person is about to be
 // signed in to a queue, not to the platform.
 const OTP_WAITLIST_NOTE =
@@ -222,7 +216,7 @@ const AUTH_LABEL = 'block text-[13px] text-zinc-500 dark:text-zinc-400';
  */
 const CODE_FIELD = 'font-mono text-[26px] leading-[28px] tracking-[8px]';
 const ERROR = 'text-red-400 text-sm';
-// The line under the set-password step's username field: its rule, or the
+// The line under the username step's field: its rule, or the
 // server's sentence about the name (QA 2026-09-24 Q12). Two whole literals.
 const FIELD_HINT = 'mt-1 text-sm text-zinc-500 dark:text-zinc-400';
 const FIELD_HINT_ERROR = 'mt-1 text-sm text-red-600 dark:text-red-400';
@@ -232,7 +226,7 @@ const STATUS = 'text-sm text-zinc-500 dark:text-zinc-400';
 // their body copy — `#otp-status` is where CODE_SENT_MSG lands, so the
 // expiry sentence must not be a size smaller than the echo above it. Its own
 // literal rather than a reuse of STEP_P: this is a status, not a paragraph,
-// and the set-password step keeps STATUS because that step is out of scope.
+// and the username step keeps STATUS because that step is out of scope.
 const STEP_STATUS = 'text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400';
 
 /**
@@ -523,9 +517,7 @@ export function LoginScreen() {
   const password = useRef<HTMLInputElement>(null);
   const otpEmailInput = useRef<HTMLInputElement>(null);
   const otpCode = useRef<HTMLInputElement>(null);
-  const otpNewPassword = useRef<HTMLInputElement>(null);
   const otpUsername = useRef<HTMLInputElement>(null);
-  const otpConfirmPassword = useRef<HTMLInputElement>(null);
   const recoveryNewPassword = useRef<HTMLInputElement>(null);
   const recoveryConfirmPassword = useRef<HTMLInputElement>(null);
   const recoveryEmailInput = useRef<HTMLInputElement>(null);
@@ -545,9 +537,9 @@ export function LoginScreen() {
     setOtpError(null);
     setOtpDetails(null);
     setOtpUsernameError(null);
-    // What a verified code said belongs to the password step only; any
+    // What a verified code said belongs to the username step only; any
     // other step is a new attempt, possibly for a different address.
-    if (step !== 'password') setOtpSignup(null);
+    if (step !== 'username') setOtpSignup(null);
     setOtpStep(step);
   }, []);
 
@@ -925,10 +917,9 @@ export function LoginScreen() {
         await finishLogin();
         return;
       }
-      otpShowStep('password');
+      otpShowStep('username');
       setOtpSignup({
         created: data.created === true,
-        needsUsername: data.needsUsername === true,
         waitlisted: typeof data.waitlisted === 'boolean' ? data.waitlisted : null,
       });
       // Past the code: nothing left to resend, and setOtpStatus(null) above
@@ -941,41 +932,27 @@ export function LoginScreen() {
     }
   }, [clearConfirmation, finishLogin, otpShowStep, showLoginBaseView, st]);
 
-  const onOtpSetPassword = useCallback(async () => {
+  const onOtpFinish = useCallback(async () => {
     clearConfirmation();
     setOtpError(null);
     setOtpDetails(null);
     setOtpUsernameError(null);
-    // The handle rides along only when this step asked for it; the server
-    // validates it exactly as the first-run "Choose your username" step does.
-    const handle = otpSignup?.needsUsername ? (otpUsername.current?.value || '').trim() : null;
-    if (handle === '') {
+    // The server validates it exactly as the first-run "Choose your
+    // username" step does.
+    const handle = (otpUsername.current?.value || '').trim();
+    if (!handle) {
       setOtpUsernameError('Enter a username.');
       otpUsername.current?.focus();
       return;
     }
-    const value = otpNewPassword.current?.value || '';
-    const confirm = otpConfirmPassword.current?.value || '';
-    if (value.length < 8) {
-      setOtpError('Password must be at least 8 characters');
-      return;
-    }
-    if (value !== confirm) {
-      setOtpError('Passwords do not match');
-      return;
-    }
     if (blockedOffline(setOtpError)) return;
-    setOtpStatus('Setting password...');
+    setOtpStatus('Signing in...');
     try {
-      const res = await fetchSessionMint('/api/auth/otp/set-password', {
+      const res = await fetchSessionMint('/api/auth/otp/finish', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
-        body: JSON.stringify({
-          password: value,
-          passwordConfirmation: confirm,
-          ...(handle ? { username: handle } : {}),
-        }),
+        body: JSON.stringify({ username: handle }),
       });
       const data = await res.json();
       if (!res.ok || !data.user) {
@@ -987,7 +964,7 @@ export function LoginScreen() {
           otpUsername.current?.focus();
           return;
         }
-        setOtpError(data.error || 'Could not set the password');
+        setOtpError(data.error || 'Could not finish setting up your account');
         return;
       }
       setOtpStatus(null);
@@ -997,7 +974,7 @@ export function LoginScreen() {
       setOtpError(sessionMintFailureMessage(error));
       setOtpDetails(error instanceof NativeLoginPreparationError ? error.details : null);
     }
-  }, [clearConfirmation, finishLogin, otpSignup, st]);
+  }, [clearConfirmation, finishLogin]);
 
   // ── Wallet sign-in ───────────────────────────────────────────────────
 
@@ -1304,7 +1281,7 @@ export function LoginScreen() {
       the three otp steps only: the recovery and reset views bring their own
       <h2> and are out of this change's scope, so the <h1> is hidden there
       rather than stacking "Sign in" above "Reset your password". The
-      set-password step keeps the words its retired <h2> gave it, because that
+      username step keeps the words its retired <h2> gave it, because that
       step's look is out of scope too.
   */
   const heading =
@@ -1317,7 +1294,7 @@ export function LoginScreen() {
   /*
       #btn-otp-back is ONE control under all three otp steps, so its words are
       the step's: from the email step the way back is the password form, from
-      the code step it is a mistyped address. The set-password step keeps what
+      the code step it is a mistyped address. The username step keeps what
       it shipped.
   */
   const backLabel =
@@ -1750,15 +1727,11 @@ export function LoginScreen() {
             </div>
             <div
               id="otp-step-password"
-              className={hiddenFirst(otpStep !== 'password', 'space-y-3')}
-              onKeyDown={returnKeyHandler({ submit: () => { void onOtpSetPassword(); } })}
+              className={hiddenFirst(otpStep !== 'username', 'space-y-3')}
+              onKeyDown={returnKeyHandler({ submit: () => { void onOtpFinish(); } })}
             >
               <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                {otpSignup?.created
-                  ? OTP_PASSWORD_INTRO_NEW
-                  : otpSignup?.needsUsername
-                    ? OTP_PASSWORD_INTRO_HANDLE
-                    : OTP_PASSWORD_INTRO}
+                {otpSignup?.created ? OTP_USERNAME_INTRO_NEW : OTP_USERNAME_INTRO}
               </p>
               {/*
                   QA 2026-09-24 Q12: the handle, asked HERE. An account made by
@@ -1776,8 +1749,13 @@ export function LoginScreen() {
                   who will see it. That line is its own <p>, ahead of the
                   rule: the rule's line is swapped whole for the server's
                   refusal, and the public note has to stay put meanwhile.
+
+                  It is the step's only field: there is no password to choose,
+                  because the email code signs the account in every time.
+                  Drawn once a code has verified, so each sign-up starts it
+                  empty and the prerendered screen does not carry it.
               */}
-              {otpSignup?.needsUsername ? (
+              {otpSignup ? (
                 <div>
                   <label htmlFor="otp-username" className="block text-[15px] font-medium text-zinc-500 dark:text-zinc-400 mb-1">
                     Username
@@ -1788,7 +1766,7 @@ export function LoginScreen() {
                     type="text"
                     autoComplete="username"
                     maxLength={32}
-                    enterKeyHint="next"
+                    enterKeyHint="go"
                     {...HANDLE_FIELD}
                     aria-describedby="otp-username-public otp-username-hint"
                     aria-invalid={otpUsernameError ? true : undefined}
@@ -1804,32 +1782,6 @@ export function LoginScreen() {
                   </p>
                 </div>
               ) : null}
-              <div>
-                <label className="block text-[15px] font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-                  New password
-                </label>
-                <PasswordInput
-                  ref={otpNewPassword}
-                  id="otp-new-password"
-                  autoComplete="new-password"
-                  enterKeyHint="next"
-                  {...FIELD}
-                  placeholder="at least 8 characters"
-                />
-              </div>
-              <div>
-                <label className="block text-[15px] font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-                  Confirm password
-                </label>
-                <PasswordInput
-                  ref={otpConfirmPassword}
-                  id="otp-confirm-password"
-                  autoComplete="new-password"
-                  enterKeyHint="go"
-                  {...FIELD}
-                  placeholder="re-enter password"
-                />
-              </div>
               {otpSignup?.waitlisted ? (
                 <p id="otp-waitlist-note" className={WAITLIST_NOTE}>
                   {OTP_WAITLIST_NOTE}
@@ -1840,9 +1792,9 @@ export function LoginScreen() {
                 type="button"
                 data-offline-disabled=""
                 {...SOLID}
-                onClick={onOtpSetPassword}
+                onClick={onOtpFinish}
               >
-                {otpSignup?.created ? 'Create account & sign in' : 'Set password & sign in'}
+                {otpSignup?.created ? 'Create account & sign in' : 'Continue'}
               </Button>
             </div>
             <div id="otp-error" className={hiddenLast(!otpError, ERROR)}>
@@ -1851,17 +1803,17 @@ export function LoginScreen() {
             </div>
             <div
               id="otp-status"
-              className={hiddenLast(!otpStatus, otpStep === 'password' ? STATUS : STEP_STATUS)}
+              className={hiddenLast(!otpStatus, otpStep === 'username' ? STATUS : STEP_STATUS)}
             >
               {otpStatus}
             </div>
             {/*
                 THE FOOT PIN for the email and code steps, whose one tertiary
-                line is #btn-otp-back. Hidden on the set-password step, which
+                line is #btn-otp-back. Hidden on the username step, which
                 is out of this change's scope: that step keeps its controls in
                 one run, top-anchored, exactly as they sat before.
             */}
-            <div className={otpStep === 'password' ? 'hidden' : 'grow'} />
+            <div className={otpStep === 'username' ? 'hidden' : 'grow'} />
             <button
               id="btn-otp-back"
               type="button"

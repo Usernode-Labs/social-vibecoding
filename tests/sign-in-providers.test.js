@@ -477,7 +477,8 @@ test('the sheet: Apple and Google first when offered, then email; the trip carri
   assert.match(src, /const firstStep: Step = providers\.length \? 'choose' : 'email';/);
   assert.match(src, /\{`Continue with \$\{PROVIDER_LABEL\[provider\]\}`\}/);
   assert.match(src, /Continue with email/);
-  assert.match(src, /fetchSessionMint\('\/api\/auth\/oauth\/finish',/);
+  // The username step is shared with the email code's, and finishes the provider's here.
+  assert.match(src, /fetchSessionMint\(usernameFor\.current === 'email' \? '\/api\/auth\/otp\/finish' : '\/api\/auth\/oauth\/finish',/);
   const icons = read('frontend/@/components/ui/icons.tsx');
   assert.match(icons, /export const AppleIcon = filled\(/);
   assert.match(icons, /export const GoogleIcon = \(/);

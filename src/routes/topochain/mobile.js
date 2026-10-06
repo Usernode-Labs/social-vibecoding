@@ -121,13 +121,16 @@ async function seasonIdFromQuery(pool, raw) {
 // event's name and total_points, and turns it off together with
 // include_activity: that leaves one indexed snapshot read per event instead
 // of four queries.
-async function computeLevel(pool, userId, passwordSet) {
+// `member` is an account somebody can sign in to: a password, or a
+// confirmed address, which the email code (and Apple and Google) signs in
+// with. Sign-up has asked for no password since that became enough.
+async function computeLevel(pool, userId, canSignIn) {
   const { rows } = await pool.query(
     'SELECT 1 FROM onchain_accounts WHERE user_id = $1 LIMIT 1',
     [userId]
   );
   if (rows.length) return 'operator';
-  return passwordSet ? 'member' : 'guest';
+  return canSignIn ? 'member' : 'guest';
 }
 
 // `include_activity` (breakdown) — bool query param, default TRUE (SPEC
@@ -791,7 +794,7 @@ function topochainMobileRoutes(config) {
       // closed as the same 401 a dead token gets, rather than a 500.
       if (!user) return fail(res, 401, 'Unauthenticated.');
 
-      const level = await computeLevel(pool, user.id, !!user.password_set);
+      const level = await computeLevel(pool, user.id, !!(user.password_set || user.email_confirmed));
       return ok(res, {
         data: {
           id: Number(user.id),

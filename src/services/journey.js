@@ -478,7 +478,9 @@ function firstMileSteps(row, now = new Date()) {
     code_asked: row.code_asked_at
       ? { done: true, at: t(row.code_asked_at) }
       : { done: false, stuck: 'Admitted, never asked for a login code', expired: mailExpired },
-    account: hasAccount && row.password_set !== false
+    // Finished: a password, or (sign-up asks for none now, nor do Apple and
+    // Google) the username the last step chooses.
+    account: hasAccount && (row.password_set !== false || row.needs_username_choice === false)
       ? { done: true, at: t(row.account_at) }
       : { done: false, stuck: hasAccount ? 'Account started, not finished' : 'Code mailed, no account' },
     access: row.has_platform_access ? { done: true, at: t(row.access_at) }
@@ -486,7 +488,7 @@ function firstMileSteps(row, now = new Date()) {
     opened: row.opened_at ? { done: true, at: t(row.opened_at) }
       : { done: false, stuck: 'Has access, never opened Homeroom' },
     // A flag with no time can be set before the person was ever inside (the
-    // password step chooses one too), so it is done but never moves the
+    // sign-up step chooses one too), so it is done but never moves the
     // furthest step: `weak`.
     username: hasAccount && row.needs_username_choice === false
       ? { done: true, at: null, weak: true }

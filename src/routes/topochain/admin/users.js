@@ -352,7 +352,7 @@ function usersAdminRoutes(config) {
         // needs_username_choice (#3575): `topochain_<hex>` is a stand-in,
         // not a name. The person this row is for picks their own handle
         // the first time they sign in to Homeroom — the email-code
-        // set-password step will not finish without one — instead of
+        // username step will not finish without one — instead of
         // entering the platform wearing a generated string.
         const { rows: insertRows } = await client.query(
           `INSERT INTO users (username, password, password_set, email, telegram, discord, display_name, accept_logs, is_admin, created_at, updated_at, needs_username_choice)

@@ -241,7 +241,7 @@ test('the password step sends the sign-in screen\'s exchange, and says what it r
 
 test('the password step is the sheet\'s: the link opens it, and Forgot password still reaches the reset', () => {
   const src = read(SHEET);
-  assert.match(src, /type Step = 'choose' \| 'email' \| 'code' \| 'account' \| 'username' \| 'password';/);
+  assert.match(src, /type Step = 'choose' \| 'email' \| 'code' \| 'username' \| 'password';/);
   assert.match(src, /data-sign-in-sheet-password=""\s+onClick=\{\(e\) => \{ e\.preventDefault\(\); setError\(null\); setDetails\(null\); setStep\('password'\); \}\}/);
   assert.match(src, /<label htmlFor="sign-in-sheet-identifier" className=\{LABEL\}>Username or email<\/label>/);
   assert.match(src, /<PasswordInput ref=\{currentPasswordField\} id="sign-in-sheet-current-password" name="password" required autoComplete="current-password"/);
@@ -254,6 +254,19 @@ test('the password step is the sheet\'s: the link opens it, and Forgot password 
   // A session the shell cannot confirm says so in the sheet, as on the screen.
   assert.match(src, /<SessionConfirmationNotice completion=\{completion\} \/>/);
   assert.match(src, /<NativeLoginDetailsLink details=\{details\} \/>/);
+});
+
+test('a new account chooses a username and nothing else: one step, whichever way it signed in', () => {
+  const src = read(SHEET);
+  // After the email code: the username step, marked as the code's.
+  assert.match(src, /usernameFor\.current = 'email';\s+setCooldownUntil\(0\);\s+setStep\('username'\);/);
+  // After a provider, by its way back or the app's own sheet: the same step.
+  assert.match(src, /if \(resume === 'username'\) usernameFor\.current = 'provider';/);
+  assert.match(src, /usernameFor\.current = 'provider';\s+setStep\('username'\);/);
+  // It finishes the sign-in it belongs to, with the username only.
+  assert.match(src, /fetchSessionMint\(usernameFor\.current === 'email' \? '\/api\/auth\/otp\/finish' : '\/api\/auth\/oauth\/finish', \{[\s\S]{0,160}body: JSON\.stringify\(\{ username: handle \}\),/);
+  // No step asks for a new password.
+  assert.doesNotMatch(src, /'Finish your account'|Pick a password|\/api\/auth\/otp\/set-password/);
 });
 
 test('each way into the sheet says only what is true for it', () => {

@@ -140,7 +140,7 @@ function validateUsername(raw) {
 // the private half of the address. So nothing on the platform derives a
 // handle from an email address any more: a new account holds the opaque
 // placeholder below, and every field that asks for the handle starts EMPTY
-// (the set-password step in frontend/src/features/auth/login.tsx, and the
+// (the username step in frontend/src/features/auth/login.tsx, and the
 // first-run gate in frontend/src/features/auth/username-first-run.js).
 
 /**
@@ -148,7 +148,7 @@ function validateUsername(raw) {
  * Opaque ON PURPOSE: it must not be the email address (#2563), must not be
  * derived from it (#3575), and must not read as anybody's real name. The
  * account carries `needs_username_choice` alongside it, and the email
- * sign-up will not finish without a choice (completePassword in
+ * sign-up will not finish without a choice (completeSignup in
  * email-signup.js), so a person signing up never enters Homeroom wearing it.
  *
  * Shaped like the `topochain_<hex>` handles admin-created accounts get

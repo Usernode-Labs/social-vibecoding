@@ -360,7 +360,7 @@ test('the sign-in sheet\'s panel rides the keys as a sheet in the band, and ever
   assert.match(SHEET, /ref=\{panelRef\}\s+role="dialog"/);
   assert.match(SHEET, /className=\{`platform-kb-sheet absolute inset-x-0 bottom-0 /);
   assert.doesNotMatch(SHEET, /\.focus\(\)/);
-  for (const step of ['sign-in-sheet-email', 'sign-in-sheet-code', 'sign-in-sheet-identifier', 'sign-in-sheet-password']) {
+  for (const step of ['sign-in-sheet-email', 'sign-in-sheet-code', 'sign-in-sheet-identifier', 'sign-in-sheet-username']) {
     const form = SHEET.slice(SHEET.lastIndexOf('<form', SHEET.indexOf(`id="${step}"`)), SHEET.indexOf('</form>', SHEET.indexOf(`id="${step}"`)));
     assert.match(form, /<button type="submit"/, `${step}'s form has the button the reveal brings with it`);
   }
@@ -414,7 +414,7 @@ test('returnTarget: the next empty field, else the last; the last field submits'
   assert.equal(returnTarget(['only'], 0), null, 'a one-field step submits');
 });
 
-test('the password and account steps walk on Return, and each field says what its Return does', () => {
+test('the password step walks on Return, and each field says what its Return does', () => {
   const { returnWalks } = loadTsx('frontend/src/features/auth/sign-in-sheet.tsx');
   const field = (value) => ({ value, focused: null, focus(opts) { this.focused = opts; } });
   const user = field('');
@@ -427,15 +427,15 @@ test('the password and account steps walk on Return, and each field says what it
     return e;
   };
   const first = press(user);
-  assert.equal(first.prevented, true, 'no submit from the username');
-  assert.deepEqual(pass.focused, { preventScroll: true }, 'on to the password, without a scroll');
+  assert.equal(first.prevented, true, 'no submit from the first field');
+  assert.deepEqual(pass.focused, { preventScroll: true }, 'on to the next, without a scroll');
   pass.value = 'secret-1';
   press(pass);
   assert.deepEqual(confirm.focused, { preventScroll: true });
   assert.equal(press(confirm).prevented, false, 'the last field\'s Return submits the form');
   assert.equal(press(user, { shiftKey: true }).prevented, false, 'Shift+Return is left alone');
   assert.equal(press(user, { nativeEvent: { isComposing: true } }).prevented, false, 'so is an IME\'s Return');
-  // No username asked for: the step's fields are the two passwords.
+  // A field that is not rendered is passed over.
   const two = [{ current: null }, { current: pass }, { current: confirm }];
   pass.value = '';
   confirm.focused = null;
@@ -446,12 +446,10 @@ test('the password and account steps walk on Return, and each field says what it
   // Wired: "next" on every field but each step's last, which says "go".
   assert.match(SHEET, /id="sign-in-sheet-identifier"[^>]*enterKeyHint="next" onKeyDown=\{returnWalks\(passwordStepFields, 0\)\}/);
   assert.match(SHEET, /id="sign-in-sheet-current-password"[^>]*enterKeyHint="go"/);
-  assert.match(SHEET, /id="sign-in-sheet-username"[^>]*enterKeyHint="next" onKeyDown=\{returnWalks\(accountStepFields, 0\)\}/);
-  assert.match(SHEET, /id="sign-in-sheet-password"[^>]*enterKeyHint="next" onKeyDown=\{returnWalks\(accountStepFields, 1\)\}/);
-  assert.match(SHEET, /id="sign-in-sheet-confirm"[^>]*enterKeyHint="go"/);
-  for (const id of ['sign-in-sheet-email', 'sign-in-sheet-code', 'sign-in-sheet-provider-username']) {
+  for (const id of ['sign-in-sheet-email', 'sign-in-sheet-code', 'sign-in-sheet-username']) {
     assert.match(SHEET, new RegExp(`id="${id}"[^>]*enterKeyHint="go"`), `${id}: a one-field step's Return goes`);
   }
   assert.match(SHEET, /const passwordStepFields = \[identifierField, currentPasswordField\];/);
-  assert.match(SHEET, /const accountStepFields = \[usernameField, passwordField, confirmField\];/);
+  // Sign-up chooses no password: no step asks for a new one.
+  assert.doesNotMatch(SHEET, /autoComplete="new-password"/);
 });

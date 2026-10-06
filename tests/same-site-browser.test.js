@@ -142,6 +142,7 @@ const EXEMPT = new Map([
   ['auth.js POST /api/auth/login', JSON_FIELD],
   ['auth.js POST /api/auth/otp/request', JSON_FIELD],
   ['auth.js POST /api/auth/otp/verify', JSON_FIELD],
+  ['auth.js POST /api/auth/otp/finish', JSON_FIELD],
   ['auth.js POST /api/auth/otp/set-password', JSON_FIELD],
   ['auth.js POST /api/auth/register', JSON_FIELD],
   ['auth.js POST /api/me/api-key', JSON_FIELD],

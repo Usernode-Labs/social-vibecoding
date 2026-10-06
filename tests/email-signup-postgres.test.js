@@ -34,7 +34,7 @@ const DDL = `
   );
   CREATE UNIQUE INDEX users_email_lower_unique
     ON users (lower(email)) WHERE email IS NOT NULL;
-  -- The handle a new account types at set-password goes through
+  -- The handle a new account types at the username step goes through
   -- checkAvailability, which consults the retired-handle ledger as well as
   -- the live table (#2563; since #3575 nothing is derived from the address).
   CREATE TABLE username_history (
@@ -209,14 +209,14 @@ test('real PostgreSQL web signup keeps authority in HttpOnly cookies', async (t)
         body: JSON.stringify({ email: 'new.user@example.com', code }),
       });
       assert.equal(verify.status, 200);
-      // QA 2026-09-24 Q12: additive fields so the set-password step can say
+      // QA 2026-09-24 Q12: additive fields so the username step can say
       // that the code just created the account, ask for the handle, and say
-      // before the waiting room that it queues. `ok` and `next` are what
-      // they always were. #3575: no `suggestedUsername` — the field the
-      // person types into starts empty.
+      // before the waiting room that it queues. #3575: no
+      // `suggestedUsername` — the field the person types into starts empty.
+      // `next` is the username step: sign-up chooses no password.
       assert.deepEqual(await verify.json(), {
         ok: true,
-        next: 'set-password',
+        next: 'username',
         created: true,
         needsUsername: true,
         waitlisted: true,
@@ -241,23 +241,19 @@ test('real PostgreSQL web signup keeps authority in HttpOnly cookies', async (t)
       assert.equal(pendingRow.getting_started_gate, true,
         'and starts on the Getting started list that gates its season (2026-10-01)');
 
-      const setPassword = (payload) => fetch(`${base}/api/auth/otp/set-password`, {
+      const finishSignup = (payload) => fetch(`${base}/api/auth/otp/finish`, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
           cookie: `usernode_signup=${signupCookie}`,
         },
-        body: JSON.stringify({
-          password: 'correct horse battery staple',
-          passwordConfirmation: 'correct horse battery staple',
-          ...payload,
-        }),
+        body: JSON.stringify(payload),
       });
 
       // #3575: a new account does not finish sign-up without typing a
       // handle. Refused as a username error, and nothing is spent: no
-      // session, no password, and the signup cookie still works.
-      const unnamed = await setPassword({});
+      // session, and the signup cookie still works.
+      const unnamed = await finishSignup({});
       assert.equal(unnamed.status, 422);
       assert.deepEqual(await unnamed.json(), {
         error: 'Enter a username.',
@@ -274,19 +270,21 @@ test('real PostgreSQL web signup keeps authority in HttpOnly cookies', async (t)
         ['new.user@example.com'],
       )).rows[0].password_set, false);
 
-      const complete = await setPassword({ username: 'New_User' });
+      // The username is all it takes: no password is chosen.
+      const complete = await finishSignup({ username: 'New_User' });
       assert.equal(complete.status, 200);
       const body = await complete.json();
       assert.deepEqual(Object.keys(body), ['user']);
       assert.equal(body.user.username, 'New_User');
       assert.equal('token' in body, false);
       const createdRow = (await pool.query(
-        'SELECT username, email, needs_username_choice, needs_communities_choice FROM users WHERE email = $1',
+        'SELECT username, email, needs_username_choice, needs_communities_choice, password_set FROM users WHERE email = $1',
         ['new.user@example.com'],
       )).rows[0];
       assert.equal(createdRow.username, 'New_User');
       assert.equal(createdRow.needs_username_choice, false);
       assert.equal(createdRow.needs_communities_choice, true);
+      assert.equal(createdRow.password_set, false, 'sign-up sets no password');
       const sessionCookie = cookieValue(complete.headers, 'session');
       assert.match(sessionCookie, /^[0-9a-f]{64}$/);
       assert.match(complete.headers.get('set-cookie'), /HttpOnly/i);
@@ -302,16 +300,28 @@ test('real PostgreSQL web signup keeps authority in HttpOnly cookies', async (t)
         'SELECT COUNT(*)::int AS count FROM mobile_auth_tokens',
       )).rows[0].count, 0);
 
-      const replay = await fetch(`${base}/api/auth/otp/set-password`, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          cookie: `usernode_signup=${signupCookie}`,
-        },
-        body: JSON.stringify({ password: 'another password', passwordConfirmation: 'another password' }),
-      });
+      const replay = await finishSignup({ username: 'Another_Name' });
       assert.equal(replay.status, 422);
       assert.equal((await replay.json()).code, 'invalid_signup_session');
+
+      // Back another day: the code alone signs the account in, as it does a
+      // password account, and there is nothing left to set up.
+      code = null;
+      await fetch(`${base}/api/auth/otp/request`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: 'new.user@example.com' }),
+      });
+      const again = await fetch(`${base}/api/auth/otp/verify`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: 'new.user@example.com', code }),
+      });
+      assert.equal(again.status, 200);
+      const againBody = await again.json();
+      assert.equal(againBody.next, 'signed-in');
+      assert.equal(againBody.user.username, 'New_User');
+      assert.match(cookieValue(again.headers, 'session'), /^[0-9a-f]{64}$/);
 
       const { rows: sourceRows } = await pool.query(
         `INSERT INTO users
@@ -591,8 +601,10 @@ test('an email code branches on the account it matches (#1586)', async (t) => {
         await freshCode('twice@example.com'),
       );
       assert.equal(firstVerify.status, 200);
-      assert.equal((await firstVerify.json()).next, 'set-password');
+      assert.equal((await firstVerify.json()).next, 'username');
       const signupCookie = cookieValue(firstVerify.headers, 'usernode_signup');
+      // A shell cached from before still finishes at /set-password with a
+      // password, and that password is set: what somebody typed works.
       const setPassword = await fetch(`${base}/api/auth/otp/set-password`, {
         method: 'POST',
         headers: {
@@ -608,6 +620,10 @@ test('an email code branches on the account it matches (#1586)', async (t) => {
       });
       assert.equal(setPassword.status, 200);
       const createdId = (await setPassword.json()).user.id;
+      assert.equal((await pool.query(
+        'SELECT password_set FROM users WHERE id = $1',
+        [createdId],
+      )).rows[0].password_set, true);
 
       const secondVerify = await verify(
         'twice@example.com',
@@ -618,51 +634,54 @@ test('an email code branches on the account it matches (#1586)', async (t) => {
       assert.equal(secondBody.next, 'signed-in');
       assert.equal(secondBody.user.id, createdId);
 
-      // ── The password-less branch is unchanged, and stamps the address ──
-      const setupId = await seed('no.password@example.com', {
+      // ── No password, and a username already chosen: signed straight in ──
+      // Sign-up chooses no password any more, so the code is what signs
+      // such an account in (as it does Apple and Google accounts), and it
+      // stamps the address on the way.
+      const noPasswordId = await seed('no.password@example.com', {
         email_confirmed: false, password_set: false, is_admin: false,
       });
-      const setup = await verify(
+      const noPassword = await verify(
         'no.password@example.com',
         await freshCode('no.password@example.com'),
       );
-      assert.equal(setup.status, 200);
-      // QA 2026-09-24 Q12: an account that already existed is not "created",
-      // and one that never owed a handle is not asked for one.
-      assert.deepEqual(await setup.json(), {
-        ok: true,
-        next: 'set-password',
-        created: false,
-        needsUsername: false,
-        waitlisted: true,
-      });
-      assert.match(cookieValue(setup.headers, 'usernode_signup'), /^[0-9a-f]{64}$/);
+      assert.equal(noPassword.status, 200);
+      const noPasswordBody = await noPassword.json();
+      assert.equal(noPasswordBody.next, 'signed-in');
+      assert.equal(noPasswordBody.user.id, noPasswordId);
+      assert.equal(noPasswordBody.user.username, 'no.password@example.com',
+        'it keeps the handle it has');
+      assert.match(cookieValue(noPassword.headers, 'session'), /^[0-9a-f]{64}$/);
       assert.equal((await pool.query(
         'SELECT COUNT(*)::int AS count FROM web_signup_sessions WHERE user_id = $1',
-        [setupId],
-      )).rows[0].count, 1);
+        [noPasswordId],
+      )).rows[0].count, 0);
       // Reading the code proves the mailbox, so the confirmation is stamped
       // here — which stops the row ageing into the refusal branch above.
       assert.equal((await pool.query(
         'SELECT email_confirmed FROM users WHERE id = $1',
-        [setupId],
+        [noPasswordId],
       )).rows[0].email_confirmed, true);
 
-      // #3575 is about NEW accounts. One that already existed and never owed
-      // a handle finishes without being asked, and keeps the one it has.
-      const setupDone = await fetch(`${base}/api/auth/otp/set-password`, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          cookie: `usernode_signup=${cookieValue(setup.headers, 'usernode_signup')}`,
-        },
-        body: JSON.stringify({
-          password: 'correct horse battery staple',
-          passwordConfirmation: 'correct horse battery staple',
-        }),
+      // ── No password and no username yet: the username step ─────────────
+      const unnamedId = await seed('no.name@example.com', {
+        email_confirmed: true, password_set: false, is_admin: false, needs_username_choice: true,
       });
-      assert.equal(setupDone.status, 200);
-      assert.equal((await setupDone.json()).user.username, 'no.password@example.com');
+      const unnamed = await verify('no.name@example.com', await freshCode('no.name@example.com'));
+      assert.equal(unnamed.status, 200);
+      // QA 2026-09-24 Q12: an account that already existed is not "created".
+      assert.deepEqual(await unnamed.json(), {
+        ok: true,
+        next: 'username',
+        created: false,
+        needsUsername: true,
+        waitlisted: true,
+      });
+      assert.equal(cookieValue(unnamed.headers, 'session'), null);
+      assert.equal((await pool.query(
+        'SELECT COUNT(*)::int AS count FROM web_signup_sessions WHERE user_id = $1',
+        [unnamedId],
+      )).rows[0].count, 1);
     } finally {
       await new Promise((resolve) => server.close(resolve));
       mail.sendOtpMail = originalSend;
@@ -770,12 +789,12 @@ test('a repeat code request inside the min gap reuses the outstanding code', asy
   });
 });
 
-// QA 2026-09-24 Q12: the set-password step asks a new account for its handle
+// QA 2026-09-24 Q12: the username step asks a new account for its handle
 // instead of the waiting room introducing one the person never chose. Since
 // #3575 the field starts empty and is required for an account that has never
 // chosen; a refused or missing name leaves the signup session unspent so the
 // corrected submit works.
-test('set-password takes the first handle, and a refused one keeps the session', async (t) => {
+test('the username step takes the first handle, and a refused one keeps the session', async (t) => {
   await withDatabase(t, async (pool) => {
     const poolPath = require.resolve('../src/db/pool');
     const authPath = require.resolve('../src/routes/auth');
@@ -827,12 +846,11 @@ test('set-password takes the first handle, and a refused one keeps the session',
         "SELECT COUNT(*)::int AS n FROM users WHERE username ILIKE '%pick%'",
       )).rows[0].n, 0);
       const cookie = `usernode_signup=${cookieValue(verified.headers, 'usernode_signup')}`;
-      const pw = { password: 'correct horse battery staple', passwordConfirmation: 'correct horse battery staple' };
 
       // No name at all is refused the same way, as is a blank one: the
       // person has to type one (#3575).
       for (const blank of [{}, { username: '' }]) {
-        const r = await post('/api/auth/otp/set-password', { ...pw, ...blank }, cookie);
+        const r = await post('/api/auth/otp/finish', blank, cookie);
         assert.equal(r.status, 422);
         const b = await r.json();
         assert.equal(b.code, 'username_required');
@@ -842,7 +860,7 @@ test('set-password takes the first handle, and a refused one keeps the session',
 
       // A malformed name is refused as a username error, and the signup
       // session survives it.
-      let res = await post('/api/auth/otp/set-password', { ...pw, username: 'bad name!' }, cookie);
+      let res = await post('/api/auth/otp/finish', { username: 'bad name!' }, cookie);
       assert.equal(res.status, 422);
       let body = await res.json();
       assert.equal(body.code, 'invalid_username');
@@ -851,26 +869,26 @@ test('set-password takes the first handle, and a refused one keeps the session',
       assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM web_signup_sessions')).rows[0].n, 1);
 
       // So does a taken one (case-insensitively, as everywhere else).
-      res = await post('/api/auth/otp/set-password', { ...pw, username: 'Taken_Name' }, cookie);
+      res = await post('/api/auth/otp/finish', { username: 'Taken_Name' }, cookie);
       assert.equal(res.status, 422);
       body = await res.json();
       assert.equal(body.code, 'username_taken');
       assert.equal(body.field, 'username');
       assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM web_signup_sessions')).rows[0].n, 1);
       assert.equal((await pool.query(
-        "SELECT password_set FROM users WHERE email = 'pick.me@example.com'",
-      )).rows[0].password_set, false, 'nothing was written by a refused submit');
+        "SELECT needs_username_choice FROM users WHERE email = 'pick.me@example.com'",
+      )).rows[0].needs_username_choice, true, 'nothing was written by a refused submit');
 
-      // The corrected submit sets the password AND the handle, clears the
-      // first-run flag, and signs in under the chosen name.
-      res = await post('/api/auth/otp/set-password', { ...pw, username: 'Ada_Picked' }, cookie);
+      // The corrected submit sets the handle, clears the first-run flag, and
+      // signs in under the chosen name. No password is chosen.
+      res = await post('/api/auth/otp/finish', { username: 'Ada_Picked' }, cookie);
       assert.equal(res.status, 200);
       body = await res.json();
       assert.equal(body.user.username, 'Ada_Picked');
       const row = (await pool.query(
         "SELECT username, needs_username_choice, password_set FROM users WHERE email = 'pick.me@example.com'",
       )).rows[0];
-      assert.deepEqual(row, { username: 'Ada_Picked', needs_username_choice: false, password_set: true });
+      assert.deepEqual(row, { username: 'Ada_Picked', needs_username_choice: false, password_set: false });
       assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM web_signup_sessions')).rows[0].n, 0);
       assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM username_history')).rows[0].n, 0,
         'a first choice retires nothing');

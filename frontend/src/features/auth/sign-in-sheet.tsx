@@ -8,19 +8,20 @@
  * (./login.tsx), against the same routes:
  *
  *   email    POST /api/auth/otp/request sends a six-digit code.
- *   code     POST /api/auth/otp/verify. An account that has a password is
- *            signed straight in; a new one (or one with no password yet)
- *            moves on to
- *   account  POST /api/auth/otp/set-password: a password, and the username
- *            when the account has none, which mints the session.
+ *   code     POST /api/auth/otp/verify. An account that has its username
+ *            is signed straight in; a new one moves on to
+ *   username POST /api/auth/otp/finish: the username, which mints the
+ *            session. There is no password to choose: the code signs the
+ *            account in every time, as Apple and Google do.
  *
  * Continue with Apple and Continue with Google come first when an admin has
  * set them up (`providers`, from the waitlist options). Either leaves
  * the page for the provider (GET /api/auth/oauth/:provider/start) and comes
  * back to it signed in, or (`resume`) to this sheet: at
  *
- *   username POST /api/auth/oauth/finish, when the provider's sign-in made
- *            an account that has no username yet, which mints the session;
+ *   username the same step, posting to POST /api/auth/oauth/finish
+ *            (`usernameFor`), when the provider's sign-in made an account
+ *            that has no username yet;
  *   or the first step again, with what went wrong.
  *
  * Inside the Homeroom app the providers' pages refuse its web view, so
@@ -71,7 +72,7 @@
  * inside. Taps on its fields focus without the pan, and the focused field is
  * revealed in the panel with the step's button under it when the two fit
  * (lib/keyboard-surface.ts). Every focus here is `preventScroll`, so that
- * reveal is the only movement. Every step is the same: email, code, account,
+ * reveal is the only movement. Every step is the same: email, code,
  * username and password. Return walks a step's fields, as on the make screen
  * (#3904): from any but the last it goes to the next empty one, and only the
  * last field's Return (the keyboard says "go") submits (`returnTarget`). The
@@ -129,7 +130,7 @@ import {
 } from './shared';
 import { TermsNotice } from './waitlist-shared';
 
-type Step = 'choose' | 'email' | 'code' | 'account' | 'username' | 'password';
+type Step = 'choose' | 'email' | 'code' | 'username' | 'password';
 
 export type SignInProvider = 'apple' | 'google';
 
@@ -401,7 +402,6 @@ export function SignInSheet({
   const firstStep: Step = providers.length ? 'choose' : 'email';
   const [step, setStep] = useState<Step>(firstStep);
   const [email, setEmail] = useState('');
-  const [needsUsername, setNeedsUsername] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [details, setDetails] = useState<NativeLoginFailureDetails | null>(null);
   const [busy, setBusy] = useState(false);
@@ -419,14 +419,12 @@ export function SignInSheet({
   const firstField = useRef<HTMLInputElement>(null);
   const codeField = useRef<HTMLInputElement>(null);
   const usernameField = useRef<HTMLInputElement>(null);
-  const providerUsernameField = useRef<HTMLInputElement>(null);
-  const passwordField = useRef<HTMLInputElement>(null);
-  const confirmField = useRef<HTMLInputElement>(null);
+  // Which sign-in the username step finishes: the email code's, or a provider's.
+  const usernameFor = useRef<'email' | 'provider'>('email');
   const identifierField = useRef<HTMLInputElement>(null);
   const currentPasswordField = useRef<HTMLInputElement>(null);
-  // Each multi-field step's fields in order, for Return (`returnWalks`).
+  // The password step's fields in order, for Return (`returnWalks`).
   const passwordStepFields = [identifierField, currentPasswordField];
-  const accountStepFields = [usernameField, passwordField, confirmField];
   // The panel scrolls its fields; with the keyboard up they are revealed in
   // it, with the step's button, and tapped without iOS's pan. It rides the
   // keys up and down as one eased movement.
@@ -468,6 +466,7 @@ export function SignInSheet({
   // from a provider, it opens where that left off.
   useEffect(() => {
     if (!open) return;
+    if (resume === 'username') usernameFor.current = 'provider';
     setStep(resume === 'username' ? 'username' : firstStepRef.current);
     setError(resumeError(resume));
     setDetails(null);
@@ -487,11 +486,9 @@ export function SignInSheet({
       return;
     }
     const field = step === 'email' ? firstField : step === 'code' ? codeField
-      : step === 'username' ? providerUsernameField
-        : step === 'password' ? identifierField
-          : (needsUsername ? usernameField : passwordField);
+      : step === 'username' ? usernameField : identifierField;
     if (focus) field.current?.focus({ preventScroll: true });
-  }, [open, step, needsUsername]);
+  }, [open, step]);
 
   // Back from the provider's page by the browser's Back button, the page can
   // come out of the back-forward cache as it was left: busy. Undo that.
@@ -634,46 +631,15 @@ export function SignInSheet({
         await finish('existing');
         return;
       }
-      setNeedsUsername(data.needsUsername === true);
+      usernameFor.current = 'email';
       setCooldownUntil(0);
-      setStep('account');
+      setStep('username');
     } catch (err) {
       setError(sessionMintFailureMessage(err));
     } finally {
       setBusy(false);
     }
   }, [email, followInvite, finish]);
-
-  const finishAccount = useCallback(async () => {
-    setError(null);
-    const handle = needsUsername ? (usernameField.current?.value || '').trim() : null;
-    if (handle === '') { setError('Enter a username.'); usernameField.current?.focus({ preventScroll: true }); return; }
-    const password = passwordField.current?.value || '';
-    const confirm = confirmField.current?.value || '';
-    if (password.length < 8) { setError('Password must be at least 8 characters'); return; }
-    if (password !== confirm) { setError('Passwords do not match'); return; }
-    if (blockedOffline(setError)) return;
-    setBusy(true);
-    try {
-      const res = await fetchSessionMint('/api/auth/otp/set-password', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({ password, passwordConfirmation: confirm, ...(handle ? { username: handle } : {}) }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.user) {
-        setError(data.error || 'Could not finish setting up your account');
-        if (data.field === 'username') usernameField.current?.focus({ preventScroll: true });
-        return;
-      }
-      await finish('new');
-    } catch (err) {
-      setError(sessionMintFailureMessage(err));
-    } finally {
-      setBusy(false);
-    }
-  }, [needsUsername, finish]);
 
   // The password step: the sign-in screen's own exchange (./shared.ts).
   const signInWithPassword = useCallback(async () => {
@@ -718,6 +684,7 @@ export function SignInSheet({
         return;
       }
       if ('next' in outcome && outcome.next === 'username') {
+        usernameFor.current = 'provider';
         setStep('username');
         return;
       }
@@ -729,14 +696,15 @@ export function SignInSheet({
     }
   }, [native, from, followInvite, returnTo, finish]);
 
-  const finishProviderAccount = useCallback(async () => {
+  // The last step of a new account, whichever way it signed in.
+  const finishUsername = useCallback(async () => {
     setError(null);
-    const handle = (providerUsernameField.current?.value || '').trim();
-    if (!handle) { setError('Enter a username.'); providerUsernameField.current?.focus({ preventScroll: true }); return; }
+    const handle = (usernameField.current?.value || '').trim();
+    if (!handle) { setError('Enter a username.'); usernameField.current?.focus({ preventScroll: true }); return; }
     if (blockedOffline(setError)) return;
     setBusy(true);
     try {
-      const res = await fetchSessionMint('/api/auth/oauth/finish', {
+      const res = await fetchSessionMint(usernameFor.current === 'email' ? '/api/auth/otp/finish' : '/api/auth/oauth/finish', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
@@ -746,7 +714,7 @@ export function SignInSheet({
       if (!res.ok || !data.user) {
         if (data.field === 'username') {
           setError(data.error || 'Choose another username.');
-          providerUsernameField.current?.focus({ preventScroll: true });
+          usernameField.current?.focus({ preventScroll: true });
           return;
         }
         // The continuation is gone: start over from the first step.
@@ -767,8 +735,7 @@ export function SignInSheet({
   const waitLeft = Math.max(0, Math.ceil((cooldownUntil - now) / 1000));
   const heading = step === 'choose' || step === 'email' ? title
     : step === 'code' ? 'Check your email'
-      : step === 'password' ? 'Sign in'
-        : step === 'username' ? 'Pick a username' : 'Finish your account';
+      : step === 'password' ? 'Sign in' : 'Pick a username';
   const sub = step === 'choose' || (step === 'email' && !providers.length)
     ? intro
     : step === 'email'
@@ -777,9 +744,7 @@ export function SignInSheet({
         ? `We sent a 6-digit code to ${email}. It expires in 10 minutes.`
         : step === 'password'
           ? 'With your username or email, and your password.'
-          : step === 'username'
-            ? 'Your username is public on Homeroom. It is how people @mention you.'
-            : (needsUsername ? 'Pick a username and a password. Your username is public on Homeroom.' : 'Pick a password for next time.');
+          : 'Your username is public on Homeroom. It is how people @mention you.';
   // Up, on its way up, or leaving for the make screen: whole literals, for
   // the extractor. On a phone it slides; from md, where it is a centred
   // card, it fades.
@@ -872,11 +837,11 @@ export function SignInSheet({
         ) : null}
 
         {step === 'username' ? (
-          <form className="mt-5 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void finishProviderAccount(); }}>
+          <form className="mt-5 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void finishUsername(); }}>
             <div className={FIELD_GROUP}>
               <div className={FIELD}>
-                <label htmlFor="sign-in-sheet-provider-username" className={LABEL}>Username</label>
-                <input ref={providerUsernameField} id="sign-in-sheet-provider-username" autoComplete="username" enterKeyHint="go" className={INPUT} placeholder={USERNAME_RULE} {...HANDLE_FIELD} />
+                <label htmlFor="sign-in-sheet-username" className={LABEL}>Username</label>
+                <input ref={usernameField} id="sign-in-sheet-username" autoComplete="username" enterKeyHint="go" className={INPUT} placeholder={USERNAME_RULE} {...HANDLE_FIELD} />
               </div>
             </div>
             <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Finishing…' : 'Continue'}</button>
@@ -921,28 +886,6 @@ export function SignInSheet({
               {/* The reset is the sign-in screen's (./login.tsx), reached by its own address. */}
               <a href="#login/forgot" onClick={() => { if (followInvite) rememberInviteJoin(); onClose(); }} className={QUIET}>Forgot password?</a>
             </div>
-          </form>
-        ) : null}
-
-        {step === 'account' ? (
-          <form className="mt-5 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void finishAccount(); }}>
-            <div className={FIELD_GROUP}>
-              {needsUsername ? (
-                <div className={FIELD}>
-                  <label htmlFor="sign-in-sheet-username" className={LABEL}>Username</label>
-                  <input ref={usernameField} id="sign-in-sheet-username" autoComplete="username" enterKeyHint="next" onKeyDown={returnWalks(accountStepFields, 0)} className={INPUT} placeholder={USERNAME_RULE} {...HANDLE_FIELD} />
-                </div>
-              ) : null}
-              <div className={FIELD}>
-                <label htmlFor="sign-in-sheet-password" className={LABEL}>Password</label>
-                <input ref={passwordField} id="sign-in-sheet-password" type="password" autoComplete="new-password" enterKeyHint="next" onKeyDown={returnWalks(accountStepFields, 1)} className={INPUT} placeholder="At least 8 characters" />
-              </div>
-              <div className={FIELD}>
-                <label htmlFor="sign-in-sheet-confirm" className={LABEL}>Password again</label>
-                <input ref={confirmField} id="sign-in-sheet-confirm" type="password" autoComplete="new-password" enterKeyHint="go" className={INPUT} />
-              </div>
-            </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Finishing…' : 'Continue'}</button>
           </form>
         ) : null}
 

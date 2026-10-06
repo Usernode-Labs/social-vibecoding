@@ -39,7 +39,9 @@ const ADMIN_DB_EXPORT = read('frontend/src/features/admin/admin-db-export.tsx');
 
 // The screens that hold a password field, and how many each holds.
 const SHELL_FIELDS = {
-  'frontend/src/features/auth/login.tsx': 7,
+  // Sign-up chooses no password any more: the step after the email code
+  // asks for the username only, so its two fields are gone.
+  'frontend/src/features/auth/login.tsx': 5,
   'frontend/src/features/auth/register.tsx': 1,
   'frontend/src/features/settings/sections/password.tsx': 3,
   'frontend/src/features/settings/sections/username.tsx': 1,
@@ -139,12 +141,11 @@ test('every rendered password field carries a toggle', () => {
 });
 
 test('the login screen\'s fields are all masked on arrival', () => {
-  // Five of the seven render on mount; #reset-password-view's two are built
+  // Three of the five render on mount; #reset-password-view's two are built
   // only when the emailed link is being redeemed.
   const html = interiorHtmlFor('auth-login-screen');
-  assert.equal(passwordInputs(html).length, 5);
-  for (const id of ['login-password', 'otp-new-password', 'otp-confirm-password',
-    'recovery-new-password', 'recovery-confirm-password']) {
+  assert.equal(passwordInputs(html).length, 3);
+  for (const id of ['login-password', 'recovery-new-password', 'recovery-confirm-password']) {
     assert.match(html, new RegExp(`<input id="${id}"[^>]*type="password"`), id);
   }
 });

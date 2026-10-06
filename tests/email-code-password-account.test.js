@@ -63,14 +63,14 @@ test('a refused-but-correct code lands on the password form, address carried ove
   assert.ok(body.indexOf('admin_password_required') < body.indexOf('Invalid or expired code.'));
 });
 
-test('a code that signs you straight in finishes the login instead of asking for a password', () => {
+test('a code that signs you straight in finishes the login instead of asking for a username', () => {
   const body = /const onOtpVerify = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]*\]\);/.exec(read(LOGIN_TSX))[0];
   assert.match(body, /if \(data\.next === 'signed-in'\) \{[\s\S]{0,160}finishLogin\(\);/,
     'the new server branch is honoured');
-  assert.match(body, /otpShowStep\('password'\)/,
-    'the password-setup branch still runs for a brand new account');
+  assert.match(body, /otpShowStep\('username'\)/,
+    'the username step still runs for a brand new account');
   // …and the setup step is the fallback, not the thing tried first.
-  assert.ok(body.indexOf("data.next === 'signed-in'") < body.indexOf("otpShowStep('password')"));
+  assert.ok(body.indexOf("data.next === 'signed-in'") < body.indexOf("otpShowStep('username')"));
 });
 
 test('verification crosses the session-mint boundary on both sides', () => {

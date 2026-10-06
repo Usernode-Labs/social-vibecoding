@@ -314,6 +314,12 @@ const RETIRED_IDS = {
   'feedback-screenshot-img': 'The single attachment preview <img>. Each attached image is now an item the controller appends to #feedback-screenshot-preview, with its own preview and an alt text numbered by position.',
   'feedback-screenshot-state': 'The single attachment\'s status line ("Uploading…", "Saved with your feedback…"). Each thumbnail item carries its own status span now, so an upload failing on one image is reported beside that image.',
   'feedback-screenshot-remove': 'The single ✕ that dropped the only attachment. Each thumbnail has its own 48px remove button, labelled "Remove image N", so one picture can go without the others.',
+  // ── Sign-up asks for no password: email, code, username ─────────────
+  // The email code signs an account in every time (services/email-signup.js),
+  // so the step after the code (#otp-step-password, kept) asks only for the
+  // username, as Apple and Google sign-in already did.
+  'otp-new-password': 'The "New password" field of the step after the email code. Sign-up no longer chooses a password; "Forgot password?" still adds one for anyone who wants it.',
+  'otp-confirm-password': 'The "Confirm password" field of the same step, retired with it.',
 };
 
 // Ids a conversion chunk deliberately added, each with the reason.

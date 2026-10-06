@@ -145,11 +145,20 @@ test('first-mile steps: expired mail proof reads unknown, and nothing counts pas
   const started = journey.firstMileSteps({
     released_at: '2026-11-14T09:00:00Z', mail_status: 'sent', mail_at: '2026-11-14T09:00:01Z',
     code_asked_at: '2026-11-14T10:00:00Z', user_id: 10, password_set: false, has_platform_access: true,
-    needs_username_choice: false, needs_communities_choice: false,
+    needs_username_choice: true, needs_communities_choice: false,
   }, now);
   assert.equal(started.stuckAt, 'account');
   assert.equal(started.furthest, 'code_asked', 'the row\'s defaults do not carry a started account past it');
   assert.deepEqual(started.steps.slice(4).map((s) => s.state), ['not_yet', 'not_yet', 'not_yet', 'not_yet', 'not_yet']);
+  // Sign-up asks for no password now: an account that chose its username
+  // finished, with or without one (and so did every Apple and Google one).
+  const codeOnly = journey.firstMileSteps({
+    released_at: '2026-11-14T09:00:00Z', mail_status: 'sent', mail_at: '2026-11-14T09:00:01Z',
+    code_asked_at: '2026-11-14T10:00:00Z', user_id: 11, password_set: false, account_at: '2026-11-14T10:01:00Z',
+    has_platform_access: false, needs_username_choice: false, needs_communities_choice: false,
+  }, now);
+  assert.equal(codeOnly.steps[3].state, 'done', 'a username without a password is a finished account');
+  assert.equal(codeOnly.stuckAt, 'access');
 });
 
 test('a change the Homeroom bot built is credited to the person who asked for it', () => {

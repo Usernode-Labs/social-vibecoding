@@ -39,7 +39,7 @@
  *      code's: an admin signs in with a password, and so does an account
  *      whose password was set before its address was ever confirmed.
  *   5. An account that has never chosen a username is not signed in yet:
- *      like the email code's set-password step (#3575), it gets a short
+ *      like the email code's username step (#3575), it gets a short
  *      continuation and the sheet asks for the handle (completeUsername).
  *
  * INSIDE THE HOMEROOM APP the providers' pages refuse its web view, so the

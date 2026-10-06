@@ -106,7 +106,7 @@ test('a waiting email invite becomes a project invite when its address is confir
 
   await t.test('both places an address is confirmed claim what waits on it, and deletion removes it', () => {
     assert.match(read('src/services/email-signup.js'),
-      /if \(result\.next === 'set-password'\) \{\s*await require\('\.\/email-invites'\)\.claimEmailInvites\(pool, \{ userId: result\.userId, email \}\);/);
+      /if \(result\.proved\) \{\s*await require\('\.\/email-invites'\)\.claimEmailInvites\(pool, \{ userId: result\.userId, email \}\);/);
     assert.match(read('src/services/account-email.js'),
       /await require\('\.\/email-invites'\)\.claimEmailInvites\(pool, \{ userId, email: result\.email \}\);/);
     const deletion = read('src/services/account-deletion.js');

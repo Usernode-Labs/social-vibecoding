@@ -116,6 +116,7 @@ const SESSION_MINT_PATHS = [
   // the wallet-recovery dialog and the mobile wallet-claim flow both request
   // codes while signed in, and a mint guard there would break claiming.
   '/api/auth/otp/verify',
+  '/api/auth/otp/finish',
   '/api/auth/otp/set-password',
   '/api/auth/register',
   '/api/auth/wallet-verify',
@@ -342,9 +343,10 @@ function authRoutes(config) {
     }
   });
 
-  // Social email-code onboarding is a web-session flow. Verification puts a
-  // narrow, ten-minute continuation in an HttpOnly cookie; password setup
-  // consumes it and creates the ordinary web session in one transaction.
+  // Social email-code onboarding is a web-session flow. Verification signs an
+  // account that has its username straight in; a new one gets a narrow,
+  // ten-minute continuation in an HttpOnly cookie, which the username step
+  // consumes, creating the ordinary web session in one transaction.
   // Browser JavaScript never receives a mobile bearer.
   router.post('/api/auth/otp/request', otpRequestLimiter, otpRequestEmailLimiter, async (req, res) => {
     try {
@@ -385,8 +387,8 @@ function authRoutes(config) {
       // next pass (#3564). A queued one waits for release, and the schedule.
       if (invite && invite.status === 'joined') await challengeScorer.scoreOnJoin(pool, config);
       if (verified.next === 'signed-in') {
-        // The account already has a password, so there is nothing to set up.
-        // Clear any stale continuation and hand back the ordinary web session,
+        // The account already has its username, so there is nothing to set
+        // up. Clear any stale continuation and hand back the ordinary web session,
         // shaped exactly like /api/auth/login's response.
         clearSignupCookie(res);
         createSessionCookie(res, verified.session.token, verified.session.expiresAt);
@@ -415,27 +417,32 @@ function authRoutes(config) {
         });
       }
       createSignupCookie(res, verified.signupToken, verified.expiresAt);
-      log.info('email-signup', 'Email code verified, password setup pending', {
+      log.info('email-signup', 'Email code verified, username pending', {
         userId: verified.userId,
-        next: 'set-password',
+        next: 'username',
       });
       // QA 2026-09-24 Q12: say what the next step IS. `created` means this
       // code just made the account (no account used the address), so the
       // screen can say so instead of implying one already existed;
       // `needsUsername` makes it ask for the handle rather than the waiting
       // room introducing one the person never chose; `waitlisted` lets it
-      // say plainly, before the waiting room, that new accounts queue. `ok`
-      // and `next` are unchanged. Nothing here leaks to somebody who does
-      // not hold the mailbox: the code was just proved.
+      // say plainly, before the waiting room, that new accounts queue.
+      // Nothing here leaks to somebody who does not hold the mailbox: the
+      // code was just proved.
+      //
+      // `next` is 'username' now that sign-up asks for no password. A shell
+      // cached from before reads anything but 'signed-in' as its old
+      // username-and-password step, and /set-password below still takes
+      // what that step sends.
       //
       // #3575: there is no `suggestedUsername` any more. It was a handle
       // derived from the address that the field arrived holding, and one
       // press accepted it; the person now types their own into an empty
-      // field, and set-password refuses to finish without it. A shell cached
-      // from before reads the missing field as null — an empty field.
+      // field, and the username step refuses to finish without it. A shell
+      // cached from before reads the missing field as null — an empty field.
       return res.json({
         ok: true,
-        next: 'set-password',
+        next: 'username',
         created: !!verified.created,
         needsUsername: !!verified.needsUsernameChoice,
         waitlisted: typeof verified.waitlisted === 'boolean' ? verified.waitlisted : null,
@@ -450,16 +457,19 @@ function authRoutes(config) {
     }
   });
 
-  router.post('/api/auth/otp/set-password', otpVerifyLimiter, async (req, res) => {
+  // The username step: the handle, and the session. `/set-password` is the
+  // same route under the name a shell cached from before still posts to,
+  // with a password, which is set as it always was (completeSignup).
+  router.post(['/api/auth/otp/finish', '/api/auth/otp/set-password'], otpVerifyLimiter, async (req, res) => {
     const password = req.body?.password;
-    if (password !== req.body?.passwordConfirmation) {
+    if (password != null && password !== req.body?.passwordConfirmation) {
       return res.status(422).json({ error: 'Passwords do not match.', code: 'password_mismatch' });
     }
     try {
-      const completed = await emailSignup.completePassword(pool, {
+      const completed = await emailSignup.completeSignup(pool, {
         signupToken: req.cookies?.[SIGNUP_COOKIE],
         password,
-        // The handle the set-password step asks a new account for (QA
+        // The handle the username step asks a new account for (QA
         // 2026-09-24 Q12). Required since #3575 for an account that has
         // never chosen one: absent, the service answers `username_required`
         // and nothing is spent. Ignored for an account that already has one.
@@ -488,7 +498,7 @@ function authRoutes(config) {
         clearSignupCookie(res);
         return res.status(422).json({ error: error.message, code: error.code });
       }
-      log.error('email-signup', 'Password setup failed', { message: error.message });
+      log.error('email-signup', 'Sign-up finish failed', { message: error.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });

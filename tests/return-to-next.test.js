@@ -276,8 +276,6 @@ test('sign-in: the password form, every code step and both recovery paths say wh
     ['login-password', 'go'],
     ['otp-email', 'send'],
     ['otp-code', 'go'],
-    ['otp-new-password', 'next'],
-    ['otp-confirm-password', 'go'],
     ['recovery-new-password', 'next'],
     ['recovery-confirm-password', 'go'],
   ]);
@@ -289,11 +287,12 @@ test('sign-in: the password form, every code step and both recovery paths say wh
   // …and the steps that are not forms run their own button's action.
   assert.match(src, /id="otp-step-email"[\s\S]{0,160}returnKeyHandler\(\{ submit: \(\) => \{ if \(!cooldownLeft\) void otpRequestCode\(\); \} \}\)/);
   assert.match(src, /id="otp-step-code"[\s\S]{0,160}returnKeyHandler\(\{ submit: \(\) => \{ void onOtpVerify\(\); \} \}\)/);
-  assert.match(src, /id="otp-step-password"[\s\S]{0,160}returnKeyHandler\(\{ submit: \(\) => \{ void onOtpSetPassword\(\); \} \}\)/);
+  assert.match(src, /id="otp-step-password"[\s\S]{0,160}returnKeyHandler\(\{ submit: \(\) => \{ void onOtpFinish\(\); \} \}\)/);
   assert.match(src, /id="recovery-wallet"[\s\S]{0,200}returnKeyHandler\(\{ submit: \(\) => \{ void onWalletReset\(\); \} \}\)/);
   assert.match(src, /id="recovery-email"[\s\S]{0,200}returnKeyHandler\(\{ submit: \(\) => \{ if \(busy !== 'btn-email-reset'\) void onEmailReset\(\); \} \}\)/);
-  // The fields drawn only on demand say it too.
-  assert.match(src, /id="otp-username"[\s\S]{0,200}enterKeyHint="next"/);
+  // The fields drawn only on demand say it too. The step after the code
+  // asks for the username only, so its one field goes.
+  assert.match(src, /id="otp-username"[\s\S]{0,200}enterKeyHint="go"/);
   assert.match(src, /id="recovery-email-input"[\s\S]{0,120}enterKeyHint="send"/);
   assert.match(src, /id="reset-new-password"[\s\S]{0,80}enterKeyHint="next"/);
   assert.match(src, /id="reset-confirm-password"[\s\S]{0,80}enterKeyHint="go"/);
