@@ -121,9 +121,11 @@ test('Identity Toolkit errors map onto this API’s codes', async () => {
     () => phoneAuth.requestCode(FULL_CONFIG, '+15551234567', null, refusing('INVALID_PHONE_NUMBER')),
     (err) => err.code === 'invalid_phone',
   );
-  // Anything unmapped is 502, with no hint at which knob is missing.
+  // Anything unmapped is 502, with no hint at which knob is missing. (A
+  // refused reCAPTCHA is mapped: the caller fixes it with a fresh token,
+  // tests/phone-auth-fixes.test.js.)
   await assert.rejects(
-    () => phoneAuth.requestCode(FULL_CONFIG, '+15551234567', null, refusing('INVALID_APP_CREDENTIAL: whatever')),
+    () => phoneAuth.requestCode(FULL_CONFIG, '+15551234567', null, refusing('OPERATION_NOT_ALLOWED: whatever')),
     (err) => err.code === 'firebase_unreachable' && err.status === 502,
   );
 });
