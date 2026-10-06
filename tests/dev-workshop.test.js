@@ -3234,12 +3234,72 @@ test('?group=stage is a deep link to the pane, and a tap retires it', () => {
   assert.equal(junk._getWorkshopGroup(), 'category');
 });
 
+test('what app.css reads off the page\'s hosts is a class, never a :has() that looks inside them', () => {
+  // Three facts decide how the hosts are laid out: the board is up, the Needs
+  // tab is up, there is a band. app.css used to ask for each with a `:has()`
+  // on the host, on rules that go on to pick what is INSIDE it. Asked that
+  // way the answer can change with any node added anywhere under the host,
+  // so the browser re-applied the stylesheet to everything the rule could
+  // reach after every such write. Measured on this repository's own board
+  // with every card open (October 2026): 43 passes over about 9,000 elements
+  // in one load, 2.9 of the 3.1 seconds the page spent on style.
+  const rules = CSS.replace(/\/\*[\s\S]*?\*\//g, '');
+  for (const gone of [
+    '#dev-workshop:has(.dev-ws-board)',
+    '#dev-workshop:has(.dev-ws[data-ws-tab="needs"])',
+    '#dev-forum-scroll:not(:has(.dev-ws-band))',
+  ]) {
+    assert.ok(!rules.includes(gone), `${gone} is a class on the host now`);
+  }
+  // The general form of the same mistake, on the three nodes that hold the
+  // board. `:has(> …)` is fine and stays: it only ever looks at children, so
+  // a comment written into a card cannot change its answer.
+  assert.doesNotMatch(rules, /#dev-(?:forum-scroll|body|workshop)(?::not\()?:has\(\s*[^>\s]/,
+    'a :has() on a board host starts with the child combinator, or is a class instead');
+
+  // The Workshop says so itself, on nodes it does not render: classList in a
+  // layout effect, so the classes are right before the frame is shown.
+  const cls = (name) => {
+    const m = WORKSHOP.match(new RegExp(`const ${name} = '([a-z-]+)';`));
+    assert.ok(m, `workshop.tsx names ${name}`);
+    return m[1];
+  };
+  const board = cls('HOST_HAS_BOARD');
+  const needs = cls('HOST_ON_NEEDS');
+  const band = cls('SCROLLER_HAS_BAND');
+  assert.match(WORKSHOP, /const workshop = el\.closest\('#dev-workshop'\);\s*if \(workshop\) \{\s*workshop\.classList\.toggle\(HOST_HAS_BOARD, board\);\s*workshop\.classList\.toggle\(HOST_ON_NEEDS, needs\);\s*\}/);
+  assert.match(WORKSHOP, /const scroller = el\.closest\('#dev-forum-scroll'\);\s*if \(scroller\) scroller\.classList\.toggle\(SCROLLER_HAS_BAND, band\);/);
+  // ...and takes them off on the way out, in an effect of its own so that a
+  // tab change does not remove and re-add them.
+  assert.match(WORKSHOP, /return \(\) => \{\s*if \(workshop\) workshop\.classList\.remove\(HOST_HAS_BOARD, HOST_ON_NEEDS\);\s*if \(scroller\) scroller\.classList\.remove\(SCROLLER_HAS_BAND\);\s*\};\s*\}, \[hostRef\]\);/);
+  // What each one means. The skeleton has no band, no board and no tab; the
+  // board is the All items page read by stage and nothing else draws one.
+  assert.match(WORKSHOP, /useWorkshopHostState\(\s*hostRef,\s*!v\.loading,\s*!v\.loading && tab === 'all' && group === 'stage',\s*!v\.loading && tab === 'needs',\s*\);/);
+  assert.match(WORKSHOP, /\{group === 'stage' \? \(\s*<div className="dev-ws-board"/, 'the pane the class stands for');
+
+  // The stylesheet reads exactly those three, with the weight the `:has()`
+  // forms had (a `:has()` weighs what its argument weighs). The one
+  // exception is the column's release on Needs, which now weighs what the
+  // board's release always has; `#dev-workshop { max-width: 760px }` is the
+  // only rule either has to beat.
+  assert.equal(board, 'dev-ws-has-board');
+  assert.equal(needs, 'dev-ws-on-needs');
+  assert.equal(band, 'dev-ws-has-band');
+  assert.match(rules, /#dev-workshop\.dev-ws-on-needs \{ max-width: none; \}/);
+  assert.match(rules, /#dev-workshop\.dev-ws-on-needs > \.dev-ws\[data-ws-tab="needs"\] > :not\(\.dev-ws-tabbody\) \{/);
+  assert.match(rules, /#dev-forum-scroll:not\(\.dev-ws-has-band\) > \* \{/);
+  // The scroller outlives a body that is replaced without unmounting the
+  // Workshop, so the pull asks again as it starts (tests/community-hub.test.js
+  // pins the call); the class it writes is the one the Workshop writes.
+  assert.match(APP_VIEW_SRC, /devScroll\.classList\.toggle\('dev-ws-has-band', !!band\);/);
+});
+
 test('the stage pane runs edge to edge, and not by a 100vw full-bleed', () => {
   // #dev-workshop is a 760px reading column, which is right for one-line
   // rows and wrong for four side-by-side columns: bounded there the board is
   // a horizontal scroller before it is a board.
   assert.match(CSS, /#dev-workshop \{ max-width: 760px/, 'the column bound exists');
-  assert.match(CSS, /#dev-workshop:has\(\.dev-ws-board\) \{ max-width: none; \}/,
+  assert.match(CSS, /#dev-workshop\.dev-ws-has-board \{ max-width: none; \}/,
     'and comes off when the board is up');
   // ...and goes back on to every OTHER child, so only the working PANE widens
   // — the toolbar, the tabs and the board travel together now, so the pane is
@@ -3255,15 +3315,15 @@ test('the stage pane runs edge to edge, and not by a 100vw full-bleed', () => {
   // brings it back — the first for the rail and anything else that stays a
   // direct child, the second for the pane inside the body.
   assert.match(CSS,
-    /#dev-workshop:has\(\.dev-ws-board\) > \.dev-ws > :not\(\.dev-ws-tabbody\),/);
+    /#dev-workshop\.dev-ws-has-board > \.dev-ws > :not\(\.dev-ws-tabbody\),/);
   assert.match(CSS,
-    /#dev-workshop:has\(\.dev-ws-board\) > \.dev-ws > \.dev-ws-tabbody > :not\(\.dev-ws-pane\) \{[^}]*max-width: 760px/);
+    /#dev-workshop\.dev-ws-has-board > \.dev-ws > \.dev-ws-tabbody > :not\(\.dev-ws-pane\) \{[^}]*max-width: 760px/);
   // Widening it must not DISSOLVE it. An earlier cut stripped the pane's sheet,
   // radius and padding on By stage, on the argument that a card face is a
   // frame drawn around the whole window; what that produced was the pane
   // vanishing and the sticky head's fill left behind as a bare rectangle over
   // the controls alone, with the board below belonging to no pane at all.
-  const stageRules = CSS.slice(CSS.indexOf('#dev-workshop:has(.dev-ws-board) { max-width: none; }'),
+  const stageRules = CSS.slice(CSS.indexOf('#dev-workshop.dev-ws-has-board { max-width: none; }'),
     CSS.indexOf('.dev-ws-sort {'));
   assert.ok(!/\.dev-ws-pane \{[^}]*(border-radius: 0|background: none|padding: 0)/.test(stageRules),
     'the pane keeps its card face at every width');
@@ -3840,7 +3900,7 @@ test('the pane head pins, and the pane does not clip what must escape it', () =>
   // grouping strip included (#852: it hung off the pane as an "ear" once, and
   // that surface was the one exemption).
   assert.match(CSS,
-    /#dev-workshop:has\(\.dev-ws-board\) \.dev-ws-pane-head > \* \{[\s\S]*?max-width: calc\(760px - 20px\)/);
+    /#dev-workshop\.dev-ws-has-board \.dev-ws-pane-head > \* \{[\s\S]*?max-width: calc\(760px - 20px\)/);
   assert.ok(!/dev-ws-ear/.test(CSS), 'no rule styles an ear any more');
 });
 

@@ -4255,11 +4255,26 @@ const AppView = {
     //     replaces it. No band (the Workshop still loading, an app that
     //     could not load) is the kit's default anchor, the scroller's top,
     //     and app.css then slides everything in the scroller.
+    //
+    // WHETHER THERE IS A BAND is a class on the scroller, `dev-ws-has-band`,
+    // and app.css reads that class where it used to ask
+    // `:not(:has(.dev-ws-band))`. Asked as `:has()`, the answer could change
+    // with any node added anywhere in the scroller, so the browser re-applied
+    // the stylesheet to the whole board after every such write. The Workshop
+    // sets the class while it has a band on screen (workshop.tsx,
+    // `useWorkshopHostState`); it is read again here because this is the
+    // moment the answer is used, and a body replaced without unmounting that
+    // component (the frame's skeleton, on the way to another project) would
+    // otherwise leave it standing.
     const devScroll = document.getElementById('dev-forum-scroll');
     if (devScroll) {
       PlatformUI.pullToRefresh(devScroll, () => AppView._loadDevFeed(), {
         pullProperty: '--dev-ptr-pull',
-        topEl: () => devScroll.querySelector('.dev-ws > .dev-ws-band'),
+        topEl: () => {
+          const band = devScroll.querySelector('.dev-ws > .dev-ws-band');
+          devScroll.classList.toggle('dev-ws-has-band', !!band);
+          return band;
+        },
       });
     }
     // The General-chat CARD is retired (Streamlined Concept): Activity is an
@@ -10582,6 +10597,30 @@ const AppView = {
   // the width, and a repaint detaches every node it was watching.
   _feedClampObserver: null,
 
+  // The roots asked for since the last wiring pass. One board paint asks many
+  // times over: the Workshop's layout effect, each of the four columns', and
+  // the repaint that published them all call `_wireFeedComments` in the same
+  // task. On the platform's own board with every card open that was 17 calls
+  // in one load (October 2026). They are collected here and wired ONCE, in a
+  // microtask, which still runs before the frame those callers drew is shown.
+  _feedWireRoots: null,
+
+  // What each slot is showing: slot node -> the HTML last written into it. A
+  // slot already showing exactly what a fill would write is left alone,
+  // because writing the same HTML again is not free: the stylesheet has to be
+  // re-applied to everything the write could have touched, and with every
+  // card open that was the whole board each time. The HTML itself is what is
+  // compared, not the cached answer it came from, because a comment's age
+  // ("5m ago") is in it: a slot is written again as soon as what it would say
+  // has changed, and not before. Weak, so a slot a repaint dropped is forgotten.
+  _feedCommentsPainted: null,
+
+  // Comment requests on the wire, by `slug/number`. `_ghComments` is only
+  // written when an answer lands, so it cannot say "already asked", and
+  // every wiring pass asks for the first few slots again. Before this, one
+  // load of that board fetched the same three threads six times each.
+  _ghCommentsInFlight: {},
+
   _wireFeedComments(root) {
     if (AppView._feedCommentObserver) {
       AppView._feedCommentObserver.disconnect();
@@ -10591,12 +10630,45 @@ const AppView = {
       AppView._feedClampObserver.disconnect();
       AppView._feedClampObserver = null;
     }
-    if (!root) return;
-    const slots = [...root.querySelectorAll('.dev-feed-comments[data-comments-for]')];
+    // A teardown also forgets what was queued: the pass an earlier call
+    // scheduled must not rebuild the observers this one just dropped.
+    if (!root) { AppView._feedWireRoots = null; return; }
+    // ONE PASS PER PAINT (see `_feedWireRoots`). The first caller of a task
+    // schedules it; the others only add their root.
+    if (!AppView._feedWireRoots) {
+      AppView._feedWireRoots = new Set();
+      Promise.resolve().then(() => AppView._wireFeedCommentsNow());
+    }
+    AppView._feedWireRoots.add(root);
+  },
+
+  _wireFeedCommentsNow() {
+    const roots = AppView._feedWireRoots;
+    AppView._feedWireRoots = null;
+    if (!roots) return;
+    // The call that queued this pass dropped the clamp observer, and with it
+    // every comment it was watching, under these roots or not. Whatever is
+    // still on the page is watched again; a slot painted below adds its own.
+    AppView._watchFeedClamps(document);
+    // Callers overlap (a column passes the whole board, and so does the
+    // repaint), so a slot is taken once, in the order it was first found.
+    // A root replaced between the call and this pass has nothing live in it.
+    const slots = [];
+    const seen = new Set();
+    for (const root of roots) {
+      if (root.isConnected === false) continue;
+      for (const slot of root.querySelectorAll('.dev-feed-comments[data-comments-for]')) {
+        if (seen.has(slot)) continue;
+        seen.add(slot);
+        slots.push(slot);
+      }
+    }
     if (!slots.length) return;
     // The first few outright, wherever they sit in the stream. Also the whole
     // behaviour where IntersectionObserver is unavailable, which used to fill
-    // nothing at all.
+    // nothing at all. "First" is by POSITION, not "the first few still
+    // unfilled": that would fill three more on every pass and walk the whole
+    // feed in a handful of repaints.
     const lazy = slots.slice(AppView.FEED_COMMENT_EAGER);
     for (const slot of slots.slice(0, AppView.FEED_COMMENT_EAGER)) {
       AppView._fillFeedComments(slot);
@@ -10644,19 +10716,54 @@ const AppView = {
   // screen. The 1px slack is for sub-pixel line heights: a body that lands a
   // fraction over four lines must not offer a "Show more" that reveals
   // nothing.
-  _syncFeedCommentToggle(clamp) {
+  //
+  // The READ and the WRITE are two functions on purpose. Asking for
+  // `scrollHeight` makes the browser finish every style and layout change
+  // made so far, and showing or hiding the control is such a change, so
+  // measuring and toggling one comment after another pays for the page once
+  // per comment. The observer below reads all of them, then writes all of
+  // them.
+  _feedCommentOverflows(clamp) {
+    return clamp.scrollHeight - clamp.clientHeight > 1;
+  },
+
+  // `overflows` is the measurement when the caller already has it; left out,
+  // it is taken here.
+  _syncFeedCommentToggle(clamp, overflows) {
     const main = clamp && clamp.parentElement;
     const btn = main && main.querySelector('.dev-feed-comment-toggle');
     if (!btn) return;
     // An expanded comment keeps its control: it is the way back.
-    if (clamp.classList.contains('is-expanded')) { btn.hidden = false; return; }
-    btn.hidden = !(clamp.scrollHeight - clamp.clientHeight > 1);
+    const hide = clamp.classList.contains('is-expanded')
+      ? false
+      : !(overflows === undefined ? AppView._feedCommentOverflows(clamp) : overflows);
+    // Only when it changes. The observer reports every box again after each
+    // wiring pass, and most of them have not moved.
+    if (btn.hidden !== hide) btn.hidden = hide;
+  },
+
+  // Watch the clamped boxes under `root`. The observer reports each box once
+  // when it is first watched (provided it has a size) and again whenever the
+  // size changes, and it does so after layout, when a measurement costs
+  // nothing. So it is both the first measurement and the tracking afterwards.
+  _watchFeedClamps(root, clamps) {
+    if (typeof ResizeObserver !== 'function') return;
+    const list = clamps || (root ? [...root.querySelectorAll('.dev-feed-comment-clamp')] : []);
+    if (!list.length) return;
+    if (!AppView._feedClampObserver) {
+      AppView._feedClampObserver = new ResizeObserver((entries) => {
+        const measured = entries.map((entry) => AppView._feedCommentOverflows(entry.target));
+        entries.forEach((entry, i) => AppView._syncFeedCommentToggle(entry.target, measured[i]));
+      });
+    }
+    for (const clamp of list) AppView._feedClampObserver.observe(clamp);
   },
 
   _clampFeedComments(root) {
     if (!root) return;
     const clamps = [...root.querySelectorAll('.dev-feed-comment-clamp')];
     if (!clamps.length) return;
+    const observed = typeof ResizeObserver === 'function';
     for (const clamp of clamps) {
       const btn = clamp.parentElement
         && clamp.parentElement.querySelector('.dev-feed-comment-toggle');
@@ -10673,21 +10780,29 @@ const AppView = {
         btn.setAttribute('aria-expanded', String(expanded));
         btn.textContent = expanded ? 'Show less' : 'Show more';
       });
-      AppView._syncFeedCommentToggle(clamp);
+      // NOT MEASURED HERE when there is an observer to do it. This runs on
+      // the line after `innerHTML` was written, and a measurement there made
+      // the browser restyle the page before it could answer: with every card
+      // open, 30 such passes over about 9,000 elements, two of the board's
+      // four and a half seconds of work on load. The control ships `hidden`,
+      // which is also the right answer for a box that has no size yet.
+      if (!observed) AppView._syncFeedCommentToggle(clamp);
     }
-    // The first measurement above is right only if the slot already has a
-    // box. A card that is still folded gives every clamp a zero height, and
+    // A card that is still folded gives every clamp a zero height, and
     // `#dev-workshop .dev-feed-comments:empty` hides an unfilled slot
     // outright -- the same deadlock the observer note above is about. The
-    // ResizeObserver is what re-measures once the box exists, and what
-    // tracks the width afterwards.
-    if (typeof ResizeObserver !== 'function') return;
-    if (!AppView._feedClampObserver) {
-      AppView._feedClampObserver = new ResizeObserver((entries) => {
-        for (const entry of entries) AppView._syncFeedCommentToggle(entry.target);
-      });
-    }
-    for (const clamp of clamps) AppView._feedClampObserver.observe(clamp);
+    // ResizeObserver is what measures once the box exists, and what tracks
+    // the width afterwards.
+    AppView._watchFeedClamps(root, clamps);
+  },
+
+  // Is this slot already showing exactly `html`?
+  _feedSlotShows(node, html) {
+    const painted = AppView._feedCommentsPainted;
+    if (!painted || painted.get(node) !== html) return false;
+    // ...and still holding it. Nothing else writes into a slot, but one that
+    // was emptied anyway is filled again rather than believed.
+    return html === '' || !!node.firstChild;
   },
 
   async _fillFeedComments(slot) {
@@ -10708,8 +10823,14 @@ const AppView = {
       const live = document.querySelectorAll(
         `.dev-feed-comments[data-comments-for="${number}"]`
       );
+      if (!AppView._feedCommentsPainted) AppView._feedCommentsPainted = new WeakMap();
       for (const node of live) {
+        // Already showing exactly this (see `_feedCommentsPainted`): nothing
+        // is written, so nothing has to be measured again either, and a
+        // comment the reader expanded stays expanded.
+        if (AppView._feedSlotShows(node, html)) continue;
         node.innerHTML = html;
+        AppView._feedCommentsPainted.set(node, html);
         AppView._clampFeedComments(node);
       }
     };
@@ -10717,9 +10838,16 @@ const AppView = {
     const cached = AppView._ghComments[number];
     if (cached) { paint(cached); return; }
 
+    const slug = AppView.appData && AppView.appData.slug;
+    if (!slug) return;
+    // One request per issue, however many slots and passes ask (see
+    // `_ghCommentsInFlight`). The caller that joins does not wait for the
+    // answer: `paint` finds every live slot for this number when it lands,
+    // this one included.
+    const key = `${slug}/${number}`;
+    if (AppView._ghCommentsInFlight[key]) return;
+    AppView._ghCommentsInFlight[key] = true;
     try {
-      const slug = AppView.appData && AppView.appData.slug;
-      if (!slug) return;
       const res = await fetch(
         `/api/apps/${slug}/github-issues/${number}/comments${AppView._demoQS()}`
       );
@@ -10731,7 +10859,12 @@ const AppView = {
       };
       AppView._ghComments[number] = entry;
       paint(entry);
-    } catch (_) { /* best-effort: the row simply shows no replies */ }
+    } catch (_) {
+      /* best-effort: the row simply shows no replies */
+    } finally {
+      // Whatever happened, the next ask is free to try again.
+      delete AppView._ghCommentsInFlight[key];
+    }
   },
 
   // Re-render the feed in place from the cached data, then re-mount the

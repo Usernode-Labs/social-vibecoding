@@ -3587,6 +3587,66 @@ function usePinnedStrip(
   }, [bar, hostRef, tab]);
 }
 
+/**
+ * Three facts about this page that app.css lays its HOSTS out by, written as
+ * classes on those hosts: `dev-ws-has-board` and `dev-ws-on-needs` on
+ * #dev-workshop, `dev-ws-has-band` on #dev-forum-scroll.
+ *
+ * app.css used to ask for them itself, with `#dev-workshop:has(.dev-ws-board)`,
+ * `#dev-workshop:has(.dev-ws[data-ws-tab="needs"])` and `#dev-forum-scroll:not(
+ * :has(.dev-ws-band))`, on rules that go on to pick what is INSIDE the host. A
+ * `:has()` like that is asked again whenever a node is added anywhere under
+ * the host, and its answer could move every element the rule reaches, so the
+ * browser re-applied the stylesheet to the whole board after every such
+ * write. With every card open that was 43 passes in one load, about 9,000
+ * elements and 67ms each (October 2026). None of the three facts changes
+ * unless this component says so, which is what a class is for.
+ *
+ * Neither host is this component's node: #dev-workshop is the mount point
+ * public/js/app-view.js creates, #dev-forum-scroll the frame's scroller. So
+ * the classes go on with classList in a layout effect, before paint, and no
+ * rendered className is involved (frontend/src/lib/legacy-dom.ts says why
+ * that matters). They come off when the component unmounts.
+ *
+ * A body replaced WITHOUT unmounting this component takes #dev-workshop, and
+ * its two classes, with it. The scroller outlives that, which is why the
+ * pull-to-refresh reads the band again at the moment it starts
+ * (app-view.js, the `topEl` it hands the kit).
+ */
+const HOST_HAS_BOARD = 'dev-ws-has-board';
+const HOST_ON_NEEDS = 'dev-ws-on-needs';
+const SCROLLER_HAS_BAND = 'dev-ws-has-band';
+
+function useWorkshopHostState(
+  hostRef: React.RefObject<HTMLDivElement | null>,
+  band: boolean,
+  board: boolean,
+  needs: boolean,
+): void {
+  useLayoutEffect(() => {
+    const el = hostRef.current;
+    if (!el) return;
+    const workshop = el.closest('#dev-workshop');
+    if (workshop) {
+      workshop.classList.toggle(HOST_HAS_BOARD, board);
+      workshop.classList.toggle(HOST_ON_NEEDS, needs);
+    }
+    const scroller = el.closest('#dev-forum-scroll');
+    if (scroller) scroller.classList.toggle(SCROLLER_HAS_BAND, band);
+  }, [hostRef, band, board, needs]);
+  // The way out is its own effect, so a tab or a pane changing above does not
+  // take the classes off and put them straight back on.
+  useLayoutEffect(() => {
+    const el = hostRef.current;
+    const workshop = el ? el.closest('#dev-workshop') : null;
+    const scroller = el ? el.closest('#dev-forum-scroll') : null;
+    return () => {
+      if (workshop) workshop.classList.remove(HOST_HAS_BOARD, HOST_ON_NEEDS);
+      if (scroller) scroller.classList.remove(SCROLLER_HAS_BAND);
+    };
+  }, [hostRef]);
+}
+
 export function DevWorkshop(): ReactNode {
   const v = useStoreState(devWorkshopStore);
   // THE OPEN APP'S NAME AND ARTWORK, for the hero and the channel below. The
@@ -3783,6 +3843,18 @@ export function DevWorkshop(): ReactNode {
   // itself (`--dev-ptr-pull` on the scroller, public/js/app-view.js) and
   // app.css slides only what is under the band by it. Nothing in this
   // component takes part, which is how it stays the only writer of its tree.
+  //
+  // What it does say, here, is what app.css needs to know about this page on
+  // its HOSTS, one of which is that there is a band at all (see
+  // `useWorkshopHostState`). The loading skeleton below has no band, no board
+  // and no tab, so none of the three holds while it is up. The board is the
+  // All items page read by stage, and nothing else draws one.
+  useWorkshopHostState(
+    hostRef,
+    !v.loading,
+    !v.loading && tab === 'all' && group === 'stage',
+    !v.loading && tab === 'needs',
+  );
   // The toolbar's props reach this root through a store, not a prop — the
   // Workshop is a separate React root from the frame that receives them. See
   // ../actions-store.ts.

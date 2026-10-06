@@ -17910,9 +17910,21 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
    `topEl` finds no band), and everything in the scroller slides, as it all
    did. AT EVERY WIDTH, outside the phone block above: the kit only pulls on
    a touch device, and an iPad's row of tabs holds still the same way (the
-   row the band becomes from 768px is the same `.dev-ws-band`). */
+   row the band becomes from 768px is the same `.dev-ws-band`).
+
+   A CLASS, NOT `:has()`. This was `#dev-forum-scroll:not(:has(.dev-ws-band))
+   > *`, and a `:has()` on the scroller that picks its children is a question
+   the browser has to ask again whenever anything is added inside it: every
+   comment the board filled in re-applied the stylesheet to the whole board
+   (about 9,000 elements with every card open, 67ms a time). The Workshop
+   sets `dev-ws-has-band` while its band is on screen and the pull re-reads
+   it when it starts (workshop.tsx `useWorkshopHostState`, app-view.js
+   `topEl`). The same holds for `dev-ws-has-board` and `dev-ws-on-needs` on
+   #dev-workshop further down. Each selector weighs what its `:has()` form
+   did, except the Needs release of the column, which now weighs what the
+   board's has always weighed. */
 #dev-forum-scroll .dev-ws > .dev-ws-band ~ *,
-#dev-forum-scroll:not(:has(.dev-ws-band)) > * {
+#dev-forum-scroll:not(.dev-ws-has-band) > * {
   transform: translateY(var(--dev-ptr-pull));
 }
 
@@ -18451,7 +18463,7 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
        alignment below: 740px with auto side margins is a shrink-to-fit box
        centred in the column, and a row cannot be left-aligned inside a box
        that has already centred itself. The board pane re-states both at
-       higher specificity (`#dev-workshop:has(.dev-ws-board) > .dev-ws > …`),
+       higher specificity (`#dev-workshop.dev-ws-has-board > .dev-ws > …`),
        which is the one place they are wanted up here. */
     inset: auto;
     /* AFTER `inset: auto`, and that ordering is the whole of it. Written
@@ -18595,12 +18607,12 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
      the item stays readable while you use it; the vote is a popover on its
      own button. The Workshop column widens past its 760px reading measure
      for this tab alone — the same release the Board pane has. */
-  #dev-workshop:has(.dev-ws[data-ws-tab="needs"]) { max-width: none; }
+  #dev-workshop.dev-ws-on-needs { max-width: none; }
   /* The tab strip keeps the reading column while the stage takes the window
      (the same re-statement the board pane makes for itself below): a
      left-aligned strip inside a 1440px nav would sit at the window's edge,
      lined up with nothing, while the card it belongs to sits at the centre. */
-  #dev-workshop:has(.dev-ws[data-ws-tab="needs"]) > .dev-ws > :not(.dev-ws-tabbody) {
+  #dev-workshop.dev-ws-on-needs > .dev-ws[data-ws-tab="needs"] > :not(.dev-ws-tabbody) {
     width: 100%; max-width: 760px; margin-left: auto; margin-right: auto;
   }
   /* `place-content`, not `justify-content: center`, here and on the key
@@ -19039,7 +19051,7 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
    `100vw` counts the scrollbar that `#dev-forum-scroll` always has, so it
    overflows by its width and adds a horizontal scrollbar to the page.
    Re-parenting the bound has no such edge. */
-#dev-workshop:has(.dev-ws-board) { max-width: none; }
+#dev-workshop.dev-ws-has-board { max-width: none; }
 /* THE TAB BODY IS A LEVEL THIS RULE HAS TO REACH THROUGH. It used to bound
    every direct child of `.dev-ws` except the pane; the tabs put the pane one
    level deeper, inside `.dev-ws-tabbody`, so the bound landed on the WRAPPER
@@ -19047,8 +19059,8 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
    body's children instead, and leave the body itself unbounded — the rail is
    still a direct child of `.dev-ws`, so it keeps the column width, which is
    what it wants: a pill spanning 1440px is not a tab bar. */
-#dev-workshop:has(.dev-ws-board) > .dev-ws > :not(.dev-ws-tabbody),
-#dev-workshop:has(.dev-ws-board) > .dev-ws > .dev-ws-tabbody > :not(.dev-ws-pane) {
+#dev-workshop.dev-ws-has-board > .dev-ws > :not(.dev-ws-tabbody),
+#dev-workshop.dev-ws-has-board > .dev-ws > .dev-ws-tabbody > :not(.dev-ws-pane) {
   width: 100%; max-width: 760px; margin-left: auto; margin-right: auto;
 }
 /* On By stage the pane WIDENS AND STAYS A PANE. An earlier cut stripped its
@@ -19065,7 +19077,7 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
    the same pair at reading width — the strip in particular reads as pulled
    apart rather than as a segmented pair. So the head still spans the pane, as
    a pinned edge must, while what sits IN it keeps the reading column. */
-#dev-workshop:has(.dev-ws-board) .dev-ws-pane-head > * {
+#dev-workshop.dev-ws-has-board .dev-ws-pane-head > * {
   /* 760px is the reading column; the 20px is the head's own left+right
      padding. Bounding to the column's OUTER width instead made the controls
      20px wider on By stage than on By category — a toolbar that grew slightly
