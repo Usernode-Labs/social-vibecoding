@@ -141,9 +141,15 @@ import { aiBudgetStore } from './ai-budget-store.js';
         // because this text is itself the tooltip.
         var RT = (typeof window !== 'undefined' && window.ResetTime) || null;
         var weeklyReset = s.capWindow === 'weekly';
+        // The reset boundary itself, worded once (#3230: in the viewer's own
+        // clock through ResetTime; the server's UTC words where that is
+        // absent) and used twice: the tooltip's full sentence below, and the
+        // short visible note the meter carries (#3998).
+        var resetBoundary = RT
+          ? RT.resetWhen(weeklyReset ? 'weekly' : 'daily', { at: s.resetsAt })
+          : (weeklyReset ? 'Monday 00:00 UTC' : 'at midnight UTC');
         var resetText = state ? CO.resetSentence(state)
-          : 'Free credits reset ' + (RT ? RT.resetWhen(weeklyReset ? 'weekly' : 'daily', { at: s.resetsAt })
-            : (weeklyReset ? 'Monday 00:00 UTC' : 'at midnight UTC')) + '.';
+          : 'Free credits reset ' + resetBoundary + '.';
         var resetUtc = state && CO.resetTitle ? CO.resetTitle(state) : null;
         if (resetUtc) resetText = resetText.replace(/\.$/, ' (' + resetUtc + ').');
         // The raw figures ride along for a reader that draws them itself
@@ -254,7 +260,14 @@ import { aiBudgetStore } from './ai-budget-store.js';
           });
         }
 
-        show({ title: tip, parts: parts });
+        // #3998: the reset time, visible at last. It used to live only in
+        // the tooltip, which nobody on a phone ever sees, so the row said
+        // how much was left but never when it comes back. Short and dim,
+        // with no period: the meter is figure-style text and its other runs
+        // carry none. The full sentence, with the exact UTC instant, stays
+        // on `title`. The locked and unavailable views above publish no
+        // reset, and ./ai-budget.tsx renders none when it is absent.
+        show({ title: tip, parts: parts, reset: 'Resets ' + resetBoundary });
       },
     },
 

@@ -262,3 +262,77 @@ test('the window wording is derived from capWindow, never retyped per state', ()
   assert.match(CREDIT_OPTIONS_SRC, /RT\.resetWhen\(weekly \? 'weekly' : 'daily'/);
   assert.match(CREDIT_OPTIONS_SRC, /weekly\s*\n?\s*\? 'Free credits reset ' \+ resetLabel/);
 });
+
+// ── #3998: the reset time is visible, not tooltip-only ──────────────────
+//
+// The row told you how much was left and kept "when you get it back" on a
+// hover tooltip, which nobody on a phone ever opens. The note rides as one
+// final dim part so the row reads as one line: figures first, reset last.
+
+test('the weekly row shows its reset time as a trailing dim part', async () => {
+  const s = await publish(budget({
+    limitCents: 5000, spentCents: 4800, remainingCents: 200,
+    capWindow: 'weekly', windowLabel: 'This week', resetLabel: 'Monday 00:00 UTC',
+  }));
+  // The store's parts stay exactly the figures; the note rides separately.
+  assert.equal(s.view.reset, 'Resets Monday 00:00 UTC');
+  const html = rowHtml(s);
+  // One final part of its own, dim, with the separator travelling with it
+  // so a wrap drops the whole note rather than splitting it.
+  assert.match(html,
+    /<span class="drawer-meter-part"><span class="drawer-meter-dim">· <\/span><span class="drawer-meter-dim">Resets Monday 00:00 UTC<\/span><\/span>/);
+  // The hooks the declared checks aim at still resolve beside it.
+  assert.match(html, /data-credits-remaining="1"/);
+  assert.match(html, /id="ai-budget-slot"/);
+  // The tooltip keeps the full sentence; the visible note stays short.
+  assert.doesNotMatch(s.view.reset, /\.\s*$|UTC instant/);
+});
+
+test('a payload with no weekly window words the daily reset', async () => {
+  const s = await publish(budget({ capWindow: 'none' }));
+  assert.equal(s.view.reset, 'Resets at midnight UTC');
+  assert.match(rowHtml(s), /drawer-meter-dim">Resets at midnight UTC/);
+});
+
+test('the reset note wraps as one part, the only place the row may break', async () => {
+  const s = await publish(budget({ capWindow: 'weekly', resetLabel: 'Monday 00:00 UTC' }));
+  const html = rowHtml(s);
+  // A real space BEFORE the note's part, never inside it.
+  assert.match(html, /<\/span> <span class="drawer-meter-part"><span class="drawer-meter-dim">· <\/span><span class="drawer-meter-dim">Resets /);
+});
+
+test('exhausted or not, the note is there; the special states carry none', async () => {
+  // Exhausted is exactly when the reset time matters most.
+  const out = await publish(budget({ spentCents: 2000, remainingCents: 0 }));
+  assert.equal(out.view.reset, 'Resets at midnight UTC');
+  // The locked and unavailable views publish no reset, and none renders.
+  const locked = await publish(budget({
+    limitCents: 0, remainingCents: 0, spentCents: 0, verificationRequired: true,
+  }));
+  assert.ok(!locked.view.reset);
+  assert.doesNotMatch(rowHtml(locked), /Resets /);
+  const unavailable = await publish(budget({ limitCents: 0, entitlementAvailable: false }));
+  assert.ok(!unavailable.view.reset);
+  assert.doesNotMatch(rowHtml(unavailable), /Resets /);
+});
+
+test('with ResetTime published, the note is worded in the viewer’s own clock', async () => {
+  // The bundle publishes window.ResetTime (frontend/src/lib/reset-time.ts);
+  // the sandbox above has none, which is what the fallback wordings pin.
+  // Here the real module is published, so the note must read "Resets" plus
+  // a weekday and a time in whatever clock this process has — a shape, not
+  // a literal time, which is timezone-dependent.
+  const rt = loadTsx('frontend/src/lib/reset-time.ts');
+  const g = globalThis;
+  g.window.ResetTime = rt.default;
+  try {
+    const s = await publish(budget({
+      capWindow: 'weekly', resetsAt: '2026-10-12T00:00:00Z',
+    }));
+    assert.match(s.view.reset, /^Resets [A-Za-z]+ at \d{1,2}:\d{2}/);
+    assert.doesNotMatch(s.view.reset, /UTC/, 'the viewer’s clock, not the server’s');
+    assert.match(rowHtml(s), /drawer-meter-dim">Resets [A-Za-z]+ at \d{1,2}:\d{2}/);
+  } finally {
+    delete g.window.ResetTime;
+  }
+});

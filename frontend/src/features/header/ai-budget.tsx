@@ -37,6 +37,12 @@ export interface AiBudgetView {
   /** A tone on the meter itself, for the one state that is all one colour. */
   tone?: MeterTone;
   parts: MeterPart[];
+  /**
+   * The reset time as visible dim text (#3998): "Resets Sunday at 8:00 PM",
+   * worded by ./ai-credit.js from the same boundary its tooltip names. The
+   * locked and unavailable views publish none, and then nothing renders.
+   */
+  reset?: string;
 }
 
 /** The numbers the view is worded from (./ai-credit.js), for a reader that draws its own. */
@@ -84,9 +90,17 @@ function Runs({ part }: { part: MeterPart }): ReactNode {
 
 export function AiBudgetMeter({ view }: { view: AiBudgetState['view'] }): ReactNode {
   if (!view) return null;
+  // The reset note (#3998) is one final part, built here rather than in the
+  // view model so the store's `parts` stay exactly the figures. Tone `dim`,
+  // the same literal the "limit" run uses, and the "·" travels WITH the
+  // note, as it does with the "your key" figure, so the row's `flex-wrap`
+  // drops the whole note onto its own line intact rather than splitting it.
+  const parts = view.reset
+    ? [...view.parts, { runs: [{ tone: 'dim', text: '· ' }, { tone: 'dim', text: view.reset }] }]
+    : view.parts;
   return (
     <span className={view.tone ? `ai-budget-meter drawer-meter ${TONE[view.tone]}` : 'ai-budget-meter drawer-meter'} title={view.title}>
-      {view.parts.map((part, i) => {
+      {parts.map((part, i) => {
         // A real space BETWEEN parts, never inside one: the parts are
         // `nowrap`, so this is the only place the value may break.
         const body = part.bare
