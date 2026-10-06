@@ -4156,6 +4156,12 @@
       "expectText": "Staging demo core v1"
     },
     {
+      "name": "Homeroom bot Benchmark's Studio place shows the App bench studio's gallery of first versions built from briefs, its runs, its context packs and its launcher",
+      "path": "/#admin/homeroom-bot/benchmark/studio",
+      "expectSelector": "#admin-homeroom-bench[data-bench-view=\"studio\"]:has(#admin-homeroom-bench-tab-studio[aria-current=\"page\"]) #admin-bench-studio-gallery [data-studio-brief=\"bread\"] h4",
+      "expectText": "Bread Bot"
+    },
+    {
       "name": "Welcome messages lets an admin choose who greets somebody let in, and what the first message says",
       "path": "/#admin/welcome-dm",
       "expectSelector": "#admin-welcome-dm:has(#admin-welcome-dm-members):has(#admin-welcome-dm-recent) #admin-welcome-dm-intro",

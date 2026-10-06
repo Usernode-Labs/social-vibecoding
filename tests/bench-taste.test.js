@@ -17,6 +17,7 @@ const taste = require('../src/services/bench/taste');
 const capture = require('../src/services/bench/capture');
 const step = require('../worker/usernode-bench-capture');
 const runner = require('../src/services/bench/runner');
+const scaffold = require('../src/services/bench/scaffold');
 const grading = require('../src/services/bench/grading');
 const graders = require('../src/services/bench/graders');
 const report = require('../src/services/bench/report');
@@ -384,6 +385,7 @@ function spySideEffects(t) {
 }
 
 const SCAFFOLD = 'a'.repeat(40);
+const CARD = { kind: 'card', emoji: '🎵', tagline: 'Learn chords and progressions by ear', points: ['Lessons that get harder', 'Progressions from songs and hymns'], source: 'fallback' };
 const APP = { id: 9, slug: 'ear-trainer-9aee0d', name: 'Ear Trainer', repo_url: 'https://github.com/o/ear', self_hosted: false };
 const REPO = { owner: 'o', repo: 'ear' };
 const USER = { id: 501, username: 'homeroom_bench' };
@@ -398,6 +400,9 @@ function harness({ verdict = 'ready', pushed = true, captureOut = null } = {}) {
         nextSession += 1;
         return { rows: [{ id: nextSession, branch_name: params[2] ?? null, agent_model: params[4] }] };
       }
+      // The run's shared first commit (services/bench/scaffold.js): this
+      // trial is the first to need it, so it makes it.
+      if (/INSERT INTO bench_scaffolds/.test(String(sql))) return { rows: [{ id: 12 }] };
       return { rows: [], rowCount: 1 };
     },
   };
@@ -438,6 +443,8 @@ function harness({ verdict = 'ready', pushed = true, captureOut = null } = {}) {
     },
     agentTurn: { async resolveCodexRuntimeContext({ session }) { return { agentModel: session.agent_model }; } },
     activeWorkers: new Set(),
+    // The first session's card, as creation would make it.
+    makeSketch: async () => ({ design: CARD, model: 'fallback', readyAt: '2026-10-06T00:00:00.000Z' }),
     captureStep: async (args) => {
       calls.capture.push(args);
       return captureOut || { ok: true, capture: { booted: true, shots: [{ id: 'phone-light-populated', artifactId: 'b'.repeat(32) }], checks: {}, tells: {} } };
@@ -457,7 +464,7 @@ function ctx(h, stage, snapshot, over = {}) {
 
 const FIRST = { id: 5, stage: 'build', issueNumber: 1, baseSha: null, texts: { brief: EAR_TRAINER }, extra: { taste: 'first_version', appName: 'Ear Trainer', template: 'empty' } };
 
-test('a first-version trial: today\'s starter as a history-less commit, the bot\'s first-version triage, spec and build, then the screenshots', async (t) => {
+test('a first-version trial: today\'s new project as a history-less first commit, the bot\'s first-version triage, the plan as Build it leaves it, spec and build, then the screenshots', async (t) => {
   const side = spySideEffects(t);
   const realBuild = live.buildAndPropose;
   let args = null;
@@ -466,26 +473,39 @@ test('a first-version trial: today\'s starter as a history-less commit, the bot\
   const h = harness();
   const out = await runner.runStage(ctx(h, 'first_version', FIRST));
   assert.equal(out.status, 'ok', out.error);
-  // The starter, rendered for the app's name, on the trial's own branch.
+  // The new project's first commit: the starter rendered for the app's name
+  // with its card of the idea, made once for the run (bench/r<run>-s<id>).
   assert.equal(h.calls.scaffold.length, 1);
-  assert.deepEqual(h.calls.scaffold[0].files.map((f) => f.path).sort(), taste.scaffoldFiles({ appName: 'Ear Trainer', template: 'empty' }).map((f) => f.path).sort());
-  assert.deepEqual(h.calls.deleted, ['bench/r3-t44'], 'an earlier attempt\'s branch of the same trial goes first');
-  assert.deepEqual(h.calls.pinned[0], { branch: 'bench/r3-t44', sha: SCAFFOLD });
+  const sketch = { design: CARD, model: 'fallback', readyAt: '2026-10-06T00:00:00.000Z' };
+  assert.deepEqual(h.calls.scaffold[0].files.map((f) => f.path).sort(),
+    scaffold.filesFor({ input: { appName: 'Ear Trainer', template: 'empty' }, sketch }).map((f) => f.path).sort());
+  assert.ok(h.calls.scaffold[0].files.some((f) => f.path === 'design/sketch.json'), 'the card is in the first commit, as creation puts it');
+  assert.deepEqual(h.calls.deleted, ['bench/r3-s12', 'bench/r3-t44'], 'the first commit\'s branch, then an earlier attempt\'s branch of the same trial');
+  assert.deepEqual(h.calls.pinned.slice(0, 2), [{ branch: 'bench/r3-s12', sha: SCAFFOLD }, { branch: 'bench/r3-t44', sha: SCAFFOLD }]);
+  assert.ok(h.calls.pinned.slice(2).every((p) => p.branch === 'bench/r3-t44' && p.sha === SCAFFOLD), 'the build confirms the trial\'s branch at the same commit');
   assert.equal(out.base_sha, SCAFFOLD);
-  // The bot's own first-version triage, on the request the bot would read.
+  assert.deepEqual(out.parsed.scaffold, { sha: SCAFFOLD, branch: 'bench/r3-s12' });
+  assert.equal(out.parsed.sketch.tagline, CARD.tagline);
+  // The bot's own first-version triage, on the request the bot would read:
+  // the brief, quoting the card as a project's first request does.
   assert.deepEqual(h.calls.modes, ['scout', 'scout', 'build'], 'triage, spec, build');
   const triagePrompt = h.calls.prompts[0];
   assert.ok(triagePrompt.includes('THIS REQUEST IS A NEW PROJECT\'S FIRST VERSION'));
   assert.ok(triagePrompt.includes(EAR_TRAINER));
-  assert.ok(triagePrompt.startsWith(taste.seedFor({ appName: 'Ear Trainer', brief: EAR_TRAINER }, 'usernode-bot')));
+  assert.ok(triagePrompt.includes('**Featured card:**'));
+  assert.ok(triagePrompt.includes(CARD.tagline));
+  const card = { emoji: CARD.emoji, tagline: CARD.tagline, points: CARD.points, committed: true };
+  assert.ok(triagePrompt.startsWith(taste.seedFor({ appName: 'Ear Trainer', brief: EAR_TRAINER }, 'usernode-bot', card)));
+  assert.ok(!triagePrompt.includes('ADDITIONAL GUIDANCE'), 'no pack, no guidance');
   // Then the bot's real build, as a first version, never proposed.
   assert.equal(args.firstVersion, true);
   assert.equal(args.propose, false);
   assert.ok(args.buildNote.startsWith('Lessons list, a keyboard, both looks.'), 'the triage\'s plan, as the bot hands it on');
+  assert.equal(args.specModel, undefined, 'one model for every turn');
   assert.equal(args.turnBudgetMs, 120_000, 'a first version\'s longer clock');
   assert.equal(args.issue.title, 'First version of Ear Trainer');
   assert.ok(h.calls.prompts[2].includes('Lessons list, a keyboard, both looks.'));
-  // The screenshots, on the build's own worker, sealed at the starter.
+  // The screenshots, on the build's own worker, sealed at the first commit.
   assert.equal(h.calls.capture.length, 1);
   assert.equal(h.calls.capture[0].trialId, 44);
   assert.equal(h.calls.capture[0].containerName, `w-${out.session_id}`);
@@ -493,6 +513,7 @@ test('a first-version trial: today\'s starter as a history-less commit, the bot\
   assert.equal(out.capture.booted, true);
   assert.equal(out.parsed.built, true);
   assert.equal(out.parsed.triage.verdict, 'ready');
+  assert.deepEqual(out.parsed.plan.chosen, [], 'a plan with no questions: nothing chosen');
   assert.equal(out.session_ids.length, 2, 'the triage\'s session and the build\'s are both the trial\'s cost');
   assert.equal(out.build_commits, 3);
   assert.deepEqual(side, [], 'nothing posted, commented, DMed, pushed or proposed');

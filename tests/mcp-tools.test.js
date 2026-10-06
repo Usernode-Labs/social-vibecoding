@@ -2479,20 +2479,29 @@ test('platform failures pass the platform’s own wording through', () => {
 test('the registered tool surface is exactly this, and nothing more', () => {
   const registered = [...SRC.matchAll(/server\.registerTool\('([a-z_]+)'/g)].map((m) => m[1]);
   assert.deepEqual(registered.sort(), [
+    'add_bench_task',
     'answer_questions',
     // #3654. Cancelling a benchmark run: full platform admins only.
     'cancel_bench_run',
-    'claim_request', 'create_request',
+    // The App bench studio (services/bench/studio.js), the benchmark's suites,
+    // the live Homeroom bot and the recent before/after screenshots: every
+    // one registered only for a full platform admin, and every route behind
+    // them (routes/bench-studio.js) refuses anybody else.
+    'cancel_bench_trial',
+    'claim_request', 'create_bench_context_pack', 'create_request',
     // Test accounts for first-run testing (create_test_account,
     // list_test_accounts, retire_test_account): registered only for a full
     // platform admin, and every route behind them refuses anybody else.
     'create_test_account',
     // Demo mode: the four acting tools of a creator's synthetic partner, and
     // its read — see ACTING_TOOLS and routes/demo-mode.js.
-    'demo_mode', 'demo_promote', 'demo_propose', 'demo_reset', 'demo_vote', 'get_app',
-    'get_bench_item',
+    'demo_mode', 'demo_promote', 'demo_propose', 'demo_reset', 'demo_vote',
+    'deploy_bench_preview', 'edit_bench_task', 'get_app',
+    'get_bench_context_pack', 'get_bench_gallery',
+    'get_bench_item', 'get_bench_reference_order',
     // #3654. One benchmark run's results, as aggregates only.
     'get_bench_run',
+    'get_bench_studio', 'get_bench_studio_run', 'get_bench_suite', 'get_bench_trial',
     // #2779. A native change, read the way the change page reads it.
     'get_change',
     // #1433. Read-only, and named `get_` so the shipped allow rules already
@@ -2500,12 +2509,12 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     'get_checkout_status',
     'get_connector_guidance', 'get_demo_status',
     // #3556. One app discussion thread, read through the transcript route.
-    'get_discussion',
+    'get_discussion', 'get_homeroom_bot',
     'get_platform_build', 'get_platform_conventions', 'get_proposal',
-    'get_request',
+    'get_recent_shots', 'get_request',
     // Specs on a request (services/request-specs.js): reading one, and the
     // platform's own format for writing one. post_spec, below, posts it.
-    'get_spec', 'get_spec_format',
+    'get_spec', 'get_spec_format', 'keep_bench_trial',
     // #3654. The Homeroom bot benchmark's judge (get_bench_item above it,
     // list_bench_grading_queue and submit_bench_grade below): registered only
     // for a full platform admin, and every route behind them refuses anybody
@@ -2513,9 +2522,10 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     'label_bench_task',
     // #3654. Running the benchmark (launch_bench_run, list_bench_runs, with
     // get_bench_run and cancel_bench_run above): the same full-admin gate.
-    'launch_bench_run',
-    'list_apps', 'list_bench_grading_queue', 'list_bench_runs',
-    'list_my_proposals', 'list_requests', 'list_test_accounts',
+    'launch_bench_run', 'launch_bench_studio',
+    'list_apps', 'list_bench_context_packs', 'list_bench_grading_queue', 'list_bench_runs',
+    'list_bench_suites', 'list_bench_trials',
+    'list_my_proposals', 'list_recent_shots', 'list_requests', 'list_test_accounts',
     // #1405. They write a row, but only into the CALLER'S OWN notification
     // feed — see the allow-rule reasoning in services/mcp-connect-constants.js
     // for why that is a different category from the acting tools below.
@@ -2535,11 +2545,13 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     // close". It files the proposal; the vote decides, and the platform
     // closes the issue only when it passes.
     'propose_close_request',
+    'rate_homeroom_bot_run',
     'recheck_change',
     'release_request',
+    'rerun_bench_trial',
     'retire_test_account',
     'start_change',
-    'start_platform_build', 'submit_bench_grade', 'submit_platform_build', 'submit_work',
+    'start_platform_build', 'submit_bench_grade', 'submit_bench_reference', 'submit_platform_build', 'submit_work',
     'sync_change',
     'update_proposal_description', 'update_proposal_issues', 'whoami',
     'withdraw_change',
@@ -2746,13 +2758,16 @@ test('ACTING_TOOLS names every user-directed action, and every one is a write', 
   // mean a read is being withheld from both for no reason, and a write left
   // out of it would leak into the read-only globs.
   assert.deepEqual([...tools.ACTING_TOOLS].sort(), [
-    'cancel_bench_run',
-    'create_request', 'create_test_account',
+    'add_bench_task',
+    'cancel_bench_run', 'cancel_bench_trial',
+    'create_bench_context_pack', 'create_request', 'create_test_account',
     'demo_mode', 'demo_promote', 'demo_propose', 'demo_reset', 'demo_vote',
-    'label_bench_task', 'launch_bench_run',
-    'post_message', 'post_spec', 'prepare_work', 'promote_change', 'propose_close_request', 'recheck_change',
+    'deploy_bench_preview', 'edit_bench_task', 'keep_bench_trial',
+    'label_bench_task', 'launch_bench_run', 'launch_bench_studio',
+    'post_message', 'post_spec', 'prepare_work', 'promote_change', 'propose_close_request',
+    'rate_homeroom_bot_run', 'recheck_change', 'rerun_bench_trial',
     'retire_test_account', 'start_change',
-    'start_platform_build', 'submit_bench_grade',
+    'start_platform_build', 'submit_bench_grade', 'submit_bench_reference',
     'submit_platform_build', 'submit_work', 'sync_change',
     'update_proposal_description', 'update_proposal_issues', 'withdraw_change',
   ]);
