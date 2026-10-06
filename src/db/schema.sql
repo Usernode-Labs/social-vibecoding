@@ -12493,6 +12493,11 @@ CREATE TRIGGER wf_events_writer
 --     EXECUTE FUNCTION wf_guard_owned_columns('status', 'payload.appliedAt');
 -- An UPDATE that changes an owned path without the writer marker raises,
 -- or in 'log' mode is recorded and allowed.
+--
+-- A first argument '@enrolled=<machine>/<key prefix>' limits the guard to
+-- rows whose instance exists (key = prefix || id), so a machine rolled out
+-- behind a flag owns a row from the moment it enrolls it, and the legacy
+-- writers keep the rows it has not.
 CREATE OR REPLACE FUNCTION wf_guard_owned_columns() RETURNS TRIGGER AS $$
 DECLARE
   owned TEXT;
@@ -12501,13 +12506,23 @@ DECLARE
   before JSONB;
   after JSONB;
   mode TEXT;
+  enrolled TEXT;
 BEGIN
   IF current_setting('app.wf_writer', true) = 'transition' THEN
     RETURN NEW;
   END IF;
   before := to_jsonb(OLD);
   after := to_jsonb(NEW);
+  IF TG_ARGV[0] LIKE '@enrolled=%' THEN
+    enrolled := substr(TG_ARGV[0], length('@enrolled=') + 1);
+    IF NOT EXISTS (SELECT 1 FROM wf_instances
+                    WHERE machine = split_part(enrolled, '/', 1)
+                      AND key = split_part(enrolled, '/', 2) || (before ->> 'id')) THEN
+      RETURN NEW;
+    END IF;
+  END IF;
   FOREACH owned IN ARRAY TG_ARGV LOOP
+    CONTINUE WHEN owned LIKE '@%';
     col := split_part(owned, '.', 1);
     sub := NULLIF(split_part(owned, '.', 2), '');
     IF (sub IS NULL AND (after -> col) IS DISTINCT FROM (before -> col))
@@ -12525,3 +12540,16 @@ BEGIN
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+
+-- governance-proposal (src/workflow/governance-proposal/) owns a governance
+-- row's status and audit keys once the row is enrolled. The kinds are
+-- services/governance-kinds.js's list (pinned by
+-- tests/workflow-governance-postgres.test.js); general request twins are
+-- never owned.
+DROP TRIGGER IF EXISTS issues_wf_governance_owned ON issues;
+CREATE TRIGGER issues_wf_governance_owned
+  BEFORE UPDATE ON issues
+  FOR EACH ROW
+  WHEN (OLD.kind IN ('secret_change', 'rename', 'close_issue', 'maintenance_campaign', 'featured_illustration'))
+  EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=governance-proposal/issue:', 'status',
+    'payload.appliedAt', 'payload.appliedBy', 'payload.withdrawnAt', 'payload.supersededAt');

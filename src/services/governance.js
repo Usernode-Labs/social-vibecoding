@@ -64,18 +64,25 @@ function invalidateGovernance(appId) {
 async function getGovernance(pool, appId) {
   const hit = govCache.get(appId);
   if (hit && Date.now() - hit.at < GOV_CACHE_TTL_MS) return hit.value;
+  const value = await readGovernance(pool, appId);
+  govCache.set(appId, { at: Date.now(), value });
+  return value;
+}
+
+// The same read without the cache, for a decision taken under a lock (the
+// workflow governance machine's gate): a cached value is only as fresh as
+// its TTL, and a settings change must not be missed by the vote it races.
+async function readGovernance(pool, appId) {
   const { rows } = await pool.query(
     'SELECT approver_policy, approvals_required FROM apps WHERE id = $1',
     [appId]
   );
-  const value = {
+  return {
     approverPolicy: rows[0]?.approver_policy === 'invited' ? 'invited' : 'anyone',
     approvalsRequired: rows[0]?.approvals_required != null
       ? parseInt(rows[0].approvals_required, 10)
       : null,
   };
-  govCache.set(appId, { at: Date.now(), value });
-  return value;
 }
 
 // The approver electorate for an 'invited'-policy app: member rows in
@@ -556,6 +563,7 @@ module.exports = {
   electorateAtPromote,
   requiredAtPromote,
   getGovernance,
+  readGovernance,
   invalidateGovernance,
   getApproverSet,
   isApprover,

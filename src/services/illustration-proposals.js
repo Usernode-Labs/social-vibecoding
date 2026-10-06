@@ -163,6 +163,25 @@ async function createProposal(pool, { app, user, proposed, images = {} }) {
  * kept an image (a reframe, a light-only upload). Anything else means the
  * image is gone, which is an error rather than a silent blank card.
  */
+// Why applyProposal would throw for this record, or null when it would not:
+// the same checks, reading ids rather than bytes, so the workflow machine can
+// refuse a proposal whose image is gone instead of failing its apply.
+async function missingProposalImage(client, appId, payload, issueId) {
+  const proposed = payload && payload.proposed ? payload.proposed : null;
+  if (!proposed) return null;
+  const lightId = imageIdFromUrl(proposed.url);
+  const darkId = proposed.darkUrl ? imageIdFromUrl(proposed.darkUrl) : null;
+  if (!lightId || (proposed.darkUrl && !darkId)) return 'no_image';
+  const { rows } = await client.query(
+    `SELECT id, dark_id FROM app_illustration_proposals WHERE issue_id = $1
+     UNION ALL
+     SELECT id, dark_id FROM app_illustrations WHERE app_id = $2`,
+    [issueId, appId]
+  );
+  const known = new Set(rows.flatMap((r) => [r.id, r.dark_id]).filter(Boolean));
+  return known.has(lightId) && (!darkId || known.has(darkId)) ? null : 'image_unavailable';
+}
+
 async function applyProposal(client, appId, payload, issueId) {
   const proposed = payload && payload.proposed ? payload.proposed : null;
   if (!proposed) {
@@ -227,4 +246,5 @@ module.exports = {
   findOpenProposal,
   createProposal,
   applyProposal,
+  missingProposalImage,
 };

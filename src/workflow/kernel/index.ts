@@ -54,7 +54,8 @@ export function createRuntime(opts: RuntimeOptions) {
   const stopping = new AbortController();
   const loops: Promise<void>[] = [];
   const running = new Map<string, Set<Promise<void>>>();
-  let started = false;
+  let listening = false;
+  let looping = false;
 
   const machineFor = (m: Machine<any, any> | string) =>
     typeof m === 'string' ? (machines.get(m) || m) : m;
@@ -107,7 +108,7 @@ export function createRuntime(opts: RuntimeOptions) {
       // commits, so waiting there could only ever time out.
       if (o.db) throw new Error('appendAndWait cannot run inside a caller transaction; use append');
       const id = await append(opts.pool, machineFor(machine), key, event, o);
-      return waitForOutcome(opts.pool, started ? signals : null, id, o.waitMs ?? 3000);
+      return waitForOutcome(opts.pool, listening ? signals : null, id, o.waitMs ?? 3000);
     },
 
     // Single steps, for tests and admin tooling.
@@ -131,12 +132,15 @@ export function createRuntime(opts: RuntimeOptions) {
 
     // Every process starts signals (so appendAndWait wakes on outcomes);
     // with `loops`, it also runs pipeline slots, timers and services. That
-    // is the leader for now; correctness does not depend on it.
+    // is the leader for now; correctness does not depend on it. Callable
+    // again later: a follower starts its loops when it is elected.
     async start(o: { loops?: boolean } = {}) {
-      if (started) return;
-      started = true;
-      await signals.start();
-      if (!o.loops) return;
+      if (!listening) {
+        listening = true;
+        await signals.start();
+      }
+      if (!o.loops || looping) return;
+      looping = true;
       for (let i = 0; i < (opts.slots ?? 8); i++) {
         loop(`pipeline slot ${i}`, async () => (await processNext(pipeline)) !== null, 'wf_events');
       }
