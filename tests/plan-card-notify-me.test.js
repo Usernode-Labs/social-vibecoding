@@ -209,10 +209,22 @@ test('the card: one button, which asks nothing until it is tapped, then says wha
   assert.equal(mod.notifyMeOutcome({ outcome: 'no-app' }), 'here');
   assert.equal(mod.notifyMeOutcome({ outcome: 'unknown' }), 'here', 'never a promise it cannot keep');
   assert.equal(mod.notifyMeOutcome(null), 'here');
-  assert.equal(mod.NOTIFY_ME_LINES.granted, 'I’ll send you a notification when it’s ready.');
-  assert.equal(mod.NOTIFY_ME_LINES.here, 'I’ll message you here when it’s ready.');
-  assert.match(mod.NOTIFY_ME_LINES.denied, /^Notifications are off for Homeroom, so I’ll message you here when it’s ready\.$/);
-  for (const line of Object.values(mod.NOTIFY_ME_LINES)) assert.ok(!/—/.test(line));
+  // #4046 (owner, 6 October): tapped, the same button turns grey and says
+  // so, with a check; no line is added under it.
+  assert.equal(mod.NOTIFY_ME_OFFER, 'Notify me when it’s ready');
+  assert.equal(mod.NOTIFY_ME_DONE, 'We’ll notify you');
+  const draw = (props) => renderToHtml(createElement(mod.NotifyMeView, props));
+  assert.match(draw({ state: 'asking' }), /<button type="button" class="messages-bot-tint" data-bot-notify-me="" disabled="">/, 'asking: pressed once, waiting for the answer');
+  for (const state of ['granted', 'here', 'denied']) {
+    const done = draw({ state });
+    assert.match(done, new RegExp(`^<div class="messages-bot-answers" role="group" aria-label="Notifications" aria-live="polite"><button type="button" class="messages-bot-done" data-bot-notify-me="${state}" disabled=""><svg[^>]*>.*?</svg><span>We’ll notify you</span></button></div>$`), state);
+    assert.doesNotMatch(done, /<p[ >]|Notify me when/, 'no new line, and the offer is gone');
+  }
+  assert.match(draw({ state: 'denied', settings: true }), /We’ll notify you<\/span><\/button><button type="button" class="messages-bot-secondary">Turn on notifications<\/button>/,
+    'notifications off in the app: the way to turn them on, beside it');
+  assert.match(read('public/css/app.css'), /\.messages-bot-answers \.messages-bot-done \{ color: var\(--text-muted\); background: var\(--dc-raised\); cursor: default; filter: none; \}/,
+    'grey: the muted ink on the raised fill');
+  for (const line of [mod.NOTIFY_ME_OFFER, mod.NOTIFY_ME_DONE]) assert.ok(!/—|!/.test(line));
 });
 
 test('the tap: the app\'s answer, a browser\'s, and "Your builds" switched back on when it was off', async () => {
@@ -272,7 +284,7 @@ test('offered under the bot\'s line while it is being built, and not again once 
   assert.doesNotMatch(card, /footer=/, 'the plan card offers nothing itself');
   assert.match(card, /const \[offer\] = useState\(\(\) => !notifyMeChosen\(userId\)\);/,
     'decided when the line is drawn: an account that chose here is not asked again');
-  assert.match(card, /\{offer && card\?\.state !== 'done' \? <div className="mt-2"><NotifyMe userId=\{userId\} quietHere \/><\/div> : null\}/,
+  assert.match(card, /\{offer && card\?\.state !== 'done' \? <div className="mt-2"><NotifyMe userId=\{userId\} \/><\/div> : null\}/,
     'only while it is being built');
   const notify = read('frontend/src/features/messages/notify-me.tsx');
   assert.match(notify, /setState\('asking'\);\s*markNotifyMeChosen\(userId\);\s*const answered = await askToNotify\(\);/,

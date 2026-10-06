@@ -113,7 +113,7 @@ test('#4046: the plan is the one place its request\'s step shows: the card above
   assert.equal(PLAN_FOLLOW_UP_WORDS, 'I’ll message you here when it’s ready to try.');
   const { BotPlanFollowUp } = loadTsx('frontend/src/features/messages/bot-plan.tsx');
   const html = renderToHtml(createElement(BotPlanFollowUp, { message: card(50) }));
-  assert.match(html, /^<div data-bot-plan-follow-up="pending"><div class="messages-markdown gc-msg-content"><p>I’ll message you here when it’s ready to try\.<\/p><\/div><div class="mt-2"><div class="messages-bot-answers" role="group" aria-label="Notifications"><button type="button" class="messages-bot-tint" data-bot-notify-me="">/);
+  assert.match(html, /^<div data-bot-plan-follow-up="pending"><div class="messages-markdown gc-msg-content"><p>I’ll message you here when it’s ready to try\.<\/p><\/div><div class="mt-2"><div class="messages-bot-answers" role="group" aria-label="Notifications" aria-live="polite"><button type="button" class="messages-bot-tint" data-bot-notify-me="">/);
   const row = read('frontend/src/features/messages/message-row.tsx');
   assert.match(row, /isActivityMessage\(message\) && underPlan \? \([\s\S]{0,120}<BotPlanFollowUp message=\{message\} \/>/);
   assert.match(row, /<BotPlanCard message=\{message\} conversationId=\{conversationId\} cardId=\{planCardId\} \/>/);

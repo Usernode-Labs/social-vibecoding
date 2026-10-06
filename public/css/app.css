@@ -1377,6 +1377,8 @@ html:not(.dark) .messages-markdown .gc-ref-issue { background: rgba(16, 185, 129
 /* #4046: "Notify me when it's ready" under the plan: an action in the
    accent's tint, quieter than the plan's Build it. */
 .messages-bot-answers .messages-bot-tint { color: var(--accent-tint-ink); background: var(--accent-tint); }
+/* Tapped, it turns grey and says so, with a check: settled, not pressable. */
+.messages-bot-answers .messages-bot-done { color: var(--text-muted); background: var(--dc-raised); cursor: default; filter: none; }
 /* B6: an answer tapped as a choice (a plan's, or one of two questions)
    takes the same accent fill. Nothing is sent until Build it. */
 .messages-bot-answers button[aria-pressed="true"] { color: var(--accent-ink); background: var(--accent); }

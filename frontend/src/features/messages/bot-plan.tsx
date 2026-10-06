@@ -223,8 +223,8 @@ export function BotPlanCard({ message, conversationId, cardId = null }: {
  * #4046: the activity card Build it moved under its plan (planLayout
  * `underPlan`), drawn as one line in the bot's voice: the plan above carries
  * its step. While it is being built, "Notify me when it's ready" is under it
- * (./notify-me.tsx), unless this account chose already on this device. In a
- * browser the tap's answer is this same line, so it adds nothing (quietHere).
+ * (./notify-me.tsx), unless this account chose already on this device.
+ * Tapped, it turns grey and says "We'll notify you".
  */
 export function BotPlanFollowUp({ message }: { message: ConversationMessage }) {
   const activity = useBotActivity();
@@ -237,7 +237,7 @@ export function BotPlanFollowUp({ message }: { message: ConversationMessage }) {
     <div data-bot-plan-follow-up={card?.state || 'pending'}>
       {/* Drawn as the bot's words are (./format.tsx MessageMarkdown). */}
       <div className="messages-markdown gc-msg-content"><p>{PLAN_FOLLOW_UP_WORDS}</p></div>
-      {offer && card?.state !== 'done' ? <div className="mt-2"><NotifyMe userId={userId} quietHere /></div> : null}
+      {offer && card?.state !== 'done' ? <div className="mt-2"><NotifyMe userId={userId} /></div> : null}
     </div>
   );
 }

@@ -1,5 +1,7 @@
 import { useState } from 'react';
 
+import { CheckIcon } from '@/components/ui/icons';
+
 /*
  * "Notify me when it's ready", under the line Homeroom bot says once its
  * maker pressed Build it on a plan, "I'll message you here when it's ready to
@@ -21,16 +23,16 @@ import { useState } from 'react';
  * Offered while the first version is being built, and never again once
  * chosen here (CHOSEN_KEY, per account): an old plan in the chat does not
  * keep asking. It is the accent's tint: an action, quieter than Build it.
+ * #4046: once tapped, the same button turns grey and says "We'll notify
+ * you", with a check; no new line. When the app's notifications are off it
+ * offers the way to turn them on beside it.
  */
 
 export type NotifyMeState = 'offer' | 'asking' | 'granted' | 'denied' | 'here';
 
-/** What the card says once the tap is answered. */
-export const NOTIFY_ME_LINES: Record<Exclude<NotifyMeState, 'offer' | 'asking'>, string> = {
-  granted: 'I’ll send you a notification when it’s ready.',
-  denied: 'Notifications are off for Homeroom, so I’ll message you here when it’s ready.',
-  here: 'I’ll message you here when it’s ready.',
-};
+/** What the button says before it is tapped, and once it is. */
+export const NOTIFY_ME_OFFER = 'Notify me when it’s ready';
+export const NOTIFY_ME_DONE = 'We’ll notify you';
 
 const CHOSEN_KEY = 'usernode:notify-me-chosen';
 
@@ -93,11 +95,35 @@ export async function askToNotify(host: NotifyMeHost = window as unknown as Noti
   return { state, settings: state === 'denied' && answer?.settings === true };
 }
 
-export function NotifyMe({ userId, quietHere = false }: {
-  userId: number | null | undefined;
-  /** The line above already says "I'll message you here": a browser's answer adds nothing to it. */
-  quietHere?: boolean;
+/** The button in each state: a pure render, so a test can draw every one. */
+export function NotifyMeView({ state, settings = false, onTap, onSettings }: {
+  state: NotifyMeState;
+  /** Denied, and the app can open its notification settings. */
+  settings?: boolean;
+  onTap?: () => void;
+  onSettings?: () => void;
 }) {
+  const done = state !== 'offer' && state !== 'asking';
+  return (
+    <div className="messages-bot-answers" role="group" aria-label="Notifications" aria-live="polite">
+      <button
+        type="button"
+        className={done ? 'messages-bot-done' : 'messages-bot-tint'}
+        data-bot-notify-me={done ? state : ''}
+        disabled={state !== 'offer'}
+        onClick={() => onTap?.()}
+      >
+        {done ? <CheckIcon className="h-4 w-4 shrink-0" aria-hidden="true" /> : null}
+        <span>{done ? NOTIFY_ME_DONE : NOTIFY_ME_OFFER}</span>
+      </button>
+      {done && settings ? (
+        <button type="button" className="messages-bot-secondary" onClick={() => onSettings?.()}>Turn on notifications</button>
+      ) : null}
+    </div>
+  );
+}
+
+export function NotifyMe({ userId }: { userId: number | null | undefined }) {
   const [state, setState] = useState<NotifyMeState>('offer');
   const [settings, setSettings] = useState(false);
 
@@ -110,37 +136,15 @@ export function NotifyMe({ userId, quietHere = false }: {
     setState(answered.state);
   }
 
-  if (state === 'offer' || state === 'asking') {
-    return (
-      <div className="messages-bot-answers" role="group" aria-label="Notifications">
-        <button
-          type="button"
-          className="messages-bot-tint"
-          data-bot-notify-me=""
-          disabled={state === 'asking'}
-          onClick={() => { void tap(); }}
-        >
-          <span>Notify me when it’s ready</span>
-        </button>
-      </div>
-    );
-  }
-  if (state === 'here' && quietHere) return null;
-  const host = window as unknown as NotifyMeHost;
   return (
-    <div data-bot-notify-me={state}>
-      <p className="messages-bot-answered" role="status">{NOTIFY_ME_LINES[state]}</p>
-      {settings ? (
-        <div className="mt-2 messages-bot-answers">
-          <button
-            type="button"
-            className="messages-bot-secondary"
-            onClick={() => { void host.usernode?.openNotificationSettings?.()?.catch?.(() => {}); }}
-          >
-            Turn on notifications
-          </button>
-        </div>
-      ) : null}
-    </div>
+    <NotifyMeView
+      state={state}
+      settings={settings}
+      onTap={() => { void tap(); }}
+      onSettings={() => {
+        const host = window as unknown as NotifyMeHost;
+        void host.usernode?.openNotificationSettings?.()?.catch?.(() => {});
+      }}
+    />
   );
 }
