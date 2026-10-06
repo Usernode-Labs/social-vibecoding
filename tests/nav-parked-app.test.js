@@ -474,3 +474,46 @@ test('storage is read defensively and written through one key', () => {
   const set = SRC.slice(SRC.indexOf('export function setParked'));
   assert.ok(set.indexOf('parkedStore.set(') < set.indexOf('localStorage.setItem'));
 });
+
+// ── #4025: the strip says when you were last in the app ────────────────
+//
+// The parked entry carries no clock (parked-store.js), so the strip looks the
+// app up in the recency list the rail keeps and prints its stamp in the same
+// compact form every other list uses.
+
+test('the strip shows when the parked app was last opened, from the recency list', () => {
+  const before = ui.recentAppsStore.get().apps;
+  const twoHoursAgo = new Date(Date.now() - 2 * 3600e3).toISOString();
+  try {
+    ui.recentAppsStore.set({
+      apps: [{ slug: 'notes-ab12', name: 'Notes', iconUrl: null, iconEmoji: null, at: twoHoursAgo }],
+    });
+    const html = render({ slug: 'notes-ab12', name: 'Notes', iconUrl: null, iconEmoji: null });
+    const anchor = html.slice(html.indexOf('<a '), html.indexOf('</a>') + 4);
+    assert.match(anchor, /<span class="platform-parked-at" title="[^"]+">2h ago<\/span>/,
+      'the compact stamp, with the full time one hover away on the title');
+    assert.ok(anchor.indexOf('platform-parked-at') < anchor.indexOf('platform-parked-pill'),
+      'between the name and the Resume pill');
+    // Not aria-hidden: "Notes, 2h ago, Resume" is what the row says.
+    assert.doesNotMatch(anchor, /aria-hidden="true"[^>]*>2h ago/);
+  } finally {
+    ui.recentAppsStore.set({ apps: before });
+  }
+});
+
+test('no stamp when the recency list is empty or lacks the parked app', () => {
+  const before = ui.recentAppsStore.get().apps;
+  try {
+    ui.recentAppsStore.set({ apps: [] });
+    let html = render({ slug: 'notes-ab12', name: 'Notes', iconUrl: null, iconEmoji: null });
+    assert.doesNotMatch(html, /platform-parked-at/,
+      'an empty list: no stamp, and never a placeholder');
+    ui.recentAppsStore.set({
+      apps: [{ slug: 'chess-ab12', name: 'Chess', iconUrl: null, iconEmoji: null, at: new Date().toISOString() }],
+    });
+    html = render({ slug: 'notes-ab12', name: 'Notes', iconUrl: null, iconEmoji: null });
+    assert.doesNotMatch(html, /platform-parked-at/, 'another app\'s time is not this one\'s');
+  } finally {
+    ui.recentAppsStore.set({ apps: before });
+  }
+});

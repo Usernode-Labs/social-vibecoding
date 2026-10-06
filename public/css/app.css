@@ -20209,6 +20209,15 @@ html.un-ios {
   font-size: 13px;
   font-weight: 600;
 }
+/* WHEN YOU WERE LAST IN IT (#4025), between the name and the pill: the same
+   compact stamp the rail's Recents rows print, in the strip's muted ink so
+   the Resume pill stays the one loud thing on the strip. flex none keeps it
+   from being squeezed: the name is the side that gives. */
+.platform-parked-at {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 12px;
+}
 /* FORGET, not hide. A strip that comes back on the next screen swap is a
    strip you cannot get rid of, and the handle's promise is that it is there
    until you are done with it. */
@@ -20898,6 +20907,21 @@ html.un-kb #platform-parked {
     border-radius: 999px;
     /* The unread count's own fill in Messages (`.messages-unread`). */
     background: var(--accent);
+  }
+
+  /* WHEN YOU WERE LAST IN IT (#4025), beside an app row's name: the compact
+     stamp agoStamp prints everywhere else (frontend/src/lib/timestamp.ts),
+     in the day labels' own treatment so it reads quieter than the name it
+     sits beside. flex none keeps the stamp from being squeezed: the label is
+     the side that gives, and the row keeps its 34px and its ellipsis. */
+  .platform-recent-at {
+    flex: none;
+    color: var(--text-muted);
+    opacity: .75;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: .01em;
+    line-height: 1.5;
   }
 
   /* RESUME ON A RUNNING APP YOU LEFT (#3618). The Active row's one action,

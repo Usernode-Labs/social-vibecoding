@@ -90,6 +90,7 @@ import {
 
 import { useHiddenClass } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
+import { agoStamp } from '../../lib/timestamp';
 import {
   LIVE_APP_LABEL, LiveAppDot, useCurrentAppSlug, useLiveAppSlugs,
 } from '../app-frame/live-apps';
@@ -184,19 +185,31 @@ function AppTile({ app }: { app: NonNullable<RecentItem['app']> }) {
   );
 }
 
-function RecentRow({ item, live, resume = false }: { item: RecentItem; live: boolean; resume?: boolean }) {
+function RecentRow({
+  item, live, resume = false, now,
+}: { item: RecentItem; live: boolean; resume?: boolean; now?: number }) {
   const Glyph = GLYPHS[item.kind];
   const app = item.app && (item.app.iconUrl || item.app.iconEmoji) ? item.app : null;
   const unread = item.unread ? ', unread' : '';
   const loaded = live ? `, ${LIVE_APP_LABEL}` : '';
   const doing = item.activity ? `, ${ACTIVITY_LABEL[item.activity].toLowerCase()}` : '';
+  // #4025: an app row says when you were last in it, in agoStamp's compact
+  // form, the one every other list prints. Only apps: a conversation's clock
+  // is its own row's business, and an Active row's `at` is null (recents.ts
+  // buildActive) because an app still open was not "last opened". Empty text
+  // (no stored time, or one agoStamp cannot parse) renders nothing at all.
+  const opened = item.kind === 'app' && item.at
+    ? agoStamp(item.at, now === undefined ? {} : { now: new Date(now) })
+    : null;
+  const at = opened?.text ? opened : null;
+  const lastOpened = at ? `, last opened ${at.text}` : '';
   return (
     <a
       className="platform-recent"
       href={item.href}
       data-recent-kind={item.kind}
       data-recent-key={item.key}
-      aria-label={`${KIND_NAMES[item.kind]}: ${item.label}${loaded}${doing}${unread}`}
+      aria-label={`${KIND_NAMES[item.kind]}: ${item.label}${loaded}${doing}${unread}${lastOpened}`}
       {...(live ? { 'data-live': 'true' } : null)}
       {...(item.current ? { 'aria-current': 'true' as const, 'data-current': 'true' } : null)}
       onClick={item.app
@@ -211,6 +224,8 @@ function RecentRow({ item, live, resume = false }: { item: RecentItem; live: boo
         ? <AgentActivityIcon activity={item.activity} className="platform-recent-glyph" />
         : app ? <AppTile app={app} /> : <Glyph className="platform-recent-glyph" aria-hidden="true" />}
       <span className="platform-recent-label">{item.label}</span>
+      {/* #4025: the quiet when-you-were-last-in-it stamp, beside the name. */}
+      {at ? <span className="platform-recent-at" title={at.title}>{at.text}</span> : null}
       {/* #3618: the action the row stands for, on a running app you left. */}
       {resume ? <span className="platform-recent-resume" aria-hidden="true">Resume</span> : null}
       {/* #2902: still loaded — resuming it shows it exactly as it was left. */}
@@ -234,7 +249,12 @@ export function RecentsByDay({ items, live, showOlder, onToggleOlder, now }: {
 }) {
   const { days, earlier, older } = groupRecents(items, now);
   const row = (item: RecentItem) => (
-    <RecentRow key={item.key} item={item} live={!!item.app && live.includes(item.app.slug)} />
+    <RecentRow
+      key={item.key}
+      item={item}
+      live={!!item.app && live.includes(item.app.slug)}
+      now={now}
+    />
   );
   return (
     <>

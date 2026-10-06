@@ -732,3 +732,63 @@ test('#3555: pressing the row is the hub\'s door turned to the Discussion; a mod
   assert.match(list, /const platformSlug = usePlatformSlug\(!!viewer\);/, '#general\'s project, as it becomes known');
   assert.match(list, /active: active\.map\(\(item\) => item\.app!\.slug\),\n\s*platformSlug,\n/);
 });
+
+// ── #4025: an app row says when it was last opened ────────────────────
+//
+// The rail already keeps the clock (recent-apps-store.js writes `at` when the
+// router parks an app); the row prints it in agoStamp's compact form, quiet
+// beside the name. Only apps: a conversation's clock is its own business, and
+// an app still open was not "last opened".
+
+test('#4025: an app row shows its last-opened stamp; a conversation row does not', () => {
+  const { RecentsByDay } = loadTsx('frontend/src/features/nav/recents-list.tsx');
+  const items = buildRecents({
+    apps: [{ slug: 'notes', name: 'Notes', iconUrl: null, iconEmoji: '📝', at: local(21, 12) }],
+    conversations: [conversation(1, 'direct', local(23, 0, 1), { peer: { id: 9, username: 'ana' } })],
+    discussions: [],
+    agents: [],
+  });
+  const html = renderToHtml(createElement(RecentsByDay, {
+    items, live: [], showOlder: false, onToggleOlder: () => {}, now: NOW,
+  }));
+  // Sep 21, 12:00 against 12:05am Sep 23: a day and a half, so the floor of
+  // the relative form ("1d ago"), with the full stamp one hover away. The
+  // day is checked the way message-timestamp.test.js checks a title: through
+  // the runtime's own locale, never a hard-coded spelling.
+  const left = new Date(local(21, 12));
+  const day = left.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  const stamp = html.match(/<span class="platform-recent-at" title="([^"]+)">([^<]*)<\/span>/);
+  assert.ok(stamp, 'the stamp is beside the app\'s name, with a title');
+  assert.ok(stamp[1].includes(day), `the full time on the title, got ${stamp[1]}`);
+  assert.equal(stamp[2], '1d ago', 'the compact form every other list prints');
+  const row = html.match(/<a class="platform-recent"[^>]*data-recent-key="app:notes"[^>]*>/)[0];
+  assert.match(row, /aria-label="App: Notes, last opened 1d ago"/,
+    'the row\'s name says it for a screen reader');
+  // One stamp in the whole list: the conversation's own clock draws none.
+  assert.equal((html.match(/platform-recent-at/g) || []).length, 1);
+  const talk = html.match(/<a class="platform-recent"[^>]*data-recent-key="conversation:1"[^>]*>/)[0];
+  assert.doesNotMatch(talk, /last opened/, 'a conversation is not something you "last opened"');
+});
+
+test('#4025: an app with no stored time shows no stamp, and Active rows never do', () => {
+  const { RecentsByDay, ActiveApps } = loadTsx('frontend/src/features/nav/recents-list.tsx');
+  const items = buildRecents({
+    apps: [{ slug: 'todo', name: 'Todo', iconUrl: null, iconEmoji: null, at: '' }],
+    conversations: [],
+    discussions: [],
+    agents: [],
+  });
+  assert.equal(items[0].at, null, 'an empty clock is no clock');
+  const html = renderToHtml(createElement(RecentsByDay, {
+    items, live: [], showOlder: false, onToggleOlder: () => {}, now: NOW,
+  }));
+  assert.doesNotMatch(html, /platform-recent-at/, 'no placeholder where no time is stored');
+
+  // buildActive sets at: null, which is the whole of why a running app is
+  // never stamped: it is still open, not last opened.
+  const active = buildActive({ live: ['notes'], current: null, apps: [recentApp('notes', local(21, 12))] });
+  assert.equal(active[0].at, null);
+  const activeHtml = renderToHtml(createElement(ActiveApps, { items: active }));
+  assert.doesNotMatch(activeHtml, /platform-recent-at|last opened/,
+    'an app you are using is not something you last opened');
+});

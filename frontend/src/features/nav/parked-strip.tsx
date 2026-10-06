@@ -101,9 +101,11 @@ import { XIcon } from '@/components/ui/icons';
 import { useClassToggle, useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility } from '../../lib/visibility-store';
+import { agoStamp } from '../../lib/timestamp';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { navStore } from './nav-store.js';
 import { parkedStore, readParked, setParked } from './parked-store.js';
+import { recentAppsStore } from './recent-apps-store.js';
 import { enterPeekByMouse, leavePeekByMouse } from './rail-peek';
 import { noteResumeOrigin } from './resume-motion';
 
@@ -140,6 +142,12 @@ export function ParkedStrip() {
   // prerender, and it only ever reaches the DOM as a class.
   const barUp = useVisibility('platform-tabs', true);
   const { peek } = useStoreState(navStore);
+  // #4025: the recency list the rail keeps, for the when-you-were-last-in-it
+  // stamp. The strip has no clock of its own (parked-store.js), so it looks
+  // the parked app up by slug and prints nothing when the lookup misses or
+  // the entry has no time. The store's initial state is empty, which is what
+  // the prerendered root shows, so this adds no hydration mismatch.
+  const { apps } = useStoreState(recentAppsStore);
   // The app on its way out, drawn until the leave finishes; null otherwise.
   const [leaving, setLeaving] = useState<ParkedApp | null>(null);
   const [entering, setEntering] = useState(false);
@@ -218,6 +226,10 @@ export function ParkedStrip() {
   const record = shown
     ? { icon_url: shown.iconUrl, icon_emoji: shown.iconEmoji, name: shown.name }
     : null;
+  // When you were last in the app, in agoStamp's compact form; empty text
+  // (no stored time, or one it cannot parse) renders nothing.
+  const parkedAt = shown ? apps.find((a) => a.slug === shown.slug)?.at || null : null;
+  const opened = parkedAt ? agoStamp(parkedAt) : null;
 
   return (
     <div
@@ -255,6 +267,11 @@ export function ParkedStrip() {
               <AppIconContent app={record} />
             </span>
             <span className="platform-parked-name">{shown.name}</span>
+            {/* #4025: the quiet when-you-were-last-in-it stamp, and not
+                aria-hidden: "Chess, 2h ago, Resume" is what the row says. */}
+            {opened?.text
+              ? <span className="platform-parked-at" title={opened.title}>{opened.text}</span>
+              : null}
             <span className="platform-parked-pill">Resume</span>
           </a>
           <button
