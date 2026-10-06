@@ -4174,9 +4174,9 @@
       "expectText": "Default per-user weekly cap"
     },
     {
-      "name": "Spend limits: the weekly cap is set per identity tier, with GitHub-and-X and zkPassport fields beside the unverified one (#838)",
+      "name": "Spend limits: the weekly cap is set per identity tier, with phone, GitHub-and-X and zkPassport fields beside the unverified one (#838), and the verified identity rule's switch below them",
       "path": "/#admin/limits",
-      "expectSelector": "#admin-limit-tiers:has(#admin-limit-weekly):has(#admin-limit-weekly-social) #admin-limit-weekly-zk"
+      "expectSelector": "#admin-section-content:has(#admin-identity-rule) #admin-limit-tiers:has(#admin-limit-weekly):has(#admin-limit-weekly-phone):has(#admin-limit-weekly-social) #admin-limit-weekly-zk"
     },
     {
       "name": "A user row states week-to-date spend, not just today's (#1788)",

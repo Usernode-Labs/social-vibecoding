@@ -21669,6 +21669,17 @@ const AppView = {
   // (the line is in hand and the optimistic paint is about to happen), so
   // a caller can show that it is on its way without claiming it landed.
   // The onclick callers ignore the value, as they always have.
+  // A vote the verified-identity rule refused (identity_required): open the
+  // verify sheet and, once a phone is linked, cast it again. Runs after the
+  // refused call has returned, so its in-flight guard is clear. False when
+  // there is no sheet to open, and the caller says the server's words.
+  _verifyThenVote(again) {
+    const ask = window.UsernodeReact?.verifyIdentity?.ask;
+    if (typeof ask !== 'function') return false;
+    void Promise.resolve(ask()).then((verified) => { if (verified) again(); });
+    return true;
+  },
+
   async castVote(sessionId, vote, expectedEpoch = null, opts = null) {
     // Guard against double-click / mashing: one in-flight vote per session.
     // The server is idempotent on an unchanged vote, but blocking here
@@ -21743,6 +21754,10 @@ const AppView = {
           AppView._seenEpoch.set(sessionId, parseInt(data.approvalEpoch, 10));
         }
         await AppView.refreshDevData('vote');
+        // A public app's vote counts from a verified account: the sheet that
+        // verifies, then the same vote again (features/auth/verify-identity.tsx).
+        if (data.code === 'identity_required' && AppView._verifyThenVote(
+          () => AppView.castVote(sessionId, vote, expectedEpoch, opts))) return false;
         // #1688: a No the server would not take without its line says so in
         // the server's own words rather than as an opaque failure.
         PlatformUI.toast((data.error === 'reason_required' && data.message)
@@ -21845,6 +21860,12 @@ const AppView = {
         // 409 "Issue is not open" is the common one: someone else's vote
         // decided it between this card rendering and the click landing.
         finish();
+        // A public app's vote counts from a verified account (castVote).
+        if (data.code === 'identity_required' && AppView._verifyThenVote(
+          () => AppView.castIssueVote(issueId, vote, opts))) {
+          AppView.refreshDevData('vote');
+          return;
+        }
         // #2603: a No the server would not take without its line says so in
         // the server's own words rather than as an opaque failure.
         PlatformUI.toast((data.error === 'reason_required' && data.message)
