@@ -113,6 +113,32 @@ test('Discover card: a focusable button named by its app, attributes after data-
   assert.match(html, /class="card-add-btn [^"]*"[^>]*aria-label="Add Alpha Board to Shortcuts"/);
 });
 
+// #4021: the badge says what it does in words, so the one control on a card
+// a new reader could not name is named on its face: "Add" beside the plus
+// before the app is in Shortcuts, "Added" beside the check after. The words
+// are decoration — the button's aria-label already names the whole action —
+// and the selectors and aria-labels the wiring and the checks read are the
+// ones the round badge always carried.
+test('Discover card: the badge pill reads Add, then Added, in words', () => {
+  const before = renderToHtml(createElement(DiscoverCard, { tile: TILE }));
+  assert.match(before, /class="card-add-btn [^"]*"[^>]*data-added="false"[^>]*>/, 'the badge keeps data-added');
+  assert.match(before, /aria-hidden="true" class="text-\[11px\] font-semibold leading-none">Add<\/span>/,
+    '"Add" beside the plus');
+  assert.match(before, /aria-hidden="true"><path[^>]*><\/path><\/svg><span aria-hidden="true" class="text-\[11px\]/,
+    'the word rides after the icon it names');
+
+  const after = renderToHtml(createElement(DiscoverCard, { tile: { ...TILE, added: true } }));
+  assert.match(after, /class="card-add-btn [^"]*"[^>]*aria-label="Remove Alpha Board from Shortcuts"/,
+    'the added state keeps its own name');
+  assert.match(after, /aria-hidden="true" class="text-\[11px\] font-semibold leading-none">Added<\/span>/,
+    '"Added" beside the check');
+
+  // The editor's preview is a picture of a card: the pill renders disabled,
+  // as the badge did.
+  const preview = renderToHtml(createElement(DiscoverCard, { tile: TILE, preview: true, previewTheme: 'light' }));
+  assert.match(preview, /<button[^>]*disabled=""[^>]*class="card-add-btn /);
+});
+
 test('Discover card: the editor preview stays a picture, out of the tab order', () => {
   const html = renderToHtml(createElement(DiscoverCard, { tile: TILE, preview: true, previewTheme: 'light' }));
   const tag = html.match(/<div class="app-card home-discover-card [^>]*>/)[0];

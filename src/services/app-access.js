@@ -89,6 +89,11 @@ const NON_SECRET_APP_COLUMNS = [
   // The community the app belongs to (services/communities.js). An id, and
   // the community's members are the app's own collaborators and joiners.
   'community_id',
+  // The starter the project was created from (services/app-templates.js);
+  // NULL is `empty`, an import or a fork. Not secret: the apps list and
+  // detail routes read it to lend a starter's summary to an app whose
+  // manifest says nothing about itself (#4021).
+  'template',
 ];
 
 // `NON_SECRET_APP_COLUMNS` rendered as a bare comma-joined column list

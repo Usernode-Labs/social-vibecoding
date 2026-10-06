@@ -61,10 +61,11 @@ test('one list, newest first, across apps and every kind of conversation', () =>
   ]);
 });
 
-test('#2878: more than a rail of rows, and the cut keeps the newest', () => {
-  // The list runs down the rest of the rail and scrolls there, so the cap is
-  // a ceiling on history rather than the eight rows it used to be.
-  assert.ok(RECENTS_LIMIT >= 24, 'more rows than a tall rail shows at once');
+test('#2878/#4021: the cut is short on purpose, and keeps the newest', () => {
+  // #2878 let the list run back through the whole day; #4021 cuts it to
+  // about one screen of the rail, so Recents reads as "just now". The
+  // per-account app store still keeps more than the list shows.
+  assert.equal(RECENTS_LIMIT, 8, 'about a screen of the rail, not the whole day');
   const conversations = Array.from({ length: RECENTS_LIMIT + 5 }, (_, i) => conversation(
     i + 1, 'group', new Date(Date.UTC(2026, 8, 1) + i * 3600e3).toISOString(),
   ));
@@ -76,6 +77,79 @@ test('#2878: more than a rail of rows, and the cut keeps the newest', () => {
 
   const { RECENT_APPS_MAX } = loadTsx('frontend/src/features/nav/recent-apps-store.js');
   assert.ok(RECENT_APPS_MAX > RECENTS_LIMIT, 'storage keeps more apps than the list holds');
+});
+
+// ── #4021: the list stops repeating itself ────────────────────────────
+//
+// Two agent sessions the platform titled the same, two conversations that
+// both say "Team": the rail carried every one of them, and a history that
+// reads as one name five times over is no history at all. Duplicates of the
+// same KIND and the same name collapse to the newest; a duplicate that is
+// unread is never dropped in favour of a read one. Rows of different kinds
+// with the same words do not collide, and buildActive's list is untouched.
+
+test('#4021: the same kind and name collapse to the newest; other names and kinds stay', () => {
+  const items = buildRecents({
+    apps: [],
+    conversations: [
+      conversation(1, 'direct', '2026-09-20T12:00:00Z', { peer: { id: 9, username: 'ana' } }),
+      conversation(2, 'group', '2026-09-20T11:00:00Z', { title: 'Team' }),
+      conversation(3, 'group', '2026-09-20T10:00:00Z', { title: 'Team' }),
+      conversation(4, 'group', '2026-09-20T09:00:00Z', { title: 'Team' }),
+      // Same words as row 1, but a GROUP, not a direct: a different kind,
+      // so it is not a duplicate.
+      conversation(5, 'group', '2026-09-20T08:00:00Z', { title: '@ana' }),
+    ],
+    discussions: [],
+    agents: [],
+  });
+  assert.deepEqual(items.map((i) => [i.kind, i.key]), [
+    ['direct', 'conversation:1'],
+    ['group', 'conversation:2'],
+    ['group', 'conversation:5'],
+  ], 'one row per kind and name, the newest of each');
+});
+
+test('#4021: a duplicate that is unread survives a read newest', () => {
+  // The newest of the pair was read; the older one is not. Dropping the
+  // older would drop the one thing still waiting on the viewer.
+  const items = buildRecents({
+    apps: [],
+    conversations: [
+      conversation(1, 'group', '2026-09-20T12:00:00Z', { title: 'Team' }),
+      conversation(2, 'group', '2026-09-20T11:00:00Z', { title: 'Team', unreadCount: 2 }),
+    ],
+    discussions: [],
+    agents: [],
+  });
+  assert.deepEqual(items.map((i) => i.key), ['conversation:2']);
+  assert.equal(items[0].unread, true);
+
+  // And the usual way round: the newest is unread, the older read — the
+  // newest stays, as it always did.
+  const flipped = buildRecents({
+    apps: [],
+    conversations: [
+      conversation(1, 'group', '2026-09-20T12:00:00Z', { title: 'Team', unreadCount: 2 }),
+      conversation(2, 'group', '2026-09-20T11:00:00Z', { title: 'Team' }),
+    ],
+    discussions: [],
+    agents: [],
+  });
+  assert.deepEqual(flipped.map((i) => i.key), ['conversation:1']);
+});
+
+test('#4021: the dedupe matches on the words, not the case or the padding', () => {
+  const items = buildRecents({
+    apps: [],
+    conversations: [
+      conversation(1, 'group', '2026-09-20T12:00:00Z', { title: 'Team' }),
+      conversation(2, 'group', '2026-09-20T11:00:00Z', { title: ' team ' }),
+    ],
+    discussions: [],
+    agents: [],
+  });
+  assert.deepEqual(items.map((i) => i.key), ['conversation:1'], 'trim and case do not make a second row');
 });
 
 test('#2878: the list fills the rail and scrolls; the tabs never shrink for it', () => {

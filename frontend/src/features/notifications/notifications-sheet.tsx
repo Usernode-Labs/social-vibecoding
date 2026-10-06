@@ -368,9 +368,13 @@ function ScreenRow({ view, touch, removes }: ScreenRowProps): ReactNode {
             apart from the meta line, which is the same size in regular
             weight. A kind with no subject to name (a collaborator invite is
             entirely its own label) renders on the SUBJECT's line instead: a
-            heading over nothing is worse than either line alone. */}
+            heading over nothing is worse than either line alone.
+            The small lines on a row — this one, the kudos note and the
+            where/who/when line below — carry facts (#4021), so they read one
+            zinc step darker in both looks than the section labels, which
+            stay where they were. */}
         {view.segments.length ? (
-          <span className="block text-xs text-zinc-500 dark:text-zinc-400 truncate">
+          <span className="block text-xs text-zinc-600 dark:text-zinc-300 truncate">
             {view.label}
           </span>
         ) : null}
@@ -395,7 +399,7 @@ function ScreenRow({ view, touch, removes }: ScreenRowProps): ReactNode {
         {/* #3227: what this kind of row means, for the one kind that needs
             saying (kudos). It wraps: a truncated explanation explains nothing. */}
         {view.note ? (
-          <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+          <span className="block text-xs text-zinc-600 dark:text-zinc-300 mt-0.5">
             {view.note}
           </span>
         ) : null}
@@ -405,7 +409,7 @@ function ScreenRow({ view, touch, removes }: ScreenRowProps): ReactNode {
             rowView in ./notifications.js. `by` is absent on a system row
             (nobody did it) and on the two key rows (the name there is the
             subject). */}
-        <span className="block text-xs text-zinc-500 truncate">
+        <span className="block text-xs text-zinc-600 dark:text-zinc-300 truncate">
           {/* The when is its own element so it can carry the unelided instant
               in `title` (#1808) — the rest of the line is plain text, and the
               separator rides inside it rather than as a whitespace-only

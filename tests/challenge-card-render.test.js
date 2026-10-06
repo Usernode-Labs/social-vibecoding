@@ -184,7 +184,9 @@ test('artwork that fails to load puts back the tile it replaced, through state',
 });
 
 const META_OPEN = '<div class="flex min-w-0 items-baseline gap-1.5 text-[0.8125rem] leading-5">';
-const DEADLINE = (t) => `<span class="shrink-0 text-zinc-500 dark:text-zinc-400">${t}</span>`;
+// The meta line's quiet ink is one zinc step darker than it was (#4021): the
+// deadline and the cadence carry facts, not captions.
+const DEADLINE = (t) => `<span class="shrink-0 text-zinc-600 dark:text-zinc-300">${t}</span>`;
 const DOT = '<span aria-hidden="true" class="shrink-0 text-zinc-400 dark:text-zinc-500">·</span>';
 const REWARD = (t) => `<span class="min-w-0 truncate font-medium text-amber-800 dark:text-amber-300">${t}</span>`;
 const EARNED = (t) => `<span class="min-w-0 truncate font-medium text-emerald-700 dark:text-emerald-400">${t}</span>`;
@@ -251,7 +253,7 @@ test('the meta line drops what it does not have, and never holds a stray dot', (
 // because its count only moves when a run writes credits. It is the view's
 // `cadence`, composed by the controller, and the card puts it at the end of
 // the meta line it already has, never as a row of its own.
-const CADENCE = (t) => `<span class="min-w-0 flex-1 truncate text-zinc-500 dark:text-zinc-400">${t}</span>`;
+const CADENCE = (t) => `<span class="min-w-0 flex-1 truncate text-zinc-600 dark:text-zinc-300">${t}</span>`;
 
 test('a scored card says when it next counts, at the end of the meta line, with no new row', () => {
   const base = {
@@ -315,6 +317,35 @@ test('a card that opens something is a keyboard-reachable button, so it takes th
   const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');
   assert.match(css, /\.tc-se-card\[role="button"\]:active,\s*\.home-challenge-card\[role="button"\]:active \{\s*transition: transform 0s linear 120ms, filter 0s linear 120ms;/,
     'on touch the press waits a beat, so a scroll that starts on a card does not flash it');
+});
+
+// ── #4021: the chevron that says the card opens something ─────────────
+//
+// A card's one job is "read the state, tap to open", and nothing on it said
+// so: the tap target was the whole card with no mark on it. A pressable card
+// now carries the trailing chevron a row carries everywhere else in the app
+// (the notification rows' exact classes), at the card's right edge, centred
+// by the card's own `flex items-center`. It is decoration: aria-hidden, no
+// word, no tab stop, no role of its own. A card with nothing to open — the
+// loading placeholder built from CHALLENGE_CARD_FACE — gains nothing.
+
+test('#4021: a pressable card carries the trailing chevron; a plain one does not', () => {
+  const view = { goal: 'Try Three Apps', reward: '500 pts', state: 'new', stateLabel: 'Not started', fill: 0, earned: null };
+  const tappable = renderToHtml(createElement(Card.ChallengeCard, { view, onClick: () => {} }));
+  assert.match(tappable,
+    /<svg[^>]*class="w-5 h-5 shrink-0 text-zinc-300 dark:text-zinc-600"[^>]*aria-hidden="true"><path[^>]*><\/path><\/svg><\/div>$/,
+    'the notification rows\' chevron, at the card\'s right edge, last in the card');
+  assert.ok(tappable.indexOf('role="button"') < tappable.indexOf('w-5 h-5'),
+    'it comes after the body, as a row\'s trailing mark does');
+
+  // The chevron is decoration: it does not change what the card is.
+  assert.match(tappable, /^<div[^>]*role="button"/, 'the card keeps its role');
+  assert.match(tappable, /aria-valuetext="Not started"/, 'and the rail keeps its words');
+
+  const inert = card(view);
+  assert.doesNotMatch(inert, /<svg[^>]*w-5 h-5/, 'a card with nothing to open gains no chevron');
+  assert.equal(Card.CHALLENGE_CARD_FACE.includes('w-5'), false,
+    'the placeholder face carries no affordance of its own');
 });
 
 test('Enter and Space open a focused card like a tap (#1918)', () => {

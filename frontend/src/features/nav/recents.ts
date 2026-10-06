@@ -94,11 +94,12 @@ export interface RecentAgentSession {
   doneUnseen?: boolean;
 }
 
-/** How many rows the list holds (#2878). NOT how many the rail shows: the
- *  list runs down the rest of the rail to the rule above Me and scrolls
- *  inside it (app.css), so a tall window shows more history and a short one
- *  scrolls. This is only the ceiling on how far back that history goes. */
-export const RECENTS_LIMIT = 30;
+/** How many rows the list holds (#4021, back from #2878's 30): about one
+ *  screen of the rail, not the whole day. The list still runs down the rest
+ *  of the rail and scrolls inside it (app.css) — the cut is a ceiling on how
+ *  far back the history goes, and a short one now on purpose, so Recents
+ *  reads as "just now" rather than as an inbox. */
+export const RECENTS_LIMIT = 8;
 
 function stamp(value: string | null | undefined): number {
   if (!value) return Number.NEGATIVE_INFINITY;
@@ -311,15 +312,39 @@ export function currentAppOnScreen(input: {
   return input.frameSlug || null;
 }
 
-/** Newest first, a row with no clock last, stable within a timestamp. */
+/** Newest first, a row with no clock last, stable within a timestamp. Two
+ *  rows of the same kind with the same name — two agent sessions the
+ *  platform titled the same, two `Untitled chat`s — collapse to the newest
+ *  (#4021); a duplicate that has something on it is never dropped in favour
+ *  of a quiet one, so if the newest of a pair was read and the older one is
+ *  unread, working, or finished unseen, that one is what stays. Rows of
+ *  different kinds with the same words (a channel and a session both
+ *  "Planning") do not collide, and neither do rows whose labels only match
+ *  with case or padding: the key is trimmed and lowercased, and the kind
+ *  rides with it. Active-app rows are a separate list (buildActive) and are
+ *  never deduped. */
 function pick(items: RecentItem[], limit = RECENTS_LIMIT): RecentItem[] {
-  return items
+  const sorted = items
     .slice()
     .sort((a, b) => {
       const diff = stamp(b.at) - stamp(a.at);
       return Number.isNaN(diff) ? 0 : diff;
-    })
-    .slice(0, limit);
+    });
+  const kept = new Map<string, RecentItem>();
+  for (const item of sorted) {
+    const key = `${item.kind}\u0000${item.label.trim().toLowerCase()}`;
+    const first = kept.get(key);
+    if (!first) { kept.set(key, item); continue; }
+    // An earlier (newer) row already answers this kind and name. Dropping a
+    // quiet duplicate is the point; dropping one that is unread, spinning,
+    // or finished unseen because a read row got there first would hide the
+    // one thing still waiting on the viewer.
+    const live = (row: RecentItem) => !!row.unread || !!row.activity;
+    if (live(item) && !live(first)) kept.set(key, item);
+  }
+  // The Map keeps each key at the position of its first (newest) occurrence,
+  // so the surviving rows are still in the list's own newest-first order.
+  return [...kept.values()].slice(0, limit);
 }
 
 /* ── BY DAY (#2919) ────────────────────────────────────────────────────

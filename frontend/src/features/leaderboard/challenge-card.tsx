@@ -65,7 +65,7 @@ import { useState } from 'react';
 import type { HTMLAttributes, KeyboardEvent, ReactNode } from 'react';
 
 import { IconTile } from '@/components/ui/icon-tile';
-import { CheckIcon } from '@/components/ui/icons';
+import { CheckIcon, ChevronRightIcon } from '@/components/ui/icons';
 import { resolveIllustration } from '../../lib/challenge-illustrations';
 
 export type ChallengeState = 'new' | 'progress' | 'done';
@@ -98,11 +98,11 @@ const META: Record<PartSize, string> = {
   md: 'flex min-w-0 items-baseline gap-1.5 text-[0.8125rem] leading-5',
   lg: 'flex min-w-0 items-baseline gap-1.5 text-sm leading-5',
 };
-const META_DEADLINE = 'shrink-0 text-zinc-500 dark:text-zinc-400';
+const META_DEADLINE = 'shrink-0 text-zinc-600 dark:text-zinc-300';
 const META_DOT = 'shrink-0 text-zinc-400 dark:text-zinc-500';
 const META_REWARD = 'min-w-0 truncate font-medium text-amber-800 dark:text-amber-300';
 const META_EARNED = 'min-w-0 truncate font-medium text-emerald-700 dark:text-emerald-400';
-const META_CADENCE = 'min-w-0 flex-1 truncate text-zinc-500 dark:text-zinc-400';
+const META_CADENCE = 'min-w-0 flex-1 truncate text-zinc-600 dark:text-zinc-300';
 // The artwork's face: whatever `--tint-art` the registry's tone class sets.
 // The `dark:` twin is not a second colour — the tone class already switches
 // the property in dark mode — it is what displaces IconTile's own
@@ -345,6 +345,15 @@ export function ChallengeCard({ view, className, onClick, onKeyDown, ...rest }: 
           counted={!!view.counted}
         />
       </div>
+      {/* #4021: the "this opens" mark, the trailing chevron a row carries
+          everywhere else in the app, at the card's right edge. No word on it —
+          the card IS the button and its accessible name already says where it
+          goes — and no new tab stop or role. It rides the card's own
+          `flex items-center`, so it is centred on the tile, and a card with
+          nothing to open (the loading placeholder) gains nothing. */}
+      {onClick ? (
+        <ChevronRightIcon className="w-5 h-5 shrink-0 text-zinc-300 dark:text-zinc-600" aria-hidden="true" />
+      ) : null}
     </div>
   );
 }

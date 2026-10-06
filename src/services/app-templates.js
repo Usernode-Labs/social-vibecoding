@@ -169,6 +169,18 @@ function get(id) {
   return BY_ID.get(id) || null;
 }
 
+/** The starter's one-line summary, lent to an app whose manifest says nothing
+ *  about itself yet (#4021): it is written into the generated dapp.json when
+ *  the create dialog supplied no "What is it?" line, and answered by the apps
+ *  list and detail routes for a snapshot whose description is blank. `empty`,
+ *  an unknown id and the NULL an import or a fork carries all answer null:
+ *  the scaffold every project always got has no sentence to lend, and a card
+ *  with nothing to say says nothing rather than padding itself. */
+function summaryFor(id) {
+  if (!isTemplate(id) || id === DEFAULT_TEMPLATE) return null;
+  return get(id).summary;
+}
+
 /**
  * `template` from a create body: absent is the default, anything else must
  * be on the list. Strict, like the rest of create-options.js: a creator who
@@ -213,6 +225,7 @@ module.exports = {
   TEMPLATE_IDS,
   get,
   isTemplate,
+  summaryFor,
   parseTemplate,
   starterFiles,
 };

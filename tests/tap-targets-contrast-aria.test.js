@@ -121,8 +121,13 @@ test('Q20: the bell badge, the Discover meta line and the list subtitles use the
   assert.ok(contrast('#ffffff', '#dc2626') >= 4.5, 'red-600 carries white text');
 
   const discover = read('frontend/src/features/home/panels/discover.tsx');
-  assert.match(discover, /className="home-discover-meta [^"]*\btext-zinc-600 dark:text-zinc-400"/,
-    'the meta line takes the blurb\'s ink on the pastel tints');
+  // #4021 asked the little lines that carry facts one zinc step darker than
+  // the QA Q20 compromise (zinc-600, after zinc-500 measured under 4.5:1 on
+  // two of the five pastel tints): zinc-700 light, zinc-300 dark.
+  assert.match(discover, /className="home-discover-meta [^"]*\btext-zinc-700 dark:text-zinc-300"/,
+    'the meta line takes the blurb\'s ink on the pastel tints, one step up');
+  assert.match(discover, /className="home-discover-blurb [^"]*\btext-zinc-700 dark:text-zinc-300"/,
+    'the blurb keeps the same ink');
 
   const list = read('frontend/@/components/ui/grouped-list.tsx');
   assert.match(list, /cn\('mt-0\.5 truncate text-\[0\.8125rem\] leading-\[1\.125rem\] text-zinc-500 dark:text-zinc-400', subtitleClassName\)/,

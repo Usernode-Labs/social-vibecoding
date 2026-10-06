@@ -748,7 +748,8 @@ test('every open First challenges card says how long it has left; the season pro
     return html.slice(at, next > at ? next : html.indexOf('home-panel-footer', at));
   };
   assert.match(cardById(1),
-    /<span class="shrink-0 text-zinc-500 dark:text-zinc-400">3d left<\/span><span aria-hidden="true"[^>]*>·<\/span><span class="[^"]*text-amber-800[^"]*">250 pts<\/span>/,
+    // #4021 raised the card's small meta lines a zinc step (500/400 → 600/300).
+    /<span class="shrink-0 text-zinc-600 dark:text-zinc-300">3d left<\/span><span aria-hidden="true"[^>]*>·<\/span><span class="[^"]*text-amber-800[^"]*">250 pts<\/span>/,
     'the season end, beside the reward, on a challenge with no end of its own');
   assert.match(cardById(2), />23h left</, 'a challenge’s own earlier end wins');
   assert.doesNotMatch(cardById(3), /\d+[dh] left/, 'nothing to count down on a finished challenge');

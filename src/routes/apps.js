@@ -50,6 +50,22 @@ const MAX_INITIAL_APPROVERS = 20;
 // audience parsing shares.
 const validateVisibilityCombo = createOptions.visibilityComboError;
 
+// #4021: an app whose manifest has no description yet borrows the one-line
+// summary of the starter it was created from (services/app-templates.js), so
+// every Discover card can say what the app is. No snapshot at all — the app
+// has not shipped its first version — counts as having none. The snapshot is
+// copied, never mutated: a description that says something already comes back
+// unchanged, as does an app from `empty` (NULL on the row), an import, a
+// fork, or any template without a summary. When the app's own manifest gains
+// a description at its next deploy's snapshot refresh, it wins.
+function describedSnapshot(appRow, snapshot) {
+  if (snapshot && (typeof snapshot !== 'object' || Array.isArray(snapshot))) return snapshot;
+  const own = snapshot && snapshot.description;
+  if (typeof own === 'string' && own.trim()) return snapshot;
+  const summary = appTemplates.summaryFor(appRow && appRow.template);
+  return summary ? { ...(snapshot || {}), description: summary } : snapshot;
+}
+
 // A source must have finished the durable parts of provisioning before a
 // fork can take a repository snapshot. `awaiting_secrets` is safe: its repo
 // is complete and only private deploy input is missing. People see a fork
@@ -817,7 +833,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           // tests and platform env, which no client reads and which were most
           // of this payload (see summarizeManifestSnapshot). GET
           // /api/apps/:slug still answers the whole snapshot.
-          manifest_snapshot: appAccess.summarizeManifestSnapshot(a.manifest_snapshot),
+          manifest_snapshot: describedSnapshot(a, appAccess.summarizeManifestSnapshot(a.manifest_snapshot)),
           contributor_count: contributorCount,
           last_failure: undefined,
           last_failure_reason: lf ? (lf.reason || null) : null,
@@ -1564,9 +1580,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         // `?manifest=summary`: the shell's own reads of an app (the Improve
         // target, AppView) use only the snapshot's description, and the
         // platform's snapshot alone is ~280 KB. Without the flag the whole
-        // snapshot is answered, as it always was.
+        // snapshot is answered, as it always was. Either way a blank
+        // description is filled from the app's starter (#4021).
         ...(req.query.manifest === 'summary'
-          ? { manifest_snapshot: appAccess.summarizeManifestSnapshot(appRow.manifest_snapshot) }
+          ? { manifest_snapshot: describedSnapshot(appRow, appAccess.summarizeManifestSnapshot(appRow.manifest_snapshot)) }
           : {}),
         demo_partner: demoPartner,
         contributor_count: contributorCount,

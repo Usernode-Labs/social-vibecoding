@@ -155,6 +155,90 @@ test('GET /api/apps/:slug answers the whole snapshot unless asked for the summar
   }
 });
 
+// ── #4021: an app whose manifest says nothing about itself borrows the
+// one-line summary of the starter it was created from. The row carries
+// `template` (NULL is `empty`, an import, a fork); the description is added
+// to the ANSWER, never to the stored row, and an app that says something
+// already is left exactly as it was.
+test('#4021: a blank snapshot description on a named starter answers the starter summary', async () => {
+  appRow = makeAppRow({
+    template: 'social-productivity',
+    manifest_snapshot: { name: 'Recipes', secrets: [], tests: [], platform_env: [] },
+  });
+  const server = await startServer();
+  try {
+    const { apps } = await getJson(server, '/api/apps');
+    assert.equal(apps[0].manifest_snapshot.description, 'Shared lists that members add tasks to, claim and tick off.',
+      'the Discover card\'s sentence');
+    assert.equal(apps[0].manifest_snapshot.tests, undefined, 'the summary copy is still the launcher\'s');
+
+    const summary = (await getJson(server, '/api/apps/recipes?manifest=summary')).app.manifest_snapshot;
+    assert.equal(summary.description, 'Shared lists that members add tasks to, claim and tick off.',
+      'the detail page and the join screen read the same words');
+
+    // The stored row is untouched: the full snapshot path answers the
+    // snapshot as it is, blank description and all.
+    const full = (await getJson(server, '/api/apps/recipes')).app.manifest_snapshot;
+    assert.deepEqual(full, { name: 'Recipes', secrets: [], tests: [], platform_env: [] });
+    assert.equal(appRow.manifest_snapshot.description, undefined, 'nothing was written back');
+  } finally {
+    server.close();
+  }
+});
+
+test('#4021: empty, no template, and an existing description borrow nothing', async () => {
+  // NULL on the row is `empty`, an import or a fork: no starter, no sentence.
+  for (const template of [null, 'empty']) {
+    appRow = makeAppRow({
+      template,
+      manifest_snapshot: { name: 'Recipes', secrets: [], description: '' },
+    });
+    const server = await startServer();
+    try {
+      const { apps } = await getJson(server, '/api/apps');
+      assert.equal(apps[0].manifest_snapshot.description, '', `${template}: nothing to borrow from`);
+    } finally {
+      server.close();
+    }
+  }
+
+  // No snapshot at all — the app has not shipped its first version — counts
+  // as "the manifest has none": the card still borrows when there is a
+  // starter to borrow from (#4021), and a null snapshot on an app without a
+  // starter stays null.
+  appRow = makeAppRow({ template: 'social-productivity', manifest_snapshot: null });
+  {
+    const server = await startServer();
+    try {
+      const { apps } = await getJson(server, '/api/apps');
+      assert.deepEqual(apps[0].manifest_snapshot, { description: 'Shared lists that members add tasks to, claim and tick off.' },
+        'a null snapshot on a named starter answers the starter summary');
+      appRow = makeAppRow({ template: null, manifest_snapshot: null });
+      const nulled = (await getJson(server, '/api/apps')).apps[0].manifest_snapshot;
+      assert.equal(nulled, null, 'no starter: a null snapshot stays null');
+      appRow = makeAppRow({ template: 'social-productivity', manifest_snapshot: 'not an object' });
+      const junk = (await getJson(server, '/api/apps')).apps[0].manifest_snapshot;
+      assert.equal(junk, 'not an object', 'a snapshot that is not an object is left alone');
+    } finally {
+      server.close();
+    }
+  }
+
+  // A named starter, but the app DOES say something: its own line wins, and
+  // the summary never competes with it.
+  appRow = makeAppRow({
+    template: 'game-2d',
+    manifest_snapshot: { name: 'Recipes', secrets: [], description: 'Catch stars with the house.' },
+  });
+  const server = await startServer();
+  try {
+    const { apps } = await getJson(server, '/api/apps');
+    assert.equal(apps[0].manifest_snapshot.description, 'Catch stars with the house.');
+  } finally {
+    server.close();
+  }
+});
+
 test('the shell reads the app record as a summary', () => {
   const fs = require('fs');
   const path = require('path');

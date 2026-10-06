@@ -187,7 +187,13 @@ export function DiscoverCard({ tile, preview = false, previewTheme }: { tile: Di
           type="button"
           disabled={preview}
           tabIndex={preview ? -1 : undefined}
-          className={`card-add-btn absolute top-1.5 right-1.5 w-6 h-6 flex items-center justify-center rounded-full border shadow-sm transition-colors un-touch-target ${
+          // #4021: the badge says what it does in words — "Add" beside the
+          // plus before the app is in Shortcuts, "Added" beside the check
+          // after — because a bare ⊕ was the one thing on the card a new
+          // reader could not name. The classes, the selectors and the
+          // aria-labels are the ones the badge always carried; only the
+          // 24px round shape grew into a pill, and the word span was added.
+          className={`card-add-btn absolute top-1.5 right-1.5 h-6 px-2 flex items-center gap-1 rounded-full border shadow-sm transition-colors un-touch-target ${
             added
               ? 'bg-emerald-500 border-emerald-500 text-white'
               : 'bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-600 text-violet-700 dark:text-violet-400 hover:border-violet-400'
@@ -201,6 +207,7 @@ export function DiscoverCard({ tile, preview = false, previewTheme }: { tile: Di
           {added
             ? <CheckIcon className="w-3.5 h-3.5" strokeWidth="3" aria-hidden="true" />
             : <PlusWideIcon className="w-3.5 h-3.5" strokeWidth="3" aria-hidden="true" />}
+          <span aria-hidden="true" className="text-[11px] font-semibold leading-none">{added ? 'Added' : 'Add'}</span>
         </button>
       </div>
       <div className="flex flex-col gap-0.5 px-2.5 pt-2 pb-2.5">
@@ -215,14 +222,18 @@ export function DiscoverCard({ tile, preview = false, previewTheme }: { tile: Di
           {tile.name}
         </span>
         {tile.blurb ? (
-          <span className="home-discover-blurb text-[12px] leading-snug text-zinc-600 dark:text-zinc-400">
+          <span className="home-discover-blurb text-[12px] leading-snug text-zinc-700 dark:text-zinc-300">
             {tile.blurb}
           </span>
         ) : null}
-        {/* zinc-600, the blurb's ink (QA 2026-09-24 Q20): zinc-500 is under
-            4.5:1 on two of the five pastel tints (4.39 and 4.36). */}
+        {/* zinc-700, the blurb's ink (#4021 raised it a step from zinc-600):
+            the little lines that carry facts — this one and the contributor
+            count below — read one step darker in both looks. Earlier QA
+            (2026-09-24 Q20) already had zinc-500 under 4.5:1 on two of the
+            five pastel tints; zinc-600 was the compromise, and the request
+            asked the small text up from it. */}
         {tile.contributors ? (
-          <span className="home-discover-meta pt-0.5 text-[12px] leading-none text-zinc-600 dark:text-zinc-400">
+          <span className="home-discover-meta pt-0.5 text-[12px] leading-none text-zinc-700 dark:text-zinc-300">
             {tile.contributors === 1 ? '1 contributor' : `${tile.contributors} contributors`}
           </span>
         ) : null}

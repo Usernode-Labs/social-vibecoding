@@ -617,6 +617,13 @@ function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = n
   const server = starter ? STARTER_SERVER : EMPTY_SERVER;
   const governanceBlock = require('./create-options').governanceBlock(governance);
   const about = typeof description === 'string' && description.trim() ? description.trim() : null;
+  // #4021: an app created from a named starter says what the starter says
+  // until its author says more. The creator's own line wins; `empty`, an
+  // import and a fork write nothing (starter is null here — imports and
+  // forks never call getTemplateFiles). The first deploy snapshots this back
+  // into `manifest_snapshot`, so the row, the Discover card and the join
+  // screen all read the app's own words.
+  const blurb = about || (starter ? starter.summary : null);
   // The first session's card (services/app-sketch.js): its emoji is the
   // project's icon, so dapp.json says so from the first commit (every deploy
   // reconciles the icon from it). A starter's own icon comes first.
@@ -988,7 +995,7 @@ value = "build"
       path: 'dapp.json',
       content: JSON.stringify(
         {
-          ...(about ? { description: about } : {}),
+          ...(blurb ? { description: blurb } : {}),
           // A starter's tile icon, else the first session card's, and the
           // checks a starter's first proposal runs.
           ...(icon ? { icon } : {}),

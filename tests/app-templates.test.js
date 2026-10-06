@@ -161,10 +161,13 @@ for (const id of STARTERS) {
     assert.equal(typeof mod.migrate, 'function');
     assert.equal(typeof mod.routes, 'function');
 
-    // dapp.json: the starter's icon and checks, kept by the platform's own
-    // reader, every check anchored on something the screen has.
+    // dapp.json: the starter's summary sentence, its icon and checks, kept
+    // by the platform's own reader, every check anchored on something the
+    // screen has.
     const dapp = JSON.parse(file(files, 'dapp.json'));
-    assert.deepEqual(Object.keys(dapp), ['icon', 'secrets', 'tests']);
+    assert.deepEqual(Object.keys(dapp), ['description', 'icon', 'secrets', 'tests']);
+    assert.equal(dapp.description, meta.summary,
+      '#4021: with no "What is it?" line of its own, the app says what the starter says');
     assert.deepEqual(dapp.secrets, []);
     assert.equal(appManifest.readIcon(dapp).emoji, meta.icon);
     const read = appManifest.readTests(dapp);
@@ -197,8 +200,32 @@ test('a starter carries the creator\'s line and rule into its dapp.json like Emp
     governance: { approverPolicy: 'invited', approvalsRequired: 2 },
   }), 'dapp.json'));
   assert.deepEqual(Object.keys(dapp), ['description', 'icon', 'secrets', 'governance', 'tests']);
-  assert.equal(dapp.description, 'Catch stars together');
+  assert.equal(dapp.description, 'Catch stars together', 'the creator\'s own line wins over the starter\'s');
   assert.deepEqual(appManifest.readGovernance(dapp), { approvers: 'invited', approvals: 2 });
+});
+
+// #4021: an app created from a named starter says what the starter says when
+// the create dialog supplied no "What is it?" line; `empty` and an explicit
+// description behave as they always did. summaryFor is also what the apps
+// list and detail routes read for a snapshot whose description is blank.
+test('the starter\'s summary is the description an app without a line of its own gets', () => {
+  for (const id of STARTERS) {
+    assert.equal(appTemplates.summaryFor(id), appTemplates.get(id).summary, id);
+  }
+  assert.equal(appTemplates.summaryFor('empty'), null, 'Empty has no sentence to lend');
+  assert.equal(appTemplates.summaryFor(null), null);
+  assert.equal(appTemplates.summaryFor(undefined), null);
+  assert.equal(appTemplates.summaryFor('chess'), null, 'an id that is not a starter');
+  assert.equal(appTemplates.summaryFor('toString'), null);
+  assert.equal(appTemplates.summaryFor('__proto__'), null);
+
+  // dapp.json is where the sentence becomes the app's own, so the first
+  // deploy snapshots it back into manifest_snapshot and the card, the
+  // detail page and the join screen all read the same words.
+  assert.deepEqual(JSON.parse(file(generate('game-2d'), 'dapp.json')).description,
+    appTemplates.get('game-2d').summary);
+  assert.deepEqual(JSON.parse(file(generate('empty'), 'dapp.json')), { secrets: [] },
+    'Empty writes exactly what it always did');
 });
 
 test('the starters live outside src/, where the SQL lint would read their queries as the platform\'s', () => {

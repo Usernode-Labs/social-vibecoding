@@ -364,11 +364,14 @@ test('the three lines are visually ranked, not three of the same thing', () => {
   // Tailwind's — see the type block in the sheet's header. The RANKING is what
   // this test is about and it is unchanged: the subject is the only line that
   // is both larger and heavier than the two around it.
-  assert.match(body, /block text-xs text-zinc-500 dark:text-zinc-400 truncate/,
+  assert.match(body, /block text-xs text-zinc-600 dark:text-zinc-300 truncate/,
+    // #4021 raised the rows' small muted lines a zinc step (500/400 → 600/300),
+    // the same ink the Discover card's facts wear; the RANKING is unchanged —
+    // the kind line is still small and regular against the heavier subject.
     'the kind line is subordinate, in the muted ink');
   assert.match(body, /block text-sm font-semibold text-zinc-900 dark:text-zinc-100 truncate/,
     'the subject carries the strong ink and the larger size');
-  assert.match(body, /block text-xs text-zinc-500 truncate/,
+  assert.match(body, /block text-xs text-zinc-600 dark:text-zinc-300 truncate/,
     'the meta line stays small and regular');
 
   // Stated as a relationship too, so a future scale change has to keep the
@@ -430,8 +433,9 @@ test('a kudos row says what kudos are and offers the leaderboard', async () => {
   assert.equal((await load())({ ...ROW, kind: 'pr_proposed', prTitle: 'x' }).note, undefined);
 
   // The sheet draws the note under the subject, wrapping rather than
-  // truncating: a cut-off explanation explains nothing.
-  assert.match(SHEET, /\{view\.note \? \(\s*<span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0\.5">/);
+  // truncating: a cut-off explanation explains nothing. (#4021 raised the
+  // rows' small muted ink a zinc step.)
+  assert.match(SHEET, /\{view\.note \? \(\s*<span className="block text-xs text-zinc-600 dark:text-zinc-300 mt-0\.5">/);
 });
 
 test('the kudos row button opens the Kudos leaderboard', async () => {
