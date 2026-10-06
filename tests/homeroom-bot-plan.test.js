@@ -249,7 +249,6 @@ test('B6: the plan card, drawn in every state', () => {
   assert.match(draw({ state: 'changing' }), /You asked for changes\. A new plan is on its way\./);
   assert.match(draw({ state: 'closed' }), /No longer needed\./);
   assert.match(draw({ busy: true }), /data-bot-plan="built"/, 'Build it pressed here reads as chosen at once');
-  assert.match(draw({ surface: 'app' }), /rounded-\[20px\] bg-\[color:var\(--dc-sheet-solid\)\]/, 'the App tab draws it as a card');
 });
 
 test('B6: which bot messages draw a plan or two questions, and what state a plan is in', () => {
@@ -279,15 +278,15 @@ test('B6: which bot messages draw a plan or two questions, and what state a plan
   assert.match(composer, /Say what to change, and Homeroom bot sends a new plan\. Only you see this\./);
 });
 
-test('B6: the App tab shows the same plan, in place of the chat button, and builds through the same endpoint', () => {
+test('B6: the App tab keeps only the build\'s progress and the way into the chat; the plan is decided through the same endpoint', () => {
   const view = read('public/js/app-view.js');
-  assert.match(view, /action: mine && !plan\s*\? \{ key: 'botChat'/);
+  assert.match(view, /action: mine\s*\? \{ key: 'botChat'/);
+  assert.doesNotMatch(view, /appName: name,/, 'no plan card is drawn on the App tab');
   assert.match(view, /fetch\(`\/api\/conversations\/homeroom-bot\/actions\/\$\{id\}`, \{\s*method: 'POST',/);
   assert.match(view, /body: JSON\.stringify\(\{ choice: 'build', answers:/);
   assert.match(view, /messages\.quoteBotMessage\(conversationId, messageId\)/);
   const status = read('frontend/src/features/app-frame/app-status.tsx');
-  assert.match(status, /\{view\.plan \? <FirstVersionPlanCard key=\{view\.plan\.actionId\} plan=\{view\.plan\} \/> : null\}/);
-  assert.match(status, /call\('buildFirstVersion', plan\.slug, plan\.actionId, answers\)/);
+  assert.doesNotMatch(status, /PlanCardView|FirstVersionPlanCard/, 'the plan is answered in the chat, not here');
   assert.match(read('src/routes/apps.js'), /\.\.\.\(mine && state\.plan \? \{ plan: state\.plan \} : \{\}\),/);
   const route = read('src/routes/conversations.js');
   assert.match(route, /const answers = Array\.isArray\(req\.body\?\.answers\)/);

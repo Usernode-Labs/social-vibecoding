@@ -853,8 +853,9 @@ const App = {
   _applyFirstVersionShot() {
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
-    // B6: `?shot=first-version-plan`, the same screen while its plan waits for
-    // Build it. `-ready` and `-approved`: built and up for approval, as a
+    // B6: `?shot=first-version-plan`, the same screen while its plan waits on
+    // its creator (the step line and the chat button: the plan is answered in
+    // the chat). `-ready` and `-approved`: built and up for approval, as a
     // member who still has to approve it and as one who has.
     const variants = {
       'first-version': false, 'first-version-plan': 'plan', 'first-version-ready': 'ready', 'first-version-approved': 'approved',

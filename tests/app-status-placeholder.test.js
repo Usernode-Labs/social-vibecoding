@@ -315,7 +315,7 @@ test('#15: the creator sees whose description it is, the step, and the way into 
   assert.doesNotMatch(out, /Start a new change/);
 });
 
-test('B6: while its plan waits, the creator gets the plan card in place of the chat button', () => {
+test('B6: while its plan waits, the creator gets the build\'s progress and the chat button, not the plan card', () => {
   const { AppView } = makeAppView();
   const plan = {
     bullets: ['A list of your plants'], questions: [{ question: 'How should it remind you?', answers: ['In the app', 'Phone alert'] }],
@@ -323,18 +323,24 @@ test('B6: while its plan waits, the creator gets the plan card in place of the c
   };
   const v = view(AppView, firstVersionApp({}, { plan }));
   assert.deepEqual(v.lines, ['Step 3 of 7: Write a plan']);
-  assert.equal(v.action, null);
-  assert.deepEqual(v.plan, { appName: 'Plant Pal', slug: 'plant-pal', ...plan });
+  assert.equal(v.plan, undefined);
+  assert.deepEqual(v.action, { key: 'botChat', label: 'Open my chat with Homeroom bot', slug: 'plant-pal', conversationId: 42 });
   const out = html(v);
-  assert.match(out, /data-bot-plan="open"/);
-  assert.match(out, /Here’s my plan for Plant Pal:/);
-  assert.match(out, /data-bot-plan-build="">Build it<\/button>/);
-  assert.match(out, /data-bot-plan-change="">Change something<\/button>/);
-  assert.doesNotMatch(out, /app-first-version-chat/);
+  assert.doesNotMatch(out, /data-bot-plan/);
+  assert.doesNotMatch(out, /Build it</);
+  assert.doesNotMatch(out, /Here’s my plan/);
+  assert.match(out, /<button id="app-first-version-chat"[^>]*>Open my chat with Homeroom bot<\/button>/);
   assert.match(out, /<button id="app-first-version-starter"/, 'the starter is still there');
-  // Only the creator's, and only a plan it can build.
-  assert.equal(view(AppView, firstVersionApp({}, { plan, mine: false, conversationId: null })).plan, undefined);
-  assert.equal(view(AppView, firstVersionApp({}, { plan: { ...plan, actionId: null } })).plan, undefined);
+  // Only the creator's. Not mine: no chat of somebody else's build, and no plan.
+  const other = view(AppView, firstVersionApp({}, { plan, mine: false, conversationId: null }));
+  assert.equal(other.action, null);
+  assert.equal(other.plan, undefined);
+  // A plan the record marks unbuildable reads as any other waiting step:
+  // the ordinary building lines, and the chat button.
+  const unbuildable = view(AppView, firstVersionApp({}, { plan: { ...plan, actionId: null } }));
+  assert.equal(unbuildable.action.key, 'botChat');
+  assert.deepEqual(unbuildable.lines, ['Step 3 of 7: Write a plan', 'We’ll message you when it’s ready.']);
+  assert.equal(unbuildable.plan, undefined);
 });
 
 test('#15: anyone else is told whose description it is, and gets no chat of somebody else\'s', () => {

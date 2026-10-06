@@ -2832,7 +2832,8 @@ const AppView = {
   // and is not the routed app, so "Show the starter for now" frames nothing,
   // and the chat button opens Messages.
   //
-  // `variant`: true or 'plan', its plan waiting for Build it; 'ready', built
+  // `variant`: true or 'plan', its plan waiting on its creator (the step line
+  // and the chat button: the plan is answered in the chat); 'ready', built
   // and waiting for the viewer's approval in a group; 'approved', the same
   // once the viewer approved it, waiting on the other member with the
   // group's clock running. Their change id stands for no change, so Try it
@@ -2858,9 +2859,10 @@ const AppView = {
           goesLiveAt: new Date(Date.now() + 3 * 86400000).toISOString(), soon: false,
         },
       } : withPlan ? {
-        // B6: its plan waits for Build it. A shot: the action id stands for
-        // no plan, so a tap here decides nothing. The step is named as the
-        // server names it to the plan's creator while it waits on them
+        // B6: its plan waits on its creator. A shot: the action id stands for
+        // no plan, so nothing here decides it; the plan is answered in the
+        // chat (decideBotAction). The step is named as the server names it to
+        // the plan's creator while it waits on them
         // (homeroom-bot-dm.js planWaitsStepName).
         building: true, mine: true, step: 3, of: 7, stepName: 'Your turn: answer the plan',
         creator: null, ready: false, question: false, conversationId: null,
@@ -3134,14 +3136,18 @@ const AppView = {
     if (Number.isInteger(fv.step) && Number.isInteger(fv.of) && fv.stepName) {
       lines.push(`Step ${fv.step} of ${fv.of}: ${fv.stepName}`);
     }
-    // B6: the plan it waits on, with Build it, in place of the chat's button
-    // (Change something goes to that chat). The step line says the rest.
+    // B6: the plan it waits on. The card itself is answered in the creator's
+    // chat with Homeroom bot (bot-plan.tsx decides it there); the screen keeps
+    // only the build's progress and the way into that chat. `plan` still
+    // decides between this view and the ready one, and keeps the step line
+    // alone while a plan waits.
     const plan = mine && fv.plan && Array.isArray(fv.plan.bullets) && fv.plan.bullets.length
       && Number.isInteger(fv.plan.actionId) ? fv.plan : null;
     // Built and up for approval: no longer "being built" (_firstVersionReadyView).
     if (!plan && fv.ready) return AppView._firstVersionReadyView(appData, lines);
     if (plan) {
-      // Nothing more to say under the step: the card is what comes next.
+      // Nothing more to say under the step: it already says whose turn it is,
+      // and the chat button is the way to answer.
     } else if (mine && fv.question) lines.push('Homeroom bot has a question for you.');
     else {
       lines.push(mine ? 'We’ll message you when it’s ready.' : 'It opens here once it’s ready.');
@@ -3151,18 +3157,7 @@ const AppView = {
       message: `${name} is being built from ${from}`,
       detail: null,
       lines,
-      ...(plan ? {
-        plan: {
-          appName: name,
-          slug: appData.slug,
-          bullets: plan.bullets,
-          questions: Array.isArray(plan.questions) ? plan.questions : [],
-          actionId: plan.actionId,
-          messageId: Number.isInteger(plan.messageId) ? plan.messageId : null,
-          conversationId: Number.isInteger(plan.conversationId) ? plan.conversationId : null,
-        },
-      } : {}),
-      action: mine && !plan
+      action: mine
         ? { key: 'botChat', label: 'Open my chat with Homeroom bot', slug: appData.slug,
           conversationId: Number.isInteger(fv.conversationId) ? fv.conversationId : null }
         : null,

@@ -8,17 +8,14 @@ import type { HomeroomBotPlan } from './types';
  * Homeroom bot reads a new project's description and sends its creator the
  * plan first: 3 to 5 plain bullets of what the first version will do, up to
  * two choices with the suggested answer marked, then Build it and Change
- * something. Nothing is built until Build it. The same card is drawn in the
- * creator's chat with the bot (./bot-plan.tsx) and on the project's App tab
- * while its first version waits (../app-frame/app-status.tsx), and both send
- * the tap to the same endpoint, which decides it once
- * (services/homeroom-bot-dm.js decidePlanTap).
+ * something. Nothing is built until Build it. The card is drawn in the
+ * creator's chat with the bot (./bot-plan.tsx); its Build it is decided once
+ * on the server (services/homeroom-bot-dm.js decidePlanTap).
  *
  * A CHIP IS A CHOICE, NOT A SEND. Tapping one fills it and nothing goes
  * anywhere until Build it, which takes the choices tapped; a question left
  * alone goes with its suggested answer. Change something is the card's
- * owner's to wire: in the chat it quotes the card in the composer, on the
- * App tab it opens the chat to do the same.
+ * owner's to wire: in the chat it quotes the card in the composer.
  *
  * Once its buttons go, the card says why in one quiet line: built, replaced
  * by a newer plan (its bullets fold away), stopped after a week with no tap
@@ -26,7 +23,7 @@ import type { HomeroomBotPlan } from './types';
  * host may add a `footer`: the chat's "Notify me when it's ready", right
  * after Build it is pressed there (./notify-me.tsx).
  *
- * Pure: no store, so the App tab draws it without the Messages screen.
+ * Pure: no store.
  */
 
 export type PlanCardState = 'open' | 'built' | 'replaced' | 'stopped' | 'changing' | 'closed';
@@ -50,20 +47,12 @@ export interface PlanCardViewProps {
   /** Build it, with the answer tapped for each choice (null for one left alone). */
   onBuild?: (answers: Array<string | null>) => void;
   onChange?: () => void;
-  /** The chat's bubble surface, or the App tab's card. */
-  surface?: 'messages' | 'app';
   /** Drawn last, inside the card. */
   footer?: ReactNode;
 }
 
-// Complete literals only: Tailwind's extractor reads source text.
-const SURFACES = {
-  messages: 'mt-1 flex max-w-[480px] flex-col gap-3 rounded-2xl bg-[color:var(--messages-surface)] px-3 py-3 text-left',
-  app: 'flex w-full max-w-sm flex-col gap-3 rounded-[20px] bg-[color:var(--dc-sheet-solid)] px-4 py-4 text-left shadow-[inset_0_0_0_1px_var(--app-sheet-line)]',
-} as const;
-
 export function PlanCardView({
-  appName, plan, state, choices = [], busy = false, onBuild, onChange, surface = 'messages', footer = null,
+  appName, plan, state, choices = [], busy = false, onBuild, onChange, footer = null,
 }: PlanCardViewProps) {
   const [picked, setPicked] = useState<Array<string | null>>(() => plan.questions.map(() => null));
   const open = state === 'open' && !busy;
@@ -74,7 +63,13 @@ export function PlanCardView({
   }
 
   return (
-    <div className={SURFACES[surface]} role="group" aria-label={`Plan for ${appName}`} data-bot-plan={shown}>
+    // Complete literals only: Tailwind's extractor reads source text.
+    <div
+      className="mt-1 flex max-w-[480px] flex-col gap-3 rounded-2xl bg-[color:var(--messages-surface)] px-3 py-3 text-left"
+      role="group"
+      aria-label={`Plan for ${appName}`}
+      data-bot-plan={shown}
+    >
       <div>
         <div className={`text-[0.9375rem] font-semibold ${shown === 'replaced' ? 'text-zinc-500 dark:text-zinc-400' : 'text-zinc-900 dark:text-zinc-100'}`}>
           {`Here’s my plan for ${appName}:`}

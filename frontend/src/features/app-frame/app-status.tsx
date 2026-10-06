@@ -31,13 +31,11 @@
  * is the whole point of that path — the frame must survive.
  */
 
-import { useState, type ReactNode } from 'react';
+import { type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 
 import { useStoreState } from '../../lib/use-store-state';
-import { PlanCardView } from '../messages/bot-plan-view';
-import type { HomeroomBotPlanQuestion } from '../messages/types';
 import { appStatusStore } from './app-status-store.js';
 
 /** The resolved placeholder. `null` means some other owner has the host. */
@@ -72,43 +70,6 @@ export interface AppStatusView {
    * an `alt` it is the third button, and drawn as the quietest.
    */
   secondary?: { key: 'starter'; label: string; slug: string } | null;
-  /**
-   * B6: the plan a first version waits on, for its creator: the same card as
-   * in their chat with Homeroom bot, whose Build it is decided the same way.
-   */
-  plan?: FirstVersionPlan | null;
-}
-
-export interface FirstVersionPlan {
-  appName: string;
-  slug: string;
-  bullets: string[];
-  questions: HomeroomBotPlanQuestion[];
-  actionId: number;
-  messageId: number | null;
-  conversationId: number | null;
-}
-
-/** B6: the plan, with its taps handed to AppView (buildFirstVersion, changeFirstVersionPlan). */
-function FirstVersionPlanCard({ plan }: { plan: FirstVersionPlan }): ReactNode {
-  // Pressed here until the screen reads the project again and moves on.
-  const [pressed, setPressed] = useState(false);
-  return (
-    <div className="mt-3 flex w-full justify-center">
-      <PlanCardView
-        surface="app"
-        appName={plan.appName}
-        plan={{ bullets: plan.bullets, questions: plan.questions }}
-        state="open"
-        busy={pressed}
-        onBuild={(answers) => {
-          setPressed(true);
-          call('buildFirstVersion', plan.slug, plan.actionId, answers);
-        }}
-        onChange={() => call('changeFirstVersionPlan', plan.slug, plan.conversationId, plan.messageId)}
-      />
-    </div>
-  );
 }
 
 function call(fn: string, ...args: unknown[]): void {
@@ -142,7 +103,6 @@ export function AppStatusView_({ view }: { view: AppStatusView }): ReactNode {
       {view.dot ? <div className={`status-dot ${view.dot}`}></div> : null}
       <p className={titled ? 'max-w-sm text-base font-semibold text-zinc-900 dark:text-zinc-100' : 'text-sm'}>{view.message}</p>
       {titled ? view.lines!.map((line) => <p key={line} className="max-w-sm text-sm">{line}</p>) : null}
-      {view.plan ? <FirstVersionPlanCard key={view.plan.actionId} plan={view.plan} /> : null}
       {view.detail ? (
         <p className="text-xs font-mono text-red-700 max-w-md break-words dark:text-red-400">{view.detail}</p>
       ) : null}
