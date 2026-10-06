@@ -146,6 +146,11 @@ const DENIED_COLUMNS = {
     'input_hash',
     'normalized_input',
   ],
+  phone_sign_in_tokens: [
+    // SHA-256 digest of a spent Firebase ID token (replay detection) —
+    // derived from auth material, so it is denied rather than reviewed.
+    'token_hash',
+  ],
   agent_session_actions: [
     // The sealed exact input of a pending write and its fingerprint (#2779).
     'input_hash',

@@ -160,6 +160,15 @@ const EXEMPT = new Map([
   // sign-in-providers.js's, below.
   ['auth.js POST /api/auth/oauth/finish', JSON_FIELD],
   ['auth.js POST /api/auth/oauth/:provider/native', JSON_FIELD],
+  // Phone sign-in (routes/phone-auth.js). SESSION_MINT_PATHS names verify
+  // and finish for the live-session guard, so auth.js's registrations of
+  // those two paths are listed here the same way; the handlers are
+  // phone-auth.js's, and every one of them carries JSON body fields.
+  ['auth.js POST /api/auth/phone/verify', JSON_FIELD],
+  ['auth.js POST /api/auth/phone/finish', JSON_FIELD],
+  ['phone-auth.js POST /api/auth/phone/request', JSON_FIELD],
+  ['phone-auth.js POST /api/auth/phone/verify', JSON_FIELD],
+  ['phone-auth.js POST /api/auth/phone/finish', JSON_FIELD],
   ['board-order.js POST /api/apps/:slug/board-order', JSON_FIELD],
   ['chat-drafts.js POST /api/sessions/:id/drafts', JSON_FIELD],
   ['chat.js POST /api/apps/:slug/messages', JSON_FIELD],

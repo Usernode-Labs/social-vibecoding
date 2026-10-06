@@ -349,6 +349,17 @@
       "description": "Complete Firebase Admin service-account JSON encoded as base64 on one line. Required only while MOBILE_PUSH_ENABLED is true; never forwarded to child apps."
     },
     {
+      "key": "FIREBASE_PHONE_AUTH_ENABLED",
+      "group": "Phone sign-in",
+      "default": "false",
+      "description": "Offers phone-number sign-in and sign-up through Firebase Phone Auth (POST /api/auth/phone/*, APIs only). Requires FIREBASE_WEB_API_KEY plus the same Firebase project credentials mobile push uses; unset (or false) leaves every phone endpoint answering 404 not_offered."
+    },
+    {
+      "key": "FIREBASE_WEB_API_KEY",
+      "group": "Phone sign-in",
+      "description": "The Firebase project's Identity Toolkit web API key, used by the server for the send-verification-code and verify-phone-number REST calls. Required only while FIREBASE_PHONE_AUTH_ENABLED is true. Not private: a web API key is a public-in-client identifier."
+    },
+    {
       "key": "PLATFORM_MAIL_PROVIDER",
       "group": "Platform mail",
       "default": "auto",

@@ -119,6 +119,7 @@ spec:
             - {name: EXPLORER_USE_HTTP, value: {{ .Values.config.explorerUseHttp | quote }}}
             - {name: NATIVE_SESSION_V2_TESTNET_CHAIN_ID, value: {{ .Values.config.nativeSessionV2TestnetChainId | quote }}}
             - {name: LOG_LEVEL, value: {{ .Values.config.logLevel | quote }}}
+            - {name: FIREBASE_PHONE_AUTH_ENABLED, value: {{ .Values.config.firebasePhoneAuthEnabled | quote }}}
             - {name: WORKER_MEMORY, value: {{ .Values.config.workerMemory | quote }}}
             - {name: WORKER_CPUS, value: {{ .Values.config.workerCpus | quote }}}
             - {name: CAPTURE_MEMORY, value: {{ .Values.config.captureMemory | quote }}}
