@@ -15464,6 +15464,29 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   place-items: center; font-size: 11px; font-weight: 700; line-height: 1; color: #fff; background: #16a34a; box-shadow: 0 0 0 2px #fff; }
 .shots-flip-before .shots-box-n { background: #dc2626; }
 .dark .shots-box-n { box-shadow: 0 0 0 2px #18181b; }
+
+/* A phone shot sits between the status bar and the home indicator space a
+   phone keeps (services/visible-changes.js): the capture is the page between
+   them, and the frame draws that space back around the picture at display
+   time, so the framed shot is the declared phone size again. The strips
+   scale with the picture's width (the wrapper carries it as --shots-device-w,
+   beside the whole device's --shots-shape), so an older full-height shot
+   shows a slightly taller device around the same picture. */
+.shots-device { display: flex; flex-direction: column; width: 100%; height: 100%;
+  border-radius: 10px; overflow: hidden; background: rgba(24, 24, 27, 0.1); }
+.dark .shots-device { background: rgba(255, 255, 255, 0.14); }
+.shots-device-strip { flex: none; width: 100%; display: grid; place-items: center; }
+.shots-device-status { aspect-ratio: var(--shots-device-w, 390) / 47; }
+.shots-device-status::before { content: ""; width: 23%; aspect-ratio: 90 / 24; border-radius: 999px; background: rgba(24, 24, 27, 0.14); }
+.dark .shots-device-status::before { background: rgba(255, 255, 255, 0.16); }
+.shots-device-home { aspect-ratio: var(--shots-device-w, 390) / 34; }
+.shots-device-home::before { content: ""; width: 34%; height: 4px; border-radius: 999px; background: rgba(24, 24, 27, 0.8); }
+.dark .shots-device-home::before { background: rgba(255, 255, 255, 0.8); }
+.shots-device-screen { flex: 1 1 auto; min-height: 0; position: relative; background: #fff; }
+.dark .shots-device-screen { background: #18181b; }
+/* A framed clip keeps a phone's width beside its change, whatever the row
+   around it flexes to. */
+.shots-clip-frame { display: block; width: 160px; max-width: 100%; aspect-ratio: var(--shots-shape, 390 / 844); }
 /* Pointing at a change in the description picks out its outline. */
 .shots-view:has(.shots-change:hover) .shots-box,
 .shots-view:has(.shots-change:hover) .shots-mark { opacity: 0.2; }

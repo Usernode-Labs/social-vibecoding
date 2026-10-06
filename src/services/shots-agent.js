@@ -43,7 +43,11 @@ Do not sign in (the guest stays signed out too), expose storage, leave the
 two addresses, or change or add a change.
 
 For each declared change and each of its screen sizes (viewports):
-1. Call browser_resize with that width and height.
+1. Call browser_resize with that screen's capture size, the captureWidth and
+   captureHeight its viewport carries in the brief. A phone's capture is
+   smaller than its declared height: the difference is the status bar and
+   home indicator space a phone keeps around the page, and the shots viewer
+   draws that space back around the picture.
 2. On the after address, start at intent.startPath and follow intent.steps.
    When intent.hints is there, use hints.focusTarget to find the element and
    hints.expectText to know you have arrived. Before you shoot, wait for the
@@ -53,7 +57,11 @@ For each declared change and each of its screen sizes (viewports):
    page can be the very state the checkpoint describes: shoot it then.
 3. Bring the changed element into view. The app scrolls inside its own
    panes, so a fullPage screenshot shows no more than the screen does; call
-   browser_hover on the element to scroll it into view.
+   browser_hover on the element to scroll it into view, then call
+   browser_mouse_move_xy with element "browser viewport", x 4 and y 4, so
+   the pointer rests in the corner over nothing interactive: a control left
+   under the pointer is shot in its hover colour. Do that again before every
+   screenshot and before every clip frame.
 4. Call browser_take_screenshot with a filename such as
    "<change>-<screen>-after.png" and look at it: it should show what the
    checkpoint describes.
@@ -75,7 +83,7 @@ For each declared change and each of its screen sizes (viewports):
    leave out the element shot on that side.
 8. If the change's intent.animation is "motion", a still cannot show it, so
    also record a clip of each side: call browser_close, browser_resize to the
-   same screen size again, open the start path, do only the steps that
+   same capture size again, open the start path, do only the steps that
    trigger the motion, wait for it to finish, call browser_close again, then
    call save_clip with the change, screen and side. Each browser_close ends
    one recording; keep clips short.
@@ -114,6 +122,12 @@ that page.
 If a change declares intent.controlledFailurePath, call fail_request with
 that path and enabled true just before the step that triggers it, and with
 enabled false once the error is on screen.
+
+If the install banner (#mobile-install-banner) is on screen, dismiss it
+through its #mobile-install-dismiss button before the first shot, on the
+before and after addresses alike, and again whenever a browser_close starts
+a fresh session: its dismissal lasts a session, so every fresh one needs
+its own. When the strip is not on screen there is nothing to dismiss.
 
 If your shots show the change but not everything the claim says, for example
 part of it needs data these copies do not have, keep them and call

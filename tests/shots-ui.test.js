@@ -165,7 +165,14 @@ test('every screen sits in the same fixed stage, fitted at its own shape', () =>
   const [desktop, phone] = html.match(/<figure class="shots-view"[\s\S]*?<\/figcaption>\s*<\/figure>/g);
   for (const figure of [desktop, phone]) assert.equal((figure.match(/<div class="shots-stage">/g) || []).length, 1);
   assert.match(desktop, /<span class="shots-flip-side shots-flip-after" style="--shots-shape:1280 \/ 800"><img /);
-  assert.match(phone, /<span class="shots-flip-side shots-flip-after" style="--shots-shape:390 \/ 844"><img /);
+  // A phone picture is the page between the status bar and home indicator
+  // space; the viewer draws that space back as strips around it (the frame's
+  // shape is the picture plus the chrome, so an older full-height shot shows
+  // a slightly taller device).
+  assert.match(phone, new RegExp('<span class="shots-flip-side shots-flip-framed shots-flip-after" style="--shots-shape:390 / 925;--shots-device-w:390">'
+    + '<span class="shots-device"><span class="shots-device-strip shots-device-status" aria-hidden="true"></span>'
+    + '<span class="shots-device-screen"><img '));
+  assert.match(phone, /<span class="shots-device-strip shots-device-home" aria-hidden="true"><\/span><\/span><\/span>/);
   assert.match(desktop, /Desktop, 1280 × 800 · seen as a member/);
   assert.match(phone, /Phone, 390 × 844 · seen as a member/);
   // No size of its own on the screen: the stylesheet gives every stage one.
@@ -177,6 +184,87 @@ test('every screen sits in the same fixed stage, fitted at its own shape', () =>
   // Without recorded sizes a phone screen still reads as a phone.
   const unsized = AppView.shotsHtml({ ...value, artifacts: value.artifacts.map(({ width, height, ...rest }) => rest) }, { sessionId: 42 });
   assert.match(unsized, /data-shots-viewport="phone"[\s\S]*?--shots-shape:390 \/ 844/);
+});
+
+test('the phone chrome the viewer draws is the space the capture left out', () => {
+  // services/visible-changes.js carries the shared rules (brief, clip size,
+  // capture height); the classic viewer script repeats the two numbers and
+  // this test keeps them together.
+  const contract = require('../src/services/visible-changes.js');
+  const source = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '../public/js/app-view.js'), 'utf8');
+  const read = (name) => Number(new RegExp(`const ${name} = (\\d+);`).exec(source)?.[1]);
+  assert.equal(read('PHONE_STATUS_BAR'), contract.PHONE_STATUS_BAR);
+  assert.equal(read('PHONE_HOME_INDICATOR'), contract.PHONE_HOME_INDICATOR);
+});
+
+test('a phone shot’s outlines stay on the page, not on the frame around it', () => {
+  // The published screen's heights are the capture heights: the frame is
+  // drawn by the viewer at display time, so a change near the bottom of the
+  // page is outlined against the page, not the whole device.
+  const value = shots({
+    claims: [{ ...shots().claims[0], viewports: ['phone'] }],
+    artifacts: [
+      { id: id('a'), storyId: 'dialog', viewport: 'phone', side: 'base', variant: 'context', media: 'png', url: url('a'), width: 390, height: 763 },
+      { id: id('b'), storyId: 'dialog', viewport: 'phone', side: 'head', variant: 'context', media: 'png', url: url('b'), width: 390, height: 763 },
+    ],
+    screens: [{
+      viewport: 'phone', shot: 'dialog', stories: ['dialog'], width: 390,
+      heightBefore: 763, heightAfter: 763,
+      regions: [
+        { story: 'dialog', b: [10, 700, 370, 60], a: [10, 700, 370, 60], bMark: null, aMark: null },
+      ],
+    }],
+  });
+  const html = AppView.shotsHtml(value, { sessionId: 42 });
+  const phone = /<figure class="shots-view"[\s\S]*?<\/figcaption>\s*<\/figure>/.exec(html)[0];
+  assert.match(phone, /--shots-shape:390 \/ 844;--shots-device-w:390/,
+    'the capture size plus the chrome is the declared phone size again');
+  // 700/763 of the picture, not 700/844 of the whole device.
+  assert.match(phone, /top:91\.743%;width:94\.872%;height:7\.864%/);
+  assert.match(phone, /class="shots-device-screen">[\s\S]*?class="shots-box"/);
+});
+
+test('a phone motion change’s clips sit in the frame, when the run recorded the phone page', () => {
+  const value = shots({
+    claims: [{ ...shots().claims[0], animation: 'motion', viewports: ['phone'] }],
+    artifacts: [
+      { id: id('a'), storyId: 'dialog', viewport: 'phone', side: 'base', variant: 'context', media: 'png', url: url('a'), width: 390, height: 763 },
+      { id: id('b'), storyId: 'dialog', viewport: 'phone', side: 'head', variant: 'context', media: 'png', url: url('b'), width: 390, height: 763 },
+      { id: id('7'), storyId: 'dialog', viewport: 'phone', side: 'base', variant: 'animation', media: 'webm', url: url('7') },
+      { id: id('8'), storyId: 'dialog', viewport: 'phone', side: 'head', variant: 'animation', media: 'webm', url: url('8') },
+    ],
+    screens: [{
+      viewport: 'phone', shot: 'dialog', stories: ['dialog'], width: 390,
+      heightBefore: 763, heightAfter: 763, regions: [],
+    }],
+  });
+  const html = AppView.shotsHtml(value, { sessionId: 42 });
+  const clips = /<div data-shots-clips="1"[\s\S]*?<\/div>/.exec(html)[0];
+  assert.match(clips, new RegExp('<span class="shots-clip-frame" style="--shots-shape:390 / 844;--shots-device-w:390">'
+    + '<span class="shots-device">[\\s\\S]*?<video '));
+  assert.match(clips, /class="shots-device-screen"><video /);
+
+  // The screen shot beside it carries the clip's shape, so a clip whose
+  // recording could not be matched (no sizes on the run's screens, or a
+  // wider motion screen that set the recording) renders as before; the
+  // screen shots keep their frame either way.
+  const unsized = AppView.shotsHtml({ ...value, screens: [] }, { sessionId: 42 });
+  assert.doesNotMatch(unsized, /shots-clip-frame/);
+  assert.match(unsized, /<video src="[^"]*" poster="[^"]*" controls preload="none" muted playsinline aria-label="[^"]*" style="display:block;width:100%;max-height:360px/);
+  const wide = AppView.shotsHtml(shots({
+    claims: [{ ...shots().claims[0], animation: 'motion', viewports: ['phone', 'desktop'] }],
+    artifacts: [
+      ...value.artifacts,
+      { id: id('c'), storyId: 'dialog', viewport: 'desktop', side: 'base', variant: 'context', media: 'png', url: url('c'), width: 1280, height: 800 },
+      { id: id('d'), storyId: 'dialog', viewport: 'desktop', side: 'head', variant: 'context', media: 'png', url: url('d'), width: 1280, height: 800 },
+    ],
+    screens: [
+      { viewport: 'phone', shot: 'dialog', stories: ['dialog'], width: 390, heightBefore: 763, heightAfter: 763, regions: [] },
+      { viewport: 'desktop', shot: 'dialog', stories: ['dialog'], width: 1280, heightBefore: 800, heightAfter: 800, regions: [] },
+    ],
+  }), { sessionId: 42 });
+  assert.doesNotMatch(wide, /shots-clip-frame/);
 });
 
 test('the run\'s screens outline each change where it differs, numbered as in the list', () => {

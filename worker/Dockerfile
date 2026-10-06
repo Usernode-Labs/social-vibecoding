@@ -9,9 +9,26 @@ FROM node:22-bookworm-slim
 # died with a raw gyp stack, failing the unit-suite check's `npm ci` for
 # any repo with a native dep. The toolchain makes the fallback actually
 # work, for the unit-suite one-shot and for agent build turns alike.
+#
+# Inter is the shots browser's sans-serif (worker/fonts.conf says why, and
+# capture/Dockerfile says the same for the capture image): the platform sets
+# its text in the reader's system face, which this image does not have, so
+# the browser rendered every heading, label and button in a fallback face
+# with no bold weights, and shots of the same screens in Chrome on a Mac
+# showed the real type. Liberation is the fallback for anything Inter
+# lacks; Noto Color Emoji still draws the emoji. The fc-list guard fails
+# the image build when Inter is missing, so a future base-image change
+# cannot silently drop the weights again.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git curl wget ca-certificates unzip python3 make g++ \
+    fonts-inter fonts-liberation fonts-noto-color-emoji \
   && rm -rf /var/lib/apt/lists/*
+COPY fonts.conf /etc/fonts/local.conf
+RUN fc-cache -f \
+  && if [ -z "$(fc-list 'Inter')" ]; then \
+       echo 'worker image: the Inter font is missing, so the shots browser would render every heading in a fallback face with no bold weights' >&2; \
+       exit 1; \
+     fi
 
 # ── Local Postgres for in-loop builds and repository SQL checks ────────
 # INLOOP_DATABASE_URL (src/services/in-loop-browser.js) points at

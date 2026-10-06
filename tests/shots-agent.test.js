@@ -138,7 +138,8 @@ test('the shots agent prompt asks for before/after shots and leaves judgement to
   assert.match(prompt, /The guest browser is not signed in/);
   assert.match(prompt, /Do not sign in \(the guest stays signed out too\)/);
   assert.match(prompt, /For a guest change, a sign-in or landing\s+page can be the very state the checkpoint describes/);
-  assert.match(prompt, /Call browser_resize with that width and height/);
+  assert.match(prompt, /Call browser_resize with that screen's capture size, the captureWidth and\s+captureHeight its viewport carries in the brief/);
+  assert.match(prompt, /the shots viewer\s+draws that space back around the picture/);
   assert.match(prompt, /browser_take_screenshot with a filename/);
   assert.match(prompt, /Save both in one save_shot call: list each file with the change id, the\s+screen name, side "after"/);
   // Fewer round trips: each tool call is a model turn, which is what the
@@ -151,6 +152,11 @@ test('the shots agent prompt asks for before/after shots and leaves judgement to
   assert.match(prompt, /call browser_wait_for with text you expect/, 'waits for the finished state');
   assert.match(prompt, /fullPage screenshot shows no more than the screen does; call\s+browser_hover/,
     'the shell scrolls inside its panes, so hover scrolls the element into view');
+  // The pointer rests over nothing interactive, so no control is shot in its
+  // hover colour.
+  assert.match(prompt, /browser_mouse_move_xy with element "browser viewport", x 4 and y 4/);
+  assert.match(prompt, /a control left\s+under the pointer is shot in its hover colour/);
+  assert.match(prompt, /Do that again before every\s+screenshot and before every clip frame/);
   assert.match(prompt, /look at it: it should show what the\s+checkpoint describes/);
   assert.match(prompt, /element shot leads the\s+change on the proposal, so take one\s+whenever intent\.focus/);
   assert.match(prompt, /leave out the element shot on that side/);
@@ -162,6 +168,10 @@ test('the shots agent prompt asks for before/after shots and leaves judgement to
   assert.match(prompt, /If the brief has previewAt, the change only shows at certain times/);
   assert.match(prompt, /set to previewAt\.at, to\s+intent\.startPath on the after address and on the before address alike/);
   assert.match(prompt, /un-now=2026-10-08T18:00:00\.000Z/);
+  // The install banner covers the top of a first screen; its dismissal lasts
+  // one session (sessionStorage), so each fresh browser session dismisses it.
+  assert.match(prompt, /If the install banner \(#mobile-install-banner\) is on screen, dismiss it\s+through its #mobile-install-dismiss button before the first shot/);
+  assert.match(prompt, /again whenever a browser_close starts\s+a fresh session/);
   // Each persona's demo data, and where the checks' data belongs: a member
   // story once 404'd on a check path whose fixture is the read-only admin's.
   assert.match(prompt, /availableFixtures\s+lists it: who it is for \(persona, alsoFor\), what it shows and its path/);

@@ -20391,6 +20391,8 @@ const AppView = {
       : claim.persona === 'full_admin' ? 'full admin'
         : claim.persona === 'guest' ? 'signed-out visitor' : 'member');
     const videoStyle = 'display:block;width:100%;max-height:360px;border-radius:6px;background:rgba(0,0,0,0.35)';
+    // Inside a device frame the picture area is already the clip's shape.
+    const framedVideoStyle = 'display:block;width:100%;height:100%;background:rgba(0,0,0,0.35)';
 
     // One screen at a time, in a frame that keeps its size: a phone screen
     // sits in the middle of the same 16:10 stage as a desktop one, at the
@@ -20438,12 +20440,66 @@ const AppView = {
         return '';
       }).join('');
     };
-    // The shape of a side's shot, so the stage can fit it without stretching.
-    const shapeOf = (artifact, width, height, narrow) => {
+    // The picture a side's shot is drawn at, so the stage can fit it without
+    // stretching: the artifact's own size when it has one, the declared
+    // screen's size otherwise, and a standard phone page or a 16:10 screen
+    // when nothing was recorded. A phone picture is the page between the
+    // status bar and the home indicator space a phone keeps
+    // (services/visible-changes.js, which also carries the shared rules for
+    // the brief and the clip size; this classic script cannot import that
+    // module, so the two numbers repeat here and a test pins them together).
+    const PHONE_STATUS_BAR = 47;
+    const PHONE_HOME_INDICATOR = 34;
+    const PHONE_CHROME = PHONE_STATUS_BAR + PHONE_HOME_INDICATOR;
+    const dimsOf = (artifact, width, height, narrow) => {
       const w = Number(artifact && artifact.width) > 0 ? Number(artifact.width) : Number(width);
       const h = Number(artifact && artifact.height) > 0 ? Number(artifact.height) : Number(height);
-      return w > 0 && h > 0 ? `${Math.round(w)} / ${Math.round(h)}` : (narrow ? '390 / 844' : '16 / 10');
+      if (w > 0 && h > 0) return { w: Math.round(w), h: Math.round(h) };
+      return narrow ? { w: 390, h: 844 - PHONE_CHROME } : { w: 16, h: 10 };
     };
+    const shapeOf = (dims) => `${dims.w} / ${dims.h}`;
+    // A phone is a declared viewport narrower than 600; a claim's viewports
+    // are names only, so the width is read off the screens the run published.
+    const widthOf = (viewport) => {
+      const screen = screens.find((entry) => entry.viewport === viewport);
+      return Number(screen && screen.width) > 0 ? Number(screen.width) : null;
+    };
+    const isPhoneViewport = (viewport) => {
+      const width = widthOf(viewport);
+      return width != null ? width < 600 : /phone|mobile/i.test(viewport);
+    };
+    // What a clip of one viewport was recorded at: the largest capture size
+    // among this run's motion screens (services/visible-changes.js
+    // clipSize), read off the screens' published shots because the stored
+    // clip carries no dimensions of its own. Every motion viewport must have
+    // a published screen for the size to be known at all; otherwise nothing
+    // is framed rather than guessed.
+    const motionViewports = () => claims.filter((claim) => claim.animation === 'motion')
+      .flatMap((claim) => viewportsOf(claim));
+    const clipRecordOf = () => {
+      const names = motionViewports();
+      if (!names.length
+        || !names.every((name) => screens.some((entry) => entry.viewport === name && Number(entry.width) > 0))) {
+        return null;
+      }
+      const sizes = names
+        .map((name) => screens.find((entry) => entry.viewport === name))
+        .map((screen) => ({
+          w: Number(screen.width),
+          h: Math.max(Number(screen.heightBefore) || 0, Number(screen.heightAfter) || 0),
+        }));
+      if (sizes.some((size) => !(size.h > 0))) return null;
+      return { w: Math.max(...sizes.map((size) => size.w)), h: Math.max(...sizes.map((size) => size.h)) };
+    };
+    // The device a phone picture sits in: the status bar strip above, the
+    // page between, the home indicator below. The strips scale with the
+    // picture's width, so an older full-height shot shows a slightly taller
+    // device around the same picture. The wrapper sizes it (the stage fits
+    // a screen shot by --shots-shape; a clip keeps its own width), and the
+    // change outlines stay percentages of the picture inside the positioned
+    // screen.
+    const deviceFrame = (picture) => `<span class="shots-device"><span class="shots-device-strip shots-device-status" aria-hidden="true"></span><span class="shots-device-screen">${picture}</span><span class="shots-device-strip shots-device-home" aria-hidden="true"></span></span>`;
+    const framedStyle = (dims) => `--shots-shape:${dims.w} / ${dims.h + PHONE_CHROME};--shots-device-w:${dims.w}`;
     const sizeName = AppView._shotsSizeName;
 
     // The switches are radios before the screens and labels on each screen,
@@ -20469,10 +20525,27 @@ const AppView = {
       const baseClip = by(claim.id, viewport, 'base', 'animation', 'webm');
       const headClip = by(claim.id, viewport, 'head', 'animation', 'webm');
       const pairedClip = by(claim.id, viewport, 'paired', 'animation', 'webm');
-      const poster = (side) => { const shot = by(claim.id, viewport, side, 'context'); return shot ? shotsUrl(shot.url) : ''; };
+      const contextShot = (side) => by(claim.id, viewport, side, 'context');
+      const poster = (side) => { const shot = contextShot(side); return shot ? shotsUrl(shot.url) : ''; };
+      // The clip's picture is the page area the browser recorded, the same
+      // capture the screen shot beside it shows (the stored clip carries no
+      // dimensions, so the screen shot's stand in for it). It is framed with
+      // the phone's chrome only when this run's recording really was that
+      // phone page: a wider motion screen sets the recording size, and then
+      // the phone page sits on grey, so the clip renders as before.
+      const recorded = clipRecordOf();
+      const shapeShot = [contextShot('base'), contextShot('head')]
+        .find((shot) => shot && Number(shot.width) > 0 && Number(shot.height) > 0) || null;
+      const phoneClip = !!shapeShot && !!recorded
+        && Number(shapeShot.width) < 600
+        && Math.round(Number(shapeShot.width)) === recorded.w
+        && Math.round(Number(shapeShot.height)) === recorded.h;
       const clip = (label, artifact, posterUrl) => `<figure style="flex:1 1 240px;min-width:0;margin:0">
           <figcaption class="mb-1 text-[0.68rem] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">${label} clip · ${esc(viewport)}</figcaption>
-          ${artifact ? `<video src="${attr(shotsUrl(artifact.url))}"${posterUrl ? ` poster="${attr(posterUrl)}"` : ''} controls preload="none" muted playsinline aria-label="${attr(`${label} clip: ${claim.claim || ''}`)}" style="${videoStyle}"></video>`
+          ${artifact
+            ? (phoneClip
+              ? `<span class="shots-clip-frame" style="${framedStyle({ w: Math.round(Number(shapeShot.width)), h: Math.round(Number(shapeShot.height)) })}">${deviceFrame(`<video src="${attr(shotsUrl(artifact.url))}"${posterUrl ? ` poster="${attr(posterUrl)}"` : ''} controls preload="none" muted playsinline aria-label="${attr(`${label} clip: ${claim.claim || ''}`)}" style="${framedVideoStyle}"></video>`)}</span>`
+              : `<video src="${attr(shotsUrl(artifact.url))}"${posterUrl ? ` poster="${attr(posterUrl)}"` : ''} controls preload="none" muted playsinline aria-label="${attr(`${label} clip: ${claim.claim || ''}`)}" style="${videoStyle}"></video>`)
             : `<div class="flex items-center justify-center rounded-md border border-dashed border-zinc-300 text-xs text-zinc-500 dark:border-zinc-700 dark:text-zinc-400" style="height:120px">No clip</div>`}
         </figure>`;
       if (baseClip || headClip) {
@@ -20497,8 +20570,16 @@ const AppView = {
       const side = (which, artifact, label) => {
         const cls = which === 'base' ? 'shots-flip-before' : 'shots-flip-after';
         if (!artifact) return `<span class="shots-flip-side ${cls} shots-flip-missing">No shot</span>`;
-        const shape = shapeOf(artifact, screen.width, which === 'base' ? screen.heightBefore : screen.heightAfter, narrow);
-        return `<span class="shots-flip-side ${cls}" style="--shots-shape:${shape}"><img src="${attr(shotsUrl(artifact.url))}" alt="${attr(`${label}: ${described}`)}" loading="lazy">${drawn[which]}</span>`;
+        const dims = dimsOf(artifact, screen.width, which === 'base' ? screen.heightBefore : screen.heightAfter, narrow);
+        const picture = `<img src="${attr(shotsUrl(artifact.url))}" alt="${attr(`${label}: ${described}`)}" loading="lazy">${drawn[which]}`;
+        // A phone picture sits between the status bar and home indicator
+        // space the capture left out, drawn back around it at display time,
+        // so the framed shot is the declared phone size again; the change
+        // outlines stay percentages of the picture inside their own
+        // positioned wrapper. A desktop picture renders exactly as before.
+        return narrow
+          ? `<span class="shots-flip-side shots-flip-framed ${cls}" style="${framedStyle(dims)}">${deviceFrame(picture)}</span>`
+          : `<span class="shots-flip-side ${cls}" style="--shots-shape:${shapeOf(dims)}">${picture}</span>`;
       };
       const changes = onScreen.map((claim) => {
         const n = numberOf(claim.id);

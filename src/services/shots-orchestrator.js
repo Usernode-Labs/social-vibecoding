@@ -385,7 +385,15 @@ function shotsBrief({ run, session, revision, pair, deployment, intent, guestKin
   return {
     version: 2,
     runId: run.id,
-    declaredChanges: intent.stories,
+    // Each viewport carries its capture size beside the author's declared
+    // one (services/visible-changes.js captureViewport): a phone's browser
+    // is shot at the page area between its status bar and home indicator
+    // space, so the agent resizes to that and the viewer draws the space
+    // back around the picture.
+    declaredChanges: intent.stories.map((story) => ({
+      ...story,
+      viewports: story.viewports.map(planContract.captureViewport),
+    })),
     addresses: { before: deployment.origins.base, after: deployment.origins.head },
     // Kept for the bridge's hosted-app catalog check, which keys on base/head.
     origins: deployment.origins,
