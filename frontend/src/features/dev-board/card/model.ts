@@ -165,6 +165,13 @@ export interface ActionSpec {
    * so in one line.
    */
   uncounted?: boolean;
+  /**
+   * #3984: this side's vote is on its way (castVote's `_votePending`). The
+   * button renders busy — the arc spinner and "Voting…" in place of the
+   * tally — and stops taking clicks until the server answers, so a slow
+   * round-trip is a visibly busy pill rather than silence.
+   */
+  pending?: boolean;
 }
 
 /** Everything that can appear in the status band, as a tagged union. */

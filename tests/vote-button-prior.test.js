@@ -103,6 +103,58 @@ test('a counted vote, or none at all, draws what it always drew', () => {
   assert.match(priorNo, /class="dev-vote-btn" data-vote-btn="open"/, 'an earlier No is not asked back: it stopped nothing');
 });
 
+// ── #3984: the pressed side's vote button goes busy ───────────────────
+//
+// While castVote has a vote on its way (_votePending) the card's ONE button
+// becomes the busy state: disabled, the arc spinner, "Voting…" in place of
+// the tally — the same word the chat pill and the deck's rail use — so the
+// second press of an impatient voter lands on something visibly inert.
+// EXECUTED through the card renderer, as the tests above are.
+
+test('#3984: the side in flight renders the face disabled, with the spinner and "Voting…"', () => {
+  const AppView = makeAppView(ME);
+  AppView._votePending.set(7, 'yes');
+  const html = proposalCardHtml(AppView, proposal({ my_vote: null }));
+  const btn = html.match(/<button[^>]*class="dev-vote-btn dev-vote-btn-voting"[^>]*>[\s\S]*?<\/button>/);
+  assert.ok(btn, 'the busy face is the one vote button');
+  assert.match(btn[0], /disabled=""/);
+  assert.match(btn[0], /data-vote-btn="voting"/);
+  assert.match(btn[0], /title="Your vote is on its way"/);
+  assert.match(btn[0], /class="dc-status-icon dc-status-spinner-arc"/);
+  assert.match(btn[0], />Voting…</);
+  assert.doesNotMatch(btn[0], /dev-vote-caret/, 'nothing to open while it is busy');
+  assert.ok(!html.includes('gc-vote-btn-yes'), 'the pressed side is not offered beside it');
+
+  // The No on its way instead: same face.
+  AppView._votePending.set(7, 'no');
+  assert.match(proposalCardHtml(AppView, proposal({ my_vote: null })), /data-vote-btn="voting"/);
+
+  // The answer landed: exactly what it drew before (the tests above pin that
+  // in full; this is the restore).
+  AppView._votePending.delete(7);
+  const settled = proposalCardHtml(AppView, proposal({ my_vote: null }));
+  assert.match(settled, /class="dev-vote-btn" data-vote-btn="open"/);
+  assert.ok(!settled.includes('Voting…'));
+});
+
+test('#3984: the solo Approve goes busy too, without the optimistic Approved speaking over it', () => {
+  const AppView = makeAppView(ME);
+  AppView.appData = { slug: 'plant-pal', can_collaborate: true, audience: 'solo' };
+  assert.match(proposalCardHtml(AppView, proposal({ my_vote: null })),
+    /class="dev-vote-btn dev-vote-btn-approve" data-vote-btn="approve"/, 'the one-tap face as always');
+
+  AppView._votePending.set(7, 'yes');
+  const html = proposalCardHtml(AppView, proposal({ my_vote: null }));
+  const btn = html.match(/<button[^>]*class="dev-vote-btn dev-vote-btn-approve dev-vote-btn-voting"[^>]*>[\s\S]*?<\/button>/);
+  assert.ok(btn, 'the busy Approve');
+  assert.match(btn[0], /disabled=""/);
+  assert.match(btn[0], /data-vote-btn="voting"/);
+  assert.match(btn[0], /class="dc-status-icon dc-status-spinner-arc"/);
+  assert.match(btn[0], />Voting…</);
+  assert.ok(!btn[0].includes('Approved'), 'the optimistic flip does not take the face while the vote is out');
+  delete AppView.appData;
+});
+
 test('the live card\'s band carries the kudos slot the thanks pill lands in; not for a read-only viewer', () => {
   const AppView = makeAppView(ME);
   const model = AppView._proposalCardModel(proposal({ my_vote: null, my_prior_vote: 'yes' }));

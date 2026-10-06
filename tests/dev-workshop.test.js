@@ -5400,9 +5400,9 @@ test('the Needs-you card is marked voted only once the server has the vote (QA 2
   assert.ok(marks > then, 'and the card is marked only inside it');
   assert.match(body.slice(then), /if \(ok === true\) \{\s*setAnswered\(/, 'only on a vote that landed');
   assert.match(body, /pinsRef\.current\.delete\(key\)/, 'a cancelled or failed vote drops the pin this press added');
-  assert.match(body, /\{ onSend \}/, 'the rail says "Sending…" from the moment the vote is committed');
+  assert.match(body, /\{ onSend \}/, 'the rail says "Voting…" from the moment the vote is committed (#3984: the one word every surface uses)');
   assert.match(body, /if \(sendingRef\.current\.has\(key\)\) return;/, 'one vote per card in flight');
-  assert.match(WORKSHOP, /sending\[row\.key\] \? 'Sending…' : 'Vote'/);
+  assert.match(WORKSHOP, /sending\[row\.key\] \? 'Voting…' : 'Vote'/);
   // castVote's side of the contract.
   const view = read('public/js/app-view.js');
   const cast = view.slice(view.indexOf('  async castVote(sessionId, vote'));

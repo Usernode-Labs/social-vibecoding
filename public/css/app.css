@@ -8006,6 +8006,24 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   background: var(--state-neutral-bg);
   border-color: transparent;
 }
+/* #3984: the vote ON ITS WAY, as the same pill in gray — the building
+   state's twin, and the reason the two read as one state ("this is busy,
+   not broken"). A pressed Yes used to sit inert until the server answered,
+   so on a slow connection a voter pressed again and the second press
+   vanished into the re-entry guard. Now the pressed side renders
+   <button disabled> with the arc spinner and "Voting…", and .gc-vote-btn:
+   disabled's ghosting is undone here exactly as #2585 undid it for
+   building: a half-transparent pill reads as broken rather than busy, and
+   the higher specificity (later, same count) is what beats both :disabled
+   and the still-matching :hover. */
+.gc-vote-btn.gc-vote-btn-voting,
+.gc-vote-btn.gc-vote-btn-voting:disabled {
+  opacity: 1;
+  cursor: default;
+  color: var(--state-neutral);
+  background: var(--state-neutral-bg);
+  border-color: transparent;
+}
 /* The ledger's one action (Re-run checks): the band's accent pill — the
    tinted fill Preview wears on the card — so the row's button reads as the
    same kind of control as the card's, not as a second neutral chip. */
@@ -14387,6 +14405,17 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 .dev-vote-btn:hover { background: var(--accent-light); }
 .dev-vote-btn-yes, .dev-vote-btn-yes:hover { background: var(--accent-tint); color: var(--accent); }
 .dev-vote-btn-no, .dev-vote-btn-no:hover { background: var(--state-blocked-bg); color: var(--state-blocked); }
+/* #3984: the vote on its way — the face goes neutral and busy (the arc
+   spinner reads against the neutral fill; on the accent one it would
+   vanish), greyed like the chat pill's Voting… state and not faded out.
+   The explicit :hover matters: a disabled button still matches it, and the
+   accent fill would come back under the pointer. */
+.dev-vote-btn-voting,
+.dev-vote-btn-voting:hover {
+  background: var(--state-neutral-bg);
+  color: var(--state-neutral);
+  cursor: default;
+}
 /* The picker: body-mounted and fixed, like .dev-card-menu, because the
    kanban columns scroll sideways and would clip it. */
 .dev-vote-pop {

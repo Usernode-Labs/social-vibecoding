@@ -750,3 +750,167 @@ test('the browser sends the line, and re-reads the roster once the vote lands', 
   assert.match(view, /if \(t\.kind === 'gov'\) AppView\._loadGovVoteRoster\(item\.id\);/);
   assert.match(view, /roster: AppView\._govVoteRoster\[item\.id\] \|\| \{ phase: 'loading' \},/);
 });
+
+// ── 8. The pressed button, busy while the vote is on its way (#3984) ──
+//
+// The reported bug: on a slow connection a pressed Yes sat inert for
+// seconds, so the voter nearly pressed again. castVote now records the side
+// in flight (AppView._votePending) the moment the line is in hand — the
+// same point the optimistic paint runs — and the renderers draw that side
+// busy ("Voting…", not clickable) until the server answers. The lifecycle
+// here, EXECUTED through the same vm harness as the chat-row tests
+// (tests/attr-vote-repaint.test.js): set after the line resolves, published
+// even when the optimistic step has nothing to change, cleared on every
+// exit, and never set at all on a cancelled No.
+
+const vm = require('node:vm');
+
+function makeView({ fetchImpl, promptImpl } = {}) {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8');
+  const sandbox = {
+    console,
+    relTime: () => 'just now',
+    App: { user: { id: 1, username: 'evan' } },
+    document: {
+      getElementById: () => null,
+      querySelector: () => null,
+      querySelectorAll: () => ({ forEach: () => {} }),
+      addEventListener: () => {},
+      createElement: () => ({ style: {}, classList: { add: () => {}, remove: () => {} } }),
+      body: { appendChild: () => {} },
+    },
+    fetch: fetchImpl || (async () => ({ ok: true, json: async () => ({}) })),
+    alert: () => {},
+    setTimeout, clearTimeout, setInterval, clearInterval,
+    addEventListener: () => {},
+    localStorage: { getItem: () => null, setItem: () => {} },
+    innerWidth: 1000,
+  };
+  sandbox.window = sandbox;
+  sandbox.globalThis = sandbox;
+  const toasts = [];
+  sandbox.PlatformUI = {
+    toast: (m) => { toasts.push(m); },
+    prompt: promptImpl,
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
+  const AppView = sandbox.__AppView;
+  const repaints = { count: 0 };
+  AppView._repaintDevBody = () => { repaints.count += 1; };
+  AppView._renderTopicHead = () => {};
+  AppView.refreshDevData = async () => {};
+  return { AppView, sandbox, toasts, repaints };
+}
+
+// castVote's first await is the line resolver; with the reason already in
+// the options bag it settles in a couple of microtasks, by which time the
+// pending state is set and the fetch is out.
+const tick = () => new Promise((r) => setImmediate(r));
+const VOTABLE = { id: 7, status: 'promoted', my_vote: null, yes_count: 1, no_count: 0, approval_epoch: 3 };
+
+test('#3984: the pressed side is pending while the vote is on its way, and stops once the server answers', async () => {
+  let release;
+  const { AppView, repaints } = makeView({
+    fetchImpl: () => new Promise((resolve) => { release = () => resolve({ ok: true, json: async () => ({}) }); }),
+  });
+  AppView._proposals = [VOTABLE];
+  const done = AppView.castVote(7, 'yes', null, { reason: null });
+  await tick(); await tick();
+  assert.equal(AppView._votePending.get(7), 'yes', 'the side in flight');
+  assert.equal(repaints.count, 1, 'the pending state was published, so the pill can be drawn');
+  release();
+  assert.equal(await done, true, 'the server took the vote');
+  assert.ok(!AppView._votePending.has(7), 'and the button stops being busy');
+});
+
+test('#3984: a row the optimistic paint cannot reach still goes busy — the reported silence', async () => {
+  // No cached row (_findItem misses): the optimistic step has nothing to
+  // change, and today that meant NO repaint of any kind until the
+  // round-trip ended — a pressed Yes on a slow net read as a dead button.
+  let release;
+  const { AppView, repaints } = makeView({
+    fetchImpl: () => new Promise((resolve) => { release = () => resolve({ ok: true, json: async () => ({}) }); }),
+  });
+  AppView._proposals = [];
+  const done = AppView.castVote(7, 'yes', null, { reason: null });
+  await tick(); await tick();
+  assert.equal(AppView._votePending.get(7), 'yes');
+  assert.equal(repaints.count, 1, 'repainted anyway');
+  release();
+  assert.equal(await done, true);
+  assert.ok(!AppView._votePending.has(7));
+});
+
+test('#3984: a re-cast of the side the row already shows still goes busy', async () => {
+  let release;
+  const { AppView, repaints } = makeView({
+    fetchImpl: () => new Promise((resolve) => { release = () => resolve({ ok: true, json: async () => ({}) }); }),
+  });
+  AppView._proposals = [{ ...VOTABLE, my_vote: 'yes' }];
+  const done = AppView.castVote(7, 'yes', null, { reason: null });
+  await tick(); await tick();
+  assert.equal(AppView._votePending.get(7), 'yes');
+  assert.equal(repaints.count, 1);
+  release();
+  assert.equal(await done, true);
+  assert.ok(!AppView._votePending.has(7));
+});
+
+test('#3984: a cancelled No never goes busy, and nothing is sent', async () => {
+  let sent = 0;
+  const { AppView, toasts, repaints } = makeView({
+    fetchImpl: async () => { sent += 1; return { ok: true, json: async () => ({}) }; },
+    promptImpl: async () => null, // the "What's not working for you?" card, backed out of
+  });
+  AppView._proposals = [VOTABLE];
+  assert.equal(await AppView.castVote(7, 'no', null, {}), false);
+  assert.equal(sent, 0, 'the vote never left');
+  assert.ok(!AppView._votePending.has(7), 'nothing was on its way');
+  assert.equal(repaints.count, 0, 'and nothing repainted');
+  assert.deepEqual(toasts, []);
+});
+
+test('#3984: a refused vote stops being busy, and the toast still says so', async () => {
+  const { AppView, toasts } = makeView({
+    fetchImpl: async () => ({ ok: false, status: 409, json: async () => ({ error: 'Voting has closed' }) }),
+  });
+  AppView._proposals = [VOTABLE];
+  assert.equal(await AppView.castVote(7, 'yes', null, { reason: null }), false);
+  assert.ok(!AppView._votePending.has(7));
+  assert.deepEqual(toasts, ['Voting has closed']);
+});
+
+test('#3984: a vote that never reaches the server stops being busy too', async () => {
+  const { AppView, toasts } = makeView({
+    fetchImpl: async () => { throw new Error('offline'); },
+  });
+  AppView._proposals = [VOTABLE];
+  assert.equal(await AppView.castVote(7, 'no', null, { reason: 'The colors clash' }), false);
+  assert.ok(!AppView._votePending.has(7));
+  assert.deepEqual(toasts, ['Your vote did not go through. Check your connection and try again.']);
+});
+
+test('#3984: a newer press of the other side owns the pending state, and the slower first fetch cannot clear it', async () => {
+  const gates = [];
+  const { AppView } = makeView({
+    fetchImpl: () => new Promise((resolve) => {
+      gates.push(() => resolve({ ok: true, json: async () => ({}) }));
+    }),
+  });
+  AppView._proposals = [VOTABLE];
+  const yes = AppView.castVote(7, 'yes', null, { reason: null });
+  await tick(); await tick();
+  assert.equal(AppView._votePending.get(7), 'yes');
+  const no = AppView.castVote(7, 'no', null, { reason: 'line' });
+  await tick(); await tick();
+  assert.equal(AppView._votePending.get(7), 'no', 'the newest press is the one shown as pending');
+  gates[1](); // the No's fetch answers first
+  assert.equal(await no, true);
+  assert.ok(!AppView._votePending.has(7), 'cleared by the side it belongs to');
+  gates[0](); // now the slower Yes lands
+  assert.equal(await yes, true);
+  assert.ok(!AppView._votePending.has(7), 'and it was not resurrected by the first call\'s finally');
+});

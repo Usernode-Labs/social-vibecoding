@@ -134,6 +134,16 @@ test('the swipe votes through answer(), so a No asks for its reason and a dismis
   assert.match(ask, /if \(no && !line\) \{[\s\S]*?return false;/, 'and so is an empty line');
 });
 
+// #3984: the one word for "the vote is on its way", everywhere the state
+// shows. The rail already disabled itself and refused a second swipe while
+// a vote was out; it only said "Sending…", which no other surface used.
+test('the rail waits in the word every surface uses, and stays disabled while it waits', () => {
+  const rail = body(WORKSHOP, 'data-ws-rail-btn="vote"', 'data-ws-rail-btn="description"');
+  assert.match(rail, /disabled=\{!voted && !!sending\[row\.key\]\}/);
+  assert.match(rail, /sending\[row\.key\] \? 'Voting…' : 'Vote'/);
+  assert.ok(!WORKSHOP.includes('Sending…'), 'no second word for this state');
+});
+
 test('only a card the viewer can vote on, on a phone, takes the gesture', () => {
   const can = body(WORKSHOP, 'function canSwipeVote(', '\n}\n');
   assert.match(can, /row\.kind === 'vote' && !!\(row\.yes && row\.yes\.act\) && !!\(row\.no && row\.no\.act\)/,

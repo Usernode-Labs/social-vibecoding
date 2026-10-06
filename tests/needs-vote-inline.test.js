@@ -67,6 +67,19 @@ test('on No the box asks what is not working, and the send waits for a line', ()
   assert.match(filled, /class="dev-vote-reason-send dev-vote-reason-send-no">Vote no</);
 });
 
+test('#3984: the rail waits in the one word every surface uses, and takes no press while it waits', () => {
+  // While the vote is on its way the rail button is disabled and labelled
+  // "Voting…" — the same word the chat pill and the card's face use — so a
+  // slow round-trip reads as busy rather than as a button doing nothing.
+  const rail = WORKSHOP.slice(
+    WORKSHOP.indexOf('data-ws-rail-btn="vote"'),
+    WORKSHOP.indexOf('data-ws-rail-btn="description"')
+  );
+  assert.match(rail, /disabled=\{!voted && !!sending\[row\.key\]\}/);
+  assert.match(rail, /sending\[row\.key\] \? 'Voting…' : 'Vote'/);
+  assert.ok(!WORKSHOP.includes('Sending…'), 'no second word for this state');
+});
+
 test('the sheet sends its line with the vote, so castVote does not ask again', () => {
   assert.match(WORKSHOP, /answer\(voteSide, undefined, voteTrimmed \|\| null\)/, 'the form sends its side and its line');
   assert.match(WORKSHOP, /const opts = reason === undefined \? \{ onSend \} : \{ onSend, reason \};/,

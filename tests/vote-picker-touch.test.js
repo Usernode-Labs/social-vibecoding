@@ -204,3 +204,40 @@ test('a test account\'s vote on an app a real person made says, in one line, tha
   assert.match(CSS, /\.dev-vote-uncounted \{/);
   assert.match(CSS, /\.gc-vote-uncounted \{/);
 });
+
+// ── #3984: the face while the vote is on its way ──────────────────────
+
+test('the busy face reads the pending side off the specs, and the busy styles are neutral, not faded', () => {
+  const fn = SRC.slice(SRC.indexOf('export function VoteButton('), SRC.indexOf('export function VotePicker('));
+  assert.match(fn, /const pendingSide: 'yes' \| 'no' \| null = yes\.pending \? 'yes' : \(no\.pending \? 'no' : null\);/,
+    'the side whose vote is on its way, from _cardVoteButtonSpecs\'s flag');
+  assert.match(fn, /const face = pendingSide\s*\n\s*\? 'Voting…'/, 'one word for this state, as the chat pill says it');
+  assert.match(fn, /const disabled = !!\(yes\.disabled \|\| no\.disabled\) \|\| !!pendingSide;/,
+    'busy is disabled, so a second press lands on something visibly inert');
+  assert.match(fn, /data-vote-btn=\{pendingSide \? 'voting' : \(mine \|\| \(prior === 'yes' \? 'prior-yes' : 'open'\)\)\}/);
+  assert.match(fn, /\{pendingSide\s*\n\s*\? <Spinner \/>/, 'the module\'s own arc spinner');
+  assert.match(fn, /\{pendingSide \? null : <ChevronDownIcon className="dev-vote-caret" aria-hidden="true" \/>\}/,
+    'no caret while there is nothing to open');
+  // The solo Approve rides the same state.
+  assert.match(fn, /\{pendingSide \? 'Voting…' : \(approved \? 'Approved' : 'Approve'\)\}/);
+
+  // The card's busy style: neutral tokens, never the half-transparent ghost
+  // a bare disabled control gets — that reads as broken, not busy — and the
+  // hover cannot bring the accent fill back (a disabled button still
+  // matches :hover).
+  const at = CSS.indexOf('.dev-vote-btn-voting,');
+  assert.ok(at > CSS.indexOf('.dev-vote-btn-no'), 'beside the vote button\'s own states');
+  const block = CSS.slice(at, CSS.indexOf('}', at));
+  assert.match(block, /background: var\(--state-neutral-bg\)/);
+  assert.match(block, /color: var\(--state-neutral\)/);
+  assert.match(block, /cursor: default/);
+  assert.ok(!block.includes('opacity:'), 'not faded out');
+  assert.match(CSS, /\.dev-vote-btn-voting,\n\.dev-vote-btn-voting:hover \{/);
+  // The chat pill's twin, composed with .gc-vote-btn like the building state
+  // it is modelled on (#2585), at the specificity that beats :disabled.
+  const gcAt = CSS.indexOf('.gc-vote-btn.gc-vote-btn-voting,');
+  assert.ok(gcAt > CSS.indexOf('.gc-vote-btn.gc-vote-btn-building'), 'next to the building state it mirrors');
+  const gcBlock = CSS.slice(gcAt, CSS.indexOf('}', gcAt));
+  assert.match(gcBlock, /opacity: 1/);
+  assert.match(gcBlock, /background: var\(--state-neutral-bg\)/);
+});

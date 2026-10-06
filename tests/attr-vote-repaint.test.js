@@ -253,3 +253,49 @@ test('an imported Underway attribute vote updates the session cache before repai
   assert.equal(mine.assignee.count, 2);
   assert.equal(mine.assignee.myValue, 'bruno');
 });
+
+// ── #3984: the pressed vote side draws busy ───────────────────────────
+//
+// The chat row's controls are voteButtonsHtml's output (group-chat.js
+// _voteInnerHtml → refreshVoteControls, which castVote's repaint runs). The
+// side whose vote is on its way renders as the "Voting…" pill — disabled,
+// arc spinner inside — while the OTHER side keeps its tally, and the pair
+// comes back whole once the answer lands.
+
+const votablePr = () => ({
+  id: 7, status: 'promoted', my_vote: null,
+  yes_count: 1, no_count: 0, approval_policy: null, approval_epoch: 3,
+});
+
+test('#3984: the side in flight renders as the disabled Voting… pill, the other side keeps its tally', () => {
+  const { AppView } = makeSandbox();
+  const before = AppView.voteButtonsHtml(votablePr(), { collapseVoted: true });
+  assert.match(before, /class="gc-vote-btn gc-vote-btn-yes"[^>]*>Yes \(1\)<\/button>/, 'the pair as it always drew');
+  assert.ok(!before.includes('Voting'));
+
+  AppView._votePending.set(7, 'yes');
+  const yesInFlight = AppView.voteButtonsHtml(votablePr(), { collapseVoted: true });
+  assert.match(yesInFlight,
+    /<button class="gc-vote-btn gc-vote-btn-voting" disabled><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"><\/span>Voting…<\/button>/,
+    'the pill: the same frame, the arc spinner inside, one word');
+  assert.ok(!yesInFlight.includes('gc-vote-btn-yes'), 'the pressed side no longer offers itself');
+  assert.match(yesInFlight, /class="gc-vote-btn gc-vote-btn-no"[^>]*>No \(0\)<\/button>/, 'the other side keeps its tally');
+  // The full control set (a surface without collapseVoted) draws the same pill.
+  assert.match(AppView.voteButtonsHtml(votablePr()), /gc-vote-btn-voting/);
+
+  AppView._votePending.set(7, 'no');
+  const noInFlight = AppView.voteButtonsHtml(votablePr(), { collapseVoted: true });
+  assert.match(noInFlight, /gc-vote-btn-voting/);
+  assert.match(noInFlight, /class="gc-vote-btn gc-vote-btn-yes"[^>]*>Yes \(1\)<\/button>/, 'the Yes tally is back');
+  assert.ok(!/class="gc-vote-btn gc-vote-btn-no"/.test(noInFlight), 'and the No side is the busy one now');
+});
+
+test('#3984: the pill restores to the pair once the server answers', () => {
+  const { AppView } = makeSandbox();
+  AppView._votePending.set(7, 'yes');
+  assert.match(AppView.voteButtonsHtml(votablePr(), { collapseVoted: true }), /gc-vote-btn-voting/);
+  AppView._votePending.delete(7);
+  const after = AppView.voteButtonsHtml(votablePr(), { collapseVoted: true });
+  assert.match(after, /class="gc-vote-btn gc-vote-btn-yes"[^>]*>Yes \(1\)<\/button>/);
+  assert.ok(!after.includes('Voting'), 'nothing busy left');
+});

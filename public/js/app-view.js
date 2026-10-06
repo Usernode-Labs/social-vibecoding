@@ -13929,6 +13929,9 @@ const AppView = {
     // Test accounts: the viewer's vote here is recorded but not counted
     // (my_vote_uncounted on the /promoted row); the picker says so.
     const uncounted = pr.my_vote_uncounted === true ? { uncounted: true } : {};
+    // #3984: the side whose vote is on its way renders busy — the card's
+    // one button goes "Voting…", disabled, until the server answers.
+    const pendingVote = AppView._votePending.get(Number(pr.id));
     return [
       {
         key: 'yes',
@@ -13939,12 +13942,14 @@ const AppView = {
         ...AppView._voteSolo(),
         ...(AppView._approveSolo(pr) ? { approve: true } : {}),
         ...uncounted,
+        ...(pendingVote === 'yes' ? { pending: true } : {}),
       },
       {
         key: 'no',
         cls: `gc-vote-btn gc-vote-btn-no${pr.my_vote === 'no' ? ' gc-vote-active' : ''}`,
         title: noT.tip, label: `No (${noT.label})`,
         act: { fn: 'castVote', args: [pr.id, 'no', ...rev] },
+        ...(pendingVote === 'no' ? { pending: true } : {}),
       },
     ];
   },
@@ -21362,8 +21367,19 @@ const AppView = {
     const revisionArg = voteEpoch === null ? '' : `, ${voteEpoch}`;
     const yesT = AppView._voteBtnTally(pr.qualified_yes_count, pr.yes_count, pr.approval_policy, 'Yes');
     const noT = AppView._voteBtnTally(pr.qualified_no_count, pr.no_count, pr.approval_policy, 'No');
-    const yesBtn = `<button class="gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}"${yesT.title} onclick="AppView.castVote(${pr.id}, 'yes'${revisionArg})">Yes (${yesT.label})</button>`;
-    const noBtn = `<button class="gc-vote-btn gc-vote-btn-no${pr.my_vote === 'no' ? ' gc-vote-active' : ''}"${noT.title} onclick="AppView.castVote(${pr.id}, 'no'${revisionArg})">No (${noT.label})</button>`;
+    // #3984: the side whose vote is on its way renders as the "Voting…" pill
+    // instead of its tally — the same pill frame, the arc spinner inside
+    // (the pattern .gc-checks-running-badge already uses), disabled so a
+    // second press lands on something visibly inert rather than vanishing.
+    // The other side keeps its tally. The same map drives the board card's
+    // specs (_cardVoteButtonSpecs), so every vote surface says the one word.
+    const pendingVote = AppView._votePending.get(Number(pr.id));
+    const votingBtn = '<button class="gc-vote-btn gc-vote-btn-voting" disabled>'
+      + '<span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Voting…</button>';
+    const yesBtn = pendingVote === 'yes' ? votingBtn
+      : `<button class="gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}"${yesT.title} onclick="AppView.castVote(${pr.id}, 'yes'${revisionArg})">Yes (${yesT.label})</button>`;
+    const noBtn = pendingVote === 'no' ? votingBtn
+      : `<button class="gc-vote-btn gc-vote-btn-no${pr.my_vote === 'no' ? ' gc-vote-active' : ''}"${noT.title} onclick="AppView.castVote(${pr.id}, 'no'${revisionArg})">No (${noT.label})</button>`;
     return preview + retryPreview + yesBtn + noBtn + adminMerge + AppView._uncountedVoteNoteHtml(pr);
   },
 
@@ -21566,6 +21582,16 @@ const AppView = {
 
 
   _voteInFlight: new Set(),
+  // #3984: the side of each proposal's vote that is on its way right now,
+  // session id → 'yes' | 'no'. The pressed button reads it at render time
+  // (voteButtonsHtml, _cardVoteButtonSpecs) and draws itself busy — the
+  // "Voting…" pill, not clickable — until the server answers, so a slow
+  // round-trip is no longer a button that just sits there. Set only once
+  // the line is in hand (a cancelled No returns before it) and cleared in
+  // castVote's finally, which every exit passes through. Only this call's
+  // own side is removed there: a newer press of the other side owns the
+  // entry until its own fetch lands.
+  _votePending: new Map(),
   // #2782: votes sent but not yet read back, by session id → { vote, token }.
   // A dev-data load that was already in flight when the vote was cast answers
   // with the row as it stood before, and publishing that repainted the vote
@@ -21683,6 +21709,13 @@ const AppView = {
     if (onSend) {
       try { onSend(vote); } catch { /* the caller's paint, never the vote's */ }
     }
+    // #3984: the pressed side is drawn busy from here until the server
+    // answers. Set before the paint that publishes it, and repainted even
+    // when the optimistic step has nothing to change (the row is missing
+    // from cache, or the vote re-casts the side the row already shows) —
+    // that was the silence the fix is for: the row sat untouched until the
+    // round-trip ended.
+    AppView._votePending.set(Number(sessionId), vote);
     // #1924: the card leaves "Needs your vote" on the click, not after the
     // 1–2 s round-trip. The lane (and the Board's needs-vote filter, and the
     // card's own Yes/No highlight) all read `my_vote` off the cached row, so
@@ -21701,8 +21734,8 @@ const AppView = {
     AppView._pendingVotes.set(Number(sessionId), { vote, token });
     if (optimistic) {
       AppView._applyVoteToRow(pr, vote);
-      AppView._repaintAfterVote(sessionId);
     }
+    AppView._repaintAfterVote(sessionId);
     const settle = () => {
       const held = AppView._pendingVotes.get(Number(sessionId));
       if (held && held.token === token) AppView._pendingVotes.delete(Number(sessionId));
@@ -21769,6 +21802,12 @@ const AppView = {
     }
     finally {
       AppView._voteInFlight.delete(key);
+      // #3984: the button stops being busy on every exit — success, refusal,
+      // thrown network error. Only THIS call's side: a newer press of the
+      // other side, whose fetch is still out, keeps the map.
+      if (AppView._votePending.get(Number(sessionId)) === vote) {
+        AppView._votePending.delete(Number(sessionId));
+      }
     }
   },
 

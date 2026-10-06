@@ -2546,7 +2546,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
    * line, so cancelling "What's not working for you?" left "Voted no · press
    * ↓ for the next" on a card nothing had been sent for, and a reload put it
    * back. `castVote` resolves true only once the server has the vote: until
-   * then the rail says it is sending, a cancel leaves the card exactly as it
+   * then the rail says the vote is on its way, a cancel leaves the card exactly as it
    * was (and drops a pin this press added), and a refusal or a network
    * failure is reported by `castVote`'s own toast.
    *
@@ -2980,7 +2980,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
               onClick={() => toggleSheet('vote')}
             >
               <span className="dev-ws-rail-ic">{voted ? <CheckIcon aria-hidden="true" /> : <BallotIcon aria-hidden="true" />}</span>
-              <span className="dev-ws-rail-lab">{voted ? `Voted ${voted}` : (sending[row.key] ? 'Sending…' : 'Vote')}</span>
+              <span className="dev-ws-rail-lab">{voted ? `Voted ${voted}` : (sending[row.key] ? 'Voting…' : 'Vote')}</span>
               <kbd className="dev-ws-rail-key" aria-hidden="true">V</kbd>
             </button>
           ) : (

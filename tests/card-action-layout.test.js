@@ -706,7 +706,12 @@ test('#1924: a refused vote puts the old value back and repaints', async () => {
   assert.equal(pr.my_vote, null);
 });
 
-test('#1924: re-casting the same vote does not repaint optimistically', async () => {
+test('#3984: re-casting the same vote flips nothing, but the busy state is still published', async () => {
+  // Was #1924's "does not repaint optimistically": with nothing to change
+  // the row sat untouched until the round-trip ended, which is the silence
+  // the Voting… pill fixes. The repaint now happens on every send — it is
+  // what draws the pill — but the ROW's vote is still untouched: the
+  // optimistic flip is as much a no-op as it ever was.
   const AppView = makeAppView(ME);
   const pr = { id: 7, status: 'promoted', my_vote: 'yes' };
   AppView._proposals = [pr];
@@ -714,9 +719,20 @@ test('#1924: re-casting the same vote does not repaint optimistically', async ()
   AppView._repaintDevBody = () => { repaints += 1; };
   AppView.refreshDevData = () => {};
   AppView.__sandbox.fetch = async () => ({ ok: true, status: 200, json: async () => ({}) });
-  await AppView.castVote(7, 'yes');
-  assert.equal(repaints, 0);
+  let release;
+  AppView.__sandbox.fetch = () => new Promise((resolve) => {
+    release = () => resolve({ ok: true, status: 200, json: async () => ({}) });
+  });
+  const done = AppView.castVote(7, 'yes');
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(AppView._votePending.get(7), 'yes', 'the re-cast is on its way');
+  assert.equal(repaints, 1, 'one repaint: the busy state, not a vote flip');
+  release();
+  assert.equal(await done, true);
+  assert.equal(repaints, 1, 'one repaint: the busy state, not a vote flip');
   assert.equal(pr.my_vote, 'yes');
+  assert.ok(!AppView._votePending.has(7), 'and it stops being busy once the server answers');
 });
 
 test('a rejected vote re-arms from the epoch the server named', async () => {

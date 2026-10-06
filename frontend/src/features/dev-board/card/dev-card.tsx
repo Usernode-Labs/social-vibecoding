@@ -624,15 +624,27 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
     const h = popRef.current?.scrollHeight;
     if (h && h !== measuredH) setMeasuredH(h);
   }, [open, side, measuredH]);
-  const face = mine === 'yes' ? 'Yes' : (mine === 'no' ? 'No' : (prior === 'yes' ? 'Still yes?' : 'Vote'));
+  // #3984: the side whose vote is on its way (castVote's `_votePending`,
+  // read off the specs). While one is in flight the face goes busy — the arc
+  // spinner and "Voting…" in place of the tally — and stops taking clicks,
+  // so the second press of an impatient voter lands on a visibly disabled
+  // button instead of vanishing into the re-entry guard. A newer press of
+  // the other side owns the flag (castVote keeps only the newest), and the
+  // same repaints that carried the specs here take the flag away again.
+  const pendingSide: 'yes' | 'no' | null = yes.pending ? 'yes' : (no.pending ? 'no' : null);
+  const face = pendingSide
+    ? 'Voting…'
+    : (mine === 'yes' ? 'Yes' : (mine === 'no' ? 'No' : (prior === 'yes' ? 'Still yes?' : 'Vote')));
   // A governance apply in flight disables the pair; the one button goes
   // inert with them, wearing the spec's own explanation.
-  const disabled = !!(yes.disabled || no.disabled);
-  const title = disabled && yes.title ? yes.title : mine
-    ? `You voted ${face}. Press to change your vote.`
-    : prior === 'yes'
-      ? `You said yes to an earlier version. One tap carries it onto this one.`
-      : `Cast your vote · Yes ${tally(yes)} · No ${tally(no)}`;
+  const disabled = !!(yes.disabled || no.disabled) || !!pendingSide;
+  const title = pendingSide
+    ? 'Your vote is on its way'
+    : disabled && yes.title ? yes.title : mine
+      ? `You voted ${face}. Press to change your vote.`
+      : prior === 'yes'
+        ? `You said yes to an earlier version. One tap carries it onto this one.`
+        : `Cast your vote · Yes ${tally(yes)} · No ${tally(no)}`;
   // The popover's frame: the switch, the box and the buttons (no box on a
   // governance vote). Placed from the button's rect each render by
   // lib/anchor-popover.ts — the helper the Homeroom menu shares — exactly as
@@ -713,14 +725,14 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
     return (
       <button
         type="button"
-        className={`dev-vote-btn dev-vote-btn-approve${approved ? ' dev-vote-btn-yes' : ''}`}
-        data-vote-btn={approved ? 'approved' : 'approve'}
-        title={approved ? 'You approved it.' : 'Approve it, and it goes live.'}
+        className={`dev-vote-btn dev-vote-btn-approve${approved && !pendingSide ? ' dev-vote-btn-yes' : ''}${pendingSide ? ' dev-vote-btn-voting' : ''}`}
+        data-vote-btn={pendingSide ? 'voting' : (approved ? 'approved' : 'approve')}
+        title={pendingSide ? 'Your vote is on its way' : (approved ? 'You approved it.' : 'Approve it, and it goes live.')}
         disabled={disabled || approved}
         onClick={(e) => { e.stopPropagation(); send(yes, null); }}
       >
-        {approved ? <CheckIcon aria-hidden="true" /> : null}
-        {approved ? 'Approved' : 'Approve'}
+        {pendingSide ? <Spinner /> : (approved ? <CheckIcon aria-hidden="true" /> : null)}
+        {pendingSide ? 'Voting…' : (approved ? 'Approved' : 'Approve')}
       </button>
     );
   }
@@ -729,18 +741,19 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
       <button
         ref={btnRef}
         type="button"
-        className={`dev-vote-btn${mine ? ` dev-vote-btn-${mine}` : (prior === 'yes' ? ' dev-vote-btn-prior' : '')}`}
-        data-vote-btn={mine || (prior === 'yes' ? 'prior-yes' : 'open')}
+        className={`dev-vote-btn${pendingSide ? ' dev-vote-btn-voting' : (mine ? ` dev-vote-btn-${mine}` : (prior === 'yes' ? ' dev-vote-btn-prior' : ''))}`}
+        data-vote-btn={pendingSide ? 'voting' : (mine || (prior === 'yes' ? 'prior-yes' : 'open'))}
         aria-haspopup="dialog"
         aria-expanded={open || !!sheetEl ? 'true' : undefined}
         title={title}
         disabled={disabled}
         onClick={toggle}
       >
-        {mine === 'yes' ? <CheckIcon aria-hidden="true" /> : null}
-        {mine === 'no' ? <XIcon aria-hidden="true" /> : null}
+        {pendingSide
+          ? <Spinner />
+          : (mine === 'yes' ? <CheckIcon aria-hidden="true" /> : (mine === 'no' ? <XIcon aria-hidden="true" /> : null))}
         {face}
-        <ChevronDownIcon className="dev-vote-caret" aria-hidden="true" />
+        {pendingSide ? null : <ChevronDownIcon className="dev-vote-caret" aria-hidden="true" />}
       </button>
       {popover}
       {sheet}
