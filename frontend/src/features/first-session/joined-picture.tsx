@@ -11,8 +11,8 @@
  * (./sketch-card.tsx), drawn here from its words, so it does not depend on
  * the link still being live once this join has spent it: "Being made" while
  * its first version is on its way, no pill once it is not, and `compact`
- * (the art and the tagline) for a new account, whose welcome leaves about
- * 200px. The Discover card's image is anyone's; an after-shot comes only
+ * (the art and the tagline) for a new account, whose welcome is the shorter
+ * of the two. The Discover card's image is anyone's; an after-shot comes only
  * through a live link, and one that does not load falls back to the next
  * thing.
  *
@@ -47,9 +47,8 @@ export function joinPicture(picture: unknown): JoinPicture | null {
 // it: the screen's spacer after it grows by 1 to this frame's 999), but no
 // taller than a phone's sketch (the invite page draws it 340px high, the made
 // screen 380): past that, the spacer takes the rest and the button stays at
-// the foot of the screen. At least 200px, which is what a new account's
-// welcome, with its "How it works", leaves above the button on a 390x844
-// phone.
+// the foot of the screen. At least 200px: a floor so the card never
+// collapses to nothing under a short welcome.
 const FRAME = 'relative mt-6 flex min-h-[200px] max-h-[440px] flex-[999_1_0%] flex-col overflow-hidden rounded-[20px] bg-white shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900';
 
 export function JoinedPicture({ slug, name, picture, description, tile, building = false, compact = false }: {

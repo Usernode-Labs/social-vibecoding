@@ -3,11 +3,11 @@
  * real screens.
  *
  *   welcome  A full-screen card on the landing's wallpaper: you joined this
- *            group, and — for an account the invite's own sign-up made — what
- *            Homeroom is, in three lines. Under that, the project as its
- *            invite showed it (./joined-picture.tsx). "Go to <name>" starts
- *            the tour, told whether its first version is still being built
- *            (read here from GET /api/apps/:slug, now that they may).
+ *            group, and one short welcome line under the join chip. Under
+ *            that, the project as its invite showed it (./joined-picture.tsx).
+ *            "Go to <name>" starts the tour, told whether its first version
+ *            is still being built (read here from GET /api/apps/:slug, now
+ *            that they may); the tour is where how Homeroom works is told.
  *   tour     ./tour-steps.ts, over the live shell. Each screen is shown whole
  *            first, then the control that leads on is cut out of the dim and
  *            the reader presses it, or the card's blue hint, which presses
@@ -541,7 +541,6 @@ export function WelcomeHeld() {
         <Skeleton shape="block" className="mt-4 h-12 w-56 rounded-full" />
         <Skeleton className="mt-5 w-28" />
         <Skeleton shape="block" className="mt-4 h-8 w-64" />
-        <Skeleton shape="muted" className="mt-4 w-56" />
       </SkeletonGroup>
     </WelcomeFrame>
   );
@@ -581,30 +580,13 @@ export function YoureIn({ info, onGo }: { info: FirstSessionInfo; onGo: (firstVe
         {who ? `You're in, ${who}!` : 'You\'re in!'}
       </p>
       <h1 id="first-session-title" className="mt-2.5 text-balance text-[30px] font-extrabold leading-[34px]">
-        {existing ? `Welcome to ${info.name}.` : 'On Homeroom, communities make apps together.'}
+        {`Welcome to ${info.name}.`}
       </h1>
-      <p className="mt-2.5 text-pretty text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400">
-        {existing
-          ? `${maker ? `${maker} ${made} it for the group.` : 'It is the group\'s own app.'} Have a look, then say hi.`
-          : 'Anyone using an app can change it. The group decides what goes in.'}
-      </p>
-      {existing ? null : (
-        <div className="mt-6 rounded-2xl bg-white p-4 text-left shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
-          <p className="text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">How it works</p>
-          <ol className="mt-3 grid gap-2.5">
-            {[
-              maker ? `Someone makes an app for their group. ${maker} ${made} this one.` : 'Someone makes an app for their group.',
-              'Anyone in the group can suggest an improvement. Homeroom bot builds it.',
-              'The group decides what goes in.',
-            ].map((line, i) => (
-              <li key={line} className="flex items-start gap-2.5 text-[15px] leading-snug text-zinc-700 dark:text-zinc-200">
-                <span className="mt-px flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full bg-violet-600 text-[12px] font-bold text-white">{i + 1}</span>
-                <span>{line}</span>
-              </li>
-            ))}
-          </ol>
-        </div>
-      )}
+      {existing ? (
+        <p className="mt-2.5 text-pretty text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400">
+          {`${maker ? `${maker} ${made} it for the group.` : 'It is the group\'s own app.'} Have a look, then say hi.`}
+        </p>
+      ) : null}
       <JoinedPicture slug={info.slug} name={info.name} picture={joinPicture(info.picture)} description={info.description} tile={tile} building={!!info.building} compact={!existing} />
       <div className="grow" />
       <Button

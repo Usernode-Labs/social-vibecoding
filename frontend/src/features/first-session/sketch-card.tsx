@@ -31,8 +31,8 @@
  * (./joined-picture.tsx) draw the same card while the project has no picture
  * of its own: "Being made" while its first version is on its way, and with
  * no pill (`plain`) when they cannot say. "You're in" for a new account,
- * whose welcome leaves about 200px, draws it `compact`: the art and the
- * tagline, no points.
+ * whose welcome is the shorter of the two, draws it `compact`: the art and
+ * the tagline, no points.
  */
 
 import { type ReactNode, useEffect, useState } from 'react';
