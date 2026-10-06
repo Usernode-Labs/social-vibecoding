@@ -879,8 +879,14 @@ test('the brief names the declared changes, both addresses and revisions, and no
       intent,
     });
     assert.equal(brief.runId, RUN_ID);
-    assert.deepEqual(brief.declaredChanges, intent.stories,
-      'a testing hint must not rewrite the declared change');
+    assert.deepEqual(brief.declaredChanges, intent.stories.map((story) => ({
+      ...story,
+      viewports: story.viewports.map((viewport) => ({
+        ...viewport,
+        captureWidth: viewport.width,
+        captureHeight: viewport.height,
+      })),
+    })), 'the brief carries each viewport\'s capture size, a testing hint must not rewrite the declared change');
     assert.deepEqual(brief.addresses, { before: 'http://base.internal', after: 'http://head.internal' });
     assert.deepEqual(brief.revisions, { before: BASE.slice(0, 12), after: HEAD.slice(0, 12) });
     assert.deepEqual(Object.keys(brief.browsers).sort(), ['full_admin', 'guest', 'member', 'read_only_admin']);

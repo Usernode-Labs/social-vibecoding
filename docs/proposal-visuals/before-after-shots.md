@@ -365,6 +365,13 @@ shot when it is big enough to read (at least 120×40 px on both sides).
   and "This proposal has no visual changes." The author's `rationale` stays
   with the declaration, for whoever reviews it.
 
+A phone's picture carries the device chrome around it in the viewer: the
+shots browser captures the page at the declared height minus the status bar
+and home indicator space, and the viewer draws that space back as two strips,
+so a phone shot reads as a phone. The worker's browser also renders the
+system text in Inter (its `fonts.conf`), the closest open face to the system
+one a phone or desktop would use, with real bold weights.
+
 The public view model and the connector's `get_proposal` carry `shotResults`
 (`[{ id, status: "ready" | "skipped" | "failed", reason, note }]`) beside `claims` and
 `artifacts`. Runs from before shots have no `shotResults`, and their older

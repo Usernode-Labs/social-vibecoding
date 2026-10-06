@@ -256,13 +256,44 @@ test('clips are recorded at the motion screens\' own size', () => {
     ...raw, stories: raw.stories.map((story, index) => (index === 1 ? { ...story, viewports: screens } : story)),
   });
   // A phone clip at a desktop size would be a phone in the corner of grey.
-  assert.equal(shots.clipSize(withScreens([phone])), '390x844');
+  // The clip records the capture size: a phone page is recorded without the
+  // status bar and home indicator space the viewer draws back around it.
+  assert.equal(shots.clipSize(withScreens([phone])), '390x763');
   assert.equal(shots.clipSize(withScreens([desktop])), '1280x800');
-  assert.equal(shots.clipSize(withScreens([phone, desktop])), '1280x844', 'the largest of several');
+  assert.equal(shots.clipSize(withScreens([phone, desktop])), '1280x800', 'the largest of several');
   // Only motion changes count; without one, nothing is recorded.
   const still = shots.parseIntent({ ...raw, stories: [raw.stories[0]] });
   assert.equal(shots.clipSize(still), null);
   assert.equal(shots.clipSize(null), null);
+});
+
+test('a phone viewport captures the page without the device chrome around it', () => {
+  // Status bar 47 + home indicator 34: the page a phone shows between them.
+  assert.equal(shots.PHONE_STATUS_BAR, 47);
+  assert.equal(shots.PHONE_HOME_INDICATOR, 34);
+  assert.equal(shots.PHONE_CHROME, 81);
+
+  const phone = { name: 'phone', width: 390, height: 844 };
+  assert.equal(shots.isPhoneViewport(phone), true, 'below the phone width ceiling');
+  assert.deepEqual(shots.captureViewport(phone), {
+    name: 'phone', width: 390, height: 844, captureWidth: 390, captureHeight: 763,
+  });
+
+  const desktop = { name: 'desktop', width: 1280, height: 800 };
+  assert.equal(shots.isPhoneViewport(desktop), false);
+  assert.deepEqual(shots.captureViewport(desktop), {
+    name: 'desktop', width: 1280, height: 800, captureWidth: 1280, captureHeight: 800,
+  }, 'a desktop capture keeps the declared size');
+
+  // Without a width, the name carries the phone-ness.
+  assert.equal(shots.isPhoneViewport({ name: 'Phone' }), true);
+  assert.equal(shots.isPhoneViewport({ name: 'desktop' }), false);
+  assert.equal(shots.isPhoneViewport(null), false);
+
+  // Degenerate declared heights still leave a page to shoot.
+  assert.equal(shots.captureViewport({ name: 'phone', width: 390, height: 81 }).captureHeight, 1);
+  assert.equal(shots.captureViewport({ name: 'phone', width: 390, height: null }).captureHeight, null,
+    'no declared height, no capture height to shrink');
 });
 
 test('the replay plan contract is gone from the declaration module', () => {

@@ -256,16 +256,56 @@ function needsClip(story) {
   return story?.intent?.animation === 'motion';
 }
 
+// ── Phone rules ─────────────────────────────────────────────────────────
+// One definition for every surface that shoots or shows a phone: the brief
+// that tells the shots agent what to resize to, the clip size the worker
+// records at, and the shots viewer, which draws the space the capture left
+// out back around the picture (the browser half of the viewer is a classic
+// script that cannot import this module, so it repeats the two numbers; a
+// test pins the copies together).
+//
+// A phone is a declared viewport narrower than 600 pixels, and the space a
+// phone keeps is iPhone's portrait insets: 47px of status bar above the
+// page and 34px of home indicator below it. The browser shoots the page
+// between them, at the declared height minus both, so a header sits where a
+// phone puts it instead of at the very top edge. The declared viewport
+// itself is untouched; only the derived capture size shrinks.
+const PHONE_MAX_WIDTH = 600;
+const PHONE_STATUS_BAR = 47;
+const PHONE_HOME_INDICATOR = 34;
+const PHONE_CHROME = PHONE_STATUS_BAR + PHONE_HOME_INDICATOR;
+
+function isPhoneViewport(viewport) {
+  const width = Number(viewport?.width);
+  return Number.isFinite(width) && width > 0
+    ? width < PHONE_MAX_WIDTH
+    : /phone|mobile/i.test(String(viewport?.name ?? viewport ?? ''));
+}
+
+// What the browser shoots for a declared viewport: the width as declared,
+// the height minus the phone's own chrome on a phone.
+function captureViewport(viewport) {
+  const height = Number(viewport?.height);
+  return {
+    ...(viewport || {}),
+    captureWidth: Number(viewport?.width),
+    captureHeight: isPhoneViewport(viewport) && Number.isFinite(height) && height > 0
+      ? Math.max(1, height - PHONE_CHROME) : (viewport?.height ?? null),
+  };
+}
+
 // The size each browser records clips at, as Playwright's WIDTHxHEIGHT, or
 // null when no change is motion. A viewport smaller than the recording is
 // drawn in its top-left corner on grey, so a phone clip recorded at a
-// desktop size is mostly empty: record at the motion screens' own size (the
-// largest of them when they differ).
+// desktop size is mostly empty: record at the motion screens' own capture
+// size (the largest of them when they differ), the page area the viewer
+// frames.
 function clipSize(intent) {
   const screens = (intent?.stories || []).filter(needsClip).flatMap((story) => story.viewports || []);
   if (!screens.length) return null;
-  const width = Math.max(...screens.map((screen) => screen.width));
-  const height = Math.max(...screens.map((screen) => screen.height));
+  const captured = screens.map(captureViewport);
+  const width = Math.max(...captured.map((screen) => screen.captureWidth));
+  const height = Math.max(...captured.map((screen) => screen.captureHeight));
   return `${width}x${height}`;
 }
 
@@ -290,4 +330,10 @@ module.exports = {
   canonicalJson,
   needsClip,
   clipSize,
+  PHONE_MAX_WIDTH,
+  PHONE_STATUS_BAR,
+  PHONE_HOME_INDICATOR,
+  PHONE_CHROME,
+  isPhoneViewport,
+  captureViewport,
 };
