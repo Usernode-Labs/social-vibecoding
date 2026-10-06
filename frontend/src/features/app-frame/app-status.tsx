@@ -58,7 +58,14 @@ export interface AppStatusView {
    * thumbnail in place of the message, with `buildLine` at its foot.
    */
   thumb?: FirstVersionThumb | null;
+  /** None: no line (a screen whose button already says it, such as Try it). */
   buildLine?: BuildLineState | null;
+  /**
+   * The lines say what the first-session tour's card says over this screen
+   * ("It opens here when it’s ready."), so they hide while the tour is up
+   * (its layer, `[data-first-session-tour]`, is in the page).
+   */
+  tourSays?: boolean;
   /**
    * At most one, and only for a viewer who can act on it. `botChat` opens
    * the viewer's DM with the Homeroom bot (#15), by its id when known.
@@ -133,6 +140,11 @@ function press(action: StatusAction): void {
   else call(opener, action.slug, action.conversationId ?? null);
 }
 
+const LINE = 'max-w-sm text-sm';
+const THUMB_LINE = 'max-w-sm pt-1 text-[15px] leading-5';
+// Hidden while the first-session tour's layer is in the page: its card says it.
+const THUMB_LINE_TOUR_SAYS = 'max-w-sm pt-1 text-[15px] leading-5 [body:has([data-first-session-tour])_&]:hidden';
+
 export function AppStatusView_({ view }: { view: AppStatusView }): ReactNode {
   const action = view.action;
   const titled = !!view.lines?.length;
@@ -145,7 +157,15 @@ export function AppStatusView_({ view }: { view: AppStatusView }): ReactNode {
       ) : (
         <p className={titled ? 'max-w-sm text-base font-semibold text-zinc-900 dark:text-zinc-100' : 'text-sm'}>{view.message}</p>
       )}
-      {titled ? view.lines!.map((line) => <p key={line} className={thumb ? 'max-w-sm pt-1 text-[15px] leading-5' : 'max-w-sm text-sm'}>{line}</p>) : null}
+      {titled ? view.lines!.map((line) => (
+        <p
+          key={line}
+          {...(view.tourSays ? { 'data-app-first-version-note': '' } : {})}
+          className={!thumb ? LINE : view.tourSays ? THUMB_LINE_TOUR_SAYS : THUMB_LINE}
+        >
+          {line}
+        </p>
+      )) : null}
       {view.detail ? (
         <p className="text-xs font-mono text-red-700 max-w-md break-words dark:text-red-400">{view.detail}</p>
       ) : null}

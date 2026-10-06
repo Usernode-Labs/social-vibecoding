@@ -3147,7 +3147,9 @@ const AppView = {
    * everyone: "It opens here when it’s ready." The build line says where it
    * is ("Your plan is ready to review" to the person who started it), and
    * nothing here asks for an answer: the plan and the bot's questions are
-   * answered in their chat with Homeroom bot.
+   * answered in their chat with Homeroom bot. While the first-session tour
+   * is over this screen its card says where the app opens, so the line hides
+   * then (`tourSays`; features/app-frame/app-status.tsx).
    */
   _firstVersionView(appData) {
     const fv = appData.first_version || {};
@@ -3159,6 +3161,7 @@ const AppView = {
       detail: null,
       ...AppView._firstVersionThumb(appData),
       lines: ['It opens here when it’s ready.'],
+      tourSays: true,
       action: null,
     };
   },
@@ -3211,12 +3214,16 @@ const AppView = {
     }
     const tryIt = { key: 'tryChange', label: 'Try it', slug, sessionId: approval.sessionId };
     const change = { key: 'seeChange', label: 'See the change', slug, sessionId: approval.sessionId };
+    // With Try it on the screen, the thumbnail's "Ready to try" would say the
+    // same thing twice: a screen with a button that says it hides the line.
     if (approval.mustApprove) {
       lines.push('Waiting for your approval.');
-      return { ...view, action: tryIt, alt: change };
+      return { ...view, buildLine: null, action: tryIt, alt: change };
     }
     lines.push(AppView._firstVersionWaitLine(approval));
-    return approval.approved ? { ...view, action: tryIt, alt: change } : { ...view, action: change };
+    return approval.approved
+      ? { ...view, buildLine: null, action: tryIt, alt: change }
+      : { ...view, action: change };
   },
 
   /**

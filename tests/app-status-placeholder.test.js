@@ -311,6 +311,7 @@ test('#4053: while it is being built, the thumbnail with its build line, and whe
     thumb: THUMB,
     buildLine: 'planning',
     lines: ['It opens here when it’s ready.'],
+    tourSays: true,
     action: null,
   });
   const out = html(v);
@@ -322,6 +323,19 @@ test('#4053: while it is being built, the thumbnail with its build line, and whe
   assert.match(out, />It opens here when it’s ready\.</);
   assert.doesNotMatch(out, /status-dot|Step \d of|being built from|<button/, 'no dot, no step count, no title, nothing to press');
   assert.doesNotMatch(out, /Start a new change|starter/i);
+});
+
+test('#4053: "It opens here when it’s ready." hides while the first-session tour is up; its card says the same', () => {
+  const { AppView } = makeAppView();
+  const out = html(view(AppView, firstVersionApp()));
+  // Hidden by the tour's own layer being in the page, not by a state the tour
+  // would have to publish: the line is drawn either way.
+  assert.match(out, /<p data-app-first-version-note="" class="max-w-sm pt-1 text-\[15px\] leading-5 \[body:has\(\[data-first-session-tour\]\)_&amp;\]:hidden">It opens here when it’s ready\.<\/p>/);
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'features', 'first-session', 'index.tsx'), 'utf8'), /<div data-first-session-tour=\{index \+ 1\}/, 'the tour\'s layer carries the attribute');
+  // Outside the tour it stays; the ready view's wait lines never hide.
+  const ready = html(view(AppView, readyApp({}, { mustApprove: true })));
+  assert.match(ready, /<p class="max-w-sm pt-1 text-\[15px\] leading-5">Waiting for your approval\.<\/p>/);
+  assert.doesNotMatch(ready, /first-session-tour|data-app-first-version-note/);
 });
 
 test('#4053: the line is the server\'s for this reader; the plan and the bot\'s questions stay in the chat', () => {
@@ -390,15 +404,16 @@ test('ready: a member who still has to approve it gets Try it and See the change
     message: 'Plant Pal',
     detail: null,
     thumb: THUMB,
-    buildLine: 'ready',
+    buildLine: null,
     lines: ['Waiting for your approval.'],
     action: { key: 'tryChange', label: 'Try it', slug: 'plant-pal', sessionId: 31 },
     alt: { key: 'seeChange', label: 'See the change', slug: 'plant-pal', sessionId: 31 },
   });
   const out = html(v);
   assert.doesNotMatch(out, /status-dot/);
-  assert.doesNotMatch(out, /being built|is ready to try/, 'the thumbnail says Ready to try, once');
-  assert.match(out, /data-build-line="ready"[^>]*>.*Ready to try/);
+  // Try it says it: the thumbnail draws no "Ready to try" under it.
+  assert.doesNotMatch(out, /being built|is ready to try|Ready to try|data-build-line|data-featured-card-line/);
+  assert.match(out, /data-featured-card="ready"/);
   assert.match(out, />Waiting for your approval\.</);
   assert.match(out, /<button id="app-first-version-try" class="rounded-lg bg-violet-600[^"]*mt-3">Try it<\/button>/);
   assert.match(out, /<button id="app-first-version-change" class="rounded-lg bg-zinc-100[^"]*">See the change<\/button>/);
@@ -419,7 +434,7 @@ test('ready: once they approved it, whom it waits for and the day it goes live a
   assert.deepEqual(v.lines, [`You approved it. Waiting for @sam_t1004, or it goes live on ${weekday} if nobody objects.`]);
   assert.deepEqual(v.action, { key: 'tryChange', label: 'Try it', slug: 'plant-pal', sessionId: 31 });
   assert.equal(v.alt.key, 'seeChange');
-  assert.equal(v.buildLine, 'ready');
+  assert.equal(v.buildLine, null, 'Try it is on the screen: no "Ready to try"');
   // No clock runs (an "at least N" project): only whom it waits for.
   const noClock = view(AppView, readyApp({}, { approved: true, waitingOn: ['sam_t1004'] }));
   assert.equal(noClock.lines[0], 'You approved it. Waiting for @sam_t1004.');
@@ -431,7 +446,9 @@ test('ready: a member whose Yes does not count is told it waits for approval, an
   assert.deepEqual(v.lines, ['Waiting for approval.']);
   assert.deepEqual(v.action, { key: 'seeChange', label: 'See the change', slug: 'plant-pal', sessionId: 31 });
   assert.equal(v.alt, undefined);
+  assert.equal(v.buildLine, 'ready', 'no Try it here, so the thumbnail says Ready to try');
   const out = html(v);
+  assert.match(out, /data-build-line="ready"[^>]*>.*Ready to try/);
   assert.match(out, /<button id="app-first-version-change" class="rounded-lg bg-violet-600[^"]*mt-3">See the change<\/button>/);
   assert.doesNotMatch(out, /app-first-version-try|app-first-version-starter/);
 });

@@ -845,7 +845,7 @@ test('#15: the first-version screenshot state is self-contained, and mounts no f
   const waiting = h.status();
   assert.equal(bridge.frame(), null);
   assert.equal(waiting.thumb.name, 'Plant Pal');
-  assert.equal(waiting.buildLine, 'ready');
+  assert.equal(waiting.buildLine, null, 'Try it says it: no "Ready to try" line');
   assert.deepEqual([...waiting.lines], ['Waiting for your approval.']);
   assert.deepEqual([waiting.action.key, waiting.alt.key], ['tryChange', 'seeChange']);
   assert.equal('secondary' in waiting, false);
@@ -975,7 +975,7 @@ test('5 Oct: a fresh read that fails shows the record there is, and keeps asking
   assert.equal(h.status().message, 'Opening…');
   await AppView._firstVersionAsking.promise;
   assert.equal(rechecks.length, 1);
-  assert.equal(h.status().buildLine, 'ready', 'not "Opening…" for good');
+  assert.equal(h.status().thumb.slug, SLUG, 'not "Opening…" for good');
   assert.notEqual(AppView._firstVersionTimer, null, 'and the 10s recheck keeps asking');
   AppView._stopFirstVersionWatch();
 });
