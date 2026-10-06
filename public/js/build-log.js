@@ -26,6 +26,41 @@ const BuildLog = {
     }
   },
 
+  // Whose problem a failure looks like. Records written before `origin`
+  // existed carry only a stage, so fall back to the same mapping the server
+  // uses (deploy-failure.originOf); anything else is honestly unknown.
+  originOf(failure) {
+    if (failure.origin === 'app' || failure.origin === 'platform') return failure.origin;
+    if (failure.origin === null) return null;
+    switch (failure.stage) {
+      case 'database': case 'repo': case 'clone': case 'timeout': return 'platform';
+      case 'build': case 'start': case 'healthcheck': return 'app';
+      default: return null;
+    }
+  },
+
+  // The banner over the panel body once the retry limit is used up.
+  // `limit` is { count, max }; `failure` may be missing.
+  limitBannerHtml(limit, failure, canAdminWrite) {
+    let last = 'Last error unavailable.';
+    if (failure) {
+      const when = failure.at ? new Date(failure.at) : null;
+      const whenAbs = when && !Number.isNaN(when.getTime()) ? when.toLocaleString() : null;
+      const whenRel = whenAbs ? blRelTime(failure.at) : null;
+      const verdict = { app: 'looks like a problem in the app, not the platform',
+        platform: 'looks like a problem on the platform, not the app' }[BuildLog.originOf(failure)]
+        || 'we can\u2019t tell whether the app or the platform is at fault';
+      last = `Last error${whenAbs ? ` ${whenRel ? `${whenRel} (${whenAbs})` : whenAbs}` : ''}: ${verdict}.`;
+    }
+    const head = `Retry limit reached (${limit.count} of ${limit.max}). ${canAdminWrite
+      ? 'As an admin you can still retry.' : 'Ask an admin to investigate.'}`;
+    return `
+      <div id="build-log-limit" class="mb-3 text-sm text-zinc-700 dark:text-zinc-200">
+        <p class="font-semibold">${blEscape(head)}</p>
+        <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">${blEscape(last)}</p>
+      </div>`;
+  },
+
   async open(slug) {
     BuildLog.close();
     let app = null;
@@ -38,11 +73,24 @@ const BuildLog = {
     BuildLog._render(slug, app);
   },
 
-  _render(slug, app) {
+  // `limitHit` is a 429 retry_limit reply ({ retryCount, retryLimit,
+  // lastFailure }): the panel re-renders from it instead of toasting.
+  _render(slug, app, limitHit) {
+    if (limitHit && app) {
+      app = { ...app, retry_count: limitHit.retryCount, retryLimit: limitHit.retryLimit,
+        lastFailure: limitHit.lastFailure || app.lastFailure };
+    }
     const failure = app && app.lastFailure && typeof app.lastFailure === 'object'
       ? app.lastFailure : null;
+    const isAdmin = !!window.App?.user?.canAdminWrite;
     const canRetry = !!(app && app.status === 'error'
-      && (window.App?.user?.canAdminWrite || window.App?.user?.id === app.created_by));
+      && (isAdmin || window.App?.user?.id === app.created_by));
+    const atLimit = !!(app && app.status === 'error' && app.retryLimit > 0
+      && app.retry_count >= app.retryLimit);
+    const retryBlocked = atLimit && !isAdmin;
+    const banner = atLimit
+      ? BuildLog.limitBannerHtml({ count: app.retry_count, max: app.retryLimit }, failure, isAdmin)
+      : '';
 
     let bodyHtml;
     if (!failure) {
@@ -90,13 +138,13 @@ const BuildLog = {
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
           </button>
         </div>
-        <div class="px-4 py-3 overflow-y-auto">${bodyHtml}</div>
+        <div class="px-4 py-3 overflow-y-auto">${banner}${bodyHtml}</div>
         <div class="flex items-center justify-end gap-2 px-4 py-3 border-t border-zinc-200 dark:border-zinc-700">
           ${failure && String(failure.log || '').trim()
             ? '<button id="build-log-copy" class="rounded-lg border border-zinc-300 dark:border-zinc-600 px-3 py-1.5 text-sm text-zinc-700 dark:text-zinc-200 hover:bg-zinc-500/10">Copy log</button>'
             : ''}
           ${canRetry
-            ? '<button id="build-log-retry" class="rounded-lg bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 text-sm font-medium text-white">Retry deploy</button>'
+            ? `<button id="build-log-retry" class="rounded-lg bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50 disabled:hover:bg-emerald-600"${retryBlocked ? ' disabled title="Retry limit reached. Ask an admin to investigate."' : ''}>Retry deploy</button>`
             : ''}
         </div>
       </div>`;
@@ -164,6 +212,11 @@ const BuildLog = {
           const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/retry`, { method: 'POST' });
           if (!res.ok) {
             const data = await res.json().catch(() => ({}));
+            if (res.status === 429 && data.code === 'retry_limit') {
+              BuildLog.close();
+              BuildLog._render(slug, app, data);
+              return;
+            }
             PlatformUI.toast(data.error || `Retry failed (HTTP ${res.status})`);
             retryBtn.disabled = false;
             retryBtn.textContent = 'Retry deploy';

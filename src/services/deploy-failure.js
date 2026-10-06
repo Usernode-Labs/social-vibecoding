@@ -16,6 +16,7 @@
  *   log    : raw tail of the docker build output / container boot logs,
  *            ANSI-stripped, capped at 16 kB
  *   at     : ISO timestamp of the failure
+ *   origin : 'app' | 'platform' | null — whose problem it looks like
  *   sha    : commit the failed deploy was building, when known
  *
  * The error-line extraction here is the former
@@ -202,13 +203,26 @@ function classify(err, opts = {}) {
   return { stage, reason, log: stderr };
 }
 
+// Whose problem a failure looks like, for the retry-limit panel. A heuristic:
+// the shared database refusing connections and the platform's own pipeline
+// steps (repo, clone, database, timeout) are the platform's; a build, start
+// or healthcheck that failed on its own is the app's. Anything else is
+// unknown, and the UI says so rather than guessing.
+function originOf(stage, infrastructure) {
+  if (infrastructure === true) return 'platform';
+  if (stage === 'database' || stage === 'repo' || stage === 'clone' || stage === 'timeout') return 'platform';
+  if (stage === 'build' || stage === 'start' || stage === 'healthcheck') return 'app';
+  return null;
+}
+
 // Full apps.last_failure record for a caught deploy error.
 function record(err, opts = {}) {
-  const { stage, reason, log } = classify(err, opts);
+  const { stage, reason, log, infrastructure } = classify(err, opts);
   return {
     stage,
     reason,
     log,
+    origin: originOf(stage, infrastructure),
     at: new Date().toISOString(),
     sha: opts.sha || null,
   };
@@ -222,6 +236,7 @@ function syntheticRecord(stage, reason) {
     stage,
     reason: capReason(reason),
     log: '',
+    origin: null,
     at: new Date().toISOString(),
     sha: null,
   };
@@ -259,6 +274,7 @@ module.exports = {
   record,
   syntheticRecord,
   sameIncident,
+  originOf,
   summarizeBootFailure,
   bootFailureIsInfrastructure,
   truncateLog,
