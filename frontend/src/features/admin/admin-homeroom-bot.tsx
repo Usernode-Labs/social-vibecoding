@@ -8,6 +8,8 @@ import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals
 import { UserFieldRow, userHandle } from './admin-user-field';
 import { BenchmarkArea, loadBenchSummary } from './admin-homeroom-bench';
 import type { Best, BenchModel } from './admin-homeroom-bench';
+import { RolloutHealth } from './admin-homeroom-bot-health';
+import type { ChatFailure, RolloutHealthData } from './admin-homeroom-bot-health';
 
 // Homeroom bot (#admin/homeroom-bot) — #2684, and laid out again in #3710.
 //
@@ -108,6 +110,7 @@ interface DmChat {
   failed: number;
   people: number;
   costUsd: number;
+  recentFailures?: ChatFailure[];
 }
 
 // #3654: the stages that each run on a model of their own. `followup` is
@@ -288,6 +291,7 @@ interface Payload {
   builtFor?: BuiltFor[];
   workingNow?: Working[];
   dmChat?: DmChat;
+  health?: RolloutHealthData;
 }
 
 // Somebody who asked the bot to stop tagging them on one issue.
@@ -1549,6 +1553,8 @@ function HomeroomBotSection() {
             </p>
           </details>
         </div>
+
+        <RolloutHealth health={payload?.health} failures={payload?.dmChat?.recentFailures} />
 
         <div className={`${AdminUI.card} p-4`}>
           <div className="grid gap-6 md:grid-cols-2">
