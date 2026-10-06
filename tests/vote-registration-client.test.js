@@ -83,8 +83,11 @@ test('a Yes cast from the open proposal page repaints the page header, not only 
     return { ok: true, status: 200, json: async () => ({ ok: true }) };
   };
   await AppView.castVote(7, 'yes', 3, { reason: null });
-  assert.deepEqual(seen, ['board:yes', 'page:yes:2', 'fetch:yes', 'refresh'],
-    'the page header shows the vote and the tally before the round-trip starts');
+  // The last two lines are settle's (#3990): the read-back lands, the
+  // pending entry is dropped, and the "Voting…" state is repainted off the
+  // same instant the counts move.
+  assert.deepEqual(seen, ['board:yes', 'page:yes:2', 'fetch:yes', 'refresh', 'board:yes', 'page:yes:2'],
+    'the page header shows the vote and the tally before the round-trip starts, and the pending state comes off when the read-back lands');
 });
 
 test('a deep-linked proposal the board lists never held still registers at once', async () => {
@@ -99,7 +102,9 @@ test('a deep-linked proposal the board lists never held still registers at once'
   AppView.refreshDevData = () => {};
   AppView.__sandbox.fetch = async () => ({ ok: true, status: 200, json: async () => ({ ok: true }) });
   await AppView.castVote(7, 'yes', 3, { reason: null });
-  assert.deepEqual(painted, ['yes:1/0'], 'a flip moves one vote from No to Yes');
+  // The second line is settle's (#3990): the read-back lands and the
+  // "Voting…" state comes off.
+  assert.deepEqual(painted, ['yes:1/0', 'yes:1/0'], 'a flip moves one vote from No to Yes, then the pending state comes off when the read lands');
 });
 
 test('a refused vote restores the page header and its tally', async () => {
@@ -115,8 +120,12 @@ test('a refused vote restores the page header and its tally', async () => {
     ok: false, status: 409, json: async () => ({ error: 'This proposal changed', approvalEpoch: 4 }),
   });
   await AppView.castVote(7, 'yes', 3, { reason: null });
-  assert.deepEqual(painted, ['yes:2', 'null:1']);
+  // The middle line is settle's repaint inside rollback (#3990): it runs
+  // before the restore, synchronously, so a reader only ever sees the last.
+  assert.deepEqual(painted, ['yes:2', 'yes:2', 'null:1']);
   assert.equal(AppView._pendingVotes.size, 0, 'a refused vote is not held over later loads');
+  assert.doesNotMatch(AppView.voteButtonsHtml(pr), /Voting…|disabled/,
+    'the refusal clears the state at once: the controls answer again');
 });
 
 // ── 2. A load sent before the vote cannot paint it away ─────────────────
@@ -348,4 +357,66 @@ test('a second press while the first is in flight resolves false without a reque
   const ok = await h.AppView.castVote(7, 'no', 3, { onSend: h.onSend });
   assert.equal(ok, false);
   assert.deepEqual(h.seen, []);
+});
+
+// ── 5. #3990: the button says the vote is on its way ────────────────────
+//
+// A Yes on a slow connection used to look like nothing had happened for the
+// whole round trip, and it was tempting to press again. The pending entry
+// castVote already holds now paints: both controls quiet down, the pending
+// side reads "Voting…", and the state comes off the moment the vote
+// settles — a success through the read-back, a refusal or a network
+// failure through the rollback, with the toast it already gave.
+
+test('while the POST is in flight, both builders say "Voting…" on the pending side and both controls are disabled', async () => {
+  const AppView = makeAppView();
+  const pr = openRow();
+  AppView._proposals = [pr];
+  AppView._repaintDevBody = () => {};
+  AppView._renderTopicHead = () => {};
+  AppView.refreshDevData = async () => {};
+  const gate = deferred();
+  // The slow connection's window: read the controls mid round-trip, and
+  // capture rather than assert here — a throw inside the fetch lands in
+  // castVote's own catch and reads as a network failure.
+  let midFlight = null;
+  AppView.__sandbox.fetch = async () => {
+    const [yes, no] = AppView._cardVoteButtonSpecs(pr);
+    midFlight = { html: AppView.voteButtonsHtml(pr), yes: yes.voting, no: no.voting };
+    await gate.promise;
+    return { ok: true, status: 200, json: async () => ({ ok: true }) };
+  };
+  const done = AppView.castVote(7, 'yes', 3, { reason: null });
+  await new Promise((r) => setImmediate(r));
+  gate.resolve();
+  assert.equal(await done, true);
+  assert.match(midFlight.html, /<button class="gc-vote-btn gc-vote-btn-yes[^"]*" disabled[^>]*>Voting…<\/button>/,
+    'the pending side reads Voting…, tally and all, still wearing the chosen side');
+  assert.match(midFlight.html, /<button class="gc-vote-btn gc-vote-btn-no" disabled[^>]*>No \(0\)<\/button>/,
+    'the other side keeps its label, and neither side fires again');
+  assert.equal(midFlight.yes, 'yes', 'the card pair carries the pending side on the Yes spec');
+  assert.equal(midFlight.no, 'yes', 'and on the No spec: they are one session');
+  // settle's repaint lands a tick after castVote answers: the read-back
+  // that clears the state is the same breath the counts move.
+  await new Promise((r) => setImmediate(r));
+  assert.equal(AppView._pendingVotes.size, 0, 'the state clears once the read-back has landed');
+  assert.doesNotMatch(AppView.voteButtonsHtml(pr), /Voting…|disabled/,
+    'and the buttons are back to their labels and their counts');
+});
+
+test('a re-cast of the side already voted repaints on send too', async () => {
+  const AppView = makeAppView();
+  const pr = openRow({ my_vote: 'yes', yes_count: 2 });
+  AppView._proposals = [pr];
+  const painted = [];
+  AppView._repaintDevBody = () => painted.push(`pending:${AppView._votePendingOn(7)}`);
+  AppView._renderTopicHead = () => {};
+  AppView.refreshDevData = async () => {};
+  AppView.__sandbox.fetch = async () => ({ ok: true, status: 200, json: async () => ({ ok: true }) });
+  await AppView.castVote(7, 'yes', 3, { reason: null });
+  await new Promise((r) => setImmediate(r));
+  // Today that path repainted nothing at all: the send's repaint sat inside
+  // the optimistic branch, and a same-side vote is never optimistic.
+  assert.deepEqual(painted, ['pending:yes', 'pending:null'],
+    'the Voting… state paints on send and comes off when the read lands');
 });

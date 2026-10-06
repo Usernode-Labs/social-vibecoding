@@ -120,3 +120,26 @@ test('B7: Approve is one tap, the viewer\'s own Yes, and reads Approved once it 
   const card = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/dev-board/card/dev-card.tsx'), 'utf8');
   assert.match(card, /onClick=\{\(e\) => \{ e\.stopPropagation\(\); send\(yes, null\); \}\}/, 'one tap, no line asked for');
 });
+
+// #3990: the wait is said. A slow connection used to leave the Approve tap
+// looking dead for the whole round trip. While the approval is on its way
+// the button reads "Approving…", dimmed and unclickable, the same button
+// with the same tint; a No cast from ⋯ is in flight on the same session and
+// says the plain word instead.
+test('a vote in flight: Approve reads Approving…, still itself', () => {
+  const { VoteButton } = loadTsx('frontend/src/features/dev-board/card/dev-card.tsx');
+  const yes = { key: 'yes', cls: 'gc-vote-btn gc-vote-btn-yes', label: 'Yes (0/1)', act: { fn: 'castVote', args: [7, 'yes', 3] }, solo: true, approve: true };
+  const no = { key: 'no', cls: 'gc-vote-btn gc-vote-btn-no', label: 'No (0/1)', act: { fn: 'castVote', args: [7, 'no', 3] } };
+  const flight = renderToHtml(createElement(VoteButton, { yes: { ...yes, voting: 'yes' }, no }));
+  assert.match(flight, /class="dev-vote-btn dev-vote-btn-approve" data-vote-btn="approve"/, 'the same button');
+  assert.match(flight, /disabled=""/, 'unclickable until the vote settles');
+  assert.match(flight, />Approving…<\/button>$/, 'the wait is said');
+  assert.doesNotMatch(flight, /dev-vote-btn-yes/, 'no chosen side yet, no tint');
+  const noInFlight = renderToHtml(createElement(VoteButton, { yes: { ...yes, voting: 'no' }, no: { ...no, voting: 'no' } }));
+  assert.match(noInFlight, />Voting…<\/button>$/, 'a No on its way does not claim to be approving');
+  const approvedFlight = renderToHtml(createElement(VoteButton, {
+    yes: { ...yes, cls: `${yes.cls} gc-vote-active`, voting: 'yes' }, no,
+  }));
+  assert.match(approvedFlight, /class="dev-vote-btn dev-vote-btn-approve dev-vote-btn-yes" data-vote-btn="approved"/,
+    'an approval in flight keeps the chosen side\'s tint');
+});

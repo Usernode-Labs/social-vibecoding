@@ -507,6 +507,11 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
   // and a Yes sent without a line keeps the earlier one — the server carries
   // it onto this version.
   const prior: 'yes' | 'no' | null = !mine && (yes.prior === 'yes' || yes.prior === 'no') ? yes.prior : null;
+  // #3990: this proposal's vote is on its way — the pair always agrees, so
+  // either spec answers. The button stays the same button, in the tint of
+  // the side chosen, dimmed, saying "Voting…", and nothing opens while the
+  // vote is under way.
+  const voting: 'yes' | 'no' | null = yes.voting || no.voting || null;
   // "Yes (2/3)" → "2/3": the tally rides in the spec's label already.
   const tally = (a: ActionSpec) => {
     const m = /\(([^)]*)\)\s*$/.exec(a.label || '');
@@ -624,11 +629,14 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
     const h = popRef.current?.scrollHeight;
     if (h && h !== measuredH) setMeasuredH(h);
   }, [open, side, measuredH]);
-  const face = mine === 'yes' ? 'Yes' : (mine === 'no' ? 'No' : (prior === 'yes' ? 'Still yes?' : 'Vote'));
+  const face = voting ? 'Voting…' : (mine === 'yes' ? 'Yes' : (mine === 'no' ? 'No' : (prior === 'yes' ? 'Still yes?' : 'Vote')));
   // A governance apply in flight disables the pair; the one button goes
-  // inert with them, wearing the spec's own explanation.
-  const disabled = !!(yes.disabled || no.disabled);
-  const title = disabled && yes.title ? yes.title : mine
+  // inert with them, wearing the spec's own explanation. A vote in flight
+  // disables it too (#3990): the wait is the whole feedback, and a second
+  // press while the first is under way was a race the code already guards.
+  const disabled = voting ? true : !!(yes.disabled || no.disabled);
+  const title = voting ? 'Your vote is on its way.'
+    : disabled && yes.title ? yes.title : mine
     ? `You voted ${face}. Press to change your vote.`
     : prior === 'yes'
       ? `You said yes to an earlier version. One tap carries it onto this one.`
@@ -715,12 +723,14 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
         type="button"
         className={`dev-vote-btn dev-vote-btn-approve${approved ? ' dev-vote-btn-yes' : ''}`}
         data-vote-btn={approved ? 'approved' : 'approve'}
-        title={approved ? 'You approved it.' : 'Approve it, and it goes live.'}
+        title={voting ? 'Your vote is on its way.' : (approved ? 'You approved it.' : 'Approve it, and it goes live.')}
         disabled={disabled || approved}
         onClick={(e) => { e.stopPropagation(); send(yes, null); }}
       >
         {approved ? <CheckIcon aria-hidden="true" /> : null}
-        {approved ? 'Approved' : 'Approve'}
+        {/* "Approving…" names this button's own vote; a No cast from ⋯ is
+            in flight on the same session and says the plain word. */}
+        {voting ? (voting === 'no' ? 'Voting…' : 'Approving…') : (approved ? 'Approved' : 'Approve')}
       </button>
     );
   }
@@ -740,7 +750,9 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
         {mine === 'yes' ? <CheckIcon aria-hidden="true" /> : null}
         {mine === 'no' ? <XIcon aria-hidden="true" /> : null}
         {face}
-        <ChevronDownIcon className="dev-vote-caret" aria-hidden="true" />
+        {/* Nothing opens while the vote is in flight (#3990): the caret
+            would promise a picker a disabled button cannot present. */}
+        {!voting && <ChevronDownIcon className="dev-vote-caret" aria-hidden="true" />}
       </button>
       {popover}
       {sheet}

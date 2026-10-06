@@ -13929,6 +13929,13 @@ const AppView = {
     // Test accounts: the viewer's vote here is recorded but not counted
     // (my_vote_uncounted on the /promoted row); the picker says so.
     const uncounted = pr.my_vote_uncounted === true ? { uncounted: true } : {};
+    // #3990: while this proposal's vote is on its way, BOTH specs carry
+    // `voting` (the pending side) — they are one session, and VoteButton
+    // quiets the whole pair down while either is held. A plain string, so
+    // it survives the serialisable model publish the board and topic head
+    // render from.
+    const voting = AppView._votePendingOn(pr.id);
+    const inFlight = voting ? { voting } : {};
     return [
       {
         key: 'yes',
@@ -13939,12 +13946,14 @@ const AppView = {
         ...AppView._voteSolo(),
         ...(AppView._approveSolo(pr) ? { approve: true } : {}),
         ...uncounted,
+        ...inFlight,
       },
       {
         key: 'no',
         cls: `gc-vote-btn gc-vote-btn-no${pr.my_vote === 'no' ? ' gc-vote-active' : ''}`,
         title: noT.tip, label: `No (${noT.label})`,
         act: { fn: 'castVote', args: [pr.id, 'no', ...rev] },
+        ...inFlight,
       },
     ];
   },
@@ -21362,8 +21371,16 @@ const AppView = {
     const revisionArg = voteEpoch === null ? '' : `, ${voteEpoch}`;
     const yesT = AppView._voteBtnTally(pr.qualified_yes_count, pr.yes_count, pr.approval_policy, 'Yes');
     const noT = AppView._voteBtnTally(pr.qualified_no_count, pr.no_count, pr.approval_policy, 'No');
-    const yesBtn = `<button class="gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}"${yesT.title} onclick="AppView.castVote(${pr.id}, 'yes'${revisionArg})">Yes (${yesT.label})</button>`;
-    const noBtn = `<button class="gc-vote-btn gc-vote-btn-no${pr.my_vote === 'no' ? ' gc-vote-active' : ''}"${noT.title} onclick="AppView.castVote(${pr.id}, 'no'${revisionArg})">No (${noT.label})</button>`;
+    // #3990: while this proposal's vote is on its way, both controls quiet
+    // down and the pending side reads "Voting…" in place of its tally — the
+    // feedback a slow connection needs, where ten silent seconds read as a
+    // missed click. The other side keeps its label; neither fires again
+    // until the vote settles. This is also the only feedback in the window
+    // where the cached row is missing (a deep link still loading): no
+    // optimistic paint happens, so the buttons are all there is.
+    const pending = AppView._votePendingOn(pr.id);
+    const yesBtn = `<button class="gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}"${yesT.title}${pending ? ' disabled' : ''} onclick="AppView.castVote(${pr.id}, 'yes'${revisionArg})">${pending === 'yes' ? 'Voting…' : `Yes (${yesT.label})`}</button>`;
+    const noBtn = `<button class="gc-vote-btn gc-vote-btn-no${pr.my_vote === 'no' ? ' gc-vote-active' : ''}"${noT.title}${pending ? ' disabled' : ''} onclick="AppView.castVote(${pr.id}, 'no'${revisionArg})">${pending === 'no' ? 'Voting…' : `No (${noT.label})`}</button>`;
     return preview + retryPreview + yesBtn + noBtn + adminMerge + AppView._uncountedVoteNoteHtml(pr);
   },
 
@@ -21592,6 +21609,14 @@ const AppView = {
     const held = AppView._pendingVotes.get(Number(row.id));
     if (held) AppView._applyVoteToRow(row, held.vote);
   },
+  // #3990: which side of this proposal's vote is in flight — 'yes' | 'no',
+  // or null when nothing is under way. Both vote-button builders read the
+  // pending map through this, so the "Voting…" state cannot drift between
+  // the card pair and the legacy controls.
+  _votePendingOn(sessionId) {
+    const held = AppView._pendingVotes.get(Number(sessionId));
+    return held ? held.vote : null;
+  },
   // The board paints from `#dev-body`; an open proposal page is a sheet
   // over it with its own header, which that repaint never reached — so on the
   // page itself a Yes showed nothing until the round-trip and two refetches
@@ -21701,11 +21726,24 @@ const AppView = {
     AppView._pendingVotes.set(Number(sessionId), { vote, token });
     if (optimistic) {
       AppView._applyVoteToRow(pr, vote);
-      AppView._repaintAfterVote(sessionId);
     }
+    // #3990: the repaint moved out of the optimistic branch — the pending
+    // entry is held now, so EVERY send repaints and the buttons read
+    // "Voting…" for the whole round trip, also when nothing was optimistically
+    // painted (a re-cast of the side already voted, or a row not in cache
+    // yet, where the buttons are the only feedback there is).
+    AppView._repaintAfterVote(sessionId);
     const settle = () => {
       const held = AppView._pendingVotes.get(Number(sessionId));
-      if (held && held.token === token) AppView._pendingVotes.delete(Number(sessionId));
+      if (held && held.token === token) {
+        AppView._pendingVotes.delete(Number(sessionId));
+        // The read-back's own repaint ran while the entry was still held,
+        // so without this the "Voting…" label would stay on screen until
+        // some later repaint. Rollback's restore-and-repaint below makes
+        // the one here a harmless duplicate there (a cache repaint is
+        // idempotent and cheap).
+        AppView._repaintAfterVote(sessionId);
+      }
     };
     const rollback = () => {
       settle();

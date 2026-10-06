@@ -204,3 +204,37 @@ test('a test account\'s vote on an app a real person made says, in one line, tha
   assert.match(CSS, /\.dev-vote-uncounted \{/);
   assert.match(CSS, /\.gc-vote-uncounted \{/);
 });
+
+// ── #3990: a vote on its way ──────────────────────────────────────────
+
+// A vote used to say nothing until the server answered; on a slow connection
+// that read as a missed click, and it was tempting to press again. While the
+// vote is under way the face says "Voting…", dimmed and unclickable, still
+// in the chosen side's tint, with no caret — nothing opens.
+
+test('a vote in flight: the face reads "Voting…", disabled, in the chosen side\'s tint, and nothing opens', () => {
+  const votedYes = { ...yes, cls: `${yes.cls} gc-vote-active`, voting: 'yes' };
+  const html = renderComponent(CARD, 'VoteButton', { yes: votedYes, no });
+  assert.match(html, /<button type="button" class="dev-vote-btn dev-vote-btn-yes" data-vote-btn="yes" aria-haspopup="dialog"[^>]*disabled=""/,
+    'the same button, wearing the chosen side and saying what it opens');
+  assert.match(html, />Voting…</, 'the wait is said');
+  assert.doesNotMatch(html, /dev-vote-caret/, 'no caret: nothing opens while the vote is under way');
+  const votedNo = renderComponent(CARD, 'VoteButton', { yes, no: { ...no, cls: `${no.cls} gc-vote-active`, voting: 'yes' } });
+  assert.match(votedNo, /class="dev-vote-btn dev-vote-btn-no" data-vote-btn="no"/, 'the No tint is kept');
+  assert.match(votedNo, />Voting…</);
+});
+
+test('settled votes draw exactly what they drew before the in-flight state', () => {
+  const html = renderComponent(CARD, 'VoteButton', { yes, no });
+  assert.match(html, /class="dev-vote-btn" data-vote-btn="open"/);
+  assert.match(html, /dev-vote-caret/, 'the caret is back');
+  assert.doesNotMatch(html, /Voting…|disabled/);
+});
+
+test('#3990: the in-flight dimming is one rule, tokens only, over the side\'s tint', () => {
+  const rule = (sel) => (new RegExp(`\\n${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\{([^}]*)\\}`).exec(CSS) || [])[1] || '';
+  assert.match(rule('.dev-vote-btn:disabled'), /opacity: 0\.5/, 'dimmed, the way the legacy pills dim');
+  assert.match(rule('.dev-vote-btn:disabled'), /cursor: default/, 'and it does not invite a click');
+  assert.doesNotMatch(rule('.dev-vote-btn:disabled'), /background|[^-]color:/,
+    'no new colour: the side\'s tint survives the dim');
+});

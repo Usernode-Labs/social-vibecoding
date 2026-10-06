@@ -680,8 +680,11 @@ test('#1924: castVote sets my_vote and repaints before the request, and keeps it
     return { ok: true, status: 200, json: async () => ({ ok: true }) };
   };
   await AppView.castVote(7, 'yes');
-  assert.equal(seen.join(' '), 'repaint:yes fetch:yes refresh',
-    'the card is repainted as voted before the network round-trip');
+  await new Promise((r) => setImmediate(r));
+  // The trailing repaint is settle's (#3990): the read-back lands, the
+  // "Voting…" state comes off, and the counts it shows are the read's.
+  assert.equal(seen.join(' '), 'repaint:yes fetch:yes refresh repaint:yes',
+    'the card is repainted as voted before the network round-trip, and the in-flight state comes off when the read lands');
   assert.equal(pr.my_vote, 'yes');
 });
 
@@ -696,8 +699,11 @@ test('#1924: a refused vote puts the old value back and repaints', async () => {
   AppView.__sandbox.PlatformUI = { toast: (m) => { toast = m; } };
   AppView.__sandbox.fetch = async () => ({ ok: false, status: 409, json: async () => ({ error: 'Voting has closed' }) });
   await AppView.castVote(7, 'yes');
+  await new Promise((r) => setImmediate(r));
   assert.equal(pr.my_vote, null, 'rolled back');
-  assert.equal(repaints.join(','), 'yes,', 'optimistic repaint, then the rollback repaint');
+  // The middle 'yes' is settle's repaint inside rollback (#3990): it runs
+  // before the restore, synchronously, so a reader only sees the last one.
+  assert.equal(repaints.join(','), 'yes,yes,', 'optimistic repaint, then the refusal clears the in-flight state and restores');
   assert.equal(toast, 'Voting has closed');
 
   // A network failure rolls back the same way.
@@ -706,7 +712,7 @@ test('#1924: a refused vote puts the old value back and repaints', async () => {
   assert.equal(pr.my_vote, null);
 });
 
-test('#1924: re-casting the same vote does not repaint optimistically', async () => {
+test('#1924/#3990: re-casting the same vote paints the in-flight state, never an optimistic vote', async () => {
   const AppView = makeAppView(ME);
   const pr = { id: 7, status: 'promoted', my_vote: 'yes' };
   AppView._proposals = [pr];
@@ -715,7 +721,11 @@ test('#1924: re-casting the same vote does not repaint optimistically', async ()
   AppView.refreshDevData = () => {};
   AppView.__sandbox.fetch = async () => ({ ok: true, status: 200, json: async () => ({}) });
   await AppView.castVote(7, 'yes');
-  assert.equal(repaints, 0);
+  await new Promise((r) => setImmediate(r));
+  // Two repaints: the send's (the "Voting…" state — the point of #3990) and
+  // settle's when the read lands. What does not happen is an OPTIMISTIC vote
+  // paint: the row already carried this vote, and nothing about it moved.
+  assert.equal(repaints, 2);
   assert.equal(pr.my_vote, 'yes');
 });
 

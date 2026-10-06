@@ -165,6 +165,15 @@ export interface ActionSpec {
    * so in one line.
    */
   uncounted?: boolean;
+  /**
+   * #3990: set on BOTH specs of a proposal's pair while that proposal's vote
+   * is on its way (the value is the pending side). VoteButton reads it off
+   * either spec — they are one session — and quiets the whole button down:
+   * "Voting…", dimmed, unclickable, until the vote settles. Beside
+   * `prior`/`solo`/`approve`/`uncounted`, the same kind of flag the builders
+   * resolve and the markup reads.
+   */
+  voting?: 'yes' | 'no';
 }
 
 /** Everything that can appear in the status band, as a tagged union. */

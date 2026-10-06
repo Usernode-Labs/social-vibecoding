@@ -21,6 +21,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { proposalCardHtml } = require('./lib/dev-card-html');
+const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 
 const SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8');
 
@@ -149,4 +150,19 @@ test('#22: on a solo project the Yes spec is marked solo, for proposals and grou
   assert.equal(govYes.solo, true);
   assert.ok(!('solo' in (gov.actions || []).find((a) => a.key === 'no')));
   delete AppView.appData;
+});
+
+// #3990: a vote on its way says so. The "Still yes?" face is one of the
+// faces the in-flight state replaces — one tap carries the earlier Yes, and
+// while that tap is travelling the button reads "Voting…" like every other
+// face, still disabled, still wearing the prior side's class and data.
+test('a prior-vote tap in flight reads "Voting…", not "Still yes?"', () => {
+  const { VoteButton } = loadTsx('frontend/src/features/dev-board/card/dev-card.tsx');
+  const yes = { key: 'yes', cls: 'gc-vote-btn gc-vote-btn-yes', title: 'Yes', label: 'Yes (1/3)', prior: 'yes', voting: 'yes', act: { fn: 'castVote', args: [7, 'yes', 3] } };
+  const no = { key: 'no', cls: 'gc-vote-btn gc-vote-btn-no', title: 'No', label: 'No (0/3)', voting: 'yes', act: { fn: 'castVote', args: [7, 'no', 3] } };
+  const html = renderToHtml(createElement(VoteButton, { yes, no }));
+  assert.match(html, /class="dev-vote-btn dev-vote-btn-prior" data-vote-btn="prior-yes"/, 'the same button, the prior side kept');
+  assert.match(html, /disabled=""/, 'quiet until the vote settles');
+  assert.match(html, />Voting…</, 'the wait is said');
+  assert.doesNotMatch(html, />Still yes\?<|>Vote</, 'neither prior face shows while the vote is under way');
 });
