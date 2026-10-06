@@ -96,7 +96,7 @@ function closeAppStep(): TourStep {
     alongside: SCREEN_HEADER,
     press: '#back-btn',
     title: 'Close it with ✕',
-    text: 'The app opens full screen. ✕ takes you back to Home.',
+    text: '✕ takes you back to Home.',
     tap: 'Tap ✕',
     place: 'bottom',
   };
@@ -171,7 +171,7 @@ export function invitedSteps({ slug, name, firstVersion = null }: TourProject): 
       // cut-out, which ./index.tsx no longer carries into this one.
       target: '#platform-tab-workshop',
       title: 'The group lives in Communities',
-      text: 'Its hub and its group chat are there.',
+      text: `You can find ${name} here.`,
       tap: 'Tap Communities',
     },
     {
@@ -234,7 +234,7 @@ export function makerSteps({ slug, name, conversationId }: TourProject): TourSte
       // The same tab as the invited path's step 4 (see there).
       target: '#platform-tab-workshop',
       title: 'Your group lives in Communities',
-      text: 'Its hub and its group chat are there.',
+      text: `You can find ${name} here.`,
       tap: 'Tap Communities',
     },
     {
@@ -257,7 +257,7 @@ export function makerSteps({ slug, name, conversationId }: TourProject): TourSte
       screen: 'hub',
       target: '#platform-tab-messages',
       title: 'Homeroom bot is in Messages',
-      text: `It's building ${name} now.`,
+      text: `Your direct messages, and Homeroom bot: where you ask for ${name} to change.`,
       tap: 'Tap Messages',
       opensNext: true,
     },
