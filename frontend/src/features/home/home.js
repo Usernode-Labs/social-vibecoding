@@ -2234,11 +2234,15 @@ const Home = {
       if (typeof onChange === 'function') onChange();
     }
     try {
-      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/membership`, {
+      // Joining a public community asks a provisional handle for a username
+      // first (username-first-run.js publicRetry).
+      const write = () => fetch(`/api/apps/${encodeURIComponent(slug)}/membership`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ joined: desired }),
       });
+      const retry = typeof window !== 'undefined' ? window.UsernameFirstRun?.publicRetry : null;
+      const res = desired && retry ? await retry(write) : await write();
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       if (app && Number.isFinite(Number(data.member_count))) app.member_count = Number(data.member_count);

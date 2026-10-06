@@ -1708,7 +1708,9 @@ export function LandingScreen() {
           open={sheet === 'join'}
           title={`Join ${invite!.project!.name}`}
           intro={phoneSignIn
-            ? 'Just your name and phone number. No app, no password.'
+            ? (invite!.project!.public
+              ? 'Just your phone number and a username. No app, no password.'
+              : 'Just your name and phone number. No app, no password.')
             : providers.length
               ? 'Sign in or make an account. It takes a minute.'
               : 'Sign in or make an account with your email. It takes a minute.'}
@@ -1716,6 +1718,7 @@ export function LandingScreen() {
           providers={providers}
           native={nativeSignIn}
           phone={phoneSignIn}
+          askName={!invite!.project!.public}
           from="invite"
           returnTo={location.pathname}
           resume={resume}

@@ -4418,11 +4418,17 @@ const App = {
           cancelLabel: 'Not now',
         }) : true;
         if (!ok) return;
-        const joined = await fetch(`/api/invite-links/by-token/${encodeURIComponent(token)}/redeem`, {
+        // A public community asks a provisional handle for a username first
+        // (username-first-run.js publicRetry).
+        const redeem = () => fetch(`/api/invite-links/by-token/${encodeURIComponent(token)}/redeem`, {
           method: 'POST', credentials: 'same-origin',
         });
+        const joined = window.UsernameFirstRun?.publicRetry
+          ? await window.UsernameFirstRun.publicRetry(redeem)
+          : await redeem();
         if (joined.status === 401) { App._inviteSessionEnded(address); return; }
         const result = await joined.json().catch(() => ({}));
+        if (result.reason === 'username_required') { toast(result.error, true); return; }
         if (!joined.ok || !result.ok) { toast(DEAD[result.reason] || 'Could not join. Try again.', true); return; }
         joinedHere = true;
         // Read Home's challenges again now. Home painted them above, before
@@ -7715,10 +7721,43 @@ const App = {
   _appNavigationGeneration: 0,
   _appLoad: null,
 
-  async navigateToApp(slug, tab, ref, subTab) {
+  // A provisional handle (an invite's phone sign-up, made from its name)
+  // is for private groups: before a public app or community, ask for a
+  // username (username-first-run.js askForPublic). True to go on. The
+  // audience comes from the launcher's record, or the app's own read; an
+  // unknown one goes on, and the server's refusal stands behind it.
+  async _usernameBeforePublic(slug) {
+    let audience = null;
+    try { audience = AppView.launchRecordFor?.(slug)?.audience || null; } catch (_) {}
+    if (!audience) {
+      try {
+        const res = await fetch(`/api/apps/${encodeURIComponent(slug)}?manifest=summary`);
+        if (res.ok) audience = (await res.json())?.app?.audience || null;
+      } catch (_) { /* the server decides */ }
+    }
+    if (audience !== 'open') return true;
+    return !!(await window.UsernameFirstRun?.askForPublic?.());
+  },
+
+  // navigateToApp for a provisional handle: the ask first, then the same
+  // navigation, marked as asked. Its own function so navigateToApp reads
+  // everything it reads synchronously (the tab press) before any await.
+  async _navigateAfterUsername(slug, tab, ref, subTab) {
+    if (!(await App._usernameBeforePublic(slug))) {
+      // "Not now": stay out. An address that already names the app goes Home.
+      if (location.hash.startsWith(`#app/${slug}`)) App.navigateHome?.();
+      return false;
+    }
+    return App.navigateToApp(slug, tab, ref, subTab, { usernameChecked: true });
+  },
+
+  async navigateToApp(slug, tab, ref, subTab, opts) {
     // The side panel never runs an app — not even to warm its frame. An App
     // tab asked for in there is the running app's job, beside it.
     if (App.embeddedPanel && App._forwardAppTab(slug, tab, ref, subTab)) return false;
+    if (App.user?.usernameProvisional && !opts?.usernameChecked) {
+      return App._navigateAfterUsername(slug, tab, ref, subTab);
+    }
     const generation = ++App._appNavigationGeneration;
     // Clean up whatever app we had mounted. This is a no-op on the first
     // navigation into any app, but without it a direct app-A → app-B

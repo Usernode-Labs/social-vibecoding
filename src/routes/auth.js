@@ -736,6 +736,10 @@ function authRoutes(config) {
     // Let in off the waitlist, once the account adds a phone (admission
     // needs one, services/waitlist.js): the waiting room asks for it.
     let awaitingPhone = false;
+    // A handle made from an invite phone sign-up's name, for private groups
+    // only: the shell asks for a username before anything public
+    // (frontend/src/features/auth/username-first-run.js askForPublic).
+    let usernameProvisional = false;
     // Communities, stage 5 (src/services/onboarding.js): the join screen a
     // new account answers after its username and the terms, and the
     // Getting started card that follows it, for an account made since that
@@ -767,6 +771,7 @@ function authRoutes(config) {
                 u.needs_communities_choice,
                 (u.admitted_pending_phone_at IS NOT NULL AND u.has_platform_access = FALSE)
                   AS awaiting_phone,
+                (u.username_provisional_since IS NOT NULL) AS username_provisional,
                 (u.communities_onboarded_at IS NOT NULL
                   AND u.getting_started_closed_at IS NULL
                   AND u.getting_started_gate) AS show_getting_started,
@@ -798,6 +803,7 @@ function authRoutes(config) {
         : null;
       needsUsernameChoice = rows[0]?.needs_username_choice === true;
       awaitingPhone = rows[0]?.awaiting_phone === true;
+      usernameProvisional = rows[0]?.username_provisional === true;
       needsCommunitiesChoice = rows[0]?.needs_communities_choice === true;
       showGettingStarted = rows[0]?.show_getting_started === true;
       tourDone = rows[0]?.tour_done === true;
@@ -891,6 +897,7 @@ function authRoutes(config) {
         hasPlatformAccess: !!req.user.hasPlatformAccess || !!req.user.isAdmin || !!req.user.privateMember,
         privateMember: !!req.user.privateMember,
         awaitingPhone,
+        usernameProvisional,
         // First-run username gate (#2563). TRUE means this account has
         // never picked the handle other members see — email sign-up gave
         // it a generated one and recorded that the person still has to

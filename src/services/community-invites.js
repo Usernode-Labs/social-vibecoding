@@ -526,6 +526,9 @@ async function preview(pool, token) {
       iconUrl: invite.icon_image_id ? `/app-icons/${invite.icon_image_id}` : null,
       description: invite.description || null,
       picture: pictureUrls(token, picture),
+      // A public community: its Join asks for a username, not a name (a
+      // public place never shows a provisional handle, usernames.js).
+      public: invite.view_visibility === 'public',
     },
     inviter: invite.inviter || null,
     inviterName: invite.inviter_display_name || invite.inviter || null,
@@ -680,6 +683,13 @@ async function redeem(pool, { token, user, browser = null, requirePhone = false 
       return { ok: true, status: 'member', slug: invite.slug, name, privateMember: false };
     }
     const hasAccess = !!(user.hasPlatformAccess || user.isAdmin);
+    // A public community never shows a provisional handle: the person picks
+    // a username first (usernames.USERNAME_REQUIRED), and nothing is spent.
+    if (invite.view_visibility === 'public'
+        && await require('./usernames').isProvisional(client, user.id)) {
+      await client.query('ROLLBACK');
+      return { ok: false, status: 409, reason: 'username_required' };
+    }
     const { rows: prior } = await client.query(
       'SELECT id, status FROM community_invite_redemptions WHERE invite_id = $1 AND user_id = $2',
       [invite.id, user.id]
@@ -757,7 +767,10 @@ async function redeem(pool, { token, user, browser = null, requirePhone = false 
       appId: invite.app_id,
       metadata: { inviteId: invite.id, status, privateMember },
     });
-    return { ok: true, status, slug: status === 'joined' ? invite.slug : null, name, privateMember };
+    return {
+      ok: true, status, slug: status === 'joined' ? invite.slug : null, name, privateMember,
+      public: invite.view_visibility === 'public',
+    };
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     throw err;
@@ -905,7 +918,10 @@ async function redeemCarried(pool, req, res, userId, { requirePhone = false } = 
     const browser = require('./invite-activity').browserFrom(req);
     const result = await redeem(pool, { token, user, browser, requirePhone });
     if (!result.ok) return null;
-    return { name: result.name, status: result.status, slug: result.slug, privateMember: !!result.privateMember };
+    return {
+      name: result.name, status: result.status, slug: result.slug,
+      privateMember: !!result.privateMember, public: !!result.public,
+    };
   } catch (err) {
     log.warn('invites', 'Following a carried invite link failed', { userId, err: err.message });
     return null;

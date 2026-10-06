@@ -513,9 +513,11 @@ async function signIn(pool, claims, { createSession } = {}) {
 // An invite's Join asks a newcomer for "Your name" and a phone number, and
 // no username (frontend/src/features/auth/sign-in-sheet.tsx). The name is
 // the account's display name, as the profile keeps it (routes/profile.js
-// MAX_DISPLAY_NAME), and its first handle is picked from it
-// (usernames.handlesFromName), so a phone sign-up never stops at "Pick a
-// username". A client that sends no name still gets the username step.
+// MAX_DISPLAY_NAME), and a PROVISIONAL handle is picked from it
+// (usernames.handlesFromName, users.username_provisional_since) for the
+// private group to see, so a phone sign-up never stops at "Pick a
+// username". Public places ask for a real one first. An invite to a public
+// community, or a client that sends no name, gets the username step.
 
 const MAX_NAME = 40;
 
@@ -548,8 +550,11 @@ async function finishWithName(pool, { signupToken, name, createSession }) {
       throw error;
     }
     await pool.query(
-      `UPDATE users SET display_name = $2, updated_at = NOW()
-        WHERE id = $1 AND (display_name IS NULL OR display_name = '')`,
+      `UPDATE users
+          SET display_name = CASE WHEN display_name IS NULL OR display_name = '' THEN $2 ELSE display_name END,
+              username_provisional_since = NOW(),
+              updated_at = NOW()
+        WHERE id = $1`,
       [done.user.id, name]
     );
     return done;

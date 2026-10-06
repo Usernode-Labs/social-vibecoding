@@ -125,8 +125,11 @@ test('private members, against the full schema', { timeout: 180000 }, async (t) 
     assert.equal(done.user.username, 'lina_park');
     assert.match(done.session.token, /\S{20,}/, 'signed in, no username step');
     const { rows: [row] } = await pool.query(
-      'SELECT username, display_name, needs_username_choice FROM users WHERE id = $1', [done.user.id]);
-    assert.deepEqual(row, { username: 'lina_park', display_name: 'Lina Park', needs_username_choice: false });
+      `SELECT username, display_name, needs_username_choice,
+              username_provisional_since IS NOT NULL AS provisional
+         FROM users WHERE id = $1`, [done.user.id]);
+    assert.deepEqual(row, { username: 'lina_park', display_name: 'Lina Park', needs_username_choice: false, provisional: true },
+      'a handle for the private group only, until they pick one');
     // Somebody with the same name gets the same handle with digits.
     const again = await phoneAuth.signIn(pool, { uid: 'uid-name-2', phoneNumber: '+15550002002' }, { createSession });
     const second = await phoneAuth.finishWithName(pool, { signupToken: again.signupToken, name: 'Lina Park', createSession });
@@ -136,6 +139,50 @@ test('private members, against the full schema', { timeout: 180000 }, async (t) 
       phoneAuth.finishWithName(pool, { signupToken: made.signupToken, name: 'Lina Park', createSession }),
       (err) => err.code === 'invalid_signup_session'
     );
+  });
+
+  await t.test('a provisional handle stays out of public places until the person picks a username', async () => {
+    const phoneAuth = require('../src/services/firebase-phone-auth');
+    const usernames = require('../src/services/usernames');
+    const { createSession } = require('../src/routes/auth');
+    const made = await phoneAuth.signIn(pool, { uid: 'uid-prov-1', phoneNumber: '+15550005001' }, { createSession });
+    const done = await phoneAuth.finishWithName(pool, { signupToken: made.signupToken, name: 'Mia Chen', createSession });
+    const mia = { id: done.user.id, isAdmin: false, hasPlatformAccess: false };
+    assert.equal(await usernames.isProvisional(pool, mia.id), true);
+    // Their private group's link: fine.
+    const privateLink = (await invites.createInvite(pool, { app: group, user: jordan })).link;
+    const inPrivate = await invites.redeem(pool, { token: privateLink.token, user: mia, requirePhone: true });
+    assert.deepEqual([inPrivate.status, inPrivate.public], ['joined', false]);
+    // A public community's link: refused, and nothing spent.
+    await pool.query(
+      `INSERT INTO apps (name, slug, created_by, view_visibility, collab_visibility)
+       VALUES ('Open garden', 'open-garden', $1, 'public', 'public')`, [jordan.id]);
+    const { rows: [garden] } = await pool.query(
+      `SELECT id, slug, name, created_by, self_hosted, collab_visibility, view_visibility, community_id
+         FROM apps WHERE slug = 'open-garden'`);
+    await pool.query('INSERT INTO community_members (community_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+      [garden.community_id, jordan.id]);
+    const gardenLink = (await invites.createInvite(pool, { app: garden, user: jordan })).link;
+    assert.equal((await invites.preview(pool, gardenLink.token)).project.public, true, 'its Join asks for a username');
+    const refused = await invites.redeem(pool, { token: gardenLink.token, user: mia, requirePhone: true });
+    assert.deepEqual(refused, { ok: false, status: 409, reason: 'username_required' });
+    const { rows: [{ uses }] } = await pool.query('SELECT uses FROM community_invites WHERE token = $1', [gardenLink.token]);
+    assert.equal(uses, 0, 'no use spent');
+    // Somebody else holds a handle: refused there too.
+    const taken = await usernames.checkAvailability(pool, 'lina_park', mia.id);
+    assert.equal(taken.available, false);
+    // They pick one: the provisional handle is gone, and public places open.
+    const chosen = await usernames.replaceProvisionalUsername(pool, mia.id, 'mia_gardens');
+    assert.deepEqual(chosen, { username: 'mia_gardens' });
+    assert.equal(await usernames.isProvisional(pool, mia.id), false);
+    assert.equal(await usernames.replaceProvisionalUsername(pool, mia.id, 'again'), null, 'once');
+    const joined = await invites.redeem(pool, { token: gardenLink.token, user: mia, requirePhone: true });
+    assert.deepEqual([joined.status, joined.public], ['joined', true]);
+    // Keeping the provisional handle is a choice too.
+    const other = await phoneAuth.signIn(pool, { uid: 'uid-prov-2', phoneNumber: '+15550005002' }, { createSession });
+    const noa = await phoneAuth.finishWithName(pool, { signupToken: other.signupToken, name: 'Noa', createSession });
+    assert.equal((await usernames.checkAvailability(pool, noa.user.username, noa.user.id)).available, true);
+    assert.deepEqual(await usernames.replaceProvisionalUsername(pool, noa.user.id, noa.user.username), { username: noa.user.username });
   });
 
   await t.test('an account made by email adds a phone, and its queued link lets it in', async () => {

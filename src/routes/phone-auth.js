@@ -177,8 +177,11 @@ function phoneAuthRoutes(config) {
       }
 
       // A new account whose sheet sent its name (an invite's Join): finished
-      // here, with a handle picked from the name, and no username step.
-      const name = result.next === 'username' ? phoneAuth.cleanName(req.body?.name) : null;
+      // here, with a provisional handle picked from the name, and no
+      // username step. Not for a public community's invite: a public place
+      // shows a username the person chose (usernames.js), so that one asks.
+      const name = result.next === 'username' && !invite?.public
+        ? phoneAuth.cleanName(req.body?.name) : null;
       const named = name
         ? await phoneAuth.finishWithName(pool, { signupToken: result.signupToken, name, createSession })
         : null;

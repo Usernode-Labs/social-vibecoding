@@ -170,8 +170,9 @@ function placeholderUsername() {
  * first is the name folded to the handle alphabet (accents dropped, every
  * other run of characters an underscore); the rest add digits, for when it
  * is taken or reserved. A name with nothing foldable (a script the handle
- * alphabet lacks) starts from `member`. They can rename later
- * (renameUser).
+ * alphabet lacks) starts from `member`. The handle is PROVISIONAL: seen in
+ * the private groups that invited them, and replaced by one they pick
+ * before anything public shows it (replaceProvisionalUsername).
  */
 function handlesFromName(rawName, tries = 6) {
   const folded = String(rawName || '')
@@ -191,6 +192,42 @@ function handlesFromName(rawName, tries = 6) {
   }
   return out;
 }
+
+/**
+ * Replace a PROVISIONAL handle (users.username_provisional_since: made from
+ * an invite phone sign-up's name, seen only in private groups) with the one
+ * the person picks before going anywhere public. Like chooseFirstUsername,
+ * not a rename: no ledger row and no cooldown, because this is the first
+ * handle they chose. Keeping the provisional one is a choice too (it is
+ * theirs, so checkAvailability lets them). Returns null when the account's
+ * handle is not provisional.
+ */
+async function replaceProvisionalUsername(pool, userId, nextName) {
+  const { rows } = await pool.query(
+    `UPDATE users
+        SET username = $1, username_provisional_since = NULL, updated_at = NOW()
+      WHERE id = $2 AND username_provisional_since IS NOT NULL
+      RETURNING username`,
+    [nextName, userId]
+  );
+  return rows.length ? { username: rows[0].username } : null;
+}
+
+/** Whether `userId` holds a provisional handle (see replaceProvisionalUsername). */
+async function isProvisional(pool, userId) {
+  if (!userId) return false;
+  const { rows } = await pool.query(
+    'SELECT 1 FROM users WHERE id = $1 AND username_provisional_since IS NOT NULL',
+    [userId]
+  );
+  return rows.length > 0;
+}
+
+/** The refusal a public place answers a provisional handle with. */
+const USERNAME_REQUIRED = Object.freeze({
+  error: 'Pick a username first. Public places show your username, not your name.',
+  code: 'username_required',
+});
 
 /**
  * Take the first handle. NOT a rename: this account has never had one.
@@ -442,6 +479,9 @@ module.exports = {
   isServiceIdentity,
   placeholderUsername,
   handlesFromName,
+  replaceProvisionalUsername,
+  isProvisional,
+  USERNAME_REQUIRED,
   chooseFirstUsername,
   checkAvailability,
   checkCooldown,

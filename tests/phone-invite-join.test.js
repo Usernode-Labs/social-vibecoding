@@ -64,7 +64,7 @@ test('the invite\'s Join sheet starts with a phone number when the server offers
   assert.match(phone, /<label for="sign-in-sheet-name"[^>]*>Your name<\/label>/);
   assert.match(phone, /<label for="sign-in-sheet-phone"[^>]*>Phone number<\/label>/);
   assert.ok(phone.indexOf('sign-in-sheet-name') < phone.indexOf('sign-in-sheet-phone"'), 'the name first, as the canvas draws it');
-  assert.match(phone, /The group sees your name, never your number\./);
+  assert.match(phone, /Only this group sees your name, never your number\./);
   assert.doesNotMatch(phone, /username/i, 'no username is asked for');
   assert.match(phone, /id="sign-in-sheet-phone"[^>]*type="tel"[^>]*autoComplete="tel"|id="sign-in-sheet-phone"[^>]*type="tel"/);
   assert.match(phone, />Text me a code</);
@@ -133,7 +133,7 @@ test('Google\'s script loads only for a phone code, never with the shell', () =>
   ]);
 });
 
-test('a new phone account gives a name: verify finishes it, with a handle picked from the name', () => {
+test('a new phone account gives a name: verify finishes it, with a provisional handle picked from the name', () => {
   const { handlesFromName } = require('../src/services/usernames');
   assert.deepEqual(handlesFromName('Lina Park', 1), ['lina_park']);
   assert.deepEqual(handlesFromName('José Álvarez', 1), ['jose_alvarez']);
@@ -148,7 +148,7 @@ test('a new phone account gives a name: verify finishes it, with a handle picked
   assert.equal(phoneAuth.cleanName('a\u0007b'), null);
   const routes = read('src/routes/phone-auth.js');
   const verify = routes.slice(routes.indexOf("router.post('/api/auth/phone/verify'"), routes.indexOf("router.post('/api/auth/phone/finish'"));
-  assert.match(verify, /const name = result\.next === 'username' \? phoneAuth\.cleanName\(req\.body\?\.name\) : null;/);
+  assert.match(verify, /const name = result\.next === 'username' && !invite\?\.public\s+\? phoneAuth\.cleanName\(req\.body\?\.name\) : null;/);
   assert.match(verify, /phoneAuth\.finishWithName\(pool, \{ signupToken: result\.signupToken, name, createSession \}\)/);
   assert.ok(verify.indexOf('finishWithName') > verify.indexOf('redeemCarried'), 'the link is followed by the account first');
   assert.ok(verify.indexOf('finishWithName') < verify.indexOf("privateCookie(res, 'hr_phone_signup'"), 'before any username step');
@@ -235,4 +235,53 @@ test('admission needs a phone: held releases show in the waiting room and the ad
     firebaseProjectId: '', firebaseServiceAccountJsonB64: '', firebasePhoneAuthEnabled: true, firebaseWebApiKey: 'k',
   });
   assert.match(read('src/config.js'), /\.\.\.firebasePhoneSettings\(\),/);
+});
+
+test('a provisional handle: private groups see it, public places ask for a username first', () => {
+  // A public community's invite asks no name: the username step follows the code.
+  const { SignInSheet } = loadTsx(SHEET);
+  const pub = renderToHtml(createElement(SignInSheet, {
+    open: true, title: 'Join Open garden', intro: 'Just your phone number and a username. No app, no password.',
+    from: 'invite', followInvite: true, phone: true, askName: false, onClose() {}, primaryClass: 'pill',
+  }));
+  assert.match(pub, /<label for="sign-in-sheet-phone"/);
+  assert.doesNotMatch(pub, /sign-in-sheet-name|Your name/);
+  assert.match(pub, /Nobody sees your number\./);
+  const landing = read('frontend/src/features/auth/landing.tsx');
+  assert.match(landing, /askName=\{!invite!\.project!\.public\}/);
+  assert.match(landing, /'Just your phone number and a username\. No app, no password\.'/);
+  assert.match(read('src/routes/phone-auth.js'), /const name = result\.next === 'username' && !invite\?\.public\s+\? phoneAuth\.cleanName\(req\.body\?\.name\) : null;/);
+  assert.match(read('src/services/firebase-phone-auth.js'), /username_provisional_since = NOW\(\),/);
+
+  // Every place a handle would go public refuses a provisional one.
+  const server = read('server.js');
+  assert.match(server, /if \(provisionalHandle && appRow\.view_visibility === 'public'\) \{\s+return res\.status\(409\)\.json\(usernames\.USERNAME_REQUIRED\);/);
+  assert.match(read('src/services/edge-gate.js'), /if \(publicApp && user\.provisional === true\) return null;/);
+  assert.match(read('src/services/edge-gate.js'), /mintIdentity\(pool, vis\.appId, identityFor, \{ publicApp: !vis\.viewPrivate \}\)/);
+  assert.match(read('src/routes/apps.js'), /if \(app\.view_visibility === 'public' && await usernames\.isProvisional\(pool, req\.user\.id\)\) \{\s+return res\.status\(409\)\.json\(usernames\.USERNAME_REQUIRED\);/);
+  const svc = read('src/services/community-invites.js');
+  assert.match(svc, /if \(invite\.view_visibility === 'public'\s+&& await require\('\.\/usernames'\)\.isProvisional\(client, user\.id\)\) \{\s+await client\.query\('ROLLBACK'\);\s+return \{ ok: false, status: 409, reason: 'username_required' \};/);
+  assert.match(read('src/routes/community-invites.js'), /if \(result\.reason === 'username_required'\) \{\s+return res\.status\(409\)\.json\(\{ \.\.\.require\('\.\.\/services\/usernames'\)\.USERNAME_REQUIRED, reason: result\.reason \}\);/);
+  const { USERNAME_REQUIRED } = require('../src/services/usernames');
+  assert.equal(USERNAME_REQUIRED.code, 'username_required');
+  assert.match(USERNAME_REQUIRED.error, /Public places show your username, not your name\./);
+  // The choice replaces it once, without a ledger row or a cooldown.
+  const profile = read('src/routes/profile.js');
+  assert.match(profile, /const result = provisional\s+\? await usernames\.replaceProvisionalUsername\(pool, req\.user\.id, next\)\s+: await usernames\.chooseFirstUsername\(pool, req\.user\.id, next\);/);
+  assert.match(read('src/routes/auth.js'), /\(u\.username_provisional_since IS NOT NULL\) AS username_provisional,/);
+
+  // The shell asks before a public app, and on a refused public join.
+  const app = read('public/js/app.js');
+  assert.match(app, /if \(App\.user\?\.usernameProvisional && !opts\?\.usernameChecked\) \{\s+return App\._navigateAfterUsername\(slug, tab, ref, subTab\);/);
+  assert.match(app, /if \(!\(await App\._usernameBeforePublic\(slug\)\)\) \{[\s\S]{0,200}return App\.navigateToApp\(slug, tab, ref, subTab, \{ usernameChecked: true \}\);/);
+  assert.match(app, /if \(audience !== 'open'\) return true;\s+return !!\(await window\.UsernameFirstRun\?\.askForPublic\?\.\(\)\);/);
+  assert.match(app, /await window\.UsernameFirstRun\.publicRetry\(redeem\)/);
+  assert.match(read('frontend/src/features/home/home.js'), /const res = desired && retry \? await retry\(write\) : await write\(\);/);
+  assert.match(read('frontend/src/features/dev-board/workshop/invite-offer.ts'), /if \(result\.reason === 'username_required'\) \{/);
+  const gate = read('frontend/src/features/auth/username-first-run.js');
+  assert.match(gate, /forPublic \? 'Pick a username' : 'Choose your username'/);
+  assert.match(gate, /'Public apps show this, not your name\. Letters, numbers and '/);
+  assert.match(gate, /'Not now'\);/);
+  assert.match(gate, /sheet = PlatformUI\.modal\(\{ contentEl: panel, dismissible: forPublic, onDismiss \}\);/);
+  assert.match(gate, /if \(body\.code !== 'username_required'\) return res;/);
 });

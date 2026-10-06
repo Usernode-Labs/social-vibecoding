@@ -37,9 +37,13 @@
  *               Firebase asks of a web caller.
  *   phone-code  POST /api/auth/phone/verify with the code and the name. A
  *               number already on an account signs it straight in; a new
- *               one is made with that name, and a handle picked from it, and
- *               signed in too: no username step (routes/phone-auth.js). Only
- *               when no handle could be picked does it move on to
+ *               one is made with that name, and a PROVISIONAL handle picked
+ *               from it that only the inviting group sees, and signed in
+ *               too: no username step (routes/phone-auth.js). The first
+ *               public place asks for a username (username-first-run.js
+ *               askForPublic). A public community's invite asks no name
+ *               (`askName` false), and so, like a client that sends none or
+ *               a name no handle could be picked from, moves on to
  *   username    POST /api/auth/phone/finish, the provider's step with the
  *               phone's own route, which mints the session.
  *
@@ -413,6 +417,12 @@ export type SignInSheetProps = {
   native?: boolean;
   /** An invite's Join: a phone number first, since a private member signs up with one. */
   phone?: boolean;
+  /**
+   * The phone step asks "Your name" (a private group's invite: the name makes
+   * a provisional handle only that group sees). A public community's invite
+   * passes false: the server asks for a username after the code instead.
+   */
+  askName?: boolean;
   /** Which screen opened it, carried across a provider's trip. */
   from?: 'invite' | 'story' | 'signin';
   /** Where a provider's trip comes back to: Home, or the invite link. */
@@ -448,8 +458,8 @@ function rememberInviteJoin() {
 }
 
 export function SignInSheet({
-  open, title, intro, followInvite = false, providers = [], native = false, phone = false, from = 'signin', returnTo = '/',
-  resume = null, releaseToken = null, beforeFinish, onClose, primaryClass,
+  open, title, intro, followInvite = false, providers = [], native = false, phone = false, askName = true, from = 'signin',
+  returnTo = '/', resume = null, releaseToken = null, beforeFinish, onClose, primaryClass,
 }: SignInSheetProps) {
   const otherWays: Step = providers.length ? 'choose' : 'email';
   const firstStep: Step = phone ? 'phone' : otherWays;
@@ -555,7 +565,7 @@ export function SignInSheet({
     const field = step === 'email' ? firstField : step === 'code' ? codeField
       : step === 'username' ? providerUsernameField
         : step === 'password' ? identifierField
-          : step === 'phone' ? nameField
+          : step === 'phone' ? (askName ? nameField : phoneField)
             : step === 'phone-code' ? phoneCodeField
               : (needsUsername ? usernameField : passwordField);
     if (focus) field.current?.focus({ preventScroll: true });
@@ -758,12 +768,13 @@ export function SignInSheet({
   // The phone step: a name for the group, then the number's code.
   const submitPhoneStep = useCallback(() => {
     setError(null);
+    if (!askName) { phoneName.current = ''; void requestPhoneCode(phoneField.current?.value || ''); return; }
     const name = (nameField.current?.value || '').replace(/\s+/g, ' ').trim();
     if (!name) { setError('Enter your name.'); nameField.current?.focus({ preventScroll: true }); return; }
     if (name.length > PHONE_NAME_MAX) { setError(`Your name can be up to ${PHONE_NAME_MAX} characters.`); return; }
     phoneName.current = name;
     void requestPhoneCode(phoneField.current?.value || '');
-  }, [requestPhoneCode]);
+  }, [askName, requestPhoneCode]);
 
   const verifyPhone = useCallback(async () => {
     setError(null);
@@ -1050,17 +1061,21 @@ export function SignInSheet({
         {step === 'phone' ? (
           <form className="mt-5 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); submitPhoneStep(); }}>
             <div className={FIELD_GROUP}>
-              <div className={FIELD}>
-                <label htmlFor="sign-in-sheet-name" className={LABEL}>Your name</label>
-                <input ref={nameField} id="sign-in-sheet-name" type="text" autoComplete="name" enterKeyHint="next" maxLength={PHONE_NAME_MAX} defaultValue={phoneName.current} onKeyDown={returnWalks(phoneStepFields, 0)} className={INPUT} />
-              </div>
+              {askName ? (
+                <div className={FIELD}>
+                  <label htmlFor="sign-in-sheet-name" className={LABEL}>Your name</label>
+                  <input ref={nameField} id="sign-in-sheet-name" type="text" autoComplete="name" enterKeyHint="next" maxLength={PHONE_NAME_MAX} defaultValue={phoneName.current} onKeyDown={returnWalks(phoneStepFields, 0)} className={INPUT} />
+                </div>
+              ) : null}
               <div className={FIELD}>
                 <label htmlFor="sign-in-sheet-phone" className={LABEL}>Phone number</label>
                 <input ref={phoneField} id="sign-in-sheet-phone" type="tel" autoComplete="tel" inputMode="tel" enterKeyHint="go" defaultValue={phoneNumber} placeholder="+1 415 555 0123" className={INPUT} />
               </div>
             </div>
             <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Sending code…' : 'Text me a code'}</button>
-            <p className="text-center text-[13px] text-zinc-500 dark:text-zinc-400">The group sees your name, never your number.</p>
+            <p className="text-center text-[13px] text-zinc-500 dark:text-zinc-400">
+              {askName ? 'Only this group sees your name, never your number.' : 'Nobody sees your number.'}
+            </p>
             <RecaptchaNotice />
           </form>
         ) : null}

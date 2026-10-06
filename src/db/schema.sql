@@ -11665,6 +11665,15 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS private_member_since TIMESTAMPTZ;
 -- triggers on the access edge fire then. An admin's direct grant is the way
 -- in without one, and clears it.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS admitted_pending_phone_at TIMESTAMPTZ;
+-- A PROVISIONAL HANDLE: an invite's phone sign-up gives a name, not a
+-- username, and its handle is made from the name (usernames.handlesFromName)
+-- for the private group that invited them to see. Nothing public may show it:
+-- a public app's identity token, a public community's membership and a
+-- public invite's join all refuse with username_required until the person
+-- picks a username (POST /api/me/username/choose clears this), and the shell
+-- asks for one first. Their name reaches a public place only as a username
+-- they chose.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS username_provisional_since TIMESTAMPTZ;
 -- The retired tree's on/off switch (services/community-invites.js used to read
 -- it). Nothing reads it now; idempotent, so a boot after the first finds none.
 DELETE FROM platform_settings WHERE key = 'invite_tree_enabled';

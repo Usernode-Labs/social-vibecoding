@@ -281,6 +281,9 @@ function communityInviteRoutes(config) {
       });
       // Following a link clears any copy the sign-in carried: it is spent.
       invites.clearInviteCookie(res);
+      if (result.reason === 'username_required') {
+        return res.status(409).json({ ...require('../services/usernames').USERNAME_REQUIRED, reason: result.reason });
+      }
       if (!result.ok) return res.status(result.status).json({ error: 'This invite link is not active.', reason: result.reason });
       // In the community now, so its challenge counts now (#3564). A queued
       // person is not in it yet; the schedule counts them once let in.
