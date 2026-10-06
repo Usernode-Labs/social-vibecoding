@@ -14,6 +14,7 @@ const { encrypt, decrypt } = require('../services/secrets');
 const { issueKindLimiter, governanceVoteLimiter } = require('../middleware/rate-limits');
 const events = require('../services/events');
 const { weekStartUtc, countWeeklyBountiesUsed, WEEKLY_BOUNTY_LIMIT } = require('./kudos');
+const { parseScreenshotIds, buildScreenshotsEmbed } = require('./feedback');
 const { placeBounty } = require('../services/bounties');
 const { claimIssueForUser } = require('../services/issue-claims');
 const appAccess = require('../services/app-access');
@@ -133,6 +134,20 @@ const MAX_ISSUE_TITLE_LENGTH = 200;
 // issues may deliberately have no description, but an accidental novel must
 // not ride through the app's JSON limit or make the topic unusable.
 const MAX_ISSUE_BODY_LENGTH = 10000;
+// GitHub's own issue-body limit: the most a request filed with screenshots
+// may come to once their embed lines are appended (MAX_REQUEST_BODY_CHARS in
+// services/mcp-tools.js is the same number).
+const MAX_GITHUB_ISSUE_BODY_CHARS = 65536;
+
+// A request body with its screenshots embedded exactly as the feedback
+// dialog embeds them, so every reader of `/issue-images/<id>` lines (the
+// topic view, the coding agents, get_request) sees one format. With no
+// description the body is the embed alone, without the blank lines that
+// would separate it from text above.
+function issueBodyWithScreenshots(description, screenshotIds, domain) {
+  const embed = buildScreenshotsEmbed(screenshotIds, domain);
+  return description ? `${description}${embed}` : embed.replace(/^\n+/, '');
+}
 
 // What the Homeroom bot is reading or building among an app's requests, by
 // issue number, for each row's `bot` field ({ what, since }, or null). The
@@ -1209,6 +1224,19 @@ function issueRoutes(config) {
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab');
       if (!app) return res.status(404).json({ error: 'App not found' });
 
+      // Screenshots on an ordinary request (the connector's create_request):
+      // ids the caller already uploaded through POST /api/feedback/screenshot,
+      // checked by the same rules the feedback dialog's are (routes/feedback.js)
+      // and embedded the same way. Only `screenshotIds`: the legacy single
+      // `screenshotId` belongs to the feedback outbox, not to this route. A
+      // governance proposal's body is the platform's own text, so it takes none.
+      const parsedShots = parseScreenshotIds({ screenshotIds: req.body?.screenshotIds });
+      if (!parsedShots.ok) return res.status(400).json({ error: parsedShots.error });
+      const screenshotIds = parsedShots.ids;
+      if (screenshotIds.length && kind !== 'general') {
+        return res.status(400).json({ error: 'Screenshots can only be attached to an ordinary request' });
+      }
+
       // Kind-specific validation + auto-filled title/description.
       if (kind === 'secret_change') {
         const key = typeof payload?.key === 'string' ? payload.key.trim() : '';
@@ -1412,6 +1440,33 @@ function issueRoutes(config) {
         title = title.trim();
         description = description || null;
         payload = typeof payload === 'object' && payload ? payload : {};
+        if (screenshotIds.length) {
+          // Every id, before GitHub is called: one foreign or already-linked
+          // id files nothing.
+          const { rows: owned } = await pool.query(
+            `SELECT id FROM issue_screenshots
+              WHERE id = ANY($1::varchar[]) AND user_id = $2 AND issue_number IS NULL`,
+            [screenshotIds, req.user.id]
+          );
+          if (owned.length !== screenshotIds.length) {
+            return res.status(400).json({ error: 'Unknown or already-used screenshot' });
+          }
+          description = issueBodyWithScreenshots(
+            description, screenshotIds, require('../services/caddy').USERNODE_DOMAIN
+          );
+          // The embed lines are the platform's, appended after the caller
+          // measured its description, so this is where the body can first
+          // outgrow GitHub's limit. Refused with the numbers, never trimmed.
+          if (description.length > MAX_GITHUB_ISSUE_BODY_CHARS) {
+            return res.status(400).json({
+              error: 'description_too_long',
+              message: `The description and its ${screenshotIds.length} image line(s) come to `
+                + `${description.length} characters, over GitHub's ${MAX_GITHUB_ISSUE_BODY_CHARS}-character `
+                + `issue-body limit. Nothing was filed. Shorten the description by at least `
+                + `${description.length - MAX_GITHUB_ISSUE_BODY_CHARS} characters.`,
+            });
+          }
+        }
       }
 
       // GitHub twin — skipped only for platform-governance kinds. A general
@@ -1420,8 +1475,10 @@ function issueRoutes(config) {
       // render. Configuration and upstream failures return before any local
       // issue/chat state is written.
       let githubIssueNumber = null;
+      let twinRepo = null;
       if (shouldCreateGithubTwin(kind)) {
         const parsed = parseOwnerRepo(app.repo_url);
+        twinRepo = parsed;
         if (!github.isEnabled() || !parsed) {
           return res.status(422).json({
             error: 'GitHub is not configured for this app; no issue was created.',
@@ -1461,6 +1518,22 @@ function issueRoutes(config) {
          VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
         [app.id, githubIssueNumber, title, description, kind, JSON.stringify(payload), req.user.id]
       );
+
+      // Stamp the screenshots with the filed issue so the orphan sweep keeps
+      // them. Best-effort, like the feedback route's: the issue already
+      // exists, so a failure risks only the images 404ing after 24 hours.
+      if (screenshotIds.length && githubIssueNumber && twinRepo) {
+        try {
+          await pool.query(
+            `UPDATE issue_screenshots
+                SET issue_owner = $2, issue_repo = $3, issue_number = $4
+              WHERE id = ANY($1::varchar[]) AND user_id = $5 AND issue_number IS NULL`,
+            [screenshotIds, twinRepo.owner, twinRepo.repo, githubIssueNumber, req.user.id]
+          );
+        } catch (err) {
+          log.warn('issues', 'Screenshot link failed', { screenshotIds, message: err.message });
+        }
+      }
 
       let chatPrefix;
       if (kind === 'secret_change') {
@@ -4143,6 +4216,8 @@ module.exports = {
   issueRoutes,
   creatorFromSourceLine,
   shouldCreateGithubTwin,
+  issueBodyWithScreenshots,
+  MAX_GITHUB_ISSUE_BODY_CHARS,
   // Exported so the stale-PR sweeper can fire window-elapsed governance
   // applies (parity with PR window-elapsed merges).
   maybeApplyRenameProposal,
