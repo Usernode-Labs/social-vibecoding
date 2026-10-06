@@ -284,6 +284,43 @@ test('the timing is what gives way on a narrow line, never the reward', () => {
     `${META_OPEN}${CADENCE('counting now')}</div>`, 'alone, it is the line, with no stray dot');
 });
 
+// #4008: a live This-week card says when the week turns over, at the end of
+// the meta line after the cadence, in the same truncating slot. The words are
+// the controllers' ("Resets Sunday at 8:00 PM"); the card only places them.
+const RESETS = (t, title) => `<span${title ? ` title="${title}"` : ''} class="min-w-0 flex-1 truncate text-zinc-500 dark:text-zinc-400">${t}</span>`;
+
+test('a weekly card says when it resets, last on the meta line, with the UTC instant on hover', () => {
+  assert.match(CARD_SRC, /const META_RESETS = 'min-w-0 flex-1 truncate text-zinc-500 dark:text-zinc-400';/,
+    'the resets span carries its own complete literal beside META_CADENCE, so the extractor sees it');
+
+  const base = {
+    goal: 'Try Three Apps', reward: '500 pts', icon: null, state: 'progress', stateLabel: '1/3 Apps tried',
+    fill: 1 / 3, counted: true, deadline: null, earned: null,
+  };
+  const html = card({
+    ...base, cadence: 'next count 9:37',
+    resets: 'Resets Sunday at 8:00 PM', resetsTitle: 'Mon, Oct 5, 00:00 UTC',
+  });
+  assert.ok(html.includes(
+    `${META_OPEN}${REWARD('500 pts')}${DOT}${CADENCE('next count 9:37')}${DOT}${RESETS('Resets Sunday at 8:00 PM', 'Mon, Oct 5, 00:00 UTC')}</div>`),
+  'after the cadence, behind the dot, in the same quiet ink');
+  assert.match(html, /title="Mon, Oct 5, 00:00 UTC"/, 'the exact instant is one hover away');
+  const railAt = html.indexOf('role="progressbar"');
+  assert.ok(html.indexOf('Resets') < railAt, 'above the rail, in the title group');
+
+  // The note is not a control and adds no row: same element count as a card
+  // with nothing to say.
+  const plain = card(base);
+  const rows = (h) => (h.match(/<div/g) || []).length;
+  assert.equal(rows(html), rows(plain), 'no extra element, so no extra height');
+  assert.equal(card({ ...base, resets: null, resetsTitle: null }), plain, 'null says nothing');
+  assert.equal(card({ ...base, resets: '', resetsTitle: 'Mon, Oct 5, 00:00 UTC' }), plain, 'nor an empty note');
+  assert.doesNotMatch(card({ ...base, resets: 'Resets Sunday at 8:00 PM' }), /title=/,
+    'no instant, no title attribute');
+  assert.ok(card({ ...base, resets: 'Resets Sunday at 8:00 PM' }).includes(RESETS('Resets Sunday at 8:00 PM')),
+    'and the note renders in the cadence slot’s class');
+});
+
 test('the detail page draws the same rail and meta line at page size', () => {
   const lg = classOf(rail({ state: 'progress', label: '180/500 blocks', fill: 0.36, name: 'x', counted: true, size: 'lg' }),
     'role="progressbar"').split(' ');
@@ -299,6 +336,9 @@ test('the detail page draws the same rail and meta line at page size', () => {
   assert.equal(renderToHtml(createElement(Card.ChallengeMeta, { text: '500 pts', cadence: 'next count 9:37', size: 'lg' })),
     `<div class="flex min-w-0 items-baseline gap-1.5 text-sm leading-5">${REWARD('500 pts')}${DOT}${CADENCE('next count 9:37')}</div>`,
     'the timing rides the page-size meta line too');
+  assert.equal(renderToHtml(createElement(Card.ChallengeMeta, { text: '500 pts', cadence: 'next count 9:37', resets: 'Resets Sunday at 8:00 PM', size: 'lg' })),
+    `<div class="flex min-w-0 items-baseline gap-1.5 text-sm leading-5">${REWARD('500 pts')}${DOT}${CADENCE('next count 9:37')}${DOT}${RESETS('Resets Sunday at 8:00 PM')}</div>`,
+    'and so does the reset note, last, with no title it was not given');
   assert.equal(Card.ProgressCadence, undefined, 'the row under the rail is gone');
 });
 

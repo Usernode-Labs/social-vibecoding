@@ -93,7 +93,11 @@ export function localizeResetText(text: string, opts: Omit<ResetOptions, 'at'> =
 const ResetTime = { nextReset, resetWhen, resetUtc, localizeResetText };
 
 if (typeof window !== 'undefined') {
-  (window as unknown as { ResetTime?: typeof ResetTime }).ResetTime = ResetTime;
+  // Assigned by its name: tests/home-panels-render.test.js's published-globals
+  // guard greps the bundle for `window.<name> =` when a module guards on it
+  // (home-panels.js reads it for the This-week cards' reset note, #4008).
+  // Window carries the member in legacy-globals.d.ts.
+  window.ResetTime = ResetTime;
 }
 
 export default ResetTime;

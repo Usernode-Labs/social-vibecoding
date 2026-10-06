@@ -103,6 +103,15 @@ const META_DOT = 'shrink-0 text-zinc-400 dark:text-zinc-500';
 const META_REWARD = 'min-w-0 truncate font-medium text-amber-800 dark:text-amber-300';
 const META_EARNED = 'min-w-0 truncate font-medium text-emerald-700 dark:text-emerald-400';
 const META_CADENCE = 'min-w-0 flex-1 truncate text-zinc-500 dark:text-zinc-400';
+// #4008: a live This-week card says when the week turns over ("Resets Sunday
+// at 8:00 PM"), the same words the kudos meter quotes for the same Monday
+// 00:00 UTC boundary. It is the line's last part, behind the cadence, in the
+// same truncating slot — flex-1 basis 0, so the note is what gives way on a
+// narrow phone, never the reward. The exact UTC instant rides on `title`,
+// one hover from certain, as the kudos meter's does. Spelled as its own
+// constant beside META_CADENCE: same string, own name, so the card render
+// test can pin it.
+const META_RESETS = 'min-w-0 flex-1 truncate text-zinc-500 dark:text-zinc-400';
 // The artwork's face: whatever `--tint-art` the registry's tone class sets.
 // The `dark:` twin is not a second colour — the tone class already switches
 // the property in dark mode — it is what displaces IconTile's own
@@ -187,13 +196,21 @@ export function ProgressRail({ state, label, fill, name, counted = false, size =
 // rail. It takes only the room the others leave (basis 0), so on a narrow
 // phone it is what truncates, never the reward. Nothing to say is no line at
 // all, never a stray dot.
-export function ChallengeMeta({ deadline = null, ends = null, text = null, earned = false, cadence = null, size = 'md' }: {
+//
+// `resets` (#4008) is the This-week card's reset note, composed by the
+// surfaces' controllers (HomePanels.resetsView, TopochainChallenges._resetsOf)
+// and handed here beside the cadence; `resetsTitle` is the same instant in
+// UTC, on the span's title and only when present.
+export function ChallengeMeta({ deadline = null, ends = null, text = null, earned = false, cadence = null, resets = null, resetsTitle = null, size = 'md' }: {
   deadline?: string | null;
   /** #3203: the detail page's "ends Mon 12 Oct, 02:00", after the deadline. */
   ends?: string | null;
   text?: string | null;
   earned?: boolean;
   cadence?: string | null;
+  resets?: string | null;
+  /** The UTC instant for the resets note's hover title; absent says nothing. */
+  resetsTitle?: string | null;
   size?: PartSize;
 }): ReactNode {
   const parts = [
@@ -201,6 +218,7 @@ export function ChallengeMeta({ deadline = null, ends = null, text = null, earne
     ends ? <span key="ends" className={META_DEADLINE}>{ends}</span> : null,
     text ? <span key="amount" className={earned ? META_EARNED : META_REWARD}>{text}</span> : null,
     cadence ? <span key="cadence" className={META_CADENCE}>{cadence}</span> : null,
+    resets ? <span key="resets" title={resetsTitle || undefined} className={META_RESETS}>{resets}</span> : null,
   ].filter(Boolean);
   if (!parts.length) return null;
   return (
@@ -272,6 +290,10 @@ export type ChallengeCardView = {
   earned: string | null;
   /** "next count 10:42" at the end of the meta line; absent or null says nothing. */
   cadence?: string | null;
+  /** #4008: "Resets Sunday at 8:00 PM" on a live This-week card; null says nothing. */
+  resets?: string | null;
+  /** The same instant in UTC, for the note's hover title. */
+  resetsTitle?: string | null;
 };
 
 // The corners are concentric: the card's 24px (`rounded-3xl`, 1.5rem in
@@ -335,7 +357,7 @@ export function ChallengeCard({ view, className, onClick, onKeyDown, ...rest }: 
       <div className="flex min-w-0 flex-1 flex-col gap-2">
         <div className="min-w-0">
           <div className={TITLE}>{view.goal}</div>
-          <ChallengeMeta deadline={view.deadline} text={reward} earned={!!view.earned} cadence={view.cadence} />
+          <ChallengeMeta deadline={view.deadline} text={reward} earned={!!view.earned} cadence={view.cadence} resets={view.resets} resetsTitle={view.resetsTitle} />
         </div>
         <ProgressRail
           state={view.state}

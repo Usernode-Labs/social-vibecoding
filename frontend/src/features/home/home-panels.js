@@ -867,6 +867,28 @@ const HomePanels = {
   // whether it is one of its TONES.
   ILLUSTRATION_TONE: /^[a-z]{3,10}$/,
 
+  // #4008: the This-week card's reset note, the last part of its meta line:
+  // "Resets Sunday at 8:00 PM" — the kudos meter's own words for the same
+  // Monday 00:00 UTC boundary the header's clock counts to (weekEnd), so the
+  // two agree. The tab's cards carry it too (TopochainChallenges._resetsOf).
+  // Only a live This-week challenge says it: a finished one has nothing left
+  // to reset (orderDone, the same predicate the rail reads), a closed or
+  // out-of-window one shows no countdown today either, and no other group's
+  // week ends. window.ResetTime is read at call time — the bundle publishes
+  // it long after this module evaluates — and is absent in the server
+  // prerender and the vm tests: null there, never a UTC-only fallback
+  // sentence.
+  resetsView(c) {
+    if (HomePanels.groupOf(c).key !== 'week') return null;
+    if (HomePanels.orderDone(c) || c.open === false) return null;
+    const RT = typeof window !== 'undefined' ? window.ResetTime : null;
+    if (!RT) return null;
+    return {
+      resets: `Resets ${RT.resetWhen('weekly')}`,
+      resetsTitle: RT.resetUtc('weekly'),
+    };
+  },
+
   // ONE CARD ON BOTH SURFACES. Home's Challenges block draws the Challenges
   // tab's card (features/leaderboard/challenge-card.tsx), so a row carries the
   // descriptor that tab's controller builds: the rail's state, its one short
@@ -945,6 +967,10 @@ const HomePanels = {
       deadline: done || c.open === false ? null
         : HomePanels.timeLeft(HomePanels.endsOf(c, panel && panel.season && panel.season.ends_at)),
       earned: done && points ? `Earned ${points.toLocaleString('en-US')} pts` : null,
+      // #4008: "Resets Sunday at 8:00 PM" on a live This-week card, or
+      // nothing — the challengeGroups pass below strips only `deadline`, so
+      // the note survives under the This week header, where it belongs.
+      ...HomePanels.resetsView(c),
     };
   },
 

@@ -36,7 +36,7 @@ const PANE_API = 'tests/fixtures/challenges-pane-api.ts';
 // one's contract (select() no-ops on the current id). Nothing here waits on
 // the network: a fetch that never settles keeps every assertion about the
 // synchronous half of each call.
-function loadPane({ challenges = [], eventId = 10, event = null, onboarding = null, search = '' } = {}) {
+function loadPane({ challenges = [], eventId = 10, event = null, onboarding = null, search = '', resetTime = null } = {}) {
   const subs = [];
   const context = {
     eventId,
@@ -61,6 +61,10 @@ function loadPane({ challenges = [], eventId = 10, event = null, onboarding = nu
     URLSearchParams,
     fetch: () => new Promise(() => {}),
   };
+  // #4008: the bundle publishes ResetTime on window; a test that wants the
+  // This-week cards' reset note supplies the stub. Absent, the controller
+  // says nothing, which is what every other test here gets.
+  if (resetTime) sandbox.window.ResetTime = resetTime;
   sandbox.window.window = sandbox.window;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
@@ -409,6 +413,72 @@ test('#3203: the page renders the end on its meta line, and the header puts it i
   assert.match(header, /<span class="[^"]*" title="Ends Mon 12 Oct, 02:00">0\/2 · 3d left<\/span>/);
   const plain = renderToHtml(createElement(GroupHeader, { heading: 'Always open', meta: '0/2 · no deadline' }));
   assert.doesNotMatch(plain, /title=/, 'no moment, no title');
+});
+
+// ─── #4008: the This-week card's reset note ─────────────────────────────
+
+// The bundle's window.ResetTime, as a stub pinned to fixed words; the
+// controller calls it with 'weekly' and nothing else.
+const RESET_TIME = {
+  resetWhen(cadence) { assert.equal(cadence, 'weekly'); return 'Sunday at 8:00 PM'; },
+  resetUtc(cadence) { assert.equal(cadence, 'weekly'); return 'Mon, Oct 5, 00:00 UTC'; },
+};
+const cardOfId = (pane, grid, id) => {
+  const ordered = pane._ordered();
+  return grid.groups.flatMap((g) => g.cards).find((c) => ordered[c.idx].id === id);
+};
+
+test('#4008: a live This-week card says when it resets; the card\'s group decides, not the grid mode', () => {
+  const { pane, store } = loadPane({
+    resetTime: RESET_TIME,
+    challenges: [
+      ch(1, 'WEEKLY'),
+      ch(2, 'WEEKLY', DONE),
+      ch(3, 'WEEKLY', { completed: true, progress: { done: false } }),
+      ch(4, 'WEEKLY', { effective: { schedule_start: inHours(5), schedule_end: inHours(20) } }),
+      ch(5, 'PERSISTENT'),
+      ch(6, 'SPOTLIGHT'),
+    ],
+  });
+  pane._renderGrid();
+  const grid = gridOf(store);
+  assert.deepEqual(keysOf(grid), ['week', 'always', 'other']);
+  assert.equal(cardOfId(pane, grid, 1).resets, 'Resets Sunday at 8:00 PM',
+    'the open card says when the week turns over');
+  assert.equal(cardOfId(pane, grid, 1).resetsTitle, 'Mon, Oct 5, 00:00 UTC',
+    'with the instant for its hover title');
+  assert.equal(cardOfId(pane, grid, 1).deadline, null,
+    'the header owns the group clock; the note is not a deadline');
+
+  for (const [id, why] of [
+    [2, 'a finished card has nothing left to reset'],
+    [3, 'nor one the organiser has archived'],
+    [4, 'nor one outside its window, which shows no countdown today either'],
+    [5, 'Always open has no week to end'],
+    [6, 'nor a Season challenges card'],
+  ]) {
+    assert.equal(cardOfId(pane, grid, id).resets ?? null, null, why);
+  }
+
+  // The card's group decides, not the grid mode: with the grouped flag off,
+  // the card keeps its own deadline AND the note beside it.
+  const flat = loadPane({
+    resetTime: RESET_TIME,
+    event: { id: 10, ends_at: inHours(47) },
+    challenges: [ch(7, 'WEEKLY', { effective: { schedule_end: inHours(71) } })],
+  });
+  flat.pane._grouped = () => false;
+  const card = flat.pane.cardView(flat.pane._challenges[0], 0);
+  assert.equal(card.resets, 'Resets Sunday at 8:00 PM', 'the note rides the card on the ungrouped grid too');
+  assert.match(card.deadline, /\d+[dh] left/, 'alongside the card\'s own countdown');
+
+  // And with no helper published, no card carries the note — the server
+  // prerender and every sandbox without the stub get nothing, never a
+  // UTC-only fallback sentence.
+  const bare = loadPane({ challenges: [ch(8, 'WEEKLY')] });
+  const plain = bare.pane.cardView(bare.pane._challenges[0], 0);
+  assert.equal(plain.resets ?? null, null, 'no ResetTime, no note');
+  assert.equal(plain.resetsTitle ?? null, null);
 });
 
 // ─── Ungrouped ──────────────────────────────────────────────────────────

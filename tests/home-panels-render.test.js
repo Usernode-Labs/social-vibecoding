@@ -784,6 +784,44 @@ test('a challenge the expanded list carries while not open shows no countdown', 
     'organiser-closed or outside its window: no "3d left" on a challenge nobody can do');
 });
 
+// #4008: a live This-week card says when the week turns over, in the kudos
+// meter's own words. window.ResetTime is read at call time, so the test
+// stubs it on the sandbox and pins the cadence it is called with; without
+// one — the server prerender, and every sandbox that does not supply it — no
+// card carries the note, and there is no UTC-only fallback sentence either.
+test('a This-week card says when it resets; a finished, closed or non-weekly card says nothing', () => {
+  const { HP, sandbox } = makeHomePanels({ slots: [] });
+  sandbox.ResetTime = {
+    resetWhen(cadence) { assert.equal(cadence, 'weekly'); return 'Sunday at 8:00 PM'; },
+    resetUtc(cadence) { assert.equal(cadence, 'weekly'); return 'Mon, Oct 5, 00:00 UTC'; },
+  };
+  const week = HP.challengeRowView(challenge({ label: 'WEEKLY' }));
+  assert.equal(week.resets, 'Resets Sunday at 8:00 PM');
+  assert.equal(week.resetsTitle, 'Mon, Oct 5, 00:00 UTC');
+
+  const nothing = (c, msg) => {
+    const row = HP.challengeRowView(c);
+    assert.equal(row.resets ?? null, null, msg);
+    assert.equal(row.resetsTitle ?? null, null, `${msg}: and no instant with it`);
+  };
+  nothing(challenge({ label: 'WEEKLY', progress: { done: true, current: null, target: null } }),
+    'a finished This-week challenge has nothing left to reset');
+  nothing(challenge({ label: 'WEEKLY', completed: true, progress: null }),
+    'nor one the organiser has archived (orderDone\'s fallback without a progress payload)');
+  nothing(challenge({ label: 'WEEKLY', open: false }),
+    'nor one the expanded list carries while it is not open');
+  nothing(challenge({ label: 'PERSISTENT' }), 'no week ends on an Always open card');
+  nothing(challenge({ label: 'COMMUNITY' }), 'nor on a Season challenges card');
+
+  // The stubs answer only where the note means something, so this is also the
+  // shortest proof that non-weekly groups never read the helper's words.
+  const noStub = makeHomePanels({ slots: [] }).HP;
+  for (const label of ['WEEKLY', 'PERSISTENT', 'COMMUNITY']) {
+    const row = noStub.challengeRowView(challenge({ label }));
+    assert.equal(row.resets ?? null, null, `${label}: no ResetTime, no note`);
+  }
+});
+
 // QA 2026-09-24 Q17: Home said "2/6 done" (the OPEN challenges) where the
 // profile said "4 of 15 done" for the same season, and the figure flipped to
 // the other when "See all" expanded the block. The season progress counts

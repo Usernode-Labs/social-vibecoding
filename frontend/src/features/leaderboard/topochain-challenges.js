@@ -782,6 +782,30 @@ const TopochainChallenges = {
         || (TopochainChallenges._grouped() && TopochainChallenges._groupOf(c).key !== 'setup')
         ? null : TopochainChallenges._deadlineOf(c),
       cadence: TopochainChallenges._cadenceOf(c),
+      ...TopochainChallenges._resetsOf(c),
+    };
+  },
+
+  // #4008: the This-week card's reset note, the last part of its meta line:
+  // "Resets Sunday at 8:00 PM" — the same words Home's cards compose
+  // (HomePanels.resetsView) for the same Monday 00:00 UTC boundary the group
+  // header's clock counts to. When the week turns over is not a deadline, so
+  // the card's own group decides and the note rides it whether the grid is
+  // grouped or not (a grouped grid's header owns the group's clock, and the
+  // card's deadline goes to it — this note does not). Null on a finished or
+  // not-open card, which show no countdown today either, on any other group,
+  // and where window.ResetTime is absent: this module takes no imports, so it
+  // reads the bundle-published helper at call time the way DevChat._resetWhen
+  // and the kudos meter do, and the server prerender and the vm sandboxes
+  // supply none — null there, never a UTC-only fallback sentence.
+  _resetsOf(c) {
+    if (TopochainChallenges._groupOf(c).key !== 'week') return null;
+    if (TopochainChallenges._isDone(c) || !TopochainChallenges._isOpen(c)) return null;
+    const RT = typeof window !== 'undefined' ? window.ResetTime : null;
+    if (!RT) return null;
+    return {
+      resets: `Resets ${RT.resetWhen('weekly')}`,
+      resetsTitle: RT.resetUtc('weekly'),
     };
   },
 

@@ -263,6 +263,17 @@ declare global {
     /** public/js/dev-host.js — maps container-local preview URLs for browsers. */
     resolveDevHost?: (url: string) => string;
     /**
+     * lib/reset-time.ts — allowance resets worded in the viewer's own clock
+     * (#3230), published for the modules that cannot import it. home-panels.js
+     * reads it at call time for the This-week cards' reset note (#4008).
+     */
+    ResetTime?: {
+      nextReset(cadence: 'weekly' | 'daily', now?: number): Date;
+      resetWhen(cadence: 'weekly' | 'daily', opts?: unknown): string;
+      resetUtc(cadence: 'weekly' | 'daily', opts?: unknown): string;
+      localizeResetText(text: string, opts?: unknown): string;
+    };
+    /**
      * features/dialogs/app-secrets-controller.js — the retired
      * public/js/app-secrets.js. Still published under this name because five
      * call sites in app-view.js reach it as `window.Secrets`.
