@@ -9025,6 +9025,15 @@ const DevChat = {
             return `<p class="dc-p">${this.parser.parseInline(tokens)}</p>`;
           },
           link({ href, title, tokens }) {
+            // #3940: an issue-body video embed is a plain markdown LINK to
+            // /issue-videos/<id> — GitHub renders an external <video> as an
+            // anchor anyway, so the embed is a link everywhere but here. On
+            // an image-enabled surface the link becomes the inline player
+            // instead; everywhere else it stays an ordinary link.
+            if (DevChat._renderImagesInline
+                && /^(?:https?:\/\/[^/]+)?\/issue-videos\/[a-f0-9]{32}$/i.test(href || '')) {
+              return `<video class="dc-inline-video" src="${escAttr(href)}" controls playsinline preload="metadata"></video>`;
+            }
             const linkOk = /^https?:\/\//i.test(href);
             const previous = !!DevChat._renderImageWithinLink;
             if (linkOk) DevChat._renderImageWithinLink = true;
@@ -9104,10 +9113,14 @@ const DevChat = {
     const out = DOMPurify.sanitize(html, {
       ALLOWED_TAGS: ['a', 'b', 'strong', 'i', 'em', 'code', 'pre', 'h3', 'h4', 'h5',
         'p', 'br', 'ol', 'ul', 'li', 'div', 'span', 'table', 'thead', 'tbody',
-        'tr', 'th', 'td', 'hr', 'del', ...(allowImages ? ['img'] : [])],
+        'tr', 'th', 'td', 'hr', 'del',
+        // #3940: the inline issue-video player rides the same opt-in as
+        // the images it sits beside (renderMarkdown's images option).
+        ...(allowImages ? ['img', 'video'] : [])],
       // 'start' keeps non-1 ordered lists numbering correctly (F2).
       ALLOWED_ATTR: ['class', 'href', 'target', 'rel', 'start',
-        ...(allowImages ? ['src', 'alt', 'loading', 'aria-label'] : [])],
+        ...(allowImages ? ['src', 'alt', 'loading', 'aria-label',
+          'controls', 'playsinline', 'preload'] : [])],
       ALLOW_DATA_ATTR: false,
     });
     if (cacheable && typeof out === 'string') DevChat._mdCachePut(text, flags, out);
