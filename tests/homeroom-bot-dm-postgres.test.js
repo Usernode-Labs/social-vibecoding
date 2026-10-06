@@ -835,12 +835,21 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     const { rows: [run] } = await pool.query(
       `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict) VALUES ($1, 3786, 'live', 'ready') RETURNING id`, [app.id],
     );
+    // #4097: the card under the words names the request. The issue is
+    // recorded as just created, so the read that hydrates the card needs
+    // no GitHub.
+    require('../src/services/github').noteIssueCreated('usernode-bot', 'seed-swap', { number: 3786, title: 'Reminders', state: 'open' });
     const sent = await dm.noteBuildRestarted(pool, { app, issueNumber: 3786, runId: run.id });
     assert.ok(sent.messageId);
     const message = await conversations.getMessage(pool, kit, sent.conversationId, sent.messageId);
     assert.equal(message.content, `**Seed swap** · request #3786: Reminders\n\n${dm.RESTARTED_TEXT}`);
     assert.equal(dm.RESTARTED_TEXT, 'My build was interrupted, so I\'ve started it again. Nothing you need to do.');
     assert.equal(message.metadata.homeroomBot.kind, 'restarted');
+    assert.deepEqual(message.objects, [{
+      type: 'issue', available: true, appId: app.id, appSlug: 'seed-swap', subtitle: 'Seed swap',
+      issueNumber: 3786, title: 'Reminders', state: 'open', author: null,
+      href: '#app/seed-swap/dev/issues/3786',
+    }]);
     const { rows: [keyed] } = await pool.query('SELECT idempotency_key FROM conversation_messages WHERE id = $1', [sent.messageId]);
     assert.equal(keyed.idempotency_key, `hrbot-restart-${run.id}`);
     const again = await dm.noteBuildRestarted(pool, { app, issueNumber: 3786, runId: run.id });
@@ -848,5 +857,58 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     assert.equal(again.duplicate, true);
     await setting('homeroom_bot_dm_users', '[]');
     assert.equal(await dm.noteBuildRestarted(pool, { app, issueNumber: 3786, runId: run.id + 1 }), null, 'nobody the bot DMs, nothing sent');
+  });
+
+  // #4097: the request's card rides under the bot's news about it, where a
+  // bare line wrote the request's number out before. The week's building
+  // time used up names the request it holds back, and news relayed after an
+  // activity card was shown (a build that stopped while one was up) keeps
+  // its card too: the words and the card say different things.
+  await t.test('#4097: the over-allowance note and relayed news carry the request\'s card', async () => {
+    const wren = await user('wren');
+    await setting('homeroom_bot_dm_users', JSON.stringify([wren.username]));
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 3787, $2, 'Compost tracker')`,
+      [app.id, wren.id],
+    );
+    require('../src/services/github').noteIssueCreated('usernode-bot', 'seed-swap', { number: 3787, title: 'Compost tracker', state: 'open' });
+    const settings = await homeroomBot.readSettings(pool);
+    const sent = await dm.noteOverAllowance(pool, {
+      settings, requester: await dm.requesterOf(pool, app.id, 3787), payer: null, app, issueNumber: 3787, bot,
+    });
+    assert.ok(sent.messageId);
+    const held = await conversations.getMessage(pool, wren, sent.conversationId, sent.messageId);
+    assert.match(held.content, /^You've used this week's building time\. I'll start Compost tracker on Monday/);
+    assert.deepEqual(held.objects, [{
+      type: 'issue', available: true, appId: app.id, appSlug: 'seed-swap', subtitle: 'Seed swap',
+      issueNumber: 3787, title: 'Compost tracker', state: 'open', author: null,
+      href: '#app/seed-swap/dev/issues/3787',
+    }]);
+
+    // The screenshot's case: an activity card for the request is up (the
+    // bot is building it), and the build then stops. The news used to
+    // arrive as words only; its card arrives with it now.
+    const nora = await user('nora');
+    await setting('homeroom_bot_dm_users', JSON.stringify([nora.username]));
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 3788, $2, 'Watering rota')`,
+      [app.id, nora.id],
+    );
+    require('../src/services/github').noteIssueCreated('usernode-bot', 'seed-swap', { number: 3788, title: 'Watering rota', state: 'open' });
+    const building = await dm.relayIssuePost({ pool, app, issueNumber: 3788, kind: 'spec', postId: 37881, bot, dm: { building: true } });
+    assert.ok(building.messageId);
+    await pool.query(`UPDATE homeroom_bot_dm_messages SET kind = 'activity' WHERE message_id = $1`, [building.messageId]);
+    const failed = await dm.relayIssuePost({
+      pool, app, issueNumber: 3788, kind: 'build_failed', postId: 37882, bot, dm: { reason: 'it took longer than I\'m allowed' },
+    });
+    assert.ok(failed.messageId);
+    const stopped = await conversations.getMessage(pool, nora, failed.conversationId, failed.messageId);
+    assert.match(stopped.content, /I couldn't finish building this/);
+    assert.deepEqual(stopped.objects, [{
+      type: 'issue', available: true, appId: app.id, appSlug: 'seed-swap', subtitle: 'Seed swap',
+      issueNumber: 3788, title: 'Watering rota', state: 'open', author: null,
+      href: '#app/seed-swap/dev/issues/3788',
+    }]);
+    await setting('homeroom_bot_dm_users', '[]');
   });
 });

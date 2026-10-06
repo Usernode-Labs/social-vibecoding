@@ -774,6 +774,8 @@ async function noteOverAllowance(pool, { settings, requester, payer = null, app,
       group: (Number(rows[0]?.members) || 0) > 1,
     }),
     metadata: { kind: 'allowance', appSlug: app.slug, appName, issueNumber },
+    // #4097: the request it holds back, as a card, for the payer too.
+    objects: cardsFor('allowance', null, app, issueNumber),
   });
 }
 
@@ -831,6 +833,8 @@ async function noteBuildRestarted(pool, { app, issueNumber, runId }) {
     idempotencyKey: `hrbot-restart-${Number(runId)}`,
     content: `${requestLine(context)}\n\n${RESTARTED_TEXT}`,
     metadata: { kind: 'restarted', appSlug: app.slug, appName: context.appName, issueNumber },
+    // #4097: the request the restarted build is on, as a card.
+    objects: cardsFor('restarted', null, app, issueNumber),
   });
 }
 
@@ -1251,9 +1255,10 @@ async function relayIssuePost({
   }
   // #3767: the request's activity card already shows it. While the card is
   // the newest thing in the DM about the request, "I'm building this now"
-  // repeats it word for word, so it is not sent; and no news about the
-  // request carries the request's card again under it. Said to the post as
+  // repeats it word for word, so it is not sent at all. Said to the post as
   // told (it is in front of them), so the post does not tag them instead.
+  // News that does go out carries the request's card again under it: the
+  // card and the words say different things (#4097).
   const shown = await cardShown(pool, requester.userId, app.id, issueNumber);
   // B4: one card follows a request through every look, so while it has one,
   // that card says it, wherever it sits.
@@ -1317,7 +1322,9 @@ async function relayIssuePost({
     metadata,
     idempotencyKey: sendKey || (postId ? `hrbot-post-${postId}` : null),
     // B7: a ready card's Try it is its way to the change; it carries no card.
-    objects: dm.card ? [] : cardsFor(kind, dm, app, issueNumber).filter((c) => !(shown && c.type === 'issue')),
+    // #4097: the request's own card is not dropped for an activity card
+    // shown earlier — the words and the card travel together.
+    objects: dm.card ? [] : cardsFor(kind, dm, app, issueNumber),
     // #3707: news about a request they started here points back at it.
     replyToId: await requestStart(pool, { userId: requester.userId, appId: app.id, issueNumber }),
   });
