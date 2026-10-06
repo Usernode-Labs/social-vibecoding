@@ -29,7 +29,7 @@
 
 import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
-import { CameraIcon, PhotoIcon } from '@/components/ui/icons';
+import { CameraIcon, PhotoIcon, VideoCameraIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -278,6 +278,34 @@ export function FeedbackDialog() {
           <p id="feedback-screenshot-count" className="hidden mt-1 text-xs text-zinc-500 dark:text-zinc-400">
           </p>
           <div id="feedback-screenshot-preview" className="hidden mt-2 flex-wrap items-center gap-2">
+          </div>
+          {/*
+            #3940: video clips. One clip per issue, chosen alongside the
+            images above: #feedback-video-btn picks an MP4/WebM/MOV file
+            (never `multiple`), #feedback-video-preview renders its
+            thumbnail row (first-frame preview, upload state, its own 48px
+            remove button) — both filled by the controller on open, hidden
+            for the same hydration reason as the screenshot controls.
+          */}
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <button
+              id="feedback-video-btn"
+              type="button"
+              className="hidden inline-flex min-h-[48px] items-center gap-1.5 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
+            >
+              <VideoCameraIcon className="w-3.5 h-3.5" />
+              <span data-video-label="">Add video</span>
+            </button>
+            <input
+              id="feedback-video-input"
+              type="file"
+              accept="video/mp4,video/webm,video/quicktime"
+              className="hidden"
+              tabIndex={-1}
+              aria-hidden="true"
+            />
+            <div id="feedback-video-preview" className="hidden mt-2 flex-wrap items-center gap-2">
+            </div>
           </div>
         </div>
         {/*

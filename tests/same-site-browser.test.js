@@ -192,6 +192,7 @@ const EXEMPT = new Map([
   ['dev-flow.js POST /api/apps/:slug/external-tasks/:id/submit-update', OWN],
   ['feedback.js POST /api/feedback/title', JSON_FIELD],
   ['feedback.js POST /api/feedback/screenshot', RAW],
+  ['feedback.js POST /api/feedback/video', RAW],
   ['feedback.js POST /api/feedback', JSON_FIELD],
   ['github-webhook.js POST /api/github/webhook', TOKEN],
   ['global-chat.js POST /api/global-chat/threads/:id/direct-actions', JSON_FIELD],

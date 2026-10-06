@@ -3832,6 +3832,32 @@ CREATE INDEX IF NOT EXISTS idx_issue_screenshots_orphan
 -- screen; staging gets the schema only.
 COMMENT ON TABLE issue_screenshots IS 'staging:private';
 
+-- #3940: video clips attached to filed GitHub issues from the feedback
+-- modal. Bytea-in-Postgres like issue_screenshots above (the platform
+-- container has no persistent file volume); rows are served on the
+-- public pre-auth GET /issue-videos/:id route (with Range support, since
+-- video playback and seeking ask for it), so the unguessable 32-hex id
+-- is the only privacy layer — same stance as screenshots, and the clip
+-- is already published into the GitHub issue body as a link. Only the
+-- id, owner and link are stored; embeds stay plain markdown links, since
+-- GitHub renders external <video> as an anchor anyway.
+CREATE TABLE IF NOT EXISTS issue_videos (
+  id            VARCHAR(32) PRIMARY KEY,
+  user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  content_type  VARCHAR(32) NOT NULL,
+  size_bytes    INTEGER NOT NULL,
+  data          BYTEA NOT NULL,
+  issue_owner   TEXT,
+  issue_repo    TEXT,
+  issue_number  INTEGER,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_issue_videos_orphan
+  ON issue_videos(created_at) WHERE issue_number IS NULL;
+-- Private: a screen recording can show anything the reporter's screen
+-- showed; staging gets the schema only.
+COMMENT ON TABLE issue_videos IS 'staging:private';
+
 -- A local record of what somebody reported through the feedback dialog.
 --
 -- The dialog's real output is a GitHub issue, and that stays the case: this
@@ -10514,7 +10540,7 @@ BEGIN
     ('app_llm_usage', 'user_id'),
     ('global_chat_usage', 'user_id'), ('token_allocation', 'user_id'),
     ('agent_turns', 'user_id'), ('pr_kudos', 'giver_user_id'),
-    ('issue_screenshots', 'user_id')
+    ('issue_screenshots', 'user_id'), ('issue_videos', 'user_id')
   ) AS retained(table_name, column_name)
   LOOP
     FOR fk IN

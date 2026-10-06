@@ -991,6 +991,15 @@ const ADDED_IDS = {
   // ── The settings restructure: Account opens with a Profile part ─────
   'settings-profile-section': 'The Profile part at the head of Settings\' Account page (features/settings/sections/profile.tsx): who is signed in, and the way to Me\'s Edit profile sheet, where name, photo, bio and the public page are edited. Settings had no route to that sheet, so someone who came to Settings to change their name found only the username form. A settings-pane root with a stable id, like its siblings; it mounts on reveal, never in the prerender.',
   'settings-profile-card': 'The Profile part\'s one control: an anchor to #profile?edit (features/profile/profile.js opens the Edit profile sheet off that address, as #profile?friends opens Friends), showing the avatar, the name and the @handle. dapp.json selects on it to pin that a bare #settings now opens Account.',
+  // ── #3940: Send Feedback takes one video clip ──────────────────────
+  // Three ids beside the screenshot pickers in the attachment row. The
+  // button and the hidden file input mirror #feedback-screenshot-* (the
+  // picker is a native surface, so the input never renders); the preview
+  // row's one item is built by feedback-controller.js, like the screenshot
+  // thumbnails, so it carries no id of its own.
+  'feedback-video-btn': '#3940: the Add video button (label becomes Replace video once a clip is attached). dapp.json\'s feedback check selects on it.',
+  'feedback-video-input': '#3940: the hidden video file input behind the button (MP4, WebM and MOV).',
+  'feedback-video-preview': '#3940: the clip preview row (first-frame thumbnail, progress bar, status, remove), empty and hidden until a clip is chosen.',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

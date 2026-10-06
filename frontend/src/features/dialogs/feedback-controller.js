@@ -1191,6 +1191,238 @@ export function init() {
       }
     });
 
+    // ── #3940: video attachment ────────────────────────────────────
+    // One clip per issue, chosen alongside the images above. MP4/WebM/MOV
+    // only, up to 50 MB and (read from the file's metadata here, enforced
+    // client-side only) 60 seconds. The clip uploads on its own with a
+    // progress bar — fetch gives no upload progress, so this one is an
+    // XMLHttpRequest. The server re-checks size and magic bytes on every
+    // upload and caps the issue at one clip (src/routes/feedback.js).
+    const MAX_VIDEO_BYTES = 50 * 1024 * 1024;
+    const MAX_VIDEO_SECONDS = 60;
+    const videoBtn = document.getElementById('feedback-video-btn');
+    const videoLabel = videoBtn.querySelector('[data-video-label]');
+    const videoInput = document.getElementById('feedback-video-input');
+    // The thumbnail row. feedback.tsx renders it empty; the item inside is
+    // this module's, like every other node inside the card.
+    const videoPreview = document.getElementById('feedback-video-preview');
+    // The one clip, or null:
+    //   { blob, objectUrl, id, uploading, xhr, node, video, stateEl, progressEl, bar, removeBtn }
+    // `id` is the server row id, set once uploaded; `uploading` blocks
+    // submit while in flight. #1054: `blob` is the clip's bytes, kept so
+    // an online submit can retry a failed upload.
+    let video = null;
+    const videoUploading = () => !!(video && video.uploading);
+
+    const paintVideoActions = () => {
+      videoBtn.classList.remove('hidden');
+      videoLabel.textContent = video ? 'Replace video' : 'Add video';
+      videoPreview.classList.toggle('hidden', !video);
+      videoPreview.classList.toggle('flex', !!video);
+    };
+
+    const setVideoActionsDisabled = (disabled) => {
+      videoBtn.disabled = disabled;
+    };
+
+    const discardVideo = (entry) => {
+      if (!entry) return;
+      if (entry.xhr) { try { entry.xhr.abort(); } catch { /* already done */ } entry.xhr = null; }
+      if (entry.objectUrl) { URL.revokeObjectURL(entry.objectUrl); entry.objectUrl = null; }
+      if (entry.node) entry.node.remove();
+      entry.uploading = false;
+      if (video === entry) video = null;
+    };
+
+    const resetVideoState = () => {
+      if (video) discardVideo(video);
+      videoInput.value = '';
+      setVideoActionsDisabled(false);
+      paintVideoActions();
+    };
+
+    // One thumbnail row: the first-frame preview, a progress bar for this
+    // clip alone, its status line, and a 48px remove button. Class strings
+    // are complete literals, so Tailwind's scan of this file compiles them.
+    const buildVideoThumb = (entry) => {
+      const item = document.createElement('div');
+      item.className = 'flex items-center gap-2';
+      item.setAttribute('data-feedback-video', '');
+      const v = document.createElement('video');
+      v.className = 'h-14 max-w-[8rem] rounded-md border border-zinc-300 dark:border-zinc-700 object-cover';
+      // #t=0.1: a plain src paints the element black until play; seeking a
+      // tenth of a second in is the standard trick that shows frame one.
+      v.src = `${entry.objectUrl}#t=0.1`;
+      v.muted = true;
+      v.preload = 'metadata';
+      v.playsInline = true;
+      const progressEl = document.createElement('span');
+      progressEl.className = 'hidden h-1 w-16 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-700';
+      const bar = document.createElement('span');
+      bar.className = 'block h-full w-0 bg-violet-500 transition-[width]';
+      progressEl.appendChild(bar);
+      const stateEl = document.createElement('span');
+      stateEl.className = 'text-xs text-zinc-500 dark:text-zinc-400';
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.className = 'rounded-full w-12 h-12 flex shrink-0 items-center justify-center text-xs bg-zinc-200 dark:bg-zinc-700 hover:bg-zinc-300 dark:hover:bg-zinc-600 transition-colors';
+      removeBtn.textContent = '✕';
+      removeBtn.setAttribute('aria-label', 'Remove video');
+      removeBtn.addEventListener('click', () => removeVideo(entry));
+      item.appendChild(v);
+      item.appendChild(progressEl);
+      item.appendChild(stateEl);
+      item.appendChild(removeBtn);
+      Object.assign(entry, { node: item, video: v, stateEl, progressEl, bar, removeBtn });
+    };
+
+    const showVideo = (entry) => {
+      videoPreview.replaceChildren(entry.node);
+      videoPreview.classList.remove('hidden');
+      videoPreview.classList.add('flex');
+    };
+
+    const setVideoBar = (entry, fraction) => {
+      entry.bar.style.width = `${Math.min(100, Math.max(0, Math.round(fraction * 100)))}%`;
+    };
+
+    const uploadVideo = (entry, onProgress) => new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      entry.xhr = xhr;
+      xhr.open('POST', '/api/feedback/video');
+      xhr.responseType = 'json';
+      if (xhr.upload && onProgress) {
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) onProgress(e.loaded / e.total);
+        };
+      }
+      xhr.onload = () => resolve({
+        ok: xhr.status >= 200 && xhr.status < 300,
+        data: xhr.response || {},
+      });
+      xhr.onerror = () => reject(new Error('network'));
+      xhr.onabort = () => reject(new Error('aborted'));
+      xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+      xhr.send(entry.blob);
+    });
+
+    // The 60-second rule needs the clip's metadata, and the same load
+    // proves the browser can decode it at all. A Blob-backed WebM without
+    // a duration header reports Infinity until seeked past the end — ask
+    // once, then read it back.
+    const videoDurationSeconds = (objectUrl) => new Promise((resolve) => {
+      const probe = document.createElement('video');
+      probe.preload = 'metadata';
+      probe.muted = true;
+      const done = (seconds) => {
+        probe.removeAttribute('src');
+        resolve(Number.isFinite(seconds) && seconds > 0 ? seconds : null);
+      };
+      probe.onloadedmetadata = () => {
+        if (probe.duration === Infinity) {
+          probe.ontimeupdate = () => {
+            probe.ontimeupdate = null;
+            done(probe.duration);
+          };
+          try { probe.currentTime = 1e101; } catch { done(null); }
+          return;
+        }
+        done(probe.duration);
+      };
+      probe.onerror = () => done(null);
+      probe.src = objectUrl;
+    });
+
+    const attachVideoBlob = async (blob) => {
+      // Validate before touching what's attached: a failed replacement
+      // keeps the clip already there rather than leaving the form with
+      // none.
+      if (blob.size > MAX_VIDEO_BYTES) {
+        showFeedbackNotice('Clips can be up to 50 MB.', true);
+        return;
+      }
+      const previous = video;
+      const entry = { blob, objectUrl: URL.createObjectURL(blob), id: null, uploading: true, xhr: null, node: null };
+      buildVideoThumb(entry);
+      video = entry;
+      showVideo(entry);
+      paintVideoActions();
+      entry.stateEl.textContent = 'Checking…';
+      const abandon = (keepPrevious, message) => {
+        entry.uploading = false;
+        if (entry.objectUrl) { URL.revokeObjectURL(entry.objectUrl); entry.objectUrl = null; }
+        if (entry.node) entry.node.remove();
+        video = keepPrevious ? previous : null;
+        if (video) showVideo(video);
+        paintVideoActions();
+        if (message) showFeedbackNotice(message, true);
+      };
+      const seconds = await videoDurationSeconds(entry.objectUrl);
+      if (video !== entry) return;
+      if (seconds === null) {
+        abandon(true, "Couldn't read that clip. Try an MP4, WebM or MOV recording.");
+        return;
+      }
+      if (seconds > MAX_VIDEO_SECONDS + 0.25) {
+        abandon(true, 'Clips can be up to 60 seconds long. Trim it and try again.');
+        return;
+      }
+      entry.stateEl.textContent = 'Uploading…';
+      entry.progressEl.classList.remove('hidden');
+      setVideoBar(entry, 0);
+      try {
+        const result = await uploadVideo(entry, (f) => setVideoBar(entry, f));
+        if (video !== entry) return;
+        if (result.ok && result.data && result.data.id) {
+          entry.id = result.data.id;
+          entry.uploading = false;
+          entry.stateEl.textContent = '';
+          entry.progressEl.classList.add('hidden');
+        } else {
+          abandon(true, (result.data && result.data.error) || 'Video upload failed');
+        }
+      } catch {
+        if (video !== entry) return;
+        // #1054: keep the bytes when the network fails. An online submit
+        // retries them; a save-for-later drops the clip (too big for the
+        // outbox) and says so.
+        entry.uploading = false;
+        entry.progressEl.classList.add('hidden');
+        entry.stateEl.textContent = "Saved with your feedback. It'll upload when you're back online";
+        showFeedbackNotice("Couldn't upload the video yet. It'll be sent along with your feedback.", false);
+      }
+    };
+
+    const removeVideo = (entry) => {
+      // An already uploaded (now orphaned) row is GC'd by the server's
+      // 24h sweeper, like the images.
+      discardVideo(entry);
+      paintVideoActions();
+    };
+
+    videoBtn.addEventListener('click', () => {
+      if (videoBtn.disabled) return;
+      // Same page-death insurance as the Photos picker above: the file
+      // picker is a native surface and the tab can be evicted behind it.
+      // Cleared again by the change handler below.
+      stashCaptureDraft();
+      videoInput.click();
+    });
+
+    videoInput.addEventListener('change', () => {
+      const file = (videoInput.files || [])[0] || null;
+      videoInput.value = '';
+      // A cancelled pick came back with the page intact — nothing to rescue.
+      clearCaptureDraft();
+      if (!file) return;
+      void attachVideoBlob(file).catch((err) => {
+        try { console.warn('[feedback] video attach failed', err && err.message); } catch { /* console is optional */ }
+        if (video && video.uploading) discardVideo(video);
+        paintVideoActions();
+        showFeedbackNotice("Couldn't attach that clip. Please try another.", true);
+      });
+    });
+
     // ── #1054: the offline outbox seam ─────────────────────────────
     //
     // Feedback is the one thing a user types BECAUSE something is wrong, and
@@ -1342,6 +1574,11 @@ export function init() {
         showFeedbackNotice('Network error', true);
         return false;
       }
+      // #3940: the outbox caps its bytes around a screenshot budget (12 MB,
+      // MAX_SCREENSHOT_BYTES in feedback-queue.js), so a clip that never
+      // uploaded is dropped here rather than queued — one that DID upload
+      // travels as body.videoId with everything else.
+      const droppedVideo = !!(video && !video.id && video.blob);
       try {
         await window.FeedbackQueue.enqueue({
           payload: body,
@@ -1354,7 +1591,9 @@ export function init() {
         showFeedbackNotice(queueRefusal(err && err.code), true);
         return false;
       }
-      feedbackStatus.textContent = "Saved on this device. We'll send it as soon as you're back online.";
+      feedbackStatus.textContent = droppedVideo
+        ? "Saved on this device without the video, which needs a connection to upload. We'll send the rest as soon as you're back online."
+        : "Saved on this device. We'll send it as soon as you're back online.";
       feedbackStatus.className = 'text-sm mt-2 text-emerald-700 dark:text-emerald-400';
       feedbackStatus.classList.remove('hidden');
       queueLineText = '';
@@ -1367,6 +1606,7 @@ export function init() {
       clearSavedDraft();
       resetTitleGenState();
       resetScreenshotState();
+      resetVideoState();
       setComposerLocked(true);
       disableSubmit();
       feedbackBtn.textContent = 'Saved';
@@ -1456,6 +1696,11 @@ export function init() {
         showFeedbackNotice('Screenshot is still uploading, one moment…', false);
         return;
       }
+      // #3940: same rule for the clip.
+      if (videoUploading()) {
+        showFeedbackNotice('Video is still uploading, one moment…', false);
+        return;
+      }
       // #732: freeze the title snapshot for this submit — cancel the
       // pending debounce and invalidate any in-flight preview (a Submit
       // click blurs the textarea, which flushes one) so a response
@@ -1511,10 +1756,25 @@ export function init() {
             }
           } catch (err) { /* still offline — handled below */ }
         }
+        // #3940: the clip whose upload failed earlier still has its bytes.
+        // Same retry rule as the screenshots: a second failure is not
+        // fatal, the offline branch below handles it.
+        if (video && !video.id && video.blob && !isOfflineNow()) {
+          const entry = video;
+          try {
+            const result = await uploadVideo(entry, null);
+            if (video === entry && result.ok && result.data && result.data.id) {
+              video.id = result.data.id;
+              if (video.stateEl) video.stateEl.textContent = '';
+            }
+          } catch (err) { /* still offline — handled below */ }
+        }
         // #683/#3027: attach the uploaded screenshots — the server appends
         // the embed lines and links every row to the filed issue.
         const shotIds = screenshotIds();
         if (shotIds.length) body.screenshotIds = shotIds;
+        // #3940: and the uploaded clip.
+        if (video && video.id) body.videoId = video.id;
         // #685: collect the app's state snapshot at submit time (fresh
         // state, and the modal only overlays the still-running iframe).
         // Never blocks filing: a null (provider gone, error, 5 s
@@ -1621,6 +1881,8 @@ export function init() {
           resetTitleGenState();
           // #683: the screenshot now belongs to the filed issue.
           resetScreenshotState();
+          // #3940: the clip now belongs to the filed issue.
+          resetVideoState();
           // Lock the textarea and keep the submit button disabled while
           // the "Thanks!" confirmation is up so a user can't keep
           // typing (or re-fire cmd+enter) after their feedback has
@@ -1711,6 +1973,8 @@ export function init() {
       const screenshotSession = ++screenshotProbeSequence;
       nativeCaptureSupported = false;
       resetScreenshotState();
+      // #3940: and clip-less, with the button repainted to "Add video".
+      resetVideoState();
       void probeNativeCaptureSupport(screenshotSession, true);
 
       // "This app" is only selectable when an app with a real repo is
@@ -1903,6 +2167,9 @@ export function init() {
         screenshotProbeSequence += 1;
         nativeCaptureSupported = false;
         resetScreenshotState();
+        // #3940: the clip is part of the draft the stale dismissal must
+        // not cost, same as the images.
+        resetVideoState();
       }
       // #964: drop any pledge intent with the rest of the draft.
       bountyCheckbox.checked = false;

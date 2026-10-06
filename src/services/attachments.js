@@ -89,6 +89,23 @@ function sniffImageType(buf) {
   return null;
 }
 
+// #3940: video clips are told by their first bytes too — the feedback
+// upload route never trusts the browser's declared type. MP4 and MOV are
+// both ISO BMFF boxes, so both start (after the 4-byte box length) with
+// the `ftyp` brand box; MOV's major brand begins with `qt`. WebM is a
+// Matroska subtype and carries the EBML magic.
+function sniffVideoType(buf) {
+  if (!Buffer.isBuffer(buf) || buf.length < 12) return null;
+  if (buf.subarray(4, 8).toString('latin1') === 'ftyp') {
+    if (buf.subarray(8, 10).toString('latin1') === 'qt') return 'video/quicktime';
+    return 'video/mp4';
+  }
+  if (buf[0] === 0x1a && buf[1] === 0x45 && buf[2] === 0xdf && buf[3] === 0xa3) {
+    return 'video/webm';
+  }
+  return null;
+}
+
 // #3557: a PDF is told by its first bytes (`%PDF-`), never by its name or
 // the client's Content-Type. It stays kind 'binary' (the kind every
 // consumer and serve route already handles); only its content type says
@@ -751,6 +768,7 @@ module.exports = {
   ATTACHMENTS_ONLY_TEXT,
   fileExt,
   sniffImageType,
+  sniffVideoType,
   isPdf,
   isPdfAttachment,
   readableDocument,

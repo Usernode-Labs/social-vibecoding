@@ -5504,6 +5504,21 @@
     {
       "source": "src/routes/feedback.js",
       "method": "POST",
+      "path": "/api/feedback/video",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.feedback.video.d12a1b3b",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps"
+    },
+    {
+      "source": "src/routes/feedback.js",
+      "method": "POST",
       "path": "/api/feedback",
       "expression": null,
       "status": "mapped",
@@ -6559,6 +6574,14 @@
       "source": "src/routes/issue-images.js",
       "method": "GET",
       "path": "/issue-images/:id",
+      "expression": null,
+      "status": "exempt",
+      "reason": "binary asset delivery rather than an interactive control"
+    },
+    {
+      "source": "src/routes/issue-videos.js",
+      "method": "GET",
+      "path": "/issue-videos/:id",
       "expression": null,
       "status": "exempt",
       "reason": "binary asset delivery rather than an interactive control"

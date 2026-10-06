@@ -245,6 +245,7 @@ async function deleteAccount(pool, { userId, actorId, mode, confirmation, passwo
       await db.query(`DELETE FROM ${table} WHERE user_id = $1 AND message_id IS NULL`, [userId]);
     }
     await db.query('DELETE FROM issue_screenshots WHERE user_id = $1 AND issue_number IS NULL', [userId]);
+    await db.query('DELETE FROM issue_videos WHERE user_id = $1 AND issue_number IS NULL', [userId]);
 
     // Freeze only previously accepted, unblocked direct histories. The
     // existing BEFORE DELETE trigger transfers group ownership and archives
