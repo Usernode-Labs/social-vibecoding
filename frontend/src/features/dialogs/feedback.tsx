@@ -27,6 +27,8 @@
  * the prerendered public/index.html that the hand-written shell never had.
  */
 
+import { useEffect, useRef, useState } from 'react';
+
 import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
 import { CameraIcon, PhotoIcon, VideoCameraIcon } from '@/components/ui/icons';
@@ -34,7 +36,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 
-import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { useIsomorphicLayoutEffect, useClassToggle } from '../../lib/legacy-dom';
 import { returnKeyHandler } from '../../lib/return-to-next';
 import { Feedback, init as initFeedback } from './feedback-controller';
 import { useDialog } from './use-dialog';
@@ -68,13 +70,44 @@ export function FeedbackDialog() {
     initFeedback();
   }, []);
 
+  // Desktop drag-and-drop (#4065): the composer's exact pattern (features/
+  // messages/composer.tsx) — a `dragging` state, dragenter opens it,
+  // dragleave closes it only when the card itself was left (children
+  // switching underneath must not flicker), and drop hands the files to the
+  // controller's own attach routines. `relative` anchors the overlay to the
+  // card, the same flag the other dialogs with an absolutely-positioned
+  // element use.
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [dragging, setDragging] = useState(false);
+  // By ref, not a rendered className: the kit writes `platform-modal-card` to
+  // the card when it lifts it (lib/kit-surface.ts), and React re-rendering
+  // the class list would wipe it — the same rule useHiddenClass exists for.
+  useClassToggle(cardRef, 'feedback-card-dragging', dragging);
+  // A close mid-drag (the viewer dismisses while a file hovers) must not
+  // leave the highlight up for the next open.
+  useEffect(() => {
+    if (!dialog.isOpen) setDragging(false);
+  }, [dialog.isOpen]);
+
   return (
     <DialogRoot
       id="feedback-modal"
       ref={dialog.rootRef}
       {...dialog.backdropProps}
     >
-      <DialogCard size="sm">
+      <DialogCard
+        size="sm"
+        relative
+        ref={cardRef}
+        onDragEnter={(event) => { event.preventDefault(); setDragging(true); }}
+        onDragOver={(event) => event.preventDefault()}
+        onDragLeave={(event) => { if (event.currentTarget === event.target) setDragging(false); }}
+        onDrop={(event) => {
+          event.preventDefault();
+          setDragging(false);
+          Feedback._dropFiles([...event.dataTransfer.files]);
+        }}
+      >
         {/* #3907: Return in the title goes on to the description, where it is
             a new line (the iOS keyboard's chevrons are gone). A handler, not
             markup: nothing here is written, so the controller still owns
@@ -440,6 +473,14 @@ export function FeedbackDialog() {
             </button>
           </div>
         </section>
+        {/*
+            #4065: while files hover over the card, the composer's dashed
+            layer, in the card's own words. Renders only from the `dragging`
+            state, never on the initial markup — the prerendered shell has
+            none, so hydration matches — and pointer-events: none (app.css)
+            keeps the drop itself landing on the card.
+        */}
+        {dragging ? <div className="feedback-drop-overlay">Drop files to attach</div> : null}
       </DialogCard>
     </DialogRoot>
   );

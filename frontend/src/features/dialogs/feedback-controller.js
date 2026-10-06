@@ -118,6 +118,8 @@ export const Feedback = {
   // the island's legacy `{ fromDev }` payload in the public signature.
   _open: (_opts = {}) => {},
   _reset: () => {},
+  // #4065: dropped files, routed by init() once the island has mounted.
+  _dropFiles: (_files) => {},
 };
 
 let wired = false;
@@ -1147,14 +1149,12 @@ export function init() {
       screenshotInput.click();
     });
 
-    screenshotInput.addEventListener('change', async () => {
-      // #3027: the picker takes several files at once. Only as many as there
-      // is room for are attached, in the order picked, and the rest are
-      // named rather than silently dropped.
-      const files = Array.from((screenshotInput.files) || []);
-      screenshotInput.value = '';
-      // A cancelled pick came back with the page intact — nothing to rescue.
-      if (!files.length) { clearCaptureDraft(); return; }
+    // The picker's change handler and the drop entry below (#4065) share this
+    // one routine, so the cap, the per-file notices and the session guard
+    // cannot drift between a picked file and a dropped one.
+    const attachPickedScreenshots = async (files) => {
+      // Only as many as there is room for are attached, in the order given,
+      // and the rest are named rather than silently dropped.
       const room = Math.max(0, MAX_SCREENSHOTS - screenshots.length);
       const taken = files.slice(0, room);
       // Bumped by every open and every real close: a dialog closed while the
@@ -1189,6 +1189,15 @@ export function init() {
         setScreenshotActionsDisabled(false);
         paintScreenshotActions();
       }
+    };
+
+    screenshotInput.addEventListener('change', async () => {
+      // #3027: the picker takes several files at once.
+      const files = Array.from((screenshotInput.files) || []);
+      screenshotInput.value = '';
+      // A cancelled pick came back with the page intact — nothing to rescue.
+      if (!files.length) { clearCaptureDraft(); return; }
+      await attachPickedScreenshots(files);
     });
 
     // ── #3940: video attachment ────────────────────────────────────
@@ -1422,6 +1431,50 @@ export function init() {
         showFeedbackNotice("Couldn't attach that clip. Please try another.", true);
       });
     });
+
+    // ── Desktop drag-and-drop (#4065) ─────────────────────────────
+    // Dragging files onto the card attaches them through the very same
+    // routines the buttons use: images through the picker's path, a clip
+    // through Add video. feedback.tsx's drop handler on the card routes here;
+    // the highlight it draws while files hover is the Messages composer's
+    // (features/messages/composer.tsx). What the pickers never offer, a drop
+    // never offers either: anything else in the drag is ignored, nothing is
+    // uploaded and nothing is said.
+    const isDroppedImage = (file) => {
+      if (!file) return false;
+      const type = String(file.type || '').toLowerCase();
+      if (type === 'image/png' || type === 'image/jpeg' || type === 'image/jpg') return true;
+      // A drag can carry a generic MIME; the extension decides, the same test
+      // isSupportedPickedFile applies to a picked file.
+      const genericType = !type || type === 'application/octet-stream';
+      return genericType && /\.(png|jpe?g)$/i.test(String(file.name || ''));
+    };
+    const isDroppedVideo = (file) => {
+      if (!file) return false;
+      const type = String(file.type || '').toLowerCase();
+      if (type === 'video/mp4' || type === 'video/webm' || type === 'video/quicktime') return true;
+      const genericType = !type || type === 'application/octet-stream';
+      return genericType && /\.(mp4|webm|mov)$/i.test(String(file.name || ''));
+    };
+    Feedback._dropFiles = (files) => {
+      const list = Array.from(files || []);
+      if (!list.length) return;
+      const images = list.filter(isDroppedImage);
+      // One clip per request, as Add video: the first one in the drag, the
+      // rest of them ignored. attachVideoBlob replaces an attached clip only
+      // after the new one has passed its own checks, so a failed drop costs
+      // nothing that was there.
+      const clip = list.find(isDroppedVideo);
+      if (images.length) void attachPickedScreenshots(images);
+      if (clip) {
+        void attachVideoBlob(clip).catch((err) => {
+          try { console.warn('[feedback] video attach failed', err && err.message); } catch { /* console is optional */ }
+          if (video && video.uploading) discardVideo(video);
+          paintVideoActions();
+          showFeedbackNotice("Couldn't attach that clip. Please try another.", true);
+        });
+      }
+    };
 
     // ── #1054: the offline outbox seam ─────────────────────────────
     //

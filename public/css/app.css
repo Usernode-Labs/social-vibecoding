@@ -1880,6 +1880,30 @@ form.agent-session-composer:focus-within {
   pointer-events: none;
 }
 
+/* Drag-and-drop onto Suggest an improvement (features/dialogs/feedback.tsx).
+   The composer's pair above, over the dialog instead: the card is the drop
+   target, so the outline sits on the card itself and the dashed layer fills
+   it (inset 4px inside the card's rounded-xl edge). pointer-events: none
+   keeps the drop reaching the card while the layer is up. The wash is the
+   plane colour the dialog paints, so it reads over the white and zinc card
+   in either look. */
+.feedback-card-dragging { outline: 2px solid var(--accent); outline-offset: -2px; }
+.feedback-drop-overlay {
+  position: absolute;
+  z-index: 30;
+  inset: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed var(--accent-light);
+  border-radius: 12px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--dc-sheet-solid) 94%, transparent);
+  font-size: 15px;
+  font-weight: 700;
+  pointer-events: none;
+}
+
 /* ── The two panes, and the width they are actually drawn at ────────────
    From 768px up both panes sit on the one strip: the list column fixed at
    22rem, the sheet rising beside it with its own margin so the strip shows
