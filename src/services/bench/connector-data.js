@@ -86,6 +86,7 @@ async function botOverview(pool, config, query = {}, deps = {}) {
       perPerson: num(s.perPerson),
       shadowBuilds: !!s.shadowBuilds,
       dmChat: !!s.dmChat,
+      continueReads: s.continueReads !== false,
       proposalCeiling: num(s.proposalCeiling),
       userWeeklyCents: num(s.userWeeklyCents),
     },
