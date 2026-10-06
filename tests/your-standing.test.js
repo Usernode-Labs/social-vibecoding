@@ -71,18 +71,21 @@ test('challenge points the standings have not caught up with keep the card, with
   assert.equal(STANDINGS_UPDATE_NOTE,
     'Standings update every few hours; points from challenges you just finished appear at the next update.');
   const empty = { ...RANKING, rank: null, total_points: 0 };
-  const view = standingView({ status: 'ready', ranking: empty, breakdown: null, pending: 1500, revealed: false });
+  const view = standingView({ status: 'ready', ranking: empty, breakdown: null, ledger: 1500, revealed: false });
   assert.ok(view, 'someone with 1,500 challenge points still sees the card');
   assert.equal(view.rank, '–');
   assert.equal(view.pending, '1,500 pts earned, not in the standings yet');
   assert.equal(view.note, STANDINGS_UPDATE_NOTE);
-  assert.equal(standingView({ status: 'ready', ranking: RANKING, breakdown: null, pending: 1500 }).pending, null,
-    'a ranked viewer is not told about a pending figure the ranking already carries');
+  assert.equal(standingView({ status: 'ready', ranking: RANKING, breakdown: null, ledger: 1800 }).pending,
+    '50 pts earned, not in the standings yet',
+    'a ranked viewer is told about ledger points the standings do not carry yet');
+  assert.equal(standingView({ status: 'ready', ranking: RANKING, breakdown: null, ledger: 1500 }).pending, null,
+    'nothing is shown when the standings lead the ledger (block production, adjustments)');
   assert.equal(standingView({ status: 'ready', ranking: RANKING, breakdown: null }).note, STANDINGS_UPDATE_NOTE,
     'the card always says how often the standings move');
 
   const real = loadTsx(STANDING);
-  const state = { status: 'ready', ranking: empty, breakdown: null, pending: 1500, revealed: false };
+  const state = { status: 'ready', ranking: empty, breakdown: null, ledger: 1500, revealed: false };
   const mod = loadTsx('frontend/src/features/leaderboard/your-standing.tsx', {
     stubs: { './my-standing.js': { ...real, myStandingStore: { get: () => state, subscribe: () => () => {} } } },
   });
@@ -91,7 +94,7 @@ test('challenge points the standings have not caught up with keep the card, with
   assert.match(html, /Standings update every few hours; points from challenges you just finished appear at the next update\./);
 });
 
-test('the ledger is read only when the standings have nothing for the viewer', async () => {
+test('the ledger is read for every season-scoped ranking, empty row or not', async () => {
   const { MyStanding, myStandingStore, ledgerPoints } = loadTsx(STANDING);
   assert.equal(ledgerPoints([{ activities_total: 500 }, { activities_total: 1000 }, { activities_total: 0 }, {}]), 1500);
   assert.equal(ledgerPoints(null), 0);
@@ -113,11 +116,29 @@ test('the ledger is read only when the standings have nothing for the viewer', a
   try {
     const seen = await run({ ...RANKING, season_id: 4, rank: null, total_points: 0 });
     assert.ok(seen.includes('/challenges-api/challenges?season_id=4'), 'the season the ranking resolved');
-    assert.equal(myStandingStore.get().pending, 1500);
+    assert.equal(myStandingStore.get().ledger, 1500);
     const ranked = await run({ ...RANKING, season_id: 4 });
-    assert.ok(!ranked.some((u) => u.startsWith('/challenges-api/challenges?')), 'no extra read for a ranked viewer');
-    assert.equal(myStandingStore.get().pending, 0);
+    assert.ok(ranked.includes('/challenges-api/challenges?season_id=4'),
+      'a ranked viewer is compared with the ledger too: a snapshot total can lag it');
+    assert.equal(myStandingStore.get().ledger, 1500);
+    const global_ = await run({ ...RANKING, season_id: null });
+    assert.ok(!global_.some((u) => u.startsWith('/challenges-api/challenges?')),
+      'no ledger read without a season to scope it to');
+    assert.equal(myStandingStore.get().ledger, 0);
   } finally {
     globalThis.fetch = realFetch;
   }
+});
+
+test('the difference line renders under a ranked standing whose ledger is ahead', () => {
+  const real = loadTsx(STANDING);
+  const state = { status: 'ready', ranking: RANKING, breakdown: null, ledger: 1800, revealed: false };
+  const mod = loadTsx('frontend/src/features/leaderboard/your-standing.tsx', {
+    stubs: { './my-standing.js': { ...real, myStandingStore: { get: () => state, subscribe: () => () => {} } } },
+  });
+  const html = renderToHtml(createElement(mod.YourStanding, {}));
+  assert.match(html, />#3</, 'the ranked card draws as before');
+  assert.match(html, /50 pts earned, not in the standings yet/,
+    'the line names only what the standings do not yet carry');
+  assert.match(html, /1,750 pts · you/, 'the main total stays the standings figure');
 });
