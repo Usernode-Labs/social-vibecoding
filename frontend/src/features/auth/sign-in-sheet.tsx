@@ -1184,7 +1184,7 @@ export function SignInSheet({
 
         {step === 'phone' ? (
           <p className="mt-4 text-center text-[13px] text-zinc-500 dark:text-zinc-400">
-            Already on Homeroom?{' '}
+            {'Already on Homeroom? '}
             <a
               href="#login"
               data-sign-in-sheet-other-ways=""
