@@ -9,7 +9,7 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { Pool } = require('pg');
-const { createRuntime, defineMachine, NONE, ok, reject } = require('../src/workflow/kernel/index.ts');
+const { createRuntime, defineMachine, inspect, NONE, ok, reject } = require('../src/workflow/kernel/index.ts');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -212,6 +212,27 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     await assert.rejects(route('k3', 'Nope'), { code: 'unknown_event' });
   });
 
+  await t.test('inherited object keys are unknown events, at append and in the pipeline', async () => {
+    await create('k-proto');
+    for (const type of ['toString', 'constructor']) {
+      await assert.rejects(route('k-proto', type), { code: 'unknown_event' }, type);
+      // A row that skipped the boundary (written straight into the stream)
+      // is refused by the pipeline's own decoder lookup.
+      const raw = async (key, requestKey) => Number((await pool.query(
+        `INSERT INTO wf_events (machine, key, type, source, request_key) VALUES ('kt-counter', $1, $2, '{"kind":"route"}', $3) RETURNING id`,
+        [key, type, requestKey])).rows[0].id);
+      const existing = await raw('k-proto', `proto-${type}`);
+      const fresh = await raw(`k-proto-${type}`, `proto-new-${type}`);
+      await rt.drain();
+      for (const id of [existing, fresh]) {
+        const e = await event(id);
+        assert.deepEqual([e.result, e.reason], ['rejected', 'unknown_event'], type);
+      }
+      assert.equal(await inst(`k-proto-${type}`), undefined, `${type}: no instance created`);
+    }
+    assert.equal(Number((await inst('k-proto')).version), 1);
+  });
+
   await t.test('creating events: a rejected or unknown first event leaves no instance', async () => {
     const id = await route('k-none', 'Add', { n: 1 });
     await rt.drain();
@@ -261,7 +282,7 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     await rt.drain();
     assert.equal((await event(b)).result, 'accepted', 'other instances keep moving');
     assert.equal((await event(later)).status, 'pending', 'nothing applies to a faulted instance');
-    const problems = await rt.inspect.problems();
+    const problems = await inspect.problems(pool);
     const flagged = problems.flagged.find((p) => p.key === 'k16-a');
     assert.equal(flagged.flag, 'faulted');
     assert.equal(flagged.heldEvents, 1);
@@ -269,7 +290,7 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     await pool.query(`UPDATE kt_flags SET on_off = FALSE WHERE name = 'flaky'`);
     assert.deepEqual(await rt.release('kt-counter', 'k16-a', { mode: 'retry', actor: 'admin:1' }), { released: true, heldEvents: 1 });
     await rt.drain();
-    const ev = (await rt.inspect.instance('kt-counter', 'k16-a')).events.reverse();
+    const ev = (await inspect.instance(pool, 'kt-counter', 'k16-a')).events.reverse();
     const order = ev.filter((e) => e.result === 'accepted' && e.type !== '@Released').map((e) => e.type);
     assert.deepEqual(order, ['Create', 'Flaky', 'Add', 'Add']);
     const retried = await event(flaky);
@@ -340,24 +361,23 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     await create('k10-b');
     const send = await route('k10-a', 'Send', { to: 'k10-b', ns: [1, 2, 0, 3] });
     await rt.drain();
-    const links = await rt.inspect.eventLinks(send);
-    assert.deepEqual(links.caused.map((e) => [e.key, e.type, e.result, e.reason]), [
-      ['k10-b', 'Add', 'accepted', null], ['k10-b', 'Add', 'accepted', null],
-      ['k10-b', 'Add', 'rejected', 'not_positive'], ['k10-b', 'Add', 'accepted', null],
+    const sent = (await event(send)).emitted.messages.map((m) => m.eventId);
+    const caused = (await inspect.instance(pool, 'kt-counter', 'k10-b')).events.filter((e) => e.causedBy === send).reverse();
+    assert.deepEqual(caused.map((e) => e.id), sent, 'the cause lists what it emitted');
+    assert.deepEqual(caused.map((e) => [e.type, e.result, e.reason]), [
+      ['Add', 'accepted', null], ['Add', 'accepted', null], ['Add', 'rejected', 'not_positive'], ['Add', 'accepted', null],
     ]);
     assert.deepEqual((await inst('k10-b')).data.log, [1, 2, 3]);
-    const first = links.caused[0];
+    const first = caused[0];
     assert.equal(first.requestKey, `msg:${send}:0`);
     assert.deepEqual(first.source, { kind: 'message', from: { machine: 'kt-counter', key: 'k10-a', eventId: send } });
-    assert.deepEqual((await event(send)).emitted.messages.map((m) => m.eventId), links.caused.map((e) => e.id));
+    assert.deepEqual(first.cause, { machine: 'kt-counter', key: 'k10-a', type: 'Send' }, 'the effect names its cause');
     // A duplicate delivery of the same message replays.
     const dup = await rt.append('kt-counter', 'k10-b', { type: 'Add', payload: { n: 1 } },
       { requestKey: `msg:${send}:0`, source: first.source, causedBy: send });
     await rt.drain();
     assert.equal((await event(dup)).result, 'replayed');
     assert.deepEqual((await inst('k10-b')).data.log, [1, 2, 3]);
-    const back = await rt.inspect.eventLinks(links.caused[0].id);
-    assert.deepEqual(back.cause, { id: send, machine: 'kt-counter', key: 'k10-a', type: 'Send' });
   });
 
   await t.test('K6/K9 work: one item per key, results settle it, stale results are refused', async () => {
@@ -449,7 +469,7 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     const results = (await inst('k8')).data.results;
     assert.deepEqual(results.map((r) => r.slice(0, 2)).sort(), [['exhausted', 'k8-fail'], ['failed', 'k8-bad']]);
     assert.deepEqual(results.find((r) => r[0] === 'exhausted')[2], 2, 'maxAttempts');
-    const problems = await rt.inspect.problems();
+    const problems = await inspect.problems(pool);
     assert.ok(problems.work.some((w) => w.workKey === 'k8-fail'), 'exhausted work is a problem');
   });
 
@@ -484,8 +504,8 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     const keys = Array.from({ length: 6 }, (_, i) => `k15-${i}`);
     for (const key of keys) await route(key, 'Create');
     for (let i = 0; i < 6; i++) for (const key of keys) await route(key, 'Add', { n: i + 1, sleepMs: 10 });
-    await a.start({ pipeline: true });
-    await b.start({ pipeline: true });
+    await a.start({ loops: true });
+    await b.start({ loops: true });
     const deadline = Date.now() + 30000;
     while ((await pool.query(`SELECT count(*)::int AS n FROM wf_events WHERE key LIKE 'k15-%' AND status <> 'processed'`)).rows[0].n) {
       assert.ok(Date.now() < deadline, 'events drained');
@@ -537,7 +557,7 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     await pool.query(`INSERT INTO wf_settings (key, value) VALUES ('ownership_mode', 'log')`);
     await pool.query(`UPDATE kt_legacy SET status = 'x' WHERE key = 'k12'`);
     await pool.query(`DELETE FROM wf_settings WHERE key = 'ownership_mode'`);
-    const { ownershipViolations } = await rt.inspect.problems();
+    const { ownershipViolations } = await inspect.problems(pool);
     assert.deepEqual(ownershipViolations.map((v) => [v.table_name, v.column_path, v.count]), [['kt_legacy', 'status', 1]]);
   });
 
@@ -548,9 +568,9 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     assert.equal(waiting.status, 'pending');
     assert.equal(waiting.requestKey, 'k17-a');
     await rt.drain();
-    assert.deepEqual(await rt.outcome(waiting.eventId), { status: 'accepted', eventId: waiting.eventId, requestKey: 'k17-a', reason: null, state: 'active', version: 2 });
+    assert.equal((await event(waiting.eventId)).result, 'accepted');
     const r = make({ slots: 1 });
-    await r.start({ pipeline: true });
+    await r.start({ loops: true });
     const started = Date.now();
     const replay = await r.appendAndWait(machine, 'k17', { type: 'Add', payload: { n: 1 } },
       { requestKey: 'k17-a', source: { kind: 'route' }, actor: 'user:1', waitMs: 5000 });
@@ -565,11 +585,11 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
   });
 
   await t.test('admin reads: state counts, instance list and timeline', async () => {
-    const counts = await rt.inspect.stateCounts('kt-counter');
+    const counts = await inspect.stateCounts(pool, 'kt-counter');
     assert.ok(counts.find((c) => c.state === 'active').count > 5);
-    const list = await rt.inspect.listInstances({ machine: 'kt-counter', appId: 7, state: 'closed' });
+    const list = await inspect.listInstances(pool, { machine: 'kt-counter', appId: 7, state: 'closed' });
     assert.deepEqual(list.map((i) => i.key), ['k6']);
-    const { instance, events, work } = await rt.inspect.instance('kt-counter', 'k6');
+    const { instance, events, work } = await inspect.instance(pool, 'kt-counter', 'k6');
     assert.equal(instance.state, 'closed');
     assert.ok(events.length > 5);
     assert.ok(events.every((e) => e.result && e.stateBefore && e.source));

@@ -4,6 +4,7 @@
 // request key `timer:<version that set it>` makes a duplicate a replay.
 
 import { enterPipeline } from './pipeline.ts';
+import type { Machine } from './machine.ts';
 import type { Pool } from './types.ts';
 
 export async function fireDueTimers(pool: Pool, opts: { lockTimeoutMs: number; statementTimeoutMs: number; limit?: number }): Promise<number> {
@@ -46,7 +47,7 @@ export async function fireDueTimers(pool: Pool, opts: { lockTimeoutMs: number; s
 // (approximated by its last update). Instances themselves are kept.
 export async function purge(pool: Pool, opts: {
   lockTimeoutMs: number; statementTimeoutMs: number;
-  terminal: Record<string, string[]>; eventsDays?: number; receiptsDays?: number; workDays?: number;
+  machines: ReadonlyMap<string, Machine<any, any>>; eventsDays?: number; receiptsDays?: number; workDays?: number;
 }): Promise<void> {
   const client = await pool.connect();
   try {
@@ -57,13 +58,13 @@ export async function purge(pool: Pool, opts: {
     await client.query(
       `DELETE FROM wf_work WHERE status = 'settled' AND settled_at < now() - make_interval(days => $1)`,
       [opts.workDays ?? 90]);
-    for (const [machine, states] of Object.entries(opts.terminal)) {
-      if (!states.length) continue;
+    for (const [machine, { terminal }] of opts.machines) {
+      if (!terminal.size) continue;
       await client.query(
         `DELETE FROM wf_receipts r USING wf_instances i
           WHERE r.machine = $1 AND i.machine = r.machine AND i.key = r.key
             AND i.state = ANY($2::text[]) AND i.updated_at < now() - make_interval(days => $3)`,
-        [machine, states, opts.receiptsDays ?? 30]);
+        [machine, [...terminal], opts.receiptsDays ?? 30]);
     }
     await client.query('COMMIT');
   } catch (err) {

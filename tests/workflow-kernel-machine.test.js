@@ -24,7 +24,8 @@ const base = () => ({
 
 test('a complete table defines a machine', () => {
   const m = defineMachine(base());
-  assert.deepEqual(m.states, ['open', 'closed']);
+  assert.deepEqual([...m.states], ['open', 'closed']);
+  assert.ok(m.events instanceof Map && m.transitions.get('open') instanceof Map, 'tables are Maps once defined');
   assert.deepEqual(m.entryFor('closed', 'Close'), { ignore: 'closed' });
   assert.deepEqual(m.entryFor(NONE, 'Close'), { ignore: 'no_instance' });
   // Work results are kernel events: a state that does not list them refuses them,
@@ -77,4 +78,14 @@ test('the payload hash is canonical: key order does not matter, values do', () =
   assert.equal(canonicalHash({ a: 1, b: { c: [1, 2], d: null } }), canonicalHash({ b: { d: null, c: [1, 2] }, a: 1 }));
   assert.notEqual(canonicalHash({ a: 1 }), canonicalHash({ a: 2 }));
   assert.notEqual(canonicalHash({ a: [1, 2] }), canonicalHash({ a: [2, 1] }));
+});
+
+test('inherited object keys are not events, rules or table entries', () => {
+  const m = defineMachine(base());
+  for (const type of ['toString', 'constructor', '__proto__', 'hasOwnProperty']) {
+    assert.equal(m.events.has(type), false, type);
+    assert.deepEqual(m.check({ type, payload: {}, source: { kind: 'route' } }, undefined, {}), reject('unknown_event'), type);
+    assert.deepEqual(m.entryFor('open', type), { ignore: 'unknown_event' }, type);
+  }
+  assert.deepEqual(m.entryFor(NONE, 'toString'), { ignore: 'no_instance' });
 });

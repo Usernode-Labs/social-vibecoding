@@ -92,24 +92,31 @@ export interface Tx {
   query<R = any>(text: string, values?: unknown[]): Promise<QueryResult<R>>;
 }
 
+export type Decoder = (payload: unknown) => unknown;
+export type Authorize<S extends State, F> = (event: Event<any>, facts: F, state: S) => Check;
+export type WriteHandler = (tx: Tx, write: any, ctx: TransitionContext) => Promise<unknown>;
+export type Notifier = (notification: any) => void | Promise<void>;
+
+// What a machine module writes. Plain objects are authoring syntax only:
+// defineMachine converts every table to a Map once, and the kernel reads
+// only the Maps (so inherited keys such as `toString` are never entries).
 export interface MachineDefinition<S extends State = State, F = unknown> {
   name: string;
   version: number;
   // Event types this machine receives, each with its payload decoder.
   // A decoder throws to refuse a payload (rejected as invalid_payload).
-  events: Record<string, (payload: unknown) => unknown>;
+  events: Record<string, Decoder>;
   // Events that may create the instance (handled in the NONE row).
   create?: string[];
   terminal?: string[];
   decode: (row: { state: string; data: unknown }) => S;
-  encode?: (state: S) => Json;
   facts?: (tx: Tx, state: S, event: Event<any>, ctx: TransitionContext) => Promise<F>;
-  authorize: Record<string, (event: Event<any>, facts: F, state: S) => Check>;
+  authorize: Record<string, Authorize<S, F>>;
   // state name -> event type (or '*') -> transition or explicit ignore.
   transitions: Record<string, Record<string, TableEntry<S, F>>>;
-  writes?: Record<string, (tx: Tx, write: any, ctx: TransitionContext) => Promise<void>>;
+  writes?: Record<string, WriteHandler>;
   project?: (tx: Tx, before: S, after: S, ctx: TransitionContext) => Promise<void>;
-  notifiers?: Record<string, (notification: any) => void | Promise<void>>;
+  notifiers?: Record<string, Notifier>;
 }
 
 export interface WorkContext {
@@ -125,11 +132,9 @@ export interface WorkContext {
 
 export interface WorkHandler {
   run(ctx: WorkContext): Promise<Json | void>;
-  maxAttempts?: number;                   // default 5
+  maxAttempts?: number;                   // default 5; an error with `permanent: true` is not retried
   backoffMs?: (attempt: number) => number;
-  retryable?: (err: unknown) => boolean;  // default: retry unless err.permanent
-  concurrency?: number;                   // per kind, across processes
-  perApp?: number;                        // per kind and app, across processes
+  concurrency?: number;                   // per kind, in this process
   leaseMs?: number;
 }
 

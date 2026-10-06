@@ -3,7 +3,8 @@
 
 import { createHash } from 'node:crypto';
 import type {
-  Check, Event, Ignored, Json, MachineDefinition, Rejection, State, TableEntry, Transition,
+  Authorize, Check, Decoder, Event, Ignored, Json, MachineDefinition, Notifier, Rejection, State,
+  TableEntry, Transition, WriteHandler,
 } from './types.ts';
 
 // The pseudo-state of an instance that does not exist yet. Its row in a
@@ -12,7 +13,7 @@ export const NONE = '(none)';
 
 // Work results are kernel events: every machine receives them, and a state
 // that does not list them refuses them as unexpected.
-export const WORK_EVENTS = ['WorkSucceeded', 'WorkFailed', 'WorkExhausted'] as const;
+export const WORK_EVENTS: ReadonlySet<string> = new Set(['WorkSucceeded', 'WorkFailed', 'WorkExhausted']);
 export interface WorkResultPayload {
   workId: string;
   kind: string;
@@ -45,78 +46,100 @@ function decodeWorkResult(payload: unknown): WorkResultPayload {
   return p as WorkResultPayload;
 }
 
-export interface Machine<S extends State = State, F = unknown> extends MachineDefinition<S, F> {
-  states: string[];
-  decoders: Record<string, (payload: unknown) => unknown>;
+// A defined machine: every table is a Map or Set, built once from the
+// authoring objects. `events` includes the kernel's work-result events.
+export interface Machine<S extends State = State, F = unknown> {
+  readonly name: string;
+  readonly version: number;
+  readonly states: ReadonlySet<string>;
+  readonly create: ReadonlySet<string>;
+  readonly terminal: ReadonlySet<string>;
+  readonly events: ReadonlyMap<string, Decoder>;
+  readonly authorize: ReadonlyMap<string, Authorize<S, F>>;
+  readonly transitions: ReadonlyMap<string, ReadonlyMap<string, TableEntry<S, F>>>;
+  readonly writes: ReadonlyMap<string, WriteHandler>;
+  readonly notifiers: ReadonlyMap<string, Notifier>;
+  readonly decode: MachineDefinition<S, F>['decode'];
+  readonly facts?: MachineDefinition<S, F>['facts'];
+  readonly project?: MachineDefinition<S, F>['project'];
   entryFor(state: string, type: string): TableEntry<S, F>;
   check(event: Event<any>, facts: F, state: S): Check;
 }
 
 const NAME = /^[a-z][a-z0-9-]*$/;
+const toMap = <V>(record: Record<string, V> | undefined) => new Map<string, V>(Object.entries(record || {}));
 
 export function defineMachine<S extends State, F>(def: MachineDefinition<S, F>): Machine<S, F> {
   const fail = (msg: string): never => { throw new Error(`defineMachine(${def.name}): ${msg}`); };
   if (!NAME.test(def.name)) fail('name must be kebab-case');
   if (!Number.isInteger(def.version) || def.version < 1) fail('version must be a positive integer');
-  const own = Object.keys(def.events);
-  if (!own.length) fail('declares no events');
-  for (const type of own) {
-    if ((WORK_EVENTS as readonly string[]).includes(type)) fail(`${type} is a kernel event`);
-    if (typeof def.authorize[type] !== 'function') fail(`no authorize rule for ${type}`);
-  }
-  const decoders: Record<string, (payload: unknown) => unknown> = { ...def.events };
-  for (const type of WORK_EVENTS) decoders[type] = decodeWorkResult;
-  const states = Object.keys(def.transitions).filter((s) => s !== NONE);
-  if (!states.length) fail('declares no states');
-  for (const t of def.terminal || []) if (!states.includes(t)) fail(`terminal state ${t} is not declared`);
-  for (const c of def.create || []) if (!own.includes(c)) fail(`creating event ${c} is not declared`);
 
-  for (const [state, row] of Object.entries(def.transitions)) {
-    for (const [type, entry] of Object.entries(row)) {
-      if (type !== '*' && !decoders[type]) fail(`${state}.${type} names an undeclared event`);
+  // The boundary: authoring objects become Maps and Sets here, once.
+  const own = toMap(def.events);
+  const authorize = toMap(def.authorize);
+  const transitions = new Map(Object.entries(def.transitions).map(([state, row]) => [state, toMap(row)]));
+  const create = new Set(def.create || []);
+  const terminal = new Set(def.terminal || []);
+  const states = new Set([...transitions.keys()].filter((s) => s !== NONE));
+
+  if (!own.size) fail('declares no events');
+  for (const type of own.keys()) {
+    if (WORK_EVENTS.has(type)) fail(`${type} is a kernel event`);
+    if (typeof authorize.get(type) !== 'function') fail(`no authorize rule for ${type}`);
+  }
+  const events = new Map(own);
+  for (const type of WORK_EVENTS) events.set(type, decodeWorkResult);
+  if (!states.size) fail('declares no states');
+  for (const t of terminal) if (!states.has(t)) fail(`terminal state ${t} is not declared`);
+  for (const c of create) if (!own.has(c)) fail(`creating event ${c} is not declared`);
+
+  for (const [state, row] of transitions) {
+    for (const [type, entry] of row) {
+      if (type !== '*' && !events.has(type)) fail(`${state}.${type} names an undeclared event`);
       if (!isIgnored(entry) && typeof (entry as Transition<S, F>).to !== 'function') {
         fail(`${state}.${type} has neither \`to\` nor \`ignore\``);
       }
-    }
-    if (state === NONE) {
-      for (const type of Object.keys(row)) {
-        if (type !== '*' && !(def.create || []).includes(type) && !isIgnored(row[type]!)) {
-          fail(`${NONE}.${type} handles an event not listed in create`);
-        }
+      if (state === NONE && type !== '*' && !create.has(type) && !isIgnored(entry)) {
+        fail(`${NONE}.${type} handles an event not listed in create`);
       }
-      continue;
     }
     // Completeness: every declared event is handled or ignored in every state.
-    if (!row['*']) {
-      for (const type of own) if (!row[type]) fail(`state ${state} neither handles nor ignores ${type}`);
+    if (state !== NONE && !row.has('*')) {
+      for (const type of own.keys()) if (!row.has(type)) fail(`state ${state} neither handles nor ignores ${type}`);
     }
   }
-  for (const c of def.create || []) {
-    const entry = def.transitions[NONE]?.[c];
+  for (const c of create) {
+    const entry = transitions.get(NONE)?.get(c);
     if (!entry || isIgnored(entry)) fail(`creating event ${c} has no transition from ${NONE}`);
   }
 
-  const machine: Machine<S, F> = {
-    ...def,
-    states,
-    decoders,
-    entryFor(state, type) {
-      const row = def.transitions[state];
-      if (state === NONE) return row?.[type] || row?.['*'] || { ignore: 'no_instance' };
+  return Object.freeze({
+    name: def.name,
+    version: def.version,
+    states, create, terminal, events, authorize, transitions,
+    writes: toMap(def.writes),
+    notifiers: toMap(def.notifiers),
+    decode: def.decode,
+    facts: def.facts,
+    project: def.project,
+    entryFor(state: string, type: string): TableEntry<S, F> {
+      const row = transitions.get(state);
+      if (state === NONE) return row?.get(type) || row?.get('*') || { ignore: 'no_instance' };
       if (!row) throw new Error(`${def.name}: state ${state} is not declared`);
-      const entry = row[type] || ((WORK_EVENTS as readonly string[]).includes(type) ? undefined : row['*']);
-      return entry || { ignore: 'unexpected_work_result' };
+      if (WORK_EVENTS.has(type)) return row.get(type) || { ignore: 'unexpected_work_result' };
+      if (!events.has(type)) return { ignore: 'unknown_event' };
+      return row.get(type) || row.get('*')!;
     },
-    check(event, facts, state) {
-      if ((WORK_EVENTS as readonly string[]).includes(event.type)) {
+    check(event: Event<any>, facts: F, state: S): Check {
+      if (WORK_EVENTS.has(event.type)) {
         const p = event.payload as WorkResultPayload;
         return event.source.kind === 'service' && event.source.workId === p.workId
           ? true : reject('not_a_service_result');
       }
-      return def.authorize[event.type]!(event, facts, state);
+      const rule = authorize.get(event.type);
+      return rule ? rule(event, facts, state) : reject('unknown_event');
     },
-  };
-  return Object.freeze(machine);
+  });
 }
 
 // Data-only values: plain objects, arrays, strings, finite numbers,

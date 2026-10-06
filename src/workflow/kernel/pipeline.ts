@@ -136,7 +136,7 @@ async function tryInstance(opts: PipelineOptions, c: Candidate): Promise<number 
     await client.query('COMMIT');
     for (const n of notifications) {
       Promise.resolve()
-        .then(() => machine.notifiers![n.type]!(n))
+        .then(() => machine.notifiers.get(n.type)!(n))
         .catch((err) => opts.log.warn('workflow', 'notification failed', { machine: c.machine, type: n.type, message: err?.message }));
     }
     return Number(row.id);
@@ -167,7 +167,7 @@ async function finishEvent(client: PoolClient, eventId: number, fields: {
 
 async function applyEvent(client: PoolClient, machine: Machine<any, any>, instance: any, row: any): Promise<Notification[]> {
   const eventId = Number(row.id);
-  const { rows: [{ now, txid }] } = await client.query('SELECT now() AS now, txid_current() AS txid');
+  const { rows: [{ now }] } = await client.query('SELECT now() AS now');
   const isNew = instance.state === NONE;
   const state: State = deepFreeze(isNew ? { name: NONE, data: null } : machine.decode({ state: instance.state, data: instance.data }));
   const version = Number(instance.version);
@@ -208,14 +208,14 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, instan
 
   // 2. Decode once, at the boundary.
   let payload: unknown;
-  const decoder = machine.decoders[row.type];
+  const decoder = machine.events.get(row.type);
   if (!decoder) return rejectWith('unknown_event');
   try { payload = decoder(row.payload); } catch { return rejectWith('invalid_payload'); }
   const event: Event = deepFreeze({
     id: eventId, type: row.type, payload, source: row.source, actor: row.actor,
     requestKey: row.request_key, appId: row.app_id, causedBy: row.caused_by == null ? null : Number(row.caused_by),
   });
-  if ((WORK_EVENTS as readonly string[]).includes(event.type)) {
+  if (WORK_EVENTS.has(event.type)) {
     const work = event.payload as WorkResultPayload;
     if (!UUID.test(work.workId)) return rejectWith('unknown_work');
     if (!await settleWork(client, machine, instance.key, row)) return rejectWith('unknown_work');
@@ -232,13 +232,13 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, instan
   const guard = entry.guard ? entry.guard(state, event, facts, ctx) : true;
   if (isRejection(guard)) return rejectWith(guard.reject);
   const outcome: Outcome = entry.to(state, event, facts, ctx);
-  if (!outcome?.next || !machine.states.includes(outcome.next.name)) {
+  if (!outcome?.next || !machine.states.has(outcome.next.name)) {
     throw new Error(`${machine.name}: transition ${state.name}.${event.type} produced undeclared state ${outcome?.next?.name}`);
   }
   for (const n of outcome.notify || []) {
-    if (!machine.notifiers?.[n.type]) throw new Error(`${machine.name}: no notifier ${n.type}`);
+    if (!machine.notifiers.has(n.type)) throw new Error(`${machine.name}: no notifier ${n.type}`);
   }
-  const data = machine.encode ? machine.encode(outcome.next) : (outcome.next.data ?? null);
+  const data = outcome.next.data ?? null;
   assertJson(data);
 
   // 4. Persist, in order.
@@ -261,7 +261,7 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, instan
       timer ? JSON.stringify({ type: timer.event.type, payload: timer.event.payload ?? {} }) : null]);
   const after = { ...ctx, version: next };
   for (const write of outcome.writes || []) {
-    const handler = machine.writes?.[write.type];
+    const handler = machine.writes.get(write.type);
     if (!handler) throw new Error(`${machine.name}: no write handler ${write.type}`);
     await handler(tx, write, after);
   }
@@ -277,12 +277,12 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, instan
     assertJson(w.input);
     const { rows: [created] } = await client.query(
       `WITH ins AS (
-         INSERT INTO wf_work (machine, key, app_id, kind, work_key, input, due_at, caused_by)
-         VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7::timestamptz, now()), $8)
+         INSERT INTO wf_work (machine, key, kind, work_key, input, due_at, caused_by)
+         VALUES ($1, $2, $3, $4, $5, COALESCE($6::timestamptz, now()), $7)
          ON CONFLICT (machine, key, kind, work_key) DO NOTHING
          RETURNING id)
-       SELECT id, pg_notify('wf_work', $4) FROM ins`,
-      [machine.name, instance.key, ctx.appId, w.kind, w.key, JSON.stringify(w.input), w.notBefore ?? null, eventId]);
+       SELECT id, pg_notify('wf_work', $3) FROM ins`,
+      [machine.name, instance.key, w.kind, w.key, JSON.stringify(w.input), w.notBefore ?? null, eventId]);
     work.push({ kind: w.kind, key: w.key, id: created?.id ?? null });
   }
   const messages = [];
@@ -298,8 +298,6 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, instan
         `msg:${eventId}:${i}`, eventId]);
     messages.push({ machine: m.to.machine, key: m.to.key, type: m.event.type, eventId: Number(sent.id) });
   }
-  const { rows: [{ txid: still }] } = await client.query('SELECT txid_current() AS txid');
-  if (String(still) !== String(txid)) throw new Error(`${machine.name}: the transaction changed under the pipeline`);
   await finishEvent(client, eventId, {
     ...base, result: 'accepted', stateAfter: outcome.next.name, versionAfter: next,
     emitted: {
@@ -315,7 +313,7 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, instan
 // The pipeline settles a work item when it applies that item's result,
 // accepted or not. Returns false when the item is not this instance's.
 async function settleWork(client: PoolClient, machine: Machine<any, any>, key: string, row: any): Promise<boolean> {
-  if (!(WORK_EVENTS as readonly string[]).includes(row.type) || !UUID.test(String(row.payload?.workId))) return true;
+  if (!WORK_EVENTS.has(row.type) || !UUID.test(String(row.payload?.workId))) return true;
   const { rowCount } = await client.query(
     `UPDATE wf_work SET status = 'settled', settled_at = COALESCE(settled_at, now())
       WHERE id = $1 AND machine = $2 AND key = $3 AND status IN ('reported', 'settled')`,

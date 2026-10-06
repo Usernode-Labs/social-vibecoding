@@ -9,15 +9,17 @@ import { randomUUID } from 'node:crypto';
 import { processNext } from './pipeline.ts';
 import { fireDueTimers, purge } from './timers.ts';
 import { claim, execute } from './services.ts';
-import { Signals, append, readOutcome, waitForOutcome } from './stream.ts';
+import { Signals, append, waitForOutcome } from './stream.ts';
 import type { AppendOptions } from './stream.ts';
-import * as inspect from './inspect.ts';
+import { release } from './inspect.ts';
 import type { Machine } from './machine.ts';
 import type { EventOutcome, Logger, Pool, WorkHandler } from './types.ts';
 
 export { NONE, WORK_EVENTS, WorkflowInputError, defineMachine, ok, reject, canonicalHash } from './machine.ts';
 export type { Machine, WorkResultPayload } from './machine.ts';
 export { LeaseLost } from './services.ts';
+// Admin reads take a pool: problems, stateCounts, listInstances, instance.
+export * as inspect from './inspect.ts';
 export type * from './types.ts';
 
 export interface RuntimeOptions {
@@ -42,7 +44,8 @@ export function createRuntime(opts: RuntimeOptions) {
     if (machines.has(m.name)) throw new Error(`workflow machine ${m.name} registered twice`);
     machines.set(m.name, m);
   }
-  const handlers = opts.services || {};
+  // Handlers are authored as an object and used as a Map, like machine tables.
+  const handlers = new Map(Object.entries(opts.services || {}));
   const timeouts = { lockTimeoutMs: opts.lockTimeoutMs ?? 2000, statementTimeoutMs: opts.statementTimeoutMs ?? 5000 };
   const pipeline = { pool: opts.pool, machines, log, ...timeouts, stallAfter: opts.stallAfter ?? 5 };
   const service = { pool: opts.pool, handlers, log, serviceId: opts.serviceId || `${hostname()}:${process.pid}:${randomUUID().slice(0, 8)}` };
@@ -75,10 +78,10 @@ export function createRuntime(opts: RuntimeOptions) {
   // Claim and start what this process has room for; returns the started runs.
   async function startServices(): Promise<Promise<void>[]> {
     const started: Promise<void>[] = [];
-    for (const kind of Object.keys(handlers)) {
+    for (const [kind, handler] of handlers) {
       const set = running.get(kind) || new Set();
       running.set(kind, set);
-      const room = (handlers[kind]!.concurrency ?? 4) - set.size;
+      const room = (handler.concurrency ?? 4) - set.size;
       if (room <= 0) continue;
       for (const w of await claim(service, kind, room)) {
         const run = execute(service, w, stopping.signal)
@@ -92,9 +95,6 @@ export function createRuntime(opts: RuntimeOptions) {
   }
 
   const runtime = {
-    machines,
-    signals,
-
     append(machine: Machine<any, any> | string, key: string, event: { type: string; payload?: unknown }, o: AppendOptions) {
       return append(o.db || opts.pool, machineFor(machine), key, event, o);
     },
@@ -110,8 +110,6 @@ export function createRuntime(opts: RuntimeOptions) {
       return waitForOutcome(opts.pool, started ? signals : null, id, o.waitMs ?? 3000);
     },
 
-    outcome: (eventId: number) => readOutcome(opts.pool, eventId),
-
     // Single steps, for tests and admin tooling.
     processNext: () => processNext(pipeline),
     async drain(max = 1000): Promise<number> {
@@ -125,45 +123,32 @@ export function createRuntime(opts: RuntimeOptions) {
       await Promise.all(runs);
       return runs.length;
     },
-    purge: (o: { eventsDays?: number; receiptsDays?: number; workDays?: number } = {}) => purge(opts.pool, {
-      ...timeouts, ...o,
-      terminal: Object.fromEntries([...machines.values()].map((m) => [m.name, m.terminal || []])),
-    }),
+    purge: (o: { eventsDays?: number; receiptsDays?: number; workDays?: number } = {}) =>
+      purge(opts.pool, { ...timeouts, ...o, machines }),
 
-    inspect: {
-      problems: (o?: inspect.ProblemOptions) => inspect.problems(opts.pool, o),
-      stateCounts: (machine?: string) => inspect.stateCounts(opts.pool, machine),
-      listInstances: (f?: Parameters<typeof inspect.listInstances>[1]) => inspect.listInstances(opts.pool, f),
-      instance: (machine: string, key: string, o?: { limit?: number; beforeId?: number }) => inspect.instance(opts.pool, machine, key, o),
-      eventLinks: (id: number) => inspect.eventLinks(opts.pool, id),
-    },
     release: (machine: string, key: string, o: { mode: 'retry' | 'skip'; actor: string }) =>
-      inspect.release(opts.pool, machine, key, { ...o, ...timeouts }),
+      release(opts.pool, machine, key, { ...o, ...timeouts }),
 
-    // Start background loops. Every process should start signals; the
-    // pipeline, timers and services run where their switch is on.
-    async start(which: { pipeline?: boolean; timers?: boolean; services?: boolean } = {}) {
+    // Every process starts signals (so appendAndWait wakes on outcomes);
+    // with `loops`, it also runs pipeline slots, timers and services. That
+    // is the leader for now; correctness does not depend on it.
+    async start(o: { loops?: boolean } = {}) {
       if (started) return;
       started = true;
       await signals.start();
-      if (which.pipeline) {
-        for (let i = 0; i < (opts.slots ?? 8); i++) {
-          loop(`pipeline slot ${i}`, async () => (await processNext(pipeline)) !== null, 'wf_events');
+      if (!o.loops) return;
+      for (let i = 0; i < (opts.slots ?? 8); i++) {
+        loop(`pipeline slot ${i}`, async () => (await processNext(pipeline)) !== null, 'wf_events');
+      }
+      let lastPurge = 0;
+      loop('timer', async () => {
+        if (Date.now() - lastPurge > 3600000) {
+          lastPurge = Date.now();
+          await runtime.purge().catch((err) => log.warn('workflow', 'retention purge failed', { message: err.message }));
         }
-      }
-      if (which.timers) {
-        let lastPurge = 0;
-        loop('timer', async () => {
-          if (Date.now() - lastPurge > 3600000) {
-            lastPurge = Date.now();
-            await runtime.purge().catch((err) => log.warn('workflow', 'retention purge failed', { message: err.message }));
-          }
-          return (await fireDueTimers(opts.pool, timeouts)) > 0;
-        }, 'wf_timer');
-      }
-      if (which.services && Object.keys(handlers).length) {
-        loop('services', async () => (await startServices()).length > 0, 'wf_work');
-      }
+        return (await fireDueTimers(opts.pool, timeouts)) > 0;
+      }, 'wf_timer');
+      if (handlers.size) loop('services', async () => (await startServices()).length > 0, 'wf_work');
     },
 
     async stop() {

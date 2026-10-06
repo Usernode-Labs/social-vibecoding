@@ -24,6 +24,7 @@ function eventRow(r: any) {
     error: r.error, machineVersion: r.machine_version, stateBefore: r.state_before,
     stateAfter: r.state_after, versionAfter: num(r.version_after), emitted: r.emitted,
     createdAt: r.created_at, processedAt: r.processed_at,
+    cause: r.caused_by == null ? null : { machine: r.cause_machine, key: r.cause_key, type: r.cause_type },
   };
 }
 
@@ -44,7 +45,7 @@ export async function problems(db: Queryable, opts: ProblemOptions = {}) {
         WHERE deadline_at < now() - make_interval(secs => $1::float8 / 1000)
         ORDER BY deadline_at LIMIT $2`, [opts.overdueMs ?? 60000, limit]),
     db.query(
-      `SELECT w.id, w.machine, w.key, w.app_id, w.kind, w.work_key, w.status, w.attempt_count,
+      `SELECT w.id, w.machine, w.key, w.kind, w.work_key, w.status, w.attempt_count,
               w.last_error, w.result, w.created_at, a.started_at, a.service_id
          FROM wf_work w
          LEFT JOIN wf_work_attempts a ON a.id = w.claim_id
@@ -60,7 +61,7 @@ export async function problems(db: Queryable, opts: ProblemOptions = {}) {
     flagged: flagged.rows.map((r) => ({ ...instanceRow(r), heldEvents: Number(r.held) })),
     overdueDeadlines: overdue.rows.map(instanceRow),
     work: work.rows.map((r) => ({
-      id: r.id, machine: r.machine, key: r.key, appId: r.app_id, kind: r.kind, workKey: r.work_key,
+      id: r.id, machine: r.machine, key: r.key, kind: r.kind, workKey: r.work_key,
       status: r.status, attempts: r.attempt_count, lastError: r.last_error, result: r.result,
       createdAt: r.created_at, startedAt: r.started_at, serviceId: r.service_id,
     })),
@@ -89,13 +90,16 @@ export async function listInstances(db: Queryable, f: {
   return rows.map(instanceRow);
 }
 
-// One instance: its row, its timeline (newest first) and its work.
+// One instance: its row, its timeline (newest first) and its work. Each
+// event names its cause's instance; what an event caused is in `emitted`.
 export async function instance(db: Queryable, machine: string, key: string, opts: { limit?: number; beforeId?: number } = {}) {
   const [inst, events, work] = await Promise.all([
     db.query('SELECT * FROM wf_instances WHERE machine = $1 AND key = $2', [machine, key]),
     db.query(
-      `SELECT * FROM wf_events WHERE machine = $1 AND key = $2 AND ($3::bigint IS NULL OR id < $3)
-        ORDER BY id DESC LIMIT $4`, [machine, key, opts.beforeId ?? null, Math.min(opts.limit ?? 100, 500)]),
+      `SELECT e.*, c.machine AS cause_machine, c.key AS cause_key, c.type AS cause_type
+         FROM wf_events e LEFT JOIN wf_events c ON c.id = e.caused_by
+        WHERE e.machine = $1 AND e.key = $2 AND ($3::bigint IS NULL OR e.id < $3)
+        ORDER BY e.id DESC LIMIT $4`, [machine, key, opts.beforeId ?? null, Math.min(opts.limit ?? 100, 500)]),
     db.query(
       `SELECT w.*, COALESCE(json_agg(a ORDER BY a.number) FILTER (WHERE a.id IS NOT NULL), '[]') AS attempts
          FROM wf_work w LEFT JOIN wf_work_attempts a ON a.work_id = w.id
@@ -110,23 +114,6 @@ export async function instance(db: Queryable, machine: string, key: string, opts
       lastError: r.last_error, result: r.result, causedBy: num(r.caused_by), createdAt: r.created_at,
       settledAt: r.settled_at,
     })),
-  };
-}
-
-// An event with its causal neighbours: what caused it and what it caused.
-export async function eventLinks(db: Queryable, eventId: number) {
-  const [self, caused] = await Promise.all([
-    db.query(`SELECT e.*, c.machine AS cause_machine, c.key AS cause_key, c.type AS cause_type
-                FROM wf_events e LEFT JOIN wf_events c ON c.id = e.caused_by WHERE e.id = $1`, [eventId]),
-    db.query('SELECT * FROM wf_events WHERE caused_by = $1 ORDER BY id', [eventId]),
-  ]);
-  const row = self.rows[0];
-  if (!row) return null;
-  return {
-    event: eventRow(row),
-    cause: row.caused_by == null ? null
-      : { id: Number(row.caused_by), machine: row.cause_machine, key: row.cause_key, type: row.cause_type },
-    caused: caused.rows.map(eventRow),
   };
 }
 

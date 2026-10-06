@@ -29,7 +29,7 @@ export async function append(
   assertJson(payload);
   if (typeof machine !== 'string') {
     // Decode at the boundary so a producer hears about a bad payload now.
-    const decoder = machine.decoders[event.type];
+    const decoder = machine.events.get(event.type);
     if (!decoder) throw new WorkflowInputError('unknown_event', `${name} has no event ${event.type}`);
     try { decoder(payload); } catch (err) {
       throw new WorkflowInputError('invalid_payload', (err as Error).message);

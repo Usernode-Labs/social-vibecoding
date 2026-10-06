@@ -12388,7 +12388,6 @@ CREATE TABLE IF NOT EXISTS wf_work (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   machine       TEXT NOT NULL,
   key           TEXT NOT NULL,
-  app_id        INTEGER,
   kind          TEXT NOT NULL,
   work_key      TEXT NOT NULL,
   input         JSONB NOT NULL,
@@ -12425,7 +12424,6 @@ CREATE TABLE IF NOT EXISTS wf_work_attempts (
                  CHECK (outcome IN ('running', 'succeeded', 'failed', 'retry', 'exhausted', 'lost')),
   error        JSONB,
   started_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  heartbeat_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   finished_at  TIMESTAMPTZ,
   UNIQUE (work_id, number)
 );

@@ -12,12 +12,13 @@ export class LeaseLost extends Error {
 
 export interface ServiceOptions {
   pool: Pool;
-  handlers: Record<string, WorkHandler>;
+  handlers: ReadonlyMap<string, WorkHandler>;
   serviceId: string;
   log: Logger;
 }
 
-const DEFAULTS = { maxAttempts: 5, concurrency: 4, leaseMs: 60000 };
+const DEFAULTS = { maxAttempts: 5, leaseMs: 60000 };
+const RESULT_EVENTS = new Map([['succeeded', 'WorkSucceeded'], ['failed', 'WorkFailed'], ['exhausted', 'WorkExhausted']]);
 const defaultBackoff = (attempt: number) => Math.min(10 * 60000, 5000 * 2 ** (attempt - 1));
 
 function errorJson(err: unknown): { message: string; code: string | null } {
@@ -25,48 +26,36 @@ function errorJson(err: unknown): { message: string; code: string | null } {
   return { message: String(e?.message ?? err).slice(0, 2000), code: e?.code == null ? null : String(e.code) };
 }
 
-interface Claimed { id: string; machine: string; key: string; app_id: number | null; kind: string;
+interface Claimed { id: string; machine: string; key: string; kind: string;
   work_key: string; input: Json; checkpoint: Json | null; attempt_count: number; claim_id: string }
 
-// Claim up to `room` due items of one kind, within its global and per-app
-// limits. Claims of one kind are serialised by an advisory lock, so the
-// limits hold across processes.
+// Claim up to `room` due items of one kind: queued and due, or running on
+// an expired lease. `room` is this process's free capacity for the kind;
+// services run in one process for now, so that is also the global limit.
 export async function claim(opts: ServiceOptions, kind: string, room: number): Promise<Claimed[]> {
-  const h = opts.handlers[kind]!;
-  const leaseMs = h.leaseMs ?? DEFAULTS.leaseMs;
+  const leaseMs = opts.handlers.get(kind)!.leaseMs ?? DEFAULTS.leaseMs;
   const client = await opts.pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query(`SELECT pg_advisory_xact_lock(hashtext('wf_work'), hashtext($1))`, [kind]);
-    const { rows: picked } = await client.query<{ id: string }>(
-      `WITH live AS (
-         SELECT app_id FROM wf_work WHERE kind = $1 AND status = 'running' AND lease_until > now()),
-       cand AS (
-         SELECT w.id, w.due_at, w.created_at,
-                row_number() OVER (PARTITION BY w.app_id ORDER BY w.due_at, w.created_at, w.id) AS rn,
-                (SELECT count(*) FROM live l WHERE l.app_id IS NOT DISTINCT FROM w.app_id) AS app_live
-           FROM wf_work w
-          WHERE w.kind = $1
-            AND ((w.status = 'queued' AND w.due_at <= now())
-              OR (w.status = 'running' AND w.lease_until <= now())))
-       SELECT id FROM cand
-        WHERE $3::int IS NULL OR rn + app_live <= $3::int
-        ORDER BY due_at, created_at, id
-        LIMIT LEAST($4::int, GREATEST(0, $2::int - (SELECT count(*) FROM live)::int))`,
-      [kind, h.concurrency ?? DEFAULTS.concurrency, h.perApp ?? null, room]);
-    if (!picked.length) { await client.query('COMMIT'); return []; }
-    const ids = picked.map((r) => r.id);
-    await client.query(
-      `UPDATE wf_work_attempts SET outcome = 'lost', finished_at = now()
-        WHERE work_id = ANY($1::uuid[]) AND outcome = 'running'`, [ids]);
-    const { rows } = await client.query<Claimed>(
-      `UPDATE wf_work SET status = 'running', claim_id = gen_random_uuid(),
-              lease_until = now() + make_interval(secs => $2::float8 / 1000),
-              attempt_count = attempt_count + 1
-        WHERE id = ANY($1::uuid[])
-        RETURNING id, machine, key, app_id, kind, work_key, input, checkpoint, attempt_count, claim_id`,
-      [ids, leaseMs]);
+    const { rows } = await client.query<Claimed & { previous_claim: string | null }>(
+      `WITH due AS (
+         SELECT id, claim_id FROM wf_work
+          WHERE kind = $1
+            AND ((status = 'queued' AND due_at <= now()) OR (status = 'running' AND lease_until <= now()))
+          ORDER BY due_at, created_at
+          LIMIT $2
+          FOR UPDATE SKIP LOCKED)
+       UPDATE wf_work w SET status = 'running', claim_id = gen_random_uuid(),
+              lease_until = now() + make_interval(secs => $3::float8 / 1000),
+              attempt_count = w.attempt_count + 1
+         FROM due WHERE w.id = due.id
+       RETURNING w.id, w.machine, w.key, w.kind, w.work_key, w.input, w.checkpoint,
+                 w.attempt_count, w.claim_id, due.claim_id AS previous_claim`,
+      [kind, room, leaseMs]);
     for (const r of rows) {
+      if (r.previous_claim) {
+        await client.query(`UPDATE wf_work_attempts SET outcome = 'lost', finished_at = now() WHERE id = $1`, [r.previous_claim]);
+      }
       await client.query(
         `INSERT INTO wf_work_attempts (id, work_id, service_id, number) VALUES ($1, $2, $3, $4)`,
         [r.claim_id, r.id, opts.serviceId, r.attempt_count]);
@@ -108,7 +97,7 @@ async function finish(opts: ServiceOptions, w: Claimed, report: Report): Promise
       `UPDATE wf_work_attempts SET outcome = $2, error = $3, finished_at = now() WHERE id = $1`,
       [w.claim_id, report.outcome, 'error' in report ? JSON.stringify(report.error) : null]);
     if (report.outcome !== 'retry') {
-      const type = { succeeded: 'WorkSucceeded', failed: 'WorkFailed', exhausted: 'WorkExhausted' }[report.outcome];
+      const type = RESULT_EVENTS.get(report.outcome)!;
       await append(client, w.machine, w.key, {
         type,
         payload: { workId: w.id, kind: w.kind, workKey: w.work_key, attempt: w.attempt_count,
@@ -116,7 +105,7 @@ async function finish(opts: ServiceOptions, w: Claimed, report: Report): Promise
       }, {
         requestKey: `work:${w.id}:${w.attempt_count}`,
         source: { kind: 'service', workId: w.id, workKind: w.kind, attempt: w.attempt_count },
-        actor: `service:${w.kind}`, appId: w.app_id,
+        actor: `service:${w.kind}`,
       });
     }
     await client.query('COMMIT');
@@ -132,7 +121,7 @@ async function finish(opts: ServiceOptions, w: Claimed, report: Report): Promise
 // Run one claimed item to completion. A lost lease aborts the handler's
 // signal and nothing is reported; the next claim resumes from the checkpoint.
 export async function execute(opts: ServiceOptions, w: Claimed, stopping?: AbortSignal): Promise<void> {
-  const h = opts.handlers[w.kind]!;
+  const h = opts.handlers.get(w.kind)!;
   const maxAttempts = h.maxAttempts ?? DEFAULTS.maxAttempts;
   const leaseMs = h.leaseMs ?? DEFAULTS.leaseMs;
   if (w.attempt_count > maxAttempts) {
@@ -150,9 +139,7 @@ export async function execute(opts: ServiceOptions, w: Claimed, stopping?: Abort
   };
   const heartbeat = setInterval(() => {
     renew(`UPDATE wf_work SET lease_until = now() + make_interval(secs => $3::float8 / 1000) WHERE ${live}`,
-      [w.id, w.claim_id, leaseMs])
-      .then(() => opts.pool.query('UPDATE wf_work_attempts SET heartbeat_at = now() WHERE id = $1', [w.claim_id]))
-      .catch(() => {});
+      [w.id, w.claim_id, leaseMs]).catch(() => {});
   }, Math.max(50, Math.floor(leaseMs / 3)));
   let report: Report;
   try {
@@ -170,8 +157,7 @@ export async function execute(opts: ServiceOptions, w: Claimed, stopping?: Abort
     assertJson(result);
     report = { outcome: 'succeeded', result };
   } catch (err) {
-    const retryable = h.retryable ? h.retryable(err) : !(err as { permanent?: boolean })?.permanent;
-    if (!retryable) report = { outcome: 'failed', error: errorJson(err) };
+    if ((err as { permanent?: boolean })?.permanent) report = { outcome: 'failed', error: errorJson(err) };
     else if (w.attempt_count >= maxAttempts) report = { outcome: 'exhausted', error: errorJson(err) };
     else report = { outcome: 'retry', error: errorJson(err), delayMs: (h.backoffMs || defaultBackoff)(w.attempt_count) };
   } finally {
