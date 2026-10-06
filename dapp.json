@@ -5522,6 +5522,12 @@
       ]
     },
     {
+      "name": "#4097: the Homeroom bot's news about a request leads with the request's card in its DM, in place of the line naming it, and its words follow the card",
+      "path": "/?demo=1#messages/910005",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-message [data-bot-request-card=\"12\"]:has(> .messages-object-card .messages-object-icon) + .messages-markdown",
+      "expectText": "Staging demo, sort the list by date"
+    },
+    {
       "name": "An agent session's own screen shows its app, its change and a Changes button, and the drawer links the active change to its proposal page (#2779) and says why its checks were skipped (#3180)",
       "path": "/#agent/990801/changes",
       "expectSelector": "#agent-session-screen:not(.hidden):has([data-agent-session-focus] ~ [data-agent-session-change-pill] ~ [data-agent-session-changes-button]) [data-agent-session-active-change]:has([data-agent-session-checks-reason]) a[href$=\"/dev/proposals/990802\"]"
