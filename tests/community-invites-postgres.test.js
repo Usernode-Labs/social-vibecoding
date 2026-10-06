@@ -158,7 +158,6 @@ test('invite links against a real PostgreSQL', async (t) => {
   const app = async (slug) => (await pool.query(`SELECT ${APP_COLUMNS} FROM apps WHERE slug = $1`, [slug])).rows[0];
   const member = async (communityId, userId) => (await pool.query(
     'SELECT 1 FROM community_members WHERE community_id = $1 AND user_id = $2', [communityId, userId])).rows.length === 1;
-  const saved = { budgets: process.env.INVITE_TREE_BUDGETS };
   try {
     let token;
     await t.test('a member makes a link; somebody outside the project cannot', async () => {
@@ -203,19 +202,37 @@ test('invite links against a real PostgreSQL', async (t) => {
       assert.equal(rows[0].uses, 1);
     });
 
-    await t.test('somebody still waiting is queued, and letting them in joins them (the trigger)', async () => {
+    await t.test('somebody still waiting joins as a private member, and letting them in keeps them in', async () => {
       const cy = as(3, 'cy', false);
-      const queued = await invites.redeem(pool, { token, user: cy });
-      assert.deepEqual([queued.status, queued.slug, queued.skippedWaitlist], ['queued', null, false]);
-      assert.equal(await member(1, 3), false, 'not before they are let in');
-      assert.deepEqual(await invites.queuedFor(pool, 3), [{ name: 'Arena', inviter: 'ada' }]);
-      assert.equal((await invites.redeem(pool, { token, user: cy })).status, 'queued', 'a second follow is the same row');
+      const joined = await invites.redeem(pool, { token, user: cy });
+      assert.deepEqual([joined.status, joined.slug, joined.privateMember], ['joined', 'arena', true]);
+      assert.equal(await member(1, 3), true, 'in the community now, before they are let in');
+      const tier = await pool.query(
+        'SELECT has_platform_access, private_member_since IS NOT NULL AS private FROM users WHERE id = 3');
+      assert.deepEqual(tier.rows, [{ has_platform_access: false, private: true }], 'still waiting, as a private member');
+      assert.deepEqual(await invites.queuedFor(pool, 3), [], 'nothing left queued');
+      assert.equal((await invites.redeem(pool, { token, user: cy })).status, 'member', 'a second follow spends nothing');
       await waitlist.grantPlatformAccess(pool, 3, { manualRelease: true });
-      assert.equal(await member(1, 3), true, 'joined the moment access was granted');
+      assert.equal(await member(1, 3), true, 'still in once let in');
       const { rows } = await pool.query('SELECT status, applied_at IS NOT NULL AS applied FROM community_invite_redemptions WHERE user_id = 3');
       assert.deepEqual(rows, [{ status: 'joined', applied: true }]);
       const gen = await pool.query('SELECT invite_generation FROM users WHERE id = 3');
       assert.equal(gen.rows[0].invite_generation, 0, 'let off the waitlist by hand is generation 0');
+    });
+
+    await t.test('a redemption queued before private membership is applied when its link is followed again, spending nothing', async () => {
+      const arena = await app('arena');
+      const made = await invites.createInvite(pool, { app: arena, user: ADA });
+      const { rows: [{ id }] } = await pool.query("INSERT INTO users (username) VALUES ('quinn') RETURNING id");
+      await pool.query(
+        "INSERT INTO community_invite_redemptions (invite_id, user_id, status) VALUES ($1, $2, 'queued')", [made.link.id, id]);
+      await pool.query('UPDATE community_invites SET uses = 1 WHERE id = $1', [made.link.id]);
+      const again = await invites.redeem(pool, { token: made.link.token, user: as(id, 'quinn', false) });
+      assert.deepEqual([again.status, again.slug, again.privateMember], ['joined', 'arena', true]);
+      assert.equal(await member(1, id), true);
+      const { rows } = await pool.query('SELECT uses FROM community_invites WHERE id = $1', [made.link.id]);
+      assert.equal(rows[0].uses, 1, 'its use was spent when it was queued');
+      await invites.revokeInvite(pool, { inviteId: made.link.id, user: ADA });
     });
 
     await t.test('a link used as often as it allows is dead, and says only why', async () => {
@@ -232,13 +249,23 @@ test('invite links against a real PostgreSQL', async (t) => {
       const collab = await pool.query('SELECT status, invited_by FROM app_collaborators WHERE app_id = 2 AND user_id = 4');
       assert.deepEqual(collab.rows, [{ status: 'member', invited_by: 1 }]);
       assert.equal(await member(2, 4), true);
-      assert.equal((await invites.redeem(pool, { token: made.link.token, user: as(5, 'eve', false) })).status, 'queued');
+      const eve = await invites.redeem(pool, { token: made.link.token, user: as(5, 'eve', false) });
+      assert.deepEqual([eve.status, eve.privateMember], ['joined', true], 'somebody still waiting joins as a private member');
+      const eveCollab = await pool.query('SELECT status FROM app_collaborators WHERE app_id = 2 AND user_id = 5');
+      assert.deepEqual(eveCollab.rows, [{ status: 'member' }], 'a collaborator like anybody the link lets in');
+      // What turning it off cancels is a redemption still queued: one from
+      // before private membership, or one the link could not grant then.
+      const { rows: [{ id: zed }] } = await pool.query("INSERT INTO users (username) VALUES ('zed') RETURNING id");
+      await pool.query(
+        "INSERT INTO community_invite_redemptions (invite_id, user_id, status) VALUES ($1, $2, 'queued')", [made.link.id, zed]);
       assert.equal((await invites.revokeInvite(pool, { inviteId: made.link.id, user: as(2, 'bo', true) })).status, 404,
         'a stranger cannot, and is not told it exists');
       assert.deepEqual(await invites.revokeInvite(pool, { inviteId: made.link.id, user: ADA }), { ok: true, cancelled: 1 });
+      await waitlist.grantPlatformAccess(pool, zed);
       await waitlist.grantPlatformAccess(pool, 5);
-      const none = await pool.query('SELECT 1 FROM app_collaborators WHERE app_id = 2 AND user_id = 5');
+      const none = await pool.query('SELECT 1 FROM app_collaborators WHERE app_id = 2 AND user_id = $1', [zed]);
       assert.equal(none.rows.length, 0, 'a cancelled invite is not applied on release');
+      assert.equal(await member(2, 5), true, 'and eve, let in, is still in');
       assert.equal((await invites.preview(pool, made.link.token)).reason, 'revoked');
     });
 
@@ -324,7 +351,11 @@ test('invite links against a real PostgreSQL', async (t) => {
       await pool.query("INSERT INTO community_members (community_id, user_id) VALUES (2, 2) ON CONFLICT DO NOTHING");
       const made = await invites.createInvite(pool, { app: group, user: as(2, 'bo', true) });
       assert.ok(made.ok);
-      assert.equal((await invites.redeem(pool, { token: made.link.token, user: as(7, 'gus', false) })).status, 'queued');
+      const gus = await invites.redeem(pool, { token: made.link.token, user: as(7, 'gus', false) });
+      assert.deepEqual([gus.status, gus.privateMember], ['joined', true], 'gus joins while bo can still grant it');
+      const { rows: [{ id: una }] } = await pool.query("INSERT INTO users (username) VALUES ('una') RETURNING id");
+      await pool.query(
+        "INSERT INTO community_invite_redemptions (invite_id, user_id, status) VALUES ($1, $2, 'queued')", [made.link.id, una]);
       // bo is removed from the group.
       await pool.query('DELETE FROM app_collaborators WHERE app_id = 2 AND user_id = 2');
       assert.deepEqual(await invites.preview(pool, made.link.token), { live: false, reason: 'revoked' });
@@ -333,12 +364,18 @@ test('invite links against a real PostgreSQL', async (t) => {
       const stranger = await pool.query("INSERT INTO users (username, has_platform_access) VALUES ('hal', TRUE) RETURNING id");
       const hal = await invites.redeem(pool, { token: made.link.token, user: as(stranger.rows[0].id, 'hal', true) });
       assert.deepEqual([hal.ok, hal.reason], [false, 'revoked']);
-      await waitlist.grantPlatformAccess(pool, 7);
-      const none = await pool.query('SELECT 1 FROM app_collaborators WHERE app_id = 2 AND user_id = 7');
-      assert.equal(none.rows.length, 0, 'gus, queued on it, is not added on release');
-      // Put gus back on the waitlist for the tree case below.
-      await pool.query('UPDATE users SET has_platform_access = FALSE, invite_generation = NULL WHERE id = 7');
+      // And a queued follow of it from before does not join anybody: not on a
+      // second follow (the link is dead) and not on release.
+      const late = await invites.redeem(pool, { token: made.link.token, user: as(una, 'una', false) });
+      assert.notEqual(late.status, 'joined', 'una, queued on it, is not let in by following it again');
+      await waitlist.grantPlatformAccess(pool, una);
+      const none = await pool.query('SELECT 1 FROM app_collaborators WHERE app_id = 2 AND user_id = $1', [una]);
+      assert.equal(none.rows.length, 0, 'una, queued on it, is not added on release');
+      // Put gus back on the waitlist, out of the group, for the tree case below.
+      await pool.query('UPDATE users SET has_platform_access = FALSE, invite_generation = NULL, private_member_since = NULL WHERE id = 7');
       await pool.query('DELETE FROM community_invite_redemptions WHERE user_id = 7');
+      await pool.query('DELETE FROM app_collaborators WHERE user_id = 7');
+      await pool.query('DELETE FROM community_members WHERE user_id = 7');
     });
 
     await t.test('a link carries its maker\'s note, and its page shows the project: an after-shot, else the card image', async () => {
@@ -476,78 +513,31 @@ test('invite links against a real PostgreSQL', async (t) => {
       }
     });
 
-    await t.test('THE TREE, on by default: only a release by hand has skips, and invites do not chain', async () => {
-      process.env.INVITE_TREE_BUDGETS = '1';
-      assert.equal(await invites.treeEnabled(pool), true, 'no setting stored: on');
+    await t.test('no skips past the waitlist: anybody new joins as a private member, whoever made the link', async () => {
       const arena = await app('arena');
-      const generation = async (id) => (await pool.query('SELECT invite_generation FROM users WHERE id = $1', [id])).rows[0].invite_generation;
-
-      // ada had access before the tree: no generation, so no skips, and her
-      // link queues somebody new like it would with the tree off.
-      assert.equal(await invites.skipsLeft(pool, ADA), 0);
-      const adas = await invites.createInvite(pool, { app: arena, user: ADA });
-      const queued = await invites.redeem(pool, { token: adas.link.token, user: as(6, 'fay', false) });
-      assert.deepEqual([queued.status, queued.skippedWaitlist], ['queued', false]);
-      // Admitting her again by hand gives her none: it is not what let her in.
-      await waitlist.grantPlatformAccess(pool, 1, { manualRelease: true });
-      assert.equal(await generation(1), null);
-      // Neither does a grant that is not a release by hand (eve, above).
-      assert.equal(await generation(5), null);
-      assert.equal(await invites.skipsLeft(pool, as(5, 'eve', true)), 0);
-
-      // cy was let off the waitlist by hand: generation 0, with a skip.
+      const newcomer = async (name) => (await pool.query('INSERT INTO users (username) VALUES ($1) RETURNING id', [name])).rows[0].id;
+      const tier = async (id) => (await pool.query(
+        'SELECT has_platform_access, admitted_by, invite_generation, private_member_since IS NOT NULL AS private FROM users WHERE id = $1',
+        [id])).rows[0];
+      // cy was let off the waitlist by hand (generation 0: the tree's ten
+      // skips once), and root is an admin (the tree's unlimited ones).
       const CY = as(3, 'cy', true);
-      assert.equal(await invites.skipsLeft(pool, CY), 1);
-      const cys = await invites.createInvite(pool, { app: arena, user: CY });
-
-      // Switched off in Admin → Waitlist, a skip is not spent: ivy waits.
-      await invites.setTreeEnabled(pool, { enabled: false, actorId: 9 });
-      assert.equal(await invites.skipsLeft(pool, CY), null, 'off: nothing to show');
-      const ivyId = (await pool.query("INSERT INTO users (username) VALUES ('ivy') RETURNING id")).rows[0].id;
-      const ivy = await invites.redeem(pool, { token: cys.link.token, user: as(ivyId, 'ivy', false) });
-      assert.deepEqual([ivy.status, ivy.skippedWaitlist], ['queued', false]);
-      await invites.setTreeEnabled(pool, { enabled: true, actorId: 9 });
-      assert.equal(await invites.skipsLeft(pool, CY), 1, 'nothing was spent while it was off');
-
-      const fay = await invites.redeem(pool, { token: cys.link.token, user: as(6, 'fay', false) });
-      assert.deepEqual([fay.status, fay.skippedWaitlist, fay.slug], ['joined', true, 'arena']);
-      const row = await pool.query('SELECT has_platform_access, admitted_by, invite_generation FROM users WHERE id = 6');
-      assert.deepEqual(row.rows[0], { has_platform_access: true, admitted_by: 3, invite_generation: 1 });
-      assert.equal(await invites.skipsLeft(pool, CY), 0);
-      const gus = await invites.redeem(pool, { token: cys.link.token, user: as(7, 'gus', false) });
-      assert.deepEqual([gus.status, gus.skippedWaitlist], ['queued', false], 'cy\'s one skip is spent');
-
-      // No chaining: fay, whom a link let in, has none of her own.
-      const FAY = as(6, 'fay', true);
-      assert.equal(await invites.skipsLeft(pool, FAY), 0);
-      const fays = await invites.createInvite(pool, { app: arena, user: FAY });
-      const viaFay = await invites.redeem(pool, { token: fays.link.token, user: as(7, 'gus', false) });
-      assert.deepEqual([viaFay.status, viaFay.skippedWaitlist], ['queued', false]);
-      // Admitting her by hand later leaves her where the link put her.
-      await waitlist.grantPlatformAccess(pool, 6, { manualRelease: true });
-      assert.equal(await generation(6), 1);
-
-      // An admin's link has no limit, but it is not a release by hand: the
-      // person it lets in is generation 1, with nothing to give.
       const ROOT = { id: 9, username: 'root', isAdmin: true, hasPlatformAccess: true };
-      assert.equal(await invites.skipsLeft(pool, ROOT), null, 'unlimited: nothing to count down');
-      const roots = await invites.createInvite(pool, { app: arena, user: ROOT });
-      const viaRoot = await invites.redeem(pool, { token: roots.link.token, user: as(7, 'gus', false) });
-      assert.deepEqual([viaRoot.status, viaRoot.skippedWaitlist], ['joined', true]);
-      const gusRow = await pool.query('SELECT admitted_by, invite_generation FROM users WHERE id = 7');
-      assert.deepEqual(gusRow.rows[0], { admitted_by: 9, invite_generation: 1 });
-      assert.equal(await invites.skipsLeft(pool, as(7, 'gus', true)), 0);
-
-      // What the Waitlist screen shows.
-      const shown = await invites.adminPayload(pool);
-      assert.deepEqual(
-        { enabled: shown.enabled, rootSkips: shown.rootSkips, roots: shown.roots, throughLinks: shown.throughLinks, updatedBy: shown.updatedBy },
-        { enabled: true, rootSkips: 1, roots: 1, throughLinks: 2, updatedBy: 'root' },
-        'cy can invite; fay and gus got in through links; root switched it last',
-      );
+      for (const [maker, name] of [[CY, 'nia'], [ROOT, 'ola'], [ADA, 'pia']]) {
+        const link = (await invites.createInvite(pool, { app: arena, user: maker })).link;
+        const id = await newcomer(name);
+        const joined = await invites.redeem(pool, { token: link.token, user: as(id, name, false) });
+        assert.deepEqual([joined.status, joined.slug, joined.privateMember], ['joined', 'arena', true], `${maker.username}'s link`);
+        assert.equal('skippedWaitlist' in joined, false);
+        assert.deepEqual(await tier(id), { has_platform_access: false, admitted_by: null, invite_generation: null, private: true },
+          `${name} waits for the waitlist like anybody else`);
+      }
+      // Letting one in is the waitlist's own release.
+      const { rows: [{ id: nia }] } = await pool.query("SELECT id FROM users WHERE username = 'nia'");
+      await waitlist.grantPlatformAccess(pool, nia, { manualRelease: true });
+      assert.equal((await tier(nia)).has_platform_access, true);
     });
   } finally {
-    process.env.INVITE_TREE_BUDGETS = saved.budgets || '';
     await dropSchema(pool);
   }
 });

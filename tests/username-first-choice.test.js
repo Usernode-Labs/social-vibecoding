@@ -84,8 +84,9 @@ function makeMockPool(state) {
     const sql = collapse(rawSql);
     calls.push({ sql, params });
 
-    if (sql.startsWith('SELECT needs_username_choice FROM users WHERE id')) {
-      return { rows: state.me ? [{ needs_username_choice: state.me.needsChoice }] : [] };
+    // (With the provisional-handle column: usernames.replaceProvisionalUsername.)
+    if (sql.startsWith('SELECT needs_username_choice, username_provisional_since IS NOT NULL AS provisional FROM users WHERE id')) {
+      return { rows: state.me ? [{ needs_username_choice: state.me.needsChoice, provisional: false }] : [] };
     }
     if (sql.startsWith('SELECT id FROM users WHERE LOWER(username)')) {
       const hit = state.live.find((u) => u.username.toLowerCase() === params[0]);
@@ -390,7 +391,11 @@ test('the gate reads the server flag, never the shape of the stored name', () =>
 });
 
 test('the step cannot be skipped: a non-dismissible modal with no Close', () => {
-  assert.match(gateJs, /PlatformUI\.modal\(\{ contentEl: panel, dismissible: false \}\)/);
+  // Dismissible only for a provisional handle's ask before a public place
+  // (askForPublic, `forPublic`); the first-run gate passes no such option.
+  assert.match(gateJs, /PlatformUI\.modal\(\{ contentEl: panel, dismissible: forPublic, onDismiss \}\)/);
+  assert.match(gateJs, /const forPublic = !!\(opts && opts\.forPublic\);/);
+  assert.match(gateJs, /UsernameFirstRun\._present\(\{\}\);/, 'the first-run gate: not for public');
   assert.doesNotMatch(gateJs, /'Close'|'Cancel'|'Skip'/);
 });
 

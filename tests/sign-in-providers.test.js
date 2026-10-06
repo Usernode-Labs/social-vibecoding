@@ -479,10 +479,12 @@ test('the sheet: Apple and Google first when offered, then email; the trip carri
   assert.match(sheet.resumeError('error-no_verified_email'), /no verified email/);
   assert.equal(sheet.resumeError('error-something_new'), 'That did not work. Try again, or use your email.');
   const src = read('frontend/src/features/auth/sign-in-sheet.tsx');
-  assert.match(src, /const firstStep: Step = providers\.length \? 'choose' : 'email';/);
+  // Apple and Google first, unless the invite's Join starts with the phone
+  // (tests/phone-invite-join.test.js), when they are among the other ways.
+  assert.match(src, /const otherWays: Step = providers\.length \? 'choose' : 'email';\s+const firstStep: Step = phone \? 'phone' : otherWays;/);
   assert.match(src, /\{`Continue with \$\{PROVIDER_LABEL\[provider\]\}`\}/);
   assert.match(src, /Continue with email/);
-  assert.match(src, /fetchSessionMint\('\/api\/auth\/oauth\/finish',/);
+  assert.match(src, /fetchSessionMint\(usernameVia === 'phone' \? '\/api\/auth\/phone\/finish' : '\/api\/auth\/oauth\/finish',/);
   const icons = read('frontend/@/components/ui/icons.tsx');
   assert.match(icons, /export const AppleIcon = filled\(/);
   assert.match(icons, /export const GoogleIcon = \(/);

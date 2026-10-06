@@ -93,6 +93,7 @@ const { debugRoutes } = require('./src/routes/debug');
 const { galleryRoutes } = require('./src/routes/gallery');
 const { appInstallRoutes } = require('./src/routes/app-install');
 const communityInviteRoutes = require('./src/routes/community-invites');
+const memberWaitlistRoutes = require('./src/routes/member-waitlist');
 const {
   cliAuthGate,
   cliApiBearerAuth,
@@ -153,6 +154,7 @@ const { getActiveWorkerCount } = require('./src/routes/sessions');
 const { sweepStuckCreatingApps } = require('./src/routes/apps');
 const appAccess = require('./src/services/app-access');
 const platformJwt = require('./src/services/platform-jwt');
+const usernames = require('./src/services/usernames');
 const appHostConfig = require('./src/services/app-host-config');
 const { getPool } = require('./src/db/pool');
 const { createLeadership, withMigrationLock } = require('./src/services/leadership');
@@ -607,6 +609,11 @@ app.use(mcpBrowserRoutes(config));
 app.use(authRoutes(config));
 // Apple and Google sign-in, and Admin → Sign-in providers, where they are set up.
 app.use(require('./src/routes/sign-in-providers').signInProviderRoutes(config));
+// Firebase phone sign-in and sign-up (routes/phone-auth.js), pre-login
+// (middleware/auth.js PUBLIC_PATHS): fail-closed 404 unless
+// FIREBASE_PHONE_AUTH_ENABLED and its three companion values are set
+// (src/services/firebase-phone-auth.js).
+app.use(require('./src/routes/phone-auth').phoneAuthRoutes(config));
 app.use(credentialRoutes(config));
 app.use(globalChatRoutes(config));
 app.use(appRoutes(config));
@@ -775,6 +782,9 @@ app.use(appInstallRoutes(config));
 // `app.get('*')` catch-all, which would otherwise answer the page with a
 // plain index.html and no link preview.
 app.use(communityInviteRoutes(config));
+// A private member's waitlist card (routes/member-waitlist.js): joining the
+// waitlist from inside, with the account's own email or a confirmed one.
+app.use(memberWaitlistRoutes(config));
 
 // Mint the iframe identity token the shell injects into an app iframe.
 //
@@ -828,14 +838,23 @@ app.get('/api/iframe-token', async (req, res) => {
   // when unset. Always present in the payload so app servers never need
   // `'locale' in payload` checks.
   let userLocale = null;
+  let provisionalHandle = false;
   try {
     const { rows } = await pool.query(
-      'SELECT usernode_pubkey, locale FROM users WHERE id = $1',
+      `SELECT usernode_pubkey, locale, username_provisional_since IS NOT NULL AS provisional
+         FROM users WHERE id = $1`,
       [req.user.id]
     );
     usernodePubkey = rows[0]?.usernode_pubkey || null;
     userLocale = rows[0]?.locale || null;
+    provisionalHandle = rows[0]?.provisional === true;
   } catch {}
+  // A provisional handle (an invite's phone sign-up, made from its name)
+  // is for private groups: a public app gets a username the person chose,
+  // and the shell asks for one first (services/usernames.js).
+  if (provisionalHandle && appRow.view_visibility === 'public') {
+    return res.status(409).json(usernames.USERNAME_REQUIRED);
+  }
 
   const tokenUser = {
     id: req.user.id,

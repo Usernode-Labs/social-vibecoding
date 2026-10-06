@@ -41,6 +41,7 @@ const log = require('../services/logger');
 const events = require('../services/events');
 const providers = require('../services/sign-in-providers');
 const communityInvites = require('../services/community-invites');
+const phoneAuth = require('../services/firebase-phone-auth');
 const challengeScorer = require('../services/topochain/challenge-scorer');
 const firstSession = require('../services/first-session');
 const managedOpenRouter = require('../services/openrouter-managed-keys');
@@ -133,7 +134,10 @@ function signInProviderRoutes(config) {
     }
     const consented = result.created || state.follow_invite === true;
     const invite = consented
-      ? await communityInvites.redeemCarried(pool, req, res, result.userId)
+      ? await communityInvites.redeemCarried(pool, req, res, result.userId, {
+        // A private member signs up with a phone (community-invites.js).
+        requirePhone: phoneAuth.offered(config),
+      })
       : (communityInvites.clearInviteCookie(res), null);
     if (invite && invite.status === 'joined') await challengeScorer.scoreOnJoin(pool, config);
   }
