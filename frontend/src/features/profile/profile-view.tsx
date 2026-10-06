@@ -19,7 +19,7 @@
  * arrives only from ./profile.js's effects, never from a render.
  */
 
-import { type ReactNode } from 'react';
+import { memo, useMemo, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { PLANE_FILL } from '@/components/ui/grouped-list';
@@ -27,8 +27,11 @@ import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { useStoreState } from '../../lib/use-store-state';
 import {
   buildProfileView,
+  identityView,
+  moreRowsView,
   publicAvatarView,
   profileStore,
+  statsView,
 } from './profile-store.js';
 import { Profile } from './profile.js';
 import { MorePanel, WorkPanel } from './account-panel';
@@ -214,9 +217,39 @@ function ProfileSkeleton(): ReactNode {
   );
 }
 
+/**
+ * StatCards, memoized where it is used. ProfileRoot derives the `stats` prop
+ * with useMemo keyed on the store's `data` field, so a push that did not move
+ * the data hands this the same array and React skips the render — the three
+ * cards do not redraw just because a sheet opened or a friend answered.
+ * A plain `function StatCards(` stays above: the node suite reads that
+ * declaration (tests/topochain-profile-web.test.js).
+ */
+const StatCardsMemo = memo(StatCards);
+
 export function ProfileRoot(): ReactNode {
   const state = useStoreState(profileStore);
   const view = buildProfileView(state);
+
+  /*
+      The store replaces its state object on every push (plain-store.js), so
+      a memo keyed on `state` would never skip. These memos are keyed on the
+      exact fields the shaping functions read instead: a push that only opened
+      a sheet, or landed a friend change from elsewhere on the page, hands the
+      memoized cards and panels the props they already had and React skips
+      them. That full-menu rebuild inside every push — the reads landing while
+      the viewer is already scrolling, a Friends or App slots tap — is what
+      made scrolling this screen and tapping its rows hitch (#4022).
+  */
+  const { data, user, pendingAvatarUrl, pendingRemove } = state;
+  // identityView reads user, data.summary and the staged-photo fields (its
+  // avatarUrlOf reads the last two); a partial state is all it needs.
+  const identity = useMemo(
+    () => identityView({ user, data, pendingAvatarUrl, pendingRemove }),
+    [user, data, pendingAvatarUrl, pendingRemove],
+  );
+  const stats = useMemo(() => statsView((data && data.summary) || null), [data]);
+  const rows = useMemo(() => moreRowsView(data), [data]);
 
   if (view.kind === 'empty') return null;
   if (view.kind === 'loading') return <ProfileSkeleton />;
@@ -267,8 +300,8 @@ export function ProfileRoot(): ReactNode {
     <>
       {state.sheetOpen ? (
         <ProfileEditSheet
-          avatarUrl={view.identity.avatarUrl}
-          initial={view.identity.initial}
+          avatarUrl={identity.avatarUrl}
+          initial={identity.initial}
           publicControls={view.publicControls}
           publicStatus={state.publicStatus}
           publishing={state.publishing}
@@ -287,8 +320,8 @@ export function ProfileRoot(): ReactNode {
           status={state.friendsStatus || ''}
         />
       ) : null}
-      <IdentityCard identity={view.identity} />
-      <StatCards stats={view.stats} />
+      <IdentityCard identity={identity} />
+      <StatCardsMemo stats={stats} />
       {/*
           "Your work" (UI overhaul): Your changes, Your requests and Your
           votes, each a view of the Your work screen. Then "More":
@@ -298,8 +331,8 @@ export function ProfileRoot(): ReactNode {
           (features/settings/account-rows.tsx). Your contributions, which
           closed the screen, is gone: Your changes lists every merged one.
       */}
-      <WorkPanel rows={view.rows} />
-      <MorePanel rows={view.rows} />
+      <WorkPanel rows={rows} />
+      <MorePanel rows={rows} />
     </>
   );
 }

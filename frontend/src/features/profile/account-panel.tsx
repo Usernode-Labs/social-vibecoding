@@ -59,7 +59,7 @@
  * render.
  */
 
-import { type ReactNode } from 'react';
+import { memo, type ReactNode } from 'react';
 
 import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
 import { IconTile } from '@/components/ui/icon-tile';
@@ -89,7 +89,15 @@ function plainClick(event: { defaultPrevented: boolean; button: number; metaKey:
     || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey);
 }
 
-export function WorkPanel({ rows }: { rows: ProfileRows }): ReactNode {
+// Both panels are React.memo on their `rows` prop: ProfileRoot derives that
+// object with useMemo keyed on the store's `data` field, so a push that did
+// not move the data hands them the same object and React skips the render —
+// the rows behind an opened card or dialog no longer redraw (#4022). Their
+// own subscriptions below (the admin flag, the wallet, the allowance) still
+// re-render their panel when one of those changes; memo only blocks the
+// parent. Names, props and markup are unchanged: callers and the node suites
+// render these directly.
+export const WorkPanel = memo(function WorkPanel({ rows }: { rows: ProfileRows }): ReactNode {
   return (
     <section id="profile-work" className="mt-2">
       <SectionHeader>Your work</SectionHeader>
@@ -127,9 +135,9 @@ export function WorkPanel({ rows }: { rows: ProfileRows }): ReactNode {
       </GroupedList>
     </section>
   );
-}
+});
 
-export function MorePanel({ rows }: {
+export const MorePanel = memo(function MorePanel({ rows }: {
   rows: ProfileRows;
 }): ReactNode {
   // A CAPABILITY, published rather than fetched: App.renderAdminButton in
@@ -215,4 +223,4 @@ export function MorePanel({ rows }: {
       </GroupedList>
     </section>
   );
-}
+});
