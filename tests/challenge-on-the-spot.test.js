@@ -54,9 +54,10 @@ const challengeRow = (extra = {}) => ({
 function spotPool({
   ruleRows = [], challenges = [], candidates = {}, credited = [], total = 0, locked = false, fail = null,
 } = {}) {
-  const pool = { seen: [], inserted: [], stamps: [], locks: [], unlocks: [], connects: 0, released: 0 };
+  const pool = { seen: [], asked: [], inserted: [], stamps: [], locks: [], unlocks: [], connects: 0, released: 0 };
   const handle = async (sql, params) => {
     pool.seen.push(sql);
+    pool.asked.push({ sql, params });
     if (fail && sql.includes(fail)) throw new Error('connection reset');
     if (sql.includes('pg_try_advisory_lock')) { pool.locks.push(params); return { rows: [{ acquired: !locked }] }; }
     if (sql.includes('pg_advisory_unlock')) { pool.unlocks.push(params); return { rows: [] }; }
@@ -335,6 +336,65 @@ test('every door runs the measures it can complete, and only those', () => {
   assert.deepEqual(all.filter((m) => rules.MEASURES[m].counted), ['TRY_APPS'],
     'the one counted measure on the spot is the one scoreOn locks for');
   assert.ok(!all.includes('INVITES_JOINED'), 'its "three and no more" waits for the locked schedule');
+});
+
+// ─── The read door (#3993) ─────────────────────────────────────────────
+//
+// The two read paths that serve the challenge card call this: every live
+// rule runs on the read that draws the card, so a task finished since the
+// last pass is counted on it rather than an interval later.
+
+test('scoreOnRead hands scoreOn every measure, and the graded ones are dropped from the rules read', async () => {
+  scorer._resetOnReadGuardForTests();
+  const gradedOnly = spotPool({
+    ruleRows: [{ id: 5, measure: 'USEFUL_FEEDBACK' }, { id: 6, measure: 'PROPOSAL_ACCEPTED' }],
+  });
+  assert.equal(await scorer.scoreOnRead(gradedOnly, ON, { now: NOW }), null,
+    'a page view never waits on, or pays for, a model call');
+  assert.deepEqual(gradedOnly.seen, [scorer.ON_THE_SPOT_RULES_SQL], 'one read, then nothing');
+  const [rulesRead] = gradedOnly.asked;
+  for (const graded of ['USEFUL_FEEDBACK', 'PROPOSAL_ACCEPTED']) {
+    assert.equal(rulesRead.params[0].includes(graded), false, `${graded} is not asked for`);
+  }
+  for (const ungraded of Object.keys(rules.MEASURES).filter((m) => !rules.MEASURES[m].graded)) {
+    assert.ok(rulesRead.params[0].includes(ungraded), `${ungraded} is offered`);
+  }
+});
+
+test('scoreOnRead is a no-op with automatic scoring off, or when the pool fails', async () => {
+  scorer._resetOnReadGuardForTests();
+  const off = spotPool();
+  assert.equal(await scorer.scoreOnRead(off, OFF, { now: NOW }), null);
+  assert.equal(off.seen.length, 0, 'interval 0 asks Postgres nothing');
+
+  const broken = { query: async () => { throw new Error('connection reset'); } };
+  assert.equal(await scorer.scoreOnRead(broken, ON, { now: NOW }), null,
+    'a failure is logged, never thrown into the read');
+});
+
+test('the read kick runs at most once a minute per process, whatever the outcome', async () => {
+  scorer._resetOnReadGuardForTests();
+  const first = spotPool({ ruleRows: [{ id: 1, measure: 'VOTE_CAST' }] });
+  await scorer.scoreOnRead(first, ON, { now: NOW });
+  assert.ok(first.seen.includes(scorer.RULE_CHALLENGES_SQL), 'the kick ran a pass');
+
+  const again = spotPool({ ruleRows: [{ id: 1, measure: 'VOTE_CAST' }] });
+  assert.equal(await scorer.scoreOnRead(again, ON, { now: NOW + 30_000 }), null);
+  assert.equal(again.seen.length, 0, 'a kick inside the window reaches no query at all');
+
+  const later = spotPool({ ruleRows: [{ id: 1, measure: 'VOTE_CAST' }] });
+  assert.ok(await scorer.scoreOnRead(later, ON, { now: NOW + scorer.ON_READ_GUARD_MS + 1 }),
+    'past the window it runs again');
+
+  // A busy pass is an attempted kick, so it spends the minute too: a burst
+  // of reads while the tick holds the lock costs nothing further.
+  scorer._resetOnReadGuardForTests();
+  const busy = spotPool({ ruleRows: [{ id: 1, measure: 'TRY_APPS' }], locked: true });
+  assert.deepEqual(await scorer.scoreOnRead(busy, ON, { now: NOW }), { busy: true });
+  assert.equal(busy.seen.includes(scorer.RULE_CHALLENGES_SQL), false, 'nothing is read or planned');
+  const afterBusy = spotPool({ ruleRows: [{ id: 1, measure: 'VOTE_CAST' }] });
+  assert.equal(await scorer.scoreOnRead(afterBusy, ON, { now: NOW + 30_000 }), null);
+  assert.equal(afterBusy.seen.length, 0, 'the skipped pass still spent the window');
 });
 
 // ─── The heartbeat: a pass on the crossing, and on nothing else ────────

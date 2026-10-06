@@ -66,7 +66,7 @@ const {
   loadOnboarding, visibleChallenges, challengeCategory, resolveProgress, loadEventBlocks,
   isLocked, gateSummary, COUNTS_THIS_WEEK_SQL,
 } = require('../../services/topochain/challenge-onboarding');
-const { loadRuleFacts, intervalMinutes } = require('../../services/topochain/challenge-scorer');
+const { loadRuleFacts, intervalMinutes, scoreOnRead } = require('../../services/topochain/challenge-scorer');
 const events = require('../../services/events');
 const seasonHistory = require('../../services/topochain/season-history');
 
@@ -724,6 +724,15 @@ function topochainPublicRoutes(config) {
       const { rows: evRows } = await pool.query('SELECT id, internal FROM season_events WHERE id = $1', [id]);
       const event = evRows[0];
       if (!event || event.internal) return fail(res, 404, 'Event not found.');
+
+      // #3993: a signed-in read kicks the scorer before the list is counted,
+      // so a task finished since the last pass shows on this response's cards
+      // instead of a full interval later — the same gap the Home card closed.
+      // scoreOnRead never throws, runs at most once a minute per process, and
+      // the route runs behind optionalSessionAuth: an anonymous read carries
+      // no viewer and does not kick, so scrapers and open crawls cannot drive
+      // scoring.
+      if (req.user?.id) await scoreOnRead(pool, config);
 
       const { rows } = await pool.query(
         // `c.completed` is the organiser's "this challenge is over" flag.

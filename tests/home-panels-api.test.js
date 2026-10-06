@@ -31,6 +31,7 @@ const path = require('node:path');
 const express = require('express');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+const scorer = require('../src/services/topochain/challenge-scorer');
 
 function collapse(sql) {
   return sql.replace(/\s+/g, ' ').trim();
@@ -50,6 +51,14 @@ function makeMockPool(state) {
       // (loadOnboarding's rows) is here for the locked count's contract.
       if (sql.startsWith('/* challenge onboarding */')) return { rows: state.onboardingRows || [] };
       calls.push({ sql, params });
+
+      // The read kick's rules read (#3993). The fixture carries no scoring
+      // rules, so the kick is one read and out — except when a test asks
+      // for the failure, which must not reach the panel.
+      if (sql.includes('measure = ANY($1::text[])')) {
+        if (state.rulesThrows) throw new Error('scoring rules exploded');
+        return { rows: [] };
+      }
 
       // Model legacy stored preferences to catch accidental reads or writes.
       if (sql.includes('SELECT home_panels_hidden FROM users')) {
@@ -609,6 +618,51 @@ test('GET /api/home-panels: ?demo=1 is a no-op outside staging', async () => {
   const { body } = await get(app, '/api/home-panels?demo=1');
   assert.equal(body.panels[0].challenges[0].goal, 'Real goal');
   assert.equal(body.panels[0].demo, undefined);
+});
+
+// ─── The read kick (#3993) ────────────────────────────────────────────
+//
+// The read that draws the card kicks the scorer first, so a task finished
+// since the last pass is counted on this response instead of an interval
+// later. These run against the scorer's module guard, so each resets it.
+
+test('GET /api/home-panels: a signed-in read kicks the scorer before the challenges rows are read', async () => {
+  scorer._resetOnReadGuardForTests();
+  const { app, calls } = makeApp({ season: SEASON, rows: [row()] }, { user: USER });
+  const { status } = await get(app, '/api/home-panels');
+  assert.equal(status, 200);
+  const kick = calls.filter((c) => c.sql.includes('measure = ANY($1::text[])'));
+  assert.equal(kick.length, 1, 'one kick per read, not per panel');
+  const kickAt = calls.findIndex((c) => c.sql.includes('measure = ANY($1::text[])'));
+  const rowQuery = calls.findIndex((c) => c.sql.includes('FROM challenges c'));
+  assert.ok(kickAt !== -1 && kickAt < rowQuery, 'the rows are read after the kick');
+});
+
+test('GET /api/home-panels: the demo variant reads no database, so it kicks nothing', async () => {
+  scorer._resetOnReadGuardForTests();
+  const prev = process.env.USERNODE_ENV;
+  process.env.USERNODE_ENV = 'staging';
+  let calls;
+  try {
+    const made = makeApp({ season: SEASON, rows: [row()] }, { user: USER });
+    calls = made.calls;
+    const { status, body } = await get(made.app, '/api/home-panels?demo=1');
+    assert.equal(status, 200);
+    assert.equal(body.panels[0].demo, true);
+  } finally {
+    process.env.USERNODE_ENV = prev;
+  }
+  assert.equal(calls.filter((c) => c.sql.includes('measure = ANY($1::text[])')).length, 0,
+    'the demo payload is read-only: no kick, no query');
+});
+
+test('GET /api/home-panels: a kick that fails still serves the panel', async () => {
+  scorer._resetOnReadGuardForTests();
+  const { app } = makeApp({ season: SEASON, rows: [row()], rulesThrows: true }, { user: USER });
+  const { status, body } = await get(app, '/api/home-panels');
+  assert.equal(status, 200, 'the response is never a scoring failure');
+  assert.deepEqual(body.panels[0].challenges.map((c) => c.id), [1],
+    'last-known numbers, served as before');
 });
 
 // HomePanels as the browser runs it, for the demo payload's drawn rows: the

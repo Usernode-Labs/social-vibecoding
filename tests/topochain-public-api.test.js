@@ -15,6 +15,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
 const cookieParser = require('cookie-parser');
+const scorer = require('../src/services/topochain/challenge-scorer');
 
 // ─── Fixture data ─────────────────────────────────────────────────────
 
@@ -315,6 +316,10 @@ function makeMockPool() {
   async function query(rawSql, params = []) {
     const sql = collapse(rawSql);
     if (sql.startsWith('/* challenge onboarding */')) return { rows: [] };
+    // The read kick's rules read (#3993): a signed-in challenges read runs
+    // it first. The fixtures carry no live rule the door would run, so it
+    // is one read and out.
+    if (sql.includes('measure = ANY($1::text[])')) return { rows: [] };
     // GET /season-events/{id}/challenges: the scoring rules bound to the
     // list's challenges or their templates, beside the event's dates (#3185).
     if (sql.startsWith('/* challenge scoring cadence */')) {
@@ -1260,6 +1265,53 @@ test('GET /season-events/:id/challenges: a scored challenge names its measure an
 test('GET /season-events/:id/challenges: internal event -> 404', async () => {
   const res = await get('/api/v4/season-events/102/challenges');
   assert.equal(res.status, 404);
+});
+
+// #3993: a signed-in read kicks the scorer before the list is counted, so a
+// task finished since the last pass shows on these cards instead of an
+// interval later. The route runs behind optionalSessionAuth, so an anonymous
+// read carries no viewer and must not kick — scrapers and open crawls cannot
+// drive scoring. A counting pool of its own, so the queries are observable.
+test('GET /season-events/:id/challenges: a signed-in read kicks the scorer first; an anonymous one does not', async () => {
+  const queries = [];
+  const pool = {
+    async query(rawSql) {
+      const sql = collapse(rawSql);
+      queries.push(sql);
+      if (sql.startsWith('/* challenge onboarding */')) return { rows: [] };
+      if (sql.includes('id, internal FROM season_events')) return { rows: [{ id: 100, internal: false }] };
+      if (sql.includes('measure = ANY($1::text[])')) return { rows: [] };
+      if (sql.includes('FROM challenges c') && sql.includes('c.enabled = TRUE')) return { rows: [] };
+      throw new Error(`unexpected SQL: ${sql.slice(0, 120)}`);
+    },
+  };
+  const read = async (user) => {
+    queries.length = 0;
+    scorer._resetOnReadGuardForTests();
+    let srv;
+    withInjectedPool(pool, ({ topochainPublicRoutes }) => {
+      const app = express();
+      app.use(express.json());
+      app.use((req, _res, next) => { if (user) req.user = user; next(); });
+      app.use(topochainPublicRoutes({ databaseUrl: 'postgres://fake/fake' }));
+      srv = app.listen(0);
+    });
+    await new Promise((r) => srv.once('listening', r));
+    try {
+      const res = await fetch(`http://127.0.0.1:${srv.address().port}/api/v4/season-events/100/challenges`);
+      assert.equal(res.status, 200);
+    } finally { srv.close(); }
+  };
+
+  await read(null);
+  assert.equal(queries.some((s) => s.includes('measure = ANY($1::text[])')), false,
+    'anonymous: no kick, the list is served as before');
+
+  await read({ id: 7, username: 'grace', isAdmin: false });
+  const kick = queries.findIndex((s) => s.includes('measure = ANY($1::text[])'));
+  const list = queries.findIndex((s) => s.includes('FROM challenges c') && s.includes('c.enabled = TRUE'));
+  assert.ok(kick !== -1, 'a signed-in read kicks the scorer');
+  assert.ok(kick < list, 'the list is counted after the kick');
 });
 
 // ─── GET /season-events/{id}/challenges/{id}/breakdown ───────────────

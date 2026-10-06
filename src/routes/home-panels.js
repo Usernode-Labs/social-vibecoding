@@ -9,6 +9,7 @@
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
+const challengeScorer = require('../services/topochain/challenge-scorer');
 const { TEMPLATE_JOIN_COLUMNS_SQL } = require('./topochain/challenge-view');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
@@ -816,7 +817,10 @@ function panelRegistryPublic() {
   }));
 }
 
-function homePanelRoutes() {
+// `config` is the server's (server.js mounts `homePanelRoutes(config)`);
+// the call without one keeps working — scoreOnRead treats absent config as
+// the default interval, as it always has.
+function homePanelRoutes(config) {
   const router = Router();
   const pool = getPool();
 
@@ -825,6 +829,14 @@ function homePanelRoutes() {
     const registry = panelRegistryPublic();
     try {
       const demo = IS_STAGING && req.query.demo === '1';
+      // #3993: the read that draws the card kicks the scorer first, so a
+      // task finished a minute ago is counted on this response instead of
+      // on the rule's next scheduled pass — which is what made the card
+      // show old numbers through a refresh. scoreOnRead never throws and
+      // runs at most once a minute per process, so a burst of home loads
+      // costs one pass and a scoring failure cannot blank the home screen;
+      // the demo variant reads no database, so it kicks nothing.
+      if (!demo) await challengeScorer.scoreOnRead(pool, config);
       // ?expand=<key> asks one panel for its expanded list (finished
       // challenges included, row cap lifted). Per-visit UI state, so it
       // rides on the request rather than being stored.

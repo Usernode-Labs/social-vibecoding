@@ -1235,6 +1235,46 @@ const scoreOnJoin = (pool, config, opts) => scoreOn(pool, config, JOIN_MEASURES,
 const scoreOnVote = (pool, config, opts) => scoreOn(pool, config, VOTE_MEASURES, opts);
 const scoreOnFeedback = (pool, config, opts) => scoreOn(pool, config, FEEDBACK_MEASURES, opts);
 
+// ── On a read (#3993) ──────────────────────────────────────────────────
+//
+// The last gap is the one the card itself leaves open. Every door above
+// counts the action that just happened; an action that happened a minute
+// ago still waits for the rule's next pass, so somebody who finished their
+// tasks yesterday could open the card, read the old numbers, refresh, and
+// read them again — the read never triggers scoring, only the timer does.
+//
+// scoreOnRead is the door the two read paths that serve the card call:
+// every enabled rule on a live challenge runs, minus the graded ones,
+// which scoreOn drops itself (a page view never waits on, or pays for, a
+// model call). INVITES_JOINED is the one counted measure this hands the
+// lock for that the action doors never do; it plans under the same
+// pg_try_advisory_lock as the tick, and a pass that loses the race writes
+// nothing.
+//
+// It is deliberately NOT in ON_THE_SPOT, which maps one action to the
+// measures that action can complete — a read is not an action, it runs
+// whatever rules are live, and challenge-anatomy's per-measure door map
+// has no answer for it.
+//
+// The re-run guard is per process, like lastAggregateCheckAt: all it
+// guards is work that produces nothing. A burst of page loads inside a
+// minute costs at most one pass; outside it, a pass is safe by the same
+// construction the schedule is (unique source keys, ON CONFLICT DO
+// NOTHING, and a stamp that advances the rule's cadence clock rather than
+// duplicating it). The timestamp is set when a kick is attempted past the
+// guard, whatever the outcome, so even a busy or failed pass spends the
+// minute.
+const ON_READ_GUARD_MS = 60_000;
+let lastOnReadKickAt = 0;
+
+async function scoreOnRead(pool, config, { now = Date.now() } = {}) {
+  if (now - lastOnReadKickAt < ON_READ_GUARD_MS) return null;
+  lastOnReadKickAt = now;
+  return scoreOn(pool, config, Object.keys(MEASURES), { now });
+}
+
+function _resetOnReadGuardForTests() { lastOnReadKickAt = 0; }
+
 // ── The heartbeat's crossing (#3570) ───────────────────────────────────
 //
 // The app heartbeat (routes/apps.js, POST /api/apps/:slug/activity) reports
@@ -1326,6 +1366,7 @@ module.exports = {
   scoreOnJoin,
   scoreOnVote,
   scoreOnFeedback,
+  scoreOnRead,
   scoreOnAppTime,
   start,
   stop,
@@ -1347,6 +1388,8 @@ module.exports = {
   CREDITED_SQL,
   MEASURE_SQL,
   JOIN_MEASURES,
+  ON_READ_GUARD_MS,
+  _resetOnReadGuardForTests,
   ON_THE_SPOT,
   ON_THE_SPOT_RULES_SQL,
   APP_TIME_SQL,

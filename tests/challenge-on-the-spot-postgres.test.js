@@ -407,4 +407,29 @@ test('the First challenges count on the spot, against the full PostgreSQL schema
     assert.ok(summary && summary.credits >= 1, 'switched back on, the next vote counts everyone it missed');
     assert.equal((await credits(quiet.id, VOTE)).length, 1);
   });
+
+  // #3993: the read that draws the card kicks the scorer, so an action whose
+  // rule has not yet passed is credited by the read itself — no tick between
+  // finishing and seeing — and the pass is as idempotent as the schedule's.
+  await t.test('a read kick counts an unscored action, and runs at most once a minute', async () => {
+    as = await user();
+    await pool.query(
+      `INSERT INTO app_activity (app_id, user_id, seconds_spent, date) VALUES ($1, $2, 12, CURRENT_DATE)`,
+      [arena.id, as.id]);
+    scorer._resetOnReadGuardForTests();
+    const first = await scorer.scoreOnRead(pool, config);
+    assert.ok(first, 'the kick ran a pass');
+    const paid = await credits(as.id, TRY);
+    assert.equal(paid.length, 1, 'credited by the read, without waiting for a tick');
+    assert.equal(Number(paid[0].points), 500);
+    assert.equal(await done(as.id, TRY), true);
+
+    const again = await scorer.scoreOnRead(pool, config);
+    assert.equal(again, null, 'a second kick inside the guard window is skipped');
+    assert.equal((await credits(as.id, TRY)).length, 1);
+
+    scorer._resetOnReadGuardForTests();
+    await scorer.scoreOnRead(pool, config);
+    assert.equal((await credits(as.id, TRY)).length, 1, 'past the window, the pass pays nothing twice');
+  });
 });
