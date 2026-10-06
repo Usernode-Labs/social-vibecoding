@@ -252,6 +252,60 @@ test('?shot=make and ?shot=make-waitlist draw the make screen for the shots, and
   assert.match(read('frontend/src/features/auth/communities-first-run.js'), /if \(params && \(params\.get\('shot'\) \|\| params\.get\('demo'\) \|\| params\.get\('token'\)\)\) \{\s+CommunitiesFirstRun\._resolve\(\);/);
 });
 
+// Owner, 6 Oct 2026: once an example has replaced their waitlist words, a
+// first chip, "Your idea", puts them back.
+test('with a waitlist answer, "Your idea" appears once an example replaced their words, and puts them back', () => {
+  let slots = [];
+  let at = 0;
+  const real = require(require.resolve('react', { paths: [path.join(ROOT, 'frontend')] }));
+  const React = {
+    ...real,
+    useState(init) {
+      const k = at++;
+      if (!(k in slots)) slots[k] = typeof init === 'function' ? init() : init;
+      return [slots[k], (v) => { slots[k] = typeof v === 'function' ? v(slots[k]) : v; }];
+    },
+    useRef(init) { const k = at++; if (!(k in slots)) slots[k] = { current: init }; return slots[k]; },
+    useCallback(fn) { at++; return fn; },
+    useEffect() { at++; },
+    useLayoutEffect() { at++; },
+  };
+  const { MakeScreen } = loadTsx(`${DIR}/make.tsx`, { stubs: { react: React } });
+  const { EXAMPLES } = loadTsx(`${DIR}/examples.ts`);
+  const idea = 'A tracker for my run club, so we can see who keeps up';
+  const draw = () => { at = 0; return MakeScreen({ who: 'Jordan', idea, onMade() {}, onLookAround() {} }); };
+  const find = (node, test, out = []) => {
+    if (!node || typeof node !== 'object') return out;
+    if (Array.isArray(node)) { node.forEach((n) => find(n, test, out)); return out; }
+    if (node.props && test(node)) out.push(node);
+    if (node.props) find(node.props.children, test, out);
+    return out;
+  };
+  const chips = (tree) => find(tree, (n) => n.type === 'button' && (n.props['data-first-session-example'] !== undefined || n.props['data-first-session-own'] !== undefined));
+  const yourIdea = (tree) => find(tree, (n) => n.props['data-first-session-own'] !== undefined)[0];
+  const brief = (tree) => find(tree, (n) => n.type === 'textarea')[0];
+  const nameField = (tree) => find(tree, (n) => n.props.id === 'first-session-name')[0];
+  let tree = draw();
+  assert.equal(yourIdea(tree), undefined, 'not offered while their words are still there');
+  assert.equal(brief(tree).props.value, idea);
+  // An example replaces them; "Your idea" comes first in the row.
+  chips(tree)[1].props.onClick();
+  tree = draw();
+  assert.equal(brief(tree).props.value, EXAMPLES[1].brief);
+  assert.ok(yourIdea(tree), 'offered once an example replaced them');
+  assert.equal(chips(tree)[0], yourIdea(tree), 'the first chip');
+  assert.equal(yourIdea(tree).props['aria-pressed'], false);
+  // It puts their words back, with the name as the screen opened it.
+  yourIdea(tree).props.onClick();
+  tree = draw();
+  assert.equal(brief(tree).props.value, idea);
+  assert.equal(nameField(tree).props.value, '');
+  assert.equal(yourIdea(tree).props['aria-pressed'], true);
+  assert.ok(chips(tree).slice(1).every((c) => c.props['aria-pressed'] === false));
+  const src = read(`${DIR}/make.tsx`);
+  assert.match(src, /<DraftEditIcon className="h-4 w-4 text-violet-700 dark:text-violet-300" aria-hidden="true" \/>\s+Your idea\s+<\/button>/);
+});
+
 test('the waitlist answer is the linked row\'s "What would its own app do", read only while the question is owed', async () => {
   const ok = fakePool([[{ idea: 'A tracker for my run club' }]]);
   assert.equal(await firstSession.waitlistIdea(ok, 7), 'A tracker for my run club');
@@ -321,14 +375,14 @@ test('the description and the name are one sequence: Return says next and goes o
   assert.match(src, /ref=\{nameRef\}\s+id="first-session-name"/);
 });
 
-test('with the keyboard up nothing scrolls under the status bar: the bar stays, the form scrolls under it, inside the visible band', () => {
+test('with the keyboard up nothing scrolls under the status bar: the strip stays, the form scrolls under it, inside the visible band', () => {
   const src = read(`${DIR}/make.tsx`);
   const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Jordan', onMade() {}, onLookAround() {} });
   const root = /<div role="dialog"[^>]*>/.exec(html)[0];
   assert.match(root, /class="platform-kb-surface fixed inset-0 z-\[9000\] flex flex-col /);
   assert.doesNotMatch(root, /overflow/, 'the screen itself does not scroll from the top of the glass');
-  // The bar (with the status bar's inset) comes first, then the scroller holding the form.
-  const bar = html.indexOf('pt-[env(safe-area-inset-top)]');
+  // The status bar's strip comes first, then the scroller holding the form.
+  const bar = html.indexOf('data-first-session-make-top=""');
   const scroller = html.indexOf('data-first-session-make-scroll=""');
   assert.ok(bar > -1 && scroller > bar && html.indexOf('<form') > scroller);
   assert.match(html, /<div data-first-session-make-scroll="" class="flex min-h-0 grow flex-col overflow-y-auto">\s*<form/);
@@ -342,10 +396,11 @@ test('with the keyboard up nothing scrolls under the status bar: the bar stays, 
   assert.match(src, /useKeyboardSurface\(scrollerRef\);/);
   assert.doesNotMatch(src, /useComposerKeyboard/, 'one owner of the fields\' taps: the surface, not the kit\'s chat avoidance too');
   assert.match(src, /useEffect\(\(\) => \{ briefRef\.current\?\.focus\(\{ preventScroll: true \}\); \}, \[\]\);/);
-  // The bar holds the whole mark under the status bar's inset (on a notched
-  // phone the mark used to hang 12px out of a 52px box), so what scrolls
-  // stops below it.
-  assert.match(src, /<div className=\{`flex h-\[max\(52px,calc\(env\(safe-area-inset-top\)\+32px\)\)\] shrink-0 items-center justify-center pt-\[env\(safe-area-inset-top\)\] \$\{motion\}`\}>/);
+  // The strip is the status bar's inset (12px where there is none), so what
+  // scrolls stops below the clock. Owner, 6 Oct 2026: no wordmark in it; the
+  // screen opens on "Hi <name>" and its question, as the canvas draws it.
+  assert.match(src, /<div data-first-session-make-top="" className="h-\[max\(12px,env\(safe-area-inset-top\)\)\] shrink-0" \/>/);
+  assert.doesNotMatch(src, /Wordmark/);
   // The scroller's class string is constant.
   assert.match(src, /<div ref=\{scrollerRef\} data-first-session-make-scroll="" className="flex min-h-0 grow flex-col overflow-y-auto">/);
   // #3894's arrival is untouched: the bar and the form still rise in.

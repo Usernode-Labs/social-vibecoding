@@ -35,7 +35,7 @@ export const EXAMPLES: readonly Example[] = [
     title: 'A run tracker',
     line: 'Weekly miles for a running club',
     short: 'Run tracker',
-    brief: 'A tracker for our weekly miles, so we can see who\'s keeping up',
+    brief: 'Track our club\'s weekly miles and see who keeps up.',
     name: 'Sunday Run Club',
     description: 'A run tracker',
     note: 'Made us a tracker. Come add to it!',
