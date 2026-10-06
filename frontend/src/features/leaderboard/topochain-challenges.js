@@ -592,18 +592,30 @@ const TopochainChallenges = {
     // or the grid would open on nothing but headers.
     const everyDone = summaries.every((s) => s.allDone);
     const toggled = TopochainChallenges._collapsed || {};
-    const groups = slices.map((s, n) => ({
-      key: s.group.key,
-      heading: s.group.heading,
-      meta: summaries[n].meta,
-      // #3203: the moment the clock runs out, for the meta's tooltip.
-      metaTitle: summaries[n].ends ? TopochainChallenges._cap(summaries[n].ends) : null,
-      allDone: summaries[n].allDone,
-      collapsed: Object.prototype.hasOwnProperty.call(toggled, s.group.key)
-        ? toggled[s.group.key] === true
-        : summaries[n].allDone && !everyDone,
-      cards: s.cards,
-    }));
+    const groups = slices.map((s, n) => {
+      // #3203: the moment the clock runs out, for the meta's tooltip. On
+      // This week the exact UTC instant of the weekly turnover follows it
+      // (#3999), one hover from certain. The other groups, and a missing
+      // helper (prerender, vm tests), keep the #3203 tooltip alone.
+      let metaTitle = summaries[n].ends ? TopochainChallenges._cap(summaries[n].ends) : null;
+      if (s.group.key === 'week' && metaTitle) {
+        const RT = window.ResetTime;
+        if (RT) {
+          metaTitle = `${metaTitle} · Resets ${RT.resetUtc('weekly', { at: new Date(TopochainChallenges._weekEnd()) })}`;
+        }
+      }
+      return {
+        key: s.group.key,
+        heading: s.group.heading,
+        meta: summaries[n].meta,
+        metaTitle,
+        allDone: summaries[n].allDone,
+        collapsed: Object.prototype.hasOwnProperty.call(toggled, s.group.key)
+          ? toggled[s.group.key] === true
+          : summaries[n].allDone && !everyDone,
+        cards: s.cards,
+      };
+    });
     const doneCount = ordered.filter((c) => TopochainChallenges._isDone(c)).length;
     const onboarding = TopochainChallenges._onboarding;
     if (!onboarding) {
@@ -652,10 +664,22 @@ const TopochainChallenges = {
     const clock = allDone || key === 'setup' ? null : TopochainChallenges._groupClock(key, list);
     const left = clock ? clock.left : null;
     const ends = clock ? TopochainChallenges._endsText(clock.at) : null;
+    // #3999: when the week's caps turn over, said on This week alone and only
+    // while its countdown runs — a finished group has nothing left for the
+    // reset to bring back. In the viewer's own clock, the Kudos meter's
+    // words ("Resets Sunday at 8:00 PM"), to the same Monday 00:00 UTC the
+    // clock runs to. `window.ResetTime` is read at call time (this file can
+    // take no import) and is absent in the SSG prerender pass and the vm
+    // tests, where the line reads exactly as it always did.
+    let resets = null;
+    if (key === 'week' && left) {
+      const RT = window.ResetTime;
+      if (RT) resets = `Resets ${RT.resetWhen('weekly', { at: new Date(TopochainChallenges._weekEnd()) })}`;
+    }
     let meta;
     if (allDone) meta = `${total}/${total} done`;
     else if (key === 'setup') meta = `${done}/${total}`;
-    else meta = `${done}/${total} · ${left || 'no deadline'}`;
+    else meta = `${done}/${total} · ${left || 'no deadline'}${resets ? ` · ${resets}` : ''}`;
     return { done, total, allDone, left, ends, meta };
   },
 

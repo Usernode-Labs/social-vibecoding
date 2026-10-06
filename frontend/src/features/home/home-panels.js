@@ -732,12 +732,29 @@ const HomePanels = {
     });
     return runs.map(({ group, views: members }) => {
       let meta = null;
+      let metaTitle = null;
       if (group.key === 'always') meta = 'no deadline';
-      else if (group.key !== 'setup' && group.key !== 'done') meta = clockOf(group.key);
+      else if (group.key !== 'setup' && group.key !== 'done') {
+        meta = clockOf(group.key);
+        // #3999: This week also says when its caps turn over, only while the
+        // group's clock runs, in the viewer's own clock — the Kudos meter's
+        // words — to the same Monday 00:00 UTC `endsOf` runs to; the UTC
+        // instant goes on the header's tooltip. `window.ResetTime` is read
+        // at call time and is absent in the vm sandboxes, where the line
+        // reads as it always did.
+        if (group.key === 'week' && meta) {
+          const RT = window.ResetTime;
+          if (RT) {
+            const at = new Date(HomePanels.weekEnd());
+            meta = `${meta} · Resets ${RT.resetWhen('weekly', { at })}`;
+            metaTitle = `Resets ${RT.resetUtc('weekly', { at })}`;
+          }
+        }
+      }
       if (group.key !== 'setup') {
         for (const view of members) view.deadline = null;
       }
-      return { key: group.key, heading: group.heading, meta, rows: members };
+      return { key: group.key, heading: group.heading, meta, metaTitle, rows: members };
     });
   },
 

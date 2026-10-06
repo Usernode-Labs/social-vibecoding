@@ -131,12 +131,20 @@ export interface ChallengeRowView {
  * is headed, a block of one group included, so `heading` ("First challenges", "This
  * week", "Always open", "Season challenges") is null only on the renderer's
  * fallback for a view built before groups existed. `meta` is the header's
- * clock ("3d left", "no deadline") or null; never a count.
+ * clock ("3d left", "no deadline") or null; never a count. On This week it
+ * also names the weekly turnover ("3d left · Resets Sunday at 8:00 PM",
+ * #3999), whose UTC instant is `metaTitle`.
  */
 export interface ChallengeGroupView {
   key: string;
   heading: string | null;
   meta: string | null;
+  /**
+   * The meta's tooltip: "Resets Mon, Oct 5, 00:00 UTC" on This week, the
+   * exact instant the group's caps turn over. Null on the other groups, and
+   * whenever the reset helper is not there.
+   */
+  metaTitle?: string | null;
   rows: ChallengeRowView[];
 }
 

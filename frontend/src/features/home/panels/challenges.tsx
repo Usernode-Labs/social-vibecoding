@@ -182,6 +182,7 @@ export function ChallengesPanel({ view }: { view: ChallengesView }) {
                 <GroupHeader
                   heading={g.heading}
                   meta={g.meta}
+                  metaTitle={g.metaTitle}
                   className={g.key === 'done' ? 'home-challenge-done-head' : undefined}
                 />
               ) : null}

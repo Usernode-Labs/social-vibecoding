@@ -75,7 +75,10 @@ function loadPane({ challenges = [], eventId = 10, event = null, onboarding = nu
   pane._challengesLoading = false;
   pane._loadedEventId = eventId;
   pane._onboarding = onboarding;
-  return { pane, store, context };
+  // `sandbox` is handed back so a test can stub globals on its `window` —
+  // set and deleted inside the test that needs them, never here, so the
+  // pins above keep guarding the no-helper fallback.
+  return { pane, store, context, sandbox };
 }
 
 const inHours = (h) => new Date(Date.now() + h * 3600000).toISOString();
@@ -409,6 +412,47 @@ test('#3203: the page renders the end on its meta line, and the header puts it i
   assert.match(header, /<span class="[^"]*" title="Ends Mon 12 Oct, 02:00">0\/2 · 3d left<\/span>/);
   const plain = renderToHtml(createElement(GroupHeader, { heading: 'Always open', meta: '0/2 · no deadline' }));
   assert.doesNotMatch(plain, /title=/, 'no moment, no title');
+});
+
+// #3999: when the week's caps turn over, said on the This week header, in the
+// helper's local words, with the UTC instant after it on the tooltip. The
+// helper is stubbed on the pane's own sandbox and deleted inside this test,
+// so the pins above keep guarding the no-helper fallback.
+test('#3999: the week header also names the weekly reset, when the reset helper is there', () => {
+  const event = { id: 10, name: 'Season 2', ends_at: inHours(143) };
+  const { pane, store, sandbox } = loadPane({
+    event,
+    challenges: [ch(1, 'WEEKLY'), ch(2, 'PERSISTENT'), ch(3, 'SPOTLIGHT')],
+  });
+  sandbox.window.ResetTime = {
+    resetWhen: () => 'Sunday at 8:00 PM',
+    resetUtc: () => 'Mon, Oct 5, 00:00 UTC',
+  };
+  pane._renderGrid();
+  const grid = gridOf(store);
+  const week = groupOf(grid, 'week');
+  assert.match(week.meta, /^0\/1 · \d+d left · Resets Sunday at 8:00 PM$/,
+    'the count and the clock it already had, then the reset');
+  assert.match(week.metaTitle, /^Ends .+ · Resets Mon, Oct 5, 00:00 UTC$/,
+    'the #3203 moment, then the UTC instant');
+  // The other groups carry no note and no UTC clause. (This week borrows the
+  // event's end for its clock; Always open never does.)
+  assert.equal(groupOf(grid, 'always').meta, '0/1 · no deadline');
+  assert.equal(groupOf(grid, 'other').meta, '0/1 · 6d left');
+  assert.ok(!String(groupOf(grid, 'other').metaTitle).includes('Resets'));
+  delete sandbox.window.ResetTime;
+
+  // A finished week group keeps its "done" line, and without the helper the
+  // header reads as it always did.
+  pane._challenges = [ch(1, 'WEEKLY', DONE)];
+  pane._renderGrid();
+  assert.equal(groupOf(gridOf(store), 'week').meta, '1/1 done');
+  pane._challenges = [ch(1, 'WEEKLY'), ch(2, 'PERSISTENT'), ch(3, 'SPOTLIGHT')];
+  pane._renderGrid();
+  const fallback = groupOf(gridOf(store), 'week');
+  assert.match(fallback.meta, /^0\/1 · \d+d left$/);
+  assert.match(fallback.metaTitle, /^Ends .+$/);
+  assert.ok(!fallback.metaTitle.includes('Resets'));
 });
 
 // ─── Ungrouped ──────────────────────────────────────────────────────────

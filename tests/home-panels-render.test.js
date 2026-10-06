@@ -949,6 +949,57 @@ test('cards from several groups are headed in board order, with clocks and no co
   assert.deepEqual([...finished.groups].map((g) => g.key), ['week', 'other', 'setup']);
 });
 
+// #3999: This week also says when the week's caps turn over — the Kudos
+// meter's local words on the header's meta, the exact UTC instant on its
+// tooltip. The helper is stubbed on the sandbox and deleted inside this test,
+// so the pins above keep guarding the no-helper fallback.
+test('#3999: the This week header names the weekly reset when the reset helper is there', () => {
+  const inHours = (h) => new Date(Date.now() + h * 3600000).toISOString();
+  const { HP, sandbox } = makeHomePanels({ slots: [] });
+  HP._expanded.challenges = true;
+  const payload = () => panel({
+    season: { id: 1, name: 'Season 1', ends_at: inHours(10 * 24) },
+    total: 4,
+    challenges: [
+      challenge({ id: 1, label: 'COMMUNITY' }),
+      challenge({ id: 2, label: 'PERSISTENT', ends_at: inHours(47) }),
+      challenge({ id: 3, label: 'WEEKLY', ends_at: inHours(95) }),
+      challenge({ id: 4, label: 'ONBOARDING', ends_at: inHours(5) }),
+    ],
+  });
+  const groupsOf = (view) => Object.fromEntries([...view.groups].map((g) => [g.key, g]));
+
+  const before = groupsOf(HP.challengesView(payload()));
+  assert.equal(before.week.meta, '4d left', 'without the helper the line is as it always was');
+  assert.equal(before.week.metaTitle, null, 'without the helper there is no tooltip');
+
+  sandbox.ResetTime = {
+    resetWhen: () => 'Sunday at 8:00 PM',
+    resetUtc: () => 'Mon, Oct 5, 00:00 UTC',
+  };
+  const after = groupsOf(HP.challengesView(payload()));
+  assert.equal(after.week.meta, '4d left · Resets Sunday at 8:00 PM',
+    'the clock it already had, then the reset in the viewer\'s own clock');
+  assert.equal(after.week.metaTitle, 'Resets Mon, Oct 5, 00:00 UTC',
+    'the tooltip carries the UTC instant alone');
+  assert.deepEqual([after.setup.meta, after.always.meta, after.other.meta],
+    [null, 'no deadline', '10d left'], 'the other groups\' clocks are untouched');
+  assert.deepEqual([after.setup.metaTitle, after.always.metaTitle, after.other.metaTitle],
+    [null, null, null], 'no tooltip on the other groups');
+  delete sandbox.ResetTime;
+
+  // A finished week has nothing left for the reset to bring back: with no
+  // open card to count down to the header says nothing, helper or not.
+  sandbox.ResetTime = { resetWhen: () => 'Sunday at 8:00 PM', resetUtc: () => 'Mon, Oct 5, 00:00 UTC' };
+  const doneWeek = groupsOf(HP.challengesView(panel({
+    total: 1,
+    challenges: [challenge({ id: 1, label: 'WEEKLY', progress: DONE })],
+  })));
+  assert.equal(doneWeek.week.meta, null);
+  assert.equal(doneWeek.week.metaTitle, null);
+  delete sandbox.ResetTime;
+});
+
 test('render: the group headers sit inside the rows list, before their cards, with no toggle', () => {
   const inHours = (h) => new Date(Date.now() + h * 3600000).toISOString();
   const { html } = renderWith({
@@ -2362,7 +2413,10 @@ test('every window.<global> the widgets read is actually published', () => {
   ].map((full) => fs.readFileSync(full, 'utf8')).join('\n');
 
   for (const name of referenced) {
-    assert.match(shell, new RegExp(`window\\.${name}\\s*=`),
+    // A TS module publishes through a cast — `(window as unknown as
+    // { ResetTime?: … }).ResetTime = …` in lib/reset-time.ts — so an
+    // assignment is recognized through the cast spelling too.
+    assert.match(shell, new RegExp(`window\\.${name}\\s*=|window as[^)]*\\)\\.${name}\\s*=`),
       `home-panels.js guards on window.${name}, but nothing assigns it — `
       + 'that guard can only ever take the "missing" branch');
   }
