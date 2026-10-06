@@ -806,14 +806,6 @@ export function FirstSession() {
           enterScreen('home', made.slug);
           setMode({ kind: 'tour', info, path: 'maker' });
         }}
-        // The plan is answered in the chat with Homeroom bot: the first
-        // session ends there, with no tour over it.
-        onOpenChat={(conversationId) => {
-          markSeen(made.slug);
-          rememberCommunity(made.slug);
-          setMode({ kind: 'none' });
-          enterScreen('bot', made.slug, conversationId);
-        }}
       />
     );
   }

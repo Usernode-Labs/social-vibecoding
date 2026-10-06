@@ -39,8 +39,7 @@ const mod = loadTsx(`${DIR}/sketch-card.tsx`);
 
 function sketchCard(props) {
   return renderToHtml(createElement(mod.SketchCard, {
-    made: MADE, line: 'Step 2 of 7: Read the description', note: 'Homeroom is making your app. It will message you when the first version is ready to try, or if it has any questions.',
-    busy: true, botBuilds: true, built: false, ...props,
+    made: MADE, botBuilds: true, built: false, ...props,
   }));
 }
 
@@ -73,8 +72,9 @@ test('while it is sketched: the same frame, the name in place, a band of light o
   assert.match(html, /data-featured-card-stage="sketching"[^>]*>(?:<span[^>]*><\/span>)?Sketching the idea<\/span>/);
   assert.match(html, /motion-safe:animate-card-sweep/);
   assert.match(html, /pointer-events-none absolute inset-0 overflow-hidden motion-reduce:hidden/);
-  assert.match(html, /data-first-session-build="">Step 2 of 7: Read the description<\/span>/);
-  assert.match(html, /Homeroom is making your app\. It will message you when the first version is ready to try, or if it has any questions\./);
+  // Request 4041, October 2026: the card is only a preview of the app.
+  // Nothing about the build is inside it: no step line, no dot, no note.
+  assert.doesNotMatch(html, /data-first-session-build|status-dot|Step 2 of 7|Homeroom is making your app/);
   // No stack of grey blocks, no frame, no words yet.
   assert.doesNotMatch(html, /animate-pulse rounded-(?:md|lg|xl) bg-zinc-200|<iframe|data-featured-card-words/);
   // The example's emoji, when one was picked, is already the icon.
@@ -92,8 +92,8 @@ test('once it is here: the idea\'s emoji, tagline and points, clearly being made
   assert.match(html, />Being made<\/span>/);
   assert.match(html, /repeating-linear-gradient\(135deg/, 'under construction');
   assert.doesNotMatch(html, /Sketching|animate-card-sweep|role="status"/);
-  // Version one ready: no stripes, and it says so.
-  const built = sketchCard({ sketch: { state: 'ready', card: CARD }, built: true, busy: false });
+  // Version one ready: no stripes, no dot.
+  const built = sketchCard({ sketch: { state: 'ready', card: CARD }, built: true });
   assert.match(built, />Ready to try<\/span>/);
   assert.doesNotMatch(built, /repeating-linear-gradient|status-dot/);
   // Nobody is building it yet.
@@ -102,7 +102,10 @@ test('once it is here: the idea\'s emoji, tagline and points, clearly being made
 
 test('a fixed size, and nothing in it scrolls', () => {
   const html = sketchCard({ sketch: { state: 'ready', card: { ...CARD, tagline: 'word '.repeat(40), points: ['x'.repeat(70), 'y'.repeat(70), 'z'.repeat(70)] } } });
-  for (const height of ['h-[148px]', 'h-[204px]', 'h-[42px]']) assert.ok(html.includes(height), height);
+  for (const height of ['h-[148px]', 'h-[204px]']) assert.ok(html.includes(height), height);
+  // Request 4041, October 2026: the 42px footer that held the step is gone;
+  // the card is 352px tall, preview only.
+  assert.ok(!html.includes('h-[42px]'));
   assert.match(html, /class="relative overflow-hidden rounded-\[20px\] bg-white/);
   assert.equal((html.match(/line-clamp-2 min-w-0/g) || []).length, 2, 'two long points fill the four lines');
   assert.doesNotMatch(SRC, /overflow-(?:y-)?(?:auto|scroll)|<iframe/);
@@ -118,15 +121,21 @@ test('a fixed size, and nothing in it scrolls', () => {
 test('the made screen draws the card, its emoji is the screen\'s icon, and nothing is framed', () => {
   const made = read(`${DIR}/made.tsx`);
   assert.match(made, /import \{ SketchCard, showsCard, useSketch \} from '\.\/sketch-card';/);
-  assert.match(made, /\{showsCard\(sketch\.state\) \? \(\n\s+<SketchCard made=\{made\} sketch=\{sketch\} line=\{line\} note=\{note\} busy=\{busy\} botBuilds=\{botBuilds\} built=\{!making \|\| !!\(fv && fv\.ready\)\} \/>/);
+  // Request 4041, October 2026: the screen hands the card nothing about the
+  // build; the progress row and the note are its own, under the card.
+  assert.match(made, /\{showsCard\(sketch\.state\) \? \(\n\s+<SketchCard made=\{made\} sketch=\{sketch\} botBuilds=\{botBuilds\} built=\{!making \|\| !!\(fv && fv\.ready\)\} \/>/);
   assert.match(made, /const tile = sketch\.card\?\.emoji \|\| made\.emoji \|\| made\.name\.slice\(0, 1\);/);
   assert.match(made, /made=\{sketch\.card \? \{ \.\.\.made, emoji: sketch\.card\.emoji \} : made\}/, 'the invite sheet shows it too');
   assert.doesNotMatch(made, /<iframe|sketch\.html|sketchCaption/);
-  // Rendered with nothing read yet: the card being sketched, not the letter tile.
+  // Rendered with nothing read yet: the card being sketched, not the letter
+  // tile, and the spinner line under it, outside the card.
   const { MadeScreen } = loadTsx(`${DIR}/made.tsx`);
-  const html = renderToHtml(createElement(MadeScreen, { made: MADE, me: 'Maya', onContinue() {}, onOpenChat() {} }));
+  const html = renderToHtml(createElement(MadeScreen, { made: MADE, me: 'Maya', onContinue() {} }));
   assert.match(html, /data-featured-card="sketching"/);
-  assert.match(html, /data-first-session-build="">Setting it up…<\/span>/);
+  const row = html.indexOf('mt-2.5 flex items-center gap-2 px-1');
+  assert.ok(row > html.indexOf('data-featured-card="sketching"'), 'the progress row is under the card');
+  assert.match(html.slice(row), /data-first-session-build="">Spinning up your app<\/span>/);
+  assert.match(html, />Homeroom is making your app\. It will message you when the first version is ready to try, or if it has any questions\.<\/p>/);
   // The poll asks past the service worker's cache.
   assert.match(SRC, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/sketch`, \{ credentials: 'same-origin', cache: 'no-store' \}\)/);
 });

@@ -11,8 +11,10 @@
 // bot's chat and on the App tab, neither of which they were on. #3878 drew
 // the whole plan here, with Build it, above the sketch. 5 October 2026 (Evan,
 // on his own phone): not the plan, and never inserted above at whatever
-// moment it lands. A small "Needs you" card under the project now says there
-// is one, and Go to chat opens the chat where it is answered.
+// moment it lands. Then, request 4041 (October 2026): not here at all. The
+// screen no longer asks anything mid-onboarding: the plan is answered in the
+// bot's chat and shown on the app's page, and this screen only reassures
+// ("Spinning up your app") and invites.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -33,17 +35,18 @@ const PLAN = {
   conversationId: 12,
 };
 
-test('a plan waits for Build it when first_version carries one, read as the App tab reads it', () => {
-  const { waitingPlan } = loadTsx(`${DIR}/made.tsx`);
-  assert.deepEqual(waitingPlan({ step: 3, of: 7, stepName: 'Write a plan', plan: PLAN }), PLAN);
-  assert.deepEqual(waitingPlan({ plan: { bullets: ['a'], actionId: 5 } }),
-    { bullets: ['a'], questions: [], actionId: 5, messageId: null, conversationId: null });
-  assert.equal(waitingPlan(null), null);
-  assert.equal(waitingPlan({ step: 2, of: 7 }), null, 'no plan yet');
-  assert.equal(waitingPlan({ plan: { ...PLAN, actionId: undefined } }), null, 'nothing to decide without its action');
-  assert.equal(waitingPlan({ plan: { ...PLAN, bullets: [] } }), null);
-  assert.equal(waitingPlan({ ready: true, plan: PLAN }), null, 'a ready version waits on nobody');
-  // The same test the being-built screen makes.
+test('the made screen draws no plan at all, though the route still answers it for the app\'s page', () => {
+  // Request 4041, October 2026: "Your turn: answer the plan" and a "Needs
+  // you" card asked for action in the middle of onboarding, before the
+  // person had finished inviting people. Nothing on this screen mentions
+  // the plan any more; the bot still asks in its chat, and the app's page
+  // still shows the step there.
+  const src = read(`${DIR}/made.tsx`);
+  for (const gone of ['PlanWaitsCard', 'WaitingPlan', 'waitingPlan', 'PLAN_LABEL', 'planWaitsLine', 'onOpenChat', 'data-first-session-plan']) {
+    assert.ok(!src.includes(gone), `${gone} is gone from the made screen`);
+  }
+  assert.doesNotMatch(src, /PlanCardView|decideBotAction|PlanSection|Build it'/, 'the made screen decides nothing');
+  // The App tab's being-built screen keeps reading the plan the same way.
   const view = read('public/js/app-view.js');
   assert.match(view, /const plan = mine && fv\.plan && Array\.isArray\(fv\.plan\.bullets\) && fv\.plan\.bullets\.length\s+&& Number\.isInteger\(fv\.plan\.actionId\) \? fv\.plan : null;/);
 });
@@ -53,10 +56,9 @@ test('the made screen reads the project under `app`, past the service worker\'s 
   // the made screen read `first_version` off the answer itself, so its plan
   // and its step never showed (tests/first-session-made-plan-postgres.test.js
   // runs it against the real route).
-  const { madeAppOf, madeAppUrl, waitingPlan } = loadTsx(`${DIR}/made.tsx`);
+  const { madeAppOf, madeAppUrl } = loadTsx(`${DIR}/made.tsx`);
   const fv = { step: 3, of: 7, stepName: 'Write a plan', ready: false, plan: PLAN };
   assert.deepEqual(madeAppOf({ app: { status: 'running', first_version: fv } }), { firstVersion: fv, status: 'running' });
-  assert.deepEqual(waitingPlan(madeAppOf({ app: { first_version: fv } }).firstVersion), PLAN);
   assert.deepEqual(madeAppOf({ app: { status: 'creating' } }), { firstVersion: null, status: 'creating' });
   assert.equal(madeAppOf({ first_version: fv, status: 'running' }), null, 'a bare record is not the route\'s answer');
   assert.equal(madeAppOf(null), null);
@@ -75,44 +77,30 @@ test('the made screen reads the project under `app`, past the service worker\'s 
   assert.ok(!/setFv\(app\.first_version/.test(src), 'never the top of the answer');
 });
 
-test('a waiting plan is one small "Needs you" card under the project, with the way to the chat', () => {
-  const { PlanWaitsCard, PLAN_LABEL, planWaitsLine } = loadTsx(`${DIR}/made.tsx`);
-  assert.equal(PLAN_LABEL, 'Needs you');
-  assert.equal(planWaitsLine('Plant Pal'), 'Homeroom bot has a plan for Plant Pal');
-  let opened = 0;
-  const html = renderToHtml(createElement(PlanWaitsCard, { name: 'Plant Pal', onOpenChat() { opened += 1; } }));
-  assert.match(html, /data-first-session-plan="waiting"/);
-  assert.match(html, />Needs you<\/p>/);
-  assert.match(html, /<p class="text-\[12px\] font-bold uppercase tracking-\[0\.06em\]|class="px-1 pb-1\.5 text-\[12px\] font-bold uppercase tracking-\[0\.06em\]/, 'small caps over a card');
-  assert.match(html, />Homeroom bot has a plan for Plant Pal<\/p>/);
-  assert.match(html, /<button type="button" data-first-session-plan-chat=""[^>]*>Go to chat<\/button>/);
-  assert.match(html, /rounded-\[20px\] bg-white/);
-  // The plan itself, and its Build it, are the chat's.
-  assert.doesNotMatch(html, /Build it|data-bot-plan|<li>/);
-  assert.equal(opened, 0);
-  for (const words of [PLAN_LABEL, planWaitsLine('Plant Pal')]) assert.ok(!/—/.test(words), words);
-  const src = read(`${DIR}/made.tsx`);
-  assert.doesNotMatch(src, /PlanCardView|decideBotAction|PlanSection|Build it'/, 'the made screen decides nothing');
-  // Under the project card, never above it, so the sketch does not move when it lands.
-  const card = src.indexOf('{plan ? <PlanWaitsCard');
-  assert.ok(card > src.indexOf('<SketchCard made='), 'after the project card');
-  assert.ok(card < src.indexOf('Invite people to ${made.name}`}</p>'), 'before the invite');
-  assert.match(src, /onOpenChat=\{\(\) => onOpenChat\(plan\.conversationId \?\? made\.conversationId\)\}/);
-});
-
-test('while the plan waits, the build\'s note says so instead of promising a message', () => {
+test('the build\'s line and note sit under the card, one plain line the whole time', () => {
+  // Request 4041, October 2026: the step line was inside the app card, so
+  // the thumbnail and the build progress read as one thing. The line ("and
+  // the note under it") is drawn by the screen, under whichever card is
+  // shown, and says the same thing whatever the bot's step is: the "waiting
+  // for your go-ahead" note went with the plan card.
   const { buildNote } = loadTsx(`${DIR}/made.tsx`);
-  assert.equal(buildNote(true, true), 'Homeroom bot is waiting for your go-ahead.');
-  assert.equal(buildNote(false, true), 'You or anyone you invite can build it from there.');
+  assert.equal(buildNote(true), 'Homeroom is making your app. It will message you when the first version is ready to try, or if it has any questions.');
+  assert.equal(buildNote(false), 'You or anyone you invite can build it from there.');
   const src = read(`${DIR}/made.tsx`);
-  assert.match(src, /const note = buildNote\(botBuilds, !!plan\);/);
-  // Under the card of the idea (./sketch-card.tsx), and in the plain card
-  // without one. The sketch's caption calling it the real app is gone.
-  assert.match(src, /<SketchCard made=\{made\} sketch=\{sketch\} line=\{line\} note=\{note\} /);
-  assert.match(src, /<p className="mt-1 text-\[13px\] text-zinc-500 dark:text-zinc-400">\{note\}<\/p>/);
-  assert.doesNotMatch(src, /sketchCaption/);
-  // Nothing is under way while it waits on them: no busy dot.
-  assert.match(src, /const busy = appStatus === 'creating' \|\| \(botBuilds && !\(fv && fv\.ready\) && !plan\);/);
+  assert.match(src, /const note = buildNote\(botBuilds\);/);
+  // One progress row and one note, after the card and before the invite.
+  const row = src.indexOf('mt-2.5 flex items-center gap-2 px-1');
+  assert.ok(row > src.indexOf('built=\{!making'), 'under the sketch card');
+  assert.ok(row > src.indexOf('id="first-session-made-title"'), 'under the plain tile card too');
+  assert.ok(row < src.indexOf('Invite people to ${made.name}`}</p>'), 'before the invite');
+  assert.match(src, /\{busy \? <span className="status-dot creating shrink-0" aria-hidden="true" \/>\s+: null\}\s+<span data-first-session-build="">\{line\}<\/span>/);
+  assert.match(src, /<p className="px-1 pt-2\.5 text-\[13px\] leading-snug text-zinc-500 dark:text-zinc-400">\{note\}<\/p>/);
+  assert.doesNotMatch(src, /waiting for your go-ahead|Homeroom bot is waiting/, 'no ask on this screen');
+  // The card itself holds nothing about the build.
+  assert.doesNotMatch(read(`${DIR}/sketch-card.tsx`), /data-first-session-build|status-dot|h-\[42px\]/);
+  // The dot always shows the bot at work while it builds, whatever its
+  // step and whatever its plan waits on: the ask lives in the chat.
+  assert.match(src, /const busy = appStatus === 'creating' \|\| \(botBuilds && !\(fv && fv\.ready\)\);/);
 });
 
 test('a first version promises no time at all, and says in one plain line that it asks when it has questions', () => {
@@ -125,9 +113,8 @@ test('a first version promises no time at all, and says in one plain line that i
   const { buildNote } = loadTsx(`${DIR}/made.tsx`);
   const line = 'Homeroom is making your app. It will message you when the first version is ready to try, or if it has any questions.';
   assert.equal(buildNote(true), line);
-  assert.equal(buildNote(true, false), line);
-  for (const words of [buildNote(true), buildNote(true, true), buildNote(false)]) {
-    assert.doesNotMatch(words, /minute|hour|usually|plans it first|approve the plan|—/, words);
+  for (const words of [buildNote(true), buildNote(false)]) {
+    assert.doesNotMatch(words, /minute|hour|usually|plans it first|approve the plan|—|waiting for your go-ahead/, words);
   }
   const src = read(`${DIR}/made.tsx`);
   assert.doesNotMatch(src, /planAhead/, 'one line whatever the step');
@@ -140,9 +127,14 @@ test('a first version promises no time at all, and says in one plain line that i
   assert.doesNotMatch(block, /typicalMinutes:/);
 });
 
-test('Go to chat leaves the first session for the chat with Homeroom bot', () => {
+test('the made screen no longer opens the bot\'s chat: the maker\'s tour still ends there', () => {
+  // Request 4041, October 2026: with the plan card gone, nothing on this
+  // screen goes to the chat. The tour's last step still does (the tour's
+  // own path into the bot screen is pinned in first-session-make.test.js).
   const index = read(`${DIR}/index.tsx`);
-  assert.match(index, /onOpenChat=\{\(conversationId\) => \{\s+markSeen\(made\.slug\);\s+rememberCommunity\(made\.slug\);\s+setMode\(\{ kind: 'none' \}\);\s+enterScreen\('bot', made\.slug, conversationId\);/);
+  const madeBlock = index.slice(index.indexOf('<MadeScreen'), index.indexOf('if (mode.kind === \'welcome\')'));
+  assert.ok(madeBlock.length > 100, 'the made screen\'s block is findable');
+  assert.doesNotMatch(madeBlock, /onOpenChat|first-session-plan-chat/, 'no Go to chat any more');
   assert.match(index, /else if \(screen === 'bot' && conversationId\) window\.location\.hash = `#messages\/\$\{conversationId\}`;/);
   assert.doesNotMatch(index, /changePlanInChat/);
 });
@@ -162,7 +154,7 @@ test('the made screen has two ways on and nothing under them: no "look around Ho
   assert.match(read(`${DIR}/make.tsx`), />Look around first<\/button>/);
   const html = renderToHtml(createElement(made.MadeScreen, {
     made: { slug: 'plant-pal', name: 'Plant Pal', emoji: '🪴', description: null, example: null, conversationId: 12 },
-    me: 'Maya', onContinue() {}, onOpenChat() {},
+    me: 'Maya', onContinue() {},
   }));
   assert.match(html, />Share invite<\/button>/);
   assert.match(html, /<button type="button" data-first-session-continue=""[^>]*>Invite people later<\/button>/);
@@ -200,16 +192,22 @@ test('the invite line says who joined, once somebody has', () => {
   assert.match(read('src/services/communities.js'), /AS member_count,/);
 });
 
-test('the made screen renders with nothing read yet: no plan, the build\'s first line', () => {
+test('the made screen renders with nothing read yet: no plan, the spinner line, the note', () => {
+  // Request 4041, October 2026: the first read says "Spinning up your app"
+  // under the card, with the dot, never a step counter and never "Setting
+  // it up…" while the bot builds it.
   const { MadeScreen } = loadTsx(`${DIR}/made.tsx`);
   const html = renderToHtml(createElement(MadeScreen, {
     made: { slug: 'plant-pal', name: 'Plant Pal', emoji: '🪴', description: null, example: null, conversationId: 12 },
     me: 'Maya',
     onContinue() {},
-    onOpenChat() {},
   }));
-  assert.ok(!/data-first-session-plan/.test(html), 'no plan until one is read');
-  assert.match(html, /data-first-session-build="">Setting it up…<\/span>/);
+  assert.ok(!/data-first-session-plan/.test(html), 'no plan on this screen, whatever the record carries');
+  // Under the card, not inside it: the row follows the sketch card's wrapper.
+  const row = html.indexOf('mt-2.5 flex items-center gap-2 px-1');
+  assert.ok(row > html.indexOf('data-featured-card="sketching"'), 'the line is outside the card');
+  assert.ok(html.indexOf('data-first-session-build') > row, 'the line sits in the row');
+  assert.match(html, /status-dot creating[^>]*><\/span>\s*<span data-first-session-build="">Spinning up your app<\/span>/);
   assert.match(html, />Homeroom is making your app\. It will message you when the first version is ready to try, or if it has any questions\.<\/p>/);
   assert.match(html, /Invite people later/);
 });
@@ -320,6 +318,9 @@ test('"Write a plan" names one wait: the plan waiting on its creator is their tu
   }
   assert.equal(progress.stepNumber('plan', true), 3, 'the plan waiting on its creator stays step 3');
   const { buildLine } = loadTsx(`${DIR}/made.tsx`);
-  assert.equal(buildLine(waits, 'running', true), 'Step 3 of 7: Your turn: answer the plan');
+  // The made screen stopped counting steps (request 4041): whatever the
+  // step is, even its creator's own turn, the line is the same spinner
+  // line. The step names still feed the app's page and the bot's chat.
+  assert.equal(buildLine(waits, 'running', true), 'Spinning up your app');
   assert.ok(!/—/.test(waits.stepName));
 });

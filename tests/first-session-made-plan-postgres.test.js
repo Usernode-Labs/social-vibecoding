@@ -1,7 +1,8 @@
 'use strict';
 
-// The made screen (frontend/src/features/first-session/made.tsx) shows
-// Homeroom bot's plan where the maker is, from GET /api/apps/:slug.
+// The made screen (frontend/src/features/first-session/made.tsx) reads
+// GET /api/apps/:slug, whose answer still carries first_version.plan for the
+// app's page, whatever this screen now draws.
 //
 // First-session run-through, 5 October 2026: alex_t1005 made Page Turners and
 // stayed on the made screen. The bot sent its plan at 11:09 and waited for
@@ -12,9 +13,10 @@
 // all: no plan, and no "Step 3 of 7" either. It reads `app.first_version` now
 // (madeAppOf), past the service worker's boot cache (madeAppUrl, no-store).
 //
-// What only the real records can show: the plan the bot's own path sends
-// (homeroom-bot.js awaitGo) reaches the made screen's read of the real route
-// as a plan it draws, for its creator only, and goes once Build it is tapped.
+// Request 4041 (October 2026) then took the plan and the step counter OFF the
+// made screen, so what only the real records can show here is that the route
+// still answers the plan (the app's page reads it) and that the made screen's
+// own line for a waiting-plan record is the plain spinner line.
 //
 // Run with: TEST_DATABASE_URL=postgres://… node --test tests/first-session-made-plan-postgres.test.js
 
@@ -136,7 +138,7 @@ test('the made screen reads the waiting plan off the real GET /api/apps/:slug, f
     listening.close();
   });
 
-  const { madeAppOf, madeAppUrl, waitingPlan, buildLine } = loadTsx(MADE);
+  const { madeAppOf, madeAppUrl, buildLine } = loadTsx(MADE);
   // The made screen's own read: its URL, and what it takes from the answer.
   const get = async () => {
     const res = await fetch(`http://127.0.0.1:${listening.address().port}${madeAppUrl(app.slug)}`);
@@ -159,7 +161,7 @@ test('the made screen reads the waiting plan off the real GET /api/apps/:slug, f
     assert.equal(card.meta.status, 'open');
   });
 
-  await t.test('its creator\'s made screen finds the plan in the route\'s answer, and draws it', async () => {
+  await t.test('its creator\'s made screen finds a first version carrying the plan, and says the spinner line', async () => {
     const body = await get();
     assert.deepEqual(Object.keys(body), ['app'], 'the record is under `app`');
     assert.equal(body.first_version, undefined, 'nothing at the top of the answer: what the made screen used to read');
@@ -167,20 +169,17 @@ test('the made screen reads the waiting plan off the real GET /api/apps/:slug, f
     assert.equal(fv.mine, true);
     // Its creator's turn, said as theirs (homeroom-bot-dm.js planWaitsStepName).
     assert.deepEqual([fv.step, fv.of, fv.stepName, fv.ready], [3, 7, 'Your turn: answer the plan', false]);
+    // The plan is still answered for the app's page (AppView._firstVersionView);
+    // the made screen stopped drawing it (request 4041).
     assert.deepEqual(fv.plan.bullets, PLAN.bullets);
     assert.ok(Number.isInteger(fv.plan.actionId), 'an action to decide, as a number');
     assert.equal(fv.plan.actionId, card.meta.actionId);
 
     const read = madeAppOf(body);
     assert.equal(read.status, 'running');
-    assert.deepEqual(waitingPlan(read.firstVersion), {
-      bullets: PLAN.bullets,
-      questions: PLAN.questions,
-      actionId: card.meta.actionId,
-      messageId: Number(card.id),
-      conversationId: Number(card.conversation_id),
-    });
-    assert.equal(buildLine(read.firstVersion, read.status, true), 'Step 3 of 7: Your turn: answer the plan');
+    assert.equal(read.firstVersion.plan.actionId, card.meta.actionId);
+    // The made screen's line for this record: one plain line, never a step.
+    assert.equal(buildLine(read.firstVersion, read.status, true), 'Spinning up your app');
   });
 
   await t.test('another member reads the step, never the plan', async () => {
@@ -189,20 +188,18 @@ test('the made screen reads the waiting plan off the real GET /api/apps/:slug, f
       const read = madeAppOf(await get());
       assert.equal(read.firstVersion.mine, false);
       assert.equal(read.firstVersion.plan, undefined);
-      assert.equal(waitingPlan(read.firstVersion), null);
       assert.equal(read.firstVersion.stepName, `Waiting for @${alex.username} to answer the plan`, 'whose turn it is');
     } finally {
       viewer = alex;
     }
   });
 
-  await t.test('Build it, tapped anywhere: the next read has no plan to draw', async () => {
+  await t.test('Build it, tapped anywhere: the next read has no plan to answer', async () => {
     const mayor = require('../src/services/homeroom-bot-mayor');
     const tapped = await mayor.decideOfferTap(pool, {}, { user: alex, actionId: card.meta.actionId, choice: 'build', answers: [] });
     assert.deepEqual(tapped, { ok: true, choice: 'build', label: 'Build it' });
     const read = madeAppOf(await get());
     assert.equal(read.firstVersion.plan, undefined);
-    assert.equal(waitingPlan(read.firstVersion), null);
     // Build it was the plan's answer: what follows is the build to its maker,
     // "Step 4 of 7: Build it", never "Write a plan" again (Evan, 5 October
     // 2026), and the bot's own account of it says building, not "writing the

@@ -10,8 +10,11 @@
  *           emoji as the icon it now is, and a pill saying where it is:
  *           "Sketching the idea", "Being made", "Ready to try";
  *   body    its name, a one-line tagline, and the points that fit four
- *           lines (fitPoints), each with an open dashed ring: not built yet;
- *   footer  on the made screen, Homeroom bot's step.
+ *           lines (fitPoints), each with an open dashed ring: not built yet.
+ *
+ * The card is only a preview of the app: the build's progress is drawn by
+ * the made screen, under the card, never inside it (request 4041, October
+ * 2026, which also moved the step counter out of the card's footer).
  *
  * 5 October 2026, on Evan's phone: the sketch was a framed mock of the app's
  * main screen that scrolled inside the made screen, under grey bars and
@@ -35,7 +38,7 @@
  * tagline, no points.
  */
 
-import { type ReactNode, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { useResolvedCommunityColor } from '../../lib/community-color';
 
@@ -167,12 +170,11 @@ function Placeholder() {
 }
 
 /**
- * The card itself, a fixed 394px tall with a footer (352px without): art
- * 148 (the icon sits below the pill), words 204, footer 42. Compact, 172px:
- * art 88, then the name and the tagline (84). `card` null is the card being
- * sketched.
+ * The card itself, a fixed 352px tall: art 148 (the icon sits below the
+ * pill), words 204. Compact, 172px: art 88, then the name and the tagline
+ * (84). `card` null is the card being sketched.
  */
-export function FeaturedCard({ name, colorKey, emoji, card, stage, titleId, heading = false, footer = null, compact = false }: {
+export function FeaturedCard({ name, colorKey, emoji, card, stage, titleId, heading = false, compact = false }: {
   name: string;
   /** Picks a colour when there is no emoji to read one from (the project's slug). */
   colorKey: string;
@@ -183,7 +185,6 @@ export function FeaturedCard({ name, colorKey, emoji, card, stage, titleId, head
   titleId?: string;
   /** The name as the screen's heading (the made screen's dialog is labelled by it). */
   heading?: boolean;
-  footer?: ReactNode;
   /** The art and the tagline only, for a screen with little room. */
   compact?: boolean;
 }) {
@@ -219,11 +220,6 @@ export function FeaturedCard({ name, colorKey, emoji, card, stage, titleId, head
         <Title id={titleId} className="truncate text-[20px] font-bold leading-6">{name}</Title>
         {card ? <Words card={card} color={color} compact={compact} /> : <Placeholder />}
       </div>
-      {footer ? (
-        <div className="flex h-[42px] items-center gap-1.5 px-4 text-[13px] text-zinc-500 shadow-[inset_0_1px_0_var(--app-sheet-line)] dark:text-zinc-400">
-          {footer}
-        </div>
-      ) : null}
       {sketching ? (
         <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden motion-reduce:hidden">
           <div className="h-full w-2/5 bg-gradient-to-r from-transparent via-white/60 to-transparent motion-safe:animate-card-sweep dark:via-white/[0.06]" />
@@ -266,17 +262,13 @@ export function useSketch(slug: string): Sketch {
 }
 
 /**
- * The made screen's card (./made.tsx): sketching, then the idea, with
- * Homeroom bot's step under it and the line about what happens next below.
+ * The made screen's card (./made.tsx): sketching, then the idea. Only a
+ * preview of the app: the build's progress line and note are drawn by the
+ * screen, under the card.
  */
-export function SketchCard({ made, sketch, line, note, busy, botBuilds, built }: {
+export function SketchCard({ made, sketch, botBuilds, built }: {
   made: Made;
   sketch: Sketch;
-  /** buildLine: "Step 2 of 7: Read the description". */
-  line: string;
-  /** buildNote: what happens next, under the card. */
-  note: string;
-  busy: boolean;
   botBuilds: boolean;
   /** Version one is ready to try. */
   built: boolean;
@@ -294,14 +286,7 @@ export function SketchCard({ made, sketch, line, note, busy, botBuilds, built }:
         stage={stage}
         titleId="first-session-made-title"
         heading
-        footer={(
-          <>
-            {busy ? <span className="status-dot creating shrink-0" aria-hidden="true" /> : null}
-            <span className="truncate" data-first-session-build="">{line}</span>
-          </>
-        )}
       />
-      <p className="px-1 pt-2.5 text-[13px] leading-snug text-zinc-500 dark:text-zinc-400">{note}</p>
     </div>
   );
 }
