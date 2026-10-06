@@ -22,7 +22,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const vm = require('node:vm');
-const { api, mergedCardHtml } = require('./lib/dev-card-html');
+const { api, mergedCardHtml, proposalCardHtml, govCardHtml, mySessionCardHtml } = require('./lib/dev-card-html');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 
 // ── Rendering the pill ──────────────────────────────────────────────────
@@ -958,4 +958,227 @@ test('the main_healthy gate carries "Resume merges" for an admin, and for nobody
   }
   // Never on any other gate, whatever its state.
   assert.equal(admin._requirementAction({ key: 'checks', state: 'blocked', actor: 'author' }, { isAdmin: true }), null);
+});
+
+// ── #4003: the four-stage progress strip ─────────────────────────────────
+//
+// A person who voted could read the vote count but not the rest of the road:
+// the bar says one thing, the tags say what is wrong, and nothing said how
+// FAR the change had got. The strip draws Vote, Checks, Going live, Live and
+// AppView.stageStripState derives each stage's state from the fields the row
+// already carries — the pill's own key decides the vote stage, and
+// MergeStatus.lifecycle's key decides Going live's, so the ladder cannot
+// disagree with the bar above it.
+
+const state = (AppView, row, key) => {
+  const s = AppView.stageStripState(row);
+  assert.ok(s, 'the ladder exists for a row on its way to going live');
+  return s.stages.find((x) => x.key === key).state;
+};
+
+test('the ladder: an open vote lights Vote, and Checks starting is in flight', () => {
+  const AppView = makeAppView();
+  const s = AppView.stageStripState(PR());
+  // Joined rather than deep-compared: arrays built inside the vm realm carry
+  // that realm's prototypes, which trips deepStrictEqual on identity alone.
+  assert.equal(s.stages.map((x) => x.key).join(','), 'vote,checks,goingLive,live');
+  assert.equal(s.stages.map((x) => x.label).join(','), 'Vote,Checks,Going live,Live');
+  assert.equal(state(AppView, PR(), 'vote'), 'active');
+  assert.equal(state(AppView, PR(), 'checks'), 'active', 'the first run has not stamped pending yet (#607)');
+  assert.equal(state(AppView, PR(), 'goingLive'), 'pending');
+  assert.equal(state(AppView, PR(), 'live'), 'pending');
+  assert.equal(s.current, 'vote', 'the first not-done stage is the lit one');
+});
+
+test('the ladder: a reached-majority countdown ticks Vote and lights Going live', () => {
+  const AppView = makeAppView();
+  const row = PR({
+    yes_count: 3, votes_required: 3, check_state: 'passing',
+    merge_window_ends_at: hoursAhead(4),
+  });
+  const s = AppView.stageStripState(row);
+  assert.equal(state(AppView, row, 'vote'), 'done', 'the countdown window is the vote decided');
+  assert.equal(state(AppView, row, 'checks'), 'done', 'the window only arms on a passing row');
+  assert.equal(state(AppView, row, 'goingLive'), 'active');
+  assert.equal(state(AppView, row, 'live'), 'pending');
+  assert.equal(s.current, 'goingLive');
+  // The strip adds no clock of its own: the pill's "Goes live in ~2h" is the
+  // timing, and the ladder only says which stage is lit.
+  assert.ok(!s.stages.some((x) => /~/.test(x.label)));
+});
+
+test('the ladder: every checks verdict lands on its own rung', () => {
+  const AppView = makeAppView();
+  // In flight, decided, and the #607 starting case are covered above.
+  assert.equal(state(AppView, PR({ check_state: 'pending', check_phase: 'deferred' }), 'checks'),
+    'pending', 'a deferred run is pending with its name, not a spinner');
+  assert.equal(state(AppView, PR({ check_state: 'passing' }), 'checks'), 'done');
+  assert.equal(state(AppView, PR({ check_state: 'skipped' }), 'checks'), 'done');
+  assert.equal(state(AppView, PR({ check_state: 'failing', test_results: [] }), 'checks'), 'blocked');
+  assert.equal(state(AppView, PR({ check_state: 'error' }), 'checks'), 'blocked');
+  assert.equal(state(AppView, PR({ preview_state: 'failed' }), 'checks'), 'blocked');
+  assert.equal(state(AppView, PR({ staging_error: 'app exited' }), 'checks'), 'blocked');
+  // An error the merge gate still counts as in progress (the run goes again
+  // on its own, MergeStatus.checksWillRetry) reads as running, not a cross.
+  assert.equal(state(AppView, PR({
+    check_state: 'error', mergeRequirements: { gates: [{ key: 'checks', state: 'active' }] },
+  }), 'checks'), 'active');
+});
+
+test('the ladder: a blocked stage is crossed on its own rung, not on the vote', () => {
+  const AppView = makeAppView();
+  // Failing checks on a WON vote: Vote is ticked and Checks carries the
+  // cross — which is the answer "cant see merge progress" was about.
+  const failing = PR({ yes_count: 3, votes_required: 3, check_state: 'failing', test_results: [] });
+  const s = AppView.stageStripState(failing);
+  assert.equal(s.current, 'checks');
+  assert.equal(state(AppView, failing, 'vote'), 'done');
+  assert.equal(state(AppView, failing, 'goingLive'), 'pending', 'the cross is Checks’ story');
+
+  // The conflict lane crosses GOING LIVE, whatever the checks say.
+  assert.equal(state(AppView, PR({ mergeability: 'conflict', yes_count: 3, votes_required: 3, check_state: 'passing' }), 'goingLive'),
+    'blocked', 'a predicted conflict crosses Going live');
+  assert.equal(state(AppView, PR({ merge_conflict_state: 'conflict' }), 'goingLive'), 'blocked');
+  assert.equal(state(AppView, PR({ merge_conflict_state: 'failed' }), 'goingLive'), 'blocked');
+  // ...on an open vote too: the vote stage reads as it does today.
+  const open = PR({ mergeability: 'conflict' });
+  assert.equal(state(AppView, open, 'vote'), 'active');
+  assert.equal(state(AppView, open, 'goingLive'), 'blocked');
+  assert.equal(AppView.stageStripState(open).current, 'vote');
+});
+
+test('the ladder: merging is Going live in flight; merged is the end of the road', () => {
+  const AppView = makeAppView();
+  const merging = PR({ status: 'merging', check_state: 'passing', yes_count: 3 });
+  const s = AppView.stageStripState(merging);
+  assert.equal(state(AppView, merging, 'vote'), 'done', 'merging is past the vote');
+  assert.equal(state(AppView, merging, 'goingLive'), 'active');
+  assert.equal(state(AppView, merging, 'live'), 'pending');
+  assert.equal(s.current, 'goingLive');
+
+  const merged = PR({ status: 'merged', check_state: 'passing', yes_count: 3 });
+  assert.equal(
+    AppView.stageStripState(merged).stages.filter((x) => x.state !== 'done').length,
+    0, 'a merged row has nothing left');
+  assert.equal(AppView.stageStripState(merged).current, null);
+  // The card builder still draws no strip on one: the pill settles it.
+  assert.equal(AppView._proposalCardModel(PR({ status: 'merged', yes_count: 3 })).stages, null);
+});
+
+test('the ladder: the rollout states land on Live', () => {
+  const AppView = makeAppView();
+  const at = (over) => AppView.stageStripState(PR({ status: 'merged', ...over })).stages.find((x) => x.key === 'live').state;
+  assert.equal(at({ deployment_state: 'deploying' }), 'active');
+  assert.equal(at({ deployment_kind: 'child', deployment_state: 'pending' }), 'active');
+  assert.equal(at({ deployment_state: 'stalled' }), 'blocked');
+  assert.equal(at({ deployment_kind: 'child', deployment_state: 'failed' }), 'blocked');
+  assert.equal(at({ deployment_state: 'deployed' }), 'done');
+});
+
+test('the ladder: the vote heading down, or held by the member floor, is not decided', () => {
+  const AppView = makeAppView();
+  assert.equal(state(AppView, PR({ rejection_armed: true, reject_window_ends_at: hoursAhead(1) }), 'vote'), 'blocked');
+  assert.equal(state(AppView, PR({ contested: true }), 'vote'), 'blocked');
+  // The member floor: the votes are in but the Yes the floor needs is not.
+  const floor = PR({
+    yes_count: 3, votes_required: 3, check_state: 'passing', requires_explicit_approval: true,
+    needs_other_member_yes: true, other_member_yes_count: 0,
+  });
+  assert.equal(state(AppView, floor, 'vote'), 'active', 'the floor holds the vote open');
+  assert.equal(state(AppView, floor, 'goingLive'), 'active', 'and the queue says why it waits');
+  assert.equal(AppView.stageStripState(floor).current, 'vote');
+});
+
+test('the ladder: null for anything not on the road to going live', () => {
+  const AppView = makeAppView();
+  assert.equal(AppView.stageStripState(null), null);
+  // A draft: its path, which starts before the vote, is drawn as steps on
+  // the change's page.
+  assert.equal(AppView.stageStripState(PR({ status: 'active' })), null);
+  // Anything else the columns can carry (paused, archived, withdrawn).
+  assert.equal(AppView.stageStripState(PR({ status: 'paused' })), null);
+  assert.equal(AppView.stageStripState({}), null);
+});
+
+// ── The strip's markup on the card ───────────────────────────────────────
+
+test('a proposal up for a vote draws the strip under the status row, as four words in order', () => {
+  const AppView = makeAppView();
+  const html = proposalCardHtml(AppView, PR());
+  assert.match(html, /data-stage-strip="1"/);
+  const strip = /<div[^>]*data-stage-strip="1">[\s\S]*?<\/div>/.exec(html)[0];
+  const order = [...strip.matchAll(/data-stage="([a-zA-Z]+)" data-stage-state="([a-z]+)"/g)]
+    .map((m) => m[1]);
+  assert.deepEqual(order, ['vote', 'checks', 'goingLive', 'live']);
+  for (const label of ['Vote', 'Checks', 'Going live', 'Live']) {
+    assert.ok(strip.includes(label), `${label} is a word, not a glyph alone`);
+  }
+  // It sits between the status row and the action band.
+  const statusAt = html.indexOf('dev-card-status');
+  const stripAt = html.indexOf('data-stage-strip');
+  const actionsAt = html.indexOf('gc-card-actions');
+  assert.ok(statusAt > -1 && stripAt > statusAt && actionsAt > stripAt,
+    'status row, strip, action band, in that order');
+  // And the detail head draws the same strip.
+  assert.match(proposalCardHtml(AppView, PR(), { noNav: true }), /data-stage-strip="1"/);
+});
+
+test('the strip lights the stage the change is at, with the ledger’s marks', () => {
+  const AppView = makeAppView();
+  const html = proposalCardHtml(AppView, PR({ yes_count: 3, votes_required: 3, check_state: 'failing', test_results: [] }));
+  const strip = /<div[^>]*data-stage-strip="1">[\s\S]*?<\/div>/.exec(html)[0];
+  assert.match(strip, /data-stage="vote" data-stage-state="done"/, 'Vote ticked');
+  assert.match(strip, /data-stage="checks" data-stage-state="blocked"/, 'Checks crossed');
+  assert.match(strip, /data-stage="goingLive" data-stage-state="pending"/);
+  assert.match(strip, /data-stage="live" data-stage-state="pending"/);
+  // The mark cell: a tick on the done stage and a cross on the blocked one,
+  // in the requirements ledger's own tones.
+  assert.match(strip, /text-emerald-600 dark:text-emerald-400[^>]*>✓</);
+  assert.match(strip, /text-red-600 dark:text-red-400[^>]*>✕</);
+  // The current stage is the lit one: semibold dark ink where the others are
+  // muted, and the class travel is per stage, not on the strip as a whole.
+  const lit = /class="inline-flex items-center gap-1 font-semibold text-zinc-900 dark:text-zinc-100"\s+data-stage="checks"/.test(strip);
+  assert.ok(lit, 'Checks, the blocked current stage, is lit');
+  assert.match(strip, /text-zinc-500 dark:text-zinc-400"\s+data-stage="live"/, 'Live, ahead, is muted');
+});
+
+test('the strip spins on the stage in flight, and mutes the stages ahead', () => {
+  const AppView = makeAppView();
+  const html = proposalCardHtml(AppView, PR({ check_state: 'pending', yes_count: 1, votes_required: 3 }));
+  const strip = /<div[^>]*data-stage-strip="1">[\s\S]*?<\/div>/.exec(html)[0];
+  assert.match(strip, /data-stage="vote" data-stage-state="active"/);
+  assert.match(strip, /dc-status-spinner-arc/, 'the same spinning arc the pill spins');
+  assert.match(strip, /data-stage="goingLive" data-stage-state="pending"/);
+});
+
+test('the strip adds no second clock and no new tooltip copy', () => {
+  const AppView = makeAppView();
+  const html = proposalCardHtml(AppView, PR({
+    yes_count: 3, votes_required: 3, check_state: 'passing',
+    merge_window_ends_at: hoursAhead(4),
+  }));
+  // The pill owns the countdown; the strip carries none.
+  assert.equal((html.match(/data-window-ends/g) || []).length, 1, 'one clock, the pill’s');
+  const strip = /<div[^>]*data-stage-strip="1">[\s\S]*?<\/div>/.exec(html)[0];
+  assert.ok(!/~\d/.test(strip), 'no countdown figure in the strip');
+  assert.ok(!/title="/.test(strip), 'no new tooltip copy on the strip');
+});
+
+test('no strip on merged, governance or draft cards', () => {
+  const AppView = makeAppView();
+  // A merged card: the pill already settles it with "✓ Live".
+  assert.doesNotMatch(
+    mergedCardHtml(AppView, PR({ status: 'merged', merged_at: '2026-06-01T00:00:00Z', yes_count: 3 }), 3),
+    /data-stage-strip/,
+  );
+  // A governance proposal: no branch, no preview, no checks.
+  assert.doesNotMatch(
+    govCardHtml(AppView, { number: 12, title: 'Governance', status: 'promoted', yes_count: 0, no_count: 0 }),
+    /data-stage-strip/,
+  );
+  // The viewer's own draft session.
+  assert.doesNotMatch(
+    mySessionCardHtml(AppView, { id: 5, status: 'active', session_title: 'Draft', created_at: '2026-06-01T00:00:00Z' }),
+    /data-stage-strip/,
+  );
 });

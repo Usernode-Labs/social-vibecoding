@@ -40,6 +40,7 @@
  */
 
 import {
+  Fragment,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -1067,6 +1068,56 @@ const REQ_TONE: Record<string, string> = {
 // No "who acts" column: the headline already says whose turn it is, and the
 // change page's steps carry none either, so the two read alike.
 
+/**
+ * The proposal card's four-stage progress strip (#4003): Vote, Checks,
+ * Going live, Live, in order, directly under the status row. A person who
+ * voted could read the vote count but not the rest of the road — the bar
+ * says one thing and the tags say what is wrong; this says how far it has
+ * got. A finished stage carries a tick, the stage in flight carries the
+ * same spinning arc the pill spins, a stopped one a cross, and the stages
+ * ahead sit in muted words so what comes next is always readable, never a
+ * bare glyph.
+ *
+ * The mark and colour tables are the requirements ledger's (REQ_MARK /
+ * REQ_TONE above), so the strip reads as the same checklist the change's
+ * page and the folded list below it already draw — nothing here is
+ * clickable, nothing here carries a clock (the pill owns the countdown), and
+ * no new tone is invented.
+ *
+ * Rendered straight from the resolved model with no effects and no store
+ * reads, so its first paint is identical on the server and the client. The
+ * model carries no strip for merged, governance and draft cards, which then
+ * emit exactly the markup they emitted before.
+ */
+function StageStrip({ spec }: { spec: NonNullable<DevCardModel['stages']> }): ReactNode {
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[0.72rem] leading-snug" data-stage-strip="1">
+      {spec.stages.map((s, i) => {
+        // A stage that is finished or still ahead is muted; the stage the
+        // change is at — running or stopped — is the lit one.
+        const dim = s.state === 'done' || s.state === 'pending';
+        return (
+          <Fragment key={s.key}>
+            {i ? <span className="text-zinc-300 dark:text-zinc-600" aria-hidden="true">{'›'}</span> : null}
+            <span
+              className={`inline-flex items-center gap-1${dim
+                ? ' text-zinc-500 dark:text-zinc-400'
+                : ' font-semibold text-zinc-900 dark:text-zinc-100'}`}
+              data-stage={s.key}
+              data-stage-state={s.state}
+            >
+              <span className={`font-bold ${REQ_TONE[s.state] || REQ_TONE.pending}`} aria-hidden="true">
+                {s.state === 'active' ? <Spinner /> : (REQ_MARK[s.state] || REQ_MARK.pending)}
+              </span>
+              {s.label}
+            </span>
+          </Fragment>
+        );
+      })}
+    </div>
+  );
+}
+
 function RequirementsRow({ x }: { x: Extract<ExtraSpec, { t: 'requirements' }> }): ReactNode {
   const [open, setOpen] = useState(x.open);
   // The model's seed as of the previous render, so the effect below can tell
@@ -1368,6 +1419,13 @@ export function DevCard(
   // one uncapped row, the pill as an inline capsule among the chips.
   const pill = m.pill ? <StatusPill s={m.pill.state} inline={m.pill.inline} /> : null;
   const factsShown = kept.length > 0;
+  // The progress strip sits directly under the status row, on the card and
+  // on the detail head alike; cards whose model carries no strip (merged,
+  // governance, draft) emit exactly the markup they emitted before, so the
+  // sibling chain the declared checks walk is unchanged for them.
+  const strip = m.stages && m.stages.stages && m.stages.stages.length
+    ? <StageStrip spec={m.stages} />
+    : null;
   const statusRow = dense ? (
     <div className="dev-card-badges dev-card-status" data-empty={pill || voteBtn ? undefined : '1'}>{pill}{voteBtn}</div>
   ) : (pill || voteBtn || factsShown ? (
@@ -1415,6 +1473,7 @@ export function DevCard(
         </div>
         {metaRow}
         {statusRow}
+        {strip}
         {factsRow}
         {actionRow}
         {(m.extra || []).map((x) => <ExtraRow key={x.key} x={x} />)}

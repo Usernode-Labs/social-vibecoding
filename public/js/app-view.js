@@ -13416,6 +13416,12 @@ const AppView = {
     // that wide there would just read as a rule.
     const pillState = AppView.statusPillState(pr, { majority, locked: ctx.locked });
     const pill = pillState && pillState.label ? { state: pillState, inline: noNav } : null;
+    // #4003: the four-stage progress strip under the bar — only where the
+    // ladder exists (up for a vote or going live). Merged, governance and
+    // draft cards are other builders' models, and the derivation itself
+    // returns null for anything off this road.
+    const stages = (pr.status === 'promoted' || pr.status === 'merging')
+      ? AppView.stageStripState(pr, { majority, locked: ctx.locked }) : null;
 
     // ── Actions: Yes / No / Explore + icon Preview; ⋯ is in the rail ──
     // Explore is PROMOTED off the ⋯ menu for a live proposal the pill rule
@@ -13479,6 +13485,7 @@ const AppView = {
       title,
       meta,
       pill,
+      stages,
       linked,
       badges,
       chatCount: parseInt(pr.chat_count) || 0,
@@ -19820,6 +19827,133 @@ const AppView = {
         ? AppView._explicitCopy(p.explicit_approval_reason).sentence
         : (hasSnap && Number.isFinite(activeAtMerge) && activeAtMerge > 0)
           ? `needed ${snap} of ${activeAtMerge} active users at merge time` : undefined };
+  },
+
+  // #4003 — the four-stage ladder of a change on its way to going live, for
+  // the proposal card's progress strip (card/dev-card.tsx StageStrip). A
+  // person who voted could not tell where the change had got to: the bar
+  // answers with ONE label and the tags say what is WRONG, but nothing said
+  // how FAR it had got — tested? waiting to go live? live? The strip draws
+  // Vote, Checks, Going live, Live, in order, and this derives each stage's
+  // state from the fields the row already carries, so no new fetch and no
+  // schema change.
+  //
+  // The same two sources the card already reads, so the ladder cannot
+  // disagree with the bar above it: statusPillState's own key (contested,
+  // merge_countdown, reject_countdown, approvals) decides the vote stage,
+  // and MergeStatus.lifecycle's key (the conflict lane, the queued states,
+  // the main pause) decides Going live's. Same majority precedence the pill
+  // uses: the row's snapshot, then the caller's, then the app's.
+  //
+  // state ∈ done | active | blocked | pending — the four states the
+  // requirements ledger draws (REQ_MARK / REQ_TONE on the card), so the
+  // strip reuses those tables rather than inventing a fifth. `current` is
+  // the first not-done stage: the one that is lit.
+  //
+  // Null for anything that is not on this road: a draft (its path, which
+  // starts before the vote, is drawn as steps on the change's page), a
+  // governance proposal (no branch, no preview, no checks — three of the
+  // four stages would not exist) and a merged card (settled; the pill
+  // already says "✓ Live"). The card builder gates on the status too; this
+  // is the derivation's own guard.
+  stageStripState(item, opts) {
+    if (!item) return null;
+    const p = item;
+    const status = p.status;
+    if (status !== 'promoted' && status !== 'merging' && status !== 'merged') return null;
+    const o = opts || {};
+    const ctx = AppView._proposalsCtx || {};
+    const isOpenRow = status !== 'merged' && status !== 'merging';
+
+    const snap = parseInt(p.votes_required, 10);
+    const hasSnap = Number.isFinite(snap) && snap > 0;
+    const maj = hasSnap ? snap : (parseInt(o.majority, 10) || parseInt(ctx.majority, 10) || 1);
+    const yes = p.qualified_yes_count != null
+      ? (parseInt(p.qualified_yes_count, 10) || 0) : (parseInt(p.yes_count, 10) || 0);
+    const no = p.qualified_no_count != null
+      ? (parseInt(p.qualified_no_count, 10) || 0) : (parseInt(p.no_count, 10) || 0);
+
+    // The bar's own answer — the same derivation, the same precedence — so
+    // the ladder's vote stage is the pill's tally, not a second opinion
+    // about whether the vote is decided.
+    const pill = AppView.statusPillState(p, { majority: maj, locked: ctx.locked });
+    const pillKey = pill ? pill.key : null;
+    const reached = yes >= (pill && pill.majority != null ? pill.majority : maj);
+
+    // The reverse states: heading down, or held by the member floor.
+    const contested = isOpenRow && !!p.contested;
+    const rejectEndsMs = p.reject_window_ends_at ? Date.parse(p.reject_window_ends_at) : NaN;
+    const inReject = isOpenRow && !!p.rejection_armed && Number.isFinite(rejectEndsMs)
+      && rejectEndsMs > Date.now();
+    const memberFloor = isOpenRow && AppView._awaitingOtherMember(p);
+
+    // Vote — decided: past `promoted`, the countdown window running, or the
+    // majority reached with none of the reverse states.
+    let vote;
+    if (!isOpenRow) vote = 'done';
+    else if (contested || inReject) vote = 'blocked';
+    else if (pillKey === 'merge_countdown' || (reached && !memberFloor)) vote = 'done';
+    else vote = 'active';
+
+    // Checks — the automated run on the staging build. An error the gate
+    // still counts as in progress (the run goes again on its own,
+    // MergeStatus.checksWillRetry) reads as running, not as a cross.
+    const MS = typeof MergeStatus !== 'undefined' ? MergeStatus : null;
+    const willRetry = MS && typeof MS.checksWillRetry === 'function' ? !!MS.checksWillRetry(p) : false;
+    const cs = p.check_state;
+    let checks;
+    if (cs === 'passing' || cs === 'skipped') checks = 'done';
+    else if (cs === 'failing' || (cs === 'error' && !willRetry)
+      || p.preview_state === 'failed' || p.staging_error) checks = 'blocked';
+    else if ((cs === 'pending' && p.check_phase !== 'deferred')
+      || (cs === 'error' && willRetry)
+      // #607: nothing recorded at all — the first run hasn't stamped
+      // 'pending' yet ("Checks starting…"), which is in flight.
+      || (!cs && status === 'promoted' && !p.console_check_state)) checks = 'active';
+    else checks = 'pending';
+
+    // Going live — the merge itself, and the queue it sits in first: the
+    // countdown, MergeStatus's queued keys (ready, the admin wait, the
+    // member floor, the main pause, the conflict lane resolving and
+    // integrating). The conflict lane is a cross: nothing here goes anywhere
+    // until it is resolved. A merged row still running its rollout has
+    // merged; the rollout itself is the Live stage's work.
+    let lifeKey = null;
+    if (MS && typeof MS.lifecycle === 'function') {
+      lifeKey = MS.lifecycle(p, { majority: maj, locked: ctx.locked }).key || null;
+    }
+    const rolloutInFlight = p.deployment_state === 'deploying'
+      || (p.deployment_kind === 'child' && p.deployment_state === 'pending');
+    const CONFLICT_KEYS = ['merge_conflict', 'mergeability_conflict', 'conflict_failed'];
+    const QUEUE_KEYS = ['ready', 'awaiting_admin', 'awaiting_member', 'main_paused',
+      'resolving', 'integrating'];
+    let goingLive;
+    let live;
+    if (status === 'merged') {
+      goingLive = 'done';
+      if (rolloutInFlight) live = 'active';
+      else if (p.deployment_state === 'stalled'
+        || (p.deployment_kind === 'child' && p.deployment_state === 'failed')) live = 'blocked';
+      else live = 'done';
+    } else if (CONFLICT_KEYS.includes(lifeKey)) {
+      goingLive = 'blocked';
+      live = 'pending';
+    } else if (status === 'merging' || pillKey === 'merge_countdown' || QUEUE_KEYS.includes(lifeKey)) {
+      goingLive = 'active';
+      live = 'pending';
+    } else {
+      goingLive = 'pending';
+      live = 'pending';
+    }
+
+    const stages = [
+      { key: 'vote', label: 'Vote', state: vote },
+      { key: 'checks', label: 'Checks', state: checks },
+      { key: 'goingLive', label: 'Going live', state: goingLive },
+      { key: 'live', label: 'Live', state: live },
+    ];
+    const current = (stages.find((s) => s.state !== 'done') || {}).key || null;
+    return { stages, current };
   },
 
   // The pill's MARKUP moved to card/dev-card.tsx (`StatusPill`), which

@@ -167,6 +167,19 @@ export interface ActionSpec {
   uncounted?: boolean;
 }
 
+/**
+ * One rung of the proposal card's four-stage progress strip (#4003): Vote,
+ * Checks, Going live, Live. Resolved by AppView.stageStripState — the
+ * derivation lives beside statusPillState, this carries only the answer.
+ */
+export interface StageSpec {
+  key: 'vote' | 'checks' | 'goingLive' | 'live';
+  /** The stage's word, in the app's own vocabulary. */
+  label: string;
+  /** 'done' | 'active' | 'blocked' | 'pending' — the requirements ledger's states. */
+  state: string;
+}
+
 /** Everything that can appear in the status band, as a tagged union. */
 export type BadgeSpec =
   /** A plain tinted chip: work state, imported, paused, checks, console errors.
@@ -298,6 +311,12 @@ export interface DevCardModel {
   meta: MetaPart[];
   /** The composite pill. `inline` is the detail head's capsule variant. */
   pill?: { state: StatusPillState; inline: boolean } | null;
+  /**
+   * #4003 — the four-stage progress strip under the status row
+   * (StageStrip), resolved by AppView.stageStripState. Null on cards that
+   * draw no strip: merged, governance and draft rows.
+   */
+  stages?: { stages: StageSpec[]; current: string | null } | null;
   /** Closes-#N pills — their own opt because they lead the band, outside the cap. */
   linked: BadgeSpec[];
   badges: BadgeSpec[];
