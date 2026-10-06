@@ -121,6 +121,7 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   FlagIcon,
+  HomeIcon,
   InfoCircleIcon,
   PlusIcon,
   PlusWideIcon,
@@ -146,6 +147,7 @@ import { ACTIVITY_LABEL } from '../agent-session/activity';
 import { archiveListedSession, loadAgentSessions, useAgentChatsShown, useAgentSessions } from '../agent-session/store';
 import { setFilter as setMessagesFilter } from '../messages/store';
 import { hydrateNeedsSeen, unseenNeeds } from '../workshop/needs-seen';
+import { navStore } from '../nav/nav-store.js';
 
 const ROW = 'flex items-center gap-3 px-5 min-h-[44px] text-sm '
   + 'text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-800 '
@@ -479,8 +481,16 @@ export function AppsSwitcherSheet(): ReactNode {
   // and what About prints — and adds no fetch: the Improve panel was reading
   // exactly these for the rows that moved here.
   const {
-    slug, name, showTerminal, restricted, canReport, readOnly,
+    slug, name, showTerminal, restricted, canReport, readOnly: writeBarred,
   } = useStoreState(improveStore);
+  // A PRIVATE MEMBER (../nav/nav-store.js): an invite link let them into this
+  // app's group before they were let in off the waitlist. Their menu has
+  // "Go to Homeroom", which is their way out of the app until they have used
+  // it once (App._privateNoClose), and no Developer terminal or Build it
+  // yourself: they suggest changes to Homeroom bot instead. So Agent chats
+  // reads them as a viewer who may not write.
+  const { privateMember } = useStoreState(navStore);
+  const readOnly = writeBarred || privateMember;
   const agentSessions = useAgentSessions();
   // Whether the viewer has built something themselves: see AgentChats.
   const agentChats = useAgentChatsShown();
@@ -884,7 +894,32 @@ export function AppsSwitcherSheet(): ReactNode {
               want it one tap away. Same id, same gate (`showTerminal`, which
               DevConsole publishes), same method.
           */}
-          {showTerminal ? (
+          {/*
+              GO TO HOMEROOM, for a private member only, and only after mount
+              (the store says who is signed in after hydration, so the
+              prerender has no such row). Home, and the first time its tour
+              (features/first-session goHome).
+          */}
+          {mounted && privateMember ? (
+            <button
+              id="app-menu-row-homeroom"
+              type="button"
+              className={`${ROW} w-full text-left`}
+              onClick={() => {
+                const info = { slug: slug || null, name: name || null };
+                void AppContext.dismissForNav().then(() => {
+                  (window as any).UsernodeReact?.firstSession?.goHome?.(info);
+                });
+              }}
+            >
+              <RowBody
+                icon={<HomeIcon />}
+                label="Go to Homeroom"
+                sub="Your Home, your communities and Homeroom bot"
+              />
+            </button>
+          ) : null}
+          {showTerminal && !privateMember ? (
             <MenuRow
               id="improve-row-terminal"
               href="#"

@@ -154,10 +154,9 @@ function communityInviteRoutes(config) {
     try {
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', appColumns);
       if (!app) return res.status(404).json({ error: 'App not found' });
-      const [listed, canCreate, skipsLeft, joiningRule] = await Promise.all([
+      const [listed, canCreate, joiningRule] = await Promise.all([
         invites.listInvites(pool, { app, user: req.user }),
         invites.canCreate(pool, app, req.user),
-        invites.skipsLeft(pool, req.user),
         invites.joiningRule(pool, app),
       ]);
       return res.json({
@@ -169,7 +168,6 @@ function communityInviteRoutes(config) {
         limits: invites.LIMITS,
         // WP-D: 0 for days or maxUses asks for no limit (until turned off).
         noLimit: invites.NO_LIMIT,
-        skipsLeft,
         joiningRule,
       });
     } catch (err) {

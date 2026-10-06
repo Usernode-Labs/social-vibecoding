@@ -703,7 +703,7 @@ async function fileMessage(pool, config, { app, user, messageId, words, title, h
           app, issueNumber: filed.issueNumber, bot, jobKey: filed.queueId, settings: here.settings, filed: true,
           requester: {
             userId: user.id, username: user.username, issueTitle: title, firstVersion: false, askedText: words,
-            isSynthetic: !!user.isSynthetic, hasPlatformAccess: !!user.hasPlatformAccess, isAdmin: !!user.isAdmin,
+            isSynthetic: !!user.isSynthetic, hasPlatformAccess: !!(user.hasPlatformAccess || user.privateMember), isAdmin: !!user.isAdmin,
           },
           deps: { dm: dmModule(deps) },
         });
@@ -973,7 +973,7 @@ async function appRow(pool, appId) {
 /** A person, as hasBot and filing read them. */
 async function personRow(pool, userId) {
   const { rows } = await pool.query(
-    `SELECT id, username, is_synthetic AS "isSynthetic", has_platform_access AS "hasPlatformAccess", is_admin AS "isAdmin"
+    `SELECT id, username, is_synthetic AS "isSynthetic", (has_platform_access OR private_member_since IS NOT NULL) AS "hasPlatformAccess", is_admin AS "isAdmin"
        FROM users WHERE id = $1 AND anonymised_at IS NULL`,
     [userId],
   );

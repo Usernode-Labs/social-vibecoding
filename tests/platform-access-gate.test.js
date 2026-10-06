@@ -42,12 +42,16 @@ const USERS = {
   1: { id: 1, username: 'released', is_admin: false, has_platform_access: true },
   2: { id: 2, username: 'waiting', is_admin: false, has_platform_access: false },
   3: { id: 3, username: 'admin', is_admin: true, has_platform_access: false },
+  // A private member: an invite link let them into its community before
+  // they were let in (users.private_member_since).
+  4: { id: 4, username: 'invited', is_admin: false, has_platform_access: false, private_member_since: new Date() },
 };
 
 const SESSIONS = {
   'released-session': { user_id: 1, expires_at: new Date(Date.now() + DAY) },
   'waiting-session': { user_id: 2, expires_at: new Date(Date.now() + DAY) },
   'admin-session': { user_id: 3, expires_at: new Date(Date.now() + DAY) },
+  'private-session': { user_id: 4, expires_at: new Date(Date.now() + DAY) },
 };
 
 function collapse(sql) {
@@ -73,6 +77,7 @@ function makeMockPool() {
           ai_progress_estimate: false,
           locale: null,
           has_platform_access: u.has_platform_access,
+          private_member_since: u.private_member_since || null,
         }],
       };
     }
@@ -147,6 +152,16 @@ test('a user WITH platform access reaches the SPA and APIs', async () => {
     assert.equal(await spa.text(), 'SPA');
 
     const api = await get(base, '/api/apps', 'released-session');
+    assert.equal(api.status, 200);
+    assert.deepEqual(await api.json(), { reached: 'apps' });
+  });
+});
+
+test('a PRIVATE MEMBER passes the gate like a user with access: their apps, hubs and chats are behind it', async () => {
+  await withServer(async (base) => {
+    const spa = await get(base, '/social', 'private-session');
+    assert.equal(spa.status, 200, 'not bounced to the shell');
+    const api = await get(base, '/api/apps', 'private-session');
     assert.equal(api.status, 200);
     assert.deepEqual(await api.json(), { reached: 'apps' });
   });

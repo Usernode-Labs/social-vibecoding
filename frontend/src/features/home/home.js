@@ -889,6 +889,9 @@ const Home = {
         hint: Home.CREATE_DISABLED_HINT,
         placement: flows ? null : { ...HomeLayout.trailingCell(placed, cols), w: 1, h: 1 },
       };
+      // A private member makes no apps until they are let in off the
+      // waitlist (their Home's waitlist card says so), so no tile at all.
+      if (App.user?.privateMember) create = null;
     }
 
     // The search view is a flat, transient list — it must not inherit the

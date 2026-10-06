@@ -1,0 +1,198 @@
+'use strict';
+
+// A PRIVATE MEMBER against the full schema (users.private_member_since):
+// an invite link lets somebody still waiting into its community, they may
+// not make apps of their own, and their Home's waitlist card joins them to
+// the waitlist with an email that is theirs — the account's own, or one a
+// code confirms — and never one another account holds. Letting them in ends
+// the tier. Skipped when no server is reachable, and required when
+// TEST_DATABASE_URL is set.
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const { Pool } = require('pg');
+
+const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
+
+test('private members, against the full schema', { timeout: 180000 }, async (t) => {
+  const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
+  try { await admin.query('SELECT 1'); } catch (err) {
+    await admin.end();
+    if (process.env.TEST_DATABASE_URL) throw err;
+    t.skip('PostgreSQL unavailable; set TEST_DATABASE_URL to require this check'); return;
+  }
+  const name = 'private_member_' + crypto.randomBytes(6).toString('hex');
+  await admin.query(`CREATE DATABASE ${name}`);
+  const url = new URL(DSN); url.pathname = '/' + name;
+  const pool = new Pool({ connectionString: String(url), max: 6 });
+  t.after(async () => {
+    await pool.end();
+    await admin.query(`DROP DATABASE ${name}`);
+    await admin.end();
+  });
+  await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
+
+  const invites = require('../src/services/community-invites');
+  const appAllowance = require('../src/services/app-allowance');
+  const memberWaitlist = require('../src/services/member-waitlist');
+  const waitlist = require('../src/services/waitlist');
+
+  let seq = 0;
+  async function account({ access = false, email = null } = {}) {
+    const n = ++seq;
+    const { rows } = await pool.query(
+      `INSERT INTO users (username, password, has_platform_access, email, email_confirmed)
+       VALUES ($1, 'x', $2, $3::varchar, $3::varchar IS NOT NULL) RETURNING id, username`,
+      [`person_${n}`, access, email]
+    );
+    return { id: rows[0].id, username: rows[0].username, isAdmin: false, hasPlatformAccess: access };
+  }
+  const tier = async (id) => (await pool.query(
+    'SELECT has_platform_access, private_member_since IS NOT NULL AS private FROM users WHERE id = $1', [id])).rows[0];
+
+  // Jordan's private group, and a link to it.
+  const jordan = await account({ access: true });
+  // The community is the AFTER INSERT trigger's (create_app_community), so
+  // the row is read back rather than taken from RETURNING.
+  await pool.query(
+    `INSERT INTO apps (name, slug, created_by, view_visibility, collab_visibility)
+     VALUES ('Best brunch spots', 'best-brunch', $1, 'private', 'private')`,
+    [jordan.id]
+  );
+  const { rows: [group] } = await pool.query(
+    `SELECT id, slug, name, created_by, self_hosted, collab_visibility, view_visibility, community_id
+       FROM apps WHERE slug = 'best-brunch'`
+  );
+  await pool.query(
+    "INSERT INTO app_collaborators (app_id, user_id, status) VALUES ($1, $2, 'member') ON CONFLICT DO NOTHING",
+    [group.id, jordan.id]
+  );
+  await pool.query(
+    'INSERT INTO community_members (community_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+    [group.community_id, jordan.id]
+  );
+  const made = await invites.createInvite(pool, { app: group, user: jordan });
+  assert.ok(made.ok, 'Jordan can make a link to his own group');
+
+  await t.test('a link lets somebody still waiting into the group, as a private member', async () => {
+    const lina = await account({ email: 'lina@example.com' });
+    const joined = await invites.redeem(pool, { token: made.link.token, user: lina });
+    assert.deepEqual([joined.status, joined.slug, joined.privateMember], ['joined', 'best-brunch', true]);
+    assert.deepEqual(await tier(lina.id), { has_platform_access: false, private: true });
+    const { rows } = await pool.query(
+      'SELECT 1 FROM community_members WHERE community_id = $1 AND user_id = $2', [group.community_id, lina.id]);
+    assert.equal(rows.length, 1, 'a member of the community');
+  });
+
+  await t.test('a private member makes no apps, whatever their quota says, until they are let in', async () => {
+    const mo = await account();
+    await invites.redeem(pool, { token: made.link.token, user: mo });
+    await pool.query('UPDATE users SET app_quota = 5 WHERE id = $1', [mo.id]);
+    // The flag is read from the row: a CLI or Homeroom bot caller carries none.
+    const refused = await appAllowance.read(pool, { id: mo.id, canAdminWrite: false });
+    assert.equal(refused.canCreateApps, false);
+    assert.deepEqual([refused.quota.limit, refused.quota.remaining], [0, 0]);
+    await waitlist.grantPlatformAccess(pool, mo.id);
+    assert.deepEqual(await tier(mo.id), { has_platform_access: true, private: true }, 'the mark stays; access ends the tier');
+    const allowed = await appAllowance.read(pool, { id: mo.id, canAdminWrite: false });
+    assert.equal(allowed.canCreateApps, true, 'let in: their own quota again');
+  });
+
+  await t.test('the waitlist card: the account\'s own confirmed address joins with one press', async () => {
+    const ana = await account({ email: 'Ana@Example.com' });
+    await invites.redeem(pool, { token: made.link.token, user: ana });
+    const before = await memberWaitlist.stateFor(pool, ana.id);
+    assert.deepEqual(before, { state: 'none', email: null, accountEmail: 'ana@example.com', moreToken: null });
+    const sent = [];
+    const joined = await memberWaitlist.join(pool, { userId: ana.id, rawEmail: 'ana@example.com', send: (...a) => sent.push(a) });
+    assert.equal(joined.next, 'listed');
+    assert.equal(joined.state, 'listed');
+    assert.equal(joined.email, 'ana@example.com');
+    assert.match(joined.moreToken, /^[a-f0-9]{48}$/, 'the "Want in sooner?" questions\' link');
+    assert.deepEqual(sent, [], 'nothing mailed: the account confirmed it already');
+    const { rows } = await pool.query(
+      'SELECT linked_user_id::int AS linked_user_id, confirmed_at IS NOT NULL AS confirmed FROM waitlist_signups WHERE email = $1', ['ana@example.com']);
+    assert.deepEqual(rows, [{ linked_user_id: ana.id, confirmed: true }]);
+    // Released from the waitlist the ordinary way, the account is let in.
+    const { rows: [{ id: signupId }] } = await pool.query('SELECT id FROM waitlist_signups WHERE email = $1', ['ana@example.com']);
+    await waitlist.releaseWaitlistSignup(pool, signupId);
+    assert.deepEqual(await tier(ana.id), { has_platform_access: true, private: true });
+  });
+
+  await t.test('another address is confirmed with a code first', async () => {
+    const ben = await account();
+    await invites.redeem(pool, { token: made.link.token, user: ben });
+    const sent = [];
+    const asked = await memberWaitlist.join(pool, { userId: ben.id, rawEmail: ' Ben@Example.com ', send: (...a) => sent.push(a) });
+    assert.deepEqual(asked, { next: 'code', email: 'ben@example.com' });
+    assert.equal(sent.length, 1);
+    const [to, code] = sent[0];
+    assert.equal(to, 'ben@example.com');
+    assert.match(code, /^[0-9]{6}$/);
+    assert.equal((await memberWaitlist.stateFor(pool, ben.id)).state, 'none', 'not on it until the code is in');
+    await assert.rejects(
+      memberWaitlist.verify(pool, { userId: ben.id, rawEmail: 'ben@example.com', code: code === '000000' ? '111111' : '000000' }),
+      (err) => err.code === 'invalid_code'
+    );
+    const done = await memberWaitlist.verify(pool, { userId: ben.id, rawEmail: 'ben@example.com', code });
+    assert.deepEqual([done.next, done.state, done.email], ['listed', 'listed', 'ben@example.com']);
+    const { rows } = await pool.query('SELECT email, email_confirmed FROM users WHERE id = $1', [ben.id]);
+    assert.deepEqual(rows, [{ email: 'ben@example.com', email_confirmed: true }], 'an account with no address takes it');
+  });
+
+  await t.test('a private member uses public apps but never votes on one, even one that invited them', async () => {
+    const communities = require('../src/services/communities');
+    const kay = await account();
+    // Their own private group: their vote counts there.
+    await invites.redeem(pool, { token: made.link.token, user: kay });
+    assert.equal(await communities.privateVoteRefusal(pool, group.id, kay.id), null);
+    const counts = async (appId, userId) => (await pool.query(
+      'SELECT counts_toward_outcome($1, $2) AS c', [userId, appId])).rows[0].c;
+    assert.equal(await counts(group.id, kay.id), true);
+    // A public community whose link brought them in too.
+    await pool.query(
+      `INSERT INTO apps (name, slug, created_by, view_visibility, collab_visibility)
+       VALUES ('Town square', 'town-square', $1, 'public', 'public')`, [jordan.id]);
+    const { rows: [square] } = await pool.query(
+      `SELECT id, slug, name, created_by, self_hosted, collab_visibility, view_visibility, community_id
+         FROM apps WHERE slug = 'town-square'`);
+    await pool.query('INSERT INTO community_members (community_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+      [square.community_id, jordan.id]);
+    const squareLink = (await invites.createInvite(pool, { app: square, user: jordan })).link;
+    const joined = await invites.redeem(pool, { token: squareLink.token, user: kay });
+    assert.deepEqual([joined.status, joined.privateMember], ['joined', true], 'they can join it and use it');
+    const refused = await communities.privateVoteRefusal(pool, square.id, kay.id);
+    assert.equal(refused.code, 'private_member_public_vote');
+    assert.match(refused.error, /let in off the waitlist/);
+    assert.equal(await counts(square.id, kay.id), false, 'and a vote of theirs would count toward nothing');
+    // Let in, they vote there like anybody.
+    await waitlist.grantPlatformAccess(pool, kay.id);
+    assert.equal(await communities.privateVoteRefusal(pool, square.id, kay.id), null);
+    assert.equal(await counts(square.id, kay.id), true);
+    // Somebody with access was never held to it.
+    assert.equal(await communities.privateVoteRefusal(pool, square.id, jordan.id), null);
+  });
+
+  await t.test('an address another account holds is refused, whichever way it arrives', async () => {
+    await account({ email: 'taken@example.com' });
+    const cal = await account();
+    await invites.redeem(pool, { token: made.link.token, user: cal });
+    const sent = [];
+    await assert.rejects(
+      memberWaitlist.join(pool, { userId: cal.id, rawEmail: 'TAKEN@example.com', send: (...a) => sent.push(a) }),
+      (err) => err.code === 'email_in_use' && err.status === 409 && /another Homeroom account/.test(err.message)
+    );
+    assert.deepEqual(sent, [], 'and no code is mailed to it');
+    // An address another account's waitlist row is linked to counts too.
+    await assert.rejects(
+      memberWaitlist.join(pool, { userId: cal.id, rawEmail: 'ana@example.com', send: () => {} }),
+      (err) => err.code === 'email_in_use'
+    );
+    await assert.rejects(
+      memberWaitlist.join(pool, { userId: cal.id, rawEmail: 'not an email', send: () => {} }),
+      (err) => err.code === 'invalid_email'
+    );
+  });
+});

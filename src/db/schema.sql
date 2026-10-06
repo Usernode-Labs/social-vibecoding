@@ -11591,9 +11591,11 @@ CREATE INDEX IF NOT EXISTS idx_community_invite_redemptions_user
   ON community_invite_redemptions (user_id) WHERE applied_at IS NULL;
 COMMENT ON TABLE community_invite_redemptions IS 'staging:private';
 
--- THE INVITE TREE: who let whom in. On unless an admin switches it off in
--- Admin → Waitlist, which writes the `invite_tree_enabled` platform_settings
--- row (services/community-invites.js; no row is on).
+-- THE INVITE TREE (retired): who a link let past the waitlist, on one of its
+-- maker's skips, while links could do that. Private membership replaced it
+-- (`private_member_since` below), so nothing writes `admitted_by` now, and
+-- the Admin → Waitlist switch it read is gone with its setting row (below).
+-- The columns keep the history: Journey's door for those accounts.
 -- `invite_generation` 0 is "let off the waitlist by us, by hand" (an admin
 -- admitting a waitlist row, or granting an account directly): grantPlatform-
 -- Access writes it only when that grant is what lets them in. 1 is somebody
@@ -11604,6 +11606,18 @@ COMMENT ON TABLE community_invite_redemptions IS 'staging:private';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS admitted_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS invite_generation SMALLINT;
 CREATE INDEX IF NOT EXISTS idx_users_admitted_by ON users (admitted_by) WHERE admitted_by IS NOT NULL;
+-- A PRIVATE MEMBER: somebody without platform access whom an invite link
+-- let into its community straight away, instead of queueing it for the day
+-- they are let in. They use and change their communities' apps, but do not
+-- make apps of their own; they are on the waitlist for that. The tier is
+-- `has_platform_access = FALSE AND private_member_since IS NOT NULL`, so
+-- letting them in (has_platform_access → TRUE, the waitlist's own release)
+-- ends it with no second write, and the triggers on that edge (the
+-- platform community, the welcome DM, queued invites) fire then, not here.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS private_member_since TIMESTAMPTZ;
+-- The retired tree's on/off switch (services/community-invites.js used to read
+-- it). Nothing reads it now; idempotent, so a boot after the first finds none.
+DELETE FROM platform_settings WHERE key = 'invite_tree_enabled';
 
 -- Whether the person who made a link can still grant what it grants: an
 -- admin, or a collaborator where building is by invitation, or a member
@@ -11794,10 +11808,17 @@ CREATE INDEX IF NOT EXISTS idx_users_test_account_created_at
 -- denominator call (services/pr-vote-revision.js countedVotePredicateSql,
 -- services/governance.js, services/active-users.js). LANGUAGE sql and STABLE
 -- so the planner inlines it.
+--
+-- A PRIVATE MEMBER (users.private_member_since, not let in yet) never counts
+-- on a PUBLIC app (view_visibility 'public', a Public community), even one
+-- whose link brought them in: they use public apps, and vote in their own
+-- private groups. Invite links are cheap to make, so this keeps them from
+-- moving a public decision, and out of its denominator. The vote routes
+-- refuse such a vote first (services/communities.js privateVoteRefusal).
 CREATE OR REPLACE FUNCTION counts_toward_outcome(voter_id INTEGER, target_app_id INTEGER)
 RETURNS BOOLEAN
 LANGUAGE sql STABLE AS $$
-  SELECT NOT EXISTS (
+  SELECT (NOT EXISTS (
            SELECT 1 FROM users tv
             WHERE tv.id = voter_id AND tv.test_account_created_at IS NOT NULL
          )
@@ -11805,6 +11826,13 @@ LANGUAGE sql STABLE AS $$
            SELECT 1 FROM apps ta
              JOIN users tc ON tc.id = ta.created_by
             WHERE ta.id = target_app_id AND tc.test_account_created_at IS NOT NULL
+         ))
+     AND NOT EXISTS (
+           SELECT 1 FROM users pv, apps pa
+            WHERE pv.id = voter_id AND pa.id = target_app_id
+              AND pv.private_member_since IS NOT NULL
+              AND NOT pv.has_platform_access AND NOT pv.is_admin
+              AND pa.view_visibility = 'public'
          )
 $$;
 -- The same rule keyed by what was voted on, for the tallies that hold only a

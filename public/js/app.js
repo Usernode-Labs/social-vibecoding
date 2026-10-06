@@ -578,6 +578,14 @@ const App = {
       location.reload();
       return;
     }
+    // So is being a private member, for the same reason: it decides the mark
+    // menu, Home's sections and the app's ✕. Being let in off the waitlist
+    // ends it, and the next boot reads the full shell.
+    if (!!user.privateMember !== !!App.user?.privateMember) {
+      App.saveSessionSnapshot(user);
+      location.reload();
+      return;
+    }
     App._sessionFromSnapshot = false;
     if (window.NativeChrome &&
         typeof NativeChrome.prepareIdentityPublication === 'function') {
@@ -4663,6 +4671,15 @@ const App = {
             }
           }
         }
+        // A PRIVATE MEMBER is on the waitlist from inside: their Home's card
+        // links to the "Want in sooner?" questions (#more/<token>, features/
+        // home/waitlist-card.tsx), the screen the join mail links everybody
+        // else to. Its "Back" is #landing, which comes through below as any
+        // stale auth hash does and lands on Home.
+        if (authRoute === 'more' && App.user?.privateMember) {
+          AuthScreens.show('more', authSeg);
+          return;
+        }
         if (authRoute) {
           AuthScreens.hideAll();
           // `_rootUrl('')`, not a bare '/': this strips the STALE AUTH HASH
@@ -5810,6 +5827,8 @@ const App = {
   // render is the prerender's "Me", and the name arrives as an update.
   _syncViewer() {
     window.UsernodeReact?.nav?.setViewer?.(App.user?.username || null);
+    // A private member's mark menu and Home differ (features/nav/nav-store.js).
+    window.UsernodeReact?.nav?.setPrivateMember?.(!!App.user?.privateMember);
   },
 
   // ── #platform-tabs — one place decides ──────────────────────────────
@@ -8098,6 +8117,28 @@ const App = {
     'profile-proposals-screen': ['arrow', '#profile'],
   },
 
+  // ── A private member's way out ───────────────────────────────────────
+  //
+  // A PRIVATE MEMBER (App.user.privateMember: an invite link let them into
+  // its community before they were let in) lands inside that app with no ✕.
+  // The mark menu's "Go to Homeroom" (features/app-context) takes them to
+  // Home and its four-step tour (features/first-session goHome), and from
+  // then on an app has its ✕ like anybody's. Remembered on this device, the
+  // way the tours themselves are.
+  PRIVATE_HOME_PREFIX: 'usernode:private-home:',
+  _privateHomeKey() {
+    return `${App.PRIVATE_HOME_PREFIX}${App.user?.id ?? 'anon'}`;
+  },
+  _privateHomeVisited() {
+    try { return !!localStorage.getItem(App._privateHomeKey()); } catch (_) { return false; }
+  },
+  _notePrivateHome() {
+    try { localStorage.setItem(App._privateHomeKey(), String(Date.now())); } catch (_) { /* private mode */ }
+  },
+  _privateNoClose() {
+    return !!App.user?.privateMember && !App._privateHomeVisited();
+  },
+
   // The slot for a screen, as setBackIcon's own arguments. Anything off the
   // table keeps the house: the auth screens are outside the tab bar entirely,
   // and a screen nobody has classified is better off offering a way out than
@@ -8151,6 +8192,10 @@ const App = {
       // publishes the same 'none', and the two writers have to agree (see
       // above).
       if (App.currentTab !== 'app' || App._selfHostedRoute()) return ['none'];
+      // A PRIVATE MEMBER who has not been to Homeroom yet has no ✕: the app
+      // an invite link landed them in is where they are, and the mark menu's
+      // "Go to Homeroom" is the way on (_privateNoClose).
+      if (App._privateNoClose()) return ['none'];
       // The ✕'s DESTINATION is the page the app was opened from (App.closeApp
       // traverses back to it; this is the href a modified click follows), and
       // Home when there is none. The table holds the glyph; this holds the
@@ -8458,8 +8503,11 @@ const App = {
       // app shows is the close button (#2718). It said 'home' because that was
       // the default for everything that was not Home, and the reset was
       // written before an app had a slot of its own. Its href is where
-      // App.closeApp goes: the page the app was opened from.
-      App.setBackIcon('close', App._closeAppHref());
+      // App.closeApp goes: the page the app was opened from. A private
+      // member's first app has none: the table's own answer for it, so the
+      // two writers agree (_backSlotFor, _privateNoClose).
+      if (App._privateNoClose()) App.setBackIcon(...App._backSlotFor('app-view'));
+      else App.setBackIcon('close', App._closeAppHref());
       AppView.renderAppTab();
       if (opening && AppView.appData?.slug === App.currentApp
           && App._isScreenVisible?.('app-view')) {

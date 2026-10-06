@@ -433,12 +433,19 @@ function authRoutes(config) {
       // press accepted it; the person now types their own into an empty
       // field, and set-password refuses to finish without it. A shell cached
       // from before reads the missing field as null — an empty field.
+      //
+      // A link that just let them in (as a private member, or on its maker's
+      // skip) answers `waitlisted`: there is no queue in front of them now.
+      // The verifier read it before the link was followed.
+      const waitlistedNow = invite && invite.status === 'joined'
+        ? false
+        : (typeof verified.waitlisted === 'boolean' ? verified.waitlisted : null);
       return res.json({
         ok: true,
         next: 'set-password',
         created: !!verified.created,
         needsUsername: !!verified.needsUsernameChoice,
-        waitlisted: typeof verified.waitlisted === 'boolean' ? verified.waitlisted : null,
+        waitlisted: waitlistedNow,
         ...(invite ? { invite } : {}),
       });
     } catch (error) {
@@ -601,7 +608,7 @@ function authRoutes(config) {
       // waitlist release — so it carries platform access with it
       // (onboarding flow alignment). Without this, every invited user
       // would land in the waiting room, a regression on the invite flow.
-      // Not a release by hand, so no invite-tree skips come with it.
+      // Not a release by hand, so no generation 0 comes with it.
       await waitlist.grantPlatformAccess(pool, userId);
 
       // #2568: the included OpenRouter key, created with the account.
@@ -857,8 +864,13 @@ function authRoutes(config) {
         // Platform-access gate (onboarding flow alignment). FALSE means
         // the account is waiting to be released off the platform
         // waitlist — the waiting room polls this to know when to let
-        // the user through.
-        hasPlatformAccess: !!req.user.hasPlatformAccess || !!req.user.isAdmin,
+        // the user through. It answers "may use the platform", so a
+        // private member says TRUE here too, and `privateMember` says
+        // what is different for them (middleware/auth.js isPrivateMember):
+        // they join by an invite link before they are let in, and do not
+        // make apps of their own until they are.
+        hasPlatformAccess: !!req.user.hasPlatformAccess || !!req.user.isAdmin || !!req.user.privateMember,
+        privateMember: !!req.user.privateMember,
         // First-run username gate (#2563). TRUE means this account has
         // never picked the handle other members see — email sign-up gave
         // it a generated one and recorded that the person still has to
@@ -1831,7 +1843,7 @@ function authRoutes(config) {
 
       // Genesis-ledger registration is invite-equivalent (the genesis
       // allowlist IS the invite) — grant platform access directly, without
-      // the invite-tree skips a release by hand carries.
+      // the generation 0 a release by hand records.
       await waitlist.grantPlatformAccess(pool, userId);
 
       // #2568: the included OpenRouter key, created with the account.

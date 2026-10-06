@@ -17,27 +17,24 @@
  *                 link shows none of that, only why it is dead.
  *   redeem        following a link. Somebody with platform access joins on
  *                 the spot. Somebody without it (a new account, or one still
- *                 on the waitlist) is QUEUED: the community waits, and the
- *                 trigger in schema.sql applies it the moment they are let in,
- *                 however that happens.
+ *                 on the waitlist) joins on the spot too, as a PRIVATE MEMBER
+ *                 (users.private_member_since): in this community now, on the
+ *                 waitlist for making apps of their own. A redemption the link
+ *                 cannot grant now stays queued, and the trigger in schema.sql
+ *                 applies it the moment they are let in, however that happens.
  *
  * WHAT A LINK GRANTS is what its maker could grant: on a project where
  * building is by invitation it is the collaborator invite, accepted; anywhere
  * else it is membership. schema.sql's apply_community_invite() is the one
  * implementation, used both here and by that trigger.
  *
- * THE INVITE TREE is ON unless an admin switches it off (Admin → Waitlist,
- * the `invite_tree_enabled` platform setting). On, a link
- * can also let somebody past the waitlist, spending one of its maker's
- * lifetime skips: INVITE_TREE_BUDGETS by generation, 10 for the people we
- * let off the waitlist by hand (generation 0) and none for anybody a link
- * let in, so invites do not chain. Unlimited for admins, but an admin's link
- * is not a release by hand: whoever it lets in is generation 1 like anyone
- * else's invitee. An account with no generation (everyone who had access
- * before the tree, activation codes, genesis wallets) has no skips.
- * Skips used is a count of users.admitted_by, read under a lock on the
- * maker's row so two people following at once cannot spend a skip that is
- * not there. With it off, everybody new is queued.
+ * THE INVITE TREE IS RETIRED. A link used to be able to let somebody past
+ * the waitlist outright, on one of its maker's lifetime skips (ten for the
+ * people we let off the waitlist by hand, unlimited for admins), switched in
+ * Admin → Waitlist. Private membership replaced it: everybody new a link
+ * brings in joins its community as a private member, whoever made the link,
+ * and is let in from the waitlist like anybody else. users.admitted_by and
+ * invite_generation keep the history of who a skip let in.
  */
 
 const crypto = require('crypto');
@@ -57,99 +54,6 @@ const MAX_LIVE_PER_MAKER = 10;
 // 16 random bytes, base64url: 22 characters. Anything else is not a token
 // and never reaches the database.
 const TOKEN_RE = /^[A-Za-z0-9_-]{22}$/;
-
-// THE SWITCH is an admin setting, stored in platform_settings like the app
-// limit (services/app-limit.js) and read through the same kind of short
-// per-pool cache, so a save applies on every server within SETTING_CACHE_MS
-// with no deploy. No row is ON: the tree is on by default. A row reads as on
-// only when it says 'true'. An unreadable setting reads as OFF and is not
-// cached: a newcomer waiting a moment longer is the safer mistake than a
-// skip nobody meant to hand out.
-const SETTING_KEY = 'invite_tree_enabled';
-const SETTING_CACHE_MS = 10 * 1000;
-const SETTING_DESCRIPTION = 'Whether invite links let people new to Homeroom skip the waitlist '
-  + '(services/community-invites.js). Switched from Admin → Waitlist.';
-const settingCaches = new WeakMap();
-
-/** The stored switch: { enabled, updatedAt, updatedBy }. Cached per pool. */
-async function readTreeSetting(pool) {
-  const cached = settingCaches.get(pool);
-  if (cached && Date.now() - cached.at < SETTING_CACHE_MS) return cached.setting;
-  try {
-    const { rows } = await pool.query(
-      `SELECT s.value, s.updated_at, u.username AS updated_by
-         FROM platform_settings s
-         LEFT JOIN users u ON u.id = s.updated_by
-        WHERE s.key = $1`,
-      [SETTING_KEY]
-    );
-    const row = rows[0];
-    const setting = {
-      enabled: row ? row.value === 'true' : true,
-      updatedAt: row ? row.updated_at || null : null,
-      updatedBy: row ? row.updated_by || null : null,
-    };
-    settingCaches.set(pool, { at: Date.now(), setting });
-    return setting;
-  } catch (err) {
-    log.warn('invites', 'Invite tree setting read failed; treating the tree as off', { err: err.message });
-    return { enabled: false, updatedAt: null, updatedBy: null };
-  }
-}
-
-async function treeEnabled(pool) {
-  return (await readTreeSetting(pool)).enabled;
-}
-
-/** Switch the tree on or off as admin `actorId`. */
-async function setTreeEnabled(pool, { enabled, actorId = null }) {
-  await pool.query(
-    `INSERT INTO platform_settings (key, value, description, updated_at, updated_by)
-     VALUES ($1, $2, $3, NOW(), $4)
-     ON CONFLICT (key) DO UPDATE
-       SET value = EXCLUDED.value, updated_at = NOW(), updated_by = EXCLUDED.updated_by`,
-    [SETTING_KEY, enabled ? 'true' : 'false', SETTING_DESCRIPTION, actorId]
-  );
-  settingCaches.delete(pool);
-}
-
-/**
- * What the Waitlist screen shows: the switch, the skips a release by hand
- * carries, and how the tree has been used so far.
- */
-async function adminPayload(pool) {
-  const setting = await readTreeSetting(pool);
-  const { rows } = await pool.query(
-    `SELECT COUNT(*) FILTER (WHERE invite_generation = 0 AND has_platform_access)::int AS roots,
-            COUNT(*) FILTER (WHERE admitted_by IS NOT NULL)::int AS through_links
-       FROM users`
-  );
-  return {
-    enabled: setting.enabled,
-    rootSkips: budgetFor(0),
-    roots: rows[0]?.roots || 0,
-    throughLinks: rows[0]?.through_links || 0,
-    updatedAt: setting.updatedAt,
-    updatedBy: setting.updatedBy,
-  };
-}
-
-// Lifetime skips by generation: index 0 is people we let off the waitlist by
-// hand, and every generation past the list gets none. The fallback is one
-// entry on purpose: a missing or mistyped value must not switch chaining on.
-function treeBudgets() {
-  const raw = String(process.env.INVITE_TREE_BUDGETS || '10');
-  const parsed = raw.split(',').map((n) => parseInt(n.trim(), 10)).filter((n) => Number.isFinite(n) && n >= 0);
-  return parsed.length ? parsed : [10];
-}
-
-/** Skips a person of `generation` gets over their lifetime. */
-function budgetFor(generation, { isAdmin = false } = {}) {
-  if (isAdmin) return Infinity;
-  if (generation == null || generation < 0) return 0;
-  const budgets = treeBudgets();
-  return generation < budgets.length ? budgets[generation] : 0;
-}
 
 function newToken() {
   return crypto.randomBytes(16).toString('base64url');
@@ -739,17 +643,23 @@ async function entryFor(pool, invite, user, showSelfHosted) {
  * browser it was followed from (invite-activity.browserFrom), for the
  * maker's open notice.
  *
- * Returns `{ ok: true, status, slug, name, skippedWaitlist }`:
+ * Returns `{ ok: true, status, slug, name, privateMember }`:
  *   status 'joined'  in the project now (slug set);
  *          'member'  was already in it; nothing spent (slug set);
- *          'queued'  no platform access yet: joins when let in (no slug);
+ *          'queued'  the link could not grant it now (its maker no longer
+ *                    holds the right, say): joins when let in (no slug);
  * or `{ ok: false, status: 404|410, reason }` for an unknown or dead link.
+ *
+ * Somebody without platform access joins too, as a PRIVATE MEMBER
+ * (`privateMember`, users.private_member_since in schema.sql): in this
+ * community now, on the waitlist for making apps of their own, whoever made
+ * the link (the invite tree's skips are retired; see the header). A
+ * redemption queued before private membership existed is applied the same
+ * way when its link is followed again, without spending another use.
  */
 async function redeem(pool, { token, user, browser = null }) {
   if (!user || !user.id) return { ok: false, status: 401, reason: 'signed_out' };
   if (!isToken(token)) return { ok: false, status: 404, reason: 'unknown' };
-  // Read before taking a connection: the switch has its own (cached) read.
-  const tree = await treeEnabled(pool);
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -762,50 +672,52 @@ async function redeem(pool, { token, user, browser = null }) {
 
     if (await alreadyHasGrant(client, invite, user.id)) {
       await client.query('COMMIT');
-      return { ok: true, status: 'member', slug: invite.slug, name, skippedWaitlist: false };
+      return { ok: true, status: 'member', slug: invite.slug, name, privateMember: false };
     }
+    const hasAccess = !!(user.hasPlatformAccess || user.isAdmin);
     const { rows: prior } = await client.query(
       'SELECT id, status FROM community_invite_redemptions WHERE invite_id = $1 AND user_id = $2',
       [invite.id, user.id]
     );
+    let redemptionId;
     if (prior[0] && prior[0].status === 'queued') {
-      await client.query('COMMIT');
-      return { ok: true, status: 'queued', slug: null, name, skippedWaitlist: false };
-    }
-    const reason = deadReason(invite);
-    if (reason) {
-      await client.query('ROLLBACK');
-      return { ok: false, status: 410, reason };
-    }
-
-    // A fresh row, or a cancelled one re-armed by a live link: either way it
-    // spends one use of THIS link.
-    const { rows: redemption } = await client.query(
-      `INSERT INTO community_invite_redemptions (invite_id, user_id, status)
-       VALUES ($1, $2, 'queued')
-       ON CONFLICT (invite_id, user_id) DO UPDATE
-         SET status = 'queued', applied_at = NULL, created_at = NOW()
-       RETURNING id`,
-      [invite.id, user.id]
-    );
-    await client.query('UPDATE community_invites SET uses = uses + 1 WHERE id = $1', [invite.id]);
-
-    const hasAccess = !!(user.hasPlatformAccess || user.isAdmin);
-    let skippedWaitlist = false;
-    if (hasAccess) {
-      await client.query('SELECT apply_community_invite($1)', [redemption[0].id]);
-    } else if (tree && invite.created_by != null) {
-      skippedWaitlist = await admitThroughTree(client, { inviterId: invite.created_by, userId: user.id });
-      if (skippedWaitlist) {
-        await client.query(
-          'UPDATE community_invite_redemptions SET skipped_waitlist = TRUE WHERE id = $1',
-          [redemption[0].id]
-        );
+      if (hasAccess) {
+        await client.query('COMMIT');
+        return { ok: true, status: 'queued', slug: null, name, privateMember: false };
       }
+      // Queued before an invite could let somebody in as a private member:
+      // its use is spent already, so following the link again applies it.
+      redemptionId = prior[0].id;
+    } else {
+      const reason = deadReason(invite);
+      if (reason) {
+        await client.query('ROLLBACK');
+        return { ok: false, status: 410, reason };
+      }
+
+      // A fresh row, or a cancelled one re-armed by a live link: either way it
+      // spends one use of THIS link.
+      const { rows: redemption } = await client.query(
+        `INSERT INTO community_invite_redemptions (invite_id, user_id, status)
+         VALUES ($1, $2, 'queued')
+         ON CONFLICT (invite_id, user_id) DO UPDATE
+           SET status = 'queued', applied_at = NULL, created_at = NOW()
+         RETURNING id`,
+        [invite.id, user.id]
+      );
+      await client.query('UPDATE community_invites SET uses = uses + 1 WHERE id = $1', [invite.id]);
+      redemptionId = redemption[0].id;
+    }
+
+    let privateMember = false;
+    if (hasAccess) {
+      await client.query('SELECT apply_community_invite($1)', [redemptionId]);
+    } else {
+      privateMember = await joinAsPrivateMember(client, user.id, redemptionId);
     }
     const { rows: after } = await client.query(
       'SELECT status FROM community_invite_redemptions WHERE id = $1',
-      [redemption[0].id]
+      [redemptionId]
     );
     // Somebody who arrived by a link has their community: the join screen
     // a new account answers ("What communities do you want to join?",
@@ -838,9 +750,9 @@ async function redeem(pool, { token, user, browser = null }) {
       type: events.EVENT_TYPES.INVITE_LINK_REDEEMED,
       userId: user.id,
       appId: invite.app_id,
-      metadata: { inviteId: invite.id, status, skippedWaitlist },
+      metadata: { inviteId: invite.id, status, privateMember },
     });
-    return { ok: true, status, slug: status === 'joined' ? invite.slug : null, name, skippedWaitlist };
+    return { ok: true, status, slug: status === 'joined' ? invite.slug : null, name, privateMember };
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     throw err;
@@ -850,63 +762,29 @@ async function redeem(pool, { token, user, browser = null }) {
 }
 
 /**
- * THE INVITE TREE (on unless switched off): let `userId` past the
- * waitlist on one of `inviterId`'s skips, inside the caller's transaction.
- * Locks the inviter's row, counts what they have spent, and when a skip is
- * left, records who let them in, their generation (one below the inviter's;
- * an admin's invitees are generation 1, as a root's are) and grants access —
- * which fires the trigger that applies the redemptions this person has
- * queued, this one included. Returns whether it let them in.
+ * Join `userId`, who has no platform access, to the community of the
+ * redemption `redemptionId` as a PRIVATE MEMBER, inside the caller's
+ * transaction. apply_community_invite does the joining, as it does for
+ * everybody, and asks nothing about access; only once it has joined them is
+ * the account marked (users.private_member_since, kept from the first link
+ * that did it). A redemption it skipped (its maker lost the right to grant,
+ * say) stays queued and marks nothing. Returns whether they are in.
  */
-async function admitThroughTree(client, { inviterId, userId }) {
+async function joinAsPrivateMember(client, userId, redemptionId) {
+  await client.query('SELECT apply_community_invite($1)', [redemptionId]);
   const { rows } = await client.query(
-    `SELECT id, is_admin, has_platform_access, invite_generation AS generation
-       FROM users WHERE id = $1
-       FOR UPDATE`,
-    [inviterId]
+    'SELECT status FROM community_invite_redemptions WHERE id = $1',
+    [redemptionId]
   );
-  const inviter = rows[0];
-  if (!inviter || !(inviter.has_platform_access || inviter.is_admin)) return false;
-  const budget = budgetFor(inviter.generation, { isAdmin: !!inviter.is_admin });
-  if (budget !== Infinity) {
-    const { rows: used } = await client.query(
-      'SELECT COUNT(*)::int AS n FROM users WHERE admitted_by = $1',
-      [inviterId]
-    );
-    if ((used[0]?.n || 0) >= budget) return false;
-  }
-  // An admin's link lets in whoever holds it, which is not a release by
-  // hand: its people get what a root's invitees get, not a root's skips.
-  const generation = inviter.is_admin ? 1 : inviter.generation + 1;
-  const { rows: admitted } = await client.query(
+  if (rows[0]?.status !== 'joined') return false;
+  const { rows: marked } = await client.query(
     `UPDATE users
-        SET has_platform_access = TRUE,
-            platform_access_granted_at = COALESCE(platform_access_granted_at, NOW()),
-            admitted_by = $2,
-            invite_generation = $3
+        SET private_member_since = COALESCE(private_member_since, NOW())
       WHERE id = $1 AND has_platform_access = FALSE
       RETURNING id`,
-    [userId, inviterId, generation]
+    [userId]
   );
-  return admitted.length > 0;
-}
-
-/**
- * Skips `user` has left to spend, for the invite sheet. Null while the tree
- * is off, so nothing on screen mentions it.
- */
-async function skipsLeft(pool, user) {
-  if (!user || !(await treeEnabled(pool))) return null;
-  const { rows } = await pool.query(
-    `SELECT is_admin, invite_generation AS generation,
-            (SELECT COUNT(*)::int FROM users x WHERE x.admitted_by = u.id) AS used
-       FROM users u WHERE u.id = $1`,
-    [user.id]
-  );
-  const row = rows[0];
-  if (!row) return null;
-  const budget = budgetFor(row.generation, { isAdmin: !!row.is_admin });
-  return budget === Infinity ? null : Math.max(0, budget - row.used);
+  return marked.length > 0;
 }
 
 /** The communities a person without access yet is queued to join. */
@@ -970,7 +848,7 @@ async function redeemCarried(pool, req, res, userId) {
     const browser = require('./invite-activity').browserFrom(req);
     const result = await redeem(pool, { token, user, browser });
     if (!result.ok) return null;
-    return { name: result.name, status: result.status, slug: result.slug };
+    return { name: result.name, status: result.status, slug: result.slug, privateMember: !!result.privateMember };
   } catch (err) {
     log.warn('invites', 'Following a carried invite link failed', { userId, err: err.message });
     return null;
@@ -993,12 +871,6 @@ module.exports = {
   MAX_LIVE_PER_MAKER,
   TOKEN_RE,
   INVITE_COOKIE,
-  SETTING_KEY,
-  treeEnabled,
-  setTreeEnabled,
-  adminPayload,
-  treeBudgets,
-  budgetFor,
   isToken,
   invitePath,
   deadReason,
@@ -1011,8 +883,6 @@ module.exports = {
   preview,
   standing,
   redeem,
-  admitThroughTree,
-  skipsLeft,
   queuedFor,
   setInviteCookie,
   clearInviteCookie,

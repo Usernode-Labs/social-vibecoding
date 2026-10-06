@@ -93,6 +93,7 @@ const { debugRoutes } = require('./src/routes/debug');
 const { galleryRoutes } = require('./src/routes/gallery');
 const { appInstallRoutes } = require('./src/routes/app-install');
 const communityInviteRoutes = require('./src/routes/community-invites');
+const memberWaitlistRoutes = require('./src/routes/member-waitlist');
 const {
   cliAuthGate,
   cliApiBearerAuth,
@@ -775,6 +776,9 @@ app.use(appInstallRoutes(config));
 // `app.get('*')` catch-all, which would otherwise answer the page with a
 // plain index.html and no link preview.
 app.use(communityInviteRoutes(config));
+// A private member's waitlist card (routes/member-waitlist.js): joining the
+// waitlist from inside, with the account's own email or a confirmed one.
+app.use(memberWaitlistRoutes(config));
 
 // Mint the iframe identity token the shell injects into an app iframe.
 //

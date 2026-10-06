@@ -1644,6 +1644,9 @@ function issueRoutes(config) {
       );
       if (!issueRows.length) return res.status(404).json({ error: 'Issue not found' });
       const issue = issueRows[0];
+      // A private member does not vote on a public app (communities.js).
+      const privateRefusal = await communities.privateVoteRefusal(pool, issue.app_id, req.user?.id);
+      if (privateRefusal) return res.status(403).json(privateRefusal);
 
       // A vote can be the transition that decrypts and applies a proposed
       // secret value. api:access deliberately excludes credential management,

@@ -65,135 +65,25 @@ test('what a link grants is what its maker could: a collaborator where building 
   assert.match(read('src/db/schema.sql'), /IF r\.collab_visibility = 'private' AND NOT r\.self_hosted THEN\s+INSERT INTO app_collaborators/);
 });
 
-test('THE TREE gives 10 lifetime skips to generation 0 and none after it; admins unlimited', () => {
-  const saved = { budgets: process.env.INVITE_TREE_BUDGETS };
-  try {
-    delete process.env.INVITE_TREE_BUDGETS;
-    assert.deepEqual(invites.treeBudgets(), [10]);
-    assert.deepEqual([0, 1, 2, 3, 9].map((g) => invites.budgetFor(g)), [10, 0, 0, 0, 0],
-      'invites do not chain: whoever a link let in has none to give');
-    assert.equal(invites.budgetFor(null), 0, 'no generation (existing accounts, not let in by hand): no skips');
-    assert.equal(invites.budgetFor(5, { isAdmin: true }), Infinity);
-    process.env.INVITE_TREE_BUDGETS = '4, 3';
-    assert.deepEqual(invites.treeBudgets(), [4, 3]);
-    process.env.INVITE_TREE_BUDGETS = 'nonsense';
-    assert.deepEqual(invites.treeBudgets(), [10], 'a bad value falls back, never to a chain');
-    process.env.INVITE_TREE_BUDGETS = '';
-    assert.deepEqual(invites.treeBudgets(), [10], 'and so does an empty one');
-  } finally {
-    if (saved.budgets === undefined) delete process.env.INVITE_TREE_BUDGETS; else process.env.INVITE_TREE_BUDGETS = saved.budgets;
+test('THE TREE IS RETIRED: no skips, no switch, no chart value; anyone new joins as a private member', () => {
+  for (const gone of ['treeEnabled', 'setTreeEnabled', 'adminPayload', 'treeBudgets', 'budgetFor', 'admitThroughTree', 'skipsLeft', 'SETTING_KEY']) {
+    assert.equal(invites[gone], undefined, `${gone} is gone`);
   }
   const src = read('src/services/community-invites.js');
-  // The inviter's row is locked while their skips are counted, and the count
-  // IS the record: no counter to drift.
-  assert.match(src, /FROM users WHERE id = \$1\s+FOR UPDATE/);
-  assert.match(src, /SELECT COUNT\(\*\)::int AS n FROM users WHERE admitted_by = \$1/);
-  // No generation reads as no place in the tree, not as generation 0: an
-  // account that had access before the tree gets no skips.
-  assert.doesNotMatch(src, /COALESCE\(invite_generation/);
-  // An admin's link is not a release by hand: its people start at 1.
-  assert.match(src, /const generation = inviter\.is_admin \? 1 : inviter\.generation \+ 1;/);
-  // grantPlatformAccess makes generation 0 only for a release by hand, and
-  // only on the grant that lets somebody in.
-  const waitlistSrc = read('src/services/waitlist.js');
-  assert.match(waitlistSrc, /invite_generation = CASE WHEN \$2::boolean THEN 0 ELSE invite_generation END\s+WHERE id = \$1 AND has_platform_access = FALSE`,\s+\[userId, manualRelease === true\]/);
-  // The three releases by hand ask for it; the invite-equivalent signups do not.
-  assert.equal((waitlistSrc.match(/grantPlatformAccess\(pool, userId, \{ manualRelease: true \}\)/g) || []).length, 2,
-    'an Admit, and an admitted address signing up later');
-  assert.match(read('src/routes/topochain/admin/waitlist.js'), /waitlist\.grantPlatformAccess\(pool, id, \{ manualRelease: true \}\)/);
-  const auth = read('src/routes/auth.js');
-  const grants = auth.match(/grantPlatformAccess\([^)]*\)/g) || [];
-  assert.deepEqual(grants, ['grantPlatformAccess(pool, userId)', 'grantPlatformAccess(pool, userId)'],
-    'activation codes and genesis wallets grant access without skips');
-});
-
-// A pool that answers the switch's read from `rows` (or throws), and records
-// every statement it was sent.
-function settingPool(rows) {
-  const sent = [];
-  return {
-    sent,
-    async query(sql, params) {
-      sent.push({ sql, params });
-      if (rows instanceof Error) throw rows;
-      if (/FROM platform_settings/.test(sql)) return { rows };
-      return { rows: [] };
-    },
-  };
-}
-
-test('the switch is an admin setting: on with no row, off only when it says so, cached for 10 seconds', async () => {
-  assert.equal(await invites.treeEnabled(settingPool([])), true, 'no row: on by default');
-  assert.equal(await invites.treeEnabled(settingPool([{ value: 'false' }])), false);
-  assert.equal(await invites.treeEnabled(settingPool([{ value: 'true' }])), true);
-  assert.equal(await invites.treeEnabled(settingPool([{ value: 'yes' }])), false, 'only true is on');
-
-  // Unreadable reads as off, and is not cached: the next read tries again.
-  const broken = settingPool(new Error('relation "platform_settings" does not exist'));
-  assert.equal(await invites.treeEnabled(broken), false);
-  await invites.treeEnabled(broken);
-  assert.equal(broken.sent.length, 2);
-
-  // Cached per pool, until the setting is written through this module.
-  const pool = settingPool([]);
-  await invites.treeEnabled(pool);
-  await invites.treeEnabled(pool);
-  assert.equal(pool.sent.length, 1, 'the second read is the cache');
-  await invites.setTreeEnabled(pool, { enabled: false, actorId: 7 });
-  const write = pool.sent[1];
-  assert.match(write.sql, /INSERT INTO platform_settings \(key, value, description, updated_at, updated_by\)/);
-  assert.deepEqual([write.params[0], write.params[1], write.params[3]], [invites.SETTING_KEY, 'false', 7]);
-  await invites.treeEnabled(pool);
-  assert.equal(pool.sent.length, 3, 'a write drops the cache');
-
-  // With it off, the invite sheet says nothing about skips.
-  assert.equal(await invites.skipsLeft(settingPool([{ value: 'false' }]), { id: 1 }), null);
-});
-
-test('the switch is served to the Waitlist screen, and only a boolean is written', () => {
-  const route = read('src/routes/topochain/admin/waitlist.js');
-  assert.match(route, /router\.get\('\/api\/v4\/admin\/invite-tree', async/);
-  assert.match(route, /router\.put\('\/api\/v4\/admin\/invite-tree', adminWriteGate, async/,
-    'a view-only admin can read it, not switch it');
-  assert.match(route, /if \(typeof enabled !== 'boolean'\) return fail\(res, 422,/);
-  assert.match(read('frontend/src/features/admin/topochain/waitlist.tsx'), /<InviteTreePanel \/>/);
-});
-
-test('the Waitlist screen says what the switch does, and shows a view-only admin its state', () => {
-  const { InviteTreeBody } = loadTsx('frontend/src/features/admin/topochain/waitlist.tsx');
-  const tree = { enabled: true, root_skips: 10, roots: 1, through_links: 3, updated_at: null, updated_by: null };
-  const writable = renderToHtml(createElement(InviteTreeBody, { tree, write: true, onToggle: () => {} }));
-  assert.match(writable, /id="admin-topo-wl-invites-enabled" type="checkbox"[^>]* checked=""/);
-  assert.match(writable, /Invite links skip the waitlist/);
-  assert.match(writable, /Everyone you admit gets 10 invites: anyone new who follows one of their invite links gets in straight away\./);
-  assert.match(writable, /The people they invite get none, and neither do accounts that already had access\./);
-  assert.match(writable, /1 person admitted can invite; 3 people got in through an invite so far\./);
-
-  const readOnly = renderToHtml(createElement(InviteTreeBody, {
-    tree: { ...tree, enabled: false, updated_at: '2026-09-29T12:00:00.000+00:00', updated_by: 'ada' },
-    write: false,
-    onToggle: () => {},
-  }));
-  assert.doesNotMatch(readOnly, /type="checkbox"/, 'nothing to click that would be refused');
-  assert.match(readOnly, /Invite links do not skip the waitlist\./);
-  assert.match(readOnly, /by ada\./);
-});
-
-test('the skips per generation come from the chart, and are in the Platform variables panel', () => {
-  // The Kubernetes Deployment lists its env explicitly, so a variable the
-  // chart does not name never reaches the process. The on/off switch is an
-  // admin setting, so it is deliberately NOT a chart value.
-  const platform = read('deploy/helm/social-vibecoding-platform/templates/platform.yaml');
-  assert.match(platform, /\{name: INVITE_TREE_BUDGETS, value: \{\{ \.Values\.config\.inviteTreeBudgets \| default "10" \| quote \}\}\}/);
-  assert.doesNotMatch(platform, /INVITE_TREE_ENABLED/);
-  const values = read('deploy/helm/social-vibecoding-platform/values.yaml');
-  assert.match(values, /^ {2}inviteTreeBudgets: "10"$/m, 'the chart default is the code default: no chaining');
-  // Declared, so an admin can find it; not required, so this merges unset.
+  assert.doesNotMatch(src, /invite_tree_enabled|INVITE_TREE_BUDGETS|admitThroughTree\(/);
+  // Without platform access, a link makes a private member, whoever made it.
+  assert.match(src, /\} else \{\s+privateMember = await joinAsPrivateMember\(client, user\.id, redemptionId\);\s+\}/);
+  // The admin switch, its routes and its panel went with it.
+  assert.doesNotMatch(read('src/routes/topochain/admin/waitlist.js'), /invite-tree|communityInvites/);
+  assert.doesNotMatch(read('frontend/src/features/admin/topochain/waitlist.tsx'), /InviteTreePanel|InviteTreeBody|admin-topo-wl-invites/);
+  // And the per-generation budget: not in the chart, not declared.
+  assert.doesNotMatch(read('deploy/helm/social-vibecoding-platform/templates/platform.yaml'), /INVITE_TREE/);
+  assert.doesNotMatch(read('deploy/helm/social-vibecoding-platform/values.yaml'), /inviteTreeBudgets/);
   const appManifest = require('../src/services/app-manifest');
-  const declared = new Map(appManifest.readPlatformEnv(JSON.parse(read('dapp.json'))).map((e) => [e.key, e]));
-  assert.equal(declared.get('INVITE_TREE_BUDGETS')?.default, '10');
-  assert.equal(declared.get('INVITE_TREE_BUDGETS')?.required, false);
-  assert.equal(declared.has('INVITE_TREE_ENABLED'), false);
+  const declared = new Set(appManifest.readPlatformEnv(JSON.parse(read('dapp.json'))).map((e) => e.key));
+  assert.equal(declared.has('INVITE_TREE_BUDGETS'), false);
+  // The invite sheet has no skips to count.
+  assert.doesNotMatch(read('src/routes/community-invites.js'), /skipsLeft/);
 });
 
 test('the tables are staging:private, and a queued invite is applied by a trigger on being let in', () => {
@@ -357,8 +247,8 @@ test('the words: the landing card, the invite pane', () => {
   assert.match(paneSrc, /'Until you turn it off'/);
   assert.match(paneSrc, /'Anyone with the link'/);
   assert.match(paneSrc, /\{state\.joiningRule\}/);
-  assert.equal(pane.newcomerLine(null), 'Someone new to Homeroom joins the waitlist first, and this project when they are let in.');
-  assert.equal(pane.newcomerLine(2), 'You can let 2 people new to Homeroom skip the waitlist.');
+  assert.equal(pane.newcomerLine(), 'Someone new to Homeroom joins straight away and goes right into this project.');
+  assert.doesNotMatch(pane.newcomerLine.toString(), /skip/, 'no skips past the waitlist to count');
 
   // #3362: the menu's "Invite to community" row is gone; the pane opens from
   // the hub's Invite (and a just-yours project's Share it card), beside the
