@@ -2110,9 +2110,9 @@
       "expectText": "Top users"
     },
     {
-      "name": "Admin Users list renders, with its Total points column",
+      "name": "Admin Users list renders, with its Total points column and the Podium switch (#3938)",
       "path": "/#admin/users",
-      "expectSelector": "#admin-users-points-header",
+      "expectSelector": "#admin-user-list:has([data-user-podium]) [data-user-podium]",
       "expectText": "Total points"
     },
     {
