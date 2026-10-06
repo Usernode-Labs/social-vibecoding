@@ -17668,36 +17668,16 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   overflow: hidden;
 }
 .dev-ws-hero-line { margin: 0; font-size: 13px; line-height: 18px; color: var(--text-muted); }
-/* WHO IS HERE, IN THE HERO (#3268). The people row: up to five faces, then
-   "Public community · 23 members". The activity line under the actions: this
-   week in words, and the last fourteen days as a small bar chart at its end,
-   the busiest day the tallest bar.
+/* WHO IT IS FOR, IN THE HERO (#3268). The people row: "Public community ·
+   23 members", the audience riding the count. The faces that led it and the
+   fourteen-day activity chart at the row's end went with #4045: the count
+   says who is here, and on a small community the chart was decoration.
 
-   THE ROW WRAPS (#3276). Nothing in it can shrink: the faces are a fixed
-   stack and the count is `nowrap`. So when five faces and the count come to
-   more than a phone's width, the count drops to a line of its own rather than
-   running past the screen's edge and scrolling the hub sideways. */
+   THE ROW WRAPS (#3276). The count is `nowrap`, so when it and the actions
+   come to more than a phone's width, the row wraps rather than running past
+   the screen's edge and scrolling the hub sideways. */
 .dev-ws-hero-people { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; min-height: 32px; }
-.dev-ws-hero-faces { display: inline-flex; align-items: center; flex: none; }
-.dev-ws-hero-face {
-  width: 26px; height: 26px; margin-right: -6px; border-radius: 9999px;
-  display: grid; place-items: center;
-  color: #fff; font-size: 11.5px; font-weight: 700;
-  box-shadow: 0 0 0 2px var(--home-ground, var(--bg-primary));
-}
-.dev-ws-hero-face:last-child { margin-right: 0; }
 .dev-ws-hero-count { font-size: 14px; font-weight: 650; color: var(--text-primary); white-space: nowrap; }
-.dev-ws-hero-activity { display: flex; align-items: flex-end; gap: 14px; }
-.dev-ws-hero-activity-words { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.dev-ws-hero-activity-line { font-size: 14px; line-height: 19px; color: var(--text-primary); }
-.dev-ws-hero-activity-line b { font-weight: 650; }
-.dev-ws-hero-spark { flex: none; width: 112px; height: 30px; display: flex; align-items: flex-end; gap: 2px; }
-.dev-ws-hero-spark-bar {
-  flex: 1 1 0; min-width: 0; border-radius: 2px 2px 1px 1px;
-  background: var(--accent); opacity: .72;
-}
-.dev-ws-hero-spark-bar:last-child { opacity: 1; }
-.dev-ws-hero-spark-bar-quiet { background: var(--app-sheet-line); opacity: 1; }
 /* A change to who it is for, up for a vote: the one line on the hero that
    asks for something, so it carries the accent and goes to the proposal. */
 a.dev-ws-hero-pending {
@@ -17716,14 +17696,6 @@ a.dev-ws-hero-pending {
    ⋯ is near the row's start (after Open app and Invite), and a menu opening
    leftward from there ran under the sidebar. */
 .dev-ws-hero #dev-plus-menu { left: 0; right: auto; }
-/* THE CHART'S TIP (community-card.tsx Spark). Against the chart's right
-   edge, above it, so it never runs off the screen; the day it is about is
-   the lit bar. `pan-y` keeps a vertical drag scrolling the page and hands a
-   sideways one to the chart, which is what lets a finger follow the days. */
-.dev-ws-hero-spark-wrap { position: relative; flex: none; display: flex; }
-.dev-ws-hero-spark { touch-action: pan-y; cursor: default; -webkit-user-select: none; user-select: none; }
-.dev-ws-hero-spark[data-ws-spark-active] .dev-ws-hero-spark-bar { opacity: .35; }
-.dev-ws-hero-spark[data-ws-spark-active] .dev-ws-hero-spark-bar-on { opacity: 1; }
 
 /* ── The project's colour: its header and its tabs ─────────────────────
    Inside a project, the bar wears its community's colour (lib/community-
@@ -18219,18 +18191,6 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
   .dev-ws-discussion-threaded > .dev-ws-discussion-host { min-width: 0; }
   .dev-ws-discussion-threaded > .messages-reply-pane { margin-left: 8px; }
 }
-.dev-ws-hero-spark-bar-quiet.dev-ws-hero-spark-bar-on { background: var(--text-muted); }
-.dev-ws-hero-spark-tip {
-  position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 6;
-  display: flex; flex-direction: column; gap: 1px;
-  padding: 7px 9px; border-radius: 9px; white-space: nowrap;
-  background: #1c1c1e; color: #fff;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, .18);
-  pointer-events: none;
-}
-.dark .dev-ws-hero-spark-tip { background: #3a3a3c; }
-.dev-ws-hero-spark-tip-day { font-size: 12.5px; font-weight: 650; }
-.dev-ws-hero-spark-tip-cap { font-size: 11px; color: rgba(255, 255, 255, .65); }
 
 /* ── The ask pane, inside its sheet ────────────────────────────────── */
 .dev-ws-ask { gap: 8px; }

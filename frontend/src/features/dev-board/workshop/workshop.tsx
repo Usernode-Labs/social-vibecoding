@@ -4056,15 +4056,15 @@ export function DevWorkshop(): ReactNode {
           project that is just yours and has nobody to talk to yet, the Share
           it card, which is how it grows; your own work, two rows and the
           rest in place; and Start a new change. See ./since-summary-card.tsx
-          and ./hub-cards.tsx. On a project nobody else is in, the vote
-          line and an empty Your work leave the zeros out (`alone`,
-          `workEmpty`). */}
+          and ./hub-cards.tsx. With nothing owed the vote line draws nothing
+          (#4045), and on a project nobody else is in an empty Your work
+          leaves the zero out too (`workEmpty`). */}
       {slug ? (
         <SinceSummaryCard slug={slug} since={v.since ? v.since.baseline : 0} onMore={() => openTab('workshop')} />
       ) : null}
       {owesVote(v.queue)
         ? <NeedsCard queue={v.queue} slug={slug} canPost={canPost} onOpen={() => openTab('needs')} />
-        : <NothingToVote queue={v.queue} onOpen={() => openTab('needs')} alone={alone} />}
+        : <NothingToVote queue={v.queue} onOpen={() => openTab('needs')} />}
       {slug && community?.audience !== 'solo' ? (
         <ChannelCard slug={slug} name={app.name || slug} data={community} compact onOpen={() => openTab('discussion')} />
       ) : null}

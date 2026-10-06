@@ -17,12 +17,12 @@
  *   own store) and dapp.json's one-line description when it has one.
  *
  *   WHO IT IS FOR. The audience, in the words people see (Public community,
- *   Private community, Just you) as a chip, and for a public or a private
- *   community WHO IS HERE: faces, the member count, and a line of this
- *   week's activity with the last fourteen days as a small bar chart (#3268;
- *   it was the hub's Members & activity card, fourth down the page). The
- *   chart names a day when it is pointed at, or dragged across with a
- *   finger (Spark, below), so it needs no caption of its own.
+ *   Private community, Just you), riding the member count: "Public
+ *   community · 23 members" (#3268; the label was a chip of its own under
+ *   the name, and the name is the coloured header's now). The row of faces
+ *   and the activity line with its fourteen-day chart went with #4045: the
+ *   count says who is here, and on a small community the chart was
+ *   decoration.
  *
  *   JOIN, JOINED, INVITE, ⋯. Membership sits across from the name, because
  *   it is a fact about you and this project, the way a profile's Follow
@@ -74,7 +74,6 @@ import { useEffect, useReducer, useRef, useState, type ReactNode, type Ref } fro
 
 import { Button } from '@/components/ui/button';
 import { CheckIcon, ChevronRightIcon, LockIcon, PlayIcon, UserGroupIcon, UserIcon } from '@/components/ui/icons';
-import { swatchFor } from '../../messages/format';
 import { offerJoin, registerJoinAnchor } from '../../../lib/join-required';
 import { invitedByLine, joinByInvite, seenByLine, useInviteOffer, type InviteJoin, type InviteOffer } from './invite-offer';
 
@@ -290,36 +289,23 @@ export function useCommunity(slug: string): CommunityPayload | null {
   return slug ? communities.get(slug) || null : null;
 }
 
-/** How many faces the hero shows before the count says the rest. */
-export const HERO_FACES = 5;
-
 /**
- * The hub's people line (#3268): up to HERO_FACES faces, then who the
- * community is for and how many are in it, "Public community · 23 members".
- * The label used to be a chip of its own under the name, and the name is the
- * coloured header's now, so the audience rides the count instead of spending
- * a row of the page on itself. Just you is the label alone.
+ * The hub's people line (#3268): who the community is for and how many are
+ * in it, "Public community · 23 members". The label used to be a chip of
+ * its own under the name, and the name is the coloured header's now, so the
+ * audience rides the count instead of spending a row of the page on itself.
+ * Just you is the label alone. The row of faces that led the line went with
+ * #4045: it repeated the count, and the count is the fact a newcomer needs.
  */
-export function HeroPeople({ members, count, audience, audienceLabel, children }: {
-  members: CommunityPayload['members'] | null | undefined;
+export function HeroPeople({ count, audience, audienceLabel, children }: {
   count: number;
   audience?: Audience;
   audienceLabel?: string;
   children?: ReactNode;
 }) {
-  const faces = (members || []).slice(0, HERO_FACES);
   const solo = audience === 'solo';
   return (
     <div className="dev-ws-hero-people" data-ws-members="">
-      {faces.length ? (
-        <span className="dev-ws-hero-faces" aria-hidden="true">
-          {faces.map((m) => (
-            <span key={m.id} className="dev-ws-hero-face" style={{ background: swatchFor(m.username) }} title={`@${m.username}`}>
-              {(m.username || '?').charAt(0).toUpperCase()}
-            </span>
-          ))}
-        </span>
-      ) : null}
       <span className="dev-ws-hero-count" data-ws-members-cell="members">
         {audienceLabel ? (
           <span className="dev-ws-hero-audience" data-ws-community-audience="">
@@ -330,143 +316,6 @@ export function HeroPeople({ members, count, audience, audienceLabel, children }
         {solo ? null : `${audienceLabel ? ' · ' : ''}${plural(count, 'member', 'members')}`}
       </span>
       {children}
-    </div>
-  );
-}
-
-/** "Sat, Sep 26", the day a bar stands for, in the viewer's own words. */
-export function sparkDay(day: string): string {
-  const when = new Date(`${day}T12:00:00`);
-  return Number.isNaN(when.getTime()) ? day
-    : when.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
-}
-
-/** The tip's first line: "Sat, Sep 26 · 21 people". */
-export function sparkTip(d: { day: string; n: number }): string {
-  return `${sparkDay(d.day)} · ${plural(Number(d.n) || 0, 'person', 'people')}`;
-}
-
-/** How long a tip stays up after a finger lifts off the chart. */
-const TIP_LINGER_MS = 2500;
-
-/**
- * The fourteen days as bars, and the day under the pointer as a tip.
- *
- * NO CAPTION, AND NO `title` ON THE BARS. The chart carried "Who took part,
- * last 14 days" under the activity line, and each bar a native tooltip that
- * a phone never shows. The caption is the tip's second line now, where it
- * explains the number it sits under, and the tip is the chart's own:
- *
- *   - with a mouse it follows the pointer across the bars and leaves with
- *     it;
- *   - with a finger it shows on touch and follows the drag sideways (the
- *     chart takes the pointer, so the drag does not scroll the page; a
- *     vertical drag still does, `touch-action: pan-y` in app.css), and
- *     lingers a moment after the finger lifts, so a tap can be read.
- *
- * The tip is placed against the chart's right edge, not over the bar: the
- * chart ends the row at the screen's edge, and a tip centred on the last
- * bar would run off it. The bar it is about is lit instead.
- *
- * For a screen reader nothing changes: the chart is one image whose name
- * lists every day's count, and the tip is hidden from it.
- */
-function Spark({ days, peak }: { days: Array<{ day: string; n: number }>; peak: number }) {
-  const [at, setAt] = useState<number | null>(null);
-  const boxRef = useRef<HTMLSpanElement | null>(null);
-  const linger = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const stopLinger = () => {
-    if (linger.current) clearTimeout(linger.current);
-    linger.current = null;
-  };
-  useEffect(() => stopLinger, []);
-  const pick = (clientX: number) => {
-    const box = boxRef.current;
-    if (!box) return;
-    const r = box.getBoundingClientRect();
-    if (!r.width) return;
-    const i = Math.floor(((clientX - r.left) / r.width) * days.length);
-    setAt(Math.min(days.length - 1, Math.max(0, i)));
-  };
-  const active = at == null ? null : days[at] || null;
-  return (
-    <span className="dev-ws-hero-spark-wrap">
-      <span
-        ref={boxRef}
-        className="dev-ws-hero-spark"
-        data-ws-members-trend=""
-        {...(active ? { 'data-ws-spark-active': '' } : {})}
-        role="img"
-        aria-label={`People taking part each day, last ${days.length} days: ${days.map((d) => Number(d.n) || 0).join(', ')}`}
-        onPointerDown={(e) => {
-          stopLinger();
-          if (e.pointerType !== 'mouse') {
-            try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* not capturable */ }
-          }
-          pick(e.clientX);
-        }}
-        onPointerMove={(e) => {
-          if (e.pointerType === 'mouse' || at != null) pick(e.clientX);
-        }}
-        onPointerLeave={(e) => { if (e.pointerType === 'mouse') setAt(null); }}
-        onPointerUp={(e) => {
-          if (e.pointerType === 'mouse') return;
-          stopLinger();
-          linger.current = setTimeout(() => setAt(null), TIP_LINGER_MS);
-        }}
-        onPointerCancel={() => { stopLinger(); setAt(null); }}
-      >
-        {days.map((d, i) => {
-          const n = Number(d.n) || 0;
-          return (
-            <span
-              key={d.day}
-              className={(n ? 'dev-ws-hero-spark-bar' : 'dev-ws-hero-spark-bar dev-ws-hero-spark-bar-quiet')
-                + (i === at ? ' dev-ws-hero-spark-bar-on' : '')}
-              style={{ height: `${n && peak ? Math.max(12, Math.round((n / peak) * 100)) : 8}%` }}
-            />
-          );
-        })}
-      </span>
-      {active ? (
-        <span className="dev-ws-hero-spark-tip" aria-hidden="true" data-ws-spark-tip="">
-          <span className="dev-ws-hero-spark-tip-day">{sparkTip(active)}</span>
-          <span className="dev-ws-hero-spark-tip-cap">Who took part, last 14 days</span>
-        </span>
-      ) : null}
-    </span>
-  );
-}
-
-/**
- * The hero's activity line (#3268): who was around this week and what
- * shipped this month, in words, with the last fourteen days as a small bar
- * chart at its end. A zero says nothing; a fortnight in which nobody did
- * anything is one quiet sentence instead of fourteen slivers.
- */
-export function HeroActivity({ activity }: { activity: CommunityPayload['activity'] | null | undefined }) {
-  const days = activity?.daily || [];
-  const active = Number(activity?.active_week) || 0;
-  const shipped = Number(activity?.shipped_month) || 0;
-  const peak = Math.max(0, ...days.map((d) => Number(d.n) || 0));
-  if (!active && !shipped && !peak) {
-    return (
-      <p className="dev-ws-hero-line" data-ws-members-trend="" data-ws-trend-empty="">
-        Nobody has been around in the last 14 days.
-      </p>
-    );
-  }
-  return (
-    <div className="dev-ws-hero-activity" data-ws-members-stats="">
-      <span className="dev-ws-hero-activity-words">
-        <span className="dev-ws-hero-activity-line">
-          {active ? <span data-ws-members-cell="active"><b>{active}</b> active this week</span> : null}
-          {active && shipped ? ' · ' : null}
-          {shipped ? <span data-ws-members-cell="shipped"><b>{shipped}</b> shipped this month</span> : null}
-          {!active && !shipped ? 'Quiet this week' : null}
-        </span>
-      </span>
-      {days.length >= 2 ? <Spark days={days} peak={peak} /> : null}
     </div>
   );
 }
@@ -867,9 +716,8 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false, onJoinedBy
     </div>
   ) : null;
   // WHO INVITED THEM, AND JOIN, first in the hero: visible without scrolling
-  // on a phone, above everything the page shows them to decide by (who is
-  // here, what it is, Open app, the fortnight, and below the hero what is
-  // being decided).
+  // on a phone, above everything the page shows them to decide by (who it is
+  // for, what it is, Open app, and below the hero what is being decided).
   const inviteHead = invited && offer ? (
     <InviteCard
       offer={offer}
@@ -936,10 +784,9 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false, onJoinedBy
       style={asking ? { position: 'relative', zIndex: 5 } : undefined}
     >
       {inviteHead}
-      {/* WHO IS HERE, AND WHO IT IS FOR: the faces, then "Public community ·
-          23 members". The tile and the name are the coloured header's. */}
+      {/* WHO IT IS FOR: "Public community · 23 members". The tile and the
+          name are the coloured header's. */}
       <HeroPeople
-        members={solo ? [] : data.members}
         count={Number(data.member_count) || 0}
         audience={data.audience}
         audienceLabel={data.audience_label}
@@ -977,7 +824,6 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false, onJoinedBy
       </div>
       {membership ? <span className="dev-ws-hero-member">{membership}</span> : null}
       </div>
-      {solo ? null : <HeroActivity activity={data.activity} />}
       {data.audience_change ? (
         <a
           className="dev-ws-hero-line dev-ws-hero-pending"

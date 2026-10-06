@@ -181,7 +181,7 @@ export function invitedSteps({ slug, name, firstVersion = null }: TourProject): 
       alongside: SCREEN_HEADER,
       endsAbove: BOTTOM_BARS,
       title: hubTitle(name),
-      text: 'Communities opens on the group you just joined: who\'s in it, what\'s being built, and what\'s up for a vote.',
+      text: 'Here you can find your community\'s discussion and the changes being made to the app.',
       place: 'bottom',
     },
     {
@@ -244,7 +244,7 @@ export function makerSteps({ slug, name, conversationId }: TourProject): TourSte
       alongside: SCREEN_HEADER,
       endsAbove: BOTTOM_BARS,
       title: hubTitle(name),
-      text: 'Who\'s in it, what\'s being built, and what\'s up for a vote, once people join.',
+      text: 'Here you can find your community\'s discussion and the changes being made to the app.',
       place: 'bottom',
     },
   ];
