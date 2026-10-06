@@ -199,7 +199,6 @@ export function NeedsReel({ items, error, capped, onDone }: {
       <div className="workshop-needs-feed" data-needs-reel="">
         <NeedsFeed
           rows={rows}
-          total={rows.length}
           models={models}
           slug=""
           canPost

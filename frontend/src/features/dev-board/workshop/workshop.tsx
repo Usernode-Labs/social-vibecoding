@@ -2251,9 +2251,8 @@ function useSwipeVote(
  * `renderApp` draws the project over a row's by-line; `doneLabel` is what the
  * end card offers once the feed is through.
  */
-export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabel, renderApp }: {
+export function NeedsFeed({ rows, models, slug, canPost, onDone, doneLabel, renderApp }: {
   rows: DevWorkshopView['queue'];
-  total: number;
   models: DevWorkshopView['models'];
   slug: string;
   canPost: boolean;
@@ -2350,6 +2349,18 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
   const acted = items.filter((r) => !!answered[r.key]).length;
   const left = n - acted;
   const leftVotes = items.filter((r) => r.kind === 'vote' && !answered[r.key]).length;
+  // The ring's denominator is the pass's own list — the vote rows still here
+  // plus the ones this session answered, which the pins hold in `items` — not
+  // the published view's `votes.total`. That view drops a change the moment
+  // it leaves review, which can be a second after the vote that sent it
+  // there, and a ring that was “1/1” on one frame and gone on the next
+  // re-centered this card under the reader: the ring is the tallest thing in
+  // the block, so every line jumped up half the ring's height at once, and
+  // the phone's snapshot caught the jump torn — the CTA painted at both
+  // heights, the upper paint's copy reading as a second, clipped button
+  // (#4031). Counting the pass's own rows keeps the card, ring and all, still
+  // while the view settles; a fresh pass (the pins gone) reads as before.
+  const voteTotal = items.filter((r) => r.kind === 'vote').length;
   /**
    * Each row's tint, decided the first time it is seen and kept for life.
    * The tints alternate so a swipe reads as a new item, and a row seen for
@@ -2957,7 +2968,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
         {/* ALWAYS, after the last item: the swipe past the end lands here.
             With no items it is the whole screen. */}
         <DoneItem
-          total={total}
+          total={voteTotal}
           acted={acted}
           left={left}
           leftVotes={leftVotes}
@@ -4391,7 +4402,6 @@ export function DevWorkshop(): ReactNode {
       {tab === 'needs' ? (
         <NeedsFeed
           rows={v.queue}
-          total={v.votes.total}
           models={v.models}
           slug={slug}
           canPost={canPost}
