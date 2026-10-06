@@ -158,7 +158,7 @@ export function MobileInstallBanner() {
             ? 'Get the app'
             : offer.kind === 'store'
               ? `Get the app on ${storeLabel(offer.os, offer.url)}`
-              : (showSteps ? A2HS_STEPS[offer.os] : 'Add it to your home screen')}
+              : (showSteps ? A2HS_STEPS[offer.os] : 'Save the web app to your Home Screen')}
         </div>
       </div>
       {offer && offer.kind === 'a2hs' ? (

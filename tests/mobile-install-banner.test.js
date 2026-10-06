@@ -376,6 +376,10 @@ test('#1513: the a2hs steps are instructions, one per OS, and name no store', ()
   // not guaranteed to fire, so both are directions to a menu item.
   assert.match(A2HS_STEPS.ios, /Share.*Add to Home Screen/i);
   assert.match(A2HS_STEPS.android, /menu.*Add to Home screen/i);
+  // #4054: with a native app in the world, "add to your home screen" is
+  // ambiguous — both steps must name the WEB app as the thing being saved.
+  assert.match(A2HS_STEPS.ios, /web app/i);
+  assert.match(A2HS_STEPS.android, /web app/i);
   for (const os of ['ios', 'android']) {
     assert.ok(!A2HS_STEPS[os].includes(STORE_LABEL[os]),
       'the home-screen path must not name a store');
@@ -411,8 +415,8 @@ test('#1513: the first render is still the hidden, offer-less strip', () => {
     'MobileInstallBanner',
   );
   assert.match(html, /class="hidden /);
-  assert.doesNotMatch(html, /Add it to your home screen/);
-  assert.doesNotMatch(html, /Add to Home Screen\./);
+  assert.doesNotMatch(html, /Save the web app to your Home Screen/);
+  assert.doesNotMatch(html, /Add to Home Screen to save the web app\./);
   // `offer === null` is the "Get the app" placeholder, unchanged.
   assert.match(html, /Get the app/);
 });

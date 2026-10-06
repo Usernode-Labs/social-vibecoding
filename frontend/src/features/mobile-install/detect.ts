@@ -177,8 +177,8 @@ export function installOffer(env: InstallEnv): InstallOffer | null {
  * Telling somebody where the menu item is works on both, every time.
  */
 export const A2HS_STEPS: Record<MobileOs, string> = {
-  ios: 'Tap Share, then Add to Home Screen.',
-  android: 'Open the browser menu, then Add to Home screen.',
+  ios: 'Tap Share, then Add to Home Screen to save the web app.',
+  android: 'Open the browser menu, then Add to Home screen to save the web app.',
 };
 
 /**
