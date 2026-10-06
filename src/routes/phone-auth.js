@@ -5,6 +5,8 @@
  * beside the email code (routes/auth.js) and Apple/Google
  * (routes/sign-in-providers.js):
  *
+ *   GET  /api/auth/phone/recaptcha the reCAPTCHA site key a web request
+ *                                  answers first (services/firebase-phone-auth.js)
  *   POST /api/auth/phone/request   text a code to a phone number
  *   POST /api/auth/phone/verify    the code, or an ID token a client SDK
  *                                  earned with its own Firebase exchange
@@ -79,6 +81,19 @@ function phoneAuthRoutes(config) {
     }
     return next();
   }
+
+  // The Firebase project's reCAPTCHA site key, for a web client to earn the
+  // token the request below carries. Public by nature (it is in every page
+  // Firebase's own web SDK serves), so no limiter beyond the service's cache.
+  router.get('/api/auth/phone/recaptcha', requireOffered, async (req, res) => {
+    try {
+      const siteKey = await phoneAuth.recaptchaSiteKey(config);
+      res.setHeader('Cache-Control', 'no-store');
+      return res.json({ siteKey });
+    } catch (error) {
+      return fail(res, error, 'reCAPTCHA site key');
+    }
+  });
 
   // Requesting a code SENDS A TEXT, so this carries the same two buckets
   // the email code's request does: per address (here per phone number) so

@@ -7787,6 +7787,21 @@
     },
     {
       "source": "src/routes/phone-auth.js",
+      "method": "GET",
+      "path": "/api/auth/phone/recaptcha",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "profile.get.auth.phone.recaptcha.553df9bb",
+      "domain": "profile",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "profile",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#profile"
+    },
+    {
+      "source": "src/routes/phone-auth.js",
       "method": "POST",
       "path": "/api/auth/phone/request",
       "expression": null,
