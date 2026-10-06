@@ -107,6 +107,8 @@ type WaitlistRow = {
   released_at?: string | null;
   linked_username?: string | null;
   has_platform_access?: boolean;
+  /** Admitted, but in only once the account adds a phone. */
+  awaiting_phone?: boolean;
   answers?: Answers | null;
   /** Who used this row's invite link to sign up, if anyone. */
   invited_by?: number | null;
@@ -979,6 +981,7 @@ type Resolution = {
 
 type AdmitOutcome = {
   admitted: number[];
+  awaiting_phone?: number[];
   already_admitted: number[];
   not_found: number[];
   failed: number[];
@@ -1054,6 +1057,8 @@ function resolutionSummary(r: Resolution): string {
 
 function admitOutcomeLine(o: AdmitOutcome): string {
   const parts = [`Admitted ${plural(o.admitted.length, 'signup', 'signups')}.`];
+  const phone = o.awaiting_phone?.length || 0;
+  if (phone) parts.push(`${phone} get${phone === 1 ? 's' : ''} in once ${phone === 1 ? 'it adds' : 'they add'} a phone.`);
   const already = o.already_admitted.length;
   if (already) parts.push(`${already} ${already === 1 ? 'was' : 'were'} already in.`);
   if (o.not_found.length) parts.push(`${o.not_found.length} had been deleted from the waitlist.`);
@@ -1322,6 +1327,8 @@ const WAITLIST_COLUMNS: Column<WaitlistRow>[] = [
         {w.linked_username}
         {w.has_platform_access ? (
           <span className="text-emerald-700 dark:text-emerald-400 text-xs">{' (has access)'}</span>
+        ) : w.awaiting_phone ? (
+          <span data-waitlist-awaiting-phone="" className="text-amber-700 dark:text-amber-400 text-xs">{' (in once it adds a phone)'}</span>
         ) : null}
       </>
     ) : <span className="text-zinc-500 dark:text-zinc-400">no account yet</span>),
@@ -1438,7 +1445,8 @@ function WaitlistScreen() {
     const okd = await topo()._confirm({
       title: `Admit ${w.email} off the waitlist?`,
       message: `They get platform access straight away if they already have an account, `
-        + `otherwise the moment they create one. They will be emailed a link to sign in or `
+        + `otherwise the moment they create one. While phone sign-in is set up, an account `
+        + `without a phone adds one first. They will be emailed a link to sign in or `
         + `create their account.${unconfirmed} This cannot be undone from here.`,
       confirmLabel: 'Admit',
     });

@@ -14,7 +14,9 @@
  * account with a verified phone, so when the server offers phone sign-in
  * the screen offers the phone too (./add-phone.tsx): adding it joins the
  * queued groups now, and the check below lets them in to the first one's
- * app.
+ * app. An account let in off the waitlist without a phone is held the same
+ * way (`awaitingPhone`, services/waitlist.js): admission needs one, so the
+ * screen says they are let in and asks only for the phone.
  *
  * ── The poll is not a mount effect ────────────────────────────────────
  *
@@ -43,6 +45,8 @@ const POLL_MS = 30000;
 interface MeUser {
   username?: string;
   hasPlatformAccess?: boolean;
+  /** Let in off the waitlist, once the account adds a phone (routes/auth.js). */
+  awaitingPhone?: boolean;
 }
 
 export function WaitingScreen() {
@@ -64,6 +68,9 @@ export function WaitingScreen() {
   // Phone sign-in is set up (the waitlist options' phone_sign_in): a queued
   // group can be joined now by adding a phone (./add-phone.tsx).
   const [phoneOffered, setPhoneOffered] = useState(false);
+  // Let in off the waitlist and held for a phone: the screen asks for it
+  // instead of saying they are in the queue.
+  const [awaitingPhone, setAwaitingPhone] = useState(false);
 
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -90,6 +97,7 @@ export function WaitingScreen() {
       const user: MeUser | undefined = data && data.user;
       if (!user) return;
       setWho(user.username || '');
+      setAwaitingPhone(user.awaitingPhone === true);
       if (user.hasPlatformAccess) {
         // Released! Boot the full shell in place — same reload-free path as
         // login, including the deep link the visitor originally arrived with.
@@ -222,12 +230,20 @@ export function WaitingScreen() {
       <div className="min-h-full flex items-center justify-center">
         <div className="w-full max-w-sm px-6 py-16 text-center">
           <h1 className="text-[28px] font-extrabold leading-tight tracking-tight mb-1 text-zinc-900 dark:text-zinc-100">
-            You're in the queue
+            {awaitingPhone ? 'You’re let in' : "You're in the queue"}
           </h1>
           <p className="text-[15px] text-zinc-500 dark:text-zinc-400 mb-8 italic">
             Homeroom
           </p>
-          <div className="rounded-2xl bg-white dark:bg-zinc-900 p-5 text-left space-y-3">
+          {awaitingPhone && phoneOffered ? (
+            <AddPhoneCard
+              groups={[]}
+              title="Add your phone number"
+              lead="One more step: Homeroom asks everybody it lets in for a phone number, so each person has one account. The group sees your name, never your number."
+              onJoined={onJoined}
+            />
+          ) : null}
+          <div hidden={awaitingPhone && phoneOffered} className="rounded-2xl bg-white dark:bg-zinc-900 p-5 text-left space-y-3">
             <p className="text-[17px] leading-snug text-zinc-900 dark:text-zinc-100">
               {'Your account '}
               <span id="waiting-who" className="font-semibold">
@@ -242,7 +258,7 @@ export function WaitingScreen() {
               {checkState}
             </p>
           </div>
-          {queued.length ? (
+          {queued.length && !awaitingPhone ? (
             <div data-waiting-queued="" className="mt-3 rounded-2xl bg-white dark:bg-zinc-900 p-5 text-left">
               <p className="text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">When you're let in</p>
               <ul className="mt-1 space-y-1 text-[15px] text-zinc-600 dark:text-zinc-300">
@@ -254,7 +270,7 @@ export function WaitingScreen() {
               </ul>
             </div>
           ) : null}
-          {phoneOffered && queued.length ? (
+          {phoneOffered && queued.length && !awaitingPhone ? (
             <AddPhoneCard groups={queued.map((q) => q.name)} onJoined={onJoined} />
           ) : null}
           {/*

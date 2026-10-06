@@ -41,6 +41,10 @@ function formatSignup(row) {
     linked_user_id: row.linked_user_id != null ? Number(row.linked_user_id) : null,
     linked_username: row.linked_username ?? null,
     has_platform_access: row.has_platform_access ?? null,
+    // Admitted, but the account has no verified phone yet: it gets in when
+    // it adds one (services/waitlist.js grantPlatformAccess, "admission
+    // needs a phone"). Grant access on the user is the way in without one.
+    awaiting_phone: row.awaiting_phone === true,
     // The other half of the invite graph. `invited_count` (below, via
     // signals) says how many this row brought in; these two say who
     // brought THIS row in, which is the question an admin looking at a
@@ -358,6 +362,8 @@ function waitlistAdminRoutes(config) {
                   AS invited_count,
                 p.email AS invited_by_email,
                 u.username AS linked_username, u.has_platform_access,
+                (u.admitted_pending_phone_at IS NOT NULL AND u.has_platform_access = FALSE)
+                  AS awaiting_phone,
                 m.status AS invite_mail_status, m.created_at AS invite_mail_at,
                 m.error AS invite_mail_error
            FROM waitlist_signups w
@@ -514,6 +520,7 @@ function waitlistAdminRoutes(config) {
           email: released.email,
           released_at: iso(released.released_at),
           linked_user_id: released.linked_user_id != null ? Number(released.linked_user_id) : null,
+          awaiting_phone: !!released.awaiting_phone,
         },
       });
     } catch (err) {
@@ -632,6 +639,8 @@ function waitlistAdminRoutes(config) {
       return ok(res, {
         data: {
           admitted: fresh.map((r) => Number(r.id)),
+          // Of those, the accounts that get in once they add a phone.
+          awaiting_phone: fresh.filter((r) => r.awaiting_phone).map((r) => Number(r.id)),
           already_admitted: already,
           not_found: missing,
           failed,

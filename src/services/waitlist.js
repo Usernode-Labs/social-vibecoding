@@ -402,15 +402,68 @@ async function setVerifiedHandle(pool, token, provider, handle) {
 // access: existing users, and anybody an invite link let in, get no skips
 // from being released again. The invite tree writes its own generations and
 // never comes through here.
-async function grantPlatformAccess(pool, userId, { manualRelease = false } = {}) {
+//
+// ADMISSION NEEDS A PHONE. With `requirePhone` (a release off the waitlist,
+// while phone sign-in is offered: admissionNeedsPhone), an account with no
+// verified phone is not let in: the release is held on the account
+// (users.admitted_pending_phone_at) and returns { held: true }; adding a
+// phone finishes it (finishHeldAdmission). Admins are never held. The
+// invite-equivalent signups and an admin's direct grant pass no
+// `requirePhone`: an activation code and the genesis allowlist are vetted
+// one person at a time, and the direct grant is how an admin lets in
+// somebody who has no phone. A grant clears any hold.
+async function grantPlatformAccess(pool, userId, { manualRelease = false, requirePhone = false } = {}) {
+  if (requirePhone) {
+    const { rows: held } = await pool.query(
+      `UPDATE users
+          SET admitted_pending_phone_at = COALESCE(admitted_pending_phone_at, NOW())
+        WHERE id = $1 AND has_platform_access = FALSE AND is_admin = FALSE
+          AND NOT EXISTS (SELECT 1 FROM user_phone_identities p WHERE p.user_id = users.id)
+        RETURNING id`,
+      [userId]
+    );
+    if (held.length) return { held: true };
+  }
   await pool.query(
     `UPDATE users
         SET has_platform_access = TRUE,
             platform_access_granted_at = COALESCE(platform_access_granted_at, NOW()),
-            invite_generation = CASE WHEN $2::boolean THEN 0 ELSE invite_generation END
+            invite_generation = CASE WHEN $2::boolean THEN 0 ELSE invite_generation END,
+            admitted_pending_phone_at = NULL
       WHERE id = $1 AND has_platform_access = FALSE`,
     [userId, manualRelease === true]
   );
+  return { held: false };
+}
+
+/**
+ * Whether a release off the waitlist needs a verified phone now: whenever
+ * phone sign-in is offered, read from the environment the way config.load()
+ * reads it (this service holds no config). Off, nothing could meet it.
+ */
+function admissionNeedsPhone() {
+  const { offered } = require('./firebase-phone-auth');
+  return offered(require('../config').firebasePhoneSettings());
+}
+
+/**
+ * Finish a held release (grantPlatformAccess `requirePhone`) once the
+ * account has a verified phone: what linking one does
+ * (routes/phone-auth.js /api/auth/phone-link/verify). Returns whether it
+ * let them in.
+ */
+async function finishHeldAdmission(pool, userId) {
+  const { rows } = await pool.query(
+    `SELECT 1 FROM users u
+      WHERE u.id = $1 AND u.has_platform_access = FALSE
+        AND u.admitted_pending_phone_at IS NOT NULL
+        AND EXISTS (SELECT 1 FROM user_phone_identities p WHERE p.user_id = u.id)`,
+    [userId]
+  );
+  if (!rows.length) return false;
+  await grantPlatformAccess(pool, userId, { manualRelease: true });
+  log.info('waitlist', 'Held admission finished with a phone', { userId });
+  return true;
 }
 
 // Account-creation linkage: point the email's waitlist row (if any) at
@@ -418,7 +471,7 @@ async function grantPlatformAccess(pool, userId, { manualRelease = false } = {})
 // access on the spot — this is the doc's "released off the waitlist,
 // create an account if you haven't already" arrow. Best-effort: a
 // failure here must never fail the signup itself.
-async function linkUserByEmail(pool, { userId, email }) {
+async function linkUserByEmail(pool, { userId, email, requirePhone = admissionNeedsPhone() }) {
   const normalized = normalizeEmail(email);
   if (!normalized || !userId) return;
   try {
@@ -430,8 +483,10 @@ async function linkUserByEmail(pool, { userId, email }) {
       [userId, normalized]
     );
     if (rows[0] && rows[0].released_at) {
-      await grantPlatformAccess(pool, userId, { manualRelease: true });
-      log.info('waitlist', 'Released waitlist email registered — access granted', { userId });
+      const { held } = await grantPlatformAccess(pool, userId, { manualRelease: true, requirePhone });
+      log.info('waitlist', held
+        ? 'Released waitlist email registered — let in once it adds a phone'
+        : 'Released waitlist email registered — access granted', { userId });
     }
   } catch (err) {
     log.error('waitlist', 'linkUserByEmail failed', { userId, message: err.message });
@@ -444,7 +499,7 @@ async function linkUserByEmail(pool, { userId, email }) {
 // null when the id doesn't exist. `newly_released` distinguishes the
 // first release from an idempotent re-release so the caller can send
 // the "you're in" notification exactly once.
-async function releaseWaitlistSignup(pool, signupId) {
+async function releaseWaitlistSignup(pool, signupId, { requirePhone = admissionNeedsPhone() } = {}) {
   const { rows } = await pool.query(
     `WITH prev AS (
         SELECT released_at FROM waitlist_signups WHERE id = $1
@@ -475,8 +530,10 @@ async function releaseWaitlistSignup(pool, signupId) {
       );
     }
   }
-  if (userId) await grantPlatformAccess(pool, userId, { manualRelease: true });
-  return { ...row, linked_user_id: userId };
+  const held = userId
+    ? (await grantPlatformAccess(pool, userId, { manualRelease: true, requirePhone })).held
+    : false;
+  return { ...row, linked_user_id: userId, awaiting_phone: held };
 }
 
 module.exports = {
@@ -497,6 +554,8 @@ module.exports = {
   mergeMoreAnswers,
   setVerifiedHandle,
   grantPlatformAccess,
+  admissionNeedsPhone,
+  finishHeldAdmission,
   linkUserByEmail,
   releaseWaitlistSignup,
 };
