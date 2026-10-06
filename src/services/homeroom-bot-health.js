@@ -185,9 +185,11 @@ const CHAT_SQL = `
  * zeros, like the rest of the dashboard's reads.
  */
 async function rolloutHealth(pool, { botUsername, days = DAYS } = {}) {
-  const read = async (name, sql, params) => {
+  // Each query names its SQL constant where it is called, so
+  // scripts/check-sql.js resolves and checks it against the schema.
+  const read = async (name, query) => {
     try {
-      const { rows } = await pool.query(sql, params);
+      const { rows } = await query();
       return rows[0] || {};
     } catch (err) {
       log.warn('homeroom-bot', 'Rollout health read failed', { figure: name, err: err.message });
@@ -195,10 +197,10 @@ async function rolloutHealth(pool, { botUsername, days = DAYS } = {}) {
     }
   };
   const [proposals, questions, turns, chat] = await Promise.all([
-    read('proposals', PROPOSALS_SQL, [botUsername, days]),
-    read('questions', QUESTIONS_SQL, [days]),
-    read('turns', TURNS_SQL, [days]),
-    read('chat', CHAT_SQL, [days]),
+    read('proposals', () => pool.query(PROPOSALS_SQL, [botUsername, days])),
+    read('questions', () => pool.query(QUESTIONS_SQL, [days])),
+    read('turns', () => pool.query(TURNS_SQL, [days])),
+    read('chat', () => pool.query(CHAT_SQL, [days])),
   ]);
   return shapeHealth({ proposals, questions, turns, chat }, days);
 }
