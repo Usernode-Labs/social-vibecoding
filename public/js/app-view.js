@@ -2829,14 +2829,14 @@ const AppView = {
   // offline shots above, and for the same reason: what it shows is the
   // shell's own screen, so no project has to be mid-build on the database
   // the shot runs against. Nothing is behind it: the record has no address
-  // and is not the routed app, so "Show the starter for now" frames nothing,
-  // and the chat button opens Messages.
+  // and is not the routed app.
   //
-  // `variant`: true or 'plan', its plan waiting for Build it; 'ready', built
-  // and waiting for the viewer's approval in a group; 'approved', the same
-  // once the viewer approved it, waiting on the other member with the
-  // group's clock running. Their change id stands for no change, so Try it
-  // and See the change open nothing real.
+  // `variant`: true or 'plan', its plan waiting for Build it (#4053: "Your
+  // plan is ready to review" on its thumbnail); 'ready', built and waiting
+  // for the viewer's approval in a group; 'approved', the same once the
+  // viewer approved it, waiting on the other member with the group's clock
+  // running. Their change id stands for no change, so Try it and See the
+  // change open nothing real. Otherwise it is being built ("Building it").
   showFirstVersionShot(variant = false) {
     const withPlan = variant === true || variant === 'plan';
     const ready = variant === 'ready' || variant === 'approved';
@@ -2844,11 +2844,14 @@ const AppView = {
       slug: 'staging-demo-first-version',
       name: 'Plant Pal',
       icon_emoji: '🪴',
+      description: 'Keep your plants alive: see which ones need water today.',
+      // Made up: there is no sketch of it to read.
+      shot: true,
       status: 'running',
       url: null,
       self_hosted: false,
       first_version: ready ? {
-        building: true, mine: variant === 'approved', step: 6, of: 7, stepName: 'Approval',
+        building: true, mine: variant === 'approved', step: 6, of: 7, line: 'ready',
         creator: variant === 'approved' ? null : 'jordan', ready: true, question: false, conversationId: null,
         approval: variant === 'approved' ? {
           sessionId: 990003, mustApprove: false, approved: true, waitingOn: ['sam'], more: 0, missing: 1,
@@ -2858,23 +2861,13 @@ const AppView = {
           goesLiveAt: new Date(Date.now() + 3 * 86400000).toISOString(), soon: false,
         },
       } : withPlan ? {
-        // B6: its plan waits for Build it. A shot: the action id stands for
-        // no plan, so a tap here decides nothing. The step is named as the
-        // server names it to the plan's creator while it waits on them
-        // (homeroom-bot-dm.js planWaitsStepName).
-        building: true, mine: true, step: 3, of: 7, stepName: 'Your turn: answer the plan',
+        // B6: its plan waits for Build it, as the server says it to the
+        // plan's creator (homeroom-bot-progress.js buildLineOf). The plan
+        // itself is answered in their chat with Homeroom bot, not here.
+        building: true, mine: true, step: 3, of: 7, line: 'plan',
         creator: null, ready: false, question: false, conversationId: null,
-        plan: {
-          bullets: [
-            'A list of your plants with a photo and how often each needs water',
-            'A Today view that shows which plants need watering now',
-            'Tap a plant to mark it watered, and its next date moves on by itself',
-          ],
-          questions: [{ question: 'How should it remind you?', answers: ['In the app', 'Phone alert'] }],
-          actionId: 990002, messageId: null, conversationId: null,
-        },
       } : {
-        building: true, mine: true, step: 4, of: 7, stepName: 'Build it',
+        building: true, mine: true, step: 4, of: 7, line: 'building',
         creator: null, ready: false, question: false, conversationId: null,
       },
     };
@@ -2974,22 +2967,23 @@ const AppView = {
   // made to "Start a new change". The server knows the state
   // (`first_version` on GET /api/apps/:slug, from
   // services/homeroom-bot-dm.js firstVersionState); while it says building,
-  // the App tab shows that instead of mounting the frame. Its creator gets
-  // their DM with the bot (and its question, when the bot waits on one);
-  // anyone else is told whose description it is. Once it is built and up
-  // for approval, it says it is ready to try and what it waits on
-  // (_firstVersionReadyView). "Show the starter for now" mounts the frame
-  // anyway, for the rest of this visit to the page, under a bar whose "Back
-  // to the first version" puts this screen back (hideStarter;
-  // features/app-frame/starter-bar.tsx).
+  // the App tab shows that instead of mounting the frame: the project's
+  // thumbnail with its build line (#4053), the same card and words as the
+  // made screen and the hub. Once it is built and up for approval, it says
+  // it is ready to try and what it waits on (_firstVersionReadyView).
+  //
+  // #4043: no plan and no way to the starter here. The plan used to be drawn
+  // under the step, with its questions and Build it, and an invited member's
+  // tour landed on "Show the starter for now" (#3944 added a bar over the
+  // starter to come back by). The plan is answered in the creator's chat
+  // with Homeroom bot, and the starter is a template, not their app.
   FIRST_VERSION_POLL_MS: 10000,
   _firstVersionTimer: null,
   _firstVersionRecord: null,
-  _starterShown: new Set(),
 
   _firstVersionPending(appData) {
     const fv = appData && appData.first_version;
-    return !!(fv && fv.building && appData.slug && !AppView._starterShown.has(appData.slug));
+    return !!(fv && fv.building && appData.slug);
   },
 
   // ── Painted only from an answer it can trust ──
@@ -3124,59 +3118,55 @@ const AppView = {
     return true;
   },
 
+  /**
+   * The thumbnail for the first version's screen (features/app-frame/
+   * app-status.tsx draws it, with the sketch's tagline once it is read, else
+   * the project's one line from dapp.json), and its build line for this
+   * reader (`first_version.line`), else what can be said without one.
+   */
+  _firstVersionThumb(appData) {
+    const fv = appData.first_version || {};
+    const snapshot = appData.manifest_snapshot && typeof appData.manifest_snapshot === 'object'
+      ? appData.manifest_snapshot : {};
+    const said = [appData.description, snapshot.description]
+      .find((line) => typeof line === 'string' && line.trim());
+    return {
+      thumb: {
+        name: appData.name || appData.slug,
+        slug: appData.slug,
+        emoji: appData.icon_emoji || null,
+        description: said ? said.replace(/\s+/g, ' ').trim() : null,
+        ...(appData.shot ? { sketch: false } : {}),
+      },
+      buildLine: typeof fv.line === 'string' && fv.line ? fv.line : (fv.ready ? 'ready' : 'planning'),
+    };
+  },
+
+  /**
+   * #4053: while it is being built, the thumbnail and one line, for
+   * everyone: "It opens here when it’s ready." The build line says where it
+   * is ("Your plan is ready to review" to the person who started it), and
+   * nothing here asks for an answer: the plan and the bot's questions are
+   * answered in their chat with Homeroom bot.
+   */
   _firstVersionView(appData) {
     const fv = appData.first_version || {};
-    const name = appData.name || appData.slug;
-    const mine = !!fv.mine;
-    const from = mine ? 'your description'
-      : (fv.creator ? `@${fv.creator}’s description` : 'its description');
-    const lines = [];
-    if (Number.isInteger(fv.step) && Number.isInteger(fv.of) && fv.stepName) {
-      lines.push(`Step ${fv.step} of ${fv.of}: ${fv.stepName}`);
-    }
-    // B6: the plan it waits on, with Build it, in place of the chat's button
-    // (Change something goes to that chat). The step line says the rest.
-    const plan = mine && fv.plan && Array.isArray(fv.plan.bullets) && fv.plan.bullets.length
-      && Number.isInteger(fv.plan.actionId) ? fv.plan : null;
     // Built and up for approval: no longer "being built" (_firstVersionReadyView).
-    if (!plan && fv.ready) return AppView._firstVersionReadyView(appData, lines);
-    if (plan) {
-      // Nothing more to say under the step: the card is what comes next.
-    } else if (mine && fv.question) lines.push('Homeroom bot has a question for you.');
-    else {
-      lines.push(mine ? 'We’ll message you when it’s ready.' : 'It opens here once it’s ready.');
-    }
+    if (fv.ready) return AppView._firstVersionReadyView(appData);
     return {
-      dot: 'creating',
-      message: `${name} is being built from ${from}`,
+      dot: null,
+      message: appData.name || appData.slug,
       detail: null,
-      lines,
-      ...(plan ? {
-        plan: {
-          appName: name,
-          slug: appData.slug,
-          bullets: plan.bullets,
-          questions: Array.isArray(plan.questions) ? plan.questions : [],
-          actionId: plan.actionId,
-          messageId: Number.isInteger(plan.messageId) ? plan.messageId : null,
-          conversationId: Number.isInteger(plan.conversationId) ? plan.conversationId : null,
-        },
-      } : {}),
-      action: mine && !plan
-        ? { key: 'botChat', label: 'Open my chat with Homeroom bot', slug: appData.slug,
-          conversationId: Number.isInteger(fv.conversationId) ? fv.conversationId : null }
-        : null,
-      // While it is still being set up there is no starter to show.
-      secondary: appData.status === 'running'
-        ? { key: 'starter', label: 'Show the starter for now', slug: appData.slug }
-        : null,
+      ...AppView._firstVersionThumb(appData),
+      lines: ['It opens here when it’s ready.'],
+      action: null,
     };
   },
 
   /**
    * The first version is built and up for approval (`first_version.ready`).
-   * The screen says so in plain words, under the step line it is given,
-   * and says what it waits on for whoever reads it, from
+   * Its thumbnail says Ready to try (#4053), and the screen says what it
+   * waits on for whoever reads it, from
    * `first_version.approval` (services/homeroom-bot-dm.js
    * firstVersionApproval):
    *
@@ -3192,24 +3182,22 @@ const AppView = {
    * cast after the answer was read: they read "You approved it." and whom
    * it still waits on (_firstVersionApprovalSeen).
    *
-   * "Show the starter for now" stays, quieter, under them. Without
-   * `approval` (a read that failed) its creator is pointed at their chat,
-   * as before. No amber dot: nothing is being built.
+   * Without `approval` (a read that failed) its creator is pointed at their
+   * chat, as before.
    */
-  _firstVersionReadyView(appData, lines) {
+  _firstVersionReadyView(appData) {
     const fv = appData.first_version || {};
     const slug = appData.slug;
     // "Your" is the reader's own Yes, as it stands now (_firstVersionApprovalSeen).
     const approval = fv.approval && Number.isInteger(fv.approval.sessionId) && fv.approval.sessionId > 0
       ? AppView._firstVersionApprovalSeen(appData, fv.approval) : null;
+    const lines = [];
     const view = {
       dot: null,
-      message: `The first version of ${appData.name || slug} is ready to try`,
+      message: appData.name || slug,
       detail: null,
+      ...AppView._firstVersionThumb(appData),
       lines,
-      secondary: appData.status === 'running'
-        ? { key: 'starter', label: 'Show the starter for now', slug }
-        : null,
     };
     if (!approval) {
       lines.push(fv.mine ? 'Try it from your chat.' : 'Waiting for approval.');
@@ -3309,83 +3297,6 @@ const AppView = {
     const messages = window.UsernodeReact && window.UsernodeReact.messages;
     if (messages && typeof messages.open === 'function') messages.open(id);
     else location.hash = id ? `#messages/${id}` : '#messages';
-  },
-
-  /**
-   * B6: Build it, under the plan on the App tab: the same tap the plan's card
-   * in the chat sends, decided once on the server, with the choices tapped.
-   * The screen then reads the project again and shows the build's step.
-   */
-  async buildFirstVersion(slug, actionId, answers) {
-    const id = Number(actionId);
-    if (!slug || !Number.isInteger(id) || id <= 0) return;
-    try {
-      const resp = await fetch(`/api/conversations/homeroom-bot/actions/${id}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ choice: 'build', answers: (Array.isArray(answers) ? answers : []).map((a) => a || '') }),
-      });
-      if (!resp.ok && resp.status !== 409) {
-        const data = await resp.json().catch(() => ({}));
-        PlatformUI.toast(data.error || `Couldn't start building just now (HTTP ${resp.status}).`);
-      }
-    } catch (err) {
-      PlatformUI.toast(`Couldn't start building just now: ${err.message}`);
-    }
-    const current = AppView.appData;
-    if (current && current.slug === slug) AppView._recheckFirstVersion(current);
-  },
-
-  /** B6: Change something: the chat with Homeroom bot, with the plan quoted in its composer. */
-  changeFirstVersionPlan(_slug, conversationId, messageId) {
-    const messages = window.UsernodeReact && window.UsernodeReact.messages;
-    if (messages && typeof messages.quoteBotMessage === 'function') {
-      messages.quoteBotMessage(conversationId, messageId);
-      return;
-    }
-    AppView.openBotChat(_slug, conversationId);
-  },
-
-  /** "Show the starter for now": the app as it runs, for this visit. */
-  showStarter(slug) {
-    if (!slug) return;
-    AppView._starterShown.add(slug);
-    AppView._stopFirstVersionWatch();
-    if (AppView.appData && AppView.appData.slug === slug
-        && App.currentApp === slug && App.currentTab === 'app') {
-      AppView.renderAppTab();
-    }
-  },
-
-  /**
-   * "Back to the first version", on the bar over the starter
-   * (features/app-frame/starter-bar.tsx): the first version's screen again,
-   * read past every cache on the way if the record on hand is old
-   * (renderAppTab's `_firstVersionTrusted`), and its recheck armed again.
-   */
-  hideStarter(slug) {
-    if (!slug || !AppView._starterShown.delete(slug)) return;
-    AppView._publishStarter(AppView.appData);
-    if (AppView.appData && AppView.appData.slug === slug
-        && App.currentApp === slug && App.currentTab === 'app') {
-      AppView.renderAppTab();
-    }
-  },
-
-  /**
-   * Whose starter the bar is over: this record's, while its first version
-   * is on its way and the viewer asked for the starter; else nobody. Said on
-   * every App tab render, so a record that comes back built (or another
-   * app) takes the bar away. The bar itself draws only over that app's
-   * mounted frame.
-   */
-  _publishStarter(appData) {
-    const fv = appData && appData.first_version;
-    const slug = fv && fv.building && appData.slug && AppView._starterShown.has(appData.slug)
-      ? appData.slug : '';
-    const starter = typeof window !== 'undefined' && window.UsernodeReact
-      && window.UsernodeReact.appStarter;
-    if (starter && typeof starter.set === 'function') starter.set(slug);
   },
 
   _stopFirstVersionWatch() {
@@ -3497,10 +3408,6 @@ const AppView = {
     // _teardownDevRoots. Switching away from the Dev tab lands here.
     AppView._teardownDevRoots();
 
-    // #15: the bar over a starter shown while its first version is built,
-    // or no bar. Before any branch, so each one leaves it right.
-    AppView._publishStarter(appData);
-
     if (!appData || appData.status !== 'running' || !appData.url) {
       if (appData?.status === 'creating') {
         // WebSocket delivery is the fast path, but it is not a durability
@@ -3541,7 +3448,7 @@ const AppView = {
 
     // #15: the first version is still being built from the description, so
     // the running app is the starter. Say so instead of framing it, and keep
-    // asking until it is built (or the viewer asks for the starter).
+    // asking until it is built.
     if (AppView._firstVersionPending(appData)) {
       AppView._teardownLaunch();
       AppView._unmountAppFrame();

@@ -279,15 +279,15 @@ test('B6: which bot messages draw a plan or two questions, and what state a plan
   assert.match(composer, /Say what to change, and Homeroom bot sends a new plan\. Only you see this\./);
 });
 
-test('B6: the App tab shows the same plan, in place of the chat button, and builds through the same endpoint', () => {
+test('B6: the plan is answered in the chat; #4043: the App tab no longer draws it', () => {
+  // #4043: the being-built App tab drew the whole plan, with its questions
+  // and Build it, under the tour card. The plan is answered in the creator's
+  // chat with Homeroom bot; the App tab shows the thumbnail and its line.
   const view = read('public/js/app-view.js');
-  assert.match(view, /action: mine && !plan\s*\? \{ key: 'botChat'/);
-  assert.match(view, /fetch\(`\/api\/conversations\/homeroom-bot\/actions\/\$\{id\}`, \{\s*method: 'POST',/);
-  assert.match(view, /body: JSON\.stringify\(\{ choice: 'build', answers:/);
-  assert.match(view, /messages\.quoteBotMessage\(conversationId, messageId\)/);
+  assert.doesNotMatch(view, /buildFirstVersion|changeFirstVersionPlan|homeroom-bot\/actions/);
   const status = read('frontend/src/features/app-frame/app-status.tsx');
-  assert.match(status, /\{view\.plan \? <FirstVersionPlanCard key=\{view\.plan\.actionId\} plan=\{view\.plan\} \/> : null\}/);
-  assert.match(status, /call\('buildFirstVersion', plan\.slug, plan\.actionId, answers\)/);
+  assert.doesNotMatch(status, /FirstVersionPlanCard|PlanCardView|buildFirstVersion/);
+  // The made screen still reads that one waits (its Needs you card).
   assert.match(read('src/routes/apps.js'), /\.\.\.\(mine && state\.plan \? \{ plan: state\.plan \} : \{\}\),/);
   const route = read('src/routes/conversations.js');
   assert.match(route, /const answers = Array\.isArray\(req\.body\?\.answers\)/);
@@ -397,10 +397,10 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     const state = states.find((s) => Number(s.row.issue_number) === 1).state;
     assert.deepEqual([state.stage, state.waitingOn], ['plan', 'them']);
     assert.equal(progress.stepNumber('plan', true), 3, 'Step 3 of 7, the plan\'s step');
-    // Its creator's turn, named for whoever reads it (planWaitsStepName).
+    // #4053: its build line, for whoever reads it (buildLineOf).
     const fv = await dm.firstVersionState(pool, app.id);
-    assert.equal(fv.stepName, 'Waiting for @maya to answer the plan');
-    assert.equal((await dm.firstVersionState(pool, app.id, { viewerId: maya.id })).stepName, 'Your turn: answer the plan');
+    assert.equal(fv.line, 'plan-member');
+    assert.equal((await dm.firstVersionState(pool, app.id, { viewerId: maya.id })).line, 'plan');
     assert.deepEqual(fv.plan.bullets, PLAN.bullets);
     assert.equal(fv.plan.actionId, (await planMessage(first)).meta.actionId);
     assert.equal((await progress.botWorkByIssue(pool, app.id)).get(1).what, 'queued', 'nobody else starts it');
@@ -449,7 +449,7 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     // Redoing the plan is not reading the description for the first time:
     // the App tab and the made screen keep it on the plan's step.
     const fv = await dm.firstVersionState(pool, app.id);
-    assert.deepEqual([fv.step, fv.of, fv.stepName], [3, 7, 'Updating the plan']);
+    assert.deepEqual([fv.step, fv.of, fv.line], [3, 7, 'planning']);
     assert.equal(fv.plan, undefined, 'no plan waits while the new one is written');
     const changes = await bot.planChangesFor(pool, app.id, 1);
     assert.deepEqual(changes, { bullets: PLAN.bullets, changes: ['Make it work for my partner too'] });

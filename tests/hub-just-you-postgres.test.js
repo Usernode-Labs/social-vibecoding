@@ -128,12 +128,12 @@ test('a just-you project\'s hub: what it is, and where its first version stands'
     return res.json();
   };
   const fv = (over) => ({
-    step: 1, of: 7, step_name: 'Set up the project', ready: false, mine: true, creator: evan.username,
+    step: 1, of: 7, line: 'planning', ready: false, mine: true, creator: evan.username,
     waits_on: null, conversation_id: opened.conversationId, session_id: null, ...over,
   });
-  // The step's name as firstVersionState names it for this viewer: what
-  // the App tab and the made screen say, whatever a step is called.
-  const named = async (who) => (await dm.firstVersionState(pool, app.id, { viewerId: who.id })).stepName;
+  // #4053: the build line as firstVersionState says it for this viewer: what
+  // the App tab and the made screen say.
+  const named = async (who) => (await dm.firstVersionState(pool, app.id, { viewerId: who.id })).line;
 
   await t.test('a project made with no description says nothing about what it is, and has no build to show', async () => {
     const body = await get();
@@ -175,7 +175,7 @@ test('a just-you project\'s hub: what it is, and where its first version stands'
        VALUES ($1, 1, $2, 'First version of Geneva hike planner', TRUE, $3)`,
       [app.id, evan.id, BRIEF],
     );
-    assert.deepEqual((await get()).first_version, fv({ step: 2, step_name: 'Read the description' }),
+    assert.deepEqual((await get()).first_version, fv({ step: 2, line: 'planning' }),
       'filed, and next to be read');
     ({ rows: [run] } = await pool.query(
       `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_note)
@@ -185,8 +185,9 @@ test('a just-you project\'s hub: what it is, and where its first version stands'
     // The bot's own plan path, as the made screen's test drives it.
     const plan = { bullets: ['A list of trails near Geneva', 'Who is coming, and when'], questions: [] };
     assert.equal(await bot.awaitGo(pool, { runId: run.id, app, issueNumber: 1, parsed: { plan }, bot: homeroomBot }), true);
-    assert.deepEqual((await get()).first_version, fv({ step: 3, step_name: await named(evan), waits_on: 'plan' }),
-      'named as the App tab names it for its maker, and no build time');
+    assert.equal(await named(evan), 'plan');
+    assert.deepEqual((await get()).first_version, fv({ step: 3, line: 'plan', waits_on: 'plan' }),
+      'said as the App tab says it for its maker, and no build time');
   });
 
   await t.test('ready to try: the change, and no promise of when', async () => {
@@ -203,7 +204,8 @@ test('a just-you project\'s hub: what it is, and where its first version stands'
       [app.id, proposal.id],
     );
     assert.deepEqual((await get()).first_version,
-      fv({ step: 6, step_name: await named(evan), ready: true, session_id: proposal.id }));
+      fv({ step: 6, line: await named(evan), ready: true, session_id: proposal.id }));
+    assert.equal(await named(evan), 'ready');
 
     // A project with people in it: the same step for everyone, and nothing
     // of its maker's (their chat, what it waits on from them).
@@ -214,7 +216,7 @@ test('a just-you project\'s hub: what it is, and where its first version stands'
       const body = await get();
       assert.equal(body.audience, 'invited');
       assert.deepEqual(body.first_version,
-        fv({ step: 6, step_name: await named(sam), ready: true, mine: false, conversation_id: null, session_id: proposal.id }));
+        fv({ step: 6, line: await named(sam), ready: true, mine: false, conversation_id: null, session_id: proposal.id }));
       assert.equal(body.description, 'Plan hikes around Geneva with friends');
     } finally {
       viewer = evan;

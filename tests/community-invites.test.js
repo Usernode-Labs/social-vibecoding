@@ -448,8 +448,9 @@ test('the picture is served only through a live link, and only an after-shot of 
   assert.match(src, /if \(picture\.kind === 'sketch'\) return \{ kind: 'sketch', url: null, darkUrl: null, card: picture\.card \};/);
   const card = read('frontend/src/features/auth/invite-card.tsx');
   assert.doesNotMatch(card, /<iframe/);
-  // "Being made" while its first version is on its way (`building`), no pill otherwise.
-  assert.match(card, /<FeaturedCard name=\{project\.name\} colorKey=\{project\.name\} emoji=\{card\.emoji\} card=\{card\} stage=\{building \? 'making' : 'plain'\} \/>/);
+  // #4053: the thumbnail, without a build line: the invite knows that its
+  // first version is on its way (`building`), not its step.
+  assert.match(card, /<FeaturedCard name=\{project\.name\} colorKey=\{project\.name\} emoji=\{card\.emoji\} card=\{card\} \/>/);
   assert.match(card, /<Picture project=\{project\} building=\{!!preview\.building\} \/>/);
 });
 

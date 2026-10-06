@@ -11,7 +11,7 @@
  *            the picture below is the tile that already carries it;
  *   picture  the project itself: the after-shot of its latest change, else
  *            the Discover card's image, else, while it is built, the
- *            featured card of the idea its maker was shown
+ *            thumbnail of the idea its maker was shown
  *            (../first-session/sketch-card.tsx, drawn here from its words),
  *            else a large tile with its one-line description
  *            (preview().project.picture);
@@ -213,15 +213,16 @@ export function pictureIsTile(project: Pick<NonNullable<InvitePreview['project']
  * the part of a screen that says what the project is. An illustration has
  * a dark version when its group made one, and each theme shows its own.
  */
-function Picture({ project, building = false }: { project: NonNullable<InvitePreview['project']>; building?: boolean }) {
+function Picture({ project }: { project: NonNullable<InvitePreview['project']>; building?: boolean }) {
   const picture = project.picture;
-  // WP-D: while it is built, the card of the idea its maker was shown:
-  // "Being made" while its first version is on its way, no pill otherwise.
+  // WP-D: while it is built, the thumbnail of the idea its maker was shown.
+  // #4053: without its build line, which needs the step, and the invite
+  // knows only that its first version is on its way.
   const card = picture && picture.kind === 'sketch' ? sketchCardOf(picture) : null;
   if (card) {
     return (
       <div data-landing-invite-picture="sketch" className="mx-4 mt-3">
-        <FeaturedCard name={project.name} colorKey={project.name} emoji={card.emoji} card={card} stage={building ? 'making' : 'plain'} />
+        <FeaturedCard name={project.name} colorKey={project.name} emoji={card.emoji} card={card} />
       </div>
     );
   }

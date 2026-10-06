@@ -2,10 +2,11 @@
  * Right after "Make it" (./make.tsx): something to give, and one thing to
  * do with it.
  *
- *   what      The project, being built: its tile and name, Homeroom bot's
- *             step from GET /api/apps/:slug (`app.first_version`, "Step 2 of
- *             7: Read the description"), read again every ten seconds,
- *             past the service worker's cache (madeAppOf, madeAppUrl).
+ *   what      The project, being built: its thumbnail, with the build line
+ *             at its foot (#4053, ./build-line.tsx: "Homeroom bot is
+ *             planning it") from GET /api/apps/:slug (`app.first_version`),
+ *             read again every ten seconds, past the service worker's cache
+ *             (madeAppOf, madeAppUrl).
  *   plan      B6: once the bot has read the description it waits for its
  *             plan's Build it (`first_version.plan`) and builds nothing
  *             until then. The plan itself is answered in the chat with
@@ -41,17 +42,18 @@
  * brings find it waiting there. The note is kept per project on this device
  * (noteKey), else read back from the maker's own newest link.
  *
- *   sketch    A featured card of the idea (./sketch-card.tsx,
- *             services/app-sketch.js): its emoji, now the project's icon, a
- *             tagline and what it will do, made from the description in a
- *             few seconds, with the build's step under it. The same frame
- *             stands while it is sketched. Without one (a project with no
- *             sketch, or one that never came) the card shows the build alone.
+ *   sketch    The project's thumbnail (./sketch-card.tsx,
+ *             services/app-sketch.js): its emoji, now the project's icon, and
+ *             a tagline, made from the description in a few seconds, with
+ *             the build line at its foot. The same frame stands while it is
+ *             sketched. Without one (a project with no sketch, or one that
+ *             never came) it says the description instead.
  *
  * Every line says what is true for this project: when Homeroom bot builds
- * it (`made.conversationId`, its DM), its step and "messages you"; when it
- * does not, the description is the project's first request, for whoever
- * builds it. Nothing says how long a first version takes (buildNote).
+ * it (`made.conversationId`, its DM), the build line and "messages you";
+ * when it does not, no build line, and the description is the project's
+ * first request, for whoever builds it. Nothing says how long a first
+ * version takes (buildNote).
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -63,8 +65,9 @@ import { Wordmark } from '@/components/ui/wordmark';
 import { askForPingWhileBotBuilds } from '../dialogs/ping-ask';
 import type { HomeroomBotPlanQuestion } from '../messages/types';
 
+import { type BuildLineState, buildLineOf } from './build-line';
 import type { Made } from './make';
-import { SketchCard, showsCard, useSketch } from './sketch-card';
+import { SketchCard, useSketch } from './sketch-card';
 
 /** B6: the plan Homeroom bot waits on before it builds anything. */
 export type WaitingPlan = {
@@ -76,7 +79,9 @@ export type WaitingPlan = {
 };
 
 type FirstVersion = {
-  step?: number; of?: number; stepName?: string | null; ready?: boolean;
+  step?: number; of?: number; ready?: boolean;
+  /** #4053: its build line for this reader (homeroom-bot-progress.js buildLineOf). */
+  line?: string | null;
   /** B6: the plan waiting for Build it, for its creator (GET /api/apps/:slug). */
   plan?: Partial<WaitingPlan> | null;
 } | null;
@@ -130,12 +135,17 @@ export function planWaitsLine(name: string): string {
   return `Homeroom bot has a plan for ${name}`;
 }
 
-/** "Step 2 of 7: Read the description", or what to say without a build. */
-export function buildLine(fv: FirstVersion, appStatus: string | null, botBuilds = true): string {
-  if (fv && fv.ready) return 'Version one is ready to try.';
-  if (fv && fv.step && fv.of) return `Step ${fv.step} of ${fv.of}${fv.stepName ? `: ${fv.stepName}` : ''}`;
-  if (appStatus === 'creating') return 'Setting it up…';
-  return botBuilds ? 'Homeroom bot builds it from your description.' : 'Your description is its first request.';
+/**
+ * #4053: the build line at the foot of the thumbnail, the server's for this
+ * reader (`first_version.line`). Before the first read, and while the
+ * project is being set up, Homeroom bot is planning it; once a first version
+ * read as on its way is gone (`live`: merged), it is live. None for a
+ * project Homeroom bot does not build.
+ */
+export function madeLine(fv: FirstVersion, botBuilds: boolean, live = false): BuildLineState | null {
+  if (!botBuilds) return null;
+  if (fv) return buildLineOf(fv.line) || (fv.ready ? 'ready' : 'planning');
+  return live ? 'live' : 'planning';
 }
 
 /**
@@ -157,7 +167,7 @@ export function buildLine(fv: FirstVersion, appStatus: string | null, botBuilds 
  * (PlanWaitsCard), and while it waits this line says so instead.
  */
 export function buildNote(botBuilds: boolean, planWaits = false): string {
-  if (!botBuilds) return 'You or anyone you invite can build it from there.';
+  if (!botBuilds) return 'Your description is its first request. You or anyone you invite can build it from there.';
   if (planWaits) return 'Homeroom bot is waiting for your go-ahead.';
   return 'Homeroom is making your app. It will message you when the first version is ready to try, or if it has any questions.';
 }
@@ -438,7 +448,6 @@ export function MadeScreen({ made, me, onContinue, onOpenChat }: {
   onOpenChat: (conversationId: number | null) => void;
 }) {
   const [fv, setFv] = useState<FirstVersion>(null);
-  const [appStatus, setAppStatus] = useState<string | null>('creating');
   const [inviting, setInviting] = useState(false);
   const [sent, setSent] = useState(false);
   // Whether a first version has been read as on its way: once it has, a read
@@ -454,7 +463,6 @@ export function MadeScreen({ made, me, onContinue, onOpenChat }: {
         const app = madeAppOf(body);
         if (live && app) {
           setFv(app.firstVersion);
-          setAppStatus(app.status);
           if (app.firstVersion && !app.firstVersion.ready) setBuilding(true);
         }
       })
@@ -477,11 +485,7 @@ export function MadeScreen({ made, me, onContinue, onOpenChat }: {
   useEffect(() => { if (botBuilds) askForPingWhileBotBuilds(); }, [botBuilds]);
   const note = buildNote(botBuilds, !!plan);
   const sketch = useSketch(made.slug);
-  const line = buildLine(fv, appStatus, botBuilds);
-  // Something is under way: the project being set up, or the bot's build
-  // (not while its plan waits on them: then nothing is).
-  const busy = appStatus === 'creating' || (botBuilds && !(fv && fv.ready) && !plan);
-  const tile = sketch.card?.emoji || made.emoji || made.name.slice(0, 1);
+  const line = madeLine(fv, botBuilds, !making);
   return (
     <div
       role="dialog"
@@ -494,20 +498,7 @@ export function MadeScreen({ made, me, onContinue, onOpenChat }: {
         <Wordmark className="h-6 w-auto text-[color:var(--brand-ink)]" />
       </div>
       <div className="mx-auto flex w-full max-w-sm grow flex-col px-4 pb-[max(34px,env(safe-area-inset-bottom))]">
-        {showsCard(sketch.state) ? (
-          <SketchCard made={made} sketch={sketch} line={line} note={note} busy={busy} botBuilds={botBuilds} built={!making || !!(fv && fv.ready)} />
-        ) : (
-          <div className="mt-4 flex flex-col items-center rounded-[20px] bg-white px-6 py-7 text-center shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
-            <span className="app-icon-tile flex h-20 w-20 items-center justify-center rounded-[22px] text-5xl" aria-hidden="true">{tile}</span>
-            <h1 id="first-session-made-title" className="mt-3 text-[22px] font-extrabold leading-tight">{made.name}</h1>
-            {made.description ? <p className="mt-1 text-[15px] text-zinc-500 dark:text-zinc-400">{made.description}</p> : null}
-            <div className="mt-4 flex items-center gap-2 text-[14px] text-zinc-600 dark:text-zinc-300">
-              {busy ? <span className="status-dot creating" aria-hidden="true" /> : null}
-              <span data-first-session-build="">{line}</span>
-            </div>
-            <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400">{note}</p>
-          </div>
-        )}
+        <SketchCard made={made} sketch={sketch} line={line} note={note} />
         {/* Under the project, never above it: the sketch stays where it is when the plan lands. */}
         {plan ? <PlanWaitsCard name={made.name} onOpenChat={() => onOpenChat(plan.conversationId ?? made.conversationId)} /> : null}
         <div className="mt-6">

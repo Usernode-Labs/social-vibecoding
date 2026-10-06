@@ -467,8 +467,9 @@ test('creation waits a little for the card, the route starts it with the maker\'
 test('the made screen says what is true: the bot builds it, or the description is its first request', () => {
   const { loadTsx } = require('./lib/render-tsx');
   const made = loadTsx('frontend/src/features/first-session/made.tsx');
-  assert.equal(made.buildLine(null, 'running', false), 'Your description is its first request.');
+  // #4053: nobody builds it, so no build line; the note says what it is.
+  assert.equal(made.madeLine(null, false), null);
   assert.equal(made.buildNote(true), 'Homeroom is making your app. It will message you when the first version is ready to try, or if it has any questions.');
-  assert.equal(made.buildNote(false), 'You or anyone you invite can build it from there.');
+  assert.equal(made.buildNote(false), 'Your description is its first request. You or anyone you invite can build it from there.');
   assert.equal(made.sketchCaption, undefined, 'no caption calling it a sketch of the real app');
 });

@@ -250,10 +250,10 @@ const stagingApps = require('../services/staging-apps');
  * steps of homeroom-bot-progress.js FIRST_VERSION_STEPS), cut to what the
  * hub draws. Pure.
  *
- *   step, of, step_name  "Step 4 of 7: Build it", the step's name exactly
- *                        as firstVersionState names it for this viewer, so
- *                        the hub says what the App tab and the made screen
- *                        say
+ *   step, of             which of FIRST_VERSION_STEPS it is on
+ *   line                 its build line for this viewer (#4053:
+ *                        homeroom-bot-progress.js buildLineOf), so the hub
+ *                        says what the App tab and the made screen say
  *   ready                built and up for approval: ready to try
  *   mine                 whose description it is: the viewer's
  *   creator              whose description it is, by username
@@ -274,7 +274,7 @@ function hubFirstVersion(state, viewerId) {
   return {
     step: Number.isInteger(state.step) ? state.step : null,
     of: Number.isInteger(state.of) ? state.of : null,
-    step_name: state.stepName || null,
+    line: state.line || null,
     ready,
     mine,
     creator: state.creator || null,
@@ -1533,7 +1533,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
               mine,
               step: state.step,
               of: state.of,
-              stepName: state.stepName,
+              // #4053: the build line its thumbnail shows this viewer.
+              line: state.line || null,
               creator: state.creator,
               ready: !!state.ready,
               question: mine && !!state.question,

@@ -318,12 +318,16 @@ test('the make screen sends the device\'s time zone with Make it, so the sketch\
   assert.match(read(`${DIR}/make.tsx`), /from: 'first-session',\s+\/\/[^\n]*\n\s+\.\.\.\(timeZone \? \{ timeZone \} : \{\}\),/);
 });
 
-test('after Make it: the build\'s step, then one invite, and the second button says where it goes', () => {
+test('after Make it: the build line, then one invite, and the second button says where it goes', () => {
   const made = loadTsx(`${DIR}/made.tsx`);
-  assert.equal(made.buildLine({ step: 2, of: 7, stepName: 'Read the description' }, 'running'), 'Step 2 of 7: Read the description');
-  assert.equal(made.buildLine({ ready: true }, 'running'), 'Version one is ready to try.');
-  assert.equal(made.buildLine(null, 'creating'), 'Setting it up…');
-  assert.equal(made.buildLine(null, 'running'), 'Homeroom bot builds it from your description.');
+  // #4053: the server's build line for this reader, never "Step 2 of 7".
+  assert.equal(made.madeLine({ step: 2, of: 7, line: 'planning' }, true), 'planning');
+  assert.equal(made.madeLine({ step: 4, of: 7, line: 'building' }, true), 'building');
+  assert.equal(made.madeLine({ ready: true }, true), 'ready', 'a record without its line');
+  assert.equal(made.madeLine({ step: 2, of: 7, line: 'Read the description' }, true), 'planning', 'never words it does not know');
+  assert.equal(made.madeLine(null, true), 'planning', 'nothing read yet, or being set up');
+  assert.equal(made.madeLine(null, true, true), 'live', 'gone once it was read as on its way: merged');
+  assert.equal(made.madeLine({ line: 'building' }, false), null, 'nobody builds it: no line');
   const src = read(`${DIR}/made.tsx`);
   assert.match(src, /\{sent \? 'Go to the Homeroom app' : 'Invite people later'\}/);
   // The link outlives a week, and the note is said to be the first message.

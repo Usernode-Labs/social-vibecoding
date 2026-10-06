@@ -102,7 +102,7 @@ test('the invite page says the maker sees a join; the made screen promises no ti
   // October 2026), and Evan asked for no average at all.
   const { buildNote } = loadTsx('frontend/src/features/first-session/made.tsx');
   assert.equal(buildNote(true), 'Homeroom is making your app. It will message you when the first version is ready to try, or if it has any questions.');
-  assert.equal(buildNote(false), 'You or anyone you invite can build it from there.');
+  assert.equal(buildNote(false), 'Your description is its first request. You or anyone you invite can build it from there.');
   const made = read('frontend/src/features/first-session/made.tsx');
   assert.match(made, /useEffect\(\(\) => \{ if \(botBuilds\) askForPingWhileBotBuilds\(\); \}, \[botBuilds\]\);/);
   assert.doesNotMatch(read('src/routes/apps.js'), /typicalMinutes: await botDm\.typicalMinutesCached\(pool\)/);

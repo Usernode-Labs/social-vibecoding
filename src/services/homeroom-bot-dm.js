@@ -3216,22 +3216,6 @@ async function sweepFirstVersions(pool, config, deps = {}) {
   return filed;
 }
 
-// What the first version's plan step is called while a plan its creator
-// asked to change is redone (firstVersionState below).
-const REPLAN_STEP_NAME = 'Updating the plan';
-
-/**
- * What the plan step is called while the plan waits for its creator's
- * answer (Build it, or Change something), for whoever reads it. "Write a
- * plan" was said both then and while the bot wrote its build plan after
- * Build it, so a maker waiting on the step read it as the bot's turn
- * (first-session run-through, 5 October 2026).
- */
-function planWaitsStepName(creatorId, creator, viewerId) {
-  if (viewerId != null && Number(viewerId) === Number(creatorId)) return 'Your turn: answer the plan';
-  return creator ? `Waiting for @${creator} to answer the plan` : 'Waiting for an answer to the plan';
-}
-
 /**
  * Where approval of a first version that is ready to try stands, for one
  * person reading its App tab (firstVersionState below), so the screen can
@@ -3313,13 +3297,14 @@ async function firstVersionApproval(pool, sessionId, viewerId = null) {
  * something other than a merge (the bot left it to the group, its build did
  * not succeed, its proposal was closed): then the app is what there is.
  *
- * `{ userId, creator, conversationId, step, of, stepName, question, ready }`:
+ * `{ userId, creator, conversationId, step, of, line, question, ready }`:
  * whose description it is, their DM with the bot, the step of
- * homeroom-bot-progress.js's FIRST_VERSION_STEPS, whether the bot waits on
- * an answer from them, and whether its proposal is up for the vote (ready
- * to try). While it is ready, `approval` is where approval of it stands for
- * whoever reads it (`deps.viewerId`; firstVersionApproval above), when that
- * could be read. GET /api/apps/:slug reads it best-effort: a read that
+ * homeroom-bot-progress.js's FIRST_VERSION_STEPS, the build line its
+ * thumbnail shows to whoever reads it (`deps.viewerId`; buildLineOf, #4053),
+ * whether the bot waits on an answer from them, and whether its proposal is
+ * up for the vote (ready to try). While it is ready, `approval` is where
+ * approval of it stands for that reader (firstVersionApproval above), when
+ * that could be read. GET /api/apps/:slug reads it best-effort: a read that
  * fails is no state, never a failed page.
  */
 async function firstVersionState(pool, appId, deps = {}) {
@@ -3350,10 +3335,15 @@ async function firstVersionState(pool, appId, deps = {}) {
   const row = rows[0];
   if (!row || !['waiting', 'filing', 'filed'].includes(row.status) || row.merged) return null;
   const progress = deps.progress || require('./homeroom-bot-progress');
-  const at = (stage) => {
-    const step = progress.stepNumber(stage, true);
-    return { step, of: progress.FIRST_VERSION_STEPS.length, stepName: step ? progress.FIRST_VERSION_STEPS[step - 1] : null };
-  };
+  const forCreator = deps.viewerId != null && Number(deps.viewerId) === Number(row.user_id);
+  // The step, for Homeroom bot's chat, and the build line its thumbnail
+  // shows this reader (#4053): "Your plan is ready to review" to the person
+  // who started it, "Planning it" to everyone else, while the plan waits.
+  const at = (stage, { question = false } = {}) => ({
+    step: progress.stepNumber(stage, true),
+    of: progress.FIRST_VERSION_STEPS.length,
+    line: progress.buildLineOf(stage, { forCreator, question }),
+  });
   const base = { userId: Number(row.user_id), creator: row.username || null, conversationId: Number(row.conversation_id) || null };
   if (row.status !== 'filed') {
     if (progress.setupOf(row).outcome) return null;
@@ -3370,9 +3360,10 @@ async function firstVersionState(pool, appId, deps = {}) {
     // A plan its creator asked to change is read again (changePlan puts it
     // first in line as 'plan_change'). That read is the plan being redone,
     // not the description being read for the first time, so it stays on the
-    // plan's step rather than going back one.
+    // plan's step rather than going back one. Its line is planning either way.
     const replanning = found.row?.queue_reason === 'plan_change'
       && (found.state.stage === 'queued' || found.state.stage === 'reading');
+    const question = found.state.stage === 'question' && found.state.waitingOn === 'them';
     const ready = found.state.stage === 'vote';
     // Ready to try: who it waits on, for the App tab to say. A read that
     // fails leaves the screen as it was before it said so.
@@ -3382,15 +3373,10 @@ async function firstVersionState(pool, appId, deps = {}) {
         return null;
       })
       : null;
-    // The plan sent and waiting on its creator is the same step as the bot
-    // writing its build plan after Build it, but not the same wait.
-    const step = replanning ? { ...at('plan'), stepName: REPLAN_STEP_NAME }
-      : found.state.stage === 'plan' ? { ...at('plan'), stepName: planWaitsStepName(row.user_id, row.username, deps.viewerId) }
-        : at(found.state.stage);
     return {
       ...base,
-      ...step,
-      question: found.state.stage === 'question' && found.state.waitingOn === 'them',
+      ...(replanning ? { ...at('reading'), step: progress.stepNumber('plan', true) } : at(found.state.stage, { question })),
+      question,
       ready,
       ...(plan ? { plan } : {}),
       ...(approval ? { approval } : {}),

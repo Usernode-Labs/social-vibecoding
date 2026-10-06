@@ -17,10 +17,12 @@ const ago = (minutes) => new Date(NOW.getTime() - minutes * 60 * 1000).toISOStri
 const stage = (row) => progress.stageOf(row, { now: NOW });
 
 test('the steps a request and a first version go through, and which step each stage is', () => {
+  // #4053: a first version's steps say what is happening, never what to do
+  // ("Build it" read as an instruction). A request's steps keep their names.
   assert.deepEqual(progress.FIRST_VERSION_STEPS, [
-    'Set up the project', 'Read the description', 'Write a plan', 'Build it', 'Test it', 'Approval', 'Live',
+    'Setting up the project', 'Reading the description', 'Planning it', 'Building it', 'Testing it', 'Ready to try', 'Live',
   ]);
-  assert.deepEqual(progress.REQUEST_STEPS, progress.FIRST_VERSION_STEPS.slice(1).map((s) => s.replace('description', 'request')));
+  assert.deepEqual(progress.REQUEST_STEPS, ['Read the request', 'Write a plan', 'Build it', 'Test it', 'Approval', 'Live']);
   assert.equal(progress.stepNumber('setting_up', true), 1);
   assert.equal(progress.stepNumber('reading', true), 2);
   assert.equal(progress.stepNumber('reading', false), 1);
@@ -29,6 +31,35 @@ test('the steps a request and a first version go through, and which step each st
   assert.equal(progress.stepNumber('checks', false), 4);
   assert.equal(progress.stepNumber('vote', false), 5);
   assert.equal(progress.stepNumber('nonsense', false), null);
+});
+
+test('#4053: the build line a first version\'s thumbnail shows, for its creator and for everyone else', () => {
+  const line = (s, o) => progress.buildLineOf(s, o);
+  const creator = { forCreator: true };
+  // Steps 1 to 3: Homeroom bot is planning it, for everyone.
+  for (const s of ['setting_up', 'queued', 'reading', 'held', 'stalled']) {
+    assert.equal(line(s), 'planning', s);
+    assert.equal(line(s, creator), 'planning', s);
+  }
+  // Its plan waits for Build it: blue for the person who started it alone.
+  assert.equal(line('plan', creator), 'plan');
+  assert.equal(line('plan'), 'plan-member');
+  // A question waits on the person who started it: theirs, else still planning.
+  assert.equal(line('question', { forCreator: true, question: true }), 'question');
+  assert.equal(line('question', { question: true }), 'planning');
+  assert.equal(line('question', creator), 'planning', 'not waiting on them');
+  // From Build it on, the build's own plan and its turn are the build.
+  for (const s of ['build_queued', 'starting', 'planning', 'building', 'proposing']) assert.equal(line(s), 'building', s);
+  for (const s of ['checks', 'checks_failed', 'fix_queued', 'fixing']) assert.equal(line(s), 'testing', s);
+  for (const s of ['vote', 'merging', 'followup_queued', 'revising']) assert.equal(line(s), 'ready', s);
+  assert.equal(line('nonsense'), null);
+  assert.deepEqual(progress.BUILD_LINE_STATES, ['planning', 'plan', 'plan-member', 'question', 'building', 'testing', 'ready', 'live']);
+  // The chat's step names for steps 4 to 7 are the line's own words
+  // (frontend/src/features/first-session/build-line.tsx).
+  const words = require('node:fs').readFileSync(require('node:path').join(__dirname, '../frontend/src/features/first-session/build-line.tsx'), 'utf8');
+  for (const [state, step] of [['building', 4], ['testing', 5], ['ready', 6], ['live', 7]]) {
+    assert.ok(words.includes(`${/-/.test(state) ? `'${state}'` : state}: '${progress.FIRST_VERSION_STEPS[step - 1]}',`), state);
+  }
 });
 
 test('a request being read, asked about, or waiting in the queue', () => {

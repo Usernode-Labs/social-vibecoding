@@ -16,8 +16,9 @@
 //     sentence of the description it was made from (server half pinned in
 //     tests/hub-just-you-postgres.test.js);
 //   - a First version card under the hero says where Homeroom bot's build
-//     stands, in the made screen's and the App tab's words ("Step 4 of 7:
-//     Build it"), and opens the bot's chat when the bot waits on its maker;
+//     stands, in the build line the made screen and the App tab draw
+//     ("Building it", #4053: never "Step 4 of 7: Build it", which read as an
+//     instruction), and opens the bot's chat when the bot waits on its maker;
 //   - "Nothing more to vote on." is a zero nobody else could change, so a
 //     project nobody else is in leaves it out;
 //   - an empty Your work says how to change something there, or leaves the
@@ -60,7 +61,7 @@ const community = (over = {}) => ({
 });
 
 const building = (over = {}) => ({
-  step: 4, of: 7, step_name: 'Build it', ready: false, mine: true, creator: 'evan',
+  step: 4, of: 7, line: 'building', ready: false, mine: true, creator: 'evan',
   waits_on: null, conversation_id: 41, session_id: null, ...over,
 });
 
@@ -68,43 +69,38 @@ const card = (fv) => renderToHtml(createElement(hub.FirstVersionCard, {
   slug: 'geneva-hikes', data: community({ first_version: fv }),
 }));
 
-test('a just-you project being built: the step, as a ring and in words, and no build time', () => {
+test('a just-you project being built: the build line, and no step count or build time', () => {
   const html = card(building());
   assert.match(html, /^<section class="dev-ws-strip dev-ws-hub-first" data-ws-first-version="building">/);
   assert.match(html, /<span class="dev-ws-head-title">First version<\/span>/);
-  assert.match(html, /data-ws-first-version-step="">Step 4 of 7: Build it<\/span>/,
-    'the made screen\'s and the App tab\'s words for the step');
-  // Evan, 5 Oct 2026: no average build time for a first version.
-  assert.match(html, /data-ws-first-version-note="">Homeroom bot will message you when it’s ready to try, or if it has any questions\.<\/span>/);
-  // The ring the bot's activity cards lead with, hidden from a screen reader
-  // because the words beside it say the same.
-  assert.match(html, /<svg class="shrink-0" width="38" height="38" viewBox="0 0 38 38" role="img" aria-label="Step 4 of 7: Build it" aria-hidden="true">/);
-  assert.match(html, />4\/7</);
+  assert.match(html, /<span role="status" data-build-line="building"[^>]*>.*>Building it<\/span><\/span>/,
+    'the made screen\'s and the App tab\'s words, with a spinner');
+  assert.match(html, /animate-spin/);
+  // #4053: no "Step 4 of 7" and no ring counting it: step numbers stay in
+  // Homeroom bot's chat. Evan, 5 Oct 2026: no average build time either.
+  assert.doesNotMatch(html, /Step \d of|<svg[^>]*width="38"|4\/7|minute|usually/);
   assert.doesNotMatch(html, /data-ws-first-version-chat|data-ws-first-version-change/,
     'nothing to press while nothing waits on its maker');
-  for (const fv of [building(), building({ waits_on: 'plan' }), building({ waits_on: 'question' }),
-    building({ ready: true, session_id: 3 }), building({ mine: false, creator: 'ada' })]) {
-    assert.doesNotMatch(hub.firstVersionNote(fv), /minute|usually|about \d/, 'no duration in any state');
-  }
+  assert.equal(hub.firstVersionLine(building({ step: 1, line: 'planning' })), 'planning');
+  assert.equal(hub.firstVersionLine(building({ line: null })), 'planning', 'a record without its line');
+  assert.equal(hub.firstVersionLine(building({ line: null, ready: true })), 'ready');
+  assert.equal(hub.firstVersionStep, undefined);
+  assert.equal(hub.firstVersionNote, undefined, 'one line, said once');
   const src = read(HUB);
-  assert.doesNotMatch(src.slice(src.indexOf('export function firstVersionStep('), src.indexOf('export function FirstVersionCard(')),
-    /typical_minutes|\$\{minutes\}|usually in about/, 'and nothing reads one');
-  assert.equal(hub.firstVersionStep(building({ step: 1, step_name: 'Set up the project' })), 'Step 1 of 7: Set up the project');
-  assert.equal(hub.firstVersionStep(building({ step: null, of: null })), 'Being built');
-  assert.doesNotMatch(card(building({ step: null, of: null })), /<svg/, 'no ring without a step');
+  assert.doesNotMatch(src.slice(src.indexOf('export const FIRST_VERSION_POLL_MS'), src.indexOf('export function ReelThumb(')),
+    /typical_minutes|\$\{minutes\}|usually in about|ProgressRing/, 'and nothing reads one');
 });
 
-test('a plan or a question waiting on its maker: Homeroom bot has a plan for you, and Go to chat', () => {
-  const plan = card(building({ step: 3, step_name: 'Your turn: answer the plan', waits_on: 'plan' }));
+test('a plan or a question waiting on its maker: the blue line, and Go to chat', () => {
+  const plan = card(building({ step: 3, line: 'plan', waits_on: 'plan' }));
   assert.match(plan, /data-ws-first-version="plan"/);
-  assert.match(plan, /data-ws-first-version-step="">Step 3 of 7: Your turn: answer the plan</);
-  assert.match(plan, /data-ws-first-version-note="">Homeroom bot has a plan for you\.</);
+  assert.match(plan, /data-build-line="plan"[^>]*>.*Your plan is ready to review/);
   assert.match(plan, /<button[^>]*data-ws-first-version-chat=""[^>]*>Go to chat<\/button>/);
   assert.match(plan, /data-ws-first-version-chat="" class="rounded-full bg-violet-600[^"]*self-start"/,
     'the accent: it is the one thing on the hub that waits on them');
-  const question = card(building({ step: 2, step_name: 'Read the description', waits_on: 'question' }));
+  const question = card(building({ step: 2, line: 'question', waits_on: 'question' }));
   assert.match(question, /data-ws-first-version="question"/);
-  assert.match(question, /Homeroom bot has a question for you\./);
+  assert.match(question, /Homeroom bot has a question for you/);
   assert.match(question, /data-ws-first-version-chat=""/);
   // The chat is theirs: their DM when the record names it, else the bot's door.
   const src = read(HUB);
@@ -112,40 +108,35 @@ test('a plan or a question waiting on its maker: Homeroom bot has a plan for you
   assert.match(src, /import \{ open as openConversation, openBot \} from '\.\.\/\.\.\/messages\/store';/);
 });
 
-test('ready to try: version one is ready, and See the change opens it', () => {
-  const html = card(building({ step: 6, step_name: 'Approval', ready: true, session_id: 990003 }));
+test('ready to try: Ready to try, and See the change opens it', () => {
+  const html = card(building({ step: 6, line: 'ready', ready: true, session_id: 990003 }));
   assert.match(html, /data-ws-first-version="ready"/);
-  assert.match(html, /data-ws-first-version-step="">Step 6 of 7: Approval</);
-  assert.match(html, /data-ws-first-version-note="">Version one is ready to try\.</);
+  assert.match(html, /data-build-line="ready"[^>]*>.*Ready to try/);
   assert.match(html, /<a href="#app\/geneva-hikes\/dev\/proposals\/990003" class="dev-ws-hub-open un-touch-target self-start" data-ws-first-version-change="">See the change/);
   assert.doesNotMatch(html, /data-ws-first-version-chat/);
   assert.doesNotMatch(card(building({ ready: true, session_id: null })), /data-ws-first-version-change/,
     'no change to open when the read of it failed');
 });
 
-test('somebody else reading it is told whose description it is, and offered nobody\'s chat', () => {
-  const html = card(building({ mine: false, creator: 'ada', conversation_id: null }));
-  assert.match(html, /Homeroom bot is building it from @ada’s description\./);
-  assert.doesNotMatch(html, /data-ws-first-version-chat/);
-  assert.equal(hub.firstVersionNote(building({ mine: false, creator: null })), 'Homeroom bot is building it from its description.');
+test('somebody else reading it while its plan waits: Planning it, and nobody\'s chat', () => {
+  const html = card(building({ mine: false, creator: 'ada', conversation_id: null, step: 3, line: 'plan-member' }));
+  assert.match(html, /data-build-line="plan-member"[^>]*>.*Planning it/);
+  assert.doesNotMatch(html, /data-ws-first-version-chat|--accent/);
 });
 
-test('the step\'s name is the server\'s, never one written on the hub', () => {
-  // firstVersionState names the step for each viewer (the App tab's and the
-  // made screen's words), so a renamed step reaches the hub with no change
-  // here.
-  assert.match(card(building({ step: 3, step_name: 'Waiting for @evan to answer the plan', mine: false, waits_on: null })),
-    /data-ws-first-version-step="">Step 3 of 7: Waiting for @evan to answer the plan</);
+test('the line is the server\'s for this viewer, and its words are the build line\'s, never written on the hub', () => {
   const src = read(HUB);
   const body = src.slice(src.indexOf('export const FIRST_VERSION_POLL_MS'), src.indexOf('export function ReelThumb('));
-  assert.match(body, /return `Step \$\{fv\.step\} of \$\{fv\.of\}\$\{fv\.step_name \? `: \$\{fv\.step_name\}` : ''\}`;/);
-  for (const name of ['Set up the project', 'Read the description', 'Write a plan', 'Build it', 'Test it', 'Approval', 'Your turn']) {
+  assert.match(body, /return buildLineOf\(fv\.line\) \|\| \(fv\.ready \? 'ready' : 'planning'\);/);
+  assert.match(body, /<BuildLine state=\{firstVersionLine\(fv\)\} \/>/);
+  const code = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  for (const name of ['Homeroom bot is planning it', 'Your plan is ready to review', 'Planning it', 'Building it', 'Testing it', 'Ready to try', 'Step ']) {
     for (const quote of ["'", '"', '`', '>']) {
-      assert.ok(!body.includes(`${quote}${name}`), `no step named in the hub's code: ${quote}${name}`);
+      assert.ok(!code.includes(`${quote}${name}`), `no line written in the hub's code: ${quote}${name}`);
     }
   }
   const route = read('src/routes/apps.js');
-  assert.match(route, /step_name: state\.stepName \|\| null,/);
+  assert.match(route, /line: state\.line \|\| null,/);
   assert.match(route, /const state = await botDm\.firstVersionState\(pool, app\.id, \{ viewerId: req\.user\?\.id \?\? null \}\);\s*firstVersion = hubFirstVersion\(state, req\.user\?\.id \?\? null\);/,
     'read for this viewer, as GET /api/apps/:slug reads it for the App tab');
 });
@@ -237,21 +228,21 @@ test('the hub puts the first version under the hero, and stands the start-here p
 test('the server cuts the bot\'s state to what the hub says, and hands the maker\'s chat to the maker alone', () => {
   const { hubFirstVersion } = require('../src/routes/apps');
   const state = {
-    userId: 7, creator: 'evan', conversationId: 41, step: 3, of: 7, stepName: 'Your turn: answer the plan',
+    userId: 7, creator: 'evan', conversationId: 41, step: 3, of: 7, line: 'plan',
     question: false, ready: false, plan: { bullets: ['A trail list'], actionId: 5 },
   };
   assert.deepEqual(hubFirstVersion(state, 7), {
-    step: 3, of: 7, step_name: 'Your turn: answer the plan', ready: false, mine: true, creator: 'evan',
+    step: 3, of: 7, line: 'plan', ready: false, mine: true, creator: 'evan',
     waits_on: 'plan', conversation_id: 41, session_id: null,
-  }, 'the step named as the state names it, and no build time');
-  assert.deepEqual(hubFirstVersion({ ...state, stepName: 'Waiting for @evan to answer the plan' }, 9), {
-    step: 3, of: 7, step_name: 'Waiting for @evan to answer the plan', ready: false, mine: false, creator: 'evan',
+  }, 'the line as the state says it for this viewer, and no build time');
+  assert.deepEqual(hubFirstVersion({ ...state, line: 'plan-member' }, 9), {
+    step: 3, of: 7, line: 'plan-member', ready: false, mine: false, creator: 'evan',
     waits_on: null, conversation_id: null, session_id: null,
   }, 'nobody else is told what it waits on from its maker, or handed their chat');
   assert.doesNotMatch(read('src/routes/apps.js').slice(read('src/routes/apps.js').indexOf('function hubFirstVersion('),
     read('src/routes/apps.js').indexOf('function isPlatformRepo(')), /typical/i, 'no build time in the hub\'s cut');
   assert.equal(hubFirstVersion({ ...state, plan: undefined, question: true }, 7).waits_on, 'question');
-  const ready = hubFirstVersion({ ...state, plan: undefined, ready: true, step: 6, stepName: 'Approval', approval: { sessionId: 31 } }, 9);
+  const ready = hubFirstVersion({ ...state, plan: undefined, ready: true, step: 6, line: 'ready', approval: { sessionId: 31 } }, 9);
   assert.deepEqual([ready.ready, ready.session_id, ready.waits_on], [true, 31, null]);
   assert.equal(hubFirstVersion(null, 7), null);
 });
