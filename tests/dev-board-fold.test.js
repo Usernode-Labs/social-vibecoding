@@ -1464,9 +1464,15 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // with no check on it to fold into. MAX_DECLARED_TESTS went 860 → 870 in
   // the same change (services/app-manifest.js), so 841 leaves 29 slots.
   //
+  // 841 → 842: +1: the Benchmark area's Studio place
+  // (#admin/homeroom-bot/benchmark/studio), the App bench studio's gallery on
+  // its staging fixture. It is a route of its own: the Benchmark's one check
+  // reads the Overview, which the Studio replaces rather than sits beside, so
+  // there is no check on that route to fold into. 842 leaves 28 slots.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 841);
+  checkCap.assertPinned(DAPP.tests.length, 842);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
