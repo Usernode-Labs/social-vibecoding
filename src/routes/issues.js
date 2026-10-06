@@ -36,6 +36,9 @@ const { isSessionBusy } = require('../services/active-workers');
 const { FEEDBACK_FALLBACK_TITLE } = require('../services/llm');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const challengeScorer = require('../services/topochain/challenge-scorer');
+// The workflow governance machine (WF_GOVERNANCE_ENABLED). Resolved per call:
+// the module is ESM loaded through type stripping, and server.js starts it.
+const workflow = () => require('../workflow/platform.ts');
 
 // #2089: the board search's server half. Shorter queries are not asked
 // (the browser applies the same floor); the hit list is capped because the
@@ -1591,6 +1594,11 @@ function issueRoutes(config) {
           null, { type: 'issue', ref: githubIssueNumber }).catch(() => {});
       }
 
+      // Enrolled now; a failure here is caught by the next vote or boot backfill.
+      if (workflow().governsKind(kind)) {
+        await workflow().fileProposal(rows[0].id, app.id).catch((err) =>
+          log.warn('issues', 'Filing the governance proposal failed', { issueId: rows[0].id, err: err.message }));
+      }
       pushIssueUpdate({ action: 'created', appSlug: app.slug, appId: app.id, issueId: rows[0].id, kind });
       // The Homeroom bot triages a new request as soon as it exists — the
       // create carries the local row's id, so the twin's number goes here.
@@ -1653,6 +1661,14 @@ function issueRoutes(config) {
       // so enforce the issue kind after lookup and before touching votes.
       if (req.cliAuthenticated && issue.kind === 'secret_change') {
         return res.status(403).json({ error: 'credential_management_not_available_via_cli' });
+      }
+
+      // The governance machine records the vote, decides the toggle and the
+      // No's line under its lock, and applies when the vote decides it.
+      if (workflow().governsKind(issue.kind)) {
+        const reply = await workflow().voteOnProposal(issue, req.user,
+          { vote, reason, requestKey: req.get('Idempotency-Key') || undefined });
+        return res.status(reply.status).json(reply.body);
       }
 
       if (issue.status !== 'open') {
@@ -3144,6 +3160,11 @@ function issueRoutes(config) {
         issueId: issue.id, kind: issue.kind, by: req.user.username,
       });
 
+      if (workflow().governsKind(issue.kind)) {
+        const reply = await workflow().adminApplyProposal(issue, req.user, req.get('Idempotency-Key') || undefined);
+        return res.status(reply.status).json(reply.body);
+      }
+
       const applied = issue.kind === 'close_issue'
         ? await maybeApplyCloseIssueProposal(pool, issue, { force: true, forceBy: req.user })
         : issue.kind === 'maintenance_campaign'
@@ -3196,6 +3217,11 @@ function issueRoutes(config) {
       // GitHub close — so the gate stays creator-scoped per the spec.)
       if (!issue.created_by || issue.created_by !== req.user.id) {
         return res.status(403).json({ error: 'Only the proposer can withdraw this proposal' });
+      }
+
+      if (workflow().governsKind(issue.kind)) {
+        const reply = await workflow().withdrawProposal(issue, req.user);
+        return res.status(reply.status).json(reply.body);
       }
 
       // Restrict to open proposals: a withdraw that loses the race against a
@@ -3820,6 +3846,15 @@ async function resolveSupersededCloseProposals(pool, { appId, appSlug, numbers, 
     .filter((n) => Number.isInteger(n) && n > 0);
   const resolved = [];
   if (!appId || !nums.length) return { resolved };
+
+  if (workflow().governanceEnabled()) {
+    try {
+      return { resolved: await workflow().targetsClosed(appId, nums, cause || { kind: 'github-close' }) };
+    } catch (err) {
+      log.warn('issues', 'Superseded close-proposal resolve failed', { appId, numbers: nums, err: err.message });
+      return { resolved };
+    }
+  }
 
   try {
     const { rows } = await pool.query(

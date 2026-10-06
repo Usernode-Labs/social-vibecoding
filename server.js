@@ -1088,6 +1088,13 @@ async function becomeLeader() {
     identity: leadership && leadership.identity,
   });
 
+  // Workflow pipeline slots, timers and services (a no-op unless a workflow
+  // flag is on). Correctness does not depend on running them here; the
+  // leader is simply where background work lives for now.
+  await require('./src/workflow/platform.ts').startWorkflowLoops().catch((err) => {
+    log.error('server', 'Workflow loops failed to start', { err: err.message });
+  });
+
   // #2045: reconcile the shared hosted-asset backend once per rollout.
   //
   // It is otherwise only reconciled from deployApplication, which means a
@@ -1626,6 +1633,10 @@ async function start() {
   // own paths and still need the provider-neutral collector.
   llmTelemetry.init(config);
   await llm.init(config);
+  // The workflow runtime (src/workflow/platform.ts): every process appends
+  // and waits for outcomes; the loops start in becomeLeader(), or here on a
+  // staging preview, which never stands for election but must still decide.
+  await require('./src/workflow/platform.ts').startWorkflow(config, { loops: !runsClusterMaintenance() });
   startupDiagnostics = Object.freeze({
     totalMs: Date.now() - startedAt,
     migrationsOnStartup,
@@ -5644,6 +5655,10 @@ let governanceApplyTickerHandle = null;
 // ARCHIVED_RETENTION_MS are zero.
 function startGovernanceApplyTicker(config) {
   if (governanceApplyTickerHandle) return;
+  if (config.wfGovernanceEnabled) {
+    log.info('server', 'Governance-apply ticker off: the governance-proposal machine decides');
+    return;
+  }
   const intervalMs = config.governanceApplyTickMs;
   if (!(intervalMs > 0)) {
     log.info('server', 'Governance-apply ticker disabled');
@@ -5860,7 +5875,8 @@ function startStalePrSweeper(config) {
     // guard on every invocation, so the hourly sweep doubles as the catch-all
     // that retires proposals whose target was closed by hand on GitHub. The
     // guard reads the cached fetchPublicIssues — one cheap fetch per app.
-    try {
+    // With the governance-proposal machine on, its own timers do this.
+    if (!config.wfGovernanceEnabled) try {
       const { rows } = await pool.query(
         `SELECT i.*, a.slug AS app_slug, a.repo_url,
                 (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'up')   AS up_count,
@@ -6226,6 +6242,10 @@ async function cleanup() {
   const scorerStop = require('./src/services/topochain/challenge-scorer').stop();
   // Stop claiming push jobs immediately. The bounded drain runs in
   // parallel with HTTP/session draining and is awaited before pool close.
+  // The workflow runtime has its own pool; its running work reports nothing
+  // and is reclaimed when its lease runs out.
+  const workflowStop = require('./src/workflow/platform.ts').stopWorkflow()
+    .catch((err) => log.warn('server', 'Stopping the workflow runtime failed', { err: err.message }));
   const pushStop = mobilePush.stop({ timeoutMs: DRAIN_TIMEOUT_MS }).catch((err) => {
     log.warn('server', 'Mobile push shutdown failed', {
       code: typeof err?.code === 'string' ? err.code : 'unknown',
@@ -6395,7 +6415,7 @@ async function cleanup() {
     let poolTimer = null;
     try {
       await Promise.race([
-        Promise.all([retentionStop, scorerStop]).then(() => shutdownPool.end()),
+        Promise.all([retentionStop, scorerStop, workflowStop]).then(() => shutdownPool.end()),
         new Promise((resolve) => { poolTimer = setTimeout(resolve, POOL_CLOSE_TIMEOUT_MS); }),
       ]);
       log.info('server', 'Pool closed', { durationMs: Date.now() - poolStartedAt });

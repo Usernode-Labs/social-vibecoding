@@ -144,6 +144,13 @@ async function createProposal(pool, { app, user, proposed, images = {} }) {
   const createdMsg = `${user.username} proposed ${remove ? 'removing' : 'changing'} the featured illustration`;
   await sendSystemMessage(pool, app.id, createdMsg, 'system',
     null, { type: 'governance', ref: issue.id }).catch(() => {});
+  // Enroll it with the workflow governance machine, when that is on; a
+  // failure is caught by the next vote or the boot backfill.
+  const workflow = require('../workflow/platform.ts');
+  if (workflow.governsKind(KIND)) {
+    await workflow.fileProposal(issue.id, app.id).catch((err) =>
+      log.warn('illustrations', 'Filing the governance proposal failed', { issueId: issue.id, err: err.message }));
+  }
   pushIssueUpdate({ action: 'created', appSlug: app.slug, appId: app.id, issueId: issue.id, kind: KIND });
 
   log.info('illustrations', 'Featured illustration proposal created', {

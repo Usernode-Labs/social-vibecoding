@@ -32,3 +32,20 @@ test('src/workflow modules are ESM loaded by type stripping, with erasable synta
   const kernel = require(path.join(ROOT, 'src/workflow/kernel/index.ts'));
   assert.equal(typeof kernel.createRuntime, 'function');
 });
+
+// The images run src/workflow/**/*.ts as-is, which needs type stripping on by
+// default: Node 22.18+ or 24+. Both floating majors are past that, so every
+// Node stage must name one of them (a pinned older line would boot-fail).
+test('every Node image stage can strip types', () => {
+  const fs = require('node:fs');
+  for (const file of ['Dockerfile', 'Dockerfile.kubernetes']) {
+    const froms = fs.readFileSync(path.join(ROOT, file), 'utf8').match(/^FROM node:\S+/gm) || [];
+    assert.ok(froms.length, `${file} has Node stages`);
+    for (const from of froms) {
+      const tag = from.slice('FROM node:'.length);
+      const [major, minor] = tag.split(/[.-]/).map(Number);
+      const ok = major >= 24 || (major === 22 && (Number.isNaN(minor) || minor >= 18));
+      assert.ok(ok, `${file}: ${from} cannot run .ts without a build step`);
+    }
+  }
+});
