@@ -11850,6 +11850,12 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS test_account_welcome_dm BOOLEAN NOT N
 CREATE INDEX IF NOT EXISTS idx_users_test_account_created_at
   ON users (test_account_created_at) WHERE test_account_created_at IS NOT NULL;
 
+-- The first-run "Add your phone number" step was answered, by "Not now" or
+-- by closing it (POST /api/me/phone-ask/answered): it is not asked again, and
+-- Home's card is where the phone is added after that. Adding the phone ends
+-- the ask on its own (identity_needed below).
+ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_ask_answered_at TIMESTAMPTZ;
+
 -- VERIFIED IDENTITY (sybil protection for public decisions and the full AI
 -- budget). An account is verified by any of: a verified phone
 -- (user_phone_identities), BOTH GitHub and X linked (user_social_identities,
@@ -11894,10 +11900,20 @@ LANGUAGE sql STABLE AS $$
                 AND COALESCE(u.platform_access_granted_at, u.created_at) < identity_rule_since()))
   )
 $$;
+-- Whether the rule holds this account to it: on, and the account is neither
+-- exempt nor verified. GET /api/auth/me's `identityNeeded`, which asks a new
+-- member for a phone (the first-run step, Home's card).
+CREATE OR REPLACE FUNCTION identity_needed(target_user_id INTEGER)
+RETURNS BOOLEAN
+LANGUAGE sql STABLE AS $$
+  SELECT identity_rule_since() IS NOT NULL
+     AND NOT identity_rule_exempt(target_user_id)
+     AND NOT identity_verified(target_user_id)
+$$;
 -- Whether a vote by `voter_id` on `target_app_id` needs a verified identity
--- to count: the rule is on, the app is PUBLIC (view_visibility 'public'),
--- and the voter is neither exempt nor verified. Private groups' votes are
--- never held to it. The vote routes refuse such a vote first
+-- to count: the app is PUBLIC (view_visibility 'public') and the rule holds
+-- the voter to it (identity_needed above). Private groups' votes are never
+-- held to it. The vote routes refuse such a vote first
 -- (services/communities.js identityVoteRefusal); counts_toward_outcome
 -- leaves it out of every tally and denominator.
 CREATE OR REPLACE FUNCTION public_vote_needs_identity(voter_id INTEGER, target_app_id INTEGER)
@@ -11905,8 +11921,7 @@ RETURNS BOOLEAN
 LANGUAGE sql STABLE AS $$
   SELECT identity_rule_since() IS NOT NULL
      AND EXISTS (SELECT 1 FROM apps a WHERE a.id = target_app_id AND a.view_visibility = 'public')
-     AND NOT identity_rule_exempt(voter_id)
-     AND NOT identity_verified(voter_id)
+     AND identity_needed(voter_id)
 $$;
 
 -- Whose vote counts toward an app's outcome (test accounts, D1). Everybody's,

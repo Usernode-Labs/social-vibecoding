@@ -512,7 +512,7 @@ function LimitsSection() {
             onChange={(e) => setRuleOn(e.target.checked)} />
           <span>
             <span className="font-medium">Verified identity rule</span>
-            {`: a vote on a public app counts only from an account with a verified phone, GitHub and X, or zkPassport, and accounts without one get the unverified cap. Accounts let in before it was switched on are exempt. ${ruleSince ? `On since ${new Date(ruleSince).toLocaleString()}.` : 'Off.'}`}
+            {`: a vote on a public app counts only from an account with a verified phone, GitHub and X, or zkPassport, and accounts without one get the unverified cap. Accounts let in before it was switched on are exempt and get the phone cap. Off, every vote counts and nobody is exempt, so earlier members without one get the unverified cap too. ${ruleSince ? `On since ${new Date(ruleSince).toLocaleString()}.` : 'Off.'}`}
           </span>
         </label>
         <div className="flex flex-wrap items-center justify-between gap-2">

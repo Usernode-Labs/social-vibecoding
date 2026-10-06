@@ -5,8 +5,9 @@
 // public_vote_needs_identity): switched on, a vote on a public app counts
 // only from a verified account (a phone, GitHub AND X, or zkPassport) or one
 // let in before the switch, and the AI budget's phone tier covers the same
-// accounts. Skipped when no server is reachable, and required when
-// TEST_DATABASE_URL is set.
+// accounts, the first-run ask's identity_needed, and the production
+// rollout (services/identity-rollout.js). Skipped when no server is
+// reachable, and required when TEST_DATABASE_URL is set.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -160,5 +161,61 @@ test('verified identity for public votes and the AI budget, against the full sch
     // Switched off, nobody is exempt any more: the tiers are the proofs alone.
     await ruleOff();
     assert.equal((await tierOf(earlier)).tier, 'unverified');
+  });
+
+  await t.test('identity_needed (the first-run ask and Home\'s card): held to the rule until a proof, or the rule goes', async () => {
+    await ruleOn();
+    const fresh = await account({ grantedAt: "NOW() + INTERVAL '1 second'" });
+    const needed = async (id) => (await pool.query('SELECT identity_needed($1) AS v', [id])).rows[0].v;
+    assert.equal(await needed(fresh), true);
+    assert.equal(await needed(owner), false, 'let in before the switch');
+    await pool.query(
+      "INSERT INTO user_social_identities (user_id, provider, provider_subject, handle) VALUES ($1, 'github', '301', 'gh_n'), ($1, 'x', '401', 'x_n')",
+      [fresh]);
+    assert.equal(await needed(fresh), false, 'GitHub and X both');
+    // "Not now" is a column of its own; answering twice keeps the first time.
+    await pool.query('UPDATE users SET phone_ask_answered_at = COALESCE(phone_ask_answered_at, NOW()) WHERE id = $1', [fresh]);
+    await ruleOff();
+    const later = await account({ grantedAt: "NOW() + INTERVAL '1 second'" });
+    assert.equal(await needed(later), false, 'off, nobody is held to it');
+  });
+
+  await t.test('the rollout: once, in production; verified tiers keep today\'s cap, new unverified members get $20', async () => {
+    const rollout = require('../src/services/identity-rollout');
+    await pool.query(
+      `DELETE FROM platform_settings WHERE key IN ('identity_rule_since', 'identity_rule_rollout',
+        'user_weekly_limit_phone_cents', 'user_weekly_limit_social_cents', 'user_weekly_limit_zk_cents')`);
+    await pool.query(
+      `INSERT INTO platform_settings (key, value) VALUES ('user_weekly_limit_cents', '5000'), ('user_weekly_limit_zk_cents', '9000')
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`);
+    assert.deepEqual(await rollout.applyIdentityRollout(pool, { env: { NODE_ENV: 'test' } }),
+      { applied: false, reason: 'not_production' });
+    assert.deepEqual(await rollout.applyIdentityRollout(pool, { env: { NODE_ENV: 'production', USERNODE_ENV: 'staging' } }),
+      { applied: false, reason: 'not_production' });
+    const earlier = await account({ grantedAt: "NOW() - INTERVAL '30 days'" });
+    assert.deepEqual(await rollout.applyIdentityRollout(pool, { env: { NODE_ENV: 'production' } }),
+      { applied: true, verifiedCents: 5000, unverifiedCents: 2000 });
+    const settings = Object.fromEntries((await pool.query(
+      "SELECT key, value FROM platform_settings WHERE key LIKE 'user_weekly_limit%' OR key LIKE 'identity_rule%'")).rows
+      .map((r) => [r.key, r.value]));
+    assert.equal(settings.user_weekly_limit_cents, '2000');
+    assert.equal(settings.user_weekly_limit_phone_cents, '5000');
+    assert.equal(settings.user_weekly_limit_social_cents, '5000');
+    assert.equal(settings.user_weekly_limit_zk_cents, '9000', 'a tier an admin set keeps its figure');
+    assert.ok(settings.identity_rule_since && settings.identity_rule_rollout);
+    // Who gets what: an earlier member the full amount, a new unverified one $20.
+    const fresh = await account({ grantedAt: "NOW() + INTERVAL '1 second'" });
+    assert.equal(await limits.getEffectiveUserWeeklyLimitCents(pool, earlier), 5000);
+    assert.equal(await limits.getEffectiveUserWeeklyLimitCents(pool, fresh), 2000);
+    assert.equal(await needs(fresh, square), true);
+    // Once: an admin's later change is never put back.
+    await pool.query("UPDATE platform_settings SET value = '3000' WHERE key = 'user_weekly_limit_cents'");
+    assert.deepEqual(await rollout.applyIdentityRollout(pool, { env: { NODE_ENV: 'production' } }),
+      { applied: false, reason: 'done_before' });
+    assert.equal((await pool.query("SELECT value FROM platform_settings WHERE key = 'user_weekly_limit_cents'")).rows[0].value, '3000');
+    // Never raised: a deployment already under $20 keeps its own figure.
+    await pool.query("DELETE FROM platform_settings WHERE key IN ('identity_rule_rollout', 'identity_rule_since')");
+    await pool.query("UPDATE platform_settings SET value = '1500' WHERE key = 'user_weekly_limit_cents'");
+    assert.equal((await rollout.applyIdentityRollout(pool, { env: { NODE_ENV: 'production' } })).unverifiedCents, 1500);
   });
 });
