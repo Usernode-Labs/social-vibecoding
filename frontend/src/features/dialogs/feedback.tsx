@@ -342,6 +342,23 @@ export function FeedbackDialog() {
         </div>
         <div id="feedback-status" className="text-sm mt-2 hidden">
         </div>
+        {/*
+            #3994: Send now, for a message already saved on this device while
+            the connection is down. The controller unhides it exactly while
+            the waiting count is up, so it renders HIDDEN like every
+            controller-owned node in this card — an initial render that
+            carried a button would both lie on open and mismatch on
+            hydration. The zinc recipe is the dialog's small-button look
+            (#feedback-screenshot-btn), deliberately not the filled violet of
+            Post request, which stays the form's one primary action.
+        */}
+        <button
+          id="feedback-queue-send"
+          type="button"
+          className="hidden mt-1.5 inline-flex items-center rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-900 dark:text-zinc-100 transition-colors disabled:opacity-40"
+        >
+          Send now
+        </button>
         <div className="flex gap-3 mt-4">
           {/*
               The controller's success and save-for-later paths still close

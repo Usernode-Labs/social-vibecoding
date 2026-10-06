@@ -149,6 +149,37 @@ test('isDue: honours the backoff, a live claim, and never picks up a failed reco
   assert.equal(FQ.isDue({ nextAttemptAt: 0, sendingSince: now - 5 * 60_000 }, now), true);
 });
 
+// #3994: the manual "Send now" press. `immediate` ignores the automatic
+// schedule — the backoff is the flush triggers' patience, not the user's —
+// while the claim guard and the failed rule keep every one of their answers.
+test('isDue with immediate: a mid-backoff record goes now, a live claim still holds', () => {
+  const FQ = load();
+  const now = 1_000_000;
+  // Pending and overdue: the flag changes nothing.
+  assert.equal(FQ.isDue({ nextAttemptAt: now - 1, status: 'pending' }, now, true), true);
+  // Pending and mid-backoff: this is the whole point of the press.
+  assert.equal(FQ.isDue({ nextAttemptAt: now + FQ.backoffMs(3), status: 'pending' }, now, true), true);
+  // Another tab is sending it right now — a press must not double that.
+  assert.equal(FQ.isDue({ nextAttemptAt: 0, sendingSince: now - 1000, status: 'pending' }, now, true), false);
+  // ...and failed is failed either way: that record is the dialog's business.
+  assert.equal(FQ.isDue({ nextAttemptAt: 0, status: 'failed' }, now, true), false);
+});
+
+test('flush with immediate: a record waiting out its backoff is sent by a manual press', async () => {
+  const FQ = load();
+  await FQ.enqueue(entry());
+  stubFetch({ status: 500 });
+  await FQ.flush();
+  assert.equal((await FQ.pending()).length, 1);
+  // The automatic schedule would wait out the backoff ...
+  stubFetch({ status: 200 });
+  assert.equal((await FQ.flush('timer')).sent, 0, 'the backoff holds for an automatic pass');
+  // ... the press does not.
+  const res = await FQ.flush('manual', { immediate: true });
+  assert.equal(res.sent, 1);
+  assert.deepEqual(await FQ.pending(), []);
+});
+
 // ── enqueue / pending ────────────────────────────────────────────────
 
 test('enqueue: keeps the payload and stamps a queuedAt the server can print', async () => {

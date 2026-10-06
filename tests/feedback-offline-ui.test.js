@@ -281,6 +281,56 @@ test('the two screenshot deep links exist and are display-only', () => {
   }
 });
 
+test('the queued line carries a Send now control, wired to an immediate flush (#3994)', () => {
+  // Rendered hidden by feedback.tsx, like every controller-owned node in the
+  // card — the initial render must match the empty state or hydration
+  // mismatches. The zinc recipe is the dialog's small-button look, not the
+  // filled violet of Post request.
+  const markup = read('frontend', 'src', 'features', 'dialogs', 'feedback.tsx');
+  const send = markup.slice(markup.indexOf('id="feedback-queue-send"'));
+  assert.ok(send.length > 0, 'the button exists in the dialog markup');
+  assert.match(send.slice(0, 120), /className="hidden /, 'ships hidden');
+  assert.match(send.slice(0, 600), /Send now/);
+
+  // The controller owns it and shows it exactly while the count is up.
+  assert.match(feedbackJs, /const feedbackQueueSend = document\.getElementById\('feedback-queue-send'\);/);
+  const paint = feedbackJs.slice(
+    feedbackJs.indexOf('const paintQueueState = () => {'),
+    feedbackJs.indexOf('const paintQueueDot'),
+  );
+  assert.match(paint,
+    /feedbackQueueSend\.classList\.toggle\('hidden', queuePendingCount <= 0\)/,
+    'the button rides the queued line: shown while the count is up, hidden at 0');
+
+  // The press is a single-flight flush that ignores the backoff, so a device
+  // whose connection came back without the app noticing can push right away.
+  assert.match(feedbackJs, /flush\('manual', \{ immediate: true \}\)/);
+
+  // A refusal keeps the record and says the same plain sentence a refused
+  // submit shows — one literal, one place, shared by both paths.
+  assert.equal(
+    feedbackJs.split("Couldn't file this right now. Please try again later.").length - 1, 1,
+    'the refused wording is spelled exactly once, in the shared constant',
+  );
+  assert.match(feedbackJs, /const SUBMIT_REFUSED_TEXT = /);
+  assert.match(feedbackJs, /return SUBMIT_REFUSED_TEXT;/, 'submitErrorText says it');
+  assert.match(feedbackJs, /export async function sendQueuedFeedbackNow/);
+});
+
+test("the Homeroom menu's Send now is the dot's twin, shown through the same seam", () => {
+  const actions = read('frontend', 'src', 'features', 'improve', 'actions.tsx');
+  assert.match(actions, /id="improve-row-send-queued"/);
+  assert.match(actions, /Send now/);
+  // Same published key and shipped-hidden value the mark's amber dot uses
+  // (platform-mark.tsx), so it appears exactly while the dot is lit.
+  assert.match(actions, /useVisibilityHiddenClass\(sendRef, 'feedback-queue-dot', false\)/);
+  // The menu's press is the shared helper, with the default toast
+  // presentation — the wording literal does not get a second home here.
+  assert.match(actions, /sendQueuedFeedbackNow\(\)/);
+  assert.equal(actions.split("Couldn't file this right now").length - 1, 0,
+    'the refusal sentence lives once, in the feedback controller');
+});
+
 test('the failed-capture deep link is reviewable and display-only (#1284)', () => {
   const shot = appJs.slice(appJs.indexOf('_applyFeedbackShot() {'), appJs.indexOf('renderAdminButton() {'));
   assert.match(shot, /shot !== 'feedback-capture-failed'/, 'the new state joins the same guard');

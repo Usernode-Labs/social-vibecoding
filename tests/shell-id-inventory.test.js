@@ -991,6 +991,9 @@ const ADDED_IDS = {
   // ── The settings restructure: Account opens with a Profile part ─────
   'settings-profile-section': 'The Profile part at the head of Settings\' Account page (features/settings/sections/profile.tsx): who is signed in, and the way to Me\'s Edit profile sheet, where name, photo, bio and the public page are edited. Settings had no route to that sheet, so someone who came to Settings to change their name found only the username form. A settings-pane root with a stable id, like its siblings; it mounts on reveal, never in the prerender.',
   'settings-profile-card': 'The Profile part\'s one control: an anchor to #profile?edit (features/profile/profile.js opens the Edit profile sheet off that address, as #profile?friends opens Friends), showing the avatar, the name and the @handle. dapp.json selects on it to pin that a bare #settings now opens Account.',
+  // ── #3994: a queued offline message can be pushed now ──────────────
+  'feedback-queue-send': '#3994: Send now, on the feedback dialog\'s queued-message line. The controller unhides it exactly while the waiting count is up, so it ships hidden like every controller-owned node in that card — an initial render that carried the button would mismatch on hydration.',
+  'improve-row-send-queued': "#3994: the Homeroom menu's Send now, the compact neutral twin beside Suggest an improvement. Shown through the same 'feedback-queue-dot' visibility key the mark's amber dot uses, so it appears exactly while the dot is lit.",
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

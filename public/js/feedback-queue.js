@@ -134,12 +134,18 @@
     try { return new Date(t).toISOString(); } catch (err) { return null; }
   }
 
-  function isDue(record, nowMs) {
+  // `immediate` (#3994) is the manual "Send now" press: the backoff is the
+  // AUTOMATIC schedule's patience, not the user's — somebody pressing the
+  // button is asking for a real send right now, so `nextAttemptAt` is
+  // ignored. The claim guard stays either way: another tab's in-flight send
+  // is never doubled, however the flush was asked for.
+  function isDue(record, nowMs, immediate) {
     if (!record || record.status === 'failed') return false;
     const claimed = Number(record.sendingSince) || 0;
     // Claimed by a live flush (this tab's or another's) — leave it alone
     // until the claim goes stale.
     if (claimed && nowMs - claimed < CLAIM_STALE_MS) return false;
+    if (immediate) return true;
     return (Number(record.nextAttemptAt) || 0) <= nowMs;
   }
 
@@ -410,11 +416,12 @@
     }
   }
 
-  async function flushOnce(reason) {
+  async function flushOnce(reason, opts) {
     if (flushDisabled) return { sent: 0, failed: 0, remaining: 0, filed: [] };
     const s = await ensureStore();
     const all = mine(await s.all());
-    const due = all.filter((r) => isDue(r, nowMs()));
+    const immediate = !!(opts && opts.immediate);
+    const due = all.filter((r) => isDue(r, nowMs(), immediate));
     const result = { sent: 0, failed: 0, remaining: 0, filed: [], reason: reason || null };
 
     // Strictly sequential: two issues filed at once from a phone that just
@@ -585,10 +592,12 @@
     },
 
     // Single-flight. Concurrent callers (reconnect + timer landing together)
-    // share the one in-flight pass rather than racing it.
-    flush(reason) {
+    // share the one in-flight pass rather than racing it. `opts.immediate`
+    // (#3994) is the manual Send now press: it joins a flush already running
+    // and starts one otherwise, with the backoff ignored — see isDue.
+    flush(reason, opts) {
       if (flushing) return flushing;
-      flushing = flushOnce(reason)
+      flushing = flushOnce(reason, opts)
         .catch((err) => ({ sent: 0, failed: 0, remaining: 0, filed: [], error: (err && err.message) || 'flush failed' }))
         .then((res) => { flushing = null; return res; });
       return flushing;

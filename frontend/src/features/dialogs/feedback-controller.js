@@ -120,6 +120,33 @@ export const Feedback = {
   _reset: () => {},
 };
 
+// What a refused submit says (see submitErrorText below) — and now also what
+// a refused MANUAL send of the queued outbox says. One literal, in one place:
+// the two surfaces of the same refusal must never drift, and
+// tests/feedback-offline-ui.test.js pins that this is its only spelling.
+const SUBMIT_REFUSED_TEXT = "Couldn't file this right now. Please try again later.";
+
+// #3994: the queued outbox's manual push, shared by the dialog's own
+// "Send now" (#feedback-queue-send) and the Homeroom menu's
+// (#improve-row-send-queued, features/improve/actions.tsx). It is the same
+// single-flight flush the automatic retry uses, with `immediate` so a record
+// waiting out its backoff goes right away — a press the app believes is
+// offline is exactly the stuck case this exists for. Reports failure and
+// nothing else: success is the queue's own onFlushed toast, and the count
+// repaints from the store. `present` is how a refusal is said — the dialog
+// passes its own callback so the sentence lands in the status line; the menu
+// passes nothing and gets the ordinary toast.
+export async function sendQueuedFeedbackNow(present) {
+  if (typeof window === 'undefined' || !window.FeedbackQueue) return false;
+  const res = await window.FeedbackQueue.flush('manual', { immediate: true });
+  const refused = !!res && res.sent === 0 && (res.remaining || 0) > 0;
+  if (refused) {
+    if (typeof present === 'function') present(SUBMIT_REFUSED_TEXT);
+    else { try { window.PlatformUI?.toast?.(SUBMIT_REFUSED_TEXT); } catch { /* the queue keeps the record either way */ } }
+  }
+  return !refused;
+}
+
 let wired = false;
 
 export function init() {
@@ -160,6 +187,10 @@ export function init() {
     };
     const feedbackBtn = document.getElementById('feedback-submit');
     const feedbackStatus = document.getElementById('feedback-status');
+    // #3994: Send now, on the queued-message line. Rendered hidden by
+    // ./feedback.tsx like every controller-owned node; this module owns its
+    // visibility (paintQueueState), its disabled state and its click.
+    const feedbackQueueSend = document.getElementById('feedback-queue-send');
     const feedbackForm = document.getElementById('feedback-form');
     const firstSuccess = document.getElementById('feedback-first-success');
     const firstNotice = document.getElementById('feedback-first-notice');
@@ -1259,6 +1290,12 @@ export function init() {
         || (queueLineText && feedbackStatus.textContent === queueLineText);
       if (!owned) return;
       const line = queueStatusLine();
+      // #3994: the Send now control rides the queued line — shown while
+      // messages are waiting, in either the online or the offline wording,
+      // and hidden again when the count reaches 0. A press always attempts a
+      // real send, because "the app thinks it is offline but it is not" is
+      // exactly the stuck case the button exists for.
+      if (feedbackQueueSend) feedbackQueueSend.classList.toggle('hidden', queuePendingCount <= 0);
       if (!line) {
         feedbackStatus.classList.add('hidden');
         queueLineText = '';
@@ -1314,6 +1351,30 @@ export function init() {
       });
     };
 
+    // #3994: Send now on the queued line. Disabled while the flush runs (a
+    // concurrent automatic flush shares the same single-flight promise), then
+    // re-enabled and repainted — success clears the line, the dot and the
+    // button through the paths already here (onFlushed's toast,
+    // refreshQueueState). A refusal keeps the record queued and says the same
+    // plain sentence a refused submit shows.
+    const sendQueuedNow = async () => {
+      if (!feedbackQueueSend || feedbackQueueSend.disabled) return;
+      feedbackQueueSend.disabled = true;
+      try {
+        await sendQueuedFeedbackNow((sentence) => {
+          showFeedbackNotice(sentence, true);
+          // The refusal is the newer and more specific thing on the line, so
+          // the queued count must not repaint over it — the same hand-back
+          // rule _open's notices follow.
+          queueLineText = '';
+        });
+      } finally {
+        feedbackQueueSend.disabled = false;
+        refreshQueueState();
+      }
+    };
+    feedbackQueueSend?.addEventListener('click', () => { void sendQueuedNow(); });
+
     // QA 2026-09-24: what a refused submit says. A 5xx is the server's own
     // trouble (no GitHub token configured, GitHub refusing the issue, a
     // database error), and its wording was written for whoever runs the
@@ -1326,7 +1387,7 @@ export function init() {
     const submitErrorText = (status, error) => {
       if (status >= 500 || !error) {
         try { console.warn('[feedback] submit refused', status, error || '(no message)'); } catch { /* console is optional */ }
-        return "Couldn't file this right now. Please try again later.";
+        return SUBMIT_REFUSED_TEXT;
       }
       return error;
     };

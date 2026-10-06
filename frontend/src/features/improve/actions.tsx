@@ -15,10 +15,12 @@
  * surface draws them.
  */
 
-import { type ReactNode } from 'react';
+import { type ReactNode, useRef } from 'react';
 
 import { ArrowPathIcon, SpinnerArcIcon } from '@/components/ui/icons';
+import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { useStoreState } from '../../lib/use-store-state';
+import { sendQueuedFeedbackNow } from '../dialogs/feedback-controller';
 import { improveStore } from './improve-store.js';
 import { Improve } from './improve-controller.js';
 
@@ -35,6 +37,19 @@ const ACTION_BASE =
 
 const ACTION_FILL =
   'bg-violet-600 hover:bg-violet-500 text-white';
+
+// The neutral twin: the same zinc pill vocabulary the dialog's small buttons
+// use, never a second filled violet — the row keeps its one primary action.
+// It is COMPACT (`shrink-0`, content-wide) rather than a second `flex-1`
+// third: two equal halves would make "Suggest an improvement" truncate at a
+// phone width, and the twin is the secondary of the two.
+const ACTION_NEUTRAL_BASE =
+  'inline-flex shrink-0 items-center justify-center h-10 px-3 '
+  + 'rounded-full text-sm font-semibold transition-colors un-touch-target';
+
+const ACTION_NEUTRAL =
+  'bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 '
+  + 'text-zinc-900 dark:text-zinc-100';
 
 function QuickAction({ id, label, onClick }: {
   id: string;
@@ -88,7 +103,33 @@ export function ImproveQuickActions(): ReactNode {
         label="Suggest an improvement"
         onClick={() => Improve.giveFeedback()}
       />
+      <SendQueuedAction />
     </div>
+  );
+}
+
+/**
+ * #3994: Send now, for a message already saved on this device while the
+ * connection is down. The neutral twin beside the filled primary above, and
+ * shown through the SAME seam the amber outbox dot on the Homeroom mark uses:
+ * the dot's published key (`feedback-queue-dot`) and its shipped-hidden value
+ * (../header/platform-mark.tsx), so it appears exactly while the dot is lit
+ * and no second state channel is invented. The press is the dialog's own
+ * immediate flush, with the refusal said as the ordinary toast.
+ */
+function SendQueuedAction(): ReactNode {
+  const sendRef = useRef<HTMLButtonElement>(null);
+  useVisibilityHiddenClass(sendRef, 'feedback-queue-dot', false);
+  return (
+    <button
+      ref={sendRef}
+      id="improve-row-send-queued"
+      type="button"
+      onClick={() => { void sendQueuedFeedbackNow(); }}
+      className={ACTION_NEUTRAL_BASE + ' ' + ACTION_NEUTRAL + ' hidden'}
+    >
+      <span className="min-w-0 truncate">Send now</span>
+    </button>
   );
 }
 
