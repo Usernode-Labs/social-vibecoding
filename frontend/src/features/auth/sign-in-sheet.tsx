@@ -27,6 +27,30 @@
  * (`native`) the buttons ask the app for its own sheet instead and never
  * leave the page (signInNatively): the same outcomes, answered in place.
  *
+ * An invite's Join asks for a phone number first (`phone`, whenever the
+ * server offers phone sign-in): an invite makes a private member, and a
+ * private member signs up with a phone (services/community-invites.js
+ * joinAsPrivateMember), against routes/phone-auth.js:
+ *
+ *   phone       Your name and a phone number. POST /api/auth/phone/request
+ *               texts a code, after an invisible reCAPTCHA (./recaptcha.ts)
+ *               Firebase asks of a web caller.
+ *   phone-code  POST /api/auth/phone/verify with the code and the name. A
+ *               number already on an account signs it straight in; a new
+ *               one is made with that name, and a PROVISIONAL handle picked
+ *               from it that only the inviting group sees, and signed in
+ *               too: no username step (routes/phone-auth.js). The first
+ *               public place asks for a username (username-first-run.js
+ *               askForPublic). A public community's invite asks no name
+ *               (`askName` false), and so, like a client that sends none or
+ *               a name no handle could be picked from, moves on to
+ *   username    POST /api/auth/phone/finish, the provider's step with the
+ *               phone's own route, which mints the session.
+ *
+ * "Already on Homeroom? Sign in another way" leads to the other ways, for an
+ * account made before; one made by email from here is not a private member
+ * and waits in the queue.
+ *
  * "Sign in with a password" is a step of its own here too:
  *
  *   password POST /api/auth/login with a username or an email, the sign-in
@@ -72,8 +96,9 @@
  * revealed in the panel with the step's button under it when the two fit
  * (lib/keyboard-surface.ts). Every focus here is `preventScroll`, so that
  * reveal is the only movement. Every step is the same: email, code, account,
- * username and password. Return walks a step's fields, as on the make screen
- * (#3904): from any but the last it goes to the next empty one, and only the
+ * username, password, phone and its code. Return walks a step's fields, as
+ * on the make screen (#3904): from any but the last it goes to the next
+ * empty one, and only the
  * last field's Return (the keyboard says "go") submits (`returnTarget`). The
  * Homeroom app is losing the keyboard's ‹ › bar (flutter-mobile-app #603),
  * and nothing here leans on that bar: what covers the page is measured from
@@ -116,6 +141,7 @@ import { useKeyboardSurface } from '../../lib/keyboard-surface';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { inviteEmailFromToken, readAutoSend, writeAutoSend } from './login';
 import { NativeLoginDetailsLink } from './native-login-details';
+import { phoneRecaptchaToken, RECAPTCHA_NOTICE } from './recaptcha';
 import { SessionConfirmationNotice, useSessionConfirmation } from './session-confirmation';
 import {
   blockedOffline,
@@ -129,7 +155,7 @@ import {
 } from './shared';
 import { TermsNotice } from './waitlist-shared';
 
-type Step = 'choose' | 'email' | 'code' | 'account' | 'username' | 'password';
+type Step = 'choose' | 'email' | 'code' | 'account' | 'username' | 'password' | 'phone' | 'phone-code';
 
 export type SignInProvider = 'apple' | 'google';
 
@@ -302,6 +328,20 @@ function prefersReducedMotion(): boolean {
 }
 
 /**
+ * A typed phone number as the server takes it (firebase-phone-auth.js
+ * normalizePhone): `+`, the country code and the number, with spaces,
+ * dashes, dots and brackets dropped. Null for anything else; no country
+ * code is guessed, since a wrong guess would text somebody else.
+ */
+/** A name's length on the profile (routes/profile.js MAX_DISPLAY_NAME). */
+export const PHONE_NAME_MAX = 40;
+
+export function phoneE164(raw: string): string | null {
+  const value = String(raw || '').replace(/[\s().\u2010-\u2015-]/g, '');
+  return /^\+[1-9][0-9]{1,14}$/.test(value) ? value : null;
+}
+
+/**
  * The line over "Sign in with a password", for the screen that opened the
  * sheet. Only what is true there: an invite's Join and the story's Get
  * started make an account for a new address; the story's Sign in is for
@@ -311,6 +351,21 @@ export function passwordLead(from: 'invite' | 'story' | 'signin'): string {
   if (from === 'invite') return 'New to Homeroom? This makes your account. ';
   if (from === 'story') return 'Already have an account? ';
   return '';
+}
+
+/** The line Google asks for where its reCAPTCHA badge is not shown (./recaptcha.ts). */
+export function RecaptchaNotice() {
+  const n = RECAPTCHA_NOTICE;
+  const link = 'underline hover:text-zinc-700 dark:hover:text-zinc-300';
+  return (
+    <p data-sign-in-sheet-recaptcha="" className="text-center text-[12px] leading-snug text-zinc-500 dark:text-zinc-400">
+      {n.lead}
+      <a href={n.privacy.href} target="_blank" rel="noopener noreferrer" className={link}>{n.privacy.label}</a>
+      {n.and}
+      <a href={n.terms.href} target="_blank" rel="noopener noreferrer" className={link}>{n.terms.label}</a>
+      {n.tail}
+    </p>
+  );
 }
 
 /** Where a waitlist "you're in" link's sheet starts. */
@@ -360,6 +415,14 @@ export type SignInSheetProps = {
   providers?: readonly SignInProvider[];
   /** Inside the Homeroom app: the providers sign in with the app's own sheet. */
   native?: boolean;
+  /** An invite's Join: a phone number first, since a private member signs up with one. */
+  phone?: boolean;
+  /**
+   * The phone step asks "Your name" (a private group's invite: the name makes
+   * a provisional handle only that group sees). A public community's invite
+   * passes false: the server asks for a username after the code instead.
+   */
+  askName?: boolean;
   /** Which screen opened it, carried across a provider's trip. */
   from?: 'invite' | 'story' | 'signin';
   /** Where a provider's trip comes back to: Home, or the invite link. */
@@ -395,12 +458,18 @@ function rememberInviteJoin() {
 }
 
 export function SignInSheet({
-  open, title, intro, followInvite = false, providers = [], native = false, from = 'signin', returnTo = '/', resume = null,
-  releaseToken = null, beforeFinish, onClose, primaryClass,
+  open, title, intro, followInvite = false, providers = [], native = false, phone = false, askName = true, from = 'signin',
+  returnTo = '/', resume = null, releaseToken = null, beforeFinish, onClose, primaryClass,
 }: SignInSheetProps) {
-  const firstStep: Step = providers.length ? 'choose' : 'email';
+  const otherWays: Step = providers.length ? 'choose' : 'email';
+  const firstStep: Step = phone ? 'phone' : otherWays;
   const [step, setStep] = useState<Step>(firstStep);
   const [email, setEmail] = useState('');
+  // The number a code went to, as sent (E.164), and the verify leg's handle.
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const phoneSession = useRef('');
+  // Whose username step this is: a provider's (Apple, Google) or the phone's.
+  const [usernameVia, setUsernameVia] = useState<'oauth' | 'phone'>('oauth');
   const [needsUsername, setNeedsUsername] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [details, setDetails] = useState<NativeLoginFailureDetails | null>(null);
@@ -421,6 +490,12 @@ export function SignInSheet({
   const usernameField = useRef<HTMLInputElement>(null);
   const providerUsernameField = useRef<HTMLInputElement>(null);
   const passwordField = useRef<HTMLInputElement>(null);
+  const nameField = useRef<HTMLInputElement>(null);
+  const phoneField = useRef<HTMLInputElement>(null);
+  // The phone step's two fields in order, for Return, and the name as typed.
+  const phoneStepFields = [nameField, phoneField];
+  const phoneName = useRef('');
+  const phoneCodeField = useRef<HTMLInputElement>(null);
   const confirmField = useRef<HTMLInputElement>(null);
   const identifierField = useRef<HTMLInputElement>(null);
   const currentPasswordField = useRef<HTMLInputElement>(null);
@@ -469,6 +544,7 @@ export function SignInSheet({
   useEffect(() => {
     if (!open) return;
     setStep(resume === 'username' ? 'username' : firstStepRef.current);
+    if (resume === 'username') setUsernameVia('oauth');
     setError(resumeError(resume));
     setDetails(null);
     setBusy(false);
@@ -489,7 +565,9 @@ export function SignInSheet({
     const field = step === 'email' ? firstField : step === 'code' ? codeField
       : step === 'username' ? providerUsernameField
         : step === 'password' ? identifierField
-          : (needsUsername ? usernameField : passwordField);
+          : step === 'phone' ? (askName ? nameField : phoneField)
+            : step === 'phone-code' ? phoneCodeField
+              : (needsUsername ? usernameField : passwordField);
     if (focus) field.current?.focus({ preventScroll: true });
   }, [open, step, needsUsername]);
 
@@ -644,6 +722,99 @@ export function SignInSheet({
     }
   }, [email, followInvite, finish]);
 
+  // The phone's code (`phone`): a reCAPTCHA token first, then the text.
+  const requestPhoneCode = useCallback(async (raw: string) => {
+    setError(null);
+    const value = phoneE164(raw);
+    if (!value) { setError('Enter your number with its country code, like +1 415 555 0123.'); return; }
+    if (blockedOffline(setError)) return;
+    setBusy(true);
+    try {
+      const recaptchaToken = await phoneRecaptchaToken();
+      const res = await fetch('/api/auth/phone/request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ phoneNumber: value, ...(recaptchaToken ? { recaptchaToken } : {}) }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok || typeof data.sessionInfo !== 'string') {
+        // Asked again too soon for a number a code already went to: that
+        // code is still the one to type, with the resend held.
+        if (res.status === 429 && phoneSession.current && value === phoneNumber) {
+          setStep('phone-code');
+          setError(data.error || 'Too many requests. Wait a moment and try again.');
+          setCooldownUntil(Date.now() + RESEND_COOLDOWN_MS);
+          setNow(Date.now());
+          return;
+        }
+        setStep('phone');
+        setError(data.error || 'Could not send a code');
+        return;
+      }
+      phoneSession.current = data.sessionInfo;
+      setPhoneNumber(value);
+      if (phoneCodeField.current) phoneCodeField.current.value = '';
+      setStep('phone-code');
+      setCooldownUntil(Date.now() + RESEND_COOLDOWN_MS);
+      setNow(Date.now());
+    } catch {
+      setError('Network error');
+    } finally {
+      setBusy(false);
+    }
+  }, [phoneNumber]);
+
+  // The phone step: a name for the group, then the number's code.
+  const submitPhoneStep = useCallback(() => {
+    setError(null);
+    if (!askName) { phoneName.current = ''; void requestPhoneCode(phoneField.current?.value || ''); return; }
+    const name = (nameField.current?.value || '').replace(/\s+/g, ' ').trim();
+    if (!name) { setError('Enter your name.'); nameField.current?.focus({ preventScroll: true }); return; }
+    if (name.length > PHONE_NAME_MAX) { setError(`Your name can be up to ${PHONE_NAME_MAX} characters.`); return; }
+    phoneName.current = name;
+    void requestPhoneCode(phoneField.current?.value || '');
+  }, [askName, requestPhoneCode]);
+
+  const verifyPhone = useCallback(async () => {
+    setError(null);
+    const code = (phoneCodeField.current?.value || '').trim();
+    if (!code) { setError('Enter the code from the text'); return; }
+    if (blockedOffline(setError)) return;
+    setBusy(true);
+    try {
+      const res = await fetchSessionMint('/api/auth/phone/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({
+          sessionInfo: phoneSession.current,
+          code,
+          ...(phoneName.current ? { name: phoneName.current } : {}),
+          ...(followInvite ? { followInvite: true } : {}),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) {
+        setError(res.status === 429
+          ? data.error || 'Too many code attempts. Try again shortly.'
+          : data.error || 'Invalid or expired code.');
+        return;
+      }
+      if (data.next === 'signed-in') {
+        await finish(data.created === true ? 'new' : 'existing');
+        return;
+      }
+      setCooldownUntil(0);
+      setUsernameVia('phone');
+      setStep('username');
+    } catch (err) {
+      setError(sessionMintFailureMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }, [followInvite, finish]);
+
   const finishAccount = useCallback(async () => {
     setError(null);
     const handle = needsUsername ? (usernameField.current?.value || '').trim() : null;
@@ -718,6 +889,7 @@ export function SignInSheet({
         return;
       }
       if ('next' in outcome && outcome.next === 'username') {
+        setUsernameVia('oauth');
         setStep('username');
         return;
       }
@@ -736,7 +908,9 @@ export function SignInSheet({
     if (blockedOffline(setError)) return;
     setBusy(true);
     try {
-      const res = await fetchSessionMint('/api/auth/oauth/finish', {
+      // The same step for both: the continuation is the phone's own cookie
+      // or the provider's (routes/phone-auth.js, routes/sign-in-providers.js).
+      const res = await fetchSessionMint(usernameVia === 'phone' ? '/api/auth/phone/finish' : '/api/auth/oauth/finish', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
@@ -760,19 +934,26 @@ export function SignInSheet({
     } finally {
       setBusy(false);
     }
-  }, [finish, firstStep]);
+  }, [finish, firstStep, usernameVia]);
 
   if (!open) return null;
 
   const waitLeft = Math.max(0, Math.ceil((cooldownUntil - now) / 1000));
-  const heading = step === 'choose' || step === 'email' ? title
+  const heading = step === 'choose' || step === 'email' || step === 'phone' ? title
     : step === 'code' ? 'Check your email'
-      : step === 'password' ? 'Sign in'
-        : step === 'username' ? 'Pick a username' : 'Finish your account';
-  const sub = step === 'choose' || (step === 'email' && !providers.length)
+      : step === 'phone-code' ? 'Check your texts'
+        : step === 'password' ? 'Sign in'
+          : step === 'username' ? 'Pick a username' : 'Finish your account';
+  // The opener's line is the first step's; with the phone first, the other
+  // ways are for an account made before.
+  const sub = step === firstStep
     ? intro
-    : step === 'email'
+    : step === 'choose'
+      ? 'Sign in to the account you have.'
+      : step === 'email'
       ? 'We\'ll email you a 6-digit code.'
+      : step === 'phone-code'
+        ? `We sent a 6-digit code to the number ending ${phoneNumber.slice(-4)}.`
       : step === 'code'
         ? `We sent a 6-digit code to ${email}. It expires in 10 minutes.`
         : step === 'password'
@@ -853,6 +1034,9 @@ export function SignInSheet({
             <button type="button" data-sign-in-provider="email" disabled={busy} className={EMAIL_BUTTON} onClick={() => { setError(null); setStep('email'); }}>
               Continue with email
             </button>
+            {phone ? (
+              <button type="button" data-sign-in-sheet-to-phone="" className={QUIET} onClick={() => { setError(null); setStep('phone'); }}>New to Homeroom? Join with your phone</button>
+            ) : null}
           </div>
         ) : null}
 
@@ -868,6 +1052,50 @@ export function SignInSheet({
             {providers.length ? (
               <button type="button" className={QUIET} onClick={() => { setError(null); setStep('choose'); }}>Other ways to continue</button>
             ) : null}
+            {phone ? (
+              <button type="button" data-sign-in-sheet-to-phone="" className={QUIET} onClick={() => { setError(null); setStep('phone'); }}>New to Homeroom? Join with your phone</button>
+            ) : null}
+          </form>
+        ) : null}
+
+        {step === 'phone' ? (
+          <form className="mt-5 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); submitPhoneStep(); }}>
+            <div className={FIELD_GROUP}>
+              {askName ? (
+                <div className={FIELD}>
+                  <label htmlFor="sign-in-sheet-name" className={LABEL}>Your name</label>
+                  <input ref={nameField} id="sign-in-sheet-name" type="text" autoComplete="name" enterKeyHint="next" maxLength={PHONE_NAME_MAX} defaultValue={phoneName.current} onKeyDown={returnWalks(phoneStepFields, 0)} className={INPUT} />
+                </div>
+              ) : null}
+              <div className={FIELD}>
+                <label htmlFor="sign-in-sheet-phone" className={LABEL}>Phone number</label>
+                <input ref={phoneField} id="sign-in-sheet-phone" type="tel" autoComplete="tel" inputMode="tel" enterKeyHint="go" defaultValue={phoneNumber} placeholder="+1 415 555 0123" className={INPUT} />
+              </div>
+            </div>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Sending code…' : 'Text me a code'}</button>
+            <p className="text-center text-[13px] text-zinc-500 dark:text-zinc-400">
+              {askName ? 'Only this group sees your name, never your number.' : 'Nobody sees your number.'}
+            </p>
+            <RecaptchaNotice />
+          </form>
+        ) : null}
+
+        {step === 'phone-code' ? (
+          <form className="mt-5 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void verifyPhone(); }}>
+            <div className={FIELD_GROUP}>
+              <div className={FIELD}>
+                <label htmlFor="sign-in-sheet-phone-code" className={LABEL}>Code</label>
+                <input ref={phoneCodeField} id="sign-in-sheet-phone-code" inputMode="numeric" autoComplete="one-time-code" enterKeyHint="go" maxLength={6} className={`${INPUT} tracking-[0.4em]`} />
+              </div>
+            </div>
+            <p className="text-[13px] text-zinc-500 dark:text-zinc-400">The code fills itself in on most phones.</p>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Checking…' : 'Continue'}</button>
+            <div className="flex items-center justify-between">
+              <button type="button" className={QUIET} onClick={() => { setError(null); setStep('phone'); }}>Use another number</button>
+              <button type="button" className={`${QUIET} disabled:text-zinc-500 disabled:dark:text-zinc-400 disabled:no-underline`} disabled={busy || waitLeft > 0} onClick={() => { void requestPhoneCode(phoneNumber); }}>
+                {waitLeft > 0 ? `Send a new code in ${waitLeft}s` : 'Send a new code'}
+              </button>
+            </div>
           </form>
         ) : null}
 
@@ -915,7 +1143,7 @@ export function SignInSheet({
             </div>
             <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Signing in…' : 'Sign in'}</button>
             <div className="flex items-center justify-between">
-              <button type="button" className={QUIET} onClick={() => { setError(null); setDetails(null); setStep(firstStep); }}>
+              <button type="button" className={QUIET} onClick={() => { setError(null); setDetails(null); setStep(otherWays); }}>
                 {providers.length ? 'Other ways to continue' : 'Use an email code'}
               </button>
               {/* The reset is the sign-in screen's (./login.tsx), reached by its own address. */}
@@ -954,9 +1182,22 @@ export function SignInSheet({
         ) : null}
         <SessionConfirmationNotice completion={completion} />
 
+        {step === 'phone' ? (
+          <p className="mt-4 text-center text-[13px] text-zinc-500 dark:text-zinc-400">
+            {'Already on Homeroom? '}
+            <a
+              href="#login"
+              data-sign-in-sheet-other-ways=""
+              onClick={(e) => { e.preventDefault(); setError(null); setDetails(null); setStep(otherWays); }}
+              className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
+            >
+              Sign in another way
+            </a>
+          </p>
+        ) : null}
         {step === 'choose' || step === 'email' ? (
           <p className="mt-4 text-center text-[13px] text-zinc-500 dark:text-zinc-400">
-            {passwordLead(from)}
+            {phone ? '' : passwordLead(from)}
             <a
               href="#login"
               data-sign-in-sheet-password=""

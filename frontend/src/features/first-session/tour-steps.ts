@@ -207,6 +207,44 @@ export function invitedSteps({ slug, name, firstVersion = null }: TourProject): 
 }
 
 /**
+ * A PRIVATE MEMBER's tour (users.private_member_since): an invite link let
+ * them into the group's app before they were let in, and they reach the rest
+ * of Homeroom only through the mark menu's "Go to Homeroom". The first time
+ * they do, four steps on the Home it opens: the app, where the group lives,
+ * Homeroom bot, and the waitlist card that is how they make apps of their
+ * own. Nothing to press but Next: every step is on the screen they are on.
+ */
+export function privateSteps({ slug, name }: TourProject): TourStep[] {
+  return [
+    {
+      screen: 'home',
+      target: `.app-card[data-slug="${slug}"]`,
+      title: `${name} is on your Home`,
+      text: 'Open it any time from here.',
+    },
+    {
+      screen: 'home',
+      target: '#platform-tab-workshop',
+      title: 'The group lives in Communities',
+      text: 'Its hub, its group chat, and what is up for a vote.',
+    },
+    {
+      screen: 'home',
+      target: '#platform-tab-messages',
+      title: 'Homeroom bot is in Messages',
+      text: 'Ask it for a change in plain words. It builds it, and the group decides what goes in.',
+    },
+    {
+      screen: 'home',
+      target: '#home-waitlist-card',
+      title: 'Make and share your own apps',
+      text: 'Join the waitlist for that, here. Until then, everything in your group is yours to use and change.',
+      last: true,
+    },
+  ];
+}
+
+/**
  * The maker's tour, after "Invite people later" or "Go to the Homeroom
  * app": the same shape as the invited one, but it ends where the build is,
  * in Homeroom bot's chat (when the project has one: the bot builds for this

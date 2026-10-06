@@ -118,7 +118,10 @@ function isDmUser(settings, username) {
  * bot's audience (homeroom-bot.js KEY_AUDIENCE):
  *   - `list`: being on the list is the whole gate (isDmUser);
  *   - `everyone`: anybody who may use the platform (platform access, which
- *     an admin always has), and never a synthetic account.
+ *     an admin always has), and never a synthetic account. A private member
+ *     (users.private_member_since) may: every read below takes
+ *     `has_platform_access` as "may use the platform", and req.user callers
+ *     fold `privateMember` in.
  * `person` is the signed-in user (req.user), or a requester (requesterFrom):
  * { username, isSynthetic, hasPlatformAccess, isAdmin }.
  * Pure. Whether the bot is switched on at all is its Mode's, not this.
@@ -126,7 +129,7 @@ function isDmUser(settings, username) {
 function hasBot(settings, person) {
   if (!settings || !person?.username) return false;
   if (settings.audience === 'everyone') {
-    return !person.isSynthetic && !!(person.hasPlatformAccess || person.isAdmin);
+    return !person.isSynthetic && !!(person.hasPlatformAccess || person.isAdmin || person.privateMember);
   }
   return isDmUser(settings, person.username);
 }
@@ -607,7 +610,7 @@ async function whileTyping(pool, { botId, conversationId, ws = null }, work) {
 async function recordRequester(pool, { app, repo, issueNumber, issue = null }) {
   const title = issue?.title ? clip(issue.title, 300) : null;
   const { rows: found } = await pool.query(
-    `SELECT q.user_id, q.first_version, q.issue_title, q.asked_text, u.username, u.is_synthetic, u.has_platform_access, u.is_admin
+    `SELECT q.user_id, q.first_version, q.issue_title, q.asked_text, u.username, u.is_synthetic, (u.has_platform_access OR u.private_member_since IS NOT NULL) AS has_platform_access, u.is_admin
        FROM homeroom_bot_requesters q JOIN users u ON u.id = q.user_id
       WHERE q.app_id = $1 AND q.issue_number = $2`,
     [app.id, issueNumber],
@@ -642,7 +645,7 @@ async function recordRequester(pool, { app, repo, issueNumber, issue = null }) {
   if (!rows.length) return null;
   // Who they are, as hasBot reads it.
   const { rows: who } = await pool.query(
-    'SELECT u.username, u.is_synthetic, u.has_platform_access, u.is_admin FROM users u WHERE u.id = $1',
+    'SELECT u.username, u.is_synthetic, (u.has_platform_access OR u.private_member_since IS NOT NULL) AS has_platform_access, u.is_admin FROM users u WHERE u.id = $1',
     [rows[0].user_id],
   );
   return requesterFrom({ ...rows[0], ...(who[0] || {}) }, { username: who[0]?.username || poster });
@@ -652,7 +655,7 @@ async function recordRequester(pool, { app, repo, issueNumber, issue = null }) {
 async function personOf(pool, userId) {
   if (!userId) return null;
   const { rows } = await pool.query(
-    'SELECT u.id AS user_id, u.username, u.is_synthetic, u.has_platform_access, u.is_admin FROM users u WHERE u.id = $1',
+    'SELECT u.id AS user_id, u.username, u.is_synthetic, (u.has_platform_access OR u.private_member_since IS NOT NULL) AS has_platform_access, u.is_admin FROM users u WHERE u.id = $1',
     [userId],
   );
   return rows[0] ? requesterFrom(rows[0]) : null;
@@ -660,7 +663,7 @@ async function personOf(pool, userId) {
 
 async function requesterOf(pool, appId, issueNumber) {
   const { rows } = await pool.query(
-    `SELECT q.user_id, q.first_version, q.issue_title, q.asked_text, u.username, u.is_synthetic, u.has_platform_access, u.is_admin
+    `SELECT q.user_id, q.first_version, q.issue_title, q.asked_text, u.username, u.is_synthetic, (u.has_platform_access OR u.private_member_since IS NOT NULL) AS has_platform_access, u.is_admin
        FROM homeroom_bot_requesters q JOIN users u ON u.id = q.user_id
       WHERE q.app_id = $1 AND q.issue_number = $2`,
     [appId, issueNumber],
@@ -787,7 +790,7 @@ const PAUSED_FOR_WEEK_TEXT = 'I\'ve paused for the rest of the week. Your reques
 async function notePausedForWeek(pool, { settings, bot, userId }) {
   if (!bot?.id || !userId) return null;
   const { rows } = await pool.query(
-    'SELECT u.id AS user_id, u.username, u.is_synthetic, u.has_platform_access, u.is_admin FROM users u WHERE u.id = $1',
+    'SELECT u.id AS user_id, u.username, u.is_synthetic, (u.has_platform_access OR u.private_member_since IS NOT NULL) AS has_platform_access, u.is_admin FROM users u WHERE u.id = $1',
     [userId],
   );
   if (!rows[0] || !hasBot(settings, requesterFrom(rows[0]))) return null;
@@ -2773,7 +2776,7 @@ async function noteRequestFiled(pool, { app, user, issueNumber, title = null, as
         app, issueNumber: n, bot, jobKey: Number(queued.id), settings, filed: true,
         requester: {
           userId: user.id, username: user.username, issueTitle: title, firstVersion: false, askedText,
-          isSynthetic: !!user.isSynthetic, hasPlatformAccess: !!user.hasPlatformAccess, isAdmin: !!user.isAdmin,
+          isSynthetic: !!user.isSynthetic, hasPlatformAccess: !!(user.hasPlatformAccess || user.privateMember), isAdmin: !!user.isAdmin,
         },
       });
     }
@@ -2907,7 +2910,7 @@ async function greetJoiner(pool, { user, app }) {
     const settings = await settingsModule().readSettings(pool);
     if (settings.mode === 'off') return null;
     const { rows } = await pool.query(
-      'SELECT id, username, is_synthetic, has_platform_access, is_admin FROM users WHERE id = $1', [user.id],
+      'SELECT id, username, is_synthetic, (has_platform_access OR private_member_since IS NOT NULL) AS has_platform_access, is_admin FROM users WHERE id = $1', [user.id],
     );
     const person = rows[0];
     if (!person || !hasBot(settings, {

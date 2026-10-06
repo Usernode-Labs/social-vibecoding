@@ -183,10 +183,14 @@ export function makerLine(me: string, name: string, making: boolean): string {
 }
 
 const NOTE_DEFAULT = 'Come try it with me!';
-// WP-D: the link works until it is turned off, for anyone it is sent to (0 is
-// no limit, services/community-invites.js NO_LIMIT): the project is the gift.
-const LINK_DAYS = 0;
-const LINK_USES = 0;
+// The link every invite link gets by default (services/community-invites.js
+// DEFAULT_DAYS and DEFAULT_USES): a week, and 25 people. It used to work until
+// it was turned off, for anyone it reached (WP-D), which was safe while the
+// waitlist stood between a stranger and the group. A link lets somebody new
+// straight in now, as a private member, so a forwarded one stops on its own.
+// The project's invite pane still makes a longer or wider one on request.
+const LINK_DAYS = 7;
+const LINK_USES = 25;
 
 /** The note, posted once per project as the maker's first chat message. */
 const postedKey = (slug: string) => `usernode:first-session:note-posted:${slug}`;
@@ -361,7 +365,7 @@ export function InviteSheet({ made, me, making = true, onClose, onSent }: {
         </div>
         {status ? <p role="status" data-first-session-invite-status="" className="mt-3 text-center text-[14px] text-emerald-700 dark:text-emerald-400">{status}</p> : null}
         {error ? <p id="first-session-invite-error" role="alert" className="mt-3 text-center text-[14px] text-red-600 dark:text-red-400">{error}</p> : null}
-        <p className="mt-3 text-center text-[13px] text-zinc-500 dark:text-zinc-400">Anyone with the link can join, until you turn it off.</p>
+        <p className="mt-3 text-center text-[13px] text-zinc-500 dark:text-zinc-400">Anyone with the link can join for the next 7 days, up to 25 people.</p>
       </div>
     </div>
   );

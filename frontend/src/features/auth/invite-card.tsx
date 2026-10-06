@@ -54,6 +54,8 @@ export type InvitePreview = {
     iconUrl: string | null;
     description?: string | null;
     picture?: InvitePicture | null;
+    /** A public community: its Join asks for a username, not a name. */
+    public?: boolean;
   };
   inviter?: string | null;
   inviterName?: string | null;

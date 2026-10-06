@@ -5478,11 +5478,14 @@ const AppView = {
     // the idle sweep took their preview away (#3161, #3163): "needs staging
     // and checks to finish", with nothing left running that could finish.
     //
-    // So the state is always 'ready'. What it carries is a NOTE: one sentence
-    // that says what submitting now means for this change, in the order a
-    // reader would care. The server stays authoritative for the few things it
-    // still refuses (nothing committed yet, an agent turn still running), and
-    // says why in its own words when it does.
+    // So the state is 'ready' with one exception. What it carries is a NOTE:
+    // one sentence that says what submitting now means for this change, in
+    // the order a reader would care. The exception is a change with nothing
+    // committed (#3776): there is nothing to review, so the state is 'empty'
+    // and the Submit for review button stays disabled beside the step that
+    // says "Nothing committed yet". The server stays authoritative for the
+    // few things it still refuses (nothing committed yet, an agent turn still
+    // running), and says why in its own words when it does.
     // `short` is the same fact in a few words: the draft's "Submit for
     // review" step line (_draftStepsView).
     const ready = (note, tone = 'ok', short = 'Ready') => ({ kind: 'ready', note, tone, short });
@@ -5514,8 +5517,8 @@ const AppView = {
         ? item.proposal_state === 'draft'
         : !item.pr_number && !item.staging_url && !item.check_state;
       if (levelWithMain || nothingPushed) {
-        return ready('There are no committed changes to submit yet. Ask the agent to make a change first.', 'mute',
-          'Nothing committed yet');
+        return { kind: 'empty', tone: 'mute', short: 'Nothing committed yet',
+          note: 'There are no committed changes to submit yet. Ask the agent to make a change first.' };
       }
     }
     if (item.check_state === 'passing' && !item.staging_url) {
@@ -5633,11 +5636,12 @@ const AppView = {
       rows.forEach((r) => { delete r.step; delete r.stepDone; });
       const submission = AppView.changeSubmissionState(item);
       const ready = submission.kind === 'ready';
-      rows.push({ key: 'review', label: 'Review', tone: ready ? submission.tone : 'mute',
-        text: [ready ? submission.note : 'Submitting for review…'] });
+      const pending = submission.kind === 'pending';
+      rows.push({ key: 'review', label: 'Review', tone: pending ? 'mute' : submission.tone,
+        text: [pending ? 'Submitting for review…' : submission.note] });
       card.actions = (card.actions || []).filter((a) => a.key !== 'promote');
       if (mine && !AppView.readOnly) card.actions.push({ key: 'propose-change', cls: 'gc-vote-btn',
-        label: submission.kind === 'pending' ? 'Submitting…' : 'Submit for review',
+        label: pending ? 'Submitting…' : 'Submit for review',
         title: submission.note, disabled: !ready || !!busy,
         act: { fn: 'runChangeAction', args: [item.id, 'promote', item] } });
     }
@@ -19596,9 +19600,14 @@ const AppView = {
     const advisory = (p.approval_policy === 'invited' && p.qualified_yes_count != null && isOpenRow)
       ? Math.max(0, (parseInt(p.yes_count, 10) || 0) - yes) : 0;
     const lock = !!(p.requires_explicit_approval && isOpenRow);
+    // #3826: the lock is a glyph with a hover title, which a phone never
+    // shows. While the other member's Yes is still missing, the change's
+    // page says so in words (topic-head.tsx); once it is in, nothing.
+    const awaitsOtherYes = !!(lock && p.status !== 'closed' && AppView._awaitingOtherMember(p));
     const base = {
       yes, no, majority: maj, advisory, lock, reasons: [],
       ...(lock ? { lockTitle: AppView._lockTitle(p) } : {}),
+      ...(awaitsOtherYes ? { awaitsOtherYes: true } : {}),
     };
 
     // 0 — settled. `merged` is the stored lifecycle; deployment_state is a

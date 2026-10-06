@@ -828,6 +828,13 @@ function load() {
     mobilePushEnvironment: process.env.PUSH_ENV || '',
     firebaseProjectId: process.env.FIREBASE_PROJECT_ID || '',
     firebaseServiceAccountJsonB64: process.env.FIREBASE_SERVICE_ACCOUNT_JSON_B64 || '',
+    // Firebase Phone Auth (services/firebase-phone-auth.js) reuses the
+    // push project's service account above and needs that project's own
+    // Identity Toolkit WEB API key for the two REST legs. OPTIONAL and
+    // default-off: unset (or false) leaves every /api/auth/phone/*
+    // endpoint answering 404 not_offered, exactly as before this existed.
+    firebasePhoneAuthEnabled: process.env.FIREBASE_PHONE_AUTH_ENABLED === 'true',
+    firebaseWebApiKey: process.env.FIREBASE_WEB_API_KEY || '',
     // Platform outbound mail (login codes, waitlist confirmations,
     // waitlist release notices). src/services/mail/select.js picks the
     // transport once, here, from platform_env: Gmail API, a generic HTTP
@@ -960,6 +967,7 @@ function load() {
   console.log(`  MOBILE_PUSH=${config.mobilePushEnabled ? 'enabled' : 'disabled'} PUSH_ENV=${config.mobilePushEnvironment || '(not set)'}`);
   console.log(`  FIREBASE_PROJECT_ID=${config.firebaseProjectId || '(not set)'}`);
   console.log(`  FIREBASE_SERVICE_ACCOUNT=${config.firebaseServiceAccountJsonB64 ? '(set)' : '(not set)'}`);
+  console.log(`  FIREBASE_PHONE_AUTH=${config.firebasePhoneAuthEnabled ? 'enabled' : 'disabled'}${config.firebaseWebApiKey ? '' : ' (no web API key — phone endpoints answer 404 not_offered)'}`);
   console.log(`  PLATFORM_MAIL=${config.mailTransport
     ? `${config.mailProvider}${config.mailStagingLogOnly ? ' (staging — rendered to the log, never delivered)' : ''} from=${config.mailFrom}`
     : '(no provider configured — OTP login codes and waitlist confirmations are NOT delivered)'}`);

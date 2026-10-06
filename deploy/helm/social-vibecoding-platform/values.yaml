@@ -121,11 +121,6 @@ config:
   waitlistOauthOrigin: ""
   # Firebase phone authentication flag; enable in the cluster's plaintext values.
   firebasePhoneAuthEnabled: false
-  # Waitlist skips by invite-tree generation (INVITE_TREE_BUDGETS): people let
-  # off the waitlist by hand get the first number; the default "10" gives the
-  # people they let in none (no chaining). Whether invite links skip the
-  # waitlist at all is an admin setting (Admin → Waitlist), not a value here.
-  inviteTreeBudgets: "10"
   platformRepository: https://github.com/replace-me/social-vibecoding
   nodeRpcUrl: http://replace-me.invalid:3000
   # Explorer host[:port] without a scheme. Public hosts use HTTPS; private

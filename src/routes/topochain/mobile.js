@@ -780,7 +780,7 @@ function topochainMobileRoutes(config) {
     try {
       const { rows } = await pool.query(
         `SELECT id, email, display_name, email_confirmed, is_in_waitlist, github, x, password_set,
-                is_admin, has_platform_access, bp_requested_at, bp_released_at
+                is_admin, has_platform_access, private_member_since, bp_requested_at, bp_released_at
            FROM users WHERE id = $1`,
         [req.user.id]
       );
@@ -805,8 +805,9 @@ function topochainMobileRoutes(config) {
           // Onboarding flow alignment. `has_platform_access` mirrors the
           // web gate; `bp_released` is what the mobile app's node gates
           // block production on (bp_requested surfaces "request pending"
-          // in the SV settings UI). Admins implicitly have access.
-          has_platform_access: !!user.has_platform_access || !!user.is_admin,
+          // in the SV settings UI). Admins implicitly have access, and so
+          // does a private member, as on the web (routes/auth.js /me).
+          has_platform_access: !!user.has_platform_access || !!user.is_admin || user.private_member_since != null,
           bp_requested: !!user.bp_requested_at,
           bp_released: !!user.bp_released_at,
           // The stable account namespace used by legacy mobile `/me`
@@ -835,7 +836,7 @@ function topochainMobileRoutes(config) {
   async function bpStateHandler(req, res) {
     try {
       const { rows } = await pool.query(
-        `SELECT is_admin, has_platform_access, bp_requested_at, bp_released_at
+        `SELECT is_admin, has_platform_access, private_member_since, bp_requested_at, bp_released_at
            FROM users WHERE id = $1`,
         [req.user.id]
       );
@@ -843,7 +844,7 @@ function topochainMobileRoutes(config) {
       const u = rows[0];
       return ok(res, {
         data: {
-          has_platform_access: !!u.has_platform_access || !!u.is_admin,
+          has_platform_access: !!u.has_platform_access || !!u.is_admin || u.private_member_since != null,
           bp_requested: !!u.bp_requested_at,
           bp_released: !!u.bp_released_at,
         },
