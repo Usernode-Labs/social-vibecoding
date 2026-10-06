@@ -28,6 +28,8 @@ const { PRODUCTION_ORIGIN } = require('../cli-auth-constants');
 const { buildMessage, KINDS } = require('./templates');
 const rateLimit = require('./rate-limit');
 const select = require('./select');
+const events = require('./events');
+const tracking = require('./tracking');
 
 // How long a delivery record is kept. Long enough to answer "did that
 // user ever get their code last week", short enough that the table is not
@@ -74,17 +76,18 @@ function maxPerHour(config) {
 // failed. send() ignores the return value entirely — the id exists so
 // sendTest() can point the admin console at the exact ledger row its
 // attempt produced.
-async function record(pool, { kind, to, provider, status, error }) {
+async function record(pool, { kind, to, provider, status, error, messageId = events.messageId(), providerMessageId = null, trackingLinks = [], engagementTracked = false }) {
   if (!pool) return null;
   try {
     const { rows } = await pool.query(
-      `INSERT INTO mail_deliveries (kind, recipient, provider, status, error)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO mail_deliveries (kind, recipient, provider, status, error, message_id, provider_message_id, tracking_links, engagement_tracked)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)
        RETURNING id`,
       [String(kind || '').slice(0, 64), String(to || '').slice(0, 255),
         provider ? String(provider).slice(0, 32) : null,
         String(status).slice(0, 24),
-        error ? String(error).slice(0, 500) : null]
+        error ? String(error).slice(0, 500) : null, messageId,
+        providerMessageId ? String(providerMessageId).slice(0, 128) : null, JSON.stringify(trackingLinks), engagementTracked]
     );
     return (rows[0] && rows[0].id) || null;
   } catch (err) {
@@ -130,6 +133,8 @@ async function readHistory(pool, { kind, to }) {
   }
 }
 
+// Events are deleted by the delivery FK’s ON DELETE CASCADE. Suppressions
+// intentionally survive retention so blocked addresses stay blocked.
 // Retention sweep, called opportunistically (never on a timer of its
 // own). Bounded by PRUNE_LIMIT so it stays a small, predictable delete.
 async function pruneDeliveries(pool) {
@@ -159,9 +164,10 @@ async function send(config, { kind, to, ...payload } = {}) {
       log.error('platform-mail', 'Refusing a mail with no recipient or kind', { kind });
       return;
     }
+    const messageId = events.messageId();
     // Render first: an unknown kind is a programming error and there is
     // no point consulting a throttle or a provider for it.
-    buildMessage(kind, payload);
+    buildMessage(kind, { ...payload, messageId, trackingEnabled: false });
 
     // `mailTransport` is what config.js resolves today;
     // `topochainMailTransport` is the original hook name, still honoured
@@ -173,7 +179,7 @@ async function send(config, { kind, to, ...payload } = {}) {
     const pool = poolFor(config);
 
     if (!transport) {
-      await record(pool, { kind, to, provider: null, status: 'no_transport' });
+      await record(pool, { kind, to, messageId, provider: null, status: 'no_transport' });
       if (config && (config.env === 'production' || process.env.USERNODE_ENV === 'production')) {
         // Global Constraints #6: NEVER log the raw code in production. An
         // unconfigured transport in prod is an operational failure — log it
@@ -191,6 +197,11 @@ async function send(config, { kind, to, ...payload } = {}) {
       return;
     }
 
+    const blocked = await events.suppression(pool, to);
+    if (blocked) {
+      await record(pool, { kind, to, messageId, provider, status: 'suppressed_bounce', error: blocked });
+      return;
+    }
     const { recipientHistory, globalCount } = await readHistory(pool, { kind, to });
     const decision = rateLimit.decide({
       kind,
@@ -201,7 +212,7 @@ async function send(config, { kind, to, ...payload } = {}) {
     });
     if (!decision.allowed) {
       await record(pool, {
-        kind, to, provider, status: 'suppressed_rate_limit', error: decision.reason,
+        kind, to, messageId, provider, status: 'suppressed_rate_limit', error: decision.reason,
       });
       // Not an error: the throttle firing is the system working. The
       // caller's response is unchanged either way.
@@ -210,14 +221,26 @@ async function send(config, { kind, to, ...payload } = {}) {
       return;
     }
 
+    // Store destinations before exposing a tracked link to any provider.
+    // If persistence fails, deliver ordinary links with no pixel instead.
+    const rendered = buildMessage(kind, { ...payload, messageId, trackingEnabled: !!pool && !!tracking.secret() });
+    const deliveryId = rendered.trackingLinks
+      ? await record(pool, { kind, to, messageId, provider, status: 'sending', trackingLinks: rendered.trackingLinks, engagementTracked: true })
+      : null;
+    const finish = async (status, error = null, providerMessageId = null) => {
+      if (!deliveryId) return record(pool, { kind, to, messageId, provider, status, error, providerMessageId });
+      try {
+        await pool.query(
+          'UPDATE mail_deliveries SET status = $2, error = $3, provider_message_id = $4 WHERE id = $1',
+          [deliveryId, status, error ? String(error).slice(0, 500) : null, providerMessageId ? String(providerMessageId).slice(0, 128) : null]
+        );
+      } catch (err) { log.error('platform-mail', 'Could not finalize mail delivery', { message: err.message }); }
+    };
     try {
-      await transport.send({ to, kind, ...payload });
-      await record(pool, {
-        kind, to, provider,
-        status: stagingLogOnly(config) ? 'skipped_staging' : 'sent',
-      });
+      const detail = await transport.send({ to, kind, ...payload, messageId, trackingEnabled: !!deliveryId });
+      await finish(stagingLogOnly(config) ? 'skipped_staging' : 'sent', null, detail?.providerMessageId);
     } catch (err) {
-      await record(pool, { kind, to, provider, status: 'failed', error: err.message });
+      await finish('failed', err.message);
       log.error('platform-mail', 'Mail transport failed to send',
         { kind, to, provider, message: err.message });
     }
@@ -243,7 +266,7 @@ async function send(config, { kind, to, ...payload } = {}) {
 //
 // It still never throws. A caller gets an outcome object with a `status`
 // drawn from the same vocabulary mail_deliveries uses:
-//   sent | skipped_staging | failed | no_transport | suppressed_rate_limit
+//   sent | skipped_staging | failed | no_transport | suppressed_rate_limit | suppressed_bounce
 // plus `invalid_recipient` for a request that never reached a provider.
 async function sendTest(config, { to } = {}) {
   const startedAt = Date.now();
@@ -290,6 +313,7 @@ async function sendTest(config, { to } = {}) {
     if (transport && transport.from) outcome.from = transport.from;
 
     const pool = poolFor(config);
+    const messageId = events.messageId();
 
     // A short, non-secret handle that appears in the email body, in the
     // log line and in the outcome, so an operator can tie the message
@@ -300,7 +324,7 @@ async function sendTest(config, { to } = {}) {
       provider: provider || 'none',
       from: outcome.from || '(unset)',
       sentAt: new Date().toISOString(),
-      reference,
+      reference, messageId,
     };
 
     // Render before anything else, so the console can show the exact copy
@@ -314,11 +338,18 @@ async function sendTest(config, { to } = {}) {
         ? `No mail transport is configured (missing: ${outcome.missing.join(', ')})`
         : 'No mail transport is configured';
       outcome.deliveryId = await record(pool, {
-        kind: 'admin_test', to, provider: null, status: 'no_transport',
+        kind: 'admin_test', to, messageId, provider: null, status: 'no_transport',
       });
       return outcome;
     }
 
+    const blocked = await events.suppression(pool, to);
+    if (blocked) {
+      outcome.status = 'suppressed_bounce';
+      outcome.error = blocked;
+      outcome.deliveryId = await record(pool, { kind: 'admin_test', to, messageId, provider, status: outcome.status, error: blocked });
+      return outcome;
+    }
     const { recipientHistory, globalCount } = await readHistory(pool, { kind: 'admin_test', to });
     const decision = rateLimit.decide({
       kind: 'admin_test',
@@ -332,7 +363,7 @@ async function sendTest(config, { to } = {}) {
       outcome.error = decision.reason;
       outcome.retryAfterMs = decision.retryAfterMs;
       outcome.deliveryId = await record(pool, {
-        kind: 'admin_test', to, provider, status: 'suppressed_rate_limit', error: decision.reason,
+        kind: 'admin_test', to, messageId, provider, status: 'suppressed_rate_limit', error: decision.reason,
       });
       return outcome;
     }
@@ -344,7 +375,7 @@ async function sendTest(config, { to } = {}) {
       }
       outcome.status = stagingLogOnly(config) ? 'skipped_staging' : 'sent';
       outcome.deliveryId = await record(pool, {
-        kind: 'admin_test', to, provider, status: outcome.status,
+        kind: 'admin_test', to, messageId, provider, status: outcome.status, providerMessageId: outcome.providerMessageId,
       });
     } catch (err) {
       outcome.status = 'failed';
@@ -353,7 +384,7 @@ async function sendTest(config, { to } = {}) {
       // response.
       outcome.error = String(err.message || err).slice(0, 500);
       outcome.deliveryId = await record(pool, {
-        kind: 'admin_test', to, provider, status: 'failed', error: outcome.error,
+        kind: 'admin_test', to, messageId, provider, status: 'failed', error: outcome.error,
       });
       log.error('platform-mail', 'Admin test mail failed to send',
         { provider, reference, message: outcome.error });

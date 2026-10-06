@@ -7037,6 +7037,30 @@
       "classicPath": "#settings"
     },
     {
+      "source": "src/routes/mail-tracking.js",
+      "method": "GET",
+      "path": "/mail/c/:messageId/:linkIndex",
+      "expression": null,
+      "status": "exempt",
+      "reason": "signed sessionless email redirect and image endpoints, never model-visible interactive controls"
+    },
+    {
+      "source": "src/routes/mail-tracking.js",
+      "method": "GET",
+      "path": "/mail/o/:messageId.gif",
+      "expression": null,
+      "status": "exempt",
+      "reason": "signed sessionless email redirect and image endpoints, never model-visible interactive controls"
+    },
+    {
+      "source": "src/routes/mail-webhooks.js",
+      "method": "POST",
+      "path": "/api/mail/webhooks/resend",
+      "expression": null,
+      "status": "exempt",
+      "reason": "provider callback authenticated by a raw-body signature, never a signed-in Classic control"
+    },
+    {
       "source": "src/routes/mcp-remote.js",
       "method": "GET",
       "path": "/.well-known/oauth-protected-resource",

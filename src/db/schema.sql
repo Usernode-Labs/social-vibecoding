@@ -6426,6 +6426,39 @@ CREATE INDEX IF NOT EXISTS idx_mail_deliveries_created
 -- question an admin debugging session needs to be able to answer.
 COMMENT ON TABLE mail_deliveries IS 'staging:private';
 
+-- Opaque identity, never the serial or the recipient, on public mail links.
+ALTER TABLE mail_deliveries ADD COLUMN IF NOT EXISTS message_id TEXT;
+ALTER TABLE mail_deliveries ADD COLUMN IF NOT EXISTS provider_message_id TEXT;
+ALTER TABLE mail_deliveries ADD COLUMN IF NOT EXISTS tracking_links JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE mail_deliveries ADD COLUMN IF NOT EXISTS engagement_tracked BOOLEAN NOT NULL DEFAULT FALSE;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mail_deliveries_message_id
+  ON mail_deliveries (message_id) WHERE message_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mail_deliveries_provider_message_id
+  ON mail_deliveries (provider, provider_message_id) WHERE provider_message_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS mail_events (
+  id BIGSERIAL PRIMARY KEY,
+  delivery_id BIGINT NOT NULL REFERENCES mail_deliveries(id) ON DELETE CASCADE,
+  type TEXT NOT NULL CHECK (type IN ('delivered', 'bounced', 'complained', 'opened', 'clicked', 'unsubscribed')),
+  url TEXT,
+  user_agent_class TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  meta JSONB NOT NULL DEFAULT '{}'::jsonb,
+  event_key TEXT UNIQUE
+);
+CREATE INDEX IF NOT EXISTS idx_mail_events_delivery_type ON mail_events (delivery_id, type);
+CREATE INDEX IF NOT EXISTS idx_mail_events_created_type ON mail_events (created_at DESC, type);
+COMMENT ON TABLE mail_events IS 'staging:private';
+
+-- Safety state survives the delivery log's 30-day retention sweep.
+CREATE TABLE IF NOT EXISTS mail_suppressions (
+  recipient TEXT PRIMARY KEY CHECK (recipient = lower(recipient)),
+  reason TEXT NOT NULL CHECK (reason IN ('bounce', 'complaint')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE mail_suppressions IS 'staging:private';
+
+
 -- Access + block-production state on the user. `has_platform_access`
 -- gates the SV platform surfaces (home/social/build) — NOT login-required
 -- child apps, which any account may use (see src/middleware/auth.js).

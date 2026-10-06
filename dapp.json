@@ -378,6 +378,20 @@
       "description": "Long-lived refresh token minted once for the sending mailbox with the https://www.googleapis.com/auth/gmail.send scope. Private: it can send mail as your domain indefinitely, so it is encrypted at rest and never returned by any API. Note the platform-variable value constraints (src/services/platform-env.js): no single quote, no CR, no NUL, 8192 characters max."
     },
     {
+      "key": "PLATFORM_MAIL_TRACKING_SECRET",
+      "group": "Platform mail",
+      "private": true,
+      "required": false,
+      "description": "HMAC secret for non-transactional email click, open and unsubscribe attribution URLs. Use a long random secret; unset sends ordinary links without tracking. Rotating it invalidates old tracking links."
+    },
+    {
+      "key": "PLATFORM_MAIL_RESEND_WEBHOOK_SECRET",
+      "group": "Platform mail",
+      "private": true,
+      "required": false,
+      "description": "Resend webhook signing secret (whsec_...) for POST /api/mail/webhooks/resend. Configure delivered, bounced and complained events in Resend. Unset rejects every webhook; Gmail has no delivery webhooks."
+    },
+    {
       "key": "PLATFORM_MAIL_MAX_PER_HOUR",
       "group": "Platform mail",
       "default": "300",
@@ -2142,9 +2156,9 @@
       "expectSelector": "#admin-mail-status"
     },
     {
-      "name": "Email delivery section offers a test send and the delivery ledger",
+      "name": "Email delivery section offers a test send, ledger and engagement reports",
       "path": "/#admin/mail",
-      "expectSelector": "#admin-mail-send, #admin-mail-activity",
+      "expectSelector": "#admin-mail-send, #admin-mail-activity, #admin-mail-reports",
       "expectText": "Recent email activity"
     },
     {
