@@ -315,6 +315,8 @@ test('the starter\'s CLAUDE.md has a short "## Design" section the first build f
   // The rules.
   assert.match(flat, /never a raw hex value or a stock palette class/);
   assert.match(flat, /Tap targets are at least 44 px/);
+  assert.match(flat, /use the kit's `field` class/);
+  assert.match(flat, /phrase a placeholder like `e\.g\. 5\.0`, never a bare plausible value like `5\.0`, which reads as entered data\./);
   assert.match(flat, /honest loading, empty and error states\. Never show the empty state while loading or after a failure; an error says what failed, what still works, and offers Retry\./);
   assert.match(flat, /Seed obviously fake staging demo data so the populated screen can be seen \("Staging mock data" in the platform conventions\)\./);
   assert.match(flat, /No cards in cards, no uppercase eyebrows, no emoji as icons\./);
@@ -331,5 +333,6 @@ test('a starter other than Empty keeps its notes as they were', () => {
     const claude = file(generate(id), 'CLAUDE.md');
     assert.doesNotMatch(claude, /\n## Design\n/, id);
     assert.match(claude.replace(/\s+/g, ' '), /both looks \(Tailwind's `dark:` variants\), unless one fixed look is the point of this app, like a game's own scene; then say so under "App-specific conventions" below\./, id);
+    assert.match(claude.replace(/\s+/g, ' '), /When you build forms, phrase a placeholder like `e\.g\. 5\.0`, never a bare plausible value like `5\.0`, which reads as entered data\./, id);
   }
 });

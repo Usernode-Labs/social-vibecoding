@@ -133,6 +133,9 @@ Re-theme by changing the token values there, keeping every text pair at
   \`text-fg\`, \`text-muted\`, \`border-line\`, \`bg-accent\` with
   \`text-on-accent\`, ...): never a raw hex value or a stock palette class.
 - Tap targets are at least 44 px; the buttons and fields already are.
+- Form fields use the kit's \`field\` class, whose placeholder renders
+  muted; phrase a placeholder like \`e.g. 5.0\`, never a bare plausible
+  value like \`5.0\`, which reads as entered data.
 - Every screen that loads data has honest loading, empty and error states.
   Never show the empty state while loading or after a failure; an error says
   what failed, what still works, and offers Retry.
@@ -1460,6 +1463,9 @@ describe the actual app once it has one.
 
 Keep the \`usernode-dev-console@1\` forwarder \`<script>\` and the bridge
 \`<script>\` when rewriting the HTML: both are platform infrastructure.
+
+When you build forms, phrase a placeholder like \`e.g. 5.0\`, never a bare
+plausible value like \`5.0\`, which reads as entered data.
 
 ${themeClaudeNote()}
 
