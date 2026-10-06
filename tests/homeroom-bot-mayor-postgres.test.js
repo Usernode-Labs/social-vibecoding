@@ -1955,4 +1955,22 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.deepEqual(cards.map((c) => [c.object_type, Number(c.object_ref)]), [['github_issue', 41]],
       'the model listed no card; the words named one');
   });
+
+  await t.test('#4097 follow-up: a reply offers what she might say next as buttons, short, each once', async () => {
+    await pool.query('DELETE FROM homeroom_bot_dm_turns WHERE user_id = $1', [ada.id]);
+    const sent = await turn('anything new?', scripted([
+      [['reply', {
+        text: 'Nothing new since this morning.',
+        suggestions: ['How long will the search box take?', 'how long will the search box take?', 'x'.repeat(61), 'Show my requests'],
+      }]],
+    ]));
+    const meta = (await read(sent)).metadata.homeroomBot;
+    assert.equal(meta.kind, 'chat');
+    assert.equal(meta.status, 'open');
+    assert.deepEqual(meta.actions.map((a) => [a.label, a.type]), [['How long will the search box take?', 'prompt'], ['Show my requests', 'prompt']],
+      'a repeat and one too long for a button are left out');
+    const quiet = await turn('ok thanks', scripted([[['reply', { text: 'Any time.' }]]]));
+    assert.equal((await read(quiet)).metadata.homeroomBot.actions, undefined, 'none offered, none drawn');
+    assert.equal((await read(sent)).metadata.homeroomBot.status, 'closed', 'the earlier ones went when it answered again');
+  });
 });

@@ -148,6 +148,12 @@ export interface HomeroomBotAction {
   target?: string;
   sessionId?: number;
   epoch?: number;
+  /**
+   * #4097 follow-up: a `prompt` sent replying to the message it sits on, so it
+   * is about what that message is about ("Try again" under a build that did
+   * not finish). Any other prompt is sent on its own.
+   */
+  quote?: boolean;
 }
 
 /**

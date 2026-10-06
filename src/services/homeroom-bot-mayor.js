@@ -138,6 +138,10 @@ const MAX_TURNS_PER_HOUR = 120;
 // #3772: the share of a weekly allowance left under which it is worth saying.
 const ALLOWANCE_LOW_SHARE = 0.2;
 const MAX_CARDS = 3;
+// The follow-ups a reply offers to tap, and the longest one: a button's
+// label (the client keeps 60 characters of one).
+const MAX_SUGGESTIONS = 3;
+const MAX_SUGGESTION_CHARS = 60;
 const MAX_REPLY_CHARS = 2500;
 const MAX_TOOL_RESULT_CHARS = 12_000;
 const MAX_TITLE_CHARS = 200;
@@ -325,8 +329,10 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '- Tell the Homeroom team about a problem they hit that nothing above fixes, when they ask you to or say yes',
     '  when you offer (report_problem). It is filed as a report from them where the team tracks problems, which',
     '  anyone can read; the last few messages of this chat go only to the team, privately. Say so.',
-    'Finish every turn by calling reply exactly once: short plain text, and cards for up to 3 requests,',
-    'proposals or projects you mention.',
+    'Finish every turn by calling reply exactly once: short plain text, cards for up to 3 requests,',
+    'proposals or projects you mention, and up to 3 suggestions: short things they might say next, in their own',
+    'words ("How long will it take?"), each something you can do or answer from this chat. Offer at least one',
+    'unless the conversation has plainly ended.',
     '',
     'HOW HOMEROOM WORKS',
     '- Each project has a board of requests (features and bugs) and a group of members. A change to a project is a',
@@ -562,6 +568,13 @@ const TOOLS = [
               required: ['kind'],
               additionalProperties: false,
             },
+          },
+          suggestions: {
+            type: 'array',
+            maxItems: MAX_SUGGESTIONS,
+            description: 'Up to 3 short things they might say next, in their own words, shown as buttons to tap. '
+              + `Each at most ${MAX_SUGGESTION_CHARS} characters, and something you can do or answer from this chat.`,
+            items: { type: 'string' },
           },
         },
         required: ['text'],
@@ -1409,6 +1422,24 @@ function cardKey(card) {
   return [card?.kind, card?.project, card?.number, card?.proposal].join(':');
 }
 
+/**
+ * Pure: a reply's suggestions as the labels of its prompt buttons: plain
+ * single lines, each once, at most MAX_SUGGESTIONS. One too long for a
+ * button is left out rather than cut mid-word, since tapping it sends the
+ * words as theirs.
+ */
+function suggestionLabels(list) {
+  const out = [];
+  for (const item of Array.isArray(list) ? list : []) {
+    const label = String(typeof item === 'string' ? item : '').replace(/\s+/g, ' ').trim();
+    if (!label || label.length > MAX_SUGGESTION_CHARS) continue;
+    if (out.some((seen) => seen.toLowerCase() === label.toLowerCase())) continue;
+    out.push(label);
+    if (out.length >= MAX_SUGGESTIONS) break;
+  }
+  return out;
+}
+
 /** Cards from the model's `reply`, resolved to Messages' shared objects. */
 async function resolveCards(pool, user, cards) {
   const out = [];
@@ -1516,7 +1547,7 @@ async function runTool(pool, ctx, name, args) {
         return { ok: true, shown: 'They see it under your reply with File it and Not now. Nothing is filed until they tap File it.' };
       }
       case 'reply': {
-        ctx.reply = { text: clip(args.text, MAX_REPLY_CHARS), cards: args.cards };
+        ctx.reply = { text: clip(args.text, MAX_REPLY_CHARS), cards: args.cards, suggestions: args.suggestions };
         return { ok: true };
       }
       default: return { error: `Unknown tool ${name}` };
@@ -2146,7 +2177,16 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   }
   cards = [...ctx.cards, ...replyCards];
   const unique = [...new Map(cards.map((c) => [JSON.stringify(c), c])).values()].slice(0, MAX_CARDS);
-  return say(text, { objects: unique, metadata: { kind: 'chat', ...(named.project ? { appSlug: named.project } : {}) } });
+  // What they might say next, as buttons to tap (dm.retireSuggestions
+  // closes them once the bot says something newer).
+  const next = suggestionLabels(ctx.reply?.suggestions);
+  return say(text, {
+    objects: unique,
+    metadata: {
+      kind: 'chat', ...(named.project ? { appSlug: named.project } : {}),
+      ...(next.length ? { actions: require('./homeroom-bot-dm').promptActions(next), status: 'open' } : {}),
+    },
+  });
 }
 
 // ── An offer, and the tap that decides it ─────────────────────────────────
@@ -3392,6 +3432,7 @@ module.exports = {
   requestNumbers,
   noteRequests,
   namedCards,
+  suggestionLabels,
   claimProblems,
   checkNote,
   stripClaims,
