@@ -740,13 +740,15 @@ function weekKey(now = new Date()) {
  * Pure: what the person whose building time is used up hears about the
  * request it holds. No amount: the limit is building time, not money, and
  * on a project with others in it, somebody else can ask for it on theirs
- * (homeroom-bot-mayor.js start_request).
+ * (homeroom-bot-mayor.js start_request). #4097: led by the request's line
+ * (requestLine), which Messages draws as its card, as the rest of its news
+ * is; the words then say "it".
  */
-function overAllowanceText({ title, appName, group = false }) {
-  const what = clip(title, 80) || 'this request';
-  return group
-    ? `You've used this week's building time. I'll start ${what} on Monday, or someone else in ${appName} can ask me for it.`
-    : `You've used this week's building time. I'll start ${what} on Monday.`;
+function overAllowanceText({ line = null, appName, group = false }) {
+  const said = group
+    ? `You've used this week's building time. I'll start it on Monday, or someone else in ${appName} can ask me for it.`
+    : 'You\'ve used this week\'s building time. I\'ll start it on Monday.';
+  return line ? `${line}\n\n${said}` : said;
 }
 
 /**
@@ -763,17 +765,22 @@ async function noteOverAllowance(pool, { settings, requester, payer = null, app,
     [app.id],
   ).catch(() => ({ rows: [] }));
   const appName = app.name || app.slug;
+  const context = { appName, issueNumber, issueTitle: requester?.issueTitle || null, firstVersion: !!requester?.firstVersion };
   return sendDm(pool, {
     bot,
     userId: who.userId,
     replyToId: await requestStart(pool, { userId: who.userId, appId: app.id, issueNumber }),
     idempotencyKey: `hrbot-allowance-${who.userId}-${weekKey()}`,
     content: overAllowanceText({
-      title: requester?.issueTitle || `${appName} request #${issueNumber}`,
+      line: requestLine(context),
       appName,
       group: (Number(rows[0]?.members) || 0) > 1,
     }),
-    metadata: { kind: 'allowance', appSlug: app.slug, appName, issueNumber },
+    metadata: {
+      kind: 'allowance', appSlug: app.slug, appName, issueNumber,
+      ...(context.issueTitle ? { issueTitle: context.issueTitle } : {}),
+      ...(context.firstVersion ? { firstVersion: true } : {}),
+    },
   });
 }
 
@@ -3051,8 +3058,11 @@ async function startFirstVersion(pool, config, { app, user, brief }) {
     userId: user.id,
     idempotencyKey: `hrbot-create-${app.id}`,
     // B6: the plan comes first, and the build waits for their Build it.
+    // #4097: the project's name is a line of its own, which Messages draws
+    // as the project's card (frontend/src/features/messages/bot-head-card.tsx);
+    // with the hello, after it.
     content: hello
-      ? `${MAKER_HELLO}\n\nI'm setting up **${name}** now. Once it's ready I'll send you my plan here first, `
+      ? `${MAKER_HELLO}\n\n**${name}**\n\nI'm setting up ${name} now. Once it's ready I'll send you my plan here first, `
         + `then build its first version for you to try.${off}`
       : `**${name}**\n\nThanks! I'm setting up ${name} now. Once it's ready I'll send you my plan here first, `
         + `then build its first version for you to try.${off}`,

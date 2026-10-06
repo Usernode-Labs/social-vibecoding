@@ -16,7 +16,7 @@ import { BotActivityCard, isActivityMessage } from './bot-activity';
 import { BotQuestion, botMeta } from './bot-question';
 import { BotPlanCard, BotTwoQuestions, isPlanMessage, isTwoQuestions } from './bot-plan';
 import { BotReadyCard, isReadyMessage } from './bot-ready';
-import { RequestHeadWords, isHeadCard, requestHead } from './bot-request-head';
+import { BotHeadWords, botHead, isHeadCard } from './bot-head-card';
 import { LinkEmbeds } from './link-cards';
 import { plainText } from './plain-text';
 import { confirmAction } from '../../lib/confirm';
@@ -234,12 +234,12 @@ export const MessageRow = memo(function MessageRow({
 
   // The words, as markdown. A Homeroom bot message about a request names its
   // project, so its `#N` chips open that project's requests (#3770), and the
-  // line it opens with naming the request is the request's card (#4097,
-  // ./bot-request-head.tsx), which is then not drawn again under the words.
-  const head = requestHead(message.content, botMeta(message));
+  // line naming what it is about is that thing's card (#4097,
+  // ./bot-head-card.tsx), which is then not drawn again under the words.
+  const head = botHead(message.content, botMeta(message));
   const objects = head ? message.objects.filter((object) => !isHeadCard(head, object)) : message.objects;
   const words = !message.content ? null : head
-    ? <RequestHeadWords head={head} objects={message.objects} channels={channels} />
+    ? <BotHeadWords head={head} objects={message.objects} channels={channels} />
     : <MessageMarkdown content={message.content} channels={channels} appSlug={botMeta(message)?.appSlug} />;
 
   // The quoted reply, the body and the inline editor: the part of the
