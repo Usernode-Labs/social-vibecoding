@@ -92,6 +92,7 @@ import { AppsMore } from './apps-more';
 import { GettingStarted } from './getting-started';
 import { ChallengesSection, DiscoverSection } from './panels/sections';
 import { SectionHeading } from './panels/ui';
+import { WaitlistCard } from './waitlist-card';
 import { WidgetStrip } from './widget-strip';
 
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -270,6 +271,14 @@ export function HomeScreen() {
           */}
           <AppsMore />
         </section>
+        {/*
+            A PRIVATE MEMBER'S WAITLIST CARD (./waitlist-card.tsx): an invite
+            link let them into their group's apps, and this is where they join
+            the waitlist to make their own. Nothing in the prerender; it draws
+            once the shell knows who is signed in. Their Home has no
+            Challenges (src/routes/home-panels.js leaves it out).
+        */}
+        <WaitlistCard />
         {/*
             ── AREAS 2-3: DISCOVER, CHALLENGES ────────────────────────
 

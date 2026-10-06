@@ -202,6 +202,10 @@ export interface WaitlistOptions {
   /** The same, from the Homeroom app's own sheets: those whose app client
    *  IDs are saved too. The app offers one only when its build can. */
   native_sign_in_providers?: string[];
+  /** Phone sign-in is set up (src/services/firebase-phone-auth.js offered):
+   *  an invite's Join asks for a phone number first. Absent or false, the
+   *  other ways only. */
+  phone_sign_in?: boolean;
 }
 
 let optionsPromise: Promise<WaitlistOptions | null> | null = null;

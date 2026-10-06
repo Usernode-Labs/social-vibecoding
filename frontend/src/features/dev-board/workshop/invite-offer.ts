@@ -148,10 +148,13 @@ export async function joinByInvite(offer: InviteSource): Promise<InviteJoin> {
   }
   let res: Response;
   try {
-    res = await fetch(`/api/invite-links/by-token/${encodeURIComponent(offer.token)}/redeem`, {
+    // A public community asks a provisional handle for a username first
+    // (username-first-run.js publicRetry).
+    const redeem = () => fetch(`/api/invite-links/by-token/${encodeURIComponent(offer.token!)}/redeem`, {
       method: 'POST',
       credentials: 'same-origin',
     });
+    res = w.UsernameFirstRun?.publicRetry ? await w.UsernameFirstRun.publicRetry(redeem) : await redeem();
   } catch {
     toast('Could not join. Try again.', true);
     return FAILED;
@@ -161,6 +164,11 @@ export async function joinByInvite(offer: InviteSource): Promise<InviteJoin> {
     return FAILED;
   }
   const result = await res.json().catch(() => ({}));
+  if (result.reason === 'username_required') {
+    // "Not now": the offer stays, for when they have one.
+    toast(result.error || 'Pick a username first.', true);
+    return FAILED;
+  }
   if (!res.ok || !result.ok || !result.slug) {
     toast(DEAD[result.reason] || 'Could not join. Try again.', true);
     if (!result.reason) return FAILED;

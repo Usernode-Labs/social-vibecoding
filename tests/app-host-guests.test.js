@@ -116,7 +116,7 @@ const fakePool = {
     if (/FROM app_collaborators WHERE app_id = \$1 AND status = 'member'/.test(sql)) return { rows: [{ user_id: MEMBER_ID }] };
     if (/SELECT is_admin FROM users WHERE id/.test(sql)) return { rows: [{ is_admin: false }] };
     if (/FROM sessions\s+WHERE encode/.test(sql)) return { rows: live.has(`${params[0]}:${params[1]}`) ? [{}] : [] };
-    if (/SELECT id, username, usernode_pubkey, locale, is_synthetic FROM users/.test(sql)) {
+    if (/SELECT id, username, usernode_pubkey, locale, is_synthetic,\s+username_provisional_since IS NOT NULL AS provisional\s+FROM users/.test(sql)) {
       return { rows: [{ id: params[0], username: `u${params[0]}`, is_synthetic: false }] };
     }
     if (/INSERT INTO edge_grant_redemptions/.test(sql)) return { rows: [{ jti: params[0] }] };
