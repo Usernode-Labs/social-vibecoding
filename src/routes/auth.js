@@ -129,6 +129,14 @@ const SESSION_MINT_PATHS = [
   // The same sign-in inside the Homeroom app, with the ID token its own
   // sheet returned.
   '/api/auth/oauth/:provider/native',
+  // Phone sign-in and sign-up (routes/phone-auth.js). Verifying the code
+  // (or an ID token a client SDK earned) signs an established account
+  // straight in, so it mints a session; /request only texts a code, like
+  // /api/auth/otp/request, and stays outside so a signed-in person can
+  // still be walked through a phone verification elsewhere. The username
+  // step spends the continuation by minting the real session.
+  '/api/auth/phone/verify',
+  '/api/auth/phone/finish',
 ];
 
 function createSessionCookie(res, token, expiresAt) {

@@ -32,6 +32,7 @@ const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const firstSession = require('../services/first-session');
 const signInProviders = require('../services/sign-in-providers');
+const phoneAuth = require('../services/firebase-phone-auth');
 const { clientIp } = require('../services/client-ip');
 const {
   waitlistJoinLimiter,
@@ -216,6 +217,10 @@ function publicApiRoutes(config) {
       marketing_url: siteUrl(config),
       story_landing: await firstSession.storyLandingEnabled(pool),
       sign_in_providers: await signInProviders.offeredProviders(pool, config),
+      // Phone-number sign-in (services/firebase-phone-auth.js): offered
+      // only when its four Firebase values are set and the flag is on.
+      // Sync on purpose — the gate reads config, not the database.
+      phone_sign_in: phoneAuth.offered(config),
       terms_link: await currentTermsLink(),
       // The same, from the Homeroom app's own sheets (the bridge's
       // signInWithProvider), once the app's client IDs are saved.
