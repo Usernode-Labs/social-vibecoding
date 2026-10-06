@@ -176,6 +176,12 @@ test('the first session: a maker\'s and an invited person\'s first hour, timed f
     'opens beside joins, and opens before they were counted read so');
   assert.match(src, /median <span className=\{targetTone\(st\.medianSeconds, st\.targetSeconds\)\}>/);
   assert.match(src, /data-journey-first-session-example=\{e\.path\}/, 'and the newest few');
+  assert.match(src, /id="admin-journey-first-session-answers"/, 'the answer split is its own block on the card');
+  assert.match(src, />Asked what to make</, 'the question, as the app says it, labels the block');
+  assert.match(src, /of \$\{plural\(data\.answers\.asked, 'new account', 'new accounts'\)\} made a project/,
+    'made, out of the accounts the question was put to');
+  assert.match(src, /Looked around first: \{data\.answers\.lookedAround\}/,
+    'skipping the question reads as its own outcome, not only the absence of a project');
 });
 
 test('one declared check opens the demo page', () => {

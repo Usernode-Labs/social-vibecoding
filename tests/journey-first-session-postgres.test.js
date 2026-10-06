@@ -54,6 +54,13 @@ test('the reading: steps against the hour and the two-minute reward, the aha, op
   assert.deepEqual(r.join.steps.map((s) => [s.key, s.reached, s.inSession]), [['said', 1, 1], ['suggested', 1, 0]]);
   assert.equal(r.join.aha, 1, 'one invited person wrote within the hour; a request after it is not the aha');
   assert.deepEqual(r.opens, { opened: 5, joined: 2 });
+  assert.deepEqual(r.answers, { asked: 0, made: 0, lookedAround: 0 },
+    'no split handed to the pure reading reads zeros, never an invented one');
+  const split = journey.firstSessionReading(rows, 5, {
+    week: { label: '2026-09-28', finished: true }, recordedFrom: { make: since, reward: since, opens: since },
+    answers: { asked: 9, made: 3, lookedAround: 6 },
+  });
+  assert.deepEqual(split.answers, { asked: 9, made: 3, lookedAround: 6 }, 'the split is returned as it is given');
   assert.deepEqual(r.examples.map((e) => e.userId), [4, 3, 2, 1], 'newest first');
   assert.deepEqual(r.examples[3].steps, { reward: 90, invited: 1000, running: 80 });
 
@@ -128,6 +135,7 @@ test('first artefacts and the first-session reading against the full PostgreSQL 
     assert.equal(r.make.notRecorded.recorded, false);
     assert.equal(r.opens.opened.recorded, false);
     assert.deepEqual([r.make.people, r.join.people, r.examples.length], [0, 0, 0]);
+    assert.deepEqual(r.answers, { asked: 0, made: 0, lookedAround: 0 });
   });
 
   const book = await project('book-swap', ana);
@@ -197,5 +205,25 @@ test('first artefacts and the first-session reading against the full PostgreSQL 
     assert.deepEqual([cohort.make.people, cohort.join.people], [0, 1]);
     const left = await journey.firstSession(pool, { week: week(), leftOutIds: [ana] });
     assert.deepEqual([left.make.people, left.join.people], [0, 1]);
+  });
+
+  await t.test('the question\'s split: asked, made, looked around first', async () => {
+    const answered = async (username, seen, cols = {}) => user(username, { getting_started_seen: seen, ...cols });
+    const dana = await answered('dana', { first_session: 'story', first_session_answer: 'made' });
+    const eli = await answered('eli', { first_session: 'sign_in', first_session_answer: 'looked_around' });
+    await answered('fay', { first_session: 'story' }); // asked, not answered yet
+    await answered('gus', { first_session_answer: 'made' }); // made with no start recorded
+    await answered('holly', { first_session: 'story', first_session_answer: 'looked_around' },
+      { created_at: new Date(Date.now() - 9 * 86400000) }); // answered, but before the window
+    await answered('ida', { first_session: 'story', first_session_answer: 'made' }, { is_admin: true });
+    await answered('joss', { first_session: 'story', first_session_answer: 'looked_around' }, { is_synthetic: true });
+
+    const r = await journey.firstSession(pool, { week: week() });
+    assert.deepEqual(r.answers, { asked: 3, made: 2, lookedAround: 1 },
+      'dana, eli and fay were asked; dana and gus made, eli looked around; fay only counts as asked, holly is outside the window, ida and joss are not real people');
+    const cohort = await journey.firstSession(pool, { week: week(), memberIds: new Set([dana, eli]) });
+    assert.deepEqual(cohort.answers, { asked: 2, made: 1, lookedAround: 1 }, 'a cohort narrows the split to its members');
+    const left = await journey.firstSession(pool, { week: week(), leftOutIds: [dana] });
+    assert.deepEqual(left.answers, { asked: 2, made: 1, lookedAround: 1 }, 'so does the admin-edited left-out list');
   });
 });

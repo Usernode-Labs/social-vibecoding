@@ -1110,6 +1110,7 @@ type FirstSessionData = {
   make: { people: number; notRecorded: NotRecorded | null; steps: FirstSessionStep[]; aha: number };
   join: { people: number; steps: FirstSessionStep[]; aha: number };
   opens: { opened: Count; joined: number };
+  answers: { asked: number; made: number; lookedAround: number };
   recordedFrom: { make: string | null; reward: string | null; opens: string | null };
   examples: Array<{
     path: 'make' | 'join'; userId: number; name: string; slug: string; project: string; startedAt: string | null;
@@ -1181,6 +1182,14 @@ function FirstSessionCard({ scope, onOpen }: { scope: Scope; onOpen: OpenPerson 
           <p className={`${JUI.fine} mt-2`} id="admin-journey-first-session-opens">
             Invite links opened: <Num v={data.opens.opened} /> · joined: {data.opens.joined}
           </p>
+        </div>
+        <div id="admin-journey-first-session-answers">
+          <div className={`${JUI.label} mb-1.5`}>Asked what to make</div>
+          <div className="flex items-baseline gap-2">
+            <span className={JUI.headline}>{data.answers.made}</span>
+            <span className={JUI.fine}>{`of ${plural(data.answers.asked, 'new account', 'new accounts')} made a project`}</span>
+          </div>
+          <div className={`mt-1 ${JUI.fine}`}>Looked around first: {data.answers.lookedAround}</div>
         </div>
       </div>
       <div className={`${JUI.label} mt-4 mb-1.5`}>Newest first sessions</div>

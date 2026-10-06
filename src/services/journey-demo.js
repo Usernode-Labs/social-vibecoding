@@ -438,7 +438,11 @@ function firstSession(day, all = false) {
   return {
     demo: true,
     ...journey.firstSessionReading(rows, 11, {
-      week, recordedFrom: { make: DEMO_RECORDED_FROM, reward: DEMO_RECORDED_FROM, opens: DEMO_RECORDED_FROM },
+      week,
+      // The question's split for the demo's four makers: eleven accounts
+      // were asked, four made, seven looked around first.
+      answers: { asked: 11, made: 4, lookedAround: 7 },
+      recordedFrom: { make: DEMO_RECORDED_FROM, reward: DEMO_RECORDED_FROM, opens: DEMO_RECORDED_FROM },
     }),
   };
 }

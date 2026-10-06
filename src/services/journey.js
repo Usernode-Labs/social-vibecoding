@@ -1723,6 +1723,24 @@ const FIRST_SESSION_OPENS_SQL = `SELECT
     (SELECT MIN(e.created_at) FROM events e WHERE e.event_type = 'first_artefact_shown') AS reward,
     (SELECT MIN(e.created_at) FROM events e WHERE e.event_type = 'invite_opened') AS opens`;
 
+// The question's own split, from the marks services/first-session.js writes:
+// the question was put (getting_started_seen.first_session) and how each
+// account answered it (first_session_answer: 'made' from POST /api/apps with
+// from = 'first-session', 'looked_around' from the first session's "Look
+// around first"). The answer stores no time, so the window anchors on the
+// account: the accounts created in [$1, $2) are the population, an account
+// counts however late it answered, and one asked but not yet answered counts
+// only in asked. An answer of 'made' with no start recorded (a project made
+// from the first session with no mark of the question) counts as made and
+// not as asked. Kept per user so a cohort can narrow the rows in JS.
+// $3/$4 are the real-person parameters.
+const FIRST_SESSION_ANSWERS_SQL = `SELECT u.id,
+       (u.getting_started_seen->>'first_session') IS NOT NULL AS asked,
+       u.getting_started_seen->>'first_session_answer' AS answer
+  FROM users u
+ WHERE u.created_at >= $1::timestamptz AND u.created_at < $2::timestamptz
+   AND ${REAL_PERSON_SQL}`;
+
 function secondsBetween(fromIso, toIso) {
   if (!fromIso || !toIso) return null;
   return Math.max(0, Math.round((new Date(toIso).getTime() - new Date(fromIso).getTime()) / 1000));
@@ -1764,8 +1782,9 @@ function firstSessionStep(people, key, { target = null } = {}) {
   };
 }
 
-/** Pure: the reading, from rows of FIRST_SESSION_SQL and FIRST_SESSION_OPENS_SQL. */
-function firstSessionReading(rows, opens, { week, recordedFrom = {} } = {}) {
+/** Pure: the reading, from rows of FIRST_SESSION_SQL, FIRST_SESSION_OPENS_SQL
+ * and the answer split of FIRST_SESSION_ANSWERS_SQL. */
+function firstSessionReading(rows, opens, { week, recordedFrom = {}, answers = { asked: 0, made: 0, lookedAround: 0 } } = {}) {
   const people = rows.map(firstSessionPerson);
   const make = people.filter((p) => p.path === 'make');
   const join = people.filter((p) => p.path === 'join');
@@ -1796,6 +1815,11 @@ function firstSessionReading(rows, opens, { week, recordedFrom = {} } = {}) {
       opened: recordedFrom.opens ? Number(opens || 0) : notRecorded('Not recorded before invite opens were counted.'),
       joined: join.length,
     },
+    answers: {
+      asked: answers.asked || 0,
+      made: answers.made || 0,
+      lookedAround: answers.lookedAround || 0,
+    },
     recordedFrom: { make: iso(recordedFrom.make), reward: iso(recordedFrom.reward), opens: iso(recordedFrom.opens) },
     examples: [...people].reverse().slice(0, FIRST_SESSION_EXAMPLES),
   };
@@ -1803,14 +1827,23 @@ function firstSessionReading(rows, opens, { week, recordedFrom = {} } = {}) {
 
 /** The first session for `week` (or all time); `memberIds` narrows to one cohort. */
 async function firstSession(pool, { week, leftOutIds = [], memberIds = null } = {}) {
-  const [{ rows }, { rows: [rec] }] = await Promise.all([
+  const [{ rows }, { rows: [rec] }, { rows: allAnswers }] = await Promise.all([
     pool.query(FIRST_SESSION_SQL, [week.start, week.end, ...realPersonParams(leftOutIds)]),
     pool.query(FIRST_SESSION_OPENS_SQL, [week.start, week.end]),
+    pool.query(FIRST_SESSION_ANSWERS_SQL, [week.start, week.end, ...realPersonParams(leftOutIds)]),
   ]);
   const mine = rows.filter((row) => !memberIds || memberIds.has(Number(row.user_id)));
+  // Narrowed to a cohort: the accounts its members created.
+  const mineAnswers = allAnswers.filter((row) => !memberIds || memberIds.has(Number(row.id)));
   const r = rec || {};
   return firstSessionReading(mine, r.opened, {
-    week, recordedFrom: { make: r.make || null, reward: r.reward || null, opens: r.opens || null },
+    week,
+    answers: {
+      asked: mineAnswers.filter((row) => row.asked === true).length,
+      made: mineAnswers.filter((row) => row.answer === 'made').length,
+      lookedAround: mineAnswers.filter((row) => row.answer === 'looked_around').length,
+    },
+    recordedFrom: { make: r.make || null, reward: r.reward || null, opens: r.opens || null },
   });
 }
 
@@ -2031,6 +2064,7 @@ module.exports = {
   CREATION_TARGETS,
   FIRST_SESSION_SQL,
   FIRST_SESSION_OPENS_SQL,
+  FIRST_SESSION_ANSWERS_SQL,
   FIRST_SESSION_MINUTES,
   FIRST_REWARD_TARGET,
   PAIRS_SQL,

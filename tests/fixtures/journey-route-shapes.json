@@ -246,6 +246,11 @@
     "week": "string"
   },
   "firstSession": {
+    "answers": {
+      "asked": "number",
+      "lookedAround": "number",
+      "made": "number"
+    },
     "examples": [],
     "finished": "boolean",
     "join": {
