@@ -465,6 +465,99 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     assert.deepEqual((await homeroomBot.readSettings(pool)).firstVersionApps, [], 'off the list, back to shadow');
   });
 
+  await t.test('#4046: a plan with its own answers closes the hello\'s generic prompts; a plan without leaves them', async () => {
+    const maker = await user('maker');
+    await setting('homeroom_bot_dm_users', JSON.stringify([maker.username]));
+    const { rows: [project] } = await pool.query(
+      `INSERT INTO apps (name, slug, status, created_by) VALUES ('Run club', 'run-club', 'creating', $1) RETURNING *`,
+      [maker.id],
+    );
+    const started = await dm.startFirstVersion(pool, {}, {
+      app: project, user: maker, brief: 'Track our club\'s weekly miles so we can see who is keeping up.',
+    });
+    assert.ok(started.conversationId, 'the DM opened for the maker');
+    const { rows: [hello] } = await pool.query(
+      `SELECT id, metadata->'homeroomBot' AS meta FROM conversation_messages
+        WHERE conversation_id = $1 AND sender_id = $2 AND deleted_at IS NULL
+          AND metadata->'homeroomBot'->>'status' = 'open'
+          AND jsonb_typeof(metadata->'homeroomBot'->'actions') = 'array'
+        ORDER BY id DESC LIMIT 1`,
+      [started.conversationId, bot.id],
+    );
+    assert.ok(hello, 'the maker hello went out with its prompts');
+    assert.deepEqual(hello.meta.actions.map((a) => [a.type, a.label]),
+      dm.MAKER_PROMPTS.map((label) => ['prompt', label]), 'the three generic questions, open');
+
+    const { rows: [run] } = await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict) VALUES ($1, 1, 'live', 'ready') RETURNING id`,
+      [project.id],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title, first_version)
+       VALUES ($1, 1, $2, 'First version of Run club', TRUE)`,
+      [project.id, maker.id],
+    );
+    const botUser = await dm.botAccount(pool);
+    const updates = () => events.filter((e) => e.payload?.type === 'conversation_message_updated').length;
+    const before = updates();
+    const sent = await dm.sendPlanCard(pool, {
+      app: project, issueNumber: 1, runId: run.id,
+      plan: {
+        bullets: ['A weekly list of your club\'s runners and their miles', 'A Log run button to add your miles'],
+        questions: [{ text: 'How should keeping up be judged?', answers: ['Each runner picks their own goal', 'One shared target'] }],
+      },
+      bot: botUser,
+    });
+    assert.ok(sent?.messageId, 'the plan card was sent');
+    const { rows: [after] } = await pool.query(
+      'SELECT metadata->\'homeroomBot\' AS meta FROM conversation_messages WHERE id = $1', [hello.id],
+    );
+    assert.equal(after.meta.status, 'closed', 'the hello\'s prompts close while the plan asks its own');
+    assert.deepEqual(after.meta.actions.map((a) => a.label), [...dm.MAKER_PROMPTS], 'its actions are untouched');
+    assert.equal(updates(), before + 1, 'the close was pushed to the DM as a message update');
+
+    // A plan without questions of its own leaves the generic prompts open.
+    const other = await user('maker2');
+    await setting('homeroom_bot_dm_users', JSON.stringify([other.username]));
+    const { rows: [otherApp] } = await pool.query(
+      `INSERT INTO apps (name, slug, status, created_by) VALUES ('Walk club', 'walk-club', 'creating', $1) RETURNING *`,
+      [other.id],
+    );
+    const otherStarted = await dm.startFirstVersion(pool, {}, {
+      app: otherApp, user: other, brief: 'Log our walks and show the week\'s total for each of us.',
+    });
+    assert.ok(otherStarted.conversationId);
+    const { rows: [otherHello] } = await pool.query(
+      `SELECT id, metadata->'homeroomBot' AS meta FROM conversation_messages
+        WHERE conversation_id = $1 AND sender_id = $2 AND deleted_at IS NULL
+          AND metadata->'homeroomBot'->>'status' = 'open'
+          AND jsonb_typeof(metadata->'homeroomBot'->'actions') = 'array'
+        ORDER BY id DESC LIMIT 1`,
+      [otherStarted.conversationId, bot.id],
+    );
+    assert.ok(otherHello, 'the second maker hello went out too');
+    const { rows: [otherRun] } = await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict) VALUES ($1, 1, 'live', 'ready') RETURNING id`,
+      [otherApp.id],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title, first_version)
+       VALUES ($1, 1, $2, 'First version of Walk club', TRUE)`,
+      [otherApp.id, other.id],
+    );
+    const plain = await dm.sendPlanCard(pool, {
+      app: otherApp, issueNumber: 1, runId: otherRun.id,
+      plan: { bullets: ['A walk log for each of us'], questions: [] },
+      bot: botUser,
+    });
+    assert.ok(plain?.messageId);
+    const { rows: [otherAfter] } = await pool.query(
+      'SELECT metadata->\'homeroomBot\' AS meta FROM conversation_messages WHERE id = $1', [otherHello.id],
+    );
+    assert.equal(otherAfter.meta.status, 'open', 'no questions on the plan: the prompts stay');
+    await setting('homeroom_bot_dm_users', '[]');
+  });
+
   await t.test('anybody else\'s description is filed as the first request too, and the bot is left out of it', async () => {
     // Sam is not on the DM list: the same record and filing, and nothing of
     // the bot's (no DM, no requester row, not live, no wake, no failure DM).

@@ -1130,6 +1130,39 @@ async function setQuestionState(pool, messageId, patch, { ws = null, conversatio
   });
 }
 
+/**
+ * #4046: close the open generic prompts (the hello's questions to tap) in one
+ * DM, while the plan that was just sent there carries its own suggested
+ * answers: those are what the person answers next. Hellos are never recorded
+ * in homeroom_bot_dm_messages, so closeOpenQuestions never reaches them;
+ * their buttons are prompt actions in the message itself, which this reads
+ * the way settlePrompt does. A prompt already tapped ('answered') is left as
+ * it is. Never throws.
+ */
+async function closeOpenPrompts(pool, { conversationId, botId, userId, ws = null }) {
+  if (!conversationId || !botId) return 0;
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, conversation_id FROM conversation_messages
+        WHERE conversation_id = $1 AND sender_id = $2 AND deleted_at IS NULL
+          AND metadata->'homeroomBot'->>'status' = 'open'
+          AND jsonb_typeof(metadata->'homeroomBot'->'actions') = 'array'
+          AND EXISTS (
+                SELECT 1 FROM jsonb_array_elements(metadata->'homeroomBot'->'actions') a
+                 WHERE a->>'type' = 'prompt'
+              )`,
+      [conversationId, botId],
+    );
+    for (const row of rows) {
+      await setQuestionState(pool, row.id, { status: 'closed' }, { ws, conversationId: row.conversation_id, userId });
+    }
+    return rows.length;
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not close the hello\'s prompts', { conversationId, err: err.message });
+    return 0;
+  }
+}
+
 // #3767: the news an activity card that is still the newest message about
 // its request already says, so it is not sent again.
 const CARD_SAYS = new Set(['spec']);
@@ -1445,6 +1478,14 @@ async function sendPlanCard(pool, { app, issueNumber, runId, plan, bot, ws = nul
       });
     }
     await closeOpenQuestions(pool, { userId: requester.userId, appId: app.id, issueNumber, ws });
+    // #4046: with the plan's own suggested answers up, the hello's generic
+    // questions are not what this person answers next. A plan without
+    // questions leaves them as they are.
+    if (questions.length) {
+      await closeOpenPrompts(pool, {
+        conversationId: sent.conversationId, botId: bot.id, userId: requester.userId, ws,
+      });
+    }
     await pool.query(
       `INSERT INTO homeroom_bot_dm_messages (message_id, user_id, conversation_id, app_id, issue_number, kind, run_id)
        VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (message_id) DO NOTHING`,
