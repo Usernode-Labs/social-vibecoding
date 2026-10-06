@@ -8370,6 +8370,36 @@
       "reason": "public immutable share document"
     },
     {
+      "source": "src/routes/request-specs.js",
+      "method": "POST",
+      "path": "/api/apps/:slug/issues/:number/spec",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "issues.post.apps.item.issues.item.spec.f5cb542c",
+      "domain": "issues",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "issue",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#app/:slug/dev/issues/:number"
+    },
+    {
+      "source": "src/routes/request-specs.js",
+      "method": "GET",
+      "path": "/api/apps/:slug/issues/:number/specs",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "issues.get.apps.item.issues.item.specs.7704d10e",
+      "domain": "issues",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "issue",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#app/:slug/dev/issues/:number"
+    },
+    {
       "source": "src/routes/sessions.js",
       "method": "GET",
       "path": "/api/sessions/:id/description",

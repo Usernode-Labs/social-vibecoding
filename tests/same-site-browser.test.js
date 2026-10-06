@@ -238,6 +238,7 @@ const EXEMPT = new Map([
   ['public-api.js POST /api/public/waitlist/confirm', JSON_FIELD],
   ['public-api.js POST /api/public/waitlist/more/:token', JSON_FIELD],
   ['report-snapshots.js POST /api/apps/:slug/report-snapshots', JSON_FIELD],
+  ['request-specs.js POST /api/apps/:slug/issues/:number/spec', JSON_FIELD],
   ['sessions.js POST /api/sessions/:id/attachments', RAW],
   ['sessions.js POST /api/sessions/:id/chat', JSON_FIELD],
   ['sessions.js POST /api/sessions/:id/specs/:version/share-user', JSON_FIELD],

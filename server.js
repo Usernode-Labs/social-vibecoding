@@ -38,6 +38,7 @@ const { publicApiRoutes } = require('./src/routes/public-api');
 const { publicProfileRoutes } = require('./src/routes/profiles');
 const { waitlistConnectRoutes } = require('./src/routes/waitlist-connect');
 const { issueRoutes } = require('./src/routes/issues');
+const { requestSpecRoutes } = require('./src/routes/request-specs');
 const { campaignRoutes } = require('./src/routes/campaigns');
 const { adminRoutes } = require('./src/routes/admin');
 const { adminSupportRoutes } = require('./src/routes/admin-support');
@@ -290,6 +291,14 @@ app.use((req, res, next) => {
   if (req.method === 'POST'
       && /^\/api\/apps\/[^/]+\/pr-import$/.test(req.path)) {
     return express.json({ limit: '512kb' })(req, res, next);
+  }
+  // A spec posted on a request (routes/request-specs.js) may be an HTML
+  // document of up to 600,000 characters (spec-html.js MAX_SPEC_HTML_CHARS),
+  // which JSON escaping makes larger still. The route checks the length
+  // itself and refuses an oversized spec with the numbers.
+  if (req.method === 'POST'
+      && /^\/api\/apps\/[^/]+\/issues\/[^/]+\/spec$/.test(req.path)) {
+    return express.json({ limit: '1mb' })(req, res, next);
   }
   express.json()(req, res, next);
 });
@@ -638,6 +647,7 @@ app.use(publicProfileRoutes(config));
 // Anonymous via the '/waitlist/connect/' PUBLIC_PATHS prefix.
 app.use(waitlistConnectRoutes(config));
 app.use(issueRoutes(config));
+app.use(requestSpecRoutes(config));
 app.use(campaignRoutes(config));
 app.use(adminRoutes(config));
 // #3654: the Homeroom bot's benchmark (services/bench/), beside its console.

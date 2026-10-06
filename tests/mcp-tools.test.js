@@ -585,8 +585,9 @@ test('get_request returns the whole description the board scan cut', async () =>
 
     // Same route the scan already uses: no new platform endpoint, and
     // nothing added to the connector allowlist to read what it could reach.
+    // The second read is the request's spec list (services/request-specs.js).
     assert.deepEqual([...new Set(calls.map((c) => `${c.method} ${c.pathname}`))],
-      ['GET /api/apps/recipe-box/github-issues']);
+      ['GET /api/apps/recipe-box/github-issues', 'GET /api/apps/recipe-box/issues/1221/specs']);
   } finally {
     restore();
   }
@@ -832,7 +833,9 @@ test('get_request skips the pictures when asked, and for a model that cannot see
     assert.deepEqual(result.structuredContent.images,
       [{ url: `${ORIGIN}/issue-images/${SHOT('f')}`, attached: false, reason: 'not_requested' }]);
     assert.deepEqual(result.content.map((b) => b.type), ['text']);
-    assert.deepEqual(optedOut.calls.map((x) => x.pathname), ['/api/apps/recipe-box/github-issues']);
+    // No screenshot fetched; the spec list is the only other read.
+    assert.deepEqual(optedOut.calls.map((x) => x.pathname),
+      ['/api/apps/recipe-box/github-issues', '/api/apps/recipe-box/issues/5/specs']);
   } finally {
     optedOut.restore();
   }
@@ -2318,6 +2321,9 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     'get_discussion',
     'get_platform_build', 'get_platform_conventions', 'get_proposal',
     'get_request',
+    // Specs on a request (services/request-specs.js): reading one, and the
+    // platform's own format for writing one. post_spec, below, posts it.
+    'get_spec', 'get_spec_format',
     // #3654. The Homeroom bot benchmark's judge (get_bench_item above it,
     // list_bench_grading_queue and submit_bench_grade below): registered only
     // for a full platform admin, and every route behind them refuses anybody
@@ -2332,6 +2338,9 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     // feed — see the allow-rule reasoning in services/mcp-connect-constants.js
     // for why that is a different category from the acting tools below.
     'notify_awaiting_input', 'notify_input_received',
+    // A person's spec on a request, for the group to review before anything
+    // is built. It builds, claims and votes on nothing (request-specs.js).
+    'post_spec',
     'prepare_work',
     // #2779. The native change lifecycle. recheck_change is on every surface;
     // the other four are registered only for an agent session's Mayor — see
@@ -2556,7 +2565,7 @@ test('ACTING_TOOLS names every user-directed action, and every one is a write', 
     'create_request', 'create_test_account',
     'demo_mode', 'demo_promote', 'demo_propose', 'demo_reset', 'demo_vote',
     'label_bench_task', 'launch_bench_run',
-    'prepare_work', 'promote_change', 'propose_close_request', 'recheck_change',
+    'post_spec', 'prepare_work', 'promote_change', 'propose_close_request', 'recheck_change',
     'retire_test_account', 'start_change',
     'start_platform_build', 'submit_bench_grade',
     'submit_platform_build', 'submit_work', 'sync_change',

@@ -63,6 +63,11 @@ test('the allowlist permits exactly the routes the tools need', () => {
     // which only the issues route above can put on the board
     // (tests/mcp-create-request-images.test.js).
     ['POST', '/api/feedback/screenshot'],
+    // Specs on a request: post_spec, its list, and the spec card's own
+    // version read (tests/mcp-request-specs.test.js).
+    ['POST', '/api/apps/recipe-box/issues/12/spec'],
+    ['GET', '/api/apps/recipe-box/issues/12/specs'],
+    ['GET', '/api/sessions/412/specs/2'],
     ['GET', '/api/sessions/412'],
     ['GET', '/api/sessions/412/status'],
     ['GET', '/api/sessions/412/spec'],

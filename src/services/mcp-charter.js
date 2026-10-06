@@ -141,6 +141,14 @@ const CHARTER_SECTIONS = Object.freeze([
     text: 'create_request files an ordinary feature request or bug report on an app. propose_close_request is its counterpart for a request that should go — already done, a duplicate, out of scope or no longer wanted: it opens a group vote on closing it, with the reason you give, and the request stays open unless that vote passes. Neither changes secrets, settings, permissions or votes — this connector cannot do those things at all, so do not offer them, and never say a request is closed because you proposed it. Write the report in full: no tool here shortens what you send, so a body under the limit its description names is stored exactly as written, and one over it is refused with the numbers rather than trimmed.',
   },
   {
+    // External only (no `audiences`): post_spec is an external client's tool.
+    // Charter-only for the same reason as the section above: each tool's own
+    // description carries its limits at the point of use.
+    id: 'specs-on-requests',
+    title: 'Specs on a request',
+    text: 'A spec says what a change will do and how, and the group reads it before anything is built. post_spec puts one on an open request: read get_spec_format first, then write one HTML document that leads with before/after screens. It appears as a card in the request\'s discussion, and posting again on the same request adds your next version, so a review round is a revision rather than a new spec. It builds nothing, claims nothing and starts no vote. get_request lists the specs on a request and get_spec reads one. When you build a request that has a spec, build to it, and say in your submission where you departed from it and why; prepare_work names the newest spec in the work order for that reason.',
+  },
+  {
     id: 'work-order-handling',
     title: 'Getting something built',
     // The patch-or-branch clause in the brief (#3687) is there because a

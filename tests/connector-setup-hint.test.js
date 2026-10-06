@@ -135,7 +135,7 @@ test('every read tool returns through readResult and no others do', () => {
   assert.deepEqual([...new Set(hinted)].sort(), [
     'get_app', 'get_bench_item', 'get_bench_run', 'get_change', 'get_checkout_status', 'get_connector_guidance', 'get_discussion',
     'get_platform_build', 'get_platform_conventions', 'get_proposal',
-    'get_request', 'list_apps', 'list_bench_grading_queue', 'list_bench_runs', 'list_my_proposals', 'list_requests',
+    'get_request', 'get_spec', 'get_spec_format', 'list_apps', 'list_bench_grading_queue', 'list_bench_runs', 'list_my_proposals', 'list_requests',
     'list_test_accounts', 'whoami',
   ]);
   for (const name of hinted) {
