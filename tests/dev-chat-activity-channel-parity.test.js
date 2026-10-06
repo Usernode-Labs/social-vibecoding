@@ -66,7 +66,7 @@ const CHANNELS = [
   {
     name: 'POST SSE (DevChat.sendMessage)',
     block: () => slice(
-      DEV_CHAT, '  async sendMessage(message, attachments = []) {',
+      DEV_CHAT, '  async sendMessage(message, attachments = [], opts = {}) {',
       '  _handleResumedEvent(data, sessionId) {', 'the POST SSE handler'
     ),
     // Direct DevChat.* calls — same file, no ordering concern.

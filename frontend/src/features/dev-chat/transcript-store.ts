@@ -249,6 +249,15 @@ export type TranscriptRow =
     /** A Claude-Code row's "Full output" disclosure. */
     more?: { details: DetailsSpec; html: string };
     /**
+     * #4012: the server never took this send — you were offline, or the
+     * connection dropped first. The bubble keeps its normal look and the
+     * note under its text says the state, with Retry beside it.
+     * `clientKey` is what Retry re-sends under, so a message the server
+     * did store after all is recognised there, never sent twice.
+     */
+    notSent?: boolean;
+    clientKey?: string;
+    /**
      * #32's suggested-answer chips, on the last conversational row.
      *
      * `multi` is "does this need a shared Send row" rather than literally

@@ -77,6 +77,23 @@ function loadStoredModel() {
   }
 }
 
+// #4012: a client message id per send. The chat route reads an optional
+// `client_message_id` (services/chat-delivery.js) and, when a retry carries
+// the same id, answers with the stored message's `accepted` event marked
+// `duplicate: true` instead of starting a second turn. The dev chat never
+// sent one; it does now, so a Not sent row can be retried safely. The shape
+// is the one `normalizeIdempotencyKey` (services/conversations.js) accepts
+// and `newClientId` (features/agent-session/outbox.ts) produces: 8 to 64 of
+// [A-Za-z0-9._:-], starting with a letter or digit. A local helper, not an
+// import of outbox.ts — the vm-based suites evaluate this file as a classic
+// script, where a top-level `import` is a syntax error.
+function newDcClientId() {
+  const random = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID().replace(/-/g, '')
+    : `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`;
+  return `c${random}`.slice(0, 40);
+}
+
 const DevChat = {
   sessions: [],
   // How many finished sessions the list left out (loadSessions), and the app
@@ -5047,7 +5064,7 @@ const DevChat = {
 
   // ── Streaming + send ─────────────────────────────────────
 
-  async sendMessage(message, attachments = []) {
+  async sendMessage(message, attachments = [], opts = {}) {
     if (!DevChat.currentSession || DevChat.isStreaming) return;
     // #450: attachments-only sends are allowed; the server stores a
     // "(attached files)" stub caption, mirrored here for the optimistic
@@ -5090,6 +5107,11 @@ const DevChat = {
     }
     const model = DevChat.selectedModel;
     const openRouterSession = DevChat._isOpenRouterSession();
+    // #4012: this send's idempotency key. A retry passes the failed send's
+    // own back in, so the server recognises a message it already stored
+    // (chat-delivery.js answers with its `accepted` event, duplicate: true)
+    // instead of starting a second turn.
+    const clientKey = (opts && opts.clientMessageId) || newDcClientId();
     DevChat.isStreaming = true;
     // #889: defensive — a fresh turn must never paint the previous turn's
     // "Stopping…" button. Every teardown path already clears this, but the
@@ -5119,6 +5141,11 @@ const DevChat = {
       content: message || '(attached files)',
       created_at: new Date().toISOString(),
       ...(sentAttachments.length ? { attachments: sentAttachments } : {}),
+      // #4012: the idempotency key a retry re-sends, and the raw typed text
+      // (which may be '' for an attachments-only send) a retry pushes again.
+      // Both live only on this page; the server stores neither.
+      _clientKey: clientKey,
+      _retryText: message || '',
     });
     // Clear the composer strip — restored on the failure paths below.
     if (sentAttachments.length) {
@@ -5151,6 +5178,7 @@ const DevChat = {
           message,
           ...(!openRouterSession ? { model } : {}),
           ...(sentAttachments.length ? { attachmentIds: sentAttachments.map((a) => a.id) } : {}),
+          clientMessageId: clientKey,
         }),
         signal: DevChat._abortController.signal,
       });
@@ -5611,6 +5639,27 @@ const DevChat = {
       // the server took the message drops the cue.
       if (err.name !== 'AbortError' && !accepted) {
         DevChat._removeSpinner();
+        // #4012: a send the server never took — you were offline, or the
+        // connection dropped before the server answered — stays in the
+        // transcript marked Not sent, with Retry, the same recovery the
+        // Messages outbox gives its sends. The words live in the row, never
+        // handed back to the composer behind the user's back, so the same
+        // text cannot sit in two places and go out twice. A mid-stream
+        // abort (session switch, stop) keeps the old handling, and anything
+        // after `accepted` keeps the resumable-stream recovery below
+        // (tests/dev-chat-accepted-delivery.test.js). No row found means
+        // the session was switched out from under this send; its
+        // transcript was replaced and there is nothing to mark.
+        const failedRow = DevChat.messages.find((m) => m._clientKey === clientKey);
+        if (failedRow) {
+          failedRow._sendFailed = true;
+          // The never-started turn is torn down whole: isStreaming false,
+          // spinner gone, composer re-enabled, resumable stream closed,
+          // poll stopped — the tail below then skips arming either.
+          DevChat._finishStreaming();
+          DevChat.renderMessages();
+          DevChat.scrollToBottom();
+        }
       }
     }
     // #2599: the primary stream is gone (drained, died or aborted) — from
@@ -5643,6 +5692,42 @@ const DevChat = {
       if (!DevChat._eventSource && !DevChat._progressPollTimer) {
         DevChat._startProgressPolling(DevChat.currentSession.id, []);
       }
+    }
+  },
+
+  // #4012: send again a message the server never took. The failed row is
+  // removed and sendMessage runs again with the SAME client id, the same
+  // text and the same already-uploaded attachment ids (no re-upload), so a
+  // message the server did store after all is answered by its duplicate
+  // `accepted` event, never a second turn. The guard is a live turn: Retry
+  // does nothing while the agent is running, and works once it is over.
+  // A retry that fails again re-marks the fresh row Not sent under the same
+  // id and loses nothing.
+  async _retryFailedSend(clientKey) {
+    if (DevChat.isStreaming || !clientKey) return;
+    const idx = DevChat.messages.findIndex((m) => m._clientKey === clientKey && m._sendFailed);
+    if (idx < 0) return;
+    const row = DevChat.messages[idx];
+    DevChat.messages.splice(idx, 1);
+    try {
+      await DevChat.sendMessage(row._retryText || '', (row.attachments || []).filter((a) => a && a.id), { clientMessageId: clientKey });
+    } catch { /* a second failure re-marks the fresh row Not sent */ }
+  },
+
+  // #4012: on the connection coming back, resend everything the OPEN change
+  // still has marked Not sent, oldest first, without waiting for a press —
+  // what Messages' retryPending and group-chat's _flushPendingOutgoing
+  // already do on their surfaces. Only the current session's rows are in
+  // memory and each carries its own payload, so walking the transcript is
+  // the whole queue. A message queued on another change waits for its own
+  // Retry button when that change is open again: auto-sending into a change
+  // nobody is looking at would start agent turns nobody asked for.
+  async _flushFailedSends() {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+    if (!DevChat.currentSession || DevChat.isStreaming) return;
+    for (const m of [...DevChat.messages]) {
+      if (!m._sendFailed || !m._clientKey) continue;
+      await DevChat._retryFailedSend(m._clientKey);
     }
   },
 
@@ -8237,6 +8322,10 @@ const DevChat = {
         ...(!isUser && hadChatOnly
           ? { reasoning: { details: DevChat._detailsSpec(msg, 'mayorraw', false), raw: rawContent } }
           : null),
+        // #4012: a user row the server never took stays in the transcript
+        // wearing its Not sent note. Page memory only: a reload while still
+        // offline loses it.
+        ...(isUser && msg._sendFailed ? { notSent: true, clientKey: msg._clientKey } : null),
         ...(wantsQa ? { qa: DevChat._qaSpec(msg) } : null),
       });
     });
@@ -9372,6 +9461,10 @@ const DevChat = {
     // actions. The host outlives every repaint of its contents, so one
     // delegated listener on it covers every row a later publish adds.
     container.addEventListener('click', (e) => {
+      // #4012: Retry on a Not sent row — delegated like the Q/A chips, the
+      // button being React-rendered with no onClick of its own.
+      const retryBtn = e.target.closest('[data-dc-retry]');
+      if (retryBtn) { void DevChat._retryFailedSend(retryBtn.dataset.dcRetry); return; }
       // Q/A chips (#32) — delegated like the spec cards, so innerHTML
       // rewrites inside renderMessages don't drop the handlers.
       const chip = e.target.closest('[data-qa-group]');
@@ -12746,6 +12839,11 @@ if (typeof window !== 'undefined') {
   document.addEventListener('visibilitychange', DevChat._awayReturnHandler);
   window.addEventListener('focus', DevChat._awayReturnHandler);
   window.addEventListener('blur', DevChat._awayReturnHandler);
+
+  // #4012: the connection is back — resend whatever the open change still
+  // has marked Not sent, oldest first, the way Messages and the general
+  // chat already flush theirs.
+  window.addEventListener('online', () => { void DevChat._flushFailedSends(); });
 
   // Tab close / hard navigation while a turn is streaming: a normal fetch
   // may be killed mid-flight, so arm via sendBeacon (cookies ride along;

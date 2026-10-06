@@ -6071,6 +6071,33 @@ body:has(#platform-header.hidden) #app-frame-host {
   color: var(--text-muted);
 }
 
+/* ── A send the server never took (#4012) ─────────────────────────────
+   The Messages recipe (.messages-message-failed-note): the state word in
+   red, Retry beside it in the accent and underlined. The note sits inside
+   your own bubble, under its text and any attachments, and the failed
+   state is said by the note — the bubble keeps its normal accent tint,
+   not a red repaint. */
+.dc-msg-failed-note {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-top: 4px;
+  font-size: 13px;
+}
+.dc-msg-failed-note .dc-msg-failed-word { color: var(--danger, #b91c1c); }
+.dark .dc-msg-failed-note .dc-msg-failed-word { color: #f87171; }
+.dc-msg-retry {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .dc-msg-content p, .dc-p { margin-top: 0.5em; }
 
 /* ── Markdown ──────────────────────────────────────────── */

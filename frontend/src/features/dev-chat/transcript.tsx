@@ -658,6 +658,18 @@ function Bubble({ r }: { r: Extract<TranscriptRow, { t: 'msg' }> }): ReactNode {
           )))}
         </div>
       ) : null}
+      {/* #4012's note: the server never took this send. Same recipe as the
+          Messages screen's failed message — the state word in red, Retry
+          beside it — sitting inside your own bubble under its text and
+          attachments. No onClick — `initScrollTracking`'s delegated
+          listener on `#dc-messages` reads `data-dc-retry` off it, like the
+          Q/A chips below. role="status" so a screen reader announces it. */}
+      {r.notSent ? (
+        <div className="dc-msg-failed-note" role="status">
+          <span className="dc-msg-failed-word">Not sent</span>
+          <button type="button" className="dc-msg-retry" data-dc-retry={r.clientKey}>Retry</button>
+        </div>
+      ) : null}
       {r.reasoning ? (
         <details
           className="dc-cc-log" style={{ marginTop: '6px' }}

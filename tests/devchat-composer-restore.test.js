@@ -16,6 +16,10 @@
 //   2. 500 non-ok  → text restored, optimistic bubble gone.
 //   3. AbortError  → NOT restored (session switch / deliberate teardown;
 //                    restoring would write into another session's box).
+// #4012 adds a fourth: a NETWORK failure (offline, connection dropped
+// before the server answered) does not restore either — the words live in
+// the Not sent row and its Retry button, so the same text cannot sit in
+// two places and go out twice. See tests/dev-chat-send-retry.test.js.
 //
 // Run with: node --test tests/devchat-composer-restore.test.js
 
@@ -200,6 +204,23 @@ test('generic non-ok (500) restores the typed text', async () => {
     DevChat.messages.some((m) => m.role === 'assistant' && /Couldn't send message/.test(m.content)),
     'send-failed notice present'
   );
+});
+
+test('#4012: a network failure does NOT restore the composer — the row is marked Not sent instead', async () => {
+  const { DevChat, sandbox, document, storage } = makeHarness();
+  sandbox.fetch = async () => { throw new TypeError('Failed to fetch'); };
+
+  await drive(DevChat, document);
+
+  const input = document.getElementById('dc-input');
+  assert.equal(input.value, '', 'typed text is NOT handed back to the composer');
+  assert.equal(storage.get(`usernode:dc-draft:${SESSION_ID}`), undefined, 'draft not re-written');
+  assert.equal(DevChat.isStreaming, false, 'streaming torn down');
+  assert.equal(input.disabled, false, 'composer re-enabled');
+  const row = DevChat.messages.find((m) => m.role === 'user');
+  assert.ok(row, 'the optimistic row stays in the transcript');
+  assert.equal(row._sendFailed, true, 'marked Not sent, with its Retry button');
+  assert.equal(row._retryText, MSG, 'the raw typed text lives on the row');
 });
 
 test('AbortError (session switch) does NOT repopulate the composer', async () => {

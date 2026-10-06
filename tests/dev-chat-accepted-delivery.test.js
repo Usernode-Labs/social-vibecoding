@@ -8,7 +8,9 @@
 // message is stored. Past that event, a broken stream (a slow or mobile
 // network dropping it a few hundred bytes in) leaves the turn's live cue up
 // and resumes the turn from the event's _seq through GET /events?since=.
-// A stream that breaks before it keeps the old handling.
+// #4012: a stream that breaks before it marks the send Not sent instead —
+// the server never took the message, so there is nothing to follow and the
+// row stays in the transcript with its Retry button.
 //
 // Drives the REAL sendMessage in a vm with a fake DOM, the
 // tests/devchat-composer-restore.test.js harness, with a response body that
@@ -146,11 +148,15 @@ test('a stream that breaks after `accepted` keeps the turn live and resumes it f
   assert.equal(getEl('dc-input').value, '', 'nothing is handed back to the composer');
 });
 
-test('a stream that breaks before `accepted` keeps the old handling', async () => {
+test('a stream that breaks before `accepted` marks the send Not sent (#4012)', async () => {
   const { DevChat, calls } = makeHarness([]);
   await send(DevChat);
 
   assert.equal(calls.removeSpinner, 1, 'no proof of delivery: the live cue drops as before');
-  assert.deepEqual(calls.resumed, [{ sessionId: SESSION_ID, since: null }],
-    'and the same fallback still looks for the turn');
+  const row = DevChat.messages.find((m) => m.role === 'user');
+  assert.ok(row, 'the optimistic row stays in the transcript');
+  assert.equal(row._sendFailed, true, 'marked Not sent, with its Retry button');
+  assert.equal(DevChat.isStreaming, false, 'nothing to follow: the server never took the message');
+  assert.deepEqual(calls.resumed, [],
+    'no fallback is armed for a turn that never started');
 });

@@ -410,7 +410,7 @@ test("the resumable 'done' and 'stopped' arms end the turn through the shared-ch
   }
   assert.match(body, /_noteLiveTurnEvent\(data, sessionId\)/, 'every resumable event is live evidence');
   const post = SRC.slice(
-    SRC.indexOf('  async sendMessage(message, attachments = []) {'),
+    SRC.indexOf('  async sendMessage(message, attachments = [], opts = {}) {'),
     SRC.indexOf('  _handleResumedEvent(data, sessionId) {'),
   );
   assert.match(post, /_noteLiveTurnEvent\(data, sessionId\)/, 'and so is every primary-stream event');
