@@ -55,6 +55,40 @@ test('parseVerdict: "none" clears missing_fact, ready keeps its note, person kee
   assert.equal(person.reason, 'Changes the login flow.');
 });
 
+test('parseVerdict finds the last verdict object whatever surrounds it', () => {
+  // The notes quote code in a fence of their own and the block's closing
+  // fence never comes: the old reader took the code fence as the only
+  // candidate and never looked at braces at all.
+  const unclosed = [
+    'The handler is `function pick(o) { return o.id; }`:',
+    '```js',
+    'const pins = { drift: true };',
+    '```',
+    'So:',
+    '```json',
+    '{"verdict":"person","determined":true,"reason":"Changes the login flow."}',
+  ].join('\n');
+  assert.equal(bot.parseVerdict(unclosed)?.verdict, 'person');
+  // A stray brace in the prose before a bare block: first `{` to last `}`
+  // spanned the prose and failed to parse.
+  const stray = 'Wraps the list in a { group.\n{"verdict":"empty","determined":true,"reason":"Nothing to build."}';
+  assert.equal(bot.parseVerdict(stray)?.verdict, 'empty');
+  // Braces inside strings, a nested object, and a later object with no
+  // verdict: the outer verdict object is the one read.
+  const nested = [
+    '```json',
+    '{"verdict":"question","determined":false,"missing_fact":"which","question":"Which screen?","default":"The map",',
+    ' "answers":["The map","The list"],"blocker":"user_facing","why_default_fails":"Two screens draw it {differently}.",',
+    ' "second_question":{"question":"Which zoom?","answers":["All","Close"]}}',
+    '```',
+    '{"note":"not a verdict"}',
+  ].join('\n');
+  const q = bot.parseVerdict(nested);
+  assert.equal(q?.verdict, 'question');
+  assert.equal(q.question, 'Which screen?');
+  assert.equal(q.reason, 'user_facing: Two screens draw it {differently}.');
+});
+
 test('parseVerdict refuses anything that is not one of the three verdicts', () => {
   assert.equal(bot.parseVerdict(''), null);
   assert.equal(bot.parseVerdict('no json here'), null);
@@ -1669,12 +1703,106 @@ test('runTriage: an unusable reply is a failed run that consumes the row; the we
   assert.equal(insert.params[4], 'failed');
   assert.match(insert.params[18], /unparseable/);
   assert.ok(bad.calls.queries.some((q) => /DELETE FROM homeroom_bot_queue/.test(q.s)), 'not retried until the thread changes');
+  assert.equal(bad.calls.exec.length, 1, 'with no thread to resume, nothing is asked again');
 
   const capped = triageHarness({ verdictText: 'x', budgetError: 'Weekly limit reached' });
   const paused = await bot.runTriage(capped.pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps: capped.deps });
   assert.deepEqual({ ran: paused.ran, reason: paused.reason }, { ran: false, reason: 'budget' });
   assert.equal(capped.calls.exec.length, 0, 'no turn is dispatched over the cap');
   assert.ok(!capped.calls.queries.some((q) => /homeroom_bot_queue/.test(q.s)), 'the queue is left alone');
+});
+
+// The triage reply, then the reply to the one turn that asks for its block.
+function repairHarness(sessionId, replies, costs = [0.02, 0.005]) {
+  const h = triageHarness({ verdictText: 'unused', sessionId });
+  h.loops = [];
+  h.deps.worker.execInWorker = async (id, opts) => {
+    h.calls.exec.push({ id, opts });
+    return replies[h.calls.exec.length - 1];
+  };
+  h.deps.sessions.runCodexAttemptLoop = async ({ dispatchOnce, resumeThreadId }) => {
+    h.loops.push({ resumeThreadId });
+    const result = await dispatchOnce({ openrouterApiKey: 'k', resumeThreadId, resumeSessionId: resumeThreadId });
+    return { result, error: null, estimatedCostUsd: costs[h.loops.length - 1] };
+  };
+  return h;
+}
+
+const WORDS_ONLY = { lastResultText: 'Small and bounded, no schema, so it can be built now. Verdict below.', agentThreadId: 'thr-1', inputTokens: 1000, outputTokens: 50 };
+
+test('runTriage: a reply that decided in words is asked once, on its own thread, for the block', async () => {
+  const h = repairHarness(951, [WORDS_ONLY, {
+    lastResultText: '```json\n{"verdict":"person","determined":true,"reason":"Changes the login flow."}\n```',
+    agentThreadId: 'thr-1', inputTokens: 1200, outputTokens: 30,
+  }]);
+  const out = await bot.runTriage(h.pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps: h.deps });
+  assert.deepEqual({ ran: out.ran, verdict: out.verdict }, { ran: true, verdict: 'person' });
+  assert.deepEqual(h.loops, [{ resumeThreadId: null }, { resumeThreadId: 'thr-1' }],
+    'a fresh thread for the triage, then that same thread resumed');
+  assert.match(h.calls.exec[1].opts.prompt, /Reply now with ONLY that one fenced ```json block/);
+  assert.equal(h.calls.exec[1].opts.resumeSessionId, 'thr-1');
+  assert.equal(h.calls.exec[1].opts.mode, 'scout');
+  const insert = h.calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
+  assert.equal(insert.params[4], 'person');
+  assert.equal(insert.params[10], 'Changes the login flow.');
+  assert.ok(Math.abs(insert.params[14] - 0.025) < 1e-9, 'the row costs both turns');
+  assert.deepEqual([insert.params[15], insert.params[16]], [2200, 80], 'and carries both turns\' tokens');
+  assert.deepEqual(h.calls.spend.map((s) => s.cents), [2, 0.5], 'each turn joins the weekly pool');
+  const statuses = h.calls.queries.filter((q) => /UPDATE chat_sessions SET status/.test(q.s)).map((q) => q.s.match(/status = '(\w+)'/)[1]);
+  assert.deepEqual(statuses, ['active', 'paused', 'active', 'paused'], 'active only while each turn runs');
+  assert.equal(h.deps.activeWorkers.size, 0, 'released after the second turn');
+  assert.ok(h.calls.queries.some((q) => /DELETE FROM homeroom_bot_queue WHERE id = \$1/.test(q.s)), 'the row is consumed by the verdict');
+});
+
+test('runTriage: a reply still without its block after the one ask fails as it always did', async () => {
+  const h = repairHarness(952, [WORDS_ONLY, { lastResultText: 'It is fine to build.', agentThreadId: 'thr-1', inputTokens: 900, outputTokens: 10 }]);
+  const out = await bot.runTriage(h.pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps: h.deps });
+  assert.equal(out.verdict, 'failed');
+  assert.equal(h.calls.exec.length, 2, 'asked once, never twice');
+  const insert = h.calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
+  assert.match(insert.params[18], /^unparseable: Small and bounded/, 'the triage reply, not the ask\'s, is what the row shows');
+  assert.ok(Math.abs(insert.params[14] - 0.025) < 1e-9, 'and it costs both turns');
+  assert.ok(h.calls.queries.some((q) => /homeroom_bot_run_snapshots/.test(q.s)), 'still a benchmark case: a better model writes its block');
+  assert.ok(h.calls.queries.some((q) => /DELETE FROM homeroom_bot_queue/.test(q.s)), 'a model failure consumes the row');
+});
+
+test('runTriage: a thread the runtime will not resume is never asked on a fresh one', async () => {
+  const h = repairHarness(954, [WORDS_ONLY, { lastResultText: '```json\n{"verdict":"ready","determined":true,"build_note":"Invented."}\n```' }]);
+  h.deps.sessions.runCodexAttemptLoop = async ({ dispatchOnce, resumeThreadId }) => {
+    h.loops.push({ resumeThreadId });
+    // The runtime dropped the thread (resolveCodexRuntimeContext's
+    // resumeThreadDropped), so the attempt would start fresh.
+    try {
+      const result = await dispatchOnce({ openrouterApiKey: 'k', resumeThreadId: null, resumeSessionId: null });
+      return { result, error: null, estimatedCostUsd: 0.01 };
+    } catch (err) {
+      return { result: null, error: err, estimatedCostUsd: null };
+    }
+  };
+  const out = await bot.runTriage(h.pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps: h.deps });
+  assert.equal(out.verdict, 'failed', 'no verdict made up on a thread that never read the request');
+  assert.equal(h.loops.length, 2);
+  assert.equal(h.calls.exec.length, 1, 'the ask is never dispatched');
+});
+
+test('runTriage: a reply that is the provider\'s API error is a platform fault, not the model\'s', async () => {
+  const { pool, deps, calls } = triageHarness({
+    sessionId: 953,
+    result: {
+      lastResultText: 'API Error: 400 messages[6]: tool messages must include a non-empty string tool_call_id',
+      agentThreadId: 'thr-1', inputTokens: 3000, outputTokens: 20,
+    },
+  });
+  const out = await bot.runTriage(pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps });
+  assert.deepEqual({ ran: out.ran, reason: out.reason }, { ran: false, reason: 'infra' }, 'the pass backs off');
+  assert.equal(calls.exec.length, 1, 'a thread that died on the wire is not asked for a block');
+  const insert = calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
+  assert.equal(insert.params[4], 'failed');
+  assert.match(insert.params[18], /^provider: API Error: 400 messages\[6\]/);
+  assert.equal(insert.params[14], 0.0123, 'what it cost is still recorded');
+  assert.ok(calls.queries.some((q) => /SET started_at = NULL WHERE id = \$1/.test(q.s)), 'the issue keeps its turn');
+  assert.ok(!calls.queries.some((q) => /DELETE FROM homeroom_bot_queue/.test(q.s)));
+  assert.ok(!calls.queries.some((q) => /homeroom_bot_run_snapshots/.test(q.s)), 'and it is no benchmark case');
 });
 
 test('runTriage: a platform fault is recorded, hands the row back, and stops the pass', async () => {

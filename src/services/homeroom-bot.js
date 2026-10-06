@@ -59,6 +59,7 @@ const live = require('./homeroom-bot-live');
 const followup = require('./homeroom-bot-followup');
 const snapshots = require('./homeroom-bot-snapshots');
 const { withoutEmDashes } = require('./em-dashes');
+const { agentApiFailure } = require('./agent-result-text');
 // #3692: the activity tray in a person's DM with the bot. Lazy, as the DM
 // module is: it reads this module's settings.
 function tray() { return require('./homeroom-bot-tray'); }
@@ -953,7 +954,11 @@ async function isSynthetic(pool, userId) {
 
 // ── Verdict parsing (pure) ──────────────────────────────────────────────
 
-const FENCE_RE = /```(?:json)?\s*([\s\S]*?)```/g;
+// How many `{` from the end of a reply are tried as the start of its verdict
+// object, and the longest object read from one: a reply is working notes and
+// one block, and neither bound is near what a verdict needs.
+const MAX_OBJECT_STARTS = 500;
+const MAX_OBJECT_CHARS = 64 * 1024;
 
 function clip(value, max = MAX_FIELD_CHARS) {
   if (value == null) return null;
@@ -963,11 +968,10 @@ function clip(value, max = MAX_FIELD_CHARS) {
 }
 
 /**
- * The verdict is the LAST fenced JSON block in the agent's final message;
- * anything before it is working notes. A message with no parseable block,
- * or one whose `verdict` is not one of the three, yields null and the run
- * is recorded as `failed` with the tail of the text — never a guessed
- * verdict.
+ * The verdict is the LAST complete JSON object in the agent's final message
+ * that carries one of the verdicts, fenced or not; anything before it is
+ * working notes. A message with no such object yields null and the run is
+ * recorded as `failed` with the tail of the text — never a guessed verdict.
  */
 // A posted question is for a real blocker only. The triage names which one
 // and why its default could waste the build; the two blockers are these.
@@ -1080,21 +1084,53 @@ function parseVerdict(text) {
   return plainVerdict(readVerdict(text));
 }
 
-function readVerdict(text) {
-  const raw = String(text || '');
-  const candidates = [];
-  let m;
-  while ((m = FENCE_RE.exec(raw)) !== null) candidates.push(m[1]);
-  FENCE_RE.lastIndex = 0;
-  // No fence: try the outermost braces of the whole text as a last resort.
-  if (!candidates.length) {
-    const first = raw.indexOf('{');
-    const last = raw.lastIndexOf('}');
-    if (first !== -1 && last > first) candidates.push(raw.slice(first, last + 1));
+/**
+ * Every JSON object a reply holds, as text, the one that ends last first
+ * (and, of two that end together, the outer one). Each `{` is matched to its
+ * own closing brace with strings and escapes respected, so a verdict is
+ * found whatever surrounds it. Reading only fenced blocks, with the first
+ * `{` to the last `}` as a fallback taken only when there was no fence at
+ * all, lost the verdict whenever the notes quoted code in a fence of their
+ * own or used a brace, and whenever the block's closing fence never came.
+ * A `{` in prose that is never closed is no object. Pure.
+ */
+function jsonObjectSpans(raw) {
+  const starts = [];
+  for (let i = raw.indexOf('{'); i !== -1; i = raw.indexOf('{', i + 1)) starts.push(i);
+  const spans = [];
+  for (const start of starts.slice(-MAX_OBJECT_STARTS)) {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    const stop = Math.min(raw.length, start + MAX_OBJECT_CHARS);
+    for (let j = start; j < stop; j += 1) {
+      const c = raw[j];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (c === '\\') escaped = true;
+        else if (c === '"') inString = false;
+      } else if (c === '"') {
+        inString = true;
+      } else if (c === '{') {
+        depth += 1;
+      } else if (c === '}') {
+        depth -= 1;
+        if (depth === 0) {
+          spans.push({ start, end: j + 1 });
+          break;
+        }
+      }
+    }
   }
-  for (let i = candidates.length - 1; i >= 0; i -= 1) {
+  spans.sort((a, b) => (b.end - a.end) || (a.start - b.start));
+  return spans.map(({ start, end }) => raw.slice(start, end));
+}
+
+function readVerdict(text) {
+  const candidates = jsonObjectSpans(String(text || ''));
+  for (const candidate of candidates) {
     let obj;
-    try { obj = JSON.parse(candidates[i]); } catch { continue; }
+    try { obj = JSON.parse(candidate); } catch { continue; }
     if (!obj || typeof obj !== 'object') continue;
     let verdict = typeof obj.verdict === 'string' ? obj.verdict.trim().toLowerCase() : '';
     if (!VERDICTS.includes(verdict)) continue;
@@ -2306,6 +2342,109 @@ function relaySpend(relayUsage, pricing, agentTurn) {
 }
 
 /**
+ * What one routed turn spent: the ledger's figure when it has one, else the
+ * relay's (relaySpend), the way runTriage prices its own turn.
+ */
+function turnSpend(routed, pricing, agentTurn) {
+  const result = (routed && routed.result) || {};
+  const ledger = Number.isFinite(routed && routed.estimatedCostUsd) ? routed.estimatedCostUsd : null;
+  const relay = relaySpend(result.relayUsage, pricing, agentTurn);
+  return {
+    costUsd: ledger ?? relay?.costUsd ?? null,
+    inputTokens: Number.isFinite(result.inputTokens) ? result.inputTokens : (relay?.inputTokens ?? null),
+    outputTokens: Number.isFinite(result.outputTokens) ? result.outputTokens : (relay?.outputTokens ?? null),
+  };
+}
+
+/** A sum of figures that may be unknown: unknown only when both are. */
+function addKnown(a, b) {
+  return a == null && b == null ? null : (a || 0) + (b || 0);
+}
+
+// The one turn a triage reply that never wrote its JSON block gets, on the
+// same thread, and how long it may take. It reads nothing: the verdict was
+// reached, usually said in words, and only the block is missing.
+const VERDICT_REPAIR_MS = 3 * 60 * 1000;
+const VERDICT_REPAIR_PROMPT = [
+  'Your reply ended without the fenced JSON block your instructions asked for, so it could not be read.',
+  'Do not read any more files and do not use any tool.',
+  'Reply now with ONLY that one fenced ```json block, for the verdict you reached, in exactly the format your instructions gave, with nothing before or after it.',
+].join('\n');
+
+/**
+ * Ask a triage thread for the JSON block its reply left out: one short turn
+ * resuming that thread, stopped on its own wall clock the way the triage is.
+ * Returns { routed, pricing, stopped }, or null when there is no thread to
+ * resume or another flow took the session meanwhile (#1006). A dispatch
+ * that throws is a routed error.
+ */
+async function askForVerdictBlock(pool, config, {
+  bot, session, model, containerName, threadId, budgetMs, deps,
+}) {
+  const { worker, agentTurn, sessions, activeWorkers } = deps;
+  if (!threadId || activeWorkers.has(session.id)) return null;
+  await pool.query(
+    "UPDATE chat_sessions SET status = 'active', last_activity_at = NOW() WHERE id = $1",
+    [session.id],
+  );
+  activeWorkers.add(session.id);
+  let stopped = false;
+  let stopping = null;
+  const timer = setTimeout(() => {
+    stopped = true;
+    noteStopped(session.id);
+    stopping = Promise.resolve(worker.stopTurn(session.id)).catch((err) => {
+      log.warn('homeroom-bot', 'Verdict block stop failed', { sessionId: session.id, err: err.message });
+    });
+  }, budgetMs);
+  if (typeof timer.unref === 'function') timer.unref();
+  let routed;
+  let pricing = null;
+  try {
+    routed = await sessions.runCodexAttemptLoop({
+      pool, session, userId: bot.id, config, isCodexSession: true,
+      turnModel: model, resumeThreadId: threadId, mode: 'scout',
+      telemetryComponent: 'homeroom_bot_triage',
+      resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
+        pool, session, userId: bot.id, model, resumeThreadId: threadId, config, harness: 'auto',
+      }),
+      dispatchOnce: (ctx) => {
+        pricing = ctx?.pricingSnapshot || pricing;
+        // A thread the runtime would not resume (another CLI's, #3296)
+        // leaves a fresh one, where the ask reads as a request to invent a
+        // verdict for a request the model never saw.
+        if (ctx && !ctx.resumeSessionId) throw new Error('the triage thread could not be resumed');
+        return worker.execInWorker(session.id, {
+          mode: 'scout',
+          prompt: VERDICT_REPAIR_PROMPT,
+          model,
+          commitMsg: '',
+          resumeSessionId: threadId,
+          branchName: session.branch_name,
+          ...(ctx || {}),
+          telemetryComponent: 'homeroom_bot_triage',
+          onProgress: () => {},
+        });
+      },
+      retryPredicate: () => null,
+      sendStatus: async () => {},
+      waitForStopped: async () => {},
+      prepareRetry: async () => false,
+      classifyAttemptStatus: ({ failed }) => (failed ? 'failed' : 'completed'),
+      containerName,
+    });
+  } catch (err) {
+    routed = { error: `dispatch: ${err.message}` };
+  } finally {
+    clearTimeout(timer);
+    if (stopping) await stopping;
+    activeWorkers.delete(session.id);
+    await pauseIdleSession(pool, session.id);
+  }
+  return { routed: routed || { error: 'not_a_codex_session' }, pricing, stopped };
+}
+
+/**
  * Why a turn came back with nothing (#2870).
  *
  * The worker's watch state is what `execInWorker` returns, and it already
@@ -2783,7 +2922,8 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
   // turn, so a stopped turn and a finished one are measured alike. It is a
   // floor: the request in flight at the stop never reports.
   const relay = relaySpend(result.relayUsage, pricing, agentTurn);
-  const costUsd = ledgerCostUsd ?? relay?.costUsd ?? null;
+  // `let`: a reply that has to be asked for its JSON block adds that turn.
+  let costUsd = ledgerCostUsd ?? relay?.costUsd ?? null;
   const usage = {
     inputTokens: Number.isFinite(result.inputTokens) ? result.inputTokens : (relay?.inputTokens ?? null),
     outputTokens: Number.isFinite(result.outputTokens) ? result.outputTokens : (relay?.outputTokens ?? null),
@@ -2807,15 +2947,17 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
   // #2571: an included (company-funded) key's spend joins the shared weekly
   // pool the budget gate above measures; a personal key would be nobody's
   // to debit, and the bot never has one.
-  if (costUsd > 0) {
+  const debit = async (usd) => {
+    if (!(usd > 0)) return;
     try {
       if (await managedOpenRouter.usesIncludedKey(pool, bot.id)) {
-        await limits.recordSpend(pool, bot.id, Math.round(costUsd * 1e6) / 1e4, { byok: false });
+        await limits.recordSpend(pool, bot.id, Math.round(usd * 1e6) / 1e4, { byok: false });
       }
     } catch (err) {
       log.warn('homeroom-bot', 'Spend debit failed', { err: err.message });
     }
-  }
+  };
+  await debit(costUsd);
 
   // The token budget, observed rather than enforced (#2870, #3035). Usage
   // arrives once, when the turn is already over, so there is nothing left
@@ -2872,7 +3014,7 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     return recordFailure(code, { sessionId: session.id }, { infra: INFRA_ERRORS.has(code) || code.startsWith('dispatch:') });
   }
   const text = String(result.lastResultText || '');
-  const parsed = parseVerdict(text);
+  let parsed = parseVerdict(text);
   if (!parsed) {
     const body = clip(text.slice(-300), 300);
     if (!body) {
@@ -2895,9 +3037,47 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
         sessionId: session.id, costUsd, ...usage,
       });
     }
-    return recordFailure(`unparseable: ${body}`, {
-      sessionId: session.id, costUsd, ...usage,
+    // A reply that IS the runtime's provider error (gas-lock #2, 2026-10-04:
+    // "API Error: 400 messages[6]: tool messages must include a non-empty
+    // string tool_call_id") is the provider's failure, not the model's: it
+    // is a platform fault, so the bot backs off and the issue keeps its turn,
+    // and it is no benchmark case. One this issue always gets cannot wedge
+    // the bot: the row it writes reads as unchanged at the next refresh,
+    // which drops the issue's queue row, and counts toward
+    // FAILED_TRIAGE_TRIES on this thread like any failed read.
+    const apiFailure = agentApiFailure(text);
+    if (apiFailure) {
+      return recordFailure(`provider: ${apiFailure.line}`, {
+        sessionId: session.id, costUsd, ...usage,
+      }, { infra: true });
+    }
+    // The reply decided in words and never wrote its block (14 of the 19
+    // failed triages in the week to 2026-10-06: "Small, bounded, no schema
+    // … so it can", "Verdict below."). The reading is done; one short turn
+    // on the same thread asks for the block alone before the run fails.
+    const repair = await askForVerdictBlock(pool, config, {
+      bot, session, model, containerName,
+      threadId: result.agentThreadId || null,
+      budgetMs: Math.min(VERDICT_REPAIR_MS, turnBudgetMs),
+      deps: { worker, agentTurn, sessions, activeWorkers },
     });
+    if (repair) {
+      const spent = turnSpend(repair.routed, repair.pricing, agentTurn);
+      await debit(spent.costUsd);
+      costUsd = addKnown(costUsd, spent.costUsd);
+      usage.inputTokens = addKnown(usage.inputTokens, spent.inputTokens);
+      usage.outputTokens = addKnown(usage.outputTokens, spent.outputTokens);
+      parsed = repair.stopped || repair.routed?.error ? null : parseVerdict(repair.routed?.result?.lastResultText);
+      log.info('homeroom-bot', parsed ? 'Triage verdict recovered by asking for its JSON block' : 'Asking for the JSON block did not recover a verdict', {
+        app: app.slug, issueNumber, verdict: parsed?.verdict || null, costUsd: spent.costUsd,
+        stopped: repair.stopped || null, error: repair.routed?.error || null,
+      });
+    }
+    if (!parsed) {
+      return recordFailure(`unparseable: ${body}`, {
+        sessionId: session.id, costUsd, ...usage,
+      });
+    }
   }
   const capSuppressed = await simulateCaps(pool, bot, app.id, parsed.verdict, settings);
   const runId = await insertRun(pool, {
