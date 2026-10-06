@@ -5235,9 +5235,11 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    design they drew. */
 
 /* ── The Create tile: the launcher grid's last cell ─────────────
-   "Create an app" is the grid's trailing tile (the prototype's scrHome), drawn
+   "New project" is the grid's trailing tile (the prototype's scrHome), drawn
    entirely in utilities in frontend/src/features/home/create-tile.tsx: an app
-   card's cell with a dashed, unfilled face and a muted label. It replaced the
+   card's cell with a dashed, unfilled face, whose ring and label carry the
+   violet accent at rest (they used to be muted zinc, which read as a
+   placeholder rather than as the grid's one action). It replaced the
    full-width Create section that sat below Challenges, and the
    `.home-create-widget` wrapper went with that section.
 

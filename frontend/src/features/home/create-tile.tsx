@@ -63,24 +63,28 @@ function win(): any {
 // and fits the same --home-cell-h row.
 //
 // The face is the prototype's `.tile.create .aic`: no fill, a 2px DASHED ring
-// in the strong line colour, a muted plus. Neutral at rest on purpose — it is
-// the end of a shelf of app icons, and an accent face would outshout every app
-// on it. The blue accent arrives on hover and focus, while creation is open.
-// Complete class literals throughout: Tailwind's extractor is a regex over
-// source text.
+// and a plus. The ring and ink used to be neutral zinc at rest — the fear was
+// that an accent face would outshout every app tile it ends the shelf of — but
+// at rest the tile read as a placeholder rather than as the launcher's one
+// action (request #4023, "According to me"), so the accent now sits on it
+// permanently, one step quieter than hover (violet-400/500 ring, violet-500
+// ink) so hovering still reads as a state. The app tiles beside it keep their
+// own faces; the quota-locked tile keeps zinc (FACE_OFF), so the two states
+// stay tellable apart. Complete class literals throughout: Tailwind's
+// extractor is a regex over source text.
 const TILE = 'home-create-tile home-create-btn group relative flex select-none flex-col items-center '
   + 'gap-1.5 rounded-xl p-2 text-center transition-colors sm:p-3';
 const FACE = 'home-create-glyph flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl '
   + 'border-2 border-dashed transition-colors';
-const FACE_ON = 'border-zinc-300 text-zinc-500 group-hover:border-violet-500 group-hover:text-violet-600 '
+const FACE_ON = 'border-violet-400 text-violet-500 group-hover:border-violet-500 group-hover:text-violet-600 '
   + 'group-focus-visible:border-violet-500 group-focus-visible:text-violet-600 '
-  + 'dark:border-zinc-600 dark:text-zinc-400 dark:group-hover:border-violet-400 dark:group-hover:text-violet-400';
+  + 'dark:border-violet-500 dark:text-violet-400 dark:group-hover:border-violet-400 dark:group-hover:text-violet-400';
 const FACE_OFF = 'border-zinc-300 text-zinc-400 dark:border-zinc-700 dark:text-zinc-500';
 // `.app-card-title` is the tiles' own label box: 11px on a 13px line, two
 // lines, clamped — so "Create an app" wraps and truncates exactly as an app
 // name in the next cell does.
-const LABEL_ON = 'home-create-label app-card-title text-zinc-500 group-hover:text-violet-700 '
-  + 'dark:text-zinc-400 dark:group-hover:text-violet-400';
+const LABEL_ON = 'home-create-label app-card-title text-violet-600 group-hover:text-violet-700 '
+  + 'dark:text-violet-400 dark:group-hover:text-violet-400';
 const LABEL_OFF = 'home-create-label app-card-title text-zinc-400 dark:text-zinc-500';
 
 // "New project" since communities, stage 4: the create dialog it opens is

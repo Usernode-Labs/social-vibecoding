@@ -87,7 +87,7 @@ import { useRef } from 'react';
 
 import { SearchIcon } from '@/components/ui/icons';
 
-import { AppGrid } from './app-grid';
+import { AppGrid, DragHint } from './app-grid';
 import { AppsMore } from './apps-more';
 import { GettingStarted } from './getting-started';
 import { ChallengesSection, DiscoverSection } from './panels/sections';
@@ -261,6 +261,13 @@ export function HomeScreen() {
               names for one collection is worse than either.
           */}
           <SectionHeading>Shortcuts</SectionHeading>
+          {/*
+              The drag/long-press hint (#4023), between the heading and the
+              grid so it reads as a note on the area, not as a tile. It keys
+              off the same store the grid does and draws nothing until the
+              grid has tiles on screen (./app-grid.tsx).
+          */}
+          <DragHint />
           <AppGrid />
           {/*
               "Show all N apps" — revealed by Home.render() only when the

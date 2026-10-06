@@ -384,6 +384,37 @@ export function AppsEmptyNote() {
   );
 }
 
+/**
+ * The one-line gesture hint under the "Shortcuts" heading (#4023).
+ *
+ * Drag-to-rearrange and the long-press card menu already exist (home.js owns
+ * both); the hint is only what makes them findable, so it says the words the
+ * tiles themselves use ("app actions", the title tooltip) and nothing else.
+ * Same store, same gating as the empty note: absent from the store's initial
+ * value and so from the prerendered document, and hidden for every state that
+ * already answers for itself — while loading, a load notice, the search view,
+ * and an empty grid, so it never sits above an empty shelf. It renders OUTSIDE
+ * `#app-list` (between the heading and the grid, from index.tsx), so it is not
+ * one more child home.js's cell maths would have to know about. No id and no
+ * `data-*` name: the class alone is the test hook, and the prerendered
+ * document stays byte-for-byte what it was.
+ */
+export function DragHint() {
+  const state = useStoreState(gridStore);
+  if (!(state.ready
+    && state.view === 'grid'
+    && !state.notice
+    && state.emptyQuery === null
+    && state.items.length > 0)) {
+    return null;
+  }
+  return (
+    <p className="home-drag-hint text-[13px] leading-snug text-zinc-500 dark:text-zinc-400 pb-1">
+      Hold and drag a tile to rearrange it; long-press for app actions.
+    </p>
+  );
+}
+
 export function AppGrid() {
   const state = useStoreState(gridStore);
   const live = useLiveAppSlugs();

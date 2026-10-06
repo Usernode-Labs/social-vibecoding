@@ -352,8 +352,16 @@ test('the tile draws both states, and never the disabled attribute', () => {
   // dialog with the quota in it.
   assert.doesNotMatch(off, /<button[^>]*\sdisabled/);
   assert.doesNotMatch(off, /aria-disabled/);
-  // The accent arrives on hover only while creation is open.
-  assert.match(on, /group-hover:border-violet-500/);
+  // Violet at rest now (#4023): the grid's one action used to be zinc at
+  // rest, which read as a placeholder, so the accent sits on it permanently —
+  // hover steps the ring stronger rather than introducing the colour. The
+  // at-rest tokens are pinned with their left neighbours: a bare
+  // /border-violet-400/ would also match the old source's
+  // dark:group-hover:border-violet-400 hover literal.
+  assert.match(on, /transition-colors border-violet-400 text-violet-500/, 'the ring is violet before any hover');
+  assert.match(on, /app-card-title text-violet-600/, 'the label is violet before any hover');
+  assert.match(on, /group-hover:border-violet-500/, 'and hover is still the stronger state');
+  // The locked tile keeps its quieter zinc, so the two states stay tellable.
   assert.doesNotMatch(off, /violet/);
 });
 
