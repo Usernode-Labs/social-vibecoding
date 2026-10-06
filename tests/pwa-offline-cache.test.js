@@ -661,7 +661,10 @@ test('serving a stale boot read is only safe because the page is told', () => {
   assert.match(loader, /AppView\._watchCreatingStatus\(AppView\.appData, \{ immediate: true \}\)/,
     'and a corrected creating record revalidates the open App tab');
   assert.match(loader, /AppView\.refreshDevData\('api-update'\)/, 'the board repaints');
-  assert.match(loader, /Home\.load\(\)/, 'and so does home');
+  // Forced past the panels' one-minute cache (#4005): an unforced Home.load()
+  // inside HomePanels.TTL_MS would repaint the Challenges block from the very
+  // copy the worker just corrected.
+  assert.match(loader, /Home\.load\(\{ forcePanels: true \}\)/, 'and so does home');
 });
 
 test('a correction does not answer itself from the cache it is correcting', () => {

@@ -2522,7 +2522,11 @@ const App = {
       }
       if (visible('browse-screen') && window.Browse) { Browse._load(); return; }
       if (visible('leaderboard-screen')) { App._refreshLeaderboard(); return; }
-      if (visible('home-screen') && window.Home) { Home.load(); }
+      // A correction's re-pull must not be answered by the panels' one-minute
+      // cache: a stale /api/home-panels copy the worker just corrected would
+      // otherwise repaint the Challenges block from the cache for up to
+      // TTL_MS longer. Ordinary loads and pull-to-refresh keep the TTL.
+      if (visible('home-screen') && window.Home) { Home.load({ forcePanels: true }); }
     } catch (err) {
       /* a correction that throws is just a screen that stays as served */
     }

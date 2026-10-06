@@ -2299,7 +2299,10 @@ test('the module is evaluated before home.js and precached with the bundle', () 
 });
 
 test('home.js loads the panels once per TTL and paints them on every render', () => {
-  assert.match(HOME, /HomePanels\?\.ensureLoaded\(\)/);
+  // home.js's load carries an options object since the late-arrival
+  // correction (#4005) began threading forcePanels through it; the TTL
+  // inside HomePanels.ensureLoaded still governs every ordinary caller.
+  assert.match(HOME, /HomePanels\?\.ensureLoaded\(\{/);
   assert.match(HOME, /HomePanels\?\.render\(\)/);
 });
 

@@ -1454,8 +1454,9 @@ test('render() and load() are the only publishers of the grid model', () => {
   assert.equal(sites.length, 3,
     'a new gridStore write needs its own drag guard — see the note above');
   // Each one is inside load() (its two failure paths) or render() (the paint).
-  // load() is the single-flight gate; the load itself is _loadOnce().
-  const load = code.indexOf('async _loadOnce() {');
+  // load() is the single-flight gate; the load itself is _loadOnce(opts),
+  // which takes the correction's forcePanels option (#4005).
+  const load = code.indexOf('async _loadOnce(opts) {');
   const render = code.indexOf('  render() {');
   const afterRender = code.indexOf('  _renderAppsMore(count) {');
   assert.ok(load > 0 && render > load && afterRender > render);

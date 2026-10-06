@@ -86,23 +86,36 @@ const Home = {
   // it still sees its change.
   _loadInFlight: null,
   _loadQueued: null,
+  // A forced call (see forcePanels below) that lands while a load is running
+  // marks the queued rerun forced, mirroring HomePanels.ensureLoaded's own
+  // queued-force rule: the correction must not be swallowed by a load that
+  // left before it. Ordinary callers that share the queued load then share a
+  // forced read, which is correct — it is at least as new as anything they
+  // would have asked for.
+  _loadQueuedForce: false,
 
-  load() {
+  load(opts) {
     if (Home._loadInFlight) {
+      if (opts && opts.forcePanels) Home._loadQueuedForce = true;
       if (!Home._loadQueued) {
-        const rerun = () => { Home._loadQueued = null; return Home.load(); };
+        const rerun = () => {
+          const force = Home._loadQueuedForce;
+          Home._loadQueuedForce = false;
+          Home._loadQueued = null;
+          return Home.load(force ? { forcePanels: true } : undefined);
+        };
         Home._loadQueued = Home._loadInFlight.then(rerun, rerun);
       }
       return Home._loadQueued;
     }
-    const run = Home._loadOnce();
+    const run = Home._loadOnce(opts);
     Home._loadInFlight = run;
     const settle = () => { if (Home._loadInFlight === run) Home._loadInFlight = null; };
     run.then(settle, settle);
     return run;
   },
 
-  async _loadOnce() {
+  async _loadOnce(opts) {
     // Re-render guard: Home.load() is invoked from many WS/event paths
     // (app_status / app_update in app.js, notifications.js), any of
     // which would wholesale-replace the grid mid-drag and yank the
@@ -150,7 +163,11 @@ const Home = {
       if ((Home._query || '').trim()) return;
       Home.render();
     };
-    window.HomePanels?.ensureLoaded()?.then(repaint);
+    // forcePanels rides through to HomePanels.ensureLoaded: the late-arrival
+    // correction's re-pull must not be answered by the panels' one-minute
+    // cache, or a block whose answer the worker just corrected would repaint
+    // from the stale copy. Every other caller leaves the TTL in place.
+    window.HomePanels?.ensureLoaded({ force: !!(opts && opts.forcePanels) })?.then(repaint);
     Home._ensureLayoutLoaded()?.then(repaint);
 
     try {
