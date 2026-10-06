@@ -134,12 +134,18 @@
     try { return new Date(t).toISOString(); } catch (err) { return null; }
   }
 
-  function isDue(record, nowMs) {
+  // `opts.force` is the manual retry's variant (#4015): it drops only the
+  // backoff test, so a "Send now" push sends a record the automatic schedule
+  // is still waiting on. The failed-record and fresh-claim guards stay —
+  // waiting cannot fix a refused message, and a second pass over a record
+  // another tab's live flush holds a claim on would file it twice.
+  function isDue(record, nowMs, opts = {}) {
     if (!record || record.status === 'failed') return false;
     const claimed = Number(record.sendingSince) || 0;
     // Claimed by a live flush (this tab's or another's) — leave it alone
     // until the claim goes stale.
     if (claimed && nowMs - claimed < CLAIM_STALE_MS) return false;
+    if (opts.force) return true;
     return (Number(record.nextAttemptAt) || 0) <= nowMs;
   }
 
@@ -410,11 +416,11 @@
     }
   }
 
-  async function flushOnce(reason) {
+  async function flushOnce(reason, opts = {}) {
     if (flushDisabled) return { sent: 0, failed: 0, remaining: 0, filed: [] };
     const s = await ensureStore();
     const all = mine(await s.all());
-    const due = all.filter((r) => isDue(r, nowMs()));
+    const due = all.filter((r) => isDue(r, nowMs(), { force: !!opts.force }));
     const result = { sent: 0, failed: 0, remaining: 0, filed: [], reason: reason || null };
 
     // Strictly sequential: two issues filed at once from a phone that just
@@ -585,10 +591,15 @@
     },
 
     // Single-flight. Concurrent callers (reconnect + timer landing together)
-    // share the one in-flight pass rather than racing it.
-    flush(reason) {
+    // share the one in-flight pass rather than racing it. A manual retry
+    // (#4015) shares it too, even when it asked for `force`: the in-flight
+    // pass holds the `sendingSince` claims, so a second pass started over
+    // them would file the same message twice. The shared pass simply
+    // finishes first; the next automatic trigger (or another tap of the
+    // button) picks up whatever is still waiting.
+    flush(reason, opts = {}) {
       if (flushing) return flushing;
-      flushing = flushOnce(reason)
+      flushing = flushOnce(reason, { force: !!opts.force })
         .catch((err) => ({ sent: 0, failed: 0, remaining: 0, filed: [], error: (err && err.message) || 'flush failed' }))
         .then((res) => { flushing = null; return res; });
       return flushing;

@@ -149,6 +149,18 @@ test('isDue: honours the backoff, a live claim, and never picks up a failed reco
   assert.equal(FQ.isDue({ nextAttemptAt: 0, sendingSince: now - 5 * 60_000 }, now), true);
 });
 
+test('isDue force: the backoff is dropped, the failed and live-claim guards are not (#4015)', () => {
+  const FQ = load();
+  const now = 1_000_000;
+  // A manual push sends a record the automatic schedule is still waiting on.
+  assert.equal(FQ.isDue({ nextAttemptAt: now + 60_000, status: 'pending' }, now, { force: true }), true);
+  // Waiting cannot fix a refused message, and a second pass over a record
+  // another tab's live flush holds a claim on would file it twice.
+  assert.equal(FQ.isDue({ nextAttemptAt: 0, status: 'failed' }, now, { force: true }), false);
+  assert.equal(FQ.isDue({ nextAttemptAt: 0, sendingSince: now - 1000 }, now, { force: true }), false,
+    'a record another tab is sending right now stays alone even under force');
+});
+
 // ── enqueue / pending ────────────────────────────────────────────────
 
 test('enqueue: keeps the payload and stamps a queuedAt the server can print', async () => {
@@ -290,6 +302,73 @@ test('flush: concurrent callers share one pass, so nothing is filed twice', asyn
   assert.equal(calls.length, 1, 'one POST for one queued message');
   assert.equal(a, b, 'the second caller awaited the in-flight pass');
   assert.equal((await FQ.pending()).length, 0);
+
+  // #4015: a manual retry landing while a pass is in flight shares it too —
+  // the in-flight pass holds the `sendingSince` claims, and a second pass
+  // over them would file the same message twice.
+  await FQ.enqueue(entry({ description: 'another one' }));
+  const [c, d] = await Promise.all([FQ.flush('reconnect'), FQ.flush('manual', { force: true })]);
+  assert.equal(calls.length, 2, 'still one POST per queued message');
+  assert.equal(c, d, 'the forced retry shared the in-flight pass');
+  assert.deepEqual(await FQ.pending(), []);
+});
+
+// ── #4015: the manual retry (Send now) ───────────────────────────────
+
+test('flush force: a stuck message goes through, and the ordinary flush still waits it out', async () => {
+  const FQ = load();
+  await FQ.enqueue(entry());
+  stubFetch({ status: 500 });
+  const refused = await FQ.flush();
+  assert.equal(refused.sent, 0);
+  const [rec] = await FQ.pending();
+  assert.ok(rec.nextAttemptAt > Date.now(), 'the automatic schedule is now waiting on a backoff');
+
+  // The ordinary flush honours that wait — coming back online does not
+  // skip it, which is exactly the stuck state the request describes.
+  const calls = stubFetch({ status: 200 });
+  const ordinary = await FQ.flush('reconnect');
+  assert.equal(ordinary.sent, 0);
+  assert.equal(calls.length, 0, 'nothing is sent while the backoff runs');
+
+  // Send now ignores the wait and files it.
+  const forced = await FQ.flush('manual', { force: true });
+  assert.equal(forced.sent, 1);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(await FQ.pending(), [], 'the stuck message is gone once filed');
+});
+
+test('flush force: never picks up a failed record, and leaves a fresh claim alone', async () => {
+  const FQ = load();
+  await FQ.enqueue(entry({ description: 'refused outright' }));
+  await FQ.enqueue(entry({ description: 'claimed elsewhere' }));
+  stubFetch((call, i) => (i === 0 ? { status: 400, body: { error: 'nope' } } : { status: 500 }));
+  const refused = await FQ.flush();
+  assert.equal(refused.failed, 1, 'the first record is now `failed`');
+  assert.equal(refused.sent, 0);
+
+  stubFetch({ status: 200 });
+  // Another tab is sending the second record right now: the memory adapter
+  // hands out live references, so the claim is set on the stored record.
+  const pending = await FQ.pending();
+  assert.equal(pending.length, 1);
+  pending[0].sendingSince = Date.now();
+
+  const forced = await FQ.flush('manual', { force: true });
+  assert.equal(forced.sent, 0, 'neither the failed record nor the freshly claimed one is picked up');
+  assert.equal((await FQ.pending()).length, 1, 'the claimed record is untouched');
+});
+
+test('seedDisplayOnly: a forced flush sends nothing either', async () => {
+  const FQ = load();
+  FQ.seedDisplayOnly([{ payload: { description: 'a saved message', target: 'platform' } }]);
+  const calls = stubFetch({ status: 200 });
+
+  assert.equal((await FQ.pending()).length, 1);
+  const res = await FQ.flush('manual', { force: true });
+  assert.equal(res.sent, 0);
+  assert.equal(calls.length, 0, 'a screenshot link must never file an issue, even by hand');
+  assert.equal((await FQ.pending()).length, 1, 'the pinned state survives a forced flush attempt');
 });
 
 test('flush: a screenshot is uploaded first and its id attached to the submit', async () => {

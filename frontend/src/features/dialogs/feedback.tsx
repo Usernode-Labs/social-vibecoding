@@ -342,6 +342,20 @@ export function FeedbackDialog() {
         </div>
         <div id="feedback-status" className="text-sm mt-2 hidden">
         </div>
+        {/*
+            #4015: the retry control. Rendered empty and hidden — the
+            controller owns its label ("Send now" beside the waiting line,
+            "Retry now" beside a refused message handed back) and toggles
+            `hidden` by classList, the same seam #feedback-status runs on.
+            Class string copied from the dialog's small secondary buttons
+            (#feedback-screenshot-btn), so no new colours or styles.
+        */}
+        <button
+          id="feedback-retry"
+          type="button"
+          className="hidden rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
+        >
+        </button>
         <div className="flex gap-3 mt-4">
           {/*
               The controller's success and save-for-later paths still close

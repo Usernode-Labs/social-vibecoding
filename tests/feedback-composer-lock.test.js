@@ -65,7 +65,10 @@ test('the guards that ask "is the form locked?" read the same flag', () => {
   // them still read `disabled` it would think an unlocked form was locked
   // forever, and silently stop handing drafts back.
   assert.match(SRC, /if \(feedbackText\.readOnly\) return;/);
-  assert.match(SRC, /if \(feedbackText\.readOnly \|\| feedbackText\.value\.trim\(\)\) return;/);
+  // #4015: the outbox hand-back is a helper now (shared with the manual
+  // push's refused result), so it answers with a plain `false` instead of
+  // returning bare — the flag it reads is unchanged.
+  assert.match(SRC, /if \(feedbackText\.readOnly \|\| feedbackText\.value\.trim\(\)\) return false;/);
   assert.match(SRC, /if \(!feedbackText\.readOnly && !feedbackText\.value\.trim\(\)\) \{/);
 });
 

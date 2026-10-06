@@ -160,6 +160,12 @@ export function init() {
     };
     const feedbackBtn = document.getElementById('feedback-submit');
     const feedbackStatus = document.getElementById('feedback-status');
+    // #4015: the small control beside the status line — "Send now" while
+    // messages are waiting on a connected device, "Retry now" when a refused
+    // message has been handed back into the composer. Rendered empty and
+    // hidden by ./feedback.tsx; this module owns its label and its `hidden`,
+    // the way it owns #feedback-status.
+    const feedbackRetry = document.getElementById('feedback-retry');
     const feedbackForm = document.getElementById('feedback-form');
     const firstSuccess = document.getElementById('feedback-first-success');
     const firstNotice = document.getElementById('feedback-first-notice');
@@ -1246,6 +1252,26 @@ export function init() {
       return '';
     };
 
+    // #4015: the retry control's one writer. `label` null hides it; a label
+    // both names it and says what a tap will do — 'Send now' pushes the
+    // waiting messages through immediately, 'Retry now' runs the ordinary
+    // submit path on the text a refused message handed back. `hidden` is
+    // toggled by classList, the seam this module already uses for
+    // #feedback-status; the className is React's constant and is never
+    // rewritten.
+    let retryMode = null; // 'send' | 'submit' | null
+    const paintRetryControl = (label, mode) => {
+      if (!feedbackRetry) return;
+      retryMode = label ? mode : null;
+      if (label) {
+        feedbackRetry.textContent = label;
+        feedbackRetry.disabled = false;
+        feedbackRetry.classList.remove('hidden');
+      } else {
+        feedbackRetry.classList.add('hidden');
+      }
+    };
+
     // Repaint the hint and the button label. Never overwrites a submit
     // outcome ("Thanks! Filed against…", an error, the saved confirmation):
     // that is the newer and more specific thing to say, so the line is only
@@ -1262,12 +1288,20 @@ export function init() {
       if (!line) {
         feedbackStatus.classList.add('hidden');
         queueLineText = '';
+        // Nothing waiting (or the line has been taken over): the control has
+        // nothing to sit beside, so it goes too.
+        paintRetryControl(null);
         return;
       }
       feedbackStatus.textContent = line;
       feedbackStatus.className = 'text-sm mt-2 text-zinc-500 dark:text-zinc-400';
       feedbackStatus.classList.remove('hidden');
       queueLineText = line;
+      // "Send now" only while the viewer is online and something is actually
+      // waiting — the same conditions that put this line up. Offline the
+      // automatic promise stands and pushing cannot work, so the control is
+      // absent rather than a button that burns a doomed retry.
+      paintRetryControl(!isOfflineNow() && queuePendingCount > 0 ? 'Send now' : null, 'send');
     };
 
     // The header's speech-bubble carries a small violet dot while anything is
@@ -1301,6 +1335,33 @@ export function init() {
         paintQueueDot(n);
         return n;
       }).catch(() => null);
+    };
+
+    // #4015: the hand-back the failed-record branch paints — the user's own
+    // words, title and destination back in the composer, the server's reason
+    // above them, and a "Retry now" control beside the explanation. Shared by
+    // its two callers: the open path (the record the outbox gave up on while
+    // the dialog was closed) and the Send now handler (a message the manual
+    // push just got refused). Returns false when the hand-back does not
+    // happen, so the caller leaves the control as it was.
+    const handBackFailedRecord = (failed) => {
+      const modal = document.getElementById('feedback-modal');
+      if (!failed || modal.classList.contains('hidden')) return false;
+      // Live text always wins — a returned draft must never overwrite
+      // what someone is typing right now.
+      if (feedbackText.readOnly || feedbackText.value.trim()) return false;
+      const p = failed.payload || {};
+      feedbackText.value = p.description || '';
+      if (p.title) { feedbackTitle.value = p.title; titleDirty = true; }
+      restoreChosenTarget(p.target);
+      feedbackStatus.textContent = `This message couldn't be sent: ${failed.lastError || 'the server rejected it'}.`
+        + ' Your text is back, so edit it and try again.';
+      feedbackStatus.className = 'text-sm mt-2 text-red-400';
+      feedbackStatus.classList.remove('hidden');
+      queueLineText = '';
+      paintRetryControl('Retry now', 'submit');
+      feedbackText.focus();
+      return true;
     };
 
     // Paint from the cached count now, then again from the store a tick later
@@ -1465,6 +1526,11 @@ export function init() {
       if (titleGenTimer) { clearTimeout(titleGenTimer); titleGenTimer = null; }
       titleGenSeq++;
       feedbackTitle.placeholder = titleIdlePlaceholder;
+      // #4015: a submit in flight is the newer fact, so the retry control
+      // stands down — the label ("Retry now" beside a hand-back, "Send now"
+      // beside the waiting line) described a state this submit is replacing,
+      // and the outcome below writes the line it must not sit beside.
+      paintRetryControl(null);
       disableSubmit(); feedbackBtn.textContent = 'Posting…';
       const submittedPresentation = presentation;
       const submittedBy = App.user?.id;
@@ -1785,21 +1851,10 @@ export function init() {
       const saved = readSavedDraft();
       if (window.FeedbackQueue && !saved) {
         Promise.resolve(window.FeedbackQueue.takeFailed()).then((failed) => {
-          const modal = document.getElementById('feedback-modal');
-          if (!failed || modal.classList.contains('hidden')) return;
-          // Live text always wins — a returned draft must never overwrite
-          // what someone is typing right now.
-          if (feedbackText.readOnly || feedbackText.value.trim()) return;
-          const p = failed.payload || {};
-          feedbackText.value = p.description || '';
-          if (p.title) { feedbackTitle.value = p.title; titleDirty = true; }
-          restoreChosenTarget(p.target);
-          feedbackStatus.textContent = `This message couldn't be sent: ${failed.lastError || 'the server rejected it'}.`
-            + ' Your text is back, so edit it and try again.';
-          feedbackStatus.className = 'text-sm mt-2 text-red-400';
-          feedbackStatus.classList.remove('hidden');
-          queueLineText = '';
-          feedbackText.focus();
+          // A record the queue gave up on was consumed either way, so when
+          // its hand-back does not fire (live text won, the dialog closed)
+          // the "Retry now" offer must not linger beside an unrelated line.
+          if (failed && !handBackFailedRecord(failed)) paintRetryControl(null);
         }).catch(() => { /* nothing to hand back */ });
       }
 
@@ -1884,6 +1939,8 @@ export function init() {
         feedbackText.value = '';
         feedbackTitle.value = '';
         feedbackStatus.classList.add('hidden');
+        // #4015: the retry control goes with the line it sits beside.
+        paintRetryControl(null);
         clearDescriptionError();
         resetTitleGenState();
         clearCaptureDraft();
@@ -1913,6 +1970,38 @@ export function init() {
       }, 0);
     };
     feedbackBtn.addEventListener('click', submitFeedback);
+    // #4015: the retry control. One button, two jobs, named by its label:
+    //   'Send now'  — push the messages waiting on this device through right
+    //                 now, ignoring the automatic backoff (the queue's
+    //                 forced flush).
+    //   'Retry now' — a refused message has handed its text back into the
+    //                 composer; run the ordinary submit path, exactly as
+    //                 Post request would.
+    feedbackRetry?.addEventListener('click', () => {
+      if (feedbackRetry.disabled) return;
+      if (retryMode === 'submit') { submitFeedback(); return; }
+      if (retryMode !== 'send' || !window.FeedbackQueue) return;
+      feedbackRetry.disabled = true;
+      Promise.resolve(window.FeedbackQueue.flush('manual', { force: true }))
+        .then(async (res) => {
+          // A message the server refused outright is handed back into the
+          // open dialog immediately, with the same text-and-reason
+          // presentation the next open would give, instead of waiting
+          // silently for it.
+          if (res && res.failed > 0) {
+            const failed = await Promise.resolve(window.FeedbackQueue.takeFailed());
+            if (failed && !handBackFailedRecord(failed)) paintRetryControl(null);
+          }
+        })
+        .catch(() => { /* the line repaints from the count below */ })
+        .finally(() => {
+          feedbackRetry.disabled = false;
+          // Repaint the line and refresh the header dot from the result.
+          // A `sent` result has already fired onFlushed (the toast and the
+          // Dev-screen refresh) inside the queue's own pass.
+          refreshQueueState();
+        });
+    });
     // cmd+enter / ctrl+enter inside the textarea submits — fixes #34.
     // Textareas swallow Enter by default (it inserts a newline), so we
     // only intercept when the modifier key is held.

@@ -118,10 +118,75 @@ test('the dialog repaints when connectivity changes under it', () => {
 
 test('a permanently-refused message is handed back with the words intact', () => {
   assert.match(openModal, /FeedbackQueue\.takeFailed\(\)/);
-  assert.match(openModal, /feedbackText\.value = p\.description \|\| '';/);
-  assert.match(openModal, /This message couldn't be sent/);
+  // #4015: the paint moved into handBackFailedRecord, which the open path
+  // shares with the manual push — the assertions follow the words, not the
+  // line numbers.
+  assert.match(feedbackJs, /feedbackText\.value = p\.description \|\| '';/);
+  assert.match(feedbackJs, /This message couldn't be sent/);
   // Live text always wins — a returned draft must not overwrite typing.
-  assert.match(openModal, /if \(feedbackText\.readOnly \|\| feedbackText\.value\.trim\(\)\) return;/);
+  assert.match(feedbackJs, /if \(feedbackText\.readOnly \|\| feedbackText\.value\.trim\(\)\) return false;/);
+});
+
+// ── #4015: the retry control beside the status line ─────────────────
+
+test('the retry control ships empty and hidden, in the small secondary-button look (#4015)', () => {
+  const feedbackTsx = read('frontend', 'src', 'features', 'dialogs', 'feedback.tsx');
+  assert.match(feedbackTsx, /id="feedback-retry"/);
+  const at = feedbackTsx.indexOf('id="feedback-retry"');
+  const node = feedbackTsx.slice(at, at + 500);
+  assert.match(node, /type="button"/);
+  assert.match(node, /className="hidden /, 'ships hidden: an island renders empty/hidden markup');
+  // Copied from the dialog's small secondary buttons (#feedback-screenshot-btn):
+  // no new colours, no new styles.
+  assert.match(node,
+    /rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-1\.5 text-xs font-medium text-zinc-900 dark:text-zinc-100/);
+  // The generated document carries it (build:shell was run).
+  assert.match(indexHtml, /id="feedback-retry"/);
+  // The controller, not the markup, owns the label.
+  assert.match(feedbackJs, /const feedbackRetry = document\.getElementById\('feedback-retry'\);/);
+});
+
+test('the queued check folds the retry control in rather than adding an entry (#4015)', () => {
+  const queued = dapp.tests.filter((t) => t.path === '/?shot=feedback-queued');
+  assert.equal(queued.length, 1);
+  // Present but held back while offline: a push cannot work disconnected.
+  assert.match(queued[0].expectSelector,
+    /body\.is-offline:has\(#feedback-queue-dot:not\(\.hidden\)\):has\(#feedback-retry\.hidden\)/);
+});
+
+test('Send now is offered exactly for the online waiting line (#4015)', () => {
+  // Online, something waiting, and the line still the queue's own.
+  assert.match(feedbackJs,
+    /paintRetryControl\(!isOfflineNow\(\) && queuePendingCount > 0 \? 'Send now' : null, 'send'\)/);
+  // It stands down everywhere else: nothing waiting, a submit outcome on the
+  // line, and on every close alongside the status line itself.
+  assert.equal(feedbackJs.match(/paintRetryControl\(null\)/g).length >= 4, true,
+    'the hidden state is painted beside the line it belongs to, not left to chance');
+  assert.match(submitFeedback, /paintRetryControl\(null\);/, 'a submit in flight stands the control down');
+  assert.match(feedbackJs, /paintRetryControl\(null\);\n\s+clearDescriptionError\(\);/, 'so does a close');
+});
+
+test('the failed hand-back offers Retry now, from one shared writer (#4015)', () => {
+  assert.match(feedbackJs, /const handBackFailedRecord = \(failed\) => \{/);
+  assert.match(feedbackJs, /paintRetryControl\('Retry now', 'submit'\)/);
+  // Both callers share it: the open path and the manual push that just got
+  // the same message refused.
+  assert.equal(feedbackJs.match(/handBackFailedRecord\(failed\)/g).length, 2);
+  assert.match(feedbackJs, /res && res\.failed > 0/);
+  // A hand-back that does not fire leaves no offer beside an unrelated line.
+  assert.match(feedbackJs, /if \(failed && !handBackFailedRecord\(failed\)\) paintRetryControl\(null\);/);
+});
+
+test("the retry control's two clicks: the forced flush, then the ordinary submit path (#4015)", () => {
+  assert.match(feedbackJs, /feedbackRetry\?\.addEventListener\('click'/);
+  assert.match(feedbackJs, /if \(retryMode === 'submit'\) \{ submitFeedback\(\); return; \}/);
+  // 'Send now' pushes straight away, ignoring the backoff.
+  assert.match(feedbackJs, /flush\('manual', \{ force: true \}\)/);
+  // The control is disabled while its push runs.
+  assert.match(feedbackJs, /feedbackRetry\.disabled = true;/);
+  // ...and the count (and with it the header dot) repaints from the result.
+  const handler = feedbackJs.slice(feedbackJs.indexOf("feedbackRetry?.addEventListener('click'"));
+  assert.match(handler, /refreshQueueState\(\)/);
 });
 
 test('a captured screenshot survives a failed upload', () => {

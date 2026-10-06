@@ -718,6 +718,8 @@ const ADDED_IDS = {
   'cli-setup-guide': 'Always-visible local-agent setup in Settings → CLI access (#1609). It is static section markup so capability detection and credential-list state cannot blank the instructions.',
   'native-app-version-slot': 'Mobile app version/build rendered through the native bridge (#1101).',
   'feedback-queue-dot': 'Header dot for feedback saved offline and still waiting to send (#1054). It has changed parents twice without changing id or writer — off the retired #feedback-btn onto #improve-btn, and off that onto the Homeroom mark when #2718 retired it — because it belongs on whichever control is the way to this dialog from the header. Bottom-left, opposite the working dot.',
+  // ── #4015: a way to push a stuck offline queue ──────────────────
+  'feedback-retry': 'The small control beside #feedback-status (#4015): "Send now" while messages wait on a connected device (a forced flush that skips the automatic backoff), "Retry now" beside a refused message handed back into the composer. Ships empty and hidden like #feedback-status — the controller owns the label and the `hidden`, by classList.',
   'feedback-screenshot-picker-btn': 'Photos fallback for mobile feedback screenshots (#824).',
   'feedback-screenshot-input': 'PNG/JPEG picker backing the mobile feedback fallback (#824).',
   'feedback-screenshot-count': 'How many images fit and how many are attached (#3027: "You can attach up to 3 images.", "2 of 3 images attached."). Ships empty and hidden like #feedback-status; the controller fills it on every open and every add or remove.',
