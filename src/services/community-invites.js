@@ -824,6 +824,43 @@ async function queuedFor(pool, userId) {
   return rows.map((r) => ({ name: r.name || r.slug, inviter: r.inviter || null }));
 }
 
+/**
+ * Follow again, as a private member, every link `userId` (no access yet) is
+ * queued on: what an account made by email does once it adds the phone a
+ * private member needs (routes/phone-auth.js /api/auth/phone-link/verify).
+ * Through redeem itself, so a queued row is applied without spending a
+ * second use, and the joining is told and recorded as any other. Returns
+ * the communities joined, `[{ slug, name }]`, oldest link first. A link
+ * that fails is logged and skipped: the rest still join.
+ */
+async function joinQueued(pool, userId) {
+  const { rows: u } = await pool.query(
+    'SELECT id, is_admin, has_platform_access FROM users WHERE id = $1',
+    [userId]
+  );
+  if (!u[0] || u[0].is_admin || u[0].has_platform_access) return [];
+  const user = { id: u[0].id, isAdmin: false, hasPlatformAccess: false };
+  const { rows } = await pool.query(
+    `SELECT i.token
+       FROM community_invite_redemptions x
+       JOIN community_invites i ON i.id = x.invite_id
+      WHERE x.user_id = $1 AND x.status = 'queued' AND x.applied_at IS NULL
+        AND i.revoked_at IS NULL
+      ORDER BY x.created_at ASC`,
+    [userId]
+  );
+  const joined = [];
+  for (const { token } of rows) {
+    try {
+      const result = await redeem(pool, { token, user, requirePhone: true });
+      if (result.ok && result.status === 'joined') joined.push({ slug: result.slug, name: result.name });
+    } catch (err) {
+      log.warn('invites', 'Joining a queued link failed', { userId, err: err.message });
+    }
+  }
+  return joined;
+}
+
 // ── Carrying a link through sign-in ────────────────────────────────────
 //
 // /invite/<token> (routes/community-invites.js) leaves the token in an
@@ -904,6 +941,7 @@ module.exports = {
   standing,
   redeem,
   queuedFor,
+  joinQueued,
   setInviteCookie,
   clearInviteCookie,
   redeemCarried,

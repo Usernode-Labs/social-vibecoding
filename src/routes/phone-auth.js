@@ -11,6 +11,17 @@
  *   POST /api/auth/phone/verify    the code, or an ID token a client SDK
  *                                  earned with its own Firebase exchange
  *   POST /api/auth/phone/finish    the username step, for a brand-new account
+ *                                  whose verify carried no name
+ *
+ * and, for an account that is signed in already and has no phone (made by
+ * email, say, and waiting), mounted under /api/auth/ so the platform-access
+ * gate lets a waiting account reach them, but outside the pre-login
+ * /api/auth/phone/ prefix so the session is read:
+ *
+ *   POST /api/auth/phone-link/request  text a code, as above
+ *   POST /api/auth/phone-link/verify   link the number to this account and
+ *                                      join the links it is queued on as a
+ *                                      private member (community-invites.js)
  *
  * The invite sheet's phone steps call these (sign-in-sheet.tsx `phone`).
  * The answers are shaped exactly like the email code's and the native OAuth
@@ -41,6 +52,7 @@ const {
   phoneVerifyLimiter,
 } = require('../middleware/rate-limits');
 const { createSession, createSessionCookie, roleFields } = require('./auth');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 const SECURE_COOKIE = process.env.NODE_ENV === 'production';
 
@@ -160,6 +172,28 @@ function phoneAuthRoutes(config) {
         });
       }
 
+      // A new account whose sheet sent its name (an invite's Join): finished
+      // here, with a handle picked from the name, and no username step.
+      const name = result.next === 'username' ? phoneAuth.cleanName(req.body?.name) : null;
+      const named = name
+        ? await phoneAuth.finishWithName(pool, { signupToken: result.signupToken, name, createSession })
+        : null;
+      if (named) {
+        createSessionCookie(res, named.session.token, named.session.expiresAt);
+        log.info('phone-auth', 'Phone sign-up finished with a name', { userId: named.user.id });
+        return res.json({
+          ok: true,
+          next: 'signed-in',
+          created: true,
+          user: {
+            id: named.user.id,
+            username: named.user.username,
+            ...roleFields(named.user.isAdmin, named.user.adminReadonly),
+          },
+          ...(invite ? { invite } : {}),
+        });
+      }
+
       if (result.next === 'signed-in') {
         createSessionCookie(res, result.session.token, result.session.expiresAt);
         log.info('phone-auth', 'Phone sign-in signed an account in', {
@@ -230,6 +264,56 @@ function phoneAuthRoutes(config) {
       return res.status(500).json({ error: 'Internal server error' });
     }
   });
+
+  // ── A phone for the account signed in ─────────────────────────────────
+  // The same two legs, for a session that exists: the number is linked to
+  // it instead of signing anybody in, and the links it is queued on are
+  // followed again, now as a private member. Same buckets as the pre-login
+  // legs; the same-origin check after them (middleware/same-site-browser.js).
+  function signedIn(req, res, next) {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    return next();
+  }
+
+  router.post(
+    '/api/auth/phone-link/request',
+    requireOffered,
+    phoneOtpRequestLimiter,
+    phoneOtpRequestPhoneLimiter,
+    sameOriginBrowserOnly,
+    signedIn,
+    async (req, res) => {
+      try {
+        const sent = await phoneAuth.requestCode(config, req.body?.phoneNumber, req.body?.recaptchaToken);
+        return res.json({ ok: true, sessionInfo: sent.sessionInfo });
+      } catch (error) {
+        return fail(res, error, 'Phone link code request');
+      }
+    }
+  );
+
+  router.post(
+    '/api/auth/phone-link/verify',
+    requireOffered,
+    phoneVerifyLimiter,
+    sameOriginBrowserOnly,
+    signedIn,
+    async (req, res) => {
+      try {
+        const exchanged = await phoneAuth.exchangeCode(config, req.body?.sessionInfo, req.body?.code);
+        const claims = await phoneAuth.verifyIdToken(pool, config, exchanged.idToken);
+        const linked = await phoneAuth.linkPhone(pool, claims, req.user.id);
+        const joined = await communityInvites.joinQueued(pool, req.user.id);
+        if (joined.length) await challengeScorer.scoreOnJoin(pool, config);
+        log.info('phone-auth', 'Phone linked to a signed-in account', {
+          userId: req.user.id, already: linked.already, joined: joined.length,
+        });
+        return res.json({ ok: true, joined, privateMember: joined.length > 0 });
+      } catch (error) {
+        return fail(res, error, 'Phone link');
+      }
+    }
+  );
 
   return router;
 }

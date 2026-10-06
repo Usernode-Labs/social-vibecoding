@@ -116,6 +116,55 @@ test('private members, against the full schema', { timeout: 180000 }, async (t) 
     assert.deepEqual([member.status, member.privateMember], ['joined', false]);
   });
 
+  await t.test('a phone sign-up gives a name: it is the display name, and the handle is picked from it', async () => {
+    const phoneAuth = require('../src/services/firebase-phone-auth');
+    const { createSession } = require('../src/routes/auth');
+    const made = await phoneAuth.signIn(pool, { uid: 'uid-name-1', phoneNumber: '+15550002001' }, { createSession });
+    assert.equal(made.next, 'username', 'new: the continuation the username step would spend');
+    const done = await phoneAuth.finishWithName(pool, { signupToken: made.signupToken, name: 'Lina Park', createSession });
+    assert.equal(done.user.username, 'lina_park');
+    assert.match(done.session.token, /\S{20,}/, 'signed in, no username step');
+    const { rows: [row] } = await pool.query(
+      'SELECT username, display_name, needs_username_choice FROM users WHERE id = $1', [done.user.id]);
+    assert.deepEqual(row, { username: 'lina_park', display_name: 'Lina Park', needs_username_choice: false });
+    // Somebody with the same name gets the same handle with digits.
+    const again = await phoneAuth.signIn(pool, { uid: 'uid-name-2', phoneNumber: '+15550002002' }, { createSession });
+    const second = await phoneAuth.finishWithName(pool, { signupToken: again.signupToken, name: 'Lina Park', createSession });
+    assert.match(second.user.username, /^lina_park_[0-9]{3,4}$/);
+    // The continuation is spent: the same token finishes nothing twice.
+    await assert.rejects(
+      phoneAuth.finishWithName(pool, { signupToken: made.signupToken, name: 'Lina Park', createSession }),
+      (err) => err.code === 'invalid_signup_session'
+    );
+  });
+
+  await t.test('an account made by email adds a phone, and its queued link lets it in', async () => {
+    const phoneAuth = require('../src/services/firebase-phone-auth');
+    const rae = await account({ email: 'rae@example.com' });
+    const queued = await invites.redeem(pool, { token: made.link.token, user: rae, requirePhone: true });
+    assert.equal(queued.status, 'queued');
+    assert.deepEqual(await invites.joinQueued(pool, rae.id), [], 'no phone yet: still queued');
+    const linked = await phoneAuth.linkPhone(pool, { uid: 'uid-rae', phoneNumber: '+15550003001' }, rae.id);
+    assert.deepEqual(linked, { linked: true, already: false });
+    assert.deepEqual(await invites.joinQueued(pool, rae.id), [{ slug: 'best-brunch', name: 'Best brunch spots' }]);
+    assert.deepEqual(await tier(rae.id), { has_platform_access: false, private: true });
+    assert.deepEqual(await invites.joinQueued(pool, rae.id), [], 'nothing left queued');
+    // The same number again is fine; another is refused, and so is a number
+    // another account holds.
+    assert.deepEqual(await phoneAuth.linkPhone(pool, { uid: 'uid-rae', phoneNumber: '+15550003001' }, rae.id),
+      { linked: true, already: true });
+    await assert.rejects(phoneAuth.linkPhone(pool, { uid: 'uid-rae-2', phoneNumber: '+15550003002' }, rae.id),
+      (err) => err.code === 'phone_already_linked' && err.status === 409);
+    const ted = await account();
+    await assert.rejects(phoneAuth.linkPhone(pool, { uid: 'uid-ted', phoneNumber: '+15550003001' }, ted.id),
+      (err) => err.code === 'phone_in_use');
+    await assert.rejects(phoneAuth.linkPhone(pool, { uid: 'uid-rae', phoneNumber: '+15550003009' }, ted.id),
+      (err) => err.code === 'phone_in_use', 'the Firebase identity is another account\'s too');
+    // Somebody with access joins nothing this way: they joined on the spot.
+    const una = await account({ access: true });
+    assert.deepEqual(await invites.joinQueued(pool, una.id), []);
+  });
+
   await t.test('a private member makes no apps, whatever their quota says, until they are let in', async () => {
     const mo = await account();
     await invites.redeem(pool, { token: made.link.token, user: mo });

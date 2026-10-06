@@ -1708,7 +1708,7 @@ export function LandingScreen() {
           open={sheet === 'join'}
           title={`Join ${invite!.project!.name}`}
           intro={phoneSignIn
-            ? 'Join with your phone number. We’ll text you a 6-digit code.'
+            ? 'Just your name and phone number. No app, no password.'
             : providers.length
               ? 'Sign in or make an account. It takes a minute.'
               : 'Sign in or make an account with your email. It takes a minute.'}

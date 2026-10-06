@@ -162,6 +162,37 @@ function placeholderUsername() {
 }
 
 /**
+ * Handles to try, in order, for somebody who gave their NAME rather than a
+ * handle: an invite's phone sign-up, whose sheet asks "Your name" and no
+ * username (firebase-phone-auth.js finishWithName). Not the derivation
+ * #3575 removed: that one published the private half of an email address,
+ * and this is the name the person just typed for the group to see. The
+ * first is the name folded to the handle alphabet (accents dropped, every
+ * other run of characters an underscore); the rest add digits, for when it
+ * is taken or reserved. A name with nothing foldable (a script the handle
+ * alphabet lacks) starts from `member`. They can rename later
+ * (renameUser).
+ */
+function handlesFromName(rawName, tries = 6) {
+  const folded = String(rawName || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 24)
+    .replace(/_+$/, '');
+  const base = folded.length >= MIN_USERNAME_LEN ? folded : (folded ? `${folded}_member` : 'member');
+  const out = [];
+  if (validateUsername(base).ok) out.push(base);
+  while (out.length < tries) {
+    const next = `${isReserved(base) ? 'member' : base}_${crypto.randomInt(100, 10000)}`;
+    if (validateUsername(next).ok && !out.includes(next)) out.push(next);
+  }
+  return out;
+}
+
+/**
  * Take the first handle. NOT a rename: this account has never had one.
  *
  * Deliberately different from `renameUser` in three ways, and each is the
@@ -410,6 +441,7 @@ module.exports = {
   isReserved,
   isServiceIdentity,
   placeholderUsername,
+  handlesFromName,
   chooseFirstUsername,
   checkAvailability,
   checkCooldown,

@@ -32,12 +32,14 @@
  * private member signs up with a phone (services/community-invites.js
  * joinAsPrivateMember), against routes/phone-auth.js:
  *
- *   phone       POST /api/auth/phone/request texts a code, after an
- *               invisible reCAPTCHA (./recaptcha.ts) Firebase asks of a web
- *               caller.
- *   phone-code  POST /api/auth/phone/verify with the code. A number already
- *               on an account signs it straight in; a new one made an
- *               account that moves on to
+ *   phone       Your name and a phone number. POST /api/auth/phone/request
+ *               texts a code, after an invisible reCAPTCHA (./recaptcha.ts)
+ *               Firebase asks of a web caller.
+ *   phone-code  POST /api/auth/phone/verify with the code and the name. A
+ *               number already on an account signs it straight in; a new
+ *               one is made with that name, and a handle picked from it, and
+ *               signed in too: no username step (routes/phone-auth.js). Only
+ *               when no handle could be picked does it move on to
  *   username    POST /api/auth/phone/finish, the provider's step with the
  *               phone's own route, which mints the session.
  *
@@ -327,6 +329,9 @@ function prefersReducedMotion(): boolean {
  * dashes, dots and brackets dropped. Null for anything else; no country
  * code is guessed, since a wrong guess would text somebody else.
  */
+/** A name's length on the profile (routes/profile.js MAX_DISPLAY_NAME). */
+export const PHONE_NAME_MAX = 40;
+
 export function phoneE164(raw: string): string | null {
   const value = String(raw || '').replace(/[\s().\u2010-\u2015-]/g, '');
   return /^\+[1-9][0-9]{1,14}$/.test(value) ? value : null;
@@ -345,7 +350,7 @@ export function passwordLead(from: 'invite' | 'story' | 'signin'): string {
 }
 
 /** The line Google asks for where its reCAPTCHA badge is not shown (./recaptcha.ts). */
-function RecaptchaNotice() {
+export function RecaptchaNotice() {
   const n = RECAPTCHA_NOTICE;
   const link = 'underline hover:text-zinc-700 dark:hover:text-zinc-300';
   return (
@@ -475,7 +480,11 @@ export function SignInSheet({
   const usernameField = useRef<HTMLInputElement>(null);
   const providerUsernameField = useRef<HTMLInputElement>(null);
   const passwordField = useRef<HTMLInputElement>(null);
+  const nameField = useRef<HTMLInputElement>(null);
   const phoneField = useRef<HTMLInputElement>(null);
+  // The phone step's two fields in order, for Return, and the name as typed.
+  const phoneStepFields = [nameField, phoneField];
+  const phoneName = useRef('');
   const phoneCodeField = useRef<HTMLInputElement>(null);
   const confirmField = useRef<HTMLInputElement>(null);
   const identifierField = useRef<HTMLInputElement>(null);
@@ -546,7 +555,7 @@ export function SignInSheet({
     const field = step === 'email' ? firstField : step === 'code' ? codeField
       : step === 'username' ? providerUsernameField
         : step === 'password' ? identifierField
-          : step === 'phone' ? phoneField
+          : step === 'phone' ? nameField
             : step === 'phone-code' ? phoneCodeField
               : (needsUsername ? usernameField : passwordField);
     if (focus) field.current?.focus({ preventScroll: true });
@@ -746,6 +755,16 @@ export function SignInSheet({
     }
   }, [phoneNumber]);
 
+  // The phone step: a name for the group, then the number's code.
+  const submitPhoneStep = useCallback(() => {
+    setError(null);
+    const name = (nameField.current?.value || '').replace(/\s+/g, ' ').trim();
+    if (!name) { setError('Enter your name.'); nameField.current?.focus({ preventScroll: true }); return; }
+    if (name.length > PHONE_NAME_MAX) { setError(`Your name can be up to ${PHONE_NAME_MAX} characters.`); return; }
+    phoneName.current = name;
+    void requestPhoneCode(phoneField.current?.value || '');
+  }, [requestPhoneCode]);
+
   const verifyPhone = useCallback(async () => {
     setError(null);
     const code = (phoneCodeField.current?.value || '').trim();
@@ -758,7 +777,10 @@ export function SignInSheet({
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
         body: JSON.stringify({
-          sessionInfo: phoneSession.current, code, ...(followInvite ? { followInvite: true } : {}),
+          sessionInfo: phoneSession.current,
+          code,
+          ...(phoneName.current ? { name: phoneName.current } : {}),
+          ...(followInvite ? { followInvite: true } : {}),
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -908,7 +930,7 @@ export function SignInSheet({
   const waitLeft = Math.max(0, Math.ceil((cooldownUntil - now) / 1000));
   const heading = step === 'choose' || step === 'email' || step === 'phone' ? title
     : step === 'code' ? 'Check your email'
-      : step === 'phone-code' ? 'Check your messages'
+      : step === 'phone-code' ? 'Check your texts'
         : step === 'password' ? 'Sign in'
           : step === 'username' ? 'Pick a username' : 'Finish your account';
   // The opener's line is the first step's; with the phone first, the other
@@ -920,7 +942,7 @@ export function SignInSheet({
       : step === 'email'
       ? 'We\'ll email you a 6-digit code.'
       : step === 'phone-code'
-        ? `We texted a 6-digit code to ${phoneNumber}.`
+        ? `We sent a 6-digit code to the number ending ${phoneNumber.slice(-4)}.`
       : step === 'code'
         ? `We sent a 6-digit code to ${email}. It expires in 10 minutes.`
         : step === 'password'
@@ -1026,14 +1048,19 @@ export function SignInSheet({
         ) : null}
 
         {step === 'phone' ? (
-          <form className="mt-5 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void requestPhoneCode(phoneField.current?.value || ''); }}>
+          <form className="mt-5 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); submitPhoneStep(); }}>
             <div className={FIELD_GROUP}>
+              <div className={FIELD}>
+                <label htmlFor="sign-in-sheet-name" className={LABEL}>Your name</label>
+                <input ref={nameField} id="sign-in-sheet-name" type="text" autoComplete="name" enterKeyHint="next" maxLength={PHONE_NAME_MAX} defaultValue={phoneName.current} onKeyDown={returnWalks(phoneStepFields, 0)} className={INPUT} />
+              </div>
               <div className={FIELD}>
                 <label htmlFor="sign-in-sheet-phone" className={LABEL}>Phone number</label>
                 <input ref={phoneField} id="sign-in-sheet-phone" type="tel" autoComplete="tel" inputMode="tel" enterKeyHint="go" defaultValue={phoneNumber} placeholder="+1 415 555 0123" className={INPUT} />
               </div>
             </div>
             <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Sending code…' : 'Text me a code'}</button>
+            <p className="text-center text-[13px] text-zinc-500 dark:text-zinc-400">The group sees your name, never your number.</p>
             <RecaptchaNotice />
           </form>
         ) : null}
@@ -1046,6 +1073,7 @@ export function SignInSheet({
                 <input ref={phoneCodeField} id="sign-in-sheet-phone-code" inputMode="numeric" autoComplete="one-time-code" enterKeyHint="go" maxLength={6} className={`${INPUT} tracking-[0.4em]`} />
               </div>
             </div>
+            <p className="text-[13px] text-zinc-500 dark:text-zinc-400">The code fills itself in on most phones.</p>
             <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Checking…' : 'Continue'}</button>
             <div className="flex items-center justify-between">
               <button type="button" className={QUIET} onClick={() => { setError(null); setStep('phone'); }}>Use another number</button>

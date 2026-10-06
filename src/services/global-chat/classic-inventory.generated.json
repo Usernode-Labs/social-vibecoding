@@ -7891,6 +7891,36 @@
       "classicPath": "#profile"
     },
     {
+      "source": "src/routes/phone-auth.js",
+      "method": "POST",
+      "path": "/api/auth/phone-link/request",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "profile.post.auth.phone.link.request.3357d33b",
+      "domain": "profile",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "profile",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#profile"
+    },
+    {
+      "source": "src/routes/phone-auth.js",
+      "method": "POST",
+      "path": "/api/auth/phone-link/verify",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "profile.post.auth.phone.link.verify.71b8a6b5",
+      "domain": "profile",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "profile",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#profile"
+    },
+    {
       "source": "src/routes/platform-about.js",
       "method": "GET",
       "path": "/api/platform/about",
