@@ -405,19 +405,18 @@ const Home = {
   // ceiling on one lane, not a second lane's own budget.
   POPULAR_LIMIT: 6,
 
-  // The popular half of the rail (#949): what everyone else is actually
-  // using, appended after the curated cards. Derived from the SAME
-  // /api/apps payload the grid already holds — `active_users` rides along
-  // with every row (see the au join in src/routes/apps.js), so this costs
-  // no query.
+  // The popular half of the rail (#949): the apps in most active use right
+  // now, appended after the curated cards. Derived from the SAME /api/apps
+  // payload the grid already holds — every signal the score reads rides
+  // along with every row (see the msg_counts / activity / au / dev joins in
+  // src/routes/apps.js), so this costs no query.
   //
-  // The ranking mirrors Browse.sortApps' 'users' order exactly (most users
-  // first, ties keeping the server's own order via a stable sort), so the
-  // widget and the Browse directory can't disagree about what is popular.
-  // (#1383 gave the directory five orders and made 'recommended' its default
-  // — this lane still tracks the users one, which is the question the word
-  // "Popular" asks.) parseInt because the count arrives as a STRING — it is a
-  // Postgres bigint and, unlike open_prs, the serializer doesn't coerce it.
+  // The ranking is the composite activity score below, not one number and
+  // not a mirror of any Browse order — the directory keeps its own five
+  // sorts (#1383) and this lane answers a different question: what is worth
+  // opening right now. Ties keep the server's own order via a stable sort.
+  // parseInt because active_users, message_count and total_seconds arrive
+  // as STRINGS — Postgres bigints the serializer doesn't coerce.
   //
   // Only currently reviewed working apps with icons qualify. Also exclude:
   //   * `featured` — the curated half of the same lane already offers those.
@@ -434,8 +433,48 @@ const Home = {
       .filter((a) => a && !a.featured && Home.isDiscoveryReady(a)
         && users(a) >= 1
         && (!Home.isYours(a) || Home._discoverKeep.has(a.slug)))
-      .sort((x, y) => users(y) - users(x))
+      .sort((x, y) => Home.discoverActivityScore(y) - Home.discoverActivityScore(x))
       .slice(0, Home.POPULAR_LIMIT);
+  },
+
+  // The composite activity score the popular half ranks by. Every signal is
+  // capped before weighting so one noisy signal (a chatty channel, a very
+  // large app) cannot own the whole lane; the caps are rough ceilings on
+  // what platforms see today. The weights are a first tuning, named here in
+  // one place so a later one is a table edit and nothing else.
+  //
+  //   active_users       4 pts each, cap 50   — people in it, last 10 days
+  //   contributor_count  3 pts each, cap 25   — people who built it
+  //   message_count      2 pts each, cap 50   — chat, last 7 days
+  //   total_seconds      1 pt per minute, cap 240 — use, last 7 days
+  //   open_prs           6 pts each, cap 5    — work in flight
+  //   active_sessions    6 pts each, cap 5    — dev sessions running now
+  //   last_active_at     40 under 24h, 15 under 7d, 5 under 30d, else 0
+  //
+  // A missing or unparseable last_active_at earns no recency bonus and
+  // never produces NaN, so the app keeps its usage points only. Coerces the
+  // bigint-string fields itself, so it reads a raw payload row as happily as
+  // a serialized one. Pure — reads only the app and the clock; unit-tested
+  // in tests/home-find-more.test.js.
+  discoverActivityScore(app) {
+    if (!app) return 0;
+    const num = (v) => (parseInt(v, 10) || 0);
+    const capped = (v, cap) => Math.min(num(v), cap);
+    let score = 0;
+    score += capped(app.active_users, 50) * 4;
+    score += capped(app.contributor_count, 25) * 3;
+    score += capped(app.message_count, 50) * 2;
+    score += Math.min(Math.floor(num(app.total_seconds) / 60), 240);
+    score += Math.min(num(app.open_prs), 5) * 6;
+    score += Math.min(num(app.active_sessions), 5) * 6;
+    const ts = app.last_active_at ? Date.parse(app.last_active_at) : NaN;
+    if (!Number.isNaN(ts)) {
+      const age = Date.now() - ts;
+      if (age < 24 * 60 * 60 * 1000) score += 40;
+      else if (age < 7 * 24 * 60 * 60 * 1000) score += 15;
+      else if (age < 30 * 24 * 60 * 60 * 1000) score += 5;
+    }
+    return score;
   },
 
   // ===== Free-form grid layout =====

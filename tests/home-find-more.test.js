@@ -358,29 +358,105 @@ test('the create-widget shot paths pin both quota treatments', () => {
 
 // ── popularApps selection (#949) ──────────────────────────────────
 //
-// The desktop widget's second lane: what everyone else is using, from the
-// `active_users` count GET /api/apps already serves. The ranking mirrors
-// Browse.sortApps' non-featured tail so the widget and the directory can't
-// disagree about what is popular.
+// The desktop widget's second lane: the apps in most active use right now,
+// ranked by the composite activity score Home.discoverActivityScore builds
+// from fields GET /api/apps already serves — not one number, and not a
+// mirror of any Browse order (the directory keeps its own five sorts).
 
 const pop = (over) => app({ active_users: 3, ...over });
 
-test('popularApps: ranks non-featured apps by active users, most first', () => {
+// Time offsets from now, for the recency bands.
+const HOUR = 60 * 60 * 1000;
+const DAY = 24 * HOUR;
+const isoAgo = (ms) => new Date(Date.now() - ms).toISOString();
+
+test('popularApps: ranks by the composite activity score, not users alone', () => {
   const Home = makeHome();
   const apps = [
-    pop({ slug: 'few', active_users: 2 }),
-    pop({ slug: 'most', active_users: 11 }),
-    pop({ slug: 'some', active_users: 5 }),
+    // More users, but quiet for three weeks: no chat, no work in flight.
+    pop({
+      slug: 'quiet-big', active_users: 12, last_active_at: isoAgo(21 * DAY),
+    }),
+    // Fewer users, but alive today: a proposal up for a vote, a dev session
+    // running, chat and use this week.
+    pop({
+      slug: 'busy-small', active_users: 6, contributor_count: 4,
+      message_count: 25, total_seconds: 3600, open_prs: 2, active_sessions: 1,
+      last_active_at: isoAgo(2 * HOUR),
+    }),
   ];
-  assert.deepEqual(Home.popularApps(apps).map((a) => a.slug), ['most', 'some', 'few']);
+  assert.deepEqual(Home.popularApps(apps).map((a) => a.slug), ['busy-small', 'quiet-big'],
+    'an app with work in flight and people in it today outranks a bigger quiet one');
 });
 
-test('popularApps: the count is coerced — the API sends it as a string', () => {
+test('discoverActivityScore: the worked example adds up signal by signal', () => {
   const Home = makeHome();
-  // Postgres COUNT(*) is a bigint, so the serializer hands the client "9",
-  // not 9. A lexicographic sort would rank "9" above "10".
-  const apps = [pop({ slug: 'nine', active_users: '9' }), pop({ slug: 'ten', active_users: '10' })];
-  assert.deepEqual(Home.popularApps(apps).map((a) => a.slug), ['ten', 'nine']);
+  // active_users 4 each (cap 50) + contributors 3 each (cap 25) + messages
+  // 2 each (cap 50) + minutes 1 each (cap 240) + in-flight 6 each (cap 5)
+  // + recency 40 / 15 / 5.
+  const gameCorner = {
+    active_users: 12, contributor_count: 21, message_count: 10,
+    total_seconds: 1800, open_prs: 0, active_sessions: 0,
+    last_active_at: isoAgo(21 * DAY),
+  };
+  const myPage = {
+    active_users: 6, contributor_count: 4, message_count: 25,
+    total_seconds: 3600, open_prs: 2, active_sessions: 1,
+    last_active_at: isoAgo(2 * HOUR),
+  };
+  const communityTies = {
+    active_users: 3, contributor_count: 3, message_count: 2,
+    total_seconds: 300, open_prs: 0, active_sessions: 0,
+    last_active_at: isoAgo(6 * DAY),
+  };
+  assert.equal(Home.discoverActivityScore(gameCorner), 166, '48 + 63 + 20 + 30 + 0 + 5');
+  assert.equal(Home.discoverActivityScore(myPage), 204, '24 + 12 + 50 + 60 + 18 + 40');
+  assert.equal(Home.discoverActivityScore(communityTies), 45, '12 + 9 + 4 + 5 + 0 + 15');
+});
+
+test('discoverActivityScore: recency bands — 24h, 7d, 30d, older, missing, invalid', () => {
+  const Home = makeHome();
+  const base = { active_users: 0, message_count: 0, total_seconds: 0 };
+  assert.equal(Home.discoverActivityScore({ ...base, last_active_at: isoAgo(2 * HOUR) }), 40);
+  assert.equal(Home.discoverActivityScore({ ...base, last_active_at: isoAgo(3 * DAY) }), 15);
+  assert.equal(Home.discoverActivityScore({ ...base, last_active_at: isoAgo(10 * DAY) }), 5);
+  assert.equal(Home.discoverActivityScore({ ...base, last_active_at: isoAgo(45 * DAY) }), 0,
+    'past the last band the bonus is gone');
+  assert.equal(Home.discoverActivityScore({ ...base, last_active_at: null }), 0);
+  assert.equal(Home.discoverActivityScore({ ...base }), 0, 'absent too');
+  assert.equal(Home.discoverActivityScore({ ...base, last_active_at: 'not-a-timestamp' }), 0,
+    'an invalid timestamp adds nothing and never produces NaN');
+  assert.equal(Number.isFinite(Home.discoverActivityScore(base)), true);
+});
+
+test('discoverActivityScore: caps bind — over-cap counts stop adding points', () => {
+  const Home = makeHome();
+  // 50 users + 25 contributors + 50 messages + 240 minutes + 5 PRs
+  // + 5 sessions, no recency: the ceiling of every count band at once.
+  const atCaps = {
+    active_users: 50, contributor_count: 25, message_count: 50,
+    total_seconds: 240 * 60, open_prs: 5, active_sessions: 5,
+  };
+  const overCaps = {
+    active_users: 999, contributor_count: 999, message_count: 999,
+    total_seconds: 999 * 60, open_prs: 99, active_sessions: 99,
+  };
+  assert.equal(Home.discoverActivityScore(atCaps), 675, '200 + 75 + 100 + 240 + 60');
+  assert.equal(Home.discoverActivityScore(overCaps), 675,
+    'counts past a cap stop adding points');
+});
+
+test('popularApps: every count is coerced — the API sends them as strings', () => {
+  const Home = makeHome();
+  // Postgres COUNT(*)/SUM() are bigints, so the serializer hands the client
+  // "9", not 9. A lexicographic sort would rank "9" above "10" — for the
+  // users, message and seconds fields alike.
+  const apps = [
+    pop({ slug: 'nine', active_users: '9', message_count: '9', total_seconds: '540' }),
+    pop({ slug: 'ten', active_users: '10', message_count: '10', total_seconds: '600' }),
+  ];
+  assert.deepEqual(Home.popularApps(apps).map((a) => a.slug), ['ten', 'nine'],
+    'all three fields sort numerically');
   assert.deepEqual(Home.popularApps([pop({ slug: 'n', active_users: 4 })]).map((a) => a.slug),
     ['n'], 'and a real number works too');
 });
