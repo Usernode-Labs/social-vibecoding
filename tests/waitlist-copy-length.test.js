@@ -55,7 +55,7 @@ test('and keeps every claim it used to make', () => {
     /Describe the app you want in chat, an AI builds it, and the group votes the changes in\./,
     /built here, by the people who use it/,
     /run on the Homeroom chain, and contributors own a share of what they build/,
-    /Access opens in batches/,
+    /We let people in a few at a time\./,
     /public apps are open to everyone now/,
     /Just your email to join\./,
   ]) {

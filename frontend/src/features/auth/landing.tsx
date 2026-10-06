@@ -1492,7 +1492,7 @@ export function LandingScreen() {
               Come build the next version with us.
             </h1>
             <p className="mt-2.5 text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400 text-pretty">
-              Access opens in batches, and we'll email you when your spot is ready.
+              We let people in a few at a time, and we'll email you when your spot is ready.
             </p>
             {/*
                 THE WAY OUT TO THE LONG VERSION. One sentence is the right
@@ -1703,7 +1703,6 @@ export function LandingScreen() {
         <SignInSheet
           open={sheet === 'join'}
           title={`Join ${invite!.project!.name}`}
-          intro=""
           followInvite
           providers={providers}
           native={nativeSignIn}
@@ -1718,9 +1717,6 @@ export function LandingScreen() {
         <SignInSheet
           open={sheet === 'start' || sheet === 'signin'}
           title={sheet === 'signin' ? 'Sign in' : 'Make your account'}
-          intro={sheet === 'signin'
-            ? (providers.length ? 'Welcome back.' : 'Welcome back. We\'ll email you a code.')
-            : ''}
           providers={providers}
           native={nativeSignIn}
           from={sheet === 'signin' ? 'signin' : 'story'}

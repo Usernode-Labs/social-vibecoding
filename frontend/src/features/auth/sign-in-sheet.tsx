@@ -350,13 +350,8 @@ const QUIET = 'py-1 text-[15px] font-medium text-violet-700 dark:text-violet-400
 
 export type SignInSheetProps = {
   open: boolean;
-  /** "Join Sunday Run Club" */
+  /** "Join Sunday Run Club", "Make your account", "Sign in" */
   title: string;
-  /**
-   * The line under the title on the first step, or '' for none: the story's
-   * "Make your account" and an invite's "Join …" say it in the title (#4037).
-   */
-  intro: string;
   /** This sign-in is the Join pressed on an invite's page. */
   followInvite?: boolean;
   /** Apple and Google, when an admin has set them up (inside the app, those its build can show). */
@@ -398,7 +393,7 @@ function rememberInviteJoin() {
 }
 
 export function SignInSheet({
-  open, title, intro, followInvite = false, providers = [], native = false, from = 'signin', returnTo = '/', resume = null,
+  open, title, followInvite = false, providers = [], native = false, from = 'signin', returnTo = '/', resume = null,
   releaseToken = null, beforeFinish, onClose, primaryClass,
 }: SignInSheetProps) {
   const firstStep: Step = providers.length ? 'choose' : 'email';
@@ -772,8 +767,11 @@ export function SignInSheet({
     : step === 'code' ? 'Check your email'
       : step === 'password' ? 'Sign in'
         : step === 'username' ? 'Pick a username' : 'Finish your account';
+  // The first step says nothing under its title: "Make your account",
+  // "Join Sunday Run Club" and "Sign in" already say it, and the field or
+  // the providers come next (#4037).
   const sub = step === 'choose' || (step === 'email' && !providers.length)
-    ? intro
+    ? ''
     : step === 'email'
       ? 'We\'ll email you a 6-digit code.'
       : step === 'code'

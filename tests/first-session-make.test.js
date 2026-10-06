@@ -152,6 +152,10 @@ test('the story: one headline, three named tiles, "Make an account" and the wait
   ]);
   assert.match(html, /<a href="#signup" data-landing-story-start="" class="pill">Make an account<\/a>/);
   assert.match(html, /<a href="#login" data-landing-story-signin=""[^>]*>Sign in<\/a>/);
+  // In a phone browser too, the story fills the screen and its foot is at the foot.
+  const css = read('public/css/app.css');
+  assert.match(css, /html\[data-browser-scroller="auth-landing-scroll"\] #auth-landing-scroll:has\(> \* > \[data-landing-story\]\) \{\s+flex: 1 0 auto;\s+display: flex;\s+flex-direction: column;\s+\}/);
+  assert.match(css, /html\[data-browser-scroller="auth-landing-scroll"\] #auth-landing-scroll > :has\(> \[data-landing-story\]\) \{\s+flex: 1 0 auto;\s+width: 100%;\s+\}/);
   for (const gone of [/Welcome to Homeroom/, /On Homeroom,/, /Anyone using an app/, /What groups make/, /What communities make/, /Get started/, /Already have an account/, /Weekly miles/]) {
     assert.doesNotMatch(html, gone);
   }

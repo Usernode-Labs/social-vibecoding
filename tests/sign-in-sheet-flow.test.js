@@ -261,31 +261,29 @@ test('each way into the sheet says only what is true for it', () => {
   assert.equal(passwordLead('invite'), 'New to Homeroom? This makes your account. ');
   assert.equal(passwordLead('story'), 'Already have an account? ');
   assert.equal(passwordLead('signin'), '');
-  const render = (from, title, intro) => renderToHtml(createElement(SignInSheet, {
-    open: true, title, intro, from, onClose() {}, primaryClass: 'pill',
+  const render = (from, title) => renderToHtml(createElement(SignInSheet, {
+    open: true, title, from, onClose() {}, primaryClass: 'pill',
   }));
-  const signin = render('signin', 'Sign in', 'Welcome back. We\'ll email you a code.');
-  assert.match(signin, /Welcome back/);
+  const signin = render('signin', 'Sign in');
+  assert.doesNotMatch(signin, /Welcome back/);
   assert.doesNotMatch(signin, /New to Homeroom|This makes your account|Already have an account/);
   assert.match(signin, /<p[^>]*><a href="#login" data-sign-in-sheet-password=""[^>]*>Sign in with a password<\/a><\/p>/,
     'Sign in: the link alone');
-  const start = render('story', 'Make your account', '');
+  const start = render('story', 'Make your account');
   assert.match(start, /Already have an account\? <a[^>]*>Sign in with a password<\/a>/);
   assert.doesNotMatch(start, /New to Homeroom/);
-  const join = render('invite', 'Join Sunday Run Club', '');
+  const join = render('invite', 'Join Sunday Run Club');
   assert.match(join, /New to Homeroom\? This makes your account\. <a[^>]*>Sign in with a password<\/a>/);
   // Nothing the story's two sheets say is a dash.
   for (const html of [signin, start, join]) assert.doesNotMatch(html, /—/);
-  // #4037: the account sheets have no line under the title, the title says
-  // it, and no empty paragraph is left where the line was.
-  for (const html of [start, join]) {
+  // #4037: no sheet has a line under its title, the title says it, and no
+  // empty paragraph is left where the line was: the title, then the field.
+  for (const html of [signin, start, join]) {
     assert.match(html, /<\/button><\/div><form/, 'the title row, then the email step');
     assert.doesNotMatch(html, /<p class="mt-1 text-\[15px\] leading-snug/);
   }
   const landing = read(LANDING);
-  assert.match(landing, /title=\{`Join \$\{invite!\.project!\.name\}`\}\s+intro=""/);
-  assert.match(landing, /title=\{sheet === 'signin' \? 'Sign in' : 'Make your account'\}\s+intro=\{sheet === 'signin'\s+\? \(providers\.length \? 'Welcome back\.' : 'Welcome back\. We\\'ll email you a code\.'\)\s+: ''\}/);
-  assert.doesNotMatch(landing, /It takes a minute/);
+  assert.doesNotMatch(landing, /\bintro=|It takes a minute|Welcome back/);
 });
 
 // ─── the way out to the make screen ─────────────────────────────────────

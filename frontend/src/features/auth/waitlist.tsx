@@ -1121,7 +1121,7 @@ export function WaitlistScreen() {
           they build.
           </li>
           <li>
-            Access opens in batches. The public apps are open to everyone now.
+            We let people in a few at a time. The public apps are open to everyone now.
           </li>
         </ul>
         <p className={hiddenLast(joined, 'mt-3 text-sm font-medium text-zinc-700 dark:text-zinc-200')}>
