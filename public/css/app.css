@@ -8006,6 +8006,23 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   background: var(--state-neutral-bg);
   border-color: transparent;
 }
+/* #4019: the vote's SENDING state — the building pill's twin, for the Yes/No
+   pair while the vote is on the wire. The pressed side wears this; the other
+   side is merely disabled and keeps its ghost. It renders as <button
+   disabled>, and .gc-vote-btn:disabled's ghosting is undone for the same
+   reason the building pill's is: a half-transparent pill reads as broken
+   rather than as busy, and the whole point is that the press was heard. The
+   :disabled arm is also what outranks .gc-vote-btn-yes.gc-vote-active below —
+   the optimistic fill the click just painted is replaced, for these few
+   seconds, by the neutral busy look. */
+.gc-vote-btn.gc-vote-btn-sending,
+.gc-vote-btn.gc-vote-btn-sending:disabled {
+  opacity: 1;
+  cursor: default;
+  color: var(--state-neutral);
+  background: var(--state-neutral-bg);
+  border-color: transparent;
+}
 /* The ledger's one action (Re-run checks): the band's accent pill — the
    tinted fill Preview wears on the card — so the row's button reads as the
    same kind of control as the card's, not as a second neutral chip. */

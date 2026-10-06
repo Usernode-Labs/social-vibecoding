@@ -680,8 +680,10 @@ test('#1924: castVote sets my_vote and repaints before the request, and keeps it
     return { ok: true, status: 200, json: async () => ({ ok: true }) };
   };
   await AppView.castVote(7, 'yes');
-  assert.equal(seen.join(' '), 'repaint:yes fetch:yes refresh',
-    'the card is repainted as voted before the network round-trip');
+  // #4019: the last repaint is the sending state's clear — once the server
+  // answers, the pair is put back before the tally refresh that follows.
+  assert.equal(seen.join(' '), 'repaint:yes fetch:yes refresh repaint:yes',
+    'the card is repainted as voted before the network round-trip, and repainted clickable again when the server answers');
   assert.equal(pr.my_vote, 'yes');
 });
 
@@ -715,7 +717,11 @@ test('#1924: re-casting the same vote does not repaint optimistically', async ()
   AppView.refreshDevData = () => {};
   AppView.__sandbox.fetch = async () => ({ ok: true, status: 200, json: async () => ({}) });
   await AppView.castVote(7, 'yes');
-  assert.equal(repaints, 0);
+  // #4019: a re-cast is not optimistic — the row's vote never moves — but it
+  // is no longer silent either: the sending state repaints once on its way
+  // and once when the server answers, which is the feedback the report asked
+  // for. Nothing about the row changed in either pass.
+  assert.equal(repaints, 2);
   assert.equal(pr.my_vote, 'yes');
 });
 

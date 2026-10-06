@@ -83,8 +83,12 @@ test('a Yes cast from the open proposal page repaints the page header, not only 
     return { ok: true, status: 200, json: async () => ({ ok: true }) };
   };
   await AppView.castVote(7, 'yes', 3, { reason: null });
-  assert.deepEqual(seen, ['board:yes', 'page:yes:2', 'fetch:yes', 'refresh'],
-    'the page header shows the vote and the tally before the round-trip starts');
+  // #4019: the last pair is the sending state's own clear — once the server
+  // answers, the flag is dropped and the pair is repainted clickable again,
+  // before the tally refresh that follows.
+  assert.deepEqual(seen,
+    ['board:yes', 'page:yes:2', 'fetch:yes', 'refresh', 'board:yes', 'page:yes:2'],
+    'the page header shows the vote and the tally before the round-trip starts, and the pair comes back when the server answers');
 });
 
 test('a deep-linked proposal the board lists never held still registers at once', async () => {
@@ -99,7 +103,9 @@ test('a deep-linked proposal the board lists never held still registers at once'
   AppView.refreshDevData = () => {};
   AppView.__sandbox.fetch = async () => ({ ok: true, status: 200, json: async () => ({ ok: true }) });
   await AppView.castVote(7, 'yes', 3, { reason: null });
-  assert.deepEqual(painted, ['yes:1/0'], 'a flip moves one vote from No to Yes');
+  // The second paint is #4019's: the sending state cleared once the server
+  // answered, repainting the header beside the board.
+  assert.deepEqual(painted, ['yes:1/0', 'yes:1/0'], 'a flip moves one vote from No to Yes');
 });
 
 test('a refused vote restores the page header and its tally', async () => {
@@ -348,4 +354,99 @@ test('a second press while the first is in flight resolves false without a reque
   const ok = await h.AppView.castVote(7, 'no', 3, { onSend: h.onSend });
   assert.equal(ok, false);
   assert.deepEqual(h.seen, []);
+});
+
+// ── #4019: the sending state ────────────────────────────────────────────
+//
+// A vote on a slow connection used to sit with no visible reply for the
+// whole round trip, which read as the button doing nothing and invited a
+// second press. While the vote is on the wire the pair now goes quiet: both
+// buttons disabled, the pressed one reading "Sending…", and every state
+// change repainting through the same pass the optimistic vote uses.
+
+function sendingHarness({ fetch, row } = {}) {
+  const AppView = makeAppView();
+  const pr = openRow(row);
+  AppView._proposals = [pr];
+  AppView._devTopic = { kind: 'proposal', id: 7 };
+  const painted = [];
+  AppView._repaintDevBody = () => painted.push('board');
+  AppView._renderTopicHead = () => painted.push('page');
+  AppView.refreshDevData = async () => {};
+  AppView.__sandbox.fetch = fetch || (async () => ({ ok: true, status: 200, json: async () => ({ ok: true }) }));
+  return { AppView, pr, painted };
+}
+
+test('#4019: while the vote is on the wire both pills go quiet and the pressed one says Sending…, even when the vote is not optimistic', async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  let sent = false;
+  const h = sendingHarness({
+    // A re-cast of the viewer's own side: nothing optimistic about it, which
+    // is exactly where the old silence lived.
+    row: { my_vote: 'yes' },
+    fetch: async () => { sent = true; await gate; return { ok: true, status: 200, json: async () => ({ ok: true }) }; },
+  });
+  const done = h.AppView.castVote(7, 'yes', 3, { reason: null });
+  while (!sent) await new Promise((r) => setImmediate(r));
+  assert.deepEqual(h.painted, ['board', 'page'],
+    'the sending state repaints even though the vote was not optimistic');
+  const html = h.AppView.voteButtonsHtml(h.pr);
+  assert.match(html,
+    /<button class="gc-vote-btn gc-vote-btn-yes gc-vote-active gc-vote-btn-sending" disabled onclick="AppView\.castVote\(7, 'yes', 3\)">Sending…<\/button>/,
+    'the pressed pill says Sending…, disabled');
+  assert.match(html, /<button class="gc-vote-btn gc-vote-btn-no" disabled[^>]*>No \(0\)<\/button>/,
+    'the other side is disabled too, and keeps its tally');
+  assert.doesNotMatch(html, /gc-vote-btn-sending[^>]*>No/);
+  release();
+  await done;
+});
+
+test('#4019: a refused vote clears the sending state and puts a clickable pair straight back', async () => {
+  const h = sendingHarness({
+    fetch: async () => ({ ok: false, status: 409, json: async () => ({ error: 'This proposal changed' }) }),
+  });
+  const ok = await h.AppView.castVote(7, 'yes', 3, { reason: null });
+  assert.equal(ok, false);
+  assert.equal(h.AppView._voteSending.size, 0, 'no sending state left behind');
+  assert.equal(h.pr.my_vote, null, 'the optimistic vote was put back');
+  const html = h.AppView.voteButtonsHtml(h.pr);
+  assert.doesNotMatch(html, /gc-vote-btn-sending/);
+  assert.doesNotMatch(html, /<button [^>]*\bdisabled/, 'the pair is clickable again');
+  assert.match(html, /Yes \(1\)/, 'the pre-vote tally is back');
+});
+
+test('#4019: a vote that never reaches the server clears the sending state too', async () => {
+  const h = sendingHarness({ fetch: async () => { throw new TypeError('Failed to fetch'); } });
+  const ok = await h.AppView.castVote(7, 'yes', 3, { reason: null });
+  assert.equal(ok, false);
+  assert.equal(h.AppView._voteSending.size, 0, 'no sending state left behind');
+  const html = h.AppView.voteButtonsHtml(h.pr);
+  assert.doesNotMatch(html, /gc-vote-btn-sending/);
+  assert.doesNotMatch(html, /<button [^>]*\bdisabled/, 'the pair is clickable again');
+});
+
+test('#4019: a cancelled No writes no sending state and repaints nothing', async () => {
+  const h = sendingHarness({ fetch: async () => { throw new Error('a cancelled No sends nothing'); } });
+  h.AppView.__sandbox.PlatformUI = { prompt: async () => null, toast: () => {} };
+  const ok = await h.AppView.castVote(7, 'no', 3, {});
+  assert.equal(ok, false);
+  assert.equal(h.AppView._voteSending.size, 0, 'nothing was recorded');
+  assert.deepEqual(h.painted, [], 'and nothing was painted');
+});
+
+test('#4019: the pair comes back the moment the server answers, before the post-vote read has landed', async () => {
+  const h = sendingHarness();
+  let resolveRefresh;
+  h.AppView.refreshDevData = () => new Promise((r) => { resolveRefresh = r; });
+  const done = h.AppView.castVote(7, 'yes', 3, { reason: null });
+  await done;
+  assert.equal(h.AppView._voteSending.size, 0, 'cleared when the server answered…');
+  assert.deepEqual(h.painted, ['board', 'page', 'board', 'page'],
+    '…and the clear repainted, one pass with the vote and one putting the pair back');
+  const html = h.AppView.voteButtonsHtml(h.pr);
+  assert.doesNotMatch(html, /gc-vote-btn-sending|<button [^>]*\bdisabled/, 'the pair is live again');
+  resolveRefresh();
+  await new Promise((r) => setImmediate(r));
+  assert.equal(h.AppView._pendingVotes.size, 0, 'the read\'s own settle still runs once it lands');
 });

@@ -624,7 +624,15 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
     const h = popRef.current?.scrollHeight;
     if (h && h !== measuredH) setMeasuredH(h);
   }, [open, side, measuredH]);
-  const face = mine === 'yes' ? 'Yes' : (mine === 'no' ? 'No' : (prior === 'yes' ? 'Still yes?' : 'Vote'));
+  // #4019: the viewer's vote is on its way (AppView's `_voteSending`). The
+  // control goes inert and reads what it is doing — the same busy word the
+  // inline pair speaks — while the optimistic tint it already wears stays,
+  // so it reads "busy, on its way" rather than "dead". A disabled button
+  // takes no click, which is what keeps the picker shut.
+  const sending = !!(yes.sending || no.sending);
+  const face = sending
+    ? 'Sending…'
+    : (mine === 'yes' ? 'Yes' : (mine === 'no' ? 'No' : (prior === 'yes' ? 'Still yes?' : 'Vote')));
   // A governance apply in flight disables the pair; the one button goes
   // inert with them, wearing the spec's own explanation.
   const disabled = !!(yes.disabled || no.disabled);
@@ -716,11 +724,11 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
         className={`dev-vote-btn dev-vote-btn-approve${approved ? ' dev-vote-btn-yes' : ''}`}
         data-vote-btn={approved ? 'approved' : 'approve'}
         title={approved ? 'You approved it.' : 'Approve it, and it goes live.'}
-        disabled={disabled || approved}
+        disabled={disabled || approved || sending}
         onClick={(e) => { e.stopPropagation(); send(yes, null); }}
       >
         {approved ? <CheckIcon aria-hidden="true" /> : null}
-        {approved ? 'Approved' : 'Approve'}
+        {approved ? 'Approved' : (sending ? 'Sending…' : 'Approve')}
       </button>
     );
   }
@@ -734,7 +742,7 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
         aria-haspopup="dialog"
         aria-expanded={open || !!sheetEl ? 'true' : undefined}
         title={title}
-        disabled={disabled}
+        disabled={disabled || sending}
         onClick={toggle}
       >
         {mine === 'yes' ? <CheckIcon aria-hidden="true" /> : null}

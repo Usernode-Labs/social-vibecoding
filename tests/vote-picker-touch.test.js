@@ -189,6 +189,44 @@ test('the switch has two filled states, the popover one even inset, and the shee
   assert.doesNotMatch(block, /#[0-9a-f]{3,6}\b|rgb\(/i, 'tokens only');
 });
 
+// ── #4019: the sending state ──────────────────────────────────────────
+
+test('#4019: a sending pair renders the face Sending…, is inert, and keeps the optimistic tint', () => {
+  const busyYes = { ...yes, disabled: true, sending: true };
+  const busyNo = { ...no, disabled: true };
+  const html = renderComponent(CARD, 'VoteButton', { yes: busyYes, no: busyNo });
+  assert.match(html, /<button type="button" class="dev-vote-btn"[^>]*disabled="">Sending…</,
+    'the control is disabled and reads what it is doing');
+  const fn = SRC.slice(SRC.indexOf('export function VoteButton('), SRC.indexOf('export function VotePicker('));
+  assert.match(fn, /disabled=\{disabled \|\| sending\}/,
+    'a disabled button takes no click, which is what keeps the picker shut');
+  // The optimistic tint stays: the side the viewer just pressed still reads
+  // as theirs while it is on its way.
+  const mine = { ...yes, cls: 'gc-vote-btn gc-vote-btn-yes gc-vote-active', disabled: true, sending: true };
+  const tinted = renderComponent(CARD, 'VoteButton', { yes: mine, no: busyNo });
+  assert.match(tinted, /class="dev-vote-btn dev-vote-btn-yes" data-vote-btn="yes"[^>]*disabled="">(<svg[^>]*><path[^>]*><\/path><\/svg>)?Sending…</,
+    'the pressed side keeps its check mark and its accent class while it says Sending…');
+  // The solo Approve variant says the same thing while its vote is away.
+  const approve = renderComponent(CARD, 'VoteButton', {
+    yes: { ...yes, approve: true, disabled: true, sending: true }, no: busyNo,
+  });
+  assert.match(approve, /class="dev-vote-btn dev-vote-btn-approve"[^>]*disabled="">Sending…</);
+  // A pair that is not sending renders exactly as before.
+  const idle = renderComponent(CARD, 'VoteButton', { yes, no });
+  assert.doesNotMatch(idle, /Sending…/);
+  assert.match(idle, />Vote</);
+});
+
+test('#4019: app.css gives the sending pill the neutral busy look, with the :disabled ghosting undone', () => {
+  const at = CSS.indexOf('.gc-vote-btn.gc-vote-btn-sending');
+  assert.ok(at > -1, 'the rule exists');
+  const rule = CSS.slice(at, CSS.indexOf('}', at) + 1);
+  assert.match(rule, /:disabled/, 'the :disabled ghosting is deliberately undone');
+  assert.match(rule, /opacity: 1/);
+  assert.match(rule, /color: var\(--state-neutral\)/);
+  assert.match(rule, /background: var\(--state-neutral-bg\)/, 'the same neutral tokens the building pill speaks');
+});
+
 // ── Test accounts ─────────────────────────────────────────────────────
 
 test('a test account\'s vote on an app a real person made says, in one line, that it will not count', () => {

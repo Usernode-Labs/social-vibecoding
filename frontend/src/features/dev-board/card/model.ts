@@ -148,6 +148,12 @@ export interface ActionSpec {
    */
   prior?: 'yes' | 'no';
   /**
+   * #4019: the viewer's vote on this proposal is on its way (AppView's
+   * `_voteSending`). The Vote control goes inert and reads "Sending…", with
+   * the optimistic tint it already wears left alone.
+   */
+  sending?: boolean;
+  /**
    * On the Yes spec: the project is just the viewer's (`audience === 'solo'`),
    * so the vote picker's optional line is a note rather than "a line for the
    * group".

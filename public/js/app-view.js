@@ -13929,12 +13929,18 @@ const AppView = {
     // Test accounts: the viewer's vote here is recorded but not counted
     // (my_vote_uncounted on the /promoted row); the picker says so.
     const uncounted = pr.my_vote_uncounted === true ? { uncounted: true } : {};
+    // #4019: while this proposal's vote is on the wire both specs go inert,
+    // and the pressed one says so — one pair feeding both the board card's
+    // band and the proposal page's Vote control, so one flag covers both.
+    const sending = AppView._voteSending.get(Number(pr.id)) || null;
     return [
       {
         key: 'yes',
         cls: `gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}`,
         title: yesT.tip, label: `Yes (${yesT.label})`,
         act: { fn: 'castVote', args: [pr.id, 'yes', ...rev] },
+        ...(sending ? { disabled: true } : {}),
+        ...(sending === 'yes' ? { sending: true } : {}),
         ...prior,
         ...AppView._voteSolo(),
         ...(AppView._approveSolo(pr) ? { approve: true } : {}),
@@ -13945,6 +13951,8 @@ const AppView = {
         cls: `gc-vote-btn gc-vote-btn-no${pr.my_vote === 'no' ? ' gc-vote-active' : ''}`,
         title: noT.tip, label: `No (${noT.label})`,
         act: { fn: 'castVote', args: [pr.id, 'no', ...rev] },
+        ...(sending ? { disabled: true } : {}),
+        ...(sending === 'no' ? { sending: true } : {}),
       },
     ];
   },
@@ -21362,8 +21370,20 @@ const AppView = {
     const revisionArg = voteEpoch === null ? '' : `, ${voteEpoch}`;
     const yesT = AppView._voteBtnTally(pr.qualified_yes_count, pr.yes_count, pr.approval_policy, 'Yes');
     const noT = AppView._voteBtnTally(pr.qualified_no_count, pr.no_count, pr.approval_policy, 'No');
-    const yesBtn = `<button class="gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}"${yesT.title} onclick="AppView.castVote(${pr.id}, 'yes'${revisionArg})">Yes (${yesT.label})</button>`;
-    const noBtn = `<button class="gc-vote-btn gc-vote-btn-no${pr.my_vote === 'no' ? ' gc-vote-active' : ''}"${noT.title} onclick="AppView.castVote(${pr.id}, 'no'${revisionArg})">No (${noT.label})</button>`;
+    // #4019: while this proposal's vote is on the wire, both pills are
+    // disabled and the pressed one reads "Sending…" — the busy-pill wording
+    // the card already speaks ("Preview building…", "Syncing…"). The other
+    // side keeps its tally so the pair still says where the count stood.
+    // Keyed by session id, so two proposals carry their sending states
+    // independently.
+    const sending = AppView._voteSending.get(Number(pr.id)) || null;
+    const voteBtn = (side, tally) => {
+      const busy = sending === side;
+      const label = busy ? 'Sending…' : `${side === 'yes' ? 'Yes' : 'No'} (${tally.label})`;
+      return `<button class="gc-vote-btn gc-vote-btn-${side}${pr.my_vote === side ? ' gc-vote-active' : ''}${busy ? ' gc-vote-btn-sending' : ''}"${sending ? ' disabled' : ''}${tally.title} onclick="AppView.castVote(${pr.id}, '${side}'${revisionArg})">${label}</button>`;
+    };
+    const yesBtn = voteBtn('yes', yesT);
+    const noBtn = voteBtn('no', noT);
     return preview + retryPreview + yesBtn + noBtn + adminMerge + AppView._uncountedVoteNoteHtml(pr);
   },
 
@@ -21566,6 +21586,14 @@ const AppView = {
 
 
   _voteInFlight: new Set(),
+  // #4019: the vote that is on the wire, by session id → 'yes' | 'no'. Where
+  // _voteInFlight only blocks a second send, this is what the buttons read:
+  // while it holds a session, its Yes/No pair renders disabled with the
+  // pressed side saying "Sending…", so a slow round-trip never reads as a
+  // dead click. Set in castVote once the line is in hand (a cancelled No
+  // writes nothing), cleared when the server answers, and cleared again in
+  // rollback before its repaint puts the pair back.
+  _voteSending: new Map(),
   // #2782: votes sent but not yet read back, by session id → { vote, token }.
   // A dev-data load that was already in flight when the vote was cast answers
   // with the row as it stood before, and publishing that repainted the vote
@@ -21679,6 +21707,10 @@ const AppView = {
       AppView._voteInFlight.delete(key);
       return false;
     }
+    // #4019: from here the vote is being sent — say so on the pair. A
+    // cancelled No left above, so nothing is painted for a vote that was
+    // never sent.
+    AppView._voteSending.set(Number(sessionId), vote);
     const onSend = opts && typeof opts.onSend === 'function' ? opts.onSend : null;
     if (onSend) {
       try { onSend(vote); } catch { /* the caller's paint, never the vote's */ }
@@ -21699,10 +21731,15 @@ const AppView = {
     const optimistic = !!pr && pr.my_vote !== vote;
     const token = {};
     AppView._pendingVotes.set(Number(sessionId), { vote, token });
+    // One repaint for the sending state and, when there is one, the
+    // optimistic vote. The repaint must happen even when the vote is NOT
+    // optimistic — a re-cast of the viewer's own side, or a row the cache
+    // does not hold, repaints nothing else, and that silence was the
+    // reported bug: the click sat there unanswered for the whole round trip.
     if (optimistic) {
       AppView._applyVoteToRow(pr, vote);
-      AppView._repaintAfterVote(sessionId);
     }
+    AppView._repaintAfterVote(sessionId);
     const settle = () => {
       const held = AppView._pendingVotes.get(Number(sessionId));
       if (held && held.token === token) AppView._pendingVotes.delete(Number(sessionId));
@@ -21710,6 +21747,9 @@ const AppView = {
     const rollback = () => {
       settle();
       if (optimistic && pr.my_vote === vote) {
+        // The sending state goes first, so the repaint below puts a
+        // clickable pair back in the same pass.
+        AppView._voteSending.delete(Number(sessionId));
         Object.assign(pr, prevRow);
         AppView._repaintAfterVote(sessionId);
       }
@@ -21769,6 +21809,16 @@ const AppView = {
     }
     finally {
       AppView._voteInFlight.delete(key);
+      // #4019: whatever the outcome, the vote is no longer on its way — clear
+      // the sending state and put the pair back in the same pass, so the
+      // buttons come back as soon as the server answers, not when the tally
+      // refresh that follows has landed. An optimistic refusal already
+      // cleared it in rollback, whose repaint then shows the restored pair,
+      // and this delete answers for it; on a non-optimistic failure only
+      // this repaint reaches the pair at all.
+      if (AppView._voteSending.delete(Number(sessionId))) {
+        AppView._repaintAfterVote(sessionId);
+      }
     }
   },
 
