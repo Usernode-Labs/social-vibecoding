@@ -25,9 +25,13 @@ import type { HomeroomBotMeta, SharedObjectCard } from './types';
  * server's reading of it for this reader, the one a pasted link to it gets
  * (./link-cards.tsx); and, until that answers or when it cannot, the card the
  * line itself describes. That last one says nothing the line did not, and
- * the `#N` chip it replaces opened the same page. No "by" on any of them: on
- * a request the platform filed, GitHub's author is its own account, and the
- * line never said who filed it.
+ * the `#N` chip it replaces opened the same page.
+ *
+ * NO "BY" AND NO STATUS on any of them. On a request the platform filed,
+ * GitHub's author is its own account, and the line never said who filed it.
+ * The status is GitHub's: a request whose change went live is "closed", so
+ * "It's live now" sat under a card reading "Todo List · closed", which reads
+ * as turned down. The message's own words say where the request stands.
  */
 
 export interface RequestHead {
@@ -88,7 +92,7 @@ export function RequestHeadCard({ head, objects }: { head: RequestHead; objects:
   };
   return (
     <div className="mb-1.5 mt-1 max-w-[480px]" data-bot-request-card={head.issueNumber}>
-      <ObjectCard object={{ ...card, author: null, href: head.link?.href || null }} />
+      <ObjectCard object={{ ...card, author: null, state: null, href: head.link?.href || null }} />
     </div>
   );
 }

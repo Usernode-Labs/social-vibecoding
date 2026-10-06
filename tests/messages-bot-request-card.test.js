@@ -13,7 +13,8 @@
 //      server's own line parses, so a change to its shape fails here.
 //   2. The card, from the best source there is: the request's card the
 //      message carries, else the server's reading for this reader, else the
-//      line's own project and title. No "by", and no fetch it does not need.
+//      line's own project and title. No "by" and no status (a request whose
+//      change went live is GitHub's "closed"), and no fetch it does not need.
 //   3. Where it is drawn: in the row in place of the line, the card not drawn
 //      again under the words, and in the two-questions card's lead.
 //
@@ -118,8 +119,9 @@ test('the card the message carries is the card, and nothing is fetched for it', 
     'the card leads, linking the request');
   assert.match(html, />Request</);
   assert.match(html, /Only close a category when its last item is checked/);
-  assert.match(html, /Todo List · closed</);
-  assert.doesNotMatch(html, /by usernode-bot|request #93|#93</, 'no "by", and no line');
+  assert.match(html, />Todo List</, 'its project alone');
+  assert.doesNotMatch(html, /closed|by usernode-bot|request #93|#93</,
+    'no status (a live request is GitHub\'s "closed", which read as turned down), no "by", and no line');
   assert.ok(html.indexOf('messages-object-card') < html.indexOf('messages-markdown'), 'then the words');
   assert.match(html, /<div class="messages-markdown gc-msg-content">I couldn't finish building this/);
   assert.equal(isHeadCard(head, carried), true, 'which the row then leaves out from under the words');
@@ -133,9 +135,9 @@ test('else the server’s reading of the request for this reader; until it comes
   let html = draw(head, [{ type: 'issue', available: false }]);
   assert.deepEqual(asked, [['issue:todo-list-b91765:93']], 'the request’s link, asked once');
   assert.match(html, /Renamed since/);
-  assert.match(html, /Todo List · open</);
+  assert.match(html, />Todo List</);
   assert.match(html, /<a href="#app\/todo-list-b91765\/dev\/issues\/93"/, 'the request’s page, not the answer’s address');
-  assert.doesNotMatch(html, /usernode-bot/);
+  assert.doesNotMatch(html, /usernode-bot|· open/);
 
   answer = null;
   html = draw(head);
