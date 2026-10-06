@@ -433,7 +433,8 @@ export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo
         const reveal = stepRef.current.newestFromTop;
         if (reveal) showNewestFromTop(reveal);
         const m = measure(at, stepRef.current);
-        const key = `${at}:${boxKey(m.box)}:${boxKey(m.press)}`;
+        // The words too: the plan coming into the chat moves no box.
+        const key = `${at}:${boxKey(m.box)}:${boxKey(m.press)}:${m.instead ? 1 : 0}`;
         if (key !== last) { last = key; setMeasured(m); }
         if (window.innerWidth !== viewport.width || window.innerHeight !== viewport.height) {
           setViewport({ width: window.innerWidth, height: window.innerHeight });
