@@ -242,6 +242,18 @@ secrets checksum rolls out changes to the chart-managed value. This makes the
 key available in the environment; application code must read it to use it.
 The current Firebase Admin push provider uses the service account above.
 
+Set the non-secret phone authentication flag in the infra repository's
+plaintext `platform.yaml`:
+
+```yaml
+config:
+  firebasePhoneAuthEnabled: true
+```
+
+This maps to `FIREBASE_PHONE_AUTH_ENABLED` in the platform Deployment and
+defaults to `false` in the reusable chart. Application support for this flag
+is required for it to enable phone authentication.
+
 `config.domain` is the canonical platform hostname (`USERNODE_DOMAIN`).
 `config.appsDomain` optionally sets a separate suffix for generated apps and
 session previews (`USERNODE_APPS_DOMAIN`). When empty, it defaults to

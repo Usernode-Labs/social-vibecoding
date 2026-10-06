@@ -119,6 +119,8 @@ config:
   appHostSignin: "on"
   # Optional waitlist OAuth callback origin. Empty uses the application's canonical origin.
   waitlistOauthOrigin: ""
+  # Firebase phone authentication flag; enable in the cluster's plaintext values.
+  firebasePhoneAuthEnabled: false
   # Waitlist skips by invite-tree generation (INVITE_TREE_BUDGETS): people let
   # off the waitlist by hand get the first number; the default "10" gives the
   # people they let in none (no chaining). Whether invite links skip the
