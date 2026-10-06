@@ -183,8 +183,18 @@ const EVENT_TYPES = Object.freeze({
   //                         project (services/invite-activity.js); user_id
   //                         is the visitor when signed in. metadata:
   //                         { inviteId, signedIn }
+  //   first_session_looked_around
+  //                         the first session's question, "What do you want
+  //                         to make?", answered with "Look around first"
+  //                         (#4039): the other outcome beside a project made
+  //                         from it (app_created with from 'first-session').
+  //                         Written once, with the answer itself
+  //                         (services/first-session.js answerJoinScreen).
+  //                         metadata: { via } (how the question reached
+  //                         them: 'story' or 'sign_in')
   FIRST_ARTEFACT_SHOWN: 'first_artefact_shown',
   INVITE_OPENED: 'invite_opened',
+  FIRST_SESSION_LOOKED_AROUND: 'first_session_looked_around',
 });
 
 // Record a single analytics event. Fire-and-forget — returns a promise

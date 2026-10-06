@@ -38,6 +38,7 @@
 const express = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
+const events = require('../services/events');
 const providers = require('../services/sign-in-providers');
 const communityInvites = require('../services/community-invites');
 const challengeScorer = require('../services/topochain/challenge-scorer');
@@ -122,6 +123,8 @@ function signInProviderRoutes(config) {
       await managedOpenRouter.ensureIncludedKey({
         pool, userId: result.userId, config, reason: `signup_${provider}`,
       });
+      // The sign-up, as the email code records it (routes/auth.js, #4039).
+      events.record(pool, { type: events.EVENT_TYPES.USER_SIGNED_UP, userId: result.userId, metadata: { via: provider } });
       // Made from the story's sheet: asked what to make, not which
       // communities to join (services/first-session.js). Recorded as
       // reached from the story; the question stays owed until it is

@@ -413,6 +413,9 @@ function authRoutes(config) {
         await managedOpenRouter.ensureIncludedKey({
           pool, userId: verified.userId, config, reason: 'signup_email',
         });
+        // The sign-up, as an activation code and a wallet record theirs
+        // (#4039): an email code made no user_signed_up before.
+        events.record(pool, { type: events.EVENT_TYPES.USER_SIGNED_UP, userId: verified.userId, metadata: { via: 'email' } });
       }
       createSignupCookie(res, verified.signupToken, verified.expiresAt);
       log.info('email-signup', 'Email code verified, password setup pending', {

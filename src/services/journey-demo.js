@@ -407,8 +407,9 @@ function pairs(day, all = false) {
 //
 // Rows shaped as journey.FIRST_SESSION_SQL returns them, read by the real
 // journey.firstSessionReading. [path, person, slug, project, started at,
-// seconds to sketch shown / invite sent / running (make), or to first
-// message / first request (join)]; null is not reached.
+// seconds to sketch shown / invite sent / running (make), to first
+// message / first request (join), or to a project of their own after
+// "Look around first" (look)]; null is not reached.
 const DEMO_FIRST_SESSIONS = [
   ['make', P.jun, 'reading-pile', 'Reading Pile', '2026-09-29T08:00:00Z', [38, 410, 91]],
   ['make', P.okafor, 'bird-log', 'Bird Log', '2026-09-29T17:00:00Z', [44, 1900, 95]],
@@ -417,13 +418,17 @@ const DEMO_FIRST_SESSIONS = [
   ['join', P.sable, 'bird-log', 'Bird Log', '2026-09-29T20:00:00Z', [95, 1300]],
   ['join', P.lena, 'tally', 'Tally', '2026-09-30T12:00:00Z', [null, null]],
   ['join', P.tobi, 'book-swap', 'Book Swap', '2026-10-01T19:00:00Z', [130, null]],
+  ['look', P.rafa, null, null, '2026-09-30T15:00:00Z', [5400]],
+  ['look', P.sable, null, null, '2026-10-02T08:00:00Z', [null]],
 ].map(([path, p, slug, name, at, secs]) => {
   const plus = (s) => (s == null ? null : new Date(Date.parse(at) + s * 1000).toISOString());
-  return path === 'make'
-    ? { path, user_id: p.userId, username: p.name, slug, name, intent_at: at,
-      reward_at: plus(secs[0]), invited_at: plus(secs[1]), running_at: plus(secs[2]), said_at: null, suggested_at: null }
-    : { path, user_id: p.userId, username: p.name, slug, name, intent_at: at,
-      reward_at: null, invited_at: null, running_at: null, said_at: plus(secs[0]), suggested_at: plus(secs[1]) };
+  const row = {
+    path, user_id: p.userId, username: p.name, slug, name, intent_at: at,
+    reward_at: null, invited_at: null, running_at: null, said_at: null, suggested_at: null, made_at: null,
+  };
+  if (path === 'make') return { ...row, reward_at: plus(secs[0]), invited_at: plus(secs[1]), running_at: plus(secs[2]) };
+  if (path === 'join') return { ...row, said_at: plus(secs[0]), suggested_at: plus(secs[1]) };
+  return { ...row, made_at: plus(secs[0]) };
 });
 
 function firstSession(day, all = false) {
@@ -438,7 +443,7 @@ function firstSession(day, all = false) {
   return {
     demo: true,
     ...journey.firstSessionReading(rows, 11, {
-      week, recordedFrom: { make: DEMO_RECORDED_FROM, reward: DEMO_RECORDED_FROM, opens: DEMO_RECORDED_FROM },
+      week, recordedFrom: { make: DEMO_RECORDED_FROM, reward: DEMO_RECORDED_FROM, opens: DEMO_RECORDED_FROM, look: DEMO_RECORDED_FROM },
     }),
   };
 }

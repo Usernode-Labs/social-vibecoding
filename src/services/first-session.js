@@ -112,15 +112,28 @@ async function recordStart(pool, userId, via) {
   );
 }
 
+// "Look around first" is also written to `events` as its own outcome
+// (first_session_looked_around, #4039), in the same statement, so it is
+// recorded exactly when the answer is, once, with its time: the admin
+// Journey counts it beside the projects made from the question
+// (services/journey.js firstSession). Make it needs no row here: POST
+// /api/apps records app_created with from 'first-session'.
 async function answerJoinScreen(pool, userId, answer) {
   await pool.query(
-    `UPDATE users
-        SET needs_communities_choice = FALSE,
-            getting_started_seen = COALESCE(getting_started_seen, '{}'::jsonb)
-                                   || jsonb_build_object(
-                                        'join_answer', COALESCE(getting_started_seen->>'first_session', $2::text),
-                                        'first_session_answer', $2::text)
-      WHERE id = $1 AND needs_communities_choice = TRUE`,
+    `WITH answered AS (
+       UPDATE users
+          SET needs_communities_choice = FALSE,
+              getting_started_seen = COALESCE(getting_started_seen, '{}'::jsonb)
+                                     || jsonb_build_object(
+                                          'join_answer', COALESCE(getting_started_seen->>'first_session', $2::text),
+                                          'first_session_answer', $2::text)
+        WHERE id = $1 AND needs_communities_choice = TRUE
+        RETURNING id, getting_started_seen->>'first_session' AS via
+     )
+     INSERT INTO events (user_id, event_type, metadata)
+     SELECT a.id, 'first_session_looked_around', jsonb_build_object('via', a.via)
+       FROM answered a
+      WHERE $2::text = 'looked_around'`,
     [userId, answer]
   );
 }

@@ -66,6 +66,11 @@ test('making something, or looking around, answers the join screen without the G
   assert.deepEqual(pool.calls[0].params, [7, 'made']);
   await firstSession.answerJoinScreenByLookingAround(pool, 9);
   assert.deepEqual(pool.calls[1].params, [9, 'looked_around']);
+  // #4039: "Look around first" is its own outcome in the admin Journey,
+  // written with the answer in one statement, so once and only then; Make
+  // it is already app_created with from 'first-session'.
+  assert.match(pool.calls[1].sql, /RETURNING id, getting_started_seen->>'first_session' AS via\s+\)\s+INSERT INTO events \(user_id, event_type, metadata\)\s+SELECT a\.id, 'first_session_looked_around', jsonb_build_object\('via', a\.via\)\s+FROM answered a\s+WHERE \$2::text = 'looked_around'/);
+  assert.equal(require('../src/services/events').EVENT_TYPES.FIRST_SESSION_LOOKED_AROUND, 'first_session_looked_around');
   // Being shown the question is recorded once, and leaves it owed.
   await firstSession.recordStart(pool, 7, 'story');
   assert.doesNotMatch(pool.calls[2].sql, /needs_communities_choice = FALSE/);
@@ -355,13 +360,13 @@ test('after Make it: the build\'s step, then one invite, and the second button s
 test('the maker\'s tour ends in Homeroom bot\'s chat when it builds for them, and on the hub when not', () => {
   const { makerSteps } = loadTsx(`${DIR}/tour-steps.ts`);
   const withBot = makerSteps({ slug: 'film', name: 'Friday Film Crew', conversationId: 12 });
-  assert.deepEqual(withBot.map((s) => s.screen), ['home', 'app', 'app', 'home', 'hub', 'hub', 'bot']);
-  assert.equal(withBot[5].target, '#platform-tab-messages');
-  assert.equal(withBot[5].opensNext, true);
-  assert.equal(withBot[6].last, true);
+  assert.deepEqual(withBot.map((s) => s.screen), ['home', 'app', 'home', 'hub', 'hub', 'bot']);
+  assert.equal(withBot[4].target, '#platform-tab-messages');
+  assert.equal(withBot[4].opensNext, true);
+  assert.equal(withBot[5].last, true);
   const without = makerSteps({ slug: 'film', name: 'Friday Film Crew', conversationId: null });
-  assert.deepEqual(without.map((s) => s.screen), ['home', 'app', 'app', 'home', 'hub']);
-  assert.equal(without[4].last, true);
+  assert.deepEqual(without.map((s) => s.screen), ['home', 'app', 'home', 'hub']);
+  assert.equal(without[3].last, true);
   const index = read(`${DIR}/index.tsx`);
   assert.match(index, /else if \(screen === 'bot' && conversationId\) window\.location\.hash = `#messages\/\$\{conversationId\}`;/);
 });
@@ -374,15 +379,15 @@ test('the maker\'s tour ends in Homeroom bot\'s chat when it builds for them, an
 test('the maker\'s last step shows the chat with Homeroom bot whole: its header with its messages, the newest card from its top', () => {
   const { makerSteps, BOT_CHAT_HEADER, BOT_CHAT_MESSAGES } = loadTsx(`${DIR}/tour-steps.ts`);
   const steps = makerSteps({ slug: 'film', name: 'Friday Film Crew', conversationId: 12 });
-  const chat = steps[6];
-  assert.equal(chat.title, 'Your chat with Homeroom bot');
+  const chat = steps[5];
+  assert.equal(chat.title, 'Homeroom bot is planning Friday Film Crew');
   assert.equal(BOT_CHAT_HEADER, '.messages-thread-direct > .messages-thread-header');
   assert.equal(BOT_CHAT_MESSAGES, '.messages-thread-direct > .messages-thread-scroll');
   // One cut-out round both (index.tsx targetBox draws a selector list as one box).
   assert.deepEqual(chat.target.split(',').map((s) => s.trim()), [BOT_CHAT_HEADER, BOT_CHAT_MESSAGES]);
   assert.deepEqual(chat.newestFromTop, { scroller: BOT_CHAT_MESSAGES, rows: 'article.messages-message' });
   assert.equal(chat.place, 'bottom');
-  assert.equal(chat.text, 'It shows how the build is going here, and messages you when it\'s ready to try. Ask it for changes any time.');
+  assert.equal(chat.text, 'It messages you here when the plan is ready.');
   // And the platform's top bar over them, as one cut-out (Evan, 5 Oct 2026:
   // "include the header on step 7 also").
   assert.equal(chat.alongside, '#platform-header');
@@ -390,11 +395,11 @@ test('the maker\'s last step shows the chat with Homeroom bot whole: its header 
   // The other steps' targets (the close step cuts out the app screen, with
   // ✕ its press: tests/first-session.test.js), and only this one moves a
   // transcript.
-  assert.deepEqual(steps.slice(0, 6).map((s) => s.target), [
-    '.app-card[data-slug="film"]', '#app-content', '#app-view', '#platform-tab-workshop', '#app-content', '#platform-tab-messages',
+  assert.deepEqual(steps.slice(0, 5).map((s) => s.target), [
+    '.app-card[data-slug="film"]', '#app-view', '#platform-tab-workshop', '#app-content', '#platform-tab-messages',
   ]);
-  assert.equal(steps[2].press, '#back-btn');
-  assert.deepEqual(steps.map((s) => !!s.newestFromTop), [false, false, false, false, false, false, true]);
+  assert.equal(steps[1].press, '#back-btn');
+  assert.deepEqual(steps.map((s) => !!s.newestFromTop), [false, false, false, false, false, true]);
   // The Messages screen draws what it names: a direct conversation's section,
   // whose first child is its header (none when embedded in a hub, which the
   // bot's chat never is), its scroller, and an <article> per message.

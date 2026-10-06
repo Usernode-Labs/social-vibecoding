@@ -1653,6 +1653,11 @@ async function creationPath(pool, { week, now = new Date(), leftOutIds = [], mem
 //         reward being the project they were invited to, shown at once. The
 //         in-session aha: they wrote in its chat or filed a request within
 //         the hour.
+//   look  somebody answered the first session's question with "Look around
+//         first" instead of making a project (first_session_looked_around,
+//         #4039): the other outcome of the question, so make and look are
+//         the split between them. The clock starts at the answer; the one
+//         step is whether they made a project of their own later.
 //
 // Opens of invite links (invite_opened, never a name) are counted beside
 // them, for how many opens become joins. Three of these are events first
@@ -1684,6 +1689,13 @@ const FIRST_SESSION_SQL = `WITH real AS (
        AND COALESCE(x.applied_at, x.created_at) < $2::timestamptz
        AND x.user_id IN (SELECT r.id FROM real r)
      ORDER BY x.user_id, COALESCE(x.applied_at, x.created_at), x.id
+  ), looked AS (
+    SELECT DISTINCT ON (e.user_id) e.user_id, e.created_at AS intent_at
+      FROM events e
+     WHERE e.event_type = 'first_session_looked_around'
+       AND e.created_at >= $1::timestamptz AND e.created_at < $2::timestamptz
+       AND e.user_id IN (SELECT r.id FROM real r)
+     ORDER BY e.user_id, e.created_at, e.id
   )
   SELECT 'make' AS path, m.user_id, u.username, m.app_id, ap.slug, ap.name, m.intent_at,
          (SELECT MIN(e.created_at) FROM events e
@@ -1692,7 +1704,8 @@ const FIRST_SESSION_SQL = `WITH real AS (
            WHERE ci.app_id = m.app_id AND ci.created_by = m.user_id) AS invited_at,
          ap.first_running_at AS running_at,
          NULL::timestamptz AS said_at,
-         NULL::timestamptz AS suggested_at
+         NULL::timestamptz AS suggested_at,
+         NULL::timestamptz AS made_at
     FROM made m
     JOIN users u ON u.id = m.user_id
     JOIN apps ap ON ap.id = m.app_id
@@ -1706,10 +1719,22 @@ const FIRST_SESSION_SQL = `WITH real AS (
              AND cm.created_at >= j.intent_at) AS said_at,
          (SELECT MIN(i.created_at) FROM issues i
            WHERE i.app_id = j.app_id AND i.created_by = j.user_id
-             AND i.created_at >= j.intent_at) AS suggested_at
+             AND i.created_at >= j.intent_at) AS suggested_at,
+         NULL::timestamptz AS made_at
     FROM joined j
     JOIN users u ON u.id = j.user_id
     JOIN apps ap ON ap.id = j.app_id
+  UNION ALL
+  SELECT 'look' AS path, l.user_id, u.username, NULL::int AS app_id, NULL::varchar AS slug, NULL::varchar AS name, l.intent_at,
+         NULL::timestamptz AS reward_at,
+         NULL::timestamptz AS invited_at,
+         NULL::timestamptz AS running_at,
+         NULL::timestamptz AS said_at,
+         NULL::timestamptz AS suggested_at,
+         (SELECT MIN(ap.created_at) FROM apps ap
+           WHERE ap.created_by = l.user_id AND ap.created_at >= l.intent_at) AS made_at
+    FROM looked l
+    JOIN users u ON u.id = l.user_id
    ORDER BY intent_at, user_id`;
 
 // Opens of live invite links in [$1, $2), and when each first-session event
@@ -1721,7 +1746,8 @@ const FIRST_SESSION_OPENS_SQL = `SELECT
     (SELECT MIN(e.created_at) FROM events e
       WHERE e.event_type = 'app_created' AND e.metadata->>'from' = 'first-session') AS make,
     (SELECT MIN(e.created_at) FROM events e WHERE e.event_type = 'first_artefact_shown') AS reward,
-    (SELECT MIN(e.created_at) FROM events e WHERE e.event_type = 'invite_opened') AS opens`;
+    (SELECT MIN(e.created_at) FROM events e WHERE e.event_type = 'invite_opened') AS opens,
+    (SELECT MIN(e.created_at) FROM events e WHERE e.event_type = 'first_session_looked_around') AS look`;
 
 function secondsBetween(fromIso, toIso) {
   if (!fromIso || !toIso) return null;
@@ -1741,6 +1767,8 @@ function firstSessionPerson(row) {
       invited: secondsBetween(intent, row.invited_at),
       running: secondsBetween(intent, row.running_at),
     };
+  } else if (row.path === 'look') {
+    out.steps = { made: secondsBetween(intent, row.made_at) };
   } else {
     out.steps = {
       said: secondsBetween(intent, row.said_at),
@@ -1769,6 +1797,7 @@ function firstSessionReading(rows, opens, { week, recordedFrom = {} } = {}) {
   const people = rows.map(firstSessionPerson);
   const make = people.filter((p) => p.path === 'make');
   const join = people.filter((p) => p.path === 'join');
+  const look = people.filter((p) => p.path === 'look');
   const ahaJoin = join.filter((p) => [p.steps.said, p.steps.suggested]
     .some((s) => s != null && s <= FIRST_SESSION_MINUTES * 60)).length;
   const iso = (v) => (v ? new Date(v).toISOString() : null);
@@ -1792,11 +1821,18 @@ function firstSessionReading(rows, opens, { week, recordedFrom = {} } = {}) {
       steps: [firstSessionStep(join, 'said'), firstSessionStep(join, 'suggested')],
       aha: ahaJoin,
     },
+    look: {
+      people: look.length,
+      notRecorded: recorded(recordedFrom.look, 'Not recorded before "Look around first" was marked.'),
+      steps: [firstSessionStep(look, 'made')],
+    },
     opens: {
       opened: recordedFrom.opens ? Number(opens || 0) : notRecorded('Not recorded before invite opens were counted.'),
       joined: join.length,
     },
-    recordedFrom: { make: iso(recordedFrom.make), reward: iso(recordedFrom.reward), opens: iso(recordedFrom.opens) },
+    recordedFrom: {
+      make: iso(recordedFrom.make), reward: iso(recordedFrom.reward), opens: iso(recordedFrom.opens), look: iso(recordedFrom.look),
+    },
     examples: [...people].reverse().slice(0, FIRST_SESSION_EXAMPLES),
   };
 }
@@ -1810,7 +1846,7 @@ async function firstSession(pool, { week, leftOutIds = [], memberIds = null } = 
   const mine = rows.filter((row) => !memberIds || memberIds.has(Number(row.user_id)));
   const r = rec || {};
   return firstSessionReading(mine, r.opened, {
-    week, recordedFrom: { make: r.make || null, reward: r.reward || null, opens: r.opens || null },
+    week, recordedFrom: { make: r.make || null, reward: r.reward || null, opens: r.opens || null, look: r.look || null },
   });
 }
 

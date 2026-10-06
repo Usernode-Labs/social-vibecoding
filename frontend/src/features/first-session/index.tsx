@@ -14,6 +14,8 @@
  *            the same control: the product's own handler navigates, and
  *            the tour only watches the press. Back re-opens the screen the
  *            previous step was on; Skip ends on the last step's screen.
+ *            The make screen opens it too: the maker's path after the made
+ *            screen, and "Look around first"'s own four cards on Home.
  *
  * App.\_followInvite (public/js/app.js) opens it through
  * `window.UsernodeReact.firstSession.welcome(info)`, once per account and
@@ -52,7 +54,7 @@ import { Wordmark } from '@/components/ui/wordmark';
 import { joinPicture, JoinedPicture } from './joined-picture';
 import { type Made, MakeScreen } from './make';
 import { MadeScreen, madeAppOf, madeAppUrl } from './made';
-import { type FirstVersionStage, invitedSteps, makerSteps, type TourScreen, type TourStep } from './tour-steps';
+import { BOTTOM_BARS, type FirstVersionStage, invitedSteps, lookAroundSteps, makerSteps, type TourScreen, type TourStep } from './tour-steps';
 
 export type FirstSessionInfo = {
   slug: string;
@@ -73,7 +75,10 @@ export type FirstSessionInfo = {
   /** The project's one line, and the picture its invite showed (./joined-picture.tsx). */
   description?: string | null;
   picture?: unknown;
-  /** Where its first version stands, for the tour's second step (./tour-steps.ts). */
+  /**
+   * Where its first version stands, as "You're in" read it. The tour's cards
+   * no longer say it (./tour-steps.ts): the app screen behind them does.
+   */
   firstVersion?: FirstVersionStage;
 };
 
@@ -280,9 +285,12 @@ export function pressTarget(selectors: string, root: PressRoot = document): bool
  * ring anywhere.
  *
  * `press` is the control a tap step rings, measured with it: the cut-out
- * itself, or within it the step's `press` (✕ in the app screen).
+ * itself, or within it the step's `press` (✕ in the app screen). `instead`
+ * is whether what a step's card says instead is on screen (TourStep.instead:
+ * the plan in the chat), read with the box, so the card's words change in
+ * the frame the plan arrives.
  */
-export type Measured = { step: number; box: Box | null; press?: Box | null };
+export type Measured = { step: number; box: Box | null; press?: Box | null; instead?: boolean };
 
 export function boxForStep(measured: Measured, step: number): Box | null {
   return measured.step === step ? measured.box : null;
@@ -295,7 +303,15 @@ export function pressForStep(measured: Measured, step: number): Box | null {
 /** A step's cut-out and the control it rings, measured now, for step `at`. */
 export function measure(at: number, step: TourStep): Measured {
   const box = stepBox(step);
-  return { step: at, box, press: box && step.press ? targetBox(step.press) : box };
+  const measured: Measured = { step: at, box, press: box && step.press ? targetBox(step.press) : box };
+  if (step.instead) measured.instead = document.querySelectorAll(step.instead.when).length > 0;
+  return measured;
+}
+
+/** The card's words for a step: what it says instead while that is on screen. */
+export function wordsFor(step: TourStep, measured: Measured, at: number): { title: string; text: string } {
+  const shown = step.instead && measured.step === at && measured.instead ? step.instead : step;
+  return { title: shown.title, text: shown.text };
 }
 
 /**
@@ -338,25 +354,56 @@ function boxKey(b: Box | null | undefined): string {
   return b ? `${Math.round(b.left)},${Math.round(b.top)},${Math.round(b.width)},${Math.round(b.height)}` : '';
 }
 
-/** The coach card's position for a target box, as inline style. */
-export function cardPlacement(box: Box | null, step: TourStep, viewport: { width: number; height: number }): React.CSSProperties {
+/** How far a card near the foot of the screen sits above the bar there. */
+const CARD_GAP = 20;
+
+/**
+ * Pure: where the foot of the screen begins, the top of the bars lying along
+ * it: the phone's tab bar and the Resume strip on it, each at least half the
+ * screen wide and starting in its lower half. The rail beside the screen from
+ * 768px up is neither, and a screen with no bar (the app, full screen) runs
+ * to its own edge: the screen's height.
+ */
+export function footTop(bars: Box[], viewport: { width: number; height: number }): number {
   const H = viewport.height;
-  const tabs = document.getElementById('platform-tabs');
-  const tabsTop = tabs && tabs.getBoundingClientRect().height ? tabs.getBoundingClientRect().top : H;
-  if (!box) return { bottom: H - tabsTop + 16 };
+  const foot = bars.filter((b) => b.width >= viewport.width / 2 && b.top > H / 2 && b.top < H);
+  return foot.length ? Math.min(...foot.map((b) => b.top)) : H;
+}
+
+/**
+ * The coach card's position for a target box, as inline style. It never
+ * covers the tab bar: a card near the foot sits CARD_GAP above the bar (or
+ * the screen's edge and its safe area, where there is no bar), including a
+ * card about a tab on that bar. A card about something in the top half of
+ * the screen sits under it; one about something lower down, over it.
+ */
+export function cardPlacement(
+  box: Box | null,
+  step: TourStep,
+  viewport: { width: number; height: number },
+  foot: number = footTop(visibleBoxes(BOTTOM_BARS), viewport),
+): React.CSSProperties {
+  const H = viewport.height;
+  const aboveFoot: React.CSSProperties = foot < H
+    ? { bottom: H - foot + CARD_GAP }
+    : { bottom: `calc(${CARD_GAP}px + env(safe-area-inset-bottom, 0px))` };
+  if (!box) return aboveFoot;
   if (step.place && typeof step.place === 'object') {
     const above = document.querySelector(step.place.above);
     if (above) return { bottom: H - above.getBoundingClientRect().top + 12 };
   }
-  if (step.place === 'bottom') return { bottom: H - tabsTop + 16 };
-  if (box.height > H * 0.45) return { bottom: Math.max(16, H - (box.top + box.height) + 20) };
-  if (box.top + box.height / 2 > H / 2) return { bottom: H - box.top + PAD + 12 };
+  if (step.place === 'bottom' || box.height > H * 0.45) return aboveFoot;
+  const middle = box.top + box.height / 2;
+  if (middle >= foot) return aboveFoot;
+  if (middle > H / 2) return { bottom: H - box.top + PAD + 12 };
   return { top: box.top + box.height + PAD + 12 };
 }
 
 /** The tour over the live shell (see the header); exported so a test can draw its card. */
-export function Tour({ info, steps, onEnd }: { info: FirstSessionInfo; steps: TourStep[]; onEnd: () => void }) {
-  const [index, setIndex] = useState(0);
+export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo; steps: TourStep[]; onEnd: () => void; start?: number }) {
+  // A screenshot state may open it part-way (tourShot, below), on its own
+  // screen; the tour itself always starts at its first card.
+  const [index, setIndex] = useState(() => Math.max(0, Math.min(start, steps.length - 1)));
   const [measured, setMeasured] = useState<Measured>({ step: -1, box: null });
   const [viewport, setViewport] = useState({ width: window.innerWidth, height: window.innerHeight });
   const step = steps[index];
@@ -398,6 +445,12 @@ export function Tour({ info, steps, onEnd }: { info: FirstSessionInfo; steps: To
     return () => cancelAnimationFrame(raf);
   }, [viewport.width, viewport.height]);
 
+  // Opened part-way: the step's own screen, as Back would open it. Once,
+  // for where it was opened; every later step opens its own in go().
+  useEffect(() => {
+    if (index > 0) enterScreen(steps[index].screen, info.slug, info.conversationId);
+  }, []);
+
   // A step whose target never shows (a screen that did not open) opens its
   // screen itself after a moment.
   useEffect(() => {
@@ -437,13 +490,17 @@ export function Tour({ info, steps, onEnd }: { info: FirstSessionInfo; steps: To
 
   // A tap step rings the control that leads on: the whole cut-out, kept a
   // ring's width inside the screen, or its `press` within a wider cut-out.
-  // Any other cut-out runs to the screen's edges.
-  const hole = box && holeFor(box, viewport, step.tap && !step.press ? RING : 0);
-  const ring = hole && step.tap && pressBox ? holeFor(pressBox, viewport) : null;
-  // Presses reach only that control: a step that only shows its screen
-  // covers all of its cut-out, and a tap step all of it but the ring.
-  const covers = hole ? (ring ? aroundBox(hole, ring) : [hole]) : [];
+  // So does a step that only points at a control (`ringed`). Any other
+  // cut-out runs to the screen's edges.
+  const pointed = !!(step.tap || step.ringed);
+  const hole = box && holeFor(box, viewport, pointed && !step.press ? RING : 0);
+  const ring = hole && pointed && pressBox ? holeFor(pressBox, viewport) : null;
+  // Presses reach only a tap step's control: a step that only shows its
+  // screen, or points at a control, covers all of its cut-out, and a tap
+  // step all of it but the ring.
+  const covers = hole ? (ring && step.tap ? aroundBox(hole, ring) : [hole]) : [];
   const card = cardPlacement(box, step, viewport);
+  const words = wordsFor(step, measured, index);
 
   return (
     // The layer itself lets presses through: only the shades, the card and
@@ -475,8 +532,8 @@ export function Tour({ info, steps, onEnd }: { info: FirstSessionInfo; steps: To
         style={card}
       >
         <p className="text-[12px] font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">{`${index + 1} of ${steps.length}`}</p>
-        <p id="first-session-tour-title" className="mt-0.5 text-[17px] font-semibold leading-snug">{step.title}</p>
-        <p className="mt-1 text-[15px] leading-snug text-zinc-600 dark:text-zinc-300">{step.text}</p>
+        <p id="first-session-tour-title" className="mt-0.5 text-[17px] font-semibold leading-snug">{words.title}</p>
+        <p className="mt-1 text-[15px] leading-snug text-zinc-600 dark:text-zinc-300">{words.text}</p>
         <div className="mt-3 flex items-center justify-between gap-3">
           {step.last ? <span /> : (
             <button type="button" onClick={skip} className="py-1.5 text-[15px] font-semibold text-zinc-500 dark:text-zinc-400">Skip</button>
@@ -629,7 +686,76 @@ export type Mode =
   | { kind: 'welcome'; info: FirstSessionInfo }
   | { kind: 'make' }
   | { kind: 'made'; made: Made }
-  | { kind: 'tour'; info: FirstSessionInfo; path: 'invited' | 'maker' };
+  | { kind: 'tour'; info: FirstSessionInfo; path: TourPath; start?: number };
+
+export type TourPath = 'invited' | 'maker' | 'look';
+
+/**
+ * "Look around first"'s tour is about Home and the tab bar, not a project:
+ * it carries no project, and every step is on Home.
+ */
+const LOOK_AROUND_INFO: FirstSessionInfo = { slug: '', name: '' };
+
+/**
+ * The tours' screenshot states. Only a brand-new account's first session
+ * reaches a tour, so the before/after shots open one on demand (the owner's
+ * ruling for first-run screens, 6 October 2026, as app-view.js draws
+ * `?shot=first-version`): `?shot=tour-make`, `?shot=tour-join` and
+ * `?shot=tour-look`, and `&step=N` to open it at its Nth card. Making and
+ * joining are walked over the first project on the viewer's Home, and making
+ * ends in their chat with Homeroom bot when they have one. Nothing is
+ * written: no answer to the question, no "seen" mark.
+ */
+const TOUR_SHOTS: Record<string, TourPath> = { 'tour-make': 'maker', 'tour-join': 'invited', 'tour-look': 'look' };
+
+export function tourShot(search: string): { path: TourPath; start: number } | null {
+  let params: URLSearchParams;
+  try { params = new URLSearchParams(search); } catch { return null; }
+  const path = TOUR_SHOTS[params.get('shot') || ''];
+  if (!path) return null;
+  const n = Number(params.get('step'));
+  return { path, start: Number.isInteger(n) && n > 1 ? n - 1 : 0 };
+}
+
+/** The first project on Home, as its card names it, once Home has drawn it. */
+async function firstHomeProject(): Promise<{ slug: string; name: string } | null> {
+  for (let i = 0; i < 40; i += 1) {
+    const card = document.querySelector('#app-list .app-card[data-slug]');
+    const slug = card?.getAttribute('data-slug');
+    if (card && slug) {
+      const title = card.querySelector('.app-card-title');
+      return { slug, name: title?.getAttribute('title') || title?.textContent?.trim() || slug };
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 250));
+  }
+  return null;
+}
+
+/** The viewer's chat with Homeroom bot, if they have one. */
+async function botConversationId(): Promise<number | null> {
+  try {
+    const r = await fetch('/api/conversations', { credentials: 'same-origin' });
+    if (!r.ok) return null;
+    const body = await r.json() as { conversations?: Array<{ id?: unknown; kind?: unknown; homeroomBot?: unknown }> };
+    const bot = (body.conversations || []).find((c) => c.kind === 'direct' && c.homeroomBot === true);
+    return Number(bot?.id) || null;
+  } catch {
+    return null;
+  }
+}
+
+async function openTourShot(shot: { path: TourPath; start: number }, setMode: Dispatch<SetStateAction<Mode>>): Promise<void> {
+  const open = (info: FirstSessionInfo) => setMode((prev) => (
+    prev.kind === 'none' ? { kind: 'tour', info, path: shot.path, start: shot.start } : prev
+  ));
+  legacy().App?.navigateHome?.();
+  if (shot.path === 'look') { open(LOOK_AROUND_INFO); return; }
+  const project = await firstHomeProject();
+  if (!project) return;
+  const conversationId = shot.path === 'maker' ? await botConversationId() : null;
+  rememberCommunity(project.slug);
+  open({ ...project, conversationId });
+}
 
 // Set by the signed-out story's sheet for an account it just made
 // (../auth/landing.tsx): ask it what to make once the shell has signed in.
@@ -769,12 +895,27 @@ export function FirstSession() {
     return () => { if (w.UsernodeReact?.firstSession === api) delete w.UsernodeReact.firstSession; };
   }, []);
 
+  // A tour's screenshot state (tourShot): once, as soon as the shell is
+  // signed in.
+  useEffect(() => {
+    const shot = tourShot(window.location.search);
+    if (!shot) return undefined;
+    let opened = false;
+    const open = () => {
+      if (opened || !legacy().App?.user) return;
+      opened = true;
+      void openTourShot(shot, setMode);
+    };
+    open();
+    document.addEventListener('sv:authed', open);
+    return () => document.removeEventListener('sv:authed', open);
+  }, []);
+
   const end = useCallback(() => setMode({ kind: 'none' }), []);
   const steps = useMemo(() => {
     if (mode.kind !== 'tour') return [];
-    const project = {
-      slug: mode.info.slug, name: mode.info.name, conversationId: mode.info.conversationId, firstVersion: mode.info.firstVersion,
-    };
+    if (mode.path === 'look') return lookAroundSteps();
+    const project = { slug: mode.info.slug, name: mode.info.name, conversationId: mode.info.conversationId };
     return mode.path === 'maker' ? makerSteps(project) : invitedSteps(project);
   }, [mode]);
 
@@ -784,11 +925,12 @@ export function FirstSession() {
         who={viewerName()}
         // POST /api/apps answered the question as it made the project.
         onMade={(made) => { noteAnswered(); setMode({ kind: 'made', made }); }}
+        // Home, and its own short tour of where things are (decision E).
         onLookAround={() => {
           noteAnswered();
           void recordLookAround();
-          setMode({ kind: 'none' });
           legacy().App?.navigateHome?.();
+          setMode({ kind: 'tour', info: LOOK_AROUND_INFO, path: 'look' });
         }}
       />
     );
@@ -831,6 +973,6 @@ export function FirstSession() {
     );
   }
   if (mode.kind === 'held') return <WelcomeHeld />;
-  if (mode.kind === 'tour') return <Tour info={mode.info} steps={steps} onEnd={end} />;
+  if (mode.kind === 'tour') return <Tour info={mode.info} steps={steps} onEnd={end} start={mode.start} />;
   return null;
 }
