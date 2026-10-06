@@ -137,6 +137,13 @@ type ScreenRowView = NotificationRowView & {
   conversation?: boolean;
   /** Set on an agent-status row (#2815) — the Messages tab lists these too. */
   agent?: boolean;
+  /**
+   * Which All-tab filter chip (#4014) the row belongs to — the group name
+   * rowView stamps off NOTIF_KIND_GROUPS, or null for a kind in no group.
+   * The tab filters on the flag, the way the Messages tab filters on
+   * `conversation`, so the sheet never re-derives the set from `kind`.
+   */
+  group?: string | null;
   conversationId?: number | null;
   /**
    * How many notifications this row stands for. Present only on a genuine
@@ -147,6 +154,18 @@ type ScreenRowView = NotificationRowView & {
 };
 
 type Tab = 'all' | 'unread' | 'messages';
+
+/**
+ * The All tab's filter chips (#4014), under the tab strip. Names and sets
+ * mirror NOTIF_KIND_GROUPS in ./notifications.js and
+ * NOTIFICATION_KIND_GROUPS in src/services/notifications.js; one chip lit at
+ * a time, tapping the lit chip again shows everything again.
+ */
+const FILTER_CHIPS = [
+  { group: 'mentions', label: 'Mentions' },
+  { group: 'votes', label: 'Votes and proposals' },
+  { group: 'merges', label: 'Merges' },
+] as const;
 
 /**
  * One entry on the Messages tab: a notification row, or a running session.
@@ -539,6 +558,11 @@ export function NotificationsSheetView() {
     loadingMore: boolean;
     messagesCanLoadMore?: boolean;
     loadingOlderMessages?: boolean;
+    // The All tab's filter chips (#4014): the lit group, and its pager on
+    // its own cursor — see loadOlderFiltered().
+    filterKind?: string | null;
+    filterCanLoadMore?: boolean;
+    filterLoading?: boolean;
     /** #3538: the rows' clear is a swipe on touch and a × everywhere else. */
     touch?: boolean;
   };
@@ -566,6 +590,11 @@ export function NotificationsSheetView() {
   const all = snap.screenList || [];
   const unread = all.filter((view) => view.unread);
   const messages = all.filter((view) => view.conversation || view.agent);
+  // The All tab's lit chip (#4014), read off the store the controller sets —
+  // one source of truth with the filtered pager's cursor. Null under Unread
+  // and Messages, which compute from the full list whatever a chip is doing,
+  // so their counts are unaffected.
+  const chip = tab === 'all' ? snap.filterKind || null : null;
   // WHAT YOU ARE WORKING ON, from the store that already answers it (#2718
   // review). The Improve panel splits the same list in two — this app's and
   // everywhere else — because it is standing inside an app; the bell is not,
@@ -579,7 +608,8 @@ export function NotificationsSheetView() {
   };
   const agentRows = [...(improve.sessions || []), ...(improve.otherSessions || [])];
   const rows = tab === 'unread' ? unread
-    : tab === 'messages' ? messages : all;
+    : tab === 'messages' ? messages
+    : chip ? all.filter((view) => view.group === chip) : all;
   // #2815: the Messages tab interleaves the sessions with its notification
   // rows by time, one list, newest first — the order the Messages screen's
   // chats section keeps. Stable sort, so a tie keeps notifications first.
@@ -629,6 +659,14 @@ export function NotificationsSheetView() {
   // is the language's solid inversion, not an underline or the accent.
   const tabCls = (active: boolean) =>
     'shrink-0 whitespace-nowrap h-9 px-4 rounded-full text-sm font-semibold transition-colors '
+    + (active
+      ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'
+      : 'bg-white text-zinc-900 hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800');
+  // The chips' size of the same pill: a step down in every dimension (h-8,
+  // px-3, text-xs), the same classes otherwise, so the rail reads as the tab
+  // strip's smaller sibling rather than a second idiom.
+  const chipCls = (active: boolean) =>
+    'shrink-0 whitespace-nowrap h-8 px-3 rounded-full text-xs font-semibold transition-colors '
     + (active
       ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'
       : 'bg-white text-zinc-900 hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800');
@@ -746,6 +784,39 @@ export function NotificationsSheetView() {
           All
         </button>
       </div>
+      {/*
+          THE ALL TAB'S FILTER CHIPS (#4014). A second rail, directly under
+          the strip the tab rail draws — a SIBLING row, never inside the
+          tablist, because these are toggle buttons and not places to go: one
+          lit at a time, tapping the lit one again shows everything again.
+          The rail renders only on All, so the prerendered sheet (which opens
+          on Unread) is byte-identical to before and there is no hydration
+          question to answer.
+
+          They wear the tab rail's own pill idiom one size down — h-8/px-3/
+          text-xs against its h-9/px-4/text-sm, the same solid inversion when
+          lit — so the two rows read as tabs above, filters below, in the one
+          vocabulary the sheet already speaks.
+      */}
+      {tab === 'all' ? (
+        <div
+          className={'flex gap-2 px-4 pb-2 shrink-0 overflow-x-auto '
+            + '[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden'}
+        >
+          {FILTER_CHIPS.map((def) => (
+            <button
+              key={def.group}
+              id={`notifications-chip-${def.group}`}
+              type="button"
+              aria-pressed={chip === def.group}
+              className={chipCls(chip === def.group)}
+              onClick={() => controller()?.setFilter(chip === def.group ? null : def.group)}
+            >
+              {def.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
       {/* The sheet's own scroller. The screen root used to be the scroller;
           a sheet's head has to stay put while its rows move, so the rows get
           a box of their own. */}
@@ -854,6 +925,13 @@ export function NotificationsSheetView() {
           filter is hiding, or another page on the server. An empty Unread tab
           on a quiet account would otherwise offer a link to an equally empty
           All, which is a dead end dressed as a way forward.
+
+          Under a CHIP (#4014) it is the filtered pager, and it is the only
+          one shown: pressing it fetches another page of the chip's own group
+          on the chip's own cursor, so it really does surface older rows of
+          the thing that is filtered for — and renders only while that group
+          still has an older page, so an exhausted filter ends rather than
+          offering more of everything.
       */}
       {tab === 'messages' && snap.messagesCanLoadMore ? (
         <div className="px-4 py-3">
@@ -867,6 +945,20 @@ export function NotificationsSheetView() {
             {snap.loadingOlderMessages ? 'Loading…' : 'See older message notifications'}
           </button>
         </div>
+      ) : tab === 'all' && chip ? (
+        snap.filterCanLoadMore ? (
+          <div className="px-4 py-3">
+            <button
+              id="notifications-load-older-filtered"
+              type="button"
+              className="w-full text-center text-sm font-semibold text-violet-700 dark:text-violet-400 hover:underline disabled:opacity-40"
+              disabled={snap.filterLoading}
+              onClick={() => controller()?.loadOlderFiltered()}
+            >
+              {snap.filterLoading ? 'Loading…' : 'See older notifications'}
+            </button>
+          </div>
+        ) : null
       ) : tab !== 'all' && (all.length > rows.length || snap.screenCanLoadMore) ? (
         <div className="px-4 py-3">
           <button

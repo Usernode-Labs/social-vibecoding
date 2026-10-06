@@ -123,7 +123,11 @@ test('the count rides only on a genuine collapse', () => {
 
 test('the sheet filters a Messages tab off the row flag, not off kind', () => {
   assert.match(SHEET_SRC, /const messages = all\.filter\(\(view\) => view\.conversation \|\| view\.agent\)/);
-  assert.match(SHEET_SRC, /tab === 'unread' \? unread\s*\n\s*: tab === 'messages' \? messages : all/);
+  // #4014 added a lit-chip branch for All (see
+  // tests/notifications-filter-chips.test.js); Unread and Messages are still
+  // the same two flags computed from the full list.
+  assert.match(SHEET_SRC,
+    /tab === 'unread' \? unread\s*\n\s*: tab === 'messages' \? messages\s*\n\s*: chip \? all\.filter\(\(view\) => view\.group === chip\) : all/);
   // The flag is set where CONVERSATION_NOTIF_KINDS already lives, so the tab
   // cannot drift from the set the routing and the row copy agree on.
   assert.match(FE_SRC, /conversation: true,/);

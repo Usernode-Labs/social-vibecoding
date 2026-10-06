@@ -106,7 +106,9 @@ test('the screen renders from the store: all rows, tabs, sections, pager', () =>
   // rowView carries the screen's extra data; the drawer's renderer ignores it.
   assert.match(controllerSrc, /createdAtMs: Date\.parse\(n\.createdAt\) \|\| 0/);
   // The screen partitions client-side and acts through the controller.
-  assert.match(screen, /tab === 'unread' \? unread\s*\n\s*: tab === 'messages' \? messages : all/);
+  // #4014 added a lit-chip branch for All (see
+  // tests/notifications-filter-chips.test.js); Unread and Messages unchanged.
+  assert.match(screen, /tab === 'unread' \? unread\s*\n\s*: tab === 'messages' \? messages\s*\n\s*: chip \? all\.filter\(\(view\) => view\.group === chip\) : all/);
   assert.match(screen, /at: view\.createdAtMs \|\| 0/);
   assert.match(screen, /entry\.at >= boundary/);
   assert.match(screen, /_onItemClick\(view\.id\)/);

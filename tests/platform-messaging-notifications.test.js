@@ -83,6 +83,81 @@ test('all conversation kinds serialize only conversation routing and content', (
   }
 });
 
+// #4014: the bell's All tab filter chips ride the same named-group mechanism
+// the Messages tab's `?kind=conversation` does. The grouping stays defined in
+// one place on the service, the route resolves ONLY a single string through
+// it, and anything else — an unknown name, a repeated parameter, an absent
+// one — yields the unfiltered page, so a bad value fails open rather than
+// erroring.
+test('the named kind groups, paged by name, fail open on anything else', async () => {
+  assert.deepEqual(
+    Object.keys(notifications.NOTIFICATION_KIND_GROUPS).sort(),
+    ['conversation', 'mentions', 'merges', 'votes'],
+  );
+  assert.deepEqual([...notifications.NOTIFICATION_KIND_GROUPS.mentions].sort(), [
+    'conversation_mention', 'conversation_reaction', 'conversation_reply',
+    'conversation_thread_reply', 'mention', 'reaction', 'reply', 'thread_reply',
+  ]);
+  assert.deepEqual([...notifications.NOTIFICATION_KIND_GROUPS.votes].sort(), [
+    'change_ready', 'check_failed', 'pr_proposed', 'proposal_vote',
+    'revision_recheck', 'stale_pr', 'vote_digest',
+  ]);
+  assert.deepEqual([...notifications.NOTIFICATION_KIND_GROUPS.merges], ['pr_merged']);
+
+  const calls = [];
+  const pool = {
+    async query(sql, params) {
+      calls.push({ sql: String(sql), params });
+      if (/COUNT\(\*\)::int AS c/.test(String(sql))) return { rows: [{ c: 0 }], rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    },
+  };
+  const poolModule = require('../src/db/pool');
+  const original = poolModule.getPool;
+  poolModule.getPool = () => pool;
+  const modulePath = require.resolve('../src/routes/notifications');
+  delete require.cache[modulePath];
+  const routes = require('../src/routes/notifications');
+  poolModule.getPool = original;
+  delete require.cache[modulePath];
+
+  const express = require('express');
+  const app = express();
+  app.use((req, _res, next) => {
+    req.user = { id: 7, username: 'recipient' };
+    next();
+  });
+  app.use(routes.notificationsRoutes({}));
+  const { server, baseUrl } = await new Promise((resolve) => {
+    const listening = app.listen(0, () => resolve({
+      server: listening,
+      baseUrl: `http://127.0.0.1:${listening.address().port}`,
+    }));
+  });
+  try {
+    // A named group pages THAT group's kinds.
+    await fetch(`${baseUrl}/api/notifications?kind=votes`);
+    const paged = calls.find(({ sql }) => /n\.kind = ANY\(/.test(sql));
+    assert.ok(paged, 'the named group reaches the kinds clause');
+    assert.deepEqual(
+      [...paged.params[1]].sort(),
+      [...notifications.NOTIFICATION_KIND_GROUPS.votes].sort(),
+    );
+
+    // An unknown name, and a repeated parameter (which arrives as an array),
+    // both fall through to the unfiltered page.
+    for (const bad of ['kind=nope', 'kind=mentions&kind=votes']) {
+      calls.length = 0;
+      const res = await fetch(`${baseUrl}/api/notifications?${bad}`);
+      assert.equal(res.status, 200);
+      assert.ok(!calls.some(({ sql }) => /n\.kind = ANY\(/.test(sql)),
+        `${bad} fails open to today's unfiltered list`);
+    }
+  } finally {
+    server.close();
+  }
+});
+
 test('list, exact lookup, count, and conversation mark-read share the membership gate', async () => {
   const calls = [];
   const pool = {

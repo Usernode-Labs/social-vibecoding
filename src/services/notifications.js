@@ -70,6 +70,45 @@ const CONVERSATION_NOTIFICATION_KINDS = new Set([
 const CONVERSATION_KIND_SQL = [...CONVERSATION_NOTIFICATION_KINDS]
   .map((kind) => `'${kind}'`).join(', ');
 
+// The bell's All tab filter chips (#4014), named beside the conversation
+// group the Messages tab already rides. Same mechanism: the route pages a
+// group by name through listForUser's `kinds`, so a page of "older" IS a
+// page of the thing the chip filtered for, instead of 100 older rows of
+// everything. Conversation mention/reply/reaction rows sit in BOTH groups on
+// purpose: their tab answers "what was said", the chip answers "who spoke to
+// me". A kind in no group — session rows, kudos, invites, friend rows,
+// account notices, digests — matches no chip and stays under All only.
+// MUST stay in step with NOTIF_KIND_GROUPS in
+// frontend/src/features/notifications/notifications.js, which stamps the
+// group on every row for the client-side filter; the two cannot drift
+// because tests/notifications-filter-chips.test.js compares them.
+const MENTION_NOTIFICATION_KINDS = new Set([
+  'mention',
+  'reply',
+  'reaction',
+  'thread_reply',
+  'conversation_mention',
+  'conversation_reply',
+  'conversation_thread_reply',
+  'conversation_reaction',
+]);
+const VOTE_NOTIFICATION_KINDS = new Set([
+  'pr_proposed',
+  'proposal_vote',
+  'vote_digest',
+  'revision_recheck',
+  'change_ready',
+  'stale_pr',
+  'check_failed',
+]);
+const MERGE_NOTIFICATION_KINDS = new Set(['pr_merged']);
+const NOTIFICATION_KIND_GROUPS = Object.freeze({
+  conversation: CONVERSATION_NOTIFICATION_KINDS,
+  mentions: MENTION_NOTIFICATION_KINDS,
+  votes: VOTE_NOTIFICATION_KINDS,
+  merges: MERGE_NOTIFICATION_KINDS,
+});
+
 // Conversation notification rows are useful only while their recipient may
 // still open the referenced conversation. Invite history remains visible
 // after acceptance, while an invited user may see only the invite itself.
@@ -1851,6 +1890,10 @@ module.exports = {
   unreadMessageIdsForUser,
   ACTION_COMPLETIONS,
   CONVERSATION_NOTIFICATION_KINDS,
+  MENTION_NOTIFICATION_KINDS,
+  VOTE_NOTIFICATION_KINDS,
+  MERGE_NOTIFICATION_KINDS,
+  NOTIFICATION_KIND_GROUPS,
   APP_CHAT_MESSAGE_KINDS,
   notificationHref,
   FRIEND_NOTIFICATION_KINDS,
