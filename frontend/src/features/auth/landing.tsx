@@ -1347,7 +1347,8 @@ export function LandingScreen() {
           </div>
           {/*
               AN INVITE LINK'S CARDS (./invite-card.tsx): who made it, the
-              project itself, the note and the way in. Only on
+              way in (the note and the Join button lead, so the button is on
+              the first phone screen), then the project itself. Only on
               /invite/<token>, with a placeholder in their place until its
               preview is back — nothing here on any other visit. A dead link
               says why, above the pitch.

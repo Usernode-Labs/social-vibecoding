@@ -9,13 +9,16 @@
  *            you to join …" when the sender did not make it), how many
  *            people are in it, and its one-line description (#3700) unless
  *            the picture below is the tile that already carries it;
+ *   join     the sender's note, when they left one, the one way in, and how
+ *            many people are in it: the button leads, directly after the
+ *            who card, so on a phone it is on the first screen instead of
+ *            below the fold under a tall picture (#4049);
  *   picture  the project itself: the after-shot of its latest change, else
  *            the Discover card's image, else, while it is built, the
  *            featured card of the idea its maker was shown
  *            (../first-session/sketch-card.tsx, drawn here from its words),
  *            else a large tile with its one-line description
- *            (preview().project.picture);
- *   join     the sender's note, when they left one, and the one way in.
+ *            (preview().project.picture).
  *
  * Everything comes from GET /api/public/invites/:token, which discloses
  * nothing more than the invite offers to share. Joining needs an account:
@@ -299,6 +302,13 @@ export function MadeForYou({ preview, primaryClass, onJoin }: {
   const seenNote = seen
     ? <p data-landing-invite-seen="" className="mt-2 text-center text-[13px] text-zinc-500 dark:text-zinc-400">{seen}</p>
     : null;
+  // #4049: the count sits next to the action, in the first card's own words,
+  // so the page reads as people to join, not only an app being made. It is
+  // the seen line's style, and only when anybody is in it yet.
+  const members = membersLine(preview.memberCount);
+  const membersNote = members
+    ? <p data-landing-invite-members="" className="mt-2 text-center text-[13px] text-zinc-500 dark:text-zinc-400">{members}</p>
+    : null;
   return (
     <>
       <section data-landing-invite="live" className={`${CARD} mt-4`}>
@@ -318,7 +328,8 @@ export function MadeForYou({ preview, primaryClass, onJoin }: {
           </p>
         ) : null}
       </section>
-      <Picture project={project} building={!!preview.building} />
+      {/* The way in leads: above the picture, so on a phone the button is on
+          the first screen instead of below the fold under a tall card. */}
       {preview.note ? (
         <section data-landing-invite-join="" className={`${CARD} mt-3`}>
           <p data-landing-invite-note="" className="rounded-2xl bg-violet-500/10 px-4 py-3 text-[15px] leading-snug text-zinc-700 dark:text-zinc-200">
@@ -326,11 +337,13 @@ export function MadeForYou({ preview, primaryClass, onJoin }: {
             {` “${preview.note}”`}
           </p>
           <div className="mt-4">{join}</div>
+          {membersNote}
           {seenNote}
         </section>
       ) : (
-        <div data-landing-invite-join="" className="mx-4 mt-4">{join}{seenNote}</div>
+        <div data-landing-invite-join="" className="mx-4 mt-4">{join}{membersNote}{seenNote}</div>
       )}
+      <Picture project={project} building={!!preview.building} />
     </>
   );
 }

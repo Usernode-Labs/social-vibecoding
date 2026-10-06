@@ -143,6 +143,21 @@ test('an invite to a project still being built shows the same card, drawn from i
   assert.match(html, /Never forget to water the flat&#x27;s plants/);
   assert.match(html, />Being made<\/span>/);
   assert.doesNotMatch(html, /<iframe|first-session-made-title/);
+  // #4049: the way in leads. The join block sits between the who card and
+  // the picture, so on a phone the Join button is on the first screen, and
+  // the count of people sits next to it in the first card's own words.
+  assert.ok(html.indexOf('data-landing-invite-join') < html.indexOf('data-landing-invite-picture'), 'join block before the picture');
+  assert.match(html, /data-landing-invite-members=""[^>]*>1 person is in it\.<\/p>/);
+  // A sender's note travels with the button: note, then button, then the
+  // members line, all inside the join block, all above the picture.
+  const noted = renderToHtml(createElement(MadeForYou, { preview: { ...preview, note: 'Come run with us' }, primaryClass: 'x', onJoin() {} }));
+  const joinAt = noted.indexOf('data-landing-invite-join');
+  assert.ok(joinAt > -1 && joinAt < noted.indexOf('data-landing-invite-picture'), 'join block before the picture with a note');
+  assert.ok(noted.indexOf('data-landing-invite-note') < noted.indexOf('data-landing-invite-signup'), 'note above the button');
+  assert.ok(noted.indexOf('data-landing-invite-signup') < noted.indexOf('data-landing-invite-members'), 'members line under the button');
+  // Nobody in it yet: no members line at all.
+  const empty = renderToHtml(createElement(MadeForYou, { preview: { ...preview, memberCount: 0 }, primaryClass: 'x', onJoin() {} }));
+  assert.doesNotMatch(empty, /data-landing-invite-members/);
   // Once it is not being made, the card says nothing about it: no pill, no stripes.
   const plain = renderToHtml(createElement(MadeForYou, { preview: { ...preview, building: false }, primaryClass: 'x', onJoin() {} }));
   assert.match(plain, /data-featured-card="ready"/);
