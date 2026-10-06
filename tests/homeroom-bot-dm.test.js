@@ -467,10 +467,17 @@ test('billing: whoever asked pays, and what the bot caused itself is charged to 
 });
 
 test('the held message names no amount, and offers the group when there is one', () => {
-  const solo = dm.overAllowanceText({ title: 'Sunday watering reminder', appName: 'Plant Pal' });
-  assert.equal(solo, 'You\'ve used this week\'s building time. I\'ll start Sunday watering reminder on Monday.');
-  const group = dm.overAllowanceText({ title: 'Sunday host reminder', appName: 'Supper Club', group: true });
-  assert.equal(group, 'You\'ve used this week\'s building time. I\'ll start Sunday host reminder on Monday, or someone else in Supper Club can ask me for it.');
+  // #4097: led by the request's line, which Messages draws as its card, as
+  // the rest of the request's news is; the words then say "it".
+  const solo = dm.overAllowanceText({
+    line: dm.requestLine({ appName: 'Plant Pal', issueNumber: 4, issueTitle: 'Sunday watering reminder' }), appName: 'Plant Pal',
+  });
+  assert.equal(solo, '**Plant Pal** · request #4: Sunday watering reminder\n\nYou\'ve used this week\'s building time. I\'ll start it on Monday.');
+  const group = dm.overAllowanceText({
+    line: dm.requestLine({ appName: 'Supper Club', issueNumber: 9, issueTitle: 'Sunday host reminder' }), appName: 'Supper Club', group: true,
+  });
+  assert.equal(group, '**Supper Club** · request #9: Sunday host reminder\n\nYou\'ve used this week\'s building time. I\'ll start it on Monday, or someone else in Supper Club can ask me for it.');
+  assert.equal(dm.overAllowanceText({ appName: 'Plant Pal' }), 'You\'ve used this week\'s building time. I\'ll start it on Monday.', 'no line, the words alone');
   assert.doesNotMatch(solo + group, /\$/);
 });
 

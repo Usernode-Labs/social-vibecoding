@@ -572,8 +572,8 @@ test('the row draws a bot\'s activity message as the card, in place of its words
   assert.equal(isActivityMessage(message({ deleted: true })), false);
   const row = read('frontend/src/features/messages/message-row.tsx');
   // #3770: handed the words a message is drawn with, for a card with nothing on record.
-  // #4097: led by the request's card when they open with the request's line.
-  assert.match(row, /const words = !message\.content \? null : head\s*\? <RequestHeadWords head=\{head\} objects=\{message\.objects\} channels=\{channels\} \/>\s*: <MessageMarkdown content=\{message\.content\} channels=\{channels\} appSlug=\{botMeta\(message\)\?\.appSlug\} \/>;/);
+  // #4097: led by the card of what they are about when they open with its line.
+  assert.match(row, /const words = !message\.content \? null : head\s*\? <BotHeadWords head=\{head\} objects=\{message\.objects\} channels=\{channels\} \/>\s*: <MessageMarkdown content=\{message\.content\} channels=\{channels\} appSlug=\{botMeta\(message\)\?\.appSlug\} \/>;/);
   // B5: led by the bot's hello, on the first card it sends somebody.
   // B6: then a plan and two questions at once, which stand in place of their words too.
   assert.match(row, /\) : isActivityMessage\(message\) \? \([\s\S]{0,600}homeroomBot\?\.hello \? <p className="messages-bot-hello">[\s\S]{0,120}<BotActivityCard message=\{message\} words=\{words\} \/>\s*<\/>\s*\) : isPlanMessage\(message\) \? \(/);

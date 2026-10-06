@@ -5,7 +5,7 @@ import { InfoCircleIcon } from '@/components/ui/icons';
 import * as api from './api';
 import { botMeta, requestPlace } from './bot-question';
 import { PlanCardView, type PlanCardState } from './bot-plan-view';
-import { RequestHeadWords, requestHead } from './bot-request-head';
+import { BotHeadWords, botHead } from './bot-head-card';
 import { MessageMarkdown } from './format';
 import { NotifyMe, notifyMeChosen } from './notify-me';
 import { answerBotQuestion, scopeKey, setReply } from './store';
@@ -101,7 +101,7 @@ export function BotTwoQuestions({ message, conversationId }: { message: Conversa
   const [sent, setSent] = useState<string | null>(null);
   if (!meta || questions.length < 2) return null;
   // #4097: the lead's request line is the request's card, as in any row.
-  const head = meta.lead ? requestHead(meta.lead, meta) : null;
+  const head = meta.lead ? botHead(meta.lead, meta) : null;
   const open = meta.status === 'open' && !sent;
   const answered = meta.status === 'answered' ? (meta.answer || sent) : sent;
 
@@ -113,7 +113,7 @@ export function BotTwoQuestions({ message, conversationId }: { message: Conversa
 
   return (
     <div className="messages-bot-question" data-bot-question={meta.status || 'open'} data-bot-questions="2">
-      {head ? <RequestHeadWords head={head} objects={message.objects} />
+      {head ? <BotHeadWords head={head} objects={message.objects} />
         : meta.lead ? <MessageMarkdown content={meta.lead} appSlug={meta.appSlug} /> : null}
       {open ? questions.map((q, index) => (
         <div key={q.question} className="mt-2.5">
