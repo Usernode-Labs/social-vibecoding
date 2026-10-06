@@ -2459,6 +2459,17 @@ const HELP_TEXT = [
 // says where.
 const NOT_ENABLED_TEXT = 'I\'m not taking your requests in messages yet. To try it, turn on Homeroom bot in '
   + 'Settings, under Experimental. Until then, post a request on a project\'s page and I\'ll answer it there.';
+// With the bot on for everyone that switch is gone (settings.js hides it, and
+// joining the list answers 409), so it is never what somebody is sent to:
+// the people the bot still does not answer then are the accounts Homeroom
+// has not let in yet (hasBot).
+const NOT_ENABLED_EVERYONE_TEXT = 'I\'m not taking requests from your account yet. I will as soon as Homeroom lets '
+  + 'your account in.';
+
+/** Pure: what somebody the bot does not answer is told, by who has it. */
+function notEnabledText(settings) {
+  return settings?.audience === 'everyone' ? NOT_ENABLED_EVERYONE_TEXT : NOT_ENABLED_TEXT;
+}
 
 /** Whether this conversation is the person's direct conversation with the bot. */
 async function isBotDirect(pool, conversationId, botId, userId) {
@@ -2659,7 +2670,7 @@ async function noteUserMessage(pool, config, { user, conversationId, message, de
   if (!hasBot(settings, user)) {
     const hour = Math.floor(Date.now() / (NOT_ENABLED_KEY_HOURS * 3600 * 1000));
     return sendDm(pool, {
-      bot, userId: user.id, replyToId: message.id, content: NOT_ENABLED_TEXT, idempotencyKey: `hrbot-notyet-${user.id}-${hour}`,
+      bot, userId: user.id, replyToId: message.id, content: notEnabledText(settings), idempotencyKey: `hrbot-notyet-${user.id}-${hour}`,
       moment: 'reply',
     });
   }
@@ -3541,6 +3552,8 @@ module.exports = {
   MIN_BRIEF_CHARS,
   HELP_TEXT,
   NOT_ENABLED_TEXT,
+  NOT_ENABLED_EVERYONE_TEXT,
+  notEnabledText,
   isDmUser,
   hasBot,
   isEnabledFor,
