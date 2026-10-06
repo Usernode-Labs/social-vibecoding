@@ -47,7 +47,7 @@ const idsNamed = (steps) => [...new Set(steps
   .map((t) => t.slice(1)))].sort();
 
 test('every id the tour points at is one the shell ships', () => {
-  const { invitedSteps, makerSteps } = loadTsx(`${DIR}/tour-steps.ts`);
+  const { invitedSteps, makerSteps, lookaroundSteps } = loadTsx(`${DIR}/tour-steps.ts`);
   const baseline = JSON.parse(read('tests/baselines/shell-markup.json'));
   const ids = new Set(baseline.ids || []);
   assert.deepEqual(idsNamed(invitedSteps({ slug: 'x', name: 'X' })), [
@@ -68,6 +68,13 @@ test('every id the tour points at is one the shell ships', () => {
   assert.match(read('frontend/src/features/dev-board/workshop/project-band.tsx'), /data-ws-tab-btn/);
   assert.match(read('frontend/src/features/group-chat/general-chat.tsx'), /id="gc-messages"/);
   assert.match(read(GC_FORM_SRC), /form: 'gc-form',/);
+  // The look-around path's four targets: the New project tile is drawn by
+  // Home's React island (never in the shell's id inventory), the three tab
+  // ids by the bar's own `platform-tab-${key}` template, pinned above.
+  assert.deepEqual(idsNamed(lookaroundSteps()), [
+    'home-create-tile', 'platform-tab-discover', 'platform-tab-messages', 'platform-tab-workshop',
+  ]);
+  assert.match(read('frontend/src/features/home/create-tile.tsx'), /id="home-create-tile"/);
 });
 
 test('the Communities and Messages steps point at the bar\'s own tabs, the same elements on a phone and the rail', () => {
@@ -156,6 +163,57 @@ test('a new user\'s tour, numbered as its card numbers it, with what each step c
   const invited = invitedSteps({ slug: 'film', name: 'Friday Film Crew' });
   assert.deepEqual(invited[2], steps[2]);
   assert.deepEqual(['target', 'alongside', 'endsAbove'].map((f) => invited[4][f]), ['#app-content', SCREEN_HEADER, BOTTOM_BARS]);
+});
+
+// "Look around first" (on "What do you want to make?") starts its own short
+// tour: the four shell places, in the order a person meets them, ending on
+// Messages where Homeroom bot's chat will be. No project is named and none
+// is needed: every target is a control every account has.
+test('the look-around tour: four shell places, ending on Messages', () => {
+  const { lookaroundSteps } = loadTsx(`${DIR}/tour-steps.ts`);
+  const steps = lookaroundSteps();
+  assert.deepEqual(steps.map((s) => s.screen), ['home', 'home', 'discover', 'messages']);
+  assert.deepEqual(steps.map((s) => s.target), [
+    '#home-create-tile', '#platform-tab-discover', '#platform-tab-workshop', '#platform-tab-messages',
+  ]);
+  assert.deepEqual(steps.map((s) => s.tap), [undefined, 'Tap Discover', 'Tap Communities', 'Tap Messages']);
+  assert.deepEqual(steps.map((s) => s.title), [
+    'New projects start here',
+    'Discover is everyone else\'s projects',
+    'Your projects live in Communities',
+    'Homeroom bot is in Messages',
+  ]);
+  // Step 1 is a look step: the tile is shown, never pressed, so the Create
+  // dialog never opens over the card. Step 4 is the tour's first last tap
+  // step: pressing Messages is the ending, so no "Got it" after it.
+  assert.equal(steps[0].tap, undefined);
+  assert.equal(steps.filter((s) => s.last).length, 1);
+  assert.equal(steps[3].last, true);
+});
+
+// Step 4 of the look-around tour is the first tap step whose press is the
+// tour's ending: index + 1 would move past the table, where the card has no
+// step to draw. Its card shows the blue hint where "Got it" would be.
+test('a last tap step ends the tour on its press, and its card shows the hint, not "Got it"', () => {
+  const { Tour } = loadTsx(`${DIR}/index.tsx`);
+  const { lookaroundSteps } = loadTsx(`${DIR}/tour-steps.ts`);
+  const last = lookaroundSteps()[3];
+  const had = { window: Object.hasOwn(globalThis, 'window'), document: Object.hasOwn(globalThis, 'document') };
+  const before = { window: globalThis.window, document: globalThis.document };
+  globalThis.window = { innerWidth: 390, innerHeight: 844 };
+  globalThis.document = { getElementById: () => null, querySelector: () => null };
+  let html;
+  try {
+    html = renderToHtml(createElement(Tour, { info: { slug: '', name: '' }, steps: [last], onEnd() {} }));
+  } finally {
+    for (const k of ['window', 'document']) { if (had[k]) globalThis[k] = before[k]; else delete globalThis[k]; }
+  }
+  assert.match(html, /<button type="button" data-first-session-tap=""[^>]*>Tap Messages<\/button>/, 'the hint where "Got it" would be');
+  assert.doesNotMatch(html, />Got it</);
+  // And the watcher: the deferred advance after a press on the ringed
+  // control ends the tour on the last step, never index + 1.
+  const src = read(`${DIR}/index.tsx`);
+  assert.match(src, /window\.setTimeout\(\(\) => \{\s+if \(step\.last\) \{ onEnd\(\); return; \}\s+setIndex\(\(i\) => \(i === index \? i \+ 1 : i\)\);\s+\}, 0\);/);
 });
 
 /** A document of fixed boxes, by selector, for as long as `fn` runs. */

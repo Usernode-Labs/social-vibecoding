@@ -52,7 +52,7 @@ import { Wordmark } from '@/components/ui/wordmark';
 import { joinPicture, JoinedPicture } from './joined-picture';
 import { type Made, MakeScreen } from './make';
 import { MadeScreen, madeAppOf, madeAppUrl } from './made';
-import { type FirstVersionStage, invitedSteps, makerSteps, type TourScreen, type TourStep } from './tour-steps';
+import { type FirstVersionStage, invitedSteps, lookaroundSteps, makerSteps, type TourScreen, type TourStep } from './tour-steps';
 
 export type FirstSessionInfo = {
   slug: string;
@@ -125,6 +125,12 @@ export function enterScreen(screen: TourScreen, slug: string, conversationId?: n
   else if (screen === 'app') App.navigateToApp?.(slug, 'app');
   else if (screen === 'hub') { AppView?._landOnHub?.(slug); App.navigateToApp?.(slug, 'dev'); }
   else if (screen === 'discussion') App.openDiscussionInHub?.(slug);
+  // The tab screens, on the look-around path: the bar's own hash routes
+  // (features/nav/tab-bar.tsx TABS), which the router opens as a tab press
+  // does.
+  else if (screen === 'discover') window.location.hash = '#apps';
+  else if (screen === 'communities') window.location.hash = '#communities';
+  else if (screen === 'messages') window.location.hash = '#messages';
   else if (screen === 'bot' && conversationId) window.location.hash = `#messages/${conversationId}`;
 }
 
@@ -422,13 +428,20 @@ export function Tour({ info, steps, onEnd }: { info: FirstSessionInfo; steps: To
       if (!t) return;
       const hit = Array.from(document.querySelectorAll(pressOf(step))).some((el) => el.contains(t));
       if (!hit) return;
-      window.setTimeout(() => setIndex((i) => (i === index ? i + 1 : i)), 0);
+      // The press is not intercepted: the product navigates, then the tour
+      // follows. On the last tap step the follow is the ENDING — index + 1
+      // would land past the table, where the card has no step to draw — so
+      // the tour ends over the screen the press just opened.
+      window.setTimeout(() => {
+        if (step.last) { onEnd(); return; }
+        setIndex((i) => (i === index ? i + 1 : i));
+      }, 0);
       const next = steps[index + 1];
       if (step.opensNext && next) window.setTimeout(() => enterScreen(next.screen, info.slug, info.conversationId), 250);
     };
     document.addEventListener('click', onClick, true);
     return () => document.removeEventListener('click', onClick, true);
-  }, [step, index, steps, info.slug, info.conversationId]);
+  }, [step, index, steps, info.slug, info.conversationId, onEnd]);
 
   const skip = useCallback(() => {
     enterScreen(steps[steps.length - 1].screen, info.slug, info.conversationId);
@@ -485,10 +498,12 @@ export function Tour({ info, steps, onEnd }: { info: FirstSessionInfo; steps: To
             {index > 0 ? (
               <button type="button" onClick={() => go(index - 1)} className="rounded-full bg-zinc-100 px-3.5 py-1.5 text-[15px] font-semibold text-zinc-900 dark:bg-zinc-700 dark:text-zinc-100">Back</button>
             ) : null}
-            {step.tap && !step.last ? (
+            {step.tap ? (
               // The hint presses the control it names (pressTarget), so it
-              // does what a finger on the control does. Still the blue words
-              // it was: no fill, no edge, no underline, only a pressed state.
+              // does what a finger on the control does. A last tap step's
+              // action is the hint too: its press IS the ending, so there is
+              // no "Got it" after it. Still the blue words it was: no fill,
+              // no edge, no underline, only a pressed state.
               <button
                 type="button"
                 data-first-session-tap=""
@@ -629,7 +644,7 @@ export type Mode =
   | { kind: 'welcome'; info: FirstSessionInfo }
   | { kind: 'make' }
   | { kind: 'made'; made: Made }
-  | { kind: 'tour'; info: FirstSessionInfo; path: 'invited' | 'maker' };
+  | { kind: 'tour'; info: FirstSessionInfo; path: 'invited' | 'maker' | 'lookaround' };
 
 // Set by the signed-out story's sheet for an account it just made
 // (../auth/landing.tsx): ask it what to make once the shell has signed in.
@@ -772,6 +787,9 @@ export function FirstSession() {
   const end = useCallback(() => setMode({ kind: 'none' }), []);
   const steps = useMemo(() => {
     if (mode.kind !== 'tour') return [];
+    // The look-around path names no project, and none of its screens read
+    // slug or conversationId.
+    if (mode.path === 'lookaround') return lookaroundSteps();
     const project = {
       slug: mode.info.slug, name: mode.info.name, conversationId: mode.info.conversationId, firstVersion: mode.info.firstVersion,
     };
@@ -784,11 +802,15 @@ export function FirstSession() {
         who={viewerName()}
         // POST /api/apps answered the question as it made the project.
         onMade={(made) => { noteAnswered(); setMode({ kind: 'made', made }); }}
+        // The look-around hand-off: Home first, then the tour over it — the
+        // maker hand-off's order, so step 1's target is on screen when the
+        // tour measures it. The info is the type's minimum: none of the
+        // look-around screens read slug or conversationId.
         onLookAround={() => {
           noteAnswered();
           void recordLookAround();
-          setMode({ kind: 'none' });
           legacy().App?.navigateHome?.();
+          setMode({ kind: 'tour', info: { slug: '', name: '' }, path: 'lookaround' });
         }}
       />
     );

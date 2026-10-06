@@ -253,7 +253,15 @@ test('Make it and "Look around first" each end it: on the account, the shell\'s 
 
   const src = read(ISLAND);
   assert.match(src, /onMade=\{\(made\) => \{ noteAnswered\(\); setMode\(\{ kind: 'made', made \}\); \}\}/);
-  assert.match(src, /onLookAround=\{\(\) => \{\s+noteAnswered\(\);\s+void recordLookAround\(\);\s+setMode\(\{ kind: 'none' \}\);\s+legacy\(\)\.App\?\.navigateHome\?\.\(\);\s+\}\}/);
+  // "Look around first" now hands off to the look-around tour: Home first,
+  // then the mode, the maker hand-off's order, so step 1's target is on
+  // screen when the tour measures it.
+  assert.match(src, /onLookAround=\{\(\) => \{\s+noteAnswered\(\);\s+void recordLookAround\(\);\s+legacy\(\)\.App\?\.navigateHome\?\.\(\);\s+setMode\(\{ kind: 'tour', info: \{ slug: '', name: '' \}, path: 'lookaround' \}\);\s+\}\}/);
+  // The look-around tour's Back and fallback re-open the tab screens by the
+  // bar's own hash routes (features/nav/tab-bar.tsx TABS).
+  assert.match(src, /screen === 'discover'\) window\.location\.hash = '#apps';/);
+  assert.match(src, /screen === 'communities'\) window\.location\.hash = '#communities';/);
+  assert.match(src, /screen === 'messages'\) window\.location\.hash = '#messages';/);
   // The snapshot's screen is taken down only while it is still the make
   // screen: what Make it led to stays.
   assert.match(src, /dismissMake\(\): void \{\s+setMode\(\(prev\) => \(prev\.kind === 'make' \? \{ kind: 'none' \} : prev\)\);/);

@@ -9,7 +9,7 @@
  * shell-markup.json, dapp.json): nothing here draws a picture of the product.
  */
 
-export type TourScreen = 'home' | 'app' | 'hub' | 'discussion' | 'bot';
+export type TourScreen = 'home' | 'app' | 'hub' | 'discussion' | 'bot' | 'discover' | 'communities' | 'messages';
 
 export type TourStep = {
   screen: TourScreen;
@@ -273,4 +273,48 @@ export function makerSteps({ slug, name, conversationId }: TourProject): TourSte
     },
   );
   return steps;
+}
+
+/**
+ * The look-around path, after "Look around first" on "What do you want to
+ * make?": the four shell places, in the order a person meets them, ending
+ * where the bot's chat will be. It names no project, so the hand-off passes
+ * the type's minimum (./index.tsx) and every target is a control every
+ * account has. Step 1 only shows the New project tile — pressing it would
+ * open the Create dialog over the card — and step 4 is the first last tap
+ * step: pressing Messages is the ending.
+ */
+export function lookaroundSteps(): TourStep[] {
+  return [
+    {
+      screen: 'home',
+      target: '#home-create-tile',
+      title: 'New projects start here',
+      text: 'Describe what it should do, and Homeroom bot builds the first version.',
+    },
+    {
+      // The Discover tab: ONE element, as the Communities steps above name
+      // theirs (see there).
+      screen: 'home',
+      target: '#platform-tab-discover',
+      title: 'Discover is everyone else\'s projects',
+      text: 'Projects public communities have made and shared. A good place for ideas.',
+      tap: 'Tap Discover',
+    },
+    {
+      screen: 'discover',
+      target: '#platform-tab-workshop',
+      title: 'Your projects live in Communities',
+      text: 'When you make one, it brings its own community: the people, the chat, and what\'s being built.',
+      tap: 'Tap Communities',
+    },
+    {
+      screen: 'messages',
+      target: '#platform-tab-messages',
+      title: 'Homeroom bot is in Messages',
+      text: 'When it builds for you, its chat with you is there. Ask it for changes any time.',
+      tap: 'Tap Messages',
+      last: true,
+    },
+  ];
 }
