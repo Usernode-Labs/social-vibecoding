@@ -57,6 +57,7 @@ import { useStoreState } from '../../../lib/use-store-state';
 import { clampPopoverHeight, placeUnderAnchor } from '../../../lib/anchor-popover';
 import { anchorRectOf, useAnchoredDismiss } from '../../../lib/popover-dismiss';
 import { cardTintClass } from '../../home/panels/ui';
+import { callAppView } from './fold';
 import { aiEnabledStore, cardNowStore } from './cards-store';
 import type {
   ActionRef,
@@ -495,6 +496,12 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
   // and landed ON the Vote button when it flipped above one. The guess is
   // only the first paint; the layout effect re-places it from this number.
   const [measuredH, setMeasuredH] = useState<number | null>(null);
+  // The vote is on its way: set by the options bag's `onSend` the moment
+  // castVote / castIssueVote is committed to (its line in hand, before the
+  // optimistic paint), cleared when the returned promise settles — true,
+  // false or thrown; the failure toasts stay the call's. `false` on first
+  // render, so the initial markup is what it always was.
+  const [sending, setSending] = useState(false);
   const sheetRef = useRef<{ dismiss: () => void } | null>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
@@ -535,22 +542,39 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
   // null sends none without asking. Slots the model left out are filled in
   // so the options bag always lands LAST — which is why the count is read
   // per function (VOTE_ARITY) rather than fixed at castVote's three.
+  //
+  // #3987: the bag also carries `onSend`, which lights the spinner the
+  // moment the call is committed to, and the call is dispatched through
+  // `callAppView` and AWAITED, so the face goes back to its settled state
+  // the frame the server has answered — on a slow connection that is the
+  // difference between "nothing happened" and a button that says it is
+  // working. A `false` (a refusal, a cancelled prompt, a network failure)
+  // and a throw clear it the same way; the failure toasts stay the call's.
+  const dispatchVote = (a: ActionSpec, bag: Record<string, unknown>) => {
+    if (!a.act) return;
+    const args = [...(a.act.args || [])];
+    const positional = VOTE_ARITY[a.act.fn] ?? 3;
+    while (args.length < positional) args.push(null);
+    Promise.resolve(callAppView(a.act.fn, ...args, bag))
+      .catch(() => undefined)
+      .finally(() => setSending(false));
+  };
   const send = (a: ActionSpec, reason: string | null) => {
     shut();
     if (!a.act) return;
     if (!isVote) { call(a.act); return; }
-    const args = [...(a.act.args || [])];
-    const positional = VOTE_ARITY[a.act.fn] ?? 3;
-    while (args.length < positional) args.push(null);
-    call({ fn: a.act.fn, args: [...args, { reason }] });
+    dispatchVote(a, { reason, onSend: () => setSending(true) });
   };
   // The fallback's rows are the native action sheet's, and the line is then
   // asked for by castVote itself through the kit's prompt card — the one
   // path left where the box is not inline, and only where no sheet can be
-  // presented at all.
+  // presented at all. No `reason` key in the bag: the call asks for the
+  // line first, and the spinner starts only once the vote is committed to.
   const pickTouch = (a: ActionSpec) => {
     shut();
-    call(a.act);
+    if (!a.act) return;
+    if (!isVote) { call(a.act); return; }
+    dispatchVote(a, { onSend: () => setSending(true) });
   };
   // The touch picker: a kit bottom sheet holding the same panel. The element
   // handed to the kit is the portal's target; the kit reparents it into its
@@ -716,11 +740,15 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
         className={`dev-vote-btn dev-vote-btn-approve${approved ? ' dev-vote-btn-yes' : ''}`}
         data-vote-btn={approved ? 'approved' : 'approve'}
         title={approved ? 'You approved it.' : 'Approve it, and it goes live.'}
-        disabled={disabled || approved}
+        disabled={disabled || approved || sending}
         onClick={(e) => { e.stopPropagation(); send(yes, null); }}
       >
-        {approved ? <CheckIcon aria-hidden="true" /> : null}
-        {approved ? 'Approved' : 'Approve'}
+        {sending ? <><Spinner />{'Voting…'}</> : (
+          <>
+            {approved ? <CheckIcon aria-hidden="true" /> : null}
+            {approved ? 'Approved' : 'Approve'}
+          </>
+        )}
       </button>
     );
   }
@@ -734,13 +762,23 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
         aria-haspopup="dialog"
         aria-expanded={open || !!sheetEl ? 'true' : undefined}
         title={title}
-        disabled={disabled}
+        disabled={disabled || sending}
         onClick={toggle}
       >
-        {mine === 'yes' ? <CheckIcon aria-hidden="true" /> : null}
-        {mine === 'no' ? <XIcon aria-hidden="true" /> : null}
-        {face}
-        <ChevronDownIcon className="dev-vote-caret" aria-hidden="true" />
+        {sending ? (
+          // #3987: the vote is on its way. The "Preview building…" pill's
+          // pattern — the arc, then a short word with an ellipsis — on the
+          // button itself, which cannot be pressed again until the server
+          // has answered.
+          <><Spinner />{'Voting…'}</>
+        ) : (
+          <>
+            {mine === 'yes' ? <CheckIcon aria-hidden="true" /> : null}
+            {mine === 'no' ? <XIcon aria-hidden="true" /> : null}
+            {face}
+            <ChevronDownIcon className="dev-vote-caret" aria-hidden="true" />
+          </>
+        )}
       </button>
       {popover}
       {sheet}

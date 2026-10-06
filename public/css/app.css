@@ -14387,6 +14387,10 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 .dev-vote-btn:hover { background: var(--accent-light); }
 .dev-vote-btn-yes, .dev-vote-btn-yes:hover { background: var(--accent-tint); color: var(--accent); }
 .dev-vote-btn-no, .dev-vote-btn-no:hover { background: var(--state-blocked-bg); color: var(--state-blocked); }
+/* #3987: while the vote is on its way the face carries the arc spinner
+   itself, whose var(--accent) border is invisible on the accent fill the
+   button sits on — the arc follows the face's own ink instead. */
+.dev-vote-btn .dc-status-spinner-arc { border-color: currentColor; border-right-color: transparent; }
 /* The picker: body-mounted and fixed, like .dev-card-menu, because the
    kanban columns scroll sideways and would clip it. */
 .dev-vote-pop {

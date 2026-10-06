@@ -21809,6 +21809,16 @@ const AppView = {
       return;
     }
 
+    // #3987: the same onSend hook castVote documents — the line is in hand
+    // and nothing is painted yet, so the vote button can say the vote is on
+    // its way before the round-trip starts. `_beginGovApply`'s apply state
+    // (a deciding vote) paints after this and takes over from the repaint,
+    // as on a PR vote.
+    const onSend = opts && typeof opts.onSend === 'function' ? opts.onSend : null;
+    if (onSend) {
+      try { onSend(vote); } catch { /* the caller's paint, never the vote's */ }
+    }
+
     const issue = (AppView._govProposals || []).find((g) => g.id === issueId);
     const kind = issue ? issue.kind : null;
     const targetN = (issue && issue.payload && issue.payload.issueNumber) || null;
