@@ -354,6 +354,42 @@ function boxKey(b: Box | null | undefined): string {
   return b ? `${Math.round(b.left)},${Math.round(b.top)},${Math.round(b.width)},${Math.round(b.height)}` : '';
 }
 
+/**
+ * Pure: does a target lie outside the band a step can show it in, between
+ * the top bar's foot (`top`) and the foot bars' top (`bottom`)? Then it is
+ * scrolled into view before it is ringed (the owner, 6 October 2026: "each
+ * step scrolls its target into view"). A cut-out of a whole screen (taller
+ * than the band) is a screen, not something to scroll to.
+ */
+export function outOfBand(box: Box, band: { top: number; bottom: number }): boolean {
+  if (box.height > band.bottom - band.top) return false;
+  return box.top < band.top || box.top + box.height > band.bottom;
+}
+
+/**
+ * Bring a step's target into view, at once (a smooth scroll moves it under a
+ * ring still following it): the first one drawn, centred, unless it is on
+ * the tab bar or the top bar, which are always in view. Before that, a
+ * target the screen holds back is drawn by pressing the step's `revealWith`.
+ * Answers whether it is done: the target is there and in view.
+ */
+export function bringIntoView(step: Pick<TourStep, 'target' | 'revealWith'>, viewport: { width: number; height: number }): boolean {
+  const el = (Array.from(document.querySelectorAll(step.target)) as HTMLElement[])
+    .find((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; });
+  if (!el) {
+    if (step.revealWith) pressTarget(step.revealWith);
+    return false;
+  }
+  if (el.closest('#platform-tabs, #platform-header, #platform-parked')) return true;
+  const header = document.getElementById('platform-header')?.getBoundingClientRect();
+  const band = { top: header && header.height ? header.bottom : 0, bottom: footTop(visibleBoxes(BOTTOM_BARS), viewport) };
+  const r = el.getBoundingClientRect();
+  if (outOfBand({ left: r.left, top: r.top, width: r.width, height: r.height }, band)) {
+    try { el.scrollIntoView({ block: 'center', behavior: 'auto' }); } catch { el.scrollIntoView(); }
+  }
+  return true;
+}
+
 /** How far a card near the foot of the screen sits above the bar there. */
 const CARD_GAP = 20;
 
@@ -426,9 +462,24 @@ export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo
   useEffect(() => {
     let raf = 0;
     let last = '';
+    // The step whose target was brought into view, and how many frames it
+    // has had to appear (a press of `revealWith` is tried once).
+    let shown = -1;
+    let tries = 0;
+    let lastAt = -1;
     const tick = () => {
       try {
         const at = indexRef.current;
+        if (at !== lastAt) { lastAt = at; tries = 0; }
+        // Into view first, once per step, so it is ringed where it shows.
+        if (shown !== at && tries < 240) {
+          // `revealWith` is pressed once, half a second in: a screen still
+          // drawing its target gets that long first.
+          const step = stepRef.current;
+          const asked = tries === 30 ? step : { target: step.target };
+          if (bringIntoView(asked, { width: window.innerWidth, height: window.innerHeight })) shown = at;
+          tries += 1;
+        }
         // Before measuring, so the cut-out is drawn round what it shows.
         const reveal = stepRef.current.newestFromTop;
         if (reveal) showNewestFromTop(reveal);

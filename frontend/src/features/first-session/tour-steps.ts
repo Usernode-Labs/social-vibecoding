@@ -66,6 +66,13 @@ export type TourStep = {
    */
   instead?: { when: string; title: string; text: string };
   /**
+   * A control that draws the target when the screen holds it back, pressed
+   * once if the target is not there: Home's "Show all N apps", behind which
+   * a full collapsed grid keeps the New project tile (home.js createHidden).
+   * The product's own handler draws it, as a finger on it would.
+   */
+  revealWith?: string;
+  /**
    * A transcript in the cut-out: the newest of its `rows` is shown from its
    * top edge (./index.tsx showNewestFromTop). Pinned to its newest line, a
    * card taller than the transcript began part-way down, with no first line.
@@ -264,6 +271,7 @@ export function lookAroundSteps(): TourStep[] {
     {
       screen: 'home',
       target: '#home-create-tile',
+      revealWith: '#home-apps-more-btn',
       ringed: true,
       title: 'Make something any time',
       text: 'New project starts a community and its app.',

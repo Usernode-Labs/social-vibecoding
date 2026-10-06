@@ -807,3 +807,61 @@ test('each tour has a screenshot state, opened at any card, over a real project,
   const opener = src.slice(src.indexOf('async function firstHomeProject'), src.indexOf('// Set by the signed-out story\'s sheet'));
   assert.doesNotMatch(opener, /recordLookAround|markSeen|noteAnswered|method: 'POST'/);
 });
+
+// The owner, 6 October 2026: each step scrolls its target into view before
+// ringing it. On a Home whose collapsed grid is full, the New project tile is
+// held back behind "Show all N apps" (home.js createHidden): the step presses
+// that first, as a finger would.
+test('each step brings its target into view before ringing it, drawing a held-back tile first', () => {
+  const { outOfBand, bringIntoView } = loadTsx(`${DIR}/index.tsx`);
+  const { lookAroundSteps } = loadTsx(`${DIR}/tour-steps.ts`);
+  const band = { top: 99, bottom: 754 };
+  assert.equal(outOfBand({ left: 16, top: 300, width: 80, height: 100 }, band), false, 'in the band: left where it is');
+  assert.equal(outOfBand({ left: 16, top: 900, width: 80, height: 100 }, band), true, 'below the tab bar');
+  assert.equal(outOfBand({ left: 16, top: 40, width: 80, height: 100 }, band), true, 'under the top bar');
+  assert.equal(outOfBand({ left: 0, top: 0, width: 390, height: 800 }, band), false, 'a whole screen is not scrolled to');
+
+  const first = lookAroundSteps()[0];
+  assert.equal(first.revealWith, '#home-apps-more-btn');
+  assert.match(read('frontend/src/features/home/apps-more.tsx'), /id="home-apps-more-btn"[\s\S]*home\._appsExpanded = true;\s+home\.render\(\);/);
+  assert.match(read('frontend/src/features/home/home.js'), /create = createHidden \? null : \{/);
+
+  const withDoc = (doc, fn) => {
+    const had = Object.hasOwn(globalThis, 'document');
+    const before = globalThis.document;
+    globalThis.document = doc;
+    try { return fn(); } finally { if (had) globalThis.document = before; else delete globalThis.document; }
+  };
+  const phone = { width: 390, height: 844 };
+  // Held back: the expander is pressed, and nothing is done yet.
+  let pressed = 0;
+  const expander = { getBoundingClientRect: () => ({ width: 300, height: 30 }), click() { pressed += 1; } };
+  const held = withDoc({
+    querySelectorAll: (sel) => (sel === '#home-apps-more-btn' ? [expander] : []),
+    getElementById: () => null,
+  }, () => bringIntoView(first, phone));
+  assert.deepEqual([held, pressed], [false, 1]);
+  // Drawn below the fold: scrolled into the middle, at once.
+  const scrolled = [];
+  const tile = {
+    getBoundingClientRect: () => ({ left: 16, top: 1200, width: 104, height: 124, bottom: 1324 }),
+    closest: () => null,
+    scrollIntoView: (opts) => scrolled.push(opts),
+  };
+  const done = withDoc({
+    querySelectorAll: (sel) => (sel === '#home-create-tile' ? [tile] : []),
+    getElementById: () => ({ getBoundingClientRect: () => ({ height: 99, bottom: 99 }) }),
+  }, () => bringIntoView(first, phone));
+  assert.equal(done, true);
+  assert.deepEqual(scrolled, [{ block: 'center', behavior: 'auto' }]);
+  // A tab on the bar is always in view: never scrolled.
+  const tab = { ...tile, closest: () => ({}), scrollIntoView: () => scrolled.push('tab') };
+  withDoc({ querySelectorAll: () => [tab], getElementById: () => null }, () => bringIntoView(lookAroundSteps()[1], phone));
+  assert.equal(scrolled.length, 1);
+
+  // Once per step, from the per-frame follow, before the cut-out is measured;
+  // the reveal press is tried once, half a second in.
+  const src = read(`${DIR}/index.tsx`);
+  assert.match(src, /if \(shown !== at && tries < 240\) \{[\s\S]*?const asked = tries === 30 \? step : \{ target: step\.target \};\s+if \(bringIntoView\(asked, \{ width: window\.innerWidth, height: window\.innerHeight \}\)\) shown = at;/);
+  assert.ok(src.indexOf('bringIntoView(asked') < src.indexOf('const m = measure(at, stepRef.current);'));
+});
