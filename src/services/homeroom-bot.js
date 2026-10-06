@@ -1726,7 +1726,7 @@ function triagePromptFor({
   guidance = null,
 }) {
   return [
-    seed, live.screenshotNote(seed).join('\n').trim(), triagePrompt(),
+    seed, live.screenshotNote(seed).join('\n').trim(), triagePrompt(), live.requestRulesLines().join('\n').trim(),
     firstVersion ? FIRST_VERSION_NOTE : null,
     firstVersion ? membersNote(members) : null,
     firstVersion ? planChangeNote(planChange) : null,
