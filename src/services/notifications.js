@@ -67,6 +67,35 @@ const CONVERSATION_NOTIFICATION_KINDS = new Set([
   'build_stopped',
   'build_live',
 ]);
+// The named kind groups GET /api/notifications is allowed to serve, so the
+// client's filters ask for a NAME rather than hand-picking kinds out of their
+// own feed. Defined here, beside CONVERSATION_NOTIFICATION_KINDS, the same
+// one-place rule the conversation group already follows; the route looks the
+// name up and passes the set to listForUser's `kinds`. The bell's four filter
+// chips mirror the four new groups client-side
+// (NOTIF_FILTER_GROUPS in frontend/src/features/notifications/notifications.js)
+// and tests/notifications-filter-chips.test.js holds the two together.
+const NOTIFICATION_KIND_GROUPS = {
+  // The bell's Messages tab — the group that predates the chips.
+  conversation: CONVERSATION_NOTIFICATION_KINDS,
+  // The six kinds about deciding a change: the `vote_cast` auto-dismiss
+  // cluster (pr_proposed / stale_pr / revision_recheck / change_ready,
+  // ACTION_COMPLETIONS below) plus the other two change-decision rows —
+  // a vote somebody cast, and the daily digest of what waits for approval.
+  votes: new Set([
+    'pr_proposed',
+    'change_ready',
+    'stale_pr',
+    'revision_recheck',
+    'proposal_vote',
+    'vote_digest',
+  ]),
+  merges: new Set(['pr_merged']),
+  // The app-chat cluster `message_sent` auto-dismisses, plus the thread kind
+  // (#2387) that joins it there.
+  mentions: new Set(['mention', 'reply', 'thread_reply', 'reaction']),
+  kudos: new Set(['kudos']),
+};
 const CONVERSATION_KIND_SQL = [...CONVERSATION_NOTIFICATION_KINDS]
   .map((kind) => `'${kind}'`).join(', ');
 
@@ -1851,6 +1880,7 @@ module.exports = {
   unreadMessageIdsForUser,
   ACTION_COMPLETIONS,
   CONVERSATION_NOTIFICATION_KINDS,
+  NOTIFICATION_KIND_GROUPS,
   APP_CHAT_MESSAGE_KINDS,
   notificationHref,
   FRIEND_NOTIFICATION_KINDS,

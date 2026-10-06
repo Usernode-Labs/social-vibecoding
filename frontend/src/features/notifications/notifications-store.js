@@ -92,6 +92,15 @@ export const notificationsStore = createStore({
    */
   messagesCanLoadMore: true,
   loadingOlderMessages: false,
+  /**
+   * The same pair for the filter chips' pager, which pages one named kind
+   * group on a cursor of its own (Notifications.loadOlderGroup). Separate
+   * from the two above for the same reason that cursor is separate from the
+   * shared one. `groupCanLoadMore` starts true — nothing has asked yet, and
+   * the first press is what finds out.
+   */
+  groupCanLoadMore: true,
+  loadingOlderGroup: false,
   /** PlatformUI.isTouch() at render time — gates the swipe-action wiring. */
   touch: false,
   /**

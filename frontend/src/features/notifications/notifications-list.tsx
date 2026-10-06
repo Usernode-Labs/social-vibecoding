@@ -89,6 +89,14 @@ export type NotificationRowView = {
    * yes" on a re-confirm ask. Absent on every other row.
    */
   actions?: { key: string; label: string; primary?: boolean }[];
+  /**
+   * Which filter chip the row answers — 'votes' | 'merges' | 'mentions' |
+   * 'kudos' — or null for a row outside all four groups. Set beside the
+   * `conversation` flag in ./notifications.js (NOTIF_FILTER_GROUPS), so the
+   * sheet's chips filter on it rather than re-deriving the set from `kind`.
+   * The sheet's ScreenRowView inherits the field.
+   */
+  notifGroup?: string | null;
 };
 
 type SavedView = {

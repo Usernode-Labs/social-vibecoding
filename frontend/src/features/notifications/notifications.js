@@ -106,6 +106,17 @@ const Notifications = {
   msgNextBefore: null,  // { createdAt, id } | null
   msgHasMore: true,
   msgLoading: false,
+  // The filter chips' own cursor, walked by loadOlderGroup() over
+  // `?kind=<group>`. Separate from the two above for the same reason those
+  // are separate from the shared one: each query skips different rows, and
+  // sharing a cursor would strand rows another could never reach.
+  // `groupHasMore` starts true — the first press is what discovers whether
+  // there is anything older. `groupFor` is the group the cursor belongs to,
+  // so a chip change starts the walk over.
+  groupNextBefore: null,  // { createdAt, id } | null
+  groupHasMore: true,
+  groupLoading: false,
+  groupFor: null,
   // Only the newest first-page refresh may replace the authoritative feed.
   // This prevents an older boot/bell request from completing after a native
   // network-only invalidation and overwriting its fresher result.
@@ -354,6 +365,70 @@ const Notifications = {
       console.warn('[notifications] loadOlderMessages failed', err);
     } finally {
       Notifications.msgLoading = false;
+      Notifications._renderList();
+    }
+  },
+
+  /**
+   * Page one NAMED kind group specifically, on its own cursor — the filter
+   * chips' sibling of loadOlderMessages() above, for the same reason that
+   * method exists. A chip filters the shared feed client-side, so pressing
+   * the All tab's pager under it used to fetch 100 older rows of everything
+   * and typically surface none of the kind on screen. `?kind=<group>`
+   * (src/routes/notifications.js) makes a page of "older votes" a thing the
+   * server can return, and this walks it on `groupNextBefore`, kept separate
+   * from the shared cursor for the reason loadOlderMessages's is: advancing
+   * the shared cursor past rows this query skipped would strand them.
+   *
+   * Rows still land in the one shared `items` array, deduped and re-sorted,
+   * because every tab renders from it (same as loadOlderMessages).
+   *
+   * A CHIP CHANGE STARTS THE WALK OVER: the cursor belongs to the group it
+   * was walked for (`groupFor`), so paging a different group — or the same
+   * one after the sheet reset the chip — must not continue the old position.
+   * The first press discovers whether there is anything older, exactly as
+   * the Messages tab's pager does.
+   */
+  async loadOlderGroup(group) {
+    if (Notifications.groupFor !== group) {
+      Notifications.groupFor = group;
+      Notifications.groupNextBefore = null;
+      Notifications.groupHasMore = true;
+    }
+    if (Notifications.groupLoading || !group || !Notifications.groupHasMore) return;
+    Notifications.groupLoading = true;
+    Notifications._renderList();
+    try {
+      const params = new URLSearchParams({ limit: '100', kind: String(group) });
+      if (Notifications.groupNextBefore) {
+        params.set('before', String(Notifications.groupNextBefore.createdAt));
+        params.set('before_id', String(Notifications.groupNextBefore.id));
+      }
+      const res = await fetch(`/api/notifications?${params.toString()}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const incoming = Array.isArray(data.notifications) ? data.notifications : [];
+      const seen = new Set(Notifications.items.map((n) => n.id));
+      for (const n of incoming) {
+        if (!seen.has(n.id)) {
+          Notifications.items.push(n);
+          seen.add(n.id);
+        }
+      }
+      // Re-sort: a filtered page reaches further back than the shared cursor
+      // has (see loadOlderMessages for the full reason). Same ORDER BY as the
+      // server's.
+      Notifications.items.sort((a, b) => {
+        const at = new Date(a.createdAt || a.created_at || 0).getTime();
+        const bt = new Date(b.createdAt || b.created_at || 0).getTime();
+        return (bt - at) || (Number(b.id) - Number(a.id));
+      });
+      Notifications.groupHasMore = !!data.hasMore;
+      Notifications.groupNextBefore = data.nextBefore || null;
+    } catch (err) {
+      console.warn('[notifications] loadOlderGroup failed', err);
+    } finally {
+      Notifications.groupLoading = false;
       Notifications._renderList();
     }
   },
@@ -1593,6 +1668,9 @@ const Notifications = {
         loadingMore: Notifications.loading,
         messagesCanLoadMore: Notifications.msgHasMore,
         loadingOlderMessages: Notifications.msgLoading,
+        // The filter chips' pager pair — see loadOlderGroup().
+        groupCanLoadMore: Notifications.groupHasMore,
+        loadingOlderGroup: Notifications.groupLoading,
         touch,
       });
       return;
@@ -1619,6 +1697,9 @@ const Notifications = {
       // The Messages tab's pager, on its own cursor — see loadOlderMessages().
       messagesCanLoadMore: Notifications.msgHasMore,
       loadingOlderMessages: Notifications.msgLoading,
+      // The filter chips' pager, on its own cursor — see loadOlderGroup().
+      groupCanLoadMore: Notifications.groupHasMore,
+      loadingOlderGroup: Notifications.groupLoading,
       touch,
     });
   },
@@ -1687,6 +1768,32 @@ function conversationNotificationHref(n) {
 // #2386: the two friend kinds (src/services/notifications.js
 // FRIEND_NOTIFICATION_KINDS). No app and no conversation — a person.
 const FRIEND_NOTIF_KINDS = new Set(['friend_request', 'friend_accept']);
+
+// The bell's four filter chips (the sheet's Unread and All tabs): the named
+// kind groups the server will page, mirrored from NOTIFICATION_KIND_GROUPS in
+// src/services/notifications.js the way CONVERSATION_NOTIF_KINDS above is
+// mirrored on both sides. The chips filter the flag rowView stamps on each
+// row (notifGroup, via notifGroupOf below) rather than re-deriving the set
+// from `kind` there, so the tab cannot drift from what the server accepts as
+// `?kind=<group>`; tests/notifications-filter-chips.test.js holds the two
+// maps together. Kinds outside the four groups (sessions, invites, friend
+// requests, admin alerts, check_failed, …) land in no chip and show only
+// when no chip is selected — the safe default when a new kind arrives.
+const NOTIF_FILTER_GROUPS = {
+  votes: new Set(['pr_proposed', 'change_ready', 'stale_pr', 'revision_recheck', 'proposal_vote', 'vote_digest']),
+  merges: new Set(['pr_merged']),
+  mentions: new Set(['mention', 'reply', 'thread_reply', 'reaction']),
+  kudos: new Set(['kudos']),
+};
+
+// Which chip a row answers, or null for one outside all four. One scan, in
+// map order — the groups are disjoint, so the first hit is the only one.
+function notifGroupOf(kind) {
+  for (const group in NOTIF_FILTER_GROUPS) {
+    if (NOTIF_FILTER_GROUPS[group].has(kind)) return group;
+  }
+  return null;
+}
 
 // services/platform-limit-alerts.js detailToken(): "<limit>_<level>:<used>:<cap>".
 const PLATFORM_LIMIT_DETAIL_RE = /^(apps|sessions|github|github_app)_(warn|full):(\d{1,7}):(\d{1,7})$/;
@@ -2093,6 +2200,12 @@ function rowView(n) {
     appLine,
     // Meta-line attribution. Null unless the source user actually DID this.
     by: null,
+    // Which filter chip this row answers (the Messages tab's `conversation`
+    // flag is the same pattern one kind-set over): 'votes' | 'merges' |
+    // 'mentions' | 'kudos', or null for a row no chip shows. Set here, where
+    // NOTIF_FILTER_GROUPS lives, so the sheet's chips filter on the flag and
+    // cannot drift from the routing and copy that share the same sets.
+    notifGroup: notifGroupOf(n.kind),
     // The kind line. Every branch below overwrites it; '' would render a
     // blank first line, which is why nothing is allowed to fall through
     // with the default.
