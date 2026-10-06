@@ -832,7 +832,10 @@ test('#3772: "needs a person" says what to do about it, and a card already showi
   assert.match(dm.dmText('followup_person', { reason: 'x' }, ctx), /so I've left it for the group: x$/);
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot-dm.js'), 'utf8');
   assert.match(src, /const CARD_SAYS = new Set\(\['spec'\]\);/);
-  assert.match(src, /objects: dm\.card \? \[\] : cardsFor\(kind, dm, app, issueNumber\)\.filter\(\(c\) => !\(shown && c\.type === 'issue'\)\),/);
+  // #4097: the request's card is no longer dropped for an activity card
+  // shown earlier — the relay passes cardsFor through unfiltered.
+  assert.match(src, /objects: dm\.card \? \[\] : cardsFor\(kind, dm, app, issueNumber\),/);
+  assert.doesNotMatch(src, /cardsFor\(kind, dm, app, issueNumber\)\.filter/);
 });
 
 test('"typing" goes out before the answer starts, bounded', () => {
