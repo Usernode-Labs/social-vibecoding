@@ -81,6 +81,11 @@ const Leaderboard = {
   // through `?.set(...)`.
   _store: null,
   _open: false,
+  // The document visibilitychange listener open() installs, kept so close()
+  // can remove it: coming back to the app while the Challenges tab shows
+  // re-reads the grid, so numbers scored while you were away are there
+  // without a pull.
+  _visibilityListener: null,
   // Top-level section of the Leaderboard screen. 'kudos' is everything
   // this module renders itself; 'topochain' and 'challenges' defer to the
   // TopochainLeaderboard / TopochainChallenges modules in the sibling
@@ -118,6 +123,16 @@ const Leaderboard = {
 
   async open() {
     Leaderboard._open = true;
+    // Coming back to the app after being away re-reads the Challenges grid
+    // (see _onVisibilityChange). Same install/remove idiom as
+    // TopochainChallenges' hash listener; guarded because the vm harnesses
+    // stub document with getElementById alone.
+    if (!Leaderboard._visibilityListener
+        && typeof document !== 'undefined'
+        && typeof document.addEventListener === 'function') {
+      Leaderboard._visibilityListener = () => Leaderboard._onVisibilityChange();
+      document.addEventListener('visibilitychange', Leaderboard._visibilityListener);
+    }
     Leaderboard._renderSectionTabs();
     Leaderboard._applySection();
     Leaderboard._syncTitle();
@@ -134,6 +149,10 @@ const Leaderboard = {
 
   close() {
     Leaderboard._open = false;
+    if (Leaderboard._visibilityListener) {
+      document.removeEventListener('visibilitychange', Leaderboard._visibilityListener);
+      Leaderboard._visibilityListener = null;
+    }
     // The two Topochain panes and the event bar are guests in this screen —
     // tear them down with us so their `_open` guards stop in-flight fetches
     // from painting into a hidden pane, and re-mount on the next visit to
@@ -201,6 +220,13 @@ const Leaderboard = {
       'challenges-root': Leaderboard.section === 'challenges',
       'leaderboard-history-root': Leaderboard.section === 'seasons',
     };
+    // Was the Challenges pane hidden before this toggle? Only a re-entry
+    // into the tab (it was showing, you went to another tab, you came back)
+    // re-reads the grid; a first mount or a no-change redraw does not.
+    const challengesEl = document.getElementById('challenges-root');
+    const challengesWasHidden = challengesEl
+      ? challengesEl.classList.contains('hidden')
+      : true;
     for (const [id, visible] of Object.entries(panes)) {
       const el = document.getElementById(id);
       if (el) el.classList.toggle('hidden', !visible);
@@ -222,11 +248,34 @@ const Leaderboard = {
         && window.TopochainChallenges?.open) {
       Leaderboard._challengesMounted = true;
       TopochainChallenges.open();
+    } else if (Leaderboard.section === 'challenges' && Leaderboard._challengesMounted
+        && challengesWasHidden && window.TopochainChallenges?.loadChallenges) {
+      // Re-entering the tab in the same screen visit re-reads the cards, so
+      // numbers scored since the first load are there when you come back.
+      // loadChallenges, not open(): a refresh of the same event keeps the
+      // viewer's group toggles and leaves the detail page and profile
+      // overlay alone.
+      TopochainChallenges.loadChallenges();
     }
     if (Leaderboard.section === 'seasons' && !Leaderboard._historyMounted
         && window.LeaderboardHistory?.open) {
       Leaderboard._historyMounted = true;
       LeaderboardHistory.open();
+    }
+  },
+
+  // The document became visible again. While the Challenges tab shows and
+  // its pane is mounted, re-read the grid: challenge numbers scored while
+  // the app was away land without a pull. Any other section (or a closed
+  // screen) costs nothing, and the browser tab merely losing visibility
+  // does nothing — only coming back does.
+  _onVisibilityChange() {
+    if (typeof document === 'undefined' || document.visibilityState !== 'visible') return;
+    if (!Leaderboard._open) return;
+    if (Leaderboard.section !== 'challenges') return;
+    if (!Leaderboard._challengesMounted) return;
+    if (window.TopochainChallenges?.loadChallenges) {
+      TopochainChallenges.loadChallenges();
     }
   },
 
