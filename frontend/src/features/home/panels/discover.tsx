@@ -183,11 +183,16 @@ export function DiscoverCard({ tile, preview = false, previewTheme }: { tile: Di
     >
       <div className="home-discover-art relative">
         <IllustrationArt key={`${tile.illustration?.url}:${tile.illustration?.darkUrl}`} tile={tile} />
+        {/* The badge the card always wore in this corner, made legible: the
+            word says what the bare + only implied. The shape contract above
+            the panel holds — `card-add-btn absolute` first, `un-touch-target`
+            before the colour ternary, and the data-* / title / aria strings
+            verbatim for _wireDiscoveryCards and the declared checks. */}
         <button
           type="button"
           disabled={preview}
           tabIndex={preview ? -1 : undefined}
-          className={`card-add-btn absolute top-1.5 right-1.5 w-6 h-6 flex items-center justify-center rounded-full border shadow-sm transition-colors un-touch-target ${
+          className={`card-add-btn absolute top-1.5 right-1.5 h-6 px-1.5 flex items-center gap-1 rounded-full border shadow-sm transition-colors un-touch-target ${
             added
               ? 'bg-emerald-500 border-emerald-500 text-white'
               : 'bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-600 text-violet-700 dark:text-violet-400 hover:border-violet-400'
@@ -201,6 +206,7 @@ export function DiscoverCard({ tile, preview = false, previewTheme }: { tile: Di
           {added
             ? <CheckIcon className="w-3.5 h-3.5" strokeWidth="3" aria-hidden="true" />
             : <PlusWideIcon className="w-3.5 h-3.5" strokeWidth="3" aria-hidden="true" />}
+          <span className="text-[11px] font-semibold leading-none">{added ? 'Added' : 'Add'}</span>
         </button>
       </div>
       <div className="flex flex-col gap-0.5 px-2.5 pt-2 pb-2.5">
