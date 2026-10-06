@@ -373,15 +373,19 @@ test('a link answers the join screen for the person it brings in', () => {
   assert.doesNotMatch(invites, /communities_onboarded_at = NOW\(\)/);
 });
 
-test("You're in tells a new account what Homeroom is, and an existing one only where it is", () => {
+test("You're in keeps a new account's welcome short, and tells an existing one where it is", () => {
   const src = read(`${DIR}/index.tsx`);
-  assert.match(src, /'On Homeroom, communities make apps together\.'/);
-  assert.match(src, /`Someone makes an app for their group\. \$\{maker\} \$\{made\} this one\.`/);
+  // The tour that follows teaches how Homeroom works, so the welcome says
+  // only where the viewer is: no story headline, no "How it works" box.
+  assert.doesNotMatch(src, /'On Homeroom, communities make apps together\.'/);
+  assert.doesNotMatch(src, /Someone makes an app for their group/);
   // Nothing is made yet while its first version is on its way.
   assert.match(src, /const made = info\.building \? 'is making' : 'made';/);
   assert.match(src, /`\$\{maker \? `\$\{maker\} \$\{made\} it for the group\.` : 'It is the group\\'s own app\.'\} Have a look, then say hi\.`/);
   assert.match(read('public/js/app.js'), /building: !!standing\.building,/);
-  assert.match(src, /existing \? `Welcome to \$\{info\.name\}\.`/);
+  // The one welcome headline, both accounts of it: the line the frame is
+  // labelled by (first-session-title).
+  assert.match(src, /id="first-session-title"[^>]*>\s*\{`Welcome to \$\{info\.name\}\.`\}/);
   assert.match(src, /\{`Go to \$\{info\.name\}`\}/);
 });
 
@@ -625,9 +629,11 @@ test('"You\'re in", drawn: the project under the welcome, and "is making" while 
     assert.match(existing, /data-featured-card="ready"/);
     assert.match(existing, />Pick the next book<\/span>/, 'the whole card, with room for it');
     const fresh = renderToHtml(createElement(YoureIn, { info: { ...info, newAccount: true }, onGo() {} }));
-    assert.match(fresh, />Someone makes an app for their group\. Alex is making this one\.</);
-    assert.ok(fresh.indexOf('data-first-session-picture="sketch"') > fresh.indexOf('How it works'));
-    assert.doesNotMatch(fresh, /Pick the next book/, 'compact under "How it works": the art and the tagline');
+    // The welcome is short for a new account too: no story, no "How it
+    // works" box; the tour teaches that next.
+    assert.doesNotMatch(fresh, /How it works|Someone makes an app for their group/);
+    assert.ok(fresh.indexOf('data-first-session-picture="sketch"') > fresh.indexOf('Welcome to Page Turners'));
+    assert.doesNotMatch(fresh, /Pick the next book/, 'the compact card is kept for a new account: the art and the tagline');
     const made = renderToHtml(createElement(YoureIn, { info: { ...info, building: false, picture: null, description: 'A book club' }, onGo() {} }));
     assert.match(made, />Alex made it for the group\./);
     assert.match(made, /data-first-session-picture="tile"[\s\S]*>A book club</);
