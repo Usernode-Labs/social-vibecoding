@@ -131,11 +131,30 @@ test('the landing: the story in place of the pitch unless switched off, for nobo
   assert.match(landing, /sessionStorage\.setItem\('usernode:first-session:make', '1'\)/);
   assert.match(landing, /fetch\('\/api\/me\/first-session\/started', \{ method: 'POST', credentials: 'same-origin' \}\)/);
   const story = read('frontend/src/features/auth/story.tsx');
-  for (const words of ['On Homeroom, communities make apps together.', 'Anyone using an app can change it. Your group decides what goes in.', 'What groups make', 'Get started', 'Already have an account? ']) {
-    assert.ok(story.includes(words), words);
-  }
   // No waitlist ask and no "learn more" link on it.
   assert.doesNotMatch(story, /Join the waitlist|Learn more about Homeroom/i);
+});
+
+// #4037, decisions A and B on the onboarding canvas: one headline, three
+// examples as tiles with a name only, "Make an account" and what it leads
+// to, then "Sign in". The kicker, the line under the headline, the label
+// over the examples and each example's second line are gone.
+test('the story: one headline, three named tiles, "Make an account" and the waitlist line, then Sign in', () => {
+  const html = renderComponent('frontend/src/features/auth/story.tsx', 'Story', { primaryClass: 'pill', onStart() {}, onSignIn() {} });
+  const text = html.replace(/<[^>]+>/g, '\n').split('\n').map((t) => t.trim()).filter(Boolean)
+    .map((t) => t.replace(/&#x27;/g, "'"));
+  assert.deepEqual(text, [
+    'Communities make apps together.',
+    '🏃', 'Run tracker', '🎬', 'Movie poll', '🏕️', 'Trip planner',
+    'Make an account',
+    "You'll get a spot on the waitlist.",
+    'Sign in',
+  ]);
+  assert.match(html, /<a href="#signup" data-landing-story-start="" class="pill">Make an account<\/a>/);
+  assert.match(html, /<a href="#login" data-landing-story-signin=""[^>]*>Sign in<\/a>/);
+  for (const gone of [/Welcome to Homeroom/, /On Homeroom,/, /Anyone using an app/, /What groups make/, /What communities make/, /Get started/, /Already have an account/, /Weekly miles/]) {
+    assert.doesNotMatch(html, gone);
+  }
 });
 
 test('three examples, the same on the story and the make screen, each a whole starting point', () => {
@@ -145,7 +164,7 @@ test('three examples, the same on the story and the make screen, each a whole st
     assert.ok(e.brief.length >= 10, `${e.key} brief meets BRIEF_MIN`);
     assert.ok(e.description.length <= 90, `${e.key} description fits DESCRIPTION_MAX`);
     assert.ok(e.note.length <= 280, `${e.key} note fits a link's note`);
-    for (const k of ['emoji', 'title', 'line', 'short', 'name']) assert.ok(e[k], `${e.key}.${k}`);
+    for (const k of ['emoji', 'title', 'short', 'name']) assert.ok(e[k], `${e.key}.${k}`);
   }
 });
 

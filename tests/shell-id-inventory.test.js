@@ -58,6 +58,9 @@ const withInteriors = `${after}\n${lazyInteriorsHtml()}`;
 
 // Ids a conversion chunk deliberately removed, each with the reason.
 const RETIRED_IDS = {
+  // ── #4073: the waiting screen says the waitlist in one line ────────
+  'waiting-who': 'The username inside "Your account … doesn\'t have platform access yet." on the waiting screen. The screen says "You\'re on the waitlist" and one line about your spot now (features/auth/waiting.tsx), as the onboarding canvas draws it, so nothing names the account there.',
+  'waiting-check-state': 'The waiting screen\'s "Last checked …" / "Connection issue, will retry" line. The screen still checks every 30 seconds and lets the account in the moment access is granted; it no longer reports each check, and a check that fails is tried again on the next one.',
   // ── Communities, stage 3: the create dialog asks who it is for ─────
   'create-visibility-block': 'The create dialog\'s last step, two rails for who can build and who can see. The dialog now opens on who a project is FOR (Just me, A group, A community: #create-card[data-audience]), and each answer implies both columns (services/create-options.js); "public to use, invite-only building" stays in the project\'s settings. The approval rule a group or a community picks takes the last step instead (#create-approve-block).',
   'create-vis-hint': 'The rails\' "Apps everyone can build are always public to view" hint. With no rails there is no invalid combination left to explain.',

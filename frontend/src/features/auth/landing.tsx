@@ -603,7 +603,7 @@ export function LandingScreen() {
   const { preview: invite, pending: invitePending } = useInvitePreview();
   const madeForYou = !!invite?.live;
   // Which sign-in sheet is up (./sign-in-sheet.tsx): an invite's Join, or
-  // the story's Get started or Sign in.
+  // the story's Make an account or Sign in.
   const [sheet, setSheet] = useState<null | 'join' | 'start' | 'signin'>(null);
   // Back from Apple or Google: where the sheet picks up (./sign-in-sheet.tsx).
   const [resume, setResume] = useState<SignInResume | null>(null);
@@ -628,7 +628,7 @@ export function LandingScreen() {
   const siteUrl = marketingSiteUrl(waitlistPayload);
 
   // THE STORY (./story.tsx), unless the first session's switch is off: what
-  // Homeroom is and "Get started", in place of the waitlist pitch, for a
+  // Homeroom is and "Make an account", in place of the waitlist pitch, for a
   // visitor with no session who did not come by an invite link. It is the
   // default, so it is what this interior's first render draws, before the
   // options say otherwise: the interior mounts on reveal
@@ -661,7 +661,7 @@ export function LandingScreen() {
    * states this screen has left:
    *   anonymous            → the "Join the waitlist" / "Sign in" pills and the
    *                          "Already joined?" line
-   *   waiting-room session → one "Your queue status" pill instead, back to the
+   *   waiting-room session → one "Your spot on the waitlist" pill instead, back to the
    *                          room that can tell them where they stand
    *
    * It does NOT decide the header label: that is `openApp`'s (the app's name
@@ -1684,7 +1684,7 @@ export function LandingScreen() {
                 className={hiddenLast(!session, PRIMARY_PILL)}
                 onClick={onLeaveCta}
               >
-                Your queue status
+                Your spot on the waitlist
               </a>
             </div>
           </div>
@@ -1703,9 +1703,7 @@ export function LandingScreen() {
         <SignInSheet
           open={sheet === 'join'}
           title={`Join ${invite!.project!.name}`}
-          intro={providers.length
-            ? 'Sign in or make an account. It takes a minute.'
-            : 'Sign in or make an account with your email. It takes a minute.'}
+          intro=""
           followInvite
           providers={providers}
           native={nativeSignIn}
@@ -1722,7 +1720,7 @@ export function LandingScreen() {
           title={sheet === 'signin' ? 'Sign in' : 'Make your account'}
           intro={sheet === 'signin'
             ? (providers.length ? 'Welcome back.' : 'Welcome back. We\'ll email you a code.')
-            : (providers.length ? 'It takes a minute.' : 'With your email. It takes a minute.')}
+            : ''}
           providers={providers}
           native={nativeSignIn}
           from={sheet === 'signin' ? 'signin' : 'story'}

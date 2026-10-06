@@ -269,13 +269,23 @@ test('each way into the sheet says only what is true for it', () => {
   assert.doesNotMatch(signin, /New to Homeroom|This makes your account|Already have an account/);
   assert.match(signin, /<p[^>]*><a href="#login" data-sign-in-sheet-password=""[^>]*>Sign in with a password<\/a><\/p>/,
     'Sign in: the link alone');
-  const start = render('story', 'Make your account', 'With your email. It takes a minute.');
+  const start = render('story', 'Make your account', '');
   assert.match(start, /Already have an account\? <a[^>]*>Sign in with a password<\/a>/);
   assert.doesNotMatch(start, /New to Homeroom/);
-  const join = render('invite', 'Join Sunday Run Club', 'Sign in or make an account with your email. It takes a minute.');
+  const join = render('invite', 'Join Sunday Run Club', '');
   assert.match(join, /New to Homeroom\? This makes your account\. <a[^>]*>Sign in with a password<\/a>/);
   // Nothing the story's two sheets say is a dash.
   for (const html of [signin, start, join]) assert.doesNotMatch(html, /—/);
+  // #4037: the account sheets have no line under the title, the title says
+  // it, and no empty paragraph is left where the line was.
+  for (const html of [start, join]) {
+    assert.match(html, /<\/button><\/div><form/, 'the title row, then the email step');
+    assert.doesNotMatch(html, /<p class="mt-1 text-\[15px\] leading-snug/);
+  }
+  const landing = read(LANDING);
+  assert.match(landing, /title=\{`Join \$\{invite!\.project!\.name\}`\}\s+intro=""/);
+  assert.match(landing, /title=\{sheet === 'signin' \? 'Sign in' : 'Make your account'\}\s+intro=\{sheet === 'signin'\s+\? \(providers\.length \? 'Welcome back\.' : 'Welcome back\. We\\'ll email you a code\.'\)\s+: ''\}/);
+  assert.doesNotMatch(landing, /It takes a minute/);
 });
 
 // ─── the way out to the make screen ─────────────────────────────────────

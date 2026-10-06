@@ -12,10 +12,8 @@
 export type Example = {
   key: string;
   emoji: string;
-  /** "A run tracker", on the story. */
+  /** "Run tracker", under its tile on the story. */
   title: string;
-  /** What it is for, under the title on the story. */
-  line: string;
   /** "Run tracker", on the make screen's tile. */
   short: string;
   /** Filled into "What should it do?". */
@@ -32,8 +30,7 @@ export const EXAMPLES: readonly Example[] = [
   {
     key: 'run',
     emoji: '🏃',
-    title: 'A run tracker',
-    line: 'Weekly miles for a running club',
+    title: 'Run tracker',
     short: 'Run tracker',
     brief: 'A tracker for our weekly miles, so we can see who\'s keeping up',
     name: 'Sunday Run Club',
@@ -43,8 +40,7 @@ export const EXAMPLES: readonly Example[] = [
   {
     key: 'poll',
     emoji: '🎬',
-    title: 'A movie-night poll',
-    line: 'Pick Friday\'s film together',
+    title: 'Movie poll',
     short: 'Movie-night poll',
     brief: 'A poll to pick what we watch on movie night, from everyone\'s suggestions',
     name: 'Friday Film Crew',
@@ -54,8 +50,7 @@ export const EXAMPLES: readonly Example[] = [
   {
     key: 'trip',
     emoji: '🏕️',
-    title: 'A trip planner',
-    line: 'Dates, beds and who brings what',
+    title: 'Trip planner',
     short: 'Trip planner',
     brief: 'A planner for our lake house weekend: the dates, who sleeps where, and who brings what',
     name: 'Lake House Gang',

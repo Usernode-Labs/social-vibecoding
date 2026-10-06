@@ -3,11 +3,17 @@
  * own, in place of the waitlist pitch (./landing.tsx shows it unless the
  * first session's switch is off, `story_landing` in the waitlist options).
  *
- * A small illustration so the brand carries over, one line of what this is
- * and one of the loop, three examples of what groups make (to show, not to
- * press: the make screen offers them as starting points), then one button.
- * "Get started" and "Sign in" both open the sign-in sheet over this screen;
- * an account made from it is asked what to make next
+ * One headline and three examples of what communities make, each a tile
+ * with its name (to show, not to press: the make screen offers them as
+ * starting points), then one button and what it leads to. A stranger's new
+ * account waits for access, so the line under "Make an account" says so
+ * before they make one (#4037, decisions A and B on the onboarding canvas).
+ * The kicker, the line under the headline, the label over the examples and
+ * each example's second line are gone: the headline and the tiles already
+ * say it.
+ *
+ * "Make an account" and "Sign in" both open the sign-in sheet over this
+ * screen; an account made from it is asked what to make next
  * (../first-session/make.tsx).
  */
 
@@ -28,42 +34,30 @@ export function Story({ primaryClass, onStart, onSignIn }: {
         draggable={false}
         className="mx-auto mt-4 block h-auto w-[112px] max-w-full"
       />
-      <p className="mt-4 text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">
-        Welcome to Homeroom
-      </p>
-      <h1 className="mt-2.5 text-[30px] leading-[34px] md:text-[34px] md:leading-[38px] font-extrabold text-balance">
-        On Homeroom, communities make apps together.
-      </h1>
-      <p className="mt-2.5 text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400 text-pretty">
-        Anyone using an app can change it. Your group decides what goes in.
-      </p>
-      <div className="mt-6 text-left">
-        <p className="text-center text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">
-          What groups make
-        </p>
-        <ul className="mt-2.5 overflow-hidden rounded-2xl bg-white dark:bg-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)]">
+      {/* Centred in the room between the picture and the button. */}
+      <div className="my-auto flex flex-col items-center gap-8 py-8">
+        <h1 className="text-[34px] leading-[38px] font-extrabold text-balance">
+          Communities make apps together.
+        </h1>
+        <ul className="flex justify-center gap-2">
           {EXAMPLES.map((e) => (
-            <li key={e.key} className="flex items-center gap-3 px-3.5 py-2.5 [&+&]:shadow-[inset_0_1px_0_var(--app-sheet-line)]">
-              <span className="app-icon-tile flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-2xl" aria-hidden="true">{e.emoji}</span>
-              <span className="min-w-0 flex-1">
-                <span className="block text-[15px] font-semibold text-zinc-900 dark:text-zinc-100">{e.title}</span>
-                <span className="block text-[13px] text-zinc-500 dark:text-zinc-400">{e.line}</span>
-              </span>
+            <li key={e.key} className="flex w-24 flex-col items-center gap-2">
+              <span className="app-icon-tile flex h-16 w-16 items-center justify-center rounded-[18px] text-[32px]" aria-hidden="true">{e.emoji}</span>
+              <span className="text-[14px] leading-[18px] font-semibold text-zinc-900 dark:text-zinc-100">{e.title}</span>
             </li>
           ))}
         </ul>
       </div>
-      <div className="grow" />
-      <div className="mt-6 w-full max-w-sm md:max-w-md mx-auto flex flex-col gap-2.5">
+      <div className="w-full max-w-sm md:max-w-md mx-auto flex flex-col gap-2.5">
         <a href="#signup" data-landing-story-start="" className={primaryClass} onClick={(e) => { e.preventDefault(); onStart(); }}>
-          Get started
+          Make an account
         </a>
-        <p className="mt-1.5 text-center text-[15px] text-zinc-500 dark:text-zinc-400">
-          {'Already have an account? '}
-          <a href="#login" data-landing-story-signin="" className="font-medium text-violet-700 dark:text-violet-400 hover:underline" onClick={(e) => { e.preventDefault(); onSignIn(); }}>
-            Sign in
-          </a>
+        <p className="text-[14px] leading-5 text-zinc-500 dark:text-zinc-400">
+          You'll get a spot on the waitlist.
         </p>
+        <a href="#login" data-landing-story-signin="" className="mx-auto mt-1.5 py-1 text-[15px] font-medium text-violet-700 dark:text-violet-400 hover:underline" onClick={(e) => { e.preventDefault(); onSignIn(); }}>
+          Sign in
+        </a>
       </div>
     </div>
   );

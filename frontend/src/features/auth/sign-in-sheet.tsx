@@ -352,7 +352,10 @@ export type SignInSheetProps = {
   open: boolean;
   /** "Join Sunday Run Club" */
   title: string;
-  /** The line under the title on the first step. */
+  /**
+   * The line under the title on the first step, or '' for none: the story's
+   * "Make your account" and an invite's "Join …" say it in the title (#4037).
+   */
   intro: string;
   /** This sign-in is the Join pressed on an invite's page. */
   followInvite?: boolean;
@@ -831,7 +834,7 @@ export function SignInSheet({
             <XIcon className="h-4 w-4" aria-hidden="true" />
           </button>
         </div>
-        <p className="mt-1 text-[15px] leading-snug text-zinc-500 dark:text-zinc-400">{sub}</p>
+        {sub ? <p className="mt-1 text-[15px] leading-snug text-zinc-500 dark:text-zinc-400">{sub}</p> : null}
 
         {step === 'choose' ? (
           <div className="mt-5 flex flex-col gap-2.5">

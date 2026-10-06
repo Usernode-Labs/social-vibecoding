@@ -646,7 +646,7 @@
       "name": "Guest back arrow returns to the app directory (#1028)",
       "path": "/?shot=anon-back#landing",
       "expectSelector": "#auth-landing-screen:not(.hidden) #app-viewer.hidden[data-anon-back=\"done\"]",
-      "expectText": "On Homeroom, communities make apps together.",
+      "expectText": "Communities make apps together.",
       "allowConsoleErrors": true
     },
     {
@@ -1853,7 +1853,7 @@
       "name": "Landing tells the story and asks people to get started (first session)",
       "path": "/?shot=anon#landing",
       "expectSelector": "#auth-landing-screen:not(.hidden) [data-landing-story] a[data-landing-story-start][href=\"#signup\"]",
-      "expectText": "On Homeroom, communities make apps together.",
+      "expectText": "Communities make apps together.",
       "allowConsoleErrors": true
     },
     {
@@ -2008,7 +2008,7 @@
       "name": "Landing's story signs an existing account in from the same sheet (first session)",
       "path": "/?shot=anon#landing",
       "expectSelector": "#auth-landing-screen:not(.hidden) [data-landing-story] a[data-landing-story-signin][href=\"#login\"]",
-      "expectText": "Already have an account?",
+      "expectText": "You'll get a spot on the waitlist.",
       "allowConsoleErrors": true
     },
     {
