@@ -706,6 +706,13 @@ test('the look-around tour\'s first card, drawn: Next leads on, never a tap hint
   assert.doesNotMatch(html, /data-first-session-tap/);
 });
 
+function withDocBelow(fn, el) {
+  const had = Object.hasOwn(globalThis, 'document');
+  const before = globalThis.document;
+  globalThis.document = { querySelector: () => el, querySelectorAll: () => [el] };
+  try { return fn(); } finally { if (had) globalThis.document = before; else delete globalThis.document; }
+}
+
 test('every card sits clear of the tab bar: 20px above it near the foot, under what it points at near the top', () => {
   const { cardPlacement, footTop } = loadTsx(`${DIR}/index.tsx`);
   const phone = { width: 390, height: 844 };
@@ -735,6 +742,12 @@ test('every card sits clear of the tab bar: 20px above it near the foot, under w
     // Something near the top (the app on Home, the Discussion tab): under it.
     assert.deepEqual(cardPlacement({ left: 16, top: 160, width: 104, height: 124 }, { target: '.app-card' }, phone, 764), { top: 302 });
   });
+  // The plan in Homeroom bot's chat: the card under the chat's header, so
+  // the plan's Build it, at the transcript's foot, stays clear of it.
+  const header = { getBoundingClientRect: () => ({ left: 0, top: 99, width: 390, height: 70, right: 390, bottom: 169 }) };
+  withDocBelow(() => {
+    assert.deepEqual(cardPlacement({ left: 0, top: 0, width: 390, height: 681 }, { target: '#x', place: { below: '.messages-thread-header' } }, phone, 764), { top: 181 });
+  }, header);
 });
 
 test('the maker\'s tour ends on the plan: "planning" until it is in the chat, then how to answer it', () => {

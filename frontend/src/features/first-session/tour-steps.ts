@@ -49,8 +49,8 @@ export type TourStep = {
    * of Next. The hint presses that control too (./index.tsx pressTarget).
    */
   tap?: string;
-  /** Where the card goes: under the target or over it (auto), at the foot of the screen, or just above another element. */
-  place?: 'auto' | 'bottom' | { above: string };
+  /** Where the card goes: under the target or over it (auto), at the foot of the screen, or just above or below another element. */
+  place?: 'auto' | 'bottom' | { above: string } | { below: string };
   /** Pressing the target lands on a list; open the next step's screen itself (the bot's chat, not the inbox). */
   opensNext?: boolean;
   /**
@@ -73,11 +73,13 @@ export type TourStep = {
    */
   revealWith?: string;
   /**
-   * A transcript in the cut-out: the newest of its `rows` is shown from its
-   * top edge (./index.tsx showNewestFromTop). Pinned to its newest line, a
-   * card taller than the transcript began part-way down, with no first line.
+   * A transcript in the cut-out: the newest of its `rows` is shown down to
+   * its foot, at the transcript's foot (./index.tsx showNewestToFoot). The
+   * plan's last lines are its Build it and Change something, which the card
+   * names; opened at the first unread message, the chat put them under the
+   * card.
    */
-  newestFromTop?: { scroller: string; rows: string };
+  newestToFoot?: { scroller: string; rows: string };
   last?: boolean;
 };
 
@@ -244,7 +246,11 @@ export function makerSteps({ slug, name, conversationId }: TourProject): TourSte
       screen: 'bot',
       target: `${BOT_CHAT_HEADER}, ${BOT_CHAT_MESSAGES}`,
       alongside: SCREEN_HEADER,
-      newestFromTop: { scroller: BOT_CHAT_MESSAGES, rows: 'article.messages-message' },
+      // The plan's foot, its Build it and Change something, at the foot of
+      // the transcript, and the card at its top, under the chat's header:
+      // at the foot of the screen it covered the very buttons it names
+      // (the owner's planned-vs-built review, 6 October 2026).
+      newestToFoot: { scroller: BOT_CHAT_MESSAGES, rows: 'article.messages-message' },
       title: `Homeroom bot is planning ${name}`,
       text: 'It messages you here when the plan is ready.',
       instead: {
@@ -252,7 +258,7 @@ export function makerSteps({ slug, name, conversationId }: TourProject): TourSte
         title: 'Homeroom bot has a plan for you',
         text: 'Tap Build it when the plan looks right.',
       },
-      place: 'bottom',
+      place: { below: BOT_CHAT_HEADER },
       last: true,
     },
   );

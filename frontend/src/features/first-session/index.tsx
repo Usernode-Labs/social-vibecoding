@@ -175,31 +175,31 @@ export function targetBox(selectors: string): Box | null {
   return unionBox(visibleBoxes(selectors));
 }
 
-/** How far below a transcript's top edge a row it shows from its top begins. */
+/** How far above a transcript's foot a row shown down to its foot ends. */
 const ROW_INSET = 8;
 
 /**
- * Pure: how far a transcript scrolls back so a row whose top is at `rowTop`
- * begins ROW_INSET below the transcript's own top (`scrollerTop`), both on
- * screen: 0 when it does already. Never forward: a row lower down is in view.
+ * Pure: how far a transcript scrolls on so a row whose foot is at `rowBottom`
+ * ends ROW_INSET above the transcript's own foot (`scrollerBottom`): 0 when
+ * it does already. Never back: a row that ends higher up is in view.
  */
-export function scrollBackFor(scrollerTop: number, rowTop: number, inset: number = ROW_INSET): number {
-  const by = scrollerTop + inset - rowTop;
+export function scrollOnFor(scrollerBottom: number, rowBottom: number, inset: number = ROW_INSET): number {
+  const by = rowBottom - (scrollerBottom - inset);
   return by > 0 ? Math.ceil(by) : 0;
 }
 
-type ScrollerLike = { scrollTop: number; getBoundingClientRect(): { top: number; height: number }; querySelectorAll(rows: string): ArrayLike<{ getBoundingClientRect(): { top: number } }> };
+type ScrollerLike = { scrollTop: number; getBoundingClientRect(): { top: number; height: number }; querySelectorAll(rows: string): ArrayLike<{ getBoundingClientRect(): { top: number; height: number } }> };
 
 /**
- * A step's transcript (TourStep.newestFromTop): its newest row is shown from
- * its top edge. Pinned to its newest line, the bot's chat put a plan card
- * taller than the space above the coach card part-way down, its first line
- * ("Here's my plan for …") above the cut-out. Run every frame while the step
- * is up, so it holds when the rows arrive after the step lands and when the
- * chat follows a card that grew; the step covers its cut-out, so the reader
- * is never scrolled against their own hand. Answers whether it scrolled.
+ * A step's transcript (TourStep.newestToFoot): its newest row is shown down
+ * to its foot. The chat opens at the first unread message, and a plan card
+ * taller than the space left its Build it and Change something under the
+ * coach card that names them. Run every frame while the step is up, so it
+ * holds when the rows arrive after the step lands and when a card grows; the
+ * step covers its cut-out, so the reader is never scrolled against their own
+ * hand. Answers whether it scrolled.
  */
-export function showNewestFromTop(
+export function showNewestToFoot(
   spec: { scroller: string; rows: string },
   root: { querySelectorAll(selectors: string): ArrayLike<unknown> } = document,
 ): boolean {
@@ -209,9 +209,11 @@ export function showNewestFromTop(
   const rows = scroller.querySelectorAll(spec.rows);
   const newest = rows.length ? rows[rows.length - 1] : null;
   if (!newest) return false;
-  const by = scrollBackFor(scroller.getBoundingClientRect().top, newest.getBoundingClientRect().top);
+  const s = scroller.getBoundingClientRect();
+  const r = newest.getBoundingClientRect();
+  const by = scrollOnFor(s.top + s.height, r.top + r.height);
   if (!by) return false;
-  scroller.scrollTop = Math.max(0, scroller.scrollTop - by);
+  scroller.scrollTop += by;
   return true;
 }
 
@@ -425,8 +427,13 @@ export function cardPlacement(
     : { bottom: `calc(${CARD_GAP}px + env(safe-area-inset-bottom, 0px))` };
   if (!box) return aboveFoot;
   if (step.place && typeof step.place === 'object') {
-    const above = document.querySelector(step.place.above);
-    if (above) return { bottom: H - above.getBoundingClientRect().top + 12 };
+    if ('below' in step.place) {
+      const [below] = visibleBoxes(step.place.below);
+      if (below) return { top: below.top + below.height + 12 };
+    } else {
+      const above = document.querySelector(step.place.above);
+      if (above) return { bottom: H - above.getBoundingClientRect().top + 12 };
+    }
   }
   if (step.place === 'bottom' || box.height > H * 0.45) return aboveFoot;
   const middle = box.top + box.height / 2;
@@ -481,8 +488,8 @@ export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo
           tries += 1;
         }
         // Before measuring, so the cut-out is drawn round what it shows.
-        const reveal = stepRef.current.newestFromTop;
-        if (reveal) showNewestFromTop(reveal);
+        const reveal = stepRef.current.newestToFoot;
+        if (reveal) showNewestToFoot(reveal);
         const m = measure(at, stepRef.current);
         // The words too: the plan coming into the chat moves no box.
         const key = `${at}:${boxKey(m.box)}:${boxKey(m.press)}:${m.instead ? 1 : 0}`;
