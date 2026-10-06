@@ -1939,6 +1939,55 @@ const AGENT_NOTIF_KINDS = new Set([
   'session_done', 'session_stalled', 'auto_solve_done', 'agent_awaiting_input', 'connector_submitted',
 ]);
 
+// The sheet's filter chips narrow the tab lists by what a notification IS:
+// Mentions, Votes, Builds, with Everything as the unfiltered pass-through.
+// This is the kind → bucket map they read. It mirrors, on the client, the
+// grouping the server already makes in KIND_TO_CATEGORY
+// (services/notification-preferences.js) — but into three COARSER buckets,
+// and deliberately without reusing the server's category keys: those gate
+// delivery per app, these only narrow a view, so the two must be free to
+// move at their own pace.
+//
+// Like `conversation` and `agent` above, the category rides the row
+// descriptor built in rowView rather than being re-derived in the sheet from
+// `kind`, so the chips cannot drift from the set the rest of the module
+// agrees on. A kind the map does not name — a new request on an app, friend
+// requests, the account and quota notices — maps to null and shows only
+// under Everything.
+const FILTER_CATEGORY_KINDS = {
+  // The people talking to you: messages, mentions, replies, thread replies,
+  // reactions, conversation invites, replies in an app's discussion, kudos.
+  mentions: [
+    'conversation_invite', 'conversation_message', 'conversation_mention',
+    'conversation_reply', 'conversation_thread_reply', 'conversation_reaction',
+    'reply', 'thread_reply', 'channel_message', 'first_message', 'kudos',
+  ],
+  // The decisions: a new proposal to vote on, somebody voting on yours, a
+  // proposal you backed changing, a change ready for your yes, and the daily
+  // summary of what needs your vote.
+  votes: ['pr_proposed', 'proposal_vote', 'revision_recheck', 'change_ready', 'vote_digest'],
+  // The work itself: a session finishing or stopping, an agent asking or
+  // submitting, a merge, a failed check, a stalled proposal, the bot's build
+  // moments in your chat, a shared spec, the weekly summary, deploy alerts.
+  builds: [
+    'session_done', 'session_stalled', 'auto_solve_done', 'agent_awaiting_input',
+    'connector_submitted', 'pr_merged', 'check_failed', 'stale_pr',
+    'build_ready', 'build_needs_you', 'build_stopped', 'build_live',
+    'spec_shared', 'weekly_digest', 'app_health',
+  ],
+};
+const CATEGORY_FOR_KIND = new Map();
+for (const [category, kinds] of Object.entries(FILTER_CATEGORY_KINDS)) {
+  for (const kind of kinds) {
+    // The same duplicate guard the server's KIND_TO_CATEGORY builds with: a
+    // kind in two buckets would make its chip depend on map iteration order.
+    if (CATEGORY_FOR_KIND.has(kind)) {
+      throw new Error(`duplicate_filter_category_kind:${kind}`);
+    }
+    CATEGORY_FOR_KIND.set(kind, category);
+  }
+}
+
 // One notification row, as data. It has ONE renderer — ScreenRow in
 // ./notifications-sheet.tsx — which draws THREE lines:
 //
@@ -2093,6 +2142,11 @@ function rowView(n) {
     appLine,
     // Meta-line attribution. Null unless the source user actually DID this.
     by: null,
+    // Which filter chip the row answers to (CATEGORY_FOR_KIND above), or null
+    // for a kind the map does not name — those show only under Everything.
+    // Carried on `base` so every branch below, the collapsed bot-moment one
+    // included, hands the sheet a category.
+    category: CATEGORY_FOR_KIND.get(n.kind) || null,
     // The kind line. Every branch below overwrites it; '' would render a
     // blank first line, which is why nothing is allowed to fall through
     // with the default.

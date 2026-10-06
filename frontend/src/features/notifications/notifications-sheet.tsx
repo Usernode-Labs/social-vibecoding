@@ -149,6 +149,22 @@ type ScreenRowView = NotificationRowView & {
 type Tab = 'all' | 'unread' | 'messages';
 
 /**
+ * The chips under the tab strip, on the Unread and All tabs: what KIND of
+ * thing a row is, once the tabs have said which list you are standing in.
+ * Everything is the unfiltered pass-through, so the sheet opens exactly as
+ * it did; the kinds behind the three names are CATEGORY_FOR_KIND in
+ * ./notifications.js, carried on the row as `category`.
+ */
+type Filter = 'everything' | 'mentions' | 'votes' | 'builds';
+
+const FILTER_CHIPS: { key: Filter; label: string }[] = [
+  { key: 'everything', label: 'Everything' },
+  { key: 'mentions', label: 'Mentions' },
+  { key: 'votes', label: 'Votes' },
+  { key: 'builds', label: 'Builds' },
+];
+
+/**
  * One entry on the Messages tab: a notification row, or a running session.
  * Both carry `at` (ms) so the tab sorts them as one list, as the Messages
  * screen's chats section does (see buildInbox in ../messages/inbox.ts).
@@ -544,6 +560,20 @@ export function NotificationsSheetView() {
   };
   // Unread, not All: the bell is tapped because it has a count.
   const [tab, setTab] = useState<Tab>('unread');
+  // The kind filter the chips set, one row of narrowing under the tabs. It
+  // starts at Everything — the sheet opens exactly as it did — and RESETS to
+  // Everything on every tab switch, inside the handlers themselves (see
+  // selectTab below) rather than in an effect, so the reset has one owner.
+  // Never read from `location` at render time, like every other state here:
+  // the SSG pass must be able to match the client's first pass byte for byte.
+  const [filter, setFilter] = useState<Filter>('everything');
+  // Every tab switch goes through here — the three tab buttons and the
+  // footer's way to All — so a filter can never outlive the tab it was
+  // chosen on.
+  const selectTab = useCallback((next: Tab) => {
+    setTab(next);
+    setFilter('everything');
+  }, []);
 
   // `?shot=notifications-messages` lands on the Messages tab, so the capture
   // pipeline and the declared checks can reach a view that is otherwise only
@@ -580,6 +610,28 @@ export function NotificationsSheetView() {
   const agentRows = [...(improve.sessions || []), ...(improve.otherSessions || [])];
   const rows = tab === 'unread' ? unread
     : tab === 'messages' ? messages : all;
+  // THE CHIPS' COUNTS: notifications, not rows — the same reduce idiom as
+  // unreadCount below, so a collapsed run of 4 messages adds 4 to Mentions.
+  // A kind the map does not name (`category` null) has no chip: it counts
+  // only under Everything, which is the whole tab list.
+  const categoryCounts: Record<'mentions' | 'votes' | 'builds', number> = {
+    mentions: 0, votes: 0, builds: 0,
+  };
+  for (const view of rows) {
+    if (view.category) categoryCounts[view.category] += view.count || 1;
+  }
+  const everythingCount = rows.reduce((sum, view) => sum + (view.count || 1), 0);
+  const chipCounts: Record<Filter, number> = { everything: everythingCount, ...categoryCounts };
+  // The rail shows on the two mixed tabs and only while the tab has anything
+  // to narrow; the Messages tab keeps exactly what it has, being one kind
+  // already.
+  const railShown = tab !== 'messages' && rows.length > 0;
+  // The narrowing itself. Applied to the tab's rows BEFORE the Today/Earlier
+  // split below, so both sections survive under a filter; Everything is a
+  // no-op pass-through.
+  const shown = filter === 'everything' || tab === 'messages'
+    ? rows
+    : rows.filter((view) => view.category === filter);
   // #2815: the Messages tab interleaves the sessions with its notification
   // rows by time, one list, newest first — the order the Messages screen's
   // chats section keeps. Stable sort, so a tie keeps notifications first.
@@ -598,7 +650,7 @@ export function NotificationsSheetView() {
   const unreadCount = unread.reduce((sum, view) => sum + (view.count || 1), 0);
   const boundary = startOfToday();
   const entries: MessagesEntry[] = tab === 'messages' ? messageEntries
-    : rows.map((view) => ({ type: 'notif', key: `n:${view.id}`, at: view.createdAtMs || 0, view }));
+    : shown.map((view) => ({ type: 'notif', key: `n:${view.id}`, at: view.createdAtMs || 0, view }));
   const today = entries.filter((entry) => entry.at >= boundary);
   const earlier = entries.filter((entry) => entry.at < boundary);
   const renderEntry = (entry: MessagesEntry): ReactNode => (entry.type === 'session' ? (
@@ -629,6 +681,17 @@ export function NotificationsSheetView() {
   // is the language's solid inversion, not an underline or the accent.
   const tabCls = (active: boolean) =>
     'shrink-0 whitespace-nowrap h-9 px-4 rounded-full text-sm font-semibold transition-colors '
+    + (active
+      ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'
+      : 'bg-white text-zinc-900 hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800');
+
+  // The chips are the tab rail's own idiom, one step smaller (h-7 against the
+  // tabs' h-9), so the eye reads them as a narrowing of the tab above rather
+  // than a second row of tabs. Same solid-inversion selection, same inks —
+  // stated here rather than imported from @/components/ui/chip, whose `bar`
+  // size is the tabs' own height, and with no new colours.
+  const chipCls = (active: boolean) =>
+    'shrink-0 whitespace-nowrap h-7 px-3 rounded-full text-xs font-semibold transition-colors '
     + (active
       ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'
       : 'bg-white text-zinc-900 hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800');
@@ -713,7 +776,7 @@ export function NotificationsSheetView() {
           role="tab"
           aria-selected={tab === 'unread'}
           className={tabCls(tab === 'unread')}
-          onClick={() => setTab('unread')}
+          onClick={() => selectTab('unread')}
         >
           {unreadCount ? `Unread (${unreadCount})` : 'Unread'}
         </button>
@@ -732,7 +795,7 @@ export function NotificationsSheetView() {
           role="tab"
           aria-selected={tab === 'messages'}
           className={tabCls(tab === 'messages')}
-          onClick={() => setTab('messages')}
+          onClick={() => selectTab('messages')}
         >
           Messages
         </button>
@@ -741,11 +804,44 @@ export function NotificationsSheetView() {
           role="tab"
           aria-selected={tab === 'all'}
           className={tabCls(tab === 'all')}
-          onClick={() => setTab('all')}
+          onClick={() => selectTab('all')}
         >
           All
         </button>
       </div>
+      {/*
+          THE KIND CHIPS, a sibling of the tab strip — never a child of it,
+          whose structure a declared check pins — and one step smaller than
+          the tabs (see chipCls), so they read as a narrowing of the tab
+          above. A chip carries its count as a number beside its word; a
+          category with nothing in it on this tab shows NO chip at all, so a
+          zero is never shown. Everything always shows while the rail does,
+          and counts every row the tab holds, mapped or not.
+      */}
+      {railShown ? (
+        <div
+          id="notifications-filter-rail"
+          role="group"
+          aria-label="Notification kinds"
+          className={'flex gap-1.5 px-4 pb-2 shrink-0 overflow-x-auto '
+            + '[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden'}
+        >
+          {FILTER_CHIPS.map(({ key, label }) => (
+            key === 'everything' || categoryCounts[key] ? (
+              <button
+                key={key}
+                id={`notifications-filter-${key}`}
+                type="button"
+                aria-pressed={filter === key}
+                className={chipCls(filter === key)}
+                onClick={() => setFilter(key)}
+              >
+                {`${label} (${chipCounts[key]})`}
+              </button>
+            ) : null
+          ))}
+        </div>
+      ) : null}
       {/* The sheet's own scroller. The screen root used to be the scroller;
           a sheet's head has to stay put while its rows move, so the rows get
           a box of their own. */}
@@ -873,7 +969,7 @@ export function NotificationsSheetView() {
             id="notifications-see-older"
             type="button"
             className="w-full text-center text-sm font-semibold text-violet-700 dark:text-violet-400 hover:underline"
-            onClick={() => setTab('all')}
+            onClick={() => selectTab('all')}
           >
             See older notifications
           </button>

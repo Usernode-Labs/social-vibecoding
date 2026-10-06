@@ -89,6 +89,13 @@ export type NotificationRowView = {
    * yes" on a re-confirm ask. Absent on every other row.
    */
   actions?: { key: string; label: string; primary?: boolean }[];
+  /**
+   * Which filter chip the row answers to (CATEGORY_FOR_KIND in
+   * ./notifications.js), or null for a kind the map does not name — those
+   * show only under Everything. The sheet's chips filter on this, the way
+   * the tabs filter on `conversation` / `agent`: never re-derived from kind.
+   */
+  category?: 'mentions' | 'votes' | 'builds' | null;
 };
 
 type SavedView = {
