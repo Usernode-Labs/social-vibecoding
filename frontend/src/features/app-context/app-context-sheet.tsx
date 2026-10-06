@@ -133,7 +133,7 @@ import {
 import { AboutPane } from './about-pane';
 import { InvitePane } from './invite-pane';
 import { useStoreState } from '../../lib/use-store-state';
-import { ImproveQuickActions, UpdateStatus } from '../improve/actions';
+import { ImproveQuickActions, QueueActions, UpdateStatus } from '../improve/actions';
 import { openReport } from '../dialogs/report';
 import { improveStore } from '../improve/improve-store.js';
 import { Improve } from '../improve/improve-controller.js';
@@ -726,6 +726,11 @@ export function AppsSwitcherSheet(): ReactNode {
             `view` is 'menu' in the prerender, so the hydrating render is the
             same markup. */}
         {view !== 'menu' ? null : <UpdateStatus />}
+        {/* #4004: the saved-feedback row, a SIBLING of #improve-quick-actions
+            (never a child — that container is pinned to one button) and
+            immediately ABOVE it, because #improve-quick-actions +
+            #switcher-nav pins the list to follow the container directly. */}
+        {view !== 'menu' ? null : <QueueActions />}
         {view !== 'menu' ? null : <ImproveQuickActions />}
         {/* THE App | Workshop STRIP IS RETIRED (#2761). It sat here as a
             segmented control, and a toggle was the wrong shape for it: this

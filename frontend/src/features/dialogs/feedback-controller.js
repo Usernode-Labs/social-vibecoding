@@ -48,6 +48,7 @@
 import './screenshot-select';
 
 import { publishVisibility } from '../../lib/visibility-store';
+import { improveStore } from '../improve/improve-store.js';
 
 // The shell globals this block reaches for. Resolved in `init()` rather than
 // at module scope because the SSG prerender pass evaluates this module in
@@ -120,6 +121,17 @@ export const Feedback = {
   _reset: () => {},
 };
 
+// #4004: "Send now", shared with the mark's menu row (actions.tsx), which
+// imports it from ./feedback-queue-send directly — never from this file:
+// its `./screenshot-select` import reaches a `module.exports =` file that
+// clobbers an esbuild CJS bundle's exports, so this module cannot ride in a
+// .tsx one. And the name is deliberately NOT re-exported here: the
+// controller's own unit suites evaluate this file with its import lines
+// stripped, so a bare `export { sendQueuedNow }` would throw the moment the
+// file loads. The binding is real at runtime and reaches only the click
+// wiring below.
+import { sendQueuedNow } from './feedback-queue-send.js';
+
 let wired = false;
 
 export function init() {
@@ -160,6 +172,10 @@ export function init() {
     };
     const feedbackBtn = document.getElementById('feedback-submit');
     const feedbackStatus = document.getElementById('feedback-status');
+    // #4004: the queue line's "Send now" button. Ships hidden in
+    // feedback.tsx; this module owns its `hidden` and its click, like every
+    // other node in the card.
+    const feedbackQueueSend = document.getElementById('feedback-queue-send');
     const feedbackForm = document.getElementById('feedback-form');
     const firstSuccess = document.getElementById('feedback-first-success');
     const firstNotice = document.getElementById('feedback-first-notice');
@@ -173,6 +189,16 @@ export function init() {
     let pendingFirstFeedback = null;
     let closeTimer = null;
     let presentation = 0;
+
+    // #4004: "Send now" rides the queue line, and nothing else. #feedback-status
+    // has four writers with a "newer and more specific wins" rule (see
+    // paintQueueState); every one that REPLACES the line with a submit outcome,
+    // a confirmation or a hand-back hides the button with it. Only
+    // paintQueueState — the writer that paints the line's own count — may show
+    // it, and only while that count is above zero.
+    const setSendQueuedVisible = (visible) => {
+      if (feedbackQueueSend) feedbackQueueSend.classList.toggle('hidden', !visible);
+    };
 
     const showFirstFeedback = (moment, notice) => {
       if (!moment || Number(moment.userId) !== Number(App.user?.id)) return false;
@@ -809,6 +835,7 @@ export function init() {
       feedbackStatus.textContent = text;
       feedbackStatus.className = `text-sm mt-2 ${isError ? 'text-red-400' : 'text-zinc-500 dark:text-zinc-400'}`;
       feedbackStatus.classList.remove('hidden');
+      setSendQueuedVisible(false);
     };
 
     // #1603: the empty-description refusal. Deliberately NOT routed through
@@ -1259,6 +1286,11 @@ export function init() {
         || (queueLineText && feedbackStatus.textContent === queueLineText);
       if (!owned) return;
       const line = queueStatusLine();
+      // The bare offline hint says nothing is waiting, so "Send now" rides
+      // only a line that carries the count (n > 0). queuePendingCount is the
+      // cached figure the line was painted from; the store's answer repaints
+      // both together a tick later (refreshQueueState).
+      setSendQueuedVisible(!!line && queuePendingCount > 0);
       if (!line) {
         feedbackStatus.classList.add('hidden');
         queueLineText = '';
@@ -1299,6 +1331,12 @@ export function init() {
         if (seq !== queueReadSeq) return null;
         queuePendingCount = n;
         paintQueueDot(n);
+        // #4004: the mark's menu renders its "Send now" row from this same
+        // count, published into the Improve store beside the dot above (the
+        // store's set is a no-op when nothing changed, so the every-read
+        // republish is free). A stale read returns before it gets here, so
+        // the newest read is what the menu sees too.
+        improveStore.set({ queuedFeedback: n });
         return n;
       }).catch(() => null);
     };
@@ -1357,6 +1395,7 @@ export function init() {
       feedbackStatus.textContent = "Saved on this device. We'll send it as soon as you're back online.";
       feedbackStatus.className = 'text-sm mt-2 text-emerald-700 dark:text-emerald-400';
       feedbackStatus.classList.remove('hidden');
+      setSendQueuedVisible(false);
       queueLineText = '';
       feedbackText.value = '';
       feedbackTitle.value = '';
@@ -1609,6 +1648,7 @@ export function init() {
           feedbackStatus.textContent = `${postedTo}.${bountyNotice}${stateNotice}`;
           feedbackStatus.className = 'text-sm mt-2 text-emerald-700 dark:text-emerald-400';
           feedbackStatus.classList.remove('hidden');
+          setSendQueuedVisible(false);
           feedbackText.value = '';
           feedbackTitle.value = '';
           clearDescriptionError();
@@ -1661,6 +1701,7 @@ export function init() {
         feedbackStatus.textContent = submitErrorText(res.status, data.error);
         feedbackStatus.className = 'text-sm mt-2 text-red-400';
         feedbackStatus.classList.remove('hidden');
+        setSendQueuedVisible(false);
       } catch {
         window.UITelemetry?.outcome?.(telemetryAttempt, 'failure', { errorCode: 'invalid_response' });
         // Reached only when the request itself completed and something about
@@ -1669,6 +1710,7 @@ export function init() {
         feedbackStatus.textContent = 'Network error';
         feedbackStatus.className = 'text-sm mt-2 text-red-400';
         feedbackStatus.classList.remove('hidden');
+        setSendQueuedVisible(false);
       }
       enableSubmit();
       feedbackBtn.textContent = isOfflineNow() ? 'Save for later' : 'Post request';
@@ -1703,6 +1745,7 @@ export function init() {
       setAwaitingTarget(false);
       enableSubmit(); feedbackBtn.textContent = 'Post request';
       feedbackStatus.classList.add('hidden');
+      setSendQueuedVisible(false);
       // #1603: a refusal from a previous open never greets the next one.
       clearDescriptionError();
       resetTitleGenState();
@@ -1798,6 +1841,7 @@ export function init() {
             + ' Your text is back, so edit it and try again.';
           feedbackStatus.className = 'text-sm mt-2 text-red-400';
           feedbackStatus.classList.remove('hidden');
+          setSendQueuedVisible(false);
           queueLineText = '';
           feedbackText.focus();
         }).catch(() => { /* nothing to hand back */ });
@@ -1884,6 +1928,7 @@ export function init() {
         feedbackText.value = '';
         feedbackTitle.value = '';
         feedbackStatus.classList.add('hidden');
+        setSendQueuedVisible(false);
         clearDescriptionError();
         resetTitleGenState();
         clearCaptureDraft();
@@ -1913,6 +1958,10 @@ export function init() {
       }, 0);
     };
     feedbackBtn.addEventListener('click', submitFeedback);
+    // #4004: "Send now" under the queue line — the same action the mark's
+    // menu row runs (sendQueuedNow, above). No busy state: the flush is
+    // single-flight, so a second tap shares the pass.
+    feedbackQueueSend.addEventListener('click', () => { void sendQueuedNow(); });
     // cmd+enter / ctrl+enter inside the textarea submits — fixes #34.
     // Textareas swallow Enter by default (it inserts a newline), so we
     // only intercept when the modifier key is held.

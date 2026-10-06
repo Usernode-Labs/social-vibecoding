@@ -794,7 +794,7 @@
     {
       "name": "A message already saved offline is counted, and the header carries a dot (#1054)",
       "path": "/?shot=feedback-queued",
-      "expectSelector": "body.is-offline #feedback-queue-dot:not(.hidden)",
+      "expectSelector": "body.is-offline:has(#feedback-queue-dot:not(.hidden)):has(#feedback-queue-send:not(.hidden))",
       "expectText": "message saved on this device"
     },
     {

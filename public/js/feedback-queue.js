@@ -134,13 +134,18 @@
     try { return new Date(t).toISOString(); } catch (err) { return null; }
   }
 
-  function isDue(record, nowMs) {
+  // `force` (#4004) is the manual "Send now": it overrides ONLY the retry
+  // schedule, which is what unsticks a message whose attempts have backed
+  // off. Everything else still applies — a `failed` record is the dialog's
+  // business (takeFailed), and a live claim is another tab's send.
+  function isDue(record, nowMs, force = false) {
     if (!record || record.status === 'failed') return false;
     const claimed = Number(record.sendingSince) || 0;
     // Claimed by a live flush (this tab's or another's) — leave it alone
     // until the claim goes stale.
     if (claimed && nowMs - claimed < CLAIM_STALE_MS) return false;
-    return (Number(record.nextAttemptAt) || 0) <= nowMs;
+    if (!force && (Number(record.nextAttemptAt) || 0) > nowMs) return false;
+    return true;
   }
 
   // ── Storage adapters ─────────────────────────────────────────────────
@@ -414,7 +419,9 @@
     if (flushDisabled) return { sent: 0, failed: 0, remaining: 0, filed: [] };
     const s = await ensureStore();
     const all = mine(await s.all());
-    const due = all.filter((r) => isDue(r, nowMs()));
+    // A 'manual' flush (#4004, the Send now action) overrides the backoff;
+    // timer, reconnect, online and sign-in flushes keep the schedule.
+    const due = all.filter((r) => isDue(r, nowMs(), reason === 'manual'));
     const result = { sent: 0, failed: 0, remaining: 0, filed: [], reason: reason || null };
 
     // Strictly sequential: two issues filed at once from a phone that just

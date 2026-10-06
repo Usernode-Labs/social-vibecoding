@@ -203,6 +203,7 @@ export function topicWorkshopHref(route) {
  * @property {string|null} previewUrl
  * @property {boolean} previewBuildable
  * @property {boolean} previewActive
+ * @property {number} queuedFeedback
  */
 
 /** @type {ImproveState} */
@@ -415,6 +416,18 @@ const INITIAL = {
    * eye/pencil pair's active state and the session strip's Preview chip.
    */
   previewActive: false,
+  /**
+   * #4004: saved Send Feedback messages waiting in the offline outbox — the
+   * same count the dialog's queue line and the mark's dot show. Published
+   * from the feedback controller's one sequenced read (readQueueCount) and
+   * rendered by the menu's Send now row (actions.tsx QueueActions). Zero in
+   * the prerendered empty set, so the row renders nothing until a count
+   * arrives — the same after-mount rule every other store-driven row here
+   * follows. Written back to zero by the same read when the queue empties;
+   * cross-tab, the queue's BroadcastChannel `changed` reaches it by way of
+   * the controller's onChange.
+   */
+  queuedFeedback: 0,
 };
 
 export const improveStore = createStore(INITIAL);

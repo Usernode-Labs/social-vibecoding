@@ -149,6 +149,22 @@ test('isDue: honours the backoff, a live claim, and never picks up a failed reco
   assert.equal(FQ.isDue({ nextAttemptAt: 0, sendingSince: now - 5 * 60_000 }, now), true);
 });
 
+test('isDue: force (#4004, Send now) overrides the backoff only', () => {
+  const FQ = load();
+  const now = 1_000_000;
+  // Inside its backoff window, and the user just said "now".
+  assert.equal(FQ.isDue({ nextAttemptAt: now + 1, status: 'pending' }, now, true), true);
+  // Default argument: every existing caller keeps the backoff.
+  assert.equal(FQ.isDue({ nextAttemptAt: now + 1, status: 'pending' }, now, false), false);
+  assert.equal(FQ.isDue({ nextAttemptAt: now + 1, status: 'pending' }, now), false);
+  // A permanently refused record is the dialog's business, never the flush's.
+  assert.equal(FQ.isDue({ nextAttemptAt: 0, status: 'failed' }, now, true), false);
+  // Another tab is mid-send: a manual flush does not double-file it...
+  assert.equal(FQ.isDue({ nextAttemptAt: 0, sendingSince: now - 1000 }, now, true), false);
+  // ...but a stale claim is still taken over.
+  assert.equal(FQ.isDue({ nextAttemptAt: now + 1, sendingSince: now - 5 * 60_000 }, now, true), true);
+});
+
 // ── enqueue / pending ────────────────────────────────────────────────
 
 test('enqueue: keeps the payload and stamps a queuedAt the server can print', async () => {
@@ -290,6 +306,52 @@ test('flush: concurrent callers share one pass, so nothing is filed twice', asyn
   assert.equal(calls.length, 1, 'one POST for one queued message');
   assert.equal(a, b, 'the second caller awaited the in-flight pass');
   assert.equal((await FQ.pending()).length, 0);
+});
+
+// ── #4004: the manual flush overrides the backoff, and only the backoff ──
+
+test('flush: Send now sends a message the retry schedule has not reached; the timer does not', async () => {
+  const FQ = load();
+  await FQ.enqueue(entry());
+  const [rec] = await FQ.pending();
+  // Two backed-off attempts ahead of now, so the automatic schedule is not
+  // yet due.
+  rec.nextAttemptAt = Date.now() + FQ.backoffMs(2);
+
+  // The automatic schedule keeps its wait: no record is due, so no POST.
+  const idleCalls = stubFetch({ status: 200 });
+  const timerRes = await FQ.flush('timer');
+  assert.equal(timerRes.sent, 0);
+  assert.equal(timerRes.remaining, 1);
+  assert.equal(idleCalls.length, 0, 'the timer flush honours the backoff');
+
+  // The manual flush overrides exactly that wait.
+  const calls = stubFetch({ status: 200, body: { issueUrl: 'https://github.com/o/r/issues/9' } });
+  const res = await FQ.flush('manual');
+  assert.equal(res.sent, 1);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, '/api/feedback');
+  assert.deepEqual(await FQ.pending(), [], 'the message is gone once sent');
+});
+
+test('flush: Send now still leaves a failed record and a live claim alone', async () => {
+  const FQ = load();
+  const now = Date.now();
+  const backedOff = await FQ.enqueue(entry({ description: 'backed off' }));
+  backedOff.nextAttemptAt = now + FQ.backoffMs(3);
+  const refused = await FQ.enqueue(entry({ description: 'already refused' }));
+  refused.status = 'failed';
+  const claimed = await FQ.enqueue(entry({ description: 'another tab is sending' }));
+  claimed.sendingSince = now - 1000;
+
+  const calls = stubFetch({ status: 200 });
+  const res = await FQ.flush('manual');
+  assert.equal(res.sent, 1, 'only the backed-off record was due');
+  assert.equal(calls.length, 1);
+  const left = await FQ.pending();
+  assert.equal(left.length, 1, 'the failed record is out of the count; the live claim was not sent');
+  assert.equal(left[0].payload.description, 'another tab is sending');
+  assert.equal(left[0].attempts, 0, 'the claimed record was not retried by this pass');
 });
 
 test('flush: a screenshot is uploaded first and its id attached to the submit', async () => {

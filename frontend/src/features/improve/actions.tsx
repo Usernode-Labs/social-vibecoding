@@ -15,10 +15,11 @@
  * surface draws them.
  */
 
-import { type ReactNode } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
 
-import { ArrowPathIcon, SpinnerArcIcon } from '@/components/ui/icons';
+import { ArrowPathIcon, SendIcon, SpinnerArcIcon } from '@/components/ui/icons';
 import { useStoreState } from '../../lib/use-store-state';
+import { sendQueuedNow } from '../dialogs/feedback-queue-send.js';
 import { improveStore } from './improve-store.js';
 import { Improve } from './improve-controller.js';
 
@@ -91,6 +92,54 @@ export function ImproveQuickActions(): ReactNode {
     </div>
   );
 }
+
+/**
+ * #4004: the saved-offline-feedback row. While messages wait in the outbox —
+ * the same count the dialog's queue line shows and the mark's dot lights —
+ * the menu offers to push them out right now instead of waiting out the
+ * retry schedule. The row reads like the reload rows above (UpdateStatus's
+ * ready rows: a full-width tap row, a leading glyph, violet words, the whole
+ * row the button), with the count sentence written the way the dialog writes
+ * it.
+ *
+ * Rendered by the app-context sheet as a SIBLING of #improve-quick-actions,
+ * never inside it: the declared check
+ * `#improve-quick-actions > #improve-row-feedback:only-child` pins that
+ * container to one button. It sits immediately ABOVE that container, because
+ * `#improve-quick-actions + #switcher-nav` (two more checks) pins the list to
+ * follow it directly.
+ *
+ * AFTER MOUNT ONLY, like AgentChats in the sheet: the count is published by
+ * the feedback controller's sequenced read, which can land around hydration,
+ * so the hydrating render must draw what the prerender drew — nothing — and
+ * the row arrives one commit later. Nothing is waiting in the prerendered
+ * document by construction.
+ */
+function QueueActions(): ReactNode {
+  const { queuedFeedback } = useStoreState(improveStore);
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+  if (!mounted || !(queuedFeedback > 0)) return null;
+  return (
+    <button
+      id="improve-queue-send"
+      type="button"
+      className={'flex w-full items-center gap-3 px-4 py-3 text-left '
+        + 'text-sm font-medium text-violet-600 dark:text-violet-400 '
+        + 'hover:bg-zinc-50 dark:hover:bg-zinc-800/60 un-touch-target'}
+      onClick={() => { void sendQueuedNow(); }}
+    >
+      <SendIcon className="w-5 h-5 shrink-0" aria-hidden="true" />
+      <span className="min-w-0 flex-1">
+        {queuedFeedback === 1
+          ? '1 message saved on this device is waiting to send. Send now.'
+          : `${queuedFeedback} messages saved on this device are waiting to send. Send now.`}
+      </span>
+    </button>
+  );
+}
+
+export { QueueActions };
 
 /**
  * What is happening to the build, in the panel that offers to change it.

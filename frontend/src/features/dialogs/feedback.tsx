@@ -342,6 +342,20 @@ export function FeedbackDialog() {
         </div>
         <div id="feedback-status" className="text-sm mt-2 hidden">
         </div>
+        {/*
+            #4004: "Send now", beside the queue line. Ships hidden like every
+            node in the card — ./feedback-controller owns its `hidden` (it is
+            visible exactly while #feedback-status shows a count of saved
+            messages) and its click, so no rendered handler here: React
+            renders this tree once and never reconciles inside it.
+        */}
+        <button
+          id="feedback-queue-send"
+          type="button"
+          className="hidden mt-1 text-sm font-medium text-violet-600 dark:text-violet-400 hover:underline underline-offset-2 transition-colors"
+        >
+          Send now
+        </button>
         <div className="flex gap-3 mt-4">
           {/*
               The controller's success and save-for-later paths still close

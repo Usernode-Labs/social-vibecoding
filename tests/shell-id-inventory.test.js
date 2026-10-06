@@ -319,6 +319,10 @@ const RETIRED_IDS = {
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
   'report-modal': '#2721 shared reporting dialog',
+  // #4004: the queue line's "Send now" button. Always in the dialog markup,
+  // hidden like every node in the card; the feedback controller owns its
+  // `hidden` and its click.
+  'feedback-queue-send': '#4004 Send now, under the dialog queue line',
   // ── B8: Suggest an improvement answered by Homeroom bot ─────────────────
   'feedback-sent-line': 'B8: the line under the filed-request confirmation\'s heading, worded by the controller: "Find it on your profile…", or "Homeroom bot is on it, usually about 8 minutes."',
   'feedback-sent-chat': 'B8: Open chat, the confirmation\'s main button when Homeroom bot builds the request: the chat where its card is.',

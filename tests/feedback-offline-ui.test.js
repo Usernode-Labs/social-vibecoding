@@ -31,7 +31,12 @@ const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
 
 const appJs = read('public', 'js', 'app.js');
 const feedbackJs = read('frontend', 'src', 'features', 'dialogs', 'feedback-controller.js');
+const feedbackTsx = read('frontend', 'src', 'features', 'dialogs', 'feedback.tsx');
 const queueJs = read('public', 'js', 'feedback-queue.js');
+const actionsTsx = read('frontend', 'src', 'features', 'improve', 'actions.tsx');
+const sheetTsx = read('frontend', 'src', 'features', 'app-context', 'app-context-sheet.tsx');
+const improveStoreJs = read('frontend', 'src', 'features', 'improve', 'improve-store.js');
+const inventoryTest = read('tests', 'shell-id-inventory.test.js');
 const indexHtml = read('public', 'index.html');
 const shellTsx = read('frontend', 'src', 'Shell.tsx');
 const headerTsx = read('frontend', 'src', 'features', 'header', 'platform-header.tsx');
@@ -315,4 +320,127 @@ test('the failed-capture deep link is reviewable and display-only (#1284)', () =
   assert.ok(checks.some((c) => /#feedback-status:not\(\.hidden\)$/.test(c.expectSelector)));
   assert.ok(checks.some((c) => /#feedback-submit:not\(:disabled\)$/.test(c.expectSelector)));
   assert.ok(checks.some((c) => c.expectText === 'your feedback is safe'));
+});
+
+// ── #4004: Send now, in the dialog and in the mark's menu ────────────
+
+test('the dialog carries a hidden Send now button under the queue line (#4004)', () => {
+  const btnAt = feedbackTsx.indexOf('id="feedback-queue-send"');
+  assert.ok(btnAt > feedbackTsx.indexOf('id="feedback-status"'),
+    'the button renders after #feedback-status, directly under the queue line');
+  const btn = feedbackTsx.slice(btnAt);
+  assert.match(btn.slice(0, 400), /className="hidden /,
+    'ships hidden: an island renders empty/hidden markup');
+  assert.match(btn.slice(0, 400), /type="button"/);
+  assert.match(btn.slice(0, 400), /Send now\s*<\/button>/);
+  // The controller owns the click, like every other node in the card — no
+  // rendered handler for React to reconcile.
+  assert.doesNotMatch(btn.slice(0, 400), /onClick/);
+});
+
+test('Send now rides the count line, and every other status writer hides it', () => {
+  // paintQueueState is the only writer allowed to SHOW it, and only while
+  // the line it is painting carries a count (n > 0) — the bare offline hint
+  // has nothing waiting to send.
+  const paint = feedbackJs.slice(
+    feedbackJs.indexOf('const paintQueueState = () => {'),
+    feedbackJs.indexOf('const paintQueueDot'),
+  );
+  assert.match(paint, /setSendQueuedVisible\(!!line && queuePendingCount > 0\)/);
+  // Every other #feedback-status writer — the notice, the saved
+  // confirmation, the submit outcome and its two error writes, the open
+  // reset, the failed-record hand-back and the close — hides the button
+  // with the line it writes.
+  assert.match(feedbackJs, /const setSendQueuedVisible = \(visible\) => \{/);
+  assert.ok(feedbackJs.match(/setSendQueuedVisible\(false\)/g).length >= 7,
+    'every non-queue writer hides the button');
+  // And the queue line's own writers never hard-hide it: the visibility
+  // decision lives in paintQueueState alone.
+  assert.match(feedbackJs, /const showFeedbackNotice = \(text, isError\) => \{\s*\n\s*feedbackStatus\.textContent = text;/);
+});
+
+test('sendQueuedNow flushes manually and toasts the nothing-sent outcomes', () => {
+  // Its own import-free module: it is drawn into two bundles — the dialog's,
+  // via the controller, and the sheet's, via the menu row — and the
+  // controller itself must stay out of a .tsx module's import graph (its
+  // `./screenshot-select` import reaches a `module.exports =` file that
+  // clobbers an esbuild CJS bundle's exports; agent-chats-menu's SSR render
+  // of the sheet came back with screenshot-select's exports because of it).
+  const queueSendJs = read('frontend', 'src', 'features', 'dialogs', 'feedback-queue-send.js');
+  const fn = queueSendJs.slice(queueSendJs.indexOf('export async function sendQueuedNow()'));
+  assert.ok(fn.length > 200, 'located the exported action');
+  assert.match(fn, /window\.FeedbackQueue\.flush\('manual'\)/,
+    'the manual flush is what overrides the backoff');
+  // The sent case is silent here: onFlushed already toasts it.
+  assert.match(fn, /if \(sent > 0\) return;/);
+  assert.match(fn, /failed > 0[\s\S]{0,200}?Reopen Suggest an improvement/);
+  assert.match(fn, /remaining > 0[\s\S]{0,200}?It'll send automatically when you're back online\./);
+  assert.match(fn, /'Nothing to send\.'/);
+  // Resolved at call time — the action runs before and after init().
+  assert.match(fn, /window\.PlatformUI\?\.toast\?/);
+  // Nothing at module scope, so the bundle it rides in stays clean.
+  assert.doesNotMatch(queueSendJs, /^import /m);
+  assert.doesNotMatch(queueSendJs, /^\s*module\.exports/m);
+  // The controller imports it for the dialog's click wiring, and never
+  // re-exports it: the controller's own unit suites evaluate this file with
+  // its import lines stripped, so a bare `export { sendQueuedNow }` would
+  // throw the moment the file loads.
+  assert.match(feedbackJs, /import \{ sendQueuedNow \} from '\.\/feedback-queue-send\.js';/);
+  assert.doesNotMatch(feedbackJs, /^export \{ sendQueuedNow \}/m);
+  assert.doesNotMatch(feedbackJs, /^export.*sendQueuedNow.*from/m);
+  // ...and the menu row imports the shared module, never the controller.
+  assert.match(actionsTsx, /from '\.\.\/dialogs\/feedback-queue-send\.js'/);
+  assert.doesNotMatch(actionsTsx, /from '\.\.\/dialogs\/feedback-controller/);
+  // The dialog button and the menu row run the same action.
+  assert.match(feedbackJs, /feedbackQueueSend\.addEventListener\('click', \(\) => \{ void sendQueuedNow\(\); \}\);/);
+});
+
+test('readQueueCount publishes the count into the Improve store for the menu row', () => {
+  const read = feedbackJs.slice(feedbackJs.indexOf('const readQueueCount = () =>'));
+  assert.match(read.slice(0, 800), /improveStore\.set\(\{ queuedFeedback: n \}\)/);
+  // The store's initial value is the prerender: nothing waiting, so the row
+  // renders nothing until a count arrives.
+  assert.match(improveStoreJs, /queuedFeedback: 0/);
+});
+
+test('the menu row lives outside #improve-quick-actions, as its sibling above it', () => {
+  // The row's button, in the Improve feature's own component...
+  const row = actionsTsx.slice(actionsTsx.indexOf('function QueueActions()'));
+  assert.match(row, /id="improve-queue-send"/);
+  assert.match(row, /1 message saved on this device is waiting to send\. Send now\./);
+  assert.match(row, /messages saved on this device are waiting to send\. Send now\./);
+  assert.match(row, /sendQueuedNow/);
+  // ...and NOT inside #improve-quick-actions: the declared check
+  // `#improve-quick-actions > #improve-row-feedback:only-child` pins that
+  // container to one button.
+  const well = actionsTxsWell();
+  assert.equal(well.includes('improve-queue-send'), false,
+    'the row must not be a child of #improve-quick-actions');
+  // The sheet renders it as a sibling in the same menu slot, above the
+  // container — #improve-quick-actions + #switcher-nav pins the list to
+  // follow the container directly, so the row cannot go below it.
+  assert.match(sheetTsx, /<QueueActions \/>/);
+  assert.ok(sheetTsx.indexOf('<QueueActions />') < sheetTsx.indexOf('<ImproveQuickActions />'),
+    'the row renders above the quick actions');
+  assert.ok(sheetTsx.indexOf('<QueueActions />') > sheetTsx.indexOf('<UpdateStatus />'),
+    'the row is in the menu slot, beside the other two');
+
+  function actionsTxsWell() {
+    const start = actionsTsx.indexOf("id=\"improve-quick-actions\"");
+    const end = actionsTsx.indexOf('function QueueActions()');
+    return actionsTsx.slice(start, end);
+  }
+});
+
+test('the new dialog id is recorded in the baseline ADDED_IDS map', () => {
+  assert.match(inventoryTest, /'feedback-queue-send': '#4004 Send now, under the dialog queue line'/);
+});
+
+test('the queued shot now also shows Send next to the dot it already shows (#4004)', () => {
+  const check = dapp.tests.find((t) => t.path === '/?shot=feedback-queued');
+  assert.ok(check, 'the queued shot is checked');
+  assert.match(check.expectSelector, /#feedback-queue-dot:not\(\.hidden\)/,
+    'the dot assertion the check already made is kept');
+  assert.match(check.expectSelector, /#feedback-queue-send:not\(\.hidden\)/,
+    'the count line shows, and the Send now button rides it');
 });
