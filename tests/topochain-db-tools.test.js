@@ -771,6 +771,7 @@ test('#1130: no credential-SHAPED column name in schema.sql is readable without 
     'chat_sessions.pr_summary_source_body_hash', // digest of the public PR description, not a credential
     'shot_runs.plan_hash',                 // SHA-256 naming the published shots, not authentication material
     'homeroom_bot_run_snapshots.prompt_hash', // #3654: SHA-256 of the bot's prompt text, to group runs by prompt
+    'wf_receipts.payload_hash',            // SHA-256 of a workflow event's type, payload and actor, to recognise a retried request
 
     // Counters and flags.
     'chat_session_messages.token_count',   // an LLM token COUNT
