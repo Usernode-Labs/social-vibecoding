@@ -22,10 +22,12 @@
  *             it is out, the project's community is read again, and the
  *             line says who has joined (joinedLine).
  *
- * Nothing under the two buttons. A quiet "While you wait, look around Home
- * and other apps" used to sit there; "Invite people later" is already the
- * way on without inviting anyone, so it was a third way off one screen
- * (Evan, 5 October 2026).
+ * Nothing under the two buttons while nothing has gone out. A quiet "While
+ * you wait, look around Home and other apps" used to sit there; "Invite
+ * people later" is already the way on without inviting anyone, so it was a
+ * third way off one screen (Evan, 5 October 2026). Once an invite is out,
+ * one quiet line sits under "Go to the Homeroom app", saying what comes
+ * next there (onboarding tests, October 2026).
  *
  * The sheet is the first invite, not the project's full invite pane
  * (features/app-context/invite-pane.tsx, with live links, their limits, an
@@ -37,8 +39,8 @@
  * Evan's run-through, 5 October 2026). The link it makes works until it is
  * turned off, for anyone it reaches (WP-D): the project is the gift, so the
  * link should outlive a week. The first note shared is also the maker's
- * first message in the group's chat (the sheet says so), so the people it
- * brings find it waiting there. The note is kept per project on this device
+ * first message in the group's chat, so the people it brings find it
+ * waiting there. The note is kept per project on this device
  * (noteKey), else read back from the maker's own newest link.
  *
  *   sketch    A featured card of the idea (./sketch-card.tsx,
@@ -324,7 +326,7 @@ export function InviteSheet({ made, me, making = true, onClose, onSent }: {
             <span className="app-icon-tile flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-2xl" aria-hidden="true">{tile}</span>
             <div className="min-w-0">
               <p data-first-session-invite-maker="" className="text-[15px] font-semibold leading-snug">{makerLine(me, made.name, making)}</p>
-              <p className="text-[13px] text-zinc-500 dark:text-zinc-400">A link to see it and join the chat</p>
+              <p className="text-[13px] text-zinc-500 dark:text-zinc-400">An invite to your new community. They can use the app, join the chat, and suggest changes to it.</p>
             </div>
           </div>
           <div className="px-3 pb-2 pt-2.5 shadow-[inset_0_1px_0_var(--app-sheet-line)]">
@@ -343,7 +345,6 @@ export function InviteSheet({ made, me, making = true, onClose, onSent }: {
             />
           </div>
         </div>
-        <p className="mt-2 text-[13px] text-zinc-500 dark:text-zinc-400">Your note is also your first message in the group chat.</p>
         <div className="mt-4">
           <Button type="button" onClick={() => { void shareLink(); }} disabled={busy} layout="full" variant="pillAccent" size="pillLg" ink="solidLate" className="flex items-center justify-center disabled:opacity-60">
             Share link
@@ -532,6 +533,7 @@ export function MadeScreen({ made, me, onContinue, onOpenChat }: {
           >
             {sent ? 'Go to the Homeroom app' : 'Invite people later'}
           </button>
+          {sent ? <p className="text-center text-[13px] text-zinc-500 dark:text-zinc-400">Homeroom will guide you through your app there.</p> : null}
         </div>
       </div>
       {inviting ? (

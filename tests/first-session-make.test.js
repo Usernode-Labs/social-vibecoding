@@ -326,7 +326,7 @@ test('after Make it: the build\'s step, then one invite, and the second button s
   assert.equal(made.buildLine(null, 'running'), 'Homeroom bot builds it from your description.');
   const src = read(`${DIR}/made.tsx`);
   assert.match(src, /\{sent \? 'Go to the Homeroom app' : 'Invite people later'\}/);
-  // The link outlives a week, and the note is said to be the first message.
+  // The link outlives a week: no limit on its days or uses.
   assert.match(src, /body: JSON\.stringify\(\{ days: LINK_DAYS, maxUses: LINK_USES, note: note\.trim\(\) \|\| null \}\)/);
   // WP-D: until it is turned off, for anyone it reaches (0 is no limit).
   assert.match(src, /const LINK_DAYS = 0;\s+const LINK_USES = 0;/);
@@ -344,8 +344,15 @@ test('after Make it: the build\'s step, then one invite, and the second button s
   }));
   assert.match(sheet, />Share link</);
   assert.doesNotMatch(sheet, /username|say yes|goes live/i);
+  // October 2026 onboarding tests: the sheet says what the invite is for
+  // (the maker's new community, and what members can do there), and no
+  // longer calls the note the maker's first chat message.
+  assert.match(sheet, /An invite to your new community/);
+  assert.doesNotMatch(sheet, /first message in the group chat/);
   assert.match(read('frontend/src/features/app-context/invite-pane.tsx'), /joiningRule/, 'the project\'s own pane keeps the rule');
-  assert.match(src, /Your note is also your first message in the group chat\./);
+  assert.match(src, /An invite to your new community\./);
+  assert.doesNotMatch(src, /first message in the group chat/);
+  assert.match(src, /Homeroom will guide you through your app there\./);
   assert.match(src, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(made\.slug\)\}\/messages`/);
   const invites = require('../src/services/community-invites');
   assert.equal(invites.LIMITS.maxDays, 30);
