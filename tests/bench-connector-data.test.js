@@ -101,3 +101,44 @@ test('one proposal\'s shots: only a verified run\'s stills, focus first, within 
   assert.equal(out.images[1].caption, 'c1 · phone · after · focus');
   assert.equal(out.prNumber, 12);
 });
+
+test('a failed run in recent shots carries its code, its reason in full and how the shots agent ended', async () => {
+  const reason = `The shots agent stopped with an error before it finished. ${'detail '.repeat(100)}`;
+  const gallery = {
+    async listProposals() {
+      return {
+        proposals: [
+          { id: 71, shots: { state: 'failed', failureCode: 'shots_agent_failed', failureReason: reason, claims: [], artifacts: [] } },
+          { id: 72, shots: { state: 'failed', failureCode: 'shots_capture_incomplete', failureReason: 'Needs a wallet.', claims: [], artifacts: [] } },
+          { id: 73, shots: { state: 'verified', claims: [], artifacts: [] } },
+        ],
+        nextCursor: null,
+      };
+    },
+  };
+  const queries = [];
+  const pool = {
+    async query(sql, params) {
+      queries.push({ sql, params });
+      return { rows: [
+        { session_id: 71, dispatches: [
+          { outcome: 'failed', code: 'shots_agent_failed', exitCode: -1, exitCause: 'oom_killed' },
+        ] },
+        { session_id: 72, dispatches: [{ outcome: 'completed' }] },
+      ] };
+    },
+  };
+  const out = await data.recentShots(pool, {}, { gallery });
+  assert.deepEqual(queries[0].params, [[71, 72]], 'only the failed runs are looked up');
+  const [died, skipped, verified] = out.proposals;
+  assert.equal(died.shots.failureCode, 'shots_agent_failed');
+  assert.ok(died.shots.failure.length > 200 && died.shots.failure.length <= 1200, 'the reason past its first line');
+  assert.deepEqual(died.shots.agentExit, { code: 'shots_agent_failed', exitCode: -1, exitCause: 'oom_killed' });
+  assert.equal(skipped.shots.failure, 'Needs a wallet.');
+  assert.equal(Object.hasOwn(skipped.shots, 'agentExit'), false, 'an agent that finished has no exit to report');
+  assert.equal(Object.hasOwn(verified.shots, 'agentExit'), false);
+
+  // A lookup that fails never fails the listing.
+  const broken = { async query() { throw new Error('relation does not exist'); } };
+  assert.equal((await data.recentShots(broken, {}, { gallery })).proposals.length, 3);
+});

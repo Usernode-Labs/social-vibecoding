@@ -121,3 +121,18 @@ test('screens of different widths are shown without outlines rather than guessed
   const [shown] = await diff.screensFor(stories, files);
   assert.deepEqual(shown.regions, []);
 });
+
+test('unchangedStories names the changes whose every screen shows no difference', () => {
+  const screens = [
+    { viewport: 'desktop', shot: 'a', stories: ['a'], regions: [] },
+    { viewport: 'mobile', shot: 'a', stories: ['a'], regions: [] },
+    { viewport: 'mobile', shot: 'b', stories: ['b'], regions: [{ story: 'b' }] },
+    { viewport: 'desktop', shot: 'c', stories: ['c'], regions: [] },
+    // 'e' shares 'd's before screen; the areas compare it with 'd's after,
+    // so they say nothing about 'e'.
+    { viewport: 'desktop', shot: 'd', stories: ['d', 'e'], regions: [] },
+  ];
+  assert.deepEqual([...diff.unchangedStories(screens)].sort(), ['a', 'c', 'd']);
+  assert.deepEqual([...diff.unchangedStories([])], []);
+  assert.deepEqual([...diff.unchangedStories(undefined)], []);
+});
