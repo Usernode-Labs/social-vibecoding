@@ -3587,7 +3587,10 @@ html.un-ios[data-browser-scroller="auth-landing-scroll"] [data-landing-story] {
    below them. While the story is up, the scroller takes the rest of the
    screen under the header and the column takes all of it, so the story's
    foot sits at the foot of the screen, as in the app. Scoped to the story:
-   the pitch and the invite cards keep their own height. */
+   the pitch and the invite cards keep their own height. The landing's logo
+   bar (#landing-header) stays above the story: it is a stranger's first
+   screen, so the logo says where they are (the owner's ruling, after a build
+   that hid it). tests/header-height-parity.test.js pins that nothing hides it. */
 html[data-browser-scroller="auth-landing-scroll"] #auth-landing-scroll:has(> * > [data-landing-story]) {
   flex: 1 0 auto;
   display: flex;
