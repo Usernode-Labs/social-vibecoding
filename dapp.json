@@ -352,7 +352,7 @@
       "key": "FIREBASE_PHONE_AUTH_ENABLED",
       "group": "Phone sign-in",
       "default": "false",
-      "description": "Offers phone-number sign-in and sign-up through Firebase Phone Auth (POST /api/auth/phone/*, APIs only). Requires FIREBASE_WEB_API_KEY plus the same Firebase project credentials mobile push uses; unset (or false) leaves every phone endpoint answering 404 not_offered."
+      "description": "Phone-number sign-in and sign-up through Firebase Phone Auth (/api/auth/phone/*). While offered, an invite's Join starts with a phone and a private member must have one. Needs FIREBASE_WEB_API_KEY, the Firebase credentials mobile push uses, and the site's host among the project's authorized domains (reCAPTCHA). Unset or false: phone endpoints answer 404 not_offered and invites sign up by email."
     },
     {
       "key": "FIREBASE_WEB_API_KEY",

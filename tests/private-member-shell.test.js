@@ -3,8 +3,9 @@
 // A PRIVATE MEMBER in the shell (users.private_member_since): an invite link
 // lands them inside the group's app with no ✕, the mark menu's "Go to
 // Homeroom" is their way on, and its first use runs a four-step tour of a
-// Home that has no Discover, no Challenges and no New project, and has the
-// waitlist card. The server half is tests/private-member-postgres.test.js and
+// Home that has Discover but no Challenges and no New project, and has the
+// waitlist card. The invite's Join that makes them asks for a phone first
+// (tests/phone-invite-join.test.js). The server half is tests/private-member-postgres.test.js and
 // tests/community-invites-postgres.test.js.
 
 const test = require('node:test');
@@ -137,4 +138,18 @@ test('the vote routes refuse a private member on a public app before anything is
   assert.match(issueVote, /const issue = issueRows\[0\];\s+\/\/ A private member does not vote on a public app \(communities\.js\)\.\s+const privateRefusal = await communities\.privateVoteRefusal\(pool, issue\.app_id, req\.user\?\.id\);/);
   // And every tally and denominator leaves such a vote out (schema.sql).
   assert.match(read('src/db/schema.sql'), /AND pa\.view_visibility = 'public'\s+\)\s+\$\$;/);
+});
+
+test('the waitlist card\'s routes: a code-mailing join behind the email code\'s limiters, for those still waiting', () => {
+  const routes = read('src/routes/member-waitlist.js');
+  assert.match(routes, /router\.get\('\/api\/me\/waitlist', async/);
+  // Limiters before the same-origin check (tests/same-site-browser.test.js),
+  // and only somebody still waiting gets past `waiting`.
+  assert.match(routes, /router\.post\('\/api\/me\/waitlist\/join', drainGuard, otpRequestLimiter, otpRequestEmailLimiter,\s+sameOriginBrowserOnly, waiting,/);
+  assert.match(routes, /router\.post\('\/api\/me\/waitlist\/verify', drainGuard, otpVerifyLimiter,\s+sameOriginBrowserOnly, waiting,/);
+  assert.match(routes, /code: 'already_in'/);
+  // Behind the session middleware, after the invite routes.
+  const server = read('server.js');
+  assert.ok(server.indexOf('app.use(authMiddleware(config));') < server.indexOf('app.use(memberWaitlistRoutes(config));'));
+  assert.ok(server.indexOf('app.use(communityInviteRoutes(config));') < server.indexOf('app.use(memberWaitlistRoutes(config));'));
 });

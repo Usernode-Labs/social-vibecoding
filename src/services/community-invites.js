@@ -19,9 +19,11 @@
  *                 the spot. Somebody without it (a new account, or one still
  *                 on the waitlist) joins on the spot too, as a PRIVATE MEMBER
  *                 (users.private_member_since): in this community now, on the
- *                 waitlist for making apps of their own. A redemption the link
- *                 cannot grant now stays queued, and the trigger in schema.sql
- *                 applies it the moment they are let in, however that happens.
+ *                 waitlist for making apps of their own, once they have a
+ *                 verified phone (whenever phone sign-in is offered). A
+ *                 redemption the link cannot grant now stays queued, and the
+ *                 trigger in schema.sql applies it the moment they are let
+ *                 in, however that happens.
  *
  * WHAT A LINK GRANTS is what its maker could grant: on a project where
  * building is by invitation it is the collaborator invite, accepted; anywhere
@@ -641,13 +643,16 @@ async function entryFor(pool, invite, user, showSelfHosted) {
  * Follow a link as `user` ({ id, isAdmin, hasPlatformAccess }). One
  * transaction, the link's row locked for its use count. `browser` is the
  * browser it was followed from (invite-activity.browserFrom), for the
- * maker's open notice.
+ * maker's open notice. `requirePhone` is whether a private member must have
+ * a verified phone (joinAsPrivateMember): the callers pass
+ * firebase-phone-auth.offered(config).
  *
  * Returns `{ ok: true, status, slug, name, privateMember }`:
  *   status 'joined'  in the project now (slug set);
  *          'member'  was already in it; nothing spent (slug set);
  *          'queued'  the link could not grant it now (its maker no longer
- *                    holds the right, say): joins when let in (no slug);
+ *                    holds the right, say, or a private member's phone is
+ *                    missing): joins when let in (no slug);
  * or `{ ok: false, status: 404|410, reason }` for an unknown or dead link.
  *
  * Somebody without platform access joins too, as a PRIVATE MEMBER
@@ -657,7 +662,7 @@ async function entryFor(pool, invite, user, showSelfHosted) {
  * redemption queued before private membership existed is applied the same
  * way when its link is followed again, without spending another use.
  */
-async function redeem(pool, { token, user, browser = null }) {
+async function redeem(pool, { token, user, browser = null, requirePhone = false }) {
   if (!user || !user.id) return { ok: false, status: 401, reason: 'signed_out' };
   if (!isToken(token)) return { ok: false, status: 404, reason: 'unknown' };
   const client = await pool.connect();
@@ -713,7 +718,7 @@ async function redeem(pool, { token, user, browser = null }) {
     if (hasAccess) {
       await client.query('SELECT apply_community_invite($1)', [redemptionId]);
     } else {
-      privateMember = await joinAsPrivateMember(client, user.id, redemptionId);
+      privateMember = await joinAsPrivateMember(client, user.id, redemptionId, { requirePhone });
     }
     const { rows: after } = await client.query(
       'SELECT status FROM community_invite_redemptions WHERE id = $1',
@@ -769,8 +774,23 @@ async function redeem(pool, { token, user, browser = null }) {
  * the account marked (users.private_member_since, kept from the first link
  * that did it). A redemption it skipped (its maker lost the right to grant,
  * say) stays queued and marks nothing. Returns whether they are in.
+ *
+ * A private member signs up with a phone number: with `requirePhone` (phone
+ * sign-in is offered), an account with no verified phone
+ * (user_phone_identities, services/firebase-phone-auth.js) is not joined at
+ * all, and its redemption stays queued, so it joins when let in off the
+ * waitlist like any queued one. The invite's Join sheet starts with the
+ * phone for that reason. Without phone sign-in set up, nothing could meet
+ * the rule, so it is not asked.
  */
-async function joinAsPrivateMember(client, userId, redemptionId) {
+async function joinAsPrivateMember(client, userId, redemptionId, { requirePhone = false } = {}) {
+  if (requirePhone) {
+    const { rows: phone } = await client.query(
+      'SELECT 1 FROM user_phone_identities WHERE user_id = $1',
+      [userId]
+    );
+    if (!phone.length) return false;
+  }
   await client.query('SELECT apply_community_invite($1)', [redemptionId]);
   const { rows } = await client.query(
     'SELECT status FROM community_invite_redemptions WHERE id = $1',
@@ -833,7 +853,7 @@ function clearInviteCookie(res) {
  * and clear it. Never throws: signing in must not fail because a link did.
  * Returns `{ name, status, slug }` for the response to mention, or null.
  */
-async function redeemCarried(pool, req, res, userId) {
+async function redeemCarried(pool, req, res, userId, { requirePhone = false } = {}) {
   const token = req.cookies?.[INVITE_COOKIE];
   if (!token) return null;
   clearInviteCookie(res);
@@ -846,7 +866,7 @@ async function redeemCarried(pool, req, res, userId) {
     if (!rows[0]) return null;
     const user = { id: rows[0].id, isAdmin: !!rows[0].is_admin, hasPlatformAccess: !!rows[0].has_platform_access };
     const browser = require('./invite-activity').browserFrom(req);
-    const result = await redeem(pool, { token, user, browser });
+    const result = await redeem(pool, { token, user, browser, requirePhone });
     if (!result.ok) return null;
     return { name: result.name, status: result.status, slug: result.slug, privateMember: !!result.privateMember };
   } catch (err) {

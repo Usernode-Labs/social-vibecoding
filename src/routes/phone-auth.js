@@ -5,15 +5,17 @@
  * beside the email code (routes/auth.js) and Apple/Google
  * (routes/sign-in-providers.js):
  *
+ *   GET  /api/auth/phone/recaptcha the reCAPTCHA site key a web request
+ *                                  answers first (services/firebase-phone-auth.js)
  *   POST /api/auth/phone/request   text a code to a phone number
  *   POST /api/auth/phone/verify    the code, or an ID token a client SDK
  *                                  earned with its own Firebase exchange
  *   POST /api/auth/phone/finish    the username step, for a brand-new account
  *
- * API-ONLY STAGE: no screen changes. The answers are shaped exactly like
- * the email code's and the native OAuth endpoints' JSON, so the
- * sign-in-sheet stage routes identically (`next`, `created`, the user
- * block with roleFields).
+ * The invite sheet's phone steps call these (sign-in-sheet.tsx `phone`).
+ * The answers are shaped exactly like the email code's and the native OAuth
+ * endpoints' JSON, so the sheet routes them identically (`next`, `created`,
+ * the user block with roleFields).
  *
  * The offer gate is fail-closed: any of the four Firebase values missing
  * (config.js) leaves every endpoint here answering 404 not_offered, and
@@ -80,6 +82,19 @@ function phoneAuthRoutes(config) {
     return next();
   }
 
+  // The Firebase project's reCAPTCHA site key, for the shell to earn the
+  // token the request below carries. Public by nature (it is in every page
+  // Firebase's own web SDK serves), so no limiter beyond the service's cache.
+  router.get('/api/auth/phone/recaptcha', requireOffered, async (req, res) => {
+    try {
+      const siteKey = await phoneAuth.recaptchaSiteKey(config);
+      res.setHeader('Cache-Control', 'no-store');
+      return res.json({ siteKey });
+    } catch (error) {
+      return fail(res, error, 'reCAPTCHA site key');
+    }
+  });
+
   // Requesting a code SENDS A TEXT, so this carries the same two buckets
   // the email code's request does: per address (here per phone number) so
   // one person cannot work through a list of victims, and per source so
@@ -133,7 +148,7 @@ function phoneAuthRoutes(config) {
       // word for word (routes/auth.js, where the long comment lives).
       const consented = result.created || req.body?.followInvite === true;
       const invite = consented
-        ? await communityInvites.redeemCarried(pool, req, res, result.userId)
+        ? await communityInvites.redeemCarried(pool, req, res, result.userId, { requirePhone: true })
         : (communityInvites.clearInviteCookie(res), null);
       if (invite && invite.status === 'joined') await challengeScorer.scoreOnJoin(pool, config);
 

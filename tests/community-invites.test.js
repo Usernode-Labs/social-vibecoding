@@ -72,7 +72,7 @@ test('THE TREE IS RETIRED: no skips, no switch, no chart value; anyone new joins
   const src = read('src/services/community-invites.js');
   assert.doesNotMatch(src, /invite_tree_enabled|INVITE_TREE_BUDGETS|admitThroughTree\(/);
   // Without platform access, a link makes a private member, whoever made it.
-  assert.match(src, /\} else \{\s+privateMember = await joinAsPrivateMember\(client, user\.id, redemptionId\);\s+\}/);
+  assert.match(src, /\} else \{\s+privateMember = await joinAsPrivateMember\(client, user\.id, redemptionId, \{ requirePhone \}\);\s+\}/);
   // The admin switch, its routes and its panel went with it.
   assert.doesNotMatch(read('src/routes/topochain/admin/waitlist.js'), /invite-tree|communityInvites/);
   assert.doesNotMatch(read('frontend/src/features/admin/topochain/waitlist.tsx'), /InviteTreePanel|InviteTreeBody|admin-topo-wl-invites/);
@@ -167,7 +167,7 @@ test('signing UP from an invite page follows the link server-side; signing IN is
   // one line sits between the redeem and the branch, and nothing else may.
   // An existing account follows it only when the sign-in is the Join its page
   // asked for (the sheet sends followInvite); the cookie alone never does.
-  assert.match(auth, /const consented = verified\.created \|\| req\.body\?\.followInvite === true;\s+const invite = consented\s+\? await communityInvites\.redeemCarried\(pool, req, res, verified\.userId\)\s+: \(communityInvites\.clearInviteCookie\(res\), null\);\s+(?:\/\/[^\n]*\n\s*)*if \(invite && invite\.status === 'joined'\) await challengeScorer\.scoreOnJoin\(pool, config\);\s+if \(verified\.next === 'signed-in'\)/);
+  assert.match(auth, /const consented = verified\.created \|\| req\.body\?\.followInvite === true;\s+const invite = consented\s+\? await communityInvites\.redeemCarried\(pool, req, res, verified\.userId, \{\s+requirePhone: phoneAuth\.offered\(config\),\s+\}\)\s+: \(communityInvites\.clearInviteCookie\(res\), null\);\s+(?:\/\/[^\n]*\n\s*)*if \(invite && invite\.status === 'joined'\) await challengeScorer\.scoreOnJoin\(pool, config\);\s+if \(verified\.next === 'signed-in'\)/);
   assert.match(read('frontend/src/features/auth/sign-in-sheet.tsx'), /body: JSON\.stringify\(\{ email, code, \.\.\.\(followInvite \? \{ followInvite: true \} : \{\}\) \}\)/);
   const login = auth.slice(auth.indexOf("log.info('auth', 'Login successful'"), auth.indexOf("log.info('auth', 'Login successful'") + 900);
   assert.match(login, /communityInvites\.clearInviteCookie\(res\);/, 'a password sign-in drops the carried copy');

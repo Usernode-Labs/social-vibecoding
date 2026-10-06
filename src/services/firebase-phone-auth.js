@@ -4,9 +4,12 @@
  * Firebase Phone Auth sign-in and sign-up, beside the email code
  * (services/email-signup.js) and Apple/Google (services/sign-in-providers.js).
  *
- * API-ONLY STAGE: three endpoints under routes/phone-auth.js, no screen
- * changes. The sign-in-sheet stage routes these exactly like the email
- * code's and the native OAuth endpoints' JSON answers.
+ * Endpoints under routes/phone-auth.js. An invite link's Join sheet
+ * (frontend/src/features/auth/sign-in-sheet.tsx, `phone`) starts with them
+ * whenever they are offered, because an invite makes a private member and a
+ * private member signs up with a phone (community-invites.js
+ * joinAsPrivateMember). The answers are shaped exactly like the email
+ * code's and the native OAuth endpoints' JSON.
  *
  * SET UP IN THE ENVIRONMENT, NOT THE DATABASE. Nothing lives in the admin
  * console: the two knobs are platform variables (dapp.json platform_env,
@@ -28,8 +31,12 @@
  *        accounts:verifyPhoneNumber     { sessionInfo, code }
  *              → { idToken }
  *      This leg needs the WEB API KEY, never a service account, and
- *      Firebase may require an app-verification token (reCAPTCHA) on it;
- *      the client sends one when its SDK says to. The server never sends
+ *      a web caller's request carries an app-verification token, the
+ *      answer to a reCAPTCHA whose site key GET recaptchaParams names
+ *      (recaptchaSiteKey; the shell earns it, ../../frontend/src/features/
+ *      auth/recaptcha.ts). A missing or refused one is recaptcha_required.
+ *      The page's host must be one of the Firebase project's authorized
+ *      domains for the answer to count. The server never sends
  *      the SMS itself — Firebase does, at the phone number's carrier.
  *   2. Verify an ID token with the Firebase Admin SDK
  *      (verifyIdToken), which leg 1 hands back and a client that did the
@@ -151,6 +158,17 @@ function normalizePhone(value) {
 
 // ── Leg 1: Identity Toolkit REST ────────────────────────────────────────
 
+// A web caller's code request needs an app-verification token, a reCAPTCHA
+// answer for the site key recaptchaSiteKey() names. Firebase's own words for
+// a missing, stale or refused one; the client earns a token and asks again.
+const RECAPTCHA_REFUSALS = new Set([
+  'MISSING_APP_CREDENTIAL',
+  'INVALID_APP_CREDENTIAL',
+  'MISSING_RECAPTCHA_TOKEN',
+  'INVALID_RECAPTCHA_TOKEN',
+  'CAPTCHA_CHECK_FAILED',
+]);
+
 /**
  * Map Identity Toolkit's error string to this API's codes. Unmapped
  * codes (an app-verification misconfiguration, a Firebase-side refusal)
@@ -159,7 +177,9 @@ function normalizePhone(value) {
  */
 function identityToolkitError(data, status) {
   const raw = typeof data?.error?.message === 'string' ? data.error.message : '';
-  const code = raw.split(':')[0];
+  // Firebase writes `CODE : detail` (its web SDK splits on ' : '), so the
+  // code is trimmed: untrimmed, every detailed refusal read as unmapped.
+  const code = raw.split(':')[0].trim();
   log.warn('phone-auth', 'Identity Toolkit refused', { status, code });
   if (code === 'INVALID_CODE' || code === 'SESSION_EXPIRED'
       || code === 'CODE_EXPIRED' || code === 'INVALID_SESSION_INFO') {
@@ -170,6 +190,9 @@ function identityToolkitError(data, status) {
   }
   if (code === 'INVALID_PHONE_NUMBER') {
     return new PhoneAuthError('invalid_phone', 'Enter a valid phone number.');
+  }
+  if (RECAPTCHA_REFUSALS.has(code)) {
+    return new PhoneAuthError('recaptcha_required', 'We could not check that you are a person. Try again.');
   }
   return new PhoneAuthError('firebase_unreachable', 'Could not reach the sign-in service. Try again.', 502);
 }
@@ -218,6 +241,39 @@ async function requestCode(config, rawPhone, recaptchaToken, deps = {}) {
     throw new PhoneAuthError('firebase_unreachable', 'Could not reach the sign-in service. Try again.', 502);
   }
   return { phoneNumber, sessionInfo: data.sessionInfo };
+}
+
+// The site key for the reCAPTCHA a web caller answers before a code is
+// sent: the Firebase project's own (GET recaptchaParams, what Firebase's web
+// SDK asks for), never configured here. Kept for an hour, per API key; a
+// failed read is not kept.
+const SITE_KEY_TTL_MS = 60 * 60 * 1000;
+const siteKeyCache = new Map();
+
+async function recaptchaSiteKey(config, deps = {}) {
+  assertOffered(config);
+  const now = (deps.now || Date.now)();
+  const cached = siteKeyCache.get(config.firebaseWebApiKey);
+  if (cached && cached.until > now) return cached.siteKey;
+  let res;
+  try {
+    res = await (deps.fetch || fetch)(
+      `${IDENTITY_ENDPOINT}/recaptchaParams?key=${encodeURIComponent(config.firebaseWebApiKey)}`,
+      { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS) }
+    );
+  } catch (err) {
+    log.warn('phone-auth', 'Identity Toolkit unreachable', { path: 'recaptchaParams', err: err.message });
+    throw new PhoneAuthError('firebase_unreachable', 'Could not reach the sign-in service. Try again.', 502);
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw identityToolkitError(data, res.status);
+  const siteKey = typeof data.recaptchaSiteKey === 'string' ? data.recaptchaSiteKey : '';
+  if (!siteKey || siteKey.length > 256) {
+    log.warn('phone-auth', 'Identity Toolkit sent no reCAPTCHA site key');
+    throw new PhoneAuthError('firebase_unreachable', 'Could not reach the sign-in service. Try again.', 502);
+  }
+  siteKeyCache.set(config.firebaseWebApiKey, { siteKey, until: now + SITE_KEY_TTL_MS });
+  return siteKey;
 }
 
 /**
@@ -457,6 +513,7 @@ module.exports = {
   offered,
   normalizePhone,
   requestCode,
+  recaptchaSiteKey,
   exchangeCode,
   verifyIdToken,
   cleanupExpired,

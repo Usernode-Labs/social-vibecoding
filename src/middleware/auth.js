@@ -38,6 +38,11 @@ const PUBLIC_PATHS = [
   // definition. Each is bound to the browser that started it by its own
   // HttpOnly cookie.
   '/api/auth/oauth/',
+  // Phone sign-in and sign-up (src/routes/phone-auth.js): request, verify,
+  // the username step and the reCAPTCHA site key, pre-login by definition.
+  // The router mounts after this middleware, so without this a signed-out
+  // visitor got 401 before its own not_offered gate could answer.
+  '/api/auth/phone/',
   // Read-only kudos leaderboard (Top PRs / Top users). Public so the
   // board can be linked/embedded without a session; no private data is
   // exposed (usernames + public PR titles + aggregate counts only).

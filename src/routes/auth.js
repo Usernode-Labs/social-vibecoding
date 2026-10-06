@@ -25,6 +25,7 @@ const genesisAccounts = require('../services/genesis-accounts');
 const waitlist = require('../services/waitlist');
 const firstSession = require('../services/first-session');
 const communityInvites = require('../services/community-invites');
+const phoneAuth = require('../services/firebase-phone-auth');
 const challengeScorer = require('../services/topochain/challenge-scorer');
 const events = require('../services/events');
 const { validatePassword } = require('../services/password-policy');
@@ -386,11 +387,15 @@ function authRoutes(config) {
       // copy is only dropped. Never throws.
       const consented = verified.created || req.body?.followInvite === true;
       const invite = consented
-        ? await communityInvites.redeemCarried(pool, req, res, verified.userId)
+        ? await communityInvites.redeemCarried(pool, req, res, verified.userId, {
+          requirePhone: phoneAuth.offered(config),
+        })
         : (communityInvites.clearInviteCookie(res), null);
-      // A link whose maker's skip let this person straight in has joined
-      // them already: the challenge for it counts now, not on the rule's
-      // next pass (#3564). A queued one waits for release, and the schedule.
+      // A link that joined this person (a private member's, or anybody's
+      // with access) counts for its challenge now, not on the rule's next
+      // pass (#3564). A queued one waits for release, and the schedule.
+      // While phone sign-in is offered, an email account new to the platform
+      // stays queued: a private member signs up with a phone.
       if (invite && invite.status === 'joined') await challengeScorer.scoreOnJoin(pool, config);
       if (verified.next === 'signed-in') {
         // The account already has a password, so there is nothing to set up.

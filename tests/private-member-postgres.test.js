@@ -1,7 +1,8 @@
 'use strict';
 
 // A PRIVATE MEMBER against the full schema (users.private_member_since):
-// an invite link lets somebody still waiting into its community, they may
+// an invite link lets somebody still waiting into its community (once they
+// have a verified phone, while phone sign-in is offered), they may
 // not make apps of their own, and their Home's waitlist card joins them to
 // the waitlist with an email that is theirs — the account's own, or one a
 // code confirms — and never one another account holds. Letting them in ends
@@ -84,6 +85,35 @@ test('private members, against the full schema', { timeout: 180000 }, async (t) 
     const { rows } = await pool.query(
       'SELECT 1 FROM community_members WHERE community_id = $1 AND user_id = $2', [group.community_id, lina.id]);
     assert.equal(rows.length, 1, 'a member of the community');
+  });
+
+  await t.test('while phone sign-in is offered, a private member is one with a verified phone', async () => {
+    const uses = async () => (await pool.query(
+      'SELECT uses FROM community_invites WHERE token = $1', [made.link.token])).rows[0].uses;
+    const inGroup = async (id) => (await pool.query(
+      'SELECT 1 FROM community_members WHERE community_id = $1 AND user_id = $2', [group.community_id, id])).rows.length === 1;
+    // An account made by email: the link holds its place and lets it in no further.
+    const pia = await account({ email: 'pia@example.com' });
+    const waiting = await invites.redeem(pool, { token: made.link.token, user: pia, requirePhone: true });
+    assert.deepEqual([waiting.status, waiting.slug, waiting.privateMember], ['queued', null, false]);
+    assert.deepEqual(await tier(pia.id), { has_platform_access: false, private: false });
+    assert.equal(await inGroup(pia.id), false, 'not in the group');
+    // With a verified phone (services/firebase-phone-auth.js signIn), the same
+    // link joins them, on the use the first follow spent.
+    const spent = await uses();
+    await pool.query(
+      `INSERT INTO user_phone_identities (user_id, firebase_uid, phone_e164) VALUES ($1, 'uid-pia', '+15550001111')`,
+      [pia.id]
+    );
+    const joined = await invites.redeem(pool, { token: made.link.token, user: pia, requirePhone: true });
+    assert.deepEqual([joined.status, joined.slug, joined.privateMember], ['joined', 'best-brunch', true]);
+    assert.deepEqual(await tier(pia.id), { has_platform_access: false, private: true });
+    assert.equal(await inGroup(pia.id), true);
+    assert.equal(await uses(), spent, 'no second use');
+    // Somebody with access is not asked for one.
+    const sam = await account({ access: true });
+    const member = await invites.redeem(pool, { token: made.link.token, user: sam, requirePhone: true });
+    assert.deepEqual([member.status, member.privateMember], ['joined', false]);
   });
 
   await t.test('a private member makes no apps, whatever their quota says, until they are let in', async () => {
