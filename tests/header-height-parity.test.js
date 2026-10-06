@@ -383,3 +383,24 @@ test('#2305: both bars trim the kit\'s top padding to the inset + 8px, matching 
   const kit = fs.readFileSync(path.join(__dirname, '..', 'public', 'usernode-native', 'v1', 'native.css'), 'utf8');
   assert.match(kit, /\.un-safe-top-extend \{\s*padding-top: calc\(0\.75rem \+ var\(--un-safe-inset-top, env\(safe-area-inset-top, 0px\)\)\) !important;/);
 });
+
+// #4037: the signed-out story opens on its own picture, so the landing bar is
+// not drawn while the story is up. The bar itself is untouched (the tests
+// above still hold for it in every other state); one CSS rule hides it, and
+// only while the story is in the landing and no app is open in the guest
+// viewer, whose back button lives in this bar.
+test('the story hides the landing bar, and only the story', () => {
+  const hide = css.match(/(^|\n)([^\n{}]*)#landing-header \{\s*display: none;\s*\}/);
+  assert.ok(hide, 'one rule hides #landing-header');
+  assert.equal(hide[2].trim(),
+    '#auth-landing-screen:has([data-landing-story]):not(:has(#app-viewer:not(.hidden)))',
+    'while the story is up and no app is open, nowhere else');
+  assert.equal((css.match(/#landing-header \{\s*display: none;/g) || []).length, 1,
+    'no other rule hides the bar');
+  // Without the bar, the story keeps the status bar's strip itself, with the
+  // same token the bar's padding reads.
+  assert.match(css, /#auth-landing-screen:not\(:has\(#app-viewer:not\(\.hidden\)\)\) \[data-landing-story\] \{\s*padding-top: calc\(var\(--platform-safe-top\) \+ 1rem\);\s*\}/);
+  // The bar's markup does not move with the story: same element, same classes.
+  const bar = BARS.find((b) => b.id === 'landing-header').slice;
+  assert.doesNotMatch(openingTag(bar), /\bhidden\b/, 'the bar is not hidden in the markup');
+});

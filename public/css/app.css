@@ -3597,6 +3597,23 @@ html[data-browser-scroller="auth-landing-scroll"] #auth-landing-scroll > :has(> 
   flex: 1 0 auto;
   width: 100%;
 }
+/* THE STORY HAS NO WORDMARK BAR (#4037, the owner's review of the built
+   story against the canvas). The story opens on its own picture, so the bar
+   above it said "Homeroom" a second time. While the story is up and no app
+   is open in the guest viewer, the bar is not drawn; everywhere else (the
+   pitch, an invite's cards, an open app with its back button) it is, with
+   the shape tests/header-height-parity.test.js pins. CSS rather than a class
+   from React: the bar is the same element in every state, and the story is
+   decided after the first render (an invite link's path, the options).
+   Without the bar the story keeps the status bar's strip itself: the same
+   token the bar's own padding reads (0 in a browser tab), plus 1rem, so with
+   the picture's own margin it sits 2rem under the strip, as on the canvas. */
+#auth-landing-screen:has([data-landing-story]):not(:has(#app-viewer:not(.hidden))) #landing-header {
+  display: none;
+}
+#auth-landing-screen:not(:has(#app-viewer:not(.hidden))) [data-landing-story] {
+  padding-top: calc(var(--platform-safe-top) + 1rem);
+}
 /* The anonymous overlay covered the signed-in shell, including any screen
    painted from the last-session snapshot. In document flow those roots must
    leave the layout too, so visitors see only the anonymous page. */
