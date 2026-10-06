@@ -19,7 +19,7 @@
  * arrives only from ./profile.js's effects, never from a render.
  */
 
-import { type ReactNode } from 'react';
+import { useMemo, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { PLANE_FILL } from '@/components/ui/grouped-list';
@@ -216,7 +216,25 @@ function ProfileSkeleton(): ReactNode {
 
 export function ProfileRoot(): ReactNode {
   const state = useStoreState(profileStore);
-  const view = buildProfileView(state);
+  /*
+      The view is remembered between pushes. buildProfileView reads only these
+      five fields of the state (see its body at the foot of ./profile-store.js),
+      and the store merges each push into a fresh object whose other fields keep
+      their references — so a push that moves only a sheet or a status field
+      (sheetOpen, previewOpen, cropSource, publicStatus, publishing,
+      feedbackOpen, friendsOpen, friendsPending, friendsStatus) re-renders the
+      sheet or card it concerns and leaves the remembered view, and the memo()'d
+      row panels it feeds (./account-panel.tsx), untouched. The rule that keeps
+      this correct: a field buildProfileView starts reading must join the
+      dependency list, or its change will not draw. The `now = Date.now()`
+      argument stays implicit: a remembered view keeps the relative dates of
+      the render that produced it, which is what the screen already shows
+      between pushes.
+  */
+  const view = useMemo(
+    () => buildProfileView(state),
+    [state.open, state.data, state.user, state.pendingAvatarUrl, state.pendingRemove],
+  );
 
   if (view.kind === 'empty') return null;
   if (view.kind === 'loading') return <ProfileSkeleton />;

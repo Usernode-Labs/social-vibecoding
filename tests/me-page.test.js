@@ -239,6 +239,27 @@ test('the disclosure holds the field list and the preview card (#2787)', () => {
   assert.doesNotMatch(closed, /id="public-profile-card"/);
 });
 
+// A sheet or a friends push re-renders the card it concerns, not the whole
+// screen: buildProfileView reads only five fields of the state, so ProfileRoot
+// remembers its view between pushes on exactly those, and the two row panels
+// are memo()'d on the `rows` object the remembered view hands them. The
+// dependency list is the one hazard: a field buildProfileView starts reading
+// must join it, or its change would not draw — the assertion pins the list so
+// the rule stays visible.
+test('the row panels skip a sheet-only push: memo panels over a remembered view', () => {
+  const panel = read('frontend/src/features/profile/account-panel.tsx');
+  assert.match(panel, /export const WorkPanel = memo\(function WorkPanel/);
+  assert.match(panel, /export const MorePanel = memo\(function MorePanel/);
+  const view = read('frontend/src/features/profile/profile-view.tsx');
+  const memoCall = view.match(/useMemo\(\s*\(\) => buildProfileView\(state\),\s*\[([^\]]*)\]/);
+  assert.ok(memoCall, 'ProfileRoot derives its view through useMemo');
+  const deps = memoCall[1].split(',').map((s) => s.trim()).filter(Boolean);
+  // buildProfileView reads these five fields of the state and no other
+  // (profile-store.js); each must be in the list or its change would not draw.
+  assert.deepEqual(deps,
+    ['state.open', 'state.data', 'state.user', 'state.pendingAvatarUrl', 'state.pendingRemove']);
+});
+
 test('the prerender draws nothing: the Me screen\'s data only ever arrives from effects', () => {
   const real = loadTsx(STORE);
   assert.deepEqual(real.buildProfileView(real.profileStore.get()), { kind: 'empty' });

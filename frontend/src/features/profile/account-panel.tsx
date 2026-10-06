@@ -57,9 +57,16 @@
  * Nothing here is in the prerendered shell: ProfileRoot returns null until its
  * store has data, so the admin flag read below cannot disagree with a first
  * render.
+ *
+ * Both panels are memo()'d: their only prop is `rows`, and ProfileRoot
+ * remembers its view between store pushes (./profile-view.tsx), so a push that
+ * moves only a sheet or a status field hands both panels the same `rows` and
+ * React skips them. The pushes from this file's own subscriptions (the admin
+ * flag, the wallet sheet's store, the app allowance) re-render MorePanel alone,
+ * which is what paints its subtitle lines.
  */
 
-import { type ReactNode } from 'react';
+import { memo, type ReactNode } from 'react';
 
 import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
 import { IconTile } from '@/components/ui/icon-tile';
@@ -89,7 +96,7 @@ function plainClick(event: { defaultPrevented: boolean; button: number; metaKey:
     || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey);
 }
 
-export function WorkPanel({ rows }: { rows: ProfileRows }): ReactNode {
+export const WorkPanel = memo(function WorkPanel({ rows }: { rows: ProfileRows }): ReactNode {
   return (
     <section id="profile-work" className="mt-2">
       <SectionHeader>Your work</SectionHeader>
@@ -127,9 +134,9 @@ export function WorkPanel({ rows }: { rows: ProfileRows }): ReactNode {
       </GroupedList>
     </section>
   );
-}
+});
 
-export function MorePanel({ rows }: {
+export const MorePanel = memo(function MorePanel({ rows }: {
   rows: ProfileRows;
 }): ReactNode {
   // A CAPABILITY, published rather than fetched: App.renderAdminButton in
@@ -215,4 +222,4 @@ export function MorePanel({ rows }: {
       </GroupedList>
     </section>
   );
-}
+});
