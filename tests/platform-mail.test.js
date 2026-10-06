@@ -245,6 +245,7 @@ function makePool({ history = [], globalCount = 0, failWrites = false } = {}) {
   return {
     inserted,
     async query(sql, params) {
+      if (/SELECT reason FROM mail_suppressions/.test(sql)) return { rows: [] };
       if (/INSERT INTO mail_deliveries/.test(sql)) {
         if (failWrites) throw new Error('disk on fire');
         inserted.push({
@@ -348,6 +349,7 @@ test('the throttle fails OPEN when its history read breaks', async () => {
   const pool = {
     inserted: [],
     async query(sql, params) {
+      if (/SELECT reason FROM mail_suppressions/.test(sql)) return { rows: [] };
       if (/INSERT INTO mail_deliveries/.test(sql)) {
         pool.inserted.push({ status: params[3] });
         return { rowCount: 1 };
@@ -916,12 +918,12 @@ test('the staging mail fixture only writes when USERNODE_ENV=staging', async () 
     process.env.USERNODE_ENV = 'staging';
     await seedStagingPlatformMail(pool);
     const inserts = seen.filter((s) => /INSERT INTO mail_deliveries/.test(s));
-    assert.equal(inserts.length, 13,
+    assert.equal(inserts.length, 15,
       'one row per status the card renders, plus three admin_test rows, plus '
       + 'the admission mail behind the admitted waitlist fixture, plus the '
       + 'delivered and throttled shapes of a requested waitlist code, plus '
       + "#2201's two delivery states: a window filled to the daily ceiling "
-      + 'and a code delivered seconds ago');
+      + 'and a code delivered seconds ago, plus two synthetic tracking cohorts');
     for (const sql of inserts) {
       // Every fixture is idempotent, but #2201's capped one cannot say so
       // with WHERE NOT EXISTS: it needs TEN identical rows, and that guard

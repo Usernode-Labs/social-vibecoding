@@ -14,6 +14,7 @@
 'use strict';
 
 const { PRODUCTION_ORIGIN } = require('../cli-auth-constants');
+const tracking = require('./tracking');
 
 // Minimal HTML escaping — these bodies interpolate an email address, a
 // six-digit code and platform-built URLs, never free user text, but
@@ -589,14 +590,14 @@ function buildMessage(kind, payload = {}) {
     ? TEMPLATES[kind]
     : null;
   if (!template) throw new Error(`unknown mail kind: ${kind}`);
-  const { why, preheader, headers, ...message } = template(payload);
-  return {
+  const { why, preheader, headers, ...message } = template(tracking.attributedPayload(kind, payload));
+  return tracking.decorate(kind, {
     ...message,
     html: HTML_SHELL(message.html, why, preheader),
     // Extra mail headers a kind needs (activity mail's List-Unsubscribe);
     // a transport adds them as given.
     ...(headers ? { headers } : {}),
-  };
+  }, payload);
 }
 
 // Every kind this module can render, for the admin console and for tests

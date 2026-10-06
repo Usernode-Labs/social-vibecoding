@@ -112,6 +112,15 @@ const REVIEWED_ROUTE_EXEMPTIONS = [
     reason: 'legacy or catch-all document route represented by in-app navigation capabilities',
   },
   {
+    matches: (route) => route.source === 'src/routes/mail-tracking.js'
+      && ['/mail/c/:messageId/:linkIndex', '/mail/o/:messageId.gif'].includes(route.path),
+    reason: 'signed sessionless email redirect and image endpoints, never model-visible interactive controls',
+  },
+  {
+    matches: (route) => route.source === 'src/routes/mail-webhooks.js' && route.path === '/api/mail/webhooks/resend',
+    reason: 'provider callback authenticated by a raw-body signature, never a signed-in Classic control',
+  },
+  {
     matches: (route) => route.source === 'src/routes/activity-mail.js' && route.path === '/mail/unsubscribe',
     reason: 'the unsubscribe link in activity mail: a sessionless page and its one-click POST, never a model-visible capability',
   },

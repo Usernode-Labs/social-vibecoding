@@ -2702,7 +2702,7 @@ function adminRoutes(config) {
         ? req.query.kind.trim().slice(0, 64)
         : null;
 
-      const [recent, totals] = await Promise.all([
+      const [recent, totals, reports] = await Promise.all([
         pool.query(
           `SELECT id, kind, recipient, provider, status, error, created_at
              FROM mail_deliveries
@@ -2719,12 +2719,13 @@ function adminRoutes(config) {
             GROUP BY status`,
           [kind]
         ),
+        require('../services/mail/reports').readReports(pool),
       ]);
 
       const last24h = {};
       for (const row of totals.rows) last24h[row.status] = row.n;
 
-      res.json({ deliveries: recent.rows, last24h, kind, limit });
+      res.json({ deliveries: recent.rows, last24h, kind, limit, reports });
     } catch (err) {
       log.error('admin', 'mail activity failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });

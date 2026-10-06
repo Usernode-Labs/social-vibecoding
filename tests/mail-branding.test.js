@@ -74,7 +74,7 @@ test('the frame is applied in one place, not by the templates', () => {
   // only here.
   // WP-E: and the extra headers a kind needs (activity mail's
   // List-Unsubscribe) ride beside the framed html, never inside it.
-  assert.match(build, /const \{ why, preheader, headers, \.\.\.message \} = template\(payload\);\s*return \{\s*\.\.\.message,\s*html: HTML_SHELL\(message\.html, why, preheader\),/);
+  assert.match(build, /const \{ why, preheader, headers, \.\.\.message \} = template\(tracking\.attributedPayload\(kind, payload\)\);\s*return tracking\.decorate\(kind, \{\s*\.\.\.message,\s*html: HTML_SHELL\(message\.html, why, preheader\),/);
 });
 
 test('an unknown kind still throws rather than sending a blank frame', () => {

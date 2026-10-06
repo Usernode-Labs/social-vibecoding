@@ -229,6 +229,7 @@ app.use(explorerProxyRoutes(config));
 // route verifies an HMAC before it reads anything, and is off entirely when
 // no secret is configured. src/routes/github-webhook.js carries the rest.
 app.use(githubWebhookRoutes(config));
+app.use(require('./src/routes/mail-webhooks').mailWebhookRoutes(config));
 
 // ── Challenges API (SV web shell) ──────────────────────────────────────────
 // /challenges-api/* used to be a READ-ONLY proxy to the (now retired)
@@ -534,6 +535,7 @@ app.use(reportShareRoutes(config));
 // Before authMiddleware: a mail client's one-click POST carries no session,
 // and the HMAC token in the link is the whole of the access check.
 app.use(require('./src/routes/activity-mail').activityMailRoutes(config));
+app.use(require('./src/routes/mail-tracking').mailTrackingRoutes(config));
 require('./src/services/activity-mail').init(config);
 
 // App-stored user files (#752). Public for the same reason as app-icons:
