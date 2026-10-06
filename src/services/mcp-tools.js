@@ -29,6 +29,7 @@
 // module load: everything above it is pure shaping/escaping logic that the
 // unit tests exercise directly, and they should not need the server stack
 // on the require path to do it.
+const crypto = require('crypto');
 const log = require('./logger');
 const { changeWebPath } = require('./change-destination');
 const visibleChangesContract = require('./visible-changes');
@@ -288,6 +289,10 @@ function toolResult(structured, hint, extra = []) {
 // The connector's own access token is replayed at the platform's ordinary
 // bearer entry point. That is what makes "the tool can only do what this
 // user can do" true by construction rather than by review.
+//
+// A Buffer body goes as raw bytes, the way the browser sends an image upload
+// (POST /api/feedback/screenshot parses application/octet-stream, which the
+// global JSON parser never touches); anything else goes as JSON.
 async function callPlatform(baseUrl, accessToken, method, path, body) {
   const url = `${baseUrl || PLATFORM_INTERNAL_URL}${path}`;
   const init = {
@@ -297,7 +302,10 @@ async function callPlatform(baseUrl, accessToken, method, path, body) {
       accept: 'application/json',
     },
   };
-  if (body !== undefined) {
+  if (Buffer.isBuffer(body)) {
+    init.headers['content-type'] = 'application/octet-stream';
+    init.body = body;
+  } else if (body !== undefined) {
     init.headers['content-type'] = 'application/json';
     init.body = JSON.stringify(body);
   }
@@ -566,6 +574,89 @@ async function requestImages(baseUrl, origin, number, body, { include = true } =
     content.push({ type: 'image', data: fetched[i].data, mimeType: fetched[i].mimeType });
   });
   return { images, content };
+}
+
+// ── The screenshots create_request attaches ────────────────────────────
+//
+// The write half of the above. A caller hands images inline, as base64, and
+// create_request uploads each through the feedback dialog's own route and
+// files the request with their ids, so the request carries the same
+// `/issue-images/<id>` lines a person's report does and get_request reads
+// them back as pictures.
+//
+// Inline is the only way bytes can travel: whatever reaches a tool is text
+// the model wrote. That costs the caller about four characters for every
+// three bytes, and one /mcp call is at most MCP_REQUEST_BODY_KB (the parser
+// in routes/mcp-remote.js), so this suits a small or downscaled screenshot.
+//
+// A model copying a long base64 string can drop or change a character, and a
+// damaged JPEG can still decode into a wrong picture. So each image carries
+// the SHA-256 of its bytes, computed where the bytes are (a shell, a
+// sandbox), and anything that does not match is refused before a single
+// upload: nothing is filed with an image other than the one the caller had.
+// The rest of the checks are the ones get_request reads with, so an image
+// that is accepted here is one it can hand back.
+const MCP_REQUEST_BODY_KB = 512;                    // jsonBody('512kb') on MCP_PATH in routes/mcp-remote.js.
+// Padded standard base64: whole quads, `=` only at the end. A flat character
+// class rather than a repeated group, so a 5 MB string cannot blow the regex
+// engine's backtracking stack.
+const BASE64_RE = /^[A-Za-z0-9+/]*={0,2}$/;
+const DATA_URL_PREFIX_RE = /^data:image\/(?:png|jpeg);base64,/i;
+const SHA256_RE = /^[a-f0-9]{64}$/;
+
+// Pure. Returns { ok: true, images: [{ bytes, mimeType, sha256, width,
+// height }] } in the order given, or { ok: false, code, message, index? }
+// naming the first image refused and why.
+function checkRequestImages(images) {
+  if (images == null) return { ok: true, images: [] };
+  const refuse = (message, index) => ({
+    ok: false,
+    code: 'invalid_images',
+    message: `${message} Nothing was uploaded or filed.`,
+    ...(index === undefined ? {} : { index }),
+  });
+  if (!Array.isArray(images)) return refuse('images must be a list.');
+  if (images.length > MAX_REQUEST_IMAGES) {
+    return refuse(`A request takes at most ${MAX_REQUEST_IMAGES} images; ${images.length} were sent.`);
+  }
+  const out = [];
+  for (let i = 0; i < images.length; i += 1) {
+    const where = `images[${i}]`;
+    const image = images[i];
+    if (!image || typeof image !== 'object') return refuse(`${where} is not an object.`, i);
+    const text = typeof image.data === 'string'
+      ? image.data.replace(DATA_URL_PREFIX_RE, '').replace(/\s+/g, '')
+      : '';
+    if (!text || text.length % 4 !== 0 || !BASE64_RE.test(text)) return refuse(`${where}.data is not base64.`, i);
+    const bytes = Buffer.from(text, 'base64');
+    if (bytes.length > MAX_REQUEST_IMAGE_BYTES) {
+      return refuse(`${where} is ${bytes.length} bytes, over the ${MAX_REQUEST_IMAGE_BYTES}-byte limit.`, i);
+    }
+    const declared = typeof image.sha256 === 'string' ? image.sha256.trim().toLowerCase() : '';
+    if (!SHA256_RE.test(declared)) {
+      return refuse(`${where}.sha256 must be the 64-character hex SHA-256 of the image's bytes.`, i);
+    }
+    const actual = crypto.createHash('sha256').update(bytes).digest('hex');
+    if (actual !== declared) {
+      return refuse(`${where}.data decodes to ${bytes.length} bytes whose SHA-256 is ${actual}, `
+        + `not ${declared}: part of the base64 was lost or changed on the way. Send it again from the file.`, i);
+    }
+    const mimeType = sniffImageType(bytes);
+    if (mimeType !== 'image/png' && mimeType !== 'image/jpeg') {
+      return refuse(`${where} is not a PNG or JPEG image.`, i);
+    }
+    if (image.mimeType != null && image.mimeType !== mimeType) {
+      return refuse(`${where}.mimeType says ${image.mimeType}, but the bytes are ${mimeType}.`, i);
+    }
+    const size = imageDimensions(bytes, mimeType);
+    if (!size || !size.width || !size.height) return refuse(`${where}'s image header could not be read.`, i);
+    if (Math.max(size.width, size.height) > MAX_REQUEST_IMAGE_EDGE_PX) {
+      return refuse(`${where} is ${size.width}x${size.height} pixels; neither side may exceed `
+        + `${MAX_REQUEST_IMAGE_EDGE_PX}.`, i);
+    }
+    out.push({ bytes, mimeType, sha256: actual, width: size.width, height: size.height });
+  }
+  return { ok: true, images: out };
 }
 
 // ── Who is already on it (#1225) ───────────────────────────────────────
@@ -2473,22 +2564,36 @@ function registerTools(server, ctx) {
   // campaigns), and each connector tool pins the one kind it files — this one
   // 'general', propose_close_request 'close_issue'. Secret changes are also
   // refused server-side for every automated caller, not just here.
+  //
+  // `images` is offered to an external client only. The Mayor's writes run
+  // from a confirmation card that stores and shows the exact input, which is
+  // no place for a megabyte of base64, and its route list has no upload.
+  const offersImages = kind === 'external';
   server.registerTool('create_request', {
     title: 'File a request on an app',
-    description: `File a feature request or bug report on a Homeroom app. It appears on the app's board and as a GitHub issue for the group to see and discuss. This does not change the app by itself — someone still has to build it and the group still has to vote it in. Check list_requests first to avoid duplicates. Write the whole report: the description is stored verbatim, up to ${MAX_REQUEST_BODY_CHARS} characters (GitHub's own issue-body limit), and titles up to ${MAX_REQUEST_TITLE_CHARS}. Nothing is ever shortened for you — a field over its limit is refused with the limit and your actual length, and nothing is filed, so you can split the report or shorten it and call again. \`descriptionChars\` in the result is the length that was stored; it equals what you sent.`,
+    description: `File a feature request or bug report on a Homeroom app. It appears on the app's board and as a GitHub issue for the group to see and discuss. This does not change the app by itself — someone still has to build it and the group still has to vote it in. Check list_requests first to avoid duplicates. Write the whole report: the description is stored verbatim, up to ${MAX_REQUEST_BODY_CHARS} characters (GitHub's own issue-body limit), and titles up to ${MAX_REQUEST_TITLE_CHARS}. Nothing is ever shortened for you — a field over its limit is refused with the limit and your actual length, and nothing is filed, so you can split the report or shorten it and call again. \`descriptionChars\` in the result is the length that was stored; it equals what you sent.${offersImages ? ` To show the problem, attach up to ${MAX_REQUEST_IMAGES} PNG or JPEG screenshots in \`images\`, each as base64 with its SHA-256 so a damaged copy is caught; they are embedded below the description the way a person's screenshots are, and get_request shows them back. One call is at most ${MCP_REQUEST_BODY_KB} KB, so downscale a large screenshot first.` : ''}`,
     inputSchema: {
       slug: z.string().describe('The app slug, as returned by list_apps.'),
       title: z.string().describe(`A short one-line summary of what is being asked for. At most ${MAX_REQUEST_TITLE_CHARS} characters.`),
       description: z.string().optional().describe(`The detail: what the user wants, or how to reproduce the bug. Stored in full, so include the evidence, the reasoning and any suggested fixes rather than only the headline. At most ${MAX_REQUEST_BODY_CHARS} characters.`),
+      ...(offersImages ? {
+        images: z.array(z.object({
+          data: z.string().describe('The image file\'s bytes, base64-encoded (for example `base64 -w0 shot.png`). A `data:image/...;base64,` prefix and line breaks are ignored.'),
+          sha256: z.string().describe('The hex SHA-256 of the same file\'s bytes (for example `sha256sum shot.png`), computed from the file, not from the base64. A mismatch means the copy was damaged, and nothing is filed.'),
+          mimeType: z.enum(['image/png', 'image/jpeg']).optional().describe('Optional. When given, it must match the bytes.'),
+        })).optional().describe(`Up to ${MAX_REQUEST_IMAGES} screenshots, in the order they should appear. PNG or JPEG, neither side over ${MAX_REQUEST_IMAGE_EDGE_PX} pixels. The whole call must fit in ${MCP_REQUEST_BODY_KB} KB of JSON and base64 is a third larger than the file, so in practice keep them to about ${Math.floor((MCP_REQUEST_BODY_KB * 0.7) / 50) * 50} KB of image in total: a JPEG of the relevant part of the screen, about 1000 pixels wide, usually does. Each image's line is added after the description and counts toward GitHub's limit with it. Anyone with an image's link can open it, even on a private app, so leave out anything private.`),
+      } : {}),
     },
     outputSchema: {
       number: z.number().nullable(),
       title: z.string(),
       descriptionChars: z.number(),
       webPath: z.string(),
+      // Where each attached image is served, in order. Empty with none.
+      images: z.array(z.string()),
     },
     annotations: writeAnnotations,
-  }, async ({ slug, title, description }) => {
+  }, async ({ slug, title, description, images }) => {
     const guard = scopeGuard(WRITE_SCOPE);
     if (guard) return guard;
     if (!requireSlug(slug)) return toolError('invalid_request', 'slug must be a valid app slug.');
@@ -2508,10 +2613,35 @@ function registerTools(server, ctx) {
       hint: 'Split the report across more than one request, or shorten it, then call create_request again. Do not send a truncated body.',
     });
     if (!bodyCheck.ok) return writeLengthError(bodyCheck);
+    // Every image is checked before the first upload, so a bad third image
+    // leaves nothing behind. A delegated caller is never offered the field,
+    // and is refused rather than having images quietly dropped.
+    if (images != null && !offersImages) {
+      return toolError('invalid_request', 'images cannot be attached from here.');
+    }
+    const imageCheck = checkRequestImages(images);
+    if (!imageCheck.ok) {
+      return toolError(imageCheck.code, imageCheck.message,
+        imageCheck.index === undefined ? {} : { index: imageCheck.index });
+    }
+    // One upload per image, in order, through the feedback dialog's route.
+    // An upload that is never linked to a request is deleted by the
+    // platform after 24 hours, so a failure part-way leaves nothing to undo.
+    const screenshotIds = [];
+    for (const image of imageCheck.images) {
+      const upload = await callPlatform(baseUrl, accessToken, 'POST', '/api/feedback/screenshot', image.bytes);
+      if (!upload.ok) return platformError(upload);
+      const id = upload.body && typeof upload.body.id === 'string' ? upload.body.id : '';
+      if (!/^[a-f0-9]{32}$/.test(id)) {
+        return toolError('platform_error', 'Homeroom did not return an id for an uploaded image. Nothing was filed.');
+      }
+      screenshotIds.push(id);
+    }
     const result = await callPlatform(baseUrl, accessToken, 'POST', `/api/apps/${slug}/issues`, {
       title: titleCheck.value,
       description: bodyCheck.value || null,
       kind: 'general',
+      ...(screenshotIds.length ? { screenshotIds } : {}),
     });
     if (!result.ok) return platformError(result);
     const issue = (result.body && result.body.issue) || {};
@@ -2525,6 +2655,7 @@ function registerTools(server, ctx) {
       webPath: number
         ? `${origin}/#app/${slug}/dev/issues/${number}`
         : `${origin}/#app/${slug}/dev`,
+      images: screenshotIds.map((id) => `${origin}/issue-images/${id}`),
     });
   });
 
@@ -5998,6 +6129,7 @@ module.exports = {
   MAX_REQUEST_IMAGES,
   MAX_REQUEST_IMAGE_BYTES,
   MAX_REQUEST_IMAGE_EDGE_PX,
+  MCP_REQUEST_BODY_KB,
   MAX_ANSWER_CHARS,
   MAX_CLOSE_REASON_CHARS,
   MAX_CONVENTIONS_CHARS,
@@ -6020,6 +6152,7 @@ module.exports = {
   imageDimensions,
   fetchIssueImage,
   requestImages,
+  checkRequestImages,
   shapeInProgress,
   matchesRequestQuery,
   requestPageKey,
