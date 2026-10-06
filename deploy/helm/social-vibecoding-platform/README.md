@@ -96,6 +96,25 @@ Deployment's existing secrets checksum triggers a rollout when these values
 change. After rollout, check the admin mail status and verify delivery to a
 mailbox you control.
 
+For open, click and unsubscribe attribution with the existing Gmail sender,
+set `secrets.platformMailTrackingSecret` through SOPS. Generate a stable random
+value with `openssl rand -hex 32` and keep it out of plaintext values files,
+command arguments and logs. The chart maps it to `PLATFORM_MAIL_TRACKING_SECRET`
+in the same platform Secret. With `secrets.create: false`, add that environment
+key to `secrets.existingSecret` and roll out the platform after changing it.
+An empty value leaves tracking disabled; rotating it invalidates old signed
+links. No Resend credentials or provider change is needed for Gmail engagement
+tracking; Gmail does not supply delivery, bounce or complaint callbacks.
+
+The infra values can use a separate SOPS-encrypted overlay containing only this
+new field, encrypted to the same cluster recipients and listed after the existing
+secret overlays in Argo's `valueFiles`. Release this chart before merging those
+infra values. After rollout, verify delivery with the admin test-send control,
+then send an actual tracked notification (for example a project invite) to a
+mailbox you control and open/click it. Diagnostic sends are not engagement tracked.
+Review Email engagement in Admin → Email delivery; image proxies and prefetching
+make open counts approximate.
+
 For immediate imported proposal head updates, set `secrets.githubWebhookSecret`
 in the same SOPS-encrypted values file. It maps to `GITHUB_WEBHOOK_SECRET` in
 the chart-created Secret; its empty default leaves the webhook disabled.

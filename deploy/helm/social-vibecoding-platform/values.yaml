@@ -190,6 +190,8 @@ secrets:
   gmailOauthClientId: ""
   gmailOauthClientSecret: ""
   gmailOauthRefreshToken: ""
+  # Optional engagement tracking with the existing sender. Supply through SOPS.
+  platformMailTrackingSecret: ""
   # Optional mobile push settings. Supply all four through encrypted external values.
   mobilePushEnabled: false
   pushEnv: ""
