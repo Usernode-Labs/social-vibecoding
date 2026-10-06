@@ -358,6 +358,16 @@ const App = {
       await App.enterAnonymous();
       return;
     }
+    // `?shot=waiting` / `?shot=waiting-invite` (#4073): the waiting room,
+    // which only an account still waiting for access reaches, so no shot
+    // persona can. The anonymous shell, then the room over it; the room
+    // itself neither checks for access nor follows a link in a shot
+    // (features/auth/waiting.tsx, waitingShot).
+    if (App._waitingShot()) {
+      await App.enterAnonymous();
+      if (window.AuthScreens) AuthScreens.show('waiting');
+      return;
+    }
     // `?shot=offline` / `?shot=offline-signin` pin the offline state before
     // the boot check runs, so the shot never depends on real connectivity.
     // The signed-out variant boots the anonymous shell directly, exactly
@@ -799,6 +809,14 @@ const App = {
       try { history.replaceState(null, '', location.search + '#waitlist'); } catch (err) { /* ignore */ }
     }
     return true;
+  },
+
+  // True for `?shot=waiting` and `?shot=waiting-invite`, the waiting room for
+  // the before/after shots (see init). Pure UI state, no writes.
+  _waitingShot() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    return shot === 'waiting' || shot === 'waiting-invite';
   },
 
   // Screenshot-state deep links for the offline experience (#1021):

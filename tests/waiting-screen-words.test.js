@@ -59,3 +59,24 @@ test('the landing\'s way back to it says the waitlist too', () => {
   assert.match(src, /id="landing-back-to-waiting"[\s\S]{0,200}?>\s*Your spot on the waitlist\s*<\/a>/);
   assert.doesNotMatch(src, /queue status/i);
 });
+
+// The before/after shots cannot reach the waiting room: every shot persona
+// either has access or has no session. `?shot=waiting` and
+// `?shot=waiting-invite` boot the anonymous shell and show the room over it,
+// and the room then neither checks for access nor follows a link.
+test('?shot=waiting shows the room for the shots, without the poll', () => {
+  const { waitingShot } = loadTsx(WAITING);
+  assert.equal(waitingShot('?shot=waiting'), 'plain');
+  assert.equal(waitingShot('?shot=waiting-invite'), 'invite');
+  assert.equal(waitingShot('?shot=anon'), null);
+  assert.equal(waitingShot(''), null);
+  const src = code(read(WAITING));
+  assert.match(src, /const shot = waitingShot\(location\.search\);\s+if \(shot\) \{\s+setQueued\(shot === 'invite' \? \[\{ name: 'Sunday Run Club', inviter: null \}\] : \[\]\);\s+return;\s+\}\s+startWaitingPoll\(\);/,
+    'a shot returns before the poll and the invite follow');
+  const app = read('public/js/app.js');
+  assert.match(app, /_waitingShot\(\) \{\s+let shot = null;\s+try \{ shot = new URLSearchParams\(location\.search\)\.get\('shot'\); \} catch \(err\) \{ \/\* ignore \*\/ \}\s+return shot === 'waiting' \|\| shot === 'waiting-invite';\s+\},/);
+  assert.match(app, /if \(App\._waitingShot\(\)\) \{\s+await App\.enterAnonymous\(\);\s+if \(window\.AuthScreens\) AuthScreens\.show\('waiting'\);\s+return;\s+\}/);
+  // Before the real session is read, so a shot persona's own session cannot
+  // take the page into the shell.
+  assert.ok(app.indexOf('if (App._waitingShot()) {') < app.indexOf("await fetch('/api/auth/me'"), 'decided before /api/auth/me');
+});

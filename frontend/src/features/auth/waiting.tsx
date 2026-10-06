@@ -47,6 +47,21 @@ interface MeUser {
   hasPlatformAccess?: boolean;
 }
 
+/**
+ * `?shot=waiting` and `?shot=waiting-invite` (App._waitingShot in
+ * public/js/app.js): this screen for the before/after shots, which no shot
+ * persona reaches, since each one either has access or has no session. In a
+ * shot the screen neither checks for access nor follows a link: `-invite`
+ * draws the box for one queued community, the plain one draws none.
+ */
+export function waitingShot(search: string): 'plain' | 'invite' | null {
+  let shot: string | null = null;
+  try { shot = new URLSearchParams(search).get('shot'); } catch { /* no shot */ }
+  if (shot === 'waiting') return 'plain';
+  if (shot === 'waiting-invite') return 'invite';
+  return null;
+}
+
 /** "Sunday Run Club", "A and B", "A, B and C": the invite box's names. */
 export function namesLine(names: readonly string[]): string {
   if (names.length < 2) return names[0] || '';
@@ -152,6 +167,11 @@ export function WaitingScreen() {
   }, []);
 
   const waitingOnShow = useCallback(() => {
+    const shot = waitingShot(location.search);
+    if (shot) {
+      setQueued(shot === 'invite' ? [{ name: 'Sunday Run Club', inviter: null }] : []);
+      return;
+    }
     startWaitingPoll();
     void followAndList();
   }, [startWaitingPoll, followAndList]);
