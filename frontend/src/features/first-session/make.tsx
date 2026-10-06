@@ -7,7 +7,11 @@
  * Two questions, the New project dialog's own (create-app.tsx), cut down:
  * what it should do, then what to call it — the name is the group's and
  * the project's, since a community and its one project share a name. The
- * three examples (./examples.ts) fill both fields. "Make it" creates a
+ * three examples (./examples.ts) fill both fields, drawn two by two beside
+ * a fourth tile, "Start from scratch", which lets a picked example go and
+ * puts the caret in the description: describing their own idea is an
+ * explicit choice, and the tiles carry the app's tappable cues (the
+ * grouped-list chevron, ListRow's press). "Make it" creates a
  * private community through the same POST /api/apps the dialog uses
  * (audience 'invited', no invitees yet: inviting comes next), with
  * `from: 'first-session'`, and Homeroom bot builds the first version from
@@ -71,6 +75,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { ChevronRightIcon } from '@/components/ui/icons';
 import { Wordmark } from '@/components/ui/wordmark';
 
 import { useKeyboardSurface } from '../../lib/keyboard-surface';
@@ -91,6 +96,18 @@ export type Made = {
 const FIELD = 'px-4 pt-3 pb-2 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800';
 const LABEL = 'block text-[13px] text-zinc-500 dark:text-zinc-400';
 const INPUT = 'w-full border-0 bg-transparent px-0 py-1 text-[17px] text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none';
+// The choice tiles read as tappable with what the app already draws: the
+// grouped-list rows' chevron after the words, and their press fill
+// (grouped-list.tsx) on top of the kit's press. The resting and picked
+// rings are the ones the tiles always had.
+const TILE = 'relative flex flex-col items-center gap-1.5 rounded-2xl bg-white px-1 pb-2.5 pt-3 text-center dark:bg-zinc-900 active:bg-zinc-50 dark:active:bg-zinc-800';
+const TILE_RING = 'shadow-[inset_0_0_0_1px_var(--app-sheet-line)]';
+const TILE_PICKED_RING = 'shadow-[inset_0_0_0_2px_var(--accent)]';
+const TILE_LABEL = 'flex items-center justify-center gap-0.5';
+const TILE_TEXT = 'text-[13px] font-semibold leading-tight';
+const TILE_CHEVRON = (
+  <ChevronRightIcon className="h-3.5 w-3.5 text-zinc-400 dark:text-zinc-500" aria-hidden="true" />
+);
 // Where the bar and the form start, and where they settle (see the header).
 const ARRIVING = 'translate-y-6 opacity-0 transition-[transform,opacity] duration-300 ease-out motion-reduce:transition-none';
 const ARRIVED = 'translate-y-0 opacity-100 transition-[transform,opacity] duration-300 ease-out motion-reduce:transition-none';
@@ -160,6 +177,18 @@ export function MakeScreen({ who, onMade, onLookAround }: {
     setError(null);
     setMissing(null);
   }, []);
+
+  const scratch = useCallback(() => {
+    // The example's words are not theirs to keep: only what it filled goes.
+    if (picked) {
+      setPicked(null);
+      setBrief('');
+      setName('');
+    }
+    setError(null);
+    setMissing(null);
+    briefRef.current?.focus({ preventScroll: true });
+  }, [picked]);
 
   const make = useCallback(async () => {
     if (busy) return;
@@ -242,7 +271,7 @@ export function MakeScreen({ who, onMade, onLookAround }: {
             </p>
           </div>
           <p className="mt-6 pb-2 text-[13px] text-zinc-500 dark:text-zinc-400">Start from an example</p>
-          <div className="grid grid-cols-3 gap-2" role="group" aria-label="Examples">
+          <div className="grid grid-cols-2 gap-2" role="group" aria-label="Examples">
             {EXAMPLES.map((e) => {
               const on = picked?.key === e.key;
               return (
@@ -252,13 +281,31 @@ export function MakeScreen({ who, onMade, onLookAround }: {
                   aria-pressed={on}
                   data-first-session-example={e.key}
                   onClick={() => pick(e)}
-                  className={`relative flex flex-col items-center gap-1.5 rounded-2xl bg-white px-1 pb-2.5 pt-3 text-center dark:bg-zinc-900 ${on ? 'shadow-[inset_0_0_0_2px_var(--accent)]' : 'shadow-[inset_0_0_0_1px_var(--app-sheet-line)]'}`}
+                  className={`${TILE} ${on ? TILE_PICKED_RING : TILE_RING}`}
                 >
                   <span className="app-icon-tile flex h-11 w-11 items-center justify-center rounded-xl text-2xl" aria-hidden="true">{e.emoji}</span>
-                  <span className="text-[13px] font-semibold leading-tight">{e.short}</span>
+                  <span className={TILE_LABEL}>
+                    <span className={TILE_TEXT}>{e.short}</span>
+                    {TILE_CHEVRON}
+                  </span>
                 </button>
               );
             })}
+            {/* Describing their own idea is an explicit choice, not a guess:
+                it lets a picked example go (only what it filled goes) and
+                puts the caret in the description. */}
+            <button
+              type="button"
+              data-first-session-scratch=""
+              onClick={scratch}
+              className={`${TILE} ${TILE_RING}`}
+            >
+              <span className="app-icon-tile flex h-11 w-11 items-center justify-center rounded-xl text-2xl" aria-hidden="true">✏️</span>
+              <span className={TILE_LABEL}>
+                <span className={TILE_TEXT}>Start from scratch</span>
+                {TILE_CHEVRON}
+              </span>
+            </button>
           </div>
           <div className="mt-4 overflow-hidden rounded-2xl bg-white shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
             <div className={FIELD}>

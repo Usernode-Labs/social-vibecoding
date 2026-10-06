@@ -149,6 +149,56 @@ test('three examples, the same on the story and the make screen, each a whole st
   }
 });
 
+// First-run testers, October 2026: the three choices did not look like
+// something you can tap, and nothing offered describing their own idea.
+
+test('the choices read as tappable: two by two, a chevron beside each label, the press the list rows get', () => {
+  const src = read(`${DIR}/make.tsx`);
+  const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Jordan', onMade() {}, onLookAround() {} });
+  // Two by two, so no row is left ragged; the group itself is unchanged.
+  assert.match(src, /<div className="grid grid-cols-2 gap-2" role="group" aria-label="Examples">/);
+  const at = html.indexOf('role="group" aria-label="Examples"');
+  assert.ok(at > -1, 'the examples group is drawn');
+  const group = html.slice(at, html.indexOf('</div>', at));
+  // Four tiles: the three examples, still marked as toggles, and scratch
+  // (pinned separately below).
+  const buttons = group.match(/<button\b/g) || [];
+  assert.equal(buttons.length, 4);
+  // Each label carries the grouped-list chevron's own path, hidden from
+  // a screen reader: a resting cue that the tile presses.
+  assert.equal((group.match(/d="M9 5l7 7-7 7"/g) || []).length, 4, 'a chevron beside every label');
+  assert.equal((group.match(/aria-hidden="true"[^>]*><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/g) || []).length, 4);
+  // The press fill ListRow uses, over the kit's press every button gets.
+  assert.equal((group.match(/active:bg-zinc-50 dark:active:bg-zinc-800/g) || []).length, 4);
+  // The resting and picked rings, and the mark-as-toggle attributes, are
+  // exactly what they were.
+  assert.equal((group.match(/shadow-\[inset_0_0_0_1px_var\(--app-sheet-line\)\]/g) || []).length, 4);
+  assert.equal((group.match(/aria-pressed=/g) || []).length, 3);
+  assert.equal((group.match(/data-first-session-example="(run|poll|trip)"/g) || []).length, 3);
+});
+
+test('Start from scratch is an explicit choice, drawn beside the three examples', () => {
+  const src = read(`${DIR}/make.tsx`);
+  const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Jordan', onMade() {}, onLookAround() {} });
+  const at = html.indexOf('role="group" aria-label="Examples"');
+  const group = html.slice(at, html.indexOf('</div>', at));
+  const trip = group.indexOf('data-first-session-example="trip"');
+  const scratch = group.indexOf('data-first-session-scratch=""');
+  assert.ok(trip > -1 && scratch > trip, 'drawn after the three examples, in the same grid');
+  assert.match(group, />Start from scratch</);
+  // It is an action, not a state: no aria-pressed on it.
+  const scratchButton = group.slice(scratch, group.indexOf('</button>', scratch));
+  assert.doesNotMatch(scratchButton, /aria-pressed/);
+  // Styled like the examples, with a pencil in the icon-tile spot.
+  assert.match(scratchButton, /app-icon-tile/);
+  assert.match(scratchButton, /active:bg-zinc-50 dark:active:bg-zinc-800/);
+  // Not an entry in EXAMPLES: the story's three are untouched.
+  assert.doesNotMatch(read(`${DIR}/examples.ts`), /scratch/);
+  // The handler lets only what the example filled go, and the caret goes to
+  // the description without the browser's pan, like this screen's every focus.
+  assert.match(src, /const scratch = useCallback\(\(\) => \{\s+\/\/[^\n]*\n\s+if \(picked\) \{\s+setPicked\(null\);\s+setBrief\(''\);\s+setName\(''\);\s+\}\s+setError\(null\);\s+setMissing\(null\);\s+briefRef\.current\?\.focus\(\{ preventScroll: true \}\);\s+\}, \[picked\]\);/);
+});
+
 test('"Make it" makes a private community through the dialog\'s own route', () => {
   const make = read(`${DIR}/make.tsx`);
   assert.match(make, /fetch\('\/api\/apps', \{/);
@@ -309,6 +359,74 @@ test('typing their own words into "What should it do?" lets go of the example; t
   brief(tree).props.onChange({ target: { value: brief(tree).props.value } });
   tree = draw();
   assert.equal(chips(tree).filter((c) => c.props['aria-pressed']).length, 1, 'the same text is not their own words');
+});
+
+// Scratch, stepped by hand the same way: it lets a picked example go and
+// empties what it filled; words the person typed themselves stay.
+test('Start from scratch executes: a picked example lets go and its fields empty; their own words and name stay', () => {
+  let slots = [];
+  let at = 0;
+  const real = require(require.resolve('react', { paths: [path.join(ROOT, 'frontend')] }));
+  const React = {
+    ...real,
+    useState(init) {
+      const k = at++;
+      if (!(k in slots)) slots[k] = typeof init === 'function' ? init() : init;
+      return [slots[k], (v) => { slots[k] = typeof v === 'function' ? v(slots[k]) : v; }];
+    },
+    useRef(init) { const k = at++; if (!(k in slots)) slots[k] = { current: init }; return slots[k]; },
+    useCallback(fn) { at++; return fn; },
+    useEffect() { at++; },
+    useLayoutEffect() { at++; },
+  };
+  const { MakeScreen } = loadTsx(`${DIR}/make.tsx`, { stubs: { react: React } });
+  const draw = () => { at = 0; return MakeScreen({ who: 'Jordan', onMade() {}, onLookAround() {} }); };
+  const find = (node, test, out = []) => {
+    if (!node || typeof node !== 'object') return out;
+    if (Array.isArray(node)) { node.forEach((n) => find(n, test, out)); return out; }
+    if (node.props && test(node)) out.push(node);
+    if (node.props) find(node.props.children, test, out);
+    return out;
+  };
+  const chips = (tree) => find(tree, (n) => n.props['data-first-session-example'] !== undefined);
+  const scratchBtn = (tree) => find(tree, (n) => n.props['data-first-session-scratch'] !== undefined)[0];
+  const brief = (tree) => find(tree, (n) => n.type === 'textarea')[0];
+  const nameField = (tree) => find(tree, (n) => n.props.id === 'first-session-name')[0];
+
+  // Pick an example: both fields fill and one chip is pressed.
+  let tree = draw();
+  chips(tree)[0].props.onClick();
+  tree = draw();
+  assert.equal(chips(tree).filter((c) => c.props['aria-pressed']).length, 1, 'the example is chosen');
+  assert.ok(brief(tree).props.value, 'the example filled the description');
+  assert.ok(nameField(tree).props.value, 'and the name');
+  // Tap scratch: no chip pressed, description and name empty.
+  scratchBtn(tree).props.onClick();
+  tree = draw();
+  assert.equal(chips(tree).filter((c) => c.props['aria-pressed']).length, 0, 'the example lets go');
+  assert.equal(brief(tree).props.value, '', 'what it filled in the description goes');
+  assert.equal(nameField(tree).props.value, '', 'and in the name');
+
+  // Pick again, then their own words already let it go: scratch keeps what
+  // they typed, and the name it filled stays theirs to keep or change.
+  chips(tree)[1].props.onClick();
+  tree = draw();
+  brief(tree).props.onChange({ target: { value: 'Our little book club, meeting monthly' } });
+  tree = draw();
+  assert.equal(chips(tree).filter((c) => c.props['aria-pressed']).length, 0, 'their words already let go of it');
+  scratchBtn(tree).props.onClick();
+  tree = draw();
+  assert.equal(brief(tree).props.value, 'Our little book club, meeting monthly', 'their words stay');
+  assert.ok(nameField(tree).props.value, 'the name stays theirs');
+
+  // Scratch with nothing picked and empty fields: nothing to empty, still fine.
+  slots = [];
+  tree = draw();
+  scratchBtn(tree).props.onClick();
+  tree = draw();
+  assert.equal(brief(tree).props.value, '');
+  assert.equal(nameField(tree).props.value, '');
+  assert.equal(chips(tree).filter((c) => c.props['aria-pressed']).length, 0);
 });
 
 test('the make screen sends the device\'s time zone with Make it, so the sketch\'s today is the maker\'s', () => {
