@@ -227,7 +227,29 @@ test('with a waitlist answer: "What should it do?" holds it, the name is theirs 
   // The island hands it over from the account (GET /api/auth/me).
   const island = read(`${DIR}/index.tsx`);
   assert.match(island, /const idea = legacy\(\)\.App\?\.user\?\.waitlistIdea;/);
-  assert.match(island, /<MakeScreen\s+who=\{viewerName\(\)\}\s+idea=\{waitlistIdea\(\)\}/);
+  assert.match(island, /<MakeScreen\s+who=\{viewerName\(\)\}\s+idea=\{shot \? shot\.idea : waitlistIdea\(\)\}/);
+});
+
+// Owner, 6 Oct 2026: a screen only a brand-new account's first run reaches
+// gets a ?shot= state, so the before/after shots can reach it.
+test('?shot=make and ?shot=make-waitlist draw the make screen for the shots, and it writes nothing', () => {
+  const { makeShot, MAKE_SHOTS } = loadTsx(`${DIR}/index.tsx`);
+  assert.deepEqual(makeShot('?shot=make'), { idea: null });
+  assert.deepEqual(makeShot('?shot=make-waitlist'), { idea: MAKE_SHOTS['make-waitlist'] });
+  assert.ok(MAKE_SHOTS['make-waitlist'].length >= 10, 'a waitlist answer long enough to make it');
+  assert.equal(makeShot('?shot=join-communities'), null);
+  assert.equal(makeShot('?shot=toString'), null, 'only its own names');
+  assert.equal(makeShot(''), null);
+  const island = read(`${DIR}/index.tsx`);
+  // Opened where the story's flag opens it: once the shell is signed in.
+  assert.match(island, /const check = \(now: boolean\) => \{\s+const shot = makeShot\(window\.location\.search\);\s+if \(shot\) \{\s+const open = \(\) => setMode\(\(prev\) => \(prev\.kind === 'none' \? \{ kind: 'make', shot \} : prev\)\);/);
+  // Make it makes nothing, and Look around first records nothing.
+  assert.match(island, /demo=\{!!shot\}/);
+  assert.match(island, /onLookAround=\{\(\) => \{\s+if \(shot\) \{ setMode\(\{ kind: 'none' \}\); return; \}\s+noteAnswered\(\);/);
+  const make = read(`${DIR}/make.tsx`);
+  assert.match(make, /setMissing\(gap\);[\s\S]*?return;\s+\}\s+if \(demo\) return;\s+setBusy\(true\);/);
+  // The first-run steps before it stand aside on any ?shot= address.
+  assert.match(read('frontend/src/features/auth/communities-first-run.js'), /if \(params && \(params\.get\('shot'\) \|\| params\.get\('demo'\) \|\| params\.get\('token'\)\)\) \{\s+CommunitiesFirstRun\._resolve\(\);/);
 });
 
 test('the waitlist answer is the linked row\'s "What would its own app do", read only while the question is owed', async () => {

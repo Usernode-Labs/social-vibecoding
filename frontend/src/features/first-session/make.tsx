@@ -155,10 +155,12 @@ export function deviceTimeZone(): string | null {
   }
 }
 
-export function MakeScreen({ who, idea = null, onMade, onLookAround }: {
+export function MakeScreen({ who, idea = null, demo = false, onMade, onLookAround }: {
   who: string;
   /** What they told us on the waitlist the app should do, or null. */
   idea?: string | null;
+  /** A screenshot state (./index.tsx makeShot): "Make it" makes nothing. */
+  demo?: boolean;
   onMade: (made: Made) => void;
   onLookAround: () => void;
 }) {
@@ -221,6 +223,7 @@ export function MakeScreen({ who, idea = null, onMade, onLookAround }: {
       (gap === 'brief' ? briefRef.current : nameRef.current)?.focus({ preventScroll: true });
       return;
     }
+    if (demo) return;
     setBusy(true);
     setError(null);
     // The example's one-line description only while the brief is still the
@@ -260,7 +263,7 @@ export function MakeScreen({ who, idea = null, onMade, onLookAround }: {
     } finally {
       setBusy(false);
     }
-  }, [busy, picked, brief, name, onMade]);
+  }, [busy, demo, picked, brief, name, onMade]);
   const needed = neededLine(missing, brief);
 
   const fields = (
