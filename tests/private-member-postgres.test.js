@@ -212,48 +212,6 @@ test('private members, against the full schema', { timeout: 180000 }, async (t) 
     assert.deepEqual(await invites.joinQueued(pool, una.id), []);
   });
 
-  await t.test('admission needs a phone: a release holds an account without one until it adds one', async () => {
-    const phoneAuth = require('../src/services/firebase-phone-auth');
-    const access = async (id) => (await pool.query(
-      `SELECT has_platform_access, admitted_pending_phone_at IS NOT NULL AS held FROM users WHERE id = $1`, [id])).rows[0];
-    const signup = async (email, userId) => (await pool.query(
-      'INSERT INTO waitlist_signups (email, linked_user_id) VALUES ($1, $2) RETURNING id', [email, userId])).rows[0].id;
-    assert.equal(waitlist.admissionNeedsPhone(), false, 'phone sign-in is off here: nothing is held by default');
-
-    // Admit, no phone: held, not in.
-    const val = await account({ email: 'val@example.com' });
-    const released = await waitlist.releaseWaitlistSignup(pool, await signup('val@example.com', val.id), { requirePhone: true });
-    assert.equal(released.awaiting_phone, true);
-    assert.deepEqual(await access(val.id), { has_platform_access: false, held: true });
-    assert.equal(await waitlist.finishHeldAdmission(pool, val.id), false, 'no phone yet');
-    // A phone finishes it.
-    await phoneAuth.linkPhone(pool, { uid: 'uid-val', phoneNumber: '+15550004001' }, val.id);
-    assert.equal(await waitlist.finishHeldAdmission(pool, val.id), true);
-    assert.deepEqual(await access(val.id), { has_platform_access: true, held: false });
-    assert.equal(await waitlist.finishHeldAdmission(pool, val.id), false, 'once');
-
-    // With a phone already, Admit lets them in at once.
-    const wes = await account({ email: 'wes@example.com' });
-    await phoneAuth.linkPhone(pool, { uid: 'uid-wes', phoneNumber: '+15550004002' }, wes.id);
-    const wesReleased = await waitlist.releaseWaitlistSignup(pool, await signup('wes@example.com', wes.id), { requirePhone: true });
-    assert.equal(wesReleased.awaiting_phone, false);
-    assert.deepEqual(await access(wes.id), { has_platform_access: true, held: false });
-
-    // A released address that signs up later is held the same way.
-    await pool.query("INSERT INTO waitlist_signups (email, released_at) VALUES ('xia@example.com', NOW())");
-    const xia = await account({ email: 'xia@example.com' });
-    await waitlist.linkUserByEmail(pool, { userId: xia.id, email: 'xia@example.com', requirePhone: true });
-    assert.deepEqual(await access(xia.id), { has_platform_access: false, held: true });
-    // An admin's direct grant is the way in without a phone, and clears the hold.
-    await waitlist.grantPlatformAccess(pool, xia.id, { manualRelease: true });
-    assert.deepEqual(await access(xia.id), { has_platform_access: true, held: false });
-
-    // Off (the default here), a release lets anybody in, as before.
-    const yan = await account({ email: 'yan@example.com' });
-    await waitlist.releaseWaitlistSignup(pool, await signup('yan@example.com', yan.id));
-    assert.deepEqual(await access(yan.id), { has_platform_access: true, held: false });
-  });
-
   await t.test('a private member makes no apps, whatever their quota says, until they are let in', async () => {
     const mo = await account();
     await invites.redeem(pool, { token: made.link.token, user: mo });

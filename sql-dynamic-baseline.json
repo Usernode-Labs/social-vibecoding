@@ -677,16 +677,16 @@
     {
       "source": "src/routes/topochain/admin/waitlist.js",
       "kind": "structural-template",
-      "fingerprint": "467be03234670d53569c",
+      "fingerprint": "1bb7fab9edd7b565ffb1",
       "count": 1,
-      "preview": "`SELECT w.id, w.email, w.submitted_at, w.released_at, w.confirmed_at, w.answers, (SELECT COUNT(*)::int FROM waitlist_signups c WHERE c.invited_by = w.id) AS inv"
+      "preview": "`SELECT w.id, w.email, w.submitted_at, w.released_at, w.confirmed_at, w.linked_user_id, w.answers, w.invited_by, (SELECT COUNT(*)::int FROM waitlist_signups c W"
     },
     {
       "source": "src/routes/topochain/admin/waitlist.js",
       "kind": "structural-template",
-      "fingerprint": "647a1b3a659ee789c25e",
+      "fingerprint": "467be03234670d53569c",
       "count": 1,
-      "preview": "`SELECT w.id, w.email, w.submitted_at, w.released_at, w.confirmed_at, w.linked_user_id, w.answers, w.invited_by, (SELECT COUNT(*)::int FROM waitlist_signups c W"
+      "preview": "`SELECT w.id, w.email, w.submitted_at, w.released_at, w.confirmed_at, w.answers, (SELECT COUNT(*)::int FROM waitlist_signups c WHERE c.invited_by = w.id) AS inv"
     },
     {
       "source": "src/routes/topochain/admin/waitlist.js",

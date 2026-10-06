@@ -11657,14 +11657,6 @@ CREATE INDEX IF NOT EXISTS idx_users_admitted_by ON users (admitted_by) WHERE ad
 -- ends it with no second write, and the triggers on that edge (the
 -- platform community, the welcome DM, queued invites) fire then, not here.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS private_member_since TIMESTAMPTZ;
--- LET IN, ONCE THEY ADD A PHONE: a release off the waitlist for an account
--- with no verified phone (user_phone_identities) while phone sign-in is
--- offered. Admission needs a phone, so the release is held here instead of
--- setting has_platform_access; linking a phone finishes it
--- (services/waitlist.js grantPlatformAccess / finishHeldAdmission), and the
--- triggers on the access edge fire then. An admin's direct grant is the way
--- in without one, and clears it.
-ALTER TABLE users ADD COLUMN IF NOT EXISTS admitted_pending_phone_at TIMESTAMPTZ;
 -- A PROVISIONAL HANDLE: an invite's phone sign-up gives a name, not a
 -- username, and its handle is made from the name (usernames.handlesFromName)
 -- for the private group that invited them to see. Nothing public may show it:

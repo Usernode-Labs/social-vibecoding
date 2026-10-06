@@ -13,14 +13,9 @@
  *          account and follows its queued links again as a private member
  *          (routes/phone-auth.js). `onJoined` hears which groups it joined.
  *
- * The same card finishes an admission held for a phone (`title` and
- * `lead`): a release off the waitlist lets in only an account with a
- * verified phone while phone sign-in is offered (services/waitlist.js), so
- * the verify lets them in instead of joining groups.
- *
  * Shown only when the server offers phone sign-in and the account has a
- * group waiting for it, or was let in and needs the phone. Rendered after
- * the waiting room's own reads, never in the prerender.
+ * group waiting for it. Rendered after the waiting room's own reads, never
+ * in the prerender.
  */
 
 import { useRef, useState } from 'react';
@@ -46,12 +41,9 @@ const QUIET = 'py-1 text-[15px] font-medium text-violet-700 dark:text-violet-400
 
 const RESEND_MS = 60 * 1000;
 
-export function AddPhoneCard({ groups, title: titleOverride, lead, onJoined }: {
+export function AddPhoneCard({ groups, onJoined }: {
   /** The groups this account is queued for, the first named in the title. */
   groups: readonly string[];
-  /** Instead of "Join … now", for an admission held for a phone. */
-  title?: string;
-  lead?: string;
   onJoined: (joined: JoinedGroup[]) => void;
 }) {
   const [step, setStep] = useState<'phone' | 'code'>('phone');
@@ -63,7 +55,7 @@ export function AddPhoneCard({ groups, title: titleOverride, lead, onJoined }: {
   const phoneField = useRef<HTMLInputElement>(null);
   const codeField = useRef<HTMLInputElement>(null);
 
-  const title = titleOverride || (groups.length === 1 ? `Join ${groups[0]} now` : 'Join them now');
+  const title = groups.length === 1 ? `Join ${groups[0]} now` : 'Join them now';
 
   async function requestCode(raw: string) {
     setError(null);
@@ -126,7 +118,7 @@ export function AddPhoneCard({ groups, title: titleOverride, lead, onJoined }: {
       <h2 className="text-[17px] font-[650] text-zinc-900 dark:text-zinc-100">{step === 'phone' ? title : 'Check your texts'}</h2>
       <p className="mt-1 text-[15px] leading-snug text-zinc-500 dark:text-zinc-400">
         {step === 'phone'
-          ? lead || 'Add your phone number and you’re in, no waiting. The group sees your name, never your number.'
+          ? 'Add your phone number and you’re in, no waiting. The group sees your name, never your number.'
           : `We sent a 6-digit code to the number ending ${number.slice(-4)}.`}
       </p>
       {step === 'phone' ? (

@@ -19,12 +19,9 @@
  * /api/auth/phone/ prefix so the session is read:
  *
  *   POST /api/auth/phone-link/request  text a code, as above
- *   POST /api/auth/phone-link/verify   link the number to this account;
- *                                      finish a release held for a phone
- *                                      (waitlist.js finishHeldAdmission),
- *                                      or else join the links it is queued
- *                                      on as a private member
- *                                      (community-invites.js)
+ *   POST /api/auth/phone-link/verify   link the number to this account and
+ *                                      join the links it is queued on as a
+ *                                      private member (community-invites.js)
  *
  * The invite sheet's phone steps call these (sign-in-sheet.tsx `phone`).
  * The answers are shaped exactly like the email code's and the native OAuth
@@ -46,7 +43,6 @@ const log = require('../services/logger');
 const phoneAuth = require('../services/firebase-phone-auth');
 const providers = require('../services/sign-in-providers');
 const communityInvites = require('../services/community-invites');
-const waitlist = require('../services/waitlist');
 const challengeScorer = require('../services/topochain/challenge-scorer');
 const managedOpenRouter = require('../services/openrouter-managed-keys');
 const {
@@ -310,16 +306,12 @@ function phoneAuthRoutes(config) {
         const exchanged = await phoneAuth.exchangeCode(config, req.body?.sessionInfo, req.body?.code);
         const claims = await phoneAuth.verifyIdToken(pool, config, exchanged.idToken);
         const linked = await phoneAuth.linkPhone(pool, claims, req.user.id);
-        // Let in off the waitlist and held for a phone: in now, and the
-        // access edge's own trigger applies the links it was queued on.
-        // Otherwise those links make it a private member.
-        const admitted = await waitlist.finishHeldAdmission(pool, req.user.id);
-        const joined = admitted ? [] : await communityInvites.joinQueued(pool, req.user.id);
-        if (admitted || joined.length) await challengeScorer.scoreOnJoin(pool, config);
+        const joined = await communityInvites.joinQueued(pool, req.user.id);
+        if (joined.length) await challengeScorer.scoreOnJoin(pool, config);
         log.info('phone-auth', 'Phone linked to a signed-in account', {
-          userId: req.user.id, already: linked.already, admitted, joined: joined.length,
+          userId: req.user.id, already: linked.already, joined: joined.length,
         });
-        return res.json({ ok: true, admitted, joined, privateMember: joined.length > 0 });
+        return res.json({ ok: true, joined, privateMember: joined.length > 0 });
       } catch (error) {
         return fail(res, error, 'Phone link');
       }

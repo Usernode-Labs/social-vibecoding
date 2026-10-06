@@ -261,9 +261,7 @@ test('bulk-release admits each id, mails only the newly admitted, and reports ev
   const res = await call('POST', '/api/v4/admin/waitlist/bulk-release', { ids: [1, '2', 3, 404, 1, 'x'] });
   assert.equal(res.status, 200);
   assert.deepEqual(calls, [1, 2, 3, 404], 'deduped, unparseable ids dropped, order kept');
-  // `awaiting_phone`: those admitted who get in once they add a phone
-  // (services/waitlist.js, admission needs a phone); none while it is off.
-  assert.deepEqual(res.body.data, { admitted: [1, 2], awaiting_phone: [], already_admitted: [3], not_found: [404], failed: [] });
+  assert.deepEqual(res.body.data, { admitted: [1, 2], already_admitted: [3], not_found: [404], failed: [] });
   assert.deepEqual(mailed.map((m) => [m.kind, m.to]).sort(), [
     ['waitlist_released', 'unconfirmed@example.invalid'],
     ['waitlist_released', 'waiting@example.invalid'],
@@ -371,10 +369,6 @@ test('the admit outcome names everything that did not simply succeed', () => {
   assert.equal(admitOutcomeLine({ admitted: [1], already_admitted: [3], not_found: [4], failed: [5, 6] }),
     'Admitted 1 signup. 1 was already in. 1 had been deleted from the waitlist. '
     + '2 could not be admitted; look the list up again and retry.');
-  assert.equal(admitOutcomeLine({ admitted: [1, 2, 3], awaiting_phone: [2], already_admitted: [], not_found: [], failed: [] }),
-    'Admitted 3 signups. 1 gets in once it adds a phone.');
-  assert.equal(admitOutcomeLine({ admitted: [1, 2], awaiting_phone: [1, 2], already_admitted: [], not_found: [], failed: [] }),
-    'Admitted 2 signups. 2 get in once they add a phone.');
 });
 
 test('an empty search result says it is the search, and how to widen it', () => {

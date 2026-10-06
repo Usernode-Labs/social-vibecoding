@@ -183,16 +183,6 @@ function canonicalNativeSessionV2Network(value) {
   }
 }
 
-/** The four Firebase values config.load() carries, read from `env` (no logging). */
-function firebasePhoneSettings(env = process.env) {
-  return {
-    firebaseProjectId: env.FIREBASE_PROJECT_ID || '',
-    firebaseServiceAccountJsonB64: env.FIREBASE_SERVICE_ACCOUNT_JSON_B64 || '',
-    firebasePhoneAuthEnabled: env.FIREBASE_PHONE_AUTH_ENABLED === 'true',
-    firebaseWebApiKey: env.FIREBASE_WEB_API_KEY || '',
-  };
-}
-
 function load() {
   const staging = IS_STAGING();
   const appRuntime = process.env.APP_RUNTIME || 'docker';
@@ -836,14 +826,15 @@ function load() {
     // partition and is never accepted from a mobile request.
     mobilePushEnabled: process.env.MOBILE_PUSH_ENABLED === 'true',
     mobilePushEnvironment: process.env.PUSH_ENV || '',
-    // Firebase: mobile push's project and service account, and Phone Auth
-    // (services/firebase-phone-auth.js), which reuses them and needs that
-    // project's own Identity Toolkit WEB API key for the two REST legs.
-    // Phone Auth is OPTIONAL and default-off: unset (or false) leaves every
-    // /api/auth/phone/* endpoint answering 404 not_offered, exactly as
-    // before this existed. firebasePhoneSettings is the one reading, shared
-    // with the services that hold no config (services/waitlist.js).
-    ...firebasePhoneSettings(),
+    firebaseProjectId: process.env.FIREBASE_PROJECT_ID || '',
+    firebaseServiceAccountJsonB64: process.env.FIREBASE_SERVICE_ACCOUNT_JSON_B64 || '',
+    // Firebase Phone Auth (services/firebase-phone-auth.js) reuses the
+    // push project's service account above and needs that project's own
+    // Identity Toolkit WEB API key for the two REST legs. OPTIONAL and
+    // default-off: unset (or false) leaves every /api/auth/phone/*
+    // endpoint answering 404 not_offered, exactly as before this existed.
+    firebasePhoneAuthEnabled: process.env.FIREBASE_PHONE_AUTH_ENABLED === 'true',
+    firebaseWebApiKey: process.env.FIREBASE_WEB_API_KEY || '',
     // Platform outbound mail (login codes, waitlist confirmations,
     // waitlist release notices). src/services/mail/select.js picks the
     // transport once, here, from platform_env: Gmail API, a generic HTTP
@@ -1030,7 +1021,6 @@ function runsClusterMaintenance() {
 
 module.exports = {
   load,
-  firebasePhoneSettings,
   usesMockGithubForImports,
   runsClusterMaintenance,
   canonicalCliOrigin,

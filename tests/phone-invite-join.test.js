@@ -159,7 +159,7 @@ test('a signed-in account adds a phone through routes the waiting room can reach
   // Limiters first, then the same-origin check (tests/same-site-browser.test.js).
   assert.match(routes, /router\.post\(\s+'\/api\/auth\/phone-link\/request',\s+requireOffered,\s+phoneOtpRequestLimiter,\s+phoneOtpRequestPhoneLimiter,\s+sameOriginBrowserOnly,\s+signedIn,/);
   assert.match(routes, /router\.post\(\s+'\/api\/auth\/phone-link\/verify',\s+requireOffered,\s+phoneVerifyLimiter,\s+sameOriginBrowserOnly,\s+signedIn,/);
-  assert.match(routes, /const linked = await phoneAuth\.linkPhone\(pool, claims, req\.user\.id\);[\s\S]{0,400}await communityInvites\.joinQueued\(pool, req\.user\.id\);/);
+  assert.match(routes, /const linked = await phoneAuth\.linkPhone\(pool, claims, req\.user\.id\);\s+const joined = await communityInvites\.joinQueued\(pool, req\.user\.id\);/);
   // Under /api/auth/, which the platform-access gate leaves open to a waiting
   // account, and outside the pre-login /api/auth/phone/, so the session is read.
   const auth = read('src/middleware/auth.js');
@@ -195,46 +195,10 @@ test('the waiting room: a queued group can be joined now by adding a phone, and 
   assert.match(src, /fetch\('\/api\/auth\/phone-link\/verify'/);
   const waiting = read('frontend/src/features/auth/waiting.tsx');
   assert.match(waiting, /setPhoneOffered\(options\?\.phone_sign_in === true\);/);
-  assert.match(waiting, /\{phoneOffered && queued\.length && !awaitingPhone \? \(\s+<AddPhoneCard groups=\{queued\.map\(\(q\) => q\.name\)\} onJoined=\{onJoined\} \/>/);
+  assert.match(waiting, /\{phoneOffered && queued\.length \? \(\s+<AddPhoneCard groups=\{queued\.map\(\(q\) => q\.name\)\} onJoined=\{onJoined\} \/>/);
   assert.match(waiting, /if \(host && joined\[0\]\?\.slug\) host\._pendingHash = `\/app\/\$\{joined\[0\]\.slug\}`;\s+void check\(\);/);
   // deepLinkUrl takes that app path as it is.
   assert.match(read('public/js/auth-screens.js'), /if \(value\.startsWith\('\/app\/'\)\) return value;/);
-});
-
-test('admission needs a phone: held releases show in the waiting room and the admin list, and a phone finishes them', () => {
-  const waitlistSrc = read('src/services/waitlist.js');
-  // Every release off the waitlist asks; the invite-equivalent signups and
-  // an admin's direct grant do not.
-  assert.match(waitlistSrc, /async function releaseWaitlistSignup\(pool, signupId, \{ requirePhone = admissionNeedsPhone\(\) \} = \{\}\)/);
-  assert.match(waitlistSrc, /async function linkUserByEmail\(pool, \{ userId, email, requirePhone = admissionNeedsPhone\(\) \}\)/);
-  assert.match(waitlistSrc, /return offered\(require\('\.\.\/config'\)\.firebasePhoneSettings\(\)\);/);
-  assert.match(read('src/routes/topochain/admin/waitlist.js'), /await waitlist\.grantPlatformAccess\(pool, id, \{ manualRelease: true \}\);/);
-  assert.match(read('src/routes/auth.js'), /await waitlist\.grantPlatformAccess\(pool, userId\);/);
-  // The link route finishes a held release before anything else.
-  const routes = read('src/routes/phone-auth.js');
-  assert.match(routes, /const admitted = await waitlist\.finishHeldAdmission\(pool, req\.user\.id\);\s+const joined = admitted \? \[\] : await communityInvites\.joinQueued\(pool, req\.user\.id\);/);
-  // /api/auth/me says so, and the waiting room asks for the phone.
-  assert.match(read('src/routes/auth.js'), /\(u\.admitted_pending_phone_at IS NOT NULL AND u\.has_platform_access = FALSE\)\s+AS awaiting_phone,/);
-  const waiting = read('frontend/src/features/auth/waiting.tsx');
-  assert.match(waiting, /setAwaitingPhone\(user\.awaitingPhone === true\);/);
-  assert.match(waiting, /\{awaitingPhone \? 'You’re let in' : "You're in the queue"\}/);
-  assert.match(waiting, /\{awaitingPhone && phoneOffered \? \(\s+<AddPhoneCard\s+groups=\{\[\]\}\s+title="Add your phone number"/);
-  const { AddPhoneCard } = loadTsx('frontend/src/features/auth/add-phone.tsx');
-  const held = renderToHtml(createElement(AddPhoneCard, {
-    groups: [], title: 'Add your phone number', lead: 'One more step.', onJoined() {},
-  }));
-  assert.match(held, />Add your phone number</);
-  assert.match(held, />One more step\.</);
-  // The admin sees who is in only once they add one.
-  const admin = read('frontend/src/features/admin/topochain/waitlist.tsx');
-  assert.match(admin, /w\.awaiting_phone \? \(\s+<span data-waitlist-awaiting-phone=""[^>]*>\{' \(in once it adds a phone\)'\}<\/span>/);
-  assert.match(admin, /While phone sign-in is set up, an account `\s+\+ `without a phone adds one first\./);
-  // The one reading of the Firebase values, shared with config.load().
-  const { firebasePhoneSettings } = require('../src/config');
-  assert.deepEqual(firebasePhoneSettings({ FIREBASE_PHONE_AUTH_ENABLED: 'true', FIREBASE_WEB_API_KEY: 'k' }), {
-    firebaseProjectId: '', firebaseServiceAccountJsonB64: '', firebasePhoneAuthEnabled: true, firebaseWebApiKey: 'k',
-  });
-  assert.match(read('src/config.js'), /\.\.\.firebasePhoneSettings\(\),/);
 });
 
 test('a provisional handle: private groups see it, public places ask for a username first', () => {
