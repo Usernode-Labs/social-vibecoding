@@ -203,7 +203,7 @@ test('the Homeroom bot DM\'s activity cards: one per piece of work, read from it
       [seeds.id, runId],
     );
     card = await byId(asAda, first.messageId);
-    assert.deepEqual([card.state, card.stage, card.step, card.stepName, card.doing], ['working', 'building', 3, 'Build it', 'building it']);
+    assert.deepEqual([card.state, card.stage, card.step, card.stepName, card.doing], ['working', 'building', 3, 'Building it', 'building it']);
 
     // Built: its proposal is up for a vote.
     await pool.query(`UPDATE chat_sessions SET status = 'promoted', promoted_at = NOW() WHERE id = $1`, [build.id]);
@@ -465,7 +465,7 @@ test('the Homeroom bot DM\'s activity cards: one per piece of work, read from it
       const going = demo.cards.find((c) => c.state === 'working');
       const ended = demo.cards.find((c) => c.state === 'done');
       assert.equal(going.messageId, cards[1].id);
-      assert.deepEqual([going.step, going.of, going.stepName], [3, 6, 'Build it']);
+      assert.deepEqual([going.step, going.of, going.stepName], [3, 6, 'Building it']);
       assert.equal(ended.messageId, cards[0].id);
       assert.equal(ended.outcome, 'proposed');
       const { rows } = await pool.query('SELECT 1 FROM homeroom_bot_dm_messages WHERE user_id = $1', [viewer.id]);

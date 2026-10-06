@@ -73,14 +73,14 @@ test('a card\'s outcome is the first live run after it began: its verdict, and f
 test('a card still going takes its step from progressFor; with nothing in progress it stopped', () => {
   const row = { message_id: 31, created_at: '2026-10-02T11:51:00Z', slug: 'ear trainer', issue_number: 12 };
   const entry = {
-    project: 'ear trainer', number: 12, stage: 'building', step: 3, of: 6, stepName: 'Build it', doing: 'building it',
+    project: 'ear trainer', number: 12, stage: 'building', step: 3, of: 6, stepName: 'Building it', doing: 'building it',
     since: '2026-10-02T11:56:00.000Z', stepTimeLimitMinutes: 30,
   };
   const going = activity.cardOf(row, entry);
   assert.deepEqual(going, {
     messageId: 31, startedAt: '2026-10-02T11:51:00.000Z', workedFrom: '2026-10-02T11:51:00.000Z',
     links: { request: '#app/ear%20trainer/dev/issues/12', proposal: null },
-    state: 'working', stage: 'building', step: 3, of: 6, stepName: 'Build it', doing: 'building it',
+    state: 'working', stage: 'building', step: 3, of: 6, stepName: 'Building it', doing: 'building it',
     stepSince: '2026-10-02T11:56:00.000Z', stepLimitMinutes: 30,
   });
   assert.equal(activity.cardOf(row, { ...entry, waitingOn: 'them' }).waitingOn, 'them');
@@ -124,7 +124,7 @@ test('WP1: a card whose build still waits or runs is working, whatever began aft
   const entry = { stage: 'reading', step: 1, of: 6, stepName: 'Read the request', doing: 'reading the request' };
   assert.equal(activity.cardOf({ ...row, build_status: 'active' }, entry).stage, 'building');
   // Its own progress, while it is the newest card, is read as before.
-  const own = activity.cardOf({ ...row, next_at: null, build_status: 'active' }, { stage: 'building', step: 3, of: 6, stepName: 'Build it', doing: 'building it' });
+  const own = activity.cardOf({ ...row, next_at: null, build_status: 'active' }, { stage: 'building', step: 3, of: 6, stepName: 'Building it', doing: 'building it' });
   assert.deepEqual([own.stage, own.step], ['building', 3]);
   // A build with nothing under way any more (its session put away, never
   // recorded) is not working for ever, and an outcome always wins.
@@ -145,7 +145,7 @@ test('WP1: a card in words, as the person reads it, in the client\'s own labels'
   assert.equal(activity.cardWords({ state: 'done', outcome: 'stopped' }), 'Didn\'t finish: Stopped before it finished');
   assert.equal(activity.cardWords({ state: 'done', outcome: 'proposed' }), 'Built: Built it. Waiting for approval');
   assert.equal(activity.cardWords({ state: 'done', outcome: 'live' }), 'Done: Built it. It\'s live');
-  assert.equal(activity.cardWords({ state: 'working', step: 3, of: 6, stepName: 'Build it', doing: 'building it' }), 'Step 3 of 6 · Build it: building it');
+  assert.equal(activity.cardWords({ state: 'working', step: 3, of: 6, stepName: 'Building it', doing: 'building it' }), 'Step 3 of 6 · Building it: building it');
   assert.equal(activity.cardWords({ state: 'working', step: null, of: null, doing: 'building it' }), 'Working on it: building it');
   assert.equal(activity.cardWords(null), null);
   assert.equal(activity.cardWords({ state: 'done', outcome: 'something new' }), null);
@@ -415,7 +415,7 @@ test('the staging demo has one card being built and one that ended in a proposal
   const [working, done] = demo.cards;
   assert.equal(working.messageId, 41);
   assert.equal(working.state, 'working');
-  assert.deepEqual([working.step, working.of, working.stepName], [3, 6, 'Build it']);
+  assert.deepEqual([working.step, working.of, working.stepName], [3, 6, 'Building it']);
   assert.equal(done.messageId, 40);
   assert.equal(done.outcome, 'proposed');
   for (const card of demo.cards) assert.deepEqual(card.links, { request: null, proposal: null });
@@ -445,7 +445,7 @@ test('the client keeps only in-app links, whole steps and known endings, and nev
   const cards = normalizeBotActivity({
     cards: [
       {
-        messageId: 31, state: 'working', startedAt: 'a', step: 3, of: 6, stepName: 'Build it', doing: 'building it',
+        messageId: 31, state: 'working', startedAt: 'a', step: 3, of: 6, stepName: 'Building it', doing: 'building it',
         links: { request: '#app/x/dev/issues/3', proposal: 'javascript:alert(1)' }, outcome: 'proposed',
       },
       { messageId: 32, state: 'working', step: 7, of: 6, links: { request: 'https://example.test/x' } },
@@ -458,7 +458,7 @@ test('the client keeps only in-app links, whole steps and known endings, and nev
   assert.deepEqual(cards.map((c) => c.messageId), [31, 32, 33, 34, 35], 'a card without a message is dropped');
   assert.deepEqual(cards[0], {
     messageId: 31, state: 'working', startedAt: 'a', workedFrom: null, links: { request: '#app/x/dev/issues/3', proposal: null },
-    step: 3, of: 6, stepName: 'Build it', doing: 'building it', outcome: null, endedAt: null,
+    step: 3, of: 6, stepName: 'Building it', doing: 'building it', outcome: null, endedAt: null,
   });
   assert.equal(cards[1].step, null, 'step 7 of 6 is not a step');
   assert.equal(cards[1].links.request, null);
@@ -474,7 +474,7 @@ const minutesAgo = (m) => new Date(NOW.getTime() - m * 60000).toISOString();
 const META = { kind: 'activity', appSlug: 'ear-trainer', appName: 'Ear Trainer', issueNumber: 12, issueTitle: 'Sort by date', mirrors: true };
 const working = (extra = {}) => ({
   messageId: 31, state: 'working', startedAt: minutesAgo(9), links: { request: '#app/ear-trainer/dev/issues/12', proposal: null },
-  step: 3, of: 6, stepName: 'Build it', doing: 'building it', outcome: null, endedAt: null, ...extra,
+  step: 3, of: 6, stepName: 'Building it', doing: 'building it', outcome: null, endedAt: null, ...extra,
 });
 const done = (outcome, extra = {}) => ({
   messageId: 31, state: 'done', startedAt: minutesAgo(90), links: { request: '#app/ear-trainer/dev/issues/12', proposal: null },
@@ -489,10 +489,10 @@ function draw(props) {
 test('a card going: its step as a ring and in words, what it is doing, how long so far, and its request', () => {
   const html = draw({ card: working() });
   assert.match(html, /^<div class="[^"]*rounded-2xl[^"]*" role="group" aria-label="Homeroom bot activity: Ear Trainer #12: Sort by date" data-bot-activity="working">/);
-  assert.match(html, /<svg [^>]*role="img" aria-label="Step 3 of 6: Build it">/);
+  assert.match(html, /<svg [^>]*role="img" aria-label="Step 3 of 6: Building it">/);
   assert.match(html, />3\/6<\/text>/);
   assert.match(html, /stroke-dasharray="47\.125 94\.25"/, 'half the ring: step 3 of 6');
-  assert.match(html, /data-bot-activity-eyebrow="">Step 3 of 6 · Build it</);
+  assert.match(html, /data-bot-activity-eyebrow="">Step 3 of 6 · Building it</);
   assert.match(html, /motion-safe:animate-ping/, 'a live dot while it goes');
   assert.match(html, />Ear Trainer #12: Sort by date</);
   assert.match(html, /<span role="status">Building it<\/span><span> · 9m so far<\/span>/,
@@ -650,7 +650,7 @@ test('the staging preview\'s declared check finds the card being built in the de
   // A step ring is drawn only while a card's work goes, and the panel (which
   // leads its tiles with the same ring) is not drawn while it is closed, as
   // the check requires: a ring here is a card in the transcript.
-  assert.match(check.expectSelector, /\.messages-thread-pane:has\(\[aria-label="Step 3 of 6: Build it"\]\)/);
+  assert.match(check.expectSelector, /\.messages-thread-pane:has\(\[aria-label="Step 3 of 6: Building it"\]\)/);
   assert.match(check.expectSelector, /:has\(\[aria-label="Step 2 of 6: Write a plan"\]\) > \.messages-thread-header /);
   assert.ok(check.expectSelector.length <= 256, 'within what the runner reads');
   assert.equal(check.expectText, 'Working on 3', 'the tray counts the work the new card follows');
@@ -990,7 +990,7 @@ test('B6: Build it moves the card once it is decided, before the tray hears; Cha
 test('B6: a card going says how long its step usually takes, beside how long so far', () => {
   const row = { message_id: 31, created_at: '2026-10-04T10:03:00Z', slug: 'flat-4b-chores', issue_number: 1 };
   const entry = {
-    project: 'flat-4b-chores', number: 1, firstVersion: true, stage: 'building', step: 4, of: 7, stepName: 'Build it',
+    project: 'flat-4b-chores', number: 1, firstVersion: true, stage: 'building', step: 4, of: 7, stepName: 'Building it',
     doing: 'building it', since: '2026-10-04T10:06:00.000Z', typicalMinutes: { from: 10, to: 25 },
   };
   assert.deepEqual(activity.cardOf(row, entry).typicalMinutes, { from: 10, to: 25 }, 'progress.typicalMinutes, as the bot answers "how long?"');
@@ -1016,9 +1016,9 @@ test('B6: a card going says how long its step usually takes, beside how long so 
   assert.equal(typicalText(null), null);
   const html = draw({
     meta: { ...META, issueNumber: 1, issueTitle: null, firstVersion: true, appName: 'Flat 4B Chores' },
-    card: working({ step: 4, of: 7, stepName: 'Build it', typicalMinutes: { from: 10, to: 25 }, startedAt: minutesAgo(11) }),
+    card: working({ step: 4, of: 7, stepName: 'Building it', typicalMinutes: { from: 10, to: 25 }, startedAt: minutesAgo(11) }),
   });
-  assert.match(html, /data-bot-activity-eyebrow="">Step 4 of 7 · Build it</);
+  assert.match(html, /data-bot-activity-eyebrow="">Step 4 of 7 · Building it</);
   assert.match(html, /<span role="status">Building it<\/span><span> · usually 10 to 25 minutes<\/span><span> · 11m so far<\/span>/);
   assert.match(html, />Open request<\/a>/);
   assert.doesNotMatch(draw({ card: working() }), /usually/, 'nothing said without a range');

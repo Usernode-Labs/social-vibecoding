@@ -199,7 +199,7 @@ test('what the bot\'s progress says waits on them is Needs you, the question it 
 
 test('a build the bot is still on is the work Now shows, not an earlier run; one nothing finished yet says so, never that it stopped', () => {
   const rows = [run(2, 7, 1, { verdict: 'ready' }), run(1, 7, 20, { verdict: 'question' })];
-  const building = tray.arrange([entry(7, 'building', { step: 3, stepName: 'Build it' })], rows);
+  const building = tray.arrange([entry(7, 'building', { step: 3, stepName: 'Building it' })], rows);
   assert.deepEqual(building.now[0].earlier.map((r) => r.outcome), ['question']);
   // #8 (WP3): out of Now (the bot switched off, or the build gone quiet),
   // it is not "stopped", and the question it moved past is not its news.
@@ -224,9 +224,9 @@ test('B6: a first version\'s plan replaced before Build it is not one of its ear
     run(1, 1, 0.8, { ...fv, verdict: 'failed' }),
   ];
   const building = { project: 'flat-4b-chores', projectName: 'Flat 4B Chores', number: 1, firstVersion: true, stage: 'building',
-    step: 4, of: 7, stepName: 'Build it', doing: 'building it', busyNow: true, since: at(0.1).toISOString() };
+    step: 4, of: 7, stepName: 'Building it', doing: 'building it', busyNow: true, since: at(0.1).toISOString() };
   const now = tray.arrange([building], rows).now[0];
-  assert.deepEqual([now.firstVersion, now.stepName, now.doing], [true, 'Build it', 'building it']);
+  assert.deepEqual([now.firstVersion, now.stepName, now.doing], [true, 'Building it', 'building it']);
   assert.deepEqual(now.earlier.map((r) => [r.id, r.outcome]), [[1, 'failed']], 'its plans are not earlier runs; a look that failed still is');
   const built = [run(4, 1, 0.2, { ...fv, verdict: 'ready', proposal_session_id: 40, proposal_status: 'promoted', proposal_at: at(0.05) }), ...rows.slice(1)];
   const history = tray.arrange([], built).history[0];
@@ -527,7 +527,7 @@ test('the panel: Now with the step it is at, Needs you, and History folded away'
   const html = drawPanel({
     work: work({
       now: [working({
-        issueNumber: 12, title: 'Sort by date', phase: 'building', step: 3, of: 6, stepName: 'Build it', doing: 'building it',
+        issueNumber: 12, title: 'Sort by date', phase: 'building', step: 3, of: 6, stepName: 'Building it', doing: 'building it',
         since: minutesAgo(4), href: '#app/ear-trainer/dev/issues/12',
         links: { request: '#app/ear-trainer/dev/issues/12', proposal: null, project: null },
         earlier: [{ id: 3, outcome: 'question', at: minutesAgo(60 * 20) }],
@@ -545,8 +545,8 @@ test('the panel: Now with the step it is at, Needs you, and History folded away'
   assert.match(html, /<section id="messages-bot-work-panel" class="absolute inset-x-3 [^"]*" aria-label="Homeroom bot activity" data-bot-work-panel="">/);
   assert.match(html, />Now</);
   assert.match(html, /data-bot-work-tile="now" data-bot-work-tone="working"/);
-  assert.match(html, /aria-label="Step 3 of 6: Build it"/, 'the ring the activity cards draw');
-  assert.match(html, /Step 3 of 6 · Build it/);
+  assert.match(html, /aria-label="Step 3 of 6: Building it"/, 'the ring the activity cards draw');
+  assert.match(html, /Step 3 of 6 · Building it/);
   assert.match(html, /Ear Trainer #12: Sort by date/);
   assert.match(html, /Building it · 4m so far/);
   assert.match(html, /<a href="#app\/ear-trainer\/dev\/issues\/12" [^>]*data-bot-work-link="">Request #12<\/a>/);
@@ -680,7 +680,7 @@ test('the client keeps only the platform\'s own addresses as links, and known wo
   const w = normalizeBotWork({
     now: [
       { appSlug: 'a', appName: 'A', issueNumber: 3, phase: 'building', since: 'x', href: 'javascript:alert(1)',
-        links: { request: 'https://example.test/x', proposal: '#app/a/dev/proposals/4' }, step: 3, of: 6, stepName: 'Build it' },
+        links: { request: 'https://example.test/x', proposal: '#app/a/dev/proposals/4' }, step: 3, of: 6, stepName: 'Building it' },
       { appSlug: 'b', appName: 'B', phase: 'dancing', href: '#app/b/app', firstVersion: true, step: 7, of: 6 },
       ...tray.PHASES.map((phase) => ({ appSlug: 'c', appName: 'C', issueNumber: 1, phase })),
     ],
@@ -696,7 +696,7 @@ test('the client keeps only the platform\'s own addresses as links, and known wo
   });
   assert.equal(w.now[0].href, null);
   assert.deepEqual(w.now[0].links, { request: null, proposal: '#app/a/dev/proposals/4', project: null });
-  assert.deepEqual([w.now[0].step, w.now[0].of, w.now[0].stepName], [3, 6, 'Build it']);
+  assert.deepEqual([w.now[0].step, w.now[0].of, w.now[0].stepName], [3, 6, 'Building it']);
   assert.equal(w.now[0].key, 'a#3');
   assert.equal(w.now[1].href, '#app/b/app');
   assert.equal(w.now[1].phase, 'looking');

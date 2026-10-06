@@ -1028,7 +1028,7 @@ function demoState({ working = null, done = null, underWay = null }, now = Date.
   if (working) {
     cards.push({
       messageId: working, startedAt: ago(9), links, state: 'working', stage: 'building',
-      step: 3, of: 6, stepName: 'Build it', doing: 'building it', stepSince: ago(4), stepLimitMinutes: 30,
+      step: 3, of: 6, stepName: 'Building it', doing: 'building it', stepSince: ago(4), stepLimitMinutes: 30,
       typicalMinutes: { from: 10, to: 25 },
     });
   }

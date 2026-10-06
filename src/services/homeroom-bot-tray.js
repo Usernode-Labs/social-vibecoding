@@ -529,7 +529,7 @@ function demoWork(now = Date.now()) {
   return {
     now: [{
       ...request(14, 'Staging demo, show a total under the list'),
-      phase: 'building', stage: 'building', step: 3, of: 6, stepName: 'Build it', doing: 'building it',
+      phase: 'building', stage: 'building', step: 3, of: 6, stepName: 'Building it', doing: 'building it',
       since: ago(4), ...nowhere, earlier: [],
     }, {
       // Begun before it had a card in the DM: opening the demo DM gives it

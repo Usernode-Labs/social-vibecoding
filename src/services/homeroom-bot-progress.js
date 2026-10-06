@@ -66,11 +66,13 @@ const BOT_USERNAME = 'homeroom_bot';
 // longest one, a platform build's plan and build turn, is under two hours).
 const BUSY_BUILD_HOURS = 4;
 
+// The build step reads as ongoing ("Building it", not "Build it"): a step
+// name is a status, not an instruction to the person reading it (issue 4053).
 const FIRST_VERSION_STEPS = Object.freeze([
-  'Set up the project', 'Read the description', 'Write a plan', 'Build it', 'Test it', 'Approval', 'Live',
+  'Set up the project', 'Read the description', 'Write a plan', 'Building it', 'Test it', 'Approval', 'Live',
 ]);
 const REQUEST_STEPS = Object.freeze([
-  'Read the request', 'Write a plan', 'Build it', 'Test it', 'Approval', 'Live',
+  'Read the request', 'Write a plan', 'Building it', 'Test it', 'Approval', 'Live',
 ]);
 
 // Which step each stage is part of. A request's first step is "Read".

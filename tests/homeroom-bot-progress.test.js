@@ -18,7 +18,7 @@ const stage = (row) => progress.stageOf(row, { now: NOW });
 
 test('the steps a request and a first version go through, and which step each stage is', () => {
   assert.deepEqual(progress.FIRST_VERSION_STEPS, [
-    'Set up the project', 'Read the description', 'Write a plan', 'Build it', 'Test it', 'Approval', 'Live',
+    'Set up the project', 'Read the description', 'Write a plan', 'Building it', 'Test it', 'Approval', 'Live',
   ]);
   assert.deepEqual(progress.REQUEST_STEPS, progress.FIRST_VERSION_STEPS.slice(1).map((s) => s.replace('description', 'request')));
   assert.equal(progress.stepNumber('setting_up', true), 1);

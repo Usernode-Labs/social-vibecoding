@@ -45,7 +45,7 @@ test('B4: the card leads with their words, and the project moves to the status l
   const now = new Date('2026-10-02T12:00:00Z');
   const card = {
     messageId: 1, state: 'working', startedAt: '2026-10-02T11:56:00Z', links: { request: '#app/plant-pal/dev/issues/4', proposal: null },
-    step: 3, of: 6, stepName: 'Build it', doing: 'building it', outcome: null, endedAt: null,
+    step: 3, of: 6, stepName: 'Building it', doing: 'building it', outcome: null, endedAt: null,
   };
   const html = renderToHtml(createElement(BotActivityCardView, { meta, card, loaded: true, now }));
   assert.match(html, /class="line-clamp-2 [^"]*" data-bot-activity-asked="">You asked: Add a weekly reminder on Sunday mornings</);

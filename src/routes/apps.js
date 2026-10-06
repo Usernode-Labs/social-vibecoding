@@ -250,7 +250,7 @@ const stagingApps = require('../services/staging-apps');
  * steps of homeroom-bot-progress.js FIRST_VERSION_STEPS), cut to what the
  * hub draws. Pure.
  *
- *   step, of, step_name  "Step 4 of 7: Build it", the step's name exactly
+ *   step, of, step_name  "Step 4 of 7: Building it", the step's name exactly
  *                        as firstVersionState names it for this viewer, so
  *                        the hub says what the App tab and the made screen
  *                        say

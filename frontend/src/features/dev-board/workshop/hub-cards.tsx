@@ -309,7 +309,7 @@ function HubComposer({ slug, url, placeholder }: { slug: string; url: string; pl
 export const FIRST_VERSION_POLL_MS = 15000;
 
 /**
- * "Step 4 of 7: Build it". The name is the server's (`step_name`, from
+ * "Step 4 of 7: Building it". The name is the server's (`step_name`, from
  * homeroom-bot-dm.js firstVersionState for this viewer), so the hub says
  * exactly what the made screen and the App tab say, and follows them when
  * a step is renamed.
@@ -348,7 +348,7 @@ export function firstVersionKind(fv: HubFirstVersion): 'ready' | 'plan' | 'quest
 /**
  * FIRST VERSION: where Homeroom bot's build of the project stands, while it
  * builds it from the description it was made with. The same steps the made
- * screen and the App tab say ("Step 4 of 7: Build it",
+ * screen and the App tab say ("Step 4 of 7: Building it",
  * services/homeroom-bot-progress.js), read from the hub's own record
  * (GET /api/apps/:slug/community `first_version`), with the step as the
  * ring the bot's activity cards lead with.

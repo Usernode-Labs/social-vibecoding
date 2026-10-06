@@ -36,6 +36,7 @@ import { useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 
 import { useStoreState } from '../../lib/use-store-state';
+import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { PlanCardView } from '../messages/bot-plan-view';
 import type { HomeroomBotPlanQuestion } from '../messages/types';
 import { appStatusStore } from './app-status-store.js';
@@ -44,6 +45,13 @@ import { appStatusStore } from './app-status-store.js';
 export interface AppStatusView {
   /** `creating` and `awaiting` share the amber dot; `error` gets the red one. */
   dot: 'creating' | 'error' | null;
+  /**
+   * The project's icon tile, drawn above the message (issue 4053, the
+   * being-built screen): the same artwork the header's app chip shows.
+   * Only the first version's being-built view sets it; every other
+   * placeholder renders nothing for it.
+   */
+  icon?: { name: string; icon_url: string | null; icon_emoji: string | null } | null;
   message: string;
   /** The missing secret names, or the failure reason — one mono red line. */
   detail: string | null;
@@ -140,6 +148,15 @@ export function AppStatusView_({ view }: { view: AppStatusView }): ReactNode {
   return (
     <div className="flex flex-col items-center justify-center h-full text-zinc-500 dark:text-zinc-400 gap-2 p-4 text-center">
       {view.dot ? <div className={`status-dot ${view.dot}`}></div> : null}
+      {view.icon ? (
+        <span
+          data-icon={appIconKind(view.icon)}
+          className="app-icon-tile w-14 h-14 rounded-xl overflow-hidden flex items-center justify-center"
+          aria-hidden="true"
+        >
+          <AppIconContent app={view.icon} />
+        </span>
+      ) : null}
       <p className={titled ? 'max-w-sm text-base font-semibold text-zinc-900 dark:text-zinc-100' : 'text-sm'}>{view.message}</p>
       {titled ? view.lines!.map((line) => <p key={line} className="max-w-sm text-sm">{line}</p>) : null}
       {view.plan ? <FirstVersionPlanCard key={view.plan.actionId} plan={view.plan} /> : null}

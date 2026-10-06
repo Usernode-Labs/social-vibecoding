@@ -17,7 +17,7 @@
 //     tests/hub-just-you-postgres.test.js);
 //   - a First version card under the hero says where Homeroom bot's build
 //     stands, in the made screen's and the App tab's words ("Step 4 of 7:
-//     Build it"), and opens the bot's chat when the bot waits on its maker;
+//     Building it"), and opens the bot's chat when the bot waits on its maker;
 //   - "Nothing more to vote on." is a zero nobody else could change, so a
 //     project nobody else is in leaves it out;
 //   - an empty Your work says how to change something there, or leaves the
@@ -60,7 +60,7 @@ const community = (over = {}) => ({
 });
 
 const building = (over = {}) => ({
-  step: 4, of: 7, step_name: 'Build it', ready: false, mine: true, creator: 'evan',
+  step: 4, of: 7, step_name: 'Building it', ready: false, mine: true, creator: 'evan',
   waits_on: null, conversation_id: 41, session_id: null, ...over,
 });
 
@@ -72,13 +72,13 @@ test('a just-you project being built: the step, as a ring and in words, and no b
   const html = card(building());
   assert.match(html, /^<section class="dev-ws-strip dev-ws-hub-first" data-ws-first-version="building">/);
   assert.match(html, /<span class="dev-ws-head-title">First version<\/span>/);
-  assert.match(html, /data-ws-first-version-step="">Step 4 of 7: Build it<\/span>/,
+  assert.match(html, /data-ws-first-version-step="">Step 4 of 7: Building it<\/span>/,
     'the made screen\'s and the App tab\'s words for the step');
   // Evan, 5 Oct 2026: no average build time for a first version.
   assert.match(html, /data-ws-first-version-note="">Homeroom bot will message you when it’s ready to try, or if it has any questions\.<\/span>/);
   // The ring the bot's activity cards lead with, hidden from a screen reader
   // because the words beside it say the same.
-  assert.match(html, /<svg class="shrink-0" width="38" height="38" viewBox="0 0 38 38" role="img" aria-label="Step 4 of 7: Build it" aria-hidden="true">/);
+  assert.match(html, /<svg class="shrink-0" width="38" height="38" viewBox="0 0 38 38" role="img" aria-label="Step 4 of 7: Building it" aria-hidden="true">/);
   assert.match(html, />4\/7</);
   assert.doesNotMatch(html, /data-ws-first-version-chat|data-ws-first-version-change/,
     'nothing to press while nothing waits on its maker');
@@ -139,7 +139,7 @@ test('the step\'s name is the server\'s, never one written on the hub', () => {
   const src = read(HUB);
   const body = src.slice(src.indexOf('export const FIRST_VERSION_POLL_MS'), src.indexOf('export function ReelThumb('));
   assert.match(body, /return `Step \$\{fv\.step\} of \$\{fv\.of\}\$\{fv\.step_name \? `: \$\{fv\.step_name\}` : ''\}`;/);
-  for (const name of ['Set up the project', 'Read the description', 'Write a plan', 'Build it', 'Test it', 'Approval', 'Your turn']) {
+  for (const name of ['Set up the project', 'Read the description', 'Write a plan', 'Build it', 'Building it', 'Test it', 'Approval', 'Your turn']) {
     for (const quote of ["'", '"', '`', '>']) {
       assert.ok(!body.includes(`${quote}${name}`), `no step named in the hub's code: ${quote}${name}`);
     }

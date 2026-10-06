@@ -129,7 +129,7 @@ test('the card says the work\'s time, and the wait apart, in words', () => {
   const links = { request: '#app/page-turners/dev/issues/2', proposal: null };
   const building = {
     messageId: 50, state: 'working', startedAt: at('11:10'), workedFrom: at('11:56'), waitedFor: 'first_version', links,
-    step: 3, of: 6, stepName: 'Build it', doing: 'building it', outcome: null, endedAt: null, typicalMinutes: { from: 10, to: 25 },
+    step: 3, of: 6, stepName: 'Building it', doing: 'building it', outcome: null, endedAt: null, typicalMinutes: { from: 10, to: 25 },
   };
   const draw = (card, now = new Date(at('12:12'))) => renderToHtml(createElement(BotActivityCardView, { meta, card, loaded: true, now }));
   assert.match(draw(building), /<span> · 16m so far, after waiting 46m for the first version<\/span>/, 'not "1h so far"');

@@ -748,7 +748,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const by = new Map(first.rightNow.map((e) => [`${e.project}#${e.number}`, e]));
     const building = by.get('seed-swap#3');
     assert.equal(building.stage, 'building');
-    assert.deepEqual([building.step, building.of, building.stepName], [3, 6, 'Build it']);
+    assert.deepEqual([building.step, building.of, building.stepName], [3, 6, 'Building it']);
     assert.equal(building.stepTimeLimitMinutes, 20, 'a build is stopped at its clock: the most it can take');
     // #19 (WP3): and how long a build usually takes, never past that clock.
     assert.deepEqual(building.typicalMinutes, { from: 10, to: 20 });

@@ -2874,7 +2874,7 @@ const AppView = {
           actionId: 990002, messageId: null, conversationId: null,
         },
       } : {
-        building: true, mine: true, step: 4, of: 7, stepName: 'Build it',
+        building: true, mine: true, step: 4, of: 7, stepName: 'Building it',
         creator: null, ready: false, question: false, conversationId: null,
       },
     };
@@ -3146,7 +3146,16 @@ const AppView = {
     else {
       lines.push(mine ? 'We’ll message you when it’s ready.' : 'It opens here once it’s ready.');
     }
+    // The project's icon tile, drawn above the message (issue 4053): the
+    // same artwork the header's app chip shows. The record's own icon
+    // decision (image, emoji, then the name's first letter) is the tile
+    // content's to make (features/apps/app-card.js iconViewFor).
     return {
+      icon: {
+        name: appData.name || appData.slug,
+        icon_url: appData.icon_url || null,
+        icon_emoji: appData.icon_emoji || null,
+      },
       dot: 'creating',
       message: `${name} is being built from ${from}`,
       detail: null,

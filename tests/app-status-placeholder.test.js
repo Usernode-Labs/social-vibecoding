@@ -298,6 +298,7 @@ test('#15: the creator sees whose description it is, the step, and the way into 
   const { AppView } = makeAppView();
   const v = view(AppView, firstVersionApp());
   assert.deepEqual(v, {
+    icon: { name: 'Plant Pal', icon_url: null, icon_emoji: null },
     dot: 'creating',
     message: 'Plant Pal is being built from your description',
     detail: null,
@@ -307,6 +308,17 @@ test('#15: the creator sees whose description it is, the step, and the way into 
   });
   const out = html(v);
   assert.match(out, /class="status-dot creating"/);
+  // The project's icon tile sits above the message (issue 4053): the record
+  // has neither an image nor an emoji, so the tile draws the name's letter.
+  assert.match(out, /<span data-icon="letter" class="app-icon-tile w-14 h-14[^"]*" aria-hidden="true">/);
+  assert.ok(out.indexOf('app-icon-tile') < out.indexOf('Plant Pal is being built from'), 'the tile is drawn above the message');
+  // An uploaded image, and an emoji, each render as the tile's content.
+  const imaged = html(view(AppView, firstVersionApp({ icon_url: '/app-icons/7', icon_emoji: null })));
+  assert.match(imaged, /data-icon="image"/);
+  assert.match(imaged, /<img src="\/app-icons\/7"/);
+  const emoji = html(view(AppView, firstVersionApp({ icon_emoji: '🪴' })));
+  assert.match(emoji, /data-icon="emoji"/);
+  assert.match(emoji, /🪴/);
   assert.match(out, /<p class="max-w-sm text-base font-semibold[^"]*">Plant Pal is being built from your description<\/p>/);
   assert.match(out, />Step 3 of 7: Write a plan</);
   assert.match(out, />We’ll message you when it’s ready\.</);
@@ -383,8 +395,10 @@ test('ready: a member who still has to approve it gets Try it and See the change
     alt: { key: 'seeChange', label: 'See the change', slug: 'plant-pal', sessionId: 31 },
     secondary: { key: 'starter', label: 'Show the starter for now', slug: 'plant-pal' },
   });
+  assert.equal(v.icon, undefined, 'the ready screen gains no icon tile');
   const out = html(v);
   assert.doesNotMatch(out, /status-dot/);
+  assert.doesNotMatch(out, /app-icon-tile/);
   assert.doesNotMatch(out, /being built/);
   assert.match(out, /<p class="max-w-sm text-base font-semibold[^"]*">The first version of Plant Pal is ready to try<\/p>/);
   assert.match(out, />Waiting for your approval\.</);
@@ -573,7 +587,7 @@ test('#15: the chat button opens the DM by its id, and the starter shows for the
 
 test('#15: the screen re-asks the server while it is up, past the service worker\'s cache', async () => {
   const calls = [];
-  let answer = firstVersionApp({}, { step: 4, stepName: 'Build it' });
+  let answer = firstVersionApp({}, { step: 4, stepName: 'Building it' });
   const { AppView, sandbox } = makeAppView({
     fetchImpl: async (...args) => { calls.push(args); return { ok: true, json: async () => ({ app: answer }) }; },
     setTimeoutImpl: () => 1,

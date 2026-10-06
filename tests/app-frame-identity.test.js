@@ -747,7 +747,7 @@ test('#2154: a new creating phase invalidates a terminal event from an earlier a
 // The App tab says what is happening instead, BEFORE any frame mounts, and
 // mounts the app once it is built or once the viewer asks for the starter.
 
-const BUILDING = { building: true, mine: true, step: 4, of: 7, stepName: 'Build it', creator: 'ada', ready: false, question: false, conversationId: 9 };
+const BUILDING = { building: true, mine: true, step: 4, of: 7, stepName: 'Building it', creator: 'ada', ready: false, question: false, conversationId: 9 };
 
 test('#15: a first version being built shows its screen, not the starter, and drops a launched frame', async () => {
   const h = await makeHarness();
@@ -766,7 +766,7 @@ test('#15: a first version being built shows its screen, not the starter, and dr
   assert.equal(h.surface(), 'platform', 'a platform screen keeps the clearance');
   const shown = h.status();
   assert.equal(shown.message, 'Homeroom is being built from your description');
-  assert.deepEqual([...shown.lines], ['Step 4 of 7: Build it', 'We’ll message you when it’s ready.']);
+  assert.deepEqual([...shown.lines], ['Step 4 of 7: Building it', 'We’ll message you when it’s ready.']);
   assert.equal(shown.action.key, 'botChat');
   assert.notEqual(AppView._firstVersionTimer, null, 'one recheck is armed while it is up');
 
@@ -815,7 +815,7 @@ test('#15: the starter is framed under a bar, and its Back puts the first versio
   assert.equal(h.surface(), 'platform');
   const shown = h.status();
   assert.equal(shown.message, 'Homeroom is being built from your description');
-  assert.deepEqual([...shown.lines], ['Step 4 of 7: Build it', 'We’ll message you when it’s ready.']);
+  assert.deepEqual([...shown.lines], ['Step 4 of 7: Building it', 'We’ll message you when it’s ready.']);
   assert.equal(shown.secondary.key, 'starter', 'and the starter can be shown again');
   assert.notEqual(AppView._firstVersionTimer, null, 'its recheck is armed again');
   // A second Back, or one for an app whose starter is not shown, does nothing.
@@ -896,7 +896,7 @@ test('#15: the first-version screenshot state is self-contained, and mounts no f
   assert.equal(h.surface(), 'platform');
   const shown = h.status();
   assert.equal(shown.message, 'Plant Pal is being built from your description');
-  assert.deepEqual([...shown.lines], ['Step 4 of 7: Build it', 'We’ll message you when it’s ready.']);
+  assert.deepEqual([...shown.lines], ['Step 4 of 7: Building it', 'We’ll message you when it’s ready.']);
   assert.equal(shown.action.key, 'botChat');
   assert.equal(shown.secondary.key, 'starter');
   assert.equal(AppView.appData.url, null, 'no address, so the starter never frames anything');

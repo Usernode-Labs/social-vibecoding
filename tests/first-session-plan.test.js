@@ -307,11 +307,11 @@ test('"Write a plan" names one wait: the plan waiting on its creator is their tu
   assert.equal((await plan('plan', null)).stepName, 'Waiting for @maya to answer the plan');
   // After Build it, what the bot does next is the build to them: writing
   // the build's own plan, and waiting for its turn and workspace, read as
-  // "Step 4 of 7: Build it", never "Write a plan" again (Evan, 5 October 2026:
+  // "Step 4 of 7: Building it", never "Write a plan" again (Evan, 5 October 2026:
   // "writing the plan for the build" right after he approved the plan).
   for (const stage of ['planning', 'build_queued', 'starting']) {
     const after = await plan(stage, 7);
-    assert.deepEqual([after.step, after.stepName], [4, 'Build it'], stage);
+    assert.deepEqual([after.step, after.stepName], [4, 'Building it'], stage);
   }
   const progress = require('../src/services/homeroom-bot-progress');
   for (const stage of ['planning', 'build_queued', 'starting']) {
