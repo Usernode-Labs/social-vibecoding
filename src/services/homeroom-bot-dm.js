@@ -472,6 +472,9 @@ async function sendDm(pool, {
     });
   }
   if (!result.duplicate) {
+    await retireSuggestions(pool, {
+      botId: bot.id, conversationId: opened.conversationId, keepMessageId: result.messageId ?? result.message?.id, userId,
+    });
     try {
       await pushLive(pool, result, opened.conversationId, { opened: opened.created });
     } catch (err) {
@@ -1291,6 +1294,8 @@ async function relayIssuePost({
       lead: questionLead(requestLine(context), context.firstVersion ? 'the first version' : 'this', dm),
     } : {}),
     ...(dm.link ? { link: dm.link } : {}),
+    // Where it is stuck, what to tap (STUCK_ACTIONS).
+    ...(STUCK_ACTIONS[kind] ? { actions: STUCK_ACTIONS[kind], status: 'open' } : {}),
     // B7: a change ready to try, as a card with its buttons: whether it is
     // one person's project (the title), who else it waits on and how many of
     // them it needs, their words.
@@ -2952,6 +2957,61 @@ function promptActions(labels) {
   return labels.slice(0, 3).map((label, i) => ({ id: `ask-${i + 1}`, label, style: 'secondary', type: 'prompt' }));
 }
 
+/*
+ * What to tap where the bot's work on a request is stuck, instead of "reply
+ * here" with nothing to press. A `quote` prompt is sent as the person's own
+ * words, replying to the message, so it is about that request: on a build
+ * that did not finish it reaches the bot's chat, which starts the request
+ * again (homeroom-bot-mayor.js start_request); on a mirrored kind it is
+ * posted on the request's public discussion, which the buttons say
+ * (frontend/src/features/messages/bot-question.tsx). `reply` quotes the
+ * message in the composer for them to write the detail it asks for.
+ */
+const STUCK_ACTIONS = Object.freeze({
+  build_failed: Object.freeze([{ id: 'try_again', label: 'Try again', style: 'primary', type: 'prompt', quote: true }]),
+  blocked: Object.freeze([{ id: 'add_detail', label: 'Add detail', style: 'primary', type: 'reply' }]),
+  empty: Object.freeze([{ id: 'add_detail', label: 'Add detail', style: 'primary', type: 'reply' }]),
+  person: Object.freeze([{ id: 'go_ahead', label: 'Go ahead', style: 'primary', type: 'prompt', quote: true }]),
+});
+
+// A suggestion is something to say next, never a decision the bot waits on
+// (an offer's File it, a ready card's Approve, a plan's Build it).
+const SUGGESTION_TYPES = new Set(['prompt', 'reply']);
+
+/** Pure: whether a bot message's buttons are all suggestions. */
+function suggestsOnly(meta) {
+  const actions = Array.isArray(meta?.actions) ? meta.actions : [];
+  return actions.length > 0 && actions.every((action) => SUGGESTION_TYPES.has(action?.type));
+}
+
+/**
+ * Only the newest message's suggestions stay live. Once the bot says
+ * something new in a DM, the suggestion buttons on its older messages
+ * (suggestsOnly) close, and Messages draws a closed suggestion as nothing
+ * at all; they used to stay open until somebody typed one's exact words,
+ * far up the chat. A question's answers, an offer, a plan or a ready card
+ * keep their own lifecycle. Never throws.
+ */
+async function retireSuggestions(pool, { botId, conversationId, keepMessageId, userId = null, ws = null }) {
+  if (!botId || !conversationId || !keepMessageId) return;
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, metadata FROM conversation_messages
+        WHERE conversation_id = $1 AND sender_id = $2 AND id < $3 AND deleted_at IS NULL
+          AND metadata->'homeroomBot'->>'status' = 'open'
+          AND jsonb_typeof(metadata->'homeroomBot'->'actions') = 'array'
+        ORDER BY id DESC LIMIT 20`,
+      [conversationId, botId, keepMessageId],
+    );
+    for (const row of rows) {
+      if (!suggestsOnly(row.metadata?.[META])) continue;
+      await setQuestionState(pool, Number(row.id), { status: 'closed' }, { ws, conversationId, userId });
+    }
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not retire older suggestions', { conversationId, err: err.message });
+  }
+}
+
 /**
  * B5: claim `userId`'s one hello, as `kind` ('maker' or 'member'). True only
  * for the first claim: a second device, a retry or a later project gets
@@ -3463,6 +3523,9 @@ module.exports = {
   MEMBER_PROMPTS,
   memberHello,
   promptActions,
+  STUCK_ACTIONS,
+  suggestsOnly,
+  retireSuggestions,
   claimHello,
   noteHelloSent,
   settlePrompt,
