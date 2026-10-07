@@ -49,6 +49,8 @@ import { Button } from '@/components/ui/button';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { Wordmark } from '@/components/ui/wordmark';
 
+import { bottomBarInset } from '../home/tour/spotlight';
+
 import { joinPicture, JoinedPicture } from './joined-picture';
 import { type Made, MakeScreen } from './make';
 import { MadeScreen, madeAppOf, madeAppUrl } from './made';
@@ -347,20 +349,43 @@ function boxKey(b: Box | null | undefined): string {
   return b ? `${Math.round(b.left)},${Math.round(b.top)},${Math.round(b.width)},${Math.round(b.height)}` : '';
 }
 
-/** The coach card's position for a target box, as inline style. */
-export function cardPlacement(box: Box | null, step: TourStep, viewport: { width: number; height: number }): React.CSSProperties {
+/** The card's margin to the viewport edges its placement is clamped to. */
+const CARD_MARGIN = 16;
+
+/**
+ * The coach card's position for a target box, as inline style. `cardHeight`
+ * is the card's own measured height, so every placement can be clamped to
+ * keep the whole card inside the viewport: the branches below say where the
+ * card's near edge goes, and a target near one screen edge can push the rest
+ * of the card off the other one (#4182).
+ */
+export function cardPlacement(box: Box | null, step: TourStep, viewport: { width: number; height: number }, cardHeight = 0): React.CSSProperties {
   const H = viewport.height;
+  // A `bottom` is the card's bottom edge's distance above the screen's
+  // bottom, so the clamp holds its top edge below the screen's top; a `top`
+  // holds its bottom edge above the screen's bottom. Both keep CARD_MARGIN
+  // to the edge, and a `bottom` never dips under the margin either.
+  const inside = (place: React.CSSProperties): React.CSSProperties => {
+    const ceiling = Math.max(CARD_MARGIN, H - cardHeight - CARD_MARGIN);
+    if (place.bottom !== undefined) return { ...place, bottom: Math.max(CARD_MARGIN, Math.min(place.bottom, ceiling)) };
+    if (place.top !== undefined) return { ...place, top: Math.min(Math.max(place.top, CARD_MARGIN), ceiling) };
+    return place;
+  };
+  // The phone's tab bar is the only bar the card stops above: from 768px up
+  // the same #platform-tabs is the sidebar rail down the left edge, and
+  // reading it as a bottom bar put the card's bottom near the screen's top,
+  // cutting the card off (#4182; the Home tour's #3240 fix).
   const tabs = document.getElementById('platform-tabs');
-  const tabsTop = tabs && tabs.getBoundingClientRect().height ? tabs.getBoundingClientRect().top : H;
-  if (!box) return { bottom: H - tabsTop + 16 };
+  const barInset = tabs ? bottomBarInset(tabs.getBoundingClientRect(), viewport) : 0;
+  if (!box) return inside({ bottom: barInset + CARD_MARGIN });
   if (step.place && typeof step.place === 'object') {
     const above = document.querySelector(step.place.above);
-    if (above) return { bottom: H - above.getBoundingClientRect().top + 12 };
+    if (above) return inside({ bottom: H - above.getBoundingClientRect().top + 12 });
   }
-  if (step.place === 'bottom') return { bottom: H - tabsTop + 16 };
-  if (box.height > H * 0.45) return { bottom: Math.max(16, H - (box.top + box.height) + 20) };
-  if (box.top + box.height / 2 > H / 2) return { bottom: H - box.top + PAD + 12 };
-  return { top: box.top + box.height + PAD + 12 };
+  if (step.place === 'bottom') return inside({ bottom: barInset + CARD_MARGIN });
+  if (box.height > H * 0.45) return inside({ bottom: H - (box.top + box.height) + 20 });
+  if (box.top + box.height / 2 > H / 2) return inside({ bottom: H - box.top + PAD + 12 });
+  return inside({ top: box.top + box.height + PAD + 12 });
 }
 
 /** The tour over the live shell (see the header); exported so a test can draw its card. */
@@ -368,6 +393,10 @@ export function Tour({ info, steps, onEnd }: { info: FirstSessionInfo; steps: To
   const [index, setIndex] = useState(0);
   const [measured, setMeasured] = useState<Measured>({ step: -1, box: null });
   const [viewport, setViewport] = useState({ width: window.innerWidth, height: window.innerHeight });
+  // The card's own height, for the placements' clamp (#4182): read off the
+  // mounted card, so a tall step's card cannot be pushed off the screen.
+  const [cardHeight, setCardHeight] = useState(0);
+  const cardRef = useRef<HTMLDivElement | null>(null);
   const step = steps[index];
   const stepRef = useRef(step);
   stepRef.current = step;
@@ -380,6 +409,9 @@ export function Tour({ info, steps, onEnd }: { info: FirstSessionInfo; steps: To
   // never shows beside the last step's cut-out (see Measured).
   useLayoutEffect(() => {
     setMeasured(measure(index, step));
+    // The step's text is committed here: read the card's height before the
+    // new step's first paint, so its placement is clamped from that frame.
+    setCardHeight(cardRef.current?.offsetHeight ?? 0);
   }, [index, step]);
 
   // Then follow the target every frame; keep it only when it moved. A frame
@@ -388,6 +420,7 @@ export function Tour({ info, steps, onEnd }: { info: FirstSessionInfo; steps: To
   useEffect(() => {
     let raf = 0;
     let last = '';
+    let lastHeight = -1;
     const tick = () => {
       try {
         const at = indexRef.current;
@@ -397,6 +430,10 @@ export function Tour({ info, steps, onEnd }: { info: FirstSessionInfo; steps: To
         const m = measure(at, stepRef.current);
         const key = `${at}:${boxKey(m.box)}:${boxKey(m.press)}`;
         if (key !== last) { last = key; setMeasured(m); }
+        // The card's height feeds the placement's clamp (#4182): it changes
+        // when a step's text wraps differently, or the width does.
+        const h = cardRef.current?.offsetHeight ?? 0;
+        if (h !== lastHeight) { lastHeight = h; setCardHeight(h); }
         if (window.innerWidth !== viewport.width || window.innerHeight !== viewport.height) {
           setViewport({ width: window.innerWidth, height: window.innerHeight });
         }
@@ -452,7 +489,7 @@ export function Tour({ info, steps, onEnd }: { info: FirstSessionInfo; steps: To
   // Presses reach only that control: a step that only shows its screen
   // covers all of its cut-out, and a tap step all of it but the ring.
   const covers = hole ? (ring ? aroundBox(hole, ring) : [hole]) : [];
-  const card = cardPlacement(box, step, viewport);
+  const card = cardPlacement(box, step, viewport, cardHeight);
 
   return (
     // The layer itself lets presses through: only the shades, the card and
@@ -478,6 +515,7 @@ export function Tour({ info, steps, onEnd }: { info: FirstSessionInfo; steps: To
         <div className={`${SHADE} inset-0`} />
       )}
       <div
+        ref={cardRef}
         role="dialog"
         aria-labelledby="first-session-tour-title"
         className="pointer-events-auto fixed left-4 right-4 mx-auto max-w-md rounded-[20px] bg-white p-4 text-zinc-900 shadow-[0_18px_40px_-16px_rgba(0,0,0,0.6)] dark:bg-zinc-800 dark:text-zinc-100"

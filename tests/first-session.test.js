@@ -100,8 +100,10 @@ test('a step draws only its own target, measured before its card is painted', ()
   const src = read(`${DIR}/index.tsx`);
   assert.match(src, /const box = boxForStep\(measured, index\);\s+const pressBox = pressForStep\(measured, index\);/);
   // Measured in a layout effect when the step changes, so the first paint of
-  // a step is its own target (or no ring at all), never the last one's.
-  assert.match(src, /useLayoutEffect\(\(\) => \{\s+setMeasured\(measure\(index, step\)\);\s+\}, \[index, step\]\);/);
+  // a step is its own target (or no ring at all), never the last one's. The
+  // card's own height is read in the same pre-paint pass, for the
+  // placements' clamp (#4182).
+  assert.match(src, /useLayoutEffect\(\(\) => \{\s+setMeasured\(measure\(index, step\)\);[\s\S]*?\}, \[index, step\]\);/);
   // The per-frame follow tags what it measures with the step, and survives a
   // frame that throws rather than leaving the ring where it was.
   assert.match(src, /const m = measure\(at, stepRef\.current\);\s+const key = `\$\{at\}:\$\{boxKey\(m\.box\)\}:\$\{boxKey\(m\.press\)\}`;\s+if \(key !== last\) \{ last = key; setMeasured\(m\); \}/);
@@ -633,5 +635,43 @@ test('"You\'re in", drawn: the project under the welcome, and "is making" while 
     assert.match(made, /data-first-session-picture="tile"[\s\S]*>A book club</);
   } finally {
     global.window = saved;
+  }
+});
+
+// The tour card's placement (#4182): every placement is clamped so the whole
+// card stays inside the viewport, and the sidebar rail — from 768px up the
+// same #platform-tabs — is not read as a bottom bar, which put the card's
+// bottom near the screen's top and cut it off.
+test('cardPlacement: the rail is not a bottom bar, and every placement keeps the card on screen', () => {
+  const { cardPlacement } = loadTsx(`${DIR}/index.tsx`);
+  const el = (rect) => ({ getBoundingClientRect: () => rect });
+  const saved = globalThis.document;
+  try {
+    // Desktop, the rail down the left: not a bottom bar. The card with a
+    // 'bottom' step sits a margin above the screen's bottom, not above the
+    // rail's top (which on desktop is the screen's top).
+    globalThis.document = { getElementById: () => el({ top: 0, left: 0, width: 248, height: 800 }), querySelector: () => null };
+    const desktop = { width: 1280, height: 800 };
+    assert.equal(cardPlacement(null, { place: 'bottom' }, desktop).bottom, 16);
+    assert.equal(cardPlacement({ top: 300, left: 400, width: 300, height: 60 }, { place: 'bottom' }, desktop, 140).bottom, 16);
+
+    // Phone, the bar docked along the bottom: the card stops above it.
+    globalThis.document = { getElementById: () => el({ top: 780, left: 0, width: 390, height: 64 }), querySelector: () => null };
+    assert.equal(cardPlacement(null, { place: 'bottom' }, { width: 390, height: 844 }).bottom, 80);
+
+    // A placement is clamped with the card's own height: an anchor near the
+    // screen's top (the composer scrolled up) cannot push the card off the top.
+    globalThis.document = { getElementById: () => null, querySelector: () => el({ top: 60, left: 0, width: 390, height: 60 }) };
+    assert.equal(cardPlacement({ top: 400, left: 20, width: 200, height: 60 }, { place: { above: '#gc-form' } }, { width: 390, height: 844 }, 140).bottom, 688);
+
+    // A target just above the middle cannot push the card's top placement off
+    // the bottom of a short window.
+    globalThis.document = { getElementById: () => null, querySelector: () => null };
+    const short = { width: 390, height: 500 };
+    assert.equal(cardPlacement({ top: 180, left: 20, width: 200, height: 60 }, {}, short, 280).top, 204);
+    // Room below: the clamp does not move a placement that already fits.
+    assert.equal(cardPlacement({ top: 180, left: 20, width: 200, height: 60 }, {}, { width: 390, height: 844 }, 140).top, 258);
+  } finally {
+    globalThis.document = saved;
   }
 });
