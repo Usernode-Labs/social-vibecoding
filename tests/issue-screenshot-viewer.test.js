@@ -182,8 +182,9 @@ test('a screenshot hosted elsewhere opens in a new tab from the viewer rather th
     if (before === undefined) delete global.window; else global.window = before;
   }
   const src = read(VIEWER);
-  assert.match(src, /download=\{alt \|\| true\}\n\s*\{\.\.\.\(remote \? \{ target: '_blank', rel: 'noopener noreferrer' \} : \{\}\)\}/);
-  assert.match(src, /\{remote \? 'Open original' : 'Download'\}/);
+  // #4055: a same-origin picture's Download became a button that saves it;
+  // one hosted elsewhere keeps its link, in a new tab.
+  assert.match(src, /\{remote \? \(\n\s*<a\n\s*href=\{src\}\n\s*target="_blank"\n\s*rel="noopener noreferrer"[\s\S]*?data-image-viewer-download=""\n\s*>\n\s*Open original\n\s*<\/a>/);
 });
 
 test('the installed app leaves a scope\'s picture links to the viewer', () => {

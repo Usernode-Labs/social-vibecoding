@@ -232,6 +232,9 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // the create dialog's first step (who it is for) draws them on its
     // "A group" and "A community" rows, and the dialog prerenders every step.
     'M12 20h9',
+    // DownloadIcon (#4055): the image viewer's Download and a message's
+    // "Download image", both drawn only after a tap.
+    'M12 3v12m0 0l-4-4m4 4l4-4M5 13v7h14v-7',
     'M12 3v12m0-12l-4 4m4-4l4 4M5 13v7h14v-7',
     'M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z',
     'M12 3v8.25m0 0l-3-3m3 3l3-3',
