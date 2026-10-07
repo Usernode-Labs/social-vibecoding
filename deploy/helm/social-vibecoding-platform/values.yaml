@@ -119,11 +119,8 @@ config:
   appHostSignin: "on"
   # Optional waitlist OAuth callback origin. Empty uses the application's canonical origin.
   waitlistOauthOrigin: ""
-  # Waitlist skips by invite-tree generation (INVITE_TREE_BUDGETS): people let
-  # off the waitlist by hand get the first number; the default "10" gives the
-  # people they let in none (no chaining). Whether invite links skip the
-  # waitlist at all is an admin setting (Admin → Waitlist), not a value here.
-  inviteTreeBudgets: "10"
+  # Firebase phone authentication flag; enable in the cluster's plaintext values.
+  firebasePhoneAuthEnabled: false
   platformRepository: https://github.com/replace-me/social-vibecoding
   nodeRpcUrl: http://replace-me.invalid:3000
   # Explorer host[:port] without a scheme. Public hosts use HTTPS; private
@@ -188,11 +185,15 @@ secrets:
   gmailOauthClientId: ""
   gmailOauthClientSecret: ""
   gmailOauthRefreshToken: ""
+  # Optional engagement tracking with the existing sender. Supply through SOPS.
+  platformMailTrackingSecret: ""
   # Optional mobile push settings. Supply all four through encrypted external values.
   mobilePushEnabled: false
   pushEnv: ""
   firebaseProjectId: ""
   firebaseServiceAccountJsonB64: ""
+  # Optional Firebase web API key, supplied through encrypted external values.
+  firebaseWebApiKey: ""
 
 ingress:
   enabled: true

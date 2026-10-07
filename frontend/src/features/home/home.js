@@ -889,6 +889,9 @@ const Home = {
         hint: Home.CREATE_DISABLED_HINT,
         placement: flows ? null : { ...HomeLayout.trailingCell(placed, cols), w: 1, h: 1 },
       };
+      // A private member makes no apps until they are let in off the
+      // waitlist (their Home's waitlist card says so), so no tile at all.
+      if (App.user?.privateMember) create = null;
     }
 
     // The search view is a flat, transient list — it must not inherit the
@@ -2231,11 +2234,15 @@ const Home = {
       if (typeof onChange === 'function') onChange();
     }
     try {
-      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/membership`, {
+      // Joining a public community asks a provisional handle for a username
+      // first (username-first-run.js publicRetry).
+      const write = () => fetch(`/api/apps/${encodeURIComponent(slug)}/membership`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ joined: desired }),
       });
+      const retry = typeof window !== 'undefined' ? window.UsernameFirstRun?.publicRetry : null;
+      const res = desired && retry ? await retry(write) : await write();
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       if (app && Number.isFinite(Number(data.member_count))) app.member_count = Number(data.member_count);

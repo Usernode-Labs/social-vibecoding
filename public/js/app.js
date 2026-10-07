@@ -578,6 +578,14 @@ const App = {
       location.reload();
       return;
     }
+    // So is being a private member, for the same reason: it decides the mark
+    // menu, Home's sections and the app's ✕. Being let in off the waitlist
+    // ends it, and the next boot reads the full shell.
+    if (!!user.privateMember !== !!App.user?.privateMember) {
+      App.saveSessionSnapshot(user);
+      location.reload();
+      return;
+    }
     App._sessionFromSnapshot = false;
     if (window.NativeChrome &&
         typeof NativeChrome.prepareIdentityPublication === 'function') {
@@ -607,6 +615,10 @@ const App = {
     // (features/settings/terms-first-run.js), so it has to be re-offered
     // once there is a verified one.
     try { window.TermsFirstRun?.maybePrompt?.(); } catch (e) { /* ignore */ }
+    // The phone step, the same: it skips a snapshot boot, waits for the
+    // terms, and the join screen below waits for it
+    // (frontend/src/features/auth/phone-first-run.tsx).
+    try { window.PhoneFirstRun?.maybePrompt?.(); } catch (e) { /* ignore */ }
     // And the communities join screen, which skips an unverified session for
     // the same reason. Without this, a browser that has signed in before
     // (every boot there starts from the snapshot) never showed it: that is
@@ -4410,11 +4422,17 @@ const App = {
           cancelLabel: 'Not now',
         }) : true;
         if (!ok) return;
-        const joined = await fetch(`/api/invite-links/by-token/${encodeURIComponent(token)}/redeem`, {
+        // A public community asks a provisional handle for a username first
+        // (username-first-run.js publicRetry).
+        const redeem = () => fetch(`/api/invite-links/by-token/${encodeURIComponent(token)}/redeem`, {
           method: 'POST', credentials: 'same-origin',
         });
+        const joined = window.UsernameFirstRun?.publicRetry
+          ? await window.UsernameFirstRun.publicRetry(redeem)
+          : await redeem();
         if (joined.status === 401) { App._inviteSessionEnded(address); return; }
         const result = await joined.json().catch(() => ({}));
+        if (result.reason === 'username_required') { toast(result.error, true); return; }
         if (!joined.ok || !result.ok) { toast(DEAD[result.reason] || 'Could not join. Try again.', true); return; }
         joinedHere = true;
         // Read Home's challenges again now. Home painted them above, before
@@ -4662,6 +4680,15 @@ const App = {
               return;
             }
           }
+        }
+        // A PRIVATE MEMBER is on the waitlist from inside: their Home's card
+        // links to the "Want in sooner?" questions (#more/<token>, features/
+        // home/waitlist-card.tsx), the screen the join mail links everybody
+        // else to. Its "Back" is #landing, which comes through below as any
+        // stale auth hash does and lands on Home.
+        if (authRoute === 'more' && App.user?.privateMember) {
+          AuthScreens.show('more', authSeg);
+          return;
         }
         if (authRoute) {
           AuthScreens.hideAll();
@@ -5810,6 +5837,10 @@ const App = {
   // render is the prerender's "Me", and the name arrives as an update.
   _syncViewer() {
     window.UsernodeReact?.nav?.setViewer?.(App.user?.username || null);
+    // A private member's mark menu and Home differ (features/nav/nav-store.js).
+    window.UsernodeReact?.nav?.setPrivateMember?.(!!App.user?.privateMember);
+    // Home's "Verify your account" card (features/home/verify-card.tsx).
+    window.UsernodeReact?.nav?.setIdentityNeeded?.(!!App.user?.identityNeeded);
   },
 
   // ── #platform-tabs — one place decides ──────────────────────────────
@@ -7696,10 +7727,43 @@ const App = {
   _appNavigationGeneration: 0,
   _appLoad: null,
 
-  async navigateToApp(slug, tab, ref, subTab) {
+  // A provisional handle (an invite's phone sign-up, made from its name)
+  // is for private groups: before a public app or community, ask for a
+  // username (username-first-run.js askForPublic). True to go on. The
+  // audience comes from the launcher's record, or the app's own read; an
+  // unknown one goes on, and the server's refusal stands behind it.
+  async _usernameBeforePublic(slug) {
+    let audience = null;
+    try { audience = AppView.launchRecordFor?.(slug)?.audience || null; } catch (_) {}
+    if (!audience) {
+      try {
+        const res = await fetch(`/api/apps/${encodeURIComponent(slug)}?manifest=summary`);
+        if (res.ok) audience = (await res.json())?.app?.audience || null;
+      } catch (_) { /* the server decides */ }
+    }
+    if (audience !== 'open') return true;
+    return !!(await window.UsernameFirstRun?.askForPublic?.());
+  },
+
+  // navigateToApp for a provisional handle: the ask first, then the same
+  // navigation, marked as asked. Its own function so navigateToApp reads
+  // everything it reads synchronously (the tab press) before any await.
+  async _navigateAfterUsername(slug, tab, ref, subTab) {
+    if (!(await App._usernameBeforePublic(slug))) {
+      // "Not now": stay out. An address that already names the app goes Home.
+      if (location.hash.startsWith(`#app/${slug}`)) App.navigateHome?.();
+      return false;
+    }
+    return App.navigateToApp(slug, tab, ref, subTab, { usernameChecked: true });
+  },
+
+  async navigateToApp(slug, tab, ref, subTab, opts) {
     // The side panel never runs an app — not even to warm its frame. An App
     // tab asked for in there is the running app's job, beside it.
     if (App.embeddedPanel && App._forwardAppTab(slug, tab, ref, subTab)) return false;
+    if (App.user?.usernameProvisional && !opts?.usernameChecked) {
+      return App._navigateAfterUsername(slug, tab, ref, subTab);
+    }
     const generation = ++App._appNavigationGeneration;
     // Clean up whatever app we had mounted. This is a no-op on the first
     // navigation into any app, but without it a direct app-A → app-B
@@ -8098,6 +8162,28 @@ const App = {
     'profile-proposals-screen': ['arrow', '#profile'],
   },
 
+  // ── A private member's way out ───────────────────────────────────────
+  //
+  // A PRIVATE MEMBER (App.user.privateMember: an invite link let them into
+  // its community before they were let in) lands inside that app with no ✕.
+  // The mark menu's "Go to Homeroom" (features/app-context) takes them to
+  // Home and its four-step tour (features/first-session goHome), and from
+  // then on an app has its ✕ like anybody's. Remembered on this device, the
+  // way the tours themselves are.
+  PRIVATE_HOME_PREFIX: 'usernode:private-home:',
+  _privateHomeKey() {
+    return `${App.PRIVATE_HOME_PREFIX}${App.user?.id ?? 'anon'}`;
+  },
+  _privateHomeVisited() {
+    try { return !!localStorage.getItem(App._privateHomeKey()); } catch (_) { return false; }
+  },
+  _notePrivateHome() {
+    try { localStorage.setItem(App._privateHomeKey(), String(Date.now())); } catch (_) { /* private mode */ }
+  },
+  _privateNoClose() {
+    return !!App.user?.privateMember && !App._privateHomeVisited();
+  },
+
   // The slot for a screen, as setBackIcon's own arguments. Anything off the
   // table keeps the house: the auth screens are outside the tab bar entirely,
   // and a screen nobody has classified is better off offering a way out than
@@ -8151,6 +8237,10 @@ const App = {
       // publishes the same 'none', and the two writers have to agree (see
       // above).
       if (App.currentTab !== 'app' || App._selfHostedRoute()) return ['none'];
+      // A PRIVATE MEMBER who has not been to Homeroom yet has no ✕: the app
+      // an invite link landed them in is where they are, and the mark menu's
+      // "Go to Homeroom" is the way on (_privateNoClose).
+      if (App._privateNoClose()) return ['none'];
       // The ✕'s DESTINATION is the page the app was opened from (App.closeApp
       // traverses back to it; this is the href a modified click follows), and
       // Home when there is none. The table holds the glyph; this holds the
@@ -8458,8 +8548,11 @@ const App = {
       // app shows is the close button (#2718). It said 'home' because that was
       // the default for everything that was not Home, and the reset was
       // written before an app had a slot of its own. Its href is where
-      // App.closeApp goes: the page the app was opened from.
-      App.setBackIcon('close', App._closeAppHref());
+      // App.closeApp goes: the page the app was opened from. A private
+      // member's first app has none: the table's own answer for it, so the
+      // two writers agree (_backSlotFor, _privateNoClose).
+      if (App._privateNoClose()) App.setBackIcon(...App._backSlotFor('app-view'));
+      else App.setBackIcon('close', App._closeAppHref());
       AppView.renderAppTab();
       if (opening && AppView.appData?.slug === App.currentApp
           && App._isScreenVisible?.('app-view')) {

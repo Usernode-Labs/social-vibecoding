@@ -33,6 +33,7 @@ const inviteActivity = require('../services/invite-activity');
 const log = require('../services/logger');
 const appAccess = require('../services/app-access');
 const invites = require('../services/community-invites');
+const phoneAuth = require('../services/firebase-phone-auth');
 const challengeScorer = require('../services/topochain/challenge-scorer');
 const testAccounts = require('../services/test-accounts');
 const { drainGuard } = require('../services/lifecycle');
@@ -154,10 +155,9 @@ function communityInviteRoutes(config) {
     try {
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', appColumns);
       if (!app) return res.status(404).json({ error: 'App not found' });
-      const [listed, canCreate, skipsLeft, joiningRule] = await Promise.all([
+      const [listed, canCreate, joiningRule] = await Promise.all([
         invites.listInvites(pool, { app, user: req.user }),
         invites.canCreate(pool, app, req.user),
-        invites.skipsLeft(pool, req.user),
         invites.joiningRule(pool, app),
       ]);
       return res.json({
@@ -169,7 +169,6 @@ function communityInviteRoutes(config) {
         limits: invites.LIMITS,
         // WP-D: 0 for days or maxUses asks for no limit (until turned off).
         noLimit: invites.NO_LIMIT,
-        skipsLeft,
         joiningRule,
       });
     } catch (err) {
@@ -277,9 +276,14 @@ function communityInviteRoutes(config) {
     try {
       const result = await invites.redeem(pool, {
         token: req.params.token, user: req.user, browser: inviteActivity.browserFrom(req),
+        // A private member signs up with a phone (community-invites.js).
+        requirePhone: phoneAuth.offered(config),
       });
       // Following a link clears any copy the sign-in carried: it is spent.
       invites.clearInviteCookie(res);
+      if (result.reason === 'username_required') {
+        return res.status(409).json({ ...require('../services/usernames').USERNAME_REQUIRED, reason: result.reason });
+      }
       if (!result.ok) return res.status(result.status).json({ error: 'This invite link is not active.', reason: result.reason });
       // In the community now, so its challenge counts now (#3564). A queued
       // person is not in it yet; the schedule counts them once let in.

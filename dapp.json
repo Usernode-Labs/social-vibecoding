@@ -349,6 +349,17 @@
       "description": "Complete Firebase Admin service-account JSON encoded as base64 on one line. Required only while MOBILE_PUSH_ENABLED is true; never forwarded to child apps."
     },
     {
+      "key": "FIREBASE_PHONE_AUTH_ENABLED",
+      "group": "Phone sign-in",
+      "default": "false",
+      "description": "Phone-number sign-in and sign-up through Firebase Phone Auth (/api/auth/phone/*). While offered, an invite's Join starts with a phone and a private member must have one. Needs FIREBASE_WEB_API_KEY, the Firebase credentials mobile push uses, and the site's host among the project's authorized domains (reCAPTCHA). Unset or false: phone endpoints answer 404 not_offered and invites sign up by email."
+    },
+    {
+      "key": "FIREBASE_WEB_API_KEY",
+      "group": "Phone sign-in",
+      "description": "The Firebase project's Identity Toolkit web API key, used by the server for the send-verification-code and verify-phone-number REST calls. Required only while FIREBASE_PHONE_AUTH_ENABLED is true. Not private: a web API key is a public-in-client identifier."
+    },
+    {
       "key": "PLATFORM_MAIL_PROVIDER",
       "group": "Platform mail",
       "default": "auto",
@@ -376,6 +387,20 @@
       "group": "Platform mail",
       "private": true,
       "description": "Long-lived refresh token minted once for the sending mailbox with the https://www.googleapis.com/auth/gmail.send scope. Private: it can send mail as your domain indefinitely, so it is encrypted at rest and never returned by any API. Note the platform-variable value constraints (src/services/platform-env.js): no single quote, no CR, no NUL, 8192 characters max."
+    },
+    {
+      "key": "PLATFORM_MAIL_TRACKING_SECRET",
+      "group": "Platform mail",
+      "private": true,
+      "required": false,
+      "description": "HMAC secret for non-transactional email click, open and unsubscribe attribution URLs. Use a long random secret; unset sends ordinary links without tracking. Rotating it invalidates old tracking links."
+    },
+    {
+      "key": "PLATFORM_MAIL_RESEND_WEBHOOK_SECRET",
+      "group": "Platform mail",
+      "private": true,
+      "required": false,
+      "description": "Resend webhook signing secret (whsec_...) for POST /api/mail/webhooks/resend. Configure delivered, bounced and complained events in Resend. Unset rejects every webhook; Gmail has no delivery webhooks."
     },
     {
       "key": "PLATFORM_MAIL_MAX_PER_HOUR",
@@ -592,13 +617,6 @@
       "group": "Waitlist",
       "required": false,
       "description": "Overrides the origin the waitlist connect callback URLs are built from. Unset it is this deployment's canonical origin; it is http://localhost:<PORT> only when USERNODE_LOCAL_DEV=1 marks a local run, so a missing variable cannot yield a callback that works only on a laptop. Change it and you must register the matching callback with GitHub, X and LinkedIn, which all validate redirect_uri first."
-    },
-    {
-      "key": "INVITE_TREE_BUDGETS",
-      "group": "Waitlist",
-      "required": false,
-      "default": "10",
-      "description": "Lifetime waitlist skips by invite-tree generation, comma-separated: the first number is for people let off the waitlist by hand, the next for the people their links let in, and so on, with none past the end. The default, 10, is ten each and no chaining. An empty or unreadable value falls back to 10. Whether links skip the waitlist at all is switched in Admin → Waitlist."
     },
     {
       "key": "USERNODE_OPENROUTER_MANAGEMENT_API_KEY",
@@ -2110,9 +2128,9 @@
       "expectText": "Top users"
     },
     {
-      "name": "Admin Users list renders, with its Total points column",
+      "name": "Admin Users list renders, with its Total points column and the Podium switch (#3938)",
       "path": "/#admin/users",
-      "expectSelector": "#admin-users-points-header",
+      "expectSelector": "#admin-user-list:has([data-user-podium]) [data-user-podium]",
       "expectText": "Total points"
     },
     {
@@ -2142,9 +2160,9 @@
       "expectSelector": "#admin-mail-status"
     },
     {
-      "name": "Email delivery section offers a test send and the delivery ledger",
+      "name": "Email delivery section offers a test send, ledger and engagement reports",
       "path": "/#admin/mail",
-      "expectSelector": "#admin-mail-send, #admin-mail-activity",
+      "expectSelector": "#admin-mail-send, #admin-mail-activity, #admin-mail-reports",
       "expectText": "Recent email activity"
     },
     {
@@ -2231,6 +2249,12 @@
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000030",
       "expectSelector": ".gc-vote-count-lock",
       "expectText": "Vote · 1/3"
+    },
+    {
+      "name": "Explicit-approval proposal whose votes are all in says the member floor is unmet (#3826)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000095",
+      "expectSelector": ".gc-vote-count",
+      "expectText": "Needs your Yes · 3/3"
     },
     {
       "name": "Explicit-approval proposal still shows the rejection countdown (#788)",
@@ -4038,10 +4062,10 @@
       "expectText": "non-podium"
     },
     {
-      "name": "Admin Waitlist is a first-class menu section (#1179), with its Invites panel loaded",
+      "name": "Admin Waitlist is a first-class menu section (#1179), with its Landing panel loaded",
       "path": "/#admin/waitlist",
-      "expectSelector": "#admin-topo-content:has(#admin-topo-wl-invites-usage):has(#admin-topo-wl-search)",
-      "expectText": "Invite links"
+      "expectSelector": "#admin-topo-content:has(#admin-topo-wl-story .text-xs):has(#admin-topo-wl-search)",
+      "expectText": "Signed-out visitors"
     },
     {
       "name": "Admin Waitlist says where a signup is in words, not the route's name (#1544)",
@@ -4120,9 +4144,9 @@
       "expectText": "Estimates are per-token pricing times a typical change"
     },
     {
-      "name": "Homeroom bot dashboard renders its verdict table and mode (#2684)",
+      "name": "Homeroom bot dashboard renders its verdict table and mode (#2684) under its rollout health: proposals merged, time to a proposal, questions waiting, failed turns and DM answers, with the week's failed answers",
       "path": "/#admin/homeroom-bot",
-      "expectSelector": "#admin-homeroom-bot-table",
+      "expectSelector": "#admin-homeroom-bot:has(#admin-homeroom-bot-rollout-rows [data-rollout=\"chat\"]):has(#admin-homeroom-bot-rollout-failures) #admin-homeroom-bot-table",
       "expectText": "Verdict"
     },
     {
@@ -4136,6 +4160,12 @@
       "path": "/#admin/homeroom-bot/benchmark",
       "expectSelector": "#admin-homeroom-bench[data-bench-view=\"overview\"]:has(#admin-homeroom-bench-tab-runs span):has(#admin-homeroom-bench-now a[href$=\"/runs/936551\"]):has([data-bench-taste-score=\"capture\"]) #admin-homeroom-bench-best-table [data-bench-stage-row=\"triage\"]",
       "expectText": "Staging demo core v1"
+    },
+    {
+      "name": "Homeroom bot Benchmark's Studio place shows the App bench studio's gallery of first versions built from briefs, its runs, its context packs and its launcher",
+      "path": "/#admin/homeroom-bot/benchmark/studio",
+      "expectSelector": "#admin-homeroom-bench[data-bench-view=\"studio\"]:has(#admin-homeroom-bench-tab-studio[aria-current=\"page\"]) #admin-bench-studio-gallery [data-studio-brief=\"bread\"] h4",
+      "expectText": "Bread Bot"
     },
     {
       "name": "Welcome messages lets an admin choose who greets somebody let in, and what the first message says",
@@ -4156,9 +4186,9 @@
       "expectText": "Default per-user weekly cap"
     },
     {
-      "name": "Spend limits: the weekly cap is set per identity tier, with GitHub-and-X and zkPassport fields beside the unverified one (#838)",
+      "name": "Spend limits: the weekly cap is set per identity tier, with phone, GitHub-and-X and zkPassport fields beside the unverified one (#838), and the verified identity rule's switch below them",
       "path": "/#admin/limits",
-      "expectSelector": "#admin-limit-tiers:has(#admin-limit-weekly):has(#admin-limit-weekly-social) #admin-limit-weekly-zk"
+      "expectSelector": "#admin-section-content:has(#admin-identity-rule) #admin-limit-tiers:has(#admin-limit-weekly):has(#admin-limit-weekly-phone):has(#admin-limit-weekly-social) #admin-limit-weekly-zk"
     },
     {
       "name": "A user row states week-to-date spend, not just today's (#1788)",
@@ -5502,6 +5532,12 @@
         "src/services/conversations.js",
         "src/routes/conversations.js"
       ]
+    },
+    {
+      "name": "#4097: the Homeroom bot's news about a request leads with the request's card in its DM, in place of the line naming it, and its words follow the card; a build that did not finish offers Try again",
+      "path": "/?demo=1#messages/910005",
+      "expectSelector": "#messages-screen:not(.hidden):has(.messages-message button.messages-bot-primary[data-bot-prompt]) .messages-message [data-bot-request-card=\"12\"]:has(> .messages-object-card .messages-object-icon) + .messages-markdown",
+      "expectText": "Staging demo, sort the list by date"
     },
     {
       "name": "An agent session's own screen shows its app, its change and a Changes button, and the drawer links the active change to its proposal page (#2779) and says why its checks were skipped (#3180)",

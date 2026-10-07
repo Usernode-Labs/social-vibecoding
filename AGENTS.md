@@ -70,7 +70,10 @@ before editing it.
   and the platform-managed commit upload. This path needs no personal GitHub
   link and no `prepare_work`. That tool prepares an external fork contribution
   and requires GitHub identity for that different workflow; do not call it
-  merely to discover a native proposal's base.
+  merely to discover a native proposal's base. When only the hosted Homeroom
+  connector is connected, that connector path is the one to take: do not set
+  up the CLI to reach `proposal_start` (see `usernode-api`, which keeps the
+  connector first for every Homeroom call).
 - **Establish the base commit before the first edit.** Use an already supplied
   work order or guided hand-off's `Base commit:` when present. For a new native
   proposal, use the exact canonical revision resolved through Homeroom as

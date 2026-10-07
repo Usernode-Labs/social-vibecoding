@@ -263,6 +263,37 @@ const otpVerifyLimiter = makeLimiter({
   message: (s) => `Too many code attempts. Try again ${retryPhrase(s)}.`,
 });
 
+// Phone code requests (routes/phone-auth.js), the email code's pair:
+// requesting SENDS A TEXT, so a success is the cost and refunding it would
+// be the bug. Per source and per recipient, mounted together, the same
+// shape the email request above uses.
+const phoneOtpRequestLimiter = makeLimiter({
+  windowMs: AUTH_WINDOW_MS,
+  max: 10,
+  name: 'phone-otp-request',
+  message: (s) => `Too many code requests. Try again ${retryPhrase(s)}.`,
+});
+
+const phoneOtpRequestPhoneLimiter = makeLimiter({
+  windowMs: AUTH_WINDOW_MS,
+  max: 5,
+  name: 'phone-otp-request-phone',
+  key: (req) => identifierKey('phone', req.body?.phoneNumber),
+  message: (s) => `A code was just sent to that number. Try again ${retryPhrase(s)}.`,
+});
+
+// Verifying a phone code, or spending the ID token a client SDK earned.
+// Firebase caps attempts per code server-side already, so — like the email
+// code's verify — this only has to bound working through codes, and a
+// confirmed sign-in is refunded.
+const phoneVerifyLimiter = makeLimiter({
+  windowMs: AUTH_WINDOW_MS,
+  max: 15,
+  name: 'phone-verify',
+  skipSuccessfulRequests: true,
+  message: (s) => `Too many code attempts. Try again ${retryPhrase(s)}.`,
+});
+
 // Password recovery, split from login for the reason the split exists at
 // all: the remedy must never be throttled by the failures that caused it.
 // Requesting sends mail, so it counts successes and gets the same
@@ -636,6 +667,20 @@ const benchRunLimiter = makeLimiter({
   message: (s) => `Too many benchmark launches or cancels at once. Try again ${retryPhrase(s)}.`,
 });
 
+// The App bench studio's writes through the connector (routes/bench-studio.js):
+// a session drives a run by hand (references handed in, a trial run again,
+// a build kept or previewed, a pack saved), so they come in bursts a launch
+// limit would refuse. A launch through the studio spends money and is held
+// to benchRunLimiter as well.
+const benchStudioLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 60,
+  name: 'bench-studio',
+  keyByUser: true,
+  skipFailedRequests: true,
+  message: (s) => `Too many benchmark studio changes at once. Try again ${retryPhrase(s)}.`,
+});
+
 // Test accounts (routes/test-accounts.js /api/test-accounts), reached by a
 // full admin's connector session. Each admin gets 10 creates and 10 retires an
 // hour, counted apart so retiring yesterday's accounts never spends today's
@@ -934,6 +979,18 @@ const appFileUploadLimiter = makeLimiter({
 // honest use is one per filed issue, so 10 / 10 min never bites, while a
 // scripted loop trying to balloon the DB bounces off quickly (orphans are
 // additionally GC'd after 24h). Per-user keyed for shared-NAT fairness.
+// A spec posted on a request (routes/request-specs.js). Each post stores a
+// document of up to 600,000 characters, writes a version, a thread card and a
+// GitHub comment, so it is bounded per user like the screenshot uploads: a
+// review round is one post, and 20 an hour is many rounds.
+const requestSpecLimiter = makeLimiter({
+  windowMs: 60 * 60 * 1000,
+  max: 20,
+  name: 'request-spec-post',
+  keyByUser: true,
+  message: 'Too many specs posted. Try again later this hour.',
+});
+
 const issueScreenshotLimiter = makeLimiter({
   windowMs: 10 * 60 * 1000,
   max: 10,
@@ -1491,4 +1548,4 @@ const linkCardLimiter = makeLimiter({
   message: 'Too many link previews. Please slow down.',
 });
 
-module.exports = { FEEDBACK_SUBMITS_PER_HOUR, linkCardLimiter, benchGradingLimiter, benchRunLimiter, testAccountLimiter, inviteLinkCreateLimiter, inviteRedeemLimiter, invitePreviewLimiter, agentSessionCreateLimiter, appAllowanceRequestLimiter, topochainMobileReadLimiter, partnerActivityLimiter, partnerActivityParticipantLimiter, explorerProxyLimiter, githubLookupLimiter, userDirectoryLimiter, dbExportLimiter, loginBurstLimiter, loginSustainedLimiter, loginIdentityLimiter, registerLimiter, otpRequestLimiter, otpRequestEmailLimiter, otpVerifyLimiter, oauthSignInLimiter, passwordResetRequestLimiter, passwordResetRequestEmailLimiter, passwordResetConfirmLimiter, walletAuthLimiter, mobileWalletClaimLimiter, homeLayoutLimiter, draftWriteLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, conversationMessageLimiter, conversationActionLimiter, conversationSafetyLimiter, conversationInviteLimiter, conversationReactionLimiter, conversationReportLimiter, friendshipLimiter, messageBookmarkLimiter, appChatReadLimiter, attributeVoteLimiter, governanceVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, feedbackSubmitLimiter, boardOrderLimiter, issueScreenshotLimiter, feedbackVideoLimiter, profileWriteLimiter, usernameChangeLimiter, usernameChooseLimiter, publicProfileReadLimiter, profileReportLimiter, topochainMobilePushRegistrationLimiter, reportAiLimiter, uiTelemetryLimiter, workshopAskLimiter, reportSnapshotLimiter, waitlistJoinLimiter, waitlistJoinAnonLimiter, waitlistJoinClientLimiter, waitlistJoinClientUserLimiter, waitlistTokenLimiter, waitlistTokenScanLimiter, waitlistCodeConfirmLimiter, waitlistResendLimiter, waitlistResendIpLimiter, waitlistStatusLimiter, waitlistStatusIpLimiter, mailTestLimiter };
+module.exports = { FEEDBACK_SUBMITS_PER_HOUR, linkCardLimiter, benchGradingLimiter, benchRunLimiter, benchStudioLimiter, testAccountLimiter, inviteLinkCreateLimiter, inviteRedeemLimiter, invitePreviewLimiter, agentSessionCreateLimiter, appAllowanceRequestLimiter, topochainMobileReadLimiter, partnerActivityLimiter, partnerActivityParticipantLimiter, explorerProxyLimiter, githubLookupLimiter, userDirectoryLimiter, dbExportLimiter, loginBurstLimiter, loginSustainedLimiter, loginIdentityLimiter, registerLimiter, otpRequestLimiter, otpRequestEmailLimiter, otpVerifyLimiter, phoneOtpRequestLimiter, phoneOtpRequestPhoneLimiter, phoneVerifyLimiter, oauthSignInLimiter, passwordResetRequestLimiter, passwordResetRequestEmailLimiter, passwordResetConfirmLimiter, walletAuthLimiter, mobileWalletClaimLimiter, homeLayoutLimiter, draftWriteLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, conversationMessageLimiter, conversationActionLimiter, conversationSafetyLimiter, conversationInviteLimiter, conversationReactionLimiter, conversationReportLimiter, friendshipLimiter, messageBookmarkLimiter, appChatReadLimiter, attributeVoteLimiter, governanceVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, feedbackSubmitLimiter, boardOrderLimiter, issueScreenshotLimiter, requestSpecLimiter, feedbackVideoLimiter, profileWriteLimiter, usernameChangeLimiter, usernameChooseLimiter, publicProfileReadLimiter, profileReportLimiter, topochainMobilePushRegistrationLimiter, reportAiLimiter, uiTelemetryLimiter, workshopAskLimiter, reportSnapshotLimiter, waitlistJoinLimiter, waitlistJoinAnonLimiter, waitlistJoinClientLimiter, waitlistJoinClientUserLimiter, waitlistTokenLimiter, waitlistTokenScanLimiter, waitlistCodeConfirmLimiter, waitlistResendLimiter, waitlistResendIpLimiter, waitlistStatusLimiter, waitlistStatusIpLimiter, mailTestLimiter };

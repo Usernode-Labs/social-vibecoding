@@ -379,12 +379,18 @@ test('statusPillState: votes in but no other member yet is not a green pass', ()
     check_state: 'passing', requires_explicit_approval: true, explicit_approval_reason: 'governance',
     needs_other_member_yes: true, other_member_yes_count: 0,
   };
+  // #3826: the wait gets words, not a bare count. The tally reads full, so
+  // "1 / 1" in the pass tone read as a mistake; the pill now says what it
+  // waits for, in the amber the conversation tier wears, with the reason
+  // as its tooltip.
   const waiting = AppView.statusPillState(row);
-  assert.equal(waiting.label, '1 / 1');
-  assert.equal(waiting.tone, 'progress');
+  assert.equal(waiting.key, 'needs_member');
+  assert.equal(waiting.label, 'Needs another member’s Yes · 1/1');
+  assert.equal(waiting.tone, 'attention');
   assert.equal(waiting.title, 'Changes to how changes are approved need a Yes from another member.');
   const passed = AppView.statusPillState({ ...row, yes_count: 2, votes_required: 2, other_member_yes_count: 1 });
   assert.equal(passed.tone, 'ok');
+  assert.equal(passed.key, 'tally');
 });
 
 test('voteCountPill: the chip tooltip names the reason', () => {

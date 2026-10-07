@@ -1569,6 +1569,11 @@ async function sendSystemMessage(pool, appId, content, msgType = 'system', metad
  * `msgType` may also be 'spec_share': the bot's spec, drawn as the same spec
  * card a person's "Share to group" posts (metadata.specShare), with the
  * card's summary line as its content. Nothing else.
+ *
+ * services/request-specs.js posts a PERSON's spec card on a request through
+ * this too, as that person: the same thread card, and it should not wake the
+ * bot either. Its route has already applied the membership and collaborator
+ * gates this function skips.
  */
 const BOT_MESSAGE_TYPES = new Set(['message', 'spec_share']);
 async function sendBotMessage(pool, appId, { user, content, metadata = null, thread = null, msgType = 'message' } = {}) {

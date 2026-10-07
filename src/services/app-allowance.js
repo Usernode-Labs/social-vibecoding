@@ -28,6 +28,8 @@ async function serverCapacity(pool, user, maxApps) {
 async function read(pool, user, opts = {}) {
   const { rows } = await pool.query(
     `SELECT u.app_quota, u.app_quota_requested_at,
+            (NOT u.has_platform_access AND NOT u.is_admin
+              AND u.private_member_since IS NOT NULL) AS private_member,
             (SELECT COUNT(*)::int FROM apps owned_app
               WHERE owned_app.created_by = u.id
                 AND owned_app.status <> 'error') AS app_quota_used
@@ -36,7 +38,12 @@ async function read(pool, user, opts = {}) {
   );
   if (!rows.length) throw new Error('App allowance user not found');
   const used = Number(rows[0].app_quota_used);
-  const limit = user.canAdminWrite ? null : Number(rows[0].app_quota);
+  // A private member (middleware/auth.js isPrivateMember) makes no apps of
+  // their own until they are let in off the waitlist: their allowance is
+  // nothing, whatever app_quota says, and POST /api/apps and /fork refuse
+  // them as they refuse anybody whose allowance is spent. Read from the row,
+  // not `user`: the CLI's and Homeroom bot's callers carry no such flag.
+  const limit = user.canAdminWrite ? null : (rows[0].private_member ? 0 : Number(rows[0].app_quota));
   if (!Number.isInteger(used) || used < 0
       || (limit !== null && (!Number.isInteger(limit) || limit < 0))) {
     throw new Error('Invalid app allowance');

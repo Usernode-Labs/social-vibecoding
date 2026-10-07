@@ -42,6 +42,9 @@ async function migrate(config) {
   await applySchemaWithLockRetry(pool, schema);
   await require('../services/moderation-migration').importLegacyReports(pool);
   await require('../services/moderation').purgeExpired(pool);
+  // The verified-identity rule's one-time production rollout: on, with $20
+  // a week for new members who have not verified (services/identity-rollout.js).
+  await require('../services/identity-rollout').applyIdentityRollout(pool);
   log.info('db', 'Schema up to date');
   finishPhase('schemaMs');
 
@@ -177,6 +180,8 @@ async function migrate(config) {
   await require('../services/bench/demo').seedStagingBench(pool);
   // #3737: and its taste eval, with screenshots to look at.
   await require('../services/bench/demo').seedStagingTaste(pool);
+  // And the App bench studio's gallery, with builds side by side.
+  await require('../services/bench/demo').seedStagingStudio(pool);
   // After the proposal seeds above: the platform-env fixture stamps a
   // failing verdict onto an existing staging proposal.
   await seedStagingPlatformEnv(pool, config);
@@ -13575,6 +13580,48 @@ async function seedStagingPlatformMail(pool) {
           )`,
         [row.kind, row.to, row.provider, row.status, row.error]
       );
+    }
+
+    // Tracking demo contains only synthetic recipients. Stable opaque ids
+    // and event keys keep repeated staging boots idempotent.
+    const demoMessageId = crypto.createHash('sha256').update('Staging demo mail tracking').digest('hex').slice(0, 48);
+    await pool.query(
+      `UPDATE mail_deliveries SET message_id = $1, provider_message_id = 'staging-demo-receipt'
+        WHERE id = (SELECT id FROM mail_deliveries
+          WHERE recipient = 'staging-demo-released@example.invalid'
+            AND kind = 'waitlist_released' AND status = 'sent' ORDER BY id LIMIT 1)`,
+      [demoMessageId]
+    );
+    await pool.query(
+      `INSERT INTO mail_events (delivery_id, type, event_key, meta)
+       SELECT id, 'delivered', 'staging-demo:delivered', '{"demo":"Staging demo"}'::jsonb
+         FROM mail_deliveries WHERE message_id = $1
+       ON CONFLICT (event_key) DO NOTHING`, [demoMessageId]
+    );
+
+    for (const [kind, label, recipient, types] of [
+      ['build_ready', 'build', 'staging-demo-tracking-build@example.invalid', ['delivered', 'opened', 'clicked', 'unsubscribed']],
+      ['project_invite', 'invite', 'staging-demo-tracking-invite@example.invalid', ['bounced', 'complained']],
+    ]) {
+      const id = crypto.createHash('sha256').update(`Staging demo tracking ${label}`).digest('hex').slice(0, 48);
+      await pool.query(
+        `INSERT INTO mail_deliveries (kind, recipient, provider, status, message_id, tracking_links, engagement_tracked, created_at)
+         SELECT $1::text, $2::text, 'http', 'sent', $3::text, '["https://app.onhomeroom.com/#home"]'::jsonb, TRUE,
+           NOW() - INTERVAL '1 day'
+         WHERE NOT EXISTS (SELECT 1 FROM mail_deliveries WHERE message_id = $3::text)`,
+        [kind, recipient, id]
+      );
+      await pool.query('UPDATE mail_deliveries SET engagement_tracked = TRUE WHERE message_id = $1', [id]);
+      for (const type of types) {
+        await pool.query(
+          `INSERT INTO mail_events (delivery_id, type, event_key, url, user_agent_class, meta)
+           SELECT id, $2::text, $3::text, $4::text, $5::text, '{"demo":"Staging demo","approximate":true}'::jsonb
+             FROM mail_deliveries WHERE message_id = $1
+           ON CONFLICT (event_key) DO NOTHING`,
+          [id, type, `staging-demo:${label}:${type}`, type === 'clicked' ? 'https://app.onhomeroom.com/#home' : null,
+            type === 'opened' ? 'image_proxy' : null]
+        );
+      }
     }
 
     // An unconfirmed waitlist signup with a known token, so a tester can

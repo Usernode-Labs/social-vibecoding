@@ -18,6 +18,7 @@ const { rateLimit } = require('express-rate-limit');
 const { getPool } = require('../db/pool');
 const activityMail = require('../services/activity-mail');
 const log = require('../services/logger');
+const tracking = require('../services/mail/tracking');
 
 const PAGE_STYLE = 'font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;'
   + 'max-width:420px;margin:64px auto;padding:0 16px;color:#1c1c1e;line-height:1.5';
@@ -47,7 +48,10 @@ function activityMailRoutes(config) {
       return res.status(400).type('html').send(page('This link does not work',
         '<p>It may have been copied only in part. Open it again from the email.</p>'));
     }
-    const action = `/mail/unsubscribe?u=${userId}&t=${encodeURIComponent(token)}`;
+    const attribution = typeof req.query.m === 'string' && typeof req.query.s === 'string'
+      && tracking.matches('unsubscribe', req.query.m, req.query.s)
+      ? `&m=${req.query.m}&s=${encodeURIComponent(req.query.s)}` : '';
+    const action = `/mail/unsubscribe?u=${userId}&t=${encodeURIComponent(token)}${attribution}`;
     return res.type('html').send(page('Stop these emails?',
       '<p>Homeroom emails you when something you asked for is ready, or somebody joins through your invite, '
       + 'and there is no phone to send it to. Sign-in codes are not affected.</p>'
@@ -65,6 +69,9 @@ function activityMailRoutes(config) {
         return res.status(400).type('html').send(page('This link does not work',
           '<p>Nothing was changed. Open the link again from the email.</p>'));
       }
+      // Attribution must never prevent the existing one-click opt-out.
+      try { await tracking.recordUnsubscribe(pool, { userId, messageId: req.query.m, signature: req.query.s }); }
+      catch (err) { log.warn('activity-mail', 'Unsubscribe event could not be recorded', { err: err.message }); }
       return res.type('html').send(page('Done',
         '<p>Homeroom will not email you about builds or invites any more. Your phone still gets them '
         + 'if you set it up.</p>'));

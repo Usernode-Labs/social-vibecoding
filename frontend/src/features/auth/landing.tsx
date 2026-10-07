@@ -679,6 +679,10 @@ export function LandingScreen() {
   const nativeProviders = useNativeSignInProviders(waitlistPayload);
   const nativeSignIn = nativeProviders.length > 0;
   const providers = nativeSignIn ? nativeProviders : webProviders;
+  // An invite makes a private member, who signs up with a phone number
+  // (services/community-invites.js): the Join sheet starts there when the
+  // server offers it.
+  const phoneSignIn = waitlistPayload?.phone_sign_in === true;
   // Back from a provider without a session: reopen the sheet the trip left,
   // the invite's Join on its link, the story's otherwise.
   useEffect(() => {
@@ -1703,12 +1707,18 @@ export function LandingScreen() {
         <SignInSheet
           open={sheet === 'join'}
           title={`Join ${invite!.project!.name}`}
-          intro={providers.length
-            ? 'Sign in or make an account. It takes a minute.'
-            : 'Sign in or make an account with your email. It takes a minute.'}
+          intro={phoneSignIn
+            ? (invite!.project!.public
+              ? 'Just your phone number and a username. No app, no password.'
+              : 'Just your name and phone number. No app, no password.')
+            : providers.length
+              ? 'Sign in or make an account. It takes a minute.'
+              : 'Sign in or make an account with your email. It takes a minute.'}
           followInvite
           providers={providers}
           native={nativeSignIn}
+          phone={phoneSignIn}
+          askName={!invite!.project!.public}
           from="invite"
           returnTo={location.pathname}
           resume={resume}

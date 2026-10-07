@@ -116,6 +116,14 @@ export const TAB_FOR_SCREEN = Object.freeze({
  *   the ~200ms of the fade so the element is still there to fade. Only ever
  *   true while `peek` is; ./rail-peek.ts sets and clears it.
  * @property {boolean} railOpen  The viewer has the desktop rail expanded.
+ * @property {boolean} identityNeeded  The verified-identity rule holds the
+ *   viewer to it (GET /api/auth/me `identityNeeded`): Home's "Verify your
+ *   account" card reads it (../home/verify-card.tsx). FALSE is the
+ *   prerender; App._syncViewer publishes it after boot.
+ * @property {boolean} privateMember  The viewer is a private member (an invite
+ *   link let them in before they were let in off the waitlist): the mark menu
+ *   and Home read it (../app-context, ../home/waitlist-card.tsx). FALSE is
+ *   the prerender; App._syncViewer publishes it after boot.
  *   True is the prerender; see the note on INITIAL for why this is separate
  *   from the visibility store and why it is not remembered across loads.
  */
@@ -127,6 +135,8 @@ const INITIAL = {
   messages: 0,
   communities: 0,
   viewer: null,
+  privateMember: false,
+  identityNeeded: false,
   peek: false,
   peekOut: false,
   /*

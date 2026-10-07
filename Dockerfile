@@ -83,6 +83,7 @@ COPY --from=css /build/public/css/tailwind.css ./public/css/tailwind.css
 ARG GIT_SHA=dev
 ENV GIT_SHA=$GIT_SHA
 RUN node scripts/build-shell-release.js
+RUN node scripts/precompress-static-assets.js
 # docker-compose.dev.yml bind-mounts ./public for live source editing, which
 # hides the three generated files above on a clean checkout. Keep a protected
 # image copy that its startup helper can restore into that mount when missing.

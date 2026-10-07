@@ -430,6 +430,20 @@ function stagingMockProposals(viewer) {
       needs_other_member_yes: true,
       other_member_yes_count: 0,
     },
+    // (d) Threshold met, floor not (#3826). All three Yes votes are the
+    // author's, so the tally reads full while the member floor is still
+    // unmet: the card says "Needs another member's Yes" (a viewer who has
+    // voted) or "Needs your Yes" (one who has not), instead of a bare
+    // "3 / 3" that reads as passed. No window, like (a) and (b).
+    {
+      ...mk(9000095, 900195,
+        '[Mock] Explicit-approval test: votes all in, waiting on another member (floor unmet)',
+        21, 3, 0, 2, { required: 3 }),
+      requires_explicit_approval: true,
+      explicit_approval_reason: 'visibility',
+      needs_other_member_yes: true,
+      other_member_yes_count: 0,
+    },
     // ── #1442 freshness fixtures ───────────────────────────────────────
     //
     // The three states the issue is about, each of which used to be
@@ -3390,6 +3404,12 @@ function voteRoutes(config) {
       );
       if (!sessionRows.length) return res.status(404).json({ error: 'Promoted session not found' });
       const session = sessionRows[0];
+      // A private member does not vote on a public app (communities.js).
+      const privateRefusal = await communities.privateVoteRefusal(pool, session.app_id, req.user?.id);
+      if (privateRefusal) return res.status(403).json(privateRefusal);
+      // A public app's vote counts from a verified account (communities.js).
+      const identityRefusal = await communities.identityVoteRefusal(pool, session.app_id, req.user?.id);
+      if (identityRefusal) return res.status(403).json(identityRefusal);
 
       // #2782: the revision as the ROW has it — no GitHub round-trip. This
       // used to be a fresh reconcile, which meant a full `git fetch` of the

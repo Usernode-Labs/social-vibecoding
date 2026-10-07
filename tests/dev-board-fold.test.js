@@ -1464,9 +1464,28 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // with no check on it to fold into. MAX_DECLARED_TESTS went 860 → 870 in
   // the same change (services/app-manifest.js), so 841 leaves 29 slots.
   //
+  // 841 → 842: +1 (#4097): the Homeroom bot's news about a request leads
+  // with the request's card on the staging fixture (#messages/910005). It
+  // shares that route with the #3624 and #3692 checks, but could not fold
+  // into either: their selectors are at 253 and 245 of the 256 characters
+  // the runner reads. 842 leaves 28 slots.
+  //
+  // 842 → 843: +1: the Benchmark area's Studio place
+  // (#admin/homeroom-bot/benchmark/studio), the App bench studio's gallery on
+  // its staging fixture. It is a route of its own: the Benchmark's one check
+  // reads the Overview, which the Studio replaces rather than sits beside, so
+  // there is no check on that route to fold into. 843 leaves 27 slots.
+  //
+  // 843 → 844: +1 (#3826): the member floor's words on the card. The mock
+  // row whose votes are all in and whose floor is unmet (9000095) has a
+  // route of its own — the proposal page — and the #788 family's checks sit
+  // on other rows (below threshold, floor met, rejecting), so there was
+  // nothing to fold it into. The ceiling went 860 → 880 with it
+  // (services/app-manifest.js), leaving 36 slots.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 841);
+  checkCap.assertPinned(DAPP.tests.length, 844);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

@@ -656,6 +656,31 @@ Two related notes on `path:` form:
   annotation (`path: /board @mobile`) is still accepted but redundant
   now; just point `path:` at the route where the change is visible.
 
+### Who the before & after shots see
+
+The shots agent signs in as the persona each declared change names, on
+throwaway copies of the app. Three things it cannot do by itself, which
+account for most changes that end up with no shots:
+
+- **It has no role in your app.** `member` is an ordinary signed-in member:
+  not your app's manager or owner, with no linked wallet and nothing it
+  made. When a change shows only to someone with a role, put the real
+  in-app path to that role in `hints.setup` (for example "Create a group
+  from + first; its creator is its manager"). Do not grant the role to
+  whoever opens the preview in seed data (see "Never seed the visitor"
+  above). If no in-app path reaches it, declare what a member does see and
+  say in the claim what the shots will leave out.
+- **It cannot sign out.** A change that signed-out visitors see is declared
+  with persona `guest`. A private app shows a guest only what it shows a
+  signed-out visitor outside Homeroom, usually a sign-in page, so declare a
+  private app's changes for `member`. The response to
+  `declare_visible_changes` warns about both mistakes; declare again when it
+  does.
+- **The home screen is not on the copies' addresses**, but the shots agent
+  shoots each side's home-screen tile from that side's `dapp.json`. A change
+  to the app's `icon`, `name` or colour is a visible change: declare it
+  with impact `ui` and a claim naming the home-screen tile, not `none`.
+
 ### Testing `path:` for the hybrid-routed self-app
 
 The before/after screenshots and the "Test this change" button visit the

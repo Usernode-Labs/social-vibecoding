@@ -51,7 +51,8 @@ test('app allowances: migration, create/fork, requests and admin review', async 
     await client.query(`
       CREATE TABLE users (id SERIAL PRIMARY KEY, username VARCHAR(255),
         is_admin BOOLEAN DEFAULT FALSE, admin_readonly BOOLEAN NOT NULL DEFAULT FALSE,
-        app_quota INTEGER NOT NULL DEFAULT 0);
+        app_quota INTEGER NOT NULL DEFAULT 0,
+        has_platform_access BOOLEAN NOT NULL DEFAULT TRUE, private_member_since TIMESTAMPTZ);
       CREATE TABLE platform_settings (key VARCHAR(255) PRIMARY KEY, value TEXT);
       CREATE TABLE notifications (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id),
         source_user_id INTEGER REFERENCES users(id), kind VARCHAR(32), detail VARCHAR(32),

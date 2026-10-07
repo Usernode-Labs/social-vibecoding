@@ -508,6 +508,57 @@ test('tier 6 — the plain tally, and the at-least-N approvals variant', () => {
   assert.ok(approvals.fill, 'clock-free, but still a progress pill');
 });
 
+// #3826 — the member floor's wait gets words on the card, not a bare count.
+// The tally reads full, so "3 / 3" in the pass tone read as a mistake and
+// the lock glyph alone never said why it was not going live.
+test('tier 6 — the member floor wait says so in words, not a bare count (#3826)', () => {
+  const AppView = makeAppView();
+  const s = AppView.statusPillState(PR({
+    check_state: 'passing', my_vote: 'yes', yes_count: 3, votes_required: 3,
+    requires_explicit_approval: true, explicit_approval_reason: 'visibility',
+    needs_other_member_yes: true, other_member_yes_count: 0,
+  }));
+  assert.equal(s.tier, 6);
+  assert.equal(s.key, 'needs_member');
+  assert.equal(s.label, 'Needs another member’s Yes · 3/3');
+  assert.equal(s.tone, 'attention');
+  assert.equal(s.title, 'Changes to who can see this app need a Yes from another member.');
+  assert.ok(s.lock, 'the lock glyph still rides along');
+  // Once the floor is met it is a plain pass again — no words left over.
+  const met = AppView.statusPillState(PR({
+    check_state: 'passing', my_vote: 'yes', yes_count: 3, votes_required: 3,
+    requires_explicit_approval: true, explicit_approval_reason: 'visibility',
+    needs_other_member_yes: true, other_member_yes_count: 1,
+  }));
+  assert.equal(met.key, 'tally');
+  assert.equal(met.tone, 'ok');
+});
+
+test('tier 5 — when the viewer is the member it waits on, the pill says so (#3826)', () => {
+  const AppView = makeAppView();
+  const s = AppView.statusPillState(PR({
+    check_state: 'passing', my_vote: null, yes_count: 3, votes_required: 3,
+    requires_explicit_approval: true, explicit_approval_reason: 'visibility',
+    needs_other_member_yes: true, other_member_yes_count: 0,
+  }));
+  assert.equal(s.tier, 5);
+  assert.equal(s.key, 'needs_vote');
+  assert.equal(s.label, 'Needs your Yes · 3/3');
+  assert.equal(s.tone, 'progress');
+  assert.ok(s.dot);
+  assert.match(s.title, /none is from another member yet/);
+  // An invited-approver app's non-approver vote is advisory, so the pill
+  // keeps the plain vote label and only states the floor is unmet.
+  const invited = AppView.statusPillState(PR({
+    check_state: 'passing', my_vote: null, yes_count: 3, votes_required: 3,
+    approval_policy: 'invited', requires_explicit_approval: true,
+    explicit_approval_reason: 'visibility', needs_other_member_yes: true,
+    other_member_yes_count: 0,
+  }));
+  assert.equal(invited.label, 'Vote · 3/3');
+  assert.equal(invited.title, 'It has the Yes votes it needs, but a Yes from another member is still missing.');
+});
+
 // ── Modifiers folded into the pill ──────────────────────────────────────
 
 test('the advisory surplus rides inside the label, not beside the pill', () => {

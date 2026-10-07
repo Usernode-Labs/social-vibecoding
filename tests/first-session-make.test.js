@@ -51,7 +51,7 @@ test('the options carry the switch, and the admin switches it beside the invite 
   assert.match(admin, /router\.get\('\/api\/v4\/admin\/story-landing',/);
   assert.match(admin, /router\.put\('\/api\/v4\/admin\/story-landing', adminWriteGate,/);
   const screen = read('frontend/src/features/admin/topochain/waitlist.tsx');
-  assert.match(screen, /<InviteTreePanel \/>\s+<StoryLandingPanel \/>/);
+  assert.match(screen, /\{showAnalytics \? <WaitlistAnalyticsPanel onClose=\{\(\) => setShowAnalytics\(false\)\} \/> : null\}\s+<StoryLandingPanel \/>/);
   assert.match(screen, /id="admin-topo-wl-story-enabled"/);
 });
 
@@ -108,7 +108,9 @@ test('an account that signs in some other way is asked what to make in the join 
   const island = read(`${DIR}/index.tsx`);
   assert.match(island, /const open = \(\) => setMode\(\(prev\) => \(prev\.kind === 'none' \? \{ kind: 'make' \} : prev\)\);\s+if \(now\) flushSync\(open\);\s+else open\(\);/);
   assert.match(island, /make\(\): boolean \{\s+try \{ sessionStorage\.removeItem\(MAKE_FLAG\); \} catch \{[^}]*\}\s+openMake\(setMode, true\);/);
-  assert.match(island, /if \(!flagged\) return;\s+try \{ sessionStorage\.removeItem\(MAKE_FLAG\); \} catch \{[^}]*\}\s+openMake\(setMode, now\);/);
+  // On a phone, the verified-identity rule's phone step comes first: the
+  // flag waits for it, then opens (tests/verified-identity-shell.test.js).
+  assert.match(island, /if \(!flagged\) return;\s+(?:\/\/[^\n]*\n\s+)*const phone = legacy\(\)\.PhoneFirstRun;\s+if \(now && phone\?\.comesFirst\?\.\(legacy\(\)\.App\?\.user\)\) \{\s+void phone\.settled\(\)\.then\(\(\) => check\(false\)\);\s+return;\s+\}\s+try \{ sessionStorage\.removeItem\(MAKE_FLAG\); \} catch \{[^}]*\}\s+openMake\(setMode, now\);/);
   // From the mount's own check it is an ordinary update: React is mid-effect
   // there and cannot draw synchronously.
   assert.match(island, /if \(legacy\(\)\.App\?\.user\) check\(false\);\s+const onAuthed = \(\) => check\(true\);/);
@@ -326,12 +328,14 @@ test('after Make it: the build\'s step, then one invite, and the second button s
   assert.equal(made.buildLine(null, 'running'), 'Homeroom bot builds it from your description.');
   const src = read(`${DIR}/made.tsx`);
   assert.match(src, /\{sent \? 'Go to the Homeroom app' : 'Invite people later'\}/);
-  // The link outlives a week, and the note is said to be the first message.
+  // The note is said to be the first message.
   assert.match(src, /body: JSON\.stringify\(\{ days: LINK_DAYS, maxUses: LINK_USES, note: note\.trim\(\) \|\| null \}\)/);
-  // WP-D: until it is turned off, for anyone it reaches (0 is no limit).
-  assert.match(src, /const LINK_DAYS = 0;\s+const LINK_USES = 0;/);
-  assert.equal(require('../src/services/community-invites').NO_LIMIT, 0);
-  assert.match(src, /Anyone with the link can join, until you turn it off\./);
+  // Every link's default, the first one's too: a link lets somebody new
+  // straight in as a private member now, so a forwarded one stops on its own.
+  const invitesService = require('../src/services/community-invites');
+  assert.match(src, /const LINK_DAYS = 7;\s+const LINK_USES = 25;/);
+  assert.deepEqual([invitesService.DEFAULT_DAYS, invitesService.DEFAULT_USES], [7, 25]);
+  assert.match(src, /Anyone with the link can join for the next 7 days, up to 25 people\./);
   // Evan, 5 October 2026: the first invite is a link and nothing else. No
   // invite by username (somebody brand new knows nobody on Homeroom yet), and
   // no joining-rule line ("With one other person using it, a change goes
