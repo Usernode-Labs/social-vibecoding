@@ -605,6 +605,19 @@ function isImmuneApiRequest(url, selfOrigin) {
 // can never collide with a Response.
 const TIMED_OUT = { timedOut: true };
 
+// #4177: a read that asks for the CURRENT answer gets it. The page re-reads
+// what is on screen after a gap (a dropped socket, a hidden tab, this
+// worker's own `api-updated`; frontend/src/lib/live-reads.ts) with
+// `cache: 'no-cache'`, and a re-read answered from this cache after the 1s
+// deadline would be the stale copy the re-read exists to replace. Such a
+// request waits for the network, keeps refreshing the cache, and falls back
+// to the cached copy only when the network fails, so offline still works.
+// `reload` asks for the same thing more strongly. `no-store` never gets here:
+// the fetch handler leaves it to the browser.
+function wantsFreshAnswer(cacheMode) {
+  return cacheMode === 'no-cache' || cacheMode === 'reload';
+}
+
 // Network-first WITH a deadline (#1021). Pure: every effect is injected,
 // so tests drive all three branches with fake fetch / cache / timer.
 //
@@ -623,6 +636,9 @@ const TIMED_OUT = { timedOut: true };
 //   - deadline first, cache MISS    → keep waiting on the network. A
 //     first-ever load (or a screen this device has never visited) must
 //     never fail early just because it is slow.
+//   - `timeoutMs: null`             → no deadline at all: the network's
+//     answer, however long it takes, and the cached copy only when the
+//     network fails (see `wantsFreshAnswer`).
 //
 // `schedule(fn, ms)` returns a cancel function.
 async function raceNetworkAndCache({ startFetch, matchCache, timeoutMs, schedule }) {
@@ -633,9 +649,11 @@ async function raceNetworkAndCache({ startFetch, matchCache, timeoutMs, schedule
   network.catch(() => {});
 
   let cancelTimer = null;
-  const deadline = new Promise((resolve) => {
-    cancelTimer = schedule(() => resolve(TIMED_OUT), timeoutMs);
-  });
+  const deadline = timeoutMs == null
+    ? new Promise(() => {})
+    : new Promise((resolve) => {
+      cancelTimer = schedule(() => resolve(TIMED_OUT), timeoutMs);
+    });
 
   let first;
   try {
@@ -793,6 +811,7 @@ if (typeof module !== 'undefined' && module.exports) {
     isShellDocumentUrl,
     SHELL_DOCUMENT_PATHS,
     raceNetworkAndCache,
+    wantsFreshAnswer,
     bytesEqual,
     SHELL_ASSETS,
     parseBuildScopedPath,
@@ -1262,8 +1281,9 @@ if (typeof module !== 'undefined' && module.exports) {
     const settling = awaitingNetwork.delete(event.request.url);
     const laned = !correcting.delete(event.request.url) && !settling
       && bootLaneApplies(event.request.url, ORIGIN, Date.now(), refreshIntentUntil);
-    const timeoutMs = settling ? CORRECTION_WAIT_MS
-      : laned ? BOOT_API_TIMEOUT_MS : API_TIMEOUT_MS;
+    const timeoutMs = wantsFreshAnswer(event.request.cache) ? null
+      : settling ? CORRECTION_WAIT_MS
+        : laned ? BOOT_API_TIMEOUT_MS : API_TIMEOUT_MS;
 
     const { response, pending } = await raceNetworkAndCache({
       startFetch: () => sharedApiFetch(event.request).then((res) => {

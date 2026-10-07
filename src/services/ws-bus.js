@@ -63,6 +63,7 @@ const INSTANCE_ID = crypto.randomUUID();
 
 let _client = null;
 let _onMessage = null;
+let _onListening = null;
 let _connectionString = null;
 let _stopped = true;
 let _retryMs = 1000;
@@ -119,6 +120,24 @@ function _handleNotification(msg) {
   }
 }
 
+// ── A gap in listening is a gap in delivery (#4177) ──────────────────
+//
+// NOTIFY reaches only the sessions LISTENing when it is sent. While this
+// listener is down (the database restarted, the connection dropped, the first
+// connect is still retrying) every event another instance publishes is lost
+// for this instance's sockets, and nothing tells them. So each time the
+// listener is subscribed again, this instance's sockets are told to re-read
+// what they show: the same nudge an oversize payload becomes. The very first
+// subscription at boot tells nobody anything, because nobody is connected yet.
+function _listening() {
+  if (typeof _onListening !== 'function') return;
+  try {
+    _onListening();
+  } catch (err) {
+    log.warn('ws-bus', 'listening handler threw', { err: err.message });
+  }
+}
+
 async function _connect() {
   if (_stopped) return;
   const { Client } = require('pg');
@@ -140,6 +159,7 @@ async function _connect() {
     _client = client;
     _retryMs = 1000;
     log.info('ws-bus', 'listening for cross-instance events', { instance: INSTANCE_ID });
+    _listening();
   } catch (err) {
     log.warn('ws-bus', 'listener connect failed, retrying', { err: err.message });
     _scheduleReconnect();
@@ -158,11 +178,14 @@ function _scheduleReconnect() {
  * Start the bus. Safe to call when the database is unreachable — publishing
  * degrades to a no-op and the listener retries, so a single-instance
  * deployment behaves exactly as it does today either way.
+ *
+ * `onListening` runs each time the listener is subscribed (see `_listening`).
  */
-function start({ pool, connectionString, onMessage }) {
+function start({ pool, connectionString, onMessage, onListening }) {
   _pool = pool || null;
   _connectionString = connectionString || null;
   _onMessage = onMessage || null;
+  _onListening = onListening || null;
   _stopped = false;
   if (!_connectionString) {
     log.warn('ws-bus', 'no connection string — cross-instance fan-out disabled');
@@ -183,6 +206,8 @@ async function stop() {
 module.exports = {
   start, stop, publish,
   CHANNEL, MAX_PAYLOAD_BYTES, INSTANCE_ID,
-  // Test seam: drive a notification without a database.
+  // Test seams: drive a notification, or a fresh subscription, without a
+  // database.
   _handleNotification,
+  _listening,
 };

@@ -697,7 +697,9 @@ test('a slow endpoint that differs every time is re-pulled from the network, not
   const body = strategyBody('networkFirstApi');
   assert.match(body, /const settling = awaitingNetwork\.delete\(event\.request\.url\);/,
     'the mark is consumed when the deadline is chosen');
-  assert.match(body, /const timeoutMs = settling \? CORRECTION_WAIT_MS/,
+  // #4177: a read that asks for a fresh answer comes first, with no deadline
+  // at all (tests/live-reads.test.js); the settling rule is the next one.
+  assert.match(body, /const timeoutMs = wantsFreshAnswer\(event\.request\.cache\) \? null\s*: settling \? CORRECTION_WAIT_MS/,
     'and that request waits for the network instead of racing the cache');
   assert.match(body, /&& !settling\s*&& bootLaneApplies/, 'a settling request is never laned');
   assert.match(body, /\} else \{[\s\S]*?awaitingNetwork\.add\(event\.request\.url\)/,

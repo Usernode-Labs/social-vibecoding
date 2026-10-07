@@ -4469,6 +4469,12 @@ const AppView = {
     // let the paint below re-read it once — returning to a topic shows the
     // roster it had while the new one loads, rather than a loading line.
     AppView._invalidateVoteRoster(ref.id);
+    // The governance roster follows the same rule (#4177): it used to be read
+    // once per page load, so reopening a topic showed the roster from the
+    // first visit.
+    if (ref.kind === 'gov') AppView._invalidateGovVoteRoster(ref.id);
+    // ...and both re-read after a gap while the topic is open.
+    AppView._watchTopicLiveReads();
     // Arriving at a SESSION topic used to open its shared transcript here:
     // the "Read chat" pill that once set `_transcriptOpen` on its way was
     // gone, so landing on this page WAS the read-the-chat gesture. #2605
@@ -7238,8 +7244,8 @@ const AppView = {
     AppView._tellChangePage({ id: Number(sessionId), patch: clean });
   },
   // topic-head.tsx's ChangeDetail listens for this: an id re-reads, `{ id,
-  // row }` adopts a row, `{ id, patch }` merges one, 'all' re-reads every
-  // mounted page.
+  // row }` adopts a row, `{ id, patch }` merges one. Re-reading every mounted
+  // page after a gap is live reads' job now (#4177, lib/live-reads.ts).
   _tellChangePage(detail) {
     if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function'
         || typeof CustomEvent === 'undefined') return;
@@ -16525,7 +16531,9 @@ const AppView = {
     else delete AppView._voteRoster[sessionId];
   },
 
-  async _loadVoteRoster(sessionId) {
+  // `fresh`: a live re-read after a gap (#4177), which must not be answered
+  // from the service worker's saved copy (`cache: 'no-cache'`, public/sw.js).
+  async _loadVoteRoster(sessionId, { fresh = false } = {}) {
     if (AppView._voteRosterInFlight.has(sessionId)) return;
     const stale = AppView._voteRosterStale.has(Number(sessionId));
     if (AppView._voteRoster[sessionId] && !stale) return;
@@ -16545,7 +16553,7 @@ const AppView = {
       }
     };
     try {
-      const res = await fetch(`/api/sessions/${sessionId}/votes`);
+      const res = await fetch(`/api/sessions/${sessionId}/votes`, fresh ? { cache: 'no-cache' } : undefined);
       if (!res.ok) { publish({ phase: 'hidden' }); return; }
       const data = await res.json();
       const ctx = AppView._proposalsCtx || {};
@@ -16622,7 +16630,39 @@ const AppView = {
     else delete AppView._govVoteRoster[issueId];
   },
 
-  async _loadGovVoteRoster(issueId) {
+  // ── Live re-reads for the open topic (#4177) ─────────────────────────
+  //
+  // A governance roster was invalidated only by the viewer's OWN vote, so
+  // anyone else's never appeared on an open page. It now re-reads after a gap
+  // (lib/live-reads.ts: the socket reconnecting, the tab coming back, the
+  // service worker correcting this roster's read). A change page's roster
+  // re-reads with the page itself (topic-head.tsx's ChangeDetail), and every
+  // topic's discussion with the chat (GroupChat.resyncLoaded). Registered
+  // once, the first time a topic opens; the watcher reads whichever topic is
+  // open when a re-read comes.
+  _topicLiveWatch: null,
+  _watchTopicLiveReads() {
+    if (AppView._topicLiveWatch) return;
+    const live = window.UsernodeReact && window.UsernodeReact.liveReads;
+    if (!live || typeof live.watch !== 'function') return;
+    AppView._topicLiveWatch = live.watch(() => AppView._rereadOpenTopic(), {
+      reads: (url) => url.pathname === AppView._openGovRosterPath(),
+    });
+  },
+  _openGovRosterPath() {
+    const t = AppView._devTopic;
+    if (!t || t.kind !== 'gov' || !AppView.appData) return null;
+    return `/api/apps/${AppView.appData.slug}/governance/${t.id}/votes`;
+  },
+  _rereadOpenTopic() {
+    if (typeof App === 'undefined' || App.currentTab !== 'dev' || !AppView._openGovRosterPath()) return;
+    const id = AppView._devTopic.id;
+    AppView._invalidateGovVoteRoster(id);
+    return AppView._loadGovVoteRoster(id, { fresh: true });
+  },
+
+  // `fresh` as in `_loadVoteRoster`.
+  async _loadGovVoteRoster(issueId, { fresh = false } = {}) {
     if (issueId == null || !AppView.appData) return;
     if (AppView._govVoteRosterInFlight.has(issueId)) return;
     const stale = AppView._govVoteRosterStale.has(Number(issueId));
@@ -16636,7 +16676,8 @@ const AppView = {
     };
     try {
       const slug = AppView.appData.slug;
-      const res = await fetch(`/api/apps/${slug}/governance/${issueId}/votes${AppView._demoQS()}`);
+      const res = await fetch(`/api/apps/${slug}/governance/${issueId}/votes${AppView._demoQS()}`,
+        fresh ? { cache: 'no-cache' } : undefined);
       if (!res.ok) { publish({ phase: 'hidden' }); return; }
       const data = await res.json();
       // A non-breaking space is not needed here (no approver ticks on a

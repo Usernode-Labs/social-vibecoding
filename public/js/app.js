@@ -3068,9 +3068,11 @@ const App = {
     // is the mounted one, so calling both is free.
     if (window.AdminConsole?.isOpen?.()) AdminConsole.loadStagingReap?.();
     App.loadVersion();
-    // A change's page re-reads its row on events, not on a timer, so a
-    // dropped socket is its cue too (topic-head.tsx's ChangeDetail).
-    window.dispatchEvent(new CustomEvent('change-detail-refresh', { detail: 'all' }));
+    // #4177: everything that registered with live reads re-reads what it
+    // shows — a change's page (topic-head.tsx's ChangeDetail), its vote
+    // rosters, every loaded chat stream. The lines above are the screens not
+    // moved there yet; a screen that moves takes its line out of this list.
+    window.UsernodeReact?.liveReads?.resync?.('reconnect');
     if (App.currentApp && typeof AppView !== 'undefined' && AppView.appData) {
       // Re-fetch tab-specific state. We don't blow away the DOM —
       // these helpers update in place — so scroll positions, drafts,
