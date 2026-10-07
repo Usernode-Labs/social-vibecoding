@@ -1605,8 +1605,9 @@ const FIRST_VERSION_DESIGN_LINES = Object.freeze([
   // is first seen (the staging preview with ?demo=1).
   'Build the populated demo the spec describes, the staging preview opened with `?demo=1`: the viewer\'s own data as',
   'well as other people\'s, varied realistic rows filling about a screen and a half at phone width, every control the',
-  'real screen has (never a view-only demo), and each row labelled "Staging demo". On staging and with `?demo=1` only,',
-  'and idempotent, as the platform conventions\' "Staging mock data" says.',
+  'real screen has (never a view-only demo), labelled "Staging demo" once, plainly, as a banner or a line at the top of',
+  'the screen or in the name of its list, not on each row, with every row still obviously made up. On staging and with',
+  '`?demo=1` only, and idempotent, as the platform conventions\' "Staging mock data" says.',
 ]);
 
 function buildPrompt({

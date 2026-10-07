@@ -161,7 +161,7 @@ test('a drawn screen\'s <style> block and inline SVG reach the build whole, in t
 
 test('screenStats measures each drawn screen and flags one past twice its budget, cutting nothing', () => {
   const { screenStats, SCREEN_CHAR_BUDGET } = require('../src/services/spec-html.js');
-  assert.equal(SCREEN_CHAR_BUDGET, 15000);
+  assert.equal(SCREEN_CHAR_BUDGET, 20000);
   const [small] = screenStats(DRAWN(3));
   assert.deepEqual(Object.keys(small), ['size', 'height', 'chars', 'svgs', 'shapes', 'overBudget']);
   assert.equal(small.size, 'phone');
@@ -170,11 +170,11 @@ test('screenStats measures each drawn screen and flags one past twice its budget
   assert.equal(small.shapes, 8);
   assert.equal(small.overBudget, false);
   assert.ok(small.chars > 500 && small.chars < SCREEN_CHAR_BUDGET);
-  const painting = DRAWN(3, { extra: `<svg viewBox="0 0 400 400">${'<path d="M0 0L1 1"/>'.repeat(1600)}</svg>` });
+  const painting = DRAWN(3, { extra: `<svg viewBox="0 0 400 400">${'<path d="M0 0L1 1"/>'.repeat(2000)}</svg>` });
   const [big] = screenStats(painting);
   assert.equal(big.overBudget, true);
   assert.ok(big.chars > 2 * SCREEN_CHAR_BUDGET);
-  assert.equal(big.shapes, 1608);
+  assert.equal(big.shapes, 2008);
   assert.ok(normalizeSpecOutput(painting).html.includes('M0 0L1 1'), 'measured, never cut');
   assert.deepEqual(screenStats('# A markdown spec'), []);
   assert.deepEqual(screenStats(null), []);

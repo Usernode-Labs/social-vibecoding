@@ -102,18 +102,22 @@ test('a first version\'s triage sketches a look of its own, which the spec settl
 test('a first version\'s spec decides its colours, signature element, layout and finish; every other spec keeps its brief', () => {
   const brief = prompts.FIRST_VERSION_SPEC_DESIGN_BRIEF;
   assert.match(brief, /there is no existing screen for it to look like, and the triage only sketched one/);
-  assert.match(brief, /the main screen's one job and its one primary action/);
+  // A screen for doing has its one primary action; one for reading keeps its actions quiet.
+  assert.match(brief, /the main screen's one job, and what a person does most on it: when that is an action \(adding, logging, calculating\), its one primary action; when it is reading, browsing or comparing, say so, keep the actions quiet and give the content the room \(a screen for reading needs no big filled button\);/);
   // (e) Its colours: neutrals, an action colour and the subject's own set.
   assert.match(brief, /its colours, chosen for this app and each a kit token with a light and a dark value: the neutrals, one action colour for the primary action \(ink is fine when the subject's own colours carry the screen\), and any set of colours the subject itself uses/);
   assert.match(brief, /which fit the subject rather than being a cliché to avoid \(not the starter's default palette, unless you choose it on purpose and say why\)/);
-  assert.match(brief, /ONE signature element drawn from the app's subject, something a generic app would not have;/);
+  assert.match(brief, /a visual language drawn from the app's subject: its signature element \(something a generic app would not have\) and the consistent details that carry the subject through the whole screen, such as a small drawn icon for each kind of thing, the subject's own colours and materials, or a typeface that suits it;/);
+  assert.doesNotMatch(brief, /ONE signature element/);
   assert.match(brief, /a sketch of the main screen's layout at phone width, a few plain lines from top to bottom, and how dense it is there/);
   // The finish the build should not have to invent.
   assert.match(brief, /for each repeated row or card, what it shows and in what order and prominence \(its main text, its secondary text, and its small details such as a time, a count or a status\)/);
   assert.match(brief, /which control each setting or input uses \(a text field, a stepper, a slider, a switch, a segmented control, a list to pick from\) and what it starts at/);
   // (b) The populated demo, from the viewer's own seat.
   assert.match(brief, /what the populated demo shows, the staging preview opened with \?demo=1, which is how this first version is first seen: the viewer's own data and not only other people's/);
-  assert.match(brief, /varied and realistic rows filling about a screen and a half at phone width, and every control the real populated screen has \(a view-only demo that hides actions is not a populated screen\), with every demo row labelled "Staging demo"/);
+  // Labelled once, not on every row (every row's pill cluttered all nine test drawings).
+  assert.match(brief, /varied and realistic rows filling about a screen and a half at phone width, and every control the real populated screen has \(a view-only demo that hides actions is not a populated screen\), labelled "Staging demo" once, plainly and visibly, in a banner or a line at the top of the screen or in the name of the list or collection its rows belong to, rather than on each row, with the rows themselves still obviously made up \(no real people and no real private data\);/);
+  assert.doesNotMatch(brief, /every demo row labelled/);
   assert.match(brief, /on staging and with \?demo=1 only, idempotent, either added to those responses or written once for the viewing account on its first \?demo=1 request \(the platform conventions' "Staging mock data"/);
   assert.match(brief, /records it in the app's CLAUDE\.md/);
   assert.doesNotMatch(brief, /which existing screen of this app it should look/);
@@ -184,9 +188,9 @@ test('a first version\'s HTML spec draws its finished screens within a budget; a
   assert.match(flat, /An icon or illustration is an inline <svg> inside the screen, so the build can lift it: no emoji as icons, and no images/);
   // The fidelity budget.
   assert.match(flat, /Draw at the app's REAL fidelity: the HTML and CSS the build should write, not artwork/);
-  assert.match(flat, /a 24 by 24 viewBox, one stroke width, at most about 5 shapes each, and no gradients, filters, masks, patterns or text turned into paths/);
-  assert.match(flat, /at most ONE larger illustration, and only if it is the signature element, kept to about 30 shapes/);
-  assert.match(flat, /Each screen, its <style> included, stays within about 15,000 characters: a screen that needs more is drawn in too much detail\. Draw repeated rows with identical structure\. Spend the effort on layout, hierarchy, spacing and type, not on decoration\./);
+  assert.match(flat, /Icons are line icons: a 24 by 24 viewBox, one stroke width, at most about 8 shapes each, and no gradients, filters, masks, patterns or text turned into paths\. A consistent set of them is welcome: one for each kind of thing, the app's own mark, its actions\./);
+  assert.match(flat, /A larger illustration is fine where it carries the subject, each kept to about 30 shapes\./);
+  assert.match(flat, /Each screen, its <style> included, stays within about 20,000 characters: a screen that needs more is drawn in too much detail\. Draw repeated rows with identical structure\. Spend the effort where a careful designer would: hierarchy, density, spacing, type and the subject's own details; leave out decoration that carries no meaning\./);
   assert.ok(flat.includes(require('../src/services/spec-html').SCREEN_CHAR_BUDGET.toLocaleString('en-US')), 'the words and the measure name one budget');
   assert.doesNotMatch(screens, /—/);
   assert.doesNotMatch(screens, BENCH_SUBJECTS);
@@ -213,7 +217,8 @@ test('a first version\'s build uses the starter\'s design kit and records its lo
   assert.match(flat, /When the spec draws screens \(its "### Screen markup"\), they are your visual target: reproduce them, reusing their markup structure, inline SVG icons, proportions, spacing and type choices, translated onto the kit's tokens and components rather than re-invented\./);
   assert.match(flat, /In your look-and-fix rounds, compare your screenshots with the drawn screens and fix what differs\. Where a drawing and the spec's words disagree, the words decide what the app does and the drawing decides how it looks\./);
   // The populated demo (b).
-  assert.match(flat, /Build the populated demo the spec describes, the staging preview opened with `\?demo=1`: the viewer's own data as well as other people's, varied realistic rows filling about a screen and a half at phone width, every control the real screen has \(never a view-only demo\), and each row labelled "Staging demo"\. On staging and with `\?demo=1` only, and idempotent/);
+  assert.match(flat, /Build the populated demo the spec describes, the staging preview opened with `\?demo=1`: the viewer's own data as well as other people's, varied realistic rows filling about a screen and a half at phone width, every control the real screen has \(never a view-only demo\), labelled "Staging demo" once, plainly, as a banner or a line at the top of the screen or in the name of its list, not on each row, with every row still obviously made up\. On staging and with `\?demo=1` only, and idempotent/);
+  assert.doesNotMatch(flat, /each row labelled/);
   assert.doesNotMatch(flat, BENCH_SUBJECTS);
   // The record: the starter's "## Design" section, which a starter other
   // than Empty does not have yet.
