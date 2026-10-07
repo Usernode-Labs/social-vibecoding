@@ -96,6 +96,7 @@ import { SettingsScreen } from './features/settings';
 import { Dialogs } from './features/dialogs';
 import { StagingOverlay, VisualCompareOverlay } from './features/staging';
 import { OfflineBanner, ViewAsNonAdminBanner } from './features/shell/banners';
+import { LanguageNotice } from './features/shell/language-notice';
 import { LegacyPortals } from './lib/legacy-portals';
 import { Island } from './lib/island-boundary';
 import { assetUrl } from './lib/asset-url';
@@ -124,6 +125,14 @@ export function Shell() {
           Hidden the moment the probe succeeds.
       */}
       <Island name="OfflineBanner"><OfflineBanner /></Island>
+      {/*
+          "Showing Homeroom in Español · Switch to English": shown once, the
+          first time the language was picked from the device, fixed above
+          the tab bar where a toast rests (app.css). Renders nothing until
+          then, and never while only English ships. See
+          features/shell/language-notice.tsx.
+      */}
+      <Island name="LanguageNotice"><LanguageNotice /></Island>
       {/*
           Mobile-browser install strip (#1372) — a React island in
           features/mobile-install. Offers the native app to a visitor who

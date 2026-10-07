@@ -555,6 +555,11 @@ function classifyRequest(method, url, acceptHeader, mode, selfOrigin) {
 
   // The shell's own static assets (incl. /usernode-bridge/v1/... versions).
   if (/\.(?:html|js|css|webmanifest)$/i.test(p)) return 'shell';
+  // A language pack (scripts/language-packs.js): content-hashed, fetched only
+  // when a person's language asks for it, verified against the release and
+  // kept for offline use from then on. Never in SHELL_ASSETS, so installing
+  // this worker downloads no language.
+  if (/^\/locales\/[a-zA-Z-]+\.[a-z-]+\.[a-f0-9]{64}\.json$/.test(p)) return 'shell';
   if (p.startsWith('/icons/')) return 'shell';
   // The brand assets the shell itself draws, precached above. Without this rule
   // the SHELL_ASSETS entry would fill the cache on install and never be read.

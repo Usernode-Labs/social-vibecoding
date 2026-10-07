@@ -59,6 +59,9 @@
 import { flushSync } from 'react-dom';
 import { hydrateRoot } from 'react-dom/client';
 
+// Publishes window.PlatformI18n and follows the session's language. First,
+// so the adapter exists before any legacy module's init() can ask for it.
+import './lib/i18n/runtime';
 import { Shell } from './Shell';
 import './lib/overlay-scrim-bridge';
 import { bootStep } from './lib/boot-guard';

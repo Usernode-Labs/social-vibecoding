@@ -3281,6 +3281,23 @@ form.agent-session-composer:focus-within {
   --un-toast-inset-bottom: var(--platform-tabs-h, 0px);
 }
 
+/* THE LANGUAGE NOTICE RESTS WHERE A TOAST DOES ("Showing Homeroom in Español
+   · Switch to English", features/shell/language-notice.tsx). Fixed, because
+   it has to stay in view until it is answered: in the page flow it scrolled
+   away with Home on a phone, and the sign-in screens are `fixed inset-0`
+   over anything in flow. Above those screens (z-40) and below the drawer and
+   panels (z-50), like the install strip. `--language-notice-inset` is the
+   island's own measurement when a composer sits above the tab bar. */
+#language-notice {
+  position: fixed;
+  left: 50%;
+  bottom: calc(16px + max(var(--language-notice-inset, var(--platform-tabs-h, 0px)), var(--platform-safe-bottom, 0px)));
+  z-index: 45;
+  width: max-content;
+  max-width: min(calc(100vw - 24px), 480px);
+  transform: translateX(-50%);
+}
+
 /* ── No glass, on any platform (#787, #3104, and since the phone audit) ──
    Live backdrop blur is unusually expensive in WebKit on a phone while the
    content behind it scrolls or a spring moves the surface every frame. #787
@@ -21501,7 +21518,7 @@ html.side-panel-resizing * {
    phone layout, which is the point: the panel is a phone-width column. */
 html.in-side-panel :is(#platform-header, #platform-tabs, #platform-rail-peek,
     #platform-parked, #chromeless-pill, #offline-banner, #mobile-install-banner,
-    #view-as-non-admin-banner, #platform-side-panel) {
+    #view-as-non-admin-banner, #language-notice, #platform-side-panel) {
   display: none !important;
 }
 html.in-side-panel {
