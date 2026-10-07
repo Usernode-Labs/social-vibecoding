@@ -65,11 +65,20 @@ const AppView = {
   _ghIssuesMeta: { truncatedList: false, note: null, stale: false, repoUrl: null, myRemaining: null },
   _bountyInFlight: new Set(),
 
-  // #396: per-issue-number cache of the GitHub comment thread fetched
-  // lazily when an issue topic opens, so _renderTopicHead's live-refreshes
-  // (WS-driven) reuse it instead of refetching. Each entry is
-  // `{ comments, truncated }`; absent means "not loaded yet".
-  _ghComments: {},
+  // #396: per-issue cache of the GitHub comment thread fetched lazily when
+  // an issue topic opens, so _renderTopicHead's live-refreshes (WS-driven)
+  // reuse it instead of refetching. Each entry is `{ comments, truncated }`;
+  // absent means "not loaded yet".
+  //
+  // #4178: keyed by `_ghCommentsKey(slug, number)`, never by the number
+  // alone. Every app has its own repository, so issue numbers repeat across
+  // apps, and the cache outlives the app view: keyed by number, project B's
+  // issue #12 painted project A's comments without asking the server.
+  _ghComments: new Map(),
+
+  _ghCommentsKey(slug, number) {
+    return `${slug}/${number}`;
+  },
 
   // Scroll-position memory for the Dev card list, keyed by app slug
   // (`App.currentApp`). In-memory only — reset on a full page reload by
@@ -10628,7 +10637,7 @@ const AppView = {
   // has changed, and not before. Weak, so a slot a repaint dropped is forgotten.
   _feedCommentsPainted: null,
 
-  // Comment requests on the wire, by `slug/number`. `_ghComments` is only
+  // Comment requests on the wire, by `_ghCommentsKey`. `_ghComments` is only
   // written when an answer lands, so it cannot say "already asked", and
   // every wiring pass asks for the first few slots again. Before this, one
   // load of that board fetched the same three threads six times each.
@@ -10848,16 +10857,16 @@ const AppView = {
       }
     };
 
-    const cached = AppView._ghComments[number];
-    if (cached) { paint(cached); return; }
-
     const slug = AppView.appData && AppView.appData.slug;
     if (!slug) return;
+    const key = AppView._ghCommentsKey(slug, number);
+    const cached = AppView._ghComments.get(key);
+    if (cached) { paint(cached); return; }
+
     // One request per issue, however many slots and passes ask (see
     // `_ghCommentsInFlight`). The caller that joins does not wait for the
     // answer: `paint` finds every live slot for this number when it lands,
     // this one included.
-    const key = `${slug}/${number}`;
     if (AppView._ghCommentsInFlight[key]) return;
     AppView._ghCommentsInFlight[key] = true;
     try {
@@ -10870,8 +10879,11 @@ const AppView = {
         comments: Array.isArray(data.comments) ? data.comments : [],
         truncated: !!data.truncated,
       };
-      AppView._ghComments[number] = entry;
-      paint(entry);
+      AppView._ghComments.set(key, entry);
+      // The slots are found by number alone, so an answer that lands after
+      // another app opened would land in that app's slots for the same
+      // number. It is kept for its own app, and painted only there.
+      if ((AppView.appData && AppView.appData.slug) === slug) paint(entry);
     } catch (_) {
       /* best-effort: the row simply shows no replies */
     } finally {
@@ -13289,7 +13301,7 @@ const AppView = {
   },
 
   // #396: lazily fetch + render an issue's GitHub comment thread into the
-  // #dev-issue-comments placeholder. Cached per issue number in _ghComments
+  // #dev-issue-comments placeholder. Cached per app and issue in _ghComments
   // so WS-driven _renderTopicHead refreshes paint from cache without a
   // refetch. Best-effort: a failed fetch leaves the placeholder empty (the
   // issue body still renders). Re-resolves the placeholder after the await
@@ -13299,9 +13311,16 @@ const AppView = {
     if (!item || item.number == null) return;
     const number = item.number;
 
+    const slug = AppView.appData && AppView.appData.slug;
+    if (!slug) return;
+    const key = AppView._ghCommentsKey(slug, number);
+
     const paint = (data) => {
       const t = AppView._devTopic;
       if (!t || t.kind !== 'issue' || t.id !== number) return;
+      // Issue numbers repeat across apps: the same number open in another
+      // app is not this issue (#4178).
+      if ((AppView.appData && AppView.appData.slug) !== slug) return;
       const slot = document.getElementById('dev-issue-comments');
       if (!slot) return;
       // The thread is features/dev-board/issue-comments.tsx's. The host is
@@ -13313,12 +13332,10 @@ const AppView = {
         AppView._issueCommentsView(data.comments, data.truncated, item.htmlUrl));
     };
 
-    const cached = AppView._ghComments[number];
+    const cached = AppView._ghComments.get(key);
     if (cached) { paint(cached); return; }
 
     try {
-      const slug = AppView.appData && AppView.appData.slug;
-      if (!slug) return;
       const res = await fetch(
         `/api/apps/${slug}/github-issues/${number}/comments${AppView._demoQS()}`
       );
@@ -13328,7 +13345,7 @@ const AppView = {
         comments: Array.isArray(data.comments) ? data.comments : [],
         truncated: !!data.truncated,
       };
-      AppView._ghComments[number] = entry;
+      AppView._ghComments.set(key, entry);
       paint(entry);
     } catch (_) { /* best-effort: leave the placeholder empty */ }
   },
