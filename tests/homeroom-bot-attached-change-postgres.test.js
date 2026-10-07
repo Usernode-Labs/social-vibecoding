@@ -28,7 +28,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const { Pool } = require('pg');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
@@ -78,6 +77,7 @@ const conversations = require('../src/services/conversations');
 const dm = require('../src/services/homeroom-bot-dm');
 const mayor = require('../src/services/homeroom-bot-mayor');
 const homeroomBot = require('../src/services/homeroom-bot');
+const { createSchemaDatabase } = require('./lib/schema-database');
 
 const CONFIG = { openrouterApiBase: 'https://openrouter.test/api/v1', openrouterOrigin: 'https://test', openrouterDefaultCodexModel: 'z-ai/glm-5.3-flash' };
 const EM_DASH = '—';
@@ -153,7 +153,7 @@ test('B and C against the full PostgreSQL schema', { timeout: 180000 }, async (t
     return;
   }
   const name = `hrbot_attached_${crypto.randomBytes(6).toString('hex')}`;
-  await admin.query(`CREATE DATABASE ${name}`);
+  await createSchemaDatabase(admin, name);
   const url = new URL(DSN); url.pathname = `/${name}`;
   const pool = new Pool({ connectionString: String(url), max: 8 });
   t.after(async () => {
@@ -161,7 +161,6 @@ test('B and C against the full PostgreSQL schema', { timeout: 180000 }, async (t
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
 
   const user = async (username, synthetic = false) => (await pool.query(
     `INSERT INTO users (username, password, has_platform_access, is_synthetic) VALUES ($1, 'x', TRUE, $2)

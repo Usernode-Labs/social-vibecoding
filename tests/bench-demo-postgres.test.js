@@ -19,6 +19,7 @@ const { Pool } = require('pg');
 const demo = require('../src/services/bench/demo');
 const report = require('../src/services/bench/report');
 const grading = require('../src/services/bench/grading');
+const { createSchemaDatabase } = require('./lib/schema-database');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
   || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -32,7 +33,7 @@ test('the benchmark\'s staging fixtures against the full PostgreSQL schema', { t
     return;
   }
   const name = `bench_demo_${crypto.randomBytes(6).toString('hex')}`;
-  await admin.query(`CREATE DATABASE ${name}`);
+  await createSchemaDatabase(admin, name);
   const url = new URL(DSN); url.pathname = `/${name}`;
   const pool = new Pool({ connectionString: String(url), max: 4 });
   const realEnv = process.env.USERNODE_ENV;
@@ -42,7 +43,6 @@ test('the benchmark\'s staging fixtures against the full PostgreSQL schema', { t
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
   await pool.query("INSERT INTO apps (name, slug, status, repo_url) VALUES ('Todo', 'todo', 'running', 'https://github.com/o/todo'), ('Notes', 'notes', 'running', 'https://github.com/o/notes')");
 
   delete process.env.USERNODE_ENV;

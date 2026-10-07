@@ -25,8 +25,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const { Pool } = require('pg');
+const { createSchemaDatabase } = require('./lib/schema-database');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 
@@ -38,7 +38,7 @@ test('an invite by username joins a group the way its link does, against the ful
     t.skip('PostgreSQL unavailable; set TEST_DATABASE_URL to require this check'); return;
   }
   const name = 'username_invite_' + crypto.randomBytes(6).toString('hex');
-  await admin.query(`CREATE DATABASE ${name}`);
+  await createSchemaDatabase(admin, name);
   const url = new URL(DSN); url.pathname = '/' + name;
   const pool = new Pool({ connectionString: String(url), max: 4 });
   // pool.end() resolves once its idle connections are handed their end, not
@@ -48,7 +48,6 @@ test('an invite by username joins a group the way its link does, against the ful
   // and logs it; this pool did not, so it surfaced as an uncaughtException
   // that failed the file on its teardown (5 of 6 runs). Expected here.
   pool.on('error', () => {});
-  await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
   const config = {
     databaseUrl: String(url), selfAppSlug: 'no-such-self-app', selfAppPublicVoting: true,
     challengeScorer: { intervalMinutes: 0 },

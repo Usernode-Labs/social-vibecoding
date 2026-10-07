@@ -27,6 +27,7 @@ const { Pool } = require('pg');
 const live = require('../src/services/homeroom-bot-live');
 const github = require('../src/services/github');
 const prMetadata = require('../src/services/pr-metadata');
+const { createSchemaDatabase } = require('./lib/schema-database');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
   || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -56,7 +57,7 @@ test('a bot proposal is named by its spec and led by its own description', { tim
     return;
   }
   const name = `hbot_proposal_${crypto.randomBytes(6).toString('hex')}`;
-  await admin.query(`CREATE DATABASE ${name}`);
+  await createSchemaDatabase(admin, name);
   const url = new URL(DSN); url.pathname = `/${name}`;
   const pool = new Pool({ connectionString: String(url), max: 4 });
   const realCreate = github.createPR;
@@ -71,7 +72,6 @@ test('a bot proposal is named by its spec and led by its own description', { tim
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
 
   const bot = (await pool.query(
     `INSERT INTO users (username, password, is_synthetic) VALUES ('homeroom_bot', 'x', TRUE) RETURNING id, username`,

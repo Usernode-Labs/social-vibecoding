@@ -16,10 +16,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const http = require('node:http');
 const express = require('express');
 const { Pool } = require('pg');
+const { createSchemaDatabase } = require('./lib/schema-database');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
   || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -35,7 +35,7 @@ test('the App bench studio against the full PostgreSQL schema', { timeout: 12000
     return;
   }
   const name = `bench_studio_${crypto.randomBytes(6).toString('hex')}`;
-  await admin.query(`CREATE DATABASE ${name}`);
+  await createSchemaDatabase(admin, name);
   const url = new URL(DSN); url.pathname = `/${name}`;
   const pool = new Pool({ connectionString: String(url), max: 6 });
   t.after(async () => {
@@ -43,7 +43,6 @@ test('the App bench studio against the full PostgreSQL schema', { timeout: 12000
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
 
   const studio = require('../src/services/bench/studio');
   const packs = require('../src/services/bench/packs');

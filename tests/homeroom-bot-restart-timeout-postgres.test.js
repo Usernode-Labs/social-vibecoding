@@ -24,7 +24,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const { Pool } = require('pg');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
@@ -78,6 +77,7 @@ try {
 }
 
 const bot = require('../src/services/homeroom-bot');
+const { createSchemaDatabase } = require('./lib/schema-database');
 const live = require('../src/services/homeroom-bot-live');
 const dm = require('../src/services/homeroom-bot-dm');
 const github = require('../src/services/github');
@@ -114,7 +114,7 @@ test('a live build deploys land in goes round again; one that ran too long on it
     return;
   }
   const name = `hbot_restart_${crypto.randomBytes(6).toString('hex')}`;
-  await admin.query(`CREATE DATABASE ${name}`);
+  await createSchemaDatabase(admin, name);
   const url = new URL(DSN); url.pathname = `/${name}`;
   const pool = new Pool({ connectionString: String(url), max: 8 });
   const real = {
@@ -129,8 +129,6 @@ test('a live build deploys land in goes round again; one that ran too long on it
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
-  await pool.query(schema);
 
   const posts = [];
   live.post = async (args) => { posts.push(args); return { postId: posts.length }; };

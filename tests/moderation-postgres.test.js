@@ -1,8 +1,6 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
 const { Client, Pool } = require('pg');
 const express = require('express');
 const moderation = require('../src/services/moderation');
@@ -10,6 +8,7 @@ const { importLegacyReports } = require('../src/services/moderation-migration');
 const { moderationRoutes } = require('../src/routes/moderation');
 const appAccess = require('../src/services/app-access');
 const { moderationGuard, participationWrite } = require('../src/middleware/moderation');
+const { createSchemaDatabase } = require('./lib/schema-database');
 
 const DSN = process.env.TEST_DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 
@@ -20,11 +19,10 @@ test('moderation enforces scope, retains evidence, serializes decisions and reve
   const connectionsClosed = [];
   let pool, server;
   try {
-    await root.query(`CREATE DATABASE ${name}`);
+    await createSchemaDatabase(root, name);
     const url = new URL(DSN); url.pathname = '/'+name;
     pool = new Pool({ connectionString:url.toString(), max:10 });
     pool.on('connect', client => connectionsClosed.push(new Promise(resolve => client.once('end',resolve))));
-    await pool.query(fs.readFileSync(path.join(__dirname,'../src/db/schema.sql'),'utf8'));
     const addUser = async (username, admin=false, published=false) => (await pool.query(`INSERT INTO users (username,password,is_admin,profile_published) VALUES ($1,'unused-test-password',$2,$3) RETURNING id,username`, [username,admin,published])).rows[0];
     const alice = await addUser('reporter'), bob = await addUser('author',false,true), outsider = await addUser('outsider'), admin = { ...await addUser('moderator',true),isAdmin:true,canAdminWrite:true };
     const admin2 = { ...await addUser('moderator2',true),isAdmin:true,canAdminWrite:true };

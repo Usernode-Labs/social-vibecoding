@@ -12,6 +12,7 @@ const { MobilePushWorker } = require('../src/services/mobile-push-worker');
 const { appBlockRoutes } = require('../src/routes/app-blocks');
 const { moderationGuard } = require('../src/middleware/moderation');
 const moderation = require('../src/services/moderation');
+const { createSchemaDatabase } = require('./lib/schema-database');
 
 test('personal app blocks isolate viewers, preserve contributors, suppress alerts and restore access (PostgreSQL)', async t => {
   const dsn = process.env.TEST_DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -21,11 +22,10 @@ test('personal app blocks isolate viewers, preserve contributors, suppress alert
   let pool, server;
   const closed = [];
   try {
-    await root.query(`CREATE DATABASE ${name}`);
+    await createSchemaDatabase(root, name);
     const url = new URL(dsn); url.pathname = `/${name}`;
     pool = new Pool({ connectionString: url.toString() });
     pool.on('connect', client => closed.push(new Promise(resolve => client.once('end', resolve))));
-    await pool.query(fs.readFileSync(path.join(__dirname, '../src/db/schema.sql'), 'utf8'));
     const addUser = async username => (await pool.query("INSERT INTO users (username,password) VALUES ($1,'unused') RETURNING id,username", [username])).rows[0];
     const alice = await addUser('alice'), bob = await addUser('bob'), collaborator = await addUser('carol');
     const addApp = async (slug, visibility='public', selfHosted=false) => (await pool.query(

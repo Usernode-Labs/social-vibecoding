@@ -14,9 +14,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const { Pool } = require('pg');
 const userDirectory = require('../src/services/user-directory');
+const { createSchemaDatabase } = require('./lib/schema-database');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 
@@ -28,7 +28,7 @@ test('app members and hidden accounts against the full PostgreSQL schema', { tim
     t.skip('PostgreSQL unavailable; set TEST_DATABASE_URL to require this check'); return;
   }
   const name = 'app_members_' + crypto.randomBytes(6).toString('hex');
-  await admin.query(`CREATE DATABASE ${name}`);
+  await createSchemaDatabase(admin, name);
   const url = new URL(DSN); url.pathname = '/' + name;
   const pool = new Pool({ connectionString: String(url), max: 4 });
   t.after(async () => {
@@ -36,7 +36,6 @@ test('app members and hidden accounts against the full PostgreSQL schema', { tim
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
 
   const user = async (username, { synthetic = false } = {}) => (await pool.query(
     `INSERT INTO users (username, password, is_synthetic) VALUES ($1, 'x', $2) RETURNING id`,

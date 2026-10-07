@@ -18,10 +18,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const { Pool } = require('pg');
 
 const bot = require('../src/services/homeroom-bot');
+const { createSchemaDatabase } = require('./lib/schema-database');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
   || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -35,7 +35,7 @@ test('triage runs in its own session on main, never a build\'s, and rests only a
     return;
   }
   const name = `hbot_triage_session_${crypto.randomBytes(6).toString('hex')}`;
-  await admin.query(`CREATE DATABASE ${name}`);
+  await createSchemaDatabase(admin, name);
   const url = new URL(DSN); url.pathname = `/${name}`;
   const pool = new Pool({ connectionString: String(url), max: 4 });
   t.after(async () => {
@@ -43,7 +43,6 @@ test('triage runs in its own session on main, never a build\'s, and rests only a
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
 
   const botUser = (await pool.query(
     `INSERT INTO users (username, password, is_synthetic) VALUES ('homeroom_bot', 'x', TRUE) RETURNING id, username`,
@@ -116,7 +115,7 @@ test('a failed read counts the failures that saw the same thread (#1080)', { tim
     return;
   }
   const name = `hbot_failed_reads_${crypto.randomBytes(6).toString('hex')}`;
-  await admin.query(`CREATE DATABASE ${name}`);
+  await createSchemaDatabase(admin, name);
   const url = new URL(DSN); url.pathname = `/${name}`;
   const pool = new Pool({ connectionString: String(url), max: 4 });
   t.after(async () => {
@@ -124,7 +123,6 @@ test('a failed read counts the failures that saw the same thread (#1080)', { tim
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
   const app = (await pool.query(
     `INSERT INTO apps (name, slug, status, repo_url) VALUES ('Gas', 'gas', 'running', 'https://github.com/usernode-bot/gas') RETURNING id`,
   )).rows[0];

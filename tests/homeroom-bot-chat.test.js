@@ -27,6 +27,7 @@ const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
 const botChat = require('../src/services/homeroom-bot-chat');
+const { createSchemaDatabase } = require('./lib/schema-database');
 
 test('B9: what counts as asking the bot, and what was asked', () => {
   for (const text of ['@Homeroom bot could it remind us?', 'hey @homeroom_bot, add tags', '@HOMEROOM  BOT hi']) {
@@ -103,7 +104,7 @@ test('B9: asking from the chat, against the full PostgreSQL schema', { timeout: 
     return;
   }
   const name = `hrbot_chat_${crypto.randomBytes(6).toString('hex')}`;
-  await admin.query(`CREATE DATABASE ${name}`);
+  await createSchemaDatabase(admin, name);
   const url = new URL(DSN); url.pathname = `/${name}`;
   const pool = new Pool({ connectionString: String(url), max: 4 });
   t.after(async () => {
@@ -111,7 +112,6 @@ test('B9: asking from the chat, against the full PostgreSQL schema', { timeout: 
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  await pool.query(read('src/db/schema.sql'));
   const user = async (username, synthetic = false) => (await pool.query(
     `INSERT INTO users (username, password, has_platform_access, is_synthetic) VALUES ($1, 'x', TRUE, $2) RETURNING id, username`,
     [username, synthetic],
@@ -272,7 +272,7 @@ test('B9: the staging demo seeds one chat request wearing its Building chip, onc
     return;
   }
   const name = `hrbot_chat_seed_${crypto.randomBytes(6).toString('hex')}`;
-  await admin.query(`CREATE DATABASE ${name}`);
+  await createSchemaDatabase(admin, name);
   const url = new URL(DSN); url.pathname = `/${name}`;
   const pool = new Pool({ connectionString: String(url), max: 2 });
   const env = process.env.USERNODE_ENV;
@@ -282,7 +282,6 @@ test('B9: the staging demo seeds one chat request wearing its Building chip, onc
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  await pool.query(read('src/db/schema.sql'));
   const owner = (await pool.query(
     `INSERT INTO users (username, password) VALUES ('owner', 'x') RETURNING id`)).rows[0].id;
   const app = (await pool.query(

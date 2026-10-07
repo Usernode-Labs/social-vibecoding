@@ -10,7 +10,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const express = require('express');
 const cookieParser = require('cookie-parser');
 const { Pool } = require('pg');
@@ -19,6 +18,7 @@ const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
   || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 
 const providers = require('../src/services/sign-in-providers');
+const { createSchemaDatabase } = require('./lib/schema-database');
 
 async function createSession(client, userId) {
   const token = crypto.randomBytes(32).toString('hex');
@@ -46,7 +46,7 @@ test('Apple and Google sign-in against the full PostgreSQL schema', { timeout: 1
     return;
   }
   const name = `sign_in_providers_${crypto.randomBytes(6).toString('hex')}`;
-  await admin.query(`CREATE DATABASE ${name}`);
+  await createSchemaDatabase(admin, name);
   const url = new URL(DSN); url.pathname = `/${name}`;
   const pool = new Pool({ connectionString: String(url), max: 8 });
   t.after(async () => {
@@ -54,7 +54,6 @@ test('Apple and Google sign-in against the full PostgreSQL schema', { timeout: 1
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
 
   let n = 0;
   async function account({ email, passwordSet = true, confirmed = true, isAdmin = false, chosen = true } = {}) {

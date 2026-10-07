@@ -20,8 +20,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
-const path = require('node:path');
 const express = require('express');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
@@ -51,6 +49,7 @@ const activity = require('../src/services/homeroom-bot-activity');
 const homeroomBot = require('../src/services/homeroom-bot');
 const conversations = require('../src/services/conversations');
 const { conversationRoutes } = require('../src/routes/conversations');
+const { createSchemaDatabase } = require('./lib/schema-database');
 
 async function openDatabase(t) {
   let pg;
@@ -65,7 +64,7 @@ async function openDatabase(t) {
     return null;
   }
   const name = `hrbot_activity_${crypto.randomBytes(6).toString('hex')}`;
-  await admin.query(`CREATE DATABASE ${name}`);
+  await createSchemaDatabase(admin, name);
   const url = new URL(DSN);
   url.pathname = `/${name}`;
   const pool = new pg.Pool({ connectionString: String(url), max: 8 });
@@ -75,7 +74,6 @@ async function openDatabase(t) {
     await admin.query(`DROP DATABASE IF EXISTS ${name}`).catch(() => {});
     await admin.end().catch(() => {});
   });
-  await pool.query(fs.readFileSync(path.join(__dirname, '../src/db/schema.sql'), 'utf8'));
   return pool;
 }
 

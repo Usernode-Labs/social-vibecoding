@@ -18,7 +18,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const express = require('express');
 const { Pool } = require('pg');
 
@@ -54,6 +53,7 @@ const conversations = require('../src/services/conversations');
 const governance = require('../src/services/governance');
 const activeUsers = require('../src/services/active-users');
 const { appRoutes } = require('../src/routes/apps');
+const { createSchemaDatabase } = require('./lib/schema-database');
 
 test('the first version being built, from the records the bot leaves', { timeout: 180000 }, async (t) => {
   const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
@@ -64,7 +64,7 @@ test('the first version being built, from the records the bot leaves', { timeout
     return;
   }
   const name = `first_version_${crypto.randomBytes(6).toString('hex')}`;
-  await admin.query(`CREATE DATABASE ${name}`);
+  await createSchemaDatabase(admin, name);
   const url = new URL(DSN); url.pathname = `/${name}`;
   pool = new Pool({ connectionString: String(url), max: 8 });
   t.after(async () => {
@@ -72,7 +72,6 @@ test('the first version being built, from the records the bot leaves', { timeout
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
 
   let seq = 0;
   async function user(prefix, { synthetic = false } = {}) {

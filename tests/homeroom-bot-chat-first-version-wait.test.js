@@ -38,6 +38,7 @@ const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
 const botChat = require('../src/services/homeroom-bot-chat');
+const { createSchemaDatabase } = require('./lib/schema-database');
 
 const BOOKS = 'Add list of books read with star ratings';
 const WAIT = 'Waiting for the first version to go live. I’ll start on this as soon as it does.';
@@ -140,7 +141,7 @@ test('Page Turners, against the full PostgreSQL schema', { timeout: 180000 }, as
     return;
   }
   const name = `hrbot_fvwait_${crypto.randomBytes(6).toString('hex')}`;
-  await admin.query(`CREATE DATABASE ${name}`);
+  await createSchemaDatabase(admin, name);
   const url = new URL(DSN); url.pathname = `/${name}`;
   const pool = new Pool({ connectionString: String(url), max: 4 });
   const bot = require('../src/services/homeroom-bot');
@@ -150,7 +151,6 @@ test('Page Turners, against the full PostgreSQL schema', { timeout: 180000 }, as
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  await pool.query(read('src/db/schema.sql'));
   const user = async (username, synthetic = false) => (await pool.query(
     `INSERT INTO users (username, password, has_platform_access, is_synthetic) VALUES ($1, 'x', TRUE, $2)
      RETURNING id, username, is_synthetic AS "isSynthetic", has_platform_access AS "hasPlatformAccess", is_admin AS "isAdmin"`,

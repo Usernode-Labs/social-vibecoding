@@ -8,10 +8,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const { Pool } = require('pg');
 
 const journey = require('../src/services/journey');
+const { createSchemaDatabase } = require('./lib/schema-database');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 
@@ -24,7 +24,7 @@ test('a cohort by admit date: one row per person, the furthest step, and where e
       t.skip('PostgreSQL unavailable; set TEST_DATABASE_URL to require this check'); return;
     }
     const name = 'journey_mile_' + crypto.randomBytes(6).toString('hex');
-    await admin.query(`CREATE DATABASE ${name}`);
+    await createSchemaDatabase(admin, name);
     const url = new URL(DSN); url.pathname = '/' + name;
     const pool = new Pool({ connectionString: String(url), max: 4 });
     t.after(async () => {
@@ -32,7 +32,6 @@ test('a cohort by admit date: one row per person, the furthest step, and where e
       await admin.query(`DROP DATABASE IF EXISTS ${name}`);
       await admin.end();
     });
-    await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
 
     const D = '2026-09-24';
     const admitAt = `${D}T09:00:00Z`;
