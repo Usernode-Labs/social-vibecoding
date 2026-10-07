@@ -574,11 +574,11 @@ async function studioContext(pool, config, row, settings) {
   }
   // A configuration version (services/bot-configs.js) the trial builds by:
   // a side build of a live first version names it on the trial, a studio
-  // arm as its model (`config:<id>`), and `today` is the current one, which
-  // is how the live bot builds a first version now.
+  // arm as its model (`config:<id>`). `today` is not one: it is the live
+  // bot's per-stage models, as it always was (below); the current
+  // configuration is an arm of its own, `config:<its id>`.
   const namedId = row.bot_config_version_id || botConfigs.configIdOfModel(row.model);
-  const version = namedId ? await botConfigs.versionById(pool, namedId)
-    : (row.model === TODAY ? await botConfigs.currentVersion(pool) : null);
+  const version = namedId ? await botConfigs.versionById(pool, namedId) : null;
   const recipe = version ? botConfigs.recipeOf(version.recipe) : null;
   if (namedId && !recipe) throw new Error('the trial\'s configuration version is gone');
   if (recipe) {

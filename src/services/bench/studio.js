@@ -329,6 +329,20 @@ function validateLaunch(body = {}) {
 async function launch(pool, config, body = {}, { actorId = null, deps = {} } = {}) {
   const v = validateLaunch(body);
   if (!v.ok) return v;
+  // A configuration arm (`config:<id>`): its recipe, read before anything is
+  // made, and what it is priced by (each stage at its own model's price, its
+  // reviewer's rounds included).
+  const recipes = new Map();
+  for (const m of v.models) {
+    const botConfigs = require('../bot-configs');
+    const id = botConfigs.configIdOfModel(m);
+    if (id == null) continue;
+    // eslint-disable-next-line no-await-in-loop
+    const version = await botConfigs.versionById(pool, id);
+    const recipe = version ? botConfigs.recipeOf(version.recipe) : null;
+    if (!recipe) return httpError(404, `No configuration version ${id} with a recipe that still validates`);
+    recipes.set(m, recipe);
+  }
   const briefs = await resolveBriefs(pool, body);
   if (!briefs.ok) return briefs;
   const loaded = await packs.loadForLaunch(pool, v.packIds);
@@ -347,14 +361,20 @@ async function launch(pool, config, body = {}, { actorId = null, deps = {} } = {
   const catalog = require('./catalog');
   const settings = await bot.readSettings(pool);
   const priced = (m) => (m === TODAY ? bot.stageModel(settings, config, 'build') : m);
-  const models = await catalog.listModels(pool, v.models.map(priced).filter(Boolean));
+  const models = await catalog.listModels(pool, [
+    ...v.models.filter((m) => !recipes.has(m)).map(priced).filter(Boolean),
+    ...[...recipes.values()].flatMap((r) => catalog.recipeModelIds(r)),
+  ]);
   const plan = { task: [], model: [], attempt: [], status: [], error: [], est: [], token: [], pack: [] };
   let estimate = 0;
   for (const t of tasks) {
     for (const m of v.models) {
-      const info = catalog.modelInfo(models, priced(m) || m);
-      const reason = m === TODAY ? null : catalog.notApplicableReason(info, 'first_version', t.brief.length);
-      const est = Math.round(catalog.estimateTrialCost(info, 'first_version', []) * 10000) / 10000;
+      const recipe = recipes.get(m) || null;
+      const info = catalog.modelInfo(models, recipe ? recipe.models.build : (priced(m) || m));
+      const reason = m === TODAY || recipe ? null : catalog.notApplicableReason(info, 'first_version', t.brief.length);
+      const est = Math.round((recipe
+        ? catalog.estimateRecipeCost(models, recipe)
+        : catalog.estimateTrialCost(info, 'first_version', [])) * 10000) / 10000;
       for (const packId of v.packIds) {
         for (let attempt = 1; attempt <= v.repeats; attempt += 1) {
           plan.task.push(t.taskId);

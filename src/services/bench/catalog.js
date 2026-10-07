@@ -66,6 +66,12 @@ const TOKEN_BUDGET = Object.freeze({
 // A capture trial runs no model at all (services/bench/taste.js).
 const FALLBACK_USD = Object.freeze({ triage: 0.3, dm: 0.6, spec: 0.5, build: 2.5, followup: 0.5, checks_fix: 0.6, first_version: 3, capture: 0 });
 const MIN_HISTORY = 3;
+// One call of a first version's reviewer (services/bot-review.js): the
+// request, the spec and eight screenshots in, a list of issues out, priced
+// uncached; and what one is taken to cost with no price to go on (about an
+// Opus round).
+const REVIEW_CALL_TOKENS = Object.freeze({ input: 25_000, output: 5_000 });
+const FALLBACK_REVIEW_CALL_USD = 0.2;
 
 /** OpenRouter's own figures for each id, from the stored catalog. */
 async function catalogFigures(pool, ids) {
@@ -192,6 +198,40 @@ function budgetTrialCost(model, stage) {
     });
   }
   return null;
+}
+
+/** One reviewer call at the model's catalog price, else FALLBACK_REVIEW_CALL_USD. Pure. */
+function reviewCallCost(model) {
+  const usd = modelCosts.tokenCostUsd({
+    inputPricePerMillion: Number.isFinite(model?.inputPerMillion) ? model.inputPerMillion : null,
+    outputPricePerMillion: Number.isFinite(model?.outputPerMillion) ? model.outputPerMillion : null,
+  }, { inputTokens: REVIEW_CALL_TOKENS.input, outputTokens: REVIEW_CALL_TOKENS.output });
+  return usd == null ? FALLBACK_REVIEW_CALL_USD : usd;
+}
+
+/**
+ * What one first version built by a Homeroom bot configuration's recipe
+ * (services/bot-configs.js: { models: { triage, spec, build }, reviewer })
+ * is expected to cost, each stage at its own model's price (its token
+ * budget, else its fallback): the triage, unless `triage: false` (a side
+ * build replays the live run's), the spec, the build, and per review round
+ * one reviewer call (reviewCallCost) and one fix turn at the build's model
+ * (a follow-up's budget). `models` is listModels' answer, holding every id
+ * the recipe names. Pure.
+ */
+function estimateRecipeCost(models, recipe, { triage = true } = {}) {
+  const at = (id, stage) => budgetTrialCost(modelInfo(models, id), stage) ?? FALLBACK_USD[stage] ?? 1;
+  const m = recipe?.models || {};
+  let usd = (triage ? at(m.triage, 'triage') : 0) + at(m.spec, 'spec') + at(m.build, 'build');
+  const rounds = recipe?.reviewer ? Math.max(0, Number(recipe.reviewer.maxRounds) || 0) : 0;
+  if (rounds > 0) usd += rounds * (reviewCallCost(modelInfo(models, recipe.reviewer.model)) + at(m.build, 'followup'));
+  return usd;
+}
+
+/** Every model id a recipe names, for listModels. Pure. */
+function recipeModelIds(recipe) {
+  const m = recipe?.models || {};
+  return [m.triage, m.spec, m.build, recipe?.reviewer?.model].filter((id) => typeof id === 'string' && id);
 }
 
 function median(sorted) {
@@ -324,6 +364,11 @@ module.exports = {
   notApplicableReason,
   estimateTrialCost,
   budgetTrialCost,
+  REVIEW_CALL_TOKENS,
+  FALLBACK_REVIEW_CALL_USD,
+  reviewCallCost,
+  estimateRecipeCost,
+  recipeModelIds,
   costCalibration,
   likelyTrialCost,
   COMPARABLE_STAGE,
