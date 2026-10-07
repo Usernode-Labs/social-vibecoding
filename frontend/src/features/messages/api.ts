@@ -833,6 +833,12 @@ function inAppHref(value: unknown): string | null {
   return href.startsWith('#app/') ? href : null;
 }
 
+/** #4201: an app's icon as the platform serves it (`/app-icons/<id>`), or null. */
+function appIconUrl(value: unknown): string | null {
+  const src = text(value);
+  return /^\/app-icons\/[\w-]+$/.test(src) ? src : null;
+}
+
 const BOT_PHASES = new Set<HomeroomBotPhase>([
   'setting_up', 'queued', 'looking', 'building', 'follow_up_queued', 'following_up', 'merging',
 ]);
@@ -853,6 +859,8 @@ function normalizeBotJob(row: JsonRecord): HomeroomBotJob {
     key: text(pick(row, 'key')) || `${appSlug || ''}#${issueNumber || 'first'}`,
     appSlug,
     appName: text(pick(row, 'appName')) || appSlug || 'A project',
+    iconUrl: appIconUrl(pick(row, 'iconUrl')),
+    iconEmoji: text(pick(row, 'iconEmoji')) || null,
     issueNumber,
     title: text(pick(row, 'title')) || null,
     firstVersion,

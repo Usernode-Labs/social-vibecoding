@@ -453,27 +453,49 @@ async function pastRuns(pool, { userId, limit = RUN_LIMIT }) {
   return rows;
 }
 
-/** The slugs among `items`' this person can still view. */
+/** Pure: an app's icon as a tray entry carries it (#4201): its image, else its emoji. */
+function iconOf(app) {
+  return {
+    iconUrl: app && app.icon_image_id ? `/app-icons/${app.icon_image_id}` : null,
+    iconEmoji: (app && app.icon_emoji) || null,
+  };
+}
+
+/**
+ * Pure: every entry of `work` with its app's icon (#4201), from `icons`
+ * (slug to iconOf). An app with none, or none known, carries nulls.
+ */
+function withIcons(work, icons = new Map()) {
+  const dress = (job) => ({ ...job, ...(icons.get(job.appSlug) || iconOf(null)) });
+  return { now: work.now.map(dress), needsYou: work.needsYou.map(dress), history: work.history.map(dress) };
+}
+
+/**
+ * The slugs among `items`' this person can still view, each with its app's
+ * icon (iconOf), so the tray draws an app it shows by its own icon.
+ */
 async function viewableSlugs(pool, user, items) {
   const slugs = [...new Set(items.map((item) => item.appSlug).filter(Boolean))];
-  if (!slugs.length) return new Set();
-  // The columns checkAppAccess reads (app-access.js ACCESS_COLUMNS), written
-  // out so the query stays static SQL.
+  if (!slugs.length) return new Map();
+  // The columns checkAppAccess reads (app-access.js ACCESS_COLUMNS), and the
+  // icon's, written out so the query stays static SQL.
   const { rows } = await pool.query(
-    `SELECT id, slug, created_by, self_hosted, collab_visibility, view_visibility, moderation_suspended_at
+    `SELECT id, slug, created_by, self_hosted, collab_visibility, view_visibility, moderation_suspended_at,
+            icon_image_id, icon_emoji
        FROM apps WHERE slug = ANY($1::text[])`,
     [slugs],
   );
-  const allowed = new Set();
+  const allowed = new Map();
   for (const app of rows) {
-    if (await appAccess.checkAppAccess(pool, app, user, 'view')) allowed.add(app.slug);
+    if (await appAccess.checkAppAccess(pool, app, user, 'view')) allowed.set(app.slug, iconOf(app));
   }
   return allowed;
 }
 
 /**
  * Everything the tray shows for `user`, the signed-in person:
- * { now, needsYou, history }. Never anybody else's: see the note at the top.
+ * { now, needsYou, history }, every entry with its app's icon (withIcons).
+ * Never anybody else's: see the note at the top.
  */
 async function workFor(pool, { user, settings = null, deps = {} }) {
   const userId = Number(user?.id);
@@ -489,10 +511,10 @@ async function workFor(pool, { user, settings = null, deps = {} }) {
     ...entries.map((item) => ({ appSlug: item.project })),
     ...rows.map((row) => ({ appSlug: row.slug })),
   ]);
-  return arrange(
+  return withIcons(arrange(
     entries.filter((item) => allowed.has(item.project)),
     rows.filter((row) => allowed.has(row.slug)),
-  );
+  ), allowed);
 }
 
 /**
@@ -522,11 +544,12 @@ function noteWorkChanged(userId, deps = {}) {
  * runs the bot, so without it the tray could not be seen there. Times are
  * relative to `now` so it always reads fresh. No project stands behind it
  * (as behind the fixture's own messages), so it links nowhere: `href` and
- * every link are null and the tray draws tiles without links.
+ * every link are null and the tray draws tiles without links. Its app has
+ * an emoji for an icon, so History draws its icon lead (#4201).
  */
 function demoWork(now = Date.now()) {
   const ago = (minutes) => new Date(now - minutes * 60 * 1000).toISOString();
-  const app = { appSlug: null, appName: 'Staging demo app' };
+  const app = { appSlug: null, appName: 'Staging demo app', iconUrl: null, iconEmoji: '🧪' };
   const nowhere = { href: null, links: { request: null, proposal: null, project: null } };
   const request = (issueNumber, title) => ({ key: `demo#${issueNumber}`, ...app, issueNumber, title, firstVersion: false });
   return {
@@ -562,7 +585,7 @@ function demoWork(now = Date.now()) {
 }
 
 module.exports = {
-  workFor, currentJobs, pastRuns, arrange, noteWorkChanged, demoWork,
+  workFor, currentJobs, pastRuns, arrange, noteWorkChanged, demoWork, iconOf, withIcons,
   jobOfProgress, needsYouOfProgress, entryOfRuns, leadOf, outcomeOf, hrefOf, keyOf, planOnly,
   OUTCOMES, NEEDS_YOU, PHASES, PHASE_OF_STAGE, HISTORY_LIMIT, NOW_LIMIT, NOT_FINISHED,
 };

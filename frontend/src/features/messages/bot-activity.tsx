@@ -112,6 +112,31 @@ function ToneIcon({ tone }: { tone: Tone }) {
   return <InfoCircleIcon aria-hidden="true" />;
 }
 
+// #4201: the same endings as a badge on an app icon's corner (the activity
+// tray's History leads with the app's own icon). Solid faces, not the tiles'
+// tints, so the icon under them never shows through; the ring is the tray
+// tile's own face, which cuts the badge out of the icon. Complete literals.
+const TONE_BADGES: Record<Tone, string> = {
+  done: 'bg-[color:var(--brand-ink)] text-white dark:text-zinc-900',
+  built: 'bg-[color:var(--brand-ink)] text-white dark:text-zinc-900',
+  you: 'bg-[color:var(--brand-ink)] text-white dark:text-zinc-900',
+  ended: 'bg-zinc-500 text-white dark:bg-zinc-400 dark:text-zinc-900',
+  trouble: 'bg-red-600 text-white dark:bg-red-500 dark:text-zinc-900',
+};
+
+/** How a piece of work ended, as a small round badge for an icon's corner. */
+export function ActivityBadge({ tone, className = '' }: { tone: Tone; className?: string }) {
+  return (
+    <span
+      className={`flex h-[18px] w-[18px] items-center justify-center rounded-full ring-2 ring-zinc-50 dark:ring-zinc-950 [&>svg]:h-3 [&>svg]:w-3 ${TONE_BADGES[tone]} ${className}`}
+      data-bot-work-badge={tone}
+      aria-hidden="true"
+    >
+      <ToneIcon tone={tone} />
+    </span>
+  );
+}
+
 function capitalized(text: string): string {
   return text ? text[0].toUpperCase() + text.slice(1) : text;
 }
