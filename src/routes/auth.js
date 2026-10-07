@@ -1067,9 +1067,12 @@ function authRoutes(config) {
     try {
       const { default: Anthropic } = await import('@anthropic-ai/sdk');
       const test = new Anthropic({ apiKey: clean });
+      // Thinking off: Haiku 5.5 thinks by default and the thinking counts
+      // against max_tokens, so one token would end inside it.
       await test.messages.create({
-        model: 'claude-haiku-4-5',
+        model: 'claude-haiku-5-5',
         max_tokens: 1,
+        thinking: { type: 'disabled' },
         messages: [{ role: 'user', content: 'ping' }],
       });
     } catch (err) {
