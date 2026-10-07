@@ -212,9 +212,30 @@ test('non-string and over-long bodies are rejected before GitHub', async () => {
       body: JSON.stringify({ body: null }),
     });
     assert.equal(res.status, 400);
-    res = await patchBody(server, 12, 'x'.repeat(10001));
+    res = await patchBody(server, 12, 'x'.repeat(65537));
     assert.equal(res.status, 400);
     assert.equal(patchCalls.length, 0);
+  } finally {
+    server.close();
+  }
+});
+
+test('a body at GitHub’s own limit, and one past the old 10,000 cap, are accepted', async () => {
+  const server = await startServer();
+  try {
+    // The edit sends the whole issue body, so anything GitHub itself takes
+    // is valid here — including a request filed on GitHub past the cap the
+    // editor used to enforce.
+    const longBody = 'x'.repeat(10001);
+    let res = await patchBody(server, 12, longBody);
+    assert.equal(res.status, 200);
+    assert.deepEqual(patchCalls, [{ owner: 'o', repo: 'r', number: 12, body: longBody }]);
+
+    patchCalls = [];
+    const fullBody = 'y'.repeat(65536);
+    res = await patchBody(server, 12, fullBody);
+    assert.equal(res.status, 200);
+    assert.deepEqual(patchCalls, [{ owner: 'o', repo: 'r', number: 12, body: fullBody }]);
   } finally {
     server.close();
   }

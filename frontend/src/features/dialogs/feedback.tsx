@@ -242,7 +242,7 @@ export function FeedbackDialog() {
           <Textarea
             id="feedback-text"
             rows={4}
-            maxLength={2000}
+            maxLength={64000}
             aria-required="true"
             placeholder="Describe the change, or the problem you hit"
             className="resize-none"

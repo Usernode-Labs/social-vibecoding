@@ -36,8 +36,10 @@ const TITLE_MAX = 160;
 // the spec in full" for spec-derived issues — a real spec chunk did not
 // fit in the old 4000 (session 3184 looped on body_too_long). GitHub
 // accepts 65536; the draft card collapses anything past 300 chars behind
-// "Show full report", so a bigger body costs nothing in the timeline.
-const BODY_MAX = 10000;
+// "Show full report", so a bigger body costs nothing in the timeline. The
+// cap leaves room for the source and app lines routes/sessions.js prepends
+// when it files the draft, so a full draft still fits under GitHub's limit.
+const BODY_MAX = 64000;
 
 // Per-session draft caps, counted over a rolling window. The express
 // limiter on the internal route counts REQUESTS; this counts drafts that

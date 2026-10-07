@@ -175,6 +175,7 @@ test('the body cap fits a spec-chunk report (session 3184 regression)', () => {
   // the spec in full" — a cap that cannot hold a few thousand words of
   // ordered slices guarantees the too_long retry loop the fields above
   // exist to break out of.
+  assert.equal(issueDraft.BODY_MAX, 64000, 'BODY_MAX is GitHub’s limit less headroom for the header lines');
   assert.ok(issueDraft.BODY_MAX >= 10000, `BODY_MAX ${issueDraft.BODY_MAX} fits spec-derived bodies`);
 });
 

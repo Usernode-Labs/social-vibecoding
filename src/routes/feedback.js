@@ -157,10 +157,24 @@ function parseVideoId(body) {
 
 // #685: app-provided state snapshots ("Include app state" checkbox).
 // The bridge caps the serialized snapshot at 32,768 chars client-side;
-// 40,000 is a defensive server ceiling that keeps the JSON request body
-// under the global 100 KB express.json() limit and the final issue body
-// (description ≤ 2,000 chars + this) under GitHub's 65,536-char maximum.
+// 40,000 is a defensive server ceiling. With descriptions now up to
+// MAX_FEEDBACK_DESCRIPTION_CHARS the snapshot can no longer be relied on
+// to fit: when description + snapshot exceeds GitHub's limit the snapshot
+// is dropped at filing time (see the app branch below) rather than
+// refusing the request or clipping the person's words.
 const MAX_PAGE_STATE_CHARS = 40000;
+
+// GitHub's own issue-body limit is 65,536 chars, and Homeroom adds a few
+// lines of its own around the description (who filed it, which app, the
+// queued line, screenshot and video embeds) before it files. 64,000
+// leaves well over a thousand characters of headroom for those, so a
+// description accepted here always fits once the page-state snapshot is
+// accounted for.
+const MAX_FEEDBACK_DESCRIPTION_CHARS = 64000;
+// A request that arrives longer than GitHub allows with the app's state
+// snapshot attached is filed without the snapshot. Dropped, not clipped:
+// shortening the person's words would silently change what they reported.
+const MAX_GITHUB_ISSUE_BODY_CHARS = 65536;
 
 // Pure (exported for tests): the collapsed <details> suffix appended to
 // the issue body for an app-provided state snapshot. Four-backtick fence
@@ -465,8 +479,10 @@ function feedbackRoutes(config) {
     if (!description || typeof description !== 'string' || description.trim().length === 0) {
       return res.status(400).json({ error: 'Description is required' });
     }
-    if (description.length > 2000) {
-      return res.status(400).json({ error: 'Description too long (max 2000 chars)' });
+    if (description.length > MAX_FEEDBACK_DESCRIPTION_CHARS) {
+      return res.status(400).json({
+        error: `Description too long (max ${MAX_FEEDBACK_DESCRIPTION_CHARS} chars)`,
+      });
     }
     try {
       const billing = await resolveTitleBilling(req.user?.id);
@@ -563,8 +579,10 @@ function feedbackRoutes(config) {
     if (!description || typeof description !== 'string' || description.trim().length === 0) {
       return res.status(400).json({ error: 'Description is required' });
     }
-    if (description.length > 2000) {
-      return res.status(400).json({ error: 'Description too long (max 2000 chars)' });
+    if (description.length > MAX_FEEDBACK_DESCRIPTION_CHARS) {
+      return res.status(400).json({
+        error: `Description too long (max ${MAX_FEEDBACK_DESCRIPTION_CHARS} chars)`,
+      });
     }
 
     // #556: optional user-chosen title. When present (non-empty after
@@ -851,7 +869,19 @@ function feedbackRoutes(config) {
         // #1054: the "written while offline" line sits with the other header
         // lines, above the description — it is context for reading the report,
         // not part of it.
-        const body = `**Source:** ${source}\n**App:** ${appContext.name} (${appContext.slug})\n${queuedLine}\n${description.trim()}${screenshotSuffix}${videoSuffix}${pageStateSuffix}`;
+        let body = `**Source:** ${source}\n**App:** ${appContext.name} (${appContext.slug})\n${queuedLine}\n${description.trim()}${screenshotSuffix}${videoSuffix}${pageStateSuffix}`;
+        if (body.length > MAX_GITHUB_ISSUE_BODY_CHARS) {
+          // The snapshot, not the description, is what pushed it over
+          // (a description alone is capped under the limit). Rebuild
+          // without it so the request is filed whole.
+          body = `**Source:** ${source}\n**App:** ${appContext.name} (${appContext.slug})\n${queuedLine}\n${description.trim()}${screenshotSuffix}${videoSuffix}`;
+          log.info('feedback', 'Page state dropped: body over GitHub limit', {
+            owner: issueOwner, repo: issueRepo,
+            descriptionLength: description.trim().length,
+            pageStateLength: pageState ? pageState.length : 0,
+            bodyLength: body.length,
+          });
+        }
         let issue;
         try {
           issue = await github.createIssue(issueOwner, issueRepo, { title, body });
@@ -1029,6 +1059,8 @@ module.exports = {
   // #685: pure helpers exported for tests/feedback-page-state.test.js.
   buildPageStateEmbed,
   MAX_PAGE_STATE_CHARS,
+  // The description cap: tests/feedback-description-limit.test.js.
+  MAX_FEEDBACK_DESCRIPTION_CHARS,
   normalizeQueuedAt,
   MAX_QUEUED_AT_CHARS,
 };

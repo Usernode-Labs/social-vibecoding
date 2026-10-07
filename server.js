@@ -296,6 +296,13 @@ app.use((req, res, next) => {
       && /^\/api\/apps\/[^/]+\/pr-import$/.test(req.path)) {
     return express.json({ limit: '512kb' })(req, res, next);
   }
+  // Feedback carries an up-to-64,000-character description and an app may
+  // add an up-to-40,000-character pageState snapshot, which JSON escaping
+  // makes larger still — together past the global 100kb parser. The route
+  // validates both lengths itself.
+  if (req.method === 'POST' && req.path === '/api/feedback') {
+    return express.json({ limit: '512kb' })(req, res, next);
+  }
   // A spec posted on a request (routes/request-specs.js) may be an HTML
   // document of up to 600,000 characters (spec-html.js MAX_SPEC_HTML_CHARS),
   // which JSON escaping makes larger still. The route checks the length

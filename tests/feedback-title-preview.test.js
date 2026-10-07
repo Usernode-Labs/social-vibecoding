@@ -170,7 +170,9 @@ test('missing / blank / over-long description → 400 with no generation call', 
     assert.equal(res.status, 400);
     res = await postTitle(server, { description: '   ' });
     assert.equal(res.status, 400);
-    res = await postTitle(server, { description: 'x'.repeat(2001) });
+    // #4194: the description cap is now GitHub's limit less headroom, so a
+    // 2,001-character description gets a title instead of a silent 400.
+    res = await postTitle(server, { description: 'x'.repeat(64001) });
     assert.equal(res.status, 400);
     assert.equal(generateCalls.length, 0);
   } finally {

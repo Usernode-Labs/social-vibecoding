@@ -1743,7 +1743,7 @@ function IssueBody(
             id="dev-issue-body-input"
             aria-labelledby="dev-issue-body-heading"
             rows={10}
-            maxLength={10000}
+            maxLength={65536}
             width="full"
             box="default"
             className="resize-y"

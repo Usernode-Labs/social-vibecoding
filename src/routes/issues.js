@@ -133,10 +133,6 @@ const MAX_CLOSE_REASON_LENGTH = 2000;
 // #556: cap for author-edited issue titles (rename route below). Matches
 // the feedback form's optional title input; far below GitHub's own limit.
 const MAX_ISSUE_TITLE_LENGTH = 200;
-// Matches the issue-draft service and feedback form. Empty is valid: GitHub
-// issues may deliberately have no description, but an accidental novel must
-// not ride through the app's JSON limit or make the topic unusable.
-const MAX_ISSUE_BODY_LENGTH = 10000;
 // GitHub's own issue-body limit: the most a request filed with screenshots
 // may come to once their embed lines are appended (MAX_REQUEST_BODY_CHARS in
 // services/mcp-tools.js is the same number).
@@ -2806,9 +2802,12 @@ function issueRoutes(config) {
     if (typeof rawBody !== 'string') {
       return res.status(400).json({ error: 'Body must be a string' });
     }
-    if (rawBody.length > MAX_ISSUE_BODY_LENGTH) {
+    // The edit sends the whole issue body — a request filed on GitHub may
+    // already be at GitHub's own limit — so the cap is GitHub's, not the
+    // smaller one a freshly typed description gets.
+    if (rawBody.length > MAX_GITHUB_ISSUE_BODY_CHARS) {
       return res.status(400).json({
-        error: `Body too long (max ${MAX_ISSUE_BODY_LENGTH} chars)`,
+        error: `Body too long (max ${MAX_GITHUB_ISSUE_BODY_CHARS} chars)`,
       });
     }
     const newBody = github.safeMention(rawBody);

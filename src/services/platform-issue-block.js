@@ -26,7 +26,9 @@
 // on the text the testing and description extractors have already cleaned.
 
 const TITLE_MAX = 160;
-const BODY_MAX = 10000;
+// Kept equal to issue-draft's BODY_MAX (pinned by its test): both clip the
+// model-written body of a request, well under GitHub's 65,536-char limit.
+const BODY_MAX = 64000;
 
 // Same marker grammar as proposal-description.js: the exact upper-case label
 // on its own line, fenced by `=` runs or markdown emphasis.
