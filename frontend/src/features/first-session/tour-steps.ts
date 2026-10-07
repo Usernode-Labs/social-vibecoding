@@ -11,8 +11,8 @@
  * over (decision C); the invited one ends in Discussion. "Look around first"
  * has its own four cards on Home (decision E, #4072): where to start a
  * project later, and what the tab bar's places are. A private member, let in
- * by an invite link before the waitlist let them in, gets its own four cards
- * the first time they reach Home (#4080, privateSteps).
+ * by an invite link before the waitlist let them in, gets four cards in the
+ * same words the first time they reach Home (#4080, privateSteps).
  *
  * Every target is the product's own control or region, found by the
  * selectors the rest of the shell already pins (tests/baselines/
@@ -223,37 +223,45 @@ export function invitedSteps({ slug, name }: TourProject): TourStep[] {
 
 /**
  * A PRIVATE MEMBER's tour (users.private_member_since): an invite link let
- * them into the group's app before they were let in, and they reach the rest
- * of Homeroom only through the mark menu's "Go to Homeroom". The first time
- * they do, four steps on the Home it opens: the app, where the group lives,
- * Homeroom bot, and the waitlist card that is how they make apps of their
- * own. Nothing to press but Next: every step is on the screen they are on.
+ * them into a community's app before they were let in, and they reach the
+ * rest of Homeroom only through the mark menu's "Go to Homeroom" (#4080).
+ * The first time they do, four cards on the Home it opens, in the other
+ * tours' words: the project, where to find it, Homeroom bot, and the
+ * waitlist card that is how they make apps of their own. Each points at one
+ * place and leads on with Next, as "Look around first" does: every step is
+ * on the screen they are on.
  */
 export function privateSteps({ slug, name }: TourProject): TourStep[] {
   return [
     {
       screen: 'home',
       target: `.app-card[data-slug="${slug}"]`,
+      ringed: true,
       title: `${name} is on your Home`,
       text: 'Open it any time from here.',
     },
     {
       screen: 'home',
       target: '#platform-tab-workshop',
-      title: 'The group lives in Communities',
-      text: 'Its hub, its group chat, and what is up for a vote.',
+      ringed: true,
+      title: `You can find ${name} here`,
+      text: 'Communities lists every community you\'re in.',
     },
     {
       screen: 'home',
       target: '#platform-tab-messages',
+      ringed: true,
       title: 'Homeroom bot is in Messages',
-      text: 'Ask it for a change in plain words. It builds it, and the group decides what goes in.',
+      text: `Ask it for a change to ${name}.`,
     },
     {
+      // The card's own heading says what it is for ("Make and share your
+      // own apps"); this card says where, and what the card does.
       screen: 'home',
       target: '#home-waitlist-card',
-      title: 'Make and share your own apps',
-      text: 'Join the waitlist for that, here. Until then, everything in your group is yours to use and change.',
+      ringed: true,
+      title: 'Your own apps start here',
+      text: 'Join the waitlist to get your spot.',
       last: true,
     },
   ];
