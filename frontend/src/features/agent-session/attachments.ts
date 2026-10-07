@@ -61,23 +61,27 @@ export function refusal(name: string, size: number): string | null {
 }
 
 /**
- * Which of `files` fit beside the `already` in the tray, and the first reason
- * one did not. Files past the fourth are refused whole, not truncated
+ * Which of `files` fit beside the `already` in the tray, the first reason one
+ * did not, and how many did not (#4065: the error line names the first and
+ * counts the rest). Files past the fourth are refused whole, not truncated
  * silently.
  */
-export function acceptFiles<T extends { name: string; size: number }>(already: number, files: T[]): { accepted: T[]; error: string | null } {
+export function acceptFiles<T extends { name: string; size: number }>(already: number, files: T[]): { accepted: T[]; error: string | null; refusedCount: number } {
   const accepted: T[] = [];
   let error: string | null = null;
-  for (const file of files) {
+  let refusedCount = 0;
+  for (let i = 0; i < files.length; i += 1) {
+    const file = files[i];
     if (already + accepted.length >= MAX_FILES) {
       error = error || `You can attach up to ${MAX_FILES} files to one message.`;
+      refusedCount += files.length - i;
       break;
     }
     const why = refusal(file.name, file.size);
-    if (why) { error = error || why; continue; }
+    if (why) { error = error || why; refusedCount += 1; continue; }
     accepted.push(file);
   }
-  return { accepted, error };
+  return { accepted, error, refusedCount };
 }
 
 export function formatSize(bytes: number): string {
