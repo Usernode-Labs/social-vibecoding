@@ -18,7 +18,10 @@
 //   * Never while the live bot's live builds (ones a person is waiting for)
 //     use every build slot it has (homeroom-bot isLiveLaneSaturated): the
 //     benchmark waits for them, not the other way round. Shadow builds do
-//     not hold it back; they are experiments too.
+//     not hold it back; they are experiments too. A later change's side
+//     builds (services/bot-configs.js, kind `bot_config_later`) take only
+//     the build slots live builds leave free: those in flight count beside
+//     the live builds against the bot's build concurrency.
 //   * The cap. Before a trial is claimed, what the run has spent, plus the
 //     estimate of every trial still under way, plus this trial's estimate
 //     (catalog.estimateTrialCost, deliberately pessimistic), must stay inside
@@ -92,6 +95,8 @@ const SWEEP_EVERY_MS = 10 * 60 * 1000;
 // does not hold is orphaned; the grace is a margin, not the mechanism.
 const ORPHAN_GRACE_SECONDS = 120;
 const TWICE_INTERRUPTED = 'interrupted: the platform restarted during it twice';
+// A later change's side builds' runs (services/bot-configs.js LATER_SIDE_RUN_KIND).
+const LATER_SIDE_RUN_KIND = 'bot_config_later';
 
 const inFlight = new Map(); // trialId -> { runId, est, sessionId, promise, heavy, recovered? }
 let laneOn = false;
@@ -864,10 +869,12 @@ async function recordTrial(pool, { trialRow, row, patch, user, d, recovered = fa
     ).catch(() => {});
     if (!recovered) for (const id of sessionIds) Promise.resolve(d.worker.evictWorker?.(id)).catch(() => {});
   }
-  // A branch with nothing on it is not kept. Nor is a side build's
-  // (services/bot-configs.js): it sits on the live project's own repository,
-  // and its diff and screenshots are on the trial already.
-  if (patch.build_branch && (!(patch.build_commits > 0) || row?.bot_config_version_id) && row?.repo_url) {
+  // A branch with nothing on it is not kept. Nor is a first version's side
+  // build's (services/bot-configs.js): it sits on the live project's own
+  // repository, and its diff and screenshots are on the trial already. A
+  // later change's side build keeps its commits for the sweep, as any build
+  // trial does, so its pair's compare link opens while the pair waits.
+  if (patch.build_branch && (!(patch.build_commits > 0) || (row?.bot_config_version_id && row?.run_kind !== LATER_SIDE_RUN_KIND)) && row?.repo_url) {
     await deleteBranch(pool, d.github, row.repo_url, patch.build_branch, trialRow.id);
   }
   // The deterministic grade, at once: a build's diff-scope rule reads the
@@ -1359,6 +1366,10 @@ async function tick(pool, config, deps = {}) {
       while (free > 0) {
         if (inFlight.size >= MAX_IN_FLIGHT) { out.paused = out.paused || 'lane_full'; break; }
         if ((deps.isLiveLaneSaturated || bot.isLiveLaneSaturated)(settings)) { out.paused = 'live_bot_busy'; break; }
+        if (run.kind === LATER_SIDE_RUN_KIND) {
+          const besides = [...inFlight.values()].filter((f) => f.laterSide).length;
+          if ((deps.isLiveLaneSaturated || bot.isLiveLaneSaturated)(settings, { besides })) { out.paused = 'live_bot_busy'; break; }
+        }
         // eslint-disable-next-line no-await-in-loop
         user = user || deps.user || await runner.ensureBenchUser(pool, config);
         // eslint-disable-next-line no-await-in-loop
@@ -1407,7 +1418,10 @@ async function tick(pool, config, deps = {}) {
           "UPDATE bench_runs SET status = 'running', started_at = COALESCE(started_at, NOW()) WHERE id = $1 AND status = 'queued'",
           [run.id],
         );
-        const entry = { runId: run.id, est: claim.est || 0, sessionId: null, promise: null, heavy: HEAVY_STAGES.includes(next.stage) };
+        const entry = {
+          runId: run.id, est: claim.est || 0, sessionId: null, promise: null, heavy: HEAVY_STAGES.includes(next.stage),
+          laterSide: run.kind === LATER_SIDE_RUN_KIND,
+        };
         inFlight.set(claim.id, entry);
         entry.promise = executeTrial(pool, config, claim, { ...deps, user })
           .catch(async (err) => {

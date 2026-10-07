@@ -681,6 +681,33 @@ async function sideBuildStage(ctx) {
 }
 
 /**
+ * A SIDE BUILD of a LATER change (services/bot-configs.js spawnSideBuilds,
+ * scope `later`): one configuration's spec and build of the request the
+ * bot's own build (live or shadow) is building, on the project's own
+ * repository from the commit that build started at, replaying its request
+ * and its triage's plan (the build snapshot's seed and build note) as they
+ * are. The spec is a later change's (no first-version design brief), on the
+ * build's own clocks; no review and no screenshot step. Never proposed,
+ * never posted: buildStage's propose:false on the trial's guarded GitHub.
+ */
+async function laterSideBuildStage(ctx) {
+  const { snapshot } = ctx;
+  if (!snapshot?.texts?.seed || !snapshot.baseSha) {
+    return { status: 'infra_fail', error: 'the run recorded no build snapshot to replay' };
+  }
+  const models = firstVersionModels(ctx);
+  try { ctx.onStep?.('spec'); } catch { /* a watcher never stops a trial */ }
+  const built = await buildStage({
+    ...ctx,
+    model: models.build,
+    specModel: models.spec !== models.build ? models.spec : null,
+    snapshot: { ...snapshot, extra: { ...(snapshot.extra || {}), firstVersion: false } },
+    reviewer: null,
+  });
+  return { ...built, parsed: { ...(built.parsed || {}), models, side: { botRunId: ctx.sideBuild?.botRunId || null } } };
+}
+
+/**
  * The agent-turn module a build is handed, the same but for
  * resolveCodexRuntimeContext, whose runtime is shown to `onRuntime` (the
  * last one a build resolves is its build turn's) and then returned as it
@@ -1088,7 +1115,8 @@ async function referenceStage(ctx) {
 const STAGE_RUNNERS = Object.freeze({
   triage: triageStage,
   spec: specStage,
-  build: buildStage,
+  // A side build of a later change replays its plan (laterSideBuildStage).
+  build: (ctx) => (ctx.sideBuild ? laterSideBuildStage(ctx) : buildStage(ctx)),
   followup: (ctx) => followupStage(ctx, 'followup'),
   checks_fix: (ctx) => followupStage(ctx, 'checks_fix'),
   // A DM task is a conversation of triage turns (services/bench/dm-sim.js).
@@ -1320,6 +1348,7 @@ module.exports = {
   triageStage,
   firstVersionStage,
   sideBuildStage,
+  laterSideBuildStage,
   reviewerCost,
   firstVersionModels,
   referenceStage,
