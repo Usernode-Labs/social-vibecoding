@@ -684,8 +684,10 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, { at
     // container, and the by-name sweeper is the backstop) but logged rather
     // than swallowed, same reasoning as step 4 above (#851).
     // Kubernetes deploys reconcile deterministic resource names on retry;
-    // Docker needs an explicit by-name cleanup after a partial start.
-    if (applicationRuntime.mode(config) === 'docker') {
+    // Docker needs an explicit by-name cleanup after a partial start. An
+    // attempt that failed before its deploy step started nothing, and the
+    // container by that name is the one still serving.
+    if (applicationRuntime.mode(config) === 'docker' && (!attempt || attempt.servingRemoved)) {
       const cleaned = await docker.stopAndRemove(containerName, {
         stopTimeoutSec: docker.STAGING_STOP_GRACE_SEC,
       }).catch((e) => ({ removed: false, error: e.message })) || {};
