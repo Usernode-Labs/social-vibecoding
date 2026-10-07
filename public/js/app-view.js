@@ -4915,15 +4915,19 @@ const AppView = {
     let body;
     if (t.kind === 'issue') {
       card = AppView._issueCardModel(item, { noNav: true });
+      const closedBand = AppView._issueClosedBandView(item);
       // #396: the issue body, then the GitHub comment thread. The thread is
       // fetched lazily (after paint) into `#dev-issue-comments`, which the
       // head renders as an empty host, so a cached (or empty) result reuses
       // what is already there across WS-driven refreshes.
       body = {
         actions: AppView._detailActionsView('issue', item),
-        // (#2431) The mirror of a proposal's issue chips: which change
-        // closed this issue, or is working on it.
-        addressedBy: AppView._issueProposalRefView(item),
+        // (#2431) The mirror of a proposal's issue chips: which change is
+        // working on this issue, or addressed it. (#4244) On a CLOSED issue
+        // the change that closed it rides in the card's status band instead,
+        // so the page says "closed" once.
+        closedBand,
+        addressedBy: closedBand && closedBand.ref ? null : AppView._issueProposalRefView(item),
         issueBodyHtml: AppView._issueBodyHtml(item),
         issueBodyEditor: {
           issue: item.number,
@@ -5031,6 +5035,28 @@ const AppView = {
       label: n ? `#${n}` : 'Change',
       title: ref.title || (n ? `Pull request #${n}` : `Change ${ref.sessionId}`),
       href: `#app/${slug}/dev/proposals/${ref.sessionId}`,
+    };
+  },
+
+  // #4244: a closed request's ONE status band, at the top of its card:
+  // "Closed · Oct 5 · by #10 <title>". Emerald when a merged change closed
+  // it (the change is the band's pill, the door to its page), zinc when a
+  // close vote or an admin did (`closed_via`, from the single-issue route).
+  // The card itself then carries no second "Closed" badge (_issueCardModel).
+  _issueClosedBandView(issue) {
+    if (!issue || issue.state !== 'closed') return null;
+    const ref = AppView._issueProposalRefView(issue);
+    const merged = !!(ref && ref.state === 'merged');
+    const stamp = issue.closedAt ? relStamp(issue.closedAt) : { text: '', title: '' };
+    const how = merged ? null
+      : issue.closed_via === 'admin' ? 'by an admin'
+        : issue.closed_via === 'vote' ? 'by vote' : null;
+    return {
+      tone: merged ? 'merged' : 'settled',
+      when: stamp.text || null,
+      whenTitle: stamp.title || null,
+      how,
+      ref: merged ? ref : null,
     };
   },
 
@@ -17939,7 +17965,9 @@ const AppView = {
       : null;
 
     // ── Badges: close status + work state + at most three metadata chips ──
-    const badges = closed ? [closedBadge] : [
+    // (#4244) On its own page (noNav) the status band above the card says
+    // it, with when and by what, so the card does not say it twice.
+    const badges = closed ? (noNav ? [] : [closedBadge]) : [
       closeBadge,
       AppView._inProgressChipSpec(issue),
       ...AppView._attrChipSpecs('issue', n, issue, { omitUnset: !noNav }),

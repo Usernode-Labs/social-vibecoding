@@ -361,6 +361,22 @@ export interface IssueProposalRef {
 }
 
 /**
+ * #4244 — a CLOSED request's one status band, at the top of its card
+ * (`_issueClosedBandView`). `merged` when a merged change closed it (`ref` is
+ * that change, drawn as the band's pill); `settled` when a close vote or an
+ * admin did (`how` says which, when the server knows).
+ */
+export interface IssueClosedBand {
+  tone: 'merged' | 'settled';
+  /** Short stamp: "Oct 5", or "3d ago" inside a week. */
+  when: string | null;
+  whenTitle: string | null;
+  /** "by vote" / "by an admin"; null on a merged close (the pill says it). */
+  how: string | null;
+  ref: IssueProposalRef | null;
+}
+
+/**
  * The change page's hero (topic-head.tsx `ChangeHero`): the words of the
  * Workshop's Needs-you item, for one change. The card's meta line carried
  * the same facts as one ellipsising row — "PR#2473 · snait · 5h ago · In
@@ -477,8 +493,10 @@ export interface StepsView {
 export interface TopicBody {
   changeId?: number;
   issues?: IssueLink[];
-  /** #2431 — on an ISSUE's page, the change that closed it or is on it. */
+  /** #2431 — on an ISSUE's page, the change on it (an open issue's). */
   addressedBy?: IssueProposalRef | null;
+  /** #4244 — on a CLOSED issue's page, the band that says so, and by what. */
+  closedBand?: IssueClosedBand | null;
   /**
    * On a CHANGE's page, the change it went live inside: an open change a
    * merged one was built on is marked merged as included in it
