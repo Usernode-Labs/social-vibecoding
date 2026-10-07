@@ -69,9 +69,9 @@ test('it reads the platform with the agent-session Mayor\'s connector reads, nev
   assert.match(read('src/services/mayor/mcp-shim.js'), /subject: String\(rateSubject \?\? agentSessionId\),/);
 });
 
-test('the tools: eleven lookups and actions and a reply, every one closed to extra arguments', () => {
+test('the tools: thirteen lookups and actions and a reply, every one closed to extra arguments', () => {
   assert.deepEqual(mayor.TOOLS.map((t) => t.function.name),
-    ['progress', 'my_work', 'request_detail', 'my_projects', 'answer_question', 'revise_proposal',
+    ['progress', 'my_work', 'request_detail', 'my_projects', 'list_source', 'read_source', 'answer_question', 'revise_proposal',
       'comment_on_request', 'start_request', 'offer_request', 'withdraw_proposal', 'report_problem', 'reply']);
   for (const t of mayor.TOOLS) {
     assert.equal(t.type, 'function');
@@ -526,4 +526,61 @@ test('B2: the chat never runs out with building time, and allows 120 messages an
   // Nothing the bot says or is told to say names an amount of money.
   assert.doesNotMatch(src, /dollars\(/);
   assert.match(src, /Never name an amount of money\./);
+});
+
+// #4145: "check in main how it works" was answered with "I can't read the
+// app's code from here". It reads a project's code on main now, for anybody
+// who can build on that project, and never a file that holds secrets.
+function sourceFixture({ collab = 'public', files, contents = {} } = {}) {
+  const app = { id: 7, slug: 'mail-app', name: 'Mail app', repo_url: 'https://github.com/Usernode-Labs/mail-app', collab_visibility: collab, view_visibility: 'public' };
+  const pool = { async query(sql) { return /FROM apps/.test(String(sql)) ? { rows: [app] } : { rows: [] }; } };
+  const reads = [];
+  const github = {
+    async listRepoFiles(owner, repo, ref) { reads.push(['tree', owner, repo, ref]); return { files, truncated: false }; },
+    async getFileContent(owner, repo, p, ref) { reads.push(['file', owner, repo, p, ref]); return p in contents ? contents[p] : null; },
+  };
+  return { pool, deps: { github }, reads, user: { id: 5, username: 'snait' } };
+}
+
+test('#4145: the DM reads a project\'s code on main, found by path, paged by line', async () => {
+  const f = sourceFixture({
+    files: [
+      { path: 'server.js', size: 900 }, { path: 'src/mail/track.js', size: 400 }, { path: 'src/mail/send.js', size: 300 },
+      { path: '.env', size: 20 }, { path: 'certs/server.pem', size: 10 },
+    ],
+    contents: { 'src/mail/track.js': Array.from({ length: 2000 }, (_, i) => `const line${i} = ${i};`).join('\n') },
+  });
+  const listed = await mayor.listSource(f.pool, { user: f.user, project: 'mail-app', dir: 'src', match: 'MAIL track', deps: f.deps });
+  assert.deepEqual(listed.files, [{ path: 'src/mail/track.js', size: 400 }]);
+  assert.equal(listed.branch, 'main');
+  const all = await mayor.listSource(f.pool, { user: f.user, project: 'Mail app', deps: f.deps });
+  assert.deepEqual(all.files.map((x) => x.path), ['server.js', 'src/mail/track.js', 'src/mail/send.js'], 'secret files are never listed');
+  assert.deepEqual(f.reads[0], ['tree', 'Usernode-Labs', 'mail-app', 'main']);
+
+  const first = await mayor.readSource(f.pool, { user: f.user, project: 'mail-app', path: './src/mail/track.js', deps: f.deps });
+  assert.equal(first.path, 'src/mail/track.js');
+  assert.equal(first.totalLines, 2000);
+  assert.match(first.text, /^1: const line0 = 0;/);
+  assert.ok(first.text.length <= mayor.SOURCE_CHUNK_CHARS);
+  assert.ok(first.nextLine > 1);
+  assert.ok(JSON.stringify(first).length < 12_000, 'one answer fits the tool result limit');
+  const next = await mayor.readSource(f.pool, { user: f.user, project: 'mail-app', path: 'src/mail/track.js', fromLine: first.nextLine, deps: f.deps });
+  assert.match(next.text, new RegExp(`^${first.nextLine}: `));
+
+  assert.match((await mayor.readSource(f.pool, { user: f.user, project: 'mail-app', path: 'nope.js', deps: f.deps })).error, /No such file on main/);
+  for (const p of ['.env', 'config/.env.production', 'certs/server.pem', '../other/x.js']) {
+    const before = f.reads.length;
+    assert.ok((await mayor.readSource(f.pool, { user: f.user, project: 'mail-app', path: p, deps: f.deps })).error, p);
+    assert.equal(f.reads.length, before, `${p} is never fetched`);
+  }
+});
+
+test('#4145: a project they cannot build on is not read', async () => {
+  const f = sourceFixture({ collab: 'collaborators', files: [{ path: 'server.js', size: 1 }], contents: { 'server.js': 'x' } });
+  assert.match((await mayor.listSource(f.pool, { user: f.user, project: 'mail-app', deps: f.deps })).error, /No such project/);
+  assert.match((await mayor.readSource(f.pool, { user: f.user, project: 'mail-app', path: 'server.js', deps: f.deps })).error, /No such project/);
+  assert.equal(f.reads.length, 0);
+  const tools = Object.fromEntries(mayor.TOOLS.map((t) => [t.function.name, t.function]));
+  assert.deepEqual(tools.read_source.parameters.required, ['project', 'path']);
+  assert.match(mayor.systemPrompt({ username: 'snait' }), /Read the code of a project they can build on, as it is on main/);
 });

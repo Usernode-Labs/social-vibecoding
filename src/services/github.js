@@ -907,6 +907,24 @@ async function getFileContent(owner, repo, filePath, ref) {
   }
 }
 
+// #4145: every file path in a repo at `ref` (default the repo's default
+// branch), one request through the read client: [{ path, size }], blobs
+// only, and `truncated` when GitHub cut a very large tree short. Null when
+// the repository or ref does not exist; other errors propagate.
+async function listRepoFiles(owner, repo, ref) {
+  const octokit = await getReadOctokit(owner);
+  try {
+    const { data } = await octokit.rest.git.getTree({ owner, repo, tree_sha: ref || 'HEAD', recursive: 'true' });
+    const files = (data.tree || [])
+      .filter((entry) => entry.type === 'blob')
+      .map((entry) => ({ path: entry.path, size: entry.size || 0 }));
+    return { files, truncated: data.truncated === true };
+  } catch (err) {
+    if (err.status === 404 || err.status === 409) return null;
+    throw err;
+  }
+}
+
 // `fromBranch` (default 'main') lets callers fork off an arbitrary existing
 // branch — used by the headless-session clone flow (#155), which branches a
 // user's new dev branch off the auto session's branch so any pushed commits
@@ -2798,6 +2816,7 @@ module.exports = {
   pushFiles,
   createRootCommit,
   getFileContent,
+  listRepoFiles,
   createBranch,
   ensureBranchAtSha,
   compareCommitAncestry,

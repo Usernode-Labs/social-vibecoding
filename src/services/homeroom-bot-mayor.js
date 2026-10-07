@@ -56,6 +56,12 @@
 // on; what the records say; that the bot's key does not work; one plain
 // answer from the conversation alone (plainAnswer); and only then that.
 //
+// #4145: it can read a project's own code on main (list_source, read_source)
+// for anybody who can build on that project, so "check in main how it
+// works" is answered from the code rather than with "I can't read it". The
+// same people can already read it through a work order or a dev session.
+// Files that hold secrets by convention (.env, keys) are never read.
+//
 // It can also read the platform the way the agent-session Mayor does: the
 // same connector read tools (get_request, get_discussion, list_requests,
 // get_proposal, get_platform_conventions, …) through the Mayor's in-process
@@ -146,6 +152,14 @@ const MAX_REPLY_CHARS = 2500;
 const MAX_TOOL_RESULT_CHARS = 12_000;
 const MAX_TITLE_CHARS = 200;
 const MAX_DETAILS_CHARS = 3000;
+// #4145: a project's code. One read_source answer carries at most this many
+// characters of a file (it fits MAX_TOOL_RESULT_CHARS once escaped as JSON),
+// a list_source answer at most this many paths.
+const SOURCE_CHUNK_CHARS = 8000;
+const SOURCE_MAX_PATHS = 200;
+const SOURCE_REF = 'main';
+// Never read, whoever asks: where secrets live by convention.
+const SECRET_PATH_RE = /(^|\/)(\.env(\.[^/]*)?|\.npmrc|\.netrc|id_(rsa|ed25519|ecdsa)[^/]*|[^/]*\.(pem|key|p12|pfx|keystore|jks))$/i;
 // The person's pictures are sent from this many of their newest messages.
 const IMAGE_REPLAY_MESSAGES = 2;
 const DEFAULT_MODEL = 'z-ai/glm-5.3-flash';
@@ -326,6 +340,10 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '  project\'s owner, asks you to (withdraw_proposal). It is withdrawn only once they tap Withdraw it under your',
     '  message, so ask them to. The one exception: a second proposal for a request that already has one approved',
     '  or up for a vote is withdrawn straight away, and you say so.',
+    '- Read the code of a project they can build on, as it is on main, when they ask how something works or what',
+    '  the code does (list_source to find files by path or name, then read_source). Answer from what the code says,',
+    '  in plain words, and say which file you read. Never quote secrets, and say plainly when the code you read does',
+    '  not answer the question.',
     '- Tell the Homeroom team about a problem they hit that nothing above fixes, when they ask you to or say yes',
     '  when you offer (report_problem). It is filed as a report from them where the team tracks problems, which',
     '  anyone can read; the last few messages of this chat go only to the team, privately. Say so.',
@@ -427,6 +445,43 @@ const TOOLS = [
       name: 'my_projects',
       description: 'The projects this person is a member of, where they can file requests, and whether you build on each.',
       parameters: { type: 'object', properties: {}, additionalProperties: false },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_source',
+      description: 'The files in a project\'s code on main, for a project they can build on: paths and sizes, at most '
+        + `${SOURCE_MAX_PATHS}. Narrow it with dir (a folder, like "src/services") and match (words in the path, like "mail"). `
+        + '`more` says how many matching paths were left out.',
+      parameters: {
+        type: 'object',
+        properties: {
+          project: { type: 'string', description: 'The project\'s name or short name.' },
+          dir: { type: 'string', description: 'Only files under this folder.' },
+          match: { type: 'string', description: 'Only paths containing all of these words (case does not matter).' },
+        },
+        required: ['project'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'read_source',
+      description: 'One file of a project\'s code on main, for a project they can build on, with line numbers, '
+        + `about ${SOURCE_CHUNK_CHARS} characters at a time. For a long file, nextLine says where to go on: call again with fromLine.`,
+      parameters: {
+        type: 'object',
+        properties: {
+          project: { type: 'string', description: 'The project\'s name or short name.' },
+          path: { type: 'string', description: 'The file\'s path, from list_source.' },
+          fromLine: { type: 'integer', description: 'The first line to read (1 by default).' },
+        },
+        required: ['project', 'path'],
+        additionalProperties: false,
+      },
     },
   },
   {
@@ -822,6 +877,80 @@ async function canView(pool, app, user) {
   try {
     return await require('./app-access').checkAppAccess(pool, app, user, 'view');
   } catch { return false; }
+}
+
+// ── A project's code (#4145) ──────────────────────────────────────────────
+
+/** Pure: a path as the model wrote it, made relative and safe, or null. */
+function sourcePath(value) {
+  const parts = String(value || '').trim().replace(/\\/g, '/').split('/').filter((part) => part && part !== '.');
+  if (!parts.length || parts.some((part) => part === '..')) return null;
+  return parts.join('/');
+}
+
+/** The project and its repository, when this person can build on it. */
+async function sourceRepo(pool, { user, project, deps = {} }) {
+  const app = await findApp(pool, project);
+  let allowed = false;
+  if (app) {
+    try { allowed = await require('./app-access').checkAppAccess(pool, app, user, 'collab'); } catch { allowed = false; }
+  }
+  if (!allowed) return { error: 'No such project whose code they can read. Check my_projects.' };
+  const repo = botModule(deps).parseRepo(app.repo_url);
+  if (!repo) return { error: 'That project has no code yet.' };
+  return { app, repo };
+}
+
+async function listSource(pool, { user, project, dir, match, deps = {} }) {
+  const found = await sourceRepo(pool, { user, project, deps });
+  if (found.error) return found;
+  const github = deps.github || require('./github');
+  const tree = await github.listRepoFiles(found.repo.owner, found.repo.repo, SOURCE_REF);
+  if (!tree) return { error: 'Could not read that project\'s code on main.' };
+  const prefix = dir ? sourcePath(dir) : null;
+  if (dir && !prefix) return { error: 'That folder is not a path in the project.' };
+  const words = String(match || '').toLowerCase().split(/\s+/).filter(Boolean);
+  const hits = tree.files.filter((f) => !SECRET_PATH_RE.test(f.path)
+    && (!prefix || f.path.startsWith(`${prefix}/`))
+    && words.every((w) => f.path.toLowerCase().includes(w)));
+  return {
+    project: found.app.slug,
+    branch: SOURCE_REF,
+    files: hits.slice(0, SOURCE_MAX_PATHS).map((f) => ({ path: f.path, size: f.size })),
+    more: Math.max(0, hits.length - SOURCE_MAX_PATHS),
+    ...(tree.truncated ? { note: 'The project is very large, so some files may be missing from this list.' } : {}),
+  };
+}
+
+async function readSource(pool, { user, project, path: rawPath, fromLine, deps = {} }) {
+  const found = await sourceRepo(pool, { user, project, deps });
+  if (found.error) return found;
+  const filePath = sourcePath(rawPath);
+  if (!filePath) return { error: 'That is not a file path in the project.' };
+  if (SECRET_PATH_RE.test(filePath)) return { error: 'That file holds secrets, so it is never read.' };
+  const github = deps.github || require('./github');
+  const text = await github.getFileContent(found.repo.owner, found.repo.repo, filePath, SOURCE_REF);
+  if (text == null) return { error: 'No such file on main. Use list_source to find it.' };
+  if (text.includes('\u0000')) return { error: 'That file is not text.' };
+  const lines = text.split('\n');
+  const from = Math.min(Math.max(1, Number.isInteger(Number(fromLine)) ? Number(fromLine) : 1), lines.length);
+  const out = [];
+  let used = 0;
+  let line = from;
+  for (; line <= lines.length; line += 1) {
+    const row = `${line}: ${lines[line - 1]}`;
+    if (out.length && used + row.length + 1 > SOURCE_CHUNK_CHARS) break;
+    out.push(row.length > SOURCE_CHUNK_CHARS ? `${row.slice(0, SOURCE_CHUNK_CHARS - 1)}…` : row);
+    used += row.length + 1;
+  }
+  return {
+    project: found.app.slug,
+    branch: SOURCE_REF,
+    path: filePath,
+    totalLines: lines.length,
+    text: out.join('\n'),
+    ...(line <= lines.length ? { nextLine: line } : {}),
+  };
 }
 
 /**
@@ -1501,6 +1630,8 @@ async function runTool(pool, ctx, name, args) {
       case 'comment_on_request': return await commentOnRequest(pool, ctx, args);
       case 'start_request': return await startRequest(pool, ctx, args);
       case 'my_projects': return await myProjects(pool, { user, settings, deps });
+      case 'list_source': return await listSource(pool, { user, project: args.project, dir: args.dir, match: args.match, deps });
+      case 'read_source': return await readSource(pool, { user, project: args.project, path: args.path, fromLine: args.fromLine, deps });
       case 'answer_question': {
         const dm = dmModule(deps);
         let filter = {};
@@ -3410,6 +3541,13 @@ module.exports = {
   myWork,
   requestDetail,
   myProjects,
+  // #4145
+  SECRET_PATH_RE,
+  SOURCE_CHUNK_CHARS,
+  SOURCE_MAX_PATHS,
+  sourcePath,
+  listSource,
+  readSource,
   historyMessages,
   picturesMessage,
   withoutPictures,
