@@ -676,7 +676,9 @@ async function executeTrial(pool, config, trialRow, deps = {}) {
     // A first version goes on after a restart from what it kept ("After a
     // restart", below), the skills it already reached for included.
     const resumes = goesOnAfterRestart(row);
-    watch = progress.tracker(pool, row.id, { log, skills: resumes ? row.checkpoint?.skills : null });
+    watch = progress.tracker(pool, row.id, {
+      log, skills: resumes ? row.checkpoint?.skills : null, looks: resumes ? row.checkpoint?.looks : null,
+    });
     const cancelled = () => !!inFlight.get(row.id)?.cancelled;
     patch = await runner.runStage({
       pool, config, stage: row.stage, task, snapshot, model, user, app, repo,
@@ -702,12 +704,18 @@ async function executeTrial(pool, config, trialRow, deps = {}) {
       },
       ...(resumes ? {
         checkpoint: row.checkpoint || null,
-        onCheckpoint: (part) => saveCheckpoint(pool, row.id, { ...part, skills: watch.skills() }),
+        onCheckpoint: (part) => saveCheckpoint(pool, row.id, { ...part, skills: watch.skills(), looks: watch.looks() }),
       } : {}),
     });
     const skills = watch.skills();
     if (skills.invoked.length || skills.read.length || row.context_pack_id) {
       patch.parsed = { ...(patch.parsed || {}), skills };
+    }
+    // The looks its turns took in the in-loop browser, beside what its build
+    // was told it could see and what its model was handed (runner.buildStage).
+    const looks = watch.looks();
+    if (patch.parsed?.sight || looks.screenshots || looks.snapshots || looks.navigations) {
+      patch.parsed = { ...(patch.parsed || {}), sight: { told: null, passed: null, ...(patch.parsed?.sight || {}), ...looks } };
     }
     if (cancelled()) patch = { ...patch, status: 'cancelled', error: 'cancelled by an admin' };
   } catch (err) {

@@ -103,6 +103,29 @@ test('a progress line names a skill invoked or a skill file read, apart', () => 
   assert.equal(progress.skillIn('Reading .claude/skills/warm-theme/notes.md'), null);
 });
 
+test('a progress line names a look the in-loop browser took, in either harness\'s words', () => {
+  assert.equal(progress.lookIn('Using mcp__playwright__browser_take_screenshot'), 'screenshots', 'Claude Code');
+  assert.equal(progress.lookIn('Using browser_take_screenshot'), 'screenshots', 'Codex');
+  assert.equal(progress.lookIn('Using mcp__playwright__browser_snapshot'), 'snapshots');
+  assert.equal(progress.lookIn('Using browser_navigate'), 'navigations');
+  assert.equal(progress.lookIn('Using mcp__playwright__browser_resize'), null, 'a resize is not a look');
+  assert.equal(progress.lookIn('  ⎿ mcp__playwright__browser_take_screenshot: image'), null, 'a result is not a second look');
+  assert.equal(progress.lookIn('Reading browser_take_screenshot.md'), null);
+});
+
+test('a tracker counts every look, repeats included, and starts from an earlier claim\'s', () => {
+  const pool = { async query() { return { rows: [] }; } };
+  const tr = progress.tracker(pool, 7, { writeEveryMs: 60_000 });
+  assert.deepEqual(tr.looks(), { screenshots: 0, snapshots: 0, navigations: 0 });
+  for (const line of ['Using browser_navigate', 'Using browser_take_screenshot', 'Using browser_take_screenshot', 'Using browser_snapshot']) tr.note(line);
+  assert.deepEqual(tr.looks(), { screenshots: 2, snapshots: 1, navigations: 1 });
+  assert.deepEqual(tr.snapshot().looks, { screenshots: 2, snapshots: 1, navigations: 1 }, 'written with the watch');
+  const again = progress.tracker(pool, 7, { writeEveryMs: 60_000, looks: { screenshots: 3, snapshots: 'x', navigations: -2 } });
+  assert.deepEqual(again.looks(), { screenshots: 3, snapshots: 0, navigations: 0 });
+  tr.close();
+  again.close();
+});
+
 test('a tracker writes a step at once, notes later, keeps the last four lines, and never throws on a failed write', async () => {
   const writes = [];
   let fail = false;
