@@ -5361,6 +5361,10 @@ INSERT INTO mobile_push_kind_categories (kind, category, default_enabled) VALUES
   -- (services/platform-limit-alerts.js). "Something happened that affects
   -- the apps you look after", one level up, so the same category.
   ('platform_limit', 'app_alerts', TRUE),
+  -- #4296: errors that should not happen, as a daily digest or one kind past
+  -- its hourly line (services/platform-incident-alerts.js). Full admins
+  -- only, beside platform_limit.
+  ('platform_incident', 'app_alerts', TRUE),
   ('reaction', 'lightweight_activity', FALSE),
   ('kudos', 'lightweight_activity', FALSE),
   ('conversation_invite', 'messages', TRUE),
@@ -5418,6 +5422,8 @@ DELETE FROM mobile_push_kind_categories
    'session_stalled',
    -- Server-wide limit alerts for full admins.
    'platform_limit',
+   -- #4296: the unexpected events digest and hourly alert, same audience.
+   'platform_incident',
    -- WP-E.
    'build_ready', 'build_needs_you', 'build_stopped', 'build_live',
    'invite_opened', 'member_joined', 'first_message'

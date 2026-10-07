@@ -144,6 +144,39 @@ function minutesSince(value, now) {
 // database helpers, and copy assembly stays dependency-free.
 const PLATFORM_LIMIT_DETAIL_RE = /^(apps|sessions|github|github_app)_(warn|full):(\d{1,7}):(\d{1,7})$/;
 
+// services/platform-incident-alerts.js tokens (#4296), parsed here for the
+// same reason: "digest:<total>:<kind>=<n>,..." or "hour:<kind>:<n>".
+const INCIDENT_DIGEST_RE = /^digest:(\d{1,5}):((?:[a-z][a-z0-9_]{0,23}=\d{1,5})(?:,[a-z][a-z0-9_]{0,23}=\d{1,5})*)?$/;
+const INCIDENT_HOUR_RE = /^hour:([a-z][a-z0-9_]{0,23}):(\d{1,5})$/;
+
+function incidentKindLabel(kind) {
+  return String(kind).replace(/_/g, ' ');
+}
+
+function platformIncidentCopy(detail) {
+  const hour = INCIDENT_HOUR_RE.exec(detail);
+  if (hour) {
+    const [, kind, n] = hour;
+    return {
+      title: 'Unexpected events piling up',
+      body: `${n} ${incidentKindLabel(kind)} in the last hour. Admin \u2192 Unexpected events has each one`,
+    };
+  }
+  const digest = INCIDENT_DIGEST_RE.exec(detail);
+  if (!digest) {
+    return { title: 'Unexpected events', body: 'Open Admin \u2192 Unexpected events to see what happened' };
+  }
+  const total = Number(digest[1]);
+  const parts = digest[2] ? digest[2].split(',').map((p) => p.split('=')) : [];
+  const listed = parts.reduce((sum, [, n]) => sum + Number(n), 0);
+  const kinds = parts.map(([kind, n]) => `${incidentKindLabel(kind)} ${n}`);
+  if (total > listed) kinds.push(`other ${total - listed}`);
+  return {
+    title: `${total} unexpected event${total === 1 ? '' : 's'} yesterday`,
+    body: kinds.length ? kinds.join(', ') : 'Open Admin \u2192 Unexpected events to see what happened',
+  };
+}
+
 function platformLimitCopy(detail) {
   const m = PLATFORM_LIMIT_DETAIL_RE.exec(detail);
   if (!m) {
@@ -593,6 +626,10 @@ function buildCopy(kind, context, now) {
     // cap, the level and the figures, so the push can say how close it is.
     case 'platform_limit':
       return platformLimitCopy(detail);
+    // #4296: errors that should not happen, a daily digest or one kind past
+    // its hourly line (services/platform-incident-alerts.js). Full admins.
+    case 'platform_incident':
+      return platformIncidentCopy(detail);
     default:
       return null;
   }

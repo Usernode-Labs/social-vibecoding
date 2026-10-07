@@ -1530,9 +1530,14 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // composer's Build with, a refused send), and no route reaches them
   // without a screenshot-only parameter. 733 leaves 147 slots.
   //
+  // 733 → 734: +1 (#4296): the admin console's Unexpected events section,
+  // a new route (#admin/incidents) with its filters, its links and its read
+  // in one selector; the Homeroom bot's check takes the link to it by :has().
+  // 734 leaves 146 slots.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 733);
+  checkCap.assertPinned(DAPP.tests.length, 734);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

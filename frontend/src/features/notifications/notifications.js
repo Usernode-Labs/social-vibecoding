@@ -919,6 +919,16 @@ const Notifications = {
       }
       return;
     }
+    // #4296: an unexpected events alert opens the section that lists them.
+    if (item.kind === 'platform_incident') {
+      Notifications._dismissSheetForNav();
+      if (typeof App !== 'undefined' && App.navigateToAdminConsole) {
+        App.navigateToAdminConsole('incidents');
+      } else {
+        window.location.hash = '#admin/incidents';
+      }
+      return;
+    }
     // #161/#194: completion notifications deep-link to their change.
     // session_done opens the lifecycle-aware detail page around its workspace;
     // auto_solve_done opens the Issues tab with that issue's accordion
@@ -1698,6 +1708,22 @@ function parsePlatformLimitDetail(detail) {
   return m ? { limit: m[1], level: m[2], used: Number(m[3]), cap: Number(m[4]) } : null;
 }
 
+// services/platform-incident-alerts.js tokens (#4296): "digest:<total>:<kind>=<n>,..."
+// (the previous UTC day, per kind) or "hour:<kind>:<n>" (one kind past its
+// hourly line).
+const PLATFORM_INCIDENT_DIGEST_RE = /^digest:(\d{1,5}):((?:[a-z][a-z0-9_]{0,23}=\d{1,5})(?:,[a-z][a-z0-9_]{0,23}=\d{1,5})*)?$/;
+const PLATFORM_INCIDENT_HOUR_RE = /^hour:([a-z][a-z0-9_]{0,23}):(\d{1,5})$/;
+
+function parsePlatformIncidentDetail(detail) {
+  const s = String(detail || '');
+  const h = PLATFORM_INCIDENT_HOUR_RE.exec(s);
+  if (h) return { type: 'hour', kind: h[1], n: Number(h[2]) };
+  const d = PLATFORM_INCIDENT_DIGEST_RE.exec(s);
+  if (!d) return null;
+  const kinds = d[2] ? d[2].split(',').map((p) => { const [kind, n] = p.split('='); return { kind, n: Number(n) }; }) : [];
+  return { type: 'digest', total: Number(d[1]), kinds };
+}
+
 // #161 defined these as the kinds that "demand attention": a finished dev
 // session or headless run, while still unread.
 //
@@ -2333,6 +2359,42 @@ function rowView(n) {
         { t: 'text', v: consequence },
       ],
     };
+  }
+
+  // #4296: errors that should not happen, counted for full admins (services/
+  // platform-incident-alerts.js). No app, so the meta line says Admin like
+  // platform_limit above; a token this build cannot read still says what it is.
+  if (n.kind === 'platform_incident') {
+    const alert = parsePlatformIncidentDetail(n.detail);
+    const words = (kind) => String(kind).replace(/_/g, ' ');
+    if (alert && alert.type === 'hour') {
+      return {
+        ...base,
+        appLine: 'Admin',
+        wrap: true,
+        icon: '\u{1F6A8}',
+        label: 'Unexpected events piling up',
+        segments: [
+          { t: 'strong', v: `${alert.n} ${words(alert.kind)} in the last hour.` },
+          { t: 'text', v: ' Admin \u2192 Unexpected events has each one.' },
+        ],
+      };
+    }
+    if (alert && alert.type === 'digest') {
+      const listed = alert.kinds.reduce((sum, k) => sum + k.n, 0);
+      const parts = alert.kinds.map((k) => `${words(k.kind)} ${k.n}`);
+      if (alert.total > listed) parts.push(`other ${alert.total - listed}`);
+      return {
+        ...base,
+        appLine: 'Admin',
+        wrap: true,
+        icon: '\u26A0\uFE0F',
+        label: `${alert.total} unexpected event${alert.total === 1 ? '' : 's'} yesterday`,
+        segments: [{ t: 'text', v: parts.length ? `${parts.join(', ')}.` : 'See Admin \u2192 Unexpected events.' }],
+      };
+    }
+    return { ...base, appLine: 'Admin', wrap: true, icon: '\u26A0\uFE0F',
+      ...headline('Unexpected events', 'something that should not happen did') };
   }
 
   const prLabel = n.prTitle || null;

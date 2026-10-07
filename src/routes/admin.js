@@ -26,6 +26,8 @@ const discoveryCuration = require('../services/discovery-curation');
 const appStorageCap = require('../services/app-storage-cap');
 const appLimit = require('../services/app-limit');
 const platformLimits = require('../services/platform-limit-alerts');
+const platformIncidents = require('../services/platform-incidents');
+const platformIncidentAlerts = require('../services/platform-incident-alerts');
 const githubBudget = require('../services/github-budget');
 const modelCosts = require('../services/model-costs');
 const homeroomBot = require('../services/homeroom-bot');
@@ -1074,6 +1076,25 @@ function adminRoutes(config) {
       system_tokens_daily_limit_cents: systemCents,
     };
   }
+
+  // #4296: the Unexpected events section. Read-only, so view-only admins see
+  // it too; the alerts it describes go to full admins only.
+  router.get('/api/admin/incidents', async (req, res) => {
+    const q = req.query || {};
+    const listed = await platformIncidents.list(pool, {
+      days: q.days,
+      kind: typeof q.kind === 'string' && q.kind ? q.kind : null,
+      app: typeof q.app === 'string' && q.app ? q.app : null,
+    });
+    if (!listed) return res.status(500).json({ error: 'Could not read unexpected events' });
+    res.json({
+      ...listed,
+      alerts: {
+        hourlyThreshold: platformIncidentAlerts.HOURLY_THRESHOLD,
+        digestHourUtc: platformIncidentAlerts.DIGEST_HOUR_UTC,
+      },
+    });
+  });
 
   router.get('/api/admin/limits', async (_req, res) => {
     try {

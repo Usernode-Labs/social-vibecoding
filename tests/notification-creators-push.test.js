@@ -216,6 +216,38 @@ test('platform limit alerts need a well-formed token', async () => {
   }
 });
 
+// ── unexpected events (#4296) ─────────────────────────────────────────
+
+test('unexpected events alerts go to full admins, once per digest day or kind hour, and may push', async () => {
+  const pool = fakePool({});
+  const since = new Date('2026-10-07T15:00:00Z');
+  const rows = await notifications.createPlatformIncidentNotifications(pool, {
+    detail: 'hour:build_interrupted:6', dedupePrefix: 'hour:build_interrupted:', since,
+  });
+  const insert = pool.state.inserts[0];
+
+  assert.equal(ALLOWED_KINDS.has('platform_incident'), true,
+    'a pile of errors that should not happen is worth a push to the admins who can look');
+  assert.match(insert.sql, /SELECT admin\.id, NULL, 'platform_incident', \$1::varchar\(32\)/);
+  assert.match(insert.sql, /admin\.is_admin = TRUE AND admin\.admin_readonly = FALSE/,
+    'view-only admins can read the section, but are not paged');
+  assert.match(insert.sql,
+    /existing\.kind = 'platform_incident' AND LEFT\(existing\.detail, char_length\(\$2\)\) = \$2 AND existing\.created_at >= \$3/,
+    'read or not, one alert per admin and prefix since the window opened');
+  assert.doesNotMatch(insert.sql, /app_id/, 'the log belongs to the server, not an app');
+  assert.deepEqual(insert.params, ['hour:build_interrupted:6', 'hour:build_interrupted:', since]);
+  assert.equal(rows.length, 1);
+});
+
+test('unexpected events alerts need a token that starts with its own prefix', async () => {
+  for (const input of [{}, { detail: 'digest:1:x=1' }, { detail: 'digest:1:x=1', dedupePrefix: 'hour:', since: new Date() },
+    { detail: 'digest:1:x=1', dedupePrefix: 'digest:', since: 'not a date' }]) {
+    const pool = fakePool({});
+    assert.deepEqual(await notifications.createPlatformIncidentNotifications(pool, input), []);
+    assert.equal(pool.state.queries.length, 0);
+  }
+});
+
 test('managed OpenRouter review alerts require both an owner and a key', async () => {
   for (const input of [{ sourceUserId: 7 }, { managedKeyId: 19 }, {}]) {
     const pool = fakePool({});
