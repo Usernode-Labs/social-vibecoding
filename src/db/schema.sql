@@ -12854,9 +12854,13 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM wf_settings WHERE key = 'enabled:' || split_part(enrolled, '/', 1)) THEN
       RETURN NEW;
     END IF;
+    -- '@except=<state>,<state>': an instance in one of those states has
+    -- handed the row back (the preview machine's detached and retired).
     IF NOT EXISTS (SELECT 1 FROM wf_instances
                     WHERE machine = split_part(enrolled, '/', 1)
-                      AND key = split_part(enrolled, '/', 2) || (before ->> 'id')) THEN
+                      AND key = split_part(enrolled, '/', 2) || (before ->> 'id')
+                      AND NOT (TG_NARGS > 1 AND TG_ARGV[1] LIKE '@except=%'
+                               AND state = ANY(string_to_array(substr(TG_ARGV[1], length('@except=') + 1), ',')))) THEN
       RETURN NEW;
     END IF;
   END IF;
@@ -12965,3 +12969,37 @@ CREATE TRIGGER chat_sessions_wf_merge_owned
         OR OLD.live_at IS DISTINCT FROM NEW.live_at)
   EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=merge-followups/session:',
     'merged_at', 'merge_commit_sha', 'included_in_session_id', 'live_at');
+
+-- preview (src/workflow/preview/): a proposal's preview and its required
+-- checks. While its flag is on, it owns an enrolled session's preview
+-- pointers and checks verdict: they are written from its transitions only
+-- (the checks run's live progress, checks_progress, is not owned). A
+-- detached or retired instance has handed the row back to the old paths.
+DROP TRIGGER IF EXISTS chat_sessions_wf_preview_owned ON chat_sessions;
+CREATE TRIGGER chat_sessions_wf_preview_owned
+  BEFORE UPDATE ON chat_sessions
+  FOR EACH ROW
+  WHEN (OLD.staging_url IS DISTINCT FROM NEW.staging_url
+        OR OLD.staging_container_id IS DISTINCT FROM NEW.staging_container_id
+        OR OLD.staging_image_ref IS DISTINCT FROM NEW.staging_image_ref
+        OR OLD.staging_build_ref IS DISTINCT FROM NEW.staging_build_ref
+        OR OLD.staging_runtime_kind IS DISTINCT FROM NEW.staging_runtime_kind
+        OR OLD.staging_runtime_name IS DISTINCT FROM NEW.staging_runtime_name
+        OR OLD.staging_commit_sha IS DISTINCT FROM NEW.staging_commit_sha
+        OR OLD.checks_commit_sha IS DISTINCT FROM NEW.checks_commit_sha
+        OR OLD.checks_base_sha IS DISTINCT FROM NEW.checks_base_sha
+        OR OLD.check_state IS DISTINCT FROM NEW.check_state
+        OR OLD.check_phase IS DISTINCT FROM NEW.check_phase
+        OR OLD.check_trigger IS DISTINCT FROM NEW.check_trigger
+        OR OLD.test_results IS DISTINCT FROM NEW.test_results
+        OR OLD.consecutive_check_failures IS DISTINCT FROM NEW.consecutive_check_failures
+        OR OLD.check_next_retry_at IS DISTINCT FROM NEW.check_next_retry_at
+        OR OLD.check_error_detail IS DISTINCT FROM NEW.check_error_detail
+        OR OLD.check_error_notified_at IS DISTINCT FROM NEW.check_error_notified_at
+        OR OLD.console_check_state IS DISTINCT FROM NEW.console_check_state
+        OR OLD.capture_state IS DISTINCT FROM NEW.capture_state)
+  EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=preview/session:', '@except=detached,retired',
+    'staging_url', 'staging_container_id', 'staging_image_ref', 'staging_build_ref', 'staging_runtime_kind',
+    'staging_runtime_name', 'staging_commit_sha', 'checks_commit_sha', 'checks_base_sha', 'check_state',
+    'check_phase', 'check_trigger', 'test_results', 'consecutive_check_failures', 'check_next_retry_at',
+    'check_error_detail', 'check_error_notified_at', 'console_check_state', 'capture_state');

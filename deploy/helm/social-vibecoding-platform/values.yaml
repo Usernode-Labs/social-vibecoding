@@ -31,6 +31,10 @@ platform:
   # (docs/workflows.md). A rolling change is safe in both directions; see
   # docs/kubernetes-operations.md.
   workflowMergeFollowupsEnabled: false
+  # The workflow preview machine builds, checks and retires previews
+  # (docs/workflows.md). Turning it off hands enrolled sessions back to the
+  # old paths; see docs/kubernetes-operations.md.
+  workflowPreviewsEnabled: false
   replicas: 1
   image:
     repository: ghcr.io/replace-me/social-vibecoding-platform

@@ -14,7 +14,7 @@ test('Helm session and capture settings reach the runtime as decimal strings, in
     args.push('--set-string', `platform.${image}.digest=sha256:${'a'.repeat(64)}`);
   }
   for (const [overrides, expected] of [
-    [[], { MAX_GLOBAL_SESSIONS: '25', WORKER_IDLE_EVICTION_MS: '600000', SESSION_AUTOPAUSE_IDLE_MS: '300000', CAPTURE_CPUS: '8', SHOTS_ENABLED: 'true', WF_GOVERNANCE_ENABLED: 'false', WF_MERGE_FOLLOWUPS_ENABLED: 'false' }],
+    [[], { MAX_GLOBAL_SESSIONS: '25', WORKER_IDLE_EVICTION_MS: '600000', SESSION_AUTOPAUSE_IDLE_MS: '300000', CAPTURE_CPUS: '8', SHOTS_ENABLED: 'true', WF_GOVERNANCE_ENABLED: 'false', WF_MERGE_FOLLOWUPS_ENABLED: 'false', WF_PREVIEWS_ENABLED: 'false' }],
     [['--set', 'config.maxGlobalSessions=100,config.workerIdleEvictionMs=300000,config.sessionAutopauseIdleMs=0,config.captureCpus=6'],
       { MAX_GLOBAL_SESSIONS: '100', WORKER_IDLE_EVICTION_MS: '300000', SESSION_AUTOPAUSE_IDLE_MS: '0', CAPTURE_CPUS: '6', SHOTS_ENABLED: 'true' }],
     [['--set', 'platform.shotsEnabled=false'],
@@ -23,6 +23,8 @@ test('Helm session and capture settings reach the runtime as decimal strings, in
       { MAX_GLOBAL_SESSIONS: '25', WORKER_IDLE_EVICTION_MS: '600000', SESSION_AUTOPAUSE_IDLE_MS: '300000', CAPTURE_CPUS: '8', SHOTS_ENABLED: 'true', WF_GOVERNANCE_ENABLED: 'true' }],
     [['--set', 'platform.workflowMergeFollowupsEnabled=true'],
       { MAX_GLOBAL_SESSIONS: '25', WORKER_IDLE_EVICTION_MS: '600000', SESSION_AUTOPAUSE_IDLE_MS: '300000', CAPTURE_CPUS: '8', SHOTS_ENABLED: 'true', WF_MERGE_FOLLOWUPS_ENABLED: 'true' }],
+    [['--set', 'platform.workflowPreviewsEnabled=true'],
+      { MAX_GLOBAL_SESSIONS: '25', WORKER_IDLE_EVICTION_MS: '600000', SESSION_AUTOPAUSE_IDLE_MS: '300000', CAPTURE_CPUS: '8', SHOTS_ENABLED: 'true', WF_PREVIEWS_ENABLED: 'true' }],
   ]) {
     const rendered = execFileSync('helm', [...args, ...overrides], { encoding: 'utf8' });
     const env = Object.fromEntries([...rendered.matchAll(/\{name: ([A-Z0-9_]+), value: "([^"]*)"\}/g)]

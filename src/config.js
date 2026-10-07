@@ -747,6 +747,11 @@ function load() {
     // announcements) to the merge-followups machine, and a change reads
     // live only once production runs it. Off by default.
     wfMergeFollowupsEnabled: ['1', 'true'].includes(process.env.WF_MERGE_FOLLOWUPS_ENABLED),
+    // With WF_PREVIEWS_ENABLED on, every source of a preview or a checks run
+    // appends to the preview machine, which builds, checks and retires
+    // previews as durable work. Off by default; turning it off hands
+    // enrolled sessions back to the old paths at the next boot.
+    wfPreviewsEnabled: ['1', 'true'].includes(process.env.WF_PREVIEWS_ENABLED),
     // Its own pool, so pipeline slots and the outcome listener never take
     // request connections, and how many slots each process runs. A staging
     // preview shares one Postgres server with the fleet: one slot, and a

@@ -67,4 +67,6 @@ test('every WF_* variable config.js reads is declared in platform_env', () => {
   assert.equal(declared.get('WF_GOVERNANCE_ENABLED').default, 'false', 'off unless someone turns it on');
   assert.ok(read.has('WF_MERGE_FOLLOWUPS_ENABLED'));
   assert.equal(declared.get('WF_MERGE_FOLLOWUPS_ENABLED').default, 'false', 'off unless someone turns it on');
+  assert.ok(read.has('WF_PREVIEWS_ENABLED'));
+  assert.equal(declared.get('WF_PREVIEWS_ENABLED').default, 'false', 'off unless someone turns it on');
 });

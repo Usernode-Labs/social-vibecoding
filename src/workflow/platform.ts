@@ -16,6 +16,8 @@ import { MACHINE, governanceProposal, issueKey } from './governance-proposal/mac
 import { governanceNotifiers, governanceServices } from './governance-proposal/services.ts';
 import { MACHINE as MERGE, mergeFollowups, sessionKey } from './merge-followups/machine.ts';
 import { mergeFollowupsNotifiers, mergeFollowupsServices } from './merge-followups/services.ts';
+import { MACHINE as PREVIEW, preview, sessionKey as previewKey } from './preview/machine.ts';
+import { PREPARE_LEASE_MS, previewNotifiers, previewServices } from './preview/services.ts';
 
 const pg = createRequire(import.meta.url)('pg');
 
@@ -26,6 +28,10 @@ let kernelPool: Pool & { end(): Promise<void> } | null = null;
 let machine: ReturnType<typeof governanceProposal> | null = null;
 let merges: ReturnType<typeof mergeFollowups> | null = null;
 let mergesAdmitted = false;
+// The preview machine: admitted under its flag; with the flag off it still
+// runs at boot while instances it held are live, to detach them.
+let previews: ReturnType<typeof preview> | null = null;
+let previewsAdmitted = false;
 let log: Logger | null = null;
 
 // What the ownership triggers read, synced on every boot, flag or not:
@@ -48,6 +54,17 @@ export async function syncSettings(pool: Pool, config: any): Promise<void> {
   await setSetting(pool, 'ownership_mode', config.wfOwnershipMode === 'log' ? 'log' : null);
   await setSetting(pool, `enabled:${MACHINE}`, config.wfGovernanceEnabled ? '1' : null);
   await setSetting(pool, `enabled:${MERGE}`, config.wfMergeFollowupsEnabled ? '1' : null);
+  await setSetting(pool, `enabled:${PREVIEW}`, config.wfPreviewsEnabled ? '1' : null);
+}
+
+// Preview instances still live (not retired, not handed back) or with work
+// left: with the flag off, the runtime runs to detach them (Q7).
+async function previewsUnfinished(pool: Pool): Promise<boolean> {
+  const { rows } = await pool.query(
+    `SELECT EXISTS (SELECT 1 FROM wf_instances WHERE machine = $1 AND state NOT IN ('retired', 'detached', '(none)'))
+         OR EXISTS (SELECT 1 FROM wf_work WHERE machine = $1 AND status IN ('queued', 'running', 'reported'))
+         OR EXISTS (SELECT 1 FROM wf_events WHERE machine = $1 AND status = 'pending') AS unfinished`, [PREVIEW]);
+  return !!rows[0]?.unfinished;
 }
 
 // Merges merge-followups accepted before its flag went off still finish
@@ -91,7 +108,8 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   await recordBooted(appPool).catch((err) => log!.warn('workflow', 'Could not record the booted build', { message: err.message }));
   if (runtime) return;
   const withMerges = !!config.wfMergeFollowupsEnabled || await mergesUnfinished(appPool).catch(() => false);
-  if (!config.wfGovernanceEnabled && !withMerges) return;
+  const withPreviews = !!config.wfPreviewsEnabled || await previewsUnfinished(appPool).catch(() => false);
+  if (!config.wfGovernanceEnabled && !withMerges && !withPreviews) return;
   const workflowPool = new pg.Pool({
     connectionString: config.databaseUrl, max: config.wfPoolMax, idleTimeoutMillis: 30000, application_name: 'homeroom-workflow',
   });
@@ -114,6 +132,17 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
     machines.push(merges);
     services = { ...services, ...mergeFollowupsServices(deps) };
   }
+  if (withPreviews) {
+    previews = preview({
+      maxRetries: legacy('services/staging-recovery').checkMaxAutoRetries(),
+      // A cancelled prepare has seen its signal abort by then.
+      retireAfterMs: PREPARE_LEASE_MS + 30000,
+      notifiers: previewNotifiers(deps),
+    });
+    previewsAdmitted = !!config.wfPreviewsEnabled;
+    machines.push(previews);
+    services = { ...services, ...previewServices(deps) };
+  }
   const started = createRuntime({
     pool: kernelPool!, machines, services, slots: config.wfSlots, log: log!,
   });
@@ -127,6 +156,8 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
     machine = null;
     merges = null;
     mergesAdmitted = false;
+    previews = null;
+    previewsAdmitted = false;
     throw err;
   }
   runtime = started;
@@ -140,6 +171,9 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
 export async function startWorkflowLoops(): Promise<void> {
   if (!runtime) return;
   await runtime.start({ loops: true });
+  if (previews && !previewsAdmitted) {
+    await detachPreviews().catch((err) => log!.warn('workflow', 'Could not detach previews', { message: err.message }));
+  }
   if (!machine) return;
   const { rows } = await kernelPool!.query(
     `SELECT i.id, i.app_id FROM issues i
@@ -156,6 +190,8 @@ export async function stopWorkflow(): Promise<void> {
   machine = null;
   merges = null;
   mergesAdmitted = false;
+  previews = null;
+  previewsAdmitted = false;
   await r?.stop();
   await kernelPool?.end();
   kernelPool = null;
@@ -361,6 +397,112 @@ async function releaseBooted(pool: Pool): Promise<void> {
   for (const a of rows) await productionDeployed(a.id, sha);
 }
 
+// ── Previews and checks ─────────────────────────────────────────────────
+
+// Whether the sources hand previews and check runs to the machine.
+export function previewsEnabled(): boolean {
+  return runtime !== null && previews !== null && previewsAdmitted;
+}
+
+interface PreviewRow { state: string; version: number; data: any }
+
+// The machine's instance for a session, when it has one.
+export async function previewInstance(sessionId: number): Promise<PreviewRow | null> {
+  if (!kernelPool) return null;
+  const { rows: [r] } = await kernelPool.query(
+    `SELECT state, version, data FROM wf_instances WHERE machine = $1 AND key = $2 AND state <> '(none)'`,
+    [PREVIEW, previewKey(sessionId)]);
+  return r ? { state: r.state, version: Number(r.version), data: r.data } : null;
+}
+
+// Whether the machine holds the session (its rows are the machine's to write).
+export async function previewHeld(sessionId: number): Promise<boolean> {
+  const i = await previewInstance(sessionId);
+  return !!i && i.state !== 'retired' && i.state !== 'detached';
+}
+
+// Request keys are derived (Q5): the event and its subject, and the
+// instance's version, so a second press while nothing changed replays the
+// first one's outcome and a press after a change is a new request.
+async function derivedKey(sessionId: number, what: string): Promise<string> {
+  const i = await previewInstance(sessionId);
+  return `${what}:v${i?.version ?? 0}`;
+}
+
+const SHA40 = /^[0-9a-f]{40}$/;
+
+// A source announces a head (exact: resolve 'latest' first, P-A1).
+export async function submitRevision(r: { sessionId: number; appId: number; head: string; source: string; trigger?: string | null }): Promise<number | null> {
+  if (!previewsEnabled()) return null;
+  const head = String(r.head || '').toLowerCase();
+  if (!SHA40.test(head)) throw new Error(`submitRevision: ${r.source} must resolve an exact head first`);
+  return runtime!.append(previews!, previewKey(r.sessionId), {
+    type: 'RevisionSubmitted', payload: { sessionId: r.sessionId, head, source: r.source, trigger: r.trigger ?? null },
+  }, { requestKey: await derivedKey(r.sessionId, `rev:${head}:${r.source}`), source: { kind: 'system', name: r.source }, appId: r.appId });
+}
+
+// A person asks for the preview (ensure, deploy) or the platform finds its
+// environment stale. Resolves the machine's answer.
+export async function requestPreview(r: { sessionId: number; appId: number; head: string; reason: 'ensure' | 'deploy' | 'env_stale'; actor?: string | null }): Promise<EventOutcome> {
+  const head = String(r.head || '').toLowerCase();
+  return runtime!.appendAndWait(previews!, previewKey(r.sessionId), {
+    type: 'PreviewRequested', payload: { sessionId: r.sessionId, head, reason: r.reason },
+  }, {
+    requestKey: await derivedKey(r.sessionId, `${r.reason}:${head}`),
+    source: r.reason === 'env_stale' ? { kind: 'system', name: 'env-stale' } : { kind: 'route', name: r.reason },
+    actor: r.actor ?? undefined, appId: r.appId,
+  });
+}
+
+export async function requestRecheck(r: { sessionId: number; appId: number; reason: string; trigger?: string | null; actor?: string | null; system?: boolean }): Promise<EventOutcome> {
+  return runtime!.appendAndWait(previews!, previewKey(r.sessionId), {
+    type: 'RecheckRequested', payload: { reason: r.reason, trigger: r.trigger ?? null },
+  }, {
+    requestKey: await derivedKey(r.sessionId, `recheck:${r.reason}`),
+    source: r.system ? { kind: 'system', name: r.reason } : { kind: 'route', name: r.reason },
+    actor: r.actor ?? undefined, appId: r.appId,
+  });
+}
+
+// A deferred head merges cleanly with main now.
+export async function conflictResolved(sessionId: number, appId: number, head: string): Promise<number | null> {
+  if (!previewsEnabled()) return null;
+  const i = await previewInstance(sessionId);
+  if (i?.state !== 'deferred') return null;
+  return runtime!.append(previews!, previewKey(sessionId), { type: 'ConflictResolved', payload: { head } },
+    { requestKey: `clean:${head}:${i.data?.episode ?? 0}`, source: { kind: 'system', name: 'conflict-resolved' }, appId });
+}
+
+// An observer (the heal pass, boot recovery) found the serving runtime gone.
+export async function previewLost(sessionId: number, appId: number, attempt: number, detail?: string): Promise<number | null> {
+  if (!previewsEnabled()) return null;
+  return runtime!.append(previews!, previewKey(sessionId), { type: 'PreviewLost', payload: { attempt, detail: detail ?? null } },
+    { requestKey: `lost:${attempt}`, source: { kind: 'system', name: 'observer' }, appId });
+}
+
+// Retire a session's preview. Answers false when the machine does not hold
+// the session: the caller retires it the old way.
+export async function retirePreview(sessionId: number, appId: number, reason: string, terminal: boolean): Promise<boolean> {
+  if (!previewsEnabled() || !await previewHeld(sessionId)) return false;
+  await runtime!.append(previews!, previewKey(sessionId), { type: 'RetireRequested', payload: { reason, terminal } },
+    { requestKey: await derivedKey(sessionId, `retire:${reason}`), source: { kind: 'system', name: reason }, appId });
+  return true;
+}
+
+// With the flag off: every session the machine holds goes back to the old
+// paths. Its work is cancelled; what it built stays under names [main]'s
+// reapers know (Q7).
+async function detachPreviews(): Promise<void> {
+  const { rows } = await kernelPool!.query(
+    `SELECT key, app_id, version FROM wf_instances WHERE machine = $1 AND state NOT IN ('retired', 'detached', '(none)')`,
+    [PREVIEW]);
+  for (const r of rows) {
+    await runtime!.append(previews!, r.key, { type: 'Detach', payload: {} },
+      { requestKey: `detach:v${r.version}`, source: { kind: 'system', name: 'flag-off' }, appId: r.app_id });
+  }
+  if (rows.length) log!.info('workflow', 'Detached previews (flag off)', { count: rows.length });
+}
+
 // ── The admin console ───────────────────────────────────────────────────
 
 // The events an admin may append from the console, per machine, and the
@@ -368,6 +510,7 @@ async function releaseBooted(pool: Pool): Promise<void> {
 const ADMIN_EVENTS = new Map<string, ReadonlySet<string>>([
   [MACHINE, new Set(['Evaluate', 'AdminApply', 'RetryFollowup'])],
   [MERGE, new Set(['RetryDelivery', 'RetryFollowup'])],
+  [PREVIEW, new Set(['AdminRetry', 'AdminRetire'])],
 ]);
 
 export function adminEvents(): Record<string, string[]> {
@@ -386,7 +529,7 @@ export async function adminEvent(
   if (!ADMIN_EVENTS.get(machineName)?.has(type)) throw new AdminActionError(400, `${type} is not an admin action on ${machineName}`);
   const body = type === 'AdminApply' ? { userId: admin.id, username: admin.username }
     : type === 'RetryFollowup' ? { workKey: String(payload.workKey || '') } : {};
-  const target = machineName === MACHINE ? machine : machineName === MERGE ? merges : null;
+  const target = machineName === MACHINE ? machine : machineName === MERGE ? merges : machineName === PREVIEW ? previews : null;
   if (!target) throw new AdminActionError(409, `${machineName} is not running here`);
   return runtime.appendAndWait(target, key, { type, payload: body },
     { requestKey: `admin:${randomUUID()}`, source: { kind: 'admin', name: 'console' }, actor: `user:${admin.id}` });
