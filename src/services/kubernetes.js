@@ -23,6 +23,10 @@ const PART_OF = 'social-vibecoding';
 // slice of a ~25s preview turnaround.
 const BUILD_POLL_MS = 1000;
 const ROLLOUT_POLL_MS = 1000;
+// How long a finished check Job (and its Pod's log) stays for a harvest to
+// read when the process that launched it died (services/check-harvest.js).
+// A run that settles deletes its Jobs itself (deleteSettledCheckJobs).
+const CHECK_JOB_TTL_SECONDS = 3600;
 const TERMINAL_CONTAINER_WAITING_REASONS = new Set([
   'CreateContainerConfigError',
   'CreateContainerError',
@@ -1984,8 +1988,13 @@ async function cancelPreviewChecks(config, sessionId, previewRunId = null) {
       return (pods.items || []).every(pod => ['Succeeded', 'Failed'].includes(pod.status?.phase));
     };
     if ((job.status?.succeeded || job.status?.failed) && await podsStopped()) return;
+    // The policy goes in the body. The API server reads delete options from
+    // the body when there is one and ignores the query string, and a batch/v1
+    // Job deleted without a policy ORPHANS its dependents: its Pods ran on
+    // with no deadline and its input Secret lost its owner, which is how 130
+    // ownerless input Secrets filled the worker namespace's quota.
     await deleteIfPresent(batch, 'deleteNamespacedJob', name, namespace, {
-      propagationPolicy: 'Foreground', body: { preconditions: { uid: job.metadata.uid } },
+      body: { propagationPolicy: 'Foreground', preconditions: { uid: job.metadata.uid } },
     });
     const deadline = Date.now() + 60000;
     for (;;) {
@@ -2129,7 +2138,7 @@ async function runCheckJob(config, {
   };
   const checkLabels = { ...labels({ sessionId, environment: unitSuite ? 'worker' : 'capture' }), ...checkSelector };
   const body = { apiVersion: 'batch/v1', kind: 'Job', metadata: { name, namespace, labels: { ...checkLabels } }, spec: {
-    backoffLimit: 0, activeDeadlineSeconds: Math.ceil(timeoutMs / 1000), ttlSecondsAfterFinished: 3600,
+    backoffLimit: 0, activeDeadlineSeconds: Math.ceil(timeoutMs / 1000), ttlSecondsAfterFinished: CHECK_JOB_TTL_SECONDS,
     template: { metadata: { labels: { ...checkLabels } }, spec: {
       restartPolicy: 'Never', serviceAccountName: cfg.workerServiceAccount,
       automountServiceAccountToken: false, securityContext: nodePodSecurityContext(),
@@ -2148,6 +2157,7 @@ async function runCheckJob(config, {
     body.spec.template.metadata.labels['social.usernode.io/preview-run-id'] = previewRunId;
   }
   let inputSecretCreated = false;
+  let inputSecret = null;
   // Follow state lives outside the try so the finally can close the stream.
   let following = false;
   let followAbort = null;
@@ -2163,7 +2173,7 @@ async function runCheckJob(config, {
   try {
     signal?.throwIfAborted();
     if (inputSecretName) {
-      await core.createNamespacedSecret({ namespace, body: {
+      inputSecret = await core.createNamespacedSecret({ namespace, body: {
         apiVersion: 'v1', kind: 'Secret',
         metadata: { name: inputSecretName, namespace, labels: labels({ sessionId, environment: unitSuite ? 'worker' : 'capture' }) },
         type: 'Opaque', stringData: unitSuite
@@ -2173,11 +2183,19 @@ async function runCheckJob(config, {
       inputSecretCreated = true;
     }
     signal?.throwIfAborted();
+    // A refused create (the namespace's quota, for one) leaves no Job to own
+    // the Secret; the finally below deletes it.
     const createdJob = await batch.createNamespacedJob({ namespace, body });
     // A platform restart must not orphan private clone credentials. The Job's
     // TTL also garbage-collects its input Secret if normal cleanup cannot run.
+    // The Secret goes first so a Pod never starts without its input, which
+    // leaves a crash between the Job's create and this write as the one way
+    // to strand it ownerless. The owner is written onto the object the create
+    // returned, without reading it back, so that window is these two calls;
+    // services/check-retention.js removes what a crash leaves in it.
     if (inputSecretName && createdJob?.metadata?.uid) {
-      const secret = await core.readNamespacedSecret({ name: inputSecretName, namespace });
+      const secret = inputSecret?.metadata?.resourceVersion
+        ? inputSecret : await core.readNamespacedSecret({ name: inputSecretName, namespace });
       secret.metadata.ownerReferences = [{ apiVersion: 'batch/v1', kind: 'Job', name, uid: createdJob.metadata.uid }];
       await core.replaceNamespacedSecret({ name: inputSecretName, namespace, body: secret });
     }
@@ -2327,7 +2345,9 @@ async function runCheckJob(config, {
     }
     if (inputSecretCreated) {
       await deleteIfPresent(core, 'deleteNamespacedSecret', inputSecretName, namespace)
-        .catch(() => {});
+        .catch((err) => log.warn('kubernetes', 'Check input Secret cleanup failed', {
+          name: inputSecretName, err: err.message,
+        }));
     }
   }
 }
@@ -2338,8 +2358,9 @@ async function runCheckJob(config, {
 // When that process is replaced mid-run — a platform rollout — the Job runs
 // on to completion regardless, and these two functions are how a later
 // process finds it and reads what it produced, without creating or deleting
-// anything. Deletion stays with the Job's own TTL / activeDeadline and with
-// cancelPreviewChecks, which a newer run for the session calls first.
+// anything. Deletion stays with the Job's own TTL / activeDeadline, with
+// cancelPreviewChecks, which a newer run for the session calls first, and
+// with deleteSettledCheckJobs, once a run's verdict is stored.
 
 function describeCheckJob(job) {
   const failedCondition = (job.status?.conditions || []).find(c => c.type === 'Failed' && c.status === 'True');
@@ -2488,6 +2509,74 @@ async function collectCheckJob(config, {
   return { state: 'timeout', stdout, stderr: '', exitCode: null, timedOut: true, partial: true, partialReason: 'run timed out' };
 }
 
+// A settled run's Jobs: its verdict is stored and the manifest a harvest
+// would find them by is cleared, so nothing reads them again. Deleting them
+// then, rather than leaving each for CHECK_JOB_TTL_SECONDS, keeps the worker
+// namespace's Job count near the runs in flight; the TTL held every run of
+// the last hour, two Jobs each, and filled 100 of 100 on 7 Oct 2026. Only
+// this run's finished Jobs go: one still running is left to its deadline and
+// TTL. Background propagation takes the Pods and the owned input Secret too.
+// Resolves how many were deleted.
+async function deleteSettledCheckJobs(config, { sessionId, previewRunId }) {
+  if (!previewRunId) return 0;
+  const { batch } = getClients();
+  const namespace = config.kubernetes.workerNamespace;
+  const selector = `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/session-id=${sessionId},social.usernode.io/preview-run-id=${previewRunId}`;
+  const jobs = await batch.listNamespacedJob({ namespace, labelSelector: selector });
+  let deleted = 0;
+  for (const job of jobs.items || []) {
+    const name = job.metadata?.name || '';
+    if (!name.startsWith(`sv-capture-s${sessionId}-`) && !name.startsWith(`sv-unit-suite-s${sessionId}-`)) continue;
+    if (job.metadata?.labels?.['social.usernode.io/preview-run-id'] !== previewRunId) continue;
+    if (job.metadata?.deletionTimestamp || describeCheckJob(job).state === 'running') continue;
+    await deleteIfPresent(batch, 'deleteNamespacedJob', name, namespace, { propagationPolicy: 'Background' });
+    deleted += 1;
+  }
+  return deleted;
+}
+
+// ── What a check run can leave behind (services/check-retention.js) ──
+//
+// Every Job and Pod in the worker namespace, and every Secret the platform
+// manages there, each list read to its end. Jobs and Pods are unfiltered
+// because anything that references a Secret keeps it; Secrets are only the
+// platform's own because nothing else is ours to delete. A page that fails
+// fails the whole inventory: a partial list must never read as "nothing
+// references this".
+async function listCheckLeftovers(config) {
+  const { batch, core } = getClients();
+  const namespace = config.kubernetes.workerNamespace;
+  const all = async (api, method, labelSelector) => {
+    const items = [];
+    let next;
+    do {
+      const page = await api[method]({ namespace, ...(labelSelector ? { labelSelector } : {}), limit: 500, _continue: next });
+      if (!Array.isArray(page?.items)) throw new Error(`Invalid ${method} inventory`);
+      items.push(...page.items);
+      next = page.metadata?.continue;
+    } while (next);
+    return items;
+  };
+  const [jobs, pods, secrets] = await Promise.all([
+    all(batch, 'listNamespacedJob'),
+    all(core, 'listNamespacedPod'),
+    all(core, 'listNamespacedSecret', `app.kubernetes.io/managed-by=${MANAGED_BY}`),
+  ]);
+  return { jobs, pods, secrets };
+}
+
+// Deletes exactly the object the sweep judged. One that changed since (an
+// owner written onto it, say) fails the precondition with a 409 and stays.
+async function deleteCheckLeftover(config, kind, metadata) {
+  const { name, uid, resourceVersion } = metadata || {};
+  if (!name || !uid || !resourceVersion) throw new Error('Check leftover deletion requires a name, UID and resourceVersion');
+  const method = { pod: 'deleteNamespacedPod', secret: 'deleteNamespacedSecret' }[kind];
+  if (!method) throw new Error(`Unknown check leftover kind: ${kind}`);
+  await getClients().core[method]({
+    name, namespace: config.kubernetes.workerNamespace, body: { preconditions: { uid, resourceVersion } },
+  });
+}
+
 // The pod-log follow client: an injected `logs` for tests, else one built
 // on the real kube config. Null where neither exists (a test that injected
 // only the typed API clients), which leaves the polled read in charge.
@@ -2621,6 +2710,7 @@ module.exports = {
   getApplicationLogs, getDebugLogs, restartApplication, deleteApplication, deleteBuilds, deleteFailedBuilds, ensureWorker,
   listManagedBuilds, readBuild, deleteBuildSnapshot,
   runCaptureJob, runUnitSuiteJob, cancelPreviewChecks, findCheckJobs, collectCheckJob,
+  deleteSettledCheckJobs, listCheckLeftovers, deleteCheckLeftover, MANAGED_BY, CHECK_JOB_TTL_SECONDS,
   execInWorker, _getClients: getClients,
   getWorkerStatus, getWorkerContractVersion, getWorkerRuntimeMetadata, deleteWorker, eraseWorker, listWorkers, cloneWorkerVolume,
   listWorkerVolumes, listPreviews, listShotsRuntimes, isQuotaExceeded,

@@ -2133,6 +2133,8 @@ async function captureForSession(config, session, app, commitHash, stagingResult
   const runId = operation?.runId || crypto.randomUUID();
   const harvestable = config.captureRuntime === 'kubernetes';
   let stopHeartbeat = () => {};
+  // True once the verdict is stored: the run's Jobs have nothing left to give.
+  let settledRun = false;
   try {
     const buildTimings = (stagingResult && stagingResult.timings) || null;
     if (buildTimings) {
@@ -2843,6 +2845,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       overlappedRollout: startedSoonAfterBoot(runStartedAt),
     });
     traceStatus = settled.traceStatus;
+    settledRun = true;
     return settled.result;
   } catch (err) {
     closeProgress();
@@ -2889,10 +2892,23 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // only re-drive a run something else already replaced.
     stopHeartbeat();
     if (harvestable) await checkRuns.finish(operation?.cleanupPool || pool, runId);
+    // ...and so do its Jobs, once it settled: with the verdict stored and the
+    // manifest gone no harvest will read them, and the Job TTL would hold the
+    // worker namespace's Job slots for another hour. A run that ended any
+    // other way keeps its Jobs for whoever cancels them, and the TTL.
+    if (harvestable && settledRun) releaseCheckJobs(config, session.id, runId);
     _inFlight.delete(key);
     drainQueued(key, session.id, commitHash, traceStatus);
     scheduleShots(config, pool, session.id, commitHash);
   }
+}
+
+// Best-effort and detached: a Job left behind still goes with its TTL.
+function releaseCheckJobs(config, sessionId, runId) {
+  kubernetes.deleteSettledCheckJobs(config, { sessionId, previewRunId: runId })
+    .catch((err) => log.warn('visuals', 'Settled check Jobs not deleted; their TTL will', {
+      sessionId, runId, err: err.message,
+    }));
 }
 
 // The harvester's seat at the in-flight table (services/check-harvest.js).

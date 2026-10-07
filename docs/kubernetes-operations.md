@@ -267,6 +267,33 @@ existing `SQL_CHECK_CONNECTION_URL` supplied by the unit runner. It never falls
 back to the application's `DATABASE_URL`. Kubernetes termination and cancellation
 are covered by `tests/kubernetes-preview-cancellation.test.js` with API doubles.
 
+## Check Jobs, their input Secrets and the worker quota
+
+A checks run creates a capture Job and a unit-suite Job in the worker namespace,
+each with an input Secret the Job owns. Once the run's verdict is stored and
+its `check_runs` manifest cleared, the run deletes its finished Jobs with
+background propagation, which takes their Pods and Secrets too; the harvester
+does the same after settling an orphan. The Jobs' `ttlSecondsAfterFinished`
+(3600 s) covers everything else: superseded or failed runs, the main-watch
+suite, and whatever a crash leaves. Keep it at least that long, because it is
+how late a harvest can still read a run after a slow leader handover.
+
+`services/check-retention.js` removes what no owner will. On the leader, every
+15 minutes and at most 50 deletions a pass, it deletes:
+
+- check input Secrets (`sv-capture-…-input`, `sv-unit-suite-…-input`) with no
+  owner, older than two hours, that no Pod or Job in the namespace names;
+- finished check Pods whose Job is gone, finished at least the Job TTL ago.
+
+It never touches a worker's `-env` Secret or anything with an owner. It needs
+`list` on Secrets and `delete` on Pods in the worker namespace, which nothing
+else in the platform uses; the foundation owns those grants. Without them each
+pass logs `Check leftover sweep stopped` and deletes nothing.
+
+The namespace's ResourceQuota counts Secrets and Jobs as well as CPU. Size
+`secrets` and `count/jobs.batch` for bursts of concurrent runs on top of the
+worker env Secrets; they are object counts, so headroom costs nothing.
+
 ## Workflow governance machine
 
 `platform.workflowGovernanceEnabled` (default `false`) becomes `WF_GOVERNANCE_ENABLED`.
