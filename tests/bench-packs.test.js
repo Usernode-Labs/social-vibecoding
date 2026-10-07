@@ -126,6 +126,97 @@ test('a tracker counts every look, repeats included, and starts from an earlier 
   again.close();
 });
 
+test('a turn\'s replayed lines are counted as a tracker counts them', () => {
+  const lines = ['Using browser_navigate', '  Using mcp__playwright__browser_take_screenshot  ', 'Using browser_take_screenshot',
+    '  ⎿ mcp__playwright__browser_take_screenshot: image', 'Using mcp__playwright__browser_resize', 'Editing app.js'];
+  assert.deepEqual(progress.looksIn(lines), { screenshots: 2, snapshots: 0, navigations: 1 });
+  const tr = progress.tracker({ async query() { return { rows: [] }; } }, 7, { writeEveryMs: 60_000 });
+  for (const line of lines) tr.note(line);
+  assert.deepEqual(tr.looks(), progress.looksIn(lines), 'the same lines, the same counts');
+  tr.close();
+  assert.deepEqual(progress.looksIn(null), { screenshots: 0, snapshots: 0, navigations: 0 });
+});
+
+test('a tracker keeps its looks on the checkpoint at each step and at most every interval as they change, never after close', async () => {
+  const kept = [];
+  let failing = false;
+  const warned = [];
+  const keep = async (part) => {
+    if (failing) throw new Error('db down');
+    kept.push(part);
+  };
+  const log = { warn: (_c, msg) => warned.push(msg) };
+  let t = 0;
+  const pool = { async query() { return { rows: [] }; } };
+  const tr = progress.tracker(pool, 7, {
+    now: () => t, writeEveryMs: 60_000, keepEveryMs: 20, keep, log, looks: { screenshots: 1, snapshots: 0, navigations: 2 },
+  });
+  const settle = () => new Promise((r) => { setImmediate(r); });
+
+  // A step: kept at once, with the counts its turn starts from.
+  await tr.step('build');
+  assert.deepEqual(kept, [{ stepLooks: { step: 'build', screenshots: 1, snapshots: 0, navigations: 2 } }]);
+  await tr.step('build');
+  assert.equal(kept.length, 1, 'the same step keeps nothing again');
+
+  // The first look: kept at once. Lines that are no look and no new skill: nothing.
+  tr.note('Editing public/app.js');
+  await settle();
+  assert.equal(kept.length, 1);
+  tr.note('Using browser_navigate');
+  await settle();
+  assert.equal(kept.length, 2, 'the first change is kept at once');
+  assert.deepEqual(kept[1], {}, 'the caller adds the counts as it writes');
+
+  // More within the interval: held back, then kept once for all of them.
+  t = 5;
+  tr.note('Using browser_take_screenshot');
+  tr.note('Using browser_take_screenshot');
+  tr.note('Using skill warm-theme');
+  await settle();
+  assert.equal(kept.length, 2, 'not on every line');
+  await new Promise((r) => { setTimeout(r, 40); });
+  assert.equal(kept.length, 3, 'once, when the interval is up');
+  assert.deepEqual(tr.looks(), { screenshots: 3, snapshots: 0, navigations: 3 });
+
+  // Past the interval: at once again.
+  t = 1000;
+  tr.note('Using browser_snapshot');
+  await settle();
+  assert.equal(kept.length, 4);
+
+  // A step keeps what a held-back look would have, and the hold is dropped.
+  tr.note('Using browser_snapshot');
+  await tr.step('capture');
+  assert.deepEqual(kept[4], { stepLooks: { step: 'capture', screenshots: 3, snapshots: 2, navigations: 3 } });
+  await new Promise((r) => { setTimeout(r, 40); });
+  assert.equal(kept.length, 5, 'its looks rode on the step\'s keep');
+
+  // A keep that fails is logged and never thrown.
+  failing = true;
+  t = 2000;
+  tr.note('Using browser_navigate');
+  await settle();
+  await settle();
+  assert.deepEqual(warned, ['Could not keep a trial\'s looks on its checkpoint']);
+  failing = false;
+
+  // Close drops a held-back keep: the trial's record has the counts.
+  t = 2005;
+  tr.note('Using browser_navigate');
+  await tr.close();
+  await new Promise((r) => { setTimeout(r, 40); });
+  tr.note('Using browser_navigate');
+  await settle();
+  assert.equal(kept.length, 5, 'nothing after close');
+
+  // Without `keep`, a tracker keeps nothing anywhere but its watch.
+  const plain = progress.tracker(pool, 8, { writeEveryMs: 60_000 });
+  plain.note('Using browser_navigate');
+  await plain.step('build');
+  await plain.close();
+});
+
 test('a tracker writes a step at once, notes later, keeps the last four lines, and never throws on a failed write', async () => {
   const writes = [];
   let fail = false;

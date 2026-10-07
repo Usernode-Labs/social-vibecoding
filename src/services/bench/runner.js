@@ -555,10 +555,14 @@ async function buildStage(ctx) {
   // differ; `passed` is what the runtime of its turns said the model takes
   // in, which is what makes the worker hand it an image or a note in its
   // place (AGENT_MODEL_SUPPORTS_IMAGES). The lane adds the looks it took.
+  // Each turn's is handed to ctx.onSight before the turn runs, the build
+  // turn's last: a first version keeps it on its checkpoint, since a build
+  // turn a restart interrupts is finished by recovery, which never sees this.
   const sight = { told: await live.buildSeesImages({ pool, config, userId: user.id, model }), passed: null };
-  const agentTurn = observedRuntime(deps.agentTurn, (runtime) => {
+  const agentTurn = observedRuntime(deps.agentTurn, async (runtime) => {
     const takesImages = runtime?.agentModelMetadata?.supportsImages;
     if (typeof takesImages === 'boolean') sight.passed = takesImages;
+    await ctx.onSight?.({ ...sight });
   });
   const built = await live.buildAndPropose({
     pool, config, bot: user, app, repo, issueNumber: snapshot.issueNumber,
@@ -612,7 +616,7 @@ function observedRuntime(agentTurn, onRuntime) {
       if (prop === 'resolveCodexRuntimeContext') {
         return async (...args) => {
           const runtime = await target.resolveCodexRuntimeContext(...args);
-          try { onRuntime(runtime); } catch { /* a watcher never stops a turn */ }
+          try { await onRuntime(runtime); } catch { /* a watcher never stops a turn */ }
           return runtime;
         };
       }
@@ -779,7 +783,8 @@ function firstVersionModels(ctx) {
  * not, and the trial says what it answered instead.
  *
  * Each sub-step's outcome is kept on the trial as it finishes
- * (ctx.onCheckpoint): the triage's answer, the spec, a build that landed.
+ * (ctx.onCheckpoint): the triage's answer, the spec, a build that landed;
+ * and what the build could see, as each of its turns starts (onSight).
  * A restart that interrupts the trial hands it back to the lane, and its
  * next claim (ctx.checkpoint) takes each kept outcome as it is and goes on
  * from the first sub-step without one, as the bot's own builds go on from a
@@ -890,7 +895,10 @@ async function firstVersionStage(ctx) {
       ok: false, sessionId: done.spec.sessionId, blocked: done.spec.blocked, error: done.spec.error || null, specMd: null,
     };
     built = await buildResult({ built: was, base, branch, sessionId: was.sessionId, deps, repo, task: ctx.task, trial });
-    if (was.sight) built.parsed = { ...(built.parsed || {}), sight: was.sight };
+    // What it could see: kept with a build that landed live, or, for one
+    // restart recovery finished, kept when its turn started (onSight).
+    const sight = was.sight || done.sight;
+    if (sight) built.parsed = { ...(built.parsed || {}), sight };
   } else {
     if (!done.spec) step('spec');
     built = await buildStage({
@@ -906,6 +914,7 @@ async function firstVersionStage(ctx) {
         return ctx.onSession?.(id, info);
       },
       onSpecWritten: ({ sessionId, specMd }) => keep({ spec: { sessionId: Number(sessionId), specMd } }),
+      onSight: (sight) => keep({ sight }),
       onBuilt: (b) => (b.ok && b.sha ? keep({ build: keptBuild(b) }) : null),
     });
   }
