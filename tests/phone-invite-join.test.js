@@ -193,6 +193,16 @@ test('the waiting room: a queued group can be joined now by adding a phone, and 
   const src = read('frontend/src/features/auth/add-phone.tsx');
   assert.match(src, /fetch\('\/api\/auth\/phone-link\/request'/);
   assert.match(src, /fetch\('\/api\/auth\/phone-link\/verify'/);
+  // The two step forms sit at one ternary position, so without a key each
+  // React keeps the same input DOM node across the switch and the typed
+  // phone number arrives pre-filled in the Code field (#4143). A key per
+  // form remounts the code step's input empty.
+  assert.match(src, /<form key="phone" className="mt-4 flex flex-col gap-3"/);
+  assert.match(src, /<form key="code" className="mt-4 flex flex-col gap-3"/);
+  // And a resent code starts from an empty field, not beside the typed text.
+  const resend = src.slice(src.indexOf('if (Date.now() >= resendAt)'), src.indexOf('Send a new code'));
+  const clear = resend.indexOf("codeField.current.value = ''");
+  assert.ok(clear >= 0 && clear < resend.indexOf('requestCode(number)'), 'the resend empties the code field before it asks for a new code');
   const waiting = read('frontend/src/features/auth/waiting.tsx');
   assert.match(waiting, /setPhoneOffered\(options\?\.phone_sign_in === true\);/);
   assert.match(waiting, /\{phoneOffered && queued\.length \? \(\s+<AddPhoneCard groups=\{queued\.map\(\(q\) => q\.name\)\} onJoined=\{onJoined\} \/>/);

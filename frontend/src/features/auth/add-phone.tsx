@@ -125,7 +125,7 @@ export function AddPhoneCard({ groups, title: titleOverride, lead, onJoined }: {
           : `We sent a 6-digit code to the number ending ${number.slice(-4)}.`}
       </p>
       {step === 'phone' ? (
-        <form className="mt-4 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void requestCode(phoneField.current?.value || ''); }}>
+        <form key="phone" className="mt-4 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void requestCode(phoneField.current?.value || ''); }}>
           <div className={FIELD_GROUP}>
             <label htmlFor="add-phone-number" className={LABEL}>Phone number</label>
             <input ref={phoneField} id="add-phone-number" type="tel" autoComplete="tel" inputMode="tel" enterKeyHint="go" defaultValue={number} placeholder="+1 415 555 0123" className={INPUT} />
@@ -134,7 +134,7 @@ export function AddPhoneCard({ groups, title: titleOverride, lead, onJoined }: {
           <RecaptchaNotice />
         </form>
       ) : (
-        <form className="mt-4 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void verify(); }}>
+        <form key="code" className="mt-4 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void verify(); }}>
           <div className={FIELD_GROUP}>
             <label htmlFor="add-phone-code" className={LABEL}>Code</label>
             <input ref={codeField} id="add-phone-code" inputMode="numeric" autoComplete="one-time-code" enterKeyHint="go" maxLength={6} className={`${INPUT} tracking-[0.4em]`} />
@@ -142,7 +142,7 @@ export function AddPhoneCard({ groups, title: titleOverride, lead, onJoined }: {
           <button type="submit" disabled={busy} className={PRIMARY}>{busy ? 'Checking…' : 'Continue'}</button>
           <div className="flex items-center justify-between">
             <button type="button" className={QUIET} onClick={() => { setError(null); setStep('phone'); }}>Use another number</button>
-            <button type="button" className={QUIET} disabled={busy} onClick={() => { if (Date.now() >= resendAt) void requestCode(number); else setError('Wait a minute before asking for a new code.'); }}>
+            <button type="button" className={QUIET} disabled={busy} onClick={() => { if (Date.now() >= resendAt) { if (codeField.current) codeField.current.value = ''; void requestCode(number); } else setError('Wait a minute before asking for a new code.'); }}>
               Send a new code
             </button>
           </div>
