@@ -11998,8 +11998,13 @@ html.web-browser-chrome {
 #header-title.is-centered {
   position: absolute;
   left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
+  /* `top: auto`, not 50%: the bar is pt-2/pb-4 (8px over the row, 16px
+     under it), so its middle is 4px below the row's and a title centred on
+     the box sat 4px under the bell and the mark beside it (#4237). Left at
+     auto, an absolute child of a flex container takes the row's own
+     `items-center` position, safe-area padding included. */
+  top: auto;
+  transform: translateX(-50%);
   flex: none;
   text-align: center;
 }
@@ -17584,8 +17589,35 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
   border-bottom-left-radius: 0;
   border-bottom-right-radius: 0;
 }
-html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #header-app-tile {
-  box-shadow: 0 0 0 1.5px rgba(255, 255, 255, .55);
+/* The tile's light ring is drawn INSIDE its edge (#4237). It was an outer
+   box-shadow, and the h1 around the tile is `truncate` (overflow: hidden)
+   with a line box exactly the tile's 28px, so the ring was clipped on the
+   top, bottom and left and only its right edge showed: the tile read as
+   nudged off its place. An outline pulled in by its own width paints over
+   the icon's edge, inside the box nothing clips. */
+html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #header-app-tile:not(:focus-visible) {
+  outline: 1.5px solid rgba(255, 255, 255, .55);
+  outline-offset: -1.5px;
+}
+/* ON ITS OWN, THE BAR'S ROW IS CENTRED (#4237). From 768px the band under
+   the bar is the page's own ink, so the tinted bar ends at its own 52px
+   foot, and its pt-2/pb-4 (8px over the row, 16px under) put every control
+   in it 4px above its middle. The same 52px, split 12 and 12. Below 768px
+   the band continues the colour and the 16px is part of one taller block,
+   so the shared split stays. The top keeps the safe-area inset, and the
+   browser-tab clamp (#2509) keeps its zero inset. */
+@media (min-width: 768px) {
+  html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
+    padding-bottom: 0.75rem;
+  }
+  @supports (padding: env(safe-area-inset-top)) {
+    html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header.un-safe-top-extend {
+      padding-top: calc(0.75rem + var(--un-safe-inset-top, env(safe-area-inset-top, 0px))) !important;
+    }
+    html.web-browser-chrome[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header.un-safe-top-extend {
+      padding-top: 0.75rem !important;
+    }
+  }
 }
 /* THE BAND: Hub, Discussion, Needs you, Workshop, under the header, in its
    colour. It keeps the old strip's box (`.dev-ws-tabs` > `.dev-ws-tabtrack`)
