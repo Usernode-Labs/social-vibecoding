@@ -540,9 +540,9 @@ async function firstVersionsLive(pool, appIds) {
   const ids = [...new Set(appIds.map(Number).filter((n) => Number.isInteger(n) && n > 0))];
   if (!ids.length) return new Map();
   const { rows } = await pool.query(
-    `SELECT fv.app_id, fv.issue_number, MIN(cs.merged_at) AS live_at
+    `SELECT fv.app_id, fv.issue_number, MIN(cs.live_at) AS live_at
        FROM homeroom_bot_first_versions fv
-       JOIN chat_sessions cs ON cs.app_id = fv.app_id AND cs.status = 'merged'
+       JOIN chat_sessions cs ON cs.app_id = fv.app_id AND cs.status = 'merged' AND cs.live_at IS NOT NULL
       WHERE fv.app_id = ANY($1::int[]) AND fv.issue_number IS NOT NULL
         AND (fv.issue_number = ANY(cs.linked_issues)
              OR EXISTS (SELECT 1 FROM homeroom_bot_runs r
@@ -660,7 +660,9 @@ async function cardRows(pool, userId, limit = MAX_CARDS) {
             run.id AS run_id, run.verdict, run.build_ok, run.build_error, run.cap_suppressed,
             run.created_at AS run_at, run.proposal_session_id,
             run.live_build_waiting_at AS build_waiting_at, bs.status AS build_status,
-            cs.status AS proposal_status, COALESCE(cs.promoted_at, cs.created_at) AS proposal_at
+            -- Merged but not live yet (live_at) reads as merging: going live.
+            CASE WHEN cs.status = 'merged' AND cs.live_at IS NULL THEN 'merging' ELSE cs.status END AS proposal_status,
+            COALESCE(cs.promoted_at, cs.created_at) AS proposal_at
        FROM cards c
        JOIN apps a ON a.id = c.app_id
        LEFT JOIN LATERAL (

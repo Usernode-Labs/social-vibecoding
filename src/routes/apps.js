@@ -677,12 +677,13 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
             -- merged_at was added by a later ALTER TABLE and is NULL on
             -- every row merged before it existed, so COALESCE to
             -- created_at rather than dropping that history on the floor.
-            COUNT(*) FILTER (WHERE status = 'merged') AS merged_prs,
+            -- Counted once live (live_at): a merge still going live is not yet.
+            COUNT(*) FILTER (WHERE status = 'merged' AND live_at IS NOT NULL) AS merged_prs,
             COUNT(*) FILTER (
-              WHERE status = 'merged'
+              WHERE status = 'merged' AND live_at IS NOT NULL
                 AND COALESCE(merged_at, created_at) > NOW() - INTERVAL '30 days'
             ) AS merged_prs_recent,
-            MAX(COALESCE(merged_at, created_at)) FILTER (WHERE status = 'merged')
+            MAX(COALESCE(merged_at, created_at)) FILTER (WHERE status = 'merged' AND live_at IS NOT NULL)
               AS last_merged_at
           FROM chat_sessions
           GROUP BY app_id

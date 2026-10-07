@@ -668,6 +668,8 @@ const PLAIN_REPLY_TOOL = {
 /** Pure: one request's state in a few plain words, from its records. */
 function statusOf(row) {
   const proposal = row.proposal_status || null;
+  // Merged is live once production runs it (chat_sessions.live_at).
+  if (proposal === 'merged' && row.proposal_live_at === null) return 'approved, going live now';
   if (proposal === 'merged') return 'approved and live';
   if (proposal === 'merging') return 'approved, being merged now';
   if (row.started_at) return 'looking at it now';
@@ -741,7 +743,7 @@ async function myWork(pool, { userId, settings, config = null, deps = {} }) {
      SELECT m.app_id, a.slug, a.name, m.issue_number, m.issue_title, m.first_version, m.recorded,
             q.id AS queue_id, q.started_at, q.enqueued_at,
             run.verdict, run.created_at AS run_at, run.build_ok, run.build_error, run.awaiting_go_at AS plan_waiting_at,
-            prop.proposal_session_id, cs.status AS proposal_status,
+            prop.proposal_session_id, cs.status AS proposal_status, cs.live_at AS proposal_live_at,
             oq.message_id AS open_question
        FROM mine m
        JOIN apps a ON a.id = m.app_id

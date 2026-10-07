@@ -316,6 +316,37 @@ directions. No maintenance window or scale-to-zero is needed.
 - **Turning it on again later is safe.** A proposal decided or deleted in the
   meantime ends its instance without being applied twice.
 
+## Workflow merge-followups machine
+
+`platform.workflowMergeFollowupsEnabled` (default `false`) becomes
+`WF_MERGE_FOLLOWUPS_ENABLED`. When it is on, what follows a merge (production delivery,
+preview teardown, included changes, closing requests, the announcements) is durable work
+of the merge-followups machine, and a change reads live only once production runs it.
+`merge-followup-recovery` and the boot resume of issue-close watches stand down.
+`docs/workflows.md` explains the machine.
+
+### Activation and rollback
+
+An ordinary rolling change, safe in both directions.
+
+1. **Set the value.** Set `platform.workflowMergeFollowupsEnabled: true` in the
+   platform's values in the infra repository. Argo CD rolls the Deployment.
+2. **During the rollout overlap.**
+   - An old Pod may still merge the old way. Once a new Pod has recorded the flag, the
+     ownership trigger logs such an old merge in `wf_ownership_violations`, which is
+     `log` mode in production. The old merge tail then runs as before.
+   - A merge on a new Pod is reported to the machine and finished by the leader's loops.
+3. **Verify.**
+   - **The new Pod's log.** It shows `Workflow runtime started` with `merge-followups`.
+   - **Admin → Workflows.** The next merge appears as `merge-followups / session:<id>`
+     and reaches `live`, and its problems panel is empty.
+   - **The proposal's thread.** It says "is live" after the deploy, not before.
+
+**Rollback.** Set the value back to `false`.
+- **New merges** take the old tail again.
+- **Merges the machine already accepted** still finish: the runtime keeps running while
+  they have work left, and stops on a later boot once nothing is left.
+
 ## Read-only inventory and logs
 
 These examples use the organization namespace and Deployment names. Substitute

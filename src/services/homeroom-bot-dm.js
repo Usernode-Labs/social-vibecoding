@@ -2107,7 +2107,7 @@ const MAX_READY_APPROVALS = 4;
 /** The reader's newest ready cards, each with its change and its app (with the columns app-access reads). */
 async function readyRows(pool, userId) {
   const { rows } = await pool.query(
-    `SELECT d.message_id, cs.id AS session_id, cs.status,
+    `SELECT d.message_id, cs.id AS session_id, cs.status, cs.live_at,
             a.id, a.slug, a.name, a.created_by, a.self_hosted, a.collab_visibility, a.view_visibility,
             a.moderation_suspended_at
        FROM homeroom_bot_dm_messages d
@@ -2134,6 +2134,9 @@ async function readyRows(pool, userId) {
  */
 function readyStateOf(row) {
   const base = { messageId: Number(row.message_id) };
+  // Merged is live once production runs it (chat_sessions.live_at); until
+  // then it is going live, as while it merges.
+  if (row.status === 'merged' && !row.live_at) return { ...base, state: 'going_live', actions: [] };
   if (row.status === 'merged') {
     const open = row.self_hosted ? null : openAppAction({ slug: row.slug, appName: row.name || row.slug });
     return { ...base, state: 'live', actions: open ? [open] : [] };
@@ -2395,8 +2398,12 @@ function laterChatLive(pool, run, { config, sha, deps = {} }) {
  * card cannot be (a project the bot cannot see). Its ready card says it is
  * live by itself: that card reads where the change stands each time it is
  * read (readyStates), and this news landing is one of those times.
+ *
+ * `live: true` is the merge-followups workflow machine's word that production
+ * runs a build containing the change: then nothing is probed, and nothing is
+ * re-read later.
  */
-async function noteProposalMerged(pool, session, { config = null, sha = null, deps = {} } = {}) {
+async function noteProposalMerged(pool, session, { config = null, sha = null, live: known = null, deps = {} } = {}) {
   if (!session?.id) return null;
   const { rows } = await pool.query(
     `SELECT r.app_id, r.issue_number, a.slug, a.name, a.self_hosted, a.runtime_kind, a.runtime_name
@@ -2408,7 +2415,7 @@ async function noteProposalMerged(pool, session, { config = null, sha = null, de
   if (!rows.length) return null;
   const run = rows[0];
   const platform = !!run.self_hosted;
-  const live = await liveAfterMerge(config, { ...run, id: run.app_id }, { sha, deps });
+  const live = known === true ? true : await liveAfterMerge(config, { ...run, id: run.app_id }, { sha, deps });
   // B9: the chat message it was asked in, if it was, says it is live, once
   // it is (WP-F): an app that did not answer yet is asked again a little
   // later. The platform's own app has no health check to read here, so its
@@ -3416,6 +3423,7 @@ async function firstVersionState(pool, appId, deps = {}) {
               SELECT 1 FROM homeroom_bot_runs r
                 JOIN chat_sessions cs ON cs.id = r.proposal_session_id
                WHERE r.app_id = f.app_id AND r.issue_number = f.issue_number AND cs.status = 'merged'
+                 AND cs.live_at IS NOT NULL
             ) AS merged,
             (SELECT p.conversation_id
                FROM users b

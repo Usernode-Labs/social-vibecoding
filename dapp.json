@@ -259,6 +259,12 @@
       "description": "The workflow governance-proposal machine (docs/workflows.md). true: it decides governance proposals and the governance-apply ticker and the sweeper's Pass 0b leave them alone; open proposals are enrolled at boot. false (default): the old paths decide. Turning it off and on again is safe. On Kubernetes, set by the Helm value platform.workflowGovernanceEnabled."
     },
     {
+      "key": "WF_MERGE_FOLLOWUPS_ENABLED",
+      "group": "Proposals & retention",
+      "default": "false",
+      "description": "The workflow merge-followups machine (docs/workflows.md). true: what follows a merge is durable work, and a change reads live only once production runs it. false (default): the old merge tail runs. Merges accepted while it was on still finish after it is turned off. On Kubernetes, set by the Helm value platform.workflowMergeFollowupsEnabled."
+    },
+    {
       "key": "WF_SLOTS",
       "group": "Proposals & retention",
       "description": "How many workflow events each platform process applies at once (pipeline slots). Unset: 4, or 1 on a staging preview. Only read while a workflow flag such as WF_GOVERNANCE_ENABLED is on."

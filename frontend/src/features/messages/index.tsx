@@ -1462,7 +1462,8 @@ const MayorSessionRow = memo(function MayorSessionRow({ session, active }: { ses
   const mark = agentActivity(session);
   const status = change
     ? `${change.title || (change.prNumber ? `PR #${change.prNumber}` : `Change ${change.id}`)} · ${
-      change.status === 'promoted' ? 'Waiting for approval' : change.status === 'merged' ? 'Live' : 'In progress'}`
+      change.status === 'promoted' ? 'Waiting for approval' : change.status === 'merging' ? 'Going live'
+        : change.status === 'merged' ? 'Live' : 'In progress'}`
     : 'No active change';
   return (
     <a

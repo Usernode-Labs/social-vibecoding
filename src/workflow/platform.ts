@@ -14,12 +14,18 @@ import { legacy } from './legacy.ts';
 import { GOVERNANCE_KINDS } from './governance-proposal/facts.ts';
 import { MACHINE, governanceProposal, issueKey } from './governance-proposal/machine.ts';
 import { governanceNotifiers, governanceServices } from './governance-proposal/services.ts';
+import { MACHINE as MERGE, mergeFollowups, sessionKey } from './merge-followups/machine.ts';
+import { mergeFollowupsNotifiers, mergeFollowupsServices } from './merge-followups/services.ts';
 
 const pg = createRequire(import.meta.url)('pg');
 
 let runtime: Runtime | null = null;
 let kernelPool: Pool & { end(): Promise<void> } | null = null;
+// The machines this process registered, each only under its own flag
+// (merge-followups also while it has work left to finish with its flag off).
 let machine: ReturnType<typeof governanceProposal> | null = null;
+let merges: ReturnType<typeof mergeFollowups> | null = null;
+let mergesAdmitted = false;
 let log: Logger | null = null;
 
 // What the ownership triggers read, synced on every boot, flag or not:
@@ -41,12 +47,51 @@ async function setSetting(pool: Pool, key: string, value: string | null): Promis
 export async function syncSettings(pool: Pool, config: any): Promise<void> {
   await setSetting(pool, 'ownership_mode', config.wfOwnershipMode === 'log' ? 'log' : null);
   await setSetting(pool, `enabled:${MACHINE}`, config.wfGovernanceEnabled ? '1' : null);
+  await setSetting(pool, `enabled:${MERGE}`, config.wfMergeFollowupsEnabled ? '1' : null);
+}
+
+// Merges merge-followups accepted before its flag went off still finish
+// (K13): their queued work, the events waiting for them, and the merges
+// still waiting for a deploy that contains them (delivering, deploy_failed),
+// which only this runtime hears about (productionDeployed).
+async function mergesUnfinished(pool: Pool): Promise<boolean> {
+  const { rows } = await pool.query(
+    `SELECT EXISTS (SELECT 1 FROM wf_work WHERE machine = $1 AND status IN ('queued', 'running', 'reported'))
+         OR EXISTS (SELECT 1 FROM wf_events WHERE machine = $1 AND status = 'pending')
+         OR EXISTS (SELECT 1 FROM wf_instances WHERE machine = $1 AND state IN ('delivering', 'deploy_failed')) AS unfinished`,
+    [MERGE]);
+  return !!rows[0]?.unfinished;
+}
+
+// The build this process booted with, recorded on the platform's own row
+// (apps.booted_shas, newest first, at most ten, one entry per build): what
+// served, unlike main_sha, which the migration Job writes from the incoming
+// release before the rollout. A history, so an older Pod booting after a
+// newer one (a rollout) does not erase that the newer build ran. One
+// statement: the row lock serialises two processes booting at once. Every
+// process records it, flags or not, so it is there when a flag is turned on.
+async function recordBooted(pool: Pool): Promise<void> {
+  const sha = String(process.env.GIT_SHA || '').toLowerCase();
+  if (!/^[0-9a-f]{40}$/.test(sha)) return;
+  await pool.query(
+    `UPDATE apps a SET booted_shas = (
+       SELECT COALESCE(jsonb_agg(y.e ORDER BY y.at DESC), '[]'::jsonb) FROM (
+         SELECT x.e, x.at FROM (
+           SELECT DISTINCT ON (e->>'sha') e, (e->>'at')::timestamptz AS at
+             FROM jsonb_array_elements(jsonb_build_array(jsonb_build_object('sha', $1::text, 'at', now())) || a.booted_shas) e
+            ORDER BY e->>'sha', (e->>'at')::timestamptz DESC) x
+          ORDER BY x.at DESC LIMIT 10) y)
+      WHERE a.self_hosted = TRUE`, [sha]);
 }
 
 export async function startWorkflow(config: any, opts: { loops: boolean }): Promise<void> {
   log = legacy('services/logger');
-  await syncSettings(legacy('db/pool').getPool(config), config);
-  if (!config.wfGovernanceEnabled || runtime) return;
+  const appPool = legacy('db/pool').getPool(config);
+  await syncSettings(appPool, config);
+  await recordBooted(appPool).catch((err) => log!.warn('workflow', 'Could not record the booted build', { message: err.message }));
+  if (runtime) return;
+  const withMerges = !!config.wfMergeFollowupsEnabled || await mergesUnfinished(appPool).catch(() => false);
+  if (!config.wfGovernanceEnabled && !withMerges) return;
   const workflowPool = new pg.Pool({
     connectionString: config.databaseUrl, max: config.wfPoolMax, idleTimeoutMillis: 30000, application_name: 'homeroom-workflow',
   });
@@ -55,10 +100,22 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   // an uncaught 'error' and end the process. The pool replaces it.
   workflowPool.on('error', (err: Error) => log!.warn('workflow', 'Idle workflow database connection lost', { message: err.message }));
   kernelPool = workflowPool;
-  const deps = { config, pool: legacy('db/pool').getPool(config) };
-  machine = governanceProposal({ dataKey: config.dataEncryptionKey, notifiers: governanceNotifiers(deps) });
+  const deps = { config, pool: appPool };
+  const machines = [];
+  let services = {};
+  if (config.wfGovernanceEnabled) {
+    machine = governanceProposal({ dataKey: config.dataEncryptionKey, notifiers: governanceNotifiers(deps) });
+    machines.push(machine);
+    services = { ...services, ...governanceServices(deps) };
+  }
+  if (withMerges) {
+    merges = mergeFollowups({ dataKey: config.dataEncryptionKey, notifiers: mergeFollowupsNotifiers(deps) });
+    mergesAdmitted = !!config.wfMergeFollowupsEnabled;
+    machines.push(merges);
+    services = { ...services, ...mergeFollowupsServices(deps) };
+  }
   const started = createRuntime({
-    pool: kernelPool!, machines: [machine], services: governanceServices(deps), slots: config.wfSlots, log: log!,
+    pool: kernelPool!, machines, services, slots: config.wfSlots, log: log!,
   });
   try {
     await started.start({ slots: true });
@@ -67,10 +124,14 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
     await started.stop().catch(() => {});
     await kernelPool!.end().catch(() => {});
     kernelPool = null;
+    machine = null;
+    merges = null;
+    mergesAdmitted = false;
     throw err;
   }
   runtime = started;
-  log!.info('workflow', 'Workflow runtime started', { machines: [MACHINE] });
+  log!.info('workflow', 'Workflow runtime started', { machines: machines.map((m) => m.name) });
+  if (merges) await releaseBooted(appPool).catch((err) => log!.warn('workflow', 'Could not report the running release', { message: err.message }));
   if (opts.loops) await startWorkflowLoops();
 }
 
@@ -79,6 +140,7 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
 export async function startWorkflowLoops(): Promise<void> {
   if (!runtime) return;
   await runtime.start({ loops: true });
+  if (!machine) return;
   const { rows } = await kernelPool!.query(
     `SELECT i.id, i.app_id FROM issues i
       WHERE i.status = 'open' AND i.kind = ANY($1::text[])
@@ -91,6 +153,9 @@ export async function startWorkflowLoops(): Promise<void> {
 export async function stopWorkflow(): Promise<void> {
   const r = runtime;
   runtime = null;
+  machine = null;
+  merges = null;
+  mergesAdmitted = false;
   await r?.stop();
   await kernelPool?.end();
   kernelPool = null;
@@ -99,11 +164,16 @@ export async function stopWorkflow(): Promise<void> {
 // ── Governance proposals, for the routes ────────────────────────────────
 
 export function governanceEnabled(): boolean {
-  return runtime !== null;
+  return runtime !== null && machine !== null;
 }
 
 export function governsKind(kind: string): boolean {
-  return runtime !== null && GOVERNANCE_KINDS.has(kind);
+  return governanceEnabled() && GOVERNANCE_KINDS.has(kind);
+}
+
+// Whether the runtime runs in this process (the admin console's reads say so).
+export function workflowRunning(): boolean {
+  return runtime !== null;
 }
 
 type Source = { kind: 'route' | 'system' | 'admin'; name?: string };
@@ -224,12 +294,80 @@ export async function targetsClosed(appId: number, numbers: number[], cause: { k
   return rows.map((r: { id: number }) => r.id);
 }
 
+// ── Merge follow-ups ────────────────────────────────────────────────────
+
+// Whether a merge hands its follow-ups to the machine. Off with the flag,
+// even while the machine finishes work it accepted before.
+export function mergeFollowupsEnabled(): boolean {
+  return runtime !== null && merges !== null && mergesAdmitted;
+}
+
+const count = (n: unknown) => (Number.isInteger(n) && (n as number) >= 0 ? n as number : null);
+
+// GitHub merged a proposal: the merge itself (routes/votes.js checkAndMerge)
+// reports it and waits briefly for the status move. Resolves the outcome;
+// 'pending' still means the merge is recorded once the event is processed.
+export async function mergeConfirmed(m: {
+  sessionId: number; appId: number; mergeSha: string | null; force: boolean; forcedBy?: string | null;
+  tally: { yes: unknown; required: unknown; active: unknown };
+}): Promise<EventOutcome> {
+  return runtime!.appendAndWait(merges!, sessionKey(m.sessionId), { type: 'Merged', payload: {
+    sessionId: m.sessionId, mergeSha: m.mergeSha, mergedAt: new Date().toISOString(), force: !!m.force,
+    forcedBy: m.forcedBy || null, observedBy: 'merge',
+    tally: { yes: count(m.tally.yes) ?? 0, required: count(m.tally.required), active: count(m.tally.active) },
+  } }, { requestKey: `merged:${m.sessionId}:merge`, source: { kind: 'system', name: 'merge' }, appId: m.appId, waitMs: 5000 });
+}
+
+// Recovery found on GitHub a merge whose own report was lost (a crash
+// between GitHub's answer and the append). The tally is read again: the
+// counted Yes votes on the version that merged, and the app's active members.
+export async function mergeObserved(m: { sessionId: number; appId: number; mergeSha: string | null; mergedAt: string | null }): Promise<number> {
+  const pool = kernelPool!;
+  const { countedVotePredicateSql } = legacy('services/pr-vote-revision');
+  const { rows: [v] } = await pool.query(
+    `SELECT count(*)::int AS yes, cs.votes_required FROM pr_votes pv JOIN chat_sessions cs ON cs.id = pv.session_id
+      WHERE pv.session_id = $1 AND pv.vote = 'yes' AND ${countedVotePredicateSql('pv', 'cs')}
+      GROUP BY cs.votes_required`, [m.sessionId]);
+  const stats = await legacy('services/active-users').getActiveUserStats(pool, m.appId).catch(() => null);
+  return runtime!.append(merges!, sessionKey(m.sessionId), { type: 'Merged', payload: {
+    sessionId: m.sessionId, mergeSha: m.mergeSha, mergedAt: m.mergedAt || new Date().toISOString(), force: false,
+    observedBy: 'recovery',
+    tally: { yes: v?.yes ?? 0, required: count(v?.votes_required), active: count(stats?.active) },
+  } }, { requestKey: `merged:${m.sessionId}:recovery`, source: { kind: 'system', name: 'recovery' }, appId: m.appId });
+}
+
+// Production of an app now runs `sha` (staging.rebuildProduction, whoever
+// called it): every merge of that app still waiting to go live hears it,
+// and checks whether that build contains it. Also while the flag is off, so
+// accepted merges still finish.
+export async function productionDeployed(appId: number, sha: string): Promise<void> {
+  if (!runtime || !merges || !/^[0-9a-f]{40}$/i.test(String(sha || ''))) return;
+  const { rows } = await kernelPool!.query(
+    `SELECT key FROM wf_instances
+      WHERE machine = $1 AND app_id = $2 AND state IN ('delivering', 'deploy_failed') AND data->>'role' = 'merge'`,
+    [MERGE, appId]);
+  for (const r of rows) {
+    await runtime.append(merges, r.key, { type: 'Deployed', payload: { sha: sha.toLowerCase() } },
+      { requestKey: `deployed:${sha.toLowerCase()}`, source: { kind: 'system', name: 'deploy' }, appId });
+  }
+}
+
+// The platform's own app is released outside this process (GitHub Actions,
+// Argo CD): each process that boots reports the build it runs.
+async function releaseBooted(pool: Pool): Promise<void> {
+  const sha = String(process.env.GIT_SHA || '');
+  if (!/^[0-9a-f]{40}$/i.test(sha)) return;
+  const { rows } = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE');
+  for (const a of rows) await productionDeployed(a.id, sha);
+}
+
 // ── The admin console ───────────────────────────────────────────────────
 
 // The events an admin may append from the console, per machine, and the
 // payload each needs beyond the admin's own identity.
 const ADMIN_EVENTS = new Map<string, ReadonlySet<string>>([
   [MACHINE, new Set(['Evaluate', 'AdminApply', 'RetryFollowup'])],
+  [MERGE, new Set(['RetryDelivery', 'RetryFollowup'])],
 ]);
 
 export function adminEvents(): Record<string, string[]> {
@@ -248,7 +386,9 @@ export async function adminEvent(
   if (!ADMIN_EVENTS.get(machineName)?.has(type)) throw new AdminActionError(400, `${type} is not an admin action on ${machineName}`);
   const body = type === 'AdminApply' ? { userId: admin.id, username: admin.username }
     : type === 'RetryFollowup' ? { workKey: String(payload.workKey || '') } : {};
-  return runtime.appendAndWait(machineName === MACHINE ? machine! : machineName, key, { type, payload: body },
+  const target = machineName === MACHINE ? machine : machineName === MERGE ? merges : null;
+  if (!target) throw new AdminActionError(409, `${machineName} is not running here`);
+  return runtime.appendAndWait(target, key, { type, payload: body },
     { requestKey: `admin:${randomUUID()}`, source: { kind: 'admin', name: 'console' }, actor: `user:${admin.id}` });
 }
 

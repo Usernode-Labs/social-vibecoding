@@ -168,6 +168,8 @@ function shapeFailingChecks(row) {
   };
 }
 
+// A merged change that is not live yet (chat_sessions.live_at) comes out of
+// the queries above as 'merging': the drawer and pills say "Going live".
 function shapeChangeRow(row) {
   if (!row || row.change_id == null) return null;
   return {
@@ -281,7 +283,7 @@ async function listAgentSessions(pool, { userId, status = 'open', limit = 20, be
             fa.slug AS focus_app_slug, fa.name AS focus_app_name,
             fa.self_hosted AS focus_app_self_hosted, fa.icon_emoji AS focus_app_icon_emoji,
             fa.icon_image_id AS focus_app_icon_id,
-            c.id AS change_id, c.status AS change_status, c.pr_number AS change_pr_number,
+            c.id AS change_id, CASE WHEN c.status = 'merged' AND c.live_at IS NULL THEN 'merging' ELSE c.status END AS change_status, c.pr_number AS change_pr_number,
             COALESCE(c.pr_title, c.session_title) AS change_title,
             c.staging_url AS change_staging_url, c.check_state AS change_check_state,
             CASE WHEN c.check_state = 'skipped' THEN c.check_error_detail END AS change_check_skip_reason,
@@ -340,7 +342,7 @@ async function getAgentSession(pool, { userId, id }) {
             fa.slug AS focus_app_slug, fa.name AS focus_app_name,
             fa.self_hosted AS focus_app_self_hosted, fa.icon_emoji AS focus_app_icon_emoji,
             fa.icon_image_id AS focus_app_icon_id,
-            c.id AS change_id, c.status AS change_status, c.pr_number AS change_pr_number,
+            c.id AS change_id, CASE WHEN c.status = 'merged' AND c.live_at IS NULL THEN 'merging' ELSE c.status END AS change_status, c.pr_number AS change_pr_number,
             COALESCE(c.pr_title, c.session_title) AS change_title,
             c.staging_url AS change_staging_url, c.check_state AS change_check_state,
             CASE WHEN c.check_state = 'skipped' THEN c.check_error_detail END AS change_check_skip_reason,
@@ -361,7 +363,7 @@ async function getAgentSession(pool, { userId, id }) {
   // Every change this conversation has started, newest first: the active one,
   // the parked ones the user can switch back to, and the closed ones.
   const { rows: changes } = await pool.query(
-    `SELECT c.id AS change_id, c.status AS change_status, c.pr_number AS change_pr_number,
+    `SELECT c.id AS change_id, CASE WHEN c.status = 'merged' AND c.live_at IS NULL THEN 'merging' ELSE c.status END AS change_status, c.pr_number AS change_pr_number,
             COALESCE(c.pr_title, c.session_title) AS change_title,
             c.staging_url AS change_staging_url, c.check_state AS change_check_state,
             CASE WHEN c.check_state = 'skipped' THEN c.check_error_detail END AS change_check_skip_reason,

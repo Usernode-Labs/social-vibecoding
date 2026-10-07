@@ -437,7 +437,9 @@ async function pastRuns(pool, { userId, limit = RUN_LIMIT }) {
             r.proposal_session_id, r.created_at,
             (r.plan IS NOT NULL AND r.plan->'chosen' IS NULL AND r.build_ok IS FALSE
               AND r.build_session_id IS NULL AND r.proposal_session_id IS NULL) AS plan_only,
-            cs.status AS proposal_status, COALESCE(cs.promoted_at, cs.created_at) AS proposal_at, cs.merged_at,
+            -- Merged but not live yet (live_at) reads as merging: going live.
+            CASE WHEN cs.status = 'merged' AND cs.live_at IS NULL THEN 'merging' ELSE cs.status END AS proposal_status,
+            COALESCE(cs.promoted_at, cs.created_at) AS proposal_at, cs.live_at AS merged_at,
             a.slug, a.name, q.issue_title, q.first_version
        FROM homeroom_bot_requesters q
        JOIN homeroom_bot_runs r ON r.app_id = q.app_id AND r.issue_number = q.issue_number

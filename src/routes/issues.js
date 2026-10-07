@@ -3845,7 +3845,9 @@ async function maybeApplySecretChangeProposal(config, pool, issue, options = {})
  * No GitHub writes (the issue is already closed; the proposer's reason is
  * NOT posted — the group never approved it) and no bounty changes.
  */
-async function resolveSupersededCloseProposals(pool, { appId, appSlug, numbers, cause } = {}) {
+// `strict`: a failure is thrown instead of logged (the merge-followups
+// workflow machine retries its work on it).
+async function resolveSupersededCloseProposals(pool, { appId, appSlug, numbers, cause, strict = false } = {}) {
   const nums = (Array.isArray(numbers) ? numbers : [])
     .map((n) => Number(n))
     .filter((n) => Number.isInteger(n) && n > 0);
@@ -3856,6 +3858,7 @@ async function resolveSupersededCloseProposals(pool, { appId, appSlug, numbers, 
     try {
       return { resolved: await workflow().targetsClosed(appId, nums, cause || { kind: 'github-close' }) };
     } catch (err) {
+      if (strict) throw err;
       log.warn('issues', 'Superseded close-proposal resolve failed', { appId, numbers: nums, err: err.message });
       return { resolved };
     }
@@ -3902,6 +3905,7 @@ async function resolveSupersededCloseProposals(pool, { appId, appSlug, numbers, 
       });
     }
   } catch (err) {
+    if (strict) throw err;
     log.warn('issues', 'Superseded close-proposal resolve failed', {
       appId, numbers: nums, err: err.message,
     });

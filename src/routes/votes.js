@@ -2160,6 +2160,9 @@ function mergedRowSelect() {
            -- merged before the column existed — consumers must keep the
            -- created_at fallback forever.
            cs.merged_at, cs.promoted_at, cs.shared_at, cs.session_title,
+           -- When production first ran it; NULL while a merge is still going
+           -- live (the merge-followups workflow machine), so the card says so.
+           cs.live_at,
            COALESCE(cs.merged_at, cs.created_at) AS completed_at,
            cs.revert_of_session_id,
            -- A change that went live inside another one
@@ -4684,7 +4687,7 @@ function voteRoutes(config) {
              FROM (
                SELECT COALESCE(merged_at, created_at) AS t
                  FROM chat_sessions
-                WHERE app_id = $1 AND status = 'merged'
+                WHERE app_id = $1 AND status = 'merged' AND live_at IS NOT NULL
                UNION ALL
                SELECT created_at AS t
                  FROM issues
@@ -5269,7 +5272,10 @@ async function resolveIssueBounty(pool, { appId, sessionId, awardeeUserId, issue
 //   shapers — everyone else who took part: a No with a line on the version
 //             that merged (an objection that did not stop it), or a word in
 //             the proposal's thread before it landed. Nobody is named twice.
-async function mergeCredits(pool, session) {
+// `before` bounds the thread's speakers to those who spoke before it: the
+// merge-followups machine names them when the change goes live, which can
+// be well after the merge.
+async function mergeCredits(pool, session, { before = null } = {}) {
   const { rows: authorRows } = session.user_id
     ? await pool.query('SELECT username FROM users WHERE id = $1', [session.user_id])
     : { rows: [] };
@@ -5289,9 +5295,10 @@ async function mergeCredits(pool, session) {
        JOIN users u ON u.id = cm.user_id
       WHERE cm.app_id = $1 AND cm.thread_type = 'session' AND cm.thread_ref = $2
         AND cm.msg_type = 'message'
+        AND ($3::timestamptz IS NULL OR cm.created_at <= $3::timestamptz)
       GROUP BY u.username
       ORDER BY first_at ASC`,
-    [session.app_id, session.id]
+    [session.app_id, session.id, before]
   );
   const seen = new Set(author ? [author] : []);
   const backers = [];
@@ -5548,7 +5555,7 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
     // keeps any earlier snapshot (defensive; the promoted→merging claim
     // already guarantees a single merge transition).
     await pool.query(
-      `UPDATE chat_sessions SET status = 'merged', merged_at = NOW(),
+      `UPDATE chat_sessions SET status = 'merged', merged_at = NOW(), live_at = NOW(),
                                 merge_commit_sha = COALESCE($2, merge_commit_sha),
                                 votes_required = COALESCE(votes_required, $3),
                                 active_users_at_merge = COALESCE(active_users_at_merge, $4)
@@ -7003,6 +7010,34 @@ async function checkAndMerge(config, pool, session, options = {}) {
       dstep({ phase: 'github_merge', message: 'GitHub not enabled or PR-less, so skipping the GitHub merge call.' });
     }
 
+    // With WF_MERGE_FOLLOWUPS_ENABLED on, everything after GitHub's merge
+    // belongs to the merge-followups workflow machine
+    // (src/workflow/merge-followups/): the status move, delivery, teardown,
+    // included changes, requests and the announcements, each durable. The
+    // merge reports it and waits briefly for the status move.
+    const workflow = require('../workflow/platform.ts');
+    if (workflow.mergeFollowupsEnabled()) {
+      const handed = await workflow.mergeConfirmed({
+        sessionId: session.id, appId: session.app_id, mergeSha: mergeCommitSha,
+        force, forcedBy: forceBy?.username || null,
+        tally: { yes: yesCount, required, active: activeCount },
+      });
+      if (handed.status === 'rejected' || handed.status === 'faulted') {
+        log.error('votes', 'The merge-followups machine refused a confirmed merge', {
+          sessionId: session.id, status: handed.status, reason: handed.reason,
+        });
+      }
+      dstep({
+        phase: 'merged',
+        message: `Merged${mergeCommitSha ? ` (commit ${String(mergeCommitSha).slice(0, 9)})` : ''}. Delivery and the follow-ups are the merge-followups workflow's (${handed.status}).`,
+        detail: { sha: mergeCommitSha, workflowEvent: handed.eventId, outcome: handed.status },
+      });
+      gateTrace.revise('github', 'done', { note: 'merged' });
+      gateSave();
+      dend('merged', `Merged${force ? ` (force by ${forceBy?.username || 'admin'})` : ''}.`);
+      return { merged: true, ...(handed.status === 'pending' ? { followupsPending: true } : {}) };
+    }
+
     // #687 Slice 4: run the shared post-merge finalizer. Both native and
     // imported merges converge here after the (only-difference) github.mergePR
     // call above, so the deploy/teardown/announce tail is byte-for-byte
@@ -7034,11 +7069,20 @@ async function checkAndMerge(config, pool, session, options = {}) {
     // fix the cause and re-run the rebuild ("Check for updates" / drift
     // poller). The pre-merge conflict/behind_main handling further down is
     // premised on the merge NOT having happened, so we return early.
+    // With the merge-followups machine on, the only step after GitHub's merge
+    // is reporting it. A report that failed leaves the row 'merging', and
+    // recoverStuckMerges finds the merge on GitHub and reports it again.
+    if (githubMerged && require('../workflow/platform.ts').mergeFollowupsEnabled()) {
+      dend('merged', 'Merged on GitHub; recovery records the merge.');
+      return { merged: true, followupsPending: true };
+    }
+
     if (githubMerged) {
       await pool.query(
         `UPDATE chat_sessions
             SET status = 'merged',
                 merged_at = COALESCE(merged_at, NOW()),
+                live_at = COALESCE(live_at, NOW()),
                 merge_commit_sha = COALESCE(merge_commit_sha, $2),
                 votes_required = COALESCE(votes_required, $3),
                 active_users_at_merge = COALESCE(active_users_at_merge, $4)
