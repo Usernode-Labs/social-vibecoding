@@ -126,6 +126,54 @@ test('2. the sheet opens on the maker\'s last note for that project', () => {
   assert.match(src, /const fromLink = live && !ownNote\.current \? linkNote\(data\?\.links\) : null;/);
 });
 
+// ── Copy link, where the device has a share menu ────────────────────────
+//
+// Evan, 7 October 2026 (Most Likely To): on a desktop, Share link opened the
+// computer's share menu, and that menu has no copy of its own, so the link
+// could not be got at. Copy link under Share link puts the note and the link
+// on the clipboard, and sends the invite the way sharing does.
+
+test('copy link: without a share menu the sheet is Share link alone', () => {
+  const made = loadTsx(MADE);
+  withStorage({}, () => {
+    const html = renderToHtml(createElement(made.InviteSheet, MADE_PROPS));
+    assert.doesNotMatch(html, /data-first-session-invite-copy/);
+    assert.match(html, />Share link</);
+  });
+});
+
+test('copy link: with a share menu, Copy link sits under Share link', () => {
+  const made = loadTsx(MADE);
+  Object.defineProperty(globalThis.navigator, 'share', { value: async () => {}, configurable: true });
+  try {
+    withStorage({}, () => {
+      const html = renderToHtml(createElement(made.InviteSheet, MADE_PROPS));
+      assert.match(html, /data-first-session-invite-copy=""/);
+      assert.match(html, />Copy link</);
+    });
+  } finally {
+    delete globalThis.navigator.share;
+  }
+});
+
+test('copy link: it copies the note and the link, and sends the invite', () => {
+  const src = read(MADE);
+  // The same text Share link copies where there is no share menu.
+  assert.match(src, /const text = note\.trim\(\) \? `\$\{note\.trim\(\)\} \$\{url\}` : url;/);
+  assert.match(src, /await navigator\.clipboard\.writeText\(text\);/);
+  assert.match(src, /setStatus\('Link copied\. Paste it in your group chat\.'\);/);
+  // The note is kept and posted once, and the invite counts as sent a moment
+  // later, so "Copied" is seen; onSent runs from the timer or from close.
+  assert.match(src, /keepNote\(made\.slug, note\);\s+await postNote\(\);\s+sentPending\.current = true;/);
+  assert.match(src, /sentTimer\.current = window\.setTimeout\(\(\) => \{ sentPending\.current = false; onSent\(\); \}, 1200\);/);
+  assert.match(src, /if \(sentPending\.current\) \{ sentPending\.current = false; onSent\(\); \} else \{ onClose\(\); \}/);
+  // A failed copy sends nothing and shows the link to copy by hand.
+  assert.match(src, /setError\(`Could not copy\. Copy this link: \$\{url\}`\);/);
+  // All three ways off the sheet (backdrop, close button, Escape) count it.
+  assert.match(src, /onClick=\{close\}/);
+  assert.match(src, /if \(e\.key === 'Escape'\) close\(\);/);
+});
+
 // ── 4 and 5. The invitee's end ──────────────────────────────────────────
 
 const { agoStamp } = loadTsx('frontend/src/lib/timestamp.ts');

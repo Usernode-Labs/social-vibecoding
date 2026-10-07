@@ -31,7 +31,10 @@
  * (features/app-context/invite-pane.tsx, with live links, their limits, an
  * invite by username and the project's joining rule, which stays where it
  * is): what they'll get, "<maker> is making <name>" while its first version
- * is not live, with the note edited in place, then Share link. Nothing else:
+ * is not live, with the note edited in place, then Share link, and Copy link
+ * under it wherever the device has a share menu (a desktop's share menu has
+ * no copy of its own, so Copy link puts the note and the link on the
+ * clipboard, and counts as sent the way sharing does). Nothing else:
  * somebody brand new knows nobody on Homeroom to invite by username yet, and
  * the joining rule is the project's business later (both taken out after
  * Evan's run-through, 5 October 2026). The link it makes works until it is
@@ -69,7 +72,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { XIcon } from '@/components/ui/icons';
+import { CopyIcon, XIcon } from '@/components/ui/icons';
 import { Wordmark } from '@/components/ui/wordmark';
 
 import { askForPingWhileBotBuilds } from '../dialogs/ping-ask';
@@ -260,10 +263,21 @@ export function InviteSheet({ made, me, making = true, onClose, onSent }: {
   const [error, setError] = useState<string | null>(null);
   const [shown, setShown] = useState(false);
   const linkRef = useRef<string | null>(null);
+  // Copy link shows only where the device has a share menu: there the menu
+  // offers no copy of its own (a desktop's, as in the report), so the sheet
+  // does. Where there is none, Share link already copies.
+  const [canShare] = useState(() => typeof navigator !== 'undefined' && typeof (navigator as { share?: unknown }).share === 'function');
+  const [copied, setCopied] = useState(false);
+  // A copy sends the invite a moment later, so "Copied" is seen; closing
+  // first counts the same way (sentPending).
+  const sentPending = useRef(false);
+  const sentTimer = useRef<number | null>(null);
   // Whether the note in the box is theirs from this device (kept, or typed
   // here); until it is, a note on one of their own links replaces it.
   const ownNote = useRef(keptNote(made.slug) !== null);
   useEffect(() => { const r = requestAnimationFrame(() => setShown(true)); return () => cancelAnimationFrame(r); }, []);
+  // Gone without a close (onSent unmounts the sheet): the pending one is done.
+  useEffect(() => () => { if (sentTimer.current !== null) window.clearTimeout(sentTimer.current); }, []);
   // The maker's own newest note, when this device kept none.
   useEffect(() => {
     if (ownNote.current) return undefined;
@@ -277,12 +291,6 @@ export function InviteSheet({ made, me, making = true, onClose, onSent }: {
       .catch(() => {});
     return () => { live = false; };
   }, [made.slug]);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
   // The maker's note, as their first message in the group's chat, once.
   const postNote = useCallback(async () => {
     const text = note.trim();
@@ -339,10 +347,52 @@ export function InviteSheet({ made, me, making = true, onClose, onSent }: {
     }
   }, [busy, link, me, made.name, making, note, postNote, onSent]);
 
+  // Copy link, where the device has a share menu: the same note and link
+  // Share link copies where there is none, on the clipboard directly, since
+  // the menu itself (a desktop's, as in the report) offers no copy. It sends
+  // the invite a moment later, so "Copied" is seen; closing first counts the
+  // same (close). A failed copy sends nothing, and shows the link instead.
+  const copyLink = useCallback(async () => {
+    if (busy) return;
+    setBusy(true); setError(null); setStatus(null);
+    try {
+      const url = await link();
+      if (!url) return;
+      const text = note.trim() ? `${note.trim()} ${url}` : url;
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        setError(`Could not copy. Copy this link: ${url}`);
+        return;
+      }
+      setCopied(true);
+      setStatus('Link copied. Paste it in your group chat.');
+      keepNote(made.slug, note);
+      await postNote();
+      sentPending.current = true;
+      sentTimer.current = window.setTimeout(() => { sentPending.current = false; onSent(); }, 1200);
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, link, made.slug, note, postNote, onSent]);
+
+  // The sheet's every way off: backdrop, the close button and Escape. A copy
+  // still in its one-second wait counts as sent, as its timer would.
+  const close = useCallback(() => {
+    if (sentTimer.current !== null) { window.clearTimeout(sentTimer.current); sentTimer.current = null; }
+    if (sentPending.current) { sentPending.current = false; onSent(); } else { onClose(); }
+  }, [onClose, onSent]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [close]);
+
   const tile = made.emoji || made.name.slice(0, 1);
   return (
     <div className="fixed inset-0 z-[9001]" data-first-session-invite="">
-      <div aria-hidden="true" onClick={onClose} className={`absolute inset-0 bg-black/40 transition-opacity duration-200 ${shown ? 'opacity-100' : 'opacity-0'}`} />
+      <div aria-hidden="true" onClick={close} className={`absolute inset-0 bg-black/40 transition-opacity duration-200 ${shown ? 'opacity-100' : 'opacity-0'}`} />
       <div
         role="dialog"
         aria-modal="true"
@@ -352,7 +402,7 @@ export function InviteSheet({ made, me, making = true, onClose, onSent }: {
         <div className="mx-auto h-1.5 w-10 rounded-full bg-zinc-300 dark:bg-zinc-700 md:hidden" aria-hidden="true" />
         <div className="mt-3 flex items-center gap-3">
           <h2 id="first-session-invite-title" className="min-w-0 flex-1 text-[17px] font-semibold">{`Invite people to ${made.name}`}</h2>
-          <button type="button" onClick={onClose} aria-label="Close" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-200 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+          <button type="button" onClick={close} aria-label="Close" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-200 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
             <XIcon className="h-4 w-4" aria-hidden="true" />
           </button>
         </div>
@@ -387,6 +437,20 @@ export function InviteSheet({ made, me, making = true, onClose, onSent }: {
             Share link
           </Button>
         </div>
+        {canShare ? (
+          <div className="mt-2.5">
+            <button
+              type="button"
+              data-first-session-invite-copy=""
+              onClick={() => { void copyLink(); }}
+              disabled={busy}
+              className="flex h-11 w-full items-center justify-center gap-2 rounded-full bg-white text-[16px] font-semibold text-zinc-900 shadow-sm hover:bg-zinc-50 disabled:opacity-60 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+            >
+              <CopyIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span>{copied ? 'Copied' : 'Copy link'}</span>
+            </button>
+          </div>
+        ) : null}
         {status ? <p role="status" data-first-session-invite-status="" className="mt-3 text-center text-[14px] text-emerald-700 dark:text-emerald-400">{status}</p> : null}
         {error ? <p id="first-session-invite-error" role="alert" className="mt-3 text-center text-[14px] text-red-600 dark:text-red-400">{error}</p> : null}
         <p className="mt-3 text-center text-[13px] text-zinc-500 dark:text-zinc-400">Anyone with the link can join for the next 7 days, up to 25 people.</p>
