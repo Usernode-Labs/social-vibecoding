@@ -2819,6 +2819,10 @@ function adminRoutes(config) {
     if (!config.firebaseServiceAccountJsonB64) missing.push('FIREBASE_SERVICE_ACCOUNT_JSON_B64');
     res.json({
       offered: phoneAuth.offered(config),
+      // Texts go out only through Firebase; test numbers (PHONE_TEST_CODE,
+      // never in production) sign in without one.
+      texts: phoneAuth.firebaseOffered(config),
+      testNumbers: phoneAuth.testNumbersOn(config),
       enabled: config.firebasePhoneAuthEnabled === true,
       projectId: config.firebaseProjectId || null,
       missing,
@@ -2847,7 +2851,7 @@ function adminRoutes(config) {
         }
         if (outcome.status === 'not_offered') {
           return res.status(409).json({
-            error: 'Phone sign-in is not set up, so there is nothing to test.',
+            error: 'SMS is not set up, so there is no text to test.',
             code: 'not_offered',
           });
         }

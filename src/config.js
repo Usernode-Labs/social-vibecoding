@@ -115,6 +115,21 @@ function mask(val) {
   return val.slice(0, 4) + '...' + val.slice(-4);
 }
 
+// PHONE_TEST_CODE (services/firebase-phone-auth.js, "TEST NUMBERS"): the six
+// digits the fictional +1 … 555 01xx numbers sign in with, for walking a
+// newcomer's first run on a local stack. '' when unset, malformed, or in
+// production, where it would let anybody verify a number they do not hold.
+// `refused` says why it is off, for the boot line.
+function phoneTestCodeFrom(env) {
+  const raw = typeof env.PHONE_TEST_CODE === 'string' ? env.PHONE_TEST_CODE.trim() : '';
+  if (!raw) return { code: '', refused: null };
+  if (env.NODE_ENV === 'production' || env.USERNODE_ENV === 'production') {
+    return { code: '', refused: 'production' };
+  }
+  if (!/^[0-9]{6}$/.test(raw)) return { code: '', refused: 'not six digits' };
+  return { code: raw, refused: null };
+}
+
 function canonicalCliOrigin(value, { allowLoopbackHttp = false } = {}) {
   if (typeof value !== 'string' || !value) return null;
   try {
@@ -850,6 +865,8 @@ function load() {
     // endpoint answering 404 not_offered, exactly as before this existed.
     firebasePhoneAuthEnabled: process.env.FIREBASE_PHONE_AUTH_ENABLED === 'true',
     firebaseWebApiKey: process.env.FIREBASE_WEB_API_KEY || '',
+    // Test numbers (phoneTestCodeFrom above). Never set in production.
+    phoneTestCode: phoneTestCodeFrom(process.env).code,
     // Platform outbound mail (login codes, waitlist confirmations,
     // waitlist release notices). src/services/mail/select.js picks the
     // transport once, here, from platform_env: Gmail API, a generic HTTP
@@ -983,6 +1000,12 @@ function load() {
   console.log(`  FIREBASE_PROJECT_ID=${config.firebaseProjectId || '(not set)'}`);
   console.log(`  FIREBASE_SERVICE_ACCOUNT=${config.firebaseServiceAccountJsonB64 ? '(set)' : '(not set)'}`);
   console.log(`  FIREBASE_PHONE_AUTH=${config.firebasePhoneAuthEnabled ? 'enabled' : 'disabled'}${config.firebaseWebApiKey ? '' : ' (no web API key — phone endpoints answer 404 not_offered)'}`);
+  const phoneTest = phoneTestCodeFrom(process.env);
+  if (phoneTest.code) {
+    console.log('  PHONE_TEST_CODE=(set) — +1 … 555 0100–0199 sign in with it as test accounts; no text is sent');
+  } else if (phoneTest.refused) {
+    console.error(`  PHONE_TEST_CODE=(refused: ${phoneTest.refused}) — test numbers are off`);
+  }
   console.log(`  PLATFORM_MAIL=${config.mailTransport
     ? `${config.mailProvider}${config.mailStagingLogOnly ? ' (staging — rendered to the log, never delivered)' : ''} from=${config.mailFrom}`
     : '(no provider configured — OTP login codes and waitlist confirmations are NOT delivered)'}`);
@@ -1042,4 +1065,5 @@ module.exports = {
   canonicalOpenRouterApiBase,
   canonicalNativeSessionV2Network,
   isLoopbackOrigin,
+  phoneTestCodeFrom,
 };
