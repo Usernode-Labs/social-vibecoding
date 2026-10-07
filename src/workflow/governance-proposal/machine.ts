@@ -253,6 +253,33 @@ function followupResult(s: { name: Closed; data: ClosedData }, e: Event<WorkResu
   return { next: { name: s.name, data: { ...s.data, followups } } };
 }
 
+// Something other than this machine closed or deleted the issue row: the
+// flag was turned off for a while and [main]'s paths decided it, or the app
+// was deleted. The proposal ends without applying, and the row, which
+// already says what happened, is left as it is (see project).
+const OUTSIDE = new Set(['closed_outside', 'issue_gone']);
+const outside = (f: Facts) => (!f.issue ? 'issue_gone' : f.issue.status !== 'open' ? 'closed_outside' : null);
+
+function endOutside(s: { data: OpenData }, cause: string, ctx: TransitionContext): Outcome<GovState> {
+  return {
+    next: { name: 'superseded', data: { issueId: s.data.issueId, kind: s.data.kind,
+      audit: { supersededAt: ctx.now.toISOString(), supersededBy: cause }, followups: {} } },
+    timer: null,
+  };
+}
+
+// Every transition from `open` checks that first.
+function watchingOutside(t: { guard?: (s: any, e: Event<any>, f: Facts, ctx: TransitionContext) => Check;
+  to: (s: any, e: Event<any>, f: Facts, ctx: TransitionContext) => Outcome<GovState> }) {
+  return {
+    guard: (s: any, e: Event<any>, f: Facts, ctx: TransitionContext) => (outside(f) || !t.guard ? ok() : t.guard(s, e, f, ctx)),
+    to: (s: any, e: Event<any>, f: Facts, ctx: TransitionContext) => {
+      const cause = outside(f);
+      return cause ? endOutside(s, cause, ctx) : t.to(s, e, f, ctx);
+    },
+  };
+}
+
 const pendingFollowup = (s: any, e: Event<WorkResultPayload>): Check =>
   s.data.followups[e.payload.workKey]?.status === 'pending' ? ok() : reject('stale_result');
 
@@ -262,7 +289,6 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
   for (const n of NOTIFIERS) if (typeof deps.notifiers[n] !== 'function') throw new Error(`governance-proposal: notifier ${n} missing`);
   const timing = { backstopMs: deps.backstopMs ?? 10 * 60 * 1000, targetCheckMs: deps.targetCheckMs ?? 60 * 60 * 1000 };
   const user = (e: Event<any>) => e.actor === `user:${e.payload.userId}`;
-  const needsIssue = (f: Facts): Check => (f.issue ? ok() : reject('no_issue'));
   const closedRow = {
     '*': { ignore: 'not_open' },
     WorkSucceeded: { guard: pendingFollowup, to: (s: any, e: Event<any>) => followupResult(s, e, 'done') },
@@ -321,11 +347,10 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
       },
       open: {
         Filed: { ignore: 'already_filed' },
-        VoteCast: {
+        VoteCast: watchingOutside({
           // A No needs its line, except as a retraction (the same click again).
-          guard: (s, e, f) => (!f.issue ? reject('no_issue')
-            : f.voter!.existing !== e.payload.vote && e.payload.vote === 'down' && !e.payload.reason
-              ? reject('reason_required') : ok()),
+          guard: (s, e, f) => (f.voter!.existing !== e.payload.vote && e.payload.vote === 'down' && !e.payload.reason
+            ? reject('reason_required') : ok()),
           to: (s, e, f, ctx) => {
             const issue = f.issue!;
             const vote: Vote | null = f.voter!.existing === e.payload.vote ? null : e.payload.vote;
@@ -338,27 +363,26 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
             }
             return decide(s as any, e, f, ctx, timing, withVote(f.gate!, f.voter!, vote), { writes, notify });
           },
-        },
-        Evaluate: { guard: (s, e, f) => needsIssue(f), to: (s, e, f, ctx) => decide(s as any, e, f, ctx, timing) },
-        AdminApply: {
-          guard: (s, e, f) => (!f.issue ? reject('no_issue') : f.issue.kind === 'rename' ? reject('not_admin_appliable') : ok()),
+        }),
+        Evaluate: watchingOutside({ to: (s, e, f, ctx) => decide(s as any, e, f, ctx, timing) }),
+        AdminApply: watchingOutside({
+          guard: (s, e, f) => (f.issue!.kind === 'rename' ? reject('not_admin_appliable') : ok()),
           to: (s, e, f, ctx) => apply(f.issue!, e, ctx, evaluate(f.gate!, ctx.now), f.refusal, { admin: e.payload.username }, {}),
-        },
-        Withdraw: {
-          guard: (s, e, f) => needsIssue(f),
+        }),
+        Withdraw: watchingOutside({
           to: (s, e, f, ctx) => close('withdrawn', f.issue!, e, ctx,
             { withdrawnAt: ctx.now.toISOString(), withdrawnBy: e.payload.username },
             { writes: [chat(e, f.issue!, `${e.payload.username} withdrew their proposal: "${f.issue!.title}"`, governanceThread(f.issue!))] }),
-        },
-        TargetClosed: {
-          guard: (s, e, f) => (f.issue?.kind === 'close_issue' && Number(f.issue.payload.issueNumber) === e.payload.issueNumber
+        }),
+        TargetClosed: watchingOutside({
+          guard: (s, e, f) => (f.issue!.kind === 'close_issue' && Number(f.issue!.payload.issueNumber) === e.payload.issueNumber
             ? ok() : reject('not_target')),
           to: (s, e, f, ctx) => supersede(f.issue!, e, ctx, e.payload.cause),
-        },
+        }),
         RetryFollowup: { ignore: 'no_followups' },
-        WorkSucceeded: targetCheckResult('done'),
-        WorkFailed: targetCheckResult('failed'),
-        WorkExhausted: targetCheckResult('failed'),
+        WorkSucceeded: watchingOutside(targetCheckResult('done')),
+        WorkFailed: watchingOutside(targetCheckResult('failed')),
+        WorkExhausted: watchingOutside(targetCheckResult('failed')),
       },
       applied: closedRow,
       refused: closedRow,
@@ -378,6 +402,7 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
       // proposal already decided, or already broken, when it is enrolled).
       if (after.name === 'open' || before.name === after.name) return;
       const data = after.data as ClosedData;
+      if (OUTSIDE.has(String(data.audit.supersededBy))) return;
       // A secret's ciphertext never outlives the proposal, however it ended.
       await tx.query(
         `UPDATE issues i

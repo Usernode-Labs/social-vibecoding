@@ -20,23 +20,30 @@ let kernelPool: Pool & { end(): Promise<void> } | null = null;
 let machine: ReturnType<typeof governanceProposal> | null = null;
 let log: Logger | null = null;
 
-// 'raise' (tests, staging, local) or 'log' (production, until no legacy
-// writer is left): what an ownership trigger does with a write made outside
-// the pipeline. Synced on every boot, flag or not, so turning a flag off
-// again never leaves production raising on rows a machine enrolled.
-export async function syncOwnershipMode(pool: Pool, mode: string): Promise<void> {
-  if (mode === 'log') {
-    await pool.query(
-      `INSERT INTO wf_settings (key, value) VALUES ('ownership_mode', 'log')
-       ON CONFLICT (key) DO UPDATE SET value = 'log', updated_at = NOW()`);
+// What the ownership triggers read, synced on every boot, flag or not:
+// - ownership_mode: 'raise' (tests, staging, local) or 'log' (production,
+//   until no legacy writer is left);
+// - enabled:<machine>: present while the machine's flag is on. With it off
+//   the triggers leave enrolled rows to the legacy writers again, and the
+//   machine closes any instance whose row they closed when it comes back.
+async function setSetting(pool: Pool, key: string, value: string | null): Promise<void> {
+  if (value === null) {
+    await pool.query('DELETE FROM wf_settings WHERE key = $1', [key]);
   } else {
-    await pool.query(`DELETE FROM wf_settings WHERE key = 'ownership_mode'`);
+    await pool.query(
+      `INSERT INTO wf_settings (key, value) VALUES ($1, $2)
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [key, value]);
   }
+}
+
+export async function syncSettings(pool: Pool, config: any): Promise<void> {
+  await setSetting(pool, 'ownership_mode', config.wfOwnershipMode === 'log' ? 'log' : null);
+  await setSetting(pool, `enabled:${MACHINE}`, config.wfGovernanceEnabled ? '1' : null);
 }
 
 export async function startWorkflow(config: any, opts: { loops: boolean }): Promise<void> {
   log = legacy('services/logger');
-  await syncOwnershipMode(legacy('db/pool').getPool(config), config.wfOwnershipMode);
+  await syncSettings(legacy('db/pool').getPool(config), config);
   if (!config.wfGovernanceEnabled || runtime) return;
   kernelPool = new pg.Pool({ connectionString: config.databaseUrl, max: config.wfPoolMax, idleTimeoutMillis: 30000 });
   const deps = { config, pool: legacy('db/pool').getPool(config) };

@@ -40,6 +40,11 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
   const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
   await pool.query(schema);
   await pool.query(schema);
+  // The flag, as platform.ts syncSettings records it at boot.
+  const setFlag = (on) => pool.query(on
+    ? `INSERT INTO wf_settings (key, value) VALUES ('enabled:governance-proposal', '1') ON CONFLICT DO NOTHING`
+    : `DELETE FROM wf_settings WHERE key = 'enabled:governance-proposal'`);
+  await setFlag(true);
 
   // ── Fixture ─────────────────────────────────────────────────────────
   let seq = 0;
@@ -395,6 +400,10 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
     await assert.rejects(pool.query(`UPDATE issues SET payload = payload || '{"appliedAt": "x"}' WHERE id = $1`, [enrolled.id]), /payload.appliedAt/);
     await pool.query(`UPDATE issues SET status = 'closed' WHERE id = $1`, [legacy.id]);
     await pool.query(`UPDATE issues SET title = 'retitled' WHERE id = $1`, [enrolled.id]);
+    // With the flag off, [main]'s writers have every row back.
+    await setFlag(false);
+    await pool.query(`UPDATE issues SET payload = payload || '{"appliedAt": "x"}' WHERE id = $1`, [enrolled.id]);
+    await setFlag(true);
     // The trigger's kinds are services/governance-kinds.js's.
     const { rows: [trg] } = await pool.query(
       `SELECT pg_get_triggerdef(oid) AS def FROM pg_trigger WHERE tgname = 'issues_wf_governance_owned'`);
@@ -414,5 +423,36 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
     await file(open);
     assert.equal((await event(await file(open))).reason, 'already_filed');
     assert.equal(await inst(general), undefined);
+  });
+
+  await t.test('flag off, then on: a row decided or deleted meanwhile ends its instance, never applied twice', async () => {
+    const a = await app({ approvals: 5 });
+    const author = await user();
+    const decided = await issue(a, author, 'rename', { newName: 'Twice?' });
+    const deleted = await issue(a, author, 'close_issue', { issueNumber: 31, issueTitle: 'q' });
+    const untouched = await issue(a, author, 'close_issue', { issueNumber: 32, issueTitle: 'r' });
+    for (const i of [decided, deleted, untouched]) await file(i);
+    // Off: [main]'s apply path closes one row (the trigger lets it), an app
+    // deletion removes another.
+    await setFlag(false);
+    await pool.query(`UPDATE issues SET status = 'closed', payload = payload || '{"appliedAt": "then", "appliedBy": "group-vote"}' WHERE id = $1`, [decided.id]);
+    await pool.query('UPDATE apps SET name = $2 WHERE id = $1', [a.id, 'Twice?']);
+    await pool.query('DELETE FROM issues WHERE id = $1', [deleted.id]);
+    // On again: the pending timers fire.
+    await setFlag(true);
+    await pool.query(`BEGIN; SET LOCAL app.wf_writer = 'transition';
+      UPDATE wf_instances SET deadline_at = now() - interval '1 second'
+       WHERE key IN ('${issueKey(decided.id)}', '${issueKey(deleted.id)}', '${issueKey(untouched.id)}'); COMMIT`);
+    await rt.fireTimers();
+    await pool.query('UPDATE apps SET approvals_required = 1 WHERE id = $1', [a.id]);
+    const late = await vote(decided, await user(), 'up');
+    await rt.drain();
+    assert.deepEqual([(await inst(decided)).state, (await inst(decided)).data.audit.supersededBy], ['superseded', 'closed_outside']);
+    assert.deepEqual([(await inst(deleted)).state, (await inst(deleted)).data.audit.supersededBy], ['superseded', 'issue_gone']);
+    assert.equal((await inst(untouched)).state, 'open', 'a row nobody touched carries on');
+    assert.equal(late.reason, 'not_open', 'no vote lands on it');
+    const r = await row(decided);
+    assert.deepEqual([r.payload.appliedAt, r.payload.supersededAt], ['then', undefined], 'the row keeps what [main] wrote');
+    assert.equal((await pool.query(`SELECT count(*)::int AS n FROM chat_messages WHERE thread_type = 'governance' AND thread_ref = $1`, [decided.id])).rows[0].n, 0);
   });
 });

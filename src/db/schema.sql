@@ -12429,10 +12429,11 @@ CREATE TABLE IF NOT EXISTS wf_work_attempts (
 );
 COMMENT ON TABLE wf_work_attempts IS 'staging:private';
 
--- Kernel settings. One key today: 'ownership_mode', 'raise' (the default
--- when absent) or 'log'. In log mode a write to an owned legacy column
--- without the writer marker is allowed and recorded in
--- wf_ownership_violations instead of refused.
+-- Kernel settings, written at boot (src/workflow/platform.ts):
+-- 'ownership_mode' is 'raise' (the default when absent) or 'log'; in log
+-- mode a write to an owned legacy column without the writer marker is
+-- allowed and recorded in wf_ownership_violations instead of refused.
+-- 'enabled:<machine>' exists while that machine's flag is on.
 CREATE TABLE IF NOT EXISTS wf_settings (
   key        TEXT PRIMARY KEY,
   value      TEXT NOT NULL,
@@ -12495,9 +12496,11 @@ CREATE TRIGGER wf_events_writer
 -- or in 'log' mode is recorded and allowed.
 --
 -- A first argument '@enrolled=<machine>/<key prefix>' limits the guard to
--- rows whose instance exists (key = prefix || id), so a machine rolled out
--- behind a flag owns a row from the moment it enrolls it, and the legacy
--- writers keep the rows it has not.
+-- rows whose instance exists (key = prefix || id), and only while the
+-- machine is switched on (wf_settings 'enabled:<machine>', written at boot
+-- from its flag). A machine rolled out behind a flag owns a row from the
+-- moment it enrolls it; the legacy writers keep the rows it has not, and
+-- every row again while the flag is off.
 CREATE OR REPLACE FUNCTION wf_guard_owned_columns() RETURNS TRIGGER AS $$
 DECLARE
   owned TEXT;
@@ -12515,6 +12518,9 @@ BEGIN
   after := to_jsonb(NEW);
   IF TG_ARGV[0] LIKE '@enrolled=%' THEN
     enrolled := substr(TG_ARGV[0], length('@enrolled=') + 1);
+    IF NOT EXISTS (SELECT 1 FROM wf_settings WHERE key = 'enabled:' || split_part(enrolled, '/', 1)) THEN
+      RETURN NEW;
+    END IF;
     IF NOT EXISTS (SELECT 1 FROM wf_instances
                     WHERE machine = split_part(enrolled, '/', 1)
                       AND key = split_part(enrolled, '/', 2) || (before ->> 'id')) THEN
