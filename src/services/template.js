@@ -1233,9 +1233,12 @@ ${server.start}start().catch(err => { console.error(err); process.exit(1); });
 </head>
 <body class="min-h-screen bg-ground text-fg">
   <!-- Built from the design kit in styles/tailwind-input.css: colour tokens
-       (bg-ground, text-muted, bg-accent, ...) that are right in both looks,
-       and components (btn-primary, list, card, state-empty, ...). The real
-       app keeps the kit; CLAUDE.md's "## Design" says how. -->
+       that are right in both looks, and components for buttons, fields,
+       lists, cards and data states. The real app keeps the kit; CLAUDE.md's
+       "## Design" says how. -->
+  <!-- (Named in prose on purpose: Tailwind compiles any class-name word in
+       these files, comments included, and the starter should ship only the
+       components its screen uses.) -->
   <main class="mx-auto flex max-w-md flex-col gap-8 px-4 py-10">
 
     <!-- usernode-starter-notice@1 — starter-template messaging. When building

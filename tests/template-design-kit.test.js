@@ -200,10 +200,16 @@ test('the kit compiles: tokens in both looks, components only when used', (t) =>
   assert.match(out, /:root \{\s*--ground: 250 250 249;/);
   assert.match(out, /\.dark \{\s*--ground: 12 10 9;/);
   assert.match(out, /\.bg-ground \{\s*--tw-bg-opacity: 1;\s*background-color: rgb\(var\(--ground\) \/ var\(--tw-bg-opacity, 1\)\);/);
-  assert.match(out, /\.btn-primary,\s*\.btn-secondary \{[^}]*min-height: 2\.75rem;[^}]*min-width: 2\.75rem;/, '44 px each way');
-  assert.match(out, /\.state-error \{/);
   assert.match(out, /\.text-title \{\s*font-size: 1\.75rem;/);
-  assert.doesNotMatch(out, /\.field \{/, 'a component the screen does not use is not shipped');
+  // #4047: the starter screen shows the card alone, so the build ships only
+  // it; the rest of the kit stays in the input stylesheet (pinned above) and
+  // compiles when the real app's screens use those components.
+  assert.match(out, /\.card \{/);
+  for (const sel of ['.btn-primary', '.btn-secondary', '.field', '.list', '.list-row',
+    '.section-label', '.skeleton', '.state-empty', '.state-error']) {
+    assert.doesNotMatch(out, new RegExp(`${sel.replace(/\./g, '\\.')} \\{`),
+      `${sel} is unused, so it is not shipped`);
+  }
 });
 
 // ── 3. The screen ────────────────────────────────────────────────────────
