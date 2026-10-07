@@ -207,10 +207,12 @@ const CardLink = ActivityLink;
 
 /**
  * The round thing a card leads with: the ring with its step while the work
- * goes, a clock while it goes without one, then the tile of how it ended.
- * The activity tray's tiles lead with the same.
+ * goes, the spinner while it goes without one (a clock read as history, not
+ * as now), then the tile of how it ended. The activity tray's tiles lead
+ * with the same; the clock stays only for a card with no state yet, which
+ * is neither working nor history.
  */
-export function ActivityLead({ step, of, stepName, tone }: { step?: number | null; of?: number | null; stepName?: string | null; tone?: Tone | null }) {
+export function ActivityLead({ step, of, stepName, tone, working }: { step?: number | null; of?: number | null; stepName?: string | null; tone?: Tone | null; working?: boolean }) {
   if (!tone && step && of) {
     return (
       <ProgressRing
@@ -221,6 +223,7 @@ export function ActivityLead({ step, of, stepName, tone }: { step?: number | nul
     );
   }
   if (tone) return <IconTile size="xs" className={TONE_TILES[tone]}><ToneIcon tone={tone} /></IconTile>;
+  if (working) return <IconTile size="xs" className={PLAIN_TILE}><span className="messages-spinner" aria-hidden="true" /></IconTile>;
   return <IconTile size="xs" className={PLAIN_TILE}><ClockIcon aria-hidden="true" /></IconTile>;
 }
 
@@ -251,7 +254,7 @@ export function BotActivityCardView({ meta, card, loaded = false, failed = false
   let status: ReactNode;
   if (card && working) {
     const stepped = card.step && card.of;
-    lead = <ActivityLead step={card.step} of={card.of} stepName={card.stepName} />;
+    lead = <ActivityLead step={card.step} of={card.of} stepName={card.stepName} working />;
     eyebrow = stepped ? `Step ${card.step} of ${card.of}${card.stepName ? ` · ${card.stepName}` : ''}` : 'Working on it';
     // The work's time, not the wait's (clockFrom), with the wait said apart.
     const elapsed = spanText(clockFrom(card), at);

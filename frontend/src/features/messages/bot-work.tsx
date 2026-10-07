@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } fro
 
 import { Button } from '@/components/ui/button';
 import { SectionHeader } from '@/components/ui/grouped-list';
-import { ChevronDownIcon, ClockIcon } from '@/components/ui/icons';
+import { ChevronDownIcon, SparklesIcon } from '@/components/ui/icons';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { agoStamp } from '../../lib/timestamp';
 import * as api from './api';
@@ -32,8 +32,11 @@ export { WORK_CHANGED_EVENT, jobName, jobTitle };
  *     only (#3770): the name block it sits in used to be the toggle, and
  *     nobody read a name as a control.
  *   - an ACTIVITY DISC among the header's discs, on every width, which opens
- *     the panel at any time, working or not. Its badge is the live dot while
- *     the bot works, or the number of requests that wait on the viewer.
+ *     the panel at any time, working or not. While the bot works it shows the
+ *     spinner (a clock read as history, not as now); otherwise the bot's
+ *     sparkle, the mark its inbox row carries. Its badge is the live dot
+ *     while the bot works, or the number of requests that wait on the
+ *     viewer.
  *   - the PANEL it opens: a sheet that drops over the transcript at the
  *     pane's full width (the conversation under it does not move), closed
  *     again by the disc, Escape, or a press anywhere else but the full-width
@@ -304,7 +307,9 @@ export function BotWorkStatusLine() {
  * #3770: the toggle, a disc among the header's discs (index.tsx
  * ThreadHeader), drawn on a phone too. A press on it is not "outside" the
  * panel, and Escape hands focus back to it: both find it by
- * `data-bot-work-toggle`. Its badge carries the tray's state as
+ * `data-bot-work-toggle`. While the bot works, its icon is the spinner (a
+ * clock read as history, not as now); otherwise the bot's sparkle. Its
+ * badge carries the tray's state as
  * `data-bot-work-status`, as the line does: the number of requests that
  * wait on the viewer, the accent's job (AGENTS.md), else the live dot while
  * the bot works, else nothing. A pure render.
@@ -333,7 +338,7 @@ export function BotWorkButtonView({ work, open, onToggle }: { work: HomeroomBotW
       data-bot-work-toggle=""
       onClick={onToggle}
     >
-      <ClockIcon aria-hidden="true" />
+      {kind === 'working' ? <span className="messages-spinner" aria-hidden="true" /> : <SparklesIcon aria-hidden="true" />}
       {badge}
     </button>
   );
@@ -446,7 +451,7 @@ function NowTile({ job, at, ago }: { job: HomeroomBotCurrentJob; at: Date; ago: 
       job={job}
       group="now"
       tone={null}
-      lead={<ActivityLead step={job.step} of={job.of} stepName={job.stepName} />}
+      lead={<ActivityLead step={job.step} of={job.of} stepName={job.stepName} working />}
       eyebrow={eyebrow}
       status={withTime(capitalized(job.doing || PHASE_LABELS[job.phase]), elapsed ? `${elapsed} so far` : '')}
       ago={ago}

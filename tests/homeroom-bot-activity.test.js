@@ -505,6 +505,9 @@ test('a card going: its step as a ring and in words, what it is doing, how long 
   const unstepped = draw({ card: working({ step: null, of: null, stepName: null, doing: null }) });
   assert.match(unstepped, /data-bot-activity-eyebrow="">Working on it</);
   assert.doesNotMatch(unstepped, /role="img"/);
+  assert.match(unstepped, /<span class="messages-spinner" aria-hidden="true"><\/span>/,
+    'a spinner leads while it goes without a step count (a clock read as history, not as now)');
+  assert.doesNotMatch(unstepped, /d="M12 6v6h4\.5/, 'no clock while it works');
   assert.match(unstepped, /<span role="status">Working on it<\/span>/);
 });
 
@@ -537,6 +540,8 @@ test('a card before its state is read, when the read failed, and when there is n
   assert.match(pending, /data-bot-activity="pending"/);
   assert.match(pending, />Ear Trainer #12: Sort by date</, 'the title, from the message itself, at once');
   assert.match(pending, /aria-hidden="true"><\/div><\/div><\/div><\/div>$/, 'and a placeholder line for its state');
+  assert.match(pending, /d="M12 6v6h4\.5/, 'a card with no state yet keeps the clock: neither working nor history');
+  assert.doesNotMatch(pending, /messages-spinner/);
   const failed = draw({ card: null, failed: true });
   assert.match(failed, /role="alert"/);
   assert.match(failed, /Couldn’t load how far along this is\./);

@@ -493,23 +493,30 @@ test('#3770: the Activity disc opens the panel, and its badge is the live dot, o
   const quiet = draw(work({ history: [past({ issueNumber: 9 })] }));
   assert.match(quiet, /^<button type="button" class="messages-thread-action messages-bot-work-button" aria-label="Activity" title="Activity" aria-expanded="false" aria-controls="messages-bot-work-panel" data-bot-work-toggle="">/,
     'one of the header\'s discs, named, and the toggle the panel\'s Escape and outside press find');
-  assert.match(quiet, /<svg [^>]*aria-hidden="true"><path [^>]*d="M12 6v6h4\.5m4\.5 0a9 9 0 11-18 0 9 9 0 0118 0z"><\/path><\/svg><\/button>$/,
-    'the clock, and no badge with nothing going on');
+  assert.match(quiet, /<svg [^>]*aria-hidden="true"><path [^>]*d="M9\.813 15\.904L9 18\.75l-\.813-2\.846a4\.5 4\.5 0 00-3\.09-3\.09L2\.25 12/,
+    'the bot\'s sparkle (the inbox tile\'s mark; a clock read as history), and no badge with nothing going on');
+  assert.doesNotMatch(quiet, /messages-spinner|d="M12 6v6h4\.5/, 'no spinner or clock with nothing going on');
   assert.equal(draw(null), quiet, 'before the first read, the same');
   assert.match(draw(work({}), true), /aria-expanded="true"/, 'open');
 
-  // The bot working: the live dot, carrying the state the declared check
-  // (dapp.json homeroom-bot-dm-activity-tray) selects the toggle by.
+  // The bot working: the spinner where the clock was (a clock read as
+  // history, not as now), and the live dot, carrying the state the declared
+  // check (dapp.json homeroom-bot-dm-activity-tray) selects the toggle by.
   const busy = draw(work({ now: [working({ issueNumber: 14 })] }));
+  assert.match(busy, /<span class="messages-spinner" aria-hidden="true"><\/span>/);
+  assert.doesNotMatch(busy, /d="M12 6v6h4\.5/, 'no clock while it works');
   assert.match(busy, /<span class="messages-bot-work-badge messages-bot-work-dot" data-bot-work-status="working"><span class="relative flex h-2 w-2 shrink-0" aria-hidden="true">/);
   assert.match(busy, /animate-ping/);
 
-  // Something waiting on the viewer: how many, which wins over the dot.
+  // Something waiting on the viewer: how many, which wins over the dot, and
+  // the icon is still the spinner while the bot works.
   const both = draw(work({ now: [working({ issueNumber: 14 })], needsYou: [past({ issueNumber: 7, outcome: 'question' })] }));
   assert.match(both, /<span class="messages-bot-work-badge messages-bot-work-count" data-bot-work-status="working" aria-hidden="true">1<\/span><\/button>$/);
+  assert.match(both, /messages-spinner/);
   assert.doesNotMatch(both, /animate-ping/);
   const waiting = draw(work({ needsYou: [past({ issueNumber: 7 }), past({ issueNumber: 8 })] }));
   assert.match(waiting, /data-bot-work-status="you" aria-hidden="true">2<\/span>/);
+  assert.match(waiting, /d="M9\.813 15\.904/, 'the sparkle when only requests wait on the viewer');
   const many = draw(work({ needsYou: Array.from({ length: 12 }, (_, i) => past({ issueNumber: i + 1 })) }));
   assert.match(many, /aria-hidden="true">9\+<\/span>/);
 
@@ -521,6 +528,24 @@ test('#3770: the Activity disc opens the panel, and its badge is the live dot, o
   assert.match(css, /\.messages-bot-work-button \{ position: relative; \}/);
   assert.match(css, /\.messages-bot-work-count \{[^}]*color: var\(--accent-ink\);\s*background: var\(--accent\);/, 'a number for the viewer, in the accent');
   assert.doesNotMatch(css, /\.messages-bot-work-button[^{]*\{[^}]*display: none/, 'drawn on a phone too, unlike the full-width toggle');
+});
+
+test('a Now tile without a step count leads with the spinner, not the clock', () => {
+  const html = drawPanel({
+    work: work({
+      now: [working({
+        issueNumber: 15, title: 'Tidy the list', phase: 'building', doing: 'building it',
+        since: minutesAgo(4), href: '#app/ear-trainer/dev/issues/15',
+        links: { request: '#app/ear-trainer/dev/issues/15', proposal: null, project: null },
+      })],
+    }),
+  });
+  assert.match(html, /data-bot-work-tile="now" data-bot-work-tone="working"/);
+  assert.match(html, /Working on it</, 'the unstepped eyebrow');
+  assert.match(html, /<span class="messages-spinner" aria-hidden="true"><\/span>/,
+    'the spinner where the clock was (a clock read as history, not as now)');
+  assert.doesNotMatch(html, /d="M12 6v6h4\.5/, 'no clock while it works');
+  assert.match(html, /Building it · 4m so far/);
 });
 
 test('the panel: Now with the step it is at, Needs you, and History folded away', () => {
