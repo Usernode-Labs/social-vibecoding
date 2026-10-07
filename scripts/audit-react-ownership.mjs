@@ -350,6 +350,7 @@ const OWNED = [
   { sel: '#admin-section-content', when: '#admin/limits' },  // features/admin/admin-limits.tsx
   { sel: '#admin-section-content', when: '#admin/rollover' }, // features/admin/admin-rollover.tsx
   { sel: '#admin-section-content', when: '#admin/staging-reap' }, // features/admin/admin-staging-reap.tsx
+  { sel: '#admin-section-content', when: '#admin/workflows' }, // features/admin/admin-workflows.tsx
   { sel: '#admin-section-content', when: '#admin/model-costs' }, // features/admin/admin-model-costs.tsx
   { sel: '#admin-section-content', when: '#admin/welcome-dm' }, // features/admin/admin-welcome-dm.tsx
   { sel: '#admin-section-content', when: '#admin/sign-in' }, // features/admin/admin-sign-in.tsx
@@ -404,7 +405,7 @@ const ROUTES = [
   // issue (scripts/seed-checks-db.js); if the seed changes, re-point it rather
   // than dropping the route.
   '#app/recipebot/dev/issues/900001',
-  '#admin/e2e', '#admin/gallery', '#admin/node', '#admin/merges', '#admin/push', '#admin/campaigns', '#admin/mail', '#admin/sms', '#admin/estimator', '#admin/analytics', '#admin/journey', '#admin/overview', '#admin/codes', '#admin/featured-apps', '#admin/db-export', '#admin/features', '#admin/limits', '#admin/users', '#admin/users/900301', '#admin/support', '#admin/support/900302', '#admin/status', '#admin/rollover', '#admin/staging-reap',
+  '#admin/e2e', '#admin/gallery', '#admin/node', '#admin/merges', '#admin/push', '#admin/campaigns', '#admin/mail', '#admin/sms', '#admin/estimator', '#admin/analytics', '#admin/journey', '#admin/overview', '#admin/codes', '#admin/featured-apps', '#admin/db-export', '#admin/features', '#admin/limits', '#admin/users', '#admin/users/900301', '#admin/support', '#admin/support/900302', '#admin/status', '#admin/rollover', '#admin/staging-reap', '#admin/workflows',
   '#admin/model-costs', '#admin/reports', '#admin/welcome-dm', '#admin/sign-in', '#admin/test-accounts', '#admin/homeroom-bot', '#admin/homeroom-bot/settings', '#admin/homeroom-bot/benchmark', '#admin/small-changes',
   // The Benchmark's own places, in the same host (`when: '#admin/homeroom-bot'`
   // covers them): runs, one run of each kind on the staging demo, and suites.

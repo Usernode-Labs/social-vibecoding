@@ -12523,3 +12523,294 @@ CREATE TABLE IF NOT EXISTS bot_capture_artifacts (
 CREATE INDEX IF NOT EXISTS idx_bot_capture_artifacts_run ON bot_capture_artifacts(bot_run_id, round) WHERE bot_run_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_bot_capture_artifacts_trial ON bot_capture_artifacts(trial_id, round) WHERE trial_id IS NOT NULL;
 COMMENT ON TABLE bot_capture_artifacts IS 'staging:private';
+
+-- ===================================================================
+-- Workflow foundation: the kernel's tables (src/workflow/kernel/).
+--
+-- Long-lived workflows run as persistent state machines. Routes, services,
+-- timers and other instances APPEND events to one stream (wf_events); only
+-- the transition pipeline applies them, one instance at a time under that
+-- instance's row lock, and writes the outcome (state, receipt, work,
+-- messages) in the same transaction. Every write the pipeline makes carries
+-- the writer marker `SET LOCAL app.wf_writer = 'transition'`, and the
+-- triggers below refuse instance, receipt and processed-event writes made
+-- without it. The marker guards against accidents, not against an attacker:
+-- no role or credential is involved.
+--
+-- Every row here can carry votes, actors and proposal payloads, so all of
+-- these tables are private to staging clones.
+-- ===================================================================
+
+-- One row per machine instance. `state` is the phase name, `data` its
+-- payload; `version` counts accepted transitions and `machine_version` is
+-- the definition version that last wrote the row, so an older process
+-- never applies events to an instance a newer one has written. The
+-- pseudo-state '(none)' is a row the pipeline inserted to lock an instance
+-- that does not exist yet; it is deleted again unless a creating event is
+-- accepted. app_id has no foreign key on purpose: an instance's history
+-- outlives the app row, like receipts outlive what they describe.
+CREATE TABLE IF NOT EXISTS wf_instances (
+  machine          TEXT NOT NULL,
+  key              TEXT NOT NULL,
+  app_id           INTEGER,
+  state            TEXT NOT NULL,
+  data             JSONB,
+  version          BIGINT NOT NULL DEFAULT 0,
+  machine_version  INTEGER NOT NULL,
+  deadline_at      TIMESTAMPTZ,
+  deadline_event   JSONB,
+  deadline_version BIGINT,
+  flag             TEXT CHECK (flag IN ('faulted', 'stalled')),
+  flag_detail      JSONB,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (machine, key),
+  CONSTRAINT wf_instances_deadline_shape
+    CHECK ((deadline_at IS NULL) = (deadline_event IS NULL))
+);
+CREATE INDEX IF NOT EXISTS wf_instances_state_idx ON wf_instances (machine, state);
+CREATE INDEX IF NOT EXISTS wf_instances_app_idx ON wf_instances (app_id, machine);
+CREATE INDEX IF NOT EXISTS wf_instances_deadline_idx
+  ON wf_instances (deadline_at) WHERE deadline_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS wf_instances_flag_idx
+  ON wf_instances (flag) WHERE flag IS NOT NULL;
+COMMENT ON TABLE wf_instances IS 'staging:private';
+
+-- The stream and, once processed, each instance's history. Anyone may
+-- append a pending event; only the pipeline may process it. `attempts`
+-- counts lock and statement timeouts (the event goes back to pending with
+-- `retry_at`); `error` keeps the last fault even after an admin release
+-- retries the event. `held` events wait behind a faulted one.
+CREATE TABLE IF NOT EXISTS wf_events (
+  id              BIGSERIAL PRIMARY KEY,
+  machine         TEXT NOT NULL,
+  key             TEXT NOT NULL,
+  app_id          INTEGER,
+  type            TEXT NOT NULL,
+  payload         JSONB NOT NULL DEFAULT '{}'::jsonb,
+  source          JSONB NOT NULL,
+  actor           TEXT,
+  request_key     TEXT NOT NULL,
+  caused_by       BIGINT REFERENCES wf_events(id) ON DELETE SET NULL,
+  status          TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending', 'processed', 'held')),
+  attempts        INTEGER NOT NULL DEFAULT 0,
+  retry_at        TIMESTAMPTZ,
+  result          TEXT CHECK (result IN ('accepted', 'rejected', 'replayed', 'faulted')),
+  reason          TEXT,
+  error           JSONB,
+  machine_version INTEGER,
+  state_before    TEXT,
+  state_after     TEXT,
+  version_after   BIGINT,
+  emitted         JSONB,
+  reply           JSONB,           -- the machine's answer to the producer (kernel reply hook)
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  processed_at    TIMESTAMPTZ,
+  CONSTRAINT wf_events_processed_shape
+    CHECK ((status = 'processed') = (result IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS wf_events_pending_idx
+  ON wf_events (machine, key, id) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS wf_events_instance_idx ON wf_events (machine, key, id);
+CREATE INDEX IF NOT EXISTS wf_events_caused_by_idx
+  ON wf_events (caused_by) WHERE caused_by IS NOT NULL;
+CREATE INDEX IF NOT EXISTS wf_events_processed_at_idx
+  ON wf_events (processed_at) WHERE status = 'processed';
+COMMENT ON TABLE wf_events IS 'staging:private';
+
+-- The stored outcome of an accepted request. A later event with the same
+-- (machine, key, request_key) and the same payload hash replays it; a
+-- different hash is a request_key_conflict. Rejections write no receipt.
+CREATE TABLE IF NOT EXISTS wf_receipts (
+  machine      TEXT NOT NULL,
+  key          TEXT NOT NULL,
+  request_key  TEXT NOT NULL,
+  payload_hash TEXT NOT NULL,
+  outcome      JSONB NOT NULL,
+  event_id     BIGINT NOT NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (machine, key, request_key)
+);
+COMMENT ON TABLE wf_receipts IS 'staging:private';
+
+-- Durable I/O requested by a transition, executed by a service. A service
+-- claims a row (claim_id + lease), may checkpoint under the claim, and on
+-- finishing marks it `reported` and appends the result event; the pipeline
+-- marks it `settled` when it applies that event. (machine, key, kind,
+-- work_key) is unique, so re-emitting a work key creates nothing.
+CREATE TABLE IF NOT EXISTS wf_work (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  machine       TEXT NOT NULL,
+  key           TEXT NOT NULL,
+  kind          TEXT NOT NULL,
+  work_key      TEXT NOT NULL,
+  input         JSONB NOT NULL,
+  checkpoint    JSONB,
+  status        TEXT NOT NULL DEFAULT 'queued'
+                  CHECK (status IN ('queued', 'running', 'reported', 'settled')),
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  claim_id      UUID,
+  lease_until   TIMESTAMPTZ,
+  due_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_error    JSONB,
+  result        JSONB,
+  caused_by     BIGINT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  settled_at    TIMESTAMPTZ,
+  CONSTRAINT wf_work_identity UNIQUE (machine, key, kind, work_key),
+  CONSTRAINT wf_work_claim_shape
+    CHECK ((status = 'running') = (claim_id IS NOT NULL AND lease_until IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS wf_work_due_idx
+  ON wf_work (kind, due_at) WHERE status IN ('queued', 'running');
+CREATE INDEX IF NOT EXISTS wf_work_instance_idx ON wf_work (machine, key, created_at);
+CREATE INDEX IF NOT EXISTS wf_work_settled_idx
+  ON wf_work (settled_at) WHERE status = 'settled';
+COMMENT ON TABLE wf_work IS 'staging:private';
+
+-- One row per claim of a work item. id is the claim id.
+CREATE TABLE IF NOT EXISTS wf_work_attempts (
+  id           UUID PRIMARY KEY,
+  work_id      UUID NOT NULL REFERENCES wf_work(id) ON DELETE CASCADE,
+  service_id   TEXT NOT NULL,
+  number       INTEGER NOT NULL,
+  outcome      TEXT NOT NULL DEFAULT 'running'
+                 CHECK (outcome IN ('running', 'succeeded', 'failed', 'retry', 'exhausted', 'lost')),
+  error        JSONB,
+  started_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  finished_at  TIMESTAMPTZ,
+  UNIQUE (work_id, number)
+);
+COMMENT ON TABLE wf_work_attempts IS 'staging:private';
+
+-- Kernel settings, written at boot (src/workflow/platform.ts):
+-- 'ownership_mode' is 'raise' (the default when absent) or 'log'; in log
+-- mode a write to an owned legacy column without the writer marker is
+-- allowed and recorded in wf_ownership_violations instead of refused.
+-- 'enabled:<machine>' exists while that machine's flag is on.
+CREATE TABLE IF NOT EXISTS wf_settings (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE wf_settings IS 'staging:private';
+
+CREATE TABLE IF NOT EXISTS wf_ownership_violations (
+  id          BIGSERIAL PRIMARY KEY,
+  table_name  TEXT NOT NULL,
+  column_path TEXT NOT NULL,
+  row_ref     JSONB,
+  query       TEXT,
+  application TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS wf_ownership_violations_created_idx
+  ON wf_ownership_violations (created_at DESC);
+COMMENT ON TABLE wf_ownership_violations IS 'staging:private';
+
+-- Kernel tables: instances and receipts are written only with the marker;
+-- events may be appended by anyone, but only as plain pending events, and
+-- only the pipeline changes or deletes them.
+CREATE OR REPLACE FUNCTION wf_require_writer() RETURNS TRIGGER AS $$
+BEGIN
+  IF current_setting('app.wf_writer', true) IS DISTINCT FROM 'transition' THEN
+    -- Nested: plpgsql does not short-circuit, and only wf_events has these fields.
+    IF TG_TABLE_NAME = 'wf_events' AND TG_OP = 'INSERT' THEN
+      IF NEW.status = 'pending' AND NEW.result IS NULL AND NEW.attempts = 0 THEN
+        RETURN NEW;
+      END IF;
+    END IF;
+    RAISE EXCEPTION 'WF_OWNERSHIP_VIOLATION: % on % outside the transition pipeline',
+      TG_OP, TG_TABLE_NAME;
+  END IF;
+  IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS wf_instances_writer ON wf_instances;
+CREATE TRIGGER wf_instances_writer
+  BEFORE INSERT OR UPDATE OR DELETE ON wf_instances
+  FOR EACH ROW EXECUTE FUNCTION wf_require_writer();
+DROP TRIGGER IF EXISTS wf_receipts_writer ON wf_receipts;
+CREATE TRIGGER wf_receipts_writer
+  BEFORE INSERT OR UPDATE OR DELETE ON wf_receipts
+  FOR EACH ROW EXECUTE FUNCTION wf_require_writer();
+DROP TRIGGER IF EXISTS wf_events_writer ON wf_events;
+CREATE TRIGGER wf_events_writer
+  BEFORE INSERT OR UPDATE OR DELETE ON wf_events
+  FOR EACH ROW EXECUTE FUNCTION wf_require_writer();
+
+-- Legacy columns a machine owns (its projection). Attach per table with the
+-- owned paths as arguments, `column` or `column.jsonKey`, and a WHEN clause
+-- for the rows the machine owns, for example:
+--   CREATE TRIGGER issues_wf_owned BEFORE UPDATE ON issues FOR EACH ROW
+--     WHEN (OLD.kind IN ('rename', ...))
+--     EXECUTE FUNCTION wf_guard_owned_columns('status', 'payload.appliedAt');
+-- An UPDATE that changes an owned path without the writer marker raises,
+-- or in 'log' mode is recorded and allowed.
+--
+-- A first argument '@enrolled=<machine>/<key prefix>' limits the guard to
+-- rows whose instance exists (key = prefix || id), and only while the
+-- machine is switched on (wf_settings 'enabled:<machine>', written at boot
+-- from its flag). A machine rolled out behind a flag owns a row from the
+-- moment it enrolls it; the legacy writers keep the rows it has not, and
+-- every row again while the flag is off.
+CREATE OR REPLACE FUNCTION wf_guard_owned_columns() RETURNS TRIGGER AS $$
+DECLARE
+  owned TEXT;
+  col TEXT;
+  sub TEXT;
+  before JSONB;
+  after JSONB;
+  mode TEXT;
+  enrolled TEXT;
+BEGIN
+  IF current_setting('app.wf_writer', true) = 'transition' THEN
+    RETURN NEW;
+  END IF;
+  before := to_jsonb(OLD);
+  after := to_jsonb(NEW);
+  IF TG_ARGV[0] LIKE '@enrolled=%' THEN
+    enrolled := substr(TG_ARGV[0], length('@enrolled=') + 1);
+    IF NOT EXISTS (SELECT 1 FROM wf_settings WHERE key = 'enabled:' || split_part(enrolled, '/', 1)) THEN
+      RETURN NEW;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM wf_instances
+                    WHERE machine = split_part(enrolled, '/', 1)
+                      AND key = split_part(enrolled, '/', 2) || (before ->> 'id')) THEN
+      RETURN NEW;
+    END IF;
+  END IF;
+  FOREACH owned IN ARRAY TG_ARGV LOOP
+    CONTINUE WHEN owned LIKE '@%';
+    col := split_part(owned, '.', 1);
+    sub := NULLIF(split_part(owned, '.', 2), '');
+    IF (sub IS NULL AND (after -> col) IS DISTINCT FROM (before -> col))
+       OR (sub IS NOT NULL AND (after -> col -> sub) IS DISTINCT FROM (before -> col -> sub)) THEN
+      SELECT value INTO mode FROM wf_settings WHERE key = 'ownership_mode';
+      IF COALESCE(mode, 'raise') = 'log' THEN
+        INSERT INTO wf_ownership_violations (table_name, column_path, row_ref, query, application)
+        VALUES (TG_TABLE_NAME, owned, jsonb_build_object('id', before -> 'id'),
+                left(current_query(), 2000), current_setting('application_name', true));
+      ELSE
+        RAISE EXCEPTION 'WF_OWNERSHIP_VIOLATION: %.% is owned by a workflow machine', TG_TABLE_NAME, owned;
+      END IF;
+    END IF;
+  END LOOP;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- governance-proposal (src/workflow/governance-proposal/) owns a governance
+-- row's status and audit keys once the row is enrolled. The kinds are
+-- services/governance-kinds.js's list (pinned by
+-- tests/workflow-governance-postgres.test.js); general request twins are
+-- never owned.
+DROP TRIGGER IF EXISTS issues_wf_governance_owned ON issues;
+CREATE TRIGGER issues_wf_governance_owned
+  BEFORE UPDATE ON issues
+  FOR EACH ROW
+  WHEN (OLD.kind IN ('secret_change', 'rename', 'close_issue', 'maintenance_campaign', 'featured_illustration'))
+  EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=governance-proposal/issue:', 'status',
+    'payload.appliedAt', 'payload.appliedBy', 'payload.withdrawnAt', 'payload.supersededAt');

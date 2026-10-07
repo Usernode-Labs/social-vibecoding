@@ -38,6 +38,7 @@ import './admin-support.tsx';
 import './admin-reports.tsx';
 import './admin-rollover.tsx';
 import './admin-staging-reap.tsx';
+import './admin-workflows.tsx';
 import './admin-status.tsx';
 import './admin-node.tsx';
 import './admin-journey.tsx';

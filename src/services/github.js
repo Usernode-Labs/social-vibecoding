@@ -2641,14 +2641,19 @@ async function fetchPublicIssue(owner, repo, number) {
 // Homeroom bot recorded for each comment it posted (homeroom_bot_posts), so
 // the request page can leave out the bot's comments its Homeroom thread
 // already carries. clipIssueComments does not pass it on.
-async function fetchIssueComments(owner, repo, number, { max = ISSUE_COMMENTS_MAX } = {}) {
+//
+// `since` (an ISO time) asks GitHub for the comments updated at or after it
+// only, so a caller looking for a comment it may just have posted reads the
+// recent tail instead of the oldest pages (the workflow's close-and-comment).
+async function fetchIssueComments(owner, repo, number, { max = ISSUE_COMMENTS_MAX, since = null } = {}) {
   const n = Number(number);
   if (!owner || !repo || !Number.isInteger(n) || n <= 0) {
     return { comments: [], truncated: false, note: 'bad issue number' };
   }
 
   let url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`
-    + `/issues/${n}/comments?per_page=${ISSUE_COMMENTS_PER_PAGE}`;
+    + `/issues/${n}/comments?per_page=${ISSUE_COMMENTS_PER_PAGE}`
+    + (since ? `&since=${encodeURIComponent(since)}` : '');
   const collected = [];
   let page = 0;
 

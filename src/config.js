@@ -723,6 +723,19 @@ function load() {
     // knob so it can't be silently disabled along with the stale-PR sweeper.
     // Default 60s; set to 0 to disable (the hourly catch-all still runs).
     governanceApplyTickMs: parseInt(process.env.GOVERNANCE_APPLY_TICK_MS || String(60 * 1000), 10),
+    // Workflow foundation (src/workflow/): with WF_GOVERNANCE_ENABLED on,
+    // the governance-proposal machine decides governance proposals and the
+    // ticker above and the sweeper's Pass 0b leave them alone. Off by default.
+    wfGovernanceEnabled: ['1', 'true'].includes(process.env.WF_GOVERNANCE_ENABLED),
+    // Its own pool, so pipeline slots and the outcome listener never take
+    // request connections, and how many slots the leader runs.
+    wfPoolMax: parseInt(process.env.WF_POOL_MAX || (IS_STAGING() ? '3' : '6'), 10),
+    wfSlots: parseInt(process.env.WF_SLOTS || (IS_STAGING() ? '2' : '4'), 10),
+    // What a write to a machine-owned column outside the pipeline does:
+    // 'raise' everywhere but production, where it is logged to
+    // wf_ownership_violations until no legacy writer is left.
+    wfOwnershipMode: process.env.WF_OWNERSHIP_MODE
+      || ((process.env.NODE_ENV === 'production' && !IS_STAGING()) ? 'log' : 'raise'),
     // Demand-driven global-cap eviction. When a new session is needed but
     // the platform is at maxGlobalSessions, we pause the globally least-
     // recently-active session that has been idle longer than this grace
