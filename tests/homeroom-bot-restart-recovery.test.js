@@ -121,7 +121,10 @@ function turn(extra = {}) {
 }
 
 /** A pool that answers the session read, the run lookup and the cost sum. */
-function makePool({ session, run = RUN, cost = 0.42, liveRun = null, earlierBuilds = [], firstVersion = false }) {
+function makePool({
+  session, run = RUN, cost = 0.42, liveRun = null, earlierBuilds = [], firstVersion = false,
+  sessionSpec = '# Spec', runSpec = null, resumedBefore = 0,
+}) {
   const calls = [];
   return {
     calls,
@@ -141,8 +144,12 @@ function makePool({ session, run = RUN, cost = 0.42, liveRun = null, earlierBuil
       if (/FROM homeroom_bot_runs\s+WHERE build_session_id = \$1/.test(s)) return { rows: run ? [run] : [] };
       // What completeRecoveredLive reads once the session is free.
       if (/spec_version/.test(s) && /FROM chat_sessions cs WHERE cs\.id = \$1/.test(s)) {
-        return { rows: [{ id: session.id, user_id: BOT_ID, status: 'active', branch_name: session.branch_name, spec_md: '# Spec', spec_version: 2 }] };
+        return { rows: [{ id: session.id, user_id: BOT_ID, status: 'active', branch_name: session.branch_name, spec_md: sessionSpec, spec_version: 2 }] };
       }
+      // #4210: the plan a run kept from an earlier build (keptRunSpec), and
+      // how many of its builds already carried on from it (resumesOfRun).
+      if (/SELECT build_spec_md FROM homeroom_bot_runs WHERE id = \$1/.test(s)) return { rows: [{ build_spec_md: runSpec }] };
+      if (/SELECT COUNT\(\*\)::int AS n FROM events/.test(s)) return { rows: [{ n: resumedBefore }] };
       if (/FROM apps WHERE id = \$1/.test(s)) return { rows: [{ id: 5, slug: 'todo', name: 'Todo', repo_url: 'https://github.com/usernode-bot/todo' }] };
       if (/FROM users WHERE username = \$1/.test(s)) return { rows: [{ id: BOT_ID, username: 'homeroom_bot', weekly_limit_cents: 15000 }] };
       if (/SUM\(estimated_cost_usd\)/.test(s)) return { rows: [{ cost }] };
@@ -491,7 +498,7 @@ test('a live spec turn with no usable plan sends the issue back to be triaged, a
   stubLive();
   journalTail = async () => ({ lastResultText: '', exitCode: 0 });
   let session = botSession({ active_turn: turn({ mode: 'scout' }) });
-  let pool = makePool({ session, run: null, liveRun: LIVE_RUN });
+  let pool = makePool({ session, run: null, liveRun: LIVE_RUN, sessionSpec: null });
   await adopt(pool, session);
   const [requeue] = requeues(pool);
   assert.ok(requeue, 'back in the queue: its row was gone with the pass');
@@ -513,13 +520,93 @@ test('a live spec turn with no usable plan sends the issue back to be triaged, a
   assert.deepEqual(resumes(pool), []);
 });
 
-test('a live build whose worker did not survive sends the issue back to be triaged', async () => {
+// #4210: a first version's build whose worker was lost was started over from
+// the request: a new triage, a new run, a new spec, the creator asked to tap
+// Build it again, and "My build was interrupted" in their DM. It carries on
+// from the plan it was building instead, on the same run (whose build note
+// holds what the creator approved), and nobody is told.
+const incidentRows = (pool) => pool.calls
+  .filter((c) => /INSERT INTO events/.test(c.sql) && c.params[3] === 'platform_incident')
+  .map((c) => ({ appId: c.params[1], sessionId: c.params[2], ...JSON.parse(c.params[4]) }));
+const dmRestarts = [];
+const dmModule = require('../src/services/homeroom-bot-dm');
+dmModule.noteBuildRestarted = async (_pool, args) => { dmRestarts.push(args.runId); return {}; };
+test.beforeEach(() => { dmRestarts.length = 0; });
+
+test('a live build whose worker did not survive carries on from its plan, saying nothing, and admins see it', async () => {
   stubLive();
   const session = botSession();
   const pool = makePool({ session, run: null, liveRun: LIVE_RUN });
   await adopt(pool, session, 'exited');
-  assert.deepEqual(requeues(pool).map((c) => c.params), [[5, 12, 'restart']]);
+  assert.deepEqual(requeues(pool), [], 'not sent back to be triaged, planned and approved again');
+  const [resume] = resumes(pool);
+  assert.ok(resume, 'its run is back in line for its build');
+  assert.deepEqual(resume.params, [950, '# Spec', 0.42], 'with the plan it was building from');
+  assert.equal(liveOutcome(pool), undefined, 'the run keeps going: its build note (the creator\'s answers) with it');
   assert.equal(liveCalls.some((c) => c[0] === 'promote'), false);
+  assert.deepEqual(liveCalls.filter((c) => c[0] === 'post'), [], 'nothing on the issue');
+  assert.deepEqual(dmRestarts, [], 'and no "my build was interrupted" in the DM: it is still building');
+  const [incident] = incidentRows(pool);
+  assert.ok(incident, 'recorded for admins');
+  assert.deepEqual(
+    [incident.kind, incident.appId, incident.sessionId, incident.runId, incident.issueNumber, incident.outcome],
+    ['build_interrupted', 5, 6001, 950, 12, 'resumed'],
+  );
+  assert.match(incident.why, /worker/);
+});
+
+test('a lost build whose session has no plan carries on from the one its run kept', async () => {
+  stubLive();
+  const session = botSession();
+  const pool = makePool({ session, run: null, liveRun: LIVE_RUN, sessionSpec: null, runSpec: '# Kept' });
+  await adopt(pool, session, 'exited');
+  assert.deepEqual(resumes(pool).map((c) => c.params[1]), ['# Kept']);
+  assert.deepEqual(requeues(pool), []);
+  assert.deepEqual(dmRestarts, []);
+});
+
+test('a lost build with no plan anywhere starts over from the request, and only then is its person told', async () => {
+  stubLive();
+  const session = botSession();
+  const pool = makePool({ session, run: null, liveRun: LIVE_RUN, sessionSpec: null });
+  await adopt(pool, session, 'exited');
+  assert.deepEqual(requeues(pool).map((c) => c.params), [[5, 12, 'restart']]);
+  assert.deepEqual(resumes(pool), []);
+  assert.deepEqual(dmRestarts, [950], 'told once that it started again');
+  assert.deepEqual(incidentRows(pool).map((i) => i.outcome), ['requeued']);
+});
+
+test('a spec turn cut short has no plan to carry on from: its session holds none yet', async () => {
+  stubLive();
+  const session = botSession({ active_turn: turn({ mode: 'scout' }) });
+  const pool = makePool({ session, run: null, liveRun: LIVE_RUN, sessionSpec: null });
+  await adopt(pool, session, 'exited');
+  assert.deepEqual(resumes(pool), []);
+  assert.deepEqual(requeues(pool).map((c) => c.params), [[5, 12, 'restart']]);
+});
+
+test('a spec turn that wrote a plan carries on silently too, and is recorded', async () => {
+  stubLive();
+  journalTail = async () => ({ lastResultText: SPEC_TEXT, exitCode: 0 });
+  const session = botSession({ active_turn: turn({ mode: 'scout' }) });
+  const pool = makePool({ session, run: null, liveRun: LIVE_RUN });
+  await adopt(pool, session);
+  assert.equal(resumes(pool).length, 1);
+  assert.deepEqual(dmRestarts, []);
+  assert.deepEqual(incidentRows(pool).map((i) => i.outcome), ['resumed']);
+});
+
+test('a build that already carried on from its plan twice is stopped the third time, and said', async () => {
+  stubLive();
+  const session = botSession();
+  const pool = makePool({ session, run: null, liveRun: LIVE_RUN, resumedBefore: 2 });
+  await adopt(pool, session, 'exited');
+  assert.deepEqual(resumes(pool), [], 'not resumed a third time');
+  assert.deepEqual(requeues(pool), []);
+  assert.ok(liveCalls.some((c) => c[0] === 'post' && c[1] === 'build_failed'), 'said, as any failed build is');
+  assert.deepEqual(incidentRows(pool).map((i) => i.outcome), ['failed']);
+  const count = pool.calls.find((c) => /SELECT COUNT\(\*\)::int AS n FROM events/.test(c.sql));
+  assert.deepEqual(count.params, ['platform_incident', 24, 'build_interrupted', '950']);
 });
 
 // Restarts that keep cutting one request's builds short before there is a
@@ -571,6 +658,7 @@ test('restarts that are not back to back still send the build round again', asyn
     session, run: null, liveRun: LIVE_RUN,
     // Newest first: one sent back, then a build that ended some other way.
     earlierBuilds: [sentBack('the spec turn was cut short'), { build_error: 'the build ran past its time limit' }],
+    sessionSpec: null,
   });
   await adopt(pool, session);
   assert.deepEqual(requeues(pool).map((c) => c.params), [[5, 12, 'restart']]);
@@ -591,7 +679,13 @@ test('a reaped live build is settled the way restart recovery settles one it cou
   const session = botSession();
   const pool = makePool({ session, run: null, liveRun: LIVE_RUN });
   await bot.settleReapedTurn({ pool, config: {}, session });
-  assert.deepEqual(requeues(pool).map((c) => c.params), [[5, 12, 'restart']], 'the issue goes back to be triaged');
+  assert.deepEqual(resumes(pool).map((c) => c.params[1]), ['# Spec'], 'its build carries on from its plan (#4210)');
+  assert.deepEqual(requeues(pool), []);
+
+  stubLive();
+  const bare = makePool({ session, run: null, liveRun: LIVE_RUN, sessionSpec: null });
+  await bot.settleReapedTurn({ pool: bare, config: {}, session });
+  assert.deepEqual(requeues(bare).map((c) => c.params), [[5, 12, 'restart']], 'with no plan, the issue goes back to be triaged');
 });
 
 // ── A live build's time, across restarts (5 Oct 2026) ───────────────────
@@ -635,6 +729,17 @@ test('a live build a restart reached in time, whose clock then ran out, goes rou
   const pool = makePool({ session, run: null, liveRun: LIVE_RUN });
   await adoptHeld(pool, session);
   assert.ok(workerCalls.some((c) => c[0] === 'stopTurn'), 'the bot\'s clock still ends the turn at its deadline');
+  assert.deepEqual(resumes(pool).map((c) => c.params[1]), ['# Spec'], 'it carries on from its plan (#4210)');
+  assert.deepEqual(requeues(pool), []);
+  assert.deepEqual(liveCalls.filter((c) => c[0] === 'post'), [], 'no "couldn\'t finish" on the issue or in the DM');
+});
+
+test('a live build that ran out after a restart, with no plan to carry on from, goes round again', async () => {
+  stubLive();
+  journalTail = untilStopped;
+  const session = botSession({ active_turn: turn({ startedAt: startedAgo(TURN_BUDGET_MS - CLOCK_LEFT_MS) }) });
+  const pool = makePool({ session, run: null, liveRun: LIVE_RUN, sessionSpec: null });
+  await adoptHeld(pool, session);
   assert.deepEqual(requeues(pool).map((c) => c.params), [[5, 12, 'restart']], 'back to be triaged again');
   const outcome = liveOutcome(pool);
   assert.deepEqual(outcome.slice(0, 2), [950, false]);
@@ -681,6 +786,77 @@ test('the third build in a row whose time ran out after a restart is said to hav
   assert.ok(failed);
   assert.equal(liveOutcome(pool)[2], 'the platform restarted in the middle of each of its last 3 tries at building this');
   assert.equal(bot.MAX_RESTARTED_BUILDS, 3);
+});
+
+// #4210: a first version sent back to be read again, with no plan to carry
+// on from, is not put to its creator a second time: the plan they approved,
+// and the answers they tapped, go onto the new run, which builds at once.
+function carryPool({ prev, updated = 1 }) {
+  const calls = [];
+  return {
+    calls,
+    async query(sql, params = []) {
+      calls.push({ sql: String(sql), params });
+      if (/SELECT id, plan, build_error FROM homeroom_bot_runs/.test(sql)) return { rows: prev ? [prev] : [] };
+      if (/UPDATE homeroom_bot_runs SET build_note = CONCAT/.test(sql)) return { rows: [], rowCount: updated };
+      return { rows: [], rowCount: 0 };
+    },
+  };
+}
+const APPROVED = {
+  bullets: ['A list of restaurants', 'Drag them into tiers'],
+  questions: [{ question: 'Which city?', answers: ['SF', 'Oakland'] }],
+  chosen: [{ question: 'Which city?', answer: 'Oakland', suggested: false }],
+};
+
+test('a first version its creator approved, sent back by a restart, keeps their plan and answers and is not asked again', async () => {
+  const pool = carryPool({ prev: { id: 940, plan: APPROVED, build_error: `interrupted: the worker is gone ${bot.RESTARTED_BUILD_NOTE}` } });
+  assert.equal(await bot.carryApprovedPlan(pool, { runId: 951, appId: 5, issueNumber: 12 }), true);
+  const read = pool.calls[0];
+  assert.match(read.sql, /mode = 'live' AND id < \$3\s+ORDER BY id DESC LIMIT 1/);
+  assert.deepEqual(read.params, [5, 12, 951]);
+  const write = pool.calls[1];
+  assert.equal(write.params[0], 951);
+  assert.match(write.params[1], /Drag them into tiers/, 'the bullets they approved');
+  assert.match(write.params[1], /Which city\? Oakland/, 'and the answer they tapped');
+  assert.deepEqual(JSON.parse(write.params[2]), APPROVED);
+  assert.match(write.sql, /awaiting_go_at IS NULL/);
+});
+
+test('a plan nobody approved, or a run that ended some other way, is asked about as before', async () => {
+  const unapproved = { ...APPROVED, chosen: undefined };
+  const sentBackNote = `interrupted: the worker is gone ${bot.RESTARTED_BUILD_NOTE}`;
+  assert.equal(await bot.carryApprovedPlan(carryPool({ prev: { id: 940, plan: unapproved, build_error: sentBackNote } }), { runId: 951, appId: 5, issueNumber: 12 }), false);
+  assert.equal(await bot.carryApprovedPlan(carryPool({ prev: { id: 940, plan: APPROVED, build_error: 'the build ran past its time limit' } }), { runId: 951, appId: 5, issueNumber: 12 }), false);
+  assert.equal(await bot.carryApprovedPlan(carryPool({ prev: null }), { runId: 951, appId: 5, issueNumber: 12 }), false);
+});
+
+test('a first version\'s ready verdict looks for an approved plan before it sends the plan card', () => {
+  const src = require('node:fs').readFileSync(require.resolve('../src/services/homeroom-bot'), 'utf8');
+  assert.match(src, /if \(firstVersion && await carryApprovedPlan\(pool, \{ runId, appId: app\.id, issueNumber \}\)\) \{\n\s+await queueLiveBuild\(pool, \{ runId, appId: app\.id \}\);\n\s+acted = 'build_queued';\n\s+\} else if \(firstVersion && await awaitGo\(/);
+});
+
+test('admins read the week\'s incidents newest first, and a line says what happened', async () => {
+  const incidents = require('../src/services/platform-incidents');
+  const calls = [];
+  const pool = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      if (/COUNT/.test(sql)) return { rows: [{ n: 3 }] };
+      return { rows: [{ created_at: new Date('2026-10-07T12:00:00Z'), app_slug: 'tiers', metadata: { kind: 'build_interrupted', runId: 950, issueNumber: 1, why: 'the worker is gone', outcome: 'resumed' } }] };
+    },
+  };
+  const out = await incidents.recent(pool);
+  assert.equal(out.total, 3);
+  assert.deepEqual(out.items[0], {
+    at: '2026-10-07T12:00:00.000Z', kind: 'build_interrupted', app: 'tiers', runId: 950, issueNumber: 1, why: 'the worker is gone', outcome: 'resumed',
+  });
+  assert.match(calls[0].sql, /event_type = \$1 AND e\.created_at > NOW\(\) - make_interval\(days => \$2\)/);
+  assert.deepEqual(calls[0].params, ['platform_incident', 7, 20]);
+  assert.equal(await incidents.recent({ query: async () => { throw new Error('down'); } }), null, 'never throws');
+  const src = require('node:fs').readFileSync(require.resolve('../frontend/src/features/admin/admin-homeroom-bot-health.tsx'), 'utf8');
+  assert.match(src, /id="admin-homeroom-bot-unexpected"/);
+  assert.match(src, /resumed: 'carried on from its plan'/);
 });
 
 test('restartRanItOut: only a build turn the clock ended in recovery, with time left when recovery took it', () => {

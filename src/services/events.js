@@ -203,6 +203,11 @@ const EVENT_TYPES = Object.freeze({
   FIRST_ARTEFACT_SHOWN: 'first_artefact_shown',
   INVITE_OPENED: 'invite_opened',
   INVITE_SIGNED_IN: 'invite_signed_in',
+  // Something on the platform that should not happen, kept for admins
+  // (services/platform-incidents.js, #4210). metadata: { kind, ... } where
+  // kind names the incident ('build_interrupted': a bot build a restart or
+  // a lost worker cut short; { runId, issueNumber, why, outcome }).
+  PLATFORM_INCIDENT: 'platform_incident',
 });
 
 // Record a single analytics event. Fire-and-forget — returns a promise
