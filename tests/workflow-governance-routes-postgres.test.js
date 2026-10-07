@@ -228,4 +228,35 @@ test('governance routes through the workflow machine', { timeout: 120000 }, asyn
     assert.equal(released.body.released, true);
     assert.equal((await pool.query(`SELECT flag FROM wf_instances WHERE key = $1`, [`issue:${f.id}`])).rows[0].flag, null);
   });
+
+  await t.test('an admin apply retried with its key replays; a closed row the machine never held is 409', async () => {
+    const adminUser = { ...(await user({ admin: true })), canAdminWrite: true };
+    const keyed = (k) => (h) => (h === 'Idempotency-Key' ? k : undefined);
+    const a = await issue('close_issue', { issueNumber: 31, issueTitle: 'k' });
+    const first = await call(adminApply, { params: { id: String(a.id) }, user: adminUser, get: keyed('apply-once') });
+    assert.equal(first.status, 200, JSON.stringify(first.body));
+    assert.equal(first.body.applied.applied, true);
+    const retry = await call(adminApply, { params: { id: String(a.id) }, user: adminUser, get: keyed('apply-once') });
+    assert.deepEqual([retry.status, retry.body], [200, first.body], 'the original answer, not 409');
+    const other = await call(adminApply, { params: { id: String(a.id) }, user: adminUser, get: keyed('apply-twice') });
+    assert.deepEqual([other.status, other.body.error], [409, 'Issue is not open'], 'a new request is refused');
+    const legacy = await issue('close_issue', { issueNumber: 32, issueTitle: 'l' });
+    await pool.query(`UPDATE issues SET status = 'closed' WHERE id = $1`, [legacy.id]);
+    const closed = await call(adminApply, { params: { id: String(legacy.id) }, user: adminUser });
+    assert.deepEqual([closed.status, closed.body.error], [409, 'Issue is not open']);
+  });
+
+  await t.test('the workflow pool survives the server dropping its idle connections', async () => {
+    await new Promise((res) => setTimeout(res, 100));
+    const { rows } = await pool.query(
+      `SELECT pg_terminate_backend(pid) AS killed FROM pg_stat_activity
+        WHERE application_name = 'homeroom-workflow' AND datname = current_database() AND state = 'idle'`);
+    assert.ok(rows.length > 0, 'there were idle workflow connections to drop');
+    await new Promise((res) => setTimeout(res, 300));
+    const i = await issue('close_issue', { issueNumber: 33, issueTitle: 'm' });
+    await pool.query('UPDATE apps SET approvals_required = 1 WHERE id = $1', [app.id]);
+    const r = await call(vote, { params: { id: String(i.id) }, body: { vote: 'up' }, user: await user() });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.issueClosed.applied, true);
+  });
 });

@@ -45,7 +45,14 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   log = legacy('services/logger');
   await syncSettings(legacy('db/pool').getPool(config), config);
   if (!config.wfGovernanceEnabled || runtime) return;
-  kernelPool = new pg.Pool({ connectionString: config.databaseUrl, max: config.wfPoolMax, idleTimeoutMillis: 30000 });
+  const workflowPool = new pg.Pool({
+    connectionString: config.databaseUrl, max: config.wfPoolMax, idleTimeoutMillis: 30000, application_name: 'homeroom-workflow',
+  });
+  // An idle connection the server drops (a restart, a failover, an admin's
+  // pg_terminate_backend) is reported here; without a listener it would be
+  // an uncaught 'error' and end the process. The pool replaces it.
+  workflowPool.on('error', (err: Error) => log!.warn('workflow', 'Idle workflow database connection lost', { message: err.message }));
+  kernelPool = workflowPool;
   const deps = { config, pool: legacy('db/pool').getPool(config) };
   machine = governanceProposal({ dataKey: config.dataEncryptionKey, notifiers: governanceNotifiers(deps) });
   runtime = createRuntime({
@@ -182,12 +189,14 @@ export async function withdrawProposal(issue: { id: number; app_id: number }, us
 }
 
 export async function adminApplyProposal(
-  issue: { id: number; app_id: number; kind: string }, user: { id: number; username: string }, requestKey?: string,
+  issue: { id: number; app_id: number; kind: string; status: string }, user: { id: number; username: string }, requestKey?: string,
 ): Promise<Reply> {
-  await ensureFiled(issue);
+  if (issue.status === 'open') await ensureFiled(issue);
   const outcome = await runtime!.appendAndWait(machine!, issueKey(issue.id), {
     type: 'AdminApply', payload: { userId: user.id, username: user.username },
   }, { requestKey: requestKey || `admin-apply:${issue.id}:${randomUUID()}`, source: { kind: 'admin', name: 'admin-apply' }, actor: `user:${user.id}`, appId: issue.app_id });
+  // A closed row the machine never held: [main] decided it.
+  if (outcome.status === 'rejected' && outcome.reason === 'no_instance') return REJECTIONS.get('not_open')!;
   const refused = failed(outcome);
   if (refused) return refused;
   const applied = await kindResult(issue.id);
