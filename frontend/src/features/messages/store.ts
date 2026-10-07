@@ -110,6 +110,19 @@ const unsent = new Map<string, { conversationId: number; payload: PendingSend; a
 const sentKeys = new Map<number, string>();
 const typingSentAt = new Map<number, number>();
 const typingExpiry = new Map<string, number>();
+/**
+ * #4220: a "stopped typing" that waits for its message. The bot sends its
+ * message and then stops typing (services/homeroom-bot-dm.js whileTyping),
+ * but realtime carries ids only, so the message shows once the re-read it
+ * started publishes, and in the bot's DM that read is the slow one: the line
+ * went away and the conversation sat still before the answer came. So while
+ * a re-read for a new message is in flight in a conversation (`landing`, by
+ * how many), a stop there holds its name (`heldTyping`, by the typingExpiry
+ * key) until that read publishes, and never longer than TYPING_HOLD_MS.
+ */
+const landing = new Map<number, number>();
+const heldTyping = new Map<string, { conversationId: number; shown: string }>();
+const TYPING_HOLD_MS = 5000;
 let pendingShare: SharedObjectReference | null | undefined;
 /**
  * A change the change page's Ask for changes put straight on the chat with
@@ -471,7 +484,20 @@ function transcriptOrder(a: ConversationMessage, b: ConversationMessage): number
  */
 const leftConversations = new Set<number>();
 
-export async function loadThread(conversationId: number, force = false): Promise<void> {
+/**
+ * #4243: whether the browser says it is offline. Only a `false` counts: where
+ * the property is missing nothing says the network is gone.
+ */
+function browserOffline(): boolean {
+  return typeof navigator !== 'undefined' && navigator.onLine === false;
+}
+
+/**
+ * `offlineCopy` is the retry of an open whose read from the server failed
+ * (#4243): the one read that takes the service worker's offline copy while
+ * the browser says it is online.
+ */
+export async function loadThread(conversationId: number, force = false, offlineCopy = false): Promise<void> {
   if (!validId(conversationId)) return;
   if (leftConversations.has(conversationId)) {
     threadRequest += 1;
@@ -510,7 +536,14 @@ export async function loadThread(conversationId: number, force = false): Promise
   // service worker's offline copy (#3705, #3706; api.ts ReadOptions). That
   // copy was the page from before the change, and drawing it lost the very
   // message the event was about.
-  const read = { fresh: force };
+  // AN OPEN GOES TO THE SERVER TOO WHILE THE BROWSER IS ONLINE (#4243). Its
+  // offline copy is the last visit's transcript: on a read slower than the
+  // worker's second it was drawn, and the newest messages snapped in under
+  // the reader when the worker's correction came. The skeleton stays a beat
+  // longer instead. Offline, or once that read has failed, the open takes
+  // the copy (`offlineCopy`, from the catch below).
+  const fresh = force || (!offlineCopy && !browserOffline());
+  const read = { fresh };
   try {
     // Invitation metadata is deliberately readable before acceptance, but
     // retained history is not. Resolve membership first and never request
@@ -582,6 +615,13 @@ export async function loadThread(conversationId: number, force = false): Promise
     if (last && member && !page.nextAfter && unreadHold !== conversationId) readMainWhenThere(conversationId);
   } catch (error) {
     if (request !== threadRequest) return;
+    // An open that failed on the network or the server, not with an answer
+    // like a 404, reads again and takes the offline copy (#4243).
+    const answered = error instanceof api.MessagesApiError && error.status < 500;
+    if (fresh && !force && !answered) {
+      await loadThread(conversationId, false, true);
+      return;
+    }
     publish({
       // A failed open says so on its own, as it did before the inbox row
       // stood in: no header or composer for a conversation that did not load.
@@ -2122,7 +2162,17 @@ export function handleEvent(raw: ConversationEvent): void {
       // message the thread hangs off is the conversation's to draw.
       const rootId = api.strictId(event.threadRootId ?? event.thread_root_id);
       if (onScreen(conversationId)) {
-        void loadThread(conversationId, true);
+        const load = loadThread(conversationId, true);
+        if (event.type === 'conversation_message_created') {
+          landing.set(conversationId, (landing.get(conversationId) || 0) + 1);
+          const landed = () => {
+            const left = (landing.get(conversationId) || 1) - 1;
+            if (left > 0) { landing.set(conversationId, left); return; }
+            landing.delete(conversationId);
+            releaseHeldTyping(conversationId);
+          };
+          void load.then(landed, landed);
+        }
         if (rootId && state.thread?.rootId === rootId) void loadReplyThread(conversationId, rootId, true);
       }
       void loadConversations(true);
@@ -2183,19 +2233,47 @@ export function handleEvent(raw: ConversationEvent): void {
       const existingExpiry = typingExpiry.get(expiryKey);
       if (existingExpiry && typeof window !== 'undefined') window.clearTimeout(existingExpiry);
       typingExpiry.delete(expiryKey);
+      heldTyping.delete(expiryKey);
       const shown = botPeer || username;
+      // #4220: a stop while the message it typed is still being read keeps
+      // the line until that read publishes (releaseHeldTyping), or the cap.
+      if (event.typing === false && landing.get(conversationId) && current.has(shown) && typeof window !== 'undefined') {
+        heldTyping.set(expiryKey, { conversationId, shown });
+        typingExpiry.set(expiryKey, window.setTimeout(() => {
+          typingExpiry.delete(expiryKey);
+          heldTyping.delete(expiryKey);
+          dropTyping(conversationId, shown);
+        }, TYPING_HOLD_MS));
+        break;
+      }
       if (event.typing === false) current.delete(shown); else current.add(shown);
       publish({ typing: { ...state.typing, [conversationId]: [...current] } });
       if (event.typing !== false && typeof window !== 'undefined') {
         typingExpiry.set(expiryKey, window.setTimeout(() => {
           typingExpiry.delete(expiryKey);
-          const next = new Set(state.typing[conversationId] || []);
-          if (!next.delete(shown)) return;
-          publish({ typing: { ...state.typing, [conversationId]: [...next] } });
+          dropTyping(conversationId, shown);
         }, 6000));
       }
       break;
     }
+  }
+}
+
+function dropTyping(conversationId: number, shown: string): void {
+  const next = new Set(state.typing[conversationId] || []);
+  if (!next.delete(shown)) return;
+  publish({ typing: { ...state.typing, [conversationId]: [...next] } });
+}
+
+/** #4220: the message the held names were typing has been drawn. */
+function releaseHeldTyping(conversationId: number): void {
+  for (const [key, held] of [...heldTyping]) {
+    if (held.conversationId !== conversationId) continue;
+    heldTyping.delete(key);
+    const timer = typingExpiry.get(key);
+    if (timer && typeof window !== 'undefined') window.clearTimeout(timer);
+    typingExpiry.delete(key);
+    dropTyping(conversationId, held.shown);
   }
 }
 
