@@ -3,6 +3,7 @@
 // pipeline slots, timer loop and services run where `start` enables them
 // (initially the leader). Correctness never depends on which process runs
 // what: it comes from instance row locks and SKIP LOCKED claims.
+// docs/workflows.md explains the model and how to write a machine.
 
 import { hostname } from 'node:os';
 import { randomUUID } from 'node:crypto';
