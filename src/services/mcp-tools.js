@@ -917,6 +917,21 @@ function shapeChecks(session) {
   const failed = results.filter((t) => t && t.status && t.status !== 'pass');
   const ranOn = session.checks_commit_sha || null;
   const head = headShaOf(session);
+  // #3978. The unit-suite row's stored per-test excerpts, previewed inline:
+  // fewer tests than the row keeps (the whole excerpt is get_check_output's)
+  // and a tighter per-test clip. Every other row keeps the empty array — the
+  // zod output schema reads the field on every entry, and a conditional one
+  // is what made a whole response fail validation once (#2137).
+  const inlineDetails = (t) => (Array.isArray(t.failureDetails) ? t.failureDetails : [])
+    .slice(0, unitSuiteRow.MAX_INLINE_EXCERPT_TESTS)
+    .map((d) => ({
+      file: (d && d.file) ? untrusted(String(d.file), MAX_TITLE_CHARS) : null,
+      test: (d && d.test) ? untrusted(String(d.test), MAX_TITLE_CHARS) : null,
+      excerpt: (d && d.excerpt) ? untrusted(String(d.excerpt), unitSuiteRow.MAX_INLINE_EXCERPT_CHARS) : null,
+    }));
+  const unitRows = failed.filter(unitSuiteRow.isUnitSuiteRow);
+  const detailsTruncated = unitRows.some((t) => !!t.failureDetailsTruncated
+    || (Array.isArray(t.failureDetails) ? t.failureDetails.length : 0) > unitSuiteRow.MAX_INLINE_EXCERPT_TESTS);
   return {
     state: session.check_state || null,
     phase: session.check_phase || null,
@@ -983,7 +998,13 @@ function shapeChecks(session) {
       path: t.path ? untrusted(String(t.path), MAX_TITLE_CHARS) : null,
       reason: untrusted(failureReasonOf(t), unitSuiteRow.isUnitSuiteRow(t)
         ? unitSuiteRow.FAILURE_DETAIL_MAX : MAX_FAILURE_REASON_CHARS) || null,
+      // The repo unit suite's row previews its first failing tests' excerpts
+      // here; a declared check's reason IS its diagnosis and stays alone.
+      details: unitSuiteRow.isUnitSuiteRow(t) ? inlineDetails(t) : [],
     })),
+    // True when the row kept more excerpts than the preview shows (or the
+    // run itself was capped): get_check_output returns the whole stored text.
+    detailsTruncated,
     total: results.length,
     error: session.check_error_detail
       ? untrusted(session.check_error_detail, MAX_CHECK_ERROR_CHARS)
@@ -3394,7 +3415,7 @@ function registerTools(server, ctx) {
   // ── get_proposal ─────────────────────────────────────────────────────
   server.registerTool('get_proposal', {
     title: 'Get a proposal',
-    description: "Status of one proposal, by `proposalId` or `prNumber` (the pull request number people see on GitHub); the answer carries both, name it \"PR #2151 (proposal 4223)\". It includes the checks verdict and failing test NAMES, staging preview, vote tally and votes still needed. Checks gate merge: if failing, fix the named tests and submit an UPDATE to this proposal — never a second one. `branch` says how: `branch.home` is 'user_fork' when the proposal follows a branch in the author's own fork (push to it, then call submit_work with proposalId and branch) or 'app_repo' when its head is a branch only Homeroom can write (push to your own fork, then call submit_work with proposalId and that branch — pushing alone moves nothing). `nextStep` says the same in one line; follow it. `shots` holds before/after shots of each declared change on this exact revision: a verified state means the shots agent took them (a still per screen size, plus clips for motion) and people look at them to judge the change; `shotResults` says which changes it skipped and why, which failed (the shots agent did the steps and the after build broke, for example a server error: fix the code), and what a ready change's shots leave out. Pending or failed entries never substitute legacy route captures. `captureRouteSource`, `captureDefaultedToRoot`, and `capturePaths` describe only the backward-compatible legacy capture/check path. `checks.state` 'pending' is NOT a verdict or a reason to push again — read `checks.phase`, `checks.checkedAt`, `checks.stale`, and `baseSha` before writing code; each output field describes itself.",
+    description: "Status of one proposal, by `proposalId` or `prNumber` (the pull request number people see on GitHub); the answer carries both, name it \"PR #2151 (proposal 4223)\". It includes the checks verdict and failing test NAMES with their error excerpts (checks.failures[].details; get_check_output returns the full stored excerpt), staging preview, vote tally and votes still needed. Checks gate merge: if failing, fix the named tests and submit an UPDATE to this proposal — never a second one. `branch` says how: `branch.home` is 'user_fork' when the proposal follows a branch in the author's own fork (push to it, then call submit_work with proposalId and branch) or 'app_repo' when its head is a branch only Homeroom can write (push to your own fork, then call submit_work with proposalId and that branch — pushing alone moves nothing). `nextStep` says the same in one line; follow it. `shots` holds before/after shots of each declared change on this exact revision: a verified state means the shots agent took them (a still per screen size, plus clips for motion) and people look at them to judge the change; `shotResults` says which changes it skipped and why, which failed (the shots agent did the steps and the after build broke, for example a server error: fix the code), and what a ready change's shots leave out. Pending or failed entries never substitute legacy route captures. `captureRouteSource`, `captureDefaultedToRoot`, and `capturePaths` describe only the backward-compatible legacy capture/check path. `checks.state` 'pending' is NOT a verdict or a reason to push again — read `checks.phase`, `checks.checkedAt`, `checks.stale`, and `baseSha` before writing code; each output field describes itself.",
     inputSchema: {
       proposalId: z.number().int().positive().optional()
         .describe('The proposal id, as list_my_proposals, prepare_work and submit_work report it — also the last number in a proposal\'s webPath. Either this or prNumber; this one wins when both are given, and a pair that names two different proposals is refused rather than answered.'),
@@ -3481,9 +3502,21 @@ function registerTools(server, ctx) {
           name: z.string(),
           path: z.string().nullable(),
           reason: z.string().nullable(),
+          details: z.array(z.object({
+            file: z.string().nullable(),
+            test: z.string(),
+            excerpt: z.string().nullable(),
+          })).describe('The repo unit suite row only: its first failing tests, each with the file, the test name '
+            + 'and a clipped excerpt carrying the assertion message and expected/actual. Empty on every other '
+            + 'row — a declared check\'s reason is its diagnosis. When `detailsTruncated` is true, '
+            + 'get_check_output returns the whole stored excerpt.'),
         })).describe('WHY the first few failed — the navigation or assertion error the run recorded, falling back '
           + 'to the first console error. When every entry carries the same reason, that reason is the whole '
           + 'diagnosis and no test needs fixing.'),
+        detailsTruncated: z.boolean()
+          .describe('True when the unit-suite row kept more failing-test excerpts than `failures[].details` '
+            + 'previews (or the run itself was capped). Call get_check_output for the full excerpts; the '
+            + 'grouped file list in the unit row\'s `reason` always names every failing file regardless.'),
         total: z.number()
           .describe('How many tests reported. While pending, 0 means none has reported yet — never that this '
             + 'proposal has no checks.'),
@@ -3595,6 +3628,155 @@ function registerTools(server, ctx) {
       );
     }
     return readResult('get_proposal', shapeProposal(session, origin));
+  });
+
+  // ── get_check_output ─────────────────────────────────────────────────
+  //
+  // The whole stored output of ONE failing check (#3978). get_proposal's
+  // checks.failures[].reason keeps the diagnosis short — the unit suite's
+  // grouped file list is the only place a fix turn learns which test files
+  // to re-run — and its details preview only the first few tests. This tool
+  // returns what the row stored beyond that: each failing test's excerpt
+  // (assertion message, expected/actual, the first stack lines, the stdout
+  // just before the failure), already clipped and redacted at capture time.
+  // One tool rather than a bigger get_proposal, so a run with many failures
+  // costs its reader one call per check it actually needs, not one giant
+  // answer for all of them.
+  server.registerTool('get_check_output', {
+    title: 'Get failing-check output',
+    description: 'The full stored output of ONE failing check on a proposal. The repo unit suite row returns, for each failing test it kept (up to 10), the file, the test name and a clipped excerpt carrying the assertion message, expected/actual and the first stack lines. A declared dapp.json check returns its recorded reason and console errors with their sources. Use it when get_proposal.checks.detailsTruncated is true or you need more than the first few excerpt previews. Pass proposalId (or prNumber with slug) and optionally check: a failing check\'s name exactly as get_proposal.checks.failures[].name shows it, without the untrusted-content wrapper. Without check: the repo unit suite row when it is failing, else the single failing row; when several fail and none is the unit row, the error names them so you can pick. Read-only.',
+    inputSchema: {
+      proposalId: z.number().int().positive().optional()
+        .describe('The proposal id, as get_proposal reports it.'),
+      prNumber: z.number().int().positive().optional()
+        .describe('The pull request number instead, with slug when the same number could name proposals on more than one app.'),
+      slug: z.string().optional()
+        .describe('The app slug, as returned by list_apps — only to say which app a prNumber belongs to.'),
+      check: z.string().optional()
+        .describe('Which failing check to read: its name as get_proposal.checks.failures[].name shows it. Omit for the '
+          + 'repo unit suite row when it is failing, else the single failing row.'),
+    },
+    outputSchema: {
+      proposalId: z.number()
+        .describe('The proposal id, as get_proposal takes it.'),
+      prNumber: z.number().nullable()
+        .describe('Its pull request number, when it has one.'),
+      check: z.object({
+        name: z.string(),
+        path: z.string().nullable(),
+        status: z.string(),
+        advisory: z.boolean()
+          .describe('True when the row reports but does not block the merge.'),
+      }),
+      reason: z.string().nullable()
+        .describe('The row\'s recorded reason as get_proposal carries it — for the unit suite row, the grouped '
+          + 'list of every failing test FILE with the TAP counters. The excerpts below sit beside it, not in it.'),
+      tests: z.array(z.object({
+        file: z.string().nullable()
+          .describe('The repo-relative test file, from the TAP location line. Null when the runner did not report one.'),
+        test: z.string().nullable(),
+        excerpt: z.string().nullable()
+          .describe('The failing test\'s diagnostic block — error, code, expected/actual, failureType, the first '
+            + 'stack lines — plus the stdout printed just before it. Redacted and clipped at capture time '
+            + '(2 KB per test, 10 tests per run); the names of any tests left out are still in `reason`.'),
+      })).describe('The unit suite row\'s failing tests. Empty on a declared check.'),
+      testsTruncated: z.boolean()
+        .describe('True when the run kept fewer excerpts than it reported failing tests.'),
+      consoleErrors: z.array(z.object({
+        kind: z.string(),
+        message: z.string(),
+        source: z.string().nullable(),
+      })).describe('A declared check\'s console/page errors. Empty on the unit suite row.'),
+    },
+    annotations: readAnnotations,
+  }, async ({ proposalId, prNumber, slug, check }) => {
+    const guard = scopeGuard(READ_SCOPE);
+    if (guard) return guard;
+    const byId = Number.isInteger(proposalId) && proposalId > 0;
+    const byPr = Number.isInteger(prNumber) && prNumber > 0;
+    if (!byId && !byPr) {
+      return toolError(
+        'invalid_request',
+        'Pass proposalId (the id get_proposal reports — the last number in its webPath) or prNumber (its pull '
+        + 'request number, as a person sees it on GitHub), with slug when the same PR number could be a '
+        + 'proposal on more than one of the user\'s apps.'
+      );
+    }
+    if (slug !== undefined && !requireSlug(slug)) {
+      return toolError('invalid_request', 'slug must be a valid app slug — or omit it.');
+    }
+    let id = proposalId;
+    if (!byId) {
+      const resolved = await resolveProposalByPr(prNumber, slug);
+      if (resolved.error) return resolved.error;
+      id = resolved.proposalId;
+    }
+    const result = await callPlatform(baseUrl, accessToken, 'GET', `/api/sessions/${id}`);
+    if (!result.ok) return platformError(result);
+    const session = (result.body && result.body.session) || {};
+    if (byId && byPr && Number(session.pr_number) > 0 && Number(session.pr_number) !== prNumber) {
+      return toolError(
+        'invalid_request',
+        `Proposal ${proposalId} is PR #${Number(session.pr_number)}, not PR #${prNumber}. Pass one key or the `
+        + 'other.'
+      );
+    }
+    const results = Array.isArray(session.test_results) ? session.test_results : [];
+    const failed = results.filter((t) => t && t.status && t.status !== 'pass');
+    if (!failed.length) {
+      return toolError(
+        'no_failing_checks',
+        `No failing check carries output: the run's state is '${session.check_state || 'unknown'}'. Read `
+        + 'get_proposal.checks first — a passing or pending run has nothing for this tool to return.'
+      );
+    }
+    const wanted = typeof check === 'string' ? check.trim() : '';
+    let row = null;
+    if (wanted) {
+      row = failed.find((t) => String(t.name || t.path || '').toLowerCase() === wanted.toLowerCase());
+      if (!row) {
+        return toolError(
+          'unknown_check',
+          `No failing check is named "${wanted.slice(0, MAX_TITLE_CHARS)}". The failing checks are: `
+          + `${failed.slice(0, MAX_LIST_ITEMS).map((t) => `"${String(t.name || t.path || 'unnamed test')}"`).join(', ')}.`
+        );
+      }
+    } else if (failed.some(unitSuiteRow.isUnitSuiteRow)) {
+      row = failed.find(unitSuiteRow.isUnitSuiteRow);
+    } else if (failed.length === 1) {
+      row = failed[0];
+    } else {
+      return toolError(
+        'unknown_check',
+        `Several checks failed and none is the repo unit suite row. Name one: `
+        + `${failed.slice(0, MAX_LIST_ITEMS).map((t) => `"${String(t.name || t.path || 'unnamed test')}"`).join(', ')}.`
+      );
+    }
+    const isUnit = unitSuiteRow.isUnitSuiteRow(row);
+    const stored = Array.isArray(row.failureDetails) ? row.failureDetails : [];
+    const errors = Array.isArray(row.consoleErrors) ? row.consoleErrors : [];
+    return readResult('get_check_output', {
+      proposalId: Number(session.id),
+      prNumber: Number(session.pr_number) > 0 ? Number(session.pr_number) : null,
+      check: {
+        name: untrusted(row.name || row.path || 'unnamed test', MAX_TITLE_CHARS),
+        path: row.path ? untrusted(String(row.path), MAX_TITLE_CHARS) : null,
+        status: String(row.status || 'fail'),
+        advisory: !!row.advisory,
+      },
+      reason: untrusted(failureReasonOf(row), isUnit ? unitSuiteRow.FAILURE_DETAIL_MAX : MAX_FAILURE_REASON_CHARS) || null,
+      tests: (isUnit ? stored : []).slice(0, unitSuiteRow.MAX_UNIT_EXCERPTS).map((d) => ({
+        file: (d && d.file) ? untrusted(String(d.file), MAX_TITLE_CHARS) : null,
+        test: (d && d.test) ? untrusted(String(d.test), MAX_TITLE_CHARS) : null,
+        excerpt: (d && d.excerpt) ? untrusted(String(d.excerpt), unitSuiteRow.MAX_TEST_EXCERPT_CHARS) : null,
+      })),
+      testsTruncated: !!row.failureDetailsTruncated,
+      consoleErrors: (isUnit ? [] : errors).slice(0, MAX_LIST_ITEMS).map((e) => ({
+        kind: (e && typeof e.kind === 'string') ? e.kind : 'console',
+        message: untrusted((e && e.message) || '', MAX_FAILURE_REASON_CHARS) || null,
+        source: (e && e.source) ? untrusted(String(e.source), MAX_TITLE_CHARS) : null,
+      })),
+    });
   });
 
   server.registerTool('update_proposal_description', {
@@ -3791,7 +3973,7 @@ function registerTools(server, ctx) {
   // ── get_change ───────────────────────────────────────────────────────
   server.registerTool('get_change', {
     title: 'Get a change',
-    description: 'Where one of Homeroom\'s own changes stands: a change built inside Homeroom by its coding agent, as opposed to work pushed from a fork. Returns its status, whether a turn or a sync is running right now, its branch, pull request, staging preview, checks (failing test NAMES and why), votes, and a nextStep in plain words: follow it. Takes the change id, which get_proposal and list_my_proposals call proposalId. Name the change by its pull request number first when it has one: "PR #2151 (change 4223)". Read-only.',
+    description: 'Where one of Homeroom\'s own changes stands: a change built inside Homeroom by its coding agent, as opposed to work pushed from a fork. Returns its status, whether a turn or a sync is running right now, its branch, pull request, staging preview, checks (failing test NAMES, why, and their error excerpts — get_check_output reads one in full), votes, and a nextStep in plain words: follow it. Takes the change id, which get_proposal and list_my_proposals call proposalId. Name the change by its pull request number first when it has one: "PR #2151 (change 4223)". Read-only.',
     inputSchema: { changeId: changeIdSchema() },
     outputSchema: {
       ...changeSummarySchema,
@@ -3807,7 +3989,7 @@ function registerTools(server, ctx) {
       prUrl: z.string().nullable(),
       stagingUrl: z.string().nullable(),
       checks: z.unknown()
-        .describe('The checks snapshot, in the same shape get_proposal reports: state, phase, failing names, failures with reasons, stale, error.'),
+        .describe('The checks snapshot, in the same shape get_proposal reports: state, phase, failing names, failures with reasons and their excerpt details, detailsTruncated, stale, error.'),
       yesVotes: z.number().nullable(),
       noVotes: z.number().nullable(),
       votesRequired: z.number().nullable(),

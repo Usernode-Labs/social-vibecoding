@@ -1127,6 +1127,14 @@ function summarizeFailingChecks(checkState, testResults, max = FAILING_CHECKS_MA
       consoleError: Array.isArray(r.consoleErrors) && r.consoleErrors[0]
         ? String(r.consoleErrors[0].message || '').slice(0, 200)
         : null,
+      // #3978: the unit-suite row's first failing-test excerpt — the
+      // assertion message and expected/actual, which the grouped reason
+      // above deliberately does not carry. One test, tightly clipped; the
+      // rest is what a re-run of the named files prints.
+      excerpt: unitSuiteRow.isUnitSuiteRow(r)
+        && Array.isArray(r.failureDetails) && r.failureDetails[0] && r.failureDetails[0].excerpt
+        ? String(r.failureDetails[0].excerpt).replace(/\s+/g, ' ').slice(0, 400)
+        : null,
     })),
   };
 }
@@ -1139,7 +1147,10 @@ function buildFailingChecksBlock(checkState, testResults) {
   const blocking = { length: summary.blocking };
   const lines = summary.rows.map((r) => {
     const firstConsole = r.consoleError ? ` · first console error: ${r.consoleError}` : '';
-    return `- [${r.advisory ? 'advisory' : 'BLOCKING'}] "${r.name}"${r.path ? ` (path: ${r.path})` : ''} — ${r.reason}${firstConsole}`;
+    const line = `- [${r.advisory ? 'advisory' : 'BLOCKING'}] "${r.name}"${r.path ? ` (path: ${r.path})` : ''} — ${r.reason}${firstConsole}`;
+    // The unit-suite row also carries its first failing test's error (#3978):
+    // what the failure actually asserted, flattened onto one indented line.
+    return r.excerpt ? `${line}\n  first failing test's error: ${r.excerpt}` : line;
   });
   const more = failing.length > FAILING_CHECKS_MAX
     ? `\n(+${failing.length - FAILING_CHECKS_MAX} more failing)` : '';

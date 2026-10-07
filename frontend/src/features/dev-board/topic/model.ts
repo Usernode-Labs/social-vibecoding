@@ -110,6 +110,13 @@ export interface CheckRow {
    */
   keepReason?: boolean;
   reason?: string | null;
+  /**
+   * The repo unit suite row's per-test excerpts (request #3978): the file,
+   * the test name and the captured error text — assertion message,
+   * expected/actual, the first stack lines. Empty on every other row; a
+   * declared check's reason is its diagnosis.
+   */
+  details?: { file: string | null; test: string; excerpt: string }[];
   errors?: { kind: string; message: string; source?: string | null }[];
 }
 

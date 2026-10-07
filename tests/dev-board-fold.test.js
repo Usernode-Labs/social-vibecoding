@@ -1483,9 +1483,16 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // nothing to fold it into. The ceiling went 860 → 880 with it
   // (services/app-manifest.js), leaving 36 slots.
   //
+  // 844 → 845: +1 (#3978): the unit-suite row's per-test excerpts under
+  // "Why it failed". It shares the 9000093 route with the failing-check-door
+  // check above, but folding would have flipped that check's own assertion —
+  // its selector pins the door CLOSED (`:not([open])`), and the excerpt body
+  // only exists once the row carries details — so the excerpt reads as a
+  // check of its own on the same route. 845 leaves 35 slots.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 844);
+  checkCap.assertPinned(DAPP.tests.length, 845);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

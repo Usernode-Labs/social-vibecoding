@@ -1211,7 +1211,22 @@ async function assertPresence(page, t) {
         t.expectText
       );
     } catch { found = false; }
-    if (!found) return `Expected text "${t.expectText}" was not found on the page`;
+    if (!found) {
+      // #3978: say what WAS on the page, so the fix turn can tell "the
+      // element moved" from "the page never rendered" without a re-run. One
+      // probe, only on the failure path, and only a string answer counts —
+      // a runner that answers this probe with something else is not a page
+      // this snippet was meant to trust.
+      let pageText = '';
+      try {
+        const answer = await page.evaluate(() => (document.body ? document.body.innerText : ''));
+        if (typeof answer === 'string') pageText = answer;
+      } catch { /* no snippet: the reason still names the missing text */ }
+      const snippet = pageText.trim().replace(/\s+/g, ' ').slice(0, 200);
+      return snippet
+        ? `Expected text "${t.expectText}" was not found on the page; the page text was: "${snippet}"`
+        : `Expected text "${t.expectText}" was not found on the page`;
+    }
   }
   return '';
 }

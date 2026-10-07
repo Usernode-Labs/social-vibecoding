@@ -135,8 +135,9 @@ export function NoteBoxView({ box }: { box: NoteBox }): ReactNode {
  * than wrapping — a check's name can run to a paragraph), the path for a
  * pass, and the tags. A check that FAILED, or passed only after a retry,
  * opens its reason from the line's right end ("Why it failed"), where the
- * selector string and the console errors sit until somebody asks: that
- * detail is for whoever fixes the check, not for a voter reading the row.
+ * selector string, the unit suite's per-test excerpts and the console
+ * errors sit until somebody asks: that detail is for whoever fixes the
+ * check, not for a voter reading the row.
  */
 function CheckRowView({ r }: { r: CheckRow }): ReactNode {
   const glyphCls = `dev-ledger-check-glyph ${r.pass ? 'text-emerald-700 dark:text-emerald-400' : (r.advisory ? 'text-zinc-500 dark:text-zinc-400' : 'text-red-700 dark:text-red-400')} font-medium`;
@@ -175,6 +176,20 @@ function CheckRowView({ r }: { r: CheckRow }): ReactNode {
         <div className="dev-ledger-why-body">
           {r.reason || 'failed'}
           {r.path ? <span className="dev-ledger-why-path">{` · on ${r.path}`}</span> : null}
+          {/* #3978: the unit-suite row's failing tests, each with the
+              assertion text the run captured. The fold is the collapse —
+              these open with "Why it failed" like the console errors below. */}
+          {r.details && r.details.length ? (
+            <ul className="dev-ledger-why-details">
+              {r.details.map((d, i) => (
+                <li key={i}>
+                  <span className="dev-ledger-why-test">{d.test}</span>
+                  {d.file ? <span className="dev-ledger-why-file">{` · in ${d.file}`}</span> : null}
+                  {d.excerpt ? <span className="dev-ledger-why-excerpt">{d.excerpt}</span> : null}
+                </li>
+              ))}
+            </ul>
+          ) : null}
           {r.errors && r.errors.length ? (
             <ul className="dev-ledger-why-errors">
               {r.errors.map((e, i) => (
