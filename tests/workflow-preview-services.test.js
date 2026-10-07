@@ -40,8 +40,9 @@ stub('../src/services/kubernetes', {
   async deleteSecret(config, name) { calls.push(['delete-secret', name]); },
 });
 stub('../src/services/application-runtime', { ...require('../src/services/application-runtime'), mode: () => 'kubernetes' });
+const syncs = [];
 stub('../src/services/boot-failure-sync', {
-  async afterBootFailure() { return { sync: false }; },
+  async afterBootFailure(o) { syncs.push(o.session.id); return { sync: false }; },
   explain: () => 'Main changed the schema.',
 });
 const realVisuals = require('../src/services/visuals');
@@ -87,6 +88,17 @@ test('a built attempt returns its receipt; a failed one returns why, for the mac
   assert.equal(failed.ok, false);
   assert.equal(typeof failed.detail, 'string');
   assert.equal(failed.aboutMain, 'Main changed the schema.');
+});
+
+test('a build failure seen by a claim that is no longer live sets nothing off (no sync with main, no report)', async () => {
+  calls.length = 0;
+  syncs.length = 0;
+  state.build = Object.assign(new Error('restore killed'), { healthcheckFailed: true });
+  const input = { sessionId: 5, appId: 2, n: 5, head, db: 'app_shop_staging_s5_555555' };
+  let step = 0;
+  // The deploy checkpoint passes; by the failure the claim is gone.
+  await assert.rejects(handlers[WORK.prepare].run(ctx(input, { workId: 'w5', checkpoint: async () => { if (++step > 1) throw new LeaseLost(); } })), LeaseLost);
+  assert.equal(syncs.length, 0);
 });
 
 test('a cancelled attempt drops the database it was building and reports nothing', async () => {

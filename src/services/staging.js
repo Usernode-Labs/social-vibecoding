@@ -533,9 +533,13 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, { at
         const [imageResult, cloneResult] = await Promise.allSettled([buildImage(), cloneDatabase()]);
         const failed = [imageResult, cloneResult].find(result => result.status === 'rejected');
         if (failed) {
-          await dbManager.dropDatabase(stagingDbNameStr, { strict: true }).catch(err => {
-            log.warn('staging', 'Failed preparation clone cleanup failed', { sessionId: session.id, err: err.message });
-          });
+          // An attempt's database is the preview machine's to retire: a
+          // claim that lost its lease shares it with the retry now using it.
+          if (!attempt) {
+            await dbManager.dropDatabase(stagingDbNameStr, { strict: true }).catch(err => {
+              log.warn('staging', 'Failed preparation clone cleanup failed', { sessionId: session.id, err: err.message });
+            });
+          }
           throw failed.reason;
         }
         build = imageResult.value;

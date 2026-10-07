@@ -31,7 +31,7 @@ function loadStaging({ failGit = false, failRun = false, failHealth = false, liv
   };
   const orig = {};
   for (const [k, id] of Object.entries(ids)) orig[k] = require.cache[id];
-  const calls = { git: [], removed: [], cloned: [], queries: [], checkpoints: [] };
+  const calls = { git: [], removed: [], cloned: [], queries: [], checkpoints: [], order: [], dropped: [] };
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
   stub(ids.github, { getCloneUrl: async () => 'https://x/clone.git', isEnabled: () => true });
   stub(ids.appManifest, { read: () => ({}) });
@@ -40,7 +40,12 @@ function loadStaging({ failGit = false, failRun = false, failHealth = false, liv
     mergeForDeploy: () => ({ missingRequired: [], missingPrivateStagingDefault: [], env: {} }),
   });
   stub(ids.appLlmEnv, { platformApiBaseUrl: () => 'http://usernode:3000/api/app-platform' });
-  stub(ids.pool, { getPool: () => ({ query: async (text) => { calls.queries.push(String(text)); return { rows: [] }; } }) });
+  const query = async (text) => {
+    calls.queries.push(String(text));
+    if (/pg_advisory_(un)?lock/.test(String(text))) calls.order.push(/unlock/.test(String(text)) ? 'unlock' : 'lock');
+    return { rows: [] };
+  };
+  stub(ids.pool, { getPool: () => ({ query, connect: async () => ({ query, release() {} }) }) });
   stub(ids.caddy, { stagingHostname: (slug, u) => `${slug}--${u}.example.test`, warmCert: async () => ({ ok: true }) });
   stub(ids.docker, {
     execFileAsync: async (cmd, argv) => {
@@ -52,12 +57,12 @@ function loadStaging({ failGit = false, failRun = false, failHealth = false, liv
       return { stdout: '' };
     },
     buildImage: async () => {},
-    runContainer: async () => { if (failRun) throw new Error('container exited'); return 'cid-mine'; },
+    runContainer: async () => { calls.order.push('run'); if (failRun) throw new Error('container exited'); return 'cid-mine'; },
     waitForHealthy: async () => { if (failHealth) throw new Error('never healthy'); },
     // The container by the session's name, as the platform labelled it.
-    inspectContainer: async () => (liveAttempt == null ? { status: 'not_found', labels: {} }
+    inspectContainer: async () => (calls.order.push('inspect'), liveAttempt == null ? { status: 'not_found', labels: {} }
       : { status: 'running', labels: { 'social.usernode.io/preview-attempt': String(liveAttempt) } }),
-    stopAndRemove: async (name) => { calls.removed.push(name); return { removed: true }; },
+    stopAndRemove: async (name) => { calls.order.push('remove'); calls.removed.push(name); return { removed: true }; },
     getHostPort: async () => null,
     STAGING_STOP_GRACE_SEC: 2,
   });
@@ -66,7 +71,7 @@ function loadStaging({ failGit = false, failRun = false, failHealth = false, liv
     stagingDbName: (slug, u, hash) => `app_${slug}_staging_${u}_${String(hash).substring(0, 6)}`,
     databaseExists: async () => false,
     cloneDatabase: async (from, to) => { calls.cloned.push(to); return { password: 'pw' }; },
-    dropDatabase: async () => {},
+    dropDatabase: async (name) => { calls.dropped.push(name); },
     connectionUrl: () => 'postgres://x',
   });
   delete require.cache[ids.applicationRuntime];
@@ -127,5 +132,24 @@ test('on Docker, an older attempt never replaces a newer one\'s container', asyn
     await assert.rejects(subject.prepareAttempt({ appRuntime: 'docker' }, SERVING, APP, SHA, attempt(calls)),
       (err) => err.code === 'attempt_superseded');
     assert.ok(!calls.removed.includes('usernode-staging-widget--7'), 'the newer container is untouched');
+  } finally { restore(); }
+});
+
+test('on Docker, reading the newest attempt and replacing the container hold one lock (review finding)', async () => {
+  const { subject, calls, restore } = loadStaging({ liveAttempt: 2 });
+  try {
+    await subject.prepareAttempt({ appRuntime: 'docker' }, SERVING, APP, SHA, attempt(calls));
+    assert.deepEqual(calls.order,
+      ['lock', 'inspect', 'remove', 'run', 'unlock'], 'an older attempt cannot read the label, stall, then replace a newer container');
+  } finally { restore(); }
+});
+
+test('a failed preparation leaves the attempt\'s database to the machine: a retry of the attempt may be using it (review finding)', async () => {
+  const { subject, calls, restore } = loadStaging();
+  try {
+    const a = attempt(calls);
+    a.checkpoint = async (v) => { if (v.step === 'clone') throw Object.assign(new Error('work lease lost'), { name: 'LeaseLost' }); };
+    await assert.rejects(subject.prepareAttempt({ appRuntime: 'docker' }, SERVING, APP, SHA, a), /lease lost/);
+    assert.deepEqual(calls.dropped, []);
   } finally { restore(); }
 });

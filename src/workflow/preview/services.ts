@@ -79,6 +79,10 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
             if (await cancelledByMachine(ctx.workId)) await dbManager().dropDatabase(input.db).catch(() => {});
             throw err;
           }
+          // A failure seen by a claim that is no longer the live one (its
+          // lease ran out, or the machine cancelled it) reports nothing and
+          // sets nothing off: checkpoint throws for it.
+          await ctx.checkpoint({ step: 'failed', db: input.db });
           const detail = visuals().summarizeBootFailure(err);
           const infrastructure = !!legacy('services/deploy-failure').bootFailureIsInfrastructure(err);
           const sync = legacy('services/boot-failure-sync');
