@@ -491,51 +491,17 @@ connector registered under some other name.
 
 // server.js has three parts that differ by template; everything around them
 // (the sign-in check, the hosted-asset handler, the share-link fallback) is
-// the same for every new app. EMPTY_SERVER is the Press! example, exactly
-// as the scaffold always wrote it. STARTER_SERVER mounts a starter's api.js
+// the same for every new app. EMPTY_SERVER carries no routes and no tables:
+// the starter screen is static (#4047 removed the Press! demo it served),
+// so there is nothing for the scaffold to mount until the app's first real
+// feature adds its own. STARTER_SERVER mounts a starter's api.js
 // (services/app-templates.js) and adds the graceful shutdown the platform
 // conventions ask for.
 const EMPTY_SERVER = {
   health: `app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 `,
-  routes: `// Button press
-app.post('/api/press', async (req, res) => {
-  try {
-    await pool.query(\`
-      INSERT INTO presses (user_id, username) VALUES ($1, $2)
-    \`, [req.user.id, req.user.username]);
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Leaderboard
-app.get('/api/leaderboard', async (_req, res) => {
-  try {
-    const { rows } = await pool.query(\`
-      SELECT username, COUNT(*) as presses
-      FROM presses
-      GROUP BY username
-      ORDER BY presses DESC
-      LIMIT 50
-    \`);
-    res.json({ leaderboard: rows });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-`,
+  routes: '',
   start: `async function start() {
-  await pool.query(\`
-    CREATE TABLE IF NOT EXISTS presses (
-      id SERIAL PRIMARY KEY,
-      user_id INTEGER NOT NULL,
-      username VARCHAR(255) NOT NULL,
-      created_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  \`);
   const server = app.listen(port, () => console.log(\`Listening on :\${port}\`));
   // Let Envoy retire idle upstream connections at 60s, with a 15s margin.
   server.keepAliveTimeout = 75_000;
@@ -607,7 +573,7 @@ api.routes(app, pool);
 // Discover and the project's page show) and the first sentence of
 // CLAUDE.md's About section, so the coding agent starts from the same
 // intent. Absent, both stay as they were.
-function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = null, description = null, template = null, sketch = null } = {}) {
+function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = null, description = null, template = null, sketch = null, iconEmoji = null } = {}) {
   const canonicalRepoFile = getCanonicalRepoFile(repoUrl);
   // `template` is the create screen's starter (services/app-templates.js).
   // Absent or `empty` writes exactly what every new app always got; a
@@ -619,9 +585,25 @@ function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = n
   const about = typeof description === 'string' && description.trim() ? description.trim() : null;
   // The first session's card (services/app-sketch.js): its emoji is the
   // project's icon, so dapp.json says so from the first commit (every deploy
-  // reconciles the icon from it). A starter's own icon comes first.
+  // reconciles the icon from it). A starter's own icon comes first; with
+  // neither, a caller's iconEmoji stands in — the repo heal passes the app
+  // row's icon_emoji (#4047) — and becomes dapp.json's icon block too, so
+  // the first deploy's reconcile (app-manifest reconcileAppIcon) keeps the
+  // icon the app already had instead of clearing it from a manifest without
+  // one.
   const card = sketch ? require('./app-sketch').cardOf(sketch.design) : null;
-  const icon = starter ? { emoji: starter.icon } : (card ? { emoji: card.emoji } : null);
+  const callerEmoji = typeof iconEmoji === 'string' && iconEmoji.trim() ? iconEmoji.trim() : null;
+  const icon = starter ? { emoji: starter.icon }
+    : (card ? { emoji: card.emoji }
+    : (callerEmoji ? { emoji: callerEmoji } : null));
+  // The welcome card's thumbnail tile, the app's face on Home
+  // (features/home/app-grid.tsx .app-icon-tile): the same emoji dapp.json's
+  // icon block carries, else the name's first letter the way the home tile
+  // falls back. Interpolated once at create time; the screen is placeholder
+  // content the first real change deletes.
+  const tileFace = icon
+    ? escapeHtml(icon.emoji)
+    : `<span class="text-muted">${escapeHtml(appName.charAt(0).toUpperCase())}</span>`;
   const files = [
     {
       path: 'CLAUDE.md',
@@ -687,19 +669,16 @@ the platform fixes the base commit, and none of this applies.
 
 ${starter ? starterClaudeSection(starter) : `## Starter template
 
-The screen this app currently ships — the hero, the "What's already
-working" card, and the Press! example (the demo markup in
-\`public/index.html\`, the \`/api/press\` and \`/api/leaderboard\` routes, and
-the \`presses\` table bootstrap in \`server.js\`) — is placeholder content
-from the Homeroom starter template, not product intent.
+The screen this app currently ships — the "Starter template" hero with
+the app's thumbnail tile and the plain-English note on how the app gets
+built (by asking Homeroom bot) — is placeholder content from the
+Homeroom starter template, not product intent.
 
 When the user asks for their first real feature, REPLACE the template
 screen rather than building alongside it:
 
 - remove the \`usernode-starter-notice@1\` block in \`public/index.html\`
   (both sentinel comments and everything between them),
-- remove or repurpose the "Try the example" card, its demo endpoints and
-  the \`presses\` table as appropriate,
 - rewrite \`README.md\` to describe the actual app.
 
 Keep the \`usernode-dev-console@1\` forwarder \`<script>\` when rewriting the
@@ -754,10 +733,8 @@ The scaffold is a small working demo that proves the plumbing works:
 - **Sign-in** — the server verifies the platform-issued user token
   (an RS256 JWT) on every request, so the app already knows who is
   using it. No accounts to build.
-- **Database** — the app has its own private Postgres database; the
-  demo stores button presses in a \`presses\` table.
-- **Live API** — two example routes (\`/api/press\`,
-  \`/api/leaderboard\`) read and write through a real Express server.
+- **Database** — the app has its own private Postgres database, ready
+  to store things.
 - **Styling** — Tailwind CSS, precompiled by \`npm run build\` during
   image creation with either Kubernetes/Paketo or standalone Docker, in a
   light and a dark look that follow the viewer's Homeroom theme.
@@ -1256,156 +1233,28 @@ ${server.start}start().catch(err => { console.error(err); process.exit(1); });
 </head>
 <body class="min-h-screen bg-ground text-fg">
   <!-- Built from the design kit in styles/tailwind-input.css: colour tokens
-       (bg-ground, text-muted, bg-accent, ...) that are right in both looks,
-       and components (btn-primary, list, card, state-empty, ...). The real
-       app keeps the kit; CLAUDE.md's "## Design" says how. -->
+       that are right in both looks, and components for buttons, fields,
+       lists, cards and data states. The real app keeps the kit; CLAUDE.md's
+       "## Design" says how. -->
+  <!-- (Named in prose on purpose: Tailwind compiles any class-name word in
+       these files, comments included, and the starter should ship only the
+       components its screen uses.) -->
   <main class="mx-auto flex max-w-md flex-col gap-8 px-4 py-10">
 
     <!-- usernode-starter-notice@1 — starter-template messaging. When building
          the user's real app, replace this whole screen and delete this block,
          both sentinel comments included. -->
     <section class="card flex flex-col items-start gap-3">
+      <div class="flex h-20 w-20 items-center justify-center rounded-2xl border border-line bg-ground text-title">${tileFace}</div>
       <span class="rounded-full bg-raised px-3 py-1 text-small font-medium text-muted">Starter template</span>
       <h1 class="text-title">${escapeHtml(appName)}</h1>
       <p class="text-body text-muted">Welcome to your new app! Everything on this screen is placeholder content that came with it.</p>
       <p class="text-body text-muted">To change this app, ask Homeroom bot: tap the <strong class="font-semibold text-fg">Homeroom icon</strong>, then <strong class="font-semibold text-fg">Suggest an improvement</strong>. Describe what you'd like in plain English, and it will be turned into your real app.</p>
     </section>
-
-    <section>
-      <h2 class="section-label">What's already working</h2>
-      <ul class="list">
-        <li class="list-row items-start">
-          <svg class="mt-0.5 h-5 w-5 shrink-0 text-accent" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-7 7a1 1 0 0 1-1.4 0l-3-3a1 1 0 1 1 1.4-1.4L9 11.6l6.3-6.3a1 1 0 0 1 1.4 0Z" clip-rule="evenodd"/></svg>
-          <div>
-            <p class="text-body font-medium">Sign-in</p>
-            <p class="text-small text-muted">You're signed in through Homeroom automatically, with no accounts to build.</p>
-          </div>
-        </li>
-        <li class="list-row items-start">
-          <svg class="mt-0.5 h-5 w-5 shrink-0 text-accent" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-7 7a1 1 0 0 1-1.4 0l-3-3a1 1 0 1 1 1.4-1.4L9 11.6l6.3-6.3a1 1 0 0 1 1.4 0Z" clip-rule="evenodd"/></svg>
-          <div>
-            <p class="text-body font-medium">Database</p>
-            <p class="text-small text-muted">Your app has its own private database, ready to store things.</p>
-          </div>
-        </li>
-        <li class="list-row items-start">
-          <svg class="mt-0.5 h-5 w-5 shrink-0 text-accent" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-7 7a1 1 0 0 1-1.4 0l-3-3a1 1 0 1 1 1.4-1.4L9 11.6l6.3-6.3a1 1 0 0 1 1.4 0Z" clip-rule="evenodd"/></svg>
-          <div>
-            <p class="text-body font-medium">Live API</p>
-            <p class="text-small text-muted">The example below talks to a real server. Try it.</p>
-          </div>
-        </li>
-      </ul>
-    </section>
     <!-- /usernode-starter-notice@1 -->
-
-    <section class="flex flex-col items-center gap-5">
-      <div class="w-full px-1">
-        <h2 class="text-heading">Try the example</h2>
-        <p class="text-small text-muted">This example will be replaced</p>
-      </div>
-
-      <button id="press-btn" class="btn-primary h-32 w-32 rounded-full text-title active:scale-95">Press!</button>
-
-      <p id="count" class="min-h-6 text-body text-muted"></p>
-
-      <div class="w-full">
-        <h3 class="section-label">Leaderboard</h3>
-        <!-- Anything that loads data shows exactly one of these at a time:
-             loading, the data, empty (it loaded, and there is nothing yet)
-             or error (it did not load). The script below switches them. -->
-        <div id="leaderboard-loading" role="status">
-          <span class="sr-only">Loading the leaderboard</span>
-          <div class="list">
-            <div class="list-row"><div class="skeleton h-4 w-1/2"></div></div>
-            <div class="list-row"><div class="skeleton h-4 w-1/3"></div></div>
-            <div class="list-row"><div class="skeleton h-4 w-2/5"></div></div>
-          </div>
-        </div>
-        <ol id="leaderboard" class="list" hidden></ol>
-        <div id="leaderboard-empty" class="state-empty" hidden>
-          <p class="text-heading">No presses yet</p>
-          <p class="text-body text-muted">Press the button to put your name on the board.</p>
-          <button id="leaderboard-press" class="btn-secondary">Press it</button>
-        </div>
-        <div id="leaderboard-error" class="state-error" hidden>
-          <svg class="h-6 w-6 text-danger" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Zm-8-5a1 1 0 0 1 1 1v4a1 1 0 1 1-2 0V6a1 1 0 0 1 1-1Zm0 10a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" clip-rule="evenodd"/></svg>
-          <p class="text-heading">Couldn't load the leaderboard</p>
-          <p class="text-body text-muted">Pressing still works, and every press is saved.</p>
-          <button id="leaderboard-retry" class="btn-secondary">Retry</button>
-        </div>
-      </div>
-    </section>
 
     <p class="text-center text-small text-muted">Built on Homeroom. This template screen disappears once you build your real app.</p>
   </main>
-
-  <script>
-    const params = new URLSearchParams(window.location.search);
-    const token = params.get('token') || '';
-    const headers = token ? { 'x-usernode-token': token } : {};
-    const count = document.getElementById('count');
-
-    // The leaderboard's states, one shown at a time. Empty only when the
-    // load worked and found nothing; a failure is the error state, never
-    // "No presses yet".
-    const views = {
-      loading: document.getElementById('leaderboard-loading'),
-      list: document.getElementById('leaderboard'),
-      empty: document.getElementById('leaderboard-empty'),
-      error: document.getElementById('leaderboard-error'),
-    };
-    function show(state) {
-      for (const [name, el] of Object.entries(views)) el.hidden = name !== state;
-    }
-
-    async function loadLeaderboard() {
-      let leaderboard;
-      try {
-        const res = await fetch('/api/leaderboard', { headers });
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        ({ leaderboard } = await res.json());
-      } catch {
-        show('error');
-        return;
-      }
-      // People's names go in as text, never as HTML.
-      views.list.replaceChildren(...leaderboard.map((r, i) => {
-        const row = document.createElement('li');
-        row.className = 'list-row justify-between';
-        const name = document.createElement('span');
-        name.textContent = (i + 1) + '. ' + r.username;
-        const presses = document.createElement('span');
-        presses.className = 'tabular-nums text-muted';
-        presses.textContent = r.presses;
-        row.append(name, presses);
-        return row;
-      }));
-      const total = leaderboard.reduce((s, r) => s + parseInt(r.presses, 10), 0);
-      count.textContent = total + (total === 1 ? ' press so far' : ' presses so far');
-      show(leaderboard.length ? 'list' : 'empty');
-    }
-
-    async function press() {
-      try {
-        const res = await fetch('/api/press', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...headers },
-        });
-        if (res.ok) loadLeaderboard();
-        else if (res.status === 401) count.textContent = 'Sign in to press!';
-      } catch {}
-    }
-
-    document.getElementById('press-btn').addEventListener('click', press);
-    document.getElementById('leaderboard-press').addEventListener('click', press);
-    document.getElementById('leaderboard-retry').addEventListener('click', () => {
-      show('loading');
-      loadLeaderboard();
-    });
-
-    loadLeaderboard();
-  </script>
 </body>
 </html>
 `,
