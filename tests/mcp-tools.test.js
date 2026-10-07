@@ -3123,12 +3123,20 @@ test('a failing unit suite returns each test\'s error excerpt beside its unchang
   });
   const unit = shaped.failures[0];
   assert.equal(unit.reason, `<untrusted-content>${reason}</untrusted-content>`, 'reason reads exactly as before');
-  assert.equal(unit.details.length, 10, 'capped at ten tests');
+  // The row stored 22 excerpts; the answer previews the first few and
+  // get_check_output returns the whole stored set. The field itself is on
+  // every entry — the zod output schema reads it on each one (#2137).
+  assert.equal(unit.details.length, unitSuiteRow.MAX_INLINE_EXCERPT_TESTS, 'preview holds only the first excerpts');
   assert.equal(unit.details[0].file, '<untrusted-content>tests/b.test.js</untrusted-content>');
   assert.equal(unit.details[0].test, '<untrusted-content>bot hello</untrusted-content>');
   assert.match(unit.details[0].excerpt, /^<untrusted-content>error: \|-\n {2}1 !== 2/);
-  assert.ok(unit.details.every((d) => d.excerpt.length < 1600), 'each excerpt re-capped at read time');
-  assert.equal('details' in shaped.failures[1], false, 'a row without excerpts keeps its old shape');
+  // 4000-character excerpts are re-capped at read time: the wrapper adds 37
+  // characters around the clipped text, and clip() marks the cut.
+  const wrap = '<untrusted-content></untrusted-content>'.length;
+  const cut = '… [truncated]'.length;
+  assert.ok(unit.details.every((d) => (d.excerpt || '').length <= unitSuiteRow.MAX_INLINE_EXCERPT_CHARS + wrap + cut),
+    'each excerpt re-capped at read time');
+  assert.deepEqual(shaped.failures[1].details, [], 'a row without excerpts keeps its old shape');
 });
 
 test('checks degrade to a knowable nothing rather than a guess', () => {
