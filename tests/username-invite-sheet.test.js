@@ -61,7 +61,7 @@ const MADE_PROPS = {
 // invite by username is still sent from the project's Members dialog
 // (features/dialogs/members-controller.js), and accepted as below.
 
-test('1. the made screen\'s sheet is Share link alone; a username is invited from Members', () => {
+test('1. the made screen\'s sheet is a link alone; a username is invited from Members', () => {
   const made = loadTsx(MADE);
   assert.equal(made.sentLine, undefined);
   assert.equal(made.inviteError, undefined);
@@ -73,7 +73,9 @@ test('1. the made screen\'s sheet is Share link alone; a username is invited fro
   assert.match(read('frontend/src/features/dialogs/members-controller.js'), /\/invites`/);
   withStorage({}, () => {
     const html = renderToHtml(createElement(made.InviteSheet, MADE_PROPS));
-    assert.match(html, />Share link</);
+    // Copy link, with Share link beside it where there is a share sheet
+    // (#4180, tests/first-session-copy-link.test.js); none here.
+    assert.match(html, /data-first-session-invite-action="copy"[^>]*>Copy link</);
     assert.doesNotMatch(html, /username/i);
   });
 });

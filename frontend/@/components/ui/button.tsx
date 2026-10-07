@@ -166,6 +166,12 @@ const buttonVariants = cva('', {
       // not an outline, because the language fills its controls.
       pillAccent: 'rounded-full bg-violet-600 hover:bg-violet-500',
       pillNeutral: 'rounded-full bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700',
+      // The neutral pill on a zinc-100 ground, where `pillNeutral`'s own
+      // zinc-100 fill vanishes: white and lifted by a shadow in light, as the
+      // made screen's second button is drawn, and `pillNeutral`'s fills in
+      // dark. Call site: the first-session invite sheet's second button
+      // (features/first-session/made.tsx InviteSheet, #4180).
+      pillRaised: 'rounded-full bg-white shadow-sm hover:bg-zinc-50 dark:bg-zinc-800 dark:hover:bg-zinc-700',
       pillDanger: 'rounded-full bg-red-500/10 hover:bg-red-500/15',
       // #settings-remove — the bordered destructive button.
       destructive: 'rounded-lg border border-red-400 dark:border-red-700',

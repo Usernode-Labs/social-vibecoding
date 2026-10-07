@@ -31,7 +31,8 @@
  * (features/app-context/invite-pane.tsx, with live links, their limits, an
  * invite by username and the project's joining rule, which stays where it
  * is): what they'll get, "<maker> is making <name>" while its first version
- * is not live, with the note edited in place, then Share link. Nothing else:
+ * is not live, with the note edited in place, then Share link and Copy link
+ * (inviteActions: which one leads depends on the device). Nothing else:
  * somebody brand new knows nobody on Homeroom to invite by username yet, and
  * the joining rule is the project's business later (both taken out after
  * Evan's run-through, 5 October 2026). The link it makes works until it is
@@ -75,6 +76,7 @@ import { Wordmark } from '@/components/ui/wordmark';
 import { askForPingWhileBotBuilds } from '../dialogs/ping-ask';
 import type { HomeroomBotPlanQuestion } from '../messages/types';
 
+import { copyText, inviteText } from './copy-invite';
 import type { Made, MakeEntry } from './make';
 import { SketchCard, showsCard, useSketch } from './sketch-card';
 
@@ -245,6 +247,34 @@ export function linkNote(links: unknown): string | null {
   return mine ? (mine as { note: string }).note : null;
 }
 
+/** One of the sheet's two ways to send the link. */
+export type InviteAction = 'share' | 'copy';
+
+/**
+ * The sheet's buttons, the main one first (#4180). On a phone or tablet the
+ * share sheet leads, with Copy link beside it. On a computer Copy link leads,
+ * with Share… beside it: a desktop share sheet (Safari's: AirDrop, Mail,
+ * Messages, Notes) has no plain way to copy the link. With no share sheet at
+ * all, Copy link alone.
+ */
+export function inviteActions(touch: boolean, canShare: boolean): InviteAction[] {
+  if (!canShare) return ['copy'];
+  return touch ? ['share', 'copy'] : ['copy', 'share'];
+}
+
+/** PlatformUI.isTouch(): a phone or tablet, as the native kit tells them apart. */
+function onTouch(): boolean {
+  const ui = (globalThis as unknown as { PlatformUI?: { isTouch?: () => boolean } }).PlatformUI;
+  return typeof ui?.isTouch === 'function' && ui.isTouch();
+}
+
+function hasShareSheet(): boolean {
+  return typeof navigator !== 'undefined' && typeof navigator.share === 'function';
+}
+
+// How long "Copied" stays on the sheet before it goes, so it is seen.
+const COPIED_MS = 1200;
+
 export function InviteSheet({ made, me, making = true, onClose, onSent }: {
   made: Made;
   me: string;
@@ -259,6 +289,9 @@ export function InviteSheet({ made, me, making = true, onClose, onSent }: {
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [shown, setShown] = useState(false);
+  const [copied, setCopied] = useState(false);
+  // Which button leads, read once as the sheet opens (inviteActions).
+  const [actions] = useState(() => inviteActions(onTouch(), hasShareSheet()));
   const linkRef = useRef<string | null>(null);
   // Whether the note in the box is theirs from this device (kept, or typed
   // here); until it is, a note on one of their own links replaces it.
@@ -311,6 +344,14 @@ export function InviteSheet({ made, me, making = true, onClose, onSent }: {
     return linkRef.current;
   }, [made.slug, note]);
 
+  // The link went out, shared or copied: the note kept, posted once as their
+  // first message in the group chat, and the made screen told.
+  const sent = useCallback(async () => {
+    keepNote(made.slug, note);
+    await postNote();
+    onSent();
+  }, [made.slug, note, postNote, onSent]);
+
   const shareLink = useCallback(async () => {
     if (busy) return;
     setBusy(true); setError(null); setStatus(null);
@@ -326,18 +367,39 @@ export function InviteSheet({ made, me, making = true, onClose, onSent }: {
         }
       }
       if (!shared) {
-        await navigator.clipboard.writeText(note.trim() ? `${note.trim()} ${url}` : url);
+        await navigator.clipboard.writeText(inviteText(note, url));
         setStatus('Link copied. Paste it in your group chat.');
       }
-      keepNote(made.slug, note);
-      await postNote();
-      onSent();
+      await sent();
     } catch {
       setError('Could not share the link. Try again.');
     } finally {
       setBusy(false);
     }
-  }, [busy, link, me, made.name, making, note, postNote, onSent]);
+  }, [busy, link, me, made.name, making, note, sent]);
+
+  // Copy link: the note and the link, put on the clipboard inside the press
+  // even while the link is still being made (copyText: Safari copies nothing
+  // after the press has waited on a request), then what a share does.
+  const copyLink = useCallback(async () => {
+    if (busy) return;
+    setBusy(true); setError(null); setStatus(null);
+    try {
+      const ready = linkRef.current;
+      const outcome = await copyText(ready ? inviteText(note, ready)
+        : link().then((url) => (url ? inviteText(note, url) : null)));
+      if (outcome === 'no-link') { setError((was) => was || 'Could not make a link. Try again.'); return; }
+      if (outcome === 'refused') { setError('Could not copy the link. Try again.'); return; }
+      setCopied(true);
+      setStatus('Link copied. Paste it in your group chat.');
+      await new Promise((done) => { setTimeout(done, COPIED_MS); });
+      await sent();
+    } catch {
+      setError('Could not copy the link. Try again.');
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, link, note, sent]);
 
   const tile = made.emoji || made.name.slice(0, 1);
   return (
@@ -382,10 +444,31 @@ export function InviteSheet({ made, me, making = true, onClose, onSent }: {
           </div>
         </div>
         <p className="mt-2 text-[13px] text-zinc-500 dark:text-zinc-400">Your note is also your first message in the group chat.</p>
-        <div className="mt-4">
-          <Button type="button" onClick={() => { void shareLink(); }} disabled={busy} layout="full" variant="pillAccent" size="pillLg" ink="solidLate" className="flex items-center justify-center disabled:opacity-60">
-            Share link
-          </Button>
+        {/* The main button, then the other way beside it (inviteActions), a
+            white pill on the sheet's grey (pillRaised). Not dimmed while
+            "Copied" shows: busy then only holds off a second press. */}
+        <div className="mt-4 flex gap-2.5">
+          {actions.map((action, i) => {
+            const label = action === 'share' ? (i === 0 ? 'Share link' : 'Share…') : copied ? '✓ Copied' : 'Copy link';
+            const press = () => { void (action === 'share' ? shareLink() : copyLink()); };
+            const main = i === 0;
+            return (
+              <Button
+                key={action}
+                type="button"
+                data-first-session-invite-action={action}
+                onClick={press}
+                disabled={busy && !copied}
+                layout={main ? 'flex' : 'shrink'}
+                variant={main ? 'pillAccent' : 'pillRaised'}
+                size="pillLg"
+                ink={main ? 'solidLate' : 'neutral'}
+                className="flex items-center justify-center disabled:opacity-60"
+              >
+                {label}
+              </Button>
+            );
+          })}
         </div>
         {status ? <p role="status" data-first-session-invite-status="" className="mt-3 text-center text-[14px] text-emerald-700 dark:text-emerald-400">{status}</p> : null}
         {error ? <p id="first-session-invite-error" role="alert" className="mt-3 text-center text-[14px] text-red-600 dark:text-red-400">{error}</p> : null}

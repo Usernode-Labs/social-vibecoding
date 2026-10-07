@@ -360,7 +360,9 @@ test('after Make it: the build\'s step, then one invite, and the second button s
     made: { slug: 'page-turners', name: 'Page Turners', emoji: '📚', description: null, example: null, conversationId: 3 },
     me: 'alex', onClose() {}, onSent() {},
   }));
-  assert.match(sheet, />Share link</);
+  // Copy link, and Share link where the device has a share sheet (#4180,
+  // tests/first-session-copy-link.test.js).
+  assert.match(sheet, />Copy link</);
   assert.doesNotMatch(sheet, /username|say yes|goes live/i);
   assert.match(read('frontend/src/features/app-context/invite-pane.tsx'), /joiningRule/, 'the project\'s own pane keeps the rule');
   assert.match(src, /Your note is also your first message in the group chat\./);
