@@ -987,6 +987,12 @@ value = "build"
     // is per app, so it is added beside them rather than inside them.
     ...getConnectorScaffoldFiles(),
     ...(canonicalRepoFile ? [canonicalRepoFile] : []),
+    // The `frontend-design` skill (services/design-skill.js): App bench
+    // context pack 4's files, at the path the bench put them, which the
+    // bot's spec and build are told to read. A new repository's only, not
+    // an import's or a fork's (getConnectorScaffoldFiles): those bring their
+    // own look.
+    ...require('./design-skill').skillFiles(),
     {
       path: 'server.js',
       content: `const express = require('express');

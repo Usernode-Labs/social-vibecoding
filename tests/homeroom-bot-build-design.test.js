@@ -25,6 +25,7 @@ const live = require('../src/services/homeroom-bot-live');
 const prompts = require('../src/services/prompts');
 const { IN_LOOP_BROWSER_GUIDANCE } = require('../src/services/in-loop-browser');
 const credentialStore = require('../src/services/credential-store');
+const designSkill = require('../src/services/design-skill');
 const agentModels = require('../src/services/agent-models');
 
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
@@ -109,7 +110,11 @@ test('a first version\'s spec decides accent, signature element and layout; ever
   assert.ok(first.includes(`- ${brief}`));
   assert.ok(other.includes(`- ${prompts.SPEC_DESIGN_BRIEF}`));
   assert.ok(!other.includes(brief));
-  assert.equal(first.replace(brief, prompts.SPEC_DESIGN_BRIEF), other, 'the brief is the only difference');
+  // And App bench context pack 4's nudge to read the frontend-design skill
+  // (services/design-skill.js; tests/design-skill.test.js).
+  const nudge = live.guidanceLines(designSkill.stageGuidance('spec', { firstVersion: true })).join('\n');
+  assert.equal(first.replace(brief, prompts.SPEC_DESIGN_BRIEF).replace(`\n${nudge}`, ''), other,
+    'the brief and the skill\'s nudge are the only differences');
   assert.equal(live.specPrompt({ seed: 'ISSUE', buildNote: 'plan', firstVersion: false }), other);
 });
 
@@ -134,7 +139,11 @@ test('a first version\'s build uses the starter\'s design kit and records its lo
     assert.ok(first.includes(lines));
     assert.ok(first.indexOf(lines) < first.indexOf('Make exactly that change, and nothing else:'),
       'part of "that change", before the contract that forbids adding notes');
-    assert.equal(first.replace(`${lines}\n`, ''), other, 'the record is the only difference');
+    // And App bench context pack 4's nudge and look-and-fix loop
+    // (services/design-skill.js; tests/design-skill.test.js).
+    const pack4 = live.guidanceLines(designSkill.stageGuidance('build', { firstVersion: true })).join('\n');
+    assert.equal(first.replace(`${lines}\n`, '').replace(`${pack4}\n`, ''), other,
+      'the record, the skill\'s nudge and the look-and-fix loop are the only differences');
     // Every build, a later one included, reads the note through the guidance.
     for (const p of [first, other]) {
       assert.match(p, /If the app's `CLAUDE\.md` has a "## Design" section \(or a `Design:` note under "App-specific conventions"\), that is this app's look/);

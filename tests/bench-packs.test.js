@@ -13,6 +13,7 @@ const packs = require('../src/services/bench/packs');
 const progress = require('../src/services/bench/progress');
 const live = require('../src/services/homeroom-bot-live');
 const bot = require('../src/services/homeroom-bot');
+const designSkill = require('../src/services/design-skill');
 
 test('a pack writes only relative paths outside .git/ and .github/', () => {
   for (const ok of ['CLAUDE.md', '.claude/skills/warm-theme/SKILL.md', 'design/notes.md', 'public/theme.css']) {
@@ -65,7 +66,15 @@ test('a pack\'s guidance goes to each stage, with the stage\'s own after it, und
 
   const spec = live.specPrompt({ seed: { title: 'Bread', body: 'Bake bread' }, buildNote: 'n', firstVersion: true, guidance: 'Warm colours.' });
   assert.match(spec, /ADDITIONAL GUIDANCE[\s\S]*Warm colours\./);
-  assert.doesNotMatch(live.specPrompt({ seed: { title: 'Bread', body: 'Bake bread' }, buildNote: 'n', firstVersion: true }), /ADDITIONAL GUIDANCE/);
+  // Pack 0 is today's platform: a first version's spec says the design
+  // skill's nudge under the heading (services/design-skill.js), and a pack's
+  // text follows it there, under the same one heading.
+  const none = live.specPrompt({ seed: { title: 'Bread', body: 'Bake bread' }, buildNote: 'n', firstVersion: true });
+  assert.ok(none.includes(live.guidanceLines(designSkill.NUDGE).join('\n')));
+  assert.ok(spec.indexOf(designSkill.NUDGE) < spec.indexOf('Warm colours.'));
+  assert.equal(spec.match(/==== ADDITIONAL GUIDANCE/g).length, 1);
+  assert.doesNotMatch(live.specPrompt({ seed: { title: 'Bread', body: 'Bake bread' }, buildNote: 'n' }), /ADDITIONAL GUIDANCE/,
+    'a later spec, of a repository without the skill, says nothing there');
 });
 
 test('a pack\'s files sit on the starter\'s, replacing one of the same path', () => {

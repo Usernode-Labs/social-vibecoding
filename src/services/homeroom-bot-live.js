@@ -69,6 +69,7 @@ const {
 const specHtml = require('./spec-html');
 const { IN_LOOP_BROWSER_GUIDANCE } = require('./in-loop-browser');
 const buildContract = require('./build-contract');
+const designSkill = require('./design-skill');
 
 // A staging copy of the platform starts from production's settings, live
 // list included. Posting on real GitHub issues and pushing real branches
@@ -312,8 +313,8 @@ function screenshotNote(seed) {
 // The App bench studio's context packs (services/bench/packs.js): guidance
 // an admin adds to the bot's first-version prompts on the benchmark, said
 // under one heading in the triage's, the spec's and the build's. Production
-// never passes any, and then nothing is added: the prompts are byte for byte
-// what they are without this.
+// says only the platform's own design-skill text there (stageGuidanceLines
+// below); with neither, nothing is added.
 function guidanceLines(guidance) {
   const text = String(guidance || '').trim();
   if (!text) return [];
@@ -325,6 +326,15 @@ function guidanceLines(guidance) {
     '',
     '==== END ADDITIONAL GUIDANCE ====',
   ];
+}
+
+// The spec's or the build's additional guidance: what the platform says
+// about the frontend-design skill (services/design-skill.js: a first
+// version's nudge and look-and-fix loop, App bench context pack 4 made live),
+// then a bench pack's, less any paragraph the first already says. A later
+// build's nudge arrives in `guidance` (buildAndPropose).
+function stageGuidanceLines(stage, { firstVersion = false, guidance = null } = {}) {
+  return guidanceLines(designSkill.guidanceWith(designSkill.stageGuidance(stage, { firstVersion }), guidance));
 }
 
 /*
@@ -417,7 +427,7 @@ function specPrompt({
     '- Written without em dashes: use a comma, a colon or a full stop. The group reads it, and its "User-facing',
     '  changes" half can become the change\'s description.',
     `- ${firstVersion ? FIRST_VERSION_SPEC_DESIGN_BRIEF : SPEC_DESIGN_BRIEF}`,
-    ...guidanceLines(guidance),
+    ...stageGuidanceLines('spec', { firstVersion, guidance }),
     ...requestRulesLines(),
     '',
     'Nobody is available to answer questions: this run is unattended, and the build starts as soon as you finish.',
@@ -471,7 +481,7 @@ function specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles, guidanc
     '- Written without em dashes: use a comma, a colon or a full stop. The group reads it, and its "User-facing',
     '  changes" half can become the change\'s description.',
     `- ${firstVersion ? FIRST_VERSION_SPEC_DESIGN_BRIEF : SPEC_DESIGN_BRIEF}`,
-    ...guidanceLines(guidance),
+    ...stageGuidanceLines('spec', { firstVersion, guidance }),
     ...requestRulesLines(),
     '',
     specHtmlContract(platformStyles),
@@ -1532,7 +1542,7 @@ function buildPrompt({
     clipText(buildNote, 4000) || '(no plan recorded: work from the request itself)',
     ...specBlock,
     ...(firstVersion ? FIRST_VERSION_DESIGN_LINES : []),
-    ...guidanceLines(guidance),
+    ...stageGuidanceLines('build', { firstVersion, guidance }),
     '',
     // The rules every on-platform build works under (services/build-contract.js):
     // this bot's own list, which the dev chat now shares.
@@ -1850,6 +1860,17 @@ async function buildAndPropose({
     session.branch_name = branchName;
   } catch (err) {
     return fail(`could not create its branch: ${err.message}`);
+  }
+  // A later build of a project whose repository has the frontend-design
+  // skill is told, at its spec and its build, to read it (the nudge alone;
+  // services/design-skill.js). A first version's prompts say that, and more,
+  // on their own. Read at the branch the turns run on.
+  if (!firstVersion) {
+    const nudge = designSkill.stageGuidance('build', {
+      hasSkill: await designSkill.repoHasSkill({ github: deps.github, repo, ref: branchName }),
+    });
+    specGuidance = designSkill.guidanceWith(nudge, specGuidance);
+    buildGuidance = designSkill.guidanceWith(nudge, buildGuidance);
   }
 
   // The request, as the proposal's pull request metadata reads it: the
