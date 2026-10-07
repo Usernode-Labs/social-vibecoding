@@ -70,7 +70,8 @@ test('Invite people waits for the dialog to go, then opens the invite pane', () 
   // to present while this dialog is still being taken down.
   assert.match(s, /function invite\(\) \{\s*inviteNext\.current = true;\s*dialog\.close\(\);\s*\}/);
   assert.match(s, /if \(inviteNext\.current\) \{\s*inviteNext\.current = false;\s*openInvitePane\(\);/);
-  assert.match(s, /ctx\.open\?\.\(\);\s*ctx\.showInvite\?\.\(\);/);
+  // Straight onto the pane, once (tests/invite-sheet-once.test.js).
+  assert.match(s, /void ctx\.openInvite\?\.\(\);/);
   // A fresh open never inherits a pending hand-off.
   assert.match(s, /onOpen: \(\) => \{\s*inviteNext\.current = false;/);
   // The Invite button only exists for the members-only audience.

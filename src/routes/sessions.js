@@ -48,7 +48,9 @@ const {
   getDesignGuidance,
   runtimeReadsImages,
   SPEC_DESIGN_BRIEF,
+  specHtmlContract,
 } = require('../services/prompts');
+const specHtml = require('../services/spec-html');
 const {
   IN_LOOP_BROWSER_GUIDANCE,
   HOSTED_CLAUDE_IN_LOOP_BROWSER_GUIDANCE,
@@ -1042,6 +1044,16 @@ async function loadSessionSpec(pool, sessionId) {
   return (rows[0] && rows[0].spec_md) || '';
 }
 
+// #3699: the latest spec as both its text (spec_md, a markdown copy when the
+// spec was written as HTML) and its HTML document, or null for a markdown spec.
+async function loadSessionSpecDoc(pool, sessionId) {
+  const { rows } = await pool.query(
+    'SELECT spec_md, spec_html FROM chat_sessions WHERE id = $1',
+    [sessionId]
+  );
+  return { md: (rows[0] && rows[0].spec_md) || '', html: (rows[0] && rows[0].spec_html) || null };
+}
+
 // ── Failing proposal checks → next-turn context ──────────────────────────
 //
 // The coding agent never sees its own proposal-check verdicts: checks run
@@ -1287,6 +1299,15 @@ async function buildSessionDiscussionBlock(pool, session) {
 // tests can keep requiring it from this module.
 const { stripSpecWrapperFence } = require('../services/spec-format');
 
+// #3699: what a spec author's final message is stored as. A markdown spec is
+// its fence-stripped text, as it always was. An HTML spec is stored as its
+// markdown copy (`text`), which is what every reader of spec text gets and so
+// what `ccText` means at each capture site, beside the document (`html`).
+function captureSpecOutput(raw) {
+  const { markdown, html } = specHtml.normalizeSpecOutput(stripSpecWrapperFence(String(raw || '').trim()));
+  return { text: String(markdown || '').trim(), html: html || null };
+}
+
 // #1204: spot an agent run that died on the wire and reported it as its
 // FINAL message ("API Error: Connection lost mid-response…") instead of in
 // its exit code. A scout's final message IS the spec, so without this the
@@ -1305,13 +1326,15 @@ const { agentApiFailure, describeAgentApiFailure } = require('../services/agent-
 // it uses MAX(version)+1. Ordinary callers remain best-effort; durable scout
 // publication passes required:true so the version and its receipt/card roll
 // back together instead of committing a partially replayable outcome.
-async function snapshotSessionSpec(pool, sessionId, content, { required = false } = {}) {
+async function snapshotSessionSpec(pool, sessionId, content, { required = false, html = null } = {}) {
   try {
+    // #3699: content_html is the version's HTML document when it was written
+    // as one; content is then its markdown copy.
     const { rows } = await pool.query(
-      `INSERT INTO chat_session_specs (session_id, version, content)
-       VALUES ($1, COALESCE((SELECT MAX(version) FROM chat_session_specs WHERE session_id = $1), 0) + 1, $2)
+      `INSERT INTO chat_session_specs (session_id, version, content, content_html)
+       VALUES ($1, COALESCE((SELECT MAX(version) FROM chat_session_specs WHERE session_id = $1), 0) + 1, $2, $3)
        RETURNING version`,
-      [sessionId, content]
+      [sessionId, content, html || null]
     );
     return rows[0].version;
   } catch (err) {
@@ -1331,6 +1354,9 @@ async function persistScoutPublication({
   sessionId,
   turnId = null,
   content,
+  // #3699: the spec's HTML document when it was written as one; `content` is
+  // then its markdown copy (captureSpecOutput).
+  contentHtml = null,
   conversationContent = null,
   hadSpec = false,
   durationMs = null,
@@ -1350,16 +1376,33 @@ async function persistScoutPublication({
   const scoutText = localAgentLabel
     ? `${baseScoutText} Drafted on ${localAgentLabel}, so no Homeroom credits were used.`
     : baseScoutText;
+  let html = typeof contentHtml === 'string' && contentHtml.trim() ? contentHtml.trim() : null;
+  if (html) {
+    // #3699: which stylesheet the screens draw with depends on the app
+    // (spec-html.js, stampSpecStyles); an app that cannot be read gets the
+    // native kit alone, the choice that never borrows the shell's styles.
+    let app = null;
+    try {
+      const { rows } = await pool.query(
+        'SELECT a.slug, a.self_hosted FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1',
+        [sessionId],
+      );
+      app = rows[0] || null;
+    } catch (err) {
+      log.warn('sessions', 'Could not read the app of an HTML spec', { sessionId, err: err.message });
+    }
+    html = specHtml.stampSpecStyles(html, specHtml.specStylesFor(app));
+  }
   const persist = async (client, { requiredSnapshot }) => {
     await client.query(
-      'UPDATE chat_sessions SET spec_md = $1 WHERE id = $2',
-      [ccText, sessionId],
+      'UPDATE chat_sessions SET spec_md = $1, spec_html = $3 WHERE id = $2',
+      [ccText, sessionId, html],
     );
     const specVersion = await snapshotSessionSpec(
       client,
       sessionId,
       ccText,
-      { required: requiredSnapshot },
+      { required: requiredSnapshot, html },
     );
     const metadata = {
       specPreview: buildSpecPreview(ccText),
@@ -1370,6 +1413,7 @@ async function persistScoutPublication({
         ? { scoutConversationSpecExact: true }
         : {}),
       specVersion,
+      ...(html ? { specFormat: 'html' } : {}),
       ...(durationMs != null ? { durationMs } : {}),
       ...(quickReplies ? { quickReplies } : {}),
       ...(recovered ? { recovered: true } : {}),
@@ -3443,12 +3487,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // default backend/model atomically (no insert-then-patch).
       const { rows } = await pool.query(
         `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, spec_md, linked_issues, testing_md, testing_path, testing_paths, cloned_from_session_id, session_title,
-            agent_backend, agent_provider, agent_model, agent_reasoning_effort)
-         VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            agent_backend, agent_provider, agent_model, agent_reasoning_effort, spec_html)
+         VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
          RETURNING *`,
         [src.app_id, req.user.id, branchName, src.spec_md || '', src.linked_issues, src.testing_md, src.testing_path,
          src.testing_paths != null ? JSON.stringify(src.testing_paths) : null, src.id, cloneTitle,
-         pref.backend, pref.provider, pref.model, pref.reasoningEffort]
+         pref.backend, pref.provider, pref.model, pref.reasoningEffort, src.spec_html || null]
       );
       const session = rows[0];
       await topicAttrs.selfAssignProposal(pool, src.app_id, session.id, req.user);
@@ -3475,8 +3519,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       );
       // Carry the spec version history too, so the spec viewer shows v1…vN.
       await pool.query(
-        `INSERT INTO chat_session_specs (session_id, version, content, built_at, commit_sha, pr_number)
-         SELECT $1, version, content, built_at, commit_sha, pr_number
+        `INSERT INTO chat_session_specs (session_id, version, content, content_html, built_at, commit_sha, pr_number)
+         SELECT $1, version, content, content_html, built_at, commit_sha, pr_number
          FROM chat_session_specs WHERE session_id = $2`,
         [session.id, src.id]
       ).catch((err) => log.warn('sessions', 'Spec history copy failed (continuing)', { err: err.message }));
@@ -5307,12 +5351,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   router.get('/api/sessions/:id/spec', async (req, res) => {
     try {
       const { rows: sessionRows } = await pool.query(
-        `SELECT cs.id, cs.user_id, cs.spec_md
+        `SELECT cs.id, cs.user_id, cs.spec_md, cs.spec_html
          FROM chat_sessions cs
          WHERE cs.id = $1`,
         [req.params.id]
       );
 
+      // #3699: `html` is the latest version's HTML document when it was
+      // written as one; `spec` is then its markdown copy.
       if (sessionRows.length && sessionRows[0].user_id === req.user.id) {
         const { rows: versions } = await pool.query(
           `SELECT version, built_at, commit_sha, pr_number, shared_to_group_at,
@@ -5324,6 +5370,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         );
         return res.json({
           spec: sessionRows[0].spec_md || '',
+          html: sessionRows[0].spec_html || null,
           versions,
         });
       }
@@ -5334,7 +5381,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         // query, then is stripped from the metadata rows.
         const { rows } = await pool.query(
           `SELECT version, built_at, commit_sha, pr_number, shared_to_group_at,
-                  LENGTH(content) AS char_count, content
+                  LENGTH(content) AS char_count, content, content_html
            FROM chat_session_specs s
            WHERE s.session_id = $1
              AND ${specVersionSharedVisibilitySql('s', '$2')}
@@ -5344,7 +5391,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         if (rows.length) {
           return res.json({
             spec: rows[0].content || '',
-            versions: rows.map(({ content, ...meta }) => meta),
+            html: rows[0].content_html || null,
+            versions: rows.map(({ content, content_html: _html, ...meta }) => meta),
           });
         }
       }
@@ -5399,7 +5447,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     }
     try {
       const { rows } = await pool.query(
-        `SELECT s.version, s.content, s.built_at, s.commit_sha, s.pr_number, s.shared_to_group_at
+        `SELECT s.version, s.content, s.content_html, s.built_at, s.commit_sha, s.pr_number, s.shared_to_group_at
          FROM chat_session_specs s
          JOIN chat_sessions cs ON cs.id = s.session_id
          WHERE s.session_id = $1
@@ -6597,13 +6645,18 @@ function buildHeadlessSeed(issueNumber, issue, comments, botUsername, threadMess
     createdAt: c.createdAt || '',
   }));
 
-  seed += `\n\n${threadContext.buildIssueDiscussionBlock({
-    issueNumber,
-    githubComments: clippedGithub,
-    threadMessages: thread,
-    botUsername,
-    truncated: list.length > kept.length,
-  })}`;
+  // Inside the same UNTRUSTED DATA warning a person's own session reads its
+  // discussion under (buildDiscussionPromptBlock): anyone can comment, on
+  // GitHub too, and the Homeroom bot builds from this seed.
+  seed += threadContext.buildDiscussionPromptBlock({
+    issueBlock: threadContext.buildIssueDiscussionBlock({
+      issueNumber,
+      githubComments: clippedGithub,
+      threadMessages: thread,
+      botUsername,
+      truncated: list.length > kept.length,
+    }),
+  });
   return seed;
 }
 
@@ -8682,7 +8735,8 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
     // headless success paths (spec persist / testing notes), never PR or
     // staging (the headless contract).
     if (recoveryActiveTurn.mode === 'scout') {
-      const ccText = stripSpecWrapperFence((result.lastResultText || '').trim());
+      const capturedSpec = captureSpecOutput(result.lastResultText);
+      const ccText = capturedSpec.text;
       // #1204: the replayed journal can end on a transport-failure notice
       // just like a live turn does. There is no re-dispatch on this path
       // (the run is being finalized after a platform restart, not driven),
@@ -8695,6 +8749,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
           sessionId: session.id,
           turnId: recoveryActiveTurn.turnId || null,
           content: ccText,
+          contentHtml: capturedSpec.html,
           conversationContent: result.lastResultText || '',
           hadSpec: !!(session.spec_md || '').trim(),
           agentBackend: recoveryActiveTurn.backend || session.agent_backend || 'claude_code',
@@ -9299,15 +9354,24 @@ async function runScoutTool({
   // preserving accepted content. This replaced the Mayor's old
   // in-process write_spec/edit_spec tools (#111) — Claude Code does a
   // much better job at spec drafting and revision than the Mayor did.
-  const existingSpec = (await loadSessionSpec(pool, session.id)).trim();
+  // #3699: apps in config.htmlSpecApps get an HTML spec (before/after
+  // screens, diagrams). A revision of an HTML spec revises the document
+  // itself; a markdown spec on such an app is rewritten as one.
+  const htmlSpec = specHtml.htmlSpecsEnabledFor(config, session.app_slug);
+  const platformStyles = specHtml.specStylesFor({ slug: session.app_slug, self_hosted: session.app_self_hosted }) === 'platform';
+  const existingDoc = await loadSessionSpecDoc(pool, session.id);
+  const existingSpec = existingDoc.md.trim();
+  const existingShown = htmlSpec && existingDoc.html ? existingDoc.html.trim() : existingSpec;
   const revisionBlock = existingSpec
     ? `
 
-This session ALREADY HAS a spec doc, shown verbatim below. Your task is a REVISION of it, not a from-scratch rewrite: apply the requested changes, keep everything else intact (the user may have already reviewed and accepted the rest), and re-verify against the repo only where the change requires it. Your final message must be the COMPLETE revised spec document — it replaces the doc wholesale. If the existing spec does not follow the two-section structure mandated below ("## User-facing changes" / "## Technical implementation"), reorganize it into those two sections as part of this revision while preserving its content.
+This session ALREADY HAS a spec doc, shown verbatim below. Your task is a REVISION of it, not a from-scratch rewrite: apply the requested changes, keep everything else intact (the user may have already reviewed and accepted the rest), and re-verify against the repo only where the change requires it. Your final message must be the COMPLETE revised spec document — it replaces the doc wholesale. ${htmlSpec
+      ? 'If the existing spec is markdown, or does not follow the HTML structure mandated below, rewrite it as that HTML document as part of this revision while preserving its content.'
+      : 'If the existing spec does not follow the two-section structure mandated below ("## User-facing changes" / "## Technical implementation"), reorganize it into those two sections as part of this revision while preserving its content.'}
 
 ==== CURRENT SPEC DOC (revise this) ====
 
-${existingSpec}
+${existingShown}
 
 ==== END CURRENT SPEC DOC ====`
     : '';
@@ -9369,20 +9433,20 @@ ${scoutPlanModeLine}${personalFilesNote}${revisionBlock}
 ${issueHelperNote}${runLocally ? '' : `\n${HOMEROOM_READ_NOTE}\n`}${prodDebug ? `
 ${debugAccess.promptBlock()}
 ` : ''}
-Your job is to investigate this repo and produce a MARKDOWN SPEC for the change. The spec should be:
-- A complete, self-contained markdown document the user can review on its own.
+Your job is to investigate this repo and produce ${htmlSpec ? 'an HTML SPEC' : 'a MARKDOWN SPEC'} for the change. The spec should be:
+- A complete, self-contained ${htmlSpec ? 'HTML document (the format is described below)' : 'markdown document'} the user can review on its own.
 - Grounded in real file evidence — reference actual file paths and current behaviour, not guesses.
-- Structured as TWO halves under these exact H2 headings, in this order: "## User-facing changes" then "## Technical implementation". The spec viewer renders the two halves as tabs, so content outside them is undesirable — keep everything except the title and an optional 1-2 sentence summary inside one of the two halves. "User-facing changes" must be readable by a non-developer: describe what the user will see and do differently (screens, behaviour, before/after) — no file paths, no schema, no code. "Technical implementation" holds everything else: affected files, data model, edge cases, tests, considerations, deferred work. All other headings must be ### or deeper — no other ## headings anywhere in the document.
+- ${htmlSpec ? 'Structured as TWO halves, the "user" and "tech" sections described below, in that order, standing for' : 'Structured as TWO halves under these exact H2 headings, in this order:'} "## User-facing changes" then "## Technical implementation". The spec viewer renders the two halves as tabs, so content outside them is undesirable — keep everything except the title and an optional 1-2 sentence summary inside one of the two halves. "User-facing changes" must be readable by a non-developer: describe what the user will see and do differently (screens, behaviour, before/after) — no file paths, no schema, no code. "Technical implementation" holds everything else: affected files, data model, edge cases, tests, considerations, deferred work. All other headings must be ### or deeper — no other ## headings anywhere in the document.
 - Specific enough that a coding agent could implement it without re-doing your investigation, but NOT a literal diff or code block.
 - If the planned change introduces data-dependent UI (lists, threads, leaderboards, anything that renders rows), the "Technical implementation" half should name the staging seed data the build will need (per the "Staging mock data" platform convention), so seeding is planned rather than improvised at build time.${scoutDesignBrief}
 
-The spec is rendered as markdown in a viewer that follows standard CommonMark fencing. If you include a fenced code block that ITSELF contains a triple-backtick fence (common when quoting markdown examples or the platform's \`\`\`filepath:...\`\`\` output convention), wrap the OUTER block in a four-backtick fence (\`\`\`\`) — a longer fence can safely contain shorter ones. Otherwise the inner \`\`\` closes the block early and the rest of the spec renders broken. When in doubt, prefer fewer/inline code samples over deeply nested fences.
+${htmlSpec ? specHtmlContract(platformStyles) : `The spec is rendered as markdown in a viewer that follows standard CommonMark fencing. If you include a fenced code block that ITSELF contains a triple-backtick fence (common when quoting markdown examples or the platform's \`\`\`filepath:...\`\`\` output convention), wrap the OUTER block in a four-backtick fence (\`\`\`\`) — a longer fence can safely contain shorter ones. Otherwise the inner \`\`\` closes the block early and the rest of the spec renders broken. When in doubt, prefer fewer/inline code samples over deeply nested fences.`}
 
 Do NOT pad the spec with open questions. Only include a "### Questions" subsection — placed at the END of the "User-facing changes" half, since questions are for the (possibly non-technical) requester — for things that genuinely BLOCK implementation: decisions the coding agent cannot reasonably make on its own and that would change what gets built. Make a sensible default choice wherever you can and state it, rather than asking. Non-blocking items — things worth noting but not required to answer before building — belong in the "Technical implementation" half under "### Considerations" (trade-offs, assumptions, things to keep in mind) or "### Deferred work" (out-of-scope or follow-up items), NOT as questions. When there are no blockers, OMIT the "### Questions" subsection entirely — do NOT write "### Questions\nNone" or an empty section.
 
-Your final assistant message must be ONLY the markdown spec — no preamble, no "I'll investigate...", no "Here's the spec:". The host captures that final message verbatim and stores it as the session's spec doc.
+Your final assistant message must be ONLY the ${htmlSpec ? 'HTML spec, starting with <article data-spec>' : 'markdown spec'} — no preamble, no "I'll investigate...", no "Here's the spec:". The host captures that final message verbatim and stores it as the session's spec doc.
 
-CRITICAL: Output the spec as RAW markdown. Do NOT wrap your whole response in a code fence — no leading \`\`\`markdown line and no trailing \`\`\`. A whole-document fence makes the spec render as one big code block instead of formatted markdown. Fences are only for actual code/quoted snippets INSIDE the spec.${headless ? `
+${htmlSpec ? 'CRITICAL: Output the spec as RAW HTML. Do NOT wrap your whole response in a code fence: the first characters of your message are <article data-spec> and the last are </article>.' : `CRITICAL: Output the spec as RAW markdown. Do NOT wrap your whole response in a code fence — no leading \`\`\`markdown line and no trailing \`\`\`. A whole-document fence makes the spec render as one big code block instead of formatted markdown. Fences are only for actual code/quoted snippets INSIDE the spec.`}${headless ? `
 
 HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue — no human is available to answer questions during the run. If the Mayor's instructions list ambiguities or unresolved points, resolve them from the code BEFORE considering them open: read the relevant files, state what the code shows, and choose a sensible default where one exists. Any "### Questions" section you do write (at the end of the "User-facing changes" half) will be relayed verbatim to the issue reporter as a GitHub comment, so it must contain ONLY questions a codebase cannot answer (product intent, preferences, reproduction details), each self-contained, numbered, and carrying your suggested default.` : ''}`;
 
@@ -9807,7 +9871,8 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
       return stoppedResult();
     }
 
-    const ccText = stripSpecWrapperFence((result.lastResultText || '').trim());
+    const capturedSpec = captureSpecOutput(result.lastResultText);
+    const ccText = capturedSpec.text;
     // #1204: after the retry above, is the final message STILL a transport
     // failure notice rather than a spec?
     const apiFailure = agentApiFailure(ccText);
@@ -9858,6 +9923,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
         sessionId: session.id,
         turnId: durableTurnId,
         content: ccText,
+        contentHtml: capturedSpec.html,
         conversationContent: result.lastResultText || '',
         hadSpec: !!existingSpec,
         durationMs: Date.now() - turnStartedMs,
@@ -13428,4 +13494,4 @@ const MAYOR_TURN_DEPS = Object.freeze({
   switchSessionAgent,
 });
 
-module.exports = { requestSessionStop, MAYOR_TURN_DEPS, canViewSession, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifySessionStalled, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, OPENROUTER_PLATFORM_ISSUE_GUIDANCE, DISPATCHED_TURN_INSTRUCTIONS, DEV_CHAT_SUMMARY_RULE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
+module.exports = { requestSessionStop, MAYOR_TURN_DEPS, canViewSession, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, captureSpecOutput, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifySessionStalled, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, OPENROUTER_PLATFORM_ISSUE_GUIDANCE, DISPATCHED_TURN_INSTRUCTIONS, DEV_CHAT_SUMMARY_RULE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };

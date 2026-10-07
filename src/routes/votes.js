@@ -1406,7 +1406,13 @@ async function annotateDeploymentState(config, pool, app, rows) {
   }
 
   const releaseWatch = require('../services/release-watch');
-  const stall = releaseWatch.describe(app, runningSha);
+  let stall = releaseWatch.describe(app, runningSha);
+  // Several merges, one release: the record can name a commit that never
+  // ran by itself and is already inside the running build. Resolved, though
+  // the poller has not cleared it yet; the column says no stall.
+  if (stall.stalled && await releaseWatch.carriedBy(pool, app.id, stall.sha, runningSha)) {
+    stall = releaseWatch.describe(null);
+  }
   const stalledSha = stall.stalled ? normalizedSha(stall.sha) : null;
   for (const row of prRows) {
     if (!isAfterDeploymentBoundary(row, boundary)) {
@@ -2230,6 +2236,18 @@ function mergedRowSelect() {
          LEFT JOIN chat_sessions inc ON inc.id = cs.included_in_session_id`;
 }
 
+// #3893: whether a promote was sent by the owner's own agent with a bearer
+// token: the local Homeroom CLI's proposal_promote, or a connector's
+// promote_change and submit_work `propose: true`. cli-auth.js sets
+// req.cliAuthenticated for those two token kinds only, never for a browser
+// session. A delegated grant is the platform's own agent session, whose
+// conversation already tells its owner, and the Homeroom bot promotes
+// in-process as itself; neither counts.
+function promotedByOwnersAgent(req) {
+  return req.cliAuthenticated === true && !req.mcpDelegation
+    && !(req.user && req.user.is_synthetic);
+}
+
 function voteRoutes(config) {
   const router = Router();
   const pool = getPool(config);
@@ -2859,6 +2877,25 @@ function voteRoutes(config) {
       } catch (err) {
         log.warn('votes', 'pr_proposed notify failed', { sessionId: session.id, err: err.message });
       }
+
+      // #3893: the fan-out above leaves the proposer out, which is right for
+      // a person pressing Propose and wrong when their agent did it for them
+      // while they were away. submit_work tells them when it opens a
+      // proposal (#1405, connector_submitted); an agent that puts its change
+      // up for the vote here gets the same "Submitted by your agent". Before
+      // this, work proposed through the local Homeroom CLI, promote_change or
+      // `propose: true` reached the vote without a word to its owner.
+      // Unread-deduped per (owner, change), and best-effort like the above.
+      if (promotedByOwnersAgent(req)) {
+        try {
+          const created = await notifications.createConnectorSubmittedNotification(pool, {
+            userId: req.user.id, appId: session.app_id, sessionId: session.id, detail: 'submitted',
+          });
+          if (created.length) await notifications.hydrateAndPush(pool, created[0]);
+        } catch (err) {
+          log.warn('votes', 'connector_submitted notify failed', { sessionId: session.id, err: err.message });
+        }
+      }
     } catch (err) {
       log.error('votes', 'Promote failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -3367,6 +3404,12 @@ function voteRoutes(config) {
       );
       if (!sessionRows.length) return res.status(404).json({ error: 'Promoted session not found' });
       const session = sessionRows[0];
+      // A private member does not vote on a public app (communities.js).
+      const privateRefusal = await communities.privateVoteRefusal(pool, session.app_id, req.user?.id);
+      if (privateRefusal) return res.status(403).json(privateRefusal);
+      // A public app's vote counts from a verified account (communities.js).
+      const identityRefusal = await communities.identityVoteRefusal(pool, session.app_id, req.user?.id);
+      if (identityRefusal) return res.status(403).json(identityRefusal);
 
       // #2782: the revision as the ROW has it — no GitHub round-trip. This
       // used to be a fresh reconcile, which meant a full `git fetch` of the

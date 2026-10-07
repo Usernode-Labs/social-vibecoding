@@ -9,7 +9,9 @@
  *
  * The DATA half is deliberately absent — the sheet renders from improveStore.
  * The one exception is which PANE is showing, which is presentation and lives
- * in ./app-context-store.js with `open` (see the two-pane note below).
+ * in ./app-context-store.js with `open` (see the two-pane note below). The
+ * invite pane's read is started here, but it is ./invite-data.ts's: the
+ * opener only waits on it, so the sheet goes up once (openInvite).
  *
  * One caller outside React: `../header/platform-mark.tsx`'s tap goes through
  * `window.AppContext.toggle()` (published below, the same seam every
@@ -17,7 +19,20 @@
  */
 
 import { createSheetController } from '../../lib/sheet-controller.js';
+import { improveStore } from '../improve/improve-store.js';
 import { appContextStore } from './app-context-store.js';
+import { prepareInvite } from './invite-data';
+
+/**
+ * How long Invite waits for its link before the sheet goes up without it.
+ *
+ * The sheet goes up at the height of what it first shows, so it waits for
+ * the invite pane's answer (./invite-data.ts) and presents once, at the
+ * pane's real height. Long enough for the read on a phone, which is about
+ * 200ms; short enough that a slow one still answers the tap promptly, with
+ * the pane's skeleton standing at the loaded height until the link comes.
+ */
+export const INVITE_WAIT_MS = 300;
 
 // No `canOpen` gate. #1431 had `!!improveStore.get().slug`, which matched the
 // title tab it opened: both existed only inside an app. #1443 made the chip
@@ -35,9 +50,42 @@ export const AppContext = Object.assign(
     showAbout() {
       appContextStore.set({ view: 'about' });
     },
-    /** The invite pane: a link to this project anyone can join with. */
+    /**
+     * The invite pane, in a sheet that is already open. To OPEN onto it,
+     * openInvite() below.
+     */
     showInvite() {
       appContextStore.set({ view: 'invite' });
+    },
+    /**
+     * Open straight onto the invite pane: the hub's Invite, the Share
+     * dialog's "Invite people". One present, at the pane's own height, with
+     * one fade of the dim.
+     *
+     * It was `open()` then `showInvite()`, which presented the menu and
+     * swapped the pane under it, and the pane opened on a one-line "Making
+     * your link…" that grew when the link came. The kit measures a sheet when
+     * it presents and, when the content grows after, slides it up again and
+     * restarts the dim from the share of the sheet that was added: a short
+     * rise, then a tall one, with the dim fading in twice.
+     *
+     * So the pane's state is read first, for up to INVITE_WAIT_MS, and the
+     * pane is chosen before the sheet opens (openAt), so the first thing the
+     * kit measures is the pane as it will stay.
+     */
+    openInvite() {
+      const { slug } = improveStore.get();
+      const ready = slug
+        ? Promise.race([
+          prepareInvite(slug),
+          new Promise((resolve) => { setTimeout(resolve, INVITE_WAIT_MS); }),
+        ])
+        : Promise.resolve();
+      return ready.then(() => {
+        // Somewhere else by now (a tab, Back): its project is not in context.
+        if (improveStore.get().slug !== slug) return;
+        openAt('invite');
+      });
     },
     /** Back to the app's options. */
     showMenu() {
@@ -45,6 +93,22 @@ export const AppContext = Object.assign(
     },
   },
 );
+
+/**
+ * Open the sheet on `view` rather than on the menu. The pane is published
+ * first, then the sheet: `open()` publishes `open: true` and hands the root to
+ * the kit, which measures it there and then (../../lib/sheet-controller.js),
+ * so the pane it measures has to be the one asked for. Were the open refused
+ * (no sheet in the document), the pane goes back to the menu, or the next
+ * open from the mark would land on it.
+ *
+ * @param {'about' | 'invite'} view
+ */
+function openAt(view) {
+  appContextStore.set({ view });
+  AppContext.open();
+  if (!AppContext.isOpen()) appContextStore.set({ view: 'menu' });
+}
 
 // ── The two panes (#2718) ──────────────────────────────────────────────
 //

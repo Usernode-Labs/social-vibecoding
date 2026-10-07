@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
+import { returnKeyHandler } from '../../lib/return-to-next';
 
 // Sign-in providers (#admin/sign-in): Continue with Apple and Continue with
 // Google on the sign-in sheet, beside the email code
@@ -26,6 +27,10 @@ import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals
 // (NATIVE-BRIDGE.md, Native sign-in), whose ID tokens name the app, not the
 // web client: its client IDs go in "App client IDs", and the app offers a
 // provider only once they are saved beside a complete, switched-on setup.
+//
+// RETURN walks the single-line fields (#3907, the iOS keyboard's chevrons
+// are gone). The private key and the app client IDs are textareas, where
+// Return stays a new line; Save is still a press.
 
 type Provider = 'apple' | 'google';
 type Tone = 'ok' | 'err';
@@ -172,7 +177,7 @@ function ProviderCard({ view, canWrite, onSaved }: {
       </div>
       <p className={`${AdminUI.muted} mb-4`}>{WHERE[view.provider]}</p>
 
-      <div className="space-y-4">
+      <div className="space-y-4" onKeyDown={returnKeyHandler()}>
         <div>
           <p className={LABEL}>{apple ? 'Return URL' : 'Authorized redirect URI'}</p>
           {view.callbackUrl ? (
@@ -193,7 +198,7 @@ function ProviderCard({ view, canWrite, onSaved }: {
         <label className="block" htmlFor={`${id}-client-id`}>
           <span className={LABEL}>{apple ? 'Services ID' : 'Client ID'}</span>
           <input
-            id={`${id}-client-id`} type="text" autoComplete="off" spellCheck={false}
+            id={`${id}-client-id`} type="text" autoComplete="off" spellCheck={false} enterKeyHint="next"
             className={`${AdminUI.input} mt-1 font-mono disabled:opacity-60`}
             placeholder={apple ? 'com.example.web' : '1234567890-abc.apps.googleusercontent.com'}
             disabled={dis} value={clientId} onChange={(e) => setClientId(e.target.value)}
@@ -205,7 +210,7 @@ function ProviderCard({ view, canWrite, onSaved }: {
             <label className="block" htmlFor={`${id}-team-id`}>
               <span className={LABEL}>Team ID</span>
               <input
-                id={`${id}-team-id`} type="text" autoComplete="off" spellCheck={false} maxLength={10}
+                id={`${id}-team-id`} type="text" autoComplete="off" spellCheck={false} maxLength={10} enterKeyHint="next"
                 className={`${AdminUI.input} mt-1 font-mono uppercase disabled:opacity-60`}
                 placeholder="ABCDE12345" disabled={dis} value={teamId} onChange={(e) => setTeamId(e.target.value)}
               />
@@ -213,7 +218,7 @@ function ProviderCard({ view, canWrite, onSaved }: {
             <label className="block" htmlFor={`${id}-key-id`}>
               <span className={LABEL}>Key ID</span>
               <input
-                id={`${id}-key-id`} type="text" autoComplete="off" spellCheck={false} maxLength={10}
+                id={`${id}-key-id`} type="text" autoComplete="off" spellCheck={false} maxLength={10} enterKeyHint="next"
                 className={`${AdminUI.input} mt-1 font-mono uppercase disabled:opacity-60`}
                 placeholder="XYZ9876543" disabled={dis} value={keyId} onChange={(e) => setKeyId(e.target.value)}
               />
@@ -232,7 +237,7 @@ function ProviderCard({ view, canWrite, onSaved }: {
             />
           ) : (
             <input
-              id={`${id}-secret`} type="password" autoComplete="new-password" spellCheck={false}
+              id={`${id}-secret`} type="password" autoComplete="new-password" spellCheck={false} enterKeyHint="next"
               className={`${AdminUI.input} mt-1 font-mono disabled:opacity-60`}
               placeholder={view.secretSaved ? 'Saved' : ''}
               disabled={dis} value={secret} onChange={(e) => setSecret(e.target.value)}

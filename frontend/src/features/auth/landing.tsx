@@ -558,13 +558,16 @@ const CHIPS: readonly { line: string; dot: string }[] = [
  *
  * A new account made from the story is asked what to make next
  * (../first-session/make.tsx), not which communities to join: the session's
- * flag says so to the island, and the start is recorded. So is an account
- * that already existed and is signing in for the first time (one an admin
- * made, say, through the password step); the join step opens its make
- * screen in the same tick the shell starts and records it
+ * flag says so to the island, and the start is recorded as the story's. So
+ * is an account that already existed and has not answered that question
+ * yet (one an admin made, say, through the password step, or one that saw
+ * it, left without answering and is signing in again); the join step opens
+ * its make screen in the same tick the shell starts
  * (./communities-first-run.js). Either way the sheet hands off to that
  * screen (`handOff`) while this runs, so the two read as one movement.
- * Anyone else goes where they always have, with no hand-off.
+ * Recording the start answers nothing: the question is asked until Make it
+ * or "Look around first". Anyone else goes where they always have, with no
+ * hand-off.
  */
 export async function startedFromStory(kind: 'existing' | 'new', handOff: () => Promise<void>): Promise<void> {
   if (kind !== 'new') {
@@ -676,6 +679,10 @@ export function LandingScreen() {
   const nativeProviders = useNativeSignInProviders(waitlistPayload);
   const nativeSignIn = nativeProviders.length > 0;
   const providers = nativeSignIn ? nativeProviders : webProviders;
+  // An invite makes a private member, who signs up with a phone number
+  // (services/community-invites.js): the Join sheet starts there when the
+  // server offers it.
+  const phoneSignIn = waitlistPayload?.phone_sign_in === true;
   // Back from a provider without a session: reopen the sheet the trip left,
   // the invite's Join on its link, the story's otherwise.
   useEffect(() => {
@@ -1700,12 +1707,18 @@ export function LandingScreen() {
         <SignInSheet
           open={sheet === 'join'}
           title={`Join ${invite!.project!.name}`}
-          intro={providers.length
-            ? 'Sign in or make an account. It takes a minute.'
-            : 'Sign in or make an account with your email. It takes a minute.'}
+          intro={phoneSignIn
+            ? (invite!.project!.public
+              ? 'Just your phone number and a username. No app, no password.'
+              : 'Just your name and phone number. No app, no password.')
+            : providers.length
+              ? 'Sign in or make an account. It takes a minute.'
+              : 'Sign in or make an account with your email. It takes a minute.'}
           followInvite
           providers={providers}
           native={nativeSignIn}
+          phone={phoneSignIn}
+          askName={!invite!.project!.public}
           from="invite"
           returnTo={location.pathname}
           resume={resume}

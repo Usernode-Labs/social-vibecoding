@@ -889,6 +889,9 @@ const Home = {
         hint: Home.CREATE_DISABLED_HINT,
         placement: flows ? null : { ...HomeLayout.trailingCell(placed, cols), w: 1, h: 1 },
       };
+      // A private member makes no apps until they are let in off the
+      // waitlist (their Home's waitlist card says so), so no tile at all.
+      if (App.user?.privateMember) create = null;
     }
 
     // The search view is a flat, transient list — it must not inherit the
@@ -2180,6 +2183,16 @@ const Home = {
   // are afraid to touch. The creator is never offered it: the server refuses
   // (409) and the confirm would be a dead end.
   //
+  // A WRITE THAT LANDS SAYS SO on `document`, as the tour's done does
+  // (`sv:tour-done`): `sv:membership-changed`, with `{ slug, joined }`. The
+  // flags above keep the grid and Discover's pill in step, but Home's
+  // Challenges block holds a copy of what the server counted, for a minute
+  // (./home-panels.js), and a join changes it: the server counts "Join a
+  // community" before it answers (challengeScorer.scoreOnJoin). The block
+  // listens and reads again, so the challenge ticks on Home as it does on
+  // the Challenges tab, which reads afresh each time it opens. A leave says
+  // so the same way. A refused write says nothing: nothing changed.
+  //
   // Resolves true when the membership is now `desired`, false otherwise.
   async setMembership(slug, desired, onChange, opts = {}) {
     const known = (list) => (Array.isArray(list) ? list : []).find((a) => a && a.slug === slug);
@@ -2221,15 +2234,20 @@ const Home = {
       if (typeof onChange === 'function') onChange();
     }
     try {
-      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/membership`, {
+      // Joining a public community asks a provisional handle for a username
+      // first (username-first-run.js publicRetry).
+      const write = () => fetch(`/api/apps/${encodeURIComponent(slug)}/membership`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ joined: desired }),
       });
+      const retry = typeof window !== 'undefined' ? window.UsernameFirstRun?.publicRetry : null;
+      const res = desired && retry ? await retry(write) : await write();
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       if (app && Number.isFinite(Number(data.member_count))) app.member_count = Number(data.member_count);
       PlatformUI.toast(desired ? `Joined ${name}` : `Left ${name}`);
+      Home._announceMembership(slug, desired);
       if (!app) {
         await Home.load();
         if (typeof onChange === 'function') onChange();
@@ -2243,6 +2261,20 @@ const Home = {
       if (typeof onChange === 'function') onChange();
       return false;
     }
+  },
+
+  // The event setMembership's landed write dispatches (see there). Never
+  // throws: the write has landed, and a document without CustomEvent (the
+  // server-side prerender, a test's stub) only means nobody is listening.
+  MEMBERSHIP_EVENT: 'sv:membership-changed',
+  _announceMembership(slug, joined) {
+    try {
+      if (typeof document === 'undefined' || typeof document.dispatchEvent !== 'function') return;
+      if (typeof CustomEvent !== 'function') return;
+      document.dispatchEvent(new CustomEvent(Home.MEMBERSHIP_EVENT, {
+        detail: { slug, joined: !!joined },
+      }));
+    } catch (_) { /* a listener's trouble is not the write's */ }
   },
 
   // The slow path for a slug neither app list carries — see toggleAdded.

@@ -14,8 +14,10 @@
 //
 // Now a request queued, not started, while its project's first version is
 // not live (the bot's own rule: firstVersionHolds, heldForFirstVersion) is at
-// its own stage. Its card says what the DM says, and its chip says Waiting
-// from the moment it is filed. When the first version merges, the loop is
+// its own stage. Its card says what the DM says, and its chip is the waiting
+// one (status waiting_first_version: "⏳ Homeroom bot has this", never that
+// it is looking at it) from the moment it is filed. When the first version
+// merges, the loop is
 // woken for it; the moment it is picked up moves the card and the chip on,
 // and a read of the cards after the hold ends puts back a chip no moment
 // moved.
@@ -99,16 +101,19 @@ test('what the card and the chip say while it waits', () => {
   assert.ok(!/Usually about/.test(cardWords({ ...card, typicalMinutes: 10 })), 'no time while it waits');
   assert.ok(!/—/.test(cardWords(card)));
   assert.match(renderToHtml(createElement(BotRequestCardView, { card })), /data-bot-request-action="progress"><span>See progress/);
-  // Everybody in the room: Waiting, said in full to a screen reader.
+  // Everybody in the room: Homeroom bot has it (5 October 2026: the room is
+  // told the bot took it), and a screen reader hears that it waits for the
+  // first version. Never that it is looking at it.
   const chip = { status: 'waiting_first_version', issueNumber: 2, sessionId: null };
   const theirs = renderToHtml(createElement(BotStatusChip, { chip }));
-  assert.match(theirs, /<span[^>]*data-bot-request="waiting_first_version"[^>]*aria-label="Homeroom bot: Waiting for the first version"[^>]*>.*⏳.*Waiting/);
-  assert.ok(!/Reading/.test(theirs));
+  const said = 'Homeroom bot has this, and starts on it once the first version is live';
+  assert.match(theirs, new RegExp(`<span[^>]*data-bot-request="waiting_first_version"[^>]*aria-label="${said}"[^>]*>.*⏳.*Homeroom bot has this<`));
+  assert.ok(!/Reading|looking at/.test(theirs));
   assert.match(renderToHtml(createElement(BotStatusChip, { chip, mine: true })),
-    /<button[^>]*data-bot-request="waiting_first_version"[^>]*aria-label="Homeroom bot: Waiting for the first version"/);
+    new RegExp(`<button[^>]*data-bot-request="waiting_first_version"[^>]*aria-label="${said}"`));
   // The other chips keep their values (a declared check selects on building).
   assert.match(renderToHtml(createElement(BotStatusChip, { chip: { status: 'reading', issueNumber: 2, sessionId: null } })),
-    /data-bot-request="reading"[^>]*aria-label="Homeroom bot: Reading"/);
+    /data-bot-request="reading"[^>]*aria-label="Homeroom bot is looking at this"/);
   assert.match(renderToHtml(createElement(BotStatusChip, { chip: { status: 'building', issueNumber: 2, sessionId: null } })),
     /data-bot-request="building"/);
   // The chat draws the chip, and reads the cards again each minute while one waits.

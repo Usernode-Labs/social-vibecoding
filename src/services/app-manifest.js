@@ -288,7 +288,18 @@ const MANIFEST_FILENAME = 'dapp.json';
 // by ~231s, so neither the deadline nor RUN_TIMEOUT_MS moves. The step buys
 // 29 slots over the 831 declared here.
 //
-// 860 → 880 (#3826): the member floor's words on the card. The mock row
+// 860 → 870 (#3699): main stood at 840 exactly, the 20-slot floor; the HTML
+// spec viewer declares one check on its own route, a new staging session
+// (#app/usernode-2d5619/dev/sessions/900831), which no existing check shares.
+// The nearest, 900830's shared-spec check, is a fixture whose version history
+// the boot-time draft backfill also writes, so an HTML version could not join
+// it without changing what that check proves. Same arithmetic: 870 checks at
+// ~3.9s over the pool of 16 is ~212s of ideal work, and the unchanged 650s
+// TESTS_DEADLINE_MS still clears the 2x margin by ~226s, so neither the
+// deadline nor RUN_TIMEOUT_MS moves. The step buys 29 slots over the 841
+// declared here.
+//
+// 870 → 880 (#3826): the member floor's words on the card. The mock row
 // whose votes are all in and whose floor is unmet has a route of its own
 // (the proposal page for 9000095), and no existing check shares it — the
 // #788 family's checks sit on rows below threshold or floor-met — so there
@@ -296,7 +307,7 @@ const MANIFEST_FILENAME = 'dapp.json';
 // floor. Same arithmetic: 880 checks at ~3.9s over the pool of 16 is ~215s
 // of ideal work, and the unchanged 650s TESTS_DEADLINE_MS still clears the
 // 2x margin by ~220s, so neither the deadline nor RUN_TIMEOUT_MS moves.
-// The step buys 19 slots over the 841 declared here.
+// The step buys 36 slots over the 844 declared here.
 //
 // THE RULE AT THE FLOOR, stated once because three guards enforce it and on
 // #4868 they gave opposite advice. Fold first: a check that can share a

@@ -42,6 +42,9 @@ async function migrate(config) {
   await applySchemaWithLockRetry(pool, schema);
   await require('../services/moderation-migration').importLegacyReports(pool);
   await require('../services/moderation').purgeExpired(pool);
+  // The verified-identity rule's one-time production rollout: on, with $20
+  // a week for new members who have not verified (services/identity-rollout.js).
+  await require('../services/identity-rollout').applyIdentityRollout(pool);
   log.info('db', 'Schema up to date');
   finishPhase('schemaMs');
 
@@ -75,6 +78,8 @@ async function migrate(config) {
   // Must run AFTER seedStagingMergedPrs — its snapshot dates are chosen
   // so the merged fixtures straddle the newest one (reporting-period).
   await seedStagingReportSnapshots(pool, config);
+  // Must run AFTER seedStagingMergedPrs — its tags hang off those fixtures.
+  await seedStagingSmallChangeTags(pool, config);
   await seedStagingMyOpenPr(pool, config);
   await seedStagingImportedPrProposal(pool, config);
   await seedStagingChecksAdvisoryCard(pool, config);
@@ -151,6 +156,7 @@ async function migrate(config) {
   // Must run AFTER seedStagingDemoUser — the fixture session is owned by
   // the demo user so the check viewer exercises the NON-owner spec panel.
   await seedStagingSharedSpecPanelSession(pool, config);
+  await seedStagingHtmlSpecSession(pool, config);
   await seedStagingDemoProposal(pool, config);
   await seedStagingSpecUserShareFixtures(pool, config);
   await seedStagingHeadlessFixtures(pool, config);
@@ -174,6 +180,8 @@ async function migrate(config) {
   await require('../services/bench/demo').seedStagingBench(pool);
   // #3737: and its taste eval, with screenshots to look at.
   await require('../services/bench/demo').seedStagingTaste(pool);
+  // And the App bench studio's gallery, with builds side by side.
+  await require('../services/bench/demo').seedStagingStudio(pool);
   // After the proposal seeds above: the platform-env fixture stamps a
   // failing verdict onto an existing staging proposal.
   await seedStagingPlatformEnv(pool, config);
@@ -287,7 +295,12 @@ async function backfillUsernameChoiceForEmailHandles(pool) {
 // application_name) and retry. Dumps always finish, so waiting in bounded,
 // observable slices strictly dominates one unbounded invisible wait.
 //
-// The statements are idempotent, so a mid-script timeout is safe to rerun:
+// Live queries can also lock these tables in a different order (for example,
+// reading apps before users while the schema alters users before apps).
+// PostgreSQL breaks that cycle by aborting a transaction with 40P01. Retry
+// that deadlock just like a lock timeout, within the same attempt budget.
+//
+// The statements are idempotent, so a timeout or deadlock is safe to rerun:
 // the simple-query protocol runs the whole multi-statement string in one
 // implicit transaction, and a failure rolls all of it back.
 const SCHEMA_LOCK_TIMEOUT = '10s';
@@ -302,18 +315,24 @@ async function applySchemaWithLockRetry(pool, schema) {
       await client.query(schema);
       return;
     } catch (err) {
-      if (err.code !== '55P03' || attempt >= SCHEMA_APPLY_RETRIES) throw err;
-      log.warn('db', 'Schema apply blocked on a table lock; retrying', {
-        attempt, maxAttempts: SCHEMA_APPLY_RETRIES,
+      const retryable = err.code === '55P03' || err.code === '40P01';
+      if (!retryable || attempt >= SCHEMA_APPLY_RETRIES) throw err;
+      const message = err.code === '40P01'
+        ? 'Schema apply deadlocked; retrying'
+        : 'Schema apply blocked on a table lock; retrying';
+      log.warn('db', message, {
+        code: err.code, attempt, maxAttempts: SCHEMA_APPLY_RETRIES,
         lockTimeout: SCHEMA_LOCK_TIMEOUT,
       });
-      await logSchemaApplyBlockers(pool);
-      await new Promise((resolve) => setTimeout(resolve, SCHEMA_RETRY_DELAY_MS));
     } finally {
       // Destroy rather than release: the session-level lock_timeout must
       // not leak back into the shared pool.
       client.release(true);
     }
+    // Free the connection before diagnostics borrow from the same pool;
+    // keeping it checked out would stall forever with a one-connection pool.
+    await logSchemaApplyBlockers(pool);
+    await new Promise((resolve) => setTimeout(resolve, SCHEMA_RETRY_DELAY_MS));
   }
 }
 
@@ -853,8 +872,8 @@ async function backfillOrphanedSpecDrafts(pool) {
   let res;
   try {
     res = await pool.query(
-      `INSERT INTO chat_session_specs (session_id, version, content)
-         SELECT cs.id, COALESCE(latest.max_version, 0) + 1, cs.spec_md
+      `INSERT INTO chat_session_specs (session_id, version, content, content_html)
+         SELECT cs.id, COALESCE(latest.max_version, 0) + 1, cs.spec_md, cs.spec_html
            FROM chat_sessions cs
            LEFT JOIN LATERAL (
              SELECT version AS max_version, content
@@ -2931,6 +2950,56 @@ async function seedStagingMergedPrs(pool, config) {
     total: fixtures.length,
     inserted,
   });
+}
+
+// Small changes (#admin/small-changes): the watch-only small-change tag only
+// writes rows when a checks run settles, and nothing settles in a staging
+// preview, so the section would only ever show its empty state there. Tag
+// the first five merged-PR fixtures above, one of each verdict, so the
+// table, its badges, the veto words and the week's totals all render. Every
+// head is an obviously fake `5c...` sha, so a real head can never collide,
+// and ON CONFLICT on (session_id, head_sha) makes it idempotent. Strictly a
+// no-op outside staging.
+async function seedStagingSmallChangeTags(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const { rows: apps } = await pool.query('SELECT id FROM apps WHERE slug = $1', [config.selfAppSlug]);
+    const appId = apps[0]?.id;
+    if (!appId) return;
+    const { rows: sessions } = await pool.query(
+      `SELECT id, branch_name FROM chat_sessions
+        WHERE app_id = $1 AND branch_name LIKE 'staging-fixture/merged-pr-%'
+        ORDER BY branch_name ASC LIMIT 5`,
+      [appId]
+    );
+    const fixtures = [
+      { verdict: 'small', kind: 'fix', reason: '[staging fixture] Fixes the vote pill so it no longer overflows on narrow screens.', vetoes: [], files: 2, lines: 14, cost: 0.0004, hoursAgo: 2 },
+      { verdict: 'small', kind: 'wording', reason: '[staging fixture] Changes the empty-state wording on the dashboard tiles.', vetoes: [], files: 1, lines: 6, cost: 0.0003, hoursAgo: 5 },
+      { verdict: 'not_small', kind: null, reason: '[staging fixture] Changes how the activity feed sorts, which people rely on.', vetoes: [], files: 3, lines: 48, cost: 0.0006, hoursAgo: 20 },
+      { verdict: 'vetoed', kind: null, reason: null, vetoes: ['schema_or_data_sql', 'too_large'], files: 9, lines: 410, cost: null, hoursAgo: 30 },
+      { verdict: 'unavailable', kind: null, reason: null, vetoes: [], files: 2, lines: 22, cost: null, hoursAgo: 40, error: 'no_key' },
+    ];
+    let inserted = 0;
+    for (let i = 0; i < Math.min(sessions.length, fixtures.length); i++) {
+      const f = fixtures[i];
+      const { rowCount } = await pool.query(
+        `INSERT INTO small_change_tags
+           (session_id, app_id, head_sha, verdict, kind, reason, vetoes, files_changed,
+            lines_changed, model, cost_usd, duration_ms, error, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12, $13,
+                 NOW() - ($14::int * INTERVAL '1 hour'))
+         ON CONFLICT (session_id, head_sha) DO NOTHING`,
+        [sessions[i].id, appId, `5c${String(i + 1).padStart(38, '0')}`, f.verdict, f.kind, f.reason,
+          JSON.stringify(f.vetoes), f.files, f.lines,
+          f.verdict === 'vetoed' ? null : 'z-ai/glm-5.3-flash', f.cost,
+          f.verdict === 'vetoed' ? null : 1800, f.error || null, f.hoursAgo]
+      );
+      inserted += rowCount;
+    }
+    log.info('db', 'Staging small-change tags seeded', { appId, inserted });
+  } catch (err) {
+    log.warn('db', 'Staging small-change tags failed', { message: err.message });
+  }
 }
 
 // Locked report snapshots for the Reporting tab (reporting-period). The
@@ -9678,6 +9747,129 @@ async function seedStagingSharedSpecPanelSession(pool, config) {
   });
 }
 
+// #3699: an HTML spec, shared to the group, for the spec viewer's HTML path:
+// the two tabs drawn from the document, the before/after screens in the
+// proposal card's viewer, and a diagram and a table on the Technical tab.
+// Same shape and owner rule as the shared-spec fixture above (owned by the
+// demo user, so the check exercises a non-owner's view of a shared version),
+// fixed id 900831. spec_md is the document's markdown copy, as the capture
+// path stores it, so the orphaned-draft backfill finds nothing to add.
+async function seedStagingHtmlSpecSession(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const { specHtmlToMarkdown } = require('../services/spec-html');
+
+  const { rows: appRows } = await pool.query('SELECT id FROM apps WHERE slug = $1', [config.selfAppSlug]);
+  const appId = appRows[0]?.id;
+  const { rows: demoRows } = await pool.query('SELECT id FROM users WHERE username = $1', ['staging-demo-user']);
+  const demoUserId = demoRows[0]?.id;
+  if (!appId || !demoUserId) {
+    log.warn('db', 'Staging HTML-spec fixture skipped: self-app row or demo user missing');
+    return;
+  }
+
+  const card = `<style>
+  .sd-page{font:14px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;background:var(--bg-primary,#fff);color:var(--text-primary,#0a0a0a);height:800px;padding:28px}
+  .sd-card{width:380px;margin-left:auto;border:1px solid var(--border,#d1d1d6);border-radius:14px;padding:16px;display:grid;gap:12px}
+  .sd-top{display:flex;justify-content:space-between;align-items:center;font-weight:600}
+  .sd-pill{font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;background:rgba(196,120,0,.14);color:#a35a00}
+  .sd-row{display:flex;justify-content:space-between;font-size:13px}
+  .sd-muted{color:var(--text-muted,#68686c);font-size:12px}
+  .sd-bar{display:flex;gap:3px;height:7px}.sd-bar i{flex:1;border-radius:4px;background:var(--bg-tertiary,#e3e3e6)}.sd-bar i.on{background:#16a34a}
+  .sd-btns{display:grid;grid-template-columns:1fr 1fr;gap:8px}.sd-btns span{text-align:center;padding:9px;border-radius:10px;font-weight:600}
+  .sd-yes{background:var(--accent,#0a6ee0);color:#fff}.sd-no{border:1px solid var(--border,#d1d1d6)}
+  .sd-title{font-size:22px;font-weight:700;margin:0 0 6px}.sd-lines i{display:block;height:10px;border-radius:5px;background:var(--bg-tertiary,#e3e3e6);margin:10px 0}
+  .sd-left{position:absolute;left:28px;top:28px;width:620px}
+</style>`;
+  const html = `<article data-spec-styles="platform" data-spec>
+  <h1>Staging demo HTML spec: the vote card says how many approvals are left</h1>
+  <p>A spec written as HTML. The User-facing tab opens on before and after screens; the Technical tab on a diagram and a table.</p>
+  <section data-spec-tab="user">
+    <figure data-screens>
+      <ol data-changes>
+        <li data-change="1" data-steps="Dev board → Up for vote → open a proposal">The vote card says how many more approvals the change needs, with a bar that fills as they come in</li>
+        <li data-change="2" data-steps="Dev board → Up for vote → open a proposal">The vote card names who approved</li>
+      </ol>
+      <template data-screen data-size="desktop" data-focus="820 0 460 330">
+        ${card}
+        <div class="sd-page">
+          <div class="sd-left"><p class="sd-title">Weekly challenges reset every Monday</p><div class="sd-lines"><i style="width:80%"></i><i style="width:92%"></i><i style="width:60%"></i></div></div>
+          <div class="sd-card">
+            <div class="sd-top"><span>PR #3388</span><span class="sd-pill">Up for vote</span></div>
+            <div class="sd-row" data-side="before" data-change="1"><span><b>2</b> approve · <b>0</b> reject</span><span class="sd-muted">Ends in 2d 4h</span></div>
+            <div data-side="after" data-change="1"><div class="sd-row"><b>2 more approvals to merge</b><span class="sd-muted">2 of 4</span></div><div class="sd-bar"><i class="on"></i><i class="on"></i><i></i><i></i></div></div>
+            <div class="sd-muted" data-side="after" data-change="2">Approved by mika and jroh · 3 haven't voted</div>
+            <div class="sd-btns"><span class="sd-yes">Approve</span><span class="sd-no">Reject</span></div>
+          </div>
+        </div>
+      </template>
+      <template data-screen data-size="phone" data-focus="0 0 390 330">
+        ${card}
+        <div class="sd-page" style="padding:16px">
+          <div class="sd-card" style="width:auto">
+            <div class="sd-top"><span>PR #3388</span><span class="sd-pill">Up for vote</span></div>
+            <div class="sd-row" data-side="before" data-change="1"><span><b>2</b> approve · <b>0</b> reject</span><span class="sd-muted">2d 4h left</span></div>
+            <div data-side="after" data-change="1"><div class="sd-row"><b>2 more to merge</b><span class="sd-muted">2 of 4</span></div><div class="sd-bar"><i class="on"></i><i class="on"></i><i></i><i></i></div></div>
+            <div class="sd-muted" data-side="after" data-change="2">mika, jroh · 3 haven't voted</div>
+            <div class="sd-btns"><span class="sd-yes">Approve</span><span class="sd-no">Reject</span></div>
+          </div>
+        </div>
+      </template>
+    </figure>
+    <h3>Stays the same</h3>
+    <ul><li>How votes are counted, and who can vote</li><li>The Approve and Reject buttons</li></ul>
+  </section>
+  <section data-spec-tab="tech">
+    <figure>
+      <svg viewBox="0 0 460 120" role="img"><title>Votes flow through the tally and a new approvals rule into the proposal API and the vote card</title>
+        <rect class="spec-box" x="10" y="20" width="120" height="40" rx="8"></rect><text x="22" y="45" font-size="12">votes</text>
+        <rect class="spec-box" x="170" y="20" width="120" height="40" rx="8"></rect><text x="182" y="45" font-size="12">tallyVotes()</text>
+        <rect class="spec-box-new" x="330" y="20" width="120" height="40" rx="8"></rect><text x="342" y="45" font-size="12">approvalsNeeded</text>
+        <rect class="spec-box-changed" x="170" y="76" width="120" height="36" rx="8"></rect><text x="182" y="99" font-size="12">vote card</text>
+        <line class="spec-line" x1="130" y1="40" x2="168" y2="40"></line><line class="spec-line" x1="290" y1="40" x2="328" y2="40"></line><line class="spec-line" x1="230" y1="60" x2="230" y2="74"></line>
+      </svg>
+      <figcaption>Dashed: new code. Blue outline: changed.</figcaption>
+    </figure>
+    <table><thead><tr><th>Voting rule</th><th>The card says</th></tr></thead>
+      <tbody><tr><td>At least N approvals</td><td>"2 more approvals to merge"</td></tr><tr><td>Time-limited vote</td><td>"Closes in 2d 4h"</td></tr></tbody></table>
+  </section>
+</article>`;
+  const markdown = specHtmlToMarkdown(html).trim();
+
+  const fixtureBranch = 'staging-fixture/html-spec';
+  const sessionId = 900831;
+  const { rows: existing } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+    [appId, fixtureBranch]
+  );
+  if (existing.length) {
+    await pool.query(
+      'UPDATE chat_sessions SET user_id = $1, spec_md = $2, spec_html = $3 WHERE id = $4',
+      [demoUserId, markdown, html, existing[0].id]
+    );
+  } else {
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (id, app_id, user_id, branch_name, session_title, status, spec_md, spec_html, created_at)
+       VALUES ($1, $2, $3, $4, '[staging fixture] Staging demo: an HTML spec', 'paused', $5, $6, NOW() - INTERVAL '2 hours')`,
+      [sessionId, appId, demoUserId, fixtureBranch, markdown, html]
+    );
+    await pool.query(
+      `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
+       VALUES ($1, 'system', 'Spec drafted', $2::jsonb, NOW() - INTERVAL '100 minutes')`,
+      [sessionId, JSON.stringify({ specPreview: markdown.slice(0, 400), specLines: markdown.split('\n').length, specVersion: 1, specFormat: 'html' })]
+    );
+  }
+  const specSessionId = existing.length ? existing[0].id : sessionId;
+  await pool.query(
+    `INSERT INTO chat_session_specs (session_id, version, content, content_html, built_at, shared_to_group_at)
+     VALUES ($1, 1, $2, $3, NOW() - INTERVAL '100 minutes', NOW() - INTERVAL '95 minutes')
+     ON CONFLICT (session_id, version) DO UPDATE SET content = EXCLUDED.content, content_html = EXCLUDED.content_html,
+       shared_to_group_at = COALESCE(chat_session_specs.shared_to_group_at, EXCLUDED.shared_to_group_at)`,
+    [specSessionId, markdown, html]
+  );
+  log.info('db', 'Staging HTML-spec fixture seeded', { appId, sessionId: specSessionId });
+}
+
 // Checkbox-flicker fix fixture. The fix is a client-rendering change, but
 // every checkbox surface is data-driven, so seed a scout/proposal session
 // named "Staging demo proposal" carrying GFM task lists across all three
@@ -13388,6 +13580,48 @@ async function seedStagingPlatformMail(pool) {
           )`,
         [row.kind, row.to, row.provider, row.status, row.error]
       );
+    }
+
+    // Tracking demo contains only synthetic recipients. Stable opaque ids
+    // and event keys keep repeated staging boots idempotent.
+    const demoMessageId = crypto.createHash('sha256').update('Staging demo mail tracking').digest('hex').slice(0, 48);
+    await pool.query(
+      `UPDATE mail_deliveries SET message_id = $1, provider_message_id = 'staging-demo-receipt'
+        WHERE id = (SELECT id FROM mail_deliveries
+          WHERE recipient = 'staging-demo-released@example.invalid'
+            AND kind = 'waitlist_released' AND status = 'sent' ORDER BY id LIMIT 1)`,
+      [demoMessageId]
+    );
+    await pool.query(
+      `INSERT INTO mail_events (delivery_id, type, event_key, meta)
+       SELECT id, 'delivered', 'staging-demo:delivered', '{"demo":"Staging demo"}'::jsonb
+         FROM mail_deliveries WHERE message_id = $1
+       ON CONFLICT (event_key) DO NOTHING`, [demoMessageId]
+    );
+
+    for (const [kind, label, recipient, types] of [
+      ['build_ready', 'build', 'staging-demo-tracking-build@example.invalid', ['delivered', 'opened', 'clicked', 'unsubscribed']],
+      ['project_invite', 'invite', 'staging-demo-tracking-invite@example.invalid', ['bounced', 'complained']],
+    ]) {
+      const id = crypto.createHash('sha256').update(`Staging demo tracking ${label}`).digest('hex').slice(0, 48);
+      await pool.query(
+        `INSERT INTO mail_deliveries (kind, recipient, provider, status, message_id, tracking_links, engagement_tracked, created_at)
+         SELECT $1::text, $2::text, 'http', 'sent', $3::text, '["https://app.onhomeroom.com/#home"]'::jsonb, TRUE,
+           NOW() - INTERVAL '1 day'
+         WHERE NOT EXISTS (SELECT 1 FROM mail_deliveries WHERE message_id = $3::text)`,
+        [kind, recipient, id]
+      );
+      await pool.query('UPDATE mail_deliveries SET engagement_tracked = TRUE WHERE message_id = $1', [id]);
+      for (const type of types) {
+        await pool.query(
+          `INSERT INTO mail_events (delivery_id, type, event_key, url, user_agent_class, meta)
+           SELECT id, $2::text, $3::text, $4::text, $5::text, '{"demo":"Staging demo","approximate":true}'::jsonb
+             FROM mail_deliveries WHERE message_id = $1
+           ON CONFLICT (event_key) DO NOTHING`,
+          [id, type, `staging-demo:${label}:${type}`, type === 'clicked' ? 'https://app.onhomeroom.com/#home' : null,
+            type === 'opened' ? 'image_proxy' : null]
+        );
+      }
     }
 
     // An unconfirmed waitlist signup with a known token, so a tester can

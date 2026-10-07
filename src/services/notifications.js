@@ -693,6 +693,10 @@ async function createSessionStalledNotification(pool, { userId, appId, sessionId
 // vote" and fans out to collaborators; this means "your agent did a thing" and
 // goes to one person.
 //
+// Two callers: submit_work (services/external-agent-tasks.js), and the
+// promote route (routes/votes.js) when the owner's agent put the change up
+// for the vote with a bearer token, as the local Homeroom CLI does (#3893).
+//
 // `detail` is which destination it took: 'submitted' (up for a vote) or
 // 'shared' (#1347's in-progress area). Unread-deduped per session AND per
 // detail, so sharing repeatedly onto the same card — which #1347 deliberately

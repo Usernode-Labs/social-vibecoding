@@ -79,6 +79,24 @@ test('the list keeps its hooks, pages by 50, and moves bulk quota to the footer'
     'deleted account cleanup is the last card');
 });
 
+test('the list row carries a Podium column with the switch inline (#3938)', () => {
+  assert.match(USERS, /<span>Podium<\/span>/, 'the header names the column');
+  assert.match(USERS, /data-user-podium=\{user\.id\}/, 'every row says podium yes or no');
+  assert.match(USERS, /PodiumCell user=\{user\} canWrite=\{canWrite\} onReload=\{onReload\}/);
+  const cell = USERS.slice(USERS.indexOf('function PodiumCell'), USERS.indexOf('function UserListRow'));
+  assert.match(cell, /toggle-exclude-podium/, 'the switch calls the same v4 toggle route');
+  assert.match(cell, /canWrite \? \(/, 'the switch renders for a writing admin only');
+  assert.match(cell, /admin-user-podium-toggle/, 'the switch carries its hook');
+  assert.ok(USERS.indexOf('data-user-podium={user.id}') < USERS.indexOf('admin-user-podium-toggle'),
+    'the yes or no is the value, the switch sits beside it');
+  // The list query returns the flag the column reads.
+  assert.match(read('src/routes/admin.js'), /u\.exclude_podium,/);
+  // Folded into the existing list check (the manifest stays at its cap):
+  // the podium assertion rides that check's expectSelector with :has().
+  const listCheck = DAPP.tests.find((t) => t.path === '/#admin/users' && /Total points/.test(t.name));
+  assert.match(listCheck.expectSelector, /data-user-podium/);
+});
+
 test('programme users: More and an overflow menu, no Edit, no Email column', () => {
   assert.match(PROGRAMME, /data-more-u=\{u\.id\}/);
   assert.ok(!/data-edit-u/.test(PROGRAMME), 'editing lives in the details view');

@@ -28,6 +28,7 @@ const platformLimits = require('../services/platform-limit-alerts');
 const githubBudget = require('../services/github-budget');
 const modelCosts = require('../services/model-costs');
 const homeroomBot = require('../services/homeroom-bot');
+const smallChange = require('../services/small-change');
 const shotsExport = require('../services/shots-export');
 const welcomeDm = require('../services/welcome-dm');
 const onboarding = require('../services/onboarding');
@@ -332,6 +333,10 @@ function adminRoutes(config) {
       const [standings, { rows }] = await Promise.all([computeStandings(pool, { seasonId: null }), pool.query(
         `SELECT u.id, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.app_quota_requested_at, u.created_at,
                 u.daily_limit_cents, u.weekly_limit_cents, u.usernode_pubkey,
+                -- #3938: the podium flag the list's inline switch reads and
+                -- flips; the same column the v4 toggle-exclude-podium route
+                -- updates.
+                u.exclude_podium,
                 EXISTS (
                   SELECT 1 FROM user_social_identities identity
                    WHERE identity.user_id = u.id
@@ -350,6 +355,10 @@ function adminRoutes(config) {
                   SELECT 1 FROM user_activities zk
                    WHERE zk.user_id = u.id AND zk.source = 'zkpassport'
                 ) AS has_zkpassport,
+                EXISTS (
+                  SELECT 1 FROM user_phone_identities ph WHERE ph.user_id = u.id
+                ) AS has_phone,
+                identity_rule_exempt(u.id) AS identity_exempt,
                 managed.id AS openrouter_key_id,
                 managed.status AS openrouter_key_status,
                 managed.remote_key_hash AS openrouter_key_hash,
@@ -1034,10 +1043,16 @@ function adminRoutes(config) {
   // offers the field, and the weekly cap is the account's only limit.
   // limits.resolveCaps owns the interaction.
 
-  // #838: the weekly cap comes in three identity tiers. `user_weekly_limit_cents`
-  // is the unverified tier (the base); the social and zkPassport keys are
-  // null when unset, meaning "same as the base", and a PUT of null clears
+  // #838: the weekly cap comes in identity tiers. `user_weekly_limit_cents`
+  // is the unverified tier (the base); the phone, social and zkPassport keys
+  // are null when unset, meaning "same as the base", and a PUT of null clears
   // one back to that.
+  //
+  // The verified-identity rule (`identityRule`, schema.sql identity_rule_since):
+  // on, a vote on a public app counts only from a verified account (phone,
+  // GitHub and X, or zkPassport), and accounts let in before it was switched
+  // on are exempt from it and from the verified tiers' allowance. Switching
+  // it on records the time once; off removes it.
   async function readLimitsPayload() {
     const userCents = await limits.getDefaultUserLimitCents(pool);
     const globalCents = await limits.getGlobalLimitCents(pool);
@@ -1045,11 +1060,15 @@ function adminRoutes(config) {
     const weeklyCents = await limits.getDefaultUserWeeklyLimitCents(pool);
     const weeklySocial = await limits.getTierWeeklyLimitCents(pool, limits.IDENTITY_TIER_SOCIAL);
     const weeklyZk = await limits.getTierWeeklyLimitCents(pool, limits.IDENTITY_TIER_ZK);
+    const weeklyPhone = await limits.getTierWeeklyLimitCents(pool, limits.IDENTITY_TIER_PHONE);
+    const identityRuleSince = await limits.identityRuleSince(pool);
     return {
       user_daily_limit_cents: userCents,
       user_weekly_limit_cents: weeklyCents,
       user_weekly_limit_social_cents: weeklySocial,
       user_weekly_limit_zk_cents: weeklyZk,
+      user_weekly_limit_phone_cents: weeklyPhone,
+      identity_rule_since: identityRuleSince,
       global_daily_limit_cents: globalCents,
       system_tokens_daily_limit_cents: systemCents,
     };
@@ -1065,7 +1084,7 @@ function adminRoutes(config) {
   });
 
   router.put('/api/admin/limits', requireAdminWrite, async (req, res) => {
-    const { user, weekly, global, system, weeklySocial, weeklyZk } = req.body || {};
+    const { user, weekly, global, system, weeklySocial, weeklyZk, weeklyPhone, identityRule } = req.body || {};
     const updates = [];
     const clears = [];
     const validate = (label, v) => {
@@ -1094,10 +1113,15 @@ function adminRoutes(config) {
     if (typeof socialN === 'string' && socialN !== 'clear') return res.status(400).json({ error: socialN });
     const zkN = validateOptional('weeklyZk', weeklyZk);
     if (typeof zkN === 'string' && zkN !== 'clear') return res.status(400).json({ error: zkN });
+    const phoneN = validateOptional('weeklyPhone', weeklyPhone);
+    if (typeof phoneN === 'string' && phoneN !== 'clear') return res.status(400).json({ error: phoneN });
+    if (identityRule !== undefined && typeof identityRule !== 'boolean') {
+      return res.status(400).json({ error: 'identityRule must be true or false' });
+    }
     if (userN === null && globalN === null && systemN === null && weeklyN === null
-        && socialN === null && zkN === null) {
+        && socialN === null && zkN === null && phoneN === null && identityRule === undefined) {
       return res.status(400).json({
-        error: 'Provide at least one of: user, weekly, weeklySocial, weeklyZk, global, system',
+        error: 'Provide at least one of: user, weekly, weeklySocial, weeklyZk, weeklyPhone, identityRule, global, system',
       });
     }
     if (userN !== null) updates.push([limits.KEY_USER, String(userN)]);
@@ -1106,6 +1130,9 @@ function adminRoutes(config) {
     else if (socialN !== null) updates.push([limits.KEY_WEEKLY_SOCIAL, String(socialN)]);
     if (zkN === 'clear') clears.push(limits.KEY_WEEKLY_ZK);
     else if (zkN !== null) updates.push([limits.KEY_WEEKLY_ZK, String(zkN)]);
+    if (phoneN === 'clear') clears.push(limits.KEY_WEEKLY_PHONE);
+    else if (phoneN !== null) updates.push([limits.KEY_WEEKLY_PHONE, String(phoneN)]);
+    if (identityRule === false) clears.push(limits.KEY_IDENTITY_RULE_SINCE);
     if (globalN !== null) updates.push([limits.KEY_GLOBAL, String(globalN)]);
     if (systemN !== null) updates.push([limits.KEY_SYSTEM, String(systemN)]);
 
@@ -1122,13 +1149,24 @@ function adminRoutes(config) {
       for (const key of clears) {
         await pool.query('DELETE FROM platform_settings WHERE key = $1', [key]);
       }
+      // On: the time it was switched on, kept if it already is (the date
+      // decides who is exempt, so a second "on" must not move it).
+      if (identityRule === true) {
+        await pool.query(
+          `INSERT INTO platform_settings (key, value, updated_at, updated_by)
+           VALUES ($1, $2, NOW(), $3)
+           ON CONFLICT (key) DO NOTHING`,
+          [limits.KEY_IDENTITY_RULE_SINCE, new Date().toISOString(), req.user.id]
+        );
+      }
       // Hot-flip the cache so new limits apply on the very next request
       // instead of waiting up to 10s for the TTL to expire.
       limits.invalidate(...updates.map(([k]) => k), ...clears);
       log.info('admin', 'Platform limits updated', {
         by: req.user.username,
         user: userN, weekly: weeklyN, global: globalN, system: systemN,
-        weeklySocial: socialN, weeklyZk: zkN,
+        weeklySocial: socialN, weeklyZk: zkN, weeklyPhone: phoneN,
+        identityRule: identityRule === undefined ? null : identityRule,
       });
       res.json(await readLimitsPayload());
     } catch (err) {
@@ -1387,6 +1425,19 @@ function adminRoutes(config) {
       res.json({ users: await welcomeDm.searchPeople(pool, req.query.q) });
     } catch (err) {
       log.error('admin', 'Homeroom bot people search failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // The watch-only small-change tag (services/small-change.js): its latest
+  // verdicts with their proposal, and the last week's totals. Read-only, so
+  // it stays on the plain adminMiddleware gate. `reason` is model-written
+  // text about a change, served as JSON data for admins.
+  router.get('/api/admin/small-change-tags', async (req, res) => {
+    try {
+      res.json(await smallChange.adminPayload(pool, { limit: req.query.limit }));
+    } catch (err) {
+      log.error('admin', 'Read small-change tags failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -2684,7 +2735,7 @@ function adminRoutes(config) {
         ? req.query.kind.trim().slice(0, 64)
         : null;
 
-      const [recent, totals] = await Promise.all([
+      const [recent, totals, reports] = await Promise.all([
         pool.query(
           `SELECT id, kind, recipient, provider, status, error, created_at
              FROM mail_deliveries
@@ -2701,12 +2752,13 @@ function adminRoutes(config) {
             GROUP BY status`,
           [kind]
         ),
+        require('../services/mail/reports').readReports(pool),
       ]);
 
       const last24h = {};
       for (const row of totals.rows) last24h[row.status] = row.n;
 
-      res.json({ deliveries: recent.rows, last24h, kind, limit });
+      res.json({ deliveries: recent.rows, last24h, kind, limit, reports });
     } catch (err) {
       log.error('admin', 'mail activity failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });

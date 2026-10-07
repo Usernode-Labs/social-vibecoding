@@ -767,6 +767,11 @@ function preparedCloneSourceName(sourceDb, sourceId) {
   return `${sourceDb.slice(0, 63 - suffix.length)}${suffix}`;
 }
 
+// The statement ceiling for preparing a shots run's clone source and for each
+// side's clone from it: a large copy or ownership pass under load is slow
+// without being stuck.
+const PREPARED_SOURCE_TIMEOUT_MS = 90_000;
+
 function isPreparedCloneSource(name) {
   return SAFE_IDENT.test(String(name || '')) && /_evsrc_[0-9a-f]{12}$/.test(String(name));
 }
@@ -788,10 +793,14 @@ async function prepareStagingCloneSource(sourceDb, { sourceId } = {}) {
     await dropDatabase(preparedDb, { strict: true });
     await execInDb(`CREATE ROLE ${preparedRole} NOLOGIN`);
     try {
-      await execInDb(`CREATE DATABASE ${preparedDb} TEMPLATE ${sharedTemplate} OWNER ${preparedRole}`);
+      // The copy and the ownership pass get the paired clones' own ceiling
+      // (cloneFromPreparedSource): under load the copy alone can outlast the
+      // 30-second default, and a timeout here fails the whole shots run.
+      await execInDb(`CREATE DATABASE ${preparedDb} TEMPLATE ${sharedTemplate} OWNER ${preparedRole}`,
+        { timeoutMs: PREPARED_SOURCE_TIMEOUT_MS });
       await withDatabaseConnection(preparedDb, async (execute) => {
         await reassignUserObjectsTo(preparedDb, sharedRole, preparedRole, execute);
-      });
+      }, { queryTimeoutMs: PREPARED_SOURCE_TIMEOUT_MS });
       await execInDb(`REVOKE CONNECT ON DATABASE ${preparedDb} FROM PUBLIC`);
       const fingerprint = crypto.createHash('sha256')
         .update(`${sourceDb}\n${sharedTemplate}\n${new Date(refreshedAtMs).toISOString()}\n${preparedDb}`)
@@ -821,7 +830,7 @@ async function cloneFromPreparedSource(prepared, targetDb, { onProgress = null }
   // Paired shots resets repeat this clone and have their own bounded
   // lifetime. A large ownership/redaction query may exceed the ordinary
   // preview's 30-second ceiling without being stuck.
-  const result = await cloneFromTemplate(templateDb, targetDb, { queryTimeoutMs: 90_000, onProgress });
+  const result = await cloneFromTemplate(templateDb, targetDb, { queryTimeoutMs: PREPARED_SOURCE_TIMEOUT_MS, onProgress });
   onProgress?.('connection_limit');
   await applyStagingConnectionLimit(targetDb);
   return {
@@ -1138,6 +1147,8 @@ async function execInDb(sql, opts = {}) {
   return execInTarget('usernode', sql, opts);
 }
 
+// `timeoutMs` lets a statement known to run long (a CREATE DATABASE … TEMPLATE
+// copy under load) take longer than the 30-second default, up to two minutes.
 async function execInTarget(dbName, sql, opts = {}) {
   if (!SAFE_IDENT.test(dbName)) throw new Error(`execInTarget: unsafe dbName ${JSON.stringify(dbName)}`);
   const args = ['-X', '-v', 'ON_ERROR_STOP=1'];
@@ -1149,7 +1160,7 @@ async function execInTarget(dbName, sql, opts = {}) {
   args.push('-c', sql);
 
   const { stdout, stderr } = await execFileAsync('psql', args, {
-    timeout: 30000,
+    timeout: Math.max(30_000, Math.min(120_000, Number(opts.timeoutMs) || 30_000)),
     env: postgresEnv(dbName),
   });
 

@@ -45,18 +45,19 @@ import { useEffect, useRef, type RefObject } from 'react';
  * constant so React never strips it. Everything the kit does is a structural
  * no-op on desktop and without `visualViewport`.
  *
- * A full-screen form gets the same physics: the first session's "What do
- * you want to make?" (features/first-session/make.tsx) is a fixed screen
- * whose fields scroll under a wordmark bar of its own, so it hands its
- * scroller and that bar (`topEl`, the line a revealed field stays below)
- * instead of the platform header, which is not on screen there. With no
- * column reserving the inset around it, the kit's own `un-kb-avoid` padding
- * on the scroller is the one reservation.
+ * `bar` names a bar of a screen's own instead of the platform header (#3904
+ * added it for the first session's "What do you want to make?"). That
+ * screen, and the sign-in sheet, use lib/keyboard-surface.ts now (5 Oct
+ * 2026): a full-screen form's fields are INSIDE its scroller, where the
+ * kit's reveal measures against `innerHeight`, which iOS collapses to the
+ * visual viewport with the keys up, and in a phone browser's paged document
+ * its settled pin never puts iOS's pan back. A chat's composer is outside
+ * its scroller, so neither touches a column here.
  */
 
 type KitHandle = { detach?: () => void } | null | undefined;
 type KitLike = {
-  attachKeyboardAvoidance?: (scrollEl: Element, opts?: { topEl?: Element }) => KitHandle;
+  attachKeyboardAvoidance?: (scrollEl: Element, opts?: { topEl?: Element; column?: Element }) => KitHandle;
 };
 type WinLike = { unNative?: KitLike | null };
 type DocLike = { getElementById(id: string): Element | null };
@@ -76,9 +77,12 @@ export function attachComposerKeyboard(
   const kit = win?.unNative;
   if (!el || !kit || typeof kit.attachKeyboardAvoidance !== 'function') return NOOP;
   const topEl = (bar === undefined ? doc?.getElementById('platform-header') : bar) || undefined;
+  // The column the composer sits in under the scroller: the kit takes its
+  // message box's tap too, so iOS never pans to it (5 Oct 2026).
+  const column = (typeof el.closest === 'function' ? el.closest('.platform-kb-column') : null) || undefined;
   let handle: KitHandle;
   try {
-    handle = kit.attachKeyboardAvoidance(el, topEl ? { topEl } : {});
+    handle = kit.attachKeyboardAvoidance(el, { ...(topEl ? { topEl } : {}), ...(column ? { column } : {}) });
   } catch {
     return NOOP;
   }

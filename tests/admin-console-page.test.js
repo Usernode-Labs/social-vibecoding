@@ -140,11 +140,15 @@ test('the console island imports every admin module, console first', () => {
     'admin-overview', 'admin-push', 'admin-reports', 'admin-rollover',
     // Sign-in providers: Continue with Apple / Google, set up with each one's keys.
     'admin-sign-in',
+    // The watch-only small-change tag's verdicts.
+    'admin-small-changes',
     'admin-staging-reap',
     // #2253: App storage, the per-app database cap's console section.
     'admin-status', 'admin-storage',
     // Support: one user's account, points, events, kudos and history.
     'admin-support',
+    // Test accounts: make, list and retire first-time-user test accounts.
+    'admin-test-accounts',
     'admin-topochain', 'admin-users',
     // Welcome messages: the group and first message somebody let in gets.
     'admin-welcome-dm',

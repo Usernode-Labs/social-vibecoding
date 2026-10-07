@@ -146,6 +146,11 @@ const DENIED_COLUMNS = {
     'input_hash',
     'normalized_input',
   ],
+  phone_sign_in_tokens: [
+    // SHA-256 digest of a spent Firebase ID token (replay detection) —
+    // derived from auth material, so it is denied rather than reviewed.
+    'token_hash',
+  ],
   agent_session_actions: [
     // The sealed exact input of a pending write and its fingerprint (#2779).
     'input_hash',
@@ -154,6 +159,14 @@ const DENIED_COLUMNS = {
   onchain_accounts: [
     'secret_key',        // topochain: on-chain account private key (SPEC §6)
     'registration_code', // topochain: single-use account claim code (SPEC §6)
+  ],
+  // A person's own words to the Homeroom bot, often from their DM with it,
+  // tagged staging:private in schema.sql: never read while debugging.
+  homeroom_bot_requesters: [
+    'asked_text', // what they asked for, in their words
+  ],
+  homeroom_bot_runs: [
+    'plan_change', // what a creator asked the bot's plan changed with; never posted anywhere
   ],
   waitlist_signups: [
     'ip',         // submitter IP — same treatment as users.waitlist_ip

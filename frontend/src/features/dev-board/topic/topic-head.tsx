@@ -41,6 +41,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { ActionBand, ActionButton, Badge, DevCard, StatusPill, TitleContent, VoteButton, isVoteSpec } from '../card/dev-card';
 import type { DevCardModel } from '../card/model';
 import { swatchFor } from '../../group-chat/swatch';
+import { useInlineImageViewer } from '../../image-viewer/image-viewer';
 import { topicHeadStore } from './topic-store';
 import { ChangeConversation } from './conversation';
 import { TopicBack } from './topic-back';
@@ -1105,6 +1106,12 @@ function ChangeHero({ id, card, body, linkedIssues, onIssuesSaved }: {
         ) : null}
         <ActionBand actions={pills} menuKey={card.rail.menuKey || ''} preview={card.actionPreview || card.rail.preview || null} dense={false} />
       </div>
+      {/* #3826: the pill's lock explains itself only in a hover title, which
+          a phone never shows. While the other member's Yes is missing, say
+          it; once it is in, the line goes. */}
+      {pill && pill.awaitsOtherYes
+        ? <p className="dev-topic-note" data-topic-part="needs-other-yes">Needs a Yes from another member before it can go live.</p>
+        : null}
       {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
       <Html className="dev-topic-hero-summary dev-topic-about-body" data-topic-part="summary" html={body.summaryHtml || ''} />
       {body.summaryMore ? <SummaryMore m={body.summaryMore} /> : null}
@@ -1771,10 +1778,15 @@ export function TopicBodySections({ body }: { body: TopicBody }): ReactNode {
   // sheet open, so it is resolved to null before the test below.
   const roster = body.roster && body.roster.phase !== 'hidden' ? body.roster : null;
   const hasAbout = !!(summaryHtml || issueHtml || issueEditor?.canEdit || tiles || body.proposalBody || body.note || roster);
+  // #3908: a screenshot in the request's words opens in the app's viewer,
+  // over this page, instead of following its file link out of it. The
+  // pictures are inside sanitised markdown, so the sheet takes the tap.
+  const images = useInlineImageViewer();
   return (
     <>
+      {images.viewer}
       {hasAbout ? (
-        <section className="dev-topic-sheet dev-topic-about" data-topic-sheet="about">
+        <section className="dev-topic-sheet dev-topic-about" data-topic-sheet="about" {...images.scope}>
           {!issueEditor ? <h4 className="dev-topic-h">{body.aboutTitle || 'About'}</h4> : null}
           {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
           {summaryHtml ? (

@@ -364,7 +364,7 @@ async function invokeAccounted({
   sessionId,
   maxOutputTokens = globalChatOpenRouter.DEFAULT_MAX_OUTPUT_TOKENS,
   temperature = 0.1,
-  parallelToolCalls = true,
+  parallelToolCalls = null,
   toolChoice = 'auto',
   timeoutMs = globalChatOpenRouter.DEFAULT_TIMEOUT_MS,
   signal,

@@ -29,12 +29,13 @@
 
 import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
-import { CameraIcon, PhotoIcon } from '@/components/ui/icons';
+import { CameraIcon, PhotoIcon, VideoCameraIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { returnKeyHandler } from '../../lib/return-to-next';
 import { Feedback, init as initFeedback } from './feedback-controller';
 import { useDialog } from './use-dialog';
 
@@ -74,15 +75,21 @@ export function FeedbackDialog() {
       {...dialog.backdropProps}
     >
       <DialogCard size="sm">
-        <div id="feedback-form">
-        {/* ASK FOR A CHANGE, from every way in (UI overhaul). It was "Send
-            feedback", and "Ask for a change" only from the hub's ⋯ (QA
-            2026-09-24); people read feedback as a note to nobody in
-            particular, when what it posts is a request the members of the
-            place it goes can see, vote on and pick up. The line under the
-            heading says exactly that. */}
+        {/* #3907: Return in the title goes on to the description, where it is
+            a new line (the iOS keyboard's chevrons are gone). A handler, not
+            markup: nothing here is written, so the controller still owns
+            every node inside. ⌘/Ctrl+Enter still posts, from the controller. */}
+        <div id="feedback-form" onKeyDown={returnKeyHandler()}>
+        {/* SUGGEST AN IMPROVEMENT, from every way in. It was "Send
+            feedback", then "Ask for a change" from the hub's ⋯ (QA
+            2026-09-24) and from every way in (UI overhaul); people read
+            feedback as a note to nobody in particular, when what it posts is
+            a request the members of the place it goes can see, vote on and
+            pick up. The line under the heading says exactly that. "Suggest
+            an improvement" since the first-session run-through (5 Oct
+            2026), in a newcomer's words. */}
         <h2 className="text-lg font-bold">
-          Ask for a change
+          Suggest an improvement
         </h2>
         <p className="mt-0.5 mb-4 text-sm text-zinc-600 dark:text-zinc-400">
           Members can see it, vote on it and pick it up.
@@ -187,6 +194,7 @@ export function FeedbackDialog() {
             id="feedback-title"
             type="text"
             maxLength={200}
+            enterKeyHint="next"
             placeholder="Suggested as you type"
           />
         </div>
@@ -270,6 +278,34 @@ export function FeedbackDialog() {
           <p id="feedback-screenshot-count" className="hidden mt-1 text-xs text-zinc-500 dark:text-zinc-400">
           </p>
           <div id="feedback-screenshot-preview" className="hidden mt-2 flex-wrap items-center gap-2">
+          </div>
+          {/*
+            #3940: video clips. One clip per issue, chosen alongside the
+            images above: #feedback-video-btn picks an MP4/WebM/MOV file
+            (never `multiple`), #feedback-video-preview renders its
+            thumbnail row (first-frame preview, upload state, its own 48px
+            remove button) — both filled by the controller on open, hidden
+            for the same hydration reason as the screenshot controls.
+          */}
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <button
+              id="feedback-video-btn"
+              type="button"
+              className="hidden inline-flex min-h-[48px] items-center gap-1.5 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
+            >
+              <VideoCameraIcon className="w-3.5 h-3.5" />
+              <span data-video-label="">Add video</span>
+            </button>
+            <input
+              id="feedback-video-input"
+              type="file"
+              accept="video/mp4,video/webm,video/quicktime"
+              className="hidden"
+              tabIndex={-1}
+              aria-hidden="true"
+            />
+            <div id="feedback-video-preview" className="hidden mt-2 flex-wrap items-center gap-2">
+            </div>
           </div>
         </div>
         {/*

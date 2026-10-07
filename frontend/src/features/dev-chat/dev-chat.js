@@ -172,9 +172,11 @@ const DevChat = {
     open: false,
     sessionId: null,           // session this state belongs to (guards stale loads)
     draftContent: '',          // latest spec_md from GET /api/sessions/:id/spec (always == latest version's content)
+    draftHtml: null,           // #3699: the latest version's HTML document, when it was written as one
     versions: [],              // [{ version, built_at, commit_sha, pr_number, shared_to_group_at, ... }]
     viewVersion: 'latest',     // 'latest' (follow the highest version) or a specific version number
     viewVersionContent: null,  // cached content for a non-latest selection
+    viewVersionHtml: null,     // #3699: and its HTML document, when it has one
     isLoading: false,
     activeTab: 'user',         // #196: 'user' | 'tech' — selected half of a two-section spec
   },
@@ -2297,9 +2299,11 @@ const DevChat = {
       open: false,
       sessionId: null,
       draftContent: '',
+      draftHtml: null,
       versions: [],
       viewVersion: 'latest',
       viewVersionContent: null,
+      viewVersionHtml: null,
       isLoading: false,
       activeTab: 'user',
     };
@@ -4780,6 +4784,7 @@ const DevChat = {
         DevChat.specViewer.sessionId = sessionId;
         DevChat.specViewer.viewVersion = 'latest';
         DevChat.specViewer.viewVersionContent = null;
+        DevChat.specViewer.viewVersionHtml = null;
         DevChat.specViewer.activeTab = 'user';
         // Don't await — caller's renderChatView shouldn't block on
         // the fetch. _loadSpecViewer publishes when it resolves, which
@@ -9020,6 +9025,15 @@ const DevChat = {
             return `<p class="dc-p">${this.parser.parseInline(tokens)}</p>`;
           },
           link({ href, title, tokens }) {
+            // #3940: an issue-body video embed is a plain markdown LINK to
+            // /issue-videos/<id> — GitHub renders an external <video> as an
+            // anchor anyway, so the embed is a link everywhere but here. On
+            // an image-enabled surface the link becomes the inline player
+            // instead; everywhere else it stays an ordinary link.
+            if (DevChat._renderImagesInline
+                && /^(?:https?:\/\/[^/]+)?\/issue-videos\/[a-f0-9]{32}$/i.test(href || '')) {
+              return `<video class="dc-inline-video" src="${escAttr(href)}" controls playsinline preload="metadata"></video>`;
+            }
             const linkOk = /^https?:\/\//i.test(href);
             const previous = !!DevChat._renderImageWithinLink;
             if (linkOk) DevChat._renderImageWithinLink = true;
@@ -9099,10 +9113,14 @@ const DevChat = {
     const out = DOMPurify.sanitize(html, {
       ALLOWED_TAGS: ['a', 'b', 'strong', 'i', 'em', 'code', 'pre', 'h3', 'h4', 'h5',
         'p', 'br', 'ol', 'ul', 'li', 'div', 'span', 'table', 'thead', 'tbody',
-        'tr', 'th', 'td', 'hr', 'del', ...(allowImages ? ['img'] : [])],
+        'tr', 'th', 'td', 'hr', 'del',
+        // #3940: the inline issue-video player rides the same opt-in as
+        // the images it sits beside (renderMarkdown's images option).
+        ...(allowImages ? ['img', 'video'] : [])],
       // 'start' keeps non-1 ordered lists numbering correctly (F2).
       ALLOWED_ATTR: ['class', 'href', 'target', 'rel', 'start',
-        ...(allowImages ? ['src', 'alt', 'loading', 'aria-label'] : [])],
+        ...(allowImages ? ['src', 'alt', 'loading', 'aria-label',
+          'controls', 'playsinline', 'preload'] : [])],
       ALLOW_DATA_ATTR: false,
     });
     if (cacheable && typeof out === 'string') DevChat._mdCachePut(text, flags, out);
@@ -12324,6 +12342,7 @@ const DevChat = {
     DevChat.specViewer.sessionId = sid;
     DevChat.specViewer.viewVersion = (version === 'draft' || version === 'latest' || version == null) ? 'latest' : version;
     DevChat.specViewer.viewVersionContent = null;
+    DevChat.specViewer.viewVersionHtml = null;
     DevChat._writeSpecViewerOpen(sid, true);
     DevChat.renderChatView();
     DevChat._loadSpecViewer({ force: true });
@@ -12358,6 +12377,7 @@ const DevChat = {
 
       DevChat.specViewer.sessionId = sid;
       DevChat.specViewer.draftContent = data.spec || '';
+      DevChat.specViewer.draftHtml = data.html || null;
       DevChat.specViewer.versions = data.versions || [];
     } catch (err) {
       console.warn('loadSpecViewer failed:', err);
@@ -12479,6 +12499,17 @@ const DevChat = {
     // A null split — legacy or non-conforming doc — renders the single
     // untabbed body exactly as before.
     const split = displayContent ? splitSpecSections(displayContent) : null;
+    // #3699: a version written as HTML renders from its own document
+    // (frontend/src/lib/spec-html.ts) into the same two bodies, tabs and
+    // all. The markdown beside it (displayContent) is still what the empty
+    // check and the copy button read.
+    const displayHtml = (isLatest || !hasVersions)
+      ? DevChat.specViewer.draftHtml
+      : DevChat.specViewer.viewVersionHtml;
+    const specHtml = typeof window !== 'undefined' && window.UsernodeReact ? window.UsernodeReact.specHtml : null;
+    const htmlDoc = displayContent && displayHtml && specHtml && typeof specHtml.render === 'function'
+      ? specHtml.render(displayHtml, { key: `dc-${DevChat.specViewer.sessionId}-${selectedVersion ? selectedVersion.version : 'latest'}` })
+      : null;
     let body;
     if (DevChat.specViewer.isLoading && !displayContent) {
       body = { kind: 'loading' };
@@ -12491,6 +12522,16 @@ const DevChat = {
           ? 'No spec yet. Ask the AI to draft one.'
           : 'No spec has been shared for this session yet.',
       };
+    } else if (htmlDoc && htmlDoc.split) {
+      const tab = DevChat.specViewer.activeTab === 'tech' ? 'tech' : 'user';
+      body = {
+        kind: 'split',
+        preambleHtml: htmlDoc.preambleHtml,
+        tab,
+        halfHtml: tab === 'tech' ? htmlDoc.techHtml : htmlDoc.userHtml,
+      };
+    } else if (htmlDoc) {
+      body = { kind: 'plain', html: htmlDoc.html };
     } else if (split) {
       const tab = DevChat.specViewer.activeTab === 'tech' ? 'tech' : 'user';
       const half = tab === 'tech' ? split.technical : split.userFacing;
@@ -12582,6 +12623,7 @@ const DevChat = {
   _switchSpecViewerVersion(value) {
     DevChat.specViewer.viewVersion = value === 'latest' ? 'latest' : value;
     DevChat.specViewer.viewVersionContent = null;
+    DevChat.specViewer.viewVersionHtml = null;
     DevChat._publishSpecViewer();
   },
 
@@ -12596,6 +12638,7 @@ const DevChat = {
       // Bail if the user picked another version while we were fetching.
       if (String(DevChat.specViewer.viewVersion) !== String(version)) return;
       DevChat.specViewer.viewVersionContent = data.spec.content || '';
+      DevChat.specViewer.viewVersionHtml = data.spec.content_html || null;
       DevChat._publishSpecViewer();
     } catch (err) {
       console.warn('loadSpecVersion failed:', err);

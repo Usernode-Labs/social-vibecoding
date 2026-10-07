@@ -119,8 +119,16 @@ const SETUP_PARTS = Object.freeze({
   deploy: 'starting it up',
 });
 
+// B6: a first version's plan is the one its creator answers (stage 'plan').
+// Once they tap Build it, the build's own plan being written, and its turn
+// and workspace being waited for, are the build to them, not the plan again:
+// "Step 3 of 7: Write a plan", "writing the plan for the build", read as if
+// their Build it had not counted (first-session run-through, 5 October 2026).
+// A request's steps are unchanged: its plan is the bot's own.
+const FIRST_VERSION_BUILD_STAGES = new Set(['build_queued', 'starting', 'planning']);
+
 function stepNumber(stage, firstVersion) {
-  const key = STEP_OF_STAGE[stage];
+  const key = firstVersion && FIRST_VERSION_BUILD_STAGES.has(stage) ? 'build' : STEP_OF_STAGE[stage];
   if (!key) return null;
   const order = ['setup', 'read', 'plan', 'build', 'checks', 'vote', 'live'];
   const at = order.indexOf(key);
@@ -850,7 +858,8 @@ function entry({ row, number = null, title = null, firstVersion, state, proposal
     step,
     of: steps.length,
     stepName: step ? steps[step - 1] : null,
-    doing: state.doing,
+    // The same for what it is doing: building it, once Build it is tapped.
+    doing: firstVersion && state.stage === 'planning' ? 'building it' : state.doing,
     busyNow: BUSY_STAGES.has(state.stage) && !state.waitingOn,
     ...(state.since ? { since: iso(state.since), minutesSoFar: minutes } : {}),
     ...(limit ? { stepTimeLimitMinutes: limit } : {}),
@@ -978,11 +987,15 @@ async function progressFor(pool, { userId, settings = null, config = null, deps 
 
 /**
  * Pure: `progressFor`'s answer as a short message in plain words, for the
- * DM to send from the records alone when its model could not answer.
+ * DM to send from the records alone when its model could not answer. At
+ * most `max` pieces of work, and how many more there are: #4097, the DM
+ * sends it with a card for each one it lists (homeroom-bot-mayor.js
+ * recordsAnswer), and a piece listed with no card was a number to decode.
  */
-function progressText(progress) {
+function progressText(progress, { max = 5 } = {}) {
   const lines = [];
-  for (const item of (progress?.rightNow || []).slice(0, 5)) {
+  const rightNow = progress?.rightNow || [];
+  for (const item of rightNow.slice(0, max)) {
     const what = item.number
       ? `${item.projectName} request #${item.number}${item.title ? ` (${item.title})` : ''}`
       : `${item.projectName}, its ${String(item.title || 'first version').toLowerCase()}`;
@@ -992,6 +1005,7 @@ function progressText(progress) {
       : '';
     lines.push(`- ${what}: ${step}${item.doing}${time}.`);
   }
+  if (lines.length && rightNow.length > max) lines.push(`- and ${rightNow.length - max} more.`);
   if (!lines.length) {
     const done = (progress?.finishedLately || [])[0];
     return done

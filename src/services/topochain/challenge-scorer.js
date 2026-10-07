@@ -107,10 +107,11 @@ const RULE_CHALLENGES_SQL = `
 `;
 
 // What the ledger already holds for one challenge: the source keys already
-// paid for, and how many credits each person has. Two questions, one query,
-// because the second is what enforces the weekly cap.
+// paid for, and how many credits each person has, in all and per week (from
+// each credit's activity_at). Two questions, one query, because the second is
+// what enforces the cap, and on a WEEKLY challenge the cap is per week.
 const CREDITED_SQL = `
-  SELECT user_id, metadata->>'source_key' AS source_key
+  SELECT user_id, metadata->>'source_key' AS source_key, activity_at
     FROM user_activities
    WHERE challenge_id = $1 AND metadata->>'source_key' IS NOT NULL
 `;
@@ -449,8 +450,9 @@ async function loadCandidates(pool, measure, window, { target }) {
         [startIso, endIso, seconds, CANDIDATE_LIMIT]);
       return rows.map((r) => ({
         userId: r.user_id,
-        // One credit for the whole window, so the key names the window.
-        sourceKey: 'window',
+        // One credit for the whole window, so the key names the window by
+        // the day it starts: a weekly challenge's windows are its weeks.
+        sourceKey: `window:${startIso.slice(0, 10)}`,
         activityAt: dateToIso(r.last_date),
         description: `${Math.floor(Number(r.seconds) / 60)} minutes in apps`,
       }));
@@ -563,9 +565,14 @@ async function loadCredited(pool, challengeId) {
   const map = new Map();
   for (const r of rows) {
     const userId = Number(r.user_id);
-    const state = map.get(userId) || { keys: new Set(), count: 0 };
+    const state = map.get(userId) || { keys: new Set(), count: 0, weeks: new Map() };
     state.keys.add(r.source_key);
     state.count += 1;
+    const at = r.activity_at instanceof Date ? r.activity_at.getTime() : Date.parse(r.activity_at);
+    if (Number.isFinite(at)) {
+      const week = rules.weekStartMs(at);
+      state.weeks.set(week, (state.weeks.get(week) || 0) + 1);
+    }
     map.set(userId, state);
   }
   return map;
@@ -659,9 +666,17 @@ async function scoreChallenge(pool, row, rule, run) {
 
   const window = rules.resolveWindow(row, { now: run.now });
   const target = rules.effectiveTarget(rule, row);
+  // A WEEKLY challenge is scored a week at a time (rules.weeklyWindows): this
+  // week, plus last week while its grace lasts. The measure's own query runs
+  // once per week, so "10 minutes" means 10 minutes in that week and each
+  // week's unit has a key of its own.
+  const windows = rules.isWeekly(row) ? rules.weeklyWindows(window, { now: run.now }) : [window];
   let candidates;
   try {
-    candidates = await loadCandidates(pool, rule.measure, window, { target });
+    candidates = [];
+    for (const w of windows) {
+      candidates = candidates.concat(await loadCandidates(pool, rule.measure, w, { target }));
+    }
   } catch (err) {
     entry.error = err.message;
     log.warn('challenge-scorer', 'Measure query failed', { measure: rule.measure, err: err.message });

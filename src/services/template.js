@@ -617,6 +617,11 @@ function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = n
   const server = starter ? STARTER_SERVER : EMPTY_SERVER;
   const governanceBlock = require('./create-options').governanceBlock(governance);
   const about = typeof description === 'string' && description.trim() ? description.trim() : null;
+  // The first session's card (services/app-sketch.js): its emoji is the
+  // project's icon, so dapp.json says so from the first commit (every deploy
+  // reconciles the icon from it). A starter's own icon comes first.
+  const card = sketch ? require('./app-sketch').cardOf(sketch.design) : null;
+  const icon = starter ? { emoji: starter.icon } : (card ? { emoji: card.emoji } : null);
   const files = [
     {
       path: 'CLAUDE.md',
@@ -730,7 +735,8 @@ dependencies"; etc.)_
     // pill; since #3573 it names what is there now, the Homeroom mark's menu
     // and its "Start a new change" row (frontend/src/features/app-context/
     // app-context-sheet.tsx); since B8, its "Ask for a change" button, which
-    // goes to Homeroom bot. "Homeroom icon" is what the mark looks like (the
+    // goes to Homeroom bot, called "Suggest an improvement" since the
+    // first-session run-through (5 Oct 2026). "Homeroom icon" is what the mark looks like (the
     // platform's own copy calls its menu "the Homeroom menu", its
     // aria-label), and one starter serves every new app, so it says "your
     // app". Only new repositories get this: an existing app keeps the copy it
@@ -759,8 +765,8 @@ The scaffold is a small working demo that proves the plumbing works:
 ## Replacing the template
 
 To change this app, ask Homeroom bot: open the app on Homeroom, tap the
-Homeroom icon in the header, then **Ask for a change**, and describe the
-app you want in plain English. The template will be replaced with your
+Homeroom icon in the header, then **Suggest an improvement**, and describe
+the app you want in plain English. The template will be replaced with your
 real app. You can also run
 Claude Code against this repo directly; start with \`CLAUDE.md\`, which
 carries the app-specific notes and points at the platform rules.
@@ -983,8 +989,9 @@ value = "build"
       content: JSON.stringify(
         {
           ...(about ? { description: about } : {}),
-          // A starter's tile icon and the checks its first proposal runs.
-          ...(starter ? { icon: { emoji: starter.icon } } : {}),
+          // A starter's tile icon, else the first session card's, and the
+          // checks a starter's first proposal runs.
+          ...(icon ? { icon } : {}),
           secrets: [],
           ...(governanceBlock ? { governance: governanceBlock } : {}),
           ...(starter ? { tests: starter.tests } : {}),
@@ -1261,7 +1268,7 @@ ${server.start}start().catch(err => { console.error(err); process.exit(1); });
       <span class="rounded-full bg-raised px-3 py-1 text-small font-medium text-muted">Starter template</span>
       <h1 class="text-title">${escapeHtml(appName)}</h1>
       <p class="text-body text-muted">Welcome to your new app! Everything on this screen is placeholder content that came with it.</p>
-      <p class="text-body text-muted">To change this app, ask Homeroom bot: tap the <strong class="font-semibold text-fg">Homeroom icon</strong>, then <strong class="font-semibold text-fg">Ask for a change</strong>. Describe what you'd like in plain English, and it will be turned into your real app.</p>
+      <p class="text-body text-muted">To change this app, ask Homeroom bot: tap the <strong class="font-semibold text-fg">Homeroom icon</strong>, then <strong class="font-semibold text-fg">Suggest an improvement</strong>. Describe what you'd like in plain English, and it will be turned into your real app.</p>
     </section>
 
     <section>
@@ -1404,7 +1411,7 @@ ${server.start}start().catch(err => { console.error(err); process.exit(1); });
 `,
     },
   ];
-  if (!starter) return sketch ? withSketch(files, appName, sketch, { screen: true }) : files;
+  if (!starter) return card ? withCard(files, appName, sketch) : files;
   // A starter's own screen replaces the Press! page, and its api.js and
   // scripts join the shared plumbing.
   const own = appTemplates.starterFiles(template, {
@@ -1413,72 +1420,18 @@ ${server.start}start().catch(err => { console.error(err); process.exit(1); });
   });
   const ownPaths = new Set(own.map((f) => f.path));
   const all = [...files.filter((f) => !ownPaths.has(f.path)), ...own];
-  return sketch ? withSketch(all, appName, sketch, { screen: false }) : all;
+  return card ? withCard(all, appName, sketch) : all;
 }
 
-// The first session's sketch (services/app-sketch.js), when it was ready in
-// time for the first commit. The repository always carries it as
-// design/sketch.html and design/sketch.json. On the Empty starter it is also
-// the screen: it takes the placeholder notice's place, inside the same
-// sentinels so "Starter template" above still says what to remove; the
-// Press! example and its footer are hidden rather than removed (the page's
-// script looks them up); the kit's accent becomes the sketch's, contrast
-// checked; and "## Design" starts from it. A starter of its own keeps its
-// screen and gets the files only.
-const STARTER_NOTICE_OPEN = '<!-- usernode-starter-notice@1';
-const STARTER_NOTICE_CLOSE = '<!-- /usernode-starter-notice@1 -->';
-const PRESS_SECTION = '<section class="flex flex-col items-center gap-5">';
-const STARTER_FOOTER = '<p class="text-center text-small text-muted">Built on Homeroom.';
-
-function sketchScreen(index, appName, html) {
-  const appSketch = require('./app-sketch');
-  const open = index.indexOf(STARTER_NOTICE_OPEN);
-  const openEnd = open === -1 ? -1 : index.indexOf('-->', open) + 3;
-  const close = index.indexOf(STARTER_NOTICE_CLOSE);
-  if (open === -1 || close < openEnd) return index;
-  // Hidden after the sentinels only: the sketch's own markup may use the
-  // same classes.
-  const after = index.slice(close)
-    .replace(PRESS_SECTION, PRESS_SECTION.replace('>', ' hidden>'))
-    .replace(STARTER_FOOTER, STARTER_FOOTER.replace('">', '" hidden>'));
-  return `${index.slice(0, openEnd)}\n    ${appSketch.starterBlock({ name: appName, html })}\n    ${after}`;
-}
-
-function sketchDesignSection(design) {
-  const palette = design.accentName
-    ? `accent: ${design.accentName}, from the sketch (already set in the kit's tokens); neutrals: the kit's warm greys`
-    : 'the sketch\'s accent, already set in the kit\'s tokens; neutrals: the kit\'s warm greys';
-  // Function replacers: the model's words may hold a "$", which a
-  // replacement string would read as a pattern.
-  return DESIGN_CLAUDE_SECTION
-    .replace(
-      /- \*\*Palette:\*\* _\([^)]*\)_/,
-      () => `- **Palette:** ${palette}`
-    )
-    .replace(
-      /- \*\*Signature element:\*\* _\([^)]*\)_/,
-      () => `- **Signature element:** ${design.signature || '_(the one thing on screen drawn from this app\'s subject)_'}`
-    )
-    .replace(
-      'change follows it, and updates it when a request changes the look on purpose.\n',
-      'change follows it, and updates it when a request changes the look on purpose.\n\n'
-      + '- **Sketch:** `design/sketch.html` is the sketch this app\'s creator was shown\n'
-      + '  when they made it, and `design/sketch.json` says its job, layout and words.\n'
-      + '  The first version keeps them; list any change under Assumptions.\n'
-    );
-}
-
-function withSketch(files, appName, sketch, { screen }) {
-  const appSketch = require('./app-sketch');
-  const out = !screen ? files : files.map((file) => {
-    if (file.path === 'public/index.html') return { ...file, content: sketchScreen(file.content, appName, sketch.html) };
-    if (file.path === 'styles/tailwind-input.css') {
-      return { ...file, content: file.content.replace(DESIGN_KIT_CSS, () => appSketch.retokenKitCss(DESIGN_KIT_CSS, sketch.design)) };
-    }
-    if (file.path === 'CLAUDE.md') return { ...file, content: file.content.replace(DESIGN_CLAUDE_SECTION, () => sketchDesignSection(sketch.design)) };
-    return file;
-  });
-  return [...out, ...appSketch.designFiles({ name: appName, sketch })];
+// The first session's card (services/app-sketch.js), when it was ready in
+// time for the first commit: the repository carries it as design/sketch.json,
+// whose own note says what it is, and its emoji is the icon in dapp.json
+// above. It is a picture of the idea, not of a screen, so it changes no
+// screen, colour or design note. Until 5 October 2026 it was a mock of the
+// main screen that took the starter screen's place, recoloured the kit and
+// filled in "## Design", and the first version was told to build it.
+function withCard(files, appName, sketch) {
+  return [...files, ...require('./app-sketch').designFiles({ name: appName, sketch })];
 }
 
 // The CLAUDE.md section a starter writes in place of the Press! example's.
@@ -1537,8 +1490,8 @@ And what every Homeroom app gets:
 ## Changing it
 
 To change this app, ask Homeroom bot: open the app on Homeroom, tap the
-Homeroom icon in the header, then **Ask for a change**, and describe what
-you want in plain English. You can also run Claude Code against this repo directly; start with
+Homeroom icon in the header, then **Suggest an improvement**, and describe
+what you want in plain English. You can also run Claude Code against this repo directly; start with
 \`CLAUDE.md\`, which carries the app-specific notes and points at the
 platform rules.
 `;

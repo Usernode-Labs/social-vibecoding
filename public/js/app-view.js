@@ -2859,8 +2859,10 @@ const AppView = {
         },
       } : withPlan ? {
         // B6: its plan waits for Build it. A shot: the action id stands for
-        // no plan, so a tap here decides nothing.
-        building: true, mine: true, step: 3, of: 7, stepName: 'Write a plan',
+        // no plan, so a tap here decides nothing. The step is named as the
+        // server names it to the plan's creator while it waits on them
+        // (homeroom-bot-dm.js planWaitsStepName).
+        building: true, mine: true, step: 3, of: 7, stepName: 'Your turn: answer the plan',
         creator: null, ready: false, question: false, conversationId: null,
         plan: {
           bullets: [
@@ -2977,7 +2979,9 @@ const AppView = {
   // anyone else is told whose description it is. Once it is built and up
   // for approval, it says it is ready to try and what it waits on
   // (_firstVersionReadyView). "Show the starter for now" mounts the frame
-  // anyway, for the rest of this visit to the page.
+  // anyway, for the rest of this visit to the page, under a bar whose "Back
+  // to the first version" puts this screen back (hideStarter;
+  // features/app-frame/starter-bar.tsx).
   FIRST_VERSION_POLL_MS: 10000,
   _firstVersionTimer: null,
   _firstVersionRecord: null,
@@ -3353,6 +3357,37 @@ const AppView = {
     }
   },
 
+  /**
+   * "Back to the first version", on the bar over the starter
+   * (features/app-frame/starter-bar.tsx): the first version's screen again,
+   * read past every cache on the way if the record on hand is old
+   * (renderAppTab's `_firstVersionTrusted`), and its recheck armed again.
+   */
+  hideStarter(slug) {
+    if (!slug || !AppView._starterShown.delete(slug)) return;
+    AppView._publishStarter(AppView.appData);
+    if (AppView.appData && AppView.appData.slug === slug
+        && App.currentApp === slug && App.currentTab === 'app') {
+      AppView.renderAppTab();
+    }
+  },
+
+  /**
+   * Whose starter the bar is over: this record's, while its first version
+   * is on its way and the viewer asked for the starter; else nobody. Said on
+   * every App tab render, so a record that comes back built (or another
+   * app) takes the bar away. The bar itself draws only over that app's
+   * mounted frame.
+   */
+  _publishStarter(appData) {
+    const fv = appData && appData.first_version;
+    const slug = fv && fv.building && appData.slug && AppView._starterShown.has(appData.slug)
+      ? appData.slug : '';
+    const starter = typeof window !== 'undefined' && window.UsernodeReact
+      && window.UsernodeReact.appStarter;
+    if (starter && typeof starter.set === 'function') starter.set(slug);
+  },
+
   _stopFirstVersionWatch() {
     if (AppView._firstVersionTimer) clearTimeout(AppView._firstVersionTimer);
     AppView._firstVersionTimer = null;
@@ -3461,6 +3496,10 @@ const AppView = {
     // retire any interim React root that owns it first — see
     // _teardownDevRoots. Switching away from the Dev tab lands here.
     AppView._teardownDevRoots();
+
+    // #15: the bar over a starter shown while its first version is built,
+    // or no bar. Before any branch, so each one leaves it right.
+    AppView._publishStarter(appData);
 
     if (!appData || appData.status !== 'running' || !appData.url) {
       if (appData?.status === 'creating') {
@@ -5525,11 +5564,14 @@ const AppView = {
     // the idle sweep took their preview away (#3161, #3163): "needs staging
     // and checks to finish", with nothing left running that could finish.
     //
-    // So the state is always 'ready'. What it carries is a NOTE: one sentence
-    // that says what submitting now means for this change, in the order a
-    // reader would care. The server stays authoritative for the few things it
-    // still refuses (nothing committed yet, an agent turn still running), and
-    // says why in its own words when it does.
+    // So the state is 'ready' with one exception. What it carries is a NOTE:
+    // one sentence that says what submitting now means for this change, in
+    // the order a reader would care. The exception is a change with nothing
+    // committed (#3776): there is nothing to review, so the state is 'empty'
+    // and the Submit for review button stays disabled beside the step that
+    // says "Nothing committed yet". The server stays authoritative for the
+    // few things it still refuses (nothing committed yet, an agent turn still
+    // running), and says why in its own words when it does.
     // `short` is the same fact in a few words: the draft's "Submit for
     // review" step line (_draftStepsView).
     const ready = (note, tone = 'ok', short = 'Ready') => ({ kind: 'ready', note, tone, short });
@@ -5561,8 +5603,8 @@ const AppView = {
         ? item.proposal_state === 'draft'
         : !item.pr_number && !item.staging_url && !item.check_state;
       if (levelWithMain || nothingPushed) {
-        return ready('There are no committed changes to submit yet. Ask the agent to make a change first.', 'mute',
-          'Nothing committed yet');
+        return { kind: 'empty', tone: 'mute', short: 'Nothing committed yet',
+          note: 'There are no committed changes to submit yet. Ask the agent to make a change first.' };
       }
     }
     if (item.check_state === 'passing' && !item.staging_url) {
@@ -5680,11 +5722,12 @@ const AppView = {
       rows.forEach((r) => { delete r.step; delete r.stepDone; });
       const submission = AppView.changeSubmissionState(item);
       const ready = submission.kind === 'ready';
-      rows.push({ key: 'review', label: 'Review', tone: ready ? submission.tone : 'mute',
-        text: [ready ? submission.note : 'Submitting for review…'] });
+      const pending = submission.kind === 'pending';
+      rows.push({ key: 'review', label: 'Review', tone: pending ? 'mute' : submission.tone,
+        text: [pending ? 'Submitting for review…' : submission.note] });
       card.actions = (card.actions || []).filter((a) => a.key !== 'promote');
       if (mine && !AppView.readOnly) card.actions.push({ key: 'propose-change', cls: 'gc-vote-btn',
-        label: submission.kind === 'pending' ? 'Submitting…' : 'Submit for review',
+        label: pending ? 'Submitting…' : 'Submit for review',
         title: submission.note, disabled: !ready || !!busy,
         act: { fn: 'runChangeAction', args: [item.id, 'promote', item] } });
     }
@@ -9907,7 +9950,7 @@ const AppView = {
     const mine = {
       viewer: meId != null,
       // Homeroom bot builds requests here for this viewer: the empty strip
-      // then says to ask for a change rather than build one.
+      // then says to suggest an improvement rather than build one.
       bot: !!AppView._botDoor(),
       count: mineList.length,
       shown: AppView.WORKSHOP_MINE_MAX,
@@ -19114,7 +19157,7 @@ const AppView = {
   // console-errors badge, an advisory chip and an explicit-approval chip.
   // They collapse into ONE pill, chosen by a strict precedence:
   //
-  //   0 settled        ✓ Live (grey: a done state is quiet)
+  //   0 settled        ✓ Live (green, #3873)
   //   1 in flight      Going live… / Resolving conflicts…   (spinner)
   //   2 blocked        Checks failing · N / Checks couldn't run /
   //                    Preview won't boot / Merge conflict /
@@ -19643,9 +19686,14 @@ const AppView = {
     const advisory = (p.approval_policy === 'invited' && p.qualified_yes_count != null && isOpenRow)
       ? Math.max(0, (parseInt(p.yes_count, 10) || 0) - yes) : 0;
     const lock = !!(p.requires_explicit_approval && isOpenRow);
+    // #3826: the lock is a glyph with a hover title, which a phone never
+    // shows. While the other member's Yes is still missing, the change's
+    // page says so in words (topic-head.tsx); once it is in, nothing.
+    const awaitsOtherYes = !!(lock && p.status !== 'closed' && AppView._awaitingOtherMember(p));
     const base = {
       yes, no, majority: maj, advisory, lock, reasons: [],
       ...(lock ? { lockTitle: AppView._lockTitle(p) } : {}),
+      ...(awaitsOtherYes ? { awaitsOtherYes: true } : {}),
     };
 
     // 0 — settled. `merged` is the stored lifecycle; deployment_state is a
@@ -19653,13 +19701,17 @@ const AppView = {
     // has (first-session run-through, 4 Oct 2026): a change goes LIVE, it is
     // not "merged" or "deployed". The keys keep the precise state.
     //
-    // A finished change is QUIET: tone `neutral`, grey with a check, the way
-    // "Joined" is drawn (AGENTS.md, "a state that is already done gets no
-    // fill"). It was a green wash, which made the settled card the loudest
-    // one in the column. The card's edge follows the tone (edgeFor).
+    // A change that is LIVE is green: tone `ok`, the green wash with a check.
+    // #3848 had made it quiet (tone `neutral`, grey, the way "Joined" is
+    // drawn, per AGENTS.md's "a state that is already done gets no fill").
+    // #3873 reverses that for this one state and brings the green back: Live
+    // is the exception to that rule. Only the two "✓ Live" pills below take
+    // it; Going live…, Stuck going live and Couldn't go live keep their own
+    // tones. The card's edge follows the tone (edgeFor), so a live card's
+    // spine is green again too.
     if (p.status === 'merged') {
       if (p.deployment_state === 'deployed') {
-        return { ...base, tier: 0, key: 'deployed', label: '✓ Live', tone: 'neutral', lock: false, advisory: 0,
+        return { ...base, tier: 0, key: 'deployed', label: '✓ Live', tone: 'ok', lock: false, advisory: 0,
           title: 'This change is live in the app.' };
       }
       if (p.deployment_state === 'deploying') {
@@ -19684,7 +19736,7 @@ const AppView = {
         // about, and every app not redeployed since revision labels were
         // introduced would otherwise flag its whole history (#3368).
       }
-      return { ...base, tier: 0, key: 'merged', label: '✓ Live', tone: 'neutral', lock: false, advisory: 0 };
+      return { ...base, tier: 0, key: 'merged', label: '✓ Live', tone: 'ok', lock: false, advisory: 0 };
     }
     // 1 — in flight.
     if (p.status === 'merging') {
@@ -20206,6 +20258,93 @@ const AppView = {
     return width >= 120 && height >= 40;
   },
 
+  // The before/after viewer (#3699). One frame for two callers: the
+  // proposal card's shots (shotsHtml, <img> sides) and an HTML spec's drawn
+  // screens (frontend/src/lib/spec-html.ts, sandboxed-frame sides). Each
+  // caller builds a screen's two sides and the notes under it; this builds
+  // the rest: the radios that hold the state, the toolbar, the stage, the
+  // labels that flip it and the chips. It is markup only. The switching is
+  // CSS (:has() over the radios), so the card still needs no script.
+  //
+  // A screen is { viewport, afterHtml, beforeHtml, afterChip, beforeChip,
+  // notesHtml, zoomable }. Three options the card leaves off, so its markup
+  // is what it always was:
+  //   sideBySide — a third side option: before and after at once, in the
+  //                same fixed stage.
+  //   autoSide   — start side by side when the viewer has room for that
+  //                screen's size, otherwise on After. It is a fourth radio
+  //                with no label, checked to start; any choice replaces it.
+  //   zoom       — a Close-up / Whole screen switch on screens that have a
+  //                close-up. The radios hold it; the caller lays the sides out.
+  // `key` makes the ids unique on the page, so a spec and a card can share one.
+  _shotsSizeName(size) {
+    const value = String(size || 'screen');
+    return value.charAt(0).toUpperCase() + value.slice(1);
+  },
+
+  _shotsViewerHtml({ key, screens, sideBySide = false, autoSide = false, zoom = false, className = '' } = {}) {
+    const esc = escapeHtml;
+    const attr = escapeAttr;
+    const list = Array.isArray(screens) ? screens.slice(0, 6) : [];
+    if (!list.length) return '';
+    const sizeName = AppView._shotsSizeName;
+    const sideId = (side) => `shots-${key}-side-${side}`;
+    const pickId = (index) => `shots-${key}-screen-${index}`;
+    const zoomId = (which) => `shots-${key}-zoom-${which}`;
+    const shownSizes = [...new Set(list.map((screen) => screen.viewport))];
+    const indexesOf = (size) => list.map((screen, index) => (screen.viewport === size ? index : -1)).filter((index) => index >= 0);
+    const stepping = shownSizes.some((size) => indexesOf(size).length > 1);
+    const zooming = zoom && list.some((screen) => screen.zoomable);
+    const sizeIcon = {
+      desktop: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>',
+      phone: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/></svg>',
+    };
+    const bothIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="7.5" height="14" rx="1.5"/><rect x="13.5" y="5" width="7.5" height="14" rx="1.5"/></svg>';
+    const closeIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2M11 8.5v5M8.5 11h5"/></svg>';
+    const wholeIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4"/></svg>';
+    const stepper = (index) => {
+      const same = indexesOf(list[index].viewport);
+      const at = same.indexOf(index);
+      const prev = at > 0 ? `<label for="${pickId(same[at - 1])}" class="shots-screen-step" title="Previous screen">‹</label>`
+        : '<span class="shots-screen-step shots-screen-step-off">‹</span>';
+      const next = at < same.length - 1 ? `<label for="${pickId(same[at + 1])}" class="shots-screen-step" title="Next screen">›</label>`
+        : '<span class="shots-screen-step shots-screen-step-off">›</span>';
+      return `<span class="shots-screen-nav" aria-hidden="true">${prev}<span class="shots-screen-count">${at + 1} of ${same.length}</span>${next}</span>`;
+    };
+    const both = sideBySide
+      ? `<label for="${sideId('both')}" class="shots-seg-btn shots-seg-both" title="Side by side">${bothIcon}<span class="shots-seg-label">Side by side</span></label>`
+      : '';
+    const views = list.map((screen, screenIndex) => {
+      const sizeSwitch = shownSizes.length > 1
+        ? `<span class="shots-seg shots-seg-size" aria-hidden="true">${shownSizes.map((size) => {
+          const here = size === screen.viewport;
+          return `<label for="${pickId(here ? screenIndex : indexesOf(size)[0])}" class="shots-seg-btn${here ? ' shots-seg-on' : ''}" title="${attr(sizeName(size))}">${sizeIcon[size] || ''}<span class="shots-seg-label">${esc(sizeName(size))}</span></label>`;
+        }).join('')}</span>`
+        : '';
+      const zoomSwitch = zooming && screen.zoomable
+        ? `<span class="shots-seg shots-seg-zoom" aria-hidden="true"><label for="${zoomId('close')}" class="shots-seg-btn shots-seg-close" title="Close-up">${closeIcon}<span class="shots-seg-label">Close-up</span></label><label for="${zoomId('whole')}" class="shots-seg-btn shots-seg-whole" title="Whole screen">${wholeIcon}<span class="shots-seg-label">Whole screen</span></label></span>`
+        : '';
+      return `<figure class="shots-view" data-shots-screen="${attr(screen.viewport)}" data-shots-viewport="${attr(screen.viewport)}">
+        <div class="shots-bar"><span class="shots-seg shots-seg-side" aria-hidden="true"><label for="${sideId('before')}" class="shots-seg-btn shots-seg-before">Before</label><label for="${sideId('after')}" class="shots-seg-btn shots-seg-after">After</label>${both}</span>${sizeSwitch}${zoomSwitch}${stepping ? stepper(screenIndex) : ''}</div>
+        <div class="shots-stage">
+          ${screen.afterHtml || ''}
+          ${screen.beforeHtml || ''}
+          <label for="${sideId('before')}" class="shots-flip-to shots-flip-to-before" title="Click to see before" aria-hidden="true"></label><label for="${sideId('after')}" class="shots-flip-to shots-flip-to-after" title="Click to see after" aria-hidden="true"></label>
+          <span class="shots-flip-chip shots-flip-chip-after">${esc(screen.afterChip || 'After')}</span><span class="shots-flip-chip shots-flip-chip-before">${esc(screen.beforeChip || 'Before')}</span>
+        </div>
+        <figcaption class="shots-view-notes">${screen.notesHtml || ''}</figcaption>
+      </figure>`;
+    });
+    const sidePicks = `<span class="shots-picks"><input type="radio" class="shots-side-pick shots-side-before" name="shots-${key}-side" id="${sideId('before')}" aria-label="Show the screen before the change"><input type="radio" class="shots-side-pick shots-side-after" name="shots-${key}-side" id="${sideId('after')}" aria-label="Show the screen after the change"${autoSide ? '' : ' checked'}>${sideBySide ? `<input type="radio" class="shots-side-pick shots-side-both" name="shots-${key}-side" id="${sideId('both')}" aria-label="Show before and after side by side">` : ''}${autoSide ? `<input type="radio" class="shots-side-pick shots-side-auto" name="shots-${key}-side" id="${sideId('auto')}" aria-label="Show side by side when there is room, otherwise after" checked>` : ''}</span>`;
+    const zoomPicks = zooming
+      ? `<span class="shots-picks"><input type="radio" class="shots-zoom-pick shots-zoom-close" name="shots-${key}-zoom" id="${zoomId('close')}" aria-label="Show a close-up of what changes" checked><input type="radio" class="shots-zoom-pick shots-zoom-whole" name="shots-${key}-zoom" id="${zoomId('whole')}" aria-label="Show the whole screen"></span>`
+      : '';
+    const screenPicks = list.length > 1
+      ? `<span class="shots-picks">${list.map((screen, index) => `<input type="radio" class="shots-screen-pick" name="shots-${key}-screen-pick" id="${pickId(index)}" aria-label="${attr(`Screen ${index + 1} of ${list.length}: ${screen.viewport}`)}"${index === 0 ? ' checked' : ''}>`).join('')}</span>`
+      : '';
+    return `<div class="shots-viewer${className ? ` ${attr(className)}` : ''}">${sidePicks}${zoomPicks}${screenPicks}<div class="shots-views${list.length === 1 ? ' shots-views-one' : ''}">${views.join('')}</div></div>`;
+  },
+
   shotsHtml(shots, opts = {}) {
     if (!shots || typeof shots !== 'object') return '';
     const sessionId = Number(opts.sessionId);
@@ -20300,9 +20439,6 @@ const AppView = {
     // arrows step through the screens of one size.
     const sizes = [...new Set(screens.map((screen) => screen.viewport))];
     screens = sizes.flatMap((size) => screens.filter((screen) => screen.viewport === size)).slice(0, 6);
-    const shownSizes = [...new Set(screens.map((screen) => screen.viewport))];
-    const indexesOf = (size) => screens.map((screen, index) => (screen.viewport === size ? index : -1)).filter((index) => index >= 0);
-    const stepping = shownSizes.some((size) => indexesOf(size).length > 1);
     const onScreenOf = (screen) => (Array.isArray(screen.stories) && screen.stories.length ? screen.stories : [screen.shot])
       .map((id) => claims.find((claim) => claim.id === id)).filter((claim) => claim && !skipped(claim));
 
@@ -20331,31 +20467,14 @@ const AppView = {
       const h = Number(artifact && artifact.height) > 0 ? Number(artifact.height) : Number(height);
       return w > 0 && h > 0 ? `${Math.round(w)} / ${Math.round(h)}` : (narrow ? '390 / 844' : '16 / 10');
     };
-    const sizeName = (size) => {
-      const value = String(size || 'screen');
-      return value.charAt(0).toUpperCase() + value.slice(1);
-    };
-    const sizeIcon = {
-      desktop: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>',
-      phone: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/></svg>',
-    };
+    const sizeName = AppView._shotsSizeName;
 
     // The switches are radios before the screens and labels on each screen,
     // so the viewer needs no script: the side is one pair for every screen,
     // the screens one group (the keyboard's arrow keys step both). The ids
-    // come from the proposal, so a repaint renders the same markup.
+    // come from the proposal, so a repaint renders the same markup. The frame
+    // itself is _shotsViewerHtml, which an HTML spec's screens share.
     const key = Number.isInteger(sessionId) && sessionId > 0 ? sessionId : 'card';
-    const sideId = (side) => `shots-${key}-side-${side}`;
-    const pickId = (index) => `shots-${key}-screen-${index}`;
-    const stepper = (index) => {
-      const list = indexesOf(screens[index].viewport);
-      const at = list.indexOf(index);
-      const prev = at > 0 ? `<label for="${pickId(list[at - 1])}" class="shots-screen-step" title="Previous screen">‹</label>`
-        : '<span class="shots-screen-step shots-screen-step-off">‹</span>';
-      const next = at < list.length - 1 ? `<label for="${pickId(list[at + 1])}" class="shots-screen-step" title="Next screen">›</label>`
-        : '<span class="shots-screen-step shots-screen-step-off">›</span>';
-      return `<span class="shots-screen-nav" aria-hidden="true">${prev}<span class="shots-screen-count">${at + 1} of ${list.length}</span>${next}</span>`;
-    };
 
     // The declared change's own words, how to reach it, what the shots
     // leave out, and any clips of it at the given sizes.
@@ -20389,7 +20508,7 @@ const AppView = {
       return '';
     }).join('');
 
-    const screenHtml = screens.map((screen, screenIndex) => {
+    const screenParts = screens.map((screen) => {
       const onScreen = onScreenOf(screen);
       const before = by(screen.shot, screen.viewport, 'base', 'context');
       const after = by(screen.shot, screen.viewport, 'head', 'context');
@@ -20404,12 +20523,6 @@ const AppView = {
         const shape = shapeOf(artifact, screen.width, which === 'base' ? screen.heightBefore : screen.heightAfter, narrow);
         return `<span class="shots-flip-side ${cls}" style="--shots-shape:${shape}"><img src="${attr(shotsUrl(artifact.url))}" alt="${attr(`${label}: ${described}`)}" loading="lazy">${drawn[which]}</span>`;
       };
-      const sizeSwitch = shownSizes.length > 1
-        ? `<span class="shots-seg shots-seg-size" aria-hidden="true">${shownSizes.map((size) => {
-          const here = size === screen.viewport;
-          return `<label for="${pickId(here ? screenIndex : indexesOf(size)[0])}" class="shots-seg-btn${here ? ' shots-seg-on' : ''}" title="${attr(sizeName(size))}">${sizeIcon[size] || ''}<span class="shots-seg-label">${esc(sizeName(size))}</span></label>`;
-        }).join('')}</span>`
-        : '';
       const changes = onScreen.map((claim) => {
         const n = numberOf(claim.id);
         return `<li class="shots-change" data-shots-n="${n}" data-shots-change="${attr(claim.id || '')}"><span class="shots-change-n">${n}</span>
@@ -20424,16 +20537,14 @@ const AppView = {
       const width = Number(after && after.width);
       const height = Number(after && after.height);
       const dims = width > 0 && height > 0 ? `, ${Math.round(width)} × ${Math.round(height)}` : '';
-      return `<figure class="shots-view" data-shots-screen="${attr(screen.viewport)}" data-shots-viewport="${attr(screen.viewport)}">
-        <div class="shots-bar"><span class="shots-seg shots-seg-side" aria-hidden="true"><label for="${sideId('before')}" class="shots-seg-btn shots-seg-before">Before</label><label for="${sideId('after')}" class="shots-seg-btn shots-seg-after">After</label></span>${sizeSwitch}${stepping ? stepper(screenIndex) : ''}</div>
-        <div class="shots-stage">
-          ${side('head', after, 'After')}
-          ${side('base', before, absent ? 'Before, not there yet' : 'Before')}
-          <label for="${sideId('before')}" class="shots-flip-to shots-flip-to-before" title="Click to see before" aria-hidden="true"></label><label for="${sideId('after')}" class="shots-flip-to shots-flip-to-after" title="Click to see after" aria-hidden="true"></label>
-          <span class="shots-flip-chip shots-flip-chip-after">After</span><span class="shots-flip-chip shots-flip-chip-before">${absent ? 'Before · not there yet' : 'Before'}</span>
-        </div>
-        <figcaption class="shots-view-notes">${changes ? `<ol class="shots-changes">${changes}</ol>` : ''}${keys ? `<div class="shots-keys">${keys}</div>` : ''}<div class="shots-view-meta">${esc(sizeName(screen.viewport))}${dims} · seen as ${esc(who)}</div></figcaption>
-      </figure>`;
+      return {
+        viewport: screen.viewport,
+        afterHtml: side('head', after, 'After'),
+        beforeHtml: side('base', before, absent ? 'Before, not there yet' : 'Before'),
+        afterChip: 'After',
+        beforeChip: absent ? 'Before · not there yet' : 'Before',
+        notesHtml: `${changes ? `<ol class="shots-changes">${changes}</ol>` : ''}${keys ? `<div class="shots-keys">${keys}</div>` : ''}<div class="shots-view-meta">${esc(sizeName(screen.viewport))}${dims} · seen as ${esc(who)}</div>`,
+      };
     });
 
     // What no screen above describes: a change the shots agent skipped, one
@@ -20473,19 +20584,13 @@ const AppView = {
         </div>
       </li>`;
     }).filter(Boolean);
-    if (!screenHtml.length && !claims.some(skipped)) {
+    if (!screenParts.length && !claims.some(skipped)) {
       return `<section data-shots="1" data-shots-state="verified" class="rounded-lg border border-red-300 p-3 text-xs text-red-700 dark:border-red-900 dark:text-red-400">These before & after shots are missing their details, so none can be shown.</section>`;
     }
     const lookCopy = artifacts.some((artifact) => artifact?.variant === 'animation')
       ? 'Look at the shots and clips to decide whether they show the change.'
       : 'Look at the shots to decide whether they show the change.';
-    const sidePicks = `<span class="shots-picks"><input type="radio" class="shots-side-pick shots-side-before" name="shots-${key}-side" id="${sideId('before')}" aria-label="Show the screen before the change"><input type="radio" class="shots-side-pick shots-side-after" name="shots-${key}-side" id="${sideId('after')}" aria-label="Show the screen after the change" checked></span>`;
-    const screenPicks = screens.length > 1
-      ? `<span class="shots-picks">${screens.map((screen, index) => `<input type="radio" class="shots-screen-pick" name="shots-${key}-screen-pick" id="${pickId(index)}" aria-label="${attr(`Screen ${index + 1} of ${screens.length}: ${screen.viewport}`)}"${index === 0 ? ' checked' : ''}>`).join('')}</span>`
-      : '';
-    const viewer = screenHtml.length
-      ? `<div class="shots-viewer">${sidePicks}${screenPicks}<div class="shots-views${screens.length === 1 ? ' shots-views-one' : ''}">${screenHtml.join('')}</div></div>`
-      : '';
+    const viewer = AppView._shotsViewerHtml({ key, screens: screenParts });
     // Ready shots can be taken again too: after better steps or hints, or to
     // outline a run from before outlines were worked out. The route lets only
     // the author or an app manager do it.
@@ -21587,6 +21692,17 @@ const AppView = {
   // (the line is in hand and the optimistic paint is about to happen), so
   // a caller can show that it is on its way without claiming it landed.
   // The onclick callers ignore the value, as they always have.
+  // A vote the verified-identity rule refused (identity_required): open the
+  // verify sheet and, once a phone is linked, cast it again. Runs after the
+  // refused call has returned, so its in-flight guard is clear. False when
+  // there is no sheet to open, and the caller says the server's words.
+  _verifyThenVote(again) {
+    const ask = window.UsernodeReact?.verifyIdentity?.ask;
+    if (typeof ask !== 'function') return false;
+    void Promise.resolve(ask()).then((verified) => { if (verified) again(); });
+    return true;
+  },
+
   async castVote(sessionId, vote, expectedEpoch = null, opts = null) {
     // Guard against double-click / mashing: one in-flight vote per session.
     // The server is idempotent on an unchanged vote, but blocking here
@@ -21661,6 +21777,10 @@ const AppView = {
           AppView._seenEpoch.set(sessionId, parseInt(data.approvalEpoch, 10));
         }
         await AppView.refreshDevData('vote');
+        // A public app's vote counts from a verified account: the sheet that
+        // verifies, then the same vote again (features/auth/verify-identity.tsx).
+        if (data.code === 'identity_required' && AppView._verifyThenVote(
+          () => AppView.castVote(sessionId, vote, expectedEpoch, opts))) return false;
         // #1688: a No the server would not take without its line says so in
         // the server's own words rather than as an opaque failure.
         PlatformUI.toast((data.error === 'reason_required' && data.message)
@@ -21763,6 +21883,12 @@ const AppView = {
         // 409 "Issue is not open" is the common one: someone else's vote
         // decided it between this card rendering and the click landing.
         finish();
+        // A public app's vote counts from a verified account (castVote).
+        if (data.code === 'identity_required' && AppView._verifyThenVote(
+          () => AppView.castIssueVote(issueId, vote, opts))) {
+          AppView.refreshDevData('vote');
+          return;
+        }
         // #2603: a No the server would not take without its line says so in
         // the server's own words rather than as an opaque failure.
         PlatformUI.toast((data.error === 'reason_required' && data.message)

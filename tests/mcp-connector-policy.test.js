@@ -59,6 +59,15 @@ test('the allowlist permits exactly the routes the tools need', () => {
     ['GET', '/api/apps/recipe-box/messages'],
     ['POST', '/api/apps/recipe-box/messages'],
     ['POST', '/api/apps/recipe-box/issues'],
+    // create_request's screenshots: one upload of the caller's own image,
+    // which only the issues route above can put on the board
+    // (tests/mcp-create-request-images.test.js).
+    ['POST', '/api/feedback/screenshot'],
+    // Specs on a request: post_spec, its list, and the spec card's own
+    // version read (tests/mcp-request-specs.test.js).
+    ['POST', '/api/apps/recipe-box/issues/12/spec'],
+    ['GET', '/api/apps/recipe-box/issues/12/specs'],
+    ['GET', '/api/sessions/412/specs/2'],
     ['GET', '/api/sessions/412'],
     ['GET', '/api/sessions/412/status'],
     ['GET', '/api/sessions/412/spec'],
@@ -124,6 +133,11 @@ test('fail-closed: anything not listed is refused', () => {
     ['POST', '/api/sessions/412/archive'],
     ['POST', '/api/sessions/412/chat'],
     ['DELETE', '/api/apps/recipe-box'],
+    // Uploading a screenshot is not filing feedback: the feedback route
+    // itself, and the caller's list of it, stay off.
+    ['POST', '/api/feedback'],
+    ['GET', '/api/feedback/mine'],
+    ['GET', '/api/feedback/screenshot'],
     // Right path, wrong method.
     ['DELETE', '/api/apps/recipe-box/issues'],
     ['POST', '/api/apps'],
@@ -574,6 +588,70 @@ test('the benchmark\'s eight connector routes are allowed, and every one is full
   assert.equal(writes.length, 4);
   for (const [, route, chain] of writes) {
     const limiter = route.startsWith('/api/bot-bench/runs') ? 'benchRunLimiter' : 'benchGradingLimiter';
+    assert.match(chain, new RegExp(`requireAdminWrite, ${limiter}, sameOriginBrowserOnly,`), `${route} is limited, then guarded`);
+  }
+});
+
+// The App bench studio, the benchmark's suites and trials, the live Homeroom
+// bot and the recent before/after screenshots (routes/bench-studio.js):
+// twenty-three routes outside /api/admin, allowed because every handler
+// refuses anybody who is not a full platform admin before it reads a thing.
+// They read builds, tasks and screenshots of every app, private ones
+// included, and a launch spends the platform's money.
+test('the studio\'s twenty-three connector routes are allowed, and every one is full-admin gated first', () => {
+  for (const [method, target] of [
+    ['GET', '/api/bot-studio'],
+    ['GET', '/api/bot-studio/gallery'],
+    ['GET', '/api/bot-studio/runs/12/watch'],
+    ['GET', '/api/bot-studio/runs/12/reference-order'],
+    ['POST', '/api/bot-studio/launch'],
+    ['POST', '/api/bot-studio/runs/12/references'],
+    ['POST', '/api/bot-studio/trials/3/rerun'],
+    ['POST', '/api/bot-studio/trials/3/cancel'],
+    ['POST', '/api/bot-studio/trials/3/keep'],
+    ['POST', '/api/bot-studio/trials/3/preview'],
+    ['GET', '/api/bot-studio/packs'],
+    ['GET', '/api/bot-studio/packs/4'],
+    ['POST', '/api/bot-studio/packs'],
+    ['GET', '/api/bot-studio/suites'],
+    ['GET', '/api/bot-studio/suites/2'],
+    ['POST', '/api/bot-studio/suites/2/tasks'],
+    ['POST', '/api/bot-studio/tasks/9/taste'],
+    ['GET', '/api/bot-studio/runs/12/trials'],
+    ['GET', '/api/bot-studio/trials/3'],
+    ['GET', '/api/bot-studio/bot'],
+    ['POST', '/api/bot-studio/bot/runs/5/rating'],
+    ['GET', '/api/bot-studio/shots'],
+    ['GET', '/api/bot-studio/shots/77'],
+  ]) {
+    assert.equal(policy.isConnectorApiRequest(method, target), true, `${method} ${target}`);
+  }
+  for (const [method, target] of [
+    ['DELETE', '/api/bot-studio/packs/4'],
+    ['POST', '/api/bot-studio/packs/4'],
+    ['DELETE', '/api/bot-studio/trials/3'],
+    ['POST', '/api/bot-studio/trials/3'],
+    ['GET', '/api/bot-studio/trials/3/preview'],
+    ['POST', '/api/bot-studio/bot'],
+    ['POST', '/api/bot-studio/shots/77'],
+    ['GET', '/api/bot-studio/launch'],
+    ['GET', '/api/admin/homeroom-bot/bench/studio'],
+    ['POST', '/api/admin/homeroom-bot/bench/studio/launch'],
+  ]) {
+    assert.equal(policy.isConnectorApiRequest(method, target), false, `${method} ${target} is refused`);
+  }
+  const src = fs.readFileSync(path.join(__dirname, '../src/routes/bench-studio.js'), 'utf8');
+  const routes = [...src.matchAll(/router\.(get|post)\('(\/api\/bot-studio[^']*)', ([a-zA-Z]+)/g)];
+  assert.equal(routes.length, 23);
+  for (const [, method, route, gate] of routes) {
+    assert.equal(gate, 'requireAdminWrite', `${method.toUpperCase()} ${route} is full-admin gated first`);
+  }
+  // Every write is rate-limited per person and guarded after the limiter. A
+  // launch shares the benchmark's launch limiter, since both spend money.
+  const writes = [...src.matchAll(/router\.post\('(\/api\/bot-studio[^']*)', ([^(]+)handler\(/g)];
+  assert.equal(writes.length, 10);
+  for (const [, route, chain] of writes) {
+    const limiter = route === '/api/bot-studio/launch' ? 'benchRunLimiter' : 'benchStudioLimiter';
     assert.match(chain, new RegExp(`requireAdminWrite, ${limiter}, sameOriginBrowserOnly,`), `${route} is limited, then guarded`);
   }
 });

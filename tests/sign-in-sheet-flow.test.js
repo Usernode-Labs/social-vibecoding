@@ -241,7 +241,7 @@ test('the password step sends the sign-in screen\'s exchange, and says what it r
 
 test('the password step is the sheet\'s: the link opens it, and Forgot password still reaches the reset', () => {
   const src = read(SHEET);
-  assert.match(src, /type Step = 'choose' \| 'email' \| 'code' \| 'account' \| 'username' \| 'password';/);
+  assert.match(src, /type Step = 'choose' \| 'email' \| 'code' \| 'account' \| 'username' \| 'password' \| 'phone' \| 'phone-code';/);
   assert.match(src, /data-sign-in-sheet-password=""\s+onClick=\{\(e\) => \{ e\.preventDefault\(\); setError\(null\); setDetails\(null\); setStep\('password'\); \}\}/);
   assert.match(src, /<label htmlFor="sign-in-sheet-identifier" className=\{LABEL\}>Username or email<\/label>/);
   assert.match(src, /<PasswordInput ref=\{currentPasswordField\} id="sign-in-sheet-current-password" name="password" required autoComplete="current-password"/);
@@ -420,4 +420,21 @@ test('the movement: the sheet leaves over the make screen\'s ground, then the ma
   }
   assert.match(sheet, /transition-\[transform,opacity\] duration-200 ease-out motion-reduce:transition-none/);
   assert.equal((sheet.match(/motion-reduce:transition-none/g) || []).length >= 4, true);
+});
+
+test('closed by its ✕, its dim or Escape, the sheet goes down the way it came up before it is dropped', () => {
+  const sheet = read(SHEET);
+  // The ✕ and the dim both take `close`, which is the slide down, not the
+  // parent's drop (that unmounted it in one frame: iOS app, 5 Oct 2026).
+  assert.match(sheet, /const close = leaving \? undefined : requestClose;/);
+  assert.equal((sheet.match(/onClick=\{close\}/g) || []).length, 2);
+  assert.match(sheet, /if \(e\.key === 'Escape'\) requestClose\(\);/);
+  // Down first (the panel's translate-y-full and the dim's fade ride `shown`),
+  // then the parent's onClose once that has had its time; at once with
+  // reduced motion. The keys go down with it.
+  assert.match(sheet, /export const CLOSE_MS = 240;/);
+  assert.match(sheet, /if \(active && panelRef\.current\?\.contains\(active\)\) active\.blur\(\);\s+if \(prefersReducedMotion\(\)\) \{ onClose\(\); return; \}\s+setClosing\(true\);\s+setShown\(false\);\s+closeTimer\.current = window\.setTimeout\(\(\) => \{ closeTimer\.current = null; onClose\(\); \}, CLOSE_MS\);/);
+  // A second tap on the fading dim is the same close, not a second timer.
+  assert.match(sheet, /if \(closeTimer\.current != null\) return;/);
+  assert.match(sheet, /data-sign-in-sheet-closing=\{closing \? '' : undefined\}/);
 });

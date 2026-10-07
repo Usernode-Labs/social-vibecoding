@@ -1653,6 +1653,48 @@ async function listPreviews(config) {
   return previews;
 }
 
+// Shots fixtures use the production environment label; paired runtimes use
+// staging. Require both the exact run label and its deterministic name so
+// neither ordinary apps nor vote-backed previews enter this cleanup inventory.
+async function listShotsRuntimes(config) {
+  const deployments = await getClients().apps.listNamespacedDeployment({
+    namespace: config.kubernetes.appNamespace,
+    labelSelector: `app.kubernetes.io/managed-by=${MANAGED_BY}`,
+  });
+  const { HOSTED_APP_ID } = require('../../worker/shots-hosted-app-contract');
+  const runtimes = [];
+  for (const deployment of deployments.items || []) {
+    const metadata = deployment.metadata || {};
+    const labelsMap = metadata.labels || {};
+    if (labelsMap['app.kubernetes.io/managed-by'] !== MANAGED_BY) continue;
+    for (const tag of ['shots', 'evidence']) {
+      const runId = labelsMap[`social.usernode.io/${tag}-run`];
+      const side = labelsMap[`social.usernode.io/${tag}-side`];
+      if (!/^[0-9a-f]{32}$/.test(runId || '')) continue;
+      const otherRun = labelsMap[`social.usernode.io/${tag === 'shots' ? 'evidence' : 'shots'}-run`];
+      if (otherRun && otherRun !== runId) continue;
+      const session = labelsMap['social.usernode.io/session-id'];
+      if (!/^[1-9]\d*$/.test(session || '') || !Number.isSafeInteger(Number(session))) continue;
+      let expected;
+      if (side === 'base' || side === 'head') {
+        if (labelsMap['social.usernode.io/environment'] !== 'staging') continue;
+        expected = `sv-${tag}-${runId.slice(0, 16)}-${side === 'base' ? 'b' : 'h'}`;
+      } else if (side === 'hosted-app') {
+        if (labelsMap['social.usernode.io/app-id'] !== String(HOSTED_APP_ID)
+            || labelsMap['social.usernode.io/environment'] !== 'production') continue;
+        expected = appResourceName({ id: HOSTED_APP_ID, slug: `homeroom-${tag}-${runId.slice(0, 16)}` }, 'production');
+      }
+      if (!expected || metadata.name !== expected) continue;
+      runtimes.push({
+        runtimeKind: 'kubernetes', runtimeName: expected, runId,
+        sessionId: Number(session), createdAt: metadata.creationTimestamp || null,
+      });
+      break;
+    }
+  }
+  return runtimes;
+}
+
 // Every worker state volume, with whether a worker Deployment still mounts it.
 async function listWorkerVolumes(config) {
   const namespace = config.kubernetes.workerNamespace;
@@ -2570,7 +2612,7 @@ module.exports = {
   runCaptureJob, runUnitSuiteJob, cancelPreviewChecks, findCheckJobs, collectCheckJob,
   execInWorker, _getClients: getClients,
   getWorkerStatus, getWorkerContractVersion, getWorkerRuntimeMetadata, deleteWorker, eraseWorker, listWorkers, cloneWorkerVolume,
-  listWorkerVolumes, listPreviews, isQuotaExceeded,
+  listWorkerVolumes, listPreviews, listShotsRuntimes, isQuotaExceeded,
   listStatusResources, listNamespaceCapacity, inspectWorkerTermination, getPlatformDeployStatus,
   _setClientsForTest: setClientsForTest, _envChecksumForTest: envChecksum,
   _attachLineObserverForTest: attachLineObserver,

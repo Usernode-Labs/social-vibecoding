@@ -100,6 +100,40 @@ async function placeholderUsername(db, userId) {
   throw new Error('No free placeholder username for the anonymised account');
 }
 
+// The Homeroom bot's copies of a person's words and name that no foreign key
+// reaches, so neither the purge nor the anonymised row takes them: what they
+// asked a plan changed with (homeroom_bot_runs.plan_change, on the requests
+// they asked for, found through their requester rows before the purge takes
+// those), and their username on the bot's opt-in list (platform_settings
+// homeroom_bot_dm_users, a JSON array of usernames). A list that does not
+// parse is left as it is; the bot reads it the same way (readSettings).
+async function forgetBotWords(db, userId) {
+  await db.query(
+    `UPDATE homeroom_bot_runs r SET plan_change = NULL
+       FROM homeroom_bot_requesters q
+      WHERE q.user_id = $1 AND r.app_id = q.app_id AND r.issue_number = q.issue_number
+        AND r.plan_change IS NOT NULL`,
+    [userId]
+  );
+  const { rows } = await db.query(
+    `SELECT s.value, LOWER(u.username) AS username
+       FROM platform_settings s JOIN users u ON u.id = $1
+      WHERE s.key = 'homeroom_bot_dm_users'
+      FOR UPDATE OF s`,
+    [userId]
+  );
+  if (!rows.length || !rows[0].username) return;
+  let list;
+  try { list = JSON.parse(rows[0].value); } catch { return; }
+  if (!Array.isArray(list)) return;
+  const kept = list.filter((name) => String(name).toLowerCase() !== rows[0].username);
+  if (kept.length === list.length) return;
+  await db.query(
+    `UPDATE platform_settings SET value = $1, updated_at = NOW() WHERE key = 'homeroom_bot_dm_users'`,
+    [JSON.stringify(kept)]
+  );
+}
+
 async function anonymiseUser(db, userId, unusablePassword) {
   // What the users BEFORE DELETE trigger did: hand group ownership on,
   // archive direct conversations. Then leave the remaining groups.
@@ -110,6 +144,7 @@ async function anonymiseUser(db, userId, unusablePassword) {
   await db.query(`UPDATE conversation_members cm SET status = 'declined', responded_at = NOW()
     FROM conversations c WHERE c.id = cm.conversation_id AND c.kind = 'group'
       AND cm.user_id = $1 AND cm.status = 'invited'`, [userId]);
+  await forgetBotWords(db, userId);
   await purgeCascadingRows(db, userId);
   const username = await placeholderUsername(db, userId);
   await db.query(
@@ -232,7 +267,7 @@ async function deleteAccount(pool, { userId, actorId, mode, confirmation, passwo
     // A proposal/spec may be public while its assistant transcript is not.
     await db.query(`DELETE FROM chat_session_messages WHERE session_id IN
       (SELECT id FROM chat_sessions WHERE user_id = $1 AND transcript_shared_at IS NULL)`, [userId]);
-    await db.query(`UPDATE chat_sessions SET spec_md = '', pr_title = NULL, session_title = NULL, proposed_pr_title = NULL,
+    await db.query(`UPDATE chat_sessions SET spec_md = '', spec_html = NULL, pr_title = NULL, session_title = NULL, proposed_pr_title = NULL,
       pr_summary_md = NULL, pr_summary_previous_md = NULL, pr_body = NULL,
       testing_md = NULL, local_agent_label = NULL
       WHERE user_id = $1 AND shared_at IS NULL AND pr_number IS NULL`, [userId]);
@@ -245,6 +280,7 @@ async function deleteAccount(pool, { userId, actorId, mode, confirmation, passwo
       await db.query(`DELETE FROM ${table} WHERE user_id = $1 AND message_id IS NULL`, [userId]);
     }
     await db.query('DELETE FROM issue_screenshots WHERE user_id = $1 AND issue_number IS NULL', [userId]);
+    await db.query('DELETE FROM issue_videos WHERE user_id = $1 AND issue_number IS NULL', [userId]);
 
     // Freeze only previously accepted, unblocked direct histories. The
     // existing BEFORE DELETE trigger transfers group ownership and archives

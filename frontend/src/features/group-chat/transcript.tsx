@@ -55,7 +55,7 @@ import { openReport } from '../dialogs/report';
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { ChatMessageRow, groupsWithPrevious } from '@/components/ui/chat';
+import { ChatMessageRow, NewMessagesDivider, groupsWithPrevious } from '@/components/ui/chat';
 import { Avatar, ReactionPill } from '@/components/ui/feed';
 import {
   BookmarkIcon, BookmarkSolidIcon, ChatIcon, CopyIcon, DraftTrashIcon, EnvelopeIcon, FlagIcon, LinkIcon, NoSymbolIcon,
@@ -73,6 +73,7 @@ import { QuietCard } from './quiet-card';
 import { swatchFor } from './swatch';
 import { LinkEmbeds } from '../messages/link-cards';
 import { setUserBlocked } from '../messages/store';
+import { firstUnreadId, transcriptRow } from '../messages/unread-anchor';
 import { MessageActionBar, MessageMenu, placementFor, type MenuItem } from '../message-actions/action-bar';
 import { MessageActionSheet, useLongPress } from '../message-actions/action-sheet';
 import { absoluteLink, copyToClipboard, toast } from '../message-actions/clipboard';
@@ -1000,6 +1001,16 @@ export function TranscriptRows({ view, source }: {
   const quiet = (main || chat) && view.lead.quiet && !view.messages.some((m) => m.kind === 'message')
     ? view.lead.quiet
     : null;
+  // The general chat's "New" line: above the first message after where
+  // reading stood when the channel opened (`lead.unread`), or above the
+  // first row drawn after it when that message is not drawn itself. The
+  // pane opens with it near the top (mount.ts openAtUnreadLine).
+  const unread = main ? view.lead.unread : null;
+  const lineAt = useMemo(
+    () => (unread ? firstUnreadId(view.messages.map(transcriptRow), unread.lastReadId) : null),
+    [unread, view.messages],
+  );
+  let lineDrawn = lineAt === null;
   const drawn: ReactNode[] = [];
   // The row the next one groups under; a thread-activity card resets it, so
   // the message after a card always carries its own name.
@@ -1009,6 +1020,10 @@ export function TranscriptRows({ view, source }: {
     // where it landed — one card for a run of replies to one thread with
     // nothing else said between them. A deleted reply leaves the run.
     const replyOf = main ? rows[i].replyOf : null;
+    if (!lineDrawn && rows[i].id != null && (rows[i].id as number) >= (lineAt as number)) {
+      lineDrawn = true;
+      drawn.push(<NewMessagesDivider key="unread-line" />);
+    }
     if (replyOf) {
       const run = [rows[i]];
       while (i + 1 < rows.length && rows[i + 1].replyOf?.rootId === replyOf.rootId) {

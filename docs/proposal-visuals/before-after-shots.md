@@ -101,7 +101,13 @@ external agent (`visible_changes` on the CLI's `proposal_submit_build`). The sha
 - `persona` is who is signed in: `member`, `read_only_admin`, `full_admin`
   (Homeroom controls hidden from read-only admins), or `guest`, a visitor who
   is not signed in. Use `guest` for what signed-out people see: Homeroom's
-  landing and sign-in pages, or a public app's guest view.
+  landing and sign-in pages, or a public app's guest view. A hosted build
+  turn's `declare_visible_changes` answers with `warnings` when the persona
+  cannot show the change: a `guest` change on an app whose guests are shown
+  nothing of it (private, or guests unavailable), or a claim about
+  signed-out visitors declared for a signed-in persona
+  (`shots-identities.personaWarnings`). They are warnings, not refusals: a
+  change to the sign-in page itself is a real guest change.
 - `hints` are optional. They pass on what the author learned while building
   (data to create first, text that proves the state was reached, and the
   element to point at), so the shots agent can go straight there. They are
@@ -185,11 +191,15 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
    | `skip_change` | Records why a change cannot be shown and withdraws anything saved for it (saving again takes the skip back); without a change id, it skips every change that is not ready. `outcome: "failed"` says the agent did the steps on the after address and the app broke, rather than that these copies cannot reach the state |
    | `fail_request` | Blocks a declared `controlledFailurePath` on both builds |
 
-   For each change and screen, the agent resizes the browser, follows the
-   steps on the after address, waits for the finished state, hovers the
-   changed element into view (the shell scrolls inside its own panes, so a
-   `fullPage` screenshot shows no more than the screen), and saves a screen
-   shot and an element shot. It does the same on the before address. Data a
+   For each change and screen, the agent resizes the browser and opens the
+   start path again (an app that picks its layout at load keeps a desktop
+   layout in a phone screen otherwise), follows the steps on the after
+   address, waits for the finished state and for anything still moving to
+   settle, hovers the changed element into view (the shell scrolls inside
+   its own panes, so a `fullPage` screenshot shows no more than the screen),
+   moves the pointer off it so hover-only controls do not cover the change,
+   and saves a screen shot and an element shot. It does the same on the
+   before address, framed the same way. Data a
    screen needs (`hints.setup`) is created on both addresses before either
    is shot. For a `motion` change it also records one clip per side.
    It calls `browser_close` to end the stills session, resizes again, and
@@ -201,7 +211,13 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
    Otherwise a change is **ready** when every screen has a before and an
    after screen shot, plus a before and an after clip if it is motion, and it
    carries the agent's note if it left one. Element shots are optional
-   extras. Anything else is **skipped**, with the agent's reason or, failing
+   extras. A ready change whose before and after screens came out the same
+   (the same image on every screen size, or, once the screens are compared,
+   no area that differs) is still published, marked `unchanged`, with a note
+   saying so ("Not in these shots: any visible difference…"): people judge
+   the shots, and two copies of one screen must not pass for the change.
+   `save_shot` already warns the agent (`sameAsOtherSide`) when it saves the
+   same image on both sides, while it can still retake them. Anything else is **skipped**, with the agent's reason or, failing
    that, a list of exactly what is missing. The files of ready changes are
    stored, fenced by a hash of the manifest, and the before/after builds are
    torn down.
@@ -216,6 +232,11 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
 `{ passed, mode: "shots", runs: 1, stories: [{ id, status, reason?, note? }] }`.
 `plan_hash` holds the manifest hash, which names exactly the files
 published.
+
+Within a run, a shots agent whose process died under it (`exitCause`
+`oom_killed`, `container_gone` or `turn_process_gone`, see
+`shots-agent-diagnostics.md`) is dispatched once more on the same copies,
+when at least a minute of its budget is left; what it saved stays saved.
 
 A run that a platform restart interrupted is retried automatically, up to
 twice per commit: a sweep every 30 seconds starts the same commit again once
@@ -232,6 +253,11 @@ The platform checks:
 - it is addressed to a declared change, one of that change's screens, and a
   side;
 - a shot is one complete PNG under 6 MB and at most 8192 px on each edge;
+- an element shot fits its screen: no wider than the screen (scaled by the
+  same side's screen shot when the browser shot at 2x) and at most two
+  screens tall. A wider one means the page was laid out at another size; a
+  taller one is a tiled capture nobody can read (`element_shot_too_wide`,
+  `element_shot_too_tall`);
 - a clip is a WebM between 1 KB and 20 MB, only for a `motion` change;
 - the bridge reads only a plain `.png` that is directly inside a persona's
   browser output directory, named by the agent. For a clip, it reads only the
@@ -425,7 +451,7 @@ browser). Each persona's browser saves files under
 | Where before and after differ, per screen (`screensFor`) | `src/services/shots-diff.js` |
 | Public routes (summary, files, diagnostics, take again, stop, waive) | `src/routes/shots.js` |
 | Tables, and the rename from `visual_evidence_*` | `src/db/schema.sql` (the "Renamed from visual_evidence_*" block) |
-| Proposal card | `public/js/app-view.js` (`shotsHtml`) |
+| Proposal card | `public/js/app-view.js` (`shotsHtml`; the viewer frame is `_shotsViewerHtml`, which an HTML spec's drawn screens share, #3699) |
 
 ## Diagnosing a run
 

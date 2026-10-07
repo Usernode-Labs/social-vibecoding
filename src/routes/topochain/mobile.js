@@ -47,6 +47,7 @@ const {
   loadOnboarding, visibleChallenges, challengeCategory, resolveProgress, loadEventBlocks,
   gateSummary,
 } = require('../../services/topochain/challenge-onboarding');
+const { isWeekly, weekStartMs } = require('../../services/topochain/challenge-rules');
 
 const { Router } = require('express');
 const bcrypt = require('bcrypt');
@@ -779,7 +780,7 @@ function topochainMobileRoutes(config) {
     try {
       const { rows } = await pool.query(
         `SELECT id, email, display_name, email_confirmed, is_in_waitlist, github, x, password_set,
-                is_admin, has_platform_access, bp_requested_at, bp_released_at
+                is_admin, has_platform_access, private_member_since, bp_requested_at, bp_released_at
            FROM users WHERE id = $1`,
         [req.user.id]
       );
@@ -804,8 +805,9 @@ function topochainMobileRoutes(config) {
           // Onboarding flow alignment. `has_platform_access` mirrors the
           // web gate; `bp_released` is what the mobile app's node gates
           // block production on (bp_requested surfaces "request pending"
-          // in the SV settings UI). Admins implicitly have access.
-          has_platform_access: !!user.has_platform_access || !!user.is_admin,
+          // in the SV settings UI). Admins implicitly have access, and so
+          // does a private member, as on the web (routes/auth.js /me).
+          has_platform_access: !!user.has_platform_access || !!user.is_admin || user.private_member_since != null,
           bp_requested: !!user.bp_requested_at,
           bp_released: !!user.bp_released_at,
           // The stable account namespace used by legacy mobile `/me`
@@ -834,7 +836,7 @@ function topochainMobileRoutes(config) {
   async function bpStateHandler(req, res) {
     try {
       const { rows } = await pool.query(
-        `SELECT is_admin, has_platform_access, bp_requested_at, bp_released_at
+        `SELECT is_admin, has_platform_access, private_member_since, bp_requested_at, bp_released_at
            FROM users WHERE id = $1`,
         [req.user.id]
       );
@@ -842,7 +844,7 @@ function topochainMobileRoutes(config) {
       const u = rows[0];
       return ok(res, {
         data: {
-          has_platform_access: !!u.has_platform_access || !!u.is_admin,
+          has_platform_access: !!u.has_platform_access || !!u.is_admin || u.private_member_since != null,
           bp_requested: !!u.bp_requested_at,
           bp_released: !!u.bp_released_at,
         },
@@ -1357,11 +1359,19 @@ function topochainMobileRoutes(config) {
         // ring with no words beside it while Home, reading the snapshot,
         // showed the real number. The snapshot count is passed in here, and
         // the done rule, the clamp and the target stay the shared ones.
+        // A WEEKLY challenge counts this week's credits only (from Monday
+        // 00:00 UTC), the week the scorer caps by, like every other surface
+        // (challenge-onboarding COUNTS_THIS_WEEK_SQL).
         const metricKind = item.metric ? item.metric.kind : null;
+        const credits = activitiesByChallenge.get(Number(item.id)) || [];
+        const thisWeek = weekStartMs(Date.now());
+        const counted = isWeekly({ category: item.category })
+          ? credits.filter((a) => new Date(a.activity_at).getTime() >= thisWeek)
+          : credits;
         item.progress = resolveProgress({
           metricKind,
           metricTarget: item.metric ? item.metric.target : null,
-          activityCount: (activitiesByChallenge.get(Number(item.id)) || []).length,
+          activityCount: counted.length,
           blocks: blocksByEvent.get(Number(item.season_event_id)),
         });
       }

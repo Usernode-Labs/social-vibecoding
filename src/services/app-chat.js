@@ -264,7 +264,7 @@ async function deleteOwnMessage(pool, { appId, userId, messageId }) {
   try {
     await cx.query('BEGIN');
     // FOR UPDATE: serialises against an edit, a reaction or a report
-    // (routes/content-reports.js takes FOR SHARE) racing the delete.
+    // (services/moderation.js takes FOR SHARE) racing the delete.
     const { rows } = await cx.query(
       `SELECT id, user_id, msg_type, thread_type, thread_ref, deleted_at
          FROM chat_messages
@@ -341,6 +341,27 @@ async function unreadCount(db, appId, userId) {
     [appId, userId]
   );
   return rows[0]?.unread_count || 0;
+}
+
+/**
+ * Where this reader's reading of the general stream stands: the cursor and
+ * how much is unread behind it, or null for a reader with no cursor here
+ * (one who is not a member, or never had the channel listed). The first page
+ * of the stream carries it, read before the open moves the cursor, so the
+ * channel opens at the first message after it, under a "New" line
+ * (frontend/src/features/messages/unread-anchor.ts).
+ */
+async function readPosition(db, appId, userId) {
+  if (!appId || !userId) return null;
+  const { rows } = await db.query(
+    `SELECT last_read_message_id FROM app_chat_reads WHERE app_id = $1 AND user_id = $2`,
+    [appId, userId]
+  );
+  if (!rows.length) return null;
+  return {
+    lastReadMessageId: Number(rows[0].last_read_message_id) || 0,
+    unreadCount: await unreadCount(db, appId, userId),
+  };
 }
 
 /**
@@ -439,6 +460,7 @@ module.exports = {
   threadSummaryForRoom,
   deleteOwnMessage,
   unreadCount,
+  readPosition,
   markRead,
   markUnread,
   advanceReadCursor,

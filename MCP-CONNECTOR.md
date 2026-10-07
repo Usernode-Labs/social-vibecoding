@@ -255,6 +255,46 @@ testAccountLimiter, sameOriginBrowserOnly`, and no path has a `password`
 segment. `create_test_account` and `retire_test_account` are acting tools;
 `list_test_accounts` is a `list_` read.
 
+### Admin only: the App bench studio, the benchmark, the bot and recent shots
+
+A full platform admin's connector also drives the **App bench studio**
+(`services/bench/studio.js`): a brand-new app's first version built from a
+brief the way a new project's is built today (the starter and its sketch card
+as the first commit, the Homeroom bot's triage, the plan approved as a creator
+tapping Build it, the spec, the build, then 16 screenshots), on any model,
+with or without a **context pack** (guidance added to the bot's first-version
+prompts, and files such as a theme skill added to the first commit), beside
+**reference builds** a Claude Code session makes from the same inputs and
+hands back. The same connector reads and curates the rest of the Homeroom bot
+benchmark, the live bot, and the platform's recent before/after screenshots.
+The charter's `app-bench-studio` section is the procedure a session follows.
+
+| Tool | What it actually does |
+|---|---|
+| `get_bench_studio` | The studio's recent runs, its packs, its host app, the starter briefs and its limits. Read-only |
+| `launch_bench_studio` | Launches a studio run: briefs (`briefSet: "starter"`, new `{ name, brief }`, `{ ref }` or `{ taskId }`) × `models` (`"today"` is the live bot's own per stage) × `contextPackIds` (0 for none) × `repeats`, with `references` planned per brief. `capUsd` is required; over $100 needs `confirmLargeCap` |
+| `get_bench_studio_run` | A run as it moves: each build's arm, step, time, spend, last activity lines, skills invoked or read, screenshots, code and preview. `since` takes the previous call's cursor and returns only what changed. Read-only |
+| `get_bench_reference_order` | The work order for one reference: the brief, the start commit (the same first commit the bot's builds start from, on a public branch of the host repository), the pack, how builds are judged and how to hand back. Given, alone, to a fresh Claude Code session. Read-only |
+| `submit_bench_reference` | Hands a reference in with a `label`, as a branch on a repository the admin's linked GitHub account owns or a patch (≤ 256 KB). It is copied into the host repository and captured like the bot's builds, at no model cost; the same label again is its next attempt |
+| `rerun_bench_trial`, `cancel_bench_trial`, `keep_bench_trial` | One build: run again as the arm's next attempt, stop, or keep its branch past the seven-day sweep |
+| `deploy_bench_preview` | Puts a studio build up for 24 hours through the platform's own preview path, on the host app with a fresh, empty database; at most four at once |
+| `get_bench_gallery` | Every studio brief with its builds across runs. Read-only |
+| `list_bench_context_packs`, `get_bench_context_pack`, `create_bench_context_pack` | The packs; one in full with its diff from its parent; save the next version of one |
+| `list_bench_suites`, `get_bench_suite`, `add_bench_task`, `edit_bench_task` | The benchmark's suites and tasks; add a task (a brief, a capture, a bot run at a stage, a merged pull request) or edit a taste task's brief while its suite is open |
+| `list_bench_trials`, `get_bench_trial` | Any run's trials one by one, and one in full with its screenshots as images. Refused for a run that is not a studio run while any of its trials waits for the judge, so blind grading stays blind |
+| `get_homeroom_bot`, `rate_homeroom_bot_run` | The bot as its console section shows it (settings, spend, queue, a page of its runs) and a run's rating |
+| `list_recent_shots`, `get_recent_shots` | Merged proposals' before/after screenshots as the console's Screenshot gallery lists them, and one proposal's stills as images |
+
+The studio's builds run in one private host app the benchmark user owns,
+made once through app creation's own path, so a preview's database is that
+app's own empty one and never an app's real data. A studio run is open by
+design (its watch names the model of every build); a session that grades
+blind items should never have watched. The routes sit at `/api/bot-studio`
+(`routes/bench-studio.js`), each gated `requireAdminWrite` first, reads
+included, and every write then `benchStudioLimiter` (a launch
+`benchRunLimiter`) and `sameOriginBrowserOnly`. The writes are acting tools;
+everything else is a `get_`/`list_` read.
+
 ---
 
 ## 3. The allowlist Homeroom ships

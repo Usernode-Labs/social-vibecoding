@@ -405,7 +405,10 @@
         handles.push(un.attachNavBar(topEl, { scrollEl }));
       }
       if (typeof un.attachKeyboardAvoidance === 'function') {
-        handles.push(un.attachKeyboardAvoidance(scrollEl, { topEl: topEl || undefined }));
+        // The composer column around the scroller (`.platform-kb-column`):
+        // its message box is focused without iOS's pan too.
+        const column = typeof scrollEl.closest === 'function' ? scrollEl.closest('.platform-kb-column') : null;
+        handles.push(un.attachKeyboardAvoidance(scrollEl, { topEl: topEl || undefined, column: column || undefined }));
       }
       PlatformUI._screenFx[key] = handles;
     },

@@ -33,6 +33,7 @@ const appManifest = require('./app-manifest');
 const checkHistory = require('./check-history');
 const unitSuite = require('./unit-suite');
 const contentReview = require('./content-review');
+const smallChange = require('./small-change');
 const assetRouteCheck = require('./asset-route-check');
 const renderHealth = require('./render-health');
 const checkRuns = require('./check-runs');
@@ -447,6 +448,13 @@ function deriveCapturePlan(session, declaredTests, changedFiles) {
   }
   return { paths: ['/'], pathDefaulted: true, routeSource: 'default', scenarios: [] };
 }
+
+// What the legacy capture outcome says when it took no screenshots because
+// route-based media is suppressed (suppressLegacyMediaForSession: the
+// proposal declared before & after shots, or the shots kill switch is on).
+// It used to say "No frontend files in commit range" on every such run,
+// including ones that changed the UI and had verified shots.
+const LEGACY_SUPERSEDED_REASON = 'Route-based screenshots are retired in favour of before & after shots; this run only checks the console';
 
 function shouldCaptureMedia(uiAffecting, routeSource, {
   suppressLegacyMedia = false,
@@ -2601,6 +2609,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
           shotsOnly,
           admissionReason: admission.reason || null,
           media,
+          legacyMediaSuppressed: suppressLegacyMedia,
           capturePaths,
           pathDefaulted,
           captureRouteSource,
@@ -2801,7 +2810,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     const settled = await settleCaptureRun(config, pool, {
       session, app, commitHash, trigger, send, operation, traceStep, runStartedAt,
       shotsOnly, admissionReason: admission.reason,
-      media, capturePaths, pathDefaulted, captureRouteSource,
+      media, legacyMediaSuppressed: suppressLegacyMedia, capturePaths, pathDefaulted, captureRouteSource,
       visualScenarios,
       prodRunning, stagingOrigin, targets,
       testsCount: tests.length, dispatched, ceilingDropped: declared.ceilingDropped,
@@ -2967,7 +2976,7 @@ async function settleCaptureRun(config, pool, run) {
     session, app, commitHash, trigger = null, send = null, operation = null,
     traceStep = () => {}, runStartedAt = Date.now(),
     shotsOnly = false, admissionReason = null,
-    media, capturePaths, pathDefaulted, captureRouteSource = null,
+    media, legacyMediaSuppressed = false, capturePaths, pathDefaulted, captureRouteSource = null,
     visualScenarios = [], prodRunning, stagingOrigin, targets,
     testsCount, dispatched = null, ceilingDropped = 0,
     stdout, stderr = '', runPartial = false, runPartialReason = '', unitOutcome = null,
@@ -3011,6 +3020,14 @@ async function settleCaptureRun(config, pool, run) {
     pool, sessionId: session.id, appId: app.id, repoOwner, repoName, commitHash,
   }).catch(() => null);
   if (contentOutcome) extraRows.push(contentOutcome.row);
+  // The small-change tag, watch only: a row for admins, never a check row,
+  // so it is not awaited and nothing below reads it. Cached per head like
+  // the review above. Never rejects.
+  if (!shotsOnly) {
+    void smallChange.maybeTagSmallChange({
+      config, pool, sessionId: session.id, appId: app.id, repoOwner, repoName, commitHash,
+    });
+  }
   // Render health: the platform's own reading of every checked page — a
   // stylesheet that failed or came back empty, a page that shows nothing —
   // which no dapp.json setting can opt out of. Built from the same frames
@@ -3058,7 +3075,8 @@ async function settleCaptureRun(config, pool, run) {
       failures: failures.slice(0, 20), droppedOverCap: dropped.slice(0, 20),
       runCutShort: runPartial ? (runPartialReason || true) : false,
       deferred: true,
-      reason: !media ? 'No frontend files in commit range and the verdict is deferred — nothing to capture'
+      reason: !media ? (legacyMediaSuppressed ? LEGACY_SUPERSEDED_REASON
+        : 'No frontend files in commit range and the verdict is deferred — nothing to capture')
         : (!stored ? 'No usable "after" artifact was produced' : undefined),
     }).catch((err) => {
       log.warn('visuals', 'Capture-outcome store failed (non-fatal)', {
@@ -3335,7 +3353,10 @@ async function settleCaptureRun(config, pool, run) {
     // knowingly incomplete.
     runCutShort: runPartial ? (runPartialReason || true) : false,
   };
-  if (!media) captureDetail.reason = 'No frontend files in commit range — console/tests-only run';
+  if (!media) {
+    captureDetail.reason = legacyMediaSuppressed ? LEGACY_SUPERSEDED_REASON
+      : 'No frontend files in commit range — console/tests-only run';
+  }
   else if (!stored) captureDetail.reason = 'No usable "after" artifact was produced';
   else if (runPartial) captureDetail.reason = `Capture run cut short (${runPartialReason || 'unknown'}) — partial set stored`;
   await storeCaptureOutcome(pool, session.id, captureState, captureDetail).catch((err) => {

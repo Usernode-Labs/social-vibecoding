@@ -158,7 +158,7 @@ test('recovery releases an abandoned current run while preserving longer grace f
   assert.deepEqual(transitions.map(({ runId, next, patch }) =>
     ({ runId, next, code: patch.failureCode, minIdleMs: patch.recoveryMinIdleMs })),
   [{ runId: id, next: 'failed', code: 'shots_run_interrupted', minIdleMs: gc.LEGACY_RUN_GRACE_MS }]);
-  assert.ok(queries.some(({ sql }) => sql.includes("'{cleanupComplete}'")));
+  assert.ok(queries.some(({ sql }) => sql.includes("'cleanupComplete', true")));
 });
 
 test('recovery retries cleanup left unfinished by a process exit', async () => {
@@ -167,7 +167,7 @@ test('recovery retries cleanup left unfinished by a process exit', async () => {
   let cleaned = 0;
   const pool = { query: async (sql) => {
     queries.push(String(sql));
-    if (String(sql).includes("r.state IN ('failed','cancelled')")) {
+    if (String(sql).includes("WHERE r.state IN ('verified','failed','stale'")) {
       return { rows: [{ id, app_slug: 'demo' }] };
     }
     return { rows: [], rowCount: 1 };
@@ -177,7 +177,7 @@ test('recovery retries cleanup left unfinished by a process exit', async () => {
   });
   assert.deepEqual(result, { examined: 0, failed: 0, cancelled: 0, cleanupRetried: 1 });
   assert.equal(cleaned, 1);
-  assert.ok(queries.some((sql) => sql.includes("'{cleanupComplete}'")));
+  assert.ok(queries.some((sql) => sql.includes("'cleanupComplete', true")));
 });
 
 test('recovery leaves a renewed current run and its resources untouched', async () => {
@@ -262,17 +262,19 @@ test('cleanup of an interrupted run also removes what the previous release named
   applicationRuntime.mode = () => 'kubernetes';
   applicationRuntime.remove = async (_config, ref) => {
     removed.push(ref.runtimeName);
-    if (ref.runtimeName.includes('-evidence-')) throw new Error('not found');
+    // The runtime adapter already treats 404 as a successful no-op.
   };
   dbManager.dropDatabase = async (name) => { dropped.push(name); };
   dbManager.releasePreparedCloneSource = async () => {};
   try {
     const runId = 'd'.repeat(32);
-    const errors = await gc.cleanupRunResources({}, { id: runId, app_slug: 'demo' });
+    const errors = await gc.cleanupRunResources({ appRuntime: 'kubernetes' }, { id: runId, app_slug: 'demo' });
     assert.deepEqual(errors, [], 'a legacy name that is not there is not a cleanup failure');
     assert.deepEqual(removed, [
       'sv-shots-dddddddddddddddd-b', 'sv-evidence-dddddddddddddddd-b',
       'sv-shots-dddddddddddddddd-h', 'sv-evidence-dddddddddddddddd-h',
+      'sv-app-2147482999-homeroom-shots-dddddddddddddddd',
+      'sv-app-2147482999-homeroom-evidence-dddddddddddddddd',
     ]);
     assert.deepEqual(dropped.filter((name) => /_evidence_/.test(name)), [
       dbManager.legacyShotsDbName('demo', runId, 'base'), dbManager.legacyShotsDbName('demo', runId, 'head'),

@@ -102,12 +102,16 @@ function scripted(steps, seen = []) {
 }
 const noModel = async () => { throw new Error('the model was asked'); };
 
-test('D: the prompt rules em dashes out, and a spaced one in a reply becomes a comma', () => {
+// 5 Oct 2026: a reply goes through the normaliser everything the bot writes
+// for people goes through (src/services/em-dashes.js, tests/em-dashes.test.js),
+// which picks a full stop, a colon or a comma by the words around the dash.
+test('D: the prompt rules em dashes out, and one in a reply becomes what fits there', () => {
   assert.match(mayor.systemPrompt({ username: 'sam' }), /- Never write an em dash\. Use a comma, a colon or a full stop instead\./);
-  assert.equal(mayor.cleanReply(`Sorry about that ${EM_DASH} that sounds like a bug.`), 'Sorry about that, that sounds like a bug.');
-  assert.equal(mayor.cleanReply(`I've drafted the request ${EM_DASH} tap File it.`), 'I\'ve drafted the request, tap File it.');
-  assert.equal(mayor.cleanReply(`a${EM_DASH}b`), `a${EM_DASH}b`, 'only a dash with a space on each side');
-  assert.equal(mayor.cleanReply(`First\n${EM_DASH} a line`), `First\n${EM_DASH} a line`, 'never across a line break');
+  assert.equal(mayor.cleanReply(`Sorry about that ${EM_DASH} that sounds like a bug.`), 'Sorry about that. That sounds like a bug.');
+  assert.equal(mayor.cleanReply(`I've drafted the request ${EM_DASH} tap File it.`), 'I\'ve drafted the request: tap File it.');
+  assert.equal(mayor.cleanReply(`It's on your list ${EM_DASH} and I'll start it next.`), 'It\'s on your list, and I\'ll start it next.');
+  assert.equal(mayor.cleanReply(`the date${EM_DASH}and the time`), 'the date, and the time', 'with or without spaces');
+  assert.equal(mayor.cleanReply(`First\n${EM_DASH} a line`), 'First\n- a line', 'a dash that starts a line is a bullet, and lines stay apart');
   assert.equal(mayor.cleanReply('[about x] Hi'), 'Hi', 'the leading note still goes');
 });
 
@@ -308,7 +312,8 @@ test('B and C against the full PostgreSQL schema', { timeout: 180000 }, async (t
       [['reply', { text: `Good idea ${EM_DASH} I can file a request for that. Want me to?` }]],
     ]));
     const first = (await pool.query('SELECT content FROM conversation_messages WHERE id = $1', [asked.messageId])).rows[0];
-    assert.equal(first.content, 'Good idea, I can file a request for that. Want me to?', 'D: the spaced em dash became a comma');
+    // 5 Oct 2026: the shared normaliser (em-dashes.js): a new clause after the dash is a new sentence.
+    assert.equal(first.content, 'Good idea. I can file a request for that. Want me to?', 'D: the em dash became a full stop');
     const offered = await turn('Yes please', scripted([
       [['offer_request', { project: 'Flat 4B Chores', title: 'Swap chore turns', details: 'Let two flatmates swap their turns on a chore.' }]],
       [['reply', { text: 'Here it is.' }]],

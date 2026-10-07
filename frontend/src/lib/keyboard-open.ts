@@ -66,6 +66,31 @@
  * Whether a focused element can be holding the keyboard is the kit's own
  * classifier (`unNative.physics.keyboardCanBeUp`), read at call time, so
  * this and `un-kb` never disagree about what a text field is.
+ *
+ * ── And where the visible page is, while it is open ──────────────────
+ *
+ * iPhone 17 simulator, iOS 26 Safari, 5 Oct 2026: the sign-in sheet's
+ * password step had its Sign in button behind the keys and its password
+ * field half under the keyboard's floating bar; the first session's make
+ * screen had "Make it" under that bar. Both are full-screen `fixed` surfaces,
+ * which Safari leaves at the full height of the page with the keys over
+ * their foot, and which iOS PANS up (the visual viewport's offsetTop) to
+ * reveal a tapped field, wordmark and all. The kit's `--un-kb-inset` is the
+ * cover alone, and its pan reset (attachKeyboardAvoidance's settled pin)
+ * only runs in a bounded shell, which a phone browser's paged document
+ * (#1518) is not.
+ *
+ * So while the class is on this also publishes the foot of the band of the
+ * layout viewport the reader can actually see: `--platform-kb-cover`, how
+ * much of the layout viewport is out of sight below the visual viewport (the
+ * keys, and in Safari 26 the address pill and the form bar floating over
+ * them: the visual viewport ends above all three). Its head is the pan,
+ * which ./visual-viewport.ts already publishes as `--platform-vv-top`. A
+ * surface that pads itself by the two (`.platform-kb-surface`,
+ * `.platform-kb-sheet` in app.css) sits exactly in the band however the host
+ * made room: covered (Safari; Chrome on Android), panned or not, or resized
+ * (the app's web view, where both are 0). Written in the viewport's own
+ * events, with the class, and 0px the moment the class comes off.
  */
 
 /** The class on <html> while the on-screen keyboard is open (phone only). */
@@ -80,6 +105,8 @@ export const KB_SHRINK_MIN = 150;
 export const PRESS_WINDOW_MS = 500;
 /** The longest a blur during a press keeps the class on for its click (ms). */
 export const CLICK_WAIT_MS = 350;
+/** How much of the layout viewport's foot is out of sight while the keyboard is open (px, on <html>). */
+export const KB_COVER_VAR = '--platform-kb-cover';
 
 type FocusTarget = {
   tagName?: string;
@@ -156,6 +183,34 @@ export function visibleHeight(input: {
   return heights.length ? Math.round(Math.min(...heights)) : 0;
 }
 
+/**
+ * The band of the layout viewport the reader can see with the keyboard up:
+ * `pan` is the visual viewport's offset from the layout viewport's top (iOS
+ * moving the page up to reveal a field), `cover` what is out of sight below
+ * the band. `layout` is the layout viewport's height, the larger of
+ * `innerHeight` and `documentElement.clientHeight` as the kit takes it
+ * (native.js `layoutViewportHeight`: iOS collapses `innerHeight` to the
+ * visual viewport). Zero when nothing is readable or the page is
+ * pinch-zoomed, where a small visual viewport is the zoom, not keys.
+ */
+export function visibleBand(input: {
+  layout: number;
+  vv?: (ViewportLike & { offsetTop?: number }) | null;
+}): { pan: number; cover: number } {
+  const none = { pan: 0, cover: 0 };
+  const vv = input.vv;
+  const layout = Number(input.layout);
+  if (!vv || !Number.isFinite(layout) || layout <= 0) return none;
+  const scale = vv.scale == null ? 1 : Number(vv.scale);
+  if (!Number.isFinite(scale) || Math.abs(scale - 1) > 0.01) return none;
+  const height = Number(vv.height);
+  if (!Number.isFinite(height) || height <= 0) return none;
+  const top = Number(vv.offsetTop) || 0;
+  const pan = Math.max(0, Math.round(top));
+  const cover = Math.max(0, Math.round(layout - pan - height));
+  return { pan, cover };
+}
+
 /** The decision. `resting` is the tallest `height` seen at this width. */
 export function keyboardOpen(input: {
   phone: boolean;
@@ -174,6 +229,7 @@ type DocLike = {
   documentElement: {
     clientHeight?: number;
     classList: Pick<DOMTokenList, 'toggle'>;
+    style?: Pick<CSSStyleDeclaration, 'setProperty'> | null;
   };
   addEventListener(
     type: string,
@@ -184,7 +240,7 @@ type DocLike = {
 type WinLike = {
   innerHeight?: number;
   innerWidth?: number;
-  visualViewport?: (ViewportLike & Pick<EventTarget, 'addEventListener'>) | null;
+  visualViewport?: (ViewportLike & { offsetTop?: number } & Pick<EventTarget, 'addEventListener'>) | null;
   matchMedia?: (query: string) => { matches: boolean };
   addEventListener(type: string, fn: () => void, options?: unknown): void;
   unNative?: KitLike;
@@ -230,7 +286,25 @@ export function initKeyboardOpen(doc: DocLike, win: WinLike): () => void {
   let held: unknown = null;
   let holding = false;
 
+  // The cover last written, so a viewport event that moved nothing writes
+  // nothing.
+  let cover = 0;
+  const writeCover = (next: number) => {
+    if (next === cover) return;
+    cover = next;
+    try {
+      root.style?.setProperty(KB_COVER_VAR, `${next}px`);
+    } catch { /* a surface without it keeps the kit's own avoidance */ }
+  };
+  const readCover = () => visibleBand({
+    layout: Math.max(Number(win.innerHeight) || 0, Number(root.clientHeight) || 0),
+    vv: win.visualViewport,
+  }).cover;
+
   const write = (next: boolean) => {
+    // While open the cover follows every viewport event; it is 0 the moment
+    // the class comes off, so a surface comes down with the keys.
+    writeCover(next ? readCover() : 0);
     if (next === open) return;
     open = next;
     root.classList.toggle(KB_OPEN_CLASS, next);
@@ -268,7 +342,7 @@ export function initKeyboardOpen(doc: DocLike, win: WinLike): () => void {
       resting,
     });
     // The keys going down resize the page too; under a press, the bars still
-    // wait for its click.
+    // wait for its click (and the band stays where it was with them).
     if (!next && holding) return;
     write(next);
   };
@@ -310,6 +384,8 @@ export function initKeyboardOpen(doc: DocLike, win: WinLike): () => void {
   const quiet = { capture: true, passive: true };
   win.addEventListener('resize', apply, { passive: true });
   win.visualViewport?.addEventListener('resize', apply, { passive: true });
+  // The pan: iOS reports it in its own event, about 30ms after the resize.
+  win.visualViewport?.addEventListener('scroll', apply, { passive: true });
   doc.addEventListener('focusin', apply, true);
   doc.addEventListener('focusout', onFocusOut, true);
   doc.addEventListener('pointerdown', onPress, quiet);

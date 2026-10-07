@@ -310,7 +310,8 @@ test('every client-side demo=1 passthrough survived the move, and is prerender-s
   // across the console, one per section that has staging fixtures. Four of
   // the nine heavy sections read the page-level flag for themselves, and so
   // do rollover and stale previews. Health & status, Node & chain, Campaigns,
-  // Push and Mail have no demo path at all and must not grow one here.
+  // Push and Mail have no page-level demo path and must not grow one here.
+  // A Staging demo label on a seeded API event is not a URL passthrough.
   const OWN_FLAG = ['admin-analytics', 'admin-estimator', 'admin-gallery', 'admin-merges'];
   for (const file of OWN_FLAG) {
     const src = SRC.get(file);
@@ -324,7 +325,7 @@ test('every client-side demo=1 passthrough survived the move, and is prerender-s
     assert.match(src, /if \(DEMO\)|DEMO \?/, `${file}.js must use DEMO to build its request`);
   }
   for (const file of ['admin-status', 'admin-node', 'admin-campaigns', 'admin-push', 'admin-mail']) {
-    assert.ok(!/\bdemo\b/.test(SRC.get(file)),
+    assert.ok(!/const DEMO|URLSearchParams\(location\.search\).*demo|[?&]demo=/.test(SRC.get(file)),
       `${file}.js had no demo passthrough before the move and must not have grown one`);
   }
   // The other two sites were the chassis module's own rollover and

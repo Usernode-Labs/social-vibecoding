@@ -190,6 +190,9 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
   });
 
   // GET /api/agent-sessions?status=open|archived&limit=&before=
+  // { sessions, nextBefore, started }: `started` is whether the viewer has
+  // ever had an agent session, archived ones included, which is what shows
+  // the Homeroom menu's Agent chats (services/agent-sessions.js).
   router.get('/api/agent-sessions', requireUser, async (req, res) => {
     try {
       const result = await agentSessions.listAgentSessions(pool, {

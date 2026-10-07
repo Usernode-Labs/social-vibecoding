@@ -1,3 +1,5 @@
+import type { UnreadMark } from './unread-anchor';
+
 /**
  * `channel` is a room every user is in (#2783) — today only #general. It has
  * no roster (just a count), no owner and no invitations.
@@ -146,6 +148,12 @@ export interface HomeroomBotAction {
   target?: string;
   sessionId?: number;
   epoch?: number;
+  /**
+   * #4097 follow-up: a `prompt` sent replying to the message it sits on, so it
+   * is about what that message is about ("Try again" under a build that did
+   * not finish). Any other prompt is sent on its own.
+   */
+  quote?: boolean;
 }
 
 /**
@@ -426,6 +434,13 @@ export interface ConversationSummary {
   lastActivityAt: string;
   unreadCount: number;
   /**
+   * The viewer's read cursor, as the server keeps it: the newest message
+   * they have read, 0 when they have read none. Where the conversation opens
+   * and where its "New" line goes (./unread-anchor.ts). Absent for an
+   * invitation, whose unread state is hidden, and from an older server.
+   */
+  lastReadMessageId?: number | null;
+  /**
    * QA 2026-09-24 Q2: the viewer asked for this direct conversation and the
    * other person has not accepted yet. One opening message is allowed; after
    * it `canSend` turns false and the thread says who it is waiting for.
@@ -598,6 +613,14 @@ export interface MessagesSnapshot {
   listCollapsed: boolean;
   /** #2967: the channels outside Your apps shown, under "Show more". */
   showMoreChannels: boolean;
+  /**
+   * Where reading had stopped in the open conversation when it was opened,
+   * taken from the server before the open reads it, and kept until the
+   * conversation closes: it opens at the first message after it, and the
+   * "New" line stays there while it is open (./unread-anchor.ts). Null when
+   * nothing was unread. Optional so a fixture without it reads as null.
+   */
+  unreadMark?: UnreadMark | null;
 }
 
 export interface ReplyThreadState {

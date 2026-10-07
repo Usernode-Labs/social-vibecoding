@@ -8,8 +8,11 @@
 // First-session run-through, 4 October 2026: the maker sat on the made screen
 // for ten minutes while the build waited on their tap, and the screen said
 // only "Homeroom bot messages you when it's ready to try". The plan was in the
-// bot's chat and on the App tab, neither of which they were on. It is drawn
-// here now, first, as the same card, deciding Build it through the same call.
+// bot's chat and on the App tab, neither of which they were on. #3878 drew
+// the whole plan here, with Build it, above the sketch. 5 October 2026 (Evan,
+// on his own phone): not the plan, and never inserted above at whatever
+// moment it lands. A small "Needs you" card under the project now says there
+// is one, and Go to chat opens the chat where it is answered.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -68,79 +71,105 @@ test('the made screen reads the project under `app`, past the service worker\'s 
     'the plain read is the boot lane\'s, served from cache first');
   const src = read(`${DIR}/made.tsx`);
   assert.match(src, /fetch\(madeAppUrl\(made\.slug\), \{ credentials: 'same-origin', cache: 'no-store' \}\)/);
-  assert.match(src, /const app = madeAppOf\(body\);\s+if \(live && app\) \{ setFv\(app\.firstVersion\); setAppStatus\(app\.status\); \}/);
+  assert.match(src, /const app = madeAppOf\(body\);\s+if \(live && app\) \{\s+setFv\(app\.firstVersion\);\s+setAppStatus\(app\.status\);/);
   assert.ok(!/setFv\(app\.first_version/.test(src), 'never the top of the answer');
 });
 
-test('the plan is drawn under "Needs you", as the chat\'s own card, with what Build it does', () => {
-  const { PlanSection, PLAN_LABEL, planNote } = loadTsx(`${DIR}/made.tsx`);
+test('a waiting plan is one small "Needs you" card under the project, with the way to the chat', () => {
+  const { PlanWaitsCard, PLAN_LABEL, planWaitsLine } = loadTsx(`${DIR}/made.tsx`);
   assert.equal(PLAN_LABEL, 'Needs you');
-  assert.equal(planNote('Plant Pal'), 'Homeroom bot starts building Plant Pal when you tap Build it.');
-  const html = renderToHtml(createElement(PlanSection, {
-    name: 'Plant Pal', plan: PLAN, onBuilt() {}, onGone() {}, onChange() {},
-  }));
-  assert.match(html, /data-first-session-plan="open"/);
+  assert.equal(planWaitsLine('Plant Pal'), 'Homeroom bot has a plan for Plant Pal');
+  let opened = 0;
+  const html = renderToHtml(createElement(PlanWaitsCard, { name: 'Plant Pal', onOpenChat() { opened += 1; } }));
+  assert.match(html, /data-first-session-plan="waiting"/);
   assert.match(html, />Needs you<\/p>/);
-  assert.match(html, /data-bot-plan="open"/);
-  assert.match(html, /Here’s my plan for Plant Pal:/);
-  assert.match(html, /<li>A list of your plants<\/li><li>A Today view<\/li>/);
-  assert.match(html, /How should it remind you\?/);
-  assert.match(html, /<span>In the app<\/span><span class="messages-bot-default">suggested<\/span>/);
-  assert.match(html, /data-bot-plan-build="">Build it<\/button>/);
-  assert.match(html, /data-bot-plan-change="">Change something<\/button>/);
-  assert.match(html, /Homeroom bot starts building Plant Pal when you tap Build it\./);
-  assert.match(html, /rounded-\[20px\] bg-\[color:var\(--dc-sheet-solid\)\]/, 'the App tab\'s surface of the card');
-  for (const words of [PLAN_LABEL, planNote('Plant Pal')]) assert.ok(!/—/.test(words), words);
+  assert.match(html, /<p class="text-\[12px\] font-bold uppercase tracking-\[0\.06em\]|class="px-1 pb-1\.5 text-\[12px\] font-bold uppercase tracking-\[0\.06em\]/, 'small caps over a card');
+  assert.match(html, />Homeroom bot has a plan for Plant Pal<\/p>/);
+  assert.match(html, /<button type="button" data-first-session-plan-chat=""[^>]*>Go to chat<\/button>/);
+  assert.match(html, /rounded-\[20px\] bg-white/);
+  // The plan itself, and its Build it, are the chat's.
+  assert.doesNotMatch(html, /Build it|data-bot-plan|<li>/);
+  assert.equal(opened, 0);
+  for (const words of [PLAN_LABEL, planWaitsLine('Plant Pal')]) assert.ok(!/—/.test(words), words);
+  const src = read(`${DIR}/made.tsx`);
+  assert.doesNotMatch(src, /PlanCardView|decideBotAction|PlanSection|Build it'/, 'the made screen decides nothing');
+  // Under the project card, never above it, so the sketch does not move when it lands.
+  const card = src.indexOf('{plan ? <PlanWaitsCard');
+  assert.ok(card > src.indexOf('<SketchCard made='), 'after the project card');
+  assert.ok(card < src.indexOf('Invite people to ${made.name}`}</p>'), 'before the invite');
+  assert.match(src, /onOpenChat=\{\(\) => onOpenChat\(plan\.conversationId \?\? made\.conversationId\)\}/);
 });
 
 test('while the plan waits, the build\'s note says so instead of promising a message', () => {
   const { buildNote } = loadTsx(`${DIR}/made.tsx`);
-  assert.equal(buildNote(true, 8, true), 'Homeroom bot is waiting for your go-ahead.');
-  assert.equal(buildNote(true, 8), 'Homeroom bot messages you when it\'s ready to try, usually in about 8 minutes.');
-  assert.equal(buildNote(false, null, true), 'You or anyone you invite can build it from there.');
+  assert.equal(buildNote(true, true), 'Homeroom bot is waiting for your go-ahead.');
+  assert.equal(buildNote(false, true), 'You or anyone you invite can build it from there.');
   const src = read(`${DIR}/made.tsx`);
-  assert.match(src, /buildNote\(botBuilds, minutes, planWaits\)/);
-  assert.match(src, /buildNote\(botBuilds, minutes, !!plan\)/);
+  assert.match(src, /const note = buildNote\(botBuilds, !!plan\);/);
+  // Under the card of the idea (./sketch-card.tsx), and in the plain card
+  // without one. The sketch's caption calling it the real app is gone.
+  assert.match(src, /<SketchCard made=\{made\} sketch=\{sketch\} line=\{line\} note=\{note\} /);
+  assert.match(src, /<p className="mt-1 text-\[13px\] text-zinc-500 dark:text-zinc-400">\{note\}<\/p>/);
+  assert.doesNotMatch(src, /sketchCaption/);
   // Nothing is under way while it waits on them: no busy dot.
   assert.match(src, /const busy = appStatus === 'creating' \|\| \(botBuilds && !\(fv && fv\.ready\) && !plan\);/);
 });
 
-test('Build it is the chat\'s own call, decided once; Change something is the App tab\'s', () => {
+test('a first version promises no time at all, and says in one plain line that it asks when it has questions', () => {
+  // First-session run-through, 5 October 2026: the made screen said "usually
+  // in about 10 minutes", an ordinary request's typical build. Page Turners
+  // sent its plan 11 minutes after Make it, waited on its maker's Build it,
+  // and was ready to try 50 minutes after Make it. Evan: no average there.
+  // Then, the same day: not "Homeroom bot plans it first, and asks you to
+  // approve the plan" either, but one line, before the plan and after it.
+  const { buildNote } = loadTsx(`${DIR}/made.tsx`);
+  const line = 'Homeroom is making your app. It will message you when the first version is ready to try, or if it has any questions.';
+  assert.equal(buildNote(true), line);
+  assert.equal(buildNote(true, false), line);
+  for (const words of [buildNote(true), buildNote(true, true), buildNote(false)]) {
+    assert.doesNotMatch(words, /minute|hour|usually|plans it first|approve the plan|—/, words);
+  }
   const src = read(`${DIR}/made.tsx`);
-  assert.match(src, /import \{ decideBotAction, MessagesApiError \} from '\.\.\/messages\/api';/);
-  assert.match(src, /import \{ PlanCardView \} from '\.\.\/messages\/bot-plan-view';/);
-  assert.match(src, /await decideBotAction\(plan\.actionId, 'build', answers\.map\(\(a\) => a \|\| ''\)\);/);
-  // Decided elsewhere already, or replaced: read the project again.
-  assert.match(src, /if \(err instanceof MessagesApiError && err\.status === 409\) \{ onGone\(\); return; \}/);
-  assert.match(src, /setError\('Couldn\\'t start building just now\. Try again\.'\);/);
-  // A plan built from here stays, chosen, with the answer each choice went with.
-  assert.match(src, /onBuilt\(plan, plan\.questions\.map\(\(q, i\) => answers\[i\] \|\| q\.answers\[0\] \|\| ''\)\);/);
-  assert.match(src, /<PlanCardView surface="app" appName=\{made\.name\} plan=\{chosen\.plan\} state="built" choices=\{chosen\.choices\} \/>/);
-  // Drawn first: it is what waits on them, above the project card and the sketch.
-  const plan = src.indexOf('<PlanSection\n');
-  assert.ok(plan > 0 && plan < src.indexOf('<SketchCard made='), 'the plan comes before the project card');
-  assert.match(src, /onChange=\{\(\) => onChangePlan\(plan\.conversationId \?\? made\.conversationId, plan\.messageId\)\}/);
-  // The endpoint the chat's api call reaches is the one the App tab posts to.
-  assert.match(read('frontend/src/features/messages/api.ts'), /request<unknown>\(`\/api\/conversations\/homeroom-bot\/actions\/\$\{actionId\}`/);
-  assert.match(read('public/js/app-view.js'), /changeFirstVersionPlan\(_slug, conversationId, messageId\) \{/);
+  assert.doesNotMatch(src, /planAhead/, 'one line whatever the step');
+  // Nothing reads an ordinary request's typical minutes for it any more,
+  // and GET /api/apps/:slug no longer sends them with a first version.
+  assert.doesNotMatch(src.replace(/\/\*\*[\s\S]*?\*\//g, ''), /typicalMinutes|usually in about|minutes\./);
+  const route = read('src/routes/apps.js');
+  const block = route.slice(route.indexOf('firstVersion = {'), route.indexOf('log.warn(\'apps\', \'Could not read the first version state\''));
+  assert.ok(block.length > 100, 'the first version block is findable');
+  assert.doesNotMatch(block, /typicalMinutes:/);
 });
 
-test('Change something leaves the first session for the chat, with the plan quoted', () => {
+test('Go to chat leaves the first session for the chat with Homeroom bot', () => {
   const index = read(`${DIR}/index.tsx`);
-  assert.match(index, /onChangePlan=\{\(conversationId, messageId\) => \{\s+markSeen\(made\.slug\);\s+rememberCommunity\(made\.slug\);\s+setMode\(\{ kind: 'none' \}\);\s+changePlanInChat\(made\.slug, conversationId, messageId\);/);
-  const saved = global.window;
-  const calls = [];
-  global.window = { AppView: { changeFirstVersionPlan: (...args) => calls.push(args) }, location: { hash: '' } };
-  try {
-    const { changePlanInChat } = loadTsx(`${DIR}/index.tsx`);
-    changePlanInChat('plant-pal', 12, 900);
-    assert.deepEqual(calls, [['plant-pal', 12, 900]]);
-    global.window = { location: { hash: '' } };
-    changePlanInChat('plant-pal', 12, 900);
-    assert.equal(global.window.location.hash, '#messages/12', 'without the App tab\'s opener, the chat itself');
-  } finally {
-    global.window = saved;
-  }
+  assert.match(index, /onOpenChat=\{\(conversationId\) => \{\s+markSeen\(made\.slug\);\s+rememberCommunity\(made\.slug\);\s+setMode\(\{ kind: 'none' \}\);\s+enterScreen\('bot', made\.slug, conversationId\);/);
+  assert.match(index, /else if \(screen === 'bot' && conversationId\) window\.location\.hash = `#messages\/\$\{conversationId\}`;/);
+  assert.doesNotMatch(index, /changePlanInChat/);
+});
+
+test('the made screen has two ways on and nothing under them: no "look around Home and other apps"', () => {
+  // Evan, 5 October 2026: "Invite people later" is already the way on
+  // without inviting anyone, so the quiet third way off the screen went.
+  const made = loadTsx(`${DIR}/made.tsx`);
+  assert.equal(made.LOOK_AROUND, undefined);
+  const src = read(`${DIR}/made.tsx`);
+  assert.doesNotMatch(src.replace(/\/\*[\s\S]*?\*\//g, ''), /look-around|onLookAround|While you wait|look around/i);
+  const index = read(`${DIR}/index.tsx`);
+  const madeBlock = index.slice(index.indexOf('<MadeScreen'), index.indexOf('if (mode.kind === \'welcome\')'));
+  assert.ok(madeBlock.length > 100, 'the made screen\'s block is findable');
+  assert.doesNotMatch(madeBlock, /onLookAround/, 'nothing hands it a third way off');
+  // The make screen's own "Look around first" is a different answer, and stays.
+  assert.match(read(`${DIR}/make.tsx`), />Look around first<\/button>/);
+  const html = renderToHtml(createElement(made.MadeScreen, {
+    made: { slug: 'plant-pal', name: 'Plant Pal', emoji: '🪴', description: null, example: null, conversationId: 12 },
+    me: 'Maya', onContinue() {}, onOpenChat() {},
+  }));
+  assert.match(html, />Share invite<\/button>/);
+  assert.match(html, /<button type="button" data-first-session-continue=""[^>]*>Invite people later<\/button>/);
+  assert.doesNotMatch(html, /look around|While you wait/i);
+  // Their invite line says it is still being built, not "while it's built".
+  assert.match(html, />They can follow along and chat with you while it&#x27;s being built\.<\/p>/);
+  assert.doesNotMatch(src, /while it's built/);
 });
 
 test('the invite line says who joined, once somebody has', () => {
@@ -156,18 +185,14 @@ test('the invite line says who joined, once somebody has', () => {
   assert.equal(joinedLine({ member_count: 12, members: [maker, { username: 'a' }] }), '✓ 11 people joined.');
   const src = read(`${DIR}/made.tsx`);
   // Read only while an invite is out, and in place of "Invite sent" once
-  // somebody joined, except an invite by username, which stays said beside
-  // it (first-session run-through, 5 October 2026: priya had joined, so the
-  // line never said the invite to @mo went).
+  // somebody joined.
   assert.match(src, /const community = useCommunity\(made\.slug, sent\);/);
   assert.match(src, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/community`, \{ credentials: 'same-origin' \}\)/);
   assert.match(src, /if \(!on\) return undefined;/);
   const { sentLines } = loadTsx(`${DIR}/made.tsx`);
-  assert.deepEqual(sentLines(null, null), ['✓ Invite sent.']);
-  assert.deepEqual(sentLines(null, '@mo'), ['✓ Invite sent to @mo.']);
-  assert.deepEqual(sentLines('✓ priya joined.', null), ['✓ priya joined.']);
-  assert.deepEqual(sentLines('✓ priya joined.', '@mo'), ['✓ priya joined.', '✓ Invite sent to @mo.']);
-  assert.match(src, /\{sent \? sentLines\(joined, sentTo\)\.map\(/);
+  assert.deepEqual(sentLines(null), ['✓ Invite sent.']);
+  assert.deepEqual(sentLines('✓ priya joined.'), ['✓ priya joined.']);
+  assert.match(src, /\{sent \? sentLines\(joined\)\.map\(/);
   // The route says who is in it: newest first after the maker, and how many.
   const route = read('src/routes/apps.js');
   assert.match(route, /router\.get\('\/api\/apps\/:slug\/community',/);
@@ -181,11 +206,35 @@ test('the made screen renders with nothing read yet: no plan, the build\'s first
     made: { slug: 'plant-pal', name: 'Plant Pal', emoji: '🪴', description: null, example: null, conversationId: 12 },
     me: 'Maya',
     onContinue() {},
-    onChangePlan() {},
+    onOpenChat() {},
   }));
   assert.ok(!/data-first-session-plan/.test(html), 'no plan until one is read');
   assert.match(html, /data-first-session-build="">Setting it up…<\/span>/);
+  assert.match(html, />Homeroom is making your app\. It will message you when the first version is ready to try, or if it has any questions\.<\/p>/);
   assert.match(html, /Invite people later/);
+});
+
+test('the invite sheet names its note on screen, the way it names what they\'ll get', () => {
+  // Evan, 5 October 2026: the note sat in the card under the project with
+  // no name of its own, so it read as part of what they'll get rather than
+  // something to write.
+  const { InviteSheet } = loadTsx(`${DIR}/made.tsx`);
+  const html = renderToHtml(createElement(InviteSheet, {
+    made: { slug: 'plant-pal', name: 'Plant Pal', emoji: '🪴', description: null, example: null, conversationId: 12 },
+    me: 'Maya', onClose() {}, onSent() {},
+  }));
+  const label = html.match(/<label for="first-session-note" class="([^"]*)">([^<]*)<\/label>/);
+  assert.ok(label, 'the note has a label');
+  assert.equal(label[2], 'Note');
+  assert.doesNotMatch(label[1], /sr-only/, 'and it is on screen');
+  // The same 13px grey as "What they'll get" over the card, and the make
+  // screen's field labels (make.tsx LABEL).
+  assert.equal(label[1], 'block pb-1 text-[13px] text-zinc-500 dark:text-zinc-400');
+  assert.match(html, /<p class="mt-4 pb-1\.5 text-\[13px\] text-zinc-500 dark:text-zinc-400">What they&#x27;ll get<\/p>/);
+  assert.match(read(`${DIR}/make.tsx`), /const LABEL = 'block text-\[13px\] text-zinc-500 dark:text-zinc-400';/);
+  // Right above the box it names, inside the card.
+  assert.ok(html.indexOf('>Note</label>') < html.indexOf('<textarea id="first-session-note"'));
+  assert.ok(html.indexOf('data-first-session-invite-maker') < html.indexOf('>Note</label>'));
 });
 
 // ── The step while a plan is redone ──
@@ -206,11 +255,12 @@ const FV_ROW = {
   slug: 'plant-pal', name: 'Plant Pal', app_status: 'running', username: 'maya', conversation_id: 12,
 };
 
-async function stateWith(stage, queueReason) {
+async function stateWith(stage, queueReason, viewerId = null) {
   const dm = require('../src/services/homeroom-bot-dm');
   const progress = require('../src/services/homeroom-bot-progress');
   const pool = fakePool([[FV_ROW], []]);
   return dm.firstVersionState(pool, 5, {
+    viewerId,
     progress: {
       ...progress,
       requestStates: async () => [{ row: { app_id: 5, issue_number: 1, queue_reason: queueReason }, state: { stage } }],
@@ -232,12 +282,44 @@ test('a plan its creator asked to change stays on the plan\'s step while it is r
   // A question the new read asks waits on them, as any question does.
   const asked = await stateWith('question', 'plan_change');
   assert.deepEqual([asked.step, asked.stepName], [2, 'Read the description']);
-  // The new plan, once it is sent, is the plan's own step again.
+  // The new plan, once it is sent, is the plan's own step again, and waits
+  // on its creator: named for whoever reads it (planWaitsStepName).
   const sent = await stateWith('plan', 'plan_change');
-  assert.deepEqual([sent.step, sent.stepName], [3, 'Write a plan']);
+  assert.deepEqual([sent.step, sent.stepName], [3, 'Waiting for @maya to answer the plan']);
+  const mine = await stateWith('plan', 'plan_change', 7);
+  assert.deepEqual([mine.step, mine.stepName], [3, 'Your turn: answer the plan']);
   // Changed in changePlan, read here: the reason they agree on.
   const src = read('src/services/homeroom-bot-dm.js');
   assert.match(src, /enqueueFront\(pool, \{ appId: app\.id, issueNumber, userId: user\.id, reason: 'plan_change' \}\)/);
   assert.match(src, /const replanning = found\.row\?\.queue_reason === 'plan_change'\s+&& \(found\.state\.stage === 'queued' \|\| found\.state\.stage === 'reading'\);/);
   assert.match(read('src/services/homeroom-bot-progress.js'), /q\.reason AS queue_reason,/);
+});
+
+test('"Write a plan" names one wait: the plan waiting on its creator is their turn', async () => {
+  // First-session run-through, 5 October 2026: "Step 3 of 7: Write a plan"
+  // was said while the plan waited for its maker's Build it, and again while
+  // the bot wrote its build plan after it, so the maker read their own turn
+  // as the bot's.
+  const plan = (stage, viewerId) => stateWith(stage, 'new', viewerId);
+  const waits = await plan('plan', 7);
+  assert.deepEqual([waits.step, waits.of, waits.stepName], [3, 7, 'Your turn: answer the plan']);
+  assert.equal((await plan('plan', 99)).stepName, 'Waiting for @maya to answer the plan', 'another member reads whose turn it is');
+  assert.equal((await plan('plan', null)).stepName, 'Waiting for @maya to answer the plan');
+  // After Build it, what the bot does next is the build to them: writing
+  // the build's own plan, and waiting for its turn and workspace, read as
+  // "Step 4 of 7: Build it", never "Write a plan" again (Evan, 5 October 2026:
+  // "writing the plan for the build" right after he approved the plan).
+  for (const stage of ['planning', 'build_queued', 'starting']) {
+    const after = await plan(stage, 7);
+    assert.deepEqual([after.step, after.stepName], [4, 'Build it'], stage);
+  }
+  const progress = require('../src/services/homeroom-bot-progress');
+  for (const stage of ['planning', 'build_queued', 'starting']) {
+    assert.equal(progress.stepNumber(stage, true), 4, `a first version's ${stage}`);
+    assert.equal(progress.stepNumber(stage, false), 2, `a request's ${stage} is still its plan`);
+  }
+  assert.equal(progress.stepNumber('plan', true), 3, 'the plan waiting on its creator stays step 3');
+  const { buildLine } = loadTsx(`${DIR}/made.tsx`);
+  assert.equal(buildLine(waits, 'running', true), 'Step 3 of 7: Your turn: answer the plan');
+  assert.ok(!/—/.test(waits.stepName));
 });

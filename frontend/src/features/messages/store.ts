@@ -6,6 +6,7 @@ import { WORK_CHANGED_EVENT, openAppTarget } from './bot-shared';
 import { channelDirectory, normalizeHandle, type ChannelRef } from './channels';
 import { platformHubServed, platformSlug, subscribePlatformSlug } from './channel-hub';
 import type { AppDiscussion, InboxFilter } from './inbox';
+import { markFor } from './unread-anchor';
 import type {
   ConversationDetail,
   DiscussionContext,
@@ -65,6 +66,7 @@ let state: InternalState = {
   nextAfter: null,
   listCollapsed: false,
   showMoreChannels: false,
+  unreadMark: null,
 };
 
 /*
@@ -552,7 +554,16 @@ export async function loadThread(conversationId: number, force = false): Promise
     }
     const messages = withLocalRows(conversationId, [...page.messages].sort((a, b) => a.id - b.id), member && !page.nextAfter);
     if (focus) focusLoaded = focus;
-    publish({ active, messages, nextBefore: page.nextBefore, nextAfter: page.nextAfter, loadingThread: false, online: true });
+    // WHERE READING HAD STOPPED, taken from this read of the conversation
+    // and before anything below reads it (readMainWhenThere), so the
+    // transcript can open there and draw its "New" line (./unread-anchor.ts).
+    // Once per open: a refresh of the conversation on screen is not an open,
+    // and the line stays where it was until the conversation closes (route,
+    // close and embed let it go).
+    const unreadMark = state.unreadMark?.conversationId === conversationId
+      ? state.unreadMark
+      : preserveVisibleThread ? null : markFor(conversationId, active);
+    publish({ active, messages, nextBefore: page.nextBefore, nextAfter: page.nextAfter, loadingThread: false, online: true, unreadMark });
     upsertConversation(active);
     applyPendingQuote();
     // A link to a reply inside a thread opens that thread beside it.
@@ -758,6 +769,9 @@ export function route(
     route: { open: true, conversationId: nextId, appSlug: nextSlug, agent: nextAgent, threadRootId: nextRoot, focusMessageId: nextFocus },
     thread: null,
     nextAfter: null,
+    // A conversation opened again is read afresh: its "New" line was the
+    // last visit's (loadThread takes the next one).
+    unreadMark: null,
     threadError: null,
     discussionError: null,
     // The previous thread's app, if there was one. Held until the next one
@@ -907,7 +921,7 @@ export function close(): void {
   publish({
     route: { open: false, conversationId: null, appSlug: null, agent: null, threadRootId: null, focusMessageId: null },
     active: null, messages: [], loadingThread: false, threadError: null,
-    discussionContext: null, discussionError: null, thread: null, nextAfter: null,
+    discussionContext: null, discussionError: null, thread: null, nextAfter: null, unreadMark: null,
   });
 }
 
@@ -952,7 +966,7 @@ export function embed(
   unreadHold = null;
   publish({
     route: { open: false, embedded: true, conversationId, appSlug: null, agent: null, threadRootId: root, focusMessageId: focus },
-    thread: null, nextAfter: null, threadError: null, discussionContext: null, discussionError: null,
+    thread: null, nextAfter: null, threadError: null, discussionContext: null, discussionError: null, unreadMark: null,
   });
   void loadConversations();
   void loadThread(conversationId);
@@ -1472,9 +1486,13 @@ export async function tapBotAction(message: ConversationMessage, action: Homeroo
     if (!conversationId || conversationId !== message.conversationId) return;
     const scope = scopeKey(conversationId, null);
     const staged = replyFor(scope);
-    if (staged) setReply(scope, null);
+    // A `quote` prompt replies to the message it sits on, so it is about what
+    // that message is about; any other is sent on its own. Either way a
+    // reply they had staged is theirs again after.
+    if (action.quote) setReply(scope, message);
+    else if (staged) setReply(scope, null);
     const sending = send({ content: action.label });
-    if (staged) setReply(scope, staged);
+    if (action.quote || staged) setReply(scope, staged || null);
     await sending;
     return;
   }
@@ -1731,7 +1749,14 @@ export async function markUnread(messageId: number): Promise<void> {
   if (!conversationId) return;
   const { unreadCount } = await api.markUnread(conversationId, messageId);
   unreadHold = conversationId;
-  publish({ conversations: state.conversations.map((item) => item.id === conversationId ? { ...item, unreadCount } : item) });
+  publish({
+    conversations: state.conversations.map((item) => item.id === conversationId ? { ...item, unreadCount } : item),
+    // The "New" line moves to the message, as the reader asked: the first
+    // unread is now the first message from somebody else at or after it.
+    ...(unreadCount > 0 && state.route.conversationId === conversationId
+      ? { unreadMark: { conversationId, lastReadId: messageId - 1, count: unreadCount } }
+      : {}),
+  });
   void loadConversations(true);
   // Not from a community's page (#3494): there is no list there to return to.
   if (isMobile() && !state.route.embedded) open(null);
@@ -1760,6 +1785,16 @@ export function openThread(rootId: number): void {
   const target = threadAddress(conversationId, rootId);
   if (window.location.hash === target) route(conversationId, null, null, { threadRootId: rootId });
   else window.location.hash = target;
+}
+
+/**
+ * #3701: is a reply thread open beside `conversationId`'s room in its
+ * community's page (#general on Homeroom's)? The Communities tab pressed
+ * while it is lit closes it before it goes any higher
+ * (features/workshop/tab-ladder.ts).
+ */
+export function embeddedThreadOpen(conversationId: number): boolean {
+  return !!state.route.embedded && state.route.conversationId === conversationId && !!state.route.threadRootId;
 }
 
 /** Close the thread beside the conversation, keeping the conversation open. */

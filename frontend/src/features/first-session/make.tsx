@@ -14,7 +14,10 @@
  * the description. The Create app wizard stays as it is, behind the Create
  * button.
  *
- * "Look around first" is the quiet way out: Home, with nothing asked.
+ * "Look around first" is the quiet way out: Home, with nothing asked. It is
+ * an answer, like Make it: until one of the two, the question is still the
+ * account's to answer, and every boot of the shell asks it again (a reload,
+ * the app reopened, another device; ./index.tsx, services/first-session.js).
  *
  * It ARRIVES rather than appears: the screen's ground is the wallpaper
  * from its first frame, the same one the signed-out story and the sign-in
@@ -44,6 +47,25 @@
  *     already given. A press with an answer missing now puts the caret in
  *     that field and says what it needs, and the placeholder reads as an
  *     example.
+ *
+ * AND IN SAFARI (iPhone 17 simulator, iOS 26, 5 Oct 2026): with the keyboard
+ * up, iOS panned the page to the tapped description, wordmark bar and all,
+ * and "Make it" sat under the keyboard's floating bar once a press had
+ * scrolled the form. The screen is a `.platform-kb-surface` now: while the
+ * keyboard is open it is padded into the band of the page that is actually
+ * visible (lib/keyboard-open.ts, app.css), so the bar is at the top of what
+ * is seen and the scroller ends where the keys begin. Its fields are
+ * lib/keyboard-surface.ts's: a tap focuses without the pan (the first tap on
+ * the description, which this screen focuses from code, included), and the
+ * focused field is revealed inside the scroller with "Make it" under it when
+ * the two fit. Every focus here is `preventScroll`, so that reveal is the
+ * only movement. In the app, whose web view ends at the keys, the band is the
+ * whole screen and only the reveal does anything.
+ *
+ * An example is a starting point, not a choice that sticks: typing words of
+ * their own into "What should it do?" lets go of the example (its chip is no
+ * longer marked, and Make it no longer sends its description), and the name
+ * it filled in stays theirs to keep or change.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -51,7 +73,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Wordmark } from '@/components/ui/wordmark';
 
-import { useComposerKeyboard } from '../../lib/composer-keyboard';
+import { useKeyboardSurface } from '../../lib/keyboard-surface';
 import { EXAMPLES, type Example } from './examples';
 
 /** create-app.tsx's BRIEF_MIN: the server's floor for a description. */
@@ -116,11 +138,13 @@ export function MakeScreen({ who, onMade, onLookAround }: {
   const [missing, setMissing] = useState<Missing>(null);
   const briefRef = useRef<HTMLTextAreaElement>(null);
   const nameRef = useRef<HTMLInputElement>(null);
-  const barRef = useRef<HTMLDivElement>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { briefRef.current?.focus(); }, []);
-  // The kit's keyboard avoidance on the scroller, below the wordmark bar.
-  useComposerKeyboard(scrollerRef, barRef);
+  // The caret for a hardware keyboard; on a phone the first tap raises the
+  // keys (without iOS's pan: lib/keyboard-surface.ts takes that tap).
+  useEffect(() => { briefRef.current?.focus({ preventScroll: true }); }, []);
+  // Taps on the fields without the pan, and the focused field (with Make it
+  // when they fit) revealed inside the scroller once the keys are up.
+  useKeyboardSurface(scrollerRef);
   // One frame on the wallpaper alone, so the rise has a start.
   const [arrived, setArrived] = useState(false);
   useEffect(() => {
@@ -142,7 +166,7 @@ export function MakeScreen({ who, onMade, onLookAround }: {
     const gap = missingAnswer(brief, name);
     if (gap) {
       setMissing(gap);
-      (gap === 'brief' ? briefRef.current : nameRef.current)?.focus();
+      (gap === 'brief' ? briefRef.current : nameRef.current)?.focus({ preventScroll: true });
       return;
     }
     setBusy(true);
@@ -192,16 +216,17 @@ export function MakeScreen({ who, onMade, onLookAround }: {
       role="dialog"
       aria-labelledby="first-session-make-title"
       data-first-session-make=""
-      className="fixed inset-0 z-[9000] flex flex-col text-zinc-900 dark:text-zinc-100"
+      className="platform-kb-surface fixed inset-0 z-[9000] flex flex-col text-zinc-900 dark:text-zinc-100"
       style={{ background: 'var(--home-wallpaper, #f4f2e4)' }}
     >
       {/* Stays put over the scroller, so nothing scrolls under the status bar.
           At least 32px tall under the status bar's inset, so the whole mark
           is inside it and what scrolls stops below the mark, not beside it. */}
-      <div ref={barRef} className={`flex h-[max(52px,calc(env(safe-area-inset-top)+32px))] shrink-0 items-center justify-center pt-[env(safe-area-inset-top)] ${motion}`}>
+      <div className={`flex h-[max(52px,calc(env(safe-area-inset-top)+32px))] shrink-0 items-center justify-center pt-[env(safe-area-inset-top)] ${motion}`}>
         <Wordmark className="h-6 w-auto text-[color:var(--brand-ink)]" />
       </div>
-      {/* The kit adds its class to this node: its className stays constant. */}
+      {/* The scroller the keyboard surface reveals fields in. Its className
+          stays constant: nothing here varies it. */}
       <div ref={scrollerRef} data-first-session-make-scroll="" className="flex min-h-0 grow flex-col overflow-y-auto">
         <form
           className={`mx-auto flex w-full max-w-sm grow flex-col px-4 pb-[max(34px,env(safe-area-inset-bottom))] ${motion}`}
@@ -245,12 +270,19 @@ export function MakeScreen({ who, onMade, onLookAround }: {
                 value={brief}
                 enterKeyHint="next"
                 aria-describedby={missing === 'brief' ? 'first-session-brief-needed' : undefined}
-                onChange={(e) => { setBrief(e.target.value); setError(null); setMissing(null); }}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  setBrief(next);
+                  // Their own words let go of the example.
+                  if (picked && next !== picked.brief) setPicked(null);
+                  setError(null);
+                  setMissing(null);
+                }}
                 onKeyDown={(e) => {
                   // Return goes on to the name, as the key says; Shift+Return is a new line.
                   if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return;
                   e.preventDefault();
-                  nameRef.current?.focus();
+                  nameRef.current?.focus({ preventScroll: true });
                 }}
                 placeholder="A tracker for our weekly miles…"
                 className={`${INPUT} resize-none leading-[22px]`}

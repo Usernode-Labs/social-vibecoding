@@ -30,6 +30,21 @@ const worker = require('./worker');
 const ACTIVE_STATES = new Set(['planned', 'provisioning', 'exploring', 'replaying', 'reviewing']);
 const CLOSED_STATUSES = new Set(['merged', 'archived']);
 const SHOTS_STOPPED_REASON = 'Stopped before it finished. No shots were taken for this commit; take them again from the proposal.';
+
+// How the worker saw the shots agent's process end when the agent never
+// reported it (shots-agent.js EXIT_CAUSES), for the causes that say nothing
+// about the proposal: memory ran out, or the container or the turn's
+// processes vanished. `probe_unobservable` is left out: the turn may still
+// be running. The run dispatches the agent once more for these, when at
+// least MIN_AGENT_RETRY_MS of its budget is left.
+const RETRYABLE_AGENT_EXITS = new Set(['oom_killed', 'container_gone', 'turn_process_gone']);
+const MIN_AGENT_RETRY_MS = 60_000;
+
+function agentDiedRetryable(error) {
+  return !!error && error.code === 'shots_agent_failed'
+    && RETRYABLE_AGENT_EXITS.has(error.shotsExitCause);
+}
+
 // Runs a person stopped while this process executes them. The stop already
 // made the run terminal in the database; this keeps its runner from handing
 // the shots agent another turn before a state transition refuses it.
@@ -1218,10 +1233,25 @@ async function executeRun(config, options, injected = {}) {
     failurePhase = 'agent_exploration';
     stage(failurePhase);
     progress('The shots agent is taking before/after shots…');
-    const agentOutcome = await dispatchOnce();
+    let agentOutcome = await dispatchOnce();
     // A Stop kills the shots agent mid-turn; its error is that stop.
     if (agentOutcome.error && stopRequested.has(run.id)) {
       throw new ShotsOrchestrationError('shots_stopped', SHOTS_STOPPED_REASON);
+    }
+    // The agent's process died under it (its container ran out of memory or
+    // went away): nothing about the proposal. Start it once more on the same
+    // copies with the budget that is left; what it already saved stays saved,
+    // and its brief's progress says so.
+    if (agentDiedRetryable(agentOutcome.error)
+        && agentBudgetMs - (Date.now() - agentStartedAt) >= MIN_AGENT_RETRY_MS) {
+      log.warn('shots', 'The shots agent\'s process died; dispatching it once more', {
+        sessionId: session.id, runId: run.id, exitCause: agentOutcome.error.shotsExitCause,
+      });
+      progress('The shots agent stopped unexpectedly; starting it once more…');
+      agentOutcome = await dispatchOnce();
+      if (agentOutcome.error && stopRequested.has(run.id)) {
+        throw new ShotsOrchestrationError('shots_stopped', SHOTS_STOPPED_REASON);
+      }
     }
 
     // Publish every change with a complete before/after set, even when the
@@ -1253,7 +1283,16 @@ async function executeRun(config, options, injected = {}) {
     try {
       const ready = intent.stories.filter((story) => summary.stories
         .some((result) => result.id === story.id && result.status === 'ready'));
-      summary.verdict.screens = await (deps.shotsDiff || shotsDiff).screensFor(ready, summary.files);
+      const diff = deps.shotsDiff || shotsDiff;
+      summary.verdict.screens = await diff.screensFor(ready, summary.files);
+      // A change whose screens show no difference anywhere says so on its
+      // card, as a byte-identical pair already does (shots-files.summarize).
+      if (typeof diff.unchangedStories === 'function') {
+        summary.verdict.stories = shotsFiles.markUnchanged(
+          summary.verdict.stories, diff.unchangedStories(summary.verdict.screens)
+        );
+        summary.stories = summary.verdict.stories;
+      }
     } catch (error) {
       log.warn('shots', 'Could not compare the before and after screens', {
         runId: run.id, error: String(error?.message || error).slice(0, 300),
@@ -1279,12 +1318,12 @@ async function executeRun(config, options, injected = {}) {
     addTiming(metrics, 'artifactPersist', artifactPersistStartedAt);
     metrics.artifactBytes = summary.files.reduce((sum, file) => sum + file.bytes, 0);
 
-    // Tear the before/after builds down before the shots become visible, so
-    // no published run can leave private fixture runtimes live.
+    // Attempt teardown before publication. A failed cleanup remains pending
+    // for terminal recovery without discarding the useful shots.
     failurePhase = 'cleanup';
     stage(failurePhase);
     const cleanupStartedAt = Date.now();
-    await deps.environment.cleanupPair(config, pair);
+    const cleanupResult = await deps.environment.cleanupPair(config, pair);
     addTiming(metrics, 'cleanup', cleanupStartedAt);
     pair = null;
     const finalTrace = traceSummary(metrics, {
@@ -1292,6 +1331,10 @@ async function executeRun(config, options, injected = {}) {
       runs: 1,
       stories: summary.verdict.stories,
       terminalFailureClass: null,
+      // Publishing useful shots must not hide an incomplete resource cleanup.
+      // Terminal recovery retries failures; old unversioned markers are rechecked.
+      cleanupComplete: cleanupResult?.cleaned === true,
+      cleanupVersion: cleanupResult?.cleaned === true ? environment.RESOURCE_CLEANUP_VERSION : null,
     });
     failurePhase = 'verify';
     stage(failurePhase);

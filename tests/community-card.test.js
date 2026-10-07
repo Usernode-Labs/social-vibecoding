@@ -51,8 +51,10 @@ test('the approval rule is one sentence per regime, read from the server', () =>
   for (const a of [{ electorate: 12, required: 5 }, { electorate: 2, required: 2 }]) {
     assert.doesNotMatch(line(a), /merge|unopposed|yes vote/, 'no developer words');
   }
-  // Changing the rules: a protected block, which never goes live on a wait.
-  assert.match(read(CARD), /<p className="dev-ws-rules-sub">Changing these rules is a change too, and it goes live only once it is approved\.<\/p>/);
+  // The card is the rule alone. The note under it, that changing the rules
+  // is a change too and goes live only once approved, went (5 Oct 2026).
+  assert.doesNotMatch(read(CARD), /Changing these rules|dev-ws-rules-sub/);
+  assert.doesNotMatch(read('public/css/app.css'), /\.dev-ws-rules-sub/, 'and its style with it');
 });
 
 test('the audience line uses the words on screen, and "Just you" counts nobody', () => {
@@ -109,7 +111,10 @@ test('the channel is a hub card at its old address; Join asks under its button a
   // #3362: Invite is invite LINKS, which any member can make
   // (services/community-invites.js); Members & approvals stays the ⋯'s, behind
   // its own gate.
-  assert.match(src, /\{data\.is_member && !solo \? \(\s*<Button[\s\S]{0,160}data-ws-community-invite=""/,
+  // `member` is is_member, except under `?shot=invite-join`, which draws the
+  // hero as an invitee sees it (#3700).
+  assert.match(src, /const member = data\.is_member && !offer\?\.preview;/);
+  assert.match(src, /\{member && !solo \? \(\s*<Button[\s\S]{0,160}data-ws-community-invite=""/,
     'Invite is offered to members');
   assert.doesNotMatch(src, /_plusMenuShowsMembers/, 'not by the members dialog\'s gate');
 });

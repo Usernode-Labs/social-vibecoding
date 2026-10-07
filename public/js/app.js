@@ -578,6 +578,14 @@ const App = {
       location.reload();
       return;
     }
+    // So is being a private member, for the same reason: it decides the mark
+    // menu, Home's sections and the app's ✕. Being let in off the waitlist
+    // ends it, and the next boot reads the full shell.
+    if (!!user.privateMember !== !!App.user?.privateMember) {
+      App.saveSessionSnapshot(user);
+      location.reload();
+      return;
+    }
     App._sessionFromSnapshot = false;
     if (window.NativeChrome &&
         typeof NativeChrome.prepareIdentityPublication === 'function') {
@@ -607,6 +615,10 @@ const App = {
     // (features/settings/terms-first-run.js), so it has to be re-offered
     // once there is a verified one.
     try { window.TermsFirstRun?.maybePrompt?.(); } catch (e) { /* ignore */ }
+    // The phone step, the same: it skips a snapshot boot, waits for the
+    // terms, and the join screen below waits for it
+    // (frontend/src/features/auth/phone-first-run.tsx).
+    try { window.PhoneFirstRun?.maybePrompt?.(); } catch (e) { /* ignore */ }
     // And the communities join screen, which skips an unverified session for
     // the same reason. Without this, a browser that has signed in before
     // (every boot there starts from the snapshot) never showed it: that is
@@ -1060,6 +1072,62 @@ const App = {
     App._applyFirstVersionShot();
     App._applyFeedbackShot();
     App._applyAppContextShot();
+    App._applyInviteJoinShot();
+  },
+
+  // #3700: `?shot=invite-join` on a project's page draws it the way an
+  // invite link opens it for somebody not in it yet (App._openInvitePage):
+  // who invited them, and Join, first in its hero. A capture state for the
+  // declared check and the before/after shots, drawn for whoever is
+  // looking, member or not. Its Join follows no link.
+  //
+  // `?shot=invite-preview` is the same for a private community
+  // (App._openInvitePreview): its invite preview, over whatever route the
+  // address names, filled with a made-up community, since the preview reads
+  // nothing of a real one. The island publishes its bridge once it has
+  // mounted, so a boot that gets here first asks again for a moment.
+  _applyInviteJoinShot(attempt) {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot === 'invite-preview') {
+      const island = window.UsernodeReact && window.UsernodeReact.invitePreview;
+      if (!island || typeof island.open !== 'function') {
+        const n = Number(attempt) || 0;
+        if (n < 30) setTimeout(() => App._applyInviteJoinShot(n + 1), 100);
+        return;
+      }
+      island.open({
+        token: null,
+        preview: true,
+        name: 'Sunday Run Club',
+        iconEmoji: '🏃',
+        iconUrl: null,
+        iconColor: null,
+        description: 'Routes, pace groups and who brings the coffee.',
+        memberCount: 6,
+        audienceLabel: 'Private community',
+        inviter: 'maya',
+        inviterName: 'Maya',
+        inviterMadeIt: false,
+        building: false,
+        note: 'Come and vote on what we make next.',
+      });
+      return;
+    }
+    if (shot !== 'invite-join' || !App.currentApp) return;
+    const board = window.UsernodeReact && window.UsernodeReact.devBoard;
+    if (!board || typeof board.publishInviteOffer !== 'function') return;
+    board.publishInviteOffer({
+      token: null,
+      slug: App.currentApp,
+      name: App.currentApp,
+      inviter: 'maya',
+      inviterName: 'Maya',
+      inviterMadeIt: false,
+      building: false,
+      note: 'Come and vote on what we make next.',
+      preview: true,
+    });
   },
 
   // Screenshot-state deep links `?shot=improve` and `?shot=app-context`: open
@@ -4184,8 +4252,11 @@ const App = {
   // Follow an invite link as a signed-in account with platform access
   // (services/community-invites.js). Home first, with the invite address
   // replaced so Back or a reload does not ask again; then, if the link is
-  // live and the viewer is not in the project yet, one confirm naming it and
-  // who invited them. In it — just now, or already — opens its hub. A dead
+  // live and the viewer is not in the project yet, the project's own page
+  // when they may already open it (#3700, _openInvitePage), a private
+  // community's invite preview when they may not (_openInvitePreview), else
+  // one confirm naming it and who invited them. Already in it opens its hub;
+  // just let in by this link lands where a Join does (_landJoined). A dead
   // link says why, once.
   //
   // A shell painted from the session snapshot has not heard yet whether that
@@ -4200,6 +4271,8 @@ const App = {
     // communities-first-run.js): somebody a link is bringing into a group is
     // asked to join it, not what to make. Resolves true once they are in.
     let joinedHere = false;
+    let held = false;
+    let deferred = false;
     let settle = () => {};
     App._inviteFollow = new Promise((resolve) => { settle = resolve; });
     try {
@@ -4210,6 +4283,17 @@ const App = {
         .then(() => fetch(`/api/invite-links/by-token/${encodeURIComponent(token)}`, { credentials: 'same-origin' }))
         .then(async (res) => ({ status: res.status, standing: await res.json().catch(() => ({})) }));
       standingRead.catch(() => {});
+      // Signed in from this invite's own page (Join, then the sheet): this
+      // runs in the tick the signed-in shell starts, and the standing that
+      // says whether to welcome them is a request away. "You're in"'s frame
+      // goes up first, drawn before this returns, so Home is never on screen
+      // between the sheet and the welcome (Evan, 5 October 2026; the make
+      // screen's hand-off, #3894, works the same way). The welcome fills it;
+      // any other ending takes it down (_endWelcomeHold).
+      const fromLanding = App._inviteLandingToken === token;
+      App._inviteLandingToken = null;
+      const island = window.UsernodeReact && window.UsernodeReact.firstSession;
+      held = !!(fromLanding && island && typeof island.holdWelcome === 'function' && island.holdWelcome());
       if (App._sessionFromSnapshot) {
         // Bounded: a reconcile that settles nothing (it reloads for another
         // account) must not hold the follow for good. Past it, the link's own
@@ -4242,7 +4326,10 @@ const App = {
       // "You're in" and the first-session tour (features/first-session), for
       // somebody this link has just let into the project. It answers false
       // when it will not show (already shown for this project, or the island
-      // is not there), and they land on the hub as before.
+      // is not there), and they land on the hub as before. Somebody who was
+      // signed in before following the link (the confirm below) had their
+      // account already, unless the join's answer says it is new: a test
+      // account on its first sign-in (routes/community-invites.js).
       const welcome = (standing, slug) => {
         const fs = window.UsernodeReact && window.UsernodeReact.firstSession;
         if (!fs || typeof fs.welcome !== 'function' || !slug) return false;
@@ -4252,8 +4339,13 @@ const App = {
           name: project.name || slug,
           iconEmoji: project.iconEmoji || null,
           iconUrl: project.iconUrl || null,
+          // The picture the invite page showed, and its one line, to fill
+          // "You're in" with the project rather than empty space.
+          description: project.description || null,
+          picture: project.picture || null,
           inviterName: standing.inviterName || standing.inviter || null,
           inviterMadeIt: !!standing.inviterMadeIt,
+          building: !!standing.building,
           newAccount: !!standing.newAccount,
         });
       };
@@ -4271,6 +4363,9 @@ const App = {
           // half hour), not a member reopening an old link.
           const fresh = standing.joinedAt && Date.now() - Date.parse(standing.joinedAt) < 30 * 60 * 1000;
           if (fresh && welcome(standing, standing.slug)) return;
+          // Let in just now, and "You're in" will not show (seen for this
+          // project already, or no island): where a Join lands (#3700).
+          if (fresh) { await App._landJoined(standing.slug); return; }
           openHub(standing.slug);
           return;
         }
@@ -4279,7 +4374,7 @@ const App = {
         const count = standing.memberCount || 0;
         // Who it is from, in the words the invite page uses, then their note.
         const from = standing.inviterMadeIt && standing.inviterName
-          ? `${standing.inviterName} made it and invited you.`
+          ? `${standing.inviterName} ${standing.building ? 'is making' : 'made'} it and invited you.`
           : (standing.inviter ? `@${standing.inviter} invited you.` : 'You were invited.');
         // Join was already pressed on the link's own page, and the person chose
         // "Sign in with a password" from its sheet (features/auth/
@@ -4290,6 +4385,31 @@ const App = {
           pressed = sessionStorage.getItem('usernode:invite-join') === `/invite/${token}`;
           sessionStorage.removeItem('usernode:invite-join');
         } catch (_) { /* asked as before */ }
+        // A confirm is never asked under the held frame, and nor is the
+        // project's page shown under it.
+        if (held && !pressed) { held = false; App._endWelcomeHold(); }
+        // #3700: the community itself rather than a question over Home. Its
+        // own page, in its not-joined state with who invited them and Join
+        // at its head, when the viewer may already open it (the standing's
+        // `page`: a public community). A private community's page is for its
+        // members, and a link makes nobody one until Join, so there it is
+        // the invite preview (the standing's `invitePreview`), drawn from
+        // this standing alone. Either Join follows this link; leaving is Not
+        // now. With neither, the confirm below, as before.
+        const hooks = {
+          welcome: (newAccount, slug) => welcome({ ...standing, newAccount }, slug),
+          settle,
+        };
+        const opened = !pressed && (standing.page
+          ? App._openInvitePage(token, standing, hooks)
+          : !!standing.invitePreview && App._openInvitePreview(token, standing, hooks));
+        if (opened) {
+          // The follow is not over until that Join is pressed: the page
+          // settles App._inviteFollow, so the first-run join step waits on
+          // it as it waited on the confirm.
+          deferred = true;
+          return;
+        }
         const ok = pressed ? true : window.ConfirmModal ? await ConfirmModal.show({
           title: `Join ${name}?`,
           message: from
@@ -4302,11 +4422,17 @@ const App = {
           cancelLabel: 'Not now',
         }) : true;
         if (!ok) return;
-        const joined = await fetch(`/api/invite-links/by-token/${encodeURIComponent(token)}/redeem`, {
+        // A public community asks a provisional handle for a username first
+        // (username-first-run.js publicRetry).
+        const redeem = () => fetch(`/api/invite-links/by-token/${encodeURIComponent(token)}/redeem`, {
           method: 'POST', credentials: 'same-origin',
         });
+        const joined = window.UsernameFirstRun?.publicRetry
+          ? await window.UsernameFirstRun.publicRetry(redeem)
+          : await redeem();
         if (joined.status === 401) { App._inviteSessionEnded(address); return; }
         const result = await joined.json().catch(() => ({}));
+        if (result.reason === 'username_required') { toast(result.error, true); return; }
         if (!joined.ok || !result.ok) { toast(DEAD[result.reason] || 'Could not join. Try again.', true); return; }
         joinedHere = true;
         // Read Home's challenges again now. Home painted them above, before
@@ -4318,16 +4444,116 @@ const App = {
         // run-through, 2026-10-04).
         if (result.status === 'joined') window.HomePanels?.ensureLoaded?.({ force: true });
         if (result.slug) {
-          if (welcome({ ...standing, newAccount: false }, result.slug)) return;
-          toast(`You joined ${result.name || name}.`);
-          openHub(result.slug);
+          if (welcome({ ...standing, newAccount: result.newAccount === true }, result.slug)) return;
+          await App._landJoined(result.slug);
         }
       } catch (_) {
         toast('Could not open that invite link. Try again.', true);
       }
     } finally {
-      settle(joinedHere);
+      if (!deferred) settle(joinedHere);
+      // The held frame goes, unless "You're in" has taken its place.
+      if (held) App._endWelcomeHold();
     }
+  },
+
+  // "You're in"'s held frame (above), down; a welcome that took its place stays.
+  _endWelcomeHold() {
+    const island = window.UsernodeReact && window.UsernodeReact.firstSession;
+    if (island && typeof island.endHold === 'function') island.endHold();
+  },
+
+  // #3700: open the page of the project a live link is for, as somebody not
+  // in it yet: its hub, in its not-joined state, which shows what they are
+  // asked into (who is here, what it is, Open app to try it first, the last
+  // fortnight, what is being decided), with who invited them and Join first
+  // in its hero (dev-board/workshop/invite-offer.ts). The link's address is
+  // REPLACED by the page's, so Back goes to wherever they were before they
+  // followed it, and a reload is the page. `hooks.settle` resolves
+  // App._inviteFollow when that Join lets them in; `hooks.welcome` opens
+  // "You're in" for an account the join makes new. False, with nothing
+  // done, when the page cannot take the link (no React bridge).
+  _openInvitePage(token, standing, hooks) {
+    const slug = standing && standing.page;
+    const board = window.UsernodeReact && window.UsernodeReact.devBoard;
+    if (!slug || !board || typeof board.publishInviteOffer !== 'function') return false;
+    const project = standing.project || {};
+    board.publishInviteOffer({
+      token,
+      slug,
+      name: project.name || slug,
+      inviter: standing.inviter || null,
+      inviterName: standing.inviterName || null,
+      inviterMadeIt: !!standing.inviterMadeIt,
+      building: !!standing.building,
+      note: standing.note || null,
+      welcome: (hooks && hooks.welcome) || null,
+      settle: (hooks && hooks.settle) || null,
+    });
+    if (typeof AppView !== 'undefined' && AppView._landOnHub) AppView._landOnHub(slug);
+    try {
+      history.replaceState(null, '', App._appUrl(slug, 'dev', null, null, { boardView: 'workshop' }));
+    } catch (_) {}
+    App.restoreFromHash();
+    return true;
+  },
+
+  // #3700: where a Join through an invite lands, from anywhere but the
+  // project's page (whose own Join lands itself, workshop.tsx). Needs you,
+  // at its first card, when votes are already waiting on the new member,
+  // else the hub, with "You're in." said once (`said`: the caller said it,
+  // as the invite preview's Join does). Votes waiting is the Workshop
+  // screen's own count (GET /api/workshop/counts `needs`), read after the
+  // join so the project is one of theirs; a read that fails is the hub.
+  async _landJoined(slug, opts) {
+    if (!slug) return;
+    let owed = false;
+    try {
+      const res = await fetch('/api/workshop/counts', { credentials: 'same-origin' });
+      const body = res.ok ? await res.json() : null;
+      const count = body && body.counts ? body.counts[slug] : null;
+      owed = !!count && Number(count.needs) > 0;
+    } catch (_) { /* the hub */ }
+    const said = !!(opts && opts.said);
+    if (!said && window.PlatformUI && PlatformUI.toast) PlatformUI.toast("You're in.");
+    if (typeof AppView !== 'undefined' && AppView._landOnTab) AppView._landOnTab(slug, owed ? 'needs' : 'status');
+    App.navigateToApp(slug, 'dev');
+  },
+
+  // #3700: a private community's invite preview (features/invite-preview),
+  // for somebody signed in and not in it who followed a live link. Its page
+  // is its members' alone (services/app-access.js), and a link makes nobody
+  // a member until Join, so the preview is drawn from the link's standing
+  // and nothing else: the header in its colour, its icon and name, the
+  // member COUNT, the one-line description, who invited them and their
+  // note, and Join. It reads nothing of the project. It goes over Home's
+  // address (replaced above), so neither the link nor the project is named
+  // in the address bar, Back leaves for wherever they were, and a reload is
+  // Home. Join follows the link; then the shell lands them where a Join
+  // lands. False, with nothing done, without the island.
+  _openInvitePreview(token, standing, hooks) {
+    const island = window.UsernodeReact && window.UsernodeReact.invitePreview;
+    const shown = standing && standing.invitePreview;
+    if (!shown || !island || typeof island.open !== 'function') return false;
+    const project = standing.project || {};
+    return island.open({
+      token,
+      name: project.name || 'this community',
+      iconEmoji: project.iconEmoji || null,
+      iconUrl: project.iconUrl || null,
+      iconColor: shown.iconColor || null,
+      description: project.description || null,
+      memberCount: Number(standing.memberCount) || 0,
+      audienceLabel: shown.audienceLabel || 'Private community',
+      inviter: standing.inviter || null,
+      inviterName: standing.inviterName || null,
+      inviterMadeIt: !!standing.inviterMadeIt,
+      building: !!standing.building,
+      note: standing.note || null,
+      welcome: (hooks && hooks.welcome) || null,
+      settle: (hooks && hooks.settle) || null,
+      land: (slug) => { void App._landJoined(slug, { said: true }); },
+    }) === true;
   },
 
   _deepLinkTarget() {
@@ -4369,7 +4595,9 @@ const App = {
       // Signed out, it is the landing, whose invite card
       // (features/auth/landing.tsx) names the project and offers sign-up;
       // the path is remembered so signing in comes back here. Signed in, it
-      // is followed after a confirm (App._followInvite). A waiting account
+      // is followed (App._followInvite): the project's own page with Join on
+      // it where they may open it, a private community's invite preview
+      // where they may not, else a confirm. A waiting account
       // never reaches this: enterAuthed hands it to the waiting room, which
       // follows the link itself (features/auth/waiting.tsx). A fragment
       // outranks it, as it does a clean app path: #signup and #login are
@@ -4377,6 +4605,8 @@ const App = {
       const inviteToken = rawHash ? null : App._inviteTokenFromPath(location.pathname);
       if (inviteToken && window.AuthScreens) {
         if (!App.user) {
+          // A sign-in from here comes back to this link (_followInvite).
+          App._inviteLandingToken = inviteToken;
           AuthScreens.rememberDeepLink(location.pathname);
           AuthScreens.show('landing');
           return;
@@ -4450,6 +4680,15 @@ const App = {
               return;
             }
           }
+        }
+        // A PRIVATE MEMBER is on the waitlist from inside: their Home's card
+        // links to the "Want in sooner?" questions (#more/<token>, features/
+        // home/waitlist-card.tsx), the screen the join mail links everybody
+        // else to. Its "Back" is #landing, which comes through below as any
+        // stale auth hash does and lands on Home.
+        if (authRoute === 'more' && App.user?.privateMember) {
+          AuthScreens.show('more', authSeg);
+          return;
         }
         if (authRoute) {
           AuthScreens.hideAll();
@@ -5598,6 +5837,10 @@ const App = {
   // render is the prerender's "Me", and the name arrives as an update.
   _syncViewer() {
     window.UsernodeReact?.nav?.setViewer?.(App.user?.username || null);
+    // A private member's mark menu and Home differ (features/nav/nav-store.js).
+    window.UsernodeReact?.nav?.setPrivateMember?.(!!App.user?.privateMember);
+    // Home's "Verify your account" card (features/home/verify-card.tsx).
+    window.UsernodeReact?.nav?.setIdentityNeeded?.(!!App.user?.identityNeeded);
   },
 
   // ── #platform-tabs — one place decides ──────────────────────────────
@@ -7484,10 +7727,43 @@ const App = {
   _appNavigationGeneration: 0,
   _appLoad: null,
 
-  async navigateToApp(slug, tab, ref, subTab) {
+  // A provisional handle (an invite's phone sign-up, made from its name)
+  // is for private groups: before a public app or community, ask for a
+  // username (username-first-run.js askForPublic). True to go on. The
+  // audience comes from the launcher's record, or the app's own read; an
+  // unknown one goes on, and the server's refusal stands behind it.
+  async _usernameBeforePublic(slug) {
+    let audience = null;
+    try { audience = AppView.launchRecordFor?.(slug)?.audience || null; } catch (_) {}
+    if (!audience) {
+      try {
+        const res = await fetch(`/api/apps/${encodeURIComponent(slug)}?manifest=summary`);
+        if (res.ok) audience = (await res.json())?.app?.audience || null;
+      } catch (_) { /* the server decides */ }
+    }
+    if (audience !== 'open') return true;
+    return !!(await window.UsernameFirstRun?.askForPublic?.());
+  },
+
+  // navigateToApp for a provisional handle: the ask first, then the same
+  // navigation, marked as asked. Its own function so navigateToApp reads
+  // everything it reads synchronously (the tab press) before any await.
+  async _navigateAfterUsername(slug, tab, ref, subTab) {
+    if (!(await App._usernameBeforePublic(slug))) {
+      // "Not now": stay out. An address that already names the app goes Home.
+      if (location.hash.startsWith(`#app/${slug}`)) App.navigateHome?.();
+      return false;
+    }
+    return App.navigateToApp(slug, tab, ref, subTab, { usernameChecked: true });
+  },
+
+  async navigateToApp(slug, tab, ref, subTab, opts) {
     // The side panel never runs an app — not even to warm its frame. An App
     // tab asked for in there is the running app's job, beside it.
     if (App.embeddedPanel && App._forwardAppTab(slug, tab, ref, subTab)) return false;
+    if (App.user?.usernameProvisional && !opts?.usernameChecked) {
+      return App._navigateAfterUsername(slug, tab, ref, subTab);
+    }
     const generation = ++App._appNavigationGeneration;
     // Clean up whatever app we had mounted. This is a no-op on the first
     // navigation into any app, but without it a direct app-A → app-B
@@ -7886,6 +8162,28 @@ const App = {
     'profile-proposals-screen': ['arrow', '#profile'],
   },
 
+  // ── A private member's way out ───────────────────────────────────────
+  //
+  // A PRIVATE MEMBER (App.user.privateMember: an invite link let them into
+  // its community before they were let in) lands inside that app with no ✕.
+  // The mark menu's "Go to Homeroom" (features/app-context) takes them to
+  // Home and its four-step tour (features/first-session goHome), and from
+  // then on an app has its ✕ like anybody's. Remembered on this device, the
+  // way the tours themselves are.
+  PRIVATE_HOME_PREFIX: 'usernode:private-home:',
+  _privateHomeKey() {
+    return `${App.PRIVATE_HOME_PREFIX}${App.user?.id ?? 'anon'}`;
+  },
+  _privateHomeVisited() {
+    try { return !!localStorage.getItem(App._privateHomeKey()); } catch (_) { return false; }
+  },
+  _notePrivateHome() {
+    try { localStorage.setItem(App._privateHomeKey(), String(Date.now())); } catch (_) { /* private mode */ }
+  },
+  _privateNoClose() {
+    return !!App.user?.privateMember && !App._privateHomeVisited();
+  },
+
   // The slot for a screen, as setBackIcon's own arguments. Anything off the
   // table keeps the house: the auth screens are outside the tab bar entirely,
   // and a screen nobody has classified is better off offering a way out than
@@ -7939,6 +8237,10 @@ const App = {
       // publishes the same 'none', and the two writers have to agree (see
       // above).
       if (App.currentTab !== 'app' || App._selfHostedRoute()) return ['none'];
+      // A PRIVATE MEMBER who has not been to Homeroom yet has no ✕: the app
+      // an invite link landed them in is where they are, and the mark menu's
+      // "Go to Homeroom" is the way on (_privateNoClose).
+      if (App._privateNoClose()) return ['none'];
       // The ✕'s DESTINATION is the page the app was opened from (App.closeApp
       // traverses back to it; this is the href a modified click follows), and
       // Home when there is none. The table holds the glyph; this holds the
@@ -8246,8 +8548,11 @@ const App = {
       // app shows is the close button (#2718). It said 'home' because that was
       // the default for everything that was not Home, and the reset was
       // written before an app had a slot of its own. Its href is where
-      // App.closeApp goes: the page the app was opened from.
-      App.setBackIcon('close', App._closeAppHref());
+      // App.closeApp goes: the page the app was opened from. A private
+      // member's first app has none: the table's own answer for it, so the
+      // two writers agree (_backSlotFor, _privateNoClose).
+      if (App._privateNoClose()) App.setBackIcon(...App._backSlotFor('app-view'));
+      else App.setBackIcon('close', App._closeAppHref());
       AppView.renderAppTab();
       if (opening && AppView.appData?.slug === App.currentApp
           && App._isScreenVisible?.('app-view')) {

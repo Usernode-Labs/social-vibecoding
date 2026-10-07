@@ -29,6 +29,7 @@ import {
 } from '@/components/ui/icons';
 
 import { useInnerHtml } from '../../lib/html';
+import { renderSpecHtml, useSpecFrames, type SpecHtmlDoc } from '../../lib/spec-html';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import type { AiBudgetState } from '../header/ai-budget';
@@ -141,6 +142,7 @@ import { readUnsent, writeUnsent } from './unsent';
 import { draftRequest, draftSeed, type DraftRequest } from './request-seed';
 import { CreditsCard, HandoffPanel } from './handoff';
 import { UserMessage } from './user-message';
+import { JumpToLatest } from '../messages/jump-to-latest';
 
 // Agent sessions (#2779, docs/agent-sessions.md "UI surfaces"): one
 // conversation with the Mayor that works on any app. Drawn on two surfaces,
@@ -1018,9 +1020,44 @@ export function SpecBody({ text, tab, split, onTab }: {
   );
 }
 
+/** A piece of an HTML spec (#3699), already made safe; its screens are frames scaled to fit. */
+function SpecHtmlPart({ html, tagged = false }: { html: string; tagged?: boolean }) {
+  const inner = useInnerHtml(html);
+  const ref = useRef<HTMLDivElement>(null);
+  useSpecFrames(ref, html);
+  const tag = tagged ? { 'data-agent-session-spec-text': '' } : {};
+  return <div ref={ref} className="dc-msg-content text-[15px] leading-relaxed text-zinc-900 dark:text-zinc-100" {...tag} dangerouslySetInnerHTML={inner} />;
+}
+
+/** An HTML spec, in the same frame as SpecBody: the title above two tabs, or the whole document. */
+export function SpecHtmlBody({ doc, tab, onTab }: {
+  doc: SpecHtmlDoc;
+  tab: SpecTab;
+  onTab: (tab: SpecTab) => void;
+}) {
+  if (!doc.split) return <SpecHtmlPart html={doc.html} tagged />;
+  const half = tab === 'tech' ? doc.techHtml : doc.userHtml;
+  return (
+    <>
+      {doc.preambleHtml ? <div className="dc-spec-viewer-preamble"><SpecHtmlPart html={doc.preambleHtml} /></div> : null}
+      <div className="dc-spec-viewer-tabs" role="tablist" aria-label="Spec sections">
+        <SpecTabButton tab="user" active={tab} label="User-facing" onTab={onTab} />
+        <SpecTabButton tab="tech" active={tab} label="Technical" onTab={onTab} />
+      </div>
+      <div role="tabpanel" data-agent-session-spec-half={tab}>
+        {half ? <SpecHtmlPart html={half} tagged /> : <p className="dc-spec-tab-empty">Nothing in this section.</p>}
+      </div>
+    </>
+  );
+}
+
 function SpecContent({ sheet }: { sheet: SpecSheetState }) {
   const session = useAgentSessionSelector((s) => s.session);
   const split = useMemo(() => (sheet.text ? splitSpec(sheet.text) : null), [sheet.text]);
+  const htmlDoc = useMemo(
+    () => (sheet.html ? renderSpecHtml(sheet.html, { key: `as-${sheet.changeId}-${sheet.version ?? 'latest'}` }) : null),
+    [sheet.html, sheet.changeId, sheet.version],
+  );
   const change = [session?.activeChange, ...(session?.changes || [])]
     .find((c) => c && c.id === sheet.changeId) || null;
   return (
@@ -1053,7 +1090,8 @@ function SpecContent({ sheet }: { sheet: SpecSheetState }) {
         ) : null}
         {sheet.phase === 'error' ? <p role="alert" className="text-sm text-red-700 dark:text-red-300">{sheet.error}</p> : null}
         {sheet.phase === 'ready' && !sheet.text ? <p className="text-sm text-zinc-500 dark:text-zinc-400">This change has no spec yet.</p> : null}
-        {sheet.phase === 'ready' && sheet.text ? <SpecBody text={sheet.text} tab={sheet.tab} split={split} onTab={setSpecTab} /> : null}
+        {sheet.phase === 'ready' && sheet.text && htmlDoc ? <SpecHtmlBody doc={htmlDoc} tab={sheet.tab} onTab={setSpecTab} /> : null}
+        {sheet.phase === 'ready' && sheet.text && !htmlDoc ? <SpecBody text={sheet.text} tab={sheet.tab} split={split} onTab={setSpecTab} /> : null}
       </div>
     </>
   );
@@ -2327,6 +2365,9 @@ export function AgentSessionPanel({ embedded = false, headerAction = null }: { e
             <p role="alert" className="rounded-2xl bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">{snapshot.error}</p>
           ) : null}
         </div>
+        {/* The way down when the reader is up the transcript, within the
+            same 80px FollowOutput keeps them following at. */}
+        <JumpToLatest scroller={scroll} slack={80} />
         <Replies replies={empty ? starters(about, request) : replies} />
         <Composer id={composerId(embedded ? 'messages' : 'screen')} />
         {snapshot.drawerOpen && snapshot.session ? <ChangesDrawer session={snapshot.session} /> : null}

@@ -118,7 +118,10 @@ function isDmUser(settings, username) {
  * bot's audience (homeroom-bot.js KEY_AUDIENCE):
  *   - `list`: being on the list is the whole gate (isDmUser);
  *   - `everyone`: anybody who may use the platform (platform access, which
- *     an admin always has), and never a synthetic account.
+ *     an admin always has), and never a synthetic account. A private member
+ *     (users.private_member_since) may: every read below takes
+ *     `has_platform_access` as "may use the platform", and req.user callers
+ *     fold `privateMember` in.
  * `person` is the signed-in user (req.user), or a requester (requesterFrom):
  * { username, isSynthetic, hasPlatformAccess, isAdmin }.
  * Pure. Whether the bot is switched on at all is its Mode's, not this.
@@ -126,7 +129,7 @@ function isDmUser(settings, username) {
 function hasBot(settings, person) {
   if (!settings || !person?.username) return false;
   if (settings.audience === 'everyone') {
-    return !person.isSynthetic && !!(person.hasPlatformAccess || person.isAdmin);
+    return !person.isSynthetic && !!(person.hasPlatformAccess || person.isAdmin || person.privateMember);
   }
   return isDmUser(settings, person.username);
 }
@@ -257,7 +260,7 @@ function cardsFor(kind, dm, app, issueNumber) {
   const appId = Number(app?.id);
   if (!Number.isInteger(appId) || appId <= 0) return [];
   const sessionId = Number(dm?.sessionId);
-  if ((kind === 'proposal' || kind === 'followup_revise' || kind === 'merged') && hasProposalCard(dm)) {
+  if ((kind === 'proposal' || kind === 'followup_revise' || kind === 'followup_failed' || kind === 'merged') && hasProposalCard(dm)) {
     return [{ type: 'proposal', appId, sessionId }];
   }
   const n = Number(issueNumber);
@@ -343,6 +346,9 @@ const MOMENTS = Object.freeze({
   // Stopped: it did not finish, or waits on something only time or a person changes.
   build_failed: 'stopped', blocked: 'stopped', person: 'stopped', empty: 'stopped',
   first_version_failed: 'stopped', preview_failed: 'stopped', allowance: 'held', paused: 'held',
+  // An update they asked for that did not happen ("your change stopped. I
+  // said why in our chat", the stop's own words).
+  followup_failed: 'stopped',
   // Live.
   merged: 'live',
   // An answer to what they wrote: the model's, and its offer to file.
@@ -466,6 +472,9 @@ async function sendDm(pool, {
     });
   }
   if (!result.duplicate) {
+    await retireSuggestions(pool, {
+      botId: bot.id, conversationId: opened.conversationId, keepMessageId: result.messageId ?? result.message?.id, userId,
+    });
     try {
       await pushLive(pool, result, opened.conversationId, { opened: opened.created });
     } catch (err) {
@@ -604,7 +613,7 @@ async function whileTyping(pool, { botId, conversationId, ws = null }, work) {
 async function recordRequester(pool, { app, repo, issueNumber, issue = null }) {
   const title = issue?.title ? clip(issue.title, 300) : null;
   const { rows: found } = await pool.query(
-    `SELECT q.user_id, q.first_version, q.issue_title, q.asked_text, u.username, u.is_synthetic, u.has_platform_access, u.is_admin
+    `SELECT q.user_id, q.first_version, q.issue_title, q.asked_text, u.username, u.is_synthetic, (u.has_platform_access OR u.private_member_since IS NOT NULL) AS has_platform_access, u.is_admin
        FROM homeroom_bot_requesters q JOIN users u ON u.id = q.user_id
       WHERE q.app_id = $1 AND q.issue_number = $2`,
     [app.id, issueNumber],
@@ -623,7 +632,7 @@ async function recordRequester(pool, { app, repo, issueNumber, issue = null }) {
   const poster = await live.issuePoster(pool, { app, repo, issueNumber, issue });
   if (!poster) return null;
   // B4: in their own words, when they wrote it here: the description of the
-  // request they filed on the platform (Ask for a change).
+  // request they filed on the platform (Suggest an improvement).
   const { rows } = await pool.query(
     `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title, asked_text)
      SELECT $1, $2, u.id, $4,
@@ -639,7 +648,7 @@ async function recordRequester(pool, { app, repo, issueNumber, issue = null }) {
   if (!rows.length) return null;
   // Who they are, as hasBot reads it.
   const { rows: who } = await pool.query(
-    'SELECT u.username, u.is_synthetic, u.has_platform_access, u.is_admin FROM users u WHERE u.id = $1',
+    'SELECT u.username, u.is_synthetic, (u.has_platform_access OR u.private_member_since IS NOT NULL) AS has_platform_access, u.is_admin FROM users u WHERE u.id = $1',
     [rows[0].user_id],
   );
   return requesterFrom({ ...rows[0], ...(who[0] || {}) }, { username: who[0]?.username || poster });
@@ -649,7 +658,7 @@ async function recordRequester(pool, { app, repo, issueNumber, issue = null }) {
 async function personOf(pool, userId) {
   if (!userId) return null;
   const { rows } = await pool.query(
-    'SELECT u.id AS user_id, u.username, u.is_synthetic, u.has_platform_access, u.is_admin FROM users u WHERE u.id = $1',
+    'SELECT u.id AS user_id, u.username, u.is_synthetic, (u.has_platform_access OR u.private_member_since IS NOT NULL) AS has_platform_access, u.is_admin FROM users u WHERE u.id = $1',
     [userId],
   );
   return rows[0] ? requesterFrom(rows[0]) : null;
@@ -657,7 +666,7 @@ async function personOf(pool, userId) {
 
 async function requesterOf(pool, appId, issueNumber) {
   const { rows } = await pool.query(
-    `SELECT q.user_id, q.first_version, q.issue_title, q.asked_text, u.username, u.is_synthetic, u.has_platform_access, u.is_admin
+    `SELECT q.user_id, q.first_version, q.issue_title, q.asked_text, u.username, u.is_synthetic, (u.has_platform_access OR u.private_member_since IS NOT NULL) AS has_platform_access, u.is_admin
        FROM homeroom_bot_requesters q JOIN users u ON u.id = q.user_id
       WHERE q.app_id = $1 AND q.issue_number = $2`,
     [appId, issueNumber],
@@ -734,13 +743,15 @@ function weekKey(now = new Date()) {
  * Pure: what the person whose building time is used up hears about the
  * request it holds. No amount: the limit is building time, not money, and
  * on a project with others in it, somebody else can ask for it on theirs
- * (homeroom-bot-mayor.js start_request).
+ * (homeroom-bot-mayor.js start_request). #4097: led by the request's line
+ * (requestLine), which Messages draws as its card, as the rest of its news
+ * is; the words then say "it".
  */
-function overAllowanceText({ title, appName, group = false }) {
-  const what = clip(title, 80) || 'this request';
-  return group
-    ? `You've used this week's building time. I'll start ${what} on Monday, or someone else in ${appName} can ask me for it.`
-    : `You've used this week's building time. I'll start ${what} on Monday.`;
+function overAllowanceText({ line = null, appName, group = false }) {
+  const said = group
+    ? `You've used this week's building time. I'll start it on Monday, or someone else in ${appName} can ask me for it.`
+    : 'You\'ve used this week\'s building time. I\'ll start it on Monday.';
+  return line ? `${line}\n\n${said}` : said;
 }
 
 /**
@@ -757,17 +768,22 @@ async function noteOverAllowance(pool, { settings, requester, payer = null, app,
     [app.id],
   ).catch(() => ({ rows: [] }));
   const appName = app.name || app.slug;
+  const context = { appName, issueNumber, issueTitle: requester?.issueTitle || null, firstVersion: !!requester?.firstVersion };
   return sendDm(pool, {
     bot,
     userId: who.userId,
     replyToId: await requestStart(pool, { userId: who.userId, appId: app.id, issueNumber }),
     idempotencyKey: `hrbot-allowance-${who.userId}-${weekKey()}`,
     content: overAllowanceText({
-      title: requester?.issueTitle || `${appName} request #${issueNumber}`,
+      line: requestLine(context),
       appName,
       group: (Number(rows[0]?.members) || 0) > 1,
     }),
-    metadata: { kind: 'allowance', appSlug: app.slug, appName, issueNumber },
+    metadata: {
+      kind: 'allowance', appSlug: app.slug, appName, issueNumber,
+      ...(context.issueTitle ? { issueTitle: context.issueTitle } : {}),
+      ...(context.firstVersion ? { firstVersion: true } : {}),
+    },
   });
 }
 
@@ -784,7 +800,7 @@ const PAUSED_FOR_WEEK_TEXT = 'I\'ve paused for the rest of the week. Your reques
 async function notePausedForWeek(pool, { settings, bot, userId }) {
   if (!bot?.id || !userId) return null;
   const { rows } = await pool.query(
-    'SELECT u.id AS user_id, u.username, u.is_synthetic, u.has_platform_access, u.is_admin FROM users u WHERE u.id = $1',
+    'SELECT u.id AS user_id, u.username, u.is_synthetic, (u.has_platform_access OR u.private_member_since IS NOT NULL) AS has_platform_access, u.is_admin FROM users u WHERE u.id = $1',
     [userId],
   );
   if (!rows[0] || !hasBot(settings, requesterFrom(rows[0]))) return null;
@@ -882,40 +898,69 @@ function buildFailedCause(reason) {
   return { cause: 'other' };
 }
 
+// What the bot was doing when it stopped: building a request, or updating
+// a change it had already built, after somebody asked for something
+// different on it (homeroom-bot-followup.js revisionFailedText).
+const FAILED_DOING = Object.freeze({
+  build: Object.freeze({ verb: 'finish building', noun: 'build', starting: 'building' }),
+  update: Object.freeze({ verb: 'update', noun: 'update', starting: 'updating' }),
+});
+
 // Each cause in words, two ways (5 Oct 2026). `me`: the bot to the person
 // it was building for, in its DM. `bot`: about the bot, on the request
 // itself, where everybody in the project reads it (homeroom-bot-live.js
 // buildFailedText, also its GitHub comment), as the bot's other posts there
 // are worded.
-const BUILD_FAILED_SAID = Object.freeze({
+const FAILED_SAID = Object.freeze({
   me: Object.freeze({
-    restarts: (it, n) => `I couldn't finish building ${it}: Homeroom restarted while I was working on it, ${n} times in a row.`,
-    time: (it) => `I couldn't finish building ${it}: it took longer than I'm allowed.`,
-    restart: (it) => `I couldn't finish building ${it}: Homeroom restarted while I was working on it.`,
-    unproposed: (it) => `I built ${it}, but I couldn't put it up for approval.`,
-    no_change: (it) => `I couldn't finish building ${it}: I ended up with no changes to show you.`,
-    no_start: (it) => `I couldn't get started on building ${it}.`,
-    other: (it) => `I couldn't finish building ${it}: something went wrong while I was working on it.`,
+    restarts: (d, it, n) => `I couldn't ${d.verb} ${it}: Homeroom restarted while I was working on it, ${n} times in a row.`,
+    time: (d, it) => `I couldn't ${d.verb} ${it}: it took longer than I'm allowed.`,
+    restart: (d, it) => `I couldn't ${d.verb} ${it}: Homeroom restarted while I was working on it.`,
+    unproposed: (d, it) => `I built ${it}, but I couldn't put it up for approval.`,
+    no_change: (d, it) => `I couldn't ${d.verb} ${it}: I ended up with no changes to show you.`,
+    no_start: (d, it) => `I couldn't get started on ${d.starting} ${it}.`,
+    other: (d, it) => `I couldn't ${d.verb} ${it}: something went wrong while I was working on it.`,
   }),
   bot: Object.freeze({
-    restarts: (it, n) => `Homeroom bot couldn't finish building ${it}: Homeroom restarted in the middle of the build, ${n} times in a row.`,
-    time: (it) => `Homeroom bot couldn't finish building ${it}: the build took longer than it's allowed.`,
-    restart: (it) => `Homeroom bot couldn't finish building ${it}: Homeroom restarted in the middle of the build.`,
-    unproposed: (it) => `Homeroom bot built ${it}, but couldn't put it up for approval.`,
-    no_change: (it) => `Homeroom bot couldn't finish building ${it}: it ended up with no changes to show.`,
-    no_start: (it) => `Homeroom bot couldn't get started on building ${it}.`,
-    other: (it) => `Homeroom bot couldn't finish building ${it}: something went wrong during the build.`,
+    restarts: (d, it, n) => `Homeroom bot couldn't ${d.verb} ${it}: Homeroom restarted in the middle of the ${d.noun}, ${n} times in a row.`,
+    time: (d, it) => `Homeroom bot couldn't ${d.verb} ${it}: the ${d.noun} took longer than it's allowed.`,
+    restart: (d, it) => `Homeroom bot couldn't ${d.verb} ${it}: Homeroom restarted in the middle of the ${d.noun}.`,
+    unproposed: (d, it) => `Homeroom bot built ${it}, but couldn't put it up for approval.`,
+    no_change: (d, it) => `Homeroom bot couldn't ${d.verb} ${it}: it ended up with no changes to show.`,
+    no_start: (d, it) => `Homeroom bot couldn't get started on ${d.starting} ${it}.`,
+    other: (d, it) => `Homeroom bot couldn't ${d.verb} ${it}: something went wrong during the ${d.noun}.`,
   }),
 });
 
 /**
- * Pure: why a build of `it` did not finish, in plain words (see
- * buildFailedCause), said by the bot to the person it was for (`voice`
- * 'me', the default) or about the bot on the request ('bot').
+ * Pure: why the bot stopped, in plain words, from the run's own record
+ * (read by buildFailedCause, never quoted). `voice` is 'me' (the default:
+ * the bot to the person it was for, in its DM) or 'bot' (about the bot, on
+ * the request); `doing` is 'build' (the default) or 'update' (a change it
+ * had built, which has nothing left to put up for approval).
  */
+function failedWords(reason, { it = 'this', voice = 'me', doing = 'build' } = {}) {
+  const read = buildFailedCause(reason);
+  const d = FAILED_DOING[doing] || FAILED_DOING.build;
+  const cause = d === FAILED_DOING.update && read.cause === 'unproposed' ? 'other' : read.cause;
+  return (FAILED_SAID[voice] || FAILED_SAID.me)[cause](d, it, read.times);
+}
+
+/** Pure: why a build of `it` did not finish (failedWords), in the DM's voice or ('bot') on the request. */
 function buildFailedWords(reason, it = 'this', voice = 'me') {
-  const { cause, times } = buildFailedCause(reason);
-  return (BUILD_FAILED_SAID[voice] || BUILD_FAILED_SAID.me)[cause](it, times);
+  return failedWords(reason, { it, voice, doing: 'build' });
+}
+
+/**
+ * Pure (5 Oct 2026): why the bot could not update `it`, a change it had
+ * built, after it was asked for something different on it: the same causes
+ * as a build's, from the same reading of the run's record
+ * (homeroom-bot.js runFollowUp: "the turn produced no change", "its change
+ * could not be pushed", "the turn failed (...), so its change was not
+ * kept"), said in the same two voices.
+ */
+function updateFailedWords(reason, it = 'this change', voice = 'me') {
+  return failedWords(reason, { it, voice, doing: 'update' });
 }
 
 /**
@@ -985,6 +1030,26 @@ function dmText(kind, dm, context) {
       // again (homeroom-bot-mayor.js start_request): on 5 Oct 2026 "Oh no,
       // can you try again?" had it building again within seconds.
       return `${line}\n\n${buildFailedWords(dm.reason, it)} Reply here and I'll try again.`;
+    case 'followup_failed': {
+      // 5 Oct 2026: an update to their change that did not happen, in plain
+      // words (updateFailedWords), never the run's own record, and how to
+      // try again that is sure to reach the bot: Ask for changes on the
+      // change, which posts what they write in its discussion and puts its
+      // follow-up first in the queue (homeroom-bot-mayor.js reviseAttached).
+      // A reply here goes to the bot's chat model, which can send it on the
+      // same way (revise_proposal) once it knows what to change, so the DM
+      // names the way that does not depend on it.
+      const change = context.firstVersion ? 'the first version' : 'your change';
+      if (dm.canRevise === false) {
+        return `${line}\n\nI couldn't update ${change}: I've already updated it as many times as I can on my own, `
+          + 'so a person needs to make this one. It\'s as it was.';
+      }
+      const words = updateFailedWords(dm.reason, change, 'me');
+      let next = `To try again, open it on ${context.appName} and tap Ask for changes.`;
+      if (hasProposalCard(dm)) next = 'To try again, open it below and tap Ask for changes.';
+      else if (dm.link) next = `To try again, open it and tap Ask for changes: ${dm.link}`;
+      return `${line}\n\n${words} It's as it was. ${next}`;
+    }
     case 'person':
       // #3772: and what to do about it. "Left for the group" was a dead end
       // for somebody who was the group: a reply here is posted on the
@@ -1229,6 +1294,8 @@ async function relayIssuePost({
       lead: questionLead(requestLine(context), context.firstVersion ? 'the first version' : 'this', dm),
     } : {}),
     ...(dm.link ? { link: dm.link } : {}),
+    // Where it is stuck, what to tap (STUCK_ACTIONS).
+    ...(STUCK_ACTIONS[kind] ? { actions: STUCK_ACTIONS[kind], status: 'open' } : {}),
     // B7: a change ready to try, as a card with its buttons: whether it is
     // one person's project (the title), who else it waits on and how many of
     // them it needs, their words.
@@ -2392,6 +2459,17 @@ const HELP_TEXT = [
 // says where.
 const NOT_ENABLED_TEXT = 'I\'m not taking your requests in messages yet. To try it, turn on Homeroom bot in '
   + 'Settings, under Experimental. Until then, post a request on a project\'s page and I\'ll answer it there.';
+// With the bot on for everyone that switch is gone (settings.js hides it, and
+// joining the list answers 409), so it is never what somebody is sent to:
+// the people the bot still does not answer then are the accounts Homeroom
+// has not let in yet (hasBot).
+const NOT_ENABLED_EVERYONE_TEXT = 'I\'m not taking requests from your account yet. I will as soon as Homeroom lets '
+  + 'your account in.';
+
+/** Pure: what somebody the bot does not answer is told, by who has it. */
+function notEnabledText(settings) {
+  return settings?.audience === 'everyone' ? NOT_ENABLED_EVERYONE_TEXT : NOT_ENABLED_TEXT;
+}
 
 /** Whether this conversation is the person's direct conversation with the bot. */
 async function isBotDirect(pool, conversationId, botId, userId) {
@@ -2592,7 +2670,7 @@ async function noteUserMessage(pool, config, { user, conversationId, message, de
   if (!hasBot(settings, user)) {
     const hour = Math.floor(Date.now() / (NOT_ENABLED_KEY_HOURS * 3600 * 1000));
     return sendDm(pool, {
-      bot, userId: user.id, replyToId: message.id, content: NOT_ENABLED_TEXT, idempotencyKey: `hrbot-notyet-${user.id}-${hour}`,
+      bot, userId: user.id, replyToId: message.id, content: notEnabledText(settings), idempotencyKey: `hrbot-notyet-${user.id}-${hour}`,
       moment: 'reply',
     });
   }
@@ -2690,7 +2768,7 @@ async function typicalMinutesCached(pool, now = Date.now()) {
 }
 
 /**
- * B8: a request somebody filed through Ask for a change (routes/feedback.js),
+ * B8: a request somebody filed through Suggest an improvement (routes/feedback.js),
  * told to the bot the way its own filing from a DM is (homeroom-bot-mayor.js
  * fileRequest): recorded as theirs, in their own words, and, on a project the
  * bot builds on, put first in its queue with its card in their DM. Resolves
@@ -2721,7 +2799,7 @@ async function noteRequestFiled(pool, { app, user, issueNumber, title = null, as
         app, issueNumber: n, bot, jobKey: Number(queued.id), settings, filed: true,
         requester: {
           userId: user.id, username: user.username, issueTitle: title, firstVersion: false, askedText,
-          isSynthetic: !!user.isSynthetic, hasPlatformAccess: !!user.hasPlatformAccess, isAdmin: !!user.isAdmin,
+          isSynthetic: !!user.isSynthetic, hasPlatformAccess: !!(user.hasPlatformAccess || user.privateMember), isAdmin: !!user.isAdmin,
         },
       });
     }
@@ -2839,7 +2917,7 @@ const JOINER_PROMPTS = Object.freeze(['What can I ask for?', 'How does the group
 function joinerHello(appName) {
   const name = appName || 'this project';
   return `Hi, I'm Homeroom bot, the AI that builds things for the groups on Homeroom. Welcome to ${name}! `
-    + `When you'd like something in ${name} to change, tell me here or tap Ask for a change on its page. `
+    + `When you'd like something in ${name} to change, tell me here or tap Suggest an improvement on its page. `
     + 'I\'ll build it, and the group tries it and decides whether it goes live.';
 }
 
@@ -2855,7 +2933,7 @@ async function greetJoiner(pool, { user, app }) {
     const settings = await settingsModule().readSettings(pool);
     if (settings.mode === 'off') return null;
     const { rows } = await pool.query(
-      'SELECT id, username, is_synthetic, has_platform_access, is_admin FROM users WHERE id = $1', [user.id],
+      'SELECT id, username, is_synthetic, (has_platform_access OR private_member_since IS NOT NULL) AS has_platform_access, is_admin FROM users WHERE id = $1', [user.id],
     );
     const person = rows[0];
     if (!person || !hasBot(settings, {
@@ -2888,6 +2966,61 @@ async function greetJoiner(pool, { user, app }) {
 /** Pure: `labels` as prompt buttons (types.ts HomeroomBotAction), at most three. */
 function promptActions(labels) {
   return labels.slice(0, 3).map((label, i) => ({ id: `ask-${i + 1}`, label, style: 'secondary', type: 'prompt' }));
+}
+
+/*
+ * What to tap where the bot's work on a request is stuck, instead of "reply
+ * here" with nothing to press. A `quote` prompt is sent as the person's own
+ * words, replying to the message, so it is about that request: on a build
+ * that did not finish it reaches the bot's chat, which starts the request
+ * again (homeroom-bot-mayor.js start_request); on a mirrored kind it is
+ * posted on the request's public discussion, which the buttons say
+ * (frontend/src/features/messages/bot-question.tsx). `reply` quotes the
+ * message in the composer for them to write the detail it asks for.
+ */
+const STUCK_ACTIONS = Object.freeze({
+  build_failed: Object.freeze([{ id: 'try_again', label: 'Try again', style: 'primary', type: 'prompt', quote: true }]),
+  blocked: Object.freeze([{ id: 'add_detail', label: 'Add detail', style: 'primary', type: 'reply' }]),
+  empty: Object.freeze([{ id: 'add_detail', label: 'Add detail', style: 'primary', type: 'reply' }]),
+  person: Object.freeze([{ id: 'go_ahead', label: 'Go ahead', style: 'primary', type: 'prompt', quote: true }]),
+});
+
+// A suggestion is something to say next, never a decision the bot waits on
+// (an offer's File it, a ready card's Approve, a plan's Build it).
+const SUGGESTION_TYPES = new Set(['prompt', 'reply']);
+
+/** Pure: whether a bot message's buttons are all suggestions. */
+function suggestsOnly(meta) {
+  const actions = Array.isArray(meta?.actions) ? meta.actions : [];
+  return actions.length > 0 && actions.every((action) => SUGGESTION_TYPES.has(action?.type));
+}
+
+/**
+ * Only the newest message's suggestions stay live. Once the bot says
+ * something new in a DM, the suggestion buttons on its older messages
+ * (suggestsOnly) close, and Messages draws a closed suggestion as nothing
+ * at all; they used to stay open until somebody typed one's exact words,
+ * far up the chat. A question's answers, an offer, a plan or a ready card
+ * keep their own lifecycle. Never throws.
+ */
+async function retireSuggestions(pool, { botId, conversationId, keepMessageId, userId = null, ws = null }) {
+  if (!botId || !conversationId || !keepMessageId) return;
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, metadata FROM conversation_messages
+        WHERE conversation_id = $1 AND sender_id = $2 AND id < $3 AND deleted_at IS NULL
+          AND metadata->'homeroomBot'->>'status' = 'open'
+          AND jsonb_typeof(metadata->'homeroomBot'->'actions') = 'array'
+        ORDER BY id DESC LIMIT 20`,
+      [conversationId, botId, keepMessageId],
+    );
+    for (const row of rows) {
+      if (!suggestsOnly(row.metadata?.[META])) continue;
+      await setQuestionState(pool, Number(row.id), { status: 'closed' }, { ws, conversationId, userId });
+    }
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not retire older suggestions', { conversationId, err: err.message });
+  }
 }
 
 /**
@@ -2996,8 +3129,11 @@ async function startFirstVersion(pool, config, { app, user, brief }) {
     userId: user.id,
     idempotencyKey: `hrbot-create-${app.id}`,
     // B6: the plan comes first, and the build waits for their Build it.
+    // #4097: the project's name is a line of its own, which Messages draws
+    // as the project's card (frontend/src/features/messages/bot-head-card.tsx);
+    // with the hello, after it.
     content: hello
-      ? `${MAKER_HELLO}\n\nI'm setting up **${name}** now. Once it's ready I'll send you my plan here first, `
+      ? `${MAKER_HELLO}\n\n**${name}**\n\nI'm setting up ${name} now. Once it's ready I'll send you my plan here first, `
         + `then build its first version for you to try.${off}`
       : `**${name}**\n\nThanks! I'm setting up ${name} now. Once it's ready I'll send you my plan here first, `
         + `then build its first version for you to try.${off}`,
@@ -3016,7 +3152,7 @@ async function startFirstVersion(pool, config, { app, user, brief }) {
  * Pure. Shared with the benchmark's taste eval (services/bench/taste.js),
  * whose first-version trials are given the same request the bot reads.
  */
-function firstVersionIssue({ name, username, brief, botBuilds = true, sketch = null }) {
+function firstVersionIssue({ name, username, brief, botBuilds = true, card = null }) {
   return {
     title: clip(`First version of ${name}`, 200),
     body: [
@@ -3024,14 +3160,16 @@ function firstVersionIssue({ name, username, brief, botBuilds = true, sketch = n
       '',
       brief,
       '',
-      // The first session's sketch (services/app-sketch.js), when it was
-      // drawn: the screen its creator has already seen, so the design target.
-      ...(sketch ? [
-        `**Design target:** the sketch ${username} was shown when they made it, \`design/sketch.html\``
-          + ' (its job, layout, words and accent are in `design/sketch.json`). Build that screen for real: keep its'
-          + ' layout, its words and its accent, and list any change under Assumptions with the reason.'
-          + ' Its names, dates and numbers are samples, not facts about the group.',
-        ...(sketch.job ? ['', `Its main screen's job: ${clip(sketch.job, 200)}`] : []),
+      // The first session's card (services/app-sketch.js), when it was made:
+      // what its creator has already seen, a short summary of the idea. Never
+      // a design: until 5 October 2026 it was a mock of a screen, and this
+      // line told the build to make that screen.
+      ...(card ? [
+        `**Featured card:** while it was made, ${username} was shown a card of the idea`
+          + `${card.committed ? ' (\`design/sketch.json\`)' : ''}: "${clip(card.tagline, 120)}"`
+          + `${(card.points || []).length ? `, with the points ${card.points.map((p) => `"${clip(p, 100)}"`).join(', ')}` : ''}.`
+          + ' It sums up the description above in a few words and shows no screen, so it sets no layout, words or'
+          + ' colours. Build from the description; where the two differ, the description wins.',
         '',
       ] : []),
       '---',
@@ -3069,9 +3207,11 @@ async function fileFirstVersion(pool, config, appId, deps = {}) {
   const username = people[0]?.username || 'unknown';
   const name = row.name || row.slug;
   const botBuilds = row.bot_builds !== false;
-  const sketchRow = await require('./app-sketch').readSketch(pool, row.app_id).catch(() => null);
-  const sketch = sketchRow && sketchRow.status === 'ready' && sketchRow.committed_at ? sketchRow.design || {} : null;
-  const { title, body } = firstVersionIssue({ name, username, brief: row.brief, botBuilds, sketch });
+  const appSketch = require('./app-sketch');
+  const sketchRow = await appSketch.readSketch(pool, row.app_id).catch(() => null);
+  const cardRow = sketchRow && sketchRow.status === 'ready' ? appSketch.cardOf(sketchRow.design) : null;
+  const card = cardRow ? { ...cardRow, committed: !!sketchRow.committed_at } : null;
+  const { title, body } = firstVersionIssue({ name, username, brief: row.brief, botBuilds, card });
   try {
     const parsed = (typeof github.parseGithubUrl === 'function' && github.parseGithubUrl(row.repo_url))
       || (() => {
@@ -3163,6 +3303,18 @@ async function sweepFirstVersions(pool, config, deps = {}) {
 // What the first version's plan step is called while a plan its creator
 // asked to change is redone (firstVersionState below).
 const REPLAN_STEP_NAME = 'Updating the plan';
+
+/**
+ * What the plan step is called while the plan waits for its creator's
+ * answer (Build it, or Change something), for whoever reads it. "Write a
+ * plan" was said both then and while the bot wrote its build plan after
+ * Build it, so a maker waiting on the step read it as the bot's turn
+ * (first-session run-through, 5 October 2026).
+ */
+function planWaitsStepName(creatorId, creator, viewerId) {
+  if (viewerId != null && Number(viewerId) === Number(creatorId)) return 'Your turn: answer the plan';
+  return creator ? `Waiting for @${creator} to answer the plan` : 'Waiting for an answer to the plan';
+}
 
 /**
  * Where approval of a first version that is ready to try stands, for one
@@ -3314,9 +3466,14 @@ async function firstVersionState(pool, appId, deps = {}) {
         return null;
       })
       : null;
+    // The plan sent and waiting on its creator is the same step as the bot
+    // writing its build plan after Build it, but not the same wait.
+    const step = replanning ? { ...at('plan'), stepName: REPLAN_STEP_NAME }
+      : found.state.stage === 'plan' ? { ...at('plan'), stepName: planWaitsStepName(row.user_id, row.username, deps.viewerId) }
+        : at(found.state.stage);
     return {
       ...base,
-      ...(replanning ? { ...at('plan'), stepName: REPLAN_STEP_NAME } : at(found.state.stage)),
+      ...step,
       question: found.state.stage === 'question' && found.state.waitingOn === 'them',
       ready,
       ...(plan ? { plan } : {}),
@@ -3377,6 +3534,9 @@ module.exports = {
   MEMBER_PROMPTS,
   memberHello,
   promptActions,
+  STUCK_ACTIONS,
+  suggestsOnly,
+  retireSuggestions,
   claimHello,
   noteHelloSent,
   settlePrompt,
@@ -3392,6 +3552,8 @@ module.exports = {
   MIN_BRIEF_CHARS,
   HELP_TEXT,
   NOT_ENABLED_TEXT,
+  NOT_ENABLED_EVERYONE_TEXT,
+  notEnabledText,
   isDmUser,
   hasBot,
   isEnabledFor,
@@ -3420,6 +3582,8 @@ module.exports = {
   weekKey,
   dmText,
   buildFailedWords,
+  updateFailedWords,
+  failedWords,
   twoQuestions,
   // B7: ready to try, and who approves it.
   approvalState,

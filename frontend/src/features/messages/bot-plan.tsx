@@ -5,7 +5,9 @@ import { InfoCircleIcon } from '@/components/ui/icons';
 import * as api from './api';
 import { botMeta, requestPlace } from './bot-question';
 import { PlanCardView, type PlanCardState } from './bot-plan-view';
+import { BotHeadWords, botHead } from './bot-head-card';
 import { MessageMarkdown } from './format';
+import { NotifyMe, notifyMeChosen } from './notify-me';
 import { answerBotQuestion, scopeKey, setReply } from './store';
 import type { ConversationMessage, HomeroomBotMeta } from './types';
 
@@ -18,7 +20,9 @@ import type { ConversationMessage, HomeroomBotMeta } from './types';
  * (./bot-plan-view.tsx). Build it is decided on the server, once, from any
  * device (api.decideBotAction with the choices tapped); Change something
  * quotes the card in the composer, and the reply is read by the bot, never
- * posted on the request.
+ * posted on the request. Pressed here, the card then offers "Notify me when
+ * it's ready" (./notify-me.tsx), unless this account chose already on this
+ * device.
  *
  * TWO QUESTIONS (a `question` carrying `questions`): a request the bot has
  * two questions about, answered together. Each is a row of answers to tap,
@@ -62,12 +66,15 @@ function quote(message: ConversationMessage, conversationId: number) {
 export function BotPlanCard({ message, conversationId }: { message: ConversationMessage; conversationId: number }) {
   const meta = botMeta(message);
   const [pressed, setPressed] = useState(false);
+  const [offerNotify, setOfferNotify] = useState(false);
   if (!meta?.plan) return null;
   const actionId = meta.actionId;
+  const userId = typeof window !== 'undefined' ? Number(window.App?.user?.id) || null : null;
 
   function build(answers: Array<string | null>) {
     if (!actionId) return;
     setPressed(true);
+    setOfferNotify(!notifyMeChosen(userId));
     // A refusal (decided on another device, or the plan was replaced) brings
     // nothing back here: the card's own update says what happened.
     void api.decideBotAction(actionId, 'build', answers.map((a) => a || '')).catch(() => setPressed(false));
@@ -82,6 +89,7 @@ export function BotPlanCard({ message, conversationId }: { message: Conversation
       busy={pressed && meta.status !== 'answered'}
       onBuild={build}
       onChange={() => quote(message, conversationId)}
+      footer={pressed && offerNotify ? <NotifyMe userId={userId} /> : null}
     />
   );
 }
@@ -92,6 +100,8 @@ export function BotTwoQuestions({ message, conversationId }: { message: Conversa
   const [picked, setPicked] = useState<Array<string | null>>(() => questions.map(() => null));
   const [sent, setSent] = useState<string | null>(null);
   if (!meta || questions.length < 2) return null;
+  // #4097: the lead's request line is the request's card, as in any row.
+  const head = meta.lead ? botHead(meta.lead, meta) : null;
   const open = meta.status === 'open' && !sent;
   const answered = meta.status === 'answered' ? (meta.answer || sent) : sent;
 
@@ -103,7 +113,8 @@ export function BotTwoQuestions({ message, conversationId }: { message: Conversa
 
   return (
     <div className="messages-bot-question" data-bot-question={meta.status || 'open'} data-bot-questions="2">
-      {meta.lead ? <MessageMarkdown content={meta.lead} appSlug={meta.appSlug} /> : null}
+      {head ? <BotHeadWords head={head} objects={message.objects} />
+        : meta.lead ? <MessageMarkdown content={meta.lead} appSlug={meta.appSlug} /> : null}
       {open ? questions.map((q, index) => (
         <div key={q.question} className="mt-2.5">
           <p className="text-[0.9375rem] font-medium text-zinc-900 dark:text-zinc-100">{q.question}</p>

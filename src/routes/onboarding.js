@@ -8,7 +8,14 @@
 //
 //   GET  /api/me/join-suggestions          what the join screen lists
 //   POST /api/me/communities               answer it: { join: [slug] }
+//   POST /api/me/first-session/started     "What do you want to make?", asked
+//                                          in its place, was put to them
+//   POST /api/me/first-session/look-around that question's "Look around
+//                                          first" (Make it answers it in
+//                                          POST /api/apps)
 //   POST /api/me/tour-done                 the tour's Finish and Skip
+//   POST /api/me/phone-ask/answered        the first-run phone step's "Not
+//                                          now" (or its sheet closed)
 //   GET  /api/me/getting-started           the card: the tour, then the
 //                                          season's First challenges
 //   POST /api/me/getting-started/close     the card's close button, once
@@ -59,20 +66,35 @@ function onboardingRoutes(config) {
     }
   });
 
-  // An account just made from the signed-out story (the sheet the story's
-  // "Get started" opens): the first session asks what to make, not which
-  // communities to join (services/first-session.js). `{ via: 'sign_in' }`
-  // is the same answer for an account that signed in some other way and
-  // was asked in the join screen's place (communities-first-run.js), so
-  // Journey can tell the two apart.
+  // The first session's question, "What do you want to make?", was put to
+  // this account in the join screen's place (services/first-session.js):
+  // from the signed-out story's own sheet, or `{ via: 'sign_in' }` from any
+  // other sign-in (communities-first-run.js), so Journey can tell the two
+  // apart. Kept once, the first time. It ANSWERS nothing: the question
+  // stays owed, and every later boot asks it again, until Make it or
+  // "Look around first" below.
   router.post('/api/me/first-session/started', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
-    const answer = req.body && req.body.via === 'sign_in' ? 'sign_in' : 'story';
+    const via = req.body && req.body.via === 'sign_in' ? 'sign_in' : 'story';
     try {
-      await firstSession.answerJoinScreen(pool, req.user.id, answer);
+      await firstSession.recordStart(pool, req.user.id, via);
       res.json({ ok: true });
     } catch (err) {
       log.error('onboarding', 'first session start failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // "Look around first": the first session's other answer, after Make it
+  // (which POST /api/apps records as it makes the project). The question is
+  // not asked again; Home, with nothing on it yet, is where they go.
+  router.post('/api/me/first-session/look-around', drainGuard, sameOriginBrowserOnly, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    try {
+      await firstSession.answerJoinScreenByLookingAround(pool, req.user.id);
+      res.json({ ok: true });
+    } catch (err) {
+      log.error('onboarding', 'first session look around failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -107,6 +129,21 @@ function onboardingRoutes(config) {
       res.json(await onboarding.markTourDone(pool, req.user.id, req.body || {}));
     } catch (err) {
       log.error('onboarding', 'tour done failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Read back as `phoneAsk` on /api/auth/me: the step is not asked again.
+  // Kept the first time; adding the phone ends the ask by itself.
+  router.post('/api/me/phone-ask/answered', drainGuard, sameOriginBrowserOnly, async (req, res) => {
+    try {
+      await pool.query(
+        'UPDATE users SET phone_ask_answered_at = COALESCE(phone_ask_answered_at, NOW()) WHERE id = $1',
+        [req.user.id]
+      );
+      res.json({ ok: true });
+    } catch (err) {
+      log.error('onboarding', 'phone ask answer failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

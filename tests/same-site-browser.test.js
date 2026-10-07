@@ -160,6 +160,15 @@ const EXEMPT = new Map([
   // sign-in-providers.js's, below.
   ['auth.js POST /api/auth/oauth/finish', JSON_FIELD],
   ['auth.js POST /api/auth/oauth/:provider/native', JSON_FIELD],
+  // Phone sign-in (routes/phone-auth.js). SESSION_MINT_PATHS names verify
+  // and finish for the live-session guard, so auth.js's registrations of
+  // those two paths are listed here the same way; the handlers are
+  // phone-auth.js's, and every one of them carries JSON body fields.
+  ['auth.js POST /api/auth/phone/verify', JSON_FIELD],
+  ['auth.js POST /api/auth/phone/finish', JSON_FIELD],
+  ['phone-auth.js POST /api/auth/phone/request', JSON_FIELD],
+  ['phone-auth.js POST /api/auth/phone/verify', JSON_FIELD],
+  ['phone-auth.js POST /api/auth/phone/finish', JSON_FIELD],
   ['board-order.js POST /api/apps/:slug/board-order', JSON_FIELD],
   ['chat-drafts.js POST /api/sessions/:id/drafts', JSON_FIELD],
   ['chat.js POST /api/apps/:slug/messages', JSON_FIELD],
@@ -176,8 +185,6 @@ const EXEMPT = new Map([
   ['cli-auth.js POST /api/cli/device/token', JSON_FIELD],
   ['cli-auth.js POST /api/cli/device/approve', OWN],
   ['collaborators.js POST /api/apps/:slug/invites', JSON_FIELD],
-  ['content-reports.js POST /api/apps/:slug/report', JSON_FIELD],
-  ['content-reports.js POST /api/apps/:slug/messages/:id/report', JSON_FIELD],
   ['conversations.js POST /api/conversations', JSON_FIELD],
   ['conversations.js POST /api/conversations/:id/respond', JSON_FIELD],
   ['conversations.js POST /api/conversations/:id/members', JSON_FIELD],
@@ -194,8 +201,10 @@ const EXEMPT = new Map([
   ['dev-flow.js POST /api/apps/:slug/external-tasks/:id/submit-update', OWN],
   ['feedback.js POST /api/feedback/title', JSON_FIELD],
   ['feedback.js POST /api/feedback/screenshot', RAW],
+  ['feedback.js POST /api/feedback/video', RAW],
   ['feedback.js POST /api/feedback', JSON_FIELD],
   ['github-webhook.js POST /api/github/webhook', TOKEN],
+  ['mail-webhooks.js POST /api/mail/webhooks/resend', 'Resend raw-body Svix signature; no cookie or browser session authorizes a callback'],
   ['global-chat.js POST /api/global-chat/threads/:id/direct-actions', JSON_FIELD],
   ['global-chat.js POST /api/global-chat/threads/:id/inline-actions', JSON_FIELD],
   ['global-chat.js POST /api/global-chat/actions/:token/confirm', JSON_FIELD],
@@ -239,6 +248,7 @@ const EXEMPT = new Map([
   ['public-api.js POST /api/public/waitlist/confirm', JSON_FIELD],
   ['public-api.js POST /api/public/waitlist/more/:token', JSON_FIELD],
   ['report-snapshots.js POST /api/apps/:slug/report-snapshots', JSON_FIELD],
+  ['request-specs.js POST /api/apps/:slug/issues/:number/spec', JSON_FIELD],
   ['sessions.js POST /api/sessions/:id/attachments', RAW],
   ['sessions.js POST /api/sessions/:id/chat', JSON_FIELD],
   ['sessions.js POST /api/sessions/:id/specs/:version/share-user', JSON_FIELD],

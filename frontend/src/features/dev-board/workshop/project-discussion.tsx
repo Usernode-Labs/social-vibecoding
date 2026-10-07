@@ -50,7 +50,9 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { XIcon } from '@/components/ui/icons';
 import type { CommunityPayload } from './community-card';
 import { AppReplyThreadPane, EmbeddedConversation } from '../../messages';
+import { closeThread, embeddedThreadOpen } from '../../messages/store';
 import { navStore } from '../../nav/nav-store.js';
+import { registerLevel } from '../../workshop/tab-ladder';
 import { useStoreState } from '../../../lib/use-store-state';
 
 type Channel = NonNullable<CommunityPayload['channel']>;
@@ -141,6 +143,19 @@ export function ProjectDiscussion({ slug, name, data }: {
 
   // A thread belongs to the room it was opened in.
   useEffect(() => { setThread(null); setRoomAt(null); }, [slug]);
+
+  // #3701: A REPLY THREAD IS A LEVEL BELOW THE TAB. The Communities tab,
+  // pressed while it is lit, closes it before it goes any higher
+  // (../../workshop/tab-ladder.ts): the room is the tab, and the thread
+  // beside it is the page below. No address changes, as none did when it
+  // opened. #general's thread is the Messages store's; an app's is ours.
+  const threadRef = useRef(thread);
+  threadRef.current = thread;
+  useEffect(() => registerLevel({
+    slug,
+    below: () => (room ? embeddedThreadOpen(room) : !!threadRef.current),
+    up: () => { if (room) closeThread(); else setThread(null); },
+  }), [slug, room]);
 
   // THE DOOR'S TARGET, taken once the page knows which room this is (the
   // community record has landed): now, and whenever a door is followed

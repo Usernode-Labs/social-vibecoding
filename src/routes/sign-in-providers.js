@@ -40,6 +40,7 @@ const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const providers = require('../services/sign-in-providers');
 const communityInvites = require('../services/community-invites');
+const phoneAuth = require('../services/firebase-phone-auth');
 const challengeScorer = require('../services/topochain/challenge-scorer');
 const firstSession = require('../services/first-session');
 const managedOpenRouter = require('../services/openrouter-managed-keys');
@@ -123,12 +124,17 @@ function signInProviderRoutes(config) {
         pool, userId: result.userId, config, reason: `signup_${provider}`,
       });
       // Made from the story's sheet: asked what to make, not which
-      // communities to join (services/first-session.js).
-      if (state.started_from === 'story') await firstSession.answerJoinScreen(pool, result.userId, 'story');
+      // communities to join (services/first-session.js). Recorded as
+      // reached from the story; the question stays owed until it is
+      // answered, so the shell this sign-in lands in asks it.
+      if (state.started_from === 'story') await firstSession.recordStart(pool, result.userId, 'story');
     }
     const consented = result.created || state.follow_invite === true;
     const invite = consented
-      ? await communityInvites.redeemCarried(pool, req, res, result.userId)
+      ? await communityInvites.redeemCarried(pool, req, res, result.userId, {
+        // A private member signs up with a phone (community-invites.js).
+        requirePhone: phoneAuth.offered(config),
+      })
       : (communityInvites.clearInviteCookie(res), null);
     if (invite && invite.status === 'joined') await challengeScorer.scoreOnJoin(pool, config);
   }

@@ -267,3 +267,14 @@ test('somebody not on the list is told where to turn it on, plainly', () => {
   assert.match(read('frontend/src/features/settings/sections/experimental.tsx'),
     /Homeroom bot \(build with it in Messages\)/, 'and the switch goes by the name the bot gives it');
 });
+
+test('with the bot on for everyone, nobody is sent to the switch it hides', () => {
+  assert.equal(dm.notEnabledText({ audience: 'list' }), dm.NOT_ENABLED_TEXT);
+  assert.equal(dm.notEnabledText(null), dm.NOT_ENABLED_TEXT);
+  const everyone = dm.notEnabledText({ audience: 'everyone' });
+  assert.equal(everyone, dm.NOT_ENABLED_EVERYONE_TEXT);
+  assert.doesNotMatch(everyone, /Settings|Experimental|switch|turn on/i);
+  assert.match(everyone, /as soon as Homeroom lets your account in/);
+  assert.doesNotMatch(everyone, /—/);
+  assert.match(read('src/services/homeroom-bot-dm.js'), /content: notEnabledText\(settings\)/, 'the reply is chosen by who has it');
+});

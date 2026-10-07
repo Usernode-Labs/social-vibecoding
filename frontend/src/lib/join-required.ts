@@ -67,10 +67,13 @@ const asking = new Map<string, Promise<boolean>>();
  *
  * An anchor only ASKS: it resolves true for Join and false for anything
  * else, and the membership is written here either way, so there is one join
- * path whoever asked.
+ * path whoever asked. The one exception is a page opened from an invite link
+ * (#3700, dev-board/workshop/invite-offer.ts): its Join follows the link,
+ * which writes the membership itself, and the anchor resolves 'joined' to
+ * say it is already done.
  */
 export type JoinAnchor = {
-  ask: (body: JoinRequired) => Promise<boolean>;
+  ask: (body: JoinRequired) => Promise<boolean | 'joined'>;
   /** False while the card is mounted but not showing (a hidden screen). */
   visible: () => boolean;
 };
@@ -110,6 +113,7 @@ export function offerJoin(body: JoinRequired): Promise<boolean> {
     const name = body.app?.name || slug;
     const anchor = anchors.get(slug);
     const ok = anchor && anchor.visible() ? await anchor.ask(body) : await askInDialog(body, name);
+    if (ok === 'joined') return true;
     if (!ok) return false;
     if (typeof w.Home?.setMembership !== 'function') return false;
     // The name rides along for the toast: Home may not have loaded this app
