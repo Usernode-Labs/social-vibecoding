@@ -209,7 +209,7 @@ test('the window is stamped by the platform boot and read at the live settlement
     'stamped first thing in start(), before migrations and boot sweeps');
   const src = stripComments(read('src/services/visuals.js'));
   const live = src.slice(src.indexOf('async function captureForSession('), src.indexOf('function holdCapture('));
-  assert.match(live, /const settled = await settleCaptureRun\(config, pool, \{[\s\S]*overlappedRollout: startedSoonAfterBoot\(runStartedAt\),\s*\}\);/);
+  assert.match(live, /const settled = await settleCaptureRun\(config, pool, \{[\s\S]*overlappedRollout: startedSoonAfterBoot\(runStartedAt\),[^}]*\}\);/);
 });
 
 // ── A live run ──────────────────────────────────────────────────────────

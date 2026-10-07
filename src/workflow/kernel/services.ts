@@ -177,6 +177,6 @@ export async function execute(opts: ServiceOptions, w: Claimed, stopping?: Abort
   }
   if (abort.signal.aborted) return;
   if (!await finish(opts, w, report)) {
-    opts.log.warn('workflow', 'work lease lost before reporting', { kind: w.kind, workId: w.id });
+    opts.log.warn('workflow', 'work claim gone before reporting (lease lost or cancelled)', { kind: w.kind, workId: w.id });
   }
 }

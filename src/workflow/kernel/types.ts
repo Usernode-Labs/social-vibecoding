@@ -67,6 +67,8 @@ export interface WorkRequest {
   // item starts from that item's last checkpoint (a retry keeps the progress).
   continues?: string;
 }
+// A work item of this instance, by its identity.
+export interface WorkRef { kind: string; key: string }
 export interface MessageRequest {
   to: { machine: string; key: string };
   event: { type: string; payload: Json };
@@ -79,6 +81,12 @@ export interface Outcome<S extends State = State> {
   next: S;
   writes?: DomainWrite[];
   work?: WorkRequest[];
+  // Outstanding items of this instance that the event made obsolete. They
+  // settle as cancelled in its transaction: a queued item never runs, a
+  // running one loses its claim (its signal aborts at the next renewal) and
+  // a reported result is refused as work_cancelled. Cleanup outside the
+  // database is the machine's own work.
+  cancel?: WorkRef[];
   messages?: MessageRequest[];
   timer?: TimerRequest | null;   // undefined keeps the deadline, null clears it
   notify?: Notification[];

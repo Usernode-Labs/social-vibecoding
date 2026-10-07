@@ -346,6 +346,25 @@ const RECORD_FAULT = `
      WHERE machine = $1 AND key = $2 AND status = 'pending' AND id > $9)
   SELECT pg_notify('wf_outcome', $9::text)`;
 
+// Cancel an outstanding work item of this instance: it settles with
+// `cancelled` in its result. A running item loses its claim (its attempt
+// ends 'lost', code cancelled), so its next renewal or report finds nothing.
+const CANCEL_WORK = `
+  WITH target AS (
+    SELECT id, claim_id FROM wf_work
+     WHERE machine = $1 AND key = $2 AND kind = $3 AND work_key = $4
+       AND status IN ('queued', 'running', 'reported')
+       FOR UPDATE),
+  ended AS (
+    UPDATE wf_work_attempts a SET outcome = 'lost', finished_at = now(),
+           error = '{"message": "work cancelled", "code": "cancelled"}'::jsonb
+      FROM target t WHERE a.id = t.claim_id AND a.outcome = 'running'),
+  cancelled AS (
+    UPDATE wf_work w SET status = 'settled', claim_id = NULL, lease_until = NULL, settled_at = now(),
+           result = COALESCE(w.result, '{}'::jsonb) || '{"cancelled": true}'::jsonb
+      FROM target t WHERE w.id = t.id RETURNING w.id)
+  SELECT id FROM cancelled`;
+
 const json = (v: Json | undefined) => (v == null ? null : JSON.stringify(v));
 
 async function applyEvent(client: PoolClient, machine: Machine<any, any>, row: Picked): Promise<Notification[]> {
@@ -398,7 +417,8 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, row: P
   if (WORK_EVENTS.has(event.type)) {
     const work = event.payload as WorkResultPayload;
     if (!UUID.test(work.workId)) return rejectWith('unknown_work');
-    if (!await settleWork(client, machine, row.key, row)) return rejectWith('unknown_work');
+    const settled = await settleWork(client, machine, row.key, row);
+    if (settled !== 'settled') return rejectWith(settled === 'cancelled' ? 'work_cancelled' : 'unknown_work');
   }
 
   // 3. Facts, authority, guard, transition: machine code, on a guarded handle.
@@ -424,8 +444,9 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, row: P
   if (timer) assertJson(timer.event.payload ?? {});
 
   // 4. Persist: the machine's writes, projection and reply (which may read
-  // what the writes did), then work and messages, then the instance row,
-  // receipt and the event's result in one statement. All in one transaction.
+  // what the writes did), then cancelled work, new work and messages, then
+  // the instance row, receipt and the event's result in one statement. All
+  // in one transaction.
   const next = version + 1;
   const after = { ...ctx, version: next };
   for (const write of outcome.writes || []) {
@@ -437,6 +458,11 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, row: P
   const reply = (machine.reply ? await machine.reply(tx, event, outcome.next, after, facts) : undefined) ?? null;
   if (tx.poisoned) throw tx.poisoned;
   assertJson(reply);
+  const cancelled = [];
+  for (const c of outcome.cancel || []) {
+    const { rows: [item] } = await client.query(CANCEL_WORK, [machine.name, row.key, c.kind, c.key]);
+    cancelled.push({ kind: c.kind, key: c.key, id: item?.id ?? null });
+  }
   const work = [];
   for (const w of outcome.work || []) {
     assertJson(w.input);
@@ -473,6 +499,7 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, row: P
     JSON.stringify({
       writes: (outcome.writes || []).map((w) => w.type),
       work, messages,
+      ...(cancelled.length ? { cancelled } : {}),
       timer: timer === undefined ? undefined : timer && { at: timer.at.toISOString(), type: timer.event.type },
       notify: (outcome.notify || []).map((n) => n.type),
     }),
@@ -482,14 +509,17 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, row: P
 }
 
 // The pipeline settles a work item when it applies that item's result,
-// accepted or not. Returns false when the item is not this instance's.
-async function settleWork(client: PoolClient, machine: Machine<any, any>, key: string, row: Picked): Promise<boolean> {
-  if (!WORK_EVENTS.has(row.type) || !UUID.test(String(row.payload?.workId))) return true;
-  const { rowCount } = await client.query(
+// accepted or not. Says 'unknown' when the item is not this instance's, and
+// 'cancelled' when an event cancelled it after it reported.
+async function settleWork(client: PoolClient, machine: Machine<any, any>, key: string, row: Picked): Promise<'settled' | 'cancelled' | 'unknown'> {
+  if (!WORK_EVENTS.has(row.type) || !UUID.test(String(row.payload?.workId))) return 'settled';
+  const { rows: [item] } = await client.query(
     `UPDATE wf_work SET status = 'settled', settled_at = COALESCE(settled_at, now())
-      WHERE id = $1 AND machine = $2 AND key = $3 AND status IN ('reported', 'settled')`,
+      WHERE id = $1 AND machine = $2 AND key = $3 AND status IN ('reported', 'settled')
+      RETURNING COALESCE((result->>'cancelled')::boolean, FALSE) AS cancelled`,
     [row.payload.workId, machine.name, key]);
-  return Boolean(rowCount);
+  if (!item) return 'unknown';
+  return item.cancelled ? 'cancelled' : 'settled';
 }
 
 // Record a failed event in a fresh transaction. The event is locked again

@@ -61,19 +61,47 @@ function dnsAlias({ environment, sessionId, dockerName }) {
 async function deploy(config, {
   app, environment, sessionId, imageRef, env, dockerName,
   port = 3000, memory, cpus, labels, runtimeName = null, internalOnly = false,
-  command = [], runAsUser = null,
+  command = [], runAsUser = null, attempt = null, servingAttempt = null,
 }) {
   if (mode(config) === 'docker') {
     const name = runtimeName || dockerName;
     if (!name) throw new Error('Docker deployment requires a runtime name');
-    await docker.stopAndRemove(name).catch(() => {});
     const alias = internalOnly ? null : dnsAlias({ environment, sessionId, dockerName: name });
-    await docker.runContainer(name, {
-      image: imageRef, env, port, memory, cpus, labels,
-      aliases: alias ? [alias] : [],
-      command,
-    });
-    await docker.waitForHealthy(name, port, '/health');
+    let containerId = null;
+    let replaced = false;
+    // A preview attempt (the preview machine): the container carries its
+    // attempt number, and an older attempt never replaces a newer one. The
+    // read and the replacement hold one lock per session, so the label read
+    // is still true when the old container goes.
+    const replace = async () => {
+      if (attempt) {
+        const current = await docker.inspectContainer(name).catch(() => null);
+        const written = Number(current?.labels?.[kubernetes.PREVIEW_ATTEMPT_ANNOTATION]);
+        if (Number.isInteger(written) && written > attempt) {
+          throw Object.assign(new Error(`Preview attempt ${attempt} was superseded by attempt ${written}`),
+            { code: 'attempt_superseded', permanent: true });
+        }
+      }
+      await docker.stopAndRemove(name).catch(() => {});
+      replaced = true;
+      containerId = await docker.runContainer(name, {
+        image: imageRef, env, port, memory, cpus,
+        labels: attempt ? { ...labels, [kubernetes.PREVIEW_ATTEMPT_ANNOTATION]: String(attempt) } : labels,
+        aliases: alias ? [alias] : [],
+        command,
+      });
+    };
+    try {
+      if (attempt) await withPreviewDeployLock(config, sessionId, replace);
+      else await replace();
+      await docker.waitForHealthy(name, port, '/health');
+    } catch (err) {
+      // Docker has one container per session: what served is gone. What
+      // this deploy started is named by its id, since by now the name may
+      // be a newer attempt's container.
+      if (attempt && replaced) Object.assign(err, { servingRemoved: true, containerId: containerId || null });
+      throw err;
+    }
     if (internalOnly) {
       return {
         runtimeKind: 'docker', runtimeName: name, imageRef,
@@ -100,8 +128,26 @@ async function deploy(config, {
   // has no runAsNonRoot to refuse a root image.
   return kubernetes.deployApplication(config, {
     app, environment, sessionId, imageRef, env, cpus, labels, runtimeName, internalOnly,
-    command, ...(runAsUser != null ? { runAsUser } : {}),
+    command, ...(runAsUser != null ? { runAsUser } : {}), ...(attempt ? { attempt, servingAttempt } : {}),
   });
+}
+
+// The session-scoped advisory lock of a Docker preview attempt's
+// replacement (advisory-locks.PREVIEW_DOCKER_DEPLOY_LOCK), on its own
+// connection so it is released however the replacement ends.
+async function withPreviewDeployLock(config, sessionId, fn) {
+  const { PREVIEW_DOCKER_DEPLOY_LOCK } = require('./advisory-locks');
+  const client = await require('../db/pool').getPool(config).connect();
+  try {
+    await client.query('SELECT pg_advisory_lock($1, $2)', [PREVIEW_DOCKER_DEPLOY_LOCK, Number(sessionId)]);
+    try {
+      return await fn();
+    } finally {
+      await client.query('SELECT pg_advisory_unlock($1, $2)', [PREVIEW_DOCKER_DEPLOY_LOCK, Number(sessionId)]);
+    }
+  } finally {
+    client.release();
+  }
 }
 
 async function inspect(config, ref) {

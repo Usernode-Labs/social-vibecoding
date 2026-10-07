@@ -1972,9 +1972,17 @@ function startShotsIfIdle(config, pool, sessionId, commitHash) {
   });
 }
 
+// `opts.workflow` (the workflow's preview machine, checks.run): run the
+// checks for the attempt that serves and RETURN the settlement instead of
+// storing it, as { outcome: 'verdict' | 'deferred' | 'blocked', ... }. The
+// machine owns the seat, the pending stamp, the verdict, the history and the
+// follow-ups; only the legacy media rows are written here, after
+// `workflow.checkpoint()` (a cancelled run writes nothing). `workflow` is
+// { runId, signal, checkpoint }.
 async function captureForSession(config, session, app, commitHash, stagingResult, opts = {}) {
   const lifecycle = require('./preview-lifecycle');
-  if (lifecycle.enabled(config) && !lifecycle.current()) {
+  const workflow = opts.workflow || null;
+  if (!workflow && lifecycle.enabled(config) && !lifecycle.current()) {
     try {
       const completed = await lifecycle.run(config, session, commitHash, 'capture', async (operation, fresh) => {
         const runtime = require('./application-runtime');
@@ -2006,10 +2014,10 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       throw err;
     }
   }
-  const operation = lifecycle.current();
+  const operation = workflow ? workflowOperation(workflow) : lifecycle.current();
   const { send, trigger = null, force = false } = opts || {};
   const key = captureKey(session.id);
-  if (_inFlight.has(key)) {
+  if (!workflow && _inFlight.has(key)) {
     // Re-queue: park the NEWER run's arguments (latest wins, depth 1) for the
     // in-flight run's finally block to re-drive. `send` is deliberately NOT
     // carried over — by the time the queued run fires, the requesting turn's
@@ -2063,7 +2071,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     reportPrepareChecks(config, session, stagingResult, { queued: true });
     return;
   }
-  _inFlight.set(key, { operation, commitHash: commitHash || null });
+  if (!workflow) _inFlight.set(key, { operation, commitHash: commitHash || null });
   const pool = getPool(config);
 
   // The preview for this commit is live (the lifecycle wrapper above checked
@@ -2072,7 +2080,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
   // copies from the exact revisions, reuse this preview's image for the after
   // side, and never read the checks. The hand-off in the finally block stays
   // as the fallback; starting the same head twice is a no-op.
-  startShotsIfIdle(config, pool, session.id, commitHash);
+  if (!workflow) startShotsIfIdle(config, pool, session.id, commitHash);
 
   // ── Skip a provably redundant run (#1144) ──
   //
@@ -2086,7 +2094,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
   // The bar is deliberately narrow: same session, same commit, already
   // 'passing'. That combination cannot produce new information — the suite is
   // run against a build of that exact tree. Anything else runs.
-  if (!force && await checksAlreadyDecided(pool, session.id, commitHash)) {
+  if (!workflow && !force && await checksAlreadyDecided(pool, session.id, commitHash)) {
     log.info('visuals', 'Checks already passing for this commit — skipping redundant run', {
       sessionId: session.id, commitHash, trigger,
     });
@@ -2131,7 +2139,9 @@ async function captureForSession(config, session, app, commitHash, stagingResult
   // Kubernetes Job outlives the process that created it, a docker one-shot
   // does not.
   const runId = operation?.runId || crypto.randomUUID();
-  const harvestable = config.captureRuntime === 'kubernetes';
+  // A workflow run's liveness is its work lease, and its retry collects
+  // nothing: the harvest is not needed.
+  const harvestable = !workflow && config.captureRuntime === 'kubernetes';
   let stopHeartbeat = () => {};
   try {
     const buildTimings = (stagingResult && stagingResult.timings) || null;
@@ -2171,12 +2181,14 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // 'passing' while the fresh build is being tested. Best-effort.
     // Phase 'testing': the staging preview is already up by the time capture
     // starts, so everything from here is the suite running against it.
-    await setChecksPending(pool, session.id, commitHash, 'testing', trigger).catch((err) => {
-      log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message });
-    });
-    // #607: flip open clients' badges to "Checks running…" right away —
-    // the terminal notifyChecks below can be minutes out.
-    notifyChecksPending(session.id, commitHash, 'testing', trigger);
+    if (!workflow) {
+      await setChecksPending(pool, session.id, commitHash, 'testing', trigger).catch((err) => {
+        log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message });
+      });
+      // #607: flip open clients' badges to "Checks running…" right away —
+      // the terminal notifyChecks below can be minutes out.
+      notifyChecksPending(session.id, commitHash, 'testing', trigger);
+    }
     // Shots belong to a completed run, not merely to this session id.
     // Clear the previous set before any slow browser/image work so a live
     // client cannot keep presenting it as the revision now under test.
@@ -2660,17 +2672,21 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // ~zero wall clock unless it outlasts the whole capture run. The
     // .catch collapses every failure mode to null (no row) — the checks
     // run must never die because the unit-suite runner did.
+    // A workflow run tests the head itself, not the branch that may have
+    // moved since, and tells a runner that could not run from a red suite.
     const unitSuitePromise = shotsOnly ? Promise.resolve(null) : unitSuite.maybeRunUnitSuite({
       config, pool, appId: app.id, sessionId: session.id,
-      repoOwner, repoName, ref: gitRef,
+      repoOwner, repoName, ref: workflow && commitHash ? commitHash : gitRef,
       prNumber: Number(session.pr_number) || null,
       onProgress: progress.observeUnit,
       signal: operation?.signal, previewRunId: runId,
+      strict: !!workflow,
     }).catch((err) => {
+      if (workflow && operation.signal.aborted) throw operation.signal.reason;
       log.warn('visuals', 'Unit-suite check failed to run (non-fatal)', {
         sessionId: session.id, err: err.message,
       });
-      return null;
+      return workflow ? { runnerError: String(err.message || 'the unit suite could not run').slice(0, 300) } : null;
     });
     operation?.track(unitSuitePromise);
 
@@ -2841,11 +2857,19 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       testsCount: tests.length, dispatched, ceilingDropped: declared.ceilingDropped,
       stdout, stderr: captureStderr, runPartial, runPartialReason, unitOutcome,
       overlappedRollout: startedSoonAfterBoot(runStartedAt),
+      collect: !!workflow, checkpoint: workflow?.checkpoint,
     });
     traceStatus = settled.traceStatus;
     return settled.result;
   } catch (err) {
     closeProgress();
+    if (workflow) {
+      if (operation.signal.aborted) throw operation.signal.reason || err;
+      // The run broke before a verdict: the machine records it as an error
+      // with this reason (and the error lane runs it again).
+      traceStep('capture_error', 'Checks run threw', { error: err.message, level: 'error' });
+      return { outcome: 'blocked', reason: captureFailureDetail({ stdout: err.stdout, stderr: err.stderr, fallbackReason: err.message }) };
+    }
     if (lifecycle.isCancelled(err) || operation?.signal.aborted) {
       traceStatus = lifecycle.isCancelled(operation?.signal.reason || err) ? 'superseded' : 'error';
       throw operation?.signal.reason || err;
@@ -2889,10 +2913,26 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // only re-drive a run something else already replaced.
     stopHeartbeat();
     if (harvestable) await checkRuns.finish(operation?.cleanupPool || pool, runId);
-    _inFlight.delete(key);
-    drainQueued(key, session.id, commitHash, traceStatus);
-    scheduleShots(config, pool, session.id, commitHash);
+    if (!workflow) {
+      _inFlight.delete(key);
+      drainQueued(key, session.id, commitHash, traceStatus);
+      scheduleShots(config, pool, session.id, commitHash);
+    }
   }
+}
+
+// What captureForSession reads from a lifecycle operation, for a workflow
+// run: the abort signal its lease renewal fires, and its run id. `check` is
+// the cheap signal read (it runs on every progress flush); the media write
+// calls the real checkpoint.
+function workflowOperation(workflow) {
+  const { signal, runId } = workflow;
+  return {
+    runId, signal,
+    check: async () => { if (signal.aborted) throw signal.reason || new Error('The checks run was cancelled'); },
+    track: () => {},
+    cleanupPool: null,
+  };
 }
 
 // The harvester's seat at the in-flight table (services/check-harvest.js).
@@ -3005,7 +3045,7 @@ async function settleCaptureRun(config, pool, run) {
     visualScenarios = [], prodRunning, stagingOrigin, targets,
     testsCount, dispatched = null, ceilingDropped = 0,
     stdout, stderr = '', runPartial = false, runPartialReason = '', unitOutcome = null,
-    overlappedRollout = false,
+    overlappedRollout = false, collect = false, checkpoint = null,
   } = run;
   const [, repoOwner, repoName] = (app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
   let traceStatus = 'error';
@@ -3029,7 +3069,7 @@ async function settleCaptureRun(config, pool, run) {
       sessionId: session.id, err: err.message,
     });
   }
-  if (unitOutcome) extraRows.push(unitOutcome.row);
+  if (unitOutcome?.row) extraRows.push(unitOutcome.row);
   // #2315: does the preview's own origin serve the hosted assets? Probed at
   // settlement rather than beside the capture launch so the harvester's
   // path (a run whose launching process died) reports it too. A deferred
@@ -3063,6 +3103,14 @@ async function settleCaptureRun(config, pool, run) {
   });
   if (renderOutcome) extraRows.push(renderOutcome.row);
 
+  if (shotsOnly && collect) {
+    traceStatus = 'deferred';
+    traceStep('tests', 'Suite verdict: deferred', {
+      state: 'deferred', reason: admissionReason, durationMs: Date.now() - runStartedAt,
+    });
+    const media = await collectMedia({ pool, session, commitHash, run, shots, failures, checkpoint, deferred: true });
+    return { traceStatus, result: { outcome: 'deferred', capture: media.capture, visuals: media.visuals } };
+  }
   if (shotsOnly) {
     // No verdict was taken, so none is stored: the row stays 'pending' in
     // phase 'deferred' until the head merges cleanly, when the run that
@@ -3223,12 +3271,37 @@ async function settleCaptureRun(config, pool, run) {
     });
   }
 
+  // A unit suite that could not run (its Job, its image, its clone, or the
+  // read of package.json) is not a red suite: the run is an 'error' with
+  // that reason, which the error lane runs again (workflow runs only).
+  if (unitOutcome?.runnerError && checksResult.state !== 'error') {
+    checksResult.state = 'error';
+    checksResult.errorDetail = `The unit suite could not run: ${unitOutcome.runnerError}`;
+  }
+
   const blockingCount = Number.isInteger(checksResult.blockingCount)
     ? checksResult.blockingCount
     : checksResult.results.filter((r) => r.status !== 'pass' && !r.advisory).length;
   const advisoryCount = Number.isInteger(checksResult.advisoryCount) ? checksResult.advisoryCount : 0;
   const failingCount = blockingCount;
   traceStatus = checksResult.state;
+  if (collect) {
+    traceStep('tests', `Suite verdict: ${checksResult.state}`, {
+      state: checksResult.state, tests: checksResult.results.length, failing: failingCount,
+      advisory: advisoryCount || undefined, durationMs: Date.now() - runStartedAt,
+    });
+    const media = await collectMedia({ pool, session, commitHash, run, shots, failures, checkpoint, deferred: false });
+    return { traceStatus, result: {
+      outcome: 'verdict',
+      state: checksResult.state,
+      results: JSON.parse(serializeTestResults(checksResult.results)),
+      errorDetail: checksResult.errorDetail || null,
+      console: consoleSnapshotFromTests(checksResult),
+      history: checksResult.state === 'error' ? [] : historyRowsOf(checksResult, { dispatched, unitOutcome, assetOutcome, renderOutcome }),
+      capture: media.capture,
+      visuals: media.visuals,
+    } };
+  }
   traceStep('tests', `Suite verdict: ${checksResult.state}`, {
     state: checksResult.state,
     tests: checksResult.results.length,
@@ -3428,6 +3501,54 @@ async function settleCaptureRun(config, pool, run) {
     durationMs: Date.now() - runStartedAt,
   });
   return { traceStatus, result: { state: checksResult.state } };
+}
+
+// The app_check_history rows a run's verdict adds (settleCaptureRun's own
+// rule, for a workflow run's settlement): the dispatched checks by their
+// counts, and the unit, asset-route and render-health rows.
+function historyRowsOf(checksResult, { dispatched, unitOutcome, assetOutcome, renderOutcome }) {
+  const rows = [];
+  if (dispatched) {
+    const byIndex = new Map(dispatched.map((d) => [d.index, d]));
+    for (const r of checksResult.results) {
+      const d = byIndex.get(r.index);
+      if (!d) continue;
+      rows.push({
+        checkKey: d.checkKey, name: d.name, path: d.path,
+        passes: Number.isInteger(r.passes) ? r.passes : (r.status === 'pass' ? 1 : 0),
+        fails: Number.isInteger(r.fails) ? r.fails : (r.status === 'pass' ? 0 : 1),
+      });
+    }
+  }
+  for (const o of [unitOutcome, assetOutcome, renderOutcome]) if (o?.history) rows.push(o.history);
+  return rows;
+}
+
+// A workflow run's legacy media: stored only while the run is still the
+// current one (the checkpoint throws once the machine cancelled it), and
+// the capture outcome that describes it, returned for the settlement.
+async function collectMedia({ pool, session, commitHash, run, shots, failures, checkpoint, deferred }) {
+  const { media, legacyMediaSuppressed, capturePaths, pathDefaulted, captureRouteSource,
+    visualScenarios = [], prodRunning, targets, runPartial = false, runPartialReason = '' } = run;
+  if (checkpoint) await checkpoint({ step: 'media' });
+  const dropped = [];
+  const stored = await storeArtifacts(pool, session.id, commitHash, targets, shots, dropped);
+  const state = !media ? 'console_only'
+    : (!stored ? 'failed' : ((failures.length || dropped.length || runPartial) ? 'partial' : 'captured'));
+  const detail = {
+    media, pathDefaulted, routeSource: captureRouteSource, scenarios: visualScenarios, prodRunning, paths: capturePaths,
+    failures: failures.slice(0, 20), droppedOverCap: dropped.slice(0, 20),
+    beforeFellBack: Array.from(new Set(shots.filter((x) => x.kind === 'before' && x.fellBack).map((x) => x.index))),
+    runCutShort: runPartial ? (runPartialReason || true) : false,
+    ...(deferred ? { deferred: true } : {}),
+  };
+  if (!media) {
+    detail.reason = legacyMediaSuppressed ? LEGACY_SUPERSEDED_REASON
+      : (deferred ? 'No frontend files in commit range and the verdict is deferred — nothing to capture'
+        : 'No frontend files in commit range — console/tests-only run');
+  } else if (!stored) detail.reason = 'No usable "after" artifact was produced';
+  else if (runPartial) detail.reason = `Capture run cut short (${runPartialReason || 'unknown'}) — partial set stored`;
+  return { capture: { state, detail }, visuals: !!stored };
 }
 
 // Improvement 5: drain a re-queued capture (a rebuild that arrived while this
@@ -3905,6 +4026,10 @@ module.exports = {
   kubernetesCaptureOrigin,
   sessionEventEnvelope,
   captureForSession,
+  // For the preview machine's checks.publish and visualsReady notifier.
+  patchPrBody,
+  clearPrVisuals,
+  notifyVisualsReady,
   scheduleShots,
   startShotsIfIdle,
   // The settlement half of a run and the in-flight seat, for the harvester

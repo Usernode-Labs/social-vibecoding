@@ -88,6 +88,7 @@ spec:
             - {name: SHOTS_ENABLED, value: {{ .Values.platform.shotsEnabled | quote }}}
             - {name: WF_GOVERNANCE_ENABLED, value: {{ .Values.platform.workflowGovernanceEnabled | quote }}}
             - {name: WF_MERGE_FOLLOWUPS_ENABLED, value: {{ .Values.platform.workflowMergeFollowupsEnabled | quote }}}
+            - {name: WF_PREVIEWS_ENABLED, value: {{ .Values.platform.workflowPreviewsEnabled | quote }}}
             - {name: WORKER_RUNTIME, value: kubernetes}
             - {name: CAPTURE_RUNTIME, value: kubernetes}
             {{- $previewCluster := "" }}

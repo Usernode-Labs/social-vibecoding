@@ -7,8 +7,9 @@ then applies, a preview builds and runs its checks, a merge sets off a list of f
 it, and one code path that applies those events. Everything it does to the outside world
 is a durable work item whose result comes back as another event.
 
-Governance proposals are the first machine (behind `WF_GOVERNANCE_ENABLED`) and merge
-follow-ups the second (behind `WF_MERGE_FOLLOWUPS_ENABLED`). The others move over one at a
+Governance proposals are the first machine (behind `WF_GOVERNANCE_ENABLED`), merge
+follow-ups the second (behind `WF_MERGE_FOLLOWUPS_ENABLED`) and previews with their
+required checks the third (behind `WF_PREVIEWS_ENABLED`). The others move over one at a
 time.
 
 ## What it solves
@@ -193,6 +194,16 @@ A service is a `WorkHandler` registered for a kind:
   item of the same kind with `continues: '<work key>'`. The new item then starts from that
   item's last checkpoint, so a manual retry of a close that already commented does not
   comment again. Without `continues`, a new key starts fresh.
+- **An event can cancel work it made obsolete.** An outcome's `cancel: [{ kind, key }]`
+  settles those items of the instance as cancelled in the event's transaction (`result`
+  gains `cancelled: true`):
+  - a queued item never runs;
+  - a running item loses its claim, so its `signal` aborts at the next lease renewal
+    (within a third of the lease) and it reports nothing;
+  - an item that already reported has its result refused (`work_cancelled`).
+
+  The kernel stops nothing outside the database. A build or Job the item started is
+  cleaned up by the machine's own work (the preview machine's `checks.cancel`).
 
 ## Timers and messages
 
@@ -421,6 +432,7 @@ machine, which drives far more external calls. It needs:
 |---|---|---|---|
 | `WF_GOVERNANCE_ENABLED` | `false` | Helm value `platform.workflowGovernanceEnabled` | The governance-proposal machine decides governance proposals. The ticker and the sweeper's Pass 0b leave them alone. |
 | `WF_MERGE_FOLLOWUPS_ENABLED` | `false` | Helm value `platform.workflowMergeFollowupsEnabled` | The merge-followups machine runs what follows a merge. The follow-up recovery sweep stands down, and a change reads live only once production runs it. |
+| `WF_PREVIEWS_ENABLED` | `false` | Helm value `platform.workflowPreviewsEnabled` | The preview machine builds, checks and retires previews, from every source. The stuck-checks sweep leaves the sessions it holds alone. Off again, the next boot hands them back to the old paths. |
 | `WF_SLOTS` | 4 (1 on a staging preview) | the default | Pipeline slots in each process. |
 | `WF_POOL_MAX` | 6 (2 on a staging preview) | the default | Connections in the runtime's own pool, the outcome listener's included. Keep it above `WF_SLOTS`. |
 | `WF_OWNERSHIP_MODE` | `log` in production, `raise` elsewhere | the default | What a write to an owned column from outside the machine does. |
@@ -428,7 +440,7 @@ machine, which drives far more external calls. It needs:
 **Where the variables are set.**
 - **The Helm chart.** A Kubernetes Pod gets only the variables the chart lists, so a
   variable an operator needs to change is a chart value.
-- **`platform_env`.** All five are also declared in `dapp.json`'s `platform_env`, as
+- **`platform_env`.** All six are also declared in `dapp.json`'s `platform_env`, as
   the platform requires of every variable it reads. Values stored through the Platform
   variables panel only ever reached the retired VPS deploy.
 
@@ -504,6 +516,7 @@ A new machine brings the same two layers:
 |---|---|---|---|
 | `governance-proposal` | `issue:<id>`, for the five governance kinds (rename, secret change, close issue, maintenance campaign, featured illustration) | `open` → `applied` / `refused` / `withdrawn` / `superseded` | Behind `WF_GOVERNANCE_ENABLED` |
 | `merge-followups` | `session:<id>`, for each merged proposal and each change that went live inside one | `delivering` → `live`, or `deploy_failed` → `live` | Behind `WF_MERGE_FOLLOWUPS_ENABLED` |
+| `preview` | `session:<id>`, for each proposal with a preview or checks run asked for under the flag | `preparing` → `checking` → `settled` / `deferred`, or `failed`; `retiring` → `retired` or `idle`; `detached` | Behind `WF_PREVIEWS_ENABLED` |
 
 ### merge-followups
 
@@ -536,11 +549,53 @@ What a merged pull request still has to do once GitHub has merged it
 - **A failed deploy** ends in `deploy_failed`, said in the thread. Any later deploy that
   contains the change makes it live, and so does **Retry delivery** in Admin → Workflows.
 
+### preview
+
+A proposal's preview and its required checks (`src/workflow/preview/`), from the first
+revision announced under the flag until the preview is retired.
+
+- **Attempts.** Each build is an attempt, numbered within the instance. The runtime
+  (Deployment, Service, Ingress) is the session's and is updated in place; the database
+  and the env Secret are the attempt's. The Deployment carries the attempt number and
+  refuses an older attempt, and a failed rollout gives it back the template that served.
+  What serves keeps serving, and linked, until a newer attempt is ready.
+- **Sources.** Every source of a preview or a checks run calls
+  `services/preview-workflow.js` instead of building: turn tails, the CLI hand-off,
+  updates, syncs with main, imported pull requests, the review gate, promote, fleet
+  campaigns, recovery and the manual buttons. A head is exact: the adapter resolves a
+  missing one to the row's pin for its kind, or the branch tip. The machine refuses a head
+  that is not the row's pin (`head_superseded`) and joins the head it is already
+  preparing or serving.
+- **Supersession.** A newer head cancels the attempt being prepared or the check run
+  (the kernel's `cancel`), and retires what it created once its handler has stopped.
+- **Work:**
+  - `preview.prepare`: `staging.prepareAttempt`, the build in its attempt mode;
+  - `checks.run`: `captureForSession` in its workflow mode, which returns the
+    settlement instead of storing it;
+  - `checks.cancel`, by run id;
+  - `checks.publish`: the PR body and the platform-variables check;
+  - `preview.retireAttempt` and `preview.retire`;
+  - the bot's notes and the shots hand-offs.
+- **Settlement in one transaction:** the verdict and `test_results`, the console check,
+  the capture outcome and the app's check history, counted once per run. A run that could
+  not say (output unreadable, run lost) settles `error`, never a verdict.
+- **The error lane** is the instance's timer: 2 minutes doubling to 30, at most
+  `CHECK_MAX_AUTO_RETRIES`, for a promoted proposal or a submitted CLI hand-off.
+- **Retirement by identity.** Archive, merge, included changes and app deletion retire
+  it terminally (`teardownStaging` hands a held session over); an idle or pressure
+  reclaim frees the preview and keeps the instance for the next revision.
+- **Adoption.** A session's first event adopts the preview the old paths built, as
+  attempt 0 under the old names, with its verdict when it serves the submitted head.
+  `Detach` (the flag turned off) cancels its work and hands the session back; the next
+  event adopts it again.
+- **Ownership.** While the flag is on it owns an enrolled session's preview pointers and
+  checks verdict (`chat_sessions_wf_preview_owned`); a detached or retired instance has
+  handed them back.
+
 **Planned order:**
-1. **Previews and required checks.**
-2. **Before/after shots.**
-3. **The proposal lifecycle.**
-4. **The merge itself:** the attempt, the queue, production delivery and conflicts.
-5. **Fleet campaigns.**
+1. **Before/after shots.**
+2. **The proposal lifecycle.**
+3. **The merge itself:** the attempt, the queue, production delivery and conflicts.
+4. **Fleet campaigns.**
 
 Each one deletes the old paths it replaces once its flag is the default.

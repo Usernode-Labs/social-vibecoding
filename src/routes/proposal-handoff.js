@@ -4,6 +4,7 @@ const crypto = require('node:crypto');
 const express = require('express');
 const { getPool } = require('../db/pool');
 const appAccess = require('../services/app-access');
+const previewWorkflow = require('../services/preview-workflow');
 const communities = require('../services/communities');
 const github = require('../services/github');
 const githubBudget = require('../services/github-budget');
@@ -1479,17 +1480,27 @@ function proposalHandoffRoutes(config) {
           const alreadyRecorded = session.handoff_uploaded_sha === uploaded.sha
             && session.handoff_local_commit_sha === input.localCommitSha;
           if (!alreadyRecorded) {
+            // A session the preview machine holds has its verdict cleared by
+            // the machine (ChecksCleared, below); $7 keeps those columns here.
+            const machineHeld = await previewWorkflow.held(session.id);
             const advanced = await pool.query(
               `UPDATE chat_sessions
                 SET handoff_uploaded_sha = $1, handoff_local_commit_sha = $5,
                     ${summaryFreshness.INVALIDATE_SQL},
                     handoff_upload_checked_sha = checks_commit_sha,
-                    check_state = NULL, check_phase = NULL,
-                    check_error_detail = NULL, test_results = '[]'::jsonb,
-                    checks_checked_at = NULL, consecutive_check_failures = 0,
-                    first_check_failure_at = NULL, last_check_failure_at = NULL,
-                    check_next_retry_at = NULL, check_error_notified_at = NULL,
-                    capture_state = NULL, capture_detail = NULL, captured_at = NULL,
+                    check_state = CASE WHEN $7::boolean THEN check_state END,
+                    check_phase = CASE WHEN $7::boolean THEN check_phase END,
+                    check_error_detail = CASE WHEN $7::boolean THEN check_error_detail END,
+                    test_results = CASE WHEN $7::boolean THEN test_results ELSE '[]'::jsonb END,
+                    checks_checked_at = CASE WHEN $7::boolean THEN checks_checked_at END,
+                    consecutive_check_failures = CASE WHEN $7::boolean THEN consecutive_check_failures ELSE 0 END,
+                    first_check_failure_at = CASE WHEN $7::boolean THEN first_check_failure_at END,
+                    last_check_failure_at = CASE WHEN $7::boolean THEN last_check_failure_at END,
+                    check_next_retry_at = CASE WHEN $7::boolean THEN check_next_retry_at END,
+                    check_error_notified_at = CASE WHEN $7::boolean THEN check_error_notified_at END,
+                    capture_state = CASE WHEN $7::boolean THEN capture_state END,
+                    capture_detail = CASE WHEN $7::boolean THEN capture_detail END,
+                    captured_at = CASE WHEN $7::boolean THEN captured_at END,
                     last_activity_at = NOW()
               WHERE id = $2 AND status = $6 AND source = $3
                 AND (CASE
@@ -1501,11 +1512,12 @@ function proposalHandoffRoutes(config) {
                                      handoff_head_sha, handoff_base_sha)
                      END) IS NOT DISTINCT FROM $4`,
               [uploaded.sha, session.id, SOURCE, expectedParent, input.localCommitSha,
-                session.status]
+                session.status, machineHeld]
             );
             if (!advanced.rowCount) {
               return res.status(409).json({ error: 'session_state_changed' });
             }
+            if (machineHeld) await previewWorkflow.clear({ session, reason: 'upload' });
           }
           if (revisionKind === 'session' && !session.pr_number) {
             try {
@@ -1811,9 +1823,12 @@ function proposalHandoffRoutes(config) {
                     END,
                     handoff_uploaded_sha = $1,
                     handoff_upload_checked_sha = NULL,
-                    check_state = 'pending', checks_commit_sha = $1,
-                    check_error_detail = NULL,
-                    staging_container_id = NULL, staging_url = NULL,
+                    -- $8: the preview machine owns the verdict and the preview.
+                    check_state = CASE WHEN $8::boolean THEN check_state ELSE 'pending' END,
+                    checks_commit_sha = CASE WHEN $8::boolean THEN checks_commit_sha ELSE $1 END,
+                    check_error_detail = CASE WHEN $8::boolean THEN check_error_detail END,
+                    staging_container_id = CASE WHEN $8::boolean THEN staging_container_id END,
+                    staging_url = CASE WHEN $8::boolean THEN staging_url END,
                     last_activity_at = NOW()
               WHERE id = $2 AND status = $7 AND source = $3
                 AND handoff_uploaded_sha = $1
@@ -1822,7 +1837,7 @@ function proposalHandoffRoutes(config) {
                 AND handoff_upload_checked_sha IS NOT DISTINCT FROM $6`,
             [input.headSha, session.id, SOURCE, session.checks_commit_sha || null,
               session.handoff_head_sha || null, session.handoff_upload_checked_sha || null,
-              session.status]
+              session.status, previewWorkflow.enabled()]
           );
           // Manual archive/pause is intentionally allowed to abort work. If
           // it won while the GitHub checks above were in flight, keep the
@@ -1837,11 +1852,13 @@ function proposalHandoffRoutes(config) {
             visibleChanges: input.visibleChanges,
             headChanged: currentCheckedHead(session) !== input.headSha,
           });
-          const pending = await visuals.setChecksPending(pool, session.id, input.headSha, 'building', 'commit-push');
-          if (pending === false) {
-            return res.status(409).json({ error: 'session_state_changed' });
+          if (!previewWorkflow.enabled()) {
+            const pending = await visuals.setChecksPending(pool, session.id, input.headSha, 'building', 'commit-push');
+            if (pending === false) {
+              return res.status(409).json({ error: 'session_state_changed' });
+            }
+            visuals.notifyChecksPending(session.id, input.headSha, 'building', 'commit-push');
           }
-          visuals.notifyChecksPending(session.id, input.headSha, 'building', 'commit-push');
 
           const freshSession = {
             ...session,
@@ -1965,7 +1982,7 @@ function proposalHandoffRoutes(config) {
       const checkedHead = currentCheckedHead(session);
       if (String(remoteHead).toLowerCase() !== checkedHead) {
         const detail = 'The proposal branch changed after checks. Rebuild the new head locally or from the web Dev session before promoting.';
-        await pool.query(
+        if (!previewWorkflow.enabled()) await pool.query(
           `UPDATE chat_sessions SET check_state = 'error', check_error_detail = $1
             WHERE id = $2 AND status = $5 AND source = $3
               AND COALESCE(checks_commit_sha, handoff_head_sha) IS NOT DISTINCT FROM $4`,

@@ -347,6 +347,40 @@ An ordinary rolling change, safe in both directions.
 - **Merges the machine already accepted** still finish: the runtime keeps running while
   they have work left, and stops on a later boot once nothing is left.
 
+## Workflow preview machine
+
+`platform.workflowPreviewsEnabled` (default `false`) becomes `WF_PREVIEWS_ENABLED`. When
+it is on, every source of a preview or a checks run hands its request to the preview
+machine, which builds, checks and retires previews as durable work on the leader. The
+stuck-checks sweep leaves the sessions it holds alone, and the by-name reap and the
+orphan-database sweep skip them. `docs/workflows.md` explains the machine.
+
+**On the cluster.** A preview keeps its per-session Deployment, Service and Ingress
+(`sv-preview-<appId>-s<sessionId>`). Each attempt has its own env Secret
+(`<name>-env-a<n>`) and database, and the Deployment carries the annotation
+`social.usernode.io/preview-attempt`, the highest attempt that wrote it. A failed rollout
+restores the template that served, so the older revision keeps serving.
+
+### Activation and rollback
+
+1. **Set the value.** Set `platform.workflowPreviewsEnabled: true` in the platform's
+   values in the infra repository. Argo CD rolls the Deployment.
+2. **During the rollout overlap.** An old Pod may still build a preview the old way.
+   Once a new Pod has recorded the flag, the ownership trigger logs such writes in
+   `wf_ownership_violations` (`log` mode in production).
+3. **Verify.**
+   - **The new Pod's log.** It shows `Workflow runtime started` with `preview`.
+   - **Admin → Workflows.** The next revision appears as `preview / session:<id>`,
+     goes through `preparing` and `checking`, and settles; the problems panel is
+     empty.
+   - **The cluster.** `kubectl -n social-apps get secrets` shows `-env-a<n>` Secrets, and
+     only for attempts that serve or are being prepared.
+
+**Rollback.** Set the value back to `false`. The next boot detaches every session the
+machine holds: its work is cancelled, what it built stays (attempt databases follow
+the old naming, so the orphan sweep collects them once unlinked), and the old paths own
+the sessions again. Turning it on again later adopts each session from its row.
+
 ## Read-only inventory and logs
 
 These examples use the organization namespace and Deployment names. Substitute

@@ -85,7 +85,15 @@ const MERGE_FINALIZATION_LOCK = 991013;
 // at once would otherwise each find the same piece of work without a card,
 // and send it one each when it moved on a step between them.
 const HOMEROOM_BOT_CARDS_LOCK = 991014;
+// A preview attempt's Docker deploy (services/application-runtime.js): the
+// CLASSIFIER half of `pg_advisory_lock(classifier, sessionId)`, session-
+// scoped, held from reading the session's container's attempt label through
+// starting the new container, so an older attempt cannot read the label,
+// stall, and then replace a newer attempt's container. Kubernetes has its
+// fence in the Deployment write itself (a replace on the version read).
+const PREVIEW_DOCKER_DEPLOY_LOCK = 991015;
 
 module.exports = { ADMIN_MUTATION_LOCK, EXTERNAL_TASK_SUBMIT_LOCK, PROPOSAL_UPDATE_LOCK, MERGE_FINALIZATION_LOCK, BUILD_RETENTION_LOCK,
   STAGING_BUILD_LOCK, PRODUCTION_BUILD_LOCK, STAGING_TEMPLATE_LOCK, PREVIEW_LIFECYCLE_LOCK,
-  VOTE_DIGEST_LOCK, CHALLENGE_SCORER_LOCK, WEEKLY_DIGEST_LOCK, HOMEROOM_BOT_LOCK, HOMEROOM_BOT_CARDS_LOCK };
+  VOTE_DIGEST_LOCK, CHALLENGE_SCORER_LOCK, WEEKLY_DIGEST_LOCK, HOMEROOM_BOT_LOCK, HOMEROOM_BOT_CARDS_LOCK,
+  PREVIEW_DOCKER_DEPLOY_LOCK };

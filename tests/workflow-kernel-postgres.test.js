@@ -1,7 +1,7 @@
 'use strict';
 
 // The workflow kernel (src/workflow/kernel/) against the full PostgreSQL
-// schema. One subtest per kernel guarantee (K1-K17 in the workflow
+// schema. One subtest per kernel guarantee (K1-K19 in the workflow
 // foundation's guarantee list), driven through a small test machine.
 
 const test = require('node:test');
@@ -24,7 +24,7 @@ function counter({ name = 'kt-counter', version = 1 } = {}) {
     events: {
       Create: any, Add: (p) => { if (!Number.isInteger(p?.n)) throw new Error('n must be an integer'); return p; },
       Explode: any, Flaky: any, Swallow: any, Sneaky: any, Lock: any, Send: any, Work: any,
-      Arm: any, Tick: any, Admit: any, Close: any,
+      Arm: any, Tick: any, Admit: any, Close: any, Cancel: any,
     },
     create: ['Create'],
     terminal: ['closed'],
@@ -39,6 +39,7 @@ function counter({ name = 'kt-counter', version = 1 } = {}) {
     authorize: {
       Create: () => ok(), Add: () => ok(), Explode: () => ok(), Flaky: () => ok(), Swallow: () => ok(),
       Sneaky: () => ok(), Lock: () => ok(), Send: () => ok(), Work: () => ok(), Arm: () => ok(), Close: () => ok(),
+      Cancel: () => ok(),
       Tick: (e) => (e.source.kind === 'timer' ? ok() : reject('timer_only')),
       Admit: (e, f) => (f.admission ? ok() : reject('admission_off')),
     },
@@ -73,6 +74,7 @@ function counter({ name = 'kt-counter', version = 1 } = {}) {
             })),
           }),
         },
+        Cancel: { to: (s, e) => ({ ...same(s, {}), cancel: e.payload.keys.map((key) => ({ kind: 'kt.echo', key })) }) },
         WorkSucceeded: {
           guard: (s, e) => (e.payload.workKey === s.data.expect ? ok() : reject('stale_result')),
           to: (s, e) => same(s, { results: [...s.data.results, ['ok', e.payload.workKey, e.payload.result]] }),
@@ -583,6 +585,66 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     await rt.runServices();
     assert.deepEqual(seen.get('k7c-2'), { closed: true, commented: true }, 'the continuing item resumes');
     assert.equal(seen.get('k7c-3'), null, 'an item that names nothing starts fresh');
+  });
+
+  await t.test('K18 cancelled work never reports: a queued item never runs, a running one aborts', async () => {
+    await create('k18');
+    let started;
+    const running = new Promise((r) => { started = r; });
+    let aborted = false;
+    handlers['k18-run'] = async (ctx) => {
+      started();
+      while (!ctx.signal.aborted) await sleep(20);
+      aborted = true;
+      return { late: true };
+    };
+    await route('k18', 'Work', { workKey: 'k18-run' });
+    await rt.drain();
+    const run = rt.runServices();
+    await running;
+    await route('k18', 'Work', { workKey: 'k18-q' });
+    const cancel = await route('k18', 'Cancel', { keys: ['k18-run', 'k18-q', 'k18-none'] });
+    await rt.drain();
+    await run;
+    assert.ok(aborted, 'the running handler saw its signal abort');
+    const items = (await pool.query(
+      `SELECT work_key, status, result, claim_id, attempt_count FROM wf_work WHERE key = 'k18' ORDER BY work_key`)).rows;
+    assert.deepEqual(items.map((w) => [w.work_key, w.status, w.result, w.claim_id, w.attempt_count]),
+      [['k18-q', 'settled', { cancelled: true }, null, 0], ['k18-run', 'settled', { cancelled: true }, null, 1]]);
+    assert.equal(await rt.runServices(), 0, 'nothing is left to claim');
+    await rt.drain();
+    assert.equal((await pool.query(`SELECT count(*)::int AS n FROM wf_events WHERE key = 'k18' AND type LIKE 'Work%ed'`)).rows[0].n, 0);
+    const attempt = (await pool.query(
+      `SELECT a.outcome, a.error FROM wf_work_attempts a JOIN wf_work w ON w.id = a.work_id WHERE w.work_key = 'k18-run'`)).rows;
+    assert.deepEqual(attempt, [{ outcome: 'lost', error: { message: 'work cancelled', code: 'cancelled' } }]);
+    const emitted = (await event(cancel)).emitted.cancelled;
+    assert.deepEqual(emitted.map((c) => [c.key, c.id !== null]), [['k18-run', true], ['k18-q', true], ['k18-none', false]],
+      'the event records what it cancelled; an unknown key cancels nothing');
+  });
+
+  await t.test('K19 cancelling an item that already reported makes its result stale', async () => {
+    await create('k19');
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    let started;
+    const running = new Promise((r) => { started = r; });
+    handlers['k19-w'] = async () => { started(); await gate; return { built: true }; };
+    await route('k19', 'Work', { workKey: 'k19-w' });
+    await rt.drain();
+    const run = rt.runServices();
+    await running;
+    // The cancel is appended before the result, and applied after it reported.
+    await route('k19', 'Cancel', { keys: ['k19-w'] });
+    release();
+    await run;
+    assert.equal((await pool.query(`SELECT status FROM wf_work WHERE work_key = 'k19-w'`)).rows[0].status, 'reported');
+    await rt.drain();
+    const result = (await pool.query(
+      `SELECT result, reason FROM wf_events WHERE key = 'k19' AND type = 'WorkSucceeded'`)).rows;
+    assert.deepEqual(result, [{ result: 'rejected', reason: 'work_cancelled' }]);
+    const item = (await pool.query(`SELECT status, result FROM wf_work WHERE work_key = 'k19-w'`)).rows[0];
+    assert.deepEqual([item.status, item.result], ['settled', { outcome: 'succeeded', value: { built: true }, cancelled: true }]);
+    assert.deepEqual((await inst('k19')).data.results, [], 'the machine never saw the result');
   });
 
   await t.test('K8/K13 retries are bounded and reported; accepted work runs with admission off', async () => {

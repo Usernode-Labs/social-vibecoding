@@ -92,6 +92,8 @@ function strandedPendingChecks(session, {
   activeWorkers = require('../services/active-workers'),
 } = {}) {
   if (session?.check_state !== 'pending' || session.check_phase === 'deferred') return false;
+  // The preview machine's 'pending' always has its work outstanding.
+  if (require('../services/preview-workflow').enabled()) return false;
   const id = Number(session.id);
   return !visuals.hasInFlightCapture(id)
     && !activeWorkers.hasSessionOperation(id)
@@ -1489,6 +1491,10 @@ function nativeGithubTarget(session) {
 }
 
 async function kickNativeRevisionChecks({ config, pool, session, headSha }) {
+  // With WF_PREVIEWS_ENABLED on the preview machine builds and checks it.
+  if (await require('../services/preview-workflow').revision({
+    pool, session, head: headSha, source: 'reviewed-head', trigger: 'commit-push',
+  })) return;
   const visuals = require('../services/visuals');
   await visuals.setChecksPending(pool, session.id, headSha, 'building', 'commit-push')
     .catch((err) => log.warn('votes', 'Native revision setChecksPending failed (non-fatal)', {
@@ -1513,6 +1519,9 @@ async function kickNativeRevisionChecks({ config, pool, session, headSha }) {
 // gate independently compares the verdict SHA, so even a failed pending write
 // cannot let an older green result authorize this head.
 async function kickImportedRevisionChecks({ config, pool, session, headSha }) {
+  if (await require('../services/preview-workflow').revision({
+    pool, session, head: headSha, source: 'imported', trigger: 'pr-import',
+  })) return;
   const visuals = require('../services/visuals');
   await visuals.setChecksPending(pool, session.id, headSha, 'building', 'pr-import')
     .catch((err) => log.warn('votes', 'Imported revision setChecksPending failed (non-fatal)', {
@@ -1802,7 +1811,17 @@ async function reconcileNativeReviewedHead({
     && sameSha(session.checks_commit_sha, oldHead)
     && ['passing', 'skipped'].includes(session.check_state);
   const needsChecks = !sameSha(session.checks_commit_sha, liveHead) && !checksCarry;
-  if (needsChecks) {
+  // With WF_PREVIEWS_ENABLED on the machine decides both: it carries a green
+  // verdict of the old head, else checks the new one. A deferred caller
+  // hands off the build itself once its own pins are written.
+  const previewWorkflow = require('../services/preview-workflow');
+  if (previewWorkflow.enabled()) {
+    if (checksCarry || (needsChecks && !deferChecks)) {
+      await previewWorkflow.revision({ pool, session, head: liveHead, source: 'reviewed-head', trigger: 'commit-push',
+        carryFrom: checksCarry ? oldHead : null });
+    }
+    if (checksCarry) session.checks_commit_sha = liveHead;
+  } else if (needsChecks) {
     if (deferChecks) {
       const visuals = require('../services/visuals');
       await visuals.setChecksPending(pool, session.id, liveHead, 'building', 'commit-push')
@@ -2591,7 +2610,9 @@ function voteRoutes(config) {
             // Keep the session active so the new head can be rebuilt; never
             // open voting on code that did not produce the ready verdict.
             const detail = 'The proposal branch changed after checks. Rebuild the new head locally or from the web Dev session before promoting.';
-            await pool.query(
+            // The preview machine owns the verdict when it is on; the 409
+            // below says the same to the author.
+            if (!require('../services/preview-workflow').enabled()) await pool.query(
               `UPDATE chat_sessions SET check_state = 'error', check_error_detail = $1
                 WHERE id = $2 AND status = $4 AND source = 'cli_handoff'
                   AND COALESCE(checks_commit_sha, handoff_head_sha)
@@ -2806,6 +2827,11 @@ function voteRoutes(config) {
             } catch {}
           }
           const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
+          // With WF_PREVIEWS_ENABLED on the preview machine builds and checks
+          // the reviewed head.
+          if (await require('../services/preview-workflow').revision({
+            pool, session, head: commitHash === 'latest' ? null : commitHash, source: 'promote', trigger: 'promote-kick',
+          })) return;
           // #607: stamp 'pending' + broadcast before the (minutes-long)
           // staging build so the freshly promoted proposal's card shows
           // "Checks running…" instead of a bare NULL-verdict "Re-run

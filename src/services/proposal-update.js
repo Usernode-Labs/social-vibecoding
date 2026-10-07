@@ -1870,13 +1870,16 @@ async function settleActiveSession({ config, pool, session, sessionId, headSha, 
   // rather than being regressed to an older commit's pending state.
   const adopted = await pool.query(
     `UPDATE chat_sessions
-        SET check_state = 'pending', checks_commit_sha = $1,
-            check_error_detail = NULL,
-            staging_container_id = NULL, staging_url = NULL,
+        SET check_state = CASE WHEN $4::boolean THEN check_state ELSE 'pending' END,
+            checks_commit_sha = CASE WHEN $4::boolean THEN checks_commit_sha ELSE $1 END,
+            check_error_detail = CASE WHEN $4::boolean THEN check_error_detail END,
+            staging_container_id = CASE WHEN $4::boolean THEN staging_container_id END,
+            staging_url = CASE WHEN $4::boolean THEN staging_url END,
             last_activity_at = NOW()
       WHERE id = $2 AND status = 'active' AND ${OWNED_SOURCE_SQL}
         AND checks_commit_sha IS NOT DISTINCT FROM $3`,
-    [headSha, sessionId, session.checks_commit_sha || null]
+    // $4: the preview machine owns the verdict and the preview; the claim stays.
+    [headSha, sessionId, session.checks_commit_sha || null, require('./preview-workflow').enabled()]
   );
   if (!adopted.rowCount) {
     await settlePausedSession({ pool, session, sessionId, headSha, parts });
@@ -1885,11 +1888,12 @@ async function settleActiveSession({ config, pool, session, sessionId, headSha, 
 
   await recordChangesReadyCard({ pool, session, sessionId, headSha });
 
-  const pending = await visuals.setChecksPending(pool, sessionId, headSha, 'building', 'commit-push')
-    .catch((err) => {
-      log.warn('proposal-update', 'setChecksPending failed (non-fatal)', { sessionId, err: err.message });
-      return true;
-    });
+  const pending = require('./preview-workflow').enabled() ? true
+    : await visuals.setChecksPending(pool, sessionId, headSha, 'building', 'commit-push')
+      .catch((err) => {
+        log.warn('proposal-update', 'setChecksPending failed (non-fatal)', { sessionId, err: err.message });
+        return true;
+      });
   if (pending === false) return { rebuilding: false };
   try { visuals.notifyChecksPending(sessionId, headSha, 'building', 'commit-push'); } catch { /* notify only */ }
 
@@ -1929,6 +1933,8 @@ async function settleActiveSession({ config, pool, session, sessionId, headSha, 
 // looking like it had never been checked at all.
 async function settlePausedSession({ pool, session, sessionId, headSha, parts }) {
   const { lifecycle: sessionLifecycle, pushSessionUpdate } = parts;
+  // A session the preview machine holds has its verdict cleared by it.
+  const machineHeld = await require('./preview-workflow').held(sessionId);
   // The same column list the CLI commit-upload route clears for a commit
   // nothing has run yet, minus the 'pending' verdict itself — nothing IS
   // running, and a 'pending' no pipeline will ever resolve is a spinner
@@ -1944,11 +1950,17 @@ async function settlePausedSession({ pool, session, sessionId, headSha, parts })
             first_check_failure_at = NULL, last_check_failure_at = NULL,
             capture_state = NULL, capture_detail = NULL, captured_at = NULL,
             last_activity_at = NOW()
-      WHERE id = $1 AND status = 'paused'`,
-    [sessionId]
+      WHERE id = $1 AND status = 'paused' AND NOT $2::boolean`,
+    [sessionId, machineHeld]
   ).catch((err) => log.warn('proposal-update', 'could not clear the stale verdict', {
     sessionId, err: err.message,
   }));
+  if (machineHeld) {
+    await pool.query(`UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = $1 AND status = 'paused'`, [sessionId])
+      .catch(() => {});
+    await require('./preview-workflow').clear({ session: { ...session, id: sessionId }, reason: 'paused-update' })
+      .catch((err) => log.warn('proposal-update', 'could not clear the stale verdict', { sessionId, err: err.message }));
+  }
 
   await recordChangesReadyCard({ pool, session, sessionId, headSha });
 

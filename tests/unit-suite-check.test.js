@@ -684,3 +684,37 @@ test('a harvested Job outcome keeps the same excerpts', async () => {
   assert.equal(out.row.failureDetails[0].test, 'harvested regression');
   assert.match(out.row.failureDetails[0].excerpt, /error: 'boom'/);
 });
+
+// ── strict (the preview machine's checks runs) ─────────────────────────
+
+function strictRun(t, { pkg = async () => '{"scripts":{"test":"node --test"}}', run }) {
+  const github = require('../src/services/github');
+  const docker = require('../src/services/docker');
+  const history = require('../src/services/check-history');
+  t.mock.method(github, 'isEnabled', () => true);
+  t.mock.method(github, 'getFileContent', pkg);
+  t.mock.method(github, 'getCloneUrl', async () => 'https://example.test/repo');
+  t.mock.method(history, 'loadGraduated', async () => new Set());
+  if (run) t.mock.method(docker, 'runOneShot', run);
+  return unitSuite.maybeRunUnitSuite({ config: {}, pool: { query: async () => ({ rows: [] }) }, appId: 10, sessionId: 7,
+    repoOwner: 'example', repoName: 'repo', ref: 'a'.repeat(40), strict: true });
+}
+
+test('strict: only an absent package.json exempts the suite; a read error is a runner error', async (t) => {
+  assert.equal(await strictRun(t, { pkg: async () => null }), null);
+  t.mock.restoreAll();
+  const out = await strictRun(t, { pkg: async () => { throw Object.assign(new Error('Bad gateway'), { status: 502 }); } });
+  assert.match(out.runnerError, /package\.json could not be read \(Bad gateway\)/);
+  assert.equal(out.row, undefined, 'no row: the run records an error, not a verdict');
+});
+
+test('strict: a run that failed before its clone finished is a runner error, after it a red suite', async (t) => {
+  const early = await strictRun(t, { run: async () => { throw Object.assign(new Error('image pull failed'), { stdout: '' }); } });
+  assert.equal(early.runnerError, 'image pull failed');
+  t.mock.restoreAll();
+  const late = await strictRun(t, { run: async () => {
+    throw Object.assign(new Error('exit 1'), { stdout: `${unitSuite.CLONED_SENTINEL}\nnpm error code ERESOLVE`, code: 1 });
+  } });
+  assert.equal(late.runnerError, undefined);
+  assert.equal(late.row.status, 'fail', 'npm ci failing on the proposal\'s own lockfile is the proposal\'s');
+});
