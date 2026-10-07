@@ -608,8 +608,10 @@ async function projectsBusy(pool, rows) {
  *
  * The bot's own sessions are never a request's `in_progress` (the issue
  * routes leave synthetic authors out on purpose), so without this a request
- * it was building read "Unassigned" and offered Claim and Start work, and a
- * claim then told the bot to leave the request alone.
+ * it was building read "Unassigned" and offered Start work. #4190: Claim is
+ * offered beside the bot's work on purpose, and a claim made once the bot is
+ * on the request means "I'm working on this too": it does not stop the bot
+ * (homeroom-bot.js issueHolders).
  *
  * Read twice over. First the same two reads as projectsBusy, which takes
  * the projects of the rows it is handed that wait: one waiting row names

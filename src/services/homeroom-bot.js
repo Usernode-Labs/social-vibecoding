@@ -1299,7 +1299,8 @@ async function listApps(pool) {
 }
 
 /**
- * Everything that makes an issue "somebody's": a live human claim, a live
+ * Everything that makes an issue "somebody's": a live human claim (#4190:
+ * one made before the bot was on the request; see below), a live
  * non-synthetic session that declared it, a human auto-solve run on it, or
  * an open proposal addressing it. One query per kind, per app.
  *
@@ -1318,12 +1319,33 @@ async function issueHolders(pool, appId) {
     }
   };
   const sessionKind = (r) => (r.status === 'promoted' || r.status === 'merging' ? 'proposal' : 'session');
+  // #4190: a claim made once the bot was already on the request is a person
+  // working on it ALONGSIDE the bot, not a hold: the bot keeps going and
+  // delivers. "On it" is what the request page shows as the bot's work
+  // (homeroom-bot-progress.js botWorkByIssue): a request somebody asked it to
+  // build (a priority-0 row), one it has started reading (a started row), and
+  // a live build waiting its turn or under way, or a plan waiting for its
+  // Build it, measured from when that run's read began. A claim made before
+  // any of those still holds the bot off, as before; and once the bot's run
+  // is over, the claim is an ordinary one again.
   const claims = await pool.query(
     `SELECT ic.github_issue_number AS n, u.username, ic.claimed_at AS since
        FROM issue_claims ic JOIN users u ON u.id = ic.user_id
       WHERE ic.app_id = $1 AND u.is_synthetic IS NOT TRUE
-        AND ic.claimed_at > NOW() - make_interval(days => $2)`,
-    [appId, CLAIM_TTL_DAYS],
+        AND ic.claimed_at > NOW() - make_interval(days => $2)
+        AND NOT EXISTS (
+          SELECT 1 FROM homeroom_bot_queue q
+           WHERE q.app_id = ic.app_id AND q.issue_number = ic.github_issue_number
+             AND (CASE WHEN q.priority = 0 THEN q.enqueued_at ELSE q.started_at END) <= ic.claimed_at)
+        AND NOT EXISTS (
+          SELECT 1 FROM homeroom_bot_runs r
+           WHERE r.app_id = ic.app_id AND r.issue_number = ic.github_issue_number
+             AND r.mode = 'live' AND r.build_ok IS NULL AND r.proposal_session_id IS NULL
+             AND ((r.verdict = 'ready' AND (r.live_build_waiting_at IS NOT NULL OR r.build_session_id IS NOT NULL)
+                   AND r.created_at > NOW() - make_interval(days => $3))
+                  OR r.awaiting_go_at IS NOT NULL)
+             AND r.created_at - make_interval(secs => COALESCE(r.duration_ms, 0) / 1000.0) <= ic.claimed_at)`,
+    [appId, CLAIM_TTL_DAYS, ABANDONED_LIVE_WINDOW_DAYS],
   );
   add(claims.rows, () => 'claim');
   const linked = await pool.query(
