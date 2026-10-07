@@ -16,7 +16,7 @@ const gh = {
   closeIssue: async (o, r, n) => { calls.push(['close', n]); if (gh.closeFails) throw gh.closeFails; },
   createIssueComment: async (o, r, n, body) => { calls.push(['comment', n, body]); },
   thread: { comments: [] },
-  fetchIssueComments: async (o, r, n) => { calls.push(['read-comments', n]); return gh.thread; },
+  fetchIssueComments: async (o, r, n, opts) => { calls.push(['read-comments', n, opts.since]); return gh.thread; },
   getIssue: async (o, r, n) => { calls.push(['get', n]); if (n === 404) throw Object.assign(new Error('nf'), { status: 404 }); return { state: n === 1 ? 'open' : 'closed' }; },
   noteIssuesClosed: () => calls.push(['note']),
   invalidateIssuesCache: () => calls.push(['bust']),
@@ -41,29 +41,43 @@ test('github.closeIssue closes, checkpoints, comments with its marker, and busts
   const { saved, ctx: c } = ctx({ owner: 'a', repo: 'b', number: 7, comment: 'Closed.', marker: MARKER, bustCache: true, appId: 1, appSlug: 's' });
   assert.deepEqual(await services['github.closeIssue'].run(c), { closed: true });
   assert.deepEqual(calls, [['close', 7], ['comment', 7, `Closed.\n\n<!-- ${MARKER} -->`], ['note'], ['bust'], ['push', 'github_synced']]);
-  assert.deepEqual(saved, [{ closed: true }, { closed: true, commenting: true }, { closed: true, commented: true }]);
+  assert.equal(saved.length, 3);
+  assert.deepEqual([saved[0], saved[2]], [{ closed: true }, { closed: true, commented: true }]);
+  assert.ok(!Number.isNaN(Date.parse(saved[1].commenting)), 'records when it started posting');
 });
 
 test('a retry after a lost comment reply finds the comment instead of posting it again', async () => {
   const input = { owner: 'a', repo: 'b', number: 7, comment: 'Closed.', marker: MARKER };
+  const lost = { closed: true, commenting: '2026-10-07T10:00:00.000Z' };
+  const since = '2026-10-07T09:50:00.000Z'; // the attempt's start, less ten minutes
   // GitHub created the comment, but the reply never arrived.
   calls.length = 0;
-  gh.thread = { comments: [{ body: `Closed.\n\n<!-- ${MARKER} -->` }] };
-  const found = ctx(input, { closed: true, commenting: true });
+  gh.thread = { comments: [{ body: `Closed.\n\n<!-- ${MARKER} -->` }], truncated: false };
+  const found = ctx(input, lost);
   await services['github.closeIssue'].run(found.ctx);
-  assert.deepEqual(calls, [['read-comments', 7]], 'no second comment');
+  assert.deepEqual(calls, [['read-comments', 7, since]], 'reads only the recent comments, posts nothing');
   assert.deepEqual(found.saved, [{ closed: true, commented: true }]);
+  // Found even in a thread too long to read whole.
+  calls.length = 0;
+  gh.thread = { comments: [{ body: `<!-- ${MARKER} -->` }], truncated: true };
+  await services['github.closeIssue'].run(ctx(input, lost).ctx);
+  assert.deepEqual(calls.map((c) => c[0]), ['read-comments']);
   // The attempt failed before GitHub saw it: the comment is posted.
   calls.length = 0;
-  gh.thread = { comments: [{ body: 'someone else' }] };
-  await services['github.closeIssue'].run(ctx(input, { closed: true, commenting: true }).ctx);
+  gh.thread = { comments: [{ body: 'someone else' }], truncated: false };
+  await services['github.closeIssue'].run(ctx(input, lost).ctx);
   assert.deepEqual(calls.map((c) => c[0]), ['read-comments', 'comment']);
-  // The thread cannot be read: retry later rather than risk a duplicate.
+  // Not found, but the recent comments did not all fit: cannot say, try later.
   calls.length = 0;
-  gh.thread = { comments: [], note: 'rate limited' };
-  await assert.rejects(services['github.closeIssue'].run(ctx(input, { closed: true, commenting: true }).ctx), /rate limited/);
-  assert.deepEqual(calls, [['read-comments', 7]]);
-  gh.thread = { comments: [] };
+  gh.thread = { comments: [{ body: 'someone else' }], truncated: true };
+  await assert.rejects(services['github.closeIssue'].run(ctx(input, lost).ctx), /every recent comment/);
+  assert.deepEqual(calls.map((c) => c[0]), ['read-comments']);
+  // The thread cannot be read at all: try later rather than risk a duplicate.
+  calls.length = 0;
+  gh.thread = { comments: [], truncated: false, note: 'rate limited' };
+  await assert.rejects(services['github.closeIssue'].run(ctx(input, lost).ctx), /rate limited/);
+  assert.deepEqual(calls.map((c) => c[0]), ['read-comments']);
+  gh.thread = { comments: [], truncated: false };
 });
 
 test('a retry resumes after the checkpoint: no second close, no second comment', async () => {
