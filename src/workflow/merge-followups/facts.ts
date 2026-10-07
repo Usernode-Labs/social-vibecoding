@@ -30,10 +30,11 @@ export interface App {
   repo: { owner: string; repo: string } | null;
   selfHosted: boolean;
   demoMode: boolean;
-  // The platform's own app: the build a platform process last booted with
-  // (apps.booted_sha, written by that process; not main_sha, which the
-  // migration Job writes from the incoming release before the rollout).
-  bootedSha: string | null;
+  // The platform's own app: the builds platform processes booted with,
+  // newest first (apps.booted_shas, written by those processes; not
+  // main_sha, which the migration Job writes from the incoming release
+  // before the rollout).
+  booted: { sha: string; at: string }[];
 }
 
 export interface Facts { session: Session | null; app: App | null }
@@ -57,7 +58,7 @@ export async function readFacts(tx: Tx, sessionId: number, { lock }: { lock: boo
        FROM chat_sessions cs WHERE cs.id = $1`, [sessionId]);
   if (!s) return { session: null, app: null };
   const { rows: [a] } = await tx.query(
-    'SELECT id, slug, name, repo_url, self_hosted, demo_mode, booted_sha FROM apps WHERE id = $1', [s.app_id]);
+    'SELECT id, slug, name, repo_url, self_hosted, demo_mode, booted_shas FROM apps WHERE id = $1', [s.app_id]);
   return {
     session: {
       id: s.id, appId: s.app_id, status: s.status, userId: s.user_id ?? null,
@@ -70,7 +71,9 @@ export async function readFacts(tx: Tx, sessionId: number, { lock }: { lock: boo
     app: a ? {
       id: a.id, slug: a.slug, name: a.name, repo: parseRepo(a.repo_url),
       selfHosted: !!a.self_hosted, demoMode: !!a.demo_mode,
-      bootedSha: /^[0-9a-f]{40}$/i.test(String(a.booted_sha || '')) ? String(a.booted_sha).toLowerCase() : null,
+      booted: (Array.isArray(a.booted_shas) ? a.booted_shas : [])
+        .filter((b: any) => /^[0-9a-f]{40}$/i.test(String(b?.sha || '')) && !Number.isNaN(Date.parse(b?.at)))
+        .map((b: any) => ({ sha: String(b.sha).toLowerCase(), at: new Date(b.at).toISOString() })),
     } : null,
   };
 }

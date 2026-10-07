@@ -235,14 +235,32 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
        VALUES ('Homeroom', 'homeroom-self', $1, TRUE, 'https://github.com/acme/homeroom', $2) RETURNING id`,
       [author.id, SHA('7')]);
     const was = process.env.GIT_SHA;
-    process.env.GIT_SHA = SHA('6');
-    try {
+    const boot = async (sha) => {
+      process.env.GIT_SHA = sha;
       await platform.startWorkflow(config, { loops: false });
-      const { rows: [r] } = await pool.query('SELECT main_sha, booted_sha FROM apps WHERE id = $1', [self.id]);
-      assert.deepEqual({ ...r }, { main_sha: SHA('7'), booted_sha: SHA('6') }, 'what booted, not what the migration seeded');
+      await platform.stopWorkflow();
+    };
+    const history = async () => (await pool.query('SELECT main_sha, booted_shas FROM apps WHERE id = $1', [self.id])).rows[0];
+    try {
+      await boot(SHA('6'));
+      let r = await history();
+      assert.equal(r.main_sha, SHA('7'), 'the migration\'s word is left as it is');
+      assert.deepEqual(r.booted_shas.map((b) => b.sha), [SHA('6')], 'what booted');
+      // A rollout: build 5 boots, then an older Pod of build 6 again. Both are
+      // kept, newest boot first, one entry per build.
+      await boot(SHA('5'));
+      await boot(SHA('6'));
+      r = await history();
+      assert.deepEqual(r.booted_shas.map((b) => b.sha), [SHA('6'), SHA('5')]);
+      assert.ok(r.booted_shas.every((b) => !Number.isNaN(Date.parse(b.at))));
+      // At most ten.
+      for (const c of 'abcdef0123') await boot(SHA(c));
+      r = await history();
+      assert.equal(r.booted_shas.length, 10);
+      assert.equal(r.booted_shas[0].sha, SHA('3'));
+      assert.ok(!r.booted_shas.some((b) => b.sha === SHA('5')), 'the oldest boot fell off');
     } finally {
       if (was === undefined) delete process.env.GIT_SHA; else process.env.GIT_SHA = was;
-      await platform.stopWorkflow();
     }
   });
 });

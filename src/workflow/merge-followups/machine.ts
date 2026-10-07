@@ -140,6 +140,9 @@ const EVENTS = {
   },
 };
 
+// How far before a merge a recorded boot still counts as possibly after it.
+const BOOT_CLOCK_MARGIN_MS = 5 * 60 * 1000;
+
 // ── Copy ────────────────────────────────────────────────────────────────
 
 const prRef = (d: { prNumber: number | null; sessionId: number }) => `PR #${d.prNumber || d.sessionId}`;
@@ -281,11 +284,17 @@ function merged(e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFStat
     work, notify,
   };
   // The platform's own release reports itself when it boots, to the merges
-  // waiting then. A merge recorded after that boot (recovery finding it late)
-  // checks the build a process last booted with, which may contain it.
-  if (app.selfHosted && app.bootedSha && d.mergeSha) {
-    if (app.bootedSha === d.mergeSha) return toLive(e, d, app.bootedSha, ctx, x);
-    if (d.repo) work.push(verifyWork(d, app.bootedSha));
+  // waiting then. A merge recorded after such a boot (recovery finding it
+  // late) checks the builds booted since it merged, any of which may contain
+  // it: live_at is when production first ran it. A build that booted before
+  // the merge cannot contain it (a margin for clocks), so an ordinary merge,
+  // recorded at once, checks nothing here.
+  if (app.selfHosted && d.mergeSha) {
+    const since = Date.parse(d.mergedAt) - BOOT_CLOCK_MARGIN_MS;
+    const after = app.booted.filter((b) => Date.parse(b.at) >= since);
+    const exact = after.find((b) => b.sha === d.mergeSha);
+    if (exact) return toLive(e, d, exact.sha, ctx, x);
+    if (d.repo) for (const b of after) work.push(verifyWork(d, b.sha));
   }
   return outcome('delivering', d, x);
 }

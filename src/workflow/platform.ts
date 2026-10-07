@@ -63,14 +63,25 @@ async function mergesUnfinished(pool: Pool): Promise<boolean> {
   return !!rows[0]?.unfinished;
 }
 
-// The build this process booted with, on the platform's own row
-// (apps.booted_sha): what serves, unlike main_sha, which the migration Job
-// writes from the incoming release before the rollout. Every process
-// records it, flags or not, so it is there when a flag is turned on.
+// The build this process booted with, recorded on the platform's own row
+// (apps.booted_shas, newest first, at most ten, one entry per build): what
+// served, unlike main_sha, which the migration Job writes from the incoming
+// release before the rollout. A history, so an older Pod booting after a
+// newer one (a rollout) does not erase that the newer build ran. One
+// statement: the row lock serialises two processes booting at once. Every
+// process records it, flags or not, so it is there when a flag is turned on.
 async function recordBooted(pool: Pool): Promise<void> {
   const sha = String(process.env.GIT_SHA || '').toLowerCase();
   if (!/^[0-9a-f]{40}$/.test(sha)) return;
-  await pool.query('UPDATE apps SET booted_sha = $1 WHERE self_hosted = TRUE AND booted_sha IS DISTINCT FROM $1', [sha]);
+  await pool.query(
+    `UPDATE apps a SET booted_shas = (
+       SELECT COALESCE(jsonb_agg(y.e ORDER BY y.at DESC), '[]'::jsonb) FROM (
+         SELECT x.e, x.at FROM (
+           SELECT DISTINCT ON (e->>'sha') e, (e->>'at')::timestamptz AS at
+             FROM jsonb_array_elements(jsonb_build_array(jsonb_build_object('sha', $1::text, 'at', now())) || a.booted_shas) e
+            ORDER BY e->>'sha', (e->>'at')::timestamptz DESC) x
+          ORDER BY x.at DESC LIMIT 10) y)
+      WHERE a.self_hosted = TRUE`, [sha]);
 }
 
 export async function startWorkflow(config: any, opts: { loops: boolean }): Promise<void> {

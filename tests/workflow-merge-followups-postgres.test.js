@@ -348,14 +348,15 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
   await t.test('a platform merge recorded after its release booted checks the running build (review finding 2)', async () => {
     const a = await app({ selfHosted: true });
     // The release that contains the merge already booted when recovery records it.
-    await pool.query('UPDATE apps SET booted_sha = $1 WHERE id = $2', [SHA('a'), a.id]);
+    const booted = (...entries) => JSON.stringify(entries.map(([sha, ago]) => ({ sha, at: new Date(Date.now() - ago).toISOString() })));
+    await pool.query('UPDATE apps SET booted_shas = $1 WHERE id = $2', [booted([SHA('a'), 0]), a.id]);
     const s = await proposal(a);
     await merge(s, { observedBy: 'recovery' });
     assert.equal((await instance(s)).state, 'live');
     assert.ok((await row(s.id)).live_at);
     // A running build that is not the merge commit is checked against GitHub.
     const b = await app({ selfHosted: true });
-    await pool.query('UPDATE apps SET booted_sha = $1 WHERE id = $2', [SHA('d'), b.id]);
+    await pool.query('UPDATE apps SET booted_shas = $1 WHERE id = $2', [booted([SHA('d'), 0]), b.id]);
     const s2 = await proposal(b);
     work.results.set(WORK.verify, (input) => ({ sha: input.sha, contains: input.sha === SHA('d') }));
     await merge(s2, { observedBy: 'recovery' });
@@ -370,6 +371,21 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     await merge(s3, { observedBy: 'recovery' });
     assert.equal((await instance(s3)).state, 'delivering');
     assert.equal((await row(s3.id)).live_at, null);
+
+    // A rollout: build A (it contains the merge) booted, then an older Pod of
+    // build C booted after it. Both ran since the merge; A makes it live
+    // (review finding, third pass: a single last-boot column lost A).
+    const r = await app({ selfHosted: true });
+    await pool.query('UPDATE apps SET booted_shas = $1 WHERE id = $2',
+      [booted([SHA('c'), 60 * 1000], [SHA('b'), 2 * 60 * 1000], [SHA('e'), 3 * 60 * 60 * 1000]), r.id]);
+    const s4 = await proposal(r);
+    work.results.set(WORK.verify, (input) => ({ sha: input.sha, contains: input.sha === SHA('b') }));
+    await merge(s4, { observedBy: 'recovery', mergedAt: new Date(Date.now() - 10 * 60 * 1000).toISOString() });
+    const keys = (await workOf(s4)).filter((w) => w.kind === WORK.verify).map((w) => w.work_key).sort();
+    assert.deepEqual(keys, [`verify:${SHA('b')}`, `verify:${SHA('c')}`], 'every build booted since the merge; not one booted hours before it');
+    await settle();
+    assert.equal((await instance(s4)).state, 'live');
+    assert.equal((await instance(s4)).data.deliveredSha, SHA('b'));
   });
 
   await t.test('the platform\'s own app is live when its release boots', async () => {
