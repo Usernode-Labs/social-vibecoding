@@ -61,9 +61,12 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const stream = require('stream');
-const k8s = require('@kubernetes/client-node');
 const log = require('./logger');
 const { parseDockerBuildLine } = require('./docker');
+
+// Loaded on first use, as in kubernetes.js: most processes that load this
+// file never patch a Job.
+const kubernetesClient = () => require('@kubernetes/client-node');
 
 const ENGINE = 'buildkit';
 const MANAGED_BY = 'social-vibecoding-runtime';
@@ -497,6 +500,7 @@ async function createBuild(config, { app, revision, environment, sessionId, sour
     const digest = await waitForJob(cfg, runtime, clients, name, { onProgress });
     const imageRef = `${repository}@${digest}`;
     try {
+      const k8s = kubernetesClient();
       await batch.patchNamespacedJob(
         { name, namespace, body: { metadata: { annotations: { [DIGEST_ANNOTATION]: digest } } } },
         k8s.setHeaderOptions('Content-Type', k8s.PatchStrategy.MergePatch)
