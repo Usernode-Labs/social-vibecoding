@@ -232,9 +232,9 @@ export function init() {
     document.getElementById('feedback-sent-mine')?.addEventListener('click', openMine);
     document.getElementById('feedback-first-mine')?.addEventListener('click', openMine);
     document.getElementById('feedback-sent-done')?.addEventListener('click', closeFeedback);
-    // "Posted to Run Club" / "Posted to Homeroom" is the heading; the notice
-    // under it carries only what else happened (a bounty, the app's state),
-    // and says nothing when nothing did.
+    // "Thanks! Posted to Run Club" / "Thanks! Posted to Homeroom" is the
+    // heading; the notice under it carries only what else happened (a
+    // bounty, the app's state), and says nothing when nothing did.
     const sentTitle = document.getElementById('feedback-sent-title');
     // B8: the bot's version of it. `bot` is the post's `homeroomBot`
     // ({ botWillBuild, typicalMinutes, canFix, appSlug, issueNumber }).
@@ -242,16 +242,33 @@ export function init() {
     const sentChat = document.getElementById('feedback-sent-chat');
     const sentFix = document.getElementById('feedback-sent-fix');
     const sentMine = document.getElementById('feedback-sent-mine');
-    const SENT_LINE = 'Find it on your profile, under Your requests.';
+    // #3971: a first request the bot builds; see showSent's `firstApp`.
+    const sentFirst = document.getElementById('feedback-sent-first');
+    const sentFirstLine = document.getElementById('feedback-sent-first-line');
+    // #3971: "Thanks!" went with #3400 and B8 made the bot's answer "Got it",
+    // which read as bland next to what it replaced. Both say what happens
+    // next now; the bot's line promises what its chat does ("I'll message
+    // you here when it's ready to try").
+    const SENT_LINE = 'Your idea is on the board now. Find it on your profile, under Your requests.';
+    const BOT_TITLE = 'Your idea is underway!';
+    // `minutes` is the bot's typical build time (8 until it has five builds
+    // to take a median of); 8 here too when the post did not say.
+    const botLine = (minutes) => `Homeroom bot is building it now, usually about ${minutes} minutes. You'll get a message when it's ready to try.`;
     let sentBot = null;
-    const showSent = (title, notice = '', bot = null) => {
+    // `firstApp`: the app's name when this is the person's first request ever
+    // and the bot builds it. The first-request moment used to be skipped for
+    // the bot (B8), so the bot's confirmation carries it instead.
+    const showSent = (title, notice = '', bot = null, firstApp = '') => {
       const building = !!bot?.botWillBuild;
       sentBot = building ? bot : null;
-      if (sentTitle) sentTitle.textContent = building ? 'Got it' : title;
+      if (sentTitle) sentTitle.textContent = building ? BOT_TITLE : title;
       if (sentLine) {
         const minutes = Number(bot?.typicalMinutes) > 0 ? Number(bot.typicalMinutes) : 8;
-        sentLine.textContent = building ? `Homeroom bot is on it, usually about ${minutes} minutes.` : SENT_LINE;
+        sentLine.textContent = building ? botLine(minutes) : SENT_LINE;
       }
+      const first = building && !!firstApp;
+      if (sentFirstLine && first) sentFirstLine.textContent = `You just helped shape ${firstApp}.`;
+      sentFirst?.classList.toggle('hidden', !first);
       sentChat?.classList.toggle('hidden', !building);
       sentMine?.classList.toggle('hidden', building);
       sentFix?.classList.toggle('hidden', !(building && bot.canFix));
@@ -2000,17 +2017,21 @@ export function init() {
             AppView.refreshDevData('issue');
           }
           // B8: Homeroom bot is on it: its confirmation, first request or not.
+          // #3971: a first request says so inside it, naming the app.
           if (data.homeroomBot?.botWillBuild) {
-            showSent(postedTo, `${bountyNotice}${stateNotice}`.trim(), data.homeroomBot);
+            const first = !!data.firstFeedback && Number(data.firstFeedback.userId) === Number(App.user?.id);
+            showSent(postedTo, `${bountyNotice}${stateNotice}`.trim(), data.homeroomBot,
+              first ? (AppView?.appData?.name || 'this app') : '');
             return;
           }
           // B8: the bot is theirs but does not build here: it went to the group.
           const toGroup = data.homeroomBot && target === 'app'
-            ? `Sent to ${AppView?.appData?.name || 'this app'}'s group as a request` : postedTo;
+            ? `Sent to ${AppView?.appData?.name || 'this app'}'s group` : postedTo;
           // #3186: the confirmation stays, with "See your requests" in it,
-          // instead of closing itself (see showSent above).
+          // instead of closing itself (see showSent above). #3971: "Thanks!"
+          // leads it again, as it did before #3400.
           if (!showFirstFeedback(data.firstFeedback, feedbackStatus.textContent)) {
-            showSent(toGroup, `${bountyNotice}${stateNotice}`.trim());
+            showSent(`Thanks! ${toGroup}`, `${bountyNotice}${stateNotice}`.trim());
           }
           return;
         }
@@ -2376,7 +2397,7 @@ export function init() {
   App._simulateFeedbackSent = () => {
     setComposerLocked(true);
     disableSubmit();
-    showSent('Posted to Homeroom');
+    showSent('Thanks! Posted to Homeroom');
   };
 
   // B8: ?shot=feedback-bot, what a request Homeroom bot builds is answered
