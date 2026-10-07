@@ -282,4 +282,16 @@ test('governance routes through the workflow machine', { timeout: 120000 }, asyn
     assert.equal(r.body.issueClosed.checkingTarget, true);
     await until(async () => (await instance(i)).state === 'applied', 'applied after the check');
   });
+
+  await t.test('a process that is not the leader decides votes itself, and enrolls a row it meets', async () => {
+    await platform.stopWorkflow();
+    await platform.startWorkflow(config, { loops: false });  // slots only: no timers, services or backfill
+    await pool.query('UPDATE apps SET approvals_required = 2 WHERE id = $1', [app.id]);
+    const i = await issue('rename', { newName: 'Not the leader' });
+    assert.equal(await instance(i), undefined, 'not enrolled: no backfill ran');
+    const r = await call(vote, { params: { id: String(i.id) }, body: { vote: 'up' }, user: await user() });
+    assert.equal(r.status, 200, `answered at once, not 202: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.renamed.upCount, 1);
+    assert.equal((await instance(i)).state, 'open');
+  });
 });

@@ -12559,7 +12559,8 @@ COMMENT ON TABLE bot_capture_artifacts IS 'staging:private';
 -- never applies events to an instance a newer one has written. The
 -- pseudo-state '(none)' is a row the pipeline inserted to lock an instance
 -- that does not exist yet; it is deleted again unless a creating event is
--- accepted. app_id has no foreign key on purpose: an instance's history
+-- accepted, or kept to carry a stalled or faulted flag when that event
+-- timed out or threw. app_id has no foreign key on purpose: an instance's history
 -- outlives the app row, like receipts outlive what they describe.
 CREATE TABLE IF NOT EXISTS wf_instances (
   machine          TEXT NOT NULL,

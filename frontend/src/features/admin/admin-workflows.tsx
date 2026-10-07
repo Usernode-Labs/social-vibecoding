@@ -39,9 +39,14 @@ type Overview = {
     overdueDeadlines: Instance[];
     work: (Work & { machine: string; key: string })[];
     ownershipViolations: { table_name: string; column_path: string; count: number; last_at: string }[];
+    ownershipViolationRows?: Violation[];
   };
 };
 type Ref = { machine: string; key: string };
+type Violation = {
+  id: number; table: string; column: string; row: Record<string, unknown> | null;
+  application: string | null; query: string | null; createdAt: string;
+};
 
 const RESULT_BADGE = new Map([
   ['accepted', AdminUI.badge.success],
@@ -106,14 +111,34 @@ function Problems({ overview, onOpen }: { overview: Overview; onOpen: (r: Ref) =
           </li>
         ))}
         {p.ownershipViolations.map((v) => (
-          <li key={`o:${v.table_name}.${v.column_path}`} data-wf-problem="ownership" className="flex flex-wrap items-center gap-2">
-            <span className={AdminUI.badge.warn}>written outside its machine</span>
-            <code className="text-xs">{`${v.table_name}.${v.column_path}`}</code>
-            <span className={AdminUI.muted}>{`${v.count} times, last ${when(v.last_at)}`}</span>
+          <li key={`o:${v.table_name}.${v.column_path}`} data-wf-problem="ownership">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={AdminUI.badge.warn}>written outside its machine</span>
+              <code className="text-xs">{`${v.table_name}.${v.column_path}`}</code>
+              <span className={AdminUI.muted}>{`${v.count} times, last ${when(v.last_at)}`}</span>
+            </div>
+            <ViolationRows rows={(p.ownershipViolationRows || []).filter((r) => r.table === v.table_name && r.column === v.column_path)} />
           </li>
         ))}
       </ul>
     </div>
+  );
+}
+
+// The latest writes of one column: which row, from which application
+// (the connection's application_name), and the statement that wrote it.
+function ViolationRows({ rows }: { rows: Violation[] }) {
+  if (!rows.length) return null;
+  return (
+    <ul className="mt-1 ml-4 space-y-1">
+      {rows.map((r) => (
+        <li key={r.id} data-wf-violation={r.id} className="text-xs">
+          <span className="font-mono">{`row ${r.row ? JSON.stringify(r.row) : '?'}`}</span>
+          <span className={AdminUI.muted}>{` by ${r.application || 'an unnamed connection'}, ${when(r.createdAt)}`}</span>
+          {r.query ? <code className={`block ${AdminUI.muted} truncate`} title={r.query}>{r.query}</code> : null}
+        </li>
+      ))}
+    </ul>
   );
 }
 

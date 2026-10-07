@@ -100,8 +100,10 @@ row into `wf_events` and notifies the slots. An undeclared type is refused right
 request key, and a retry with the same key returns the original result once it exists.
 
 **Answers.** A route answers from the outcome's `reply`, never by reading the tables
-afterwards. A machine that answers routes defines `reply(tx, event, after, ctx)`:
-- **When it runs.** In the event's transaction, after the writes and the projection.
+afterwards. A machine that answers routes defines `reply(tx, event, after, ctx, facts)`:
+- **When it runs.** In the event's transaction, after the writes and the projection. It
+  gets the facts the transition decided on, so an answer they already hold needs no
+  query.
 - **Where it is stored.** With the event and its receipt.
 - **On a replay.** A replayed request returns the stored reply. A route that reads the
   tables later would describe today's state instead (a vote since retracted, counts
@@ -109,11 +111,17 @@ afterwards. A machine that answers routes defines `reply(tx, event, after, ctx)`
 
 **Consuming.** A free slot:
 
-1. picks an instance with a pending event that is not faulted and not in backoff;
-2. locks its row, skipping any instance another slot holds (`SKIP LOCKED`);
-3. leaves it alone if a newer machine version last wrote it (old and new code overlap
-   during a deploy);
-4. takes that instance's oldest pending event and runs one transaction:
+1. picks the oldest pending event that is its instance's head (the instance's oldest
+   pending event), not in backoff, of an instance that is not faulted;
+2. locks the event, skipping any another slot holds (`SKIP LOCKED`), then its instance's
+   row, which is what keeps two slots from processing one instance at once. An event
+   appended in a caller's transaction can commit after a later one, so two slots can
+   hold two events of one instance; the second waits for the first's row lock, then
+   reads the receipt again. An instance with no row yet first gets a placeholder row in
+   the pseudo-state `(none)`, so its first events are serialised the same way;
+3. leaves it alone if a newer machine version last wrote the instance (old and new code
+   overlap during a deploy);
+4. runs one transaction for that event:
    1. **Replay check.** If a receipt exists for this request key with the same payload, the
       event is `replayed` with the original outcome. Nothing else is evaluated. A
       different payload under the same key is `rejected: request_key_conflict`.
@@ -121,10 +129,24 @@ afterwards. A machine that answers routes defines `reply(tx, event, after, ctx)`
    3. **Authorise, then guard.** A rejection marks the event `rejected` with its reason
       and writes **no receipt**, so a later retry with the same key can still succeed.
    4. **Transition.** It returns the outcome, and the next state must be declared.
-   5. **Persist,** in this order: the instance row, domain writes, projection, the
-      machine's reply, receipt, work items, messages, and the event's own result.
+   5. **Persist,** in this order: domain writes, projection, the machine's reply, work
+      items, messages, then the instance row, receipt and the event's own result in one
+      statement. A placeholder row whose event is rejected is deleted again.
 5. commits, then wakes whoever waits for the outcome and runs the notifications (WebSocket
    pushes, which may be lost in a crash because the next read refreshes the client).
+
+**Round trips.** A producer waits on every query of the transaction, so the kernel keeps
+its own to three: one batch opens the transaction and picks (`BEGIN`, the writer marker,
+the timeouts, the pick with its receipt and the clock), one statement records the
+outcome, then `COMMIT`. A route registers for the outcome's notification before it
+appends, so it reads the outcome once, when it is there. The rest is the machine's: keep
+its facts to as few queries as the rules allow, and fold a write and what goes with it
+into one statement. `tests/workflow-query-budget-postgres.test.js` counts the queries of
+a governance vote and fails above its budget.
+
+A failed event (a timeout or a throw) rolls back whole. Its failure is recorded in a
+transaction of its own, after locking the event again and checking it is still the one
+the slot saw.
 
 Every event ends with one of these results: `accepted`, `rejected` (with a reason),
 `replayed` or `faulted` (with the error).
@@ -338,13 +360,22 @@ separate workflow Pod.
 
 - **Every process** records its flags in `wf_settings` at boot (`startWorkflow` in
   `server.js`). With a flag on, it also starts the runtime on its own pool
-  (`application_name` `homeroom-workflow`) and listens for outcomes, so routes can wait
-  for them. With every flag off, nothing else starts.
-- **The leader** also runs the loops (`startWorkflowLoops` in `becomeLeader`):
-  - pipeline slots;
+  (`application_name` `homeroom-workflow`), listens for outcomes so routes can wait for
+  them, and runs pipeline slots. A Pod that is not the leader (the new one, during a
+  rollout) therefore applies its own events at once instead of answering `202`. With
+  every flag off, nothing else starts.
+- **The leader** also runs (`startWorkflowLoops` in `becomeLeader`):
   - the timer and retention loop;
   - service loops;
-  - a backfill that enrolls open rows the machine does not hold yet.
+  - a backfill that enrolls open rows the machine does not hold yet. A route that meets
+    an open row the machine does not hold enrolls it itself.
+- **Waking.** Each `wf_events` notification wakes one slot in each process. Idle loops
+  sleep until a notification, the next thing they know is due (an event's backoff, a
+  deadline, a work item), or a 30-second fallback; nothing polls every second. A
+  transition that sets a deadline announces it on `wf_timer` with the time, in the
+  statement that ends the event. The timer loop wakes only for a deadline earlier than
+  the one it sleeps until, so a vote that re-arms the 10-minute backstop costs it
+  nothing. The fallback only covers a lost notification.
 - **A staging preview** never stands for election, so it runs the loops itself. A
   preview has no GitHub credentials and no app fleet, so its work items fail and show in
   Admin → Workflows, where [main]'s inline calls only failed in the logs.
@@ -379,8 +410,8 @@ machine, which drives far more external calls. It needs:
 | Variable | Default | Set in production by | Meaning |
 |---|---|---|---|
 | `WF_GOVERNANCE_ENABLED` | `false` | Helm value `platform.workflowGovernanceEnabled` | The governance-proposal machine decides governance proposals. The ticker and the sweeper's Pass 0b leave them alone. |
-| `WF_SLOTS` | 4 (2 on a staging preview) | the default | Pipeline slots in the leader. |
-| `WF_POOL_MAX` | 6 (3 on a staging preview) | the default | Connections in the runtime's own pool. Keep it above `WF_SLOTS`. |
+| `WF_SLOTS` | 4 (1 on a staging preview) | the default | Pipeline slots in each process. |
+| `WF_POOL_MAX` | 6 (2 on a staging preview) | the default | Connections in the runtime's own pool, the outcome listener's included. Keep it above `WF_SLOTS`. |
 | `WF_OWNERSHIP_MODE` | `log` in production, `raise` elsewhere | the default | What a write to an owned column from outside the machine does. |
 
 **Where the variables are set.**
