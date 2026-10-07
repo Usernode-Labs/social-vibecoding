@@ -76,7 +76,7 @@ test('want-in-sooner drops the sentence that said it twice', () => {
     MORE.indexOf('id="more-invalid"'));
   assert.ok(wordsIn(intro) < 40, `saw ${wordsIn(intro)} words`);
   // What it must still say.
-  assert.match(flat(intro), /what we read when we pick the next group/);
+  assert.match(flat(intro), /what we read when we pick who gets in next/);
   assert.match(flat(intro), /come back and add to them any time/);
   // The retired half restated the first clause, and "every one is optional"
   // is the label above the heading already. Asserted on the RENDERED intro

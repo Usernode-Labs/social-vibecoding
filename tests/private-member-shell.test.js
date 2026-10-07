@@ -112,7 +112,7 @@ test('the waitlist card: join, an email, a code, then On the waitlist with "Want
   });
   assert.match(listed, /data-waitlist-card="listed"/);
   assert.match(listed, /On the waitlist/);
-  assert.match(listed, /We’ll email lina@example\.com when it’s your turn\./);
+  assert.match(listed, /We’ll email lina@example\.com when your spot is ready\./);
   assert.match(listed, new RegExp(`href="#more/${token}"[^>]*>Answer them now<`));
 
   const src = read(card);

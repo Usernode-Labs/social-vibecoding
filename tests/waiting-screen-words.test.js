@@ -82,3 +82,20 @@ test('?shot=waiting shows the room for the shots, without the poll', () => {
   // take the page into the shell.
   assert.ok(app.indexOf('if (App._waitingShot()) {') < app.indexOf("await fetch('/api/auth/me'"), 'decided before /api/auth/me');
 });
+
+// A private member's waitlist card on Home says the same words, and keeps
+// the email promise in the waitlist pitch's own words. "Group" is not a word
+// for the people of an app; their apps are in their communities.
+test('the Home waitlist card: a few at a time, your spot, no batches or group', () => {
+  const src = code(read('frontend/src/features/home/waitlist-card.tsx'));
+  assert.match(src, /We let people in a few at a time\. Until then, you can use and change the apps in your communities\./);
+  assert.match(src, /We’ll email you when your spot is ready\./);
+  for (const gone of [/batches/i, /your turn/i, /group&rsquo;s apps/, /The group doesn/]) assert.doesNotMatch(src, gone);
+});
+
+test('the waitlist pitch and form keep the email promise, without batches or groups', () => {
+  assert.match(code(read(LANDING)), /We let people in a few at a time, and we'll email you when your spot is ready\./);
+  const form = code(read('frontend/src/features/auth/waitlist.tsx'));
+  assert.match(form, /We let people in a few at a time\. We\\u2019ll email you when yours comes up\./);
+  assert.doesNotMatch(form, /small groups|next group/);
+});
