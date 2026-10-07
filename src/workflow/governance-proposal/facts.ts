@@ -36,6 +36,9 @@ function parseRepo(url: string | null): Issue['app']['repo'] {
   return m ? { owner: m[1]!, repo: m[2]! } : null;
 }
 
+// The row is locked: anything else that decides it ([main]'s apply, while
+// old and new Pods overlap in a deploy) waits for this transition, or this
+// transition waits for it and sees the row closed.
 async function readIssue(tx: Tx, issueId: number): Promise<Issue | null> {
   const { rows: [r] } = await tx.query(
     `SELECT i.id, i.app_id, i.kind, i.status, i.title, i.payload, i.created_by, i.created_at,
@@ -44,7 +47,8 @@ async function readIssue(tx: Tx, issueId: number): Promise<Issue | null> {
        FROM issues i
        JOIN apps a ON a.id = i.app_id
        LEFT JOIN users u ON u.id = i.created_by
-      WHERE i.id = $1`, [issueId]);
+      WHERE i.id = $1
+        FOR UPDATE OF i`, [issueId]);
   if (!r) return null;
   return {
     id: r.id, appId: r.app_id, kind: r.kind, status: r.status, title: r.title, payload: r.payload || {},

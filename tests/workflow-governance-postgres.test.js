@@ -455,4 +455,36 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
     assert.deepEqual([r.payload.appliedAt, r.payload.supersededAt], ['then', undefined], 'the row keeps what [main] wrote');
     assert.equal((await pool.query(`SELECT count(*)::int AS n FROM chat_messages WHERE thread_type = 'governance' AND thread_ref = $1`, [decided.id])).rows[0].n, 0);
   });
+
+  await t.test('a legacy apply racing the machine (a rolling deploy): the issue row is locked, the loser stands down', async () => {
+    // Production logs ownership violations instead of refusing them, so while
+    // old and new Pods overlap, [main]'s apply can write an enrolled row.
+    await pool.query(`INSERT INTO wf_settings (key, value) VALUES ('ownership_mode', 'log')`);
+    try {
+      const voter = await user();
+      const a = await app({ approvals: 1, members: [voter] });
+      const i = await issue(a, await user(), 'rename', { newName: 'By the machine' });
+      await file(i);
+      // [main]'s apply holds the row (FOR UPDATE, then its writes) while a
+      // deciding vote reaches the machine.
+      const legacy = await pool.connect();
+      try {
+        await legacy.query('BEGIN');
+        await legacy.query('SELECT id FROM issues WHERE id = $1 FOR UPDATE', [i.id]);
+        await send(i, 'VoteCast', { userId: voter.id, username: voter.username, vote: 'up' }, { actor: `user:${voter.id}` });
+        const draining = rt.drain();
+        await new Promise((r) => setTimeout(r, 300));
+        await legacy.query('UPDATE apps SET name = $2 WHERE id = $1', [a.id, 'By main']);
+        await legacy.query(`UPDATE issues SET status = 'closed', payload = payload || '{"appliedBy": "group-vote"}' WHERE id = $1`, [i.id]);
+        await legacy.query('COMMIT');
+        await draining;
+      } finally { legacy.release(); }
+      const s = await inst(i);
+      assert.deepEqual([s.state, s.data.audit.supersededBy], ['superseded', 'closed_outside']);
+      assert.equal((await pool.query('SELECT name FROM apps WHERE id = $1', [a.id])).rows[0].name, 'By main', 'applied once, by [main]');
+      assert.equal((await row(i)).payload.appliedBy, 'group-vote');
+    } finally {
+      await pool.query(`DELETE FROM wf_settings WHERE key = 'ownership_mode'`);
+    }
+  });
 });
