@@ -66,8 +66,8 @@ function installFrontendDependencies() {
   fs.writeFileSync(DEPENDENCY_MARKER, `${digest}\n`);
 }
 
-function runNode(script) {
-  execFileSync(process.execPath, [path.join(ROOT, script)], {
+function runNode(script, args = []) {
+  execFileSync(process.execPath, [path.join(ROOT, script), ...args], {
     cwd: ROOT,
     stdio: 'inherit',
   });
@@ -103,11 +103,15 @@ if (prebuilt) {
 
 if (needsShell) {
   installFrontendDependencies();
-  runNode('frontend/scripts/build-shell.mjs');
+  // The test suites read the document and never the bundle, so their
+  // preflight builds the document alone: the client pass is the slower half
+  // of the build (about 4.5 s of 8 in the unit-suite job, 7 October 2026).
+  // A runtime preflight needs both and builds both, here or on its next run.
+  runNode('frontend/scripts/build-shell.mjs', htmlOnly ? ['--html-only'] : []);
 
   const builtHtmlStamp = readHtmlStamp(read(htmlPath) || '');
   const builtJsStamp = readJsStamp(read(jsPath) || '');
-  if (builtHtmlStamp !== stamp || builtJsStamp !== stamp) {
+  if (builtHtmlStamp !== stamp || (!htmlOnly && builtJsStamp !== stamp)) {
     throw new Error('[ensure-shell] shell build completed without the expected HTML/JS stamp');
   }
 } else {
