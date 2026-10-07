@@ -77,10 +77,15 @@ async function readGovernance(pool, appId) {
     'SELECT approver_policy, approvals_required FROM apps WHERE id = $1',
     [appId]
   );
+  return governanceFromRow(rows[0]);
+}
+
+// The governance columns of an apps row, as readGovernance returns them.
+function governanceFromRow(row) {
   return {
-    approverPolicy: rows[0]?.approver_policy === 'invited' ? 'invited' : 'anyone',
-    approvalsRequired: rows[0]?.approvals_required != null
-      ? parseInt(rows[0].approvals_required, 10)
+    approverPolicy: row?.approver_policy === 'invited' ? 'invited' : 'anyone',
+    approvalsRequired: row?.approvals_required != null
+      ? parseInt(row.approvals_required, 10)
       : null,
   };
 }
@@ -465,12 +470,14 @@ async function proposalAuthorId(pool, kind, id) {
 // 'anyone' → the active-user stats (approverIds null = count every
 // vote); 'invited' → the approver member set (admin fallback when
 // empty). Exposed for serializers that batch-count many rows.
-async function getElectorate(pool, appId, gov) {
+// `appMeta` ({ selfHosted, collabPrivate }) is passed on to
+// getActiveUserStats by a caller that has already read the app row.
+async function getElectorate(pool, appId, gov, appMeta = null) {
   if (gov.approverPolicy === 'invited') {
     const { ids, adminFallback } = await getApproverSet(pool, appId);
     return { active: Math.max(ids.length, 1), approverIds: ids, adminFallback };
   }
-  const { active } = await activeUsers().getActiveUserStats(pool, appId);
+  const { active } = await activeUsers().getActiveUserStats(pool, appId, appMeta);
   return { active, approverIds: null, adminFallback: false };
 }
 
@@ -564,6 +571,7 @@ module.exports = {
   requiredAtPromote,
   getGovernance,
   readGovernance,
+  governanceFromRow,
   invalidateGovernance,
   getApproverSet,
   isApprover,

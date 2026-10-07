@@ -1,8 +1,10 @@
 // The workflow runtime inside the platform process: created at boot when a
 // workflow flag is on, with its own small pool so pipeline slots and the
-// outcome listener never take request connections. Every process appends
-// and waits; the loops run on the leader, and on a staging preview (which
-// never stands for election) so a preview with the flag on still decides.
+// outcome listener never take request connections. Every process appends,
+// waits and runs pipeline slots (so a Pod that is not the leader, during a
+// rollout, still decides its own votes at once); timers, services and the
+// boot backfill run on the leader, and on a staging preview (which never
+// stands for election) so a preview with the flag on still decides.
 
 import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
@@ -59,7 +61,7 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
     pool: kernelPool!, machines: [machine], services: governanceServices(deps), slots: config.wfSlots, log: log!,
   });
   try {
-    await started.start({ loops: false });
+    await started.start({ slots: true });
   } catch (err) {
     // Half started is not started: the routes must keep using the legacy paths.
     await started.stop().catch(() => {});
@@ -72,8 +74,8 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   if (opts.loops) await startWorkflowLoops();
 }
 
-// The leader's part: pipeline slots, timers and services, then enrolling
-// every open governance row the machine does not hold yet.
+// The leader's part: timers and services, then enrolling every open
+// governance row the machine does not hold yet.
 export async function startWorkflowLoops(): Promise<void> {
   if (!runtime) return;
   await runtime.start({ loops: true });
@@ -116,11 +118,19 @@ export async function fileProposal(issueId: number, appId: number): Promise<void
   if (runtime) await file(issueId, appId);
 }
 
-// Enroll a row that predates the flag, if the backfill has not reached it.
-async function ensureFiled(issue: { id: number; app_id: number }) {
-  const { rows } = await kernelPool!.query(
-    'SELECT 1 FROM wf_instances WHERE machine = $1 AND key = $2', [MACHINE, issueKey(issue.id)]);
-  if (!rows.length) await file(issue.id, issue.app_id);
+// Append a route's event and wait for its outcome. An open row the machine
+// does not hold yet (one that predates the flag, if the boot backfill has
+// not reached it) answers `no_instance`: file it, then send the event again
+// under the same request key (a rejection leaves no receipt). Checking first
+// would cost every request a query for a case the backfill almost always
+// has covered.
+async function appendFiled(issue: { id: number; app_id: number; status?: string }, event: { type: string; payload: unknown },
+  o: { requestKey: string; source: Source; actor: string }): Promise<EventOutcome> {
+  const send = () => runtime!.appendAndWait(machine!, issueKey(issue.id), event, { ...o, appId: issue.app_id });
+  const outcome = await send();
+  if (outcome.status !== 'rejected' || outcome.reason !== 'no_instance' || issue.status !== 'open') return outcome;
+  await file(issue.id, issue.app_id);
+  return send();
 }
 
 export interface Reply { status: number; body: Record<string, unknown> }
@@ -158,14 +168,15 @@ const RESULT_KEYS = new Map([
 const answer = (outcome: EventOutcome) => (outcome.reply || {}) as { toggled?: boolean; result?: Record<string, unknown> };
 
 export async function voteOnProposal(
-  issue: { id: number; app_id: number; kind: string },
+  issue: { id: number; app_id: number; kind: string; status: string },
   user: { id: number; username: string },
   vote: { vote: string; reason: string | null; requestKey?: string },
 ): Promise<Reply> {
-  await ensureFiled(issue);
-  const outcome = await runtime!.appendAndWait(machine!, issueKey(issue.id), {
+  const outcome = await appendFiled(issue, {
     type: 'VoteCast', payload: { userId: user.id, username: user.username, vote: vote.vote, reason: vote.reason },
-  }, { requestKey: vote.requestKey || `vote:${user.id}:${randomUUID()}`, source: { kind: 'route', name: 'vote' }, actor: `user:${user.id}`, appId: issue.app_id });
+  }, { requestKey: vote.requestKey || `vote:${user.id}:${randomUUID()}`, source: { kind: 'route', name: 'vote' }, actor: `user:${user.id}` });
+  // A closed row the machine never held: [main] decided it.
+  if (outcome.status === 'rejected' && outcome.reason === 'no_instance') return REJECTIONS.get('not_open')!;
   const refused = failed(outcome);
   if (refused) return refused;
   const { toggled, result } = answer(outcome);
@@ -173,22 +184,22 @@ export async function voteOnProposal(
   return { status: 200, body: { ok: true, [RESULT_KEYS.get(issue.kind)!]: result ?? null } };
 }
 
-export async function withdrawProposal(issue: { id: number; app_id: number }, user: { id: number; username: string }): Promise<Reply> {
-  await ensureFiled(issue);
-  const outcome = await runtime!.appendAndWait(machine!, issueKey(issue.id), {
+export async function withdrawProposal(issue: { id: number; app_id: number; status: string }, user: { id: number; username: string }): Promise<Reply> {
+  const outcome = await appendFiled(issue, {
     type: 'Withdraw', payload: { userId: user.id, username: user.username },
-  }, { requestKey: `withdraw:${issue.id}:${user.id}`, source: { kind: 'route', name: 'withdraw' }, actor: `user:${user.id}`, appId: issue.app_id });
-  if (outcome.status === 'rejected' && outcome.reason === 'not_open') return { status: 404, body: { error: 'Proposal not open' } };
+  }, { requestKey: `withdraw:${issue.id}:${user.id}`, source: { kind: 'route', name: 'withdraw' }, actor: `user:${user.id}` });
+  if (outcome.status === 'rejected' && ['not_open', 'no_instance'].includes(outcome.reason || '')) {
+    return { status: 404, body: { error: 'Proposal not open' } };
+  }
   return failed(outcome) || { status: 200, body: { ok: true } };
 }
 
 export async function adminApplyProposal(
   issue: { id: number; app_id: number; kind: string; status: string }, user: { id: number; username: string }, requestKey?: string,
 ): Promise<Reply> {
-  if (issue.status === 'open') await ensureFiled(issue);
-  const outcome = await runtime!.appendAndWait(machine!, issueKey(issue.id), {
+  const outcome = await appendFiled(issue, {
     type: 'AdminApply', payload: { userId: user.id, username: user.username },
-  }, { requestKey: requestKey || `admin-apply:${issue.id}:${randomUUID()}`, source: { kind: 'admin', name: 'admin-apply' }, actor: `user:${user.id}`, appId: issue.app_id });
+  }, { requestKey: requestKey || `admin-apply:${issue.id}:${randomUUID()}`, source: { kind: 'admin', name: 'admin-apply' }, actor: `user:${user.id}` });
   // A closed row the machine never held: [main] decided it.
   if (outcome.status === 'rejected' && outcome.reason === 'no_instance') return REJECTIONS.get('not_open')!;
   const refused = failed(outcome);
@@ -205,7 +216,8 @@ export async function targetsClosed(appId: number, numbers: number[], cause: { k
       WHERE app_id = $1 AND kind = 'close_issue' AND status = 'open'
         AND (payload->>'issueNumber')::int = ANY($2::int[])`, [appId, numbers]);
   for (const r of rows) {
-    await ensureFiled({ id: r.id, app_id: appId });
+    // Filing an enrolled row is a no-op (a replay, or `already_filed`).
+    await file(r.id, appId, { kind: 'system', name: 'target-closed' });
     await runtime!.append(machine!, issueKey(r.id), { type: 'TargetClosed', payload: { issueNumber: r.n, cause } },
       { requestKey: `target:${r.n}:${cause.kind}:${cause.prNumber ?? ''}`, source: { kind: 'system', name: 'target-closed' }, appId });
   }

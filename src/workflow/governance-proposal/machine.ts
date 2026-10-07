@@ -140,9 +140,11 @@ const issueUpdate = (issue: Issue, action: string, extra: object = {}): Notifica
 
 interface Extra { writes?: DomainWrite[]; notify?: Notification[] }
 
-// The thread lines an outcome writes are broadcast after commit, once.
+// The thread lines an outcome writes (chat writes, and a vote's own line)
+// are broadcast after commit, once.
 function withChat(o: Outcome<GovState>): Outcome<GovState> {
-  const lines = (o.writes || []).filter((w) => w.type === 'chat');
+  const lines = (o.writes || []).map((w) => (w.type === 'vote' ? w.line as DomainWrite | null : w))
+    .filter((w): w is DomainWrite => w?.type === 'chat');
   if (!lines.length) return o;
   const first = lines[0]!;
   return { ...o, notify: [...(o.notify || []), {
@@ -363,7 +365,9 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
     terminal: ['applied', 'refused', 'withdrawn', 'superseded'],
     decode: (row) => ({ name: row.state, data: row.data } as GovState),
     facts: (tx, state, event, ctx) => {
-      const issueId = state.data ? state.data.issueId : event.payload.issueId;
+      // Before Filed, only Filed names the issue; any other event (one a
+      // route sends to a row not enrolled yet) reads it off the key.
+      const issueId = state.data ? state.data.issueId : event.payload.issueId ?? Number(ctx.key.slice('issue:'.length));
       return readFacts(tx, issueId, event, state.name === 'open' || state.name === NONE, deps.dataKey);
     },
     authorize: {
@@ -395,13 +399,14 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
           to: (s, e, f, ctx) => {
             const issue = f.issue!;
             const vote: Vote | null = f.voter!.existing === e.payload.vote ? null : e.payload.vote;
-            const writes: DomainWrite[] = [{ type: 'vote', issueId: issue.id, appId: issue.appId, userId: e.payload.userId, vote, reason: e.payload.reason }];
+            const r = e.payload.reason;
+            // The vote, its events row and its thread line are one statement.
+            const line = vote
+              ? chat(e, issue, `${e.payload.username} voted ${vote} on ${voteSubject(issue)}${r ? `: “${r}”` : ''}`, governanceThread(issue), 'vote')
+              : null;
+            const writes: DomainWrite[] = [{ type: 'vote', issueId: issue.id, appId: issue.appId, userId: e.payload.userId, vote, reason: r, line }];
             const notify: Notification[] = [issueUpdate(issue, 'voted', vote ? { vote } : { toggled: true })];
-            if (vote) {
-              const r = e.payload.reason;
-              writes.push(chat(e, issue, `${e.payload.username} voted ${vote} on ${voteSubject(issue)}${r ? `: “${r}”` : ''}`, governanceThread(issue), 'vote'));
-              notify.push({ type: 'scoreVote' });
-            }
+            if (vote) notify.push({ type: 'scoreVote' });
             return decide(s as any, e, f, ctx, timing, withVote(f.gate!, f.voter!, vote), { writes, notify });
           },
         }),
@@ -436,8 +441,7 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
       vote: writeVote,
       chat: async (tx, w) => tx.query(
         `INSERT INTO chat_messages (app_id, content, msg_type, metadata, thread_type, thread_ref)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [w.appId, w.content, w.msgType, JSON.stringify({ wfEvent: w.eventId }), w.thread.type, w.thread.ref]),
+         VALUES ($1, $2, $3, $4, $5, $6)`, chatValues(w)),
       apply: (tx, w) => applyKind(tx, w, deps.dataKey),
     },
     async project(tx, before, after) {
@@ -460,15 +464,15 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
         [data.issueId, JSON.stringify(data.audit), after.name === 'applied']);
     },
     // What the vote and admin-apply routes answer, recorded with the receipt
-    // so a retried request gets the answer it got the first time.
-    async reply(tx, event, after): Promise<Json | undefined> {
+    // so a retried request gets the answer it got the first time. A vote
+    // the same as the voter's existing one took it back (the facts say so);
+    // a vote on a row closed outside the machine recorded nothing.
+    async reply(tx, event, after, ctx, facts): Promise<Json | undefined> {
       if (event.type !== 'VoteCast' && event.type !== 'AdminApply') return undefined;
-      const issueId = (after.data as OpenData | ClosedData).issueId;
-      if (event.type === 'VoteCast') {
-        const { rowCount } = await tx.query('SELECT 1 FROM issue_votes WHERE issue_id = $1 AND user_id = $2', [issueId, event.payload.userId]);
-        if (!rowCount) return { toggled: true };
+      if (event.type === 'VoteCast' && facts.issue?.status === 'open' && facts.voter?.existing === event.payload.vote) {
+        return { toggled: true };
       }
-      return { result: await kindResult(tx, issueId, after) };
+      return { result: await kindResult(tx, (after.data as OpenData | ClosedData).issueId, after) };
     },
     notifiers: deps.notifiers,
   });
@@ -477,39 +481,51 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
 // ── Domain writes ───────────────────────────────────────────────────────
 
 // The per-kind result the client has always read off a vote or an admin
-// apply: { applied, superseded, refused, awaitingAdmin, ... }. Read after the
+// apply: { applied, superseded, refused, awaitingAdmin, ... }. An open
+// proposal answers from its evaluation; a closed one reads its row after the
 // projection, so an applied row's audit (and a campaign's id) is in place.
 async function kindResult(tx: Tx, issueId: number, after: GovState): Promise<Json> {
+  if (after.name === 'open') {
+    const e: Partial<Evaluation> = after.data.evaluation || {};
+    return { applied: false, awaitingAdmin: e.waiting === 'awaiting_admin', upCount: e.yes, required: e.required,
+      active: e.active, windowEndsAt: e.windowEndsAt, waitingForWindow: e.waiting === 'waiting_for_window',
+      checkingTarget: !!after.data.applyAfterCheck } as Json;
+  }
+  if (after.name === 'superseded') return { applied: false, superseded: true };
   const { rows: [issue] } = await tx.query('SELECT payload FROM issues WHERE id = $1', [issueId]);
   const p = issue?.payload || {};
   if (after.name === 'applied') {
     return { applied: true, issueNumber: p.issueNumber, newName: p.newName, campaignId: p.campaignId,
       illustration: p.proposed || null, upCount: p.upCount, required: p.required, active: p.active };
   }
-  if (after.name === 'superseded') return { applied: false, superseded: true };
   if (after.name === 'refused') return { applied: false, refused: true, error: String(p.appliedBy || '').replace(/^refused:/, '') };
-  const e: Partial<Evaluation> = (after.name === 'open' && after.data.evaluation) || {};
-  return { applied: false, awaitingAdmin: e.waiting === 'awaiting_admin', upCount: e.yes, required: e.required,
-    active: e.active, windowEndsAt: e.windowEndsAt, waitingForWindow: e.waiting === 'waiting_for_window',
-    checkingTarget: after.name === 'open' && !!after.data.applyAfterCheck } as Json;
+  return { applied: false };
 }
 
+const chatValues = (w: any) => [w.appId, w.content, w.msgType, JSON.stringify({ wfEvent: w.eventId }), w.thread.type, w.thread.ref];
+
+// One statement: the vote, its `events` row and its thread line. A flip
+// replaces the line: the old sentence argued for the side this vote left.
 async function writeVote(tx: Tx, w: any) {
   if (!w.vote) {
     await tx.query('DELETE FROM issue_votes WHERE issue_id = $1 AND user_id = $2', [w.issueId, w.userId]);
     return;
   }
-  // A flip replaces the line: the old sentence argued for the side this vote left.
-  const { rows: [cast] } = await tx.query(
-    `INSERT INTO issue_votes (issue_id, user_id, vote, reason) VALUES ($1, $2, $3, $4)
-     ON CONFLICT (issue_id, user_id) DO UPDATE
-       SET vote = EXCLUDED.vote, reason = EXCLUDED.reason, created_at = NOW()
-     RETURNING id`,
-    [w.issueId, w.userId, w.vote, w.reason]);
-  const events = legacy('services/events');
+  const line = w.line ? chatValues(w.line) : [null, null, null, null, null, null];
   await tx.query(
-    `INSERT INTO events (user_id, app_id, event_type, metadata) VALUES ($1, $2, $3, $4::jsonb)`,
-    [w.userId, w.appId, events.EVENT_TYPES.ISSUE_VOTE_CAST, JSON.stringify({ vote: w.vote, issueId: w.issueId, issueVoteId: cast.id })]);
+    `WITH voted AS (
+       INSERT INTO issue_votes (issue_id, user_id, vote, reason) VALUES ($1, $2, $3, $4)
+       ON CONFLICT (issue_id, user_id) DO UPDATE
+         SET vote = EXCLUDED.vote, reason = EXCLUDED.reason, created_at = NOW()
+       RETURNING id),
+     logged AS (
+       INSERT INTO events (user_id, app_id, event_type, metadata)
+       SELECT $2, $5, $6, jsonb_build_object('vote', $3::text, 'issueId', $1::int, 'issueVoteId', voted.id) FROM voted),
+     line AS (
+       INSERT INTO chat_messages (app_id, content, msg_type, metadata, thread_type, thread_ref)
+       SELECT $7, $8, $9, $10::jsonb, $11, $12 WHERE $8::text IS NOT NULL)
+     SELECT 1`,
+    [w.issueId, w.userId, w.vote, w.reason, w.appId, legacy('services/events').EVENT_TYPES.ISSUE_VOTE_CAST, ...line]);
 }
 
 // The kind's own change, in the transaction that closes the proposal.

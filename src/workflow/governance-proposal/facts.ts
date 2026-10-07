@@ -36,59 +36,94 @@ function parseRepo(url: string | null): Issue['app']['repo'] {
   return legacy('services/github').parseGithubUrl(url || '');
 }
 
-// The row is locked: anything else that decides it ([main]'s apply, while
-// old and new Pods overlap in a deploy) waits for this transition, or this
-// transition waits for it and sees the row closed.
-async function readIssue(tx: Tx, issueId: number): Promise<Issue | null> {
+// One vote on the proposal, as the facts read it.
+interface VoteRow { userId: number; vote: string; counts: boolean; admin: boolean }
+
+// The issue, its app (with the governance columns), and while the proposal
+// is open everything about its votes, in one query. The row is locked:
+// anything else that decides it ([main]'s apply, while old and new Pods
+// overlap in a deploy) waits for this transition, or this transition waits
+// for it and sees the row closed.
+//
+// Each vote carries counts_toward_issue_outcome (the shared rule: identity,
+// test accounts) and whether its voter is a full admin; the counts are
+// taken from them in JavaScript once the electorate is known (countVotes).
+async function readIssue(tx: Tx, issueId: number, open: boolean, voterId: number | null) {
   const { rows: [r] } = await tx.query(
     `SELECT i.id, i.app_id, i.kind, i.status, i.title, i.payload, i.created_by, i.created_at,
             i.github_issue_number, u.username AS author_name,
-            a.slug, a.name, a.self_hosted, a.repo_url, a.locked
+            a.slug, a.name, a.self_hosted, a.repo_url, a.locked, a.collab_visibility,
+            a.approver_policy, a.approvals_required,
+            CASE WHEN $2::boolean THEN (
+              SELECT COALESCE(json_agg(json_build_object(
+                       'userId', v.user_id, 'vote', v.vote,
+                       'counts', counts_toward_issue_outcome(v.user_id, v.issue_id),
+                       'admin', COALESCE(vu.is_admin AND NOT vu.admin_readonly, FALSE))), '[]'::json)
+                FROM issue_votes v JOIN users vu ON vu.id = v.user_id
+               WHERE v.issue_id = i.id) END AS votes,
+            CASE WHEN $2::boolean AND $3::int IS NOT NULL
+              THEN counts_toward_issue_outcome($3::int, i.id) END AS voter_counts,
+            CASE WHEN $2::boolean AND $3::int IS NOT NULL
+              THEN COALESCE((SELECT is_admin AND NOT admin_readonly FROM users WHERE id = $3::int), FALSE) END AS voter_admin,
+            -- governance.communityMemberCount, for the member floor of a secret change
+            CASE WHEN $2::boolean AND i.kind = 'secret_change'
+              THEN (SELECT COUNT(*)::int FROM community_members m WHERE m.community_id = a.community_id) END AS member_count
        FROM issues i
        JOIN apps a ON a.id = i.app_id
        LEFT JOIN users u ON u.id = i.created_by
       WHERE i.id = $1
-        FOR UPDATE OF i`, [issueId]);
+        FOR UPDATE OF i`, [issueId, open, voterId]);
   if (!r) return null;
-  return {
+  const issue: Issue = {
     id: r.id, appId: r.app_id, kind: r.kind, status: r.status, title: r.title, payload: r.payload || {},
     createdBy: r.created_by, authorName: r.author_name, createdAt: new Date(r.created_at).toISOString(),
     githubIssueNumber: r.github_issue_number,
     app: { slug: r.slug, name: r.name, selfHosted: !!r.self_hosted, repo: parseRepo(r.repo_url), locked: !!r.locked },
   };
+  return { issue, row: r };
 }
 
-async function readGate(tx: Tx, issue: Issue): Promise<{ gate: GateInputs; approverIds: number[] | null }> {
+// services/governance.js qualifiedCounts, over the vote rows already read:
+// a vote counts when counts_toward_issue_outcome holds and its voter is in
+// the electorate (approverIds null: everyone); otherYes leaves out the
+// author's own Yes (a null author: every Yes is someone else's).
+export function countVotes(votes: VoteRow[], approverIds: number[] | null, authorId: number | null) {
+  const counted = votes.filter((v) => v.counts && (approverIds === null || approverIds.includes(v.userId)));
+  return {
+    yes: counted.filter((v) => v.vote === 'up').length,
+    no: counted.filter((v) => v.vote === 'down').length,
+    otherYes: counted.filter((v) => v.vote === 'up' && v.userId !== authorId).length,
+  };
+}
+
+// The electorate is [main]'s JavaScript (governance.getElectorate), with
+// the app row passed in so it costs one query.
+async function readGate(tx: Tx, issue: Issue, r: any): Promise<{ gate: GateInputs; approverIds: number[] | null }> {
   const governance = legacy('services/governance');
-  const gov = await governance.readGovernance(tx, issue.appId);
-  const { active, approverIds } = await governance.getElectorate(tx, issue.appId, gov);
+  const gov = governance.governanceFromRow(r);
+  const { active, approverIds } = await governance.getElectorate(tx, issue.appId, gov,
+    legacy('services/active-users').appMetaFromRow(r));
   const explicitApproval = issue.kind === 'secret_change';
-  const counts = await governance.qualifiedCounts(tx, 'issue', issue.id, approverIds, { authorId: issue.createdBy });
-  const memberCount = explicitApproval ? await governance.communityMemberCount(tx, issue.appId) : null;
-  const { rows: admins } = await tx.query(
-    `SELECT iv.user_id FROM issue_votes iv JOIN users u ON u.id = iv.user_id
-      WHERE iv.issue_id = $1 AND iv.vote = 'up' AND u.is_admin AND NOT u.admin_readonly`, [issue.id]);
+  const votes = r.votes as VoteRow[];
+  const counts = countVotes(votes, approverIds, issue.createdBy);
   return {
     approverIds,
     gate: {
-      gov, active, yes: counts.yes, no: counts.no, otherYes: counts.otherYes ?? 0,
-      explicitApproval, memberCount, authorId: issue.createdBy, openedAt: issue.createdAt,
-      locked: issue.app.locked, adminUpVoters: admins.map((a: { user_id: number }) => a.user_id),
+      gov, active, yes: counts.yes, no: counts.no, otherYes: counts.otherYes,
+      explicitApproval, memberCount: explicitApproval ? Number(r.member_count) || 0 : null,
+      authorId: issue.createdBy, openedAt: issue.createdAt, locked: issue.app.locked,
+      adminUpVoters: votes.filter((v) => v.vote === 'up' && v.admin).map((v) => v.userId),
     },
   };
 }
 
-async function readVoter(tx: Tx, issueId: number, userId: number, approverIds: number[] | null): Promise<Voter> {
-  const { rows: [r] } = await tx.query(
-    `SELECT (SELECT vote FROM issue_votes WHERE issue_id = $1 AND user_id = $2) AS existing,
-            counts_toward_issue_outcome($2, $1) AS counts,
-            COALESCE((SELECT is_admin AND NOT admin_readonly FROM users WHERE id = $2), FALSE) AS is_admin`,
-    [issueId, userId]);
+function voterOf(r: any, userId: number, approverIds: number[] | null): Voter {
+  const existing = (r.votes as VoteRow[]).find((v) => v.userId === userId)?.vote;
   return {
     userId,
-    existing: (r.existing === 'up' || r.existing === 'down') ? r.existing as Vote : null,
-    qualifies: !!r.counts && (approverIds === null || approverIds.includes(userId)),
-    isAdmin: !!r.is_admin,
+    existing: (existing === 'up' || existing === 'down') ? existing as Vote : null,
+    qualifies: !!r.voter_counts && (approverIds === null || approverIds.includes(userId)),
+    isAdmin: !!r.voter_admin,
   };
 }
 
@@ -122,9 +157,11 @@ async function readRefusal(tx: Tx, issue: Issue, dataKey: string): Promise<strin
 }
 
 export async function readFacts(tx: Tx, issueId: number, event: Event<any>, open: boolean, dataKey: string): Promise<Facts> {
-  const issue = await readIssue(tx, issueId);
-  if (!issue || !open) return { issue, gate: null, voter: null, refusal: null };
-  const { gate, approverIds } = await readGate(tx, issue);
-  const voter = event.type === 'VoteCast' ? await readVoter(tx, issue.id, event.payload.userId, approverIds) : null;
+  const voterId = event.type === 'VoteCast' ? event.payload.userId as number : null;
+  const read = await readIssue(tx, issueId, open, voterId);
+  if (!read || !open) return { issue: read?.issue ?? null, gate: null, voter: null, refusal: null };
+  const { issue, row } = read;
+  const { gate, approverIds } = await readGate(tx, issue, row);
+  const voter = voterId === null ? null : voterOf(row, voterId, approverIds);
   return { issue, gate, voter, refusal: await readRefusal(tx, issue, dataKey) };
 }
