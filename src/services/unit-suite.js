@@ -522,7 +522,12 @@ async function storeExpectedTests(pool, appId, total) {
 // stdout line changes it, and once more with phase 'done' when the run
 // ends; the caller owns any throttling. Normal failures become check rows;
 // explicit cancellation propagates to the preview lifecycle owner.
-async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, repoName, ref, prNumber, onProgress = null, signal = null, previewRunId = null }) {
+// `strict` (the workflow's checks runs): only a package.json that is not
+// there exempts the suite; any other read error, and a run that failed
+// before its clone finished (the Job, its image, the clone itself), come
+// back as { runnerError } for the caller to record as an 'error' rather
+// than a red suite or no suite at all.
+async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, repoName, ref, prNumber, onProgress = null, signal = null, previewRunId = null, strict = false }) {
   if (!isEnabled() || !github.isEnabled() || !repoOwner || !repoName || !ref) return null;
 
   let rawPkg = null;
@@ -532,6 +537,7 @@ async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, re
     log.warn('unit-suite', 'package.json fetch failed — skipping unit suite', {
       sessionId, repo: `${repoOwner}/${repoName}`, ref, err: err.message,
     });
+    if (strict) return { runnerError: `package.json could not be read (${String(err.message || err).slice(0, 200)})` };
     return null;
   }
   if (!hasRunnableTestScript(rawPkg)) return null;
@@ -593,8 +599,12 @@ async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, re
     passed = true;
   } catch (err) {
     if (signal?.aborted) throw signal.reason;
-    readSummary(err.stdout);
     const timedOut = err.killed === true || err.signal === 'SIGTERM' || err.signal === 'SIGKILL';
+    if (strict && !timedOut && !String(err.stdout || '').includes(CLONED_SENTINEL)) {
+      log.warn('unit-suite', 'Unit suite could not run', { sessionId, ref, err: err.message });
+      return { runnerError: String(err.message || 'the suite runner failed').slice(0, FAILURE_DETAIL_MAX) };
+    }
+    readSummary(err.stdout);
     const parts = failureOutcomeParts(err.stdout, err.stderr, { timedOut });
     reason = parts.reason;
     unitDetails = parts;

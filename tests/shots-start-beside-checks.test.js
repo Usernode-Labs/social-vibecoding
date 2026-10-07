@@ -67,12 +67,13 @@ test('a session with a turn open, or a busy worker, keeps the start after its ch
 test('the checks run starts the shots right after it claims the preview, and still hands off after', () => {
   const source = fs.readFileSync(path.join(__dirname, '../src/services/visuals.js'), 'utf8');
   const body = source.slice(source.indexOf('async function captureForSession('));
-  const claim = body.indexOf('_inFlight.set(key, { operation, commitHash: commitHash || null });');
-  const early = body.indexOf('startShotsIfIdle(config, pool, session.id, commitHash);');
+  // A workflow run (the preview machine) has its own start-shots work.
+  const claim = body.indexOf('if (!workflow) _inFlight.set(key, { operation, commitHash: commitHash || null });');
+  const early = body.indexOf('if (!workflow) startShotsIfIdle(config, pool, session.id, commitHash);');
   const decided = body.indexOf('checksAlreadyDecided(pool, session.id, commitHash)');
   assert.ok(claim > 0 && early > claim && early < decided,
     'after the run claims its slot, before any early return');
-  assert.match(body, /scheduleShots\(config, pool, session\.id, commitHash\);\n  \}\n\}/,
+  assert.match(body, /scheduleShots\(config, pool, session\.id, commitHash\);\n    \}\n  \}\n\}/,
     'the hand-off after the checks stays as the fallback');
 });
 

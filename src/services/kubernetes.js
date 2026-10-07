@@ -71,6 +71,18 @@ function isNotFound(err) {
   return err?.code === 404 || err?.response?.statusCode === 404 || err?.response?.status === 404;
 }
 
+function isConflict(err) {
+  return err?.code === 409 || err?.response?.statusCode === 409 || err?.response?.status === 409;
+}
+
+// A preview attempt (the workflow's preview machine): its env Secret is its
+// own, and the Deployment records the highest attempt that wrote it, so an
+// older attempt that lands late cannot overwrite a newer one.
+const PREVIEW_ATTEMPT_ANNOTATION = 'social.usernode.io/preview-attempt';
+function attemptSecretName(runtimeName, attempt) {
+  return attempt ? withSuffix(runtimeName, `env-a${attempt}`) : withSuffix(runtimeName, 'env');
+}
+
 // The namespace's ResourceQuota refused an object: every slot it allows (for
 // a worker, a volume claim or the storage those claims request) is taken.
 function isQuotaExceeded(err) {
@@ -1024,9 +1036,12 @@ async function reconcileAppGateIngresses(config, { force = null } = {}) {
 async function deployApplication(config, {
   app, environment, sessionId, imageRef, env, cpus = null,
   labels: extraLabels = {}, runtimeName = null, internalOnly = false,
-  command = [], runAsUser = null,
+  command = [], runAsUser = null, attempt = null,
 }) {
   if (!imageRef?.includes('@sha256:')) throw new Error('Kubernetes deployments require an immutable image digest');
+  if (attempt != null && (!Number.isSafeInteger(attempt) || attempt <= 0 || environment === 'production')) {
+    throw new Error('A preview attempt must be a positive integer on a preview');
+  }
   // runAsUser is an explicit override for an image that names no user and
   // so would run as root; nothing sets it unless the caller asks. The pod
   // still runs with runAsNonRoot, so 0 is refused here, not by the kubelet.
@@ -1042,13 +1057,19 @@ async function deployApplication(config, {
   if (name !== dnsName(name) || name.length > 63) throw new Error('Invalid Kubernetes runtime name');
   const resourceLabels = { ...extraLabels, ...labels({ appId: app.id, sessionId, environment }) };
   const selectorLabels = { 'social.usernode.io/runtime-name': name };
-  const secretName = withSuffix(name, 'env');
+  const secretName = attempt ? attemptSecretName(name, attempt) : withSuffix(name, 'env');
   const hostname = environment === 'production'
     ? `${app.slug}.${cfg.appDomain}`
     : `${app.slug}--s${sessionId}.${cfg.appDomain}`;
   // Check before creating or updating any Kubernetes resources.
   require('./caddy').assertAppHostname(hostname, cfg.platformDomain);
   const { core, apps, networking } = getClients();
+  // The template the preview served before this attempt, restored if the
+  // attempt's rollout fails (attempts only; [main] deletes the preview).
+  let previous = null;
+  if (attempt) {
+    previous = await readFencedDeployment(apps, namespace, name, attempt);
+  }
 
   await upsert(core, 'readNamespacedSecret', 'createNamespacedSecret', 'replaceNamespacedSecret', namespace, {
     apiVersion: 'v1', kind: 'Secret',
@@ -1059,8 +1080,10 @@ async function deployApplication(config, {
     apiVersion: 'v1', kind: 'Service', metadata: { name, namespace, labels: resourceLabels },
     spec: { selector: selectorLabels, ports: [{ name: 'http', port: 3000, targetPort: 3000 }], type: 'ClusterIP' },
   });
-  const deployed = await upsert(apps, 'readNamespacedDeployment', 'createNamespacedDeployment', 'replaceNamespacedDeployment', namespace, {
-    apiVersion: 'apps/v1', kind: 'Deployment', metadata: { name, namespace, labels: resourceLabels },
+  const deploymentBody = {
+    apiVersion: 'apps/v1', kind: 'Deployment',
+    metadata: { name, namespace, labels: resourceLabels,
+      ...(attempt ? { annotations: { [PREVIEW_ATTEMPT_ANNOTATION]: String(attempt) } } : {}) },
     spec: {
       replicas: 1,
       strategy: { type: 'RollingUpdate', rollingUpdate: { maxUnavailable: 0, maxSurge: 1 } },
@@ -1092,7 +1115,10 @@ async function deployApplication(config, {
         },
       },
     },
-  });
+  };
+  const deployed = attempt
+    ? await writeFencedDeployment(apps, namespace, name, attempt, deploymentBody, previous)
+    : await upsert(apps, 'readNamespacedDeployment', 'createNamespacedDeployment', 'replaceNamespacedDeployment', namespace, deploymentBody);
   // Best-effort, and deliberately so: the asset backend is shared
   // infrastructure, and a failure to reconcile it must not stop THIS app
   // from deploying. Without it the Ingress simply omits the asset paths and
@@ -1154,11 +1180,24 @@ async function deployApplication(config, {
     if (diagnostics.unavailable) log.warn('kubernetes', 'Preview failure diagnostics incomplete', {
       namespace, name, detail: diagnostics.unavailable,
     });
-    // A failed preview has no serving value but its declared CPU limit still
-    // consumes ResourceQuota. Production keeps its prior ReplicaSet for a
-    // recoverable rollout; previews are disposable and are rebuilt on retry.
-    if (environment !== 'production') {
-      await deleteApplication(config, name).catch((cleanupErr) => {
+    // A preview attempt whose rollout fails gives the Deployment back the
+    // template that served before it: the old ReplicaSet never stopped
+    // (maxUnavailable 0), so the preview keeps serving the older revision,
+    // and the failed pod goes. Only without one is the preview deleted.
+    if (attempt && previous) {
+      await restoreTemplate(apps, namespace, name, attempt, previous).catch((restoreErr) => {
+        err.restoreFailed = restoreErr.message;
+        log.warn('kubernetes', 'Could not restore the serving preview template', {
+          namespace, name, attempt, err: restoreErr.message,
+        });
+      });
+    } else if (environment !== 'production') {
+      // A failed preview has no serving value but its declared CPU limit still
+      // consumes ResourceQuota. Production keeps its prior ReplicaSet for a
+      // recoverable rollout; previews are disposable and are rebuilt on retry.
+      // An attempt deletes only the Deployment it wrote, by its UID.
+      const own = attempt ? await readFencedDeployment(apps, namespace, name, attempt).catch(() => null) : null;
+      if (!attempt || own) await deleteApplication(config, name, own ? { uid: own.metadata.uid } : {}).catch((cleanupErr) => {
         log.warn('kubernetes', 'Failed preview cleanup failed', {
           namespace, name, err: cleanupErr.message,
         });
@@ -1173,6 +1212,52 @@ async function deployApplication(config, {
     url: internalOnly ? `http://${name}.${namespace}.svc:3000` : `https://${hostname}`,
     ...(node ? { node } : {}),
   };
+}
+
+// The Deployment as this attempt finds it, refused when a newer attempt has
+// already written it. Null when there is none yet.
+async function readFencedDeployment(apps, namespace, name, attempt) {
+  let current;
+  try { current = await apps.readNamespacedDeployment({ name, namespace }); }
+  catch (err) { if (isNotFound(err)) return null; throw err; }
+  const written = Number(current.metadata?.annotations?.[PREVIEW_ATTEMPT_ANNOTATION]);
+  if (Number.isInteger(written) && written > attempt) {
+    throw Object.assign(new Error(`Preview attempt ${attempt} was superseded by attempt ${written}`),
+      { code: 'attempt_superseded', permanent: true });
+  }
+  return current;
+}
+
+// Create, or replace on the version this attempt read: a write by anyone
+// else in between conflicts, and the fence is read again.
+async function writeFencedDeployment(apps, namespace, name, attempt, body, current) {
+  for (let i = 0; ; i++) {
+    try {
+      if (!current) return await apps.createNamespacedDeployment({ namespace, body });
+      body.metadata.resourceVersion = current.metadata.resourceVersion;
+      return await apps.replaceNamespacedDeployment({ name, namespace, body });
+    } catch (err) {
+      if ((!isConflict(err) && !(current && isNotFound(err))) || i >= 3) throw err;
+      delete body.metadata.resourceVersion;
+      current = await readFencedDeployment(apps, namespace, name, attempt);
+    }
+  }
+}
+
+async function restoreTemplate(apps, namespace, name, attempt, previous) {
+  for (let i = 0; ; i++) {
+    const current = await apps.readNamespacedDeployment({ name, namespace });
+    const written = Number(current.metadata?.annotations?.[PREVIEW_ATTEMPT_ANNOTATION]);
+    // A newer attempt owns the Deployment now; its template is not ours to undo.
+    if (Number.isInteger(written) && written > attempt) return;
+    current.spec.template = previous.spec.template;
+    try {
+      await apps.replaceNamespacedDeployment({ name, namespace, body: current });
+      return;
+    } catch (err) {
+      if (!isConflict(err) || i >= 3) throw err;
+    }
+  }
 }
 
 function terminalPodFailureDetails(pods, { imageRef, environmentChecksum, container = 'app' } = {}) {
@@ -1310,12 +1395,17 @@ async function restartApplication(config, runtimeName) {
   return waitForDeployment(namespace, runtimeName, { generation: restarted?.metadata?.generation });
 }
 
-async function deleteApplication(config, runtimeName) {
+// `uid`: delete the Deployment only if it is still that one (a preview
+// attempt's own). `identity`: read every resource's UID first and delete
+// each with it as a precondition, plus the named `secrets` (the preview
+// machine's retirement, so a same-named successor keeps its resources).
+async function deleteApplication(config, runtimeName, { uid: ownUid = null, identity = false, secrets = [] } = {}) {
   const namespace = config.kubernetes.appNamespace;
   const { apps, core, networking } = getClients();
+  if (identity) return deleteByIdentity(config, runtimeName, secrets);
   const coordinated = require('./preview-lifecycle').enabled(config);
-  let uid;
-  if (coordinated) {
+  let uid = ownUid;
+  if (coordinated && !uid) {
     try { uid = (await apps.readNamespacedDeployment({ name: runtimeName, namespace })).metadata.uid; }
     catch (err) { if (!isNotFound(err)) throw err; }
   }
@@ -1342,6 +1432,46 @@ async function deleteApplication(config, runtimeName) {
       await new Promise(resolve => setTimeout(resolve, 250));
     }
   }
+}
+
+async function deleteByIdentity(config, runtimeName, secrets) {
+  const namespace = config.kubernetes.appNamespace;
+  const { apps, core, networking } = getClients();
+  const targets = [
+    [networking, 'readNamespacedIngress', 'deleteNamespacedIngress', runtimeName],
+    [core, 'readNamespacedService', 'deleteNamespacedService', runtimeName],
+    [apps, 'readNamespacedDeployment', 'deleteNamespacedDeployment', runtimeName],
+    ...[...new Set(secrets)].map((name) => [core, 'readNamespacedSecret', 'deleteNamespacedSecret', name]),
+  ];
+  await Promise.all(targets.map(async ([api, read, del, name]) => {
+    let uid;
+    try { uid = (await api[read]({ name, namespace })).metadata.uid; }
+    catch (err) { if (isNotFound(err)) return; throw err; }
+    await deleteIfPresent(api, del, name, namespace, {
+      ...(del === 'deleteNamespacedDeployment' ? { propagationPolicy: 'Foreground' } : {}),
+      body: { preconditions: { uid } },
+    });
+  }));
+}
+
+// Whether any of a preview's resources still exists (an error is not absence).
+async function previewResourcesPresent(config, runtimeName, secrets = []) {
+  const namespace = config.kubernetes.appNamespace;
+  const { apps, core, networking } = getClients();
+  const reads = [
+    [networking, 'readNamespacedIngress', runtimeName], [core, 'readNamespacedService', runtimeName],
+    [apps, 'readNamespacedDeployment', runtimeName], ...secrets.map((name) => [core, 'readNamespacedSecret', name]),
+  ];
+  const present = await Promise.all(reads.map(async ([api, read, name]) => {
+    try { await api[read]({ name, namespace }); return name; }
+    catch (err) { if (isNotFound(err)) return null; throw err; }
+  }));
+  return present.filter(Boolean);
+}
+
+async function deleteSecret(config, name) {
+  const { core } = getClients();
+  await deleteIfPresent(core, 'deleteNamespacedSecret', name, config.kubernetes.appNamespace);
 }
 
 async function deleteBuilds(config, appId) {
@@ -2619,6 +2749,7 @@ async function execInWorker(config, runtimeName, command, stdinText = null, { ti
 module.exports = {
   dnsName, withSuffix, labels, appResourceName, createBuild, deployApplication, getApplicationStatus, inspectApplication,
   getApplicationLogs, getDebugLogs, restartApplication, deleteApplication, deleteBuilds, deleteFailedBuilds, ensureWorker,
+  attemptSecretName, previewResourcesPresent, deleteSecret, PREVIEW_ATTEMPT_ANNOTATION,
   listManagedBuilds, readBuild, deleteBuildSnapshot,
   runCaptureJob, runUnitSuiteJob, cancelPreviewChecks, findCheckJobs, collectCheckJob,
   execInWorker, _getClients: getClients,

@@ -282,7 +282,12 @@ function makeImageProgressReporter(config, session, timings, startedAt, now = ()
   };
 }
 
-async function buildAndDeployStagingInner(config, session, app, commitHash) {
+// `attempt` (the workflow's preview machine, preview.prepare): build attempt
+// `n` into its own checkout and database `dbName`, deploy it with its own
+// env Secret and the attempt fence, call `checkpoint()` before each thing it
+// creates (it throws once the attempt is cancelled), and record nothing on
+// the row: the machine publishes the receipt. Without it, [main]'s build.
+async function buildAndDeployStagingInner(config, session, app, commitHash, { attempt = null } = {}) {
   const containerName = `usernode-staging-${app.slug}--${session.id}`;
   const imageName = `usernode-staging-${app.slug}-${session.id}:${commitHash.substring(0, 6)}`;
 
@@ -301,7 +306,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     if (!owner || !repo) throw new Error('Could not parse repo URL');
 
     const cloneUrl = await github.getCloneUrl(owner, repo);
-    const cloneDir = `/tmp/usernode-staging-${session.id}`;
+    const cloneDir = attempt ? `/tmp/usernode-preview-${session.id}-a${attempt.n}` : `/tmp/usernode-staging-${session.id}`;
 
     // Whether the caller pinned a concrete commit. 'latest' (and any falsy
     // value) keeps the historical "build the current branch tip" behaviour
@@ -463,7 +468,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     ], { timeout: 5000 });
     const resolvedRevision = (revisionOut || '').trim();
     const prodDbName = dbManager.appDbName(app.slug);
-    const stagingDbNameStr = dbManager.stagingDbName(app.slug, `s${session.id}`, commitHash);
+    const stagingDbNameStr = attempt ? attempt.dbName : dbManager.stagingDbName(app.slug, `s${session.id}`, commitHash);
     // Retries may address the database of a still-serving preview. Only
     // overlap a clone when its target is confirmed absent; otherwise keep
     // the old image-before-clone ordering. A failed lookup is not absence.
@@ -500,6 +505,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
       }
     };
     const cloneDatabase = async () => {
+      if (attempt) await attempt.checkpoint({ step: 'clone', db: stagingDbNameStr });
       cloneStartedAt = Date.now();
       if (imageFinished) reportBuildStep(config, session, 'clone', timings, cloneStartedAt);
       try {
@@ -545,6 +551,9 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     // deterministic and the deploy below reconciles it. But it is no longer
     // SILENT (#851) — a resource that resists removal is still worth surfacing.
     await require('./preview-lifecycle').current()?.check();
+    if (attempt) await attempt.checkpoint({ step: 'deploy', db: stagingDbNameStr });
+    // Docker has one container per session: from here on what served is gone.
+    if (attempt && applicationRuntime.mode(config) === 'docker') attempt.servingRemoved = true;
     if (applicationRuntime.mode(config) === 'docker' && (session.staging_runtime_name || session.staging_container_id)) {
       const runtimeName = session.staging_runtime_name || session.staging_container_id;
       const stopped = await applicationRuntime.remove(config, {
@@ -610,10 +619,11 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
       labels: {
         [stagingEnv.LABEL_ENV_FP]: stagingEnv.envFingerprint(platformEnv),
       },
+      ...(attempt ? { attempt: attempt.n } : {}),
     });
     timings.healthMs = Date.now() - healthStartedAt;
     const { hostname, url: stagingUrl } = deployed;
-    await getPool(config).query(
+    if (!attempt) await getPool(config).query(
       `UPDATE chat_sessions SET staging_image_ref = $1, staging_build_ref = $2,
          staging_runtime_kind = $3, staging_runtime_name = $4,
          staging_commit_sha = $6 WHERE id = $5`,
@@ -663,6 +673,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     };
   } catch (err) {
     if (require('./preview-lifecycle').isCancelled(err)) throw err;
+    if (attempt?.servingRemoved) err.servingRemoved = true;
     log.error('staging', 'Staging build failed', { sessionId: session.id, err: err.message });
     // Cleanup on failure — short grace, this container is being discarded.
     // Best-effort (the build already failed; nothing downstream forgets this
@@ -1270,10 +1281,17 @@ async function rebuildProductionInner(config, app, options = {}) {
   }
 }
 
+// One attempt of the preview machine (src/workflow/preview/services.ts):
+// no per-process queue, no lifecycle run, no row writes.
+function prepareAttempt(config, session, app, head, attempt) {
+  return buildAndDeployStagingInner(config, session, app, head, { attempt });
+}
+
 module.exports = {
   _makeImageProgressReporterForTest: makeImageProgressReporter,
   _imageStepLabelForTest: imageStepLabel,
   buildAndDeployStaging,
+  prepareAttempt,
   hasInFlightBuild,
   inFlightBuildSessionIds,
   previewDisplayState,

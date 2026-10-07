@@ -230,7 +230,7 @@ function begin(e: Event<any>, s: Live, head: string, trigger: string | null, ctx
 function startRun(s: Live, trigger: string | null, ctx: TransitionContext, extra: { work?: WorkRequest[]; data?: Partial<Data> } = {}): Outcome<PState> {
   const d0 = { ...s.data, ...(extra.data || {}) };
   const served = d0.serving!;
-  const key = `run:${served.n}:${ctx.version + 1}`;
+  const key = `run-${served.n}-${ctx.version + 1}`;   // a Kubernetes label value (the Jobs carry it)
   const d: Data = { ...d0, trigger, run: { key, n: served.n, head: served.head }, verdict: null };
   return step({
     name: 'checking', data: d,
@@ -549,7 +549,6 @@ function toRetiring(s: Live, reason: string, terminal: boolean, ctx: TransitionC
       // handler stops: the close checks again after that.
       closeAfter: new Date(ctx.now.getTime() + deps.retireAfterMs).toISOString(),
     } }],
-    notify: [{ type: 'stagingReady', sessionId: d.sessionId, url: null }],
     timer: null,
   });
 }
