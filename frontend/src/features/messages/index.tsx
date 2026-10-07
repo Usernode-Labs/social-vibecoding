@@ -1768,7 +1768,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
     const message = snap.messages[index];
     // B6: a card Build it moved under its plan is drawn there, not here.
     if (isMovedActivity(message)) continue;
-    // #4046: and a card its plan comes after is drawn by the plan.
+    // #4046: and a card whose step its plan carries is not drawn at all.
     if (plans.hidden.has(message.id)) continue;
     const day = dayKey(message);
     if (day && day !== previousDay) {
@@ -1814,7 +1814,6 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
       threadOpen={snap.route.threadRootId === message.id}
       focused={flashId === message.id}
       planCardId={plans.cardOf.get(message.id) ?? null}
-      underPlan={plans.underPlan.has(message.id)}
       hidePrompts={plans.answersOpen && !!message.sender.bot}
     />);
     previous = message;

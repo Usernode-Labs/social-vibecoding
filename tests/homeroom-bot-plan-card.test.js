@@ -7,8 +7,8 @@
 // to tap give way. A first version's plan is the one place its request's
 // step shows: the activity card above the plan is not drawn, the plan reads
 // its state for the line at its top, and the card Build it moves under the
-// plan is drawn as one line from the bot, with Notify me under it. The card
-// itself is pinned in tests/homeroom-bot-plan.test.js.
+// plan is not drawn either: Notify me is inside the plan while it builds.
+// The card itself is pinned in tests/homeroom-bot-plan.test.js.
 //
 // Run with: node --test tests/homeroom-bot-plan-card.test.js
 
@@ -37,7 +37,8 @@ test('#4046: while a plan or a question offers its own answers, the bot\'s quest
   const plan = (status, extra = {}) => botMsg(30, { kind: 'plan', ...fvMeta, plan: RUN_PLAN, actionId: 4, status, ...extra });
   assert.equal(planLayout([hello]).answersOpen, false, 'nothing else asks: the hello keeps its questions');
   assert.equal(planLayout([hello, plan('open')]).answersOpen, true, 'the plan waits for Build it');
-  assert.equal(planLayout([hello, plan('answered')]).answersOpen, false, 'built: they come back');
+  assert.equal(planLayout([hello, plan('answered')]).answersOpen, false,
+    'built: nothing holds them back (in production #4108 closed the hello\'s questions when the plan was sent)');
   assert.equal(planLayout([hello, plan('closed', { replaced: true })]).answersOpen, false);
   const question = botMsg(40, { kind: 'question', appName: 'Run Club', issueNumber: 2, question: 'Newest first?', answers: ['Yes', 'No'], status: 'open' });
   assert.equal(planLayout([hello, question]).answersOpen, true, 'an open question offers its own answers too');
@@ -64,8 +65,8 @@ test('#4046: while a plan or a question offers its own answers, the bot\'s quest
   assert.match(row, /<BotQuestion message=\{message\} conversationId=\{conversationId\} hidePrompts=\{hidePrompts\} \/>/);
 });
 
-test('#4046: the plan is the one place its request\'s step shows: the card above it goes, the card under it is one line', () => {
-  const { planLayout, planProgress, planTime, PLAN_FOLLOW_UP_WORDS } = loadTsx('frontend/src/features/messages/bot-plan.tsx');
+test('#4046: the plan is the one place its request\'s step shows: the cards above and under it go', () => {
+  const { planLayout, planProgress, planTime } = loadTsx('frontend/src/features/messages/bot-plan.tsx');
   const card = (id, extra = {}) => botMsg(id, { kind: 'activity', ...fvMeta, ...extra });
   const plan = (id, status, extra = {}) => botMsg(id, { kind: 'plan', ...fvMeta, plan: RUN_PLAN, actionId: 4, status, ...extra });
   const other = botMsg(25, { kind: 'activity', appSlug: 'run-club', appName: 'Run Club', issueNumber: 2 });
@@ -74,12 +75,10 @@ test('#4046: the plan is the one place its request\'s step shows: the card above
   const waiting = planLayout([card(20), other, plan(30, 'open')]);
   assert.deepEqual([...waiting.hidden], [20], 'the card above its plan is not drawn; another request\'s is');
   assert.equal(waiting.cardOf.get(30), 20, 'the plan reads its state');
-  assert.equal(waiting.underPlan.size, 0);
 
   // Build it: the card is moved under the plan (cardUnderPlan) and the one above says where it went.
   const built = planLayout([card(20, { movedTo: 50 }), plan(30, 'answered', { choices: ['Own goal'] }), card(50, { lookAt: 'x' })]);
-  assert.deepEqual([...built.hidden], []);
-  assert.deepEqual([...built.underPlan], [50], 'the card that follows the build is drawn as one line under it');
+  assert.deepEqual([...built.hidden], [50], 'the card that follows the build is not drawn: the plan says it all');
   assert.equal(built.cardOf.get(30), 50, 'and the plan reads its state');
 
   // A newer plan replaced the first: only the newest reads the card.
@@ -93,7 +92,7 @@ test('#4046: the plan is the one place its request\'s step shows: the card above
   assert.deepEqual([...stopped.hidden], [20]);
   // No plan, no change: every card is drawn as it was.
   const none = planLayout([card(20), other]);
-  assert.deepEqual([none.hidden.size, none.cardOf.size, none.underPlan.size, none.answersOpen], [0, 0, 0, false]);
+  assert.deepEqual([none.hidden.size, none.cardOf.size, none.answersOpen], [0, 0, false]);
 
   // What the line at the plan's top says.
   const working = (extra) => ({ messageId: 20, state: 'working', startedAt: null, workedFrom: null, links: {}, step: null, of: null, stepName: null, doing: null, outcome: null, endedAt: null, ...extra });
@@ -112,19 +111,16 @@ test('#4046: the plan is the one place its request\'s step shows: the card above
   assert.equal(planProgress(working({ step: 3, of: 7 }), 'changing'), null, 'a plan that is not waiting or built says its own line');
   assert.equal(planProgress(null, 'open'), null);
 
-  // Drawn: the follow-up line, and Notify me while it is built.
-  assert.equal(PLAN_FOLLOW_UP_WORDS, 'I’ll message you here when it’s ready to try.');
-  const { BotPlanFollowUp } = loadTsx('frontend/src/features/messages/bot-plan.tsx');
-  const html = renderToHtml(createElement(BotPlanFollowUp, { message: card(50) }));
-  assert.match(html, /^<div data-bot-plan-follow-up="pending"><div class="messages-markdown gc-msg-content"><p>I’ll message you here when it’s ready to try\.<\/p><\/div><div class="mt-2"><div class="messages-bot-answers" role="group" aria-label="Notifications" aria-live="polite"><button type="button" class="messages-bot-tint" data-bot-notify-me="">/);
+  // Drawn: nothing in the bot's voice under the plan (the hello said it).
   const row = read('frontend/src/features/messages/message-row.tsx');
-  assert.match(row, /isActivityMessage\(message\) && underPlan \? \([\s\S]{0,120}<BotPlanFollowUp message=\{message\} \/>/);
+  assert.doesNotMatch(row, /underPlan|BotPlanFollowUp/);
   assert.match(row, /<BotPlanCard message=\{message\} conversationId=\{conversationId\} cardId=\{planCardId\} \/>/);
   const screen = read('frontend/src/features/messages/index.tsx');
   assert.match(screen, /if \(plans\.hidden\.has\(message\.id\)\) continue;\s*const day = dayKey\(message\);/,
     'skipped before its day and its name are counted, as a moved card is');
-  assert.match(screen, /planCardId=\{plans\.cardOf\.get\(message\.id\) \?\? null\}\s*underPlan=\{plans\.underPlan\.has\(message\.id\)\}/);
+  assert.match(screen, /planCardId=\{plans\.cardOf\.get\(message\.id\) \?\? null\}\s*hidePrompts=/);
   const host = read('frontend/src/features/messages/bot-plan.tsx');
-  assert.match(host, /progress=\{planProgress\(cardId \? activity\.cards\.get\(cardId\) : null, planState\(meta, pressed\)\)\}/);
-  for (const s of [PLAN_FOLLOW_UP_WORDS, 'Step 3 of 7', 'My plan for', 'Change something']) assert.doesNotMatch(s, /—|!/);
+  assert.match(host, /const state = planState\(meta, pressed\);\s*const card = cardId \? activity\.cards\.get\(cardId\) : null;/);
+  assert.match(host, /progress=\{planProgress\(card, state\)\}/);
+  for (const s of ['Step 3 of 7', 'My plan for', 'Change something']) assert.doesNotMatch(s, /—|!/);
 });

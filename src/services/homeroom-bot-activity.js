@@ -128,9 +128,10 @@ const FIRST_VERSION_WAIT_WORDS = 'Waiting for the first version to go live. I\'l
  * DM, after the work began, so it says the work was started earlier. A card
  * started by filing the request (#3767) says it was filed, not that the
  * work began: it may wait in the queue first, and the card says so. A card
- * moved under a plan by Build it (`go`, cardUnderPlan) is drawn as this one
- * line under the plan, which carries its step (#4046,
- * frontend/src/features/messages/bot-plan.tsx), so it says only that.
+ * moved under a plan by Build it (`go`, cardUnderPlan) is not drawn in the
+ * chat: the plan carries its step and offers Notify me (#4046,
+ * frontend/src/features/messages/bot-plan.tsx). Its words are the inbox's
+ * preview, so they say only what comes next.
  */
 function cardText({ appName, issueNumber, issueTitle, firstVersion }, dm, {
   joined = false, filed = false, queued = false, lowAllowance = false, waitsForFirstVersion = false, go = false,

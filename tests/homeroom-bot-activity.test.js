@@ -924,7 +924,7 @@ test('B6: Build it moves the request\'s card under the plan, read from the plan\
   assert.equal(sent.length, 1, 'one card, under the plan');
   const [card] = sent;
   assert.equal(card.idempotencyKey, 'hrbot-activity-run-61', 'the key catching up gives the same run\'s build: never two messages');
-  // #4046: the chat draws it as this one line under the plan, which carries its step.
+  // #4046: the chat does not draw it (the plan carries its step); these words are the inbox's preview.
   assert.equal(card.content, '**Flat 4B Chores**, its first version\n\nI\'ll message you here when it\'s ready to try.');
   assert.ok(!/—/.test(card.content));
   assert.deepEqual(card.metadata, {

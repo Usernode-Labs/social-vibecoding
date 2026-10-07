@@ -14,7 +14,7 @@ import type { ConversationKind, ConversationMessage } from './types';
 import { fileSize, fullTime, MessageMarkdown, ObjectCard, UserAvatar, senderName } from './format';
 import { BotActivityCard, isActivityMessage } from './bot-activity';
 import { BotQuestion, botMeta } from './bot-question';
-import { BotPlanCard, BotPlanFollowUp, BotTwoQuestions, isPlanMessage, isTwoQuestions } from './bot-plan';
+import { BotPlanCard, BotTwoQuestions, isPlanMessage, isTwoQuestions } from './bot-plan';
 import { BotReadyCard, isReadyMessage } from './bot-ready';
 import { BotHeadWords, botHead, isHeadCard } from './bot-head-card';
 import { LinkEmbeds } from './link-cards';
@@ -86,7 +86,6 @@ export const MessageRow = memo(function MessageRow({
   threadOpen = false,
   focused = false,
   planCardId = null,
-  underPlan = false,
   hidePrompts = false,
 }: {
   message: ConversationMessage;
@@ -105,8 +104,6 @@ export const MessageRow = memo(function MessageRow({
   focused?: boolean;
   /** #4046: a plan's request's activity card, whose step the plan carries (./bot-plan.tsx planLayout). */
   planCardId?: number | null;
-  /** #4046: an activity card under its built plan, drawn as the bot's one line. */
-  underPlan?: boolean;
   /** #4046: a plan or a question offers its own answers, so questions to tap give way. */
   hidePrompts?: boolean;
 }) {
@@ -261,9 +258,6 @@ export const MessageRow = memo(function MessageRow({
       {message.reply ? <button type="button" className="messages-quote" onClick={() => document.getElementById(`messages-message-${message.reply?.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}><span>{senderName(message.reply.sender)}</span><p>{message.reply.deleted ? 'Message deleted' : plainText(message.reply.content) || 'Attachment'}</p></button> : null}
       {editing ? (
         <div className="messages-edit"><textarea ref={editRef} aria-label="Edit message" value={editValue} onChange={(event) => setEditValue(event.target.value.slice(0, 8000))} rows={2} maxLength={8000} autoFocus onKeyDown={(event) => { if (event.key === 'Escape') setEditing(false); if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void saveEdit(); } }} /><div><button type="button" disabled={busy} onClick={() => void saveEdit()}>Save</button><button type="button" onClick={() => setEditing(false)}>Cancel</button></div></div>
-      ) : isActivityMessage(message) && underPlan ? (
-        // #4046: under its built plan, which carries its step, it is one line.
-        <BotPlanFollowUp message={message} />
       ) : isActivityMessage(message) ? (
         // #3736: the bot's activity card stands in place of its words, which
         // say the same for the inbox preview and the bell (./bot-activity.tsx).

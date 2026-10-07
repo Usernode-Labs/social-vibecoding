@@ -31,14 +31,18 @@ import type { ConversationMessage, HomeroomBotActivity, HomeroomBotMeta } from '
  * it, then the card again under the plan once it was built. Now the plan is
  * the one place its step shows (planLayout below): a card above its plan is
  * not drawn, the plan reads that card's state for the line at its top
- * (planProgress), and the card Build it moved under the plan is drawn as one
- * line, "I'll message you here when it's ready to try.", with "Notify me when
- * it's ready" under it while it is being built (BotPlanFollowUp).
+ * (planProgress), and the card Build it moved under the plan is not drawn
+ * either: its words, "I'll message you here when it's ready to try.", are
+ * the inbox's preview, and the hello already said so on this screen. While
+ * it is being built, "Notify me when it's ready" is inside the plan card
+ * (BotPlanCard's footer, ./notify-me.tsx).
  *
  * #4046: ONE SET OF SUGGESTIONS. While a plan or a question offers its own
  * answers, the bot's generic questions to tap (its hello's "How long will
- * this take?" and the rest) are not drawn (planLayout `answersOpen`); they
- * come back once it is answered.
+ * this take?" and the rest) are not drawn (planLayout `answersOpen`). The
+ * server closes the hello's questions once the plan is sent (#4108,
+ * homeroom-bot-dm.js retireSuggestions), so they do not come back after
+ * Build it; a question still open then does.
  *
  * TWO QUESTIONS (a `question` carrying `questions`): a request the bot has
  * two questions about, answered together. Each is a row of answers to tap,
@@ -48,9 +52,6 @@ import type { ConversationMessage, HomeroomBotActivity, HomeroomBotMeta } from '
  * suggested answer for any left alone. Something else quotes it for answers
  * of one's own. One question keeps BotQuestion's one tap (./bot-question.tsx).
  */
-
-/** What the card Build it moved under its plan says, in place of its card. */
-export const PLAN_FOLLOW_UP_WORDS = 'I’ll message you here when it’s ready to try.';
 
 /** Whether a message is a plan the bot drew as its card. */
 export function isPlanMessage(message: ConversationMessage): boolean {
@@ -124,17 +125,15 @@ export function offersAnswers(message: ConversationMessage): boolean {
 
 /** How a transcript draws its plans and the activity cards of their requests (planLayout). */
 export interface PlanLayout {
-  /** Activity cards a plan of their request comes after: the plan carries their step. */
+  /** Activity cards whose step a plan of their request carries: not drawn. */
   hidden: ReadonlySet<number>;
   /** A request's newest plan, waiting or built, by message id: the card whose state it reads. */
   cardOf: ReadonlyMap<number, number>;
-  /** Activity cards under their request's built plan: drawn as one line (BotPlanFollowUp). */
-  underPlan: ReadonlySet<number>;
   /** A plan or a question offers its own answers: the bot's generic questions to tap give way. */
   answersOpen: boolean;
 }
 
-export const NO_PLAN_LAYOUT: PlanLayout = { hidden: new Set(), cardOf: new Map(), underPlan: new Set(), answersOpen: false };
+export const NO_PLAN_LAYOUT: PlanLayout = { hidden: new Set(), cardOf: new Map(), answersOpen: false };
 
 /** A bot message's request, as "app#number", or null. */
 function requestKey(meta: HomeroomBotMeta): string | null {
@@ -150,9 +149,8 @@ function requestKey(meta: HomeroomBotMeta): string | null {
  * (isMovedActivity). For each request with a plan:
  *
  *   - an activity card before its plan is not drawn: the plan carries it,
- *     and neither is one after a plan that still waits for Build it;
- *   - one after its plan, once that plan is built, is the card that follows
- *     the build: drawn as one line under it;
+ *     and neither is one after a plan that waits for Build it or was built
+ *     (the card that follows the build);
  *   - the newest plan, waiting or built, reads the newest card's state.
  */
 export function planLayout(messages: readonly ConversationMessage[]): PlanLayout {
@@ -174,19 +172,15 @@ export function planLayout(messages: readonly ConversationMessage[]): PlanLayout
   }
   if (!plans.size) return answersOpen ? { ...NO_PLAN_LAYOUT, answersOpen } : NO_PLAN_LAYOUT;
   const hidden = new Set<number>();
-  const underPlan = new Set<number>();
   const cardOf = new Map<number, number>();
   for (const [key, plan] of plans) {
     const ids = cards.get(key) || [];
-    const state = planState(botMeta(plan) as HomeroomBotMeta);
-    for (const id of ids) {
-      if (id < plan.id || state === 'open') hidden.add(id);
-      else if (state === 'built') underPlan.add(id);
-    }
+    const carried = ['open', 'built'].includes(planState(botMeta(plan) as HomeroomBotMeta));
+    for (const id of ids) if (id < plan.id || carried) hidden.add(id);
     const newest = Math.max(0, ...ids);
-    if (newest && (state === 'open' || state === 'built')) cardOf.set(plan.id, newest);
+    if (newest && carried) cardOf.set(plan.id, newest);
   }
-  return { hidden, cardOf, underPlan, answersOpen };
+  return { hidden, cardOf, answersOpen };
 }
 
 /** Put the card in the composer's reply bar, and the caret after it. */
@@ -206,9 +200,14 @@ export function BotPlanCard({ message, conversationId, cardId = null }: {
   const meta = botMeta(message);
   const [pressed, setPressed] = useState(false);
   const activity = useBotActivity();
+  const userId = typeof window !== 'undefined' ? Number(window.App?.user?.id) || null : null;
+  // Decided when it is drawn: an account that chose here is not asked again.
+  const [offer] = useState(() => !notifyMeChosen(userId));
   useEffect(() => { if (cardId) ensureBotActivity(); }, [cardId]);
   if (!meta?.plan) return null;
   const actionId = meta.actionId;
+  const state = planState(meta, pressed);
+  const card = cardId ? activity.cards.get(cardId) : null;
 
   function build(answers: Array<string | null>) {
     if (!actionId) return;
@@ -227,31 +226,9 @@ export function BotPlanCard({ message, conversationId, cardId = null }: {
       busy={pressed && meta.status !== 'answered'}
       onBuild={build}
       onChange={() => quote(message, conversationId)}
-      progress={planProgress(cardId ? activity.cards.get(cardId) : null, planState(meta, pressed))}
+      progress={planProgress(card, state)}
+      footer={offer && state === 'built' && card && card.state !== 'done' ? <div className="mt-3"><NotifyMe userId={userId} /></div> : null}
     />
-  );
-}
-
-/**
- * #4046: the activity card Build it moved under its plan (planLayout
- * `underPlan`), drawn as one line in the bot's voice: the plan above carries
- * its step. While it is being built, "Notify me when it's ready" is under it
- * (./notify-me.tsx), unless this account chose already on this device.
- * Tapped, it turns grey and says "We'll notify you".
- */
-export function BotPlanFollowUp({ message }: { message: ConversationMessage }) {
-  const activity = useBotActivity();
-  const userId = typeof window !== 'undefined' ? Number(window.App?.user?.id) || null : null;
-  // Decided when it is drawn: an account that chose here is not asked again.
-  const [offer] = useState(() => !notifyMeChosen(userId));
-  useEffect(() => { ensureBotActivity(); }, []);
-  const card = activity.cards.get(message.id);
-  return (
-    <div data-bot-plan-follow-up={card?.state || 'pending'}>
-      {/* Drawn as the bot's words are (./format.tsx MessageMarkdown). */}
-      <div className="messages-markdown gc-msg-content"><p>{PLAN_FOLLOW_UP_WORDS}</p></div>
-      {offer && card?.state !== 'done' ? <div className="mt-2"><NotifyMe userId={userId} /></div> : null}
-    </div>
   );
 }
 

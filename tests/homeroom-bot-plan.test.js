@@ -557,7 +557,7 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     assert.equal(card.meta.kind, 'activity');
     assert.equal(card.meta.lookAt, (await runRow(run)).created_at.toISOString(), 'read from the run the plan came from');
     assert.equal(card.meta.startedAt, undefined, 'its time counts from the tap');
-    assert.match(card.content, /\n\nI'll message you here when it's ready to try\.$/, '#4046: what the chat draws under the plan');
+    assert.match(card.content, /\n\nI'll message you here when it's ready to try\.$/, '#4046: the inbox preview; the chat does not draw it');
     const { rows: rang } = await pool.query('SELECT 1 FROM notifications WHERE conversation_message_id = $1', [under.messageId]);
     assert.equal(rang.length, 0, 'a progress card rings nothing');
     assert.equal(Number((await message(above.messageId)).meta.movedTo), under.messageId, 'the card above says where it went');
