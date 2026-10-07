@@ -6,10 +6,10 @@ Design system first
 - The app's own palette is always right. The bans below apply only to what you invent.
 - If the app's `CLAUDE.md` has a "## Design" section (or a `Design:` note under "App-specific conventions"), that is this app's look: its accent, neutrals, type, spacing and signature element. Follow it, and update it in the same change when a request changes the look on purpose.
 
-Decide before you build, in a few lines of your plan: who uses this screen, its one job, its one primary action, which existing components you will reuse, and the word you will use for each thing on it. Then ask whether you would build exactly this for any app. If you would, make it fit this app's content instead.
+Decide before you build, in a few lines of your plan: who uses this screen, its one job, its one primary action if that job is an action, which existing components you will reuse, and the word you will use for each thing on it. Then ask whether you would build exactly this for any app. If you would, make it fit this app's content instead.
 
 Hierarchy
-- One job and one primary (filled) button per view. Everything else is secondary or plain.
+- One job per view, and one primary (filled) button when that job is an action; a screen for reading or browsing may have none. Everything else is secondary or plain.
 - The most important content comes first and largest. At most three heading levels.
 - Use spacing, alignment, lists and dividers before cards. A card only when the card itself is what you tap. Never nest cards.
 - One accent colour, kept for the primary action and status. Colours the app's "## Design" section gives its subject (a map's water and parks, team colours, card suits, traffic-light statuses) are not accents: use them as that section says.

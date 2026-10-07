@@ -290,15 +290,20 @@ test('the excerpt and the full Tailwind section agree about the CDN (#1215)', ()
   assert.match(tailwind, /No proposal check rejects a `cdn\.tailwindcss\.com` tag/);
 });
 
-test('a first version\'s populated demo: the viewer\'s own data, a screen and a half, every control; nothing else changes (7 Oct 2026)', () => {
+test('a first version\'s populated demo: the viewer\'s own data, a screen and a half, labelled once, every control; nothing else changes (7 Oct 2026)', () => {
   const doc = getAppConventions();
   const mock = doc.slice(doc.indexOf('## Staging mock data'), doc.indexOf('### Seeded data must not fabricate a signal your logic reads'));
+  // The general rule names the carve-out that wins over it, as "Small" does.
+  assert.match(mock, /- \*\*Obviously fake\.\*\* Give seeded rows a consistent "Staging demo …"\n  prefix so they can't be mistaken for real user content\. \(A first\n  version's `\?demo=1` demo is labelled once instead: see "A first\n  version's populated demo" below\.\)/);
   assert.match(mock, /- \*\*Small\.\*\* A handful of rows — just enough for the testing steps\.\n  \(A project's first version is the one exception: see "A first\n  version's populated demo" below\.\)/);
   const demo = mock.slice(mock.indexOf("### A first version's populated demo"));
   assert.ok(demo.length > 500, 'the carve-out is there, inside "Staging mock data"');
   const flat = demo.replace(/\s+/g, ' ');
-  assert.match(flat, /For that build only, and on `\?demo=1` only, three seed rules change\. Every later change keeps the rules above\./);
-  assert.match(flat, /\*\*Enough to look lived in\.\*\* Varied, realistic rows filling about a screen and a half of the main screen at phone width \(390×844\), not a handful\. Each still reads "Staging demo …"\./);
+  assert.match(flat, /For that build only, and on `\?demo=1` only, four seed rules change\. Every later change keeps the rules above\./);
+  assert.match(flat, /\*\*Enough to look lived in\.\*\* Varied, realistic rows filling about a screen and a half of the main screen at phone width \(390×844\), not a handful\. - \*\*Labelled once/);
+  // Labelled once, at the top or in the list's name, not on every row; the rows stay made up.
+  assert.match(flat, /\*\*Labelled once, not on every row\.\*\* The screen says "Staging demo" once, plainly and visibly: a banner or a line at the top of the screen, or the name of the list or collection the rows belong to\. Each row needs no label of its own \(a "Staging demo" pill or prefix on every row only clutters the screen\), and this replaces the "Staging demo …" prefix above for these rows\. The rows themselves stay obviously made up: no real people and no real private data\./);
+  assert.doesNotMatch(flat, /Each still reads "Staging demo/);
   assert.match(flat, /\*\*The viewer's own data too\.\*\*/);
   assert.match(flat, /Either add the viewer's demo rows to the `\?demo=1` responses without storing them, or write them for the viewing account on its first `\?demo=1` request, once \(fixed ids, `ON CONFLICT DO NOTHING`/);
   assert.match(flat, /the rows land only in staging's own database: that is not cloning production rows, so "Never reference real users" still holds\. Other people in the demo are still fake identities\./);

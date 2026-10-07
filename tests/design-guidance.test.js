@@ -22,6 +22,9 @@ test('the design guidance covers taste, UI/UX and coherence', () => {
   assert.match(guidance, /==== END UI DESIGN ====$/);
   assert.match(guidance, /native UI kit/, 'the app\'s own kit comes before anything invented');
   assert.match(guidance, /one primary action/i);
+  // A filled button only where the view's job is an action: reading or browsing may have none.
+  assert.match(guidance, /- One job per view, and one primary \(filled\) button when that job is an action; a screen for reading or browsing may have none\. Everything else is secondary or plain\./);
+  assert.match(guidance, /confirm: one primary action where the screen's job is an action \(a screen for reading or browsing may have none\);/);
   assert.match(guidance, /same word for the same concept/, 'cross-element coherence is checked');
   assert.match(guidance, /empty state[\s\S]*loading state[\s\S]*error state/);
   assert.doesNotMatch(guidance, /\{\{/, 'no template token survives');

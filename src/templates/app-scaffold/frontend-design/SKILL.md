@@ -62,7 +62,7 @@ Work in two passes. First, brainstorm a short design plan based on the client's 
 - Color: the kit's tokens as named colours, as many as the subject needs: the neutrals, one action colour, and any set of colours the subject itself uses, each with its light and dark `R G B` value, and the text pairs checked at 4.5:1.
 - Type: the system typefaces and their roles, and the four sizes.
 - Layout: a layout concept, using one-sentence prose descriptions and ASCII wireframes to ideate and compare. Include alignment guidance; should the content be left aligned, center aligned, justified?
-- Principles: the high-level guidance for what makes this app unique, including its one signature element.
+- Principles: the high-level guidance for what makes this app unique, including its signature element and the details that carry it.
 
 Then review that plan against the brief before building: if any part of it reads like the generic default you would produce for any similar app (work through a similar prompt to see if you arrive somewhere similar) rather than a choice made for this specific brief — revise that part, say what you changed and why. Only after you've confirmed the relative uniqueness of your design plan should you start to write the code, following the revised plan, and record it in the `## Design` section of `CLAUDE.md`.
 
@@ -70,7 +70,7 @@ When writing the code, style with the kit's token classes and components rather 
 
 ## Restraint and self-critique
 
-Spend your boldness in one place. Let one element be the memorable thing — the signature element in `## Design` — keep everything around it quiet and disciplined, and cut any decoration that does not serve the brief. Build to a quality floor without announcing it: responsive down to 360px wide, tap targets of 44px or more, visible keyboard focus, reduced motion respected, readable contrast in both looks, harmonious color palettes. Critique your own work as you build, taking screenshots to review if your environment supports it — a picture is worth 1000 tokens: each screen at 390px and desktop width, in the light and the dark look (`?un-theme=light`, `?un-theme=dark`), with its loading, empty and error states. Consider Chanel's advice: before leaving the house, take a look in the mirror and remove one accessory. Human creatives have memory and always try to do something new; the `## Design` section is where this app's choices are written down for the next pass.
+Give the app one visual language drawn from its subject and carry it through the screen: the signature element in `## Design`, and the small consistent details that make the subject recognisable at a glance (a drawn icon for each kind of thing, the subject's own colours and materials, a typeface that suits it). Keep it coherent rather than loud, and cut decoration that carries no meaning, not detail that does. Build to a quality floor without announcing it: responsive down to 360px wide, tap targets of 44px or more, visible keyboard focus, reduced motion respected, readable contrast in both looks, harmonious color palettes. Critique your own work as you build, taking screenshots to review if your environment supports it — a picture is worth 1000 tokens: each screen at 390px and desktop width, in the light and the dark look (`?un-theme=light`, `?un-theme=dark`), with its loading, empty and error states. Human creatives have memory and always try to do something new; the `## Design` section is where this app's choices are written down for the next pass.
 
 ## More on writing in design
 

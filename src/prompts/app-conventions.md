@@ -548,7 +548,9 @@ Seed rules:
   re-run on each boot — use an existence check or
   `ON CONFLICT DO NOTHING`.
 - **Obviously fake.** Give seeded rows a consistent "Staging demo …"
-  prefix so they can't be mistaken for real user content.
+  prefix so they can't be mistaken for real user content. (A first
+  version's `?demo=1` demo is labelled once instead: see "A first
+  version's populated demo" below.)
 - **Small.** A handful of rows — just enough for the testing steps.
   (A project's first version is the one exception: see "A first
   version's populated demo" below.)
@@ -566,12 +568,19 @@ thread' and …"), so a tester knows exactly what they should be seeing.
 A project's **first version** (the build that replaces the starter's
 placeholder screen) is first seen as its staging preview opened with
 `?demo=1`, and that screen should show the app in use, from the
-viewer's own seat. For that build only, and on `?demo=1` only, three
+viewer's own seat. For that build only, and on `?demo=1` only, four
 seed rules change. Every later change keeps the rules above.
 
 - **Enough to look lived in.** Varied, realistic rows filling about a
   screen and a half of the main screen at phone width (390×844), not
-  a handful. Each still reads "Staging demo …".
+  a handful.
+- **Labelled once, not on every row.** The screen says "Staging demo"
+  once, plainly and visibly: a banner or a line at the top of the
+  screen, or the name of the list or collection the rows belong to.
+  Each row needs no label of its own (a "Staging demo" pill or prefix
+  on every row only clutters the screen), and this replaces the
+  "Staging demo …" prefix above for these rows. The rows themselves
+  stay obviously made up: no real people and no real private data.
 - **The viewer's own data too.** What the app keeps for a person
   (their items, choices, progress, saved things) is shown as the
   viewer's: a demo where only made-up people have done anything shows
