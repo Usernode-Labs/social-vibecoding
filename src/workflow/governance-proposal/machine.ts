@@ -374,7 +374,9 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
       apply: (tx, w) => applyKind(tx, w, deps.dataKey),
     },
     async project(tx, before, after) {
-      if (before.name !== 'open' || after.name === 'open') return;
+      // On entering a closed state, from open or straight from Filed (a
+      // proposal already decided, or already broken, when it is enrolled).
+      if (after.name === 'open' || before.name === after.name) return;
       const data = after.data as ClosedData;
       // A secret's ciphertext never outlives the proposal, however it ended.
       await tx.query(

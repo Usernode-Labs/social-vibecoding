@@ -311,6 +311,12 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
     for (const i of [rename, garbled]) { await file(i); await vote(i, await user(), 'up'); }
     assert.equal((await row(rename)).payload.appliedBy, 'refused:missing_new_name');
     assert.equal((await row(garbled)).payload.appliedBy, 'refused:undecryptable');
+    // Decided at enrollment (votes cast before the flag): projected all the same.
+    const early = await issue(a, author, 'close_issue', {});
+    await pool.query(`INSERT INTO issue_votes (issue_id, user_id, vote) VALUES ($1, $2, 'up')`, [early.id, (await user()).id]);
+    await file(early);
+    assert.equal((await inst(early)).state, 'refused');
+    assert.deepEqual([(await row(early)).status, (await row(early)).payload.appliedBy], ['closed', 'refused:missing_issue_number']);
   });
 
   await t.test('G10 only the author withdraws, only while open; the ciphertext goes with it', async () => {
