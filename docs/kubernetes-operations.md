@@ -275,8 +275,9 @@ proposals. The governance-apply ticker and the stale sweeper's Pass 0b then leav
 proposals alone. `docs/workflows.md` explains the machine and where it runs.
 
 - **Where it runs.** The machine runs inside the platform Pod; there is no extra
-  workload. Every Pod listens for outcomes, and only the advisory-lock leader runs the
-  loops.
+  workload. Every Pod listens for outcomes and runs pipeline slots, so it applies its
+  own votes; only the advisory-lock leader runs the timer and service loops and the
+  boot backfill.
 - **Schema.** The schema it needs (`wf_*` tables and triggers) is additive and ships
   with every release, whether the flag is on or off.
 
@@ -292,8 +293,10 @@ directions. No maintenance window or scale-to-zero is needed.
    - The machine and the old apply functions both lock the proposal's row, so
      whichever commits first applies it. The machine ends the other's instance
      `superseded` (`closed_outside`).
-   - Until the new Pod is leader, its governance routes answer `202`. The vote or
-     withdrawal is recorded and applied once the loops start.
+   - The new Pod applies its own votes and withdrawals at once: its pipeline slots run
+     before it is leader. Only what the leader's loops do (timers, follow-up work, and
+     enrolling proposals opened before the flag) waits until it is elected. A route on
+     a proposal not enrolled yet enrolls it itself.
 3. **Verify.**
    - **The new Pod's log.** It shows `Workflow runtime started` and, on the leader,
      `Enrolled open governance proposals` with a count.
@@ -301,9 +304,11 @@ directions. No maintenance window or scale-to-zero is needed.
      is empty.
    - **Votes.** A vote on a test proposal answers at once.
 4. **Watch for old writers.** In production the ownership trigger logs instead of
-   refusing (`WF_OWNERSHIP_MODE` defaults to `log`). Over the following days,
-   `wf_ownership_violations` should stay empty. A row there names a code path that
-   still writes a governance proposal outside the machine.
+   refusing (`WF_OWNERSHIP_MODE` defaults to `log`). Over the following days, the
+   problems panel in Admin → Workflows should show no "written outside its machine"
+   line. One lists the column, how often, and its latest writes: the row, the
+   connection's `application_name` and the statement, which name the code path that
+   still writes a governance proposal outside the machine (`wf_ownership_violations`).
 
 **Rollback.** Set the value back to `false` and let Argo CD roll the Deployment.
 - **What happens to the proposals.** The old paths decide them again. The trigger
