@@ -222,9 +222,16 @@
     {
       "source": "src/routes/dashboard.js",
       "kind": "structural-template",
-      "fingerprint": "0e4781dc8e3958f6ecdb",
+      "fingerprint": "01b8d6bfed9da13fce44",
       "count": 1,
-      "preview": "`SELECT COUNT(*) FILTER (WHERE status IN ('promoted','merging'))::int AS promoted, COUNT(*) FILTER (WHERE promoted_at IS NOT NULL)::int AS promoted_all_time, CO"
+      "preview": "`SELECT u.username AS name, u.is_admin AS is_admin, COUNT(cs.id)::int AS sessions, COUNT(*) FILTER (WHERE cs.pr_number IS NOT NULL)::int AS produced_pr, COUNT(*"
+    },
+    {
+      "source": "src/routes/dashboard.js",
+      "kind": "structural-template",
+      "fingerprint": "1549feffbea72b80fd1e",
+      "count": 1,
+      "preview": "`WITH spine AS ( SELECT generate_series( date_trunc('week', LEAST( (SELECT MIN(created_at) FROM users), NOW() - INTERVAL '12 weeks' )), date_trunc('week', NOW()"
     },
     {
       "source": "src/routes/dashboard.js",
@@ -271,14 +278,14 @@
     {
       "source": "src/routes/dashboard.js",
       "kind": "structural-template",
-      "fingerprint": "3f62c3bdf3fdaea04537",
+      "fingerprint": "43afefd2e8c3b28f1072",
       "count": 1,
       "preview": "`SELECT u.username AS name, u.is_admin AS is_admin, COALESCE(SUM(lu.total_cost_cents), 0)::float AS platform_cents, COALESCE(SUM(lu.byok_cost_cents), 0)::float "
     },
     {
       "source": "src/routes/dashboard.js",
       "kind": "structural-template",
-      "fingerprint": "63258cb606f0efd83fcf",
+      "fingerprint": "4477bc03e2c497e8a7b8",
       "count": 1,
       "preview": "`WITH spine AS ( SELECT generate_series( CURRENT_DATE - 29, CURRENT_DATE, INTERVAL '1 day' )::date AS day ), agg AS ( SELECT lu.date AS day, SUM(lu.total_cost_c"
     },
@@ -288,6 +295,13 @@
       "fingerprint": "6652d8408e0ebe9ccf04",
       "count": 1,
       "preview": "`WITH days AS ( SELECT generate_series(CURRENT_DATE - 89, CURRENT_DATE, INTERVAL '1 day')::date AS d ), ${rollupCte}, qualifying AS ( SELECT d.d, r.user_id FROM"
+    },
+    {
+      "source": "src/routes/dashboard.js",
+      "kind": "structural-template",
+      "fingerprint": "6a1293f6ec5183f2f86e",
+      "count": 1,
+      "preview": "`SELECT COALESCE(SUM(total_cost_cents) FILTER (WHERE date = CURRENT_DATE), 0)::float AS cents, COALESCE(SUM(total_cost_cents) FILTER (WHERE date >= date_trunc('"
     },
     {
       "source": "src/routes/dashboard.js",
@@ -306,20 +320,6 @@
     {
       "source": "src/routes/dashboard.js",
       "kind": "structural-template",
-      "fingerprint": "b6c9437cca9a92d70630",
-      "count": 1,
-      "preview": "`WITH spine AS ( SELECT generate_series( date_trunc('week', LEAST( (SELECT MIN(created_at) FROM users), NOW() - INTERVAL '12 weeks' )), date_trunc('week', NOW()"
-    },
-    {
-      "source": "src/routes/dashboard.js",
-      "kind": "structural-template",
-      "fingerprint": "b83cdde9dd029a386ae8",
-      "count": 1,
-      "preview": "`SELECT u.username AS name, u.is_admin AS is_admin, COUNT(cs.id)::int AS sessions, COUNT(*) FILTER (WHERE cs.pr_number IS NOT NULL)::int AS produced_pr, COUNT(*"
-    },
-    {
-      "source": "src/routes/dashboard.js",
-      "kind": "structural-template",
       "fingerprint": "ceaba7ce4b96293c9a3a",
       "count": 1,
       "preview": "`WITH spine AS ( SELECT generate_series( CURRENT_DATE - 29, CURRENT_DATE, INTERVAL '1 day' )::date AS day ), agg AS ( SELECT lu.date AS day, COUNT(*) FILTER (WH"
@@ -327,16 +327,16 @@
     {
       "source": "src/routes/dashboard.js",
       "kind": "structural-template",
-      "fingerprint": "d5accaf0d7be85f38b5e",
+      "fingerprint": "e6e828361a105e86586a",
       "count": 1,
-      "preview": "`SELECT COALESCE(SUM(total_cost_cents) FILTER (WHERE date = CURRENT_DATE), 0)::float AS cents, COALESCE(SUM(total_cost_cents) FILTER (WHERE date >= date_trunc('"
+      "preview": "`WITH days AS ( SELECT generate_series(${UTC_TODAY_SQL} - 89, ${UTC_TODAY_SQL}, INTERVAL '1 day')::date AS d ), activity AS ( SELECT DISTINCT user_id, day FROM "
     },
     {
       "source": "src/routes/dashboard.js",
       "kind": "structural-template",
-      "fingerprint": "e6e828361a105e86586a",
+      "fingerprint": "f1bf48fa7ca499f0e7b4",
       "count": 1,
-      "preview": "`WITH days AS ( SELECT generate_series(${UTC_TODAY_SQL} - 89, ${UTC_TODAY_SQL}, INTERVAL '1 day')::date AS d ), activity AS ( SELECT DISTINCT user_id, day FROM "
+      "preview": "`SELECT COUNT(*) FILTER (WHERE cs.status IN ('promoted','merging'))::int AS promoted, COUNT(*) FILTER (WHERE cs.promoted_at IS NOT NULL)::int AS promoted_all_ti"
     },
     {
       "source": "src/routes/debug.js",
