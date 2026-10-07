@@ -20,8 +20,9 @@
 // ask for a Haiku alias, which would bill a different model to the user's
 // key), a reply is capped at the model's catalog output limit, images and
 // PDFs are replaced with a note unless the catalog lists that input for the
-// model, the session's thinking level is applied, and Claude Code's
-// Anthropic-only web search is swapped for OpenRouter's own.
+// model, an image inside a tool result is moved after the tool results for a
+// model that is not Anthropic's, the session's thinking level is applied,
+// and Claude Code's Anthropic-only web search is swapped for OpenRouter's own.
 //
 //   node claude-openrouter-request.js <claude arguments...>
 //
@@ -217,18 +218,88 @@ const NON_TEXT_BLOCKS = new Map([
   ['document', '[document omitted: this model reads text only]'],
 ]);
 
-function textOnly(blocks, { images = false, documents = false } = {}) {
+// `counts` tallies the request's images for its result line (worker.js sums
+// them per turn): `sent` reach the model, `omitted` became the note above,
+// and `moved` (below) counts the sent ones moved out of a tool result.
+function textOnly(blocks, { images = false, documents = false, counts = null } = {}) {
   if (!Array.isArray(blocks)) return blocks;
   return blocks.map((block) => {
     if (!block || typeof block !== 'object') return block;
-    if (images && block.type === 'image') return block;
+    if (images && block.type === 'image') {
+      if (counts) counts.sent += 1;
+      return block;
+    }
     if (documents && block.type === 'document') return block;
-    if (NON_TEXT_BLOCKS.has(block.type)) return { type: 'text', text: NON_TEXT_BLOCKS.get(block.type) };
+    if (NON_TEXT_BLOCKS.has(block.type)) {
+      if (counts && block.type === 'image') counts.omitted += 1;
+      return { type: 'text', text: NON_TEXT_BLOCKS.get(block.type) };
+    }
     if (block.type === 'tool_result' && Array.isArray(block.content)) {
-      return { ...block, content: textOnly(block.content, { images, documents }) };
+      return { ...block, content: textOnly(block.content, { images, documents, counts }) };
     }
     return block;
   });
+}
+
+// An image inside a tool result, for a model OpenRouter does not run as
+// Anthropic. Claude Code's Read and the browser's screenshot tool both return
+// their image inside a tool_result. Another provider's hosts take OpenAI's
+// chat format (the 2026-10-04 refusal above, about "tool messages", came from
+// one), where a tool message is, for OpenAI and many hosts, text only, and
+// the image appears not to survive the trip: a GLM 5.3 Flash build (App
+// bench studio run 8, trial 1236) said its screenshot "returns empty" and
+// began decoding the PNG by hand. An image in a user message's own content is
+// an ordinary image part in that format. So each one is moved out of its tool
+// result, a pointer left in its place, and added after the message's last
+// tool_result (Anthropic's rule: tool results come first), labelled with the
+// result it came from, in order. Anthropic's models read images in tool
+// results, so theirs stay where they are.
+//
+// Every request carries the whole conversation, so an early screenshot is
+// moved again on each later request, the same way each time: this is a pure
+// function of the messages, and the prefix a provider caches stays the same
+// from one request to the next. Old images are not pruned for the same
+// reason: dropping one would rewrite an earlier message, and every request
+// after it would miss the cache from there on.
+const ANTHROPIC_MODEL = /^~?anthropic\//;
+
+function toolUseNames(messages) {
+  const names = new Map();
+  for (const message of messages) {
+    if (message?.role !== 'assistant' || !Array.isArray(message.content)) continue;
+    for (const block of message.content) {
+      if (block?.type === 'tool_use' && typeof block.id === 'string' && typeof block.name === 'string') {
+        names.set(block.id, block.name);
+      }
+    }
+  }
+  return names;
+}
+
+function imagesAfterToolResults(content, toolNames, counts) {
+  let lastResult = -1;
+  content.forEach((block, index) => { if (block?.type === 'tool_result') lastResult = index; });
+  const after = [];
+  const rewritten = content.map((block) => {
+    if (block?.type !== 'tool_result' || !Array.isArray(block.content)
+        || !block.content.some((part) => part?.type === 'image')) return block;
+    const id = typeof block.tool_use_id === 'string' ? block.tool_use_id : null;
+    const name = id && toolNames.get(id);
+    const from = `${name ? `the ${name} result` : 'the tool result'}${id ? ` (${id})` : ''}`;
+    let n = 0;
+    return {
+      ...block,
+      content: block.content.map((part) => {
+        if (part?.type !== 'image') return part;
+        n += 1;
+        after.push({ type: 'text', text: `[image ${n} of ${from}:]` }, part);
+        return { type: 'text', text: `[image ${n} of this result follows after the tool results]` };
+      }),
+    };
+  });
+  if (!after.length) return content;
+  counts.moved += after.length / 2;
+  return [...rewritten.slice(0, lastResult + 1), ...after, ...rewritten.slice(lastResult + 1)];
 }
 
 // The platform's effort scale (minimal … xhigh) plus Anthropic's `max`.
@@ -280,18 +351,26 @@ const PROVIDER_PREFERENCES = Object.freeze({
 
 // Pin the model, cap the reply, keep the input text, set the thinking level,
 // prefer hosts that answer promptly, and route web search to OpenRouter.
-// Exported for tests: this is the policy.
+// Exported for tests: this is the policy. `imageCounts`, when given, is
+// filled with what the request did with its images.
 function applyTurnPolicy(body, {
   model, maxOutputTokens, countTokens, reasoningEffort = null, imageInput = false, documentInput = false,
+  imageCounts = null,
 }) {
   body.model = model;
   if (Array.isArray(body.messages)) {
-    body.messages = body.messages.map((message) => (message && Array.isArray(message.content)
-      ? {
+    const images = imageInput === true;
+    const counts = imageCounts || { sent: 0, moved: 0, omitted: 0 };
+    const moveImages = images && !ANTHROPIC_MODEL.test(String(model));
+    const toolNames = moveImages ? toolUseNames(body.messages) : null;
+    body.messages = body.messages.map((message) => {
+      if (!message || !Array.isArray(message.content)) return message;
+      const content = textOnly(message.content, { images, documents: documentInput === true, counts });
+      return {
         ...message,
-        content: textOnly(message.content, { images: imageInput === true, documents: documentInput === true }),
-      }
-      : message));
+        content: moveImages && message.role === 'user' ? imagesAfterToolResults(content, toolNames, counts) : content,
+      };
+    });
   }
   if (countTokens) return body;
   // Any preference the request already carries is kept.
@@ -382,8 +461,10 @@ async function startMessagesAdapter({
         replyError(res, 400, 'invalid_request_error', 'Invalid OpenRouter request body');
         return;
       }
+      const images = { sent: 0, moved: 0, omitted: 0 };
       applyTurnPolicy(body, {
         model, maxOutputTokens, countTokens, reasoningEffort, imageInput, documentInput,
+        imageCounts: images,
       });
       const serializedBody = JSON.stringify(body);
       if (onTiming && !countTokens) {
@@ -391,7 +472,7 @@ async function startMessagesAdapter({
         const ordinal = ++requestOrdinal;
         const startedAt = performance.now();
         timing = { ordinal, startedAt, stage: 'await_headers', status: null,
-          responseBytes: 0, chunks: 0, outcome: 'ok' };
+          responseBytes: 0, chunks: 0, outcome: 'ok', images };
         emitTiming({
           kind: 'provider_request_start', requestOrdinal: ordinal,
           payloadBytes: Buffer.byteLength(serializedBody),
@@ -487,12 +568,14 @@ async function startMessagesAdapter({
         // What the request came to, before its end: the platform logs a
         // failed one, keeps the provider for the turn's ledger row, and sums
         // the token counts of each that finished, which is what a turn
-        // stopped before Claude Code's own total is priced from.
+        // stopped before Claude Code's own total is priced from, and the
+        // images each carried, moved or left out, for the turn's metrics.
         emitTiming({
           kind: 'provider_request_result', requestOrdinal: timing.ordinal,
           ...(timing.status != null ? { httpStatus: timing.status } : {}),
           outcome: timing.outcome,
           ...Object.fromEntries(Object.entries(timing.result || {}).filter(([, v]) => v != null)),
+          images: timing.images,
         });
         emitTiming({ kind: 'provider_request_end', requestOrdinal: timing.ordinal,
           outcome: timing.outcome, stage: timing.stage,
