@@ -30,7 +30,9 @@
  *
  * The offer gate is fail-closed: any of the four Firebase values missing
  * (config.js) leaves every endpoint here answering 404 not_offered, and
- * the waitlist options route advertises the flow as absent.
+ * the waitlist options route advertises the flow as absent — unless
+ * PHONE_TEST_CODE turns test numbers on, on a stack that is not production
+ * (services/firebase-phone-auth.js, TEST NUMBERS).
  *
  * Like the OAuth finish route, verify and finish mint sessions, so they
  * sit in routes/auth.js's SESSION_MINT_PATHS and are refused 409
@@ -94,6 +96,15 @@ function phoneAuthRoutes(config) {
     return next();
   }
 
+  // The code-request buckets bound texts, and a test number sends none
+  // (services/firebase-phone-auth.js, TEST NUMBERS), so it skips them: a
+  // first-run loop on a local stack asks for a code every round.
+  function unlessTestNumber(limiter) {
+    return (req, res, next) => (phoneAuth.usesTestNumber(config, req.body?.phoneNumber)
+      ? next()
+      : limiter(req, res, next));
+  }
+
   // The Firebase project's reCAPTCHA site key, for a web client to earn the
   // token the request below carries. Public by nature (it is in every page
   // Firebase's own web SDK serves), so no limiter beyond the service's cache.
@@ -114,8 +125,8 @@ function phoneAuthRoutes(config) {
   router.post(
     '/api/auth/phone/request',
     requireOffered,
-    phoneOtpRequestLimiter,
-    phoneOtpRequestPhoneLimiter,
+    unlessTestNumber(phoneOtpRequestLimiter),
+    unlessTestNumber(phoneOtpRequestPhoneLimiter),
     async (req, res) => {
       try {
         const sent = await phoneAuth.requestCode(
@@ -281,8 +292,8 @@ function phoneAuthRoutes(config) {
   router.post(
     '/api/auth/phone-link/request',
     requireOffered,
-    phoneOtpRequestLimiter,
-    phoneOtpRequestPhoneLimiter,
+    unlessTestNumber(phoneOtpRequestLimiter),
+    unlessTestNumber(phoneOtpRequestPhoneLimiter),
     sameOriginBrowserOnly,
     signedIn,
     async (req, res) => {

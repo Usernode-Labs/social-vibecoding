@@ -157,7 +157,8 @@ test('a new phone account gives a name: verify finishes it, with a provisional h
 test('a signed-in account adds a phone through routes the waiting room can reach', async () => {
   const routes = read('src/routes/phone-auth.js');
   // Limiters first, then the same-origin check (tests/same-site-browser.test.js).
-  assert.match(routes, /router\.post\(\s+'\/api\/auth\/phone-link\/request',\s+requireOffered,\s+phoneOtpRequestLimiter,\s+phoneOtpRequestPhoneLimiter,\s+sameOriginBrowserOnly,\s+signedIn,/);
+  // A test number skips the text buckets (tests/phone-test-numbers.test.js).
+  assert.match(routes, /router\.post\(\s+'\/api\/auth\/phone-link\/request',\s+requireOffered,\s+unlessTestNumber\(phoneOtpRequestLimiter\),\s+unlessTestNumber\(phoneOtpRequestPhoneLimiter\),\s+sameOriginBrowserOnly,\s+signedIn,/);
   assert.match(routes, /router\.post\(\s+'\/api\/auth\/phone-link\/verify',\s+requireOffered,\s+phoneVerifyLimiter,\s+sameOriginBrowserOnly,\s+signedIn,/);
   assert.match(routes, /const linked = await phoneAuth\.linkPhone\(pool, claims, req\.user\.id\);\s+const joined = await communityInvites\.joinQueued\(pool, req\.user\.id\);/);
   // Under /api/auth/, which the platform-access gate leaves open to a waiting
