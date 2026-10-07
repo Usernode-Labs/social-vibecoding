@@ -2,6 +2,7 @@ import { useEffect, useState, type MouseEvent, type ReactNode } from 'react';
 
 import { Button, buttonVariants } from '@/components/ui/button';
 import { ChatIcon, CheckIcon, ClockIcon, InfoCircleIcon, WarningTriangleIcon } from '@/components/ui/icons';
+import { cn } from '@/lib/utils';
 import { IconTile } from '@/components/ui/icon-tile';
 import { ProgressRing } from '@/components/ui/progress-ring';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -182,7 +183,14 @@ export function typicalText(range?: { from: number; to: number } | null): string
 
 // ── The view ──
 
-const LINK_CLASS = buttonVariants({ layout: 'iconRow', variant: 'pillNeutral', size: 'sm', ink: 'neutral' });
+// The card's dark surface (--messages-surface) is zinc-800, so the shared
+// pillNeutral fill disappears on it (#4200): this pill takes the step off the
+// card, the same fill the app-allowance pane's pill uses. The tray tiles
+// (./bot-work.tsx) draw this link too.
+const LINK_CLASS = cn(
+  buttonVariants({ layout: 'iconRow', variant: 'pillNeutral', size: 'sm', ink: 'neutral' }),
+  'bg-zinc-200 hover:bg-zinc-300 dark:bg-zinc-700 dark:hover:bg-zinc-600',
+);
 
 /**
  * A card's way out: a pill link to the platform's own page. Also the

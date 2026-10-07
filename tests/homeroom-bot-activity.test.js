@@ -498,6 +498,13 @@ test('a card going: its step as a ring and in words, what it is doing, how long 
   assert.match(html, /<span role="status">Building it<\/span><span> · 9m so far<\/span>/,
     'only what it is doing is announced; the clock beside it is not, every half minute');
   assert.match(html, /<a href="#app\/ear-trainer\/dev\/issues\/12" class="[^"]*rounded-full[^"]*" data-bot-activity-link="">Request #12<\/a>/);
+  // #4200: the card's dark surface is zinc-800, the shared pillNeutral fill,
+  // so the pill was invisible on it. This link's fill takes the step off the
+  // card (zinc-700 in dark, zinc-200 in light).
+  const linkClass = html.match(/<a href="#app\/ear-trainer\/dev\/issues\/12" class="([^"]*)" data-bot-activity-link="">/)[1];
+  assert.ok(linkClass.includes('dark:bg-zinc-700'), `the link pill has a dark fill one step off the card: class="${linkClass}"`);
+  assert.ok(linkClass.includes('bg-zinc-200'), `the link pill has a light fill that reads on a white card: class="${linkClass}"`);
+  assert.ok(!linkClass.includes('dark:bg-zinc-800'), `the card's own dark surface is zinc-800; the pill must not match it: class="${linkClass}"`);
   assert.doesNotMatch(html, /Open change/);
 
   const queued = draw({ card: working({ step: 1, stepName: 'Read the request', doing: 'waiting in the queue (number 3) to be read', startedAt: minutesAgo(75) }) });
