@@ -7,8 +7,9 @@ then applies, a preview builds and runs its checks, a merge sets off a list of f
 it, and one code path that applies those events. Everything it does to the outside world
 is a durable work item whose result comes back as another event.
 
-Governance proposals are the first machine (behind `WF_GOVERNANCE_ENABLED`). The others
-move over one at a time.
+Governance proposals are the first machine (behind `WF_GOVERNANCE_ENABLED`) and merge
+follow-ups the second (behind `WF_MERGE_FOLLOWUPS_ENABLED`). The others move over one at a
+time.
 
 ## What it solves
 
@@ -255,6 +256,15 @@ they cannot drift from the instance.
 
   - The `@enrolled=` argument limits the guard to rows that have an instance, and only
     while `wf_settings` has `enabled:<machine>`.
+  - The `@enabled=<machine>` argument guards every row the trigger's `WHEN` selects, only
+    while the machine is on, enrolled or not. merge-followups uses it for the move of a
+    proposal into `merged`, which is what enrolls the row:
+
+    ```sql
+    CREATE TRIGGER chat_sessions_wf_merged BEFORE UPDATE ON chat_sessions FOR EACH ROW
+      WHEN (OLD.status IS DISTINCT FROM 'merged' AND NEW.status = 'merged')
+      EXECUTE FUNCTION wf_guard_owned_columns('@enabled=merge-followups', 'status');
+    ```
   - In `raise` mode, a write from anywhere else is refused. That is the default outside
     production, so a forgotten legacy writer fails a test.
   - In `log` mode, the write is allowed and recorded in `wf_ownership_violations`. That is
@@ -379,6 +389,7 @@ machine, which drives far more external calls. It needs:
 | Variable | Default | Set in production by | Meaning |
 |---|---|---|---|
 | `WF_GOVERNANCE_ENABLED` | `false` | Helm value `platform.workflowGovernanceEnabled` | The governance-proposal machine decides governance proposals. The ticker and the sweeper's Pass 0b leave them alone. |
+| `WF_MERGE_FOLLOWUPS_ENABLED` | `false` | Helm value `platform.workflowMergeFollowupsEnabled` | The merge-followups machine runs what follows a merge. The follow-up recovery sweep stands down, and a change reads live only once production runs it. |
 | `WF_SLOTS` | 4 (2 on a staging preview) | the default | Pipeline slots in the leader. |
 | `WF_POOL_MAX` | 6 (3 on a staging preview) | the default | Connections in the runtime's own pool. Keep it above `WF_SLOTS`. |
 | `WF_OWNERSHIP_MODE` | `log` in production, `raise` elsewhere | the default | What a write to an owned column from outside the machine does. |
@@ -386,7 +397,7 @@ machine, which drives far more external calls. It needs:
 **Where the variables are set.**
 - **The Helm chart.** A Kubernetes Pod gets only the variables the chart lists, so a
   variable an operator needs to change is a chart value.
-- **`platform_env`.** All four are also declared in `dapp.json`'s `platform_env`, as
+- **`platform_env`.** All five are also declared in `dapp.json`'s `platform_env`, as
   the platform requires of every variable it reads. Values stored through the Platform
   variables panel only ever reached the retired VPS deploy.
 
@@ -461,11 +472,44 @@ A new machine brings the same two layers:
 | Machine | Instance | States | Status |
 |---|---|---|---|
 | `governance-proposal` | `issue:<id>`, for the five governance kinds (rename, secret change, close issue, maintenance campaign, featured illustration) | `open` → `applied` / `refused` / `withdrawn` / `superseded` | Behind `WF_GOVERNANCE_ENABLED` |
+| `merge-followups` | `session:<id>`, for each merged proposal and each change that went live inside one | `delivering` → `live`, or `deploy_failed` → `live` | Behind `WF_MERGE_FOLLOWUPS_ENABLED` |
+
+### merge-followups
+
+What a merged pull request still has to do once GitHub has merged it
+(`src/workflow/merge-followups/`).
+
+- **Created by `Merged`.** `checkAndMerge` appends it right after GitHub's merge, and
+  `recoverStuckMerges` appends the same event when it finds on GitHub a merge whose own
+  report was lost. Either way the merge gets every follow-up.
+- **One transaction with the merge:**
+  - the move into `merged` (with `merge_commit_sha` and the vote snapshot);
+  - the secret values the proposal declared;
+  - `PR_MERGED`;
+  - the bounties, with their events and lines.
+- **Durable work for the rest:**
+  - `app.deliver`: the production rebuild, for a child app;
+  - `preview.teardown` and `worker.retire`;
+  - `included.find`, then an `Included` message to each change it carried, which gets
+    its own instance;
+  - `issues.closeAfterMerge`: the issue-close watcher;
+  - `main.check`: the unit suite on the merge commit;
+  - `bot.requestMerged`.
+- **Merged, then live.** The change is `live` once production runs a build that contains
+  it: its own delivery, or a `Deployed` report checked against GitHub
+  (`delivery.verify`). Every successful `rebuildProduction` reports one, and so does the
+  platform's own release, at boot.
+  - Only then are these written: `chat_sessions.live_at`, the "is live" line, the
+    author's notification, the requester's DM and the journey record.
+  - Until then the change reads merged and going live.
+- **A failed deploy** ends in `deploy_failed`, said in the thread. Any later deploy that
+  contains the change makes it live, and so does **Retry delivery** in Admin → Workflows.
 
 **Planned order:**
-1. **Merge follow-ups:** each follow-up of a merge becomes durable work.
-2. **Previews and required checks.**
-3. **Before/after shots.**
-4. **The proposal lifecycle.**
+1. **Previews and required checks.**
+2. **Before/after shots.**
+3. **The proposal lifecycle.**
+4. **The merge itself:** the attempt, the queue, production delivery and conflicts.
+5. **Fleet campaigns.**
 
 Each one deletes the old paths it replaces once its flag is the default.
