@@ -114,7 +114,7 @@ export interface TourStep {
  * ── #3567: a fifth stop, first: what a community is ─────────────────────
  *
  * The join screen asks which communities to join and never says what one
- * does, and the four stops above take it for granted: Shortcuts names a
+ * does, and the four stops above take it for granted: My apps names a
  * private community's mark, Suggest an improvement posts a request "the members"
  * vote on. So the tour opens on the idea everything after it rests on:
  * communities build projects together, by proposing changes and voting them
@@ -137,11 +137,11 @@ export const TOUR_STEPS: readonly TourStep[] = [
     targets: ['#platform-tab-workshop'],
   },
   {
-    // The Shortcuts section, heading and grid together, so the card never
+    // The My apps section, heading and grid together, so the card never
     // sits on the heading the step is about. `#app-list` is the fallback
     // for a section that has not rendered its box yet.
     id: 'apps',
-    title: 'Shortcuts',
+    title: 'My apps',
     body: 'The apps you keep close. A small mark says where each one lives: people for a private community, a lock for one that is just yours. The last tile starts a new project.',
     targets: ['#home-apps-section', '#app-list'],
   },

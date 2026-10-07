@@ -1411,10 +1411,10 @@
       "expectText": "Nothing to discover right now"
     },
     {
-      "name": "Adding from Discover lands in Shortcuts with no reload, and removing takes it out again (#1567)",
+      "name": "Adding from Discover lands in My apps with no reload, and removing takes it out again (#1567)",
       "path": "/?shot=discover-add",
       "expectSelector": "body[data-shot-add=\"round-trip\"] #home-apps-section #app-list",
-      "expectText": "Shortcuts"
+      "expectText": "My apps"
     },
     {
       "name": "The launcher grid shows two rows by default, with a way to the rest",
@@ -1426,7 +1426,7 @@
       "name": "Each home area is introduced by its own label (#1478)",
       "path": "/?demo=1",
       "expectSelector": "#home-body #home-apps-section > h2.home-area-label",
-      "expectText": "Shortcuts"
+      "expectText": "My apps"
     },
     {
       "name": "App tiles are placed at explicit grid cells, with iOS-sized two-line labels (#951)",
@@ -3722,7 +3722,7 @@
       "expectSelector": "#settings-section-content [data-settings-section]:not(.hidden)"
     },
     {
-      "name": "Home's Shortcuts section renders for the seeded admin",
+      "name": "Home's My apps section renders for the seeded admin",
       "path": "/",
       "expectSelector": ".app-card[data-yours='true']"
     },
@@ -3840,7 +3840,7 @@
       "expectSelector": ".app-card[data-yours].cursor-grab"
     },
     {
-      "name": "A persisted staging sample appears in expanded Shortcuts",
+      "name": "A persisted staging sample appears in expanded My apps",
       "path": "/?demo=1&shot=home-apps",
       "expectSelector": ".app-card[data-slug='staging-demo-your-app']"
     },
