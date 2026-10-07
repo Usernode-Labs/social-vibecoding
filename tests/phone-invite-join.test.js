@@ -67,6 +67,10 @@ test('the invite\'s Join sheet starts with a phone number when the server offers
   assert.match(phone, /Only this group sees your name, never your number\./);
   assert.doesNotMatch(phone, /username/i, 'no username is asked for');
   assert.match(phone, /id="sign-in-sheet-phone"[^>]*type="tel"[^>]*autoComplete="tel"|id="sign-in-sheet-phone"[^>]*type="tel"/);
+  // A country selector sits in front of the number (#4208), so the number is
+  // typed the local way and the client builds the E.164.
+  assert.match(phone, /<select aria-label="Country"/);
+  assert.match(phone, /<label for="sign-in-sheet-phone"[^>]*>Phone number<\/label>\s*<div[^>]*>/);
   assert.match(phone, />Text me a code</);
   assert.match(phone, /Just your name and phone number\. No app, no password\./);
   assert.match(phone, /Already on Homeroom\? <a href="#login" data-sign-in-sheet-other-ways=""[^>]*>Sign in another way<\/a>/);
@@ -78,6 +82,11 @@ test('the invite\'s Join sheet starts with a phone number when the server offers
   const before = render({ phone: false, providers: [], intro: 'Sign in or make an account with your email. It takes a minute.' });
   assert.match(before, /data-sign-in-sheet="email"/);
   assert.doesNotMatch(before, /Phone number|Your name|reCAPTCHA|Join with your phone/);
+
+  // The single "type +country" rule is gone with the selector that replaced
+  // it: the refusals are per-country now (./phone-field.tsx readPhone).
+  assert.doesNotMatch(read(SHEET), /Enter your number with its country code|placeholder="\+1 415 555 0123"/);
+  assert.doesNotMatch(read('frontend/src/features/auth/add-phone.tsx'), /Enter your number with its country code|placeholder="\+1 415 555 0123"/);
 
   // The number goes as the server takes it; no country code is guessed.
   assert.equal(phoneE164('+1 (415) 555-0123'), '+14155550123');
@@ -186,6 +195,7 @@ test('the waiting room: a queued group can be joined now by adding a phone, and 
   assert.match(card, />Join Best brunch spots now</);
   assert.match(card, /Add your phone number and you’re in, no waiting\. The group sees your name, never your number\./);
   assert.match(card, /<label for="add-phone-number"[^>]*>Phone number<\/label>/);
+  assert.match(card, /<select aria-label="Country"/, 'the card carries the same country selector (#4208)');
   assert.match(card, />Text me a code</);
   assert.match(card, /This is protected by reCAPTCHA/);
   assert.doesNotMatch(card, /—/);

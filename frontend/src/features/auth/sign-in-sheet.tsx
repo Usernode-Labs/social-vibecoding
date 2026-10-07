@@ -139,6 +139,7 @@ import { PasswordInput } from '@/components/ui/password-input';
 import { KB_OPEN_CLASS } from '../../lib/keyboard-open';
 import { useKeyboardSurface } from '../../lib/keyboard-surface';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { PhoneField, phoneE164, type PhoneFieldHandle } from './phone-field';
 import { inviteEmailFromToken, readAutoSend, writeAutoSend } from './login';
 import { NativeLoginDetailsLink } from './native-login-details';
 import { phoneRecaptchaToken, RECAPTCHA_NOTICE } from './recaptcha';
@@ -294,7 +295,7 @@ export function returnTarget(values: readonly string[], at: number): number | nu
 }
 
 /** The keydown that walks a step's fields on Return (Shift+Return and an IME's Return are left alone). */
-export function returnWalks(fields: readonly RefObject<HTMLInputElement | null>[], at: number) {
+export function returnWalks(fields: readonly RefObject<{ value: string; focus(options?: FocusOptions): void } | null>[], at: number) {
   return (e: ReactKeyboardEvent<HTMLInputElement>) => {
     if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return;
     const live = fields.map((f) => f.current).filter((el): el is HTMLInputElement => !!el);
@@ -327,19 +328,14 @@ function prefersReducedMotion(): boolean {
   }
 }
 
-/**
- * A typed phone number as the server takes it (firebase-phone-auth.js
- * normalizePhone): `+`, the country code and the number, with spaces,
- * dashes, dots and brackets dropped. Null for anything else; no country
- * code is guessed, since a wrong guess would text somebody else.
- */
 /** A name's length on the profile (routes/profile.js MAX_DISPLAY_NAME). */
 export const PHONE_NAME_MAX = 40;
 
-export function phoneE164(raw: string): string | null {
-  const value = String(raw || '').replace(/[\s().\u2010-\u2015-]/g, '');
-  return /^\+[1-9][0-9]{1,14}$/.test(value) ? value : null;
-}
+// The phone field is the shared one (./phone-field.tsx): a country selector
+// in front of the number, which builds the E.164 here. `phoneE164` moved
+// there, where readPhone uses it for a number that already carries its own
+// "+".
+export { phoneE164 };
 
 /**
  * The line over "Sign in with a password", for the screen that opened the
@@ -491,7 +487,8 @@ export function SignInSheet({
   const providerUsernameField = useRef<HTMLInputElement>(null);
   const passwordField = useRef<HTMLInputElement>(null);
   const nameField = useRef<HTMLInputElement>(null);
-  const phoneField = useRef<HTMLInputElement>(null);
+  // The phone step's field and selector (./phone-field.tsx).
+  const phoneField = useRef<PhoneFieldHandle>(null);
   // The phone step's two fields in order, for Return, and the name as typed.
   const phoneStepFields = [nameField, phoneField];
   const phoneName = useRef('');
@@ -722,11 +719,10 @@ export function SignInSheet({
     }
   }, [email, followInvite, finish]);
 
-  // The phone's code (`phone`): a reCAPTCHA token first, then the text.
-  const requestPhoneCode = useCallback(async (raw: string) => {
+  // The phone's code (`phone`): the E.164 the field built, then a reCAPTCHA
+  // token, then the text.
+  const requestPhoneCode = useCallback(async (value: string) => {
     setError(null);
-    const value = phoneE164(raw);
-    if (!value) { setError('Enter your number with its country code, like +1 415 555 0123.'); return; }
     if (blockedOffline(setError)) return;
     setBusy(true);
     try {
@@ -768,12 +764,20 @@ export function SignInSheet({
   // The phone step: a name for the group, then the number's code.
   const submitPhoneStep = useCallback(() => {
     setError(null);
-    if (!askName) { phoneName.current = ''; void requestPhoneCode(phoneField.current?.value || ''); return; }
-    const name = (nameField.current?.value || '').replace(/\s+/g, ' ').trim();
-    if (!name) { setError('Enter your name.'); nameField.current?.focus({ preventScroll: true }); return; }
-    if (name.length > PHONE_NAME_MAX) { setError(`Your name can be up to ${PHONE_NAME_MAX} characters.`); return; }
-    phoneName.current = name;
-    void requestPhoneCode(phoneField.current?.value || '');
+    if (askName) {
+      const name = (nameField.current?.value || '').replace(/\s+/g, ' ').trim();
+      if (!name) { setError('Enter your name.'); nameField.current?.focus({ preventScroll: true }); return; }
+      if (name.length > PHONE_NAME_MAX) { setError(`Your name can be up to ${PHONE_NAME_MAX} characters.`); return; }
+      phoneName.current = name;
+    } else {
+      phoneName.current = '';
+    }
+    // The field builds the E.164 and refuses, in the chosen country's own
+    // words, what does not fit it.
+    const read = phoneField.current?.read();
+    if (!read) return;
+    if (!read.ok) { setError(read.error); phoneField.current?.focus({ preventScroll: true }); return; }
+    void requestPhoneCode(read.e164);
   }, [askName, requestPhoneCode]);
 
   const verifyPhone = useCallback(async () => {
@@ -1068,8 +1072,7 @@ export function SignInSheet({
                 </div>
               ) : null}
               <div className={FIELD}>
-                <label htmlFor="sign-in-sheet-phone" className={LABEL}>Phone number</label>
-                <input ref={phoneField} id="sign-in-sheet-phone" type="tel" autoComplete="tel" inputMode="tel" enterKeyHint="go" defaultValue={phoneNumber} placeholder="+1 415 555 0123" className={INPUT} />
+                <PhoneField ref={phoneField} id="sign-in-sheet-phone" labelClassName={LABEL} inputClassName={INPUT} enterKeyHint="go" defaultValue={phoneNumber} />
               </div>
             </div>
             <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Sending code…' : 'Text me a code'}</button>
