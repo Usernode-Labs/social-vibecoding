@@ -10708,6 +10708,47 @@ html .un-backdrop.platform-backdrop-dim {
   background-color: var(--dc-sheet-solid);
   box-shadow: 0 -1px 0 var(--app-sheet-line);
 }
+/* THE PAPERCLIP'S POPOVER (#4127): Photo and Video, in the vote popover's
+   frame (.dev-vote-pop / .messages-new-pop: same radius, surface, hairline
+   and shadow) and the "+" menu's rows. Absolute under the paperclip rather
+   than body-mounted and fixed: it lives inside the kit modal, which is a
+   transformed scroller, and scrolls with the field it hangs from. Above the
+   sticky Cancel/Post row (z-index 1), which it can overlap on a short form. */
+.feedback-attach-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 2;
+  width: 168px;
+  box-sizing: border-box;
+  padding: 6px;
+  border-radius: 16px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.feedback-attach-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.feedback-attach-option:hover, .feedback-attach-option:focus-visible { background: var(--bg-tertiary); outline: none; }
+.feedback-attach-option:disabled { opacity: .5; cursor: default; }
+.feedback-attach-option svg { flex: 0 0 auto; width: 20px; height: 20px; color: var(--brand-ink); }
 .un-sheet, .un-sheet::after, .un-panel, .un-panel::after,
 #apps-switcher-sheet, .un-sheet:has(#apps-switcher-sheet),
 .un-sheet:has(#apps-switcher-sheet)::after {
