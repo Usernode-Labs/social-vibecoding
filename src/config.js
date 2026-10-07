@@ -727,6 +727,11 @@ function load() {
     // the governance-proposal machine decides governance proposals and the
     // ticker above and the sweeper's Pass 0b leave them alone. Off by default.
     wfGovernanceEnabled: ['1', 'true'].includes(process.env.WF_GOVERNANCE_ENABLED),
+    // With WF_MERGE_FOLLOWUPS_ENABLED on, a merge hands what follows it
+    // (delivery, preview teardown, included changes, closing requests, the
+    // announcements) to the merge-followups machine, and a change reads
+    // live only once production runs it. Off by default.
+    wfMergeFollowupsEnabled: ['1', 'true'].includes(process.env.WF_MERGE_FOLLOWUPS_ENABLED),
     // Its own pool, so pipeline slots and the outcome listener never take
     // request connections, and how many slots the leader runs.
     wfPoolMax: parseInt(process.env.WF_POOL_MAX || (IS_STAGING() ? '3' : '6'), 10),

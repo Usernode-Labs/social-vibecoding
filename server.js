@@ -1511,6 +1511,9 @@ async function becomeLeader() {
     })
     .then(() => recoverStuckMerges(config))
     .then(() => {
+      // With the merge-followups machine on, a merge's follow-ups are its
+      // durable work, and this sweep would only race its delivery.
+      if (config.wfMergeFollowupsEnabled) return;
       mergeFollowups.recover(config).catch((err) => {
         log.warn('server', 'Boot merge follow-up recovery failed', { err: err.message });
       });
@@ -1542,7 +1545,7 @@ async function becomeLeader() {
   // out CHECKS_STALE_MS for the stale sweep to start it over.
   checkHarvest.start(config);
   mainWatch.start(config);
-  mergeFollowups.start(config);
+  if (!config.wfMergeFollowupsEnabled) mergeFollowups.start(config);
 
   // #144: re-arm post-merge issue-close watches a restart killed. The
   // watcher (services/issue-close-watcher.js) is fired-and-forgotten
@@ -1553,7 +1556,8 @@ async function becomeLeader() {
   // until someone happens to reload after the cache TTL. Re-watching
   // recently-merged sessions on boot closes that gap (and covers crash
   // restarts mid-watch for ordinary apps too).
-  resumeIssueCloseWatches(config).catch((err) => {
+  // With the merge-followups machine on, the watch is its durable work.
+  if (!config.wfMergeFollowupsEnabled) resumeIssueCloseWatches(config).catch((err) => {
     log.warn('server', 'Issue-close watch resume failed', { err: err.message });
   });
 
@@ -1865,7 +1869,7 @@ async function recoverStuckMerges(config, { attemptedOnly = false } = {}) {
   let rows;
   try {
     ({ rows } = await pool.query(
-      `SELECT cs.id, cs.status, cs.pr_number, cs.merge_commit_sha,
+      `SELECT cs.id, cs.app_id, cs.status, cs.pr_number, cs.merge_commit_sha,
               cs.merge_attempt_at,
               a.repo_url
          FROM chat_sessions cs
@@ -1913,7 +1917,19 @@ async function recoverStuckMerges(config, { attemptedOnly = false } = {}) {
         const [, owner, repo] = m;
         try {
           const pr = await github.getPR(owner, repo, row.pr_number);
-          if (pr && pr.merged) {
+          const workflow = require('./src/workflow/platform.ts');
+          if (pr && pr.merged && workflow.mergeFollowupsEnabled()) {
+            // The merge-followups machine records the merge and runs every
+            // follow-up the lost report would have (F2), not only the status.
+            await workflow.mergeObserved({
+              sessionId: row.id, appId: row.app_id,
+              mergeSha: pr.merge_commit_sha || null, mergedAt: pr.merged_at || null,
+            });
+            healed++;
+            log.info('server', 'Reported a merged-on-GitHub session to the merge-followups machine', {
+              sessionId: row.id, prNumber: row.pr_number, repo: `${owner}/${repo}`, mergeSha: pr.merge_commit_sha || null,
+            });
+          } else if (pr && pr.merged) {
             const { rowCount } = await pool.query(
               `UPDATE chat_sessions
                   SET status = 'merged',

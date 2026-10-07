@@ -284,6 +284,10 @@ function InstanceView({ at, actions, onOpen, onBack }: {
               <button type="button" disabled={busy} className={AdminUI.btn.outlineSm}
                 onClick={() => act('Re-check now', ...event('Evaluate'))}>Re-check now</button>
             ) : null}
+            {actions.includes('RetryDelivery') && inst.state === 'deploy_failed' ? (
+              <button type="button" disabled={busy} className={AdminUI.btn.primarySm}
+                onClick={() => act('Retry delivery', ...event('RetryDelivery'))}>Retry delivery</button>
+            ) : null}
             {actions.includes('AdminApply') && inst.state === 'open' ? (
               <button type="button" disabled={busy} className={AdminUI.btn.destructiveSm}
                 onClick={() => act('Apply now', ...event('AdminApply'),
@@ -308,7 +312,9 @@ function InstanceView({ at, actions, onOpen, onBack }: {
           <ul id="admin-wf-work" className="space-y-2">
             {detail.work.map((w) => {
               const outcome = w.result?.outcome;
-              const retryable = canWrite && actions.includes('RetryFollowup') && (outcome === 'failed' || outcome === 'exhausted');
+              // A failed delivery is retried as a whole (Retry delivery above).
+              const retryable = canWrite && actions.includes('RetryFollowup') && w.kind !== 'app.deliver'
+                && (outcome === 'failed' || outcome === 'exhausted');
               return (
                 <li key={w.id} data-wf-work={w.workKey} className="flex flex-wrap items-center gap-2">
                   <code className="text-xs">{`${w.kind} ${w.workKey}`}</code>
