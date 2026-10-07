@@ -370,7 +370,10 @@ separate workflow Pod.
 - **Waking.** Each `wf_events` notification wakes one slot in each process. Idle loops
   sleep until a notification, the next thing they know is due (an event's backoff, a
   deadline, a work item), or a 30-second fallback; nothing polls every second. A
-  deadline set while the timer loop sleeps longer fires within that fallback.
+  transition that sets a deadline announces it on `wf_timer` with the time, in the
+  statement that ends the event. The timer loop wakes only for a deadline earlier than
+  the one it sleeps until, so a vote that re-arms the 10-minute backstop costs it
+  nothing. The fallback only covers a lost notification.
 - **A staging preview** never stands for election, so it runs the loops itself. A
   preview has no GitHub credentials and no app fleet, so its work items fail and show in
   Admin → Workflows, where [main]'s inline calls only failed in the logs.

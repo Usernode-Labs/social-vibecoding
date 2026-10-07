@@ -113,3 +113,20 @@ test('an event notification wakes one sleeping slot, and is kept when none sleep
   await Promise.all(outcomes);
   await signals.stop();
 });
+
+test('a sleeper can take only the notifications it wants', async () => {
+  const signals = new Signals({ connect: async () => { throw new Error('no database'); } }, { info() {}, warn() {}, error() {} });
+  let woke = false;
+  const until = Date.now() + 5000;
+  const sleeping = signals.sleep('wf_timer', 5000, (payload) => Number(payload) < until).then(() => { woke = true; });
+  signals.wake('wf_timer', String(until + 60000));
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(woke, false, 'a later deadline does not wake it');
+  signals.wake('wf_timer', String(until - 1000));
+  await sleeping;
+  // Losing or regaining the connection wakes every sleeper, filter or not.
+  const filtered = signals.sleep('wf_timer', 5000, () => false);
+  signals.wakeAll();
+  await filtered;
+  await signals.stop();
+});

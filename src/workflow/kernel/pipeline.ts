@@ -244,7 +244,9 @@ const FINISH_UNCHANGED = `
 
 // An accepted event: the instance row (inserted by its creating event),
 // the receipt, the event's result and the outcome notification. $10 says
-// whether the outcome set or cleared the deadline ($8, $9) or left it.
+// whether the outcome set or cleared the deadline ($8, $9) or left it. A
+// deadline set is announced on wf_timer (epoch milliseconds), so the timer
+// loop can wake for it if it is earlier than what it sleeps until.
 const FINISH_ACCEPTED = `
   WITH instance AS (
     INSERT INTO wf_instances AS i (machine, key, app_id, state, data, version, machine_version,
@@ -266,7 +268,10 @@ const FINISH_ACCEPTED = `
            state_before = $15, state_after = $4, version_after = $6, emitted = $16, reply = $17,
            retry_at = NULL, processed_at = clock_timestamp()
      WHERE id = $14 RETURNING id)
-  SELECT pg_notify('wf_outcome', id::text) FROM finished`;
+  SELECT pg_notify('wf_outcome', id::text) AS outcome,
+         (SELECT pg_notify('wf_timer', (EXTRACT(EPOCH FROM $8::timestamptz) * 1000)::bigint::text)
+           WHERE $8::timestamptz IS NOT NULL) AS timer
+    FROM finished`;
 
 // A timeout: the event back to pending with a backoff, and once it has
 // timed out often enough ($6) the instance flagged stalled (an instance

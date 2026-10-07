@@ -68,8 +68,11 @@ export function createRuntime(opts: RuntimeOptions) {
 
   // A loop works while its body finds work, then sleeps until a
   // notification on `channel`, the next thing it knows is due (`dueIn`), or
-  // the idle fallback, whichever comes first.
-  function loop(name: string, body: () => Promise<boolean>, channel: string, dueIn: () => Promise<number | null>) {
+  // the idle fallback, whichever comes first. With `wakesFor`, only a
+  // notification it takes wakes the loop (given the payload and the time
+  // the loop sleeps until).
+  function loop(name: string, body: () => Promise<boolean>, channel: string, dueIn: () => Promise<number | null>,
+    wakesFor?: (payload: string, until: number) => boolean) {
     loops.push((async () => {
       while (!stopping.signal.aborted) {
         let busy = false;
@@ -82,7 +85,8 @@ export function createRuntime(opts: RuntimeOptions) {
           const due = await dueIn();
           if (due !== null) ms = Math.min(ms, Math.max(due, 250));
         } catch { /* the fallback still bounds the wait */ }
-        if (!stopping.signal.aborted) await signals.sleep(channel, ms);
+        const until = Date.now() + ms;
+        if (!stopping.signal.aborted) await signals.sleep(channel, ms, wakesFor && ((payload) => wakesFor(payload, until)));
       }
     })());
   }
@@ -179,7 +183,10 @@ export function createRuntime(opts: RuntimeOptions) {
           await runtime.purge().catch((err) => log.warn('workflow', 'retention purge failed', { message: err.message }));
         }
         return (await fireDueTimers(opts.pool, timeouts)) > 0;
-      }, 'wf_timer', async () => Math.min(await nextDeadlineMs(opts.pool) ?? Infinity, 3600000 - (Date.now() - lastPurge)));
+      }, 'wf_timer', async () => Math.min(await nextDeadlineMs(opts.pool) ?? Infinity, 3600000 - (Date.now() - lastPurge)),
+      // A transition announces each deadline it sets; only one earlier than
+      // the loop's wake-up wakes it (every vote re-arms a later backstop).
+      (payload, until) => Number(payload) < until);
       if (handlers.size) {
         loop('services', async () => (await startServices()).length > 0, 'wf_work', () => nextDueMs(opts.pool, kindsWithRoom()));
       }

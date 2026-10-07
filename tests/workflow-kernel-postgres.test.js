@@ -577,6 +577,24 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     assert.equal(await rt.fireTimers(), 0);
   });
 
+  await t.test('K11 a deadline set earlier than the timer loop\'s wake-up wakes it, not the fallback', async () => {
+    const r = make({ pollMs: 60000 });
+    await r.start({ loops: true });
+    try {
+      await route('k11-wake', 'Create');
+      await sleep(300);  // the loop has looked and gone to sleep, a minute away at the earliest
+      const started = Date.now();
+      await route('k11-wake', 'Arm', { ms: 700 });
+      while (!(await inst('k11-wake'))?.data?.ticks) {
+        assert.ok(Date.now() - started < 5000, 'fired by its own announcement, not the 60 s fallback');
+        await sleep(50);
+      }
+      assert.ok(Date.now() - started >= 600, 'not before it was due');
+    } finally {
+      await r.stop();
+    }
+  });
+
   await t.test('K15 serial per instance, concurrent across instances and processes', async () => {
     const a = make({ slots: 4 });
     const b = make({ pool: other, slots: 4 });

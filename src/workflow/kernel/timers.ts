@@ -44,7 +44,7 @@ export async function fireDueTimers(pool: Pool, opts: { lockTimeoutMs: number; s
 
 // Milliseconds until the next deadline (negative when one is overdue), or
 // null when none is set. The timer loop sleeps until then; a deadline set
-// meanwhile is found by the loop's idle fallback.
+// meanwhile is announced on wf_timer and wakes it if it is earlier.
 export async function nextDeadlineMs(pool: Pool): Promise<number | null> {
   const { rows: [r] } = await pool.query(
     `SELECT (EXTRACT(EPOCH FROM min(deadline_at) - now()) * 1000)::float8 AS ms

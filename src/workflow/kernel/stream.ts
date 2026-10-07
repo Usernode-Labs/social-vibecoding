@@ -86,7 +86,7 @@ export class Signals {
   #pool: Pool;
   #log: Logger;
   #client: PoolClient | null = null;
-  #sleepers = new Map<string, Set<() => void>>();
+  #sleepers = new Map<string, Set<(payload: string | null) => void>>();
   #kept = new Map<string, number>();
   #watches = new Set<{ seen: Set<string>; wake: (() => void) | null }>();
   #stopped = false;
@@ -111,6 +111,7 @@ export class Signals {
       await client.query('LISTEN wf_events');
       await client.query('LISTEN wf_outcome');
       await client.query('LISTEN wf_work');
+      await client.query('LISTEN wf_timer');
       this.#client = client;
       // Whatever was announced while nobody listened: look once.
       this.wakeAll();
@@ -130,8 +131,10 @@ export class Signals {
     }
   }
 
+  // Wakes every sleeper, whatever it waits for: the connection was lost or
+  // regained, or the runtime stops.
   wakeAll(): void {
-    for (const set of [...this.#sleepers.values()]) for (const fn of [...set]) fn();
+    for (const set of [...this.#sleepers.values()]) for (const fn of [...set]) fn(null);
     for (const w of this.#watches) w.wake?.();
   }
 
@@ -142,20 +145,21 @@ export class Signals {
     if (WAKE_ONE.has(channel)) {
       const set = this.#sleepers.get(channel);
       const first = set?.values().next().value;
-      if (first) first();
+      if (first) first(payload ?? '');
       else this.#kept.set(channel, Math.min(MAX_KEPT, (this.#kept.get(channel) ?? 0) + 1));
       return;
     }
     for (const name of [channel, `${channel}:${payload ?? ''}`]) {
       const set = this.#sleepers.get(name);
-      if (set) for (const fn of [...set]) fn();
+      if (set) for (const fn of [...set]) fn(payload ?? '');
     }
   }
 
-  // Resolves on a notification on `channel` (or `channel:payload`), or after ms.
-  sleep(channel: string, ms: number): Promise<void> {
+  // Resolves on a notification on `channel` (or `channel:payload`) that
+  // `accept` takes (default: any), or after ms.
+  sleep(channel: string, ms: number, accept?: (payload: string) => boolean): Promise<void> {
     const kept = this.#kept.get(channel) ?? 0;
-    if (kept > 0) {
+    if (kept > 0 && !accept) {
       this.#kept.set(channel, kept - 1);
       return Promise.resolve();
     }
@@ -163,7 +167,8 @@ export class Signals {
     return new Promise((resolve) => {
       let set = this.#sleepers.get(channel);
       if (!set) this.#sleepers.set(channel, set = new Set());
-      const done = () => {
+      const done = (payload: string | null = null) => {
+        if (payload !== null && accept && !accept(payload)) return;
         clearTimeout(timer);
         set!.delete(done);
         if (!set!.size) this.#sleepers.delete(channel);
