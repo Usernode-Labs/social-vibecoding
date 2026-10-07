@@ -472,6 +472,9 @@ async function sendDm(pool, {
     });
   }
   if (!result.duplicate) {
+    await retireSuggestions(pool, {
+      botId: bot.id, conversationId: opened.conversationId, keepMessageId: result.messageId ?? result.message?.id, userId,
+    });
     try {
       await pushLive(pool, result, opened.conversationId, { opened: opened.created });
     } catch (err) {
@@ -740,13 +743,15 @@ function weekKey(now = new Date()) {
  * Pure: what the person whose building time is used up hears about the
  * request it holds. No amount: the limit is building time, not money, and
  * on a project with others in it, somebody else can ask for it on theirs
- * (homeroom-bot-mayor.js start_request).
+ * (homeroom-bot-mayor.js start_request). #4097: led by the request's line
+ * (requestLine), which Messages draws as its card, as the rest of its news
+ * is; the words then say "it".
  */
-function overAllowanceText({ title, appName, group = false }) {
-  const what = clip(title, 80) || 'this request';
-  return group
-    ? `You've used this week's building time. I'll start ${what} on Monday, or someone else in ${appName} can ask me for it.`
-    : `You've used this week's building time. I'll start ${what} on Monday.`;
+function overAllowanceText({ line = null, appName, group = false }) {
+  const said = group
+    ? `You've used this week's building time. I'll start it on Monday, or someone else in ${appName} can ask me for it.`
+    : 'You\'ve used this week\'s building time. I\'ll start it on Monday.';
+  return line ? `${line}\n\n${said}` : said;
 }
 
 /**
@@ -763,17 +768,22 @@ async function noteOverAllowance(pool, { settings, requester, payer = null, app,
     [app.id],
   ).catch(() => ({ rows: [] }));
   const appName = app.name || app.slug;
+  const context = { appName, issueNumber, issueTitle: requester?.issueTitle || null, firstVersion: !!requester?.firstVersion };
   return sendDm(pool, {
     bot,
     userId: who.userId,
     replyToId: await requestStart(pool, { userId: who.userId, appId: app.id, issueNumber }),
     idempotencyKey: `hrbot-allowance-${who.userId}-${weekKey()}`,
     content: overAllowanceText({
-      title: requester?.issueTitle || `${appName} request #${issueNumber}`,
+      line: requestLine(context),
       appName,
       group: (Number(rows[0]?.members) || 0) > 1,
     }),
-    metadata: { kind: 'allowance', appSlug: app.slug, appName, issueNumber },
+    metadata: {
+      kind: 'allowance', appSlug: app.slug, appName, issueNumber,
+      ...(context.issueTitle ? { issueTitle: context.issueTitle } : {}),
+      ...(context.firstVersion ? { firstVersion: true } : {}),
+    },
   });
 }
 
@@ -1284,6 +1294,8 @@ async function relayIssuePost({
       lead: questionLead(requestLine(context), context.firstVersion ? 'the first version' : 'this', dm),
     } : {}),
     ...(dm.link ? { link: dm.link } : {}),
+    // Where it is stuck, what to tap (STUCK_ACTIONS).
+    ...(STUCK_ACTIONS[kind] ? { actions: STUCK_ACTIONS[kind], status: 'open' } : {}),
     // B7: a change ready to try, as a card with its buttons: whether it is
     // one person's project (the title), who else it waits on and how many of
     // them it needs, their words.
@@ -2447,6 +2459,17 @@ const HELP_TEXT = [
 // says where.
 const NOT_ENABLED_TEXT = 'I\'m not taking your requests in messages yet. To try it, turn on Homeroom bot in '
   + 'Settings, under Experimental. Until then, post a request on a project\'s page and I\'ll answer it there.';
+// With the bot on for everyone that switch is gone (settings.js hides it, and
+// joining the list answers 409), so it is never what somebody is sent to:
+// the people the bot still does not answer then are the accounts Homeroom
+// has not let in yet (hasBot).
+const NOT_ENABLED_EVERYONE_TEXT = 'I\'m not taking requests from your account yet. I will as soon as Homeroom lets '
+  + 'your account in.';
+
+/** Pure: what somebody the bot does not answer is told, by who has it. */
+function notEnabledText(settings) {
+  return settings?.audience === 'everyone' ? NOT_ENABLED_EVERYONE_TEXT : NOT_ENABLED_TEXT;
+}
 
 /** Whether this conversation is the person's direct conversation with the bot. */
 async function isBotDirect(pool, conversationId, botId, userId) {
@@ -2647,7 +2670,7 @@ async function noteUserMessage(pool, config, { user, conversationId, message, de
   if (!hasBot(settings, user)) {
     const hour = Math.floor(Date.now() / (NOT_ENABLED_KEY_HOURS * 3600 * 1000));
     return sendDm(pool, {
-      bot, userId: user.id, replyToId: message.id, content: NOT_ENABLED_TEXT, idempotencyKey: `hrbot-notyet-${user.id}-${hour}`,
+      bot, userId: user.id, replyToId: message.id, content: notEnabledText(settings), idempotencyKey: `hrbot-notyet-${user.id}-${hour}`,
       moment: 'reply',
     });
   }
@@ -2945,6 +2968,61 @@ function promptActions(labels) {
   return labels.slice(0, 3).map((label, i) => ({ id: `ask-${i + 1}`, label, style: 'secondary', type: 'prompt' }));
 }
 
+/*
+ * What to tap where the bot's work on a request is stuck, instead of "reply
+ * here" with nothing to press. A `quote` prompt is sent as the person's own
+ * words, replying to the message, so it is about that request: on a build
+ * that did not finish it reaches the bot's chat, which starts the request
+ * again (homeroom-bot-mayor.js start_request); on a mirrored kind it is
+ * posted on the request's public discussion, which the buttons say
+ * (frontend/src/features/messages/bot-question.tsx). `reply` quotes the
+ * message in the composer for them to write the detail it asks for.
+ */
+const STUCK_ACTIONS = Object.freeze({
+  build_failed: Object.freeze([{ id: 'try_again', label: 'Try again', style: 'primary', type: 'prompt', quote: true }]),
+  blocked: Object.freeze([{ id: 'add_detail', label: 'Add detail', style: 'primary', type: 'reply' }]),
+  empty: Object.freeze([{ id: 'add_detail', label: 'Add detail', style: 'primary', type: 'reply' }]),
+  person: Object.freeze([{ id: 'go_ahead', label: 'Go ahead', style: 'primary', type: 'prompt', quote: true }]),
+});
+
+// A suggestion is something to say next, never a decision the bot waits on
+// (an offer's File it, a ready card's Approve, a plan's Build it).
+const SUGGESTION_TYPES = new Set(['prompt', 'reply']);
+
+/** Pure: whether a bot message's buttons are all suggestions. */
+function suggestsOnly(meta) {
+  const actions = Array.isArray(meta?.actions) ? meta.actions : [];
+  return actions.length > 0 && actions.every((action) => SUGGESTION_TYPES.has(action?.type));
+}
+
+/**
+ * Only the newest message's suggestions stay live. Once the bot says
+ * something new in a DM, the suggestion buttons on its older messages
+ * (suggestsOnly) close, and Messages draws a closed suggestion as nothing
+ * at all; they used to stay open until somebody typed one's exact words,
+ * far up the chat. A question's answers, an offer, a plan or a ready card
+ * keep their own lifecycle. Never throws.
+ */
+async function retireSuggestions(pool, { botId, conversationId, keepMessageId, userId = null, ws = null }) {
+  if (!botId || !conversationId || !keepMessageId) return;
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, metadata FROM conversation_messages
+        WHERE conversation_id = $1 AND sender_id = $2 AND id < $3 AND deleted_at IS NULL
+          AND metadata->'homeroomBot'->>'status' = 'open'
+          AND jsonb_typeof(metadata->'homeroomBot'->'actions') = 'array'
+        ORDER BY id DESC LIMIT 20`,
+      [conversationId, botId, keepMessageId],
+    );
+    for (const row of rows) {
+      if (!suggestsOnly(row.metadata?.[META])) continue;
+      await setQuestionState(pool, Number(row.id), { status: 'closed' }, { ws, conversationId, userId });
+    }
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not retire older suggestions', { conversationId, err: err.message });
+  }
+}
+
 /**
  * B5: claim `userId`'s one hello, as `kind` ('maker' or 'member'). True only
  * for the first claim: a second device, a retry or a later project gets
@@ -3051,8 +3129,11 @@ async function startFirstVersion(pool, config, { app, user, brief }) {
     userId: user.id,
     idempotencyKey: `hrbot-create-${app.id}`,
     // B6: the plan comes first, and the build waits for their Build it.
+    // #4097: the project's name is a line of its own, which Messages draws
+    // as the project's card (frontend/src/features/messages/bot-head-card.tsx);
+    // with the hello, after it.
     content: hello
-      ? `${MAKER_HELLO}\n\nI'm setting up **${name}** now. Once it's ready I'll send you my plan here first, `
+      ? `${MAKER_HELLO}\n\n**${name}**\n\nI'm setting up ${name} now. Once it's ready I'll send you my plan here first, `
         + `then build its first version for you to try.${off}`
       : `**${name}**\n\nThanks! I'm setting up ${name} now. Once it's ready I'll send you my plan here first, `
         + `then build its first version for you to try.${off}`,
@@ -3439,6 +3520,9 @@ module.exports = {
   MEMBER_PROMPTS,
   memberHello,
   promptActions,
+  STUCK_ACTIONS,
+  suggestsOnly,
+  retireSuggestions,
   claimHello,
   noteHelloSent,
   settlePrompt,
@@ -3454,6 +3538,8 @@ module.exports = {
   MIN_BRIEF_CHARS,
   HELP_TEXT,
   NOT_ENABLED_TEXT,
+  NOT_ENABLED_EVERYONE_TEXT,
+  notEnabledText,
   isDmUser,
   hasBot,
   isEnabledFor,

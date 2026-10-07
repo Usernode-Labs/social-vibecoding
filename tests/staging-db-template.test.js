@@ -45,7 +45,7 @@ function loadDbManager({ templateComment = null, failOn = null, maxAge = null, p
   const fakeExecFile = (cmd, args, opts = {}) => {
     const dashC = args.indexOf('-c');
     const sql = dashC >= 0 ? args[dashC + 1] : '';
-    calls.push({ cmd, args, sql, db: (opts.env || {}).PGDATABASE });
+    calls.push({ cmd, args, sql, db: (opts.env || {}).PGDATABASE, timeout: opts.timeout });
     if (timeoutOn && timeoutOn.test(sql)) return Promise.reject(new Error('Query read timeout'));
     if (failOn && failOn.test(sql)) return Promise.reject(new Error(`boom: ${sql.slice(0, 40)}`));
     if (/shobj_description/.test(sql)) {
@@ -285,6 +285,13 @@ test('one immutable prepared source feeds both evidence sides before cleanup', a
     });
     assert.equal(dbManager.isPreparedCloneSource(prepared.templateDb), true);
     assert.match(prepared.fingerprint, /^[0-9a-f]{64}$/);
+    // The copy gets the paired clones' ceiling, not psql's 30-second default.
+    const copy = calls.find((call) => call.sql.startsWith(`CREATE DATABASE ${prepared.templateDb} TEMPLATE`));
+    assert.equal(copy.timeout, 90_000);
+    assert.ok(calls.filter((call) => call.cmd === 'psql' && call !== copy).every((call) => call.timeout === 30000),
+      'every other statement keeps the default');
+    assert.ok(connections.some((connection) => connection.db === prepared.templateDb
+      && connection.config.query_timeout === 90_000));
     assert.equal(prepared.refreshedAt.length > 0, true);
     const phases = [];
     await dbManager.cloneFromPreparedSource(prepared, 'app_demo_staging_s91_aaaaaa', {

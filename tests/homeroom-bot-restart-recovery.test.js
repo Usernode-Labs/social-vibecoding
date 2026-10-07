@@ -581,7 +581,7 @@ test('restarts that are not back to back still send the build round again', asyn
 test('an issue a restart sent back is not told "looking" a second time', () => {
   const src = require('node:fs').readFileSync(require.resolve('../src/services/homeroom-bot'), 'utf8');
   assert.equal(bot.RESTART_REASON, 'restart');
-  assert.match(src, /const looked = item\.reason === RESTART_REASON \|\| item\.reason === APP_AGAIN_REASON\n\s+\|\| item\.reason === RETRY_FAILED_REASON \? null : await live\.post\(\{\n\s+pool, github, ws: liveD\.ws, app, repo, issueNumber,\n\s+kind: 'looking'/,
+  assert.match(src, /const looked = item\.reason === RESTART_REASON \|\| item\.reason === APP_AGAIN_REASON\n\s+\|\| item\.reason === RETRY_FAILED_REASON \|\| item\.reason === READ_AGAIN_REASON \? null : await live\.post\(\{\n\s+pool, github, ws: liveD\.ws, app, repo, issueNumber,\n\s+kind: 'looking'/,
     'nor is a request whose failed read is tried again (#1080)');
 });
 

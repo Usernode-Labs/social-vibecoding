@@ -87,9 +87,20 @@ class RunControl {
       this.assertOpen();
       const target = shots.shotTarget(this.intent, rawTarget);
       const info = target.media === 'webm' ? shots.inspectClip(buffer) : shots.inspectImage(buffer);
+      shots.checkElementSize(
+        this.declaredChange(target.storyId), target, info,
+        this.saved.get(shots.slotKey({ ...target, variant: 'context' })),
+      );
       this.saved.set(shots.slotKey(target), shots.stored(target, buffer, info));
       this.skipped.delete(target.storyId);
       this.failed.delete(target.storyId);
+      // The same image on the other side says the two sides were not shot
+      // in the states the claim compares. Said while the agent can still
+      // retake them, not only on the card afterwards.
+      const otherSide = target.media === 'png'
+        ? this.saved.get(shots.slotKey({ ...target, side: target.side === 'base' ? 'head' : 'base' }))
+        : null;
+      const sameAsOtherSide = !!otherSide && otherSide.sha256 === info.sha256;
       return {
         saved: true,
         change: target.storyId,
@@ -98,6 +109,13 @@ class RunControl {
         kind: target.variant === 'animation' ? 'clip' : target.variant === 'focus' ? 'element' : 'screen',
         bytes: info.bytes,
         ...(info.width ? { width: info.width, height: info.height } : {}),
+        ...(sameAsOtherSide ? {
+          sameAsOtherSide: true,
+          warning: 'This before and after are the same image, so they cannot show the change. Check that each '
+            + 'side followed the steps to the state the claim describes, at the same scroll position, and shoot '
+            + 'again. If these copies cannot show the change, call note_change to say what the shots leave out, '
+            + 'or skip_change.',
+        } : {}),
         progress: this.progress(),
       };
     } catch (error) {

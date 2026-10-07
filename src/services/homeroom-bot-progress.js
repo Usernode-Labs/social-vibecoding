@@ -1031,11 +1031,15 @@ async function progressFor(pool, { userId, settings = null, config = null, deps 
 
 /**
  * Pure: `progressFor`'s answer as a short message in plain words, for the
- * DM to send from the records alone when its model could not answer.
+ * DM to send from the records alone when its model could not answer. At
+ * most `max` pieces of work, and how many more there are: #4097, the DM
+ * sends it with a card for each one it lists (homeroom-bot-mayor.js
+ * recordsAnswer), and a piece listed with no card was a number to decode.
  */
-function progressText(progress) {
+function progressText(progress, { max = 5 } = {}) {
   const lines = [];
-  for (const item of (progress?.rightNow || []).slice(0, 5)) {
+  const rightNow = progress?.rightNow || [];
+  for (const item of rightNow.slice(0, max)) {
     const what = item.number
       ? `${item.projectName} request #${item.number}${item.title ? ` (${item.title})` : ''}`
       : `${item.projectName}, its ${String(item.title || 'first version').toLowerCase()}`;
@@ -1045,6 +1049,7 @@ function progressText(progress) {
       : '';
     lines.push(`- ${what}: ${step}${item.doing}${time}.`);
   }
+  if (lines.length && rightNow.length > max) lines.push(`- and ${rightNow.length - max} more.`);
   if (!lines.length) {
     const done = (progress?.finishedLately || [])[0];
     return done

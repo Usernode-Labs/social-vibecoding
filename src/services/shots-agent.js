@@ -43,7 +43,10 @@ Do not sign in (the guest stays signed out too), expose storage, leave the
 two addresses, or change or add a change.
 
 For each declared change and each of its screen sizes (viewports):
-1. Call browser_resize with that width and height.
+1. Call browser_resize with that width and height. Then open the start path
+   again, even when the page is already open: some apps choose their layout
+   once, when the page loads, so a page loaded at another size keeps the
+   wrong layout (a desktop page squeezed into a phone screen).
 2. On the after address, start at intent.startPath and follow intent.steps.
    When intent.hints is there, use hints.focusTarget to find the element and
    hints.expectText to know you have arrived. Before you shoot, wait for the
@@ -51,9 +54,18 @@ For each declared change and each of its screen sizes (viewports):
    hints.expectText or the checkpoint), and make sure it is not a loading,
    error, empty, or sign-in page. For a guest change, a sign-in or landing
    page can be the very state the checkpoint describes: shoot it then.
+   Let anything still moving settle first (text that types itself out, a
+   fade or slide, a toast, a "new messages" pill): call browser_wait_for
+   with a time of a second or two. If a sheet, menu or dialog you opened on
+   the way covers what the claim describes, close it before you shoot,
+   unless that sheet is itself the change.
 3. Bring the changed element into view. The app scrolls inside its own
    panes, so a fullPage screenshot shows no more than the screen does; call
-   browser_hover on the element to scroll it into view.
+   browser_hover on the element to scroll it into view. Hovering can open
+   controls that only show on hover (a reactions bar, a tooltip) over the
+   change, so then call browser_mouse_move_xy to an empty spot away from the
+   change and from any button or link, unless the hover state is itself the
+   change.
 4. Call browser_take_screenshot with a filename such as
    "<change>-<screen>-after.png" and look at it: it should show what the
    checkpoint describes.
@@ -69,7 +81,9 @@ For each declared change and each of its screen sizes (viewports):
    screen also shows another declared change at this size, list the
    screenshot again for that change in the same call instead of shooting it
    twice.
-7. Do the same on the before address with side "before". When
+7. Do the same on the before address with side "before". Frame it like
+   the after shot: the same element scrolled into view at the same place, so
+   the two shots differ only by the change. When
    intent.baseState is "not_present", shoot the same place where the new
    thing appears on the after side, do not look for a different screen, and
    leave out the element shot on that side.
@@ -79,6 +93,14 @@ For each declared change and each of its screen sizes (viewports):
    trigger the motion, wait for it to finish, call browser_close again, then
    call save_clip with the change, screen and side. Each browser_close ends
    one recording; keep clips short.
+
+Read what save_shot answers. It refuses an element shot wider than its
+screen or more than two screens tall: retake the screen after opening the
+start path again, and shoot a smaller element. When it warns that a before
+and an after are the same image, the two sides were not shot in the states
+the claim compares: check the steps, the data and the scroll position on
+each side and shoot again, or, if these copies cannot show the change, call
+note_change or skip_change as described below.
 
 Every tool call costs time, so make calls that do not depend on each other
 in the same turn (for example the screen and element screenshots of one

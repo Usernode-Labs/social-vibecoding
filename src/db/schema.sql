@@ -9724,9 +9724,11 @@ CREATE INDEX IF NOT EXISTS idx_homeroom_bot_queue_order
 -- the model made it (`determined` / `missing_fact` are the belief model's
 -- prior), the text it would have posted, whether a live cap would have
 -- suppressed it, what the run cost, and how an admin rated it. Not marked
--- staging:private: every row derives from public GitHub issues and the
--- platform's own verdicts, and a staging preview of the dashboard needs
--- rows to show.
+-- staging:private as a table: the rows derive from public GitHub issues and
+-- the platform's own verdicts, a staging preview of the dashboard needs rows
+-- to show, and homeroom_bot_posts, the mention opt-outs and bench_tasks all
+-- point at it. One of its columns is a person's own words, `plan_change`
+-- (from their DM with the bot), and that column is private (below).
 CREATE TABLE IF NOT EXISTS homeroom_bot_runs (
   id               SERIAL PRIMARY KEY,
   app_id           INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
@@ -9877,6 +9879,8 @@ CREATE INDEX IF NOT EXISTS idx_homeroom_bot_requesters_user
 -- with it ("You asked: ..."), and the bot's change credits them by it. The
 -- issue's title stays the bot's short name for it.
 ALTER TABLE homeroom_bot_requesters ADD COLUMN IF NOT EXISTS asked_text TEXT;
+-- Their own words, often from their DM with the bot: not copied to staging.
+COMMENT ON COLUMN homeroom_bot_requesters.asked_text IS 'staging:private';
 
 -- B5: the bot is introduced once per person, ever: a maker at their first
 -- project, anybody else at their first request. Claimed by inserting the
@@ -10084,6 +10088,7 @@ CREATE INDEX IF NOT EXISTS homeroom_bot_runs_live_build_waiting_idx
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS plan JSONB;
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS awaiting_go_at TIMESTAMPTZ;
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS plan_change TEXT;
+COMMENT ON COLUMN homeroom_bot_runs.plan_change IS 'staging:private';
 CREATE INDEX IF NOT EXISTS homeroom_bot_runs_awaiting_go_idx
   ON homeroom_bot_runs(awaiting_go_at) WHERE awaiting_go_at IS NOT NULL;
 
@@ -10381,6 +10386,120 @@ CREATE TABLE IF NOT EXISTS bench_trial_artifacts (
   UNIQUE (trial_id, shot_id)
 );
 COMMENT ON TABLE bench_trial_artifacts IS 'staging:private';
+
+-- The App bench studio (services/bench/studio.js): first versions built from
+-- a brief the way the create-app flow builds them, driven from an admin's
+-- connector session, with CONTEXT PACKS to vary what the bot is told and
+-- REFERENCE builds (a Claude Code session's own app from the same inputs) to
+-- compare it with.
+--
+-- A context pack is guidance text for the bot's first-version prompts and
+-- files for the new app's first commit (a theme as a skill file, say). Each
+-- save is a new version of its name; a version that a run has used is never
+-- changed (`used_at`), so a result always names exactly what the bot read.
+-- Private: it is admin-written material for a benchmark.
+CREATE TABLE IF NOT EXISTS bench_context_packs (
+  id              SERIAL PRIMARY KEY,
+  name            TEXT NOT NULL,
+  version         INTEGER NOT NULL DEFAULT 1,
+  parent_id       INTEGER REFERENCES bench_context_packs(id) ON DELETE SET NULL,
+  guidance        TEXT NOT NULL DEFAULT '',
+  stage_guidance  JSONB NOT NULL DEFAULT '{}',
+  files           JSONB NOT NULL DEFAULT '[]',
+  notes           TEXT,
+  sha256          VARCHAR(64) NOT NULL CHECK (sha256 ~ '^[0-9a-f]{64}$'),
+  created_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  used_at         TIMESTAMPTZ,
+  UNIQUE (name, version)
+);
+COMMENT ON TABLE bench_context_packs IS 'staging:private';
+
+-- A run is `suite` (the launcher's: every task of a suite at its stages) or
+-- `studio` (the studio's: some briefs, on some models, with some packs).
+-- `context_pack_ids` are the packs its arms were given; 0 stands for none.
+ALTER TABLE bench_runs ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'suite';
+ALTER TABLE bench_runs ADD COLUMN IF NOT EXISTS context_pack_ids INTEGER[] NOT NULL DEFAULT '{}';
+ALTER TABLE bench_runs ADD COLUMN IF NOT EXISTS references_per_brief INTEGER NOT NULL DEFAULT 0;
+
+-- A trial's pack (none for every trial before the studio), its reference
+-- label when it is a reference build handed in from outside (its `model` is
+-- then `reference:<label>`), the commit a reference is captured at, what it
+-- is doing right now (its step, its last few activity lines and the skills
+-- it invoked, for the studio's watch), and when an admin kept its branch
+-- past the sweep.
+ALTER TABLE bench_trials ADD COLUMN IF NOT EXISTS context_pack_id INTEGER REFERENCES bench_context_packs(id) ON DELETE SET NULL;
+ALTER TABLE bench_trials ADD COLUMN IF NOT EXISTS reference_label TEXT;
+ALTER TABLE bench_trials ADD COLUMN IF NOT EXISTS capture_sha TEXT;
+ALTER TABLE bench_trials ADD COLUMN IF NOT EXISTS progress JSONB;
+ALTER TABLE bench_trials ADD COLUMN IF NOT EXISTS kept_at TIMESTAMPTZ;
+-- One trial per task, model, PACK and attempt: the same model with and
+-- without a pack are two arms of one run.
+ALTER TABLE bench_trials DROP CONSTRAINT IF EXISTS bench_trials_run_id_task_id_model_attempt_key;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bench_trials_arm_attempt
+  ON bench_trials(run_id, task_id, model, COALESCE(context_pack_id, 0), attempt);
+-- `awaiting`: a reference build's trial while its branch is copied in; the
+-- lane never claims it. Widening a CHECK never rejects a row already stored.
+DO $$
+BEGIN
+  ALTER TABLE bench_trials DROP CONSTRAINT IF EXISTS bench_trials_status_check;
+  ALTER TABLE bench_trials ADD CONSTRAINT bench_trials_status_check
+    CHECK (status IN ('pending', 'running', 'ok', 'model_fail', 'infra_fail', 'timeout',
+                      'not_applicable', 'skipped_cap', 'cancelled', 'awaiting'));
+END $$;
+
+-- The first commit a brief's builds start from, made once per run, task and
+-- pack: today's starter rendered for the app's name, its sketch card, and the
+-- pack's files, as a commit with no history on `bench/r<run>-s<id>`. Every
+-- arm of the run and every reference built for it start from this same
+-- commit, so they are given exactly the same tree. `making` is claimed by
+-- one trial; the others wait for `ready`.
+CREATE TABLE IF NOT EXISTS bench_scaffolds (
+  id                SERIAL PRIMARY KEY,
+  run_id            INTEGER NOT NULL REFERENCES bench_runs(id) ON DELETE CASCADE,
+  task_id           INTEGER NOT NULL REFERENCES bench_tasks(id) ON DELETE CASCADE,
+  context_pack_id   INTEGER REFERENCES bench_context_packs(id) ON DELETE SET NULL,
+  status            TEXT NOT NULL DEFAULT 'making',
+  sha               TEXT,
+  branch            TEXT,
+  sketch            JSONB,
+  error             TEXT,
+  claimed_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ready_at          TIMESTAMPTZ,
+  branch_deleted_at TIMESTAMPTZ,
+  CONSTRAINT bench_scaffolds_status_check CHECK (status IN ('making', 'ready', 'failed'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bench_scaffolds_arm
+  ON bench_scaffolds(run_id, task_id, COALESCE(context_pack_id, 0));
+COMMENT ON TABLE bench_scaffolds IS 'staging:private';
+
+-- The studio's one host app: a private project the benchmark user made
+-- through the ordinary create path, whose repository carries every studio
+-- branch and whose own database is empty, so a preview of a studio build
+-- starts from a fresh database and never from anybody's data.
+CREATE TABLE IF NOT EXISTS bench_studio_hosts (
+  key         TEXT PRIMARY KEY,
+  app_id      INTEGER REFERENCES apps(id) ON DELETE SET NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE bench_studio_hosts IS 'staging:private';
+
+-- A studio build put up as a preview for a day: the session the preview is
+-- built on, and when it is taken down.
+CREATE TABLE IF NOT EXISTS bench_previews (
+  id            SERIAL PRIMARY KEY,
+  trial_id      INTEGER NOT NULL REFERENCES bench_trials(id) ON DELETE CASCADE,
+  session_id    INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL,
+  status        TEXT NOT NULL DEFAULT 'building',
+  error         TEXT,
+  requested_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at    TIMESTAMPTZ NOT NULL,
+  ended_at      TIMESTAMPTZ,
+  CONSTRAINT bench_previews_status_check CHECK (status IN ('building', 'live', 'failed', 'ended'))
+);
+CREATE INDEX IF NOT EXISTS idx_bench_previews_open ON bench_previews(expires_at) WHERE status IN ('building', 'live');
+COMMENT ON TABLE bench_previews IS 'staging:private';
 
 -- #3624 stage 2: the bot's DM is read by a model (homeroom-bot-mayor.js).
 -- One row per answer it wrote: what it cost (counted in the person's weekly
