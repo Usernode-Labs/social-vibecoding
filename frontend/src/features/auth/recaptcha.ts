@@ -14,8 +14,10 @@
  * it through (public/sw.js, 'bypass').
  *
  * The badge is not shown (`badge: 'inline'` in a see-through box); the
- * sheet carries the notice Google asks for in its place (RECAPTCHA_NOTICE).
- * A challenge, when Google wants one, draws over the page on its own.
+ * notice Google asks for in its place (RECAPTCHA_NOTICE) is part of
+ * TermsNotice (./waitlist-shared.tsx) on the sign-in sheet, and
+ * RecaptchaNotice (./sign-in-sheet.tsx) on add-phone. A challenge, when
+ * Google wants one, draws over the page on its own.
  *
  * Never throws: anything that goes wrong is a null token, the request goes
  * without one, and the server answers recaptcha_required, which the sheet

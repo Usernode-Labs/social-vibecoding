@@ -10,6 +10,7 @@
  */
 
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
+import { RECAPTCHA_NOTICE } from './recaptcha';
 
 /**
  * The survey field, in ONE spelling for both screens (#2437).
@@ -394,23 +395,30 @@ export function useSurveyAnswered(token: string | null): boolean {
 }
 
 /**
- * "By continuing, you agree to Homeroom's terms." under the sign-in screens'
- * main button (./sign-in-sheet.tsx, ./login.tsx). Continuing past it is the
- * acceptance the first-run terms gate records
- * (../settings/terms-first-run.js), so nothing asks again after sign-in.
- * The link arrives with the options; until then, and when there is none,
- * the line names the terms without one, which is also what the prerender
- * draws.
+ * "By continuing, you agree to Homeroom's terms and Google's Privacy Policy
+ * and Terms of Service (reCAPTCHA)." under the sign-in screens' main button
+ * (./sign-in-sheet.tsx, ./login.tsx). Continuing past it is the acceptance
+ * the first-run terms gate records (../settings/terms-first-run.js), so
+ * nothing asks again after sign-in. The link arrives with the options; until
+ * then, and when there is none, the line names the terms without one, which
+ * is also what the prerender draws. Google's part is the notice Google asks
+ * for where its reCAPTCHA badge is not shown (./recaptcha.ts), folded in
+ * here so it stays visible on every step.
  */
 export function TermsNotice({ verb = 'continuing', className = '' }: { verb?: string; className?: string }) {
   const link = useWaitlistOptions()?.terms_link || null;
+  const n = RECAPTCHA_NOTICE;
   return (
-    <p className={`text-center text-[13px] text-zinc-500 dark:text-zinc-400 ${className}`}>
+    <p data-terms-recaptcha="" className={`text-center text-[13px] text-zinc-500 dark:text-zinc-400 ${className}`}>
       {`By ${verb}, you agree to Homeroom's `}
       {link ? (
         <a href={link} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-zinc-700 dark:hover:text-zinc-200">terms</a>
       ) : 'terms'}
-      .
+      {` and Google’s `}
+      <a href={n.privacy.href} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-zinc-700 dark:hover:text-zinc-200">{n.privacy.label}</a>
+      {n.and}
+      <a href={n.terms.href} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-zinc-700 dark:hover:text-zinc-200">{n.terms.label}</a>
+      {' (reCAPTCHA).'}
     </p>
   );
 }

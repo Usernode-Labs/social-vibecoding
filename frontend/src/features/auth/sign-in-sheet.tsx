@@ -407,7 +407,7 @@ export type SignInSheetProps = {
   open: boolean;
   /** "Join Sunday Run Club" */
   title: string;
-  /** The line under the title on the first step. */
+  /** The line under the title on the first step. An empty string draws no line. */
   intro: string;
   /** This sign-in is the Join pressed on an invite's page. */
   followInvite?: boolean;
@@ -1012,7 +1012,7 @@ export function SignInSheet({
             <XIcon className="h-4 w-4" aria-hidden="true" />
           </button>
         </div>
-        <p className="mt-1 text-[15px] leading-snug text-zinc-500 dark:text-zinc-400">{sub}</p>
+        {sub ? <p className="mt-1 text-[15px] leading-snug text-zinc-500 dark:text-zinc-400">{sub}</p> : null}
 
         {step === 'choose' ? (
           <div className="mt-5 flex flex-col gap-2.5">
@@ -1073,10 +1073,6 @@ export function SignInSheet({
               </div>
             </div>
             <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Sending code…' : 'Text me a code'}</button>
-            <p className="text-center text-[13px] text-zinc-500 dark:text-zinc-400">
-              {askName ? 'Only this group sees your name, never your number.' : 'Nobody sees your number.'}
-            </p>
-            <RecaptchaNotice />
           </form>
         ) : null}
 

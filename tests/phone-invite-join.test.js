@@ -56,7 +56,7 @@ test('every way a link is followed asks for the phone while phone sign-in is off
 test('the invite\'s Join sheet starts with a phone number when the server offers it', () => {
   const { SignInSheet, phoneE164 } = loadTsx(SHEET);
   const render = (props) => renderToHtml(createElement(SignInSheet, {
-    open: true, title: 'Join Best brunch spots', intro: 'Just your name and phone number. No app, no password.',
+    open: true, title: 'Join Best brunch spots', intro: '',
     from: 'invite', followInvite: true, onClose() {}, primaryClass: 'pill', ...props,
   }));
   const phone = render({ phone: true, providers: ['apple', 'google'] });
@@ -64,20 +64,25 @@ test('the invite\'s Join sheet starts with a phone number when the server offers
   assert.match(phone, /<label for="sign-in-sheet-name"[^>]*>Your name<\/label>/);
   assert.match(phone, /<label for="sign-in-sheet-phone"[^>]*>Phone number<\/label>/);
   assert.ok(phone.indexOf('sign-in-sheet-name') < phone.indexOf('sign-in-sheet-phone"'), 'the name first, as the canvas draws it');
-  assert.match(phone, /Only this group sees your name, never your number\./);
+  assert.doesNotMatch(phone, /Only this group sees your name, never your number\./);
   assert.doesNotMatch(phone, /username/i, 'no username is asked for');
   assert.match(phone, /id="sign-in-sheet-phone"[^>]*type="tel"[^>]*autoComplete="tel"|id="sign-in-sheet-phone"[^>]*type="tel"/);
   assert.match(phone, />Text me a code</);
-  assert.match(phone, /Just your name and phone number\. No app, no password\./);
+  assert.doesNotMatch(phone, /No app, no password|mt-1 text-\[15px\]/, 'no subtitle under the title');
   assert.match(phone, /Already on Homeroom\? <a href="#login" data-sign-in-sheet-other-ways=""[^>]*>Sign in another way<\/a>/);
-  assert.match(phone, /data-sign-in-sheet-recaptcha=""[^>]*>This is protected by reCAPTCHA/);
+  // Google's notice lives in the fine print now, not its own line.
+  assert.doesNotMatch(phone, /data-sign-in-sheet-recaptcha|This is protected by reCAPTCHA/);
+  assert.match(phone, /data-terms-recaptcha=""/);
+  assert.match(phone, /you agree to Homeroom&#x27;s/);
   assert.match(phone, /href="https:\/\/policies\.google\.com\/privacy"/);
+  assert.match(phone, /href="https:\/\/policies\.google\.com\/terms"/);
+  assert.match(phone, /\(reCAPTCHA\)\./);
   assert.doesNotMatch(phone, /Continue with Apple|Sign in with a password|This makes your account/, 'the other ways are one tap away, not first');
   assert.doesNotMatch(phone, /—/);
   // Without the offer it is the sheet it was.
   const before = render({ phone: false, providers: [], intro: 'Sign in or make an account with your email. It takes a minute.' });
   assert.match(before, /data-sign-in-sheet="email"/);
-  assert.doesNotMatch(before, /Phone number|Your name|reCAPTCHA|Join with your phone/);
+  assert.doesNotMatch(before, /Phone number|Your name|Join with your phone|data-sign-in-sheet-recaptcha/);
 
   // The number goes as the server takes it; no country code is guessed.
   assert.equal(phoneE164('+1 (415) 555-0123'), '+14155550123');
@@ -117,7 +122,8 @@ test('Google\'s script loads only for a phone code, never with the shell', () =>
   assert.match(src, /fetch\('\/api\/auth\/phone\/recaptcha'/);
   assert.match(src, /size: 'invisible',\s+badge: 'inline',/);
   assert.doesNotMatch(read('frontend/src/head.html'), /recaptcha/i);
-  // Only the phone screens reach for it: the sheet and the waiting room's card.
+  // Only the phone screens reach for it: the sheet, the waiting room's card,
+  // and the shared terms line that carries Google's notice.
   const users = [];
   const walk = (dir) => {
     for (const entry of fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
@@ -130,6 +136,7 @@ test('Google\'s script loads only for a phone code, never with the shell', () =>
   assert.deepEqual(users.sort(), [
     path.join('frontend/src/features/auth/add-phone.tsx'),
     path.join('frontend/src/features/auth/sign-in-sheet.tsx'),
+    path.join('frontend/src/features/auth/waitlist-shared.tsx'),
   ]);
 });
 
@@ -210,15 +217,15 @@ test('a provisional handle: private groups see it, public places ask for a usern
   // A public community's invite asks no name: the username step follows the code.
   const { SignInSheet } = loadTsx(SHEET);
   const pub = renderToHtml(createElement(SignInSheet, {
-    open: true, title: 'Join Open garden', intro: 'Just your phone number and a username. No app, no password.',
+    open: true, title: 'Join Open garden', intro: '',
     from: 'invite', followInvite: true, phone: true, askName: false, onClose() {}, primaryClass: 'pill',
   }));
   assert.match(pub, /<label for="sign-in-sheet-phone"/);
   assert.doesNotMatch(pub, /sign-in-sheet-name|Your name/);
-  assert.match(pub, /Nobody sees your number\./);
+  assert.doesNotMatch(pub, /Nobody sees your number\./);
   const landing = read('frontend/src/features/auth/landing.tsx');
   assert.match(landing, /askName=\{!invite!\.project!\.public\}/);
-  assert.match(landing, /'Just your phone number and a username\. No app, no password\.'/);
+  assert.doesNotMatch(landing, /No app, no password/);
   assert.match(read('src/routes/phone-auth.js'), /const name = result\.next === 'username' && !invite\?\.public\s+\? phoneAuth\.cleanName\(req\.body\?\.name\) : null;/);
   assert.match(read('src/services/firebase-phone-auth.js'), /username_provisional_since = NOW\(\),/);
 

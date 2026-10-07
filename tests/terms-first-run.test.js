@@ -161,6 +161,12 @@ test('the sign-in screens say continuing is agreeing, linking the current terms'
   assert.match(read('frontend', 'src', 'features', 'auth', 'login.tsx'),
     /Sign in\s*\n\s*<\/Button>\s*\n\s*<TermsNotice verb="signing in" \/>/);
   assert.match(read('src', 'routes', 'public-api.js'), /terms_link: await currentTermsLink\(\),/);
+  // The notice Google asks for where its reCAPTCHA badge is hidden is part of
+  // this line, so it stays visible on the phone step (#4207).
+  assert.match(shared, /const n = RECAPTCHA_NOTICE;/);
+  assert.match(shared, /n\.privacy\.href/);
+  assert.match(shared, /n\.terms\.href/);
+  assert.match(shared, /\(reCAPTCHA\)\./);
 });
 
 test('the consent route takes an acceptance by continuing, and never lets it replace an answer', () => {
