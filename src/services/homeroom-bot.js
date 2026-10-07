@@ -2445,7 +2445,9 @@ function continuedTriagePrompt({ seed, issueNumber }) {
 /**
  * What a turn used, from the relay's per-request sum, and what that costs
  * at the turn's catalog price (#3038). Null when the relay saw no request
- * finish; `costUsd` is null when the turn had no pricing snapshot.
+ * finish; `costUsd` is null when the turn had no pricing snapshot. The
+ * relay's input counts its cache reads and writes, as the ledger's does, so
+ * those shares are priced at the snapshot's cache rates the same way.
  */
 function relaySpend(relayUsage, pricing, agentTurn) {
   const count = n => Number.isSafeInteger(n) && n >= 0 ? n : null;
@@ -2453,7 +2455,12 @@ function relaySpend(relayUsage, pricing, agentTurn) {
   if (!requests) return null;
   const inputTokens = count(relayUsage.inputTokens) ?? 0;
   const outputTokens = count(relayUsage.outputTokens) ?? 0;
-  const { estimatedCostUsd } = agentTurn.estimateRequestedModelCost({ inputTokens, outputTokens }, pricing);
+  const { estimatedCostUsd } = agentTurn.estimateRequestedModelCost({
+    inputTokens,
+    cachedInputTokens: count(relayUsage.cachedInputTokens) ?? 0,
+    cacheWriteInputTokens: count(relayUsage.cacheWriteInputTokens) ?? 0,
+    outputTokens,
+  }, pricing);
   return {
     requests, inputTokens, outputTokens,
     costUsd: Number.isFinite(estimatedCostUsd) ? estimatedCostUsd : null,

@@ -39,7 +39,29 @@ function normalizeNonNegativeInteger(v) {
   return Math.round(n);
 }
 
+// A cache price, per million tokens, or null when there is none to apply.
+function cachePricePerMillion(value) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+// What the snapshot's estimate assumes about the cached share of the prompt.
+// The last is every snapshot's wording before cache prices were recorded.
+function cachePricingAssumption(cacheRead, cacheWrite) {
+  if (cacheRead != null && cacheWrite != null) {
+    return 'cache reads and cache writes priced at their catalog cache rates';
+  }
+  if (cacheRead != null) {
+    return 'cache reads priced at the catalog cache-read rate; cache writes at ordinary prompt rate';
+  }
+  if (cacheWrite != null) {
+    return 'cache writes priced at the catalog cache-write rate; cache reads at ordinary prompt rate';
+  }
+  return 'cached input priced at ordinary prompt rate';
+}
+
 // Build the immutable pricing snapshot from the sanitized catalog model.
+// The cache prices ride along only where the catalog lists them, so a model
+// without any gets the snapshot it always did.
 function pricingSnapshotForModel(model) {
   if (!model) return null;
   const inP = model.inputPricePerMillion;
@@ -47,13 +69,17 @@ function pricingSnapshotForModel(model) {
   const okIn = inP != null && Number.isFinite(inP);
   const okOut = outP != null && Number.isFinite(outP);
   if (!okIn || !okOut || inP < 0 || outP < 0) return { available: false };
+  const cacheRead = cachePricePerMillion(model.cacheReadPricePerMillion);
+  const cacheWrite = cachePricePerMillion(model.cacheWritePricePerMillion);
   return {
     available: true,
     model: model.id || null,
     inputPricePerMillion: inP,
     outputPricePerMillion: outP,
+    ...(cacheRead != null ? { cacheReadPricePerMillion: cacheRead } : {}),
+    ...(cacheWrite != null ? { cacheWritePricePerMillion: cacheWrite } : {}),
     capturedAt: new Date().toISOString(),
-    pricingAssumption: 'cached input priced at ordinary prompt rate',
+    pricingAssumption: cachePricingAssumption(cacheRead, cacheWrite),
   };
 }
 
@@ -768,10 +794,18 @@ function computeProviderUsageDelta(current, previous) {
   };
 }
 
-// Estimate cost from per-attempt deltas. Cached input is priced at the
-// ordinary prompt rate (conservative, recorded as an assumption). Reasoning
-// output tokens are already included in outputTokens and must not be added
-// again (plan 6.7). Never label the estimate exact.
+// Estimate cost from per-attempt deltas. inputTokens is every prompt token,
+// counted the way OpenRouter bills it, with cache reads (cachedInputTokens)
+// and cache writes (cacheWriteInputTokens) a share of it: Codex reports it
+// so, and a Claude Code turn's three counts are added up to it
+// (usageTotalFromResult, streamedUsageFloor). Each share is priced at its own
+// catalog rate when the snapshot carries one, and otherwise at the ordinary
+// prompt rate, which is all a snapshot recorded before cache prices has; with
+// neither rate the figure is exactly the prompt-rate one. Neither share can
+// claim more input than there is, so the uncached remainder is never
+// negative and no token is priced twice. Reasoning output tokens are already
+// included in outputTokens and must not be added again (plan 6.7). Never
+// label the estimate exact.
 function estimateRequestedModelCost(delta, pricing) {
   const p = pricing;
   if (!p || !p.available) return { costSource: 'unavailable', estimatedCostUsd: null };
@@ -780,9 +814,17 @@ function estimateRequestedModelCost(delta, pricing) {
   if (!Number.isFinite(inP) || !Number.isFinite(outP)) {
     return { costSource: 'unavailable', estimatedCostUsd: null };
   }
-  const estimatedCostUsd =
-    ((delta.inputTokens ?? 0) / 1_000_000) * inP +
+  const readP = cachePricePerMillion(p.cacheReadPricePerMillion);
+  const writeP = cachePricePerMillion(p.cacheWritePricePerMillion);
+  const inputTokens = delta.inputTokens ?? 0;
+  const shareOf = (tokens, room) => Math.min(Math.max(Number(tokens) || 0, 0), Math.max(room, 0));
+  const cacheReadTokens = readP == null ? 0 : shareOf(delta.cachedInputTokens, inputTokens);
+  const cacheWriteTokens = writeP == null ? 0 : shareOf(delta.cacheWriteInputTokens, inputTokens - cacheReadTokens);
+  let estimatedCostUsd =
+    ((inputTokens - cacheReadTokens - cacheWriteTokens) / 1_000_000) * inP +
     ((delta.outputTokens ?? 0) / 1_000_000) * outP;
+  if (cacheReadTokens > 0) estimatedCostUsd += (cacheReadTokens / 1_000_000) * readP;
+  if (cacheWriteTokens > 0) estimatedCostUsd += (cacheWriteTokens / 1_000_000) * writeP;
   return { costSource: 'requested_model_catalog_estimate', estimatedCostUsd: Math.round(estimatedCostUsd * 1e8) / 1e8 };
 }
 
