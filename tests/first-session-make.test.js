@@ -376,6 +376,8 @@ test('the maker\'s tour ends in Homeroom bot\'s chat when it builds for them, an
   assert.deepEqual(withBot.map((s) => s.screen), ['home', 'app', 'app', 'home', 'hub', 'hub', 'bot']);
   assert.equal(withBot[5].target, '#platform-tab-messages');
   assert.equal(withBot[5].opensNext, true);
+  // Request #4183: step 6 says the bot stays in Messages, then what it builds.
+  assert.equal(withBot[5].text, 'You can always find it here. It\'s currently building Friday Film Crew.');
   assert.equal(withBot[6].last, true);
   const without = makerSteps({ slug: 'film', name: 'Friday Film Crew', conversationId: null });
   assert.deepEqual(without.map((s) => s.screen), ['home', 'app', 'app', 'home', 'hub']);
