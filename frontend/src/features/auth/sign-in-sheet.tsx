@@ -141,6 +141,7 @@ import { useKeyboardSurface } from '../../lib/keyboard-surface';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { inviteEmailFromToken, readAutoSend, writeAutoSend } from './login';
 import { NativeLoginDetailsLink } from './native-login-details';
+import { PhoneInput, readPhone } from './phone-input';
 import { phoneRecaptchaToken, RECAPTCHA_NOTICE } from './recaptcha';
 import { SessionConfirmationNotice, useSessionConfirmation } from './session-confirmation';
 import {
@@ -327,19 +328,11 @@ function prefersReducedMotion(): boolean {
   }
 }
 
-/**
- * A typed phone number as the server takes it (firebase-phone-auth.js
- * normalizePhone): `+`, the country code and the number, with spaces,
- * dashes, dots and brackets dropped. Null for anything else; no country
- * code is guessed, since a wrong guess would text somebody else.
- */
 /** A name's length on the profile (routes/profile.js MAX_DISPLAY_NAME). */
 export const PHONE_NAME_MAX = 40;
 
-export function phoneE164(raw: string): string | null {
-  const value = String(raw || '').replace(/[\s().\u2010-\u2015-]/g, '');
-  return /^\+[1-9][0-9]{1,14}$/.test(value) ? value : null;
-}
+// The "+…" number as the server takes it, now kept with the shared field.
+export { phoneE164 } from './phone-input';
 
 /**
  * The line over "Sign in with a password", for the screen that opened the
@@ -723,10 +716,10 @@ export function SignInSheet({
   }, [email, followInvite, finish]);
 
   // The phone's code (`phone`): a reCAPTCHA token first, then the text.
-  const requestPhoneCode = useCallback(async (raw: string) => {
+  // `value` is the E.164 number the field built (./phone-input.tsx), or one
+  // sent before, for the code step's resend.
+  const requestPhoneCode = useCallback(async (value: string) => {
     setError(null);
-    const value = phoneE164(raw);
-    if (!value) { setError('Enter your number with its country code, like +1 415 555 0123.'); return; }
     if (blockedOffline(setError)) return;
     setBusy(true);
     try {
@@ -766,14 +759,21 @@ export function SignInSheet({
   }, [phoneNumber]);
 
   // The phone step: a name for the group, then the number's code.
-  const submitPhoneStep = useCallback(() => {
+  const submitPhoneStep = useCallback(async () => {
     setError(null);
-    if (!askName) { phoneName.current = ''; void requestPhoneCode(phoneField.current?.value || ''); return; }
+    const read = await readPhone(phoneField.current);
+    if (!askName) {
+      phoneName.current = '';
+      if (!read.ok) { setError(read.error); return; }
+      void requestPhoneCode(read.e164);
+      return;
+    }
     const name = (nameField.current?.value || '').replace(/\s+/g, ' ').trim();
     if (!name) { setError('Enter your name.'); nameField.current?.focus({ preventScroll: true }); return; }
     if (name.length > PHONE_NAME_MAX) { setError(`Your name can be up to ${PHONE_NAME_MAX} characters.`); return; }
     phoneName.current = name;
-    void requestPhoneCode(phoneField.current?.value || '');
+    if (!read.ok) { setError(read.error); return; }
+    void requestPhoneCode(read.e164);
   }, [askName, requestPhoneCode]);
 
   const verifyPhone = useCallback(async () => {
@@ -1059,7 +1059,7 @@ export function SignInSheet({
         ) : null}
 
         {step === 'phone' ? (
-          <form className="mt-5 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); submitPhoneStep(); }}>
+          <form className="mt-5 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void submitPhoneStep(); }}>
             <div className={FIELD_GROUP}>
               {askName ? (
                 <div className={FIELD}>
@@ -1069,7 +1069,7 @@ export function SignInSheet({
               ) : null}
               <div className={FIELD}>
                 <label htmlFor="sign-in-sheet-phone" className={LABEL}>Phone number</label>
-                <input ref={phoneField} id="sign-in-sheet-phone" type="tel" autoComplete="tel" inputMode="tel" enterKeyHint="go" defaultValue={phoneNumber} placeholder="+1 415 555 0123" className={INPUT} />
+                <PhoneInput inputRef={phoneField} id="sign-in-sheet-phone" defaultValue={phoneNumber} />
               </div>
             </div>
             <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Sending code…' : 'Text me a code'}</button>
