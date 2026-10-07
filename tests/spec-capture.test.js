@@ -106,13 +106,40 @@ test('trial 1246: the last message alone is a fragment, never kept as the spec',
   const read = live.readSpec(PART_2);
   assert.equal(read.ok, false);
   assert.equal(read.fragment, true);
-  assert.match(read.error, /only part of a spec \(no "# " title and no <article data-spec>\), so it was not kept/);
+  assert.match(read.error, /only part of a spec \(no "# " title, no <article data-spec> and neither half's "##" heading\), so it was not kept/);
   assert.equal(read.specMd, undefined);
   // A markdown message with no title is a fragment too; BLOCKED and an empty
   // message keep their own answers.
   assert.equal(live.readSpec('- the end of a list\n- and its last item').fragment, true);
   assert.deepEqual(live.readSpec('BLOCKED: no such screen'), { ok: false, blocked: 'no such screen', error: 'blocked: no such screen' });
   assert.deepEqual(live.readSpec('  '), { ok: false, error: 'the spec turn returned nothing' });
+});
+
+test('a whole spec that only lacks its "# " title is kept as it always was', () => {
+  // Both halves, no H1: a model that starts at "## User-facing changes".
+  const halves = '## User-facing changes\n\nA timeline per session.\n\n### Assumptions\n\n- Times are local.\n\n## Technical implementation\n\nIn `server.js`.';
+  assert.deepEqual(live.readSpec(halves), { ok: true, specMd: halves });
+  // One that starts there, with narration before it, as before.
+  const userOnly = '## User-facing changes\n\nA timeline per session.';
+  assert.deepEqual(live.readSpec(userOnly), { ok: true, specMd: userOnly });
+  assert.equal(live.readSpec('Writing it now.\n\n## Technical implementation\n\nIn `server.js`.').ok, true);
+  // And the 1246 tail, with no title, no article and no heading, is still a fragment.
+  assert.equal(live.specShaped(PART_2), false);
+  assert.equal(live.readSpec(PART_2).fragment, true);
+  assert.equal(live.specShaped(halves), true);
+  assert.equal(live.specShaped(`# Title\n\nx`), true);
+  assert.equal(live.specShaped('<article data-spec><h1>T</h1></article>'), true);
+});
+
+test('a titleless spec in pieces is rejoined from its "## User-facing changes" half, never from its technical half', () => {
+  const head = 'All read. Writing the spec now.';
+  const userHalf = '## User-facing changes\n\nA timeline per session.\n\n## Technical implementation\n\n- One table, `sessions`.\n- One rou';
+  const tail = '- One route, `GET /api/sessions`, cut and written again.\n- Tests in `tests/sessions.test.js`.';
+  const read = live.readSpec(tail, { parts: [head, userHalf, tail] });
+  assert.equal(read.ok, true);
+  assert.equal(read.joined, true);
+  assert.match(read.specMd, /^## User-facing changes\n/, 'the narration before it is not part of it');
+  assert.match(read.specMd, /`GET \/api\/sessions`, cut and written again/);
 });
 
 test('trial 1246: the answer is put back together from its messages, the cut item written once', () => {

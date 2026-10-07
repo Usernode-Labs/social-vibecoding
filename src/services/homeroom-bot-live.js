@@ -1779,6 +1779,9 @@ function recipeSpecEffort(model) {
  * from its parts and read instead. A fragment is never kept as the spec:
  * with no whole answer to read, the capture fails with `fragment: true`,
  * and the build goes on from the plan with that reason as its specNote.
+ * Anything a spec would start with or hold counts as whole (specShaped): a
+ * spec that begins at its "## User-facing changes" half, missing only its
+ * title, is kept as it always was.
  */
 function readSpec(text, { parts = null } = {}) {
   const first = readSpecText(text);
@@ -1789,16 +1792,36 @@ function readSpec(text, { parts = null } = {}) {
   return again.ok ? { ...again, joined: true } : first;
 }
 
-// A piece of an answer that starts the spec document: its "# " title near
-// the top, or its <article data-spec>.
-function opensSpec(piece) {
-  if (specHtml.isHtmlSpec(piece)) return true;
-  const lines = String(piece || '').split('\n');
-  const at = lines.findIndex((l) => /^# \S/.test(l));
-  return at >= 0 && at <= 40;
+// The two halves every spec has (specPrompt), as their H2 headings.
+const USER_HALF_RE = /^##[ \t]+user[- ]facing changes\b/im;
+const TECH_HALF_RE = /^##[ \t]+technical implementation\b/im;
+
+// Within its first 40 lines, as specFromTitle looks for a title.
+function nearTop(text, re) {
+  return re.test(String(text || '').split('\n').slice(0, 41).join('\n'));
 }
 
-const FRAGMENT_ERROR = 'the spec turn\'s final message was only part of a spec (no "# " title and no <article data-spec>), so it was not kept';
+/**
+ * Whether a capture reads as a spec rather than a fragment of one: a "# "
+ * title in its first 40 lines, an <article data-spec>, or either of the two
+ * halves' headings. The end of an HTML answer cut at the output limit
+ * (trial 1246: list items, "</section>", "</article>") has none of them; a
+ * markdown spec that starts at "## User-facing changes" has. Pure.
+ */
+function specShaped(text, { isHtml = false } = {}) {
+  return isHtml || specHtml.isHtmlSpec(text) || nearTop(text, /^# \S/m)
+    || USER_HALF_RE.test(String(text || '')) || TECH_HALF_RE.test(String(text || ''));
+}
+
+// A piece of an answer that starts the spec document: its "# " title near
+// the top, its <article data-spec>, or, for a spec with no title, its
+// "## User-facing changes" half near the top. The technical half is never
+// where a spec starts, so a piece holding only that does not open one.
+function opensSpec(piece) {
+  return specHtml.isHtmlSpec(piece) || nearTop(piece, /^# \S/m) || nearTop(piece, USER_HALF_RE);
+}
+
+const FRAGMENT_ERROR = 'the spec turn\'s final message was only part of a spec (no "# " title, no <article data-spec> and neither half\'s "##" heading), so it was not kept';
 
 function readSpecText(text) {
   // #3699: an HTML spec reads as its markdown copy, the shape everything
@@ -1815,7 +1838,7 @@ function readSpecText(text) {
   // A run that died on the wire can report the failure as its final message,
   // which would otherwise be stored as the spec.
   if (agentApiFailure(specMd)) return { ok: false, error: 'the spec turn ended on an API error' };
-  if (!captured.html && !specHtml.isHtmlSpec(raw) && !/^# \S/.test(specMd)) {
+  if (!specShaped(specMd, { isHtml: !!captured.html || specHtml.isHtmlSpec(raw) })) {
     return { ok: false, fragment: true, error: FRAGMENT_ERROR };
   }
   // The spec is read by the group (its card, its GitHub comment) and its
@@ -2508,5 +2531,6 @@ module.exports = {
   postSpecOnProposal,
   SPEC_TURN_MAX_MS,
   readSpec,
+  specShaped,
   MAX_SPEC_COMMENT_CHARS,
 };
