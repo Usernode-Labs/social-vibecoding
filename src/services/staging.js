@@ -112,7 +112,11 @@ function inFlightBuildSessionIds() {
 // the trade the spec picks on purpose.
 function previewDisplayState(row) {
   const missing = !row.staging_url;
-  const stagingBuilding = !!(missing && hasInFlightBuild(row.id));
+  // With WF_PREVIEWS_ENABLED on, "building" is the row's own phase, written
+  // by the preview machine: every Pod sees it, and it survives a restart.
+  const machineBuilding = row.check_state === 'pending' && row.check_phase === 'building'
+    && require('./preview-workflow').enabled();
+  const stagingBuilding = !!(missing && (hasInFlightBuild(row.id) || machineBuilding));
   const stagingError = (missing && row.check_state === 'error' && row.check_error_detail)
     ? row.check_error_detail
     : null;

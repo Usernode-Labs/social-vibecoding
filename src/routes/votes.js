@@ -92,6 +92,8 @@ function strandedPendingChecks(session, {
   activeWorkers = require('../services/active-workers'),
 } = {}) {
   if (session?.check_state !== 'pending' || session.check_phase === 'deferred') return false;
+  // The preview machine's 'pending' always has its work outstanding.
+  if (require('../services/preview-workflow').enabled()) return false;
   const id = Number(session.id);
   return !visuals.hasInFlightCapture(id)
     && !activeWorkers.hasSessionOperation(id)

@@ -34,6 +34,11 @@ function checkRunOverdue(session, { now = Date.now(), staleMs = checksStaleMs() 
   // (services/check-admission.js): no run is overdue because none was
   // started, and re-driving one would only defer it again.
   if (session?.check_phase === 'deferred') return false;
+  // With WF_PREVIEWS_ENABLED on, 'pending' means the preview machine has a
+  // build or run outstanding, alive while its work lease is: nothing is
+  // overdue by clock (bug 9). A row it never touched is enrolled by the
+  // stuck-checks sweep, which still judges by clock.
+  if (session?.check_state === 'pending' && require('./preview-workflow').enabled()) return false;
   if (!(session?.checks_commit_sha || session?.handoff_head_sha)) return false;
   const checkedAt = session?.checks_checked_at == null
     ? NaN

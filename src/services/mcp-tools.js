@@ -1402,7 +1402,11 @@ function shapeProposal(session, origin) {
     // previous run.
     pendingWrite: {
       buildInFlight: (() => {
-        try { return !!require('./staging').hasInFlightBuild(session.id); } catch { return null; }
+        try {
+          // With WF_PREVIEWS_ENABLED on, the preview machine's phase says it.
+          return !!require('./staging').hasInFlightBuild(session.id)
+            || (require('./preview-workflow').enabled() && session.check_state === 'pending' && session.check_phase === 'building');
+        } catch { return null; }
       })(),
     },
     externalAgent: session.external_agent || null,
