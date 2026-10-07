@@ -37,7 +37,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
-import { CheckIcon, PlusIcon, UserGroupIcon } from '@/components/ui/icons';
+import { CheckIcon, PlusIcon, SearchIcon, UserGroupIcon } from '@/components/ui/icons';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
@@ -234,6 +234,9 @@ export function SwitcherBody(): ReactNode {
             current={st.slug}
           />
         ))}
+        {/* #3543: two ways out, not one. "Join or start a community" went
+            to Discover, where there is nothing to start; Start opens the
+            new-project dialog, which asks who it is for first. */}
         <button
           type="button"
           className="community-switcher-row"
@@ -241,10 +244,23 @@ export function SwitcherBody(): ReactNode {
           onClick={() => { closeSwitcher(); window.location.hash = '#apps'; }}
         >
           <span className="community-switcher-tile community-switcher-tile-add" aria-hidden="true">
+            <SearchIcon className="w-5 h-5" />
+          </span>
+          <span className="community-switcher-text">
+            <span className="community-switcher-name">Join a community</span>
+          </span>
+        </button>
+        <button
+          type="button"
+          className="community-switcher-row"
+          data-switcher-start=""
+          onClick={() => { closeSwitcher(); (window as any).App?.showCreateModal?.(); }}
+        >
+          <span className="community-switcher-tile community-switcher-tile-add" aria-hidden="true">
             <PlusIcon className="w-5 h-5" />
           </span>
           <span className="community-switcher-text">
-            <span className="community-switcher-name">Join or start a community</span>
+            <span className="community-switcher-name">Start a community</span>
           </span>
         </button>
       </div>
