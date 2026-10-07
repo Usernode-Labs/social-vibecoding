@@ -488,7 +488,8 @@ function draw(props) {
 
 test('a card going: its step as a ring and in words, what it is doing, how long so far, and its request', () => {
   const html = draw({ card: working() });
-  assert.match(html, /^<div class="[^"]*rounded-2xl[^"]*" role="group" aria-label="Homeroom bot activity: Ear Trainer #12: Sort by date" data-bot-activity="working">/);
+  assert.match(html, /^<div class="[^"]*rounded-2xl[^"]*" role="group" aria-label="Homeroom bot activity: Ear Trainer #12: Sort by date" data-bot-activity="working" data-bot-activity-request="ear-trainer#12">/,
+    '#4241: naming its request, for a #N chip to find');
   assert.match(html, /<svg [^>]*role="img" aria-label="Step 3 of 6: Build it"[ >]/);
   assert.match(html, />3\/6<\/text>/);
   assert.match(html, /stroke-dasharray="47\.125 94\.25"/, 'half the ring: step 3 of 6');

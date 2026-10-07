@@ -1,7 +1,8 @@
-import { useMemo, type MouseEvent } from 'react';
+import { useMemo, useState, type MouseEvent } from 'react';
 
 import { messageStamp } from '../../lib/timestamp';
 import { decorateRefs } from './channels';
+import { findRequestCard, RefCards, revealCard } from './ref-cards';
 import type { ConversationUser, SharedObjectCard } from './types';
 
 const NO_CHANNELS: ReadonlySet<string> = new Set();
@@ -60,11 +61,29 @@ export function MessageMarkdown({ content, channels, appSlug }: { content: strin
   // `{ __html }` tore down and rebuilt every message body on every render of
   // its row, even with identical text (board-frame.tsx documents the same).
   const inner = useMemo(() => ({ __html: html }), [html]);
+  // #4241: the requests this message's chips opened in place (./ref-cards.tsx).
+  const [opened, setOpened] = useState<readonly number[]>([]);
   const openRef = (event: MouseEvent<HTMLDivElement>) => {
-    const href = (event.target as Element | null)?.closest?.('a.gc-ref[href]')?.getAttribute('href');
-    if (href) recordObjectOrigin(event, href);
+    const chip = (event.target as Element | null)?.closest?.('a.gc-ref[href]');
+    const href = chip?.getAttribute('href');
+    if (!chip || !href) return;
+    const n = Number(chip.getAttribute('data-ref-number'));
+    // A modified click (a new tab) is the browser's, as NavLink.isNativeClick says.
+    const native = event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
+    if (appSlug && chip.matches('.gc-ref-issue') && Number.isInteger(n) && n > 0 && !native) {
+      // A chip goes to its request's card nearby, else opens one under the
+      // message, and folds that away on a second tap.
+      event.preventDefault();
+      if (opened.includes(n)) { setOpened((list) => list.filter((x) => x !== n)); return; }
+      const card = findRequestCard(chip, appSlug, n);
+      if (card) revealCard(card);
+      else setOpened((list) => (list.includes(n) ? list : [...list, n]));
+      return;
+    }
+    recordObjectOrigin(event, href);
   };
-  return <div className="messages-markdown gc-msg-content" onClick={appSlug ? openRef : undefined} dangerouslySetInnerHTML={inner} />;
+  const body = <div className="messages-markdown gc-msg-content" onClick={appSlug ? openRef : undefined} dangerouslySetInnerHTML={inner} />;
+  return appSlug && opened.length ? <>{body}<RefCards appSlug={appSlug} numbers={opened} /></> : body;
 }
 
 /**
@@ -208,6 +227,16 @@ export function recordObjectOrigin(event: MouseEvent<Element>, href: string, inb
   else if (/\/dev\/(?:issues|proposals|governance)\//.test(href)) w.Improve?.enterTopicFrom?.(origin);
 }
 
+/**
+ * #4212: what a card says it is. A request names its number ("Request #51"),
+ * as the bot's words and its activity card's link do, so "RecipeBot #51" in
+ * the text is plainly the card under it.
+ */
+export function objectEyebrow(object: Pick<SharedObjectCard, 'type' | 'issueNumber'>): string {
+  if (object.type === 'issue' && object.issueNumber) return `Request #${object.issueNumber}`;
+  return OBJECT_LABELS[object.type];
+}
+
 export function ObjectCard({ object, compact = false, inboxOnly = false }: {
   object: SharedObjectCard;
   compact?: boolean;
@@ -226,7 +255,7 @@ export function ObjectCard({ object, compact = false, inboxOnly = false }: {
     <>
       <span className="messages-object-icon">{objectGlyph(object.type)}</span>
       <div className="min-w-0 flex-1">
-        <div className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400 font-semibold">{OBJECT_LABELS[object.type]}</div>
+        <div className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400 font-semibold">{objectEyebrow(object)}</div>
         <div className="text-base font-semibold text-zinc-900 dark:text-zinc-100 truncate">{object.title || 'Untitled'}</div>
         {!compact && (object.subtitle || object.state || object.author) ? (
           <div className="text-sm text-zinc-500 dark:text-zinc-400 truncate">
