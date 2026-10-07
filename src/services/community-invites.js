@@ -915,6 +915,10 @@ async function redeemCarried(pool, req, res, userId, { requirePhone = false } = 
     );
     if (!rows[0]) return null;
     const user = { id: rows[0].id, isAdmin: !!rows[0].is_admin, hasPlatformAccess: !!rows[0].has_platform_access };
+    // The admin Journey's invite funnel: signed up or in through this link.
+    // Recorded before following it, while they are not in it yet; never
+    // throws (journey-events.js).
+    await require('./journey-events').noteInviteSignedIn(pool, { token, userId: user.id, carried: true });
     const browser = require('./invite-activity').browserFrom(req);
     const result = await redeem(pool, { token, user, browser, requirePhone });
     if (!result.ok) return null;

@@ -1675,10 +1675,13 @@ async function creationPath(pool, { week, now = new Date(), leftOutIds = [], mem
 //         in-session aha: they wrote in its chat or filed a request within
 //         the hour.
 //
-// Opens of invite links (invite_opened, never a name) are counted beside
-// them, for how many opens become joins. Three of these are events first
-// written with this reading; before each was first recorded it is "not
-// recorded", never a zero.
+// Beside them, the invite funnel (#4176), for the same window: how many
+// people opened an invite link (invite_opened, signed in or out, never a
+// name), how many signed up or in through one (invite_signed_in), and how
+// many joined through one (community_invite_redemptions). Counts only: the
+// page works out what dropped off between them. Four of these are events
+// first written with this reading; before each was first recorded it is
+// "not recorded", never a zero.
 
 // Written into the reading as minutes and seconds; the SQL takes no window.
 const FIRST_SESSION_MINUTES = 60;
@@ -1733,16 +1736,63 @@ const FIRST_SESSION_SQL = `WITH real AS (
     JOIN apps ap ON ap.id = j.app_id
    ORDER BY intent_at, user_id`;
 
-// Opens of live invite links in [$1, $2), and when each first-session event
-// was first recorded at all.
-const FIRST_SESSION_OPENS_SQL = `SELECT
-    (SELECT COUNT(*)::int FROM events e
-      WHERE e.event_type = 'invite_opened'
-        AND e.created_at >= $1::timestamptz AND e.created_at < $2::timestamptz) AS opened,
+// When each first-session event was first recorded at all.
+const FIRST_SESSION_RECORDED_SQL = `SELECT
     (SELECT MIN(e.created_at) FROM events e
       WHERE e.event_type = 'app_created' AND e.metadata->>'from' = 'first-session') AS make,
     (SELECT MIN(e.created_at) FROM events e WHERE e.event_type = 'first_artefact_shown') AS reward,
-    (SELECT MIN(e.created_at) FROM events e WHERE e.event_type = 'invite_opened') AS opens`;
+    (SELECT MIN(e.created_at) FROM events e WHERE e.event_type = 'invite_opened') AS opens,
+    (SELECT MIN(e.created_at) FROM events e WHERE e.event_type = 'invite_signed_in') AS signed_in`;
+
+// The invite funnel in [$1, $2), counted from the first sign-in through an
+// invite when that is later: before it the middle step was not recorded,
+// and the three would not compare. A person counts once a step: an open
+// once per maker and project, a sign-in and a join once per link. An open
+// signed out has no name, so opens are counted whoever opened them,
+// leaving out only the signed-in opens of people who are not real; the
+// other two steps are real people's. $3/$4 are the real-person parameters.
+const INVITE_FUNNEL_SQL = `WITH real AS (
+    SELECT u.id FROM users u WHERE ${REAL_PERSON_SQL}
+  ), win AS (
+    SELECT s.since, GREATEST($1::timestamptz, s.since) AS from_at
+      FROM (SELECT MIN(e.created_at) AS since FROM events e WHERE e.event_type = 'invite_signed_in') s
+  )
+  SELECT w.since,
+         (SELECT COUNT(*)::int FROM events e
+           WHERE e.event_type = 'invite_opened'
+             AND e.created_at >= w.from_at AND e.created_at < $2::timestamptz
+             AND (e.user_id IS NULL OR e.user_id IN (SELECT r.id FROM real r))) AS opened,
+         (SELECT COUNT(*)::int FROM events e
+           WHERE e.event_type = 'invite_signed_in'
+             AND e.created_at >= w.from_at AND e.created_at < $2::timestamptz
+             AND e.user_id IN (SELECT r.id FROM real r)) AS signed_in,
+         (SELECT COUNT(*)::int FROM community_invite_redemptions x
+           WHERE x.status = 'joined'
+             AND COALESCE(x.applied_at, x.created_at) >= w.from_at
+             AND COALESCE(x.applied_at, x.created_at) < $2::timestamptz
+             AND x.user_id IN (SELECT r.id FROM real r)) AS joined
+    FROM win w`;
+
+/**
+ * Pure: the invite funnel for `week`, from a row of INVITE_FUNNEL_SQL:
+ * `{ from, opened, signedIn, joined }`, `from` being when its counts start.
+ * Not recorded before the first sign-in through an invite was, nor for one
+ * admit cohort (`cohort`): an open signed out names nobody, so it is in no
+ * cohort, and the funnel is everyone's or nothing.
+ */
+function inviteFunnelReading(row, { week, cohort = false } = {}) {
+  if (cohort) return notRecorded('An invite opened signed out names nobody, so the funnel is counted for everyone only.');
+  const since = row && row.since ? new Date(row.since) : null;
+  if (!since || since.getTime() >= new Date(week.end).getTime()) {
+    return notRecorded('Not recorded before sign-ins through an invite were counted.');
+  }
+  return {
+    from: new Date(Math.max(new Date(week.start).getTime(), since.getTime())).toISOString(),
+    opened: Number(row.opened || 0),
+    signedIn: Number(row.signed_in || 0),
+    joined: Number(row.joined || 0),
+  };
+}
 
 function secondsBetween(fromIso, toIso) {
   if (!fromIso || !toIso) return null;
@@ -1785,7 +1835,10 @@ function firstSessionStep(people, key, { target = null } = {}) {
   };
 }
 
-/** Pure: the reading, from rows of FIRST_SESSION_SQL and FIRST_SESSION_OPENS_SQL. */
+/**
+ * Pure: the reading, from rows of FIRST_SESSION_SQL, the invite funnel
+ * (`opens`, inviteFunnelReading) and FIRST_SESSION_RECORDED_SQL's dates.
+ */
 function firstSessionReading(rows, opens, { week, recordedFrom = {} } = {}) {
   const people = rows.map(firstSessionPerson);
   const make = people.filter((p) => p.path === 'make');
@@ -1813,25 +1866,30 @@ function firstSessionReading(rows, opens, { week, recordedFrom = {} } = {}) {
       steps: [firstSessionStep(join, 'said'), firstSessionStep(join, 'suggested')],
       aha: ahaJoin,
     },
-    opens: {
-      opened: recordedFrom.opens ? Number(opens || 0) : notRecorded('Not recorded before invite opens were counted.'),
-      joined: join.length,
+    opens: opens || notRecorded('Not recorded before sign-ins through an invite were counted.'),
+    recordedFrom: {
+      make: iso(recordedFrom.make), reward: iso(recordedFrom.reward),
+      opens: iso(recordedFrom.opens), signedIn: iso(recordedFrom.signedIn),
     },
-    recordedFrom: { make: iso(recordedFrom.make), reward: iso(recordedFrom.reward), opens: iso(recordedFrom.opens) },
     examples: [...people].reverse().slice(0, FIRST_SESSION_EXAMPLES),
   };
 }
 
-/** The first session for `week` (or all time); `memberIds` narrows to one cohort. */
+/**
+ * The first session for `week` (or all time); `memberIds` narrows to one
+ * cohort, where the invite funnel is not counted (inviteFunnelReading).
+ */
 async function firstSession(pool, { week, leftOutIds = [], memberIds = null } = {}) {
-  const [{ rows }, { rows: [rec] }] = await Promise.all([
+  const [{ rows }, { rows: [rec] }, { rows: [funnel] }] = await Promise.all([
     pool.query(FIRST_SESSION_SQL, [week.start, week.end, ...realPersonParams(leftOutIds)]),
-    pool.query(FIRST_SESSION_OPENS_SQL, [week.start, week.end]),
+    pool.query(FIRST_SESSION_RECORDED_SQL),
+    memberIds ? { rows: [] } : pool.query(INVITE_FUNNEL_SQL, [week.start, week.end, ...realPersonParams(leftOutIds)]),
   ]);
   const mine = rows.filter((row) => !memberIds || memberIds.has(Number(row.user_id)));
   const r = rec || {};
-  return firstSessionReading(mine, r.opened, {
-    week, recordedFrom: { make: r.make || null, reward: r.reward || null, opens: r.opens || null },
+  return firstSessionReading(mine, inviteFunnelReading(funnel, { week, cohort: !!memberIds }), {
+    week,
+    recordedFrom: { make: r.make || null, reward: r.reward || null, opens: r.opens || null, signedIn: r.signed_in || null },
   });
 }
 
@@ -2051,7 +2109,8 @@ module.exports = {
   CREATION_STEPS,
   CREATION_TARGETS,
   FIRST_SESSION_SQL,
-  FIRST_SESSION_OPENS_SQL,
+  FIRST_SESSION_RECORDED_SQL,
+  INVITE_FUNNEL_SQL,
   FIRST_SESSION_MINUTES,
   FIRST_REWARD_TARGET,
   PAIRS_SQL,
@@ -2109,6 +2168,7 @@ module.exports = {
   firstMile,
   firstSession,
   firstSessionReading,
+  inviteFunnelReading,
   firstMileCounts,
   firstMileSteps,
   groupLifecycle,
