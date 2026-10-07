@@ -198,25 +198,33 @@ function identityToolkitError(data, status) {
   return new PhoneAuthError('firebase_unreachable', 'Could not reach the sign-in service. Try again.', 502);
 }
 
+// The bare POST: { ok, status, data }, throwing only when no answer came
+// back at all. identityToolkit below maps a refusal to this API's codes;
+// the admin test send (sendTestCode) reads Firebase's own code instead.
+async function identityToolkitRaw(config, path, body, deps = {}) {
+  const res = await (deps.fetch || fetch)(
+    `${IDENTITY_ENDPOINT}/${path}?key=${encodeURIComponent(config.firebaseWebApiKey)}`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
+    }
+  );
+  const data = await res.json().catch(() => ({}));
+  return { ok: res.ok, status: res.status, data };
+}
+
 async function identityToolkit(config, path, body, deps = {}) {
-  let res;
+  let answer;
   try {
-    res = await (deps.fetch || fetch)(
-      `${IDENTITY_ENDPOINT}/${path}?key=${encodeURIComponent(config.firebaseWebApiKey)}`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', accept: 'application/json' },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
-      }
-    );
+    answer = await identityToolkitRaw(config, path, body, deps);
   } catch (err) {
     log.warn('phone-auth', 'Identity Toolkit unreachable', { path, err: err.message });
     throw new PhoneAuthError('firebase_unreachable', 'Could not reach the sign-in service. Try again.', 502);
   }
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw identityToolkitError(data, res.status);
-  return data;
+  if (!answer.ok) throw identityToolkitError(answer.data, answer.status);
+  return answer.data;
 }
 
 /**
@@ -242,6 +250,61 @@ async function requestCode(config, rawPhone, recaptchaToken, deps = {}) {
     throw new PhoneAuthError('firebase_unreachable', 'Could not reach the sign-in service. Try again.', 502);
   }
   return { phoneNumber, sessionInfo: data.sessionInfo };
+}
+
+// Firebase's code for a refusal, the part before ' : '. Only ever the
+// upper-case code itself: the free-text detail after it is dropped, and
+// anything that does not look like a code is not echoed back.
+function providerCodeOf(data) {
+  const raw = typeof data?.error?.message === 'string' ? data.error.message : '';
+  const code = raw.split(':')[0].trim();
+  return /^[A-Z][A-Z0-9_]{0,63}$/.test(code) ? code : null;
+}
+
+/**
+ * Admin → SMS delivery's test send (routes/admin.js POST /api/admin/sms/test):
+ * the same Identity Toolkit call requestCode makes, so the same text goes
+ * out by the same path, but answered as a diagnostic rather than a user
+ * error. Never throws for anything Firebase did:
+ *
+ *   { status: 'sent' | 'refused' | 'unreachable' | 'not_offered',
+ *     phoneNumber, providerCode, httpStatus, durationMs }
+ *
+ * `providerCode` is Firebase's own code (INVALID_PHONE_NUMBER, QUOTA_EXCEEDED
+ * …), which identityToolkitError deliberately hides from users and an
+ * operator needs. The sessionInfo is dropped: nobody enters the code. A
+ * malformed number is the one PhoneAuthError (invalid_phone), thrown
+ * before anything is sent, so the route can answer 400.
+ */
+async function sendTestCode(config, rawPhone, recaptchaToken, deps = {}) {
+  const phoneNumber = normalizePhone(rawPhone);
+  if (!phoneNumber) {
+    throw new PhoneAuthError('invalid_phone', 'Enter a valid phone number, starting with + and the country code.', 400);
+  }
+  const base = { phoneNumber, providerCode: null, httpStatus: null, durationMs: 0 };
+  if (!offered(config)) return { ...base, status: 'not_offered' };
+  const body = { phoneNumber };
+  if (typeof recaptchaToken === 'string' && recaptchaToken
+      && recaptchaToken.length <= RECAPTCHA_TOKEN_MAX) {
+    body.recaptchaToken = recaptchaToken;
+  }
+  const now = deps.now || Date.now;
+  const started = now();
+  let answer;
+  try {
+    answer = await identityToolkitRaw(config, 'accounts:sendVerificationCode', body, deps);
+  } catch (err) {
+    log.warn('phone-auth', 'Identity Toolkit unreachable', { path: 'test send', err: err.message });
+    return { ...base, status: 'unreachable', durationMs: now() - started };
+  }
+  const durationMs = now() - started;
+  if (!answer.ok) {
+    return { ...base, status: 'refused', providerCode: providerCodeOf(answer.data), httpStatus: answer.status, durationMs };
+  }
+  if (typeof answer.data.sessionInfo !== 'string' || !answer.data.sessionInfo) {
+    return { ...base, status: 'refused', providerCode: 'NO_SESSION_INFO', httpStatus: answer.status, durationMs };
+  }
+  return { ...base, status: 'sent', httpStatus: answer.status, durationMs };
 }
 
 // The site key for the reCAPTCHA a web caller answers before a code is
@@ -616,6 +679,7 @@ module.exports = {
   offered,
   normalizePhone,
   requestCode,
+  sendTestCode,
   recaptchaSiteKey,
   exchangeCode,
   verifyIdToken,
