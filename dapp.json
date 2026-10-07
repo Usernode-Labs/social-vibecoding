@@ -94,7 +94,7 @@
       "key": "HELPER_MODEL",
       "group": "Platform",
       "default": "glm",
-      "description": "The model behind the platform's short helper calls: titles, a new project's description and sketch card, grades, pills, chat reads, reports, the Workshop ask box, the content review, progress guesses. glm (default): GLM 5.3 Flash on the Homeroom bot's OpenRouter key, with Haiku 4.5 when it is late or fails. haiku: Haiku 4.5 only, as before. Calls on a person's own Anthropic key stay on Haiku."
+      "description": "The model behind the platform's short helper calls: titles, a new project's description and sketch card, grades, pills, chat reads, reports, the Workshop ask box, the content review, progress guesses. glm (default): GLM 5.3 Flash on the Homeroom bot's OpenRouter key, with Haiku 5.5 when it is late or fails. haiku: Haiku 5.5 only, as before. Calls on a person's own Anthropic key stay on Haiku."
     },
     {
       "key": "LOG_LEVEL",

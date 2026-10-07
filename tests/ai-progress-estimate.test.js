@@ -164,7 +164,7 @@ test('estimateRunProgress uses the helper model, GLM first and Haiku behind it',
   assert.match(fnBody, /helperMessage\(\{\s+helper: 'progress_estimate',/, 'estimator must go through the helper path');
   assert.match(fnBody, /schema: ESTIMATE_SCHEMA,/, 'with its schema as GLM\'s answer shape');
   const llm = require('../src/services/llm');
-  assert.equal(llm.HELPER_FALLBACK_MODEL, 'claude-haiku-4-5', 'and Haiku when GLM does not answer');
+  assert.equal(llm.HELPER_FALLBACK_MODEL, 'claude-haiku-5-5', 'and Haiku when GLM does not answer');
 });
 
 test('dev-chat handles cc_estimate in both event switches', () => {

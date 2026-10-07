@@ -196,7 +196,7 @@ test('a failed forced call escalates to the Haiku backstop', async () => {
     assert.equal(out.source, 'generated');
     assert.deepEqual(out.replies, ['Retry the Season 1 push', 'Why did it fail?']);
     assert.equal(calls.length, 2, 'one forced attempt, then one backstop attempt');
-    assert.equal(calls[1].params.model, 'claude-haiku-4-5',
+    assert.equal(calls[1].params.model, 'claude-haiku-5-5',
       'a different model, so a model-specific failure cannot take both rungs down');
   });
 });

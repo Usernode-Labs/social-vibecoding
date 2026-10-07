@@ -620,8 +620,8 @@ async function createMessageWithTelemetry({
 // it answers, and in production its slow calls are much slower than Haiku's
 // (Mayor calls on it: median 2.4-5.3s, p95 13-20s, against Haiku helpers'
 // ~1s median). A GLM answer that is late, fails or cannot be read is asked of
-// Haiku 4.5 instead, the model all of them used before, so the worst case is
-// the limit plus what Haiku took before. The limits are tight where somebody
+// Haiku 5.5 instead, so the worst case is the limit plus what Haiku took
+// before. The limits are tight where somebody
 // waits on the answer and loose where nobody does.
 //
 // Unchanged: a call made on somebody's own Anthropic key (BYOK) goes to Haiku
@@ -633,7 +633,7 @@ async function createMessageWithTelemetry({
 // fallback as attempt 2 under the same correlation id, so the admin report
 // counts one logical run and shows how often the fallback served it.
 const HELPER_MODEL = 'z-ai/glm-5.3-flash';
-const HELPER_FALLBACK_MODEL = 'claude-haiku-4-5';
+const HELPER_FALLBACK_MODEL = 'claude-haiku-5-5';
 const HELPER_BOT_USERNAME = 'homeroom_bot';
 const HELPER_TOOL = 'answer';
 // GLM's reasoning counts against the output ceiling, so each helper's Haiku
@@ -1640,7 +1640,7 @@ ${tail || '(no output yet)'}`;
       messages: [{ role: 'user', content: user }],
       // Structured outputs (#323): force Haiku to emit schema-matching JSON so
       // the JSON.parse / fence / smart-quote failure class can't occur for normal
-      // completions. claude-haiku-4-5 supports structured outputs, and
+      // completions. claude-haiku-5-5 supports structured outputs, and
       // The current Anthropic SDK accepts output_config.format on messages.create().
       // The schema guarantees type + presence only; the brace-extraction +
       // sanitize path below stays as a defensive fallback for off-schema output
