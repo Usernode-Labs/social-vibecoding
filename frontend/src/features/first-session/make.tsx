@@ -321,6 +321,9 @@ export function MakeScreen({ who, onMade, onLookAround }: {
           >
             {busy ? 'Making it…' : 'Make it'}
           </Button>
+          <p data-first-session-make-public="" className="mt-3 text-center text-[13px] text-zinc-500 dark:text-zinc-400">
+            What you write here, and the app's code, are public on GitHub.
+          </p>
           <p className="mt-3 text-center text-[15px] text-zinc-500 dark:text-zinc-400">
             {'Not sure yet? '}
             <button type="button" onClick={onLookAround} className="font-medium text-violet-700 hover:underline dark:text-violet-400">Look around first</button>

@@ -232,9 +232,11 @@ function ruleWords(approvers: Approvers, approvals: number | null): string {
 
 /**
  * Every repository is public on GitHub, whoever may open the project, so a
- * line that keeps people out also says the code stays public.
+ * line that keeps people out also says what is public: the description
+ * (the project's first request issue), the plan (the bot's spec comment on
+ * it) and the code.
  */
-const CODE_PUBLIC = 'Code stays public on GitHub.';
+const CODE_PUBLIC = 'Its description, plan and code are public on GitHub.';
 
 function visibilityWords(v: NonNullable<RepoManifest['visibility']>): string {
   if (v.build === 'public' && v.view === 'public') return 'Anyone can find it, join and build';
@@ -590,8 +592,8 @@ export function descriptionLeft(length: number): string {
 
 /** The three audiences, in the order and the words the screen uses. */
 const WHO: ReadonlyArray<{ key: Audience; title: string; caption: string }> = [
-  { key: 'solo', title: 'Just me', caption: 'Only you can open it. Its code is public on GitHub. Invite people or open it up later.' },
-  { key: 'invited', title: 'A private community', caption: 'Only you and the people you invite can open it. Its code is public on GitHub.' },
+  { key: 'solo', title: 'Just me', caption: 'Only you can open it. Its description, plan and code are public on GitHub. Invite people or open it up later.' },
+  { key: 'invited', title: 'A private community', caption: 'Only you and the people you invite can open it. Its description, plan and code are public on GitHub.' },
   { key: 'open', title: 'A public community', caption: 'Anyone can find it, join and build.' },
 ];
 

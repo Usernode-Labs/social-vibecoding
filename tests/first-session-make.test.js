@@ -158,9 +158,11 @@ test('"Make it" makes a private community through the dialog\'s own route', () =
   assert.match(make, /from: 'first-session',/);
   assert.match(make, /export const BRIEF_MIN = 10;/);
   assert.match(read('frontend/src/features/dialogs/create-app.tsx'), /BRIEF_MIN = 10/);
-  for (const words of ['What do you want to make?', 'What should it do?', 'What should we call it?', 'It\'s your group\'s name too. You can change it later.', 'Look around first']) {
+  for (const words of ['What do you want to make?', 'What should it do?', 'What should we call it?', 'It\'s your group\'s name too. You can change it later.', 'What you write here, and the app\'s code, are public on GitHub.', 'Look around first']) {
     assert.ok(make.includes(words), words);
   }
+  // The line sits under Make it, before the way out, and is marked for the shots.
+  assert.match(make, /data-first-session-make-public=""[^>]*>[\s\S]*?public on GitHub\./);
 });
 
 // Production run, iOS app, 5 Oct 2026: the keyboard's next chevron did not
