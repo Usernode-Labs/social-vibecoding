@@ -544,7 +544,8 @@ test('a thread is requested once and written once, however often it is asked for
 
   // A new answer for the same issue (the opened topic refetches the thread)
   // is a different entry, and replaces what the slot shows.
-  AppView._ghComments[22] = { comments: [{ author: 'b', body: 'newer', createdAt: '2026-03-05T15:30:00Z' }], truncated: false };
+  AppView._ghComments.set(AppView._ghCommentsKey('demo-app', 22),
+    { comments: [{ author: 'b', body: 'newer', createdAt: '2026-03-05T15:30:00Z' }], truncated: false });
   AppView._wireFeedComments(root);
   await settle();
   assert.equal(slots[1].writes, 2);
@@ -581,6 +582,96 @@ test('a failed request is forgotten, so the next ask can try again', async () =>
   AppView._wireFeedComments(root);
   await settle();
   assert.equal(calls, 2);
+});
+
+// #4178: issue numbers repeat across apps (each has its own repository), and
+// the cache outlives the app view, so it is keyed by app AND number.
+const commentsFor = (body) => ({ ok: true, json: async () => ({ comments: [{ author: 'a', body, createdAt: '2026-03-04T15:30:00Z' }] }) });
+
+test('the same issue number in another app is its own thread, not a cache hit', async () => {
+  const { slots, document } = fakeBoard([12]);
+  const requests = [];
+  const AppView = makeAppView({
+    document,
+    fetch: async (url) => {
+      requests.push(url);
+      return commentsFor(url.includes('/apps/other-app/') ? 'from other-app' : 'from demo-app');
+    },
+  });
+
+  await AppView._fillFeedComments(slots[0]);
+  assert.match(slots[0].html, /from demo-app/);
+
+  AppView.appData = { slug: 'other-app', can_collaborate: true };
+  await AppView._fillFeedComments(slots[0]);
+  assert.equal(requests.length, 2, 'the other app\'s #12 is asked for, not answered from cache');
+  assert.match(requests[1], /\/api\/apps\/other-app\/github-issues\/12\/comments/);
+  assert.match(slots[0].html, /from other-app/);
+  assert.doesNotMatch(slots[0].html, /from demo-app/);
+
+  // Back in the first app, its own answer is still cached.
+  AppView.appData = { slug: 'demo-app', can_collaborate: true };
+  await AppView._fillFeedComments(slots[0]);
+  assert.equal(requests.length, 2);
+  assert.match(slots[0].html, /from demo-app/);
+});
+
+test('an answer that lands after another app opened is cached, not painted', async () => {
+  const { slots, document } = fakeBoard([12]);
+  let release = null;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const AppView = makeAppView({
+    document,
+    fetch: async () => { await gate; return commentsFor('from demo-app'); },
+  });
+
+  const pending = AppView._fillFeedComments(slots[0]);
+  await settle();
+  AppView.appData = { slug: 'other-app', can_collaborate: true };
+  release();
+  await pending;
+  assert.equal(slots[0].writes, 0, 'other-app\'s slot for #12 is left alone');
+  assert.ok(AppView._ghComments.has(AppView._ghCommentsKey('demo-app', 12)), 'the answer is kept for its own app');
+  assert.ok(!AppView._ghComments.has(AppView._ghCommentsKey('other-app', 12)));
+});
+
+test('an opened issue does not show another app\'s comments for the same number', async () => {
+  const published = [];
+  const AppView = makeAppView({
+    document: {
+      getElementById: (id) => (id === 'dev-issue-comments' ? {} : null),
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      addEventListener: () => {},
+      body: { appendChild: () => {} },
+    },
+    fetch: async (url) => commentsFor(url.includes('/apps/other-app/') ? 'from other-app' : 'from demo-app'),
+  });
+  AppView._reactDevBoard = () => ({ mountIssueComments: () => {}, publishIssueComments: (view) => published.push(view) });
+  AppView._issueCommentsView = (comments) => comments.map((c) => c.body);
+
+  AppView._devTopic = { kind: 'issue', id: 12 };
+  await AppView._loadIssueComments({ number: 12, htmlUrl: null });
+  assert.deepEqual(published.at(-1), ['from demo-app']);
+
+  AppView.appData = { slug: 'other-app', can_collaborate: true };
+  await AppView._loadIssueComments({ number: 12, htmlUrl: null });
+  assert.deepEqual(published.at(-1), ['from other-app']);
+});
+
+test('a row\'s own thread under the card is keyed by app too', () => {
+  // The Workshop draws rows from several apps on one screen, and the store
+  // lives for the whole page, so two apps' issue #12 are two threads.
+  const { threadKey, patchThread, readThread } = loadTsx('frontend/src/features/dev-board/card/feed-thread-store.ts');
+  const a = threadKey('demo-app', 'issue', 12);
+  const b = threadKey('other-app', 'issue', 12);
+  assert.notEqual(a, b);
+  assert.equal(threadKey('demo-app', 'issue', 12), a, 'the same thread is the same key');
+  assert.notEqual(threadKey('demo-app', 'issue', 13), a);
+  assert.notEqual(threadKey('demo-app', 'session', 12), a);
+  patchThread(a, { loaded: true, total: 3 });
+  assert.equal(readThread(a).total, 3);
+  assert.equal(readThread(b).loaded, false, 'the other app\'s #12 is still to load');
 });
 
 // ── 6. The stylesheet the legacy surface clamps with ──────────────────
