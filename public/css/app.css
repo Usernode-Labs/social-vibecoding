@@ -1388,6 +1388,43 @@ html:not(.dark) .messages-markdown .gc-ref-issue { background: rgba(16, 185, 129
   color: var(--text-muted);
   font-size: 13px;
 }
+/* #4197: a question once answered: its words as a small label, the answer
+   under it as the tapped answer's accent pill, drawn as a chip (it is not a
+   button any more). Only the answer chosen; the other options go. */
+.messages-bot-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+}
+.messages-bot-choices dd { margin: 0; }
+.messages-bot-choice-label {
+  margin-bottom: 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.messages-bot-chosen {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-height: 32px;
+  padding: 6px 13px;
+  border-radius: 9999px;
+  color: var(--accent-ink);
+  background: var(--accent);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+/* #4197: Build it pressed: a check, then "Building it". */
+.messages-bot-done {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
 /* B8: Homeroom bot's row in Messages' "+" wears its mark, at the glyphs' size. */
 .messages-new-option-mark {
   width: 20px;

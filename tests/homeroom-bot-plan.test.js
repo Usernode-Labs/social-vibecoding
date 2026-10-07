@@ -238,8 +238,22 @@ test('B6: the plan card, drawn in every state', () => {
   assert.match(open, /class="messages-bot-secondary" data-bot-plan-change="">Change something<\/button>/);
   const built = draw({ state: 'built', choices: ['Phone alert'] });
   assert.ok(!/Build it<\/button>/.test(built));
-  assert.match(built, /How should it remind you\? Phone alert/);
-  assert.match(built, /You chose Build it/);
+  // #4197: each question a small label, the answer gone with as a filled chip
+  // (not a button, and not the other options), then a check and "Building it".
+  assert.match(built, /<dt class="messages-bot-choice-label">How should it remind you\?<\/dt><dd><span class="messages-bot-chosen">Phone alert<\/span><\/dd>/);
+  assert.ok(!/In the app/.test(built), 'only the answer chosen');
+  assert.match(built, /<p class="messages-bot-answered messages-bot-done" role="status"><svg[^>]*>[\s\S]*?<\/svg><span>Building it<\/span><\/p>/);
+  assert.ok(!/You chose/.test(built));
+  // Build it pressed here, before the update brings `choices`: the picks
+  // (the suggested answer for one left alone) stay, never blank.
+  const twoQs = { ...plan, questions: [...plan.questions, { question: 'Who can see it?', answers: ['Just me', 'Invited'] }] };
+  const pressed = renderToHtml(createElement(PlanCardView, { appName: 'Plant Pal', plan: twoQs, state: 'open', busy: true }));
+  assert.match(pressed, /data-bot-plan="built"/);
+  assert.match(pressed, /How should it remind you\?<\/dt><dd><span class="messages-bot-chosen">In the app<\/span>/);
+  assert.match(pressed, /Who can see it\?<\/dt><dd><span class="messages-bot-chosen">Just me<\/span>/);
+  assert.ok(!/messages-bot-chosen/.test(draw({ state: 'built' })), 'built elsewhere with no answers: no chips to guess');
+  const view = read('frontend/src/features/messages/bot-plan-view.tsx');
+  assert.match(view, /const went = choices\.length \? choices\s*: builtHere \|\| busy \? plan\.questions\.map\(\(q, i\) => picked\[i\] \|\| q\.answers\[0\] \|\| ''\) : \[\];/);
   const replaced = draw({ state: 'replaced' });
   assert.match(replaced, /Replaced by a newer plan/);
   assert.ok(!/<li>/.test(replaced), 'a replaced plan folds its bullets away');
@@ -269,12 +283,19 @@ test('B6: which bot messages draw a plan or two questions, and what state a plan
   assert.equal(planState({ kind: 'plan', status: 'closed', stopped: true }), 'stopped');
   assert.equal(planState({ kind: 'plan', status: 'closed', changing: true }), 'changing');
   assert.equal(planState({ kind: 'plan', status: 'open' }), 'closed', 'nothing to decide without its action');
+  // #4197: two questions answered read back as label and chip, a typed answer as written.
+  const { answeredPairs } = loadTsx('frontend/src/features/messages/bot-plan.tsx');
+  const qs = [{ question: 'How?' }, { question: 'Who?' }];
+  assert.deepEqual(answeredPairs(qs, 'How? Phone alert\nWho? Just me'), [{ question: 'How?', answer: 'Phone alert' }, { question: 'Who?', answer: 'Just me' }]);
+  assert.equal(answeredPairs(qs, 'Something of my own'), null);
+  assert.equal(answeredPairs(qs, 'How? Phone alert\nWhen? Now'), null);
   const row = read('frontend/src/features/messages/message-row.tsx');
   assert.match(row, /isPlanMessage\(message\) \? \([\s\S]{0,200}<BotPlanCard /);
   const api = read('frontend/src/features/messages/api.ts');
   assert.match(api, /body: JSON\.stringify\(answers \? \{ choice, answers \} : \{ choice \}\)/);
   const css = read('public/css/app.css');
   assert.match(css, /\.messages-bot-answers button\[aria-pressed="true"\] \{ color: var\(--accent-ink\); background: var\(--accent\); \}/);
+  assert.match(css, /\.messages-bot-chosen \{[^}]*color: var\(--accent-ink\);\s*background: var\(--accent\);/, '#4197: an answered chip wears the tapped answer\'s fill');
   const composer = read('frontend/src/features/messages/composer.tsx');
   assert.match(composer, /Say what to change, and Homeroom bot sends a new plan\. Only you see this\./);
 });

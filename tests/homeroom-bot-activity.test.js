@@ -979,7 +979,7 @@ test('B6: Build it moves the card once it is decided, before the tray hears; Cha
   const answered = body.indexOf("status: 'answered', chosen: 'build', answer: BUILD_IT");
   const move = body.indexOf("require('./homeroom-bot-activity').cardUnderPlan(pool, {");
   const tray = body.indexOf("require('./homeroom-bot-tray').noteWorkChanged(user.id, deps)");
-  assert.ok(answered > -1 && move > answered && tray > move, 'after the plan reads "You chose Build it", before the tray re-reads');
+  assert.ok(answered > -1 && move > answered && tray > move, 'after the plan reads "Building it", before the tray re-reads');
   assert.match(body, /if \(app && requester && Number\(requester\.userId\) === Number\(user\.id\) && bot\) \{/,
     'only for the person the plan was for');
   assert.match(body, /runId: Number\(card\.run_id\), planMessageId: Number\(action\.message_id\),/);
