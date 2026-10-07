@@ -188,11 +188,69 @@ test('the first session: a maker\'s and an invited person\'s first hour, timed f
   }
   assert.match(src, /\{scope\.cohort \? null : \(\s*<div id="admin-journey-first-session-opens">/);
   assert.match(src, /\{isNotRecorded\(data\.opens\) \? <Num v=\{data\.opens\} \/> : <InviteFunnelRows funnel=\{data\.opens\} \/>\}/);
-  assert.match(src, /\{before == null \? plural\(n, 'person', 'people'\) : conversion\(n, before\)\}/,
-    'each step after the first is counted out of the one before');
+  // #4272: Signed in is everyone who reached Homeroom signed in through a
+  // link, so it reads as a total, and its two ways are lines of their own:
+  // signed up or in from the link, the step's conversion out of the people
+  // who opened one, and already signed in, a count only. Joined is still
+  // out of everyone signed in.
+  assert.match(src, /\{before == null \|\| ways \? plural\(n, 'person', 'people'\) : conversion\(n, before\)\}/,
+    'each step after the first is counted out of the one before, but Signed in is a total');
+  assert.match(src, /const ways = key === 'signedIn';/);
+  for (const [key, label] of [['signedInByInvite', 'From the link'], ['signedInAlready', 'Already signed in']]) {
+    assert.ok(src.includes(`['${key}', '${label}', `), `the ${label} way`);
+  }
+  assert.match(src, /\{way === 'signedInByInvite' \? conversion\(funnel\[way\], funnel\.opened\) : plural\(funnel\[way\], 'person', 'people'\)\}/,
+    'the sign-ins the link brought are its conversion, from FUNNEL_RATE_FROM people like any other');
+  assert.match(src, /data-journey-invite-funnel-way=\{way\}/);
+  assert.match(src, /<UnitBar n=\{funnel\.signedInByInvite\} also=\{funnel\.signedInAlready\} of=\{most\}/,
+    'one bar in two parts');
+  assert.match(src, /i < n \? fill : i < n \+ also \? alsoFill : rest/);
   assert.match(src, /\{before > n \? `\$\{before - n\} dropped off` : 'nobody dropped off'\}/, 'and says what dropped off');
   assert.match(src, /median <span className=\{targetTone\(st\.medianSeconds, st\.targetSeconds\)\}>/);
   assert.match(src, /data-journey-first-session-example=\{e\.path\}/, 'and the newest few');
+});
+
+// #4272: the funnel drawn, not only read. Signed in is a total with its two
+// ways under it; the ones the link brought are its conversion, printed as a
+// share only once FUNNEL_RATE_FROM people opened a link.
+test('the invite funnel renders Signed in as a total, split into from the link and already signed in', () => {
+  const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx.js');
+  const mod = loadTsx('frontend/src/features/admin/admin-journey.tsx', {
+    stubs: {
+      './admin-console.js': {
+        AdminUI: new Proxy({}, {
+          get: (_t, key) => (['btn', 'badge'].includes(key)
+            ? new Proxy({}, { get: (_u, k) => `${key}-${String(k)}` })
+            : String(key)),
+        }),
+      },
+      '../../lib/legacy-portals': { mountLegacyPortal() {}, unmountLegacyPortal() {} },
+    },
+  });
+  const draw = (funnel) => renderToHtml(createElement(mod.InviteFunnelRows, { funnel: { from: '2026-09-28T00:00:00.000Z', ...funnel } }));
+  const text = (html) => html.replace(/<[^>]+>/g, '|').replace(/\|+/g, '|');
+  const html = draw({ opened: 26, signedIn: 12, signedInByInvite: 8, signedInAlready: 4, joined: 7 });
+  const step = (key) => text(html.slice(html.indexOf(`data-journey-invite-funnel-step="${key}"`)).split('data-journey-invite-funnel-step=')[1]);
+  assert.match(step('opened'), /\|Opened the link\|26 people\|/);
+  assert.match(step('signedIn'), /\|Signed in\|12 people\|/, 'the total, not a share');
+  assert.match(step('signedIn'), /\|From the link\|8 of 26 · 31%\|/, 'the sign-ins the link brought, out of everyone who opened one');
+  assert.match(step('signedIn'), /\|Already signed in\|4 people\|/, 'counted, never a share');
+  assert.match(step('signedIn'), /\|14 dropped off\|/, 'everyone who opened a link and never got signed in');
+  assert.match(step('joined'), /\|Joined\|7 of 12 · 58%\|5 dropped off\|/, 'joined out of everyone signed in');
+  assert.ok(html.indexOf('data-journey-invite-funnel-way="signedInByInvite"') < html.indexOf('data-journey-invite-funnel-way="signedInAlready"'));
+  // The bar: 26 is past UNIT_MAX, so one bar in two parts, sized by share.
+  assert.match(html, /bg-violet-500" style="width:31%"><\/div><div class="h-2 bg-violet-300 dark:bg-violet-400\/50" style="width:15%">/);
+
+  // Below FUNNEL_RATE_FROM people opening a link, the counts alone; and a
+  // small total is countable units, the two ways in their own fills.
+  const few = draw({ opened: 6, signedIn: 3, signedInByInvite: 1, signedInAlready: 2, joined: 1 });
+  assert.match(text(few), /\|From the link\|1 of 6\|Already signed in\|2 people\|3 dropped off\|/);
+  assert.equal(few.includes('%'), false);
+  const units = few.slice(few.indexOf('data-journey-invite-funnel-step="signedIn"'), few.indexOf('data-journey-invite-funnel-way='));
+  assert.deepEqual(units.match(/h-2 flex-1 rounded-sm [^"]+/g),
+    ['h-2 flex-1 rounded-sm bg-violet-500', 'h-2 flex-1 rounded-sm bg-violet-300 dark:bg-violet-400/50',
+      'h-2 flex-1 rounded-sm bg-violet-300 dark:bg-violet-400/50', 'h-2 flex-1 rounded-sm bg-zinc-200 dark:bg-zinc-700',
+      'h-2 flex-1 rounded-sm bg-zinc-200 dark:bg-zinc-700', 'h-2 flex-1 rounded-sm bg-zinc-200 dark:bg-zinc-700']);
 });
 
 test('one declared check opens the demo page', () => {

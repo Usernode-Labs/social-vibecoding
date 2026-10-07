@@ -181,6 +181,15 @@ test('classify: only a verdict ABOUT the code can pause merges', () => {
   assert.deepEqual(mainWatch.classify(pass).detail, { summary: pass.row.summary });
 });
 
+test('classify (#4265): a suite that counted failures is failing, even when its log lost the setup line', () => {
+  // PR #4217's log: the summary survived, the setup sentinel and every
+  // `not ok` line did not, and the Job's own failure rode along.
+  const tail = '# tests 21748\n# suites 0\n# pass 21713\n# fail 18\n# cancelled 0\n# skipped 17\n# todo 0';
+  assert.equal(mainWatch.classify(fail(unitSuite.failureDetail(tail, 'BackoffLimitExceeded: Error'))).state, 'failing');
+  // With no test reported, it is still a run that could not happen.
+  assert.equal(mainWatch.classify(fail(unitSuite.failureDetail('npm error code E404', 'BackoffLimitExceeded: Error'))).state, 'error');
+});
+
 // ── afterMerge ───────────────────────────────────────────────────────────
 
 test('afterMerge: a green run records passing, clears the pause column, and tells nobody', async () => {

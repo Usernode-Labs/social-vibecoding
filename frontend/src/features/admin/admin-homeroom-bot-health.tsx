@@ -122,6 +122,49 @@ export function healthRows(h: RolloutHealthData, now: number = Date.now()): Heal
   ];
 }
 
+// #4210: an error that should not happen, as the payload's incidents list
+// them (services/platform-incidents.js). Only build_interrupted so far.
+export interface Incident {
+  at: string;
+  kind: string;
+  app: string | null;
+  runId: number | null;
+  issueNumber: number | null;
+  why: string | null;
+  outcome: string | null;
+}
+
+export interface Incidents {
+  days: number;
+  total: number;
+  items: Incident[];
+}
+
+const INCIDENT_KIND: Record<string, string> = {
+  build_interrupted: 'Build interrupted',
+};
+
+const INCIDENT_OUTCOME: Record<string, string> = {
+  resumed: 'carried on from its plan',
+  requeued: 'started over from the request',
+  failed: 'stopped: too many in a row',
+};
+
+/** One incident as a line: when, what, where, why, what became of it. Pure. */
+export function incidentLine(i: Incident): string {
+  const at = new Date(i.at);
+  const when = Number.isNaN(at.getTime()) ? '' : at.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  const where = i.app ? `${i.app}${i.issueNumber != null ? ` #${i.issueNumber}` : ''}` : '';
+  return [
+    when,
+    INCIDENT_KIND[i.kind] || i.kind,
+    where,
+    i.runId != null ? `run ${i.runId}` : '',
+    i.why || '',
+    i.outcome ? (INCIDENT_OUTCOME[i.outcome] || i.outcome) : '',
+  ].filter(Boolean).join(' · ');
+}
+
 /** One failed DM answer as a line: when, who, why, what answered. Pure. */
 export function failureLine(f: ChatFailure): string {
   const at = new Date(f.at);
@@ -135,10 +178,14 @@ export function failureLine(f: ChatFailure): string {
   ].filter(Boolean).join(' · ');
 }
 
-export function RolloutHealth({ health, failures }: { health?: RolloutHealthData | null; failures?: ChatFailure[] }) {
+export function RolloutHealth({ health, failures, incidents }: {
+  health?: RolloutHealthData | null; failures?: ChatFailure[]; incidents?: Incidents | null;
+}) {
   const rows = health ? healthRows(health) : [];
   const flagged = rows.filter((r) => r.watch).length;
   const list = failures || [];
+  const unexpected = incidents?.items || [];
+  const unexpectedTotal = incidents?.total || 0;
   return (
     <div className={`${AdminUI.card} p-4`} id="admin-homeroom-bot-rollout">
       <div className={AdminUI.cardHeader}>
@@ -171,6 +218,18 @@ export function RolloutHealth({ health, failures }: { health?: RolloutHealthData
         {list.length ? (
           <ul className="text-sm space-y-1 mt-2">
             {list.map((f, i) => <li key={`${f.at}-${i}`} className="break-words">{failureLine(f)}</li>)}
+          </ul>
+        ) : null}
+      </details>
+      <details className="mt-2" id="admin-homeroom-bot-unexpected" data-count={unexpectedTotal}>
+        <summary className={`${AdminUI.muted} cursor-pointer`}>
+          {unexpectedTotal
+            ? `Unexpected events in the last ${incidents?.days ?? 7} days (${unexpectedTotal}${unexpectedTotal > unexpected.length ? `, the latest ${unexpected.length}` : ''})`
+            : `No unexpected events in the last ${incidents?.days ?? 7} days`}
+        </summary>
+        {unexpected.length ? (
+          <ul className="text-sm space-y-1 mt-2" id="admin-homeroom-bot-unexpected-list">
+            {unexpected.map((i, n) => <li key={`${i.at}-${n}`} className="break-words" data-kind={i.kind}>{incidentLine(i)}</li>)}
           </ul>
         ) : null}
       </details>

@@ -179,11 +179,16 @@ const NOT_NOW = 'Not now';
 // #11 (WP3): the answers under an offer to withdraw one of its proposals.
 const WITHDRAW_IT = 'Withdraw it';
 const KEEP_IT = 'Keep it';
+// #4239: the answers under an offer to move a request about Homeroom itself
+// to Homeroom's own board (homeroom-bot-move.js).
+const MOVE_IT = 'Move it to Homeroom';
+const KEEP_HERE = 'Keep it here';
 // The answers under each kind of offer (homeroom_bot_dm_actions.kind), the
 // one that does it first.
 const OFFER_ANSWERS = Object.freeze({
   file_request: Object.freeze([FILE_IT, NOT_NOW]),
   withdraw_proposal: Object.freeze([WITHDRAW_IT, KEEP_IT]),
+  move_request: Object.freeze([MOVE_IT, KEEP_HERE]),
 });
 
 /**
@@ -332,6 +337,11 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '  is not one of your open proposals (offer_request). Nothing is filed until they tap File it under your',
     '  message. Use their own words. You never file anything yourself, and never write that something was filed:',
     '  Homeroom says so itself when they tap it.',
+    '- A request on one of their projects that is about Homeroom itself (its header, its request form, a project\'s',
+    '  description or invite message, how votes or notifications work), not the project\'s code, belongs on Homeroom\'s',
+    '  own board: request_detail says aboutHomeroom when you left it for that reason. When they filed it or asked for',
+    '  it, offer to move it there (offer_move_request). Nothing moves until they tap Move it to Homeroom under your',
+    '  message, so never say it was moved.',
     '- Add their words to a request that already exists when they ask you to (comment_on_request): posted on its',
     '  public discussion under their name, and you look at the request again next. Say so.',
     '- Start one of their requests now when they ask you to (start_request): it goes to the front of your queue,',
@@ -563,6 +573,23 @@ const TOOLS = [
           details: { type: 'string', description: 'What they asked for, in their words, with anything they said that matters.' },
         },
         required: ['project', 'title', 'details'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'offer_move_request',
+      description: 'Offer to move one of their requests that is about Homeroom itself (its header, its request form, a project\'s description or invite message, how votes or notifications work), not the project\'s code, to Homeroom\'s own board. Only a request they filed or asked for. They see it under your reply with Move it to Homeroom and Keep it here; nothing moves unless they tap Move it to Homeroom. Then it is filed on Homeroom\'s board with a link back, and the original is closed, or put to its group\'s vote when anybody else took part in it. One offer per turn.',
+      parameters: {
+        type: 'object',
+        properties: {
+          project: { type: 'string', description: 'The project it is on: its name or short name.' },
+          number: { type: 'integer', description: 'The request number.' },
+          reason: { type: 'string', description: 'Why it is about Homeroom rather than the project, in a few plain words. They see it with the offer.' },
+        },
+        required: ['project', 'number', 'reason'],
         additionalProperties: false,
       },
     },
@@ -996,7 +1023,7 @@ async function requestDetail(pool, { user, project, number, settings = null, dep
   // nothing to anybody, and its verdict read as the bot's decision.
   const { rows: runs } = await pool.query(
     `SELECT verdict, question, question_answers, reason, build_note, build_ok, build_error, created_at,
-            proposal_session_id, cap_suppressed, live_build_waiting_at, build_session_id
+            proposal_session_id, cap_suppressed, live_build_waiting_at, build_session_id, about_platform
        FROM homeroom_bot_runs WHERE app_id = $1 AND issue_number = $2 AND mode = 'live'
       ORDER BY id DESC LIMIT 4`,
     [app.id, n],
@@ -1031,6 +1058,8 @@ async function requestDetail(pool, { user, project, number, settings = null, dep
       }[r.verdict] || r.verdict,
       question: r.question ? clip(r.question, 600) : undefined,
       why: r.reason ? clip(r.reason, 600) : undefined,
+      // #4239: left because it is about Homeroom itself (offer_move_request).
+      aboutHomeroom: r.about_platform ? true : undefined,
       plan: r.build_note ? clip(r.build_note, 800) : undefined,
       build: buildWords(r),
     })),
@@ -1121,6 +1150,14 @@ const CLAIMS = Object.freeze([
     backed: (ctx) => !!ctx.withdrew,
     said: 'says a proposal was withdrawn',
     instead: 'I haven\'t withdrawn anything.',
+  },
+  {
+    kind: 'moved',
+    // #4239: a request is moved only by its Move it to Homeroom tap.
+    re: /\bI(?:'ve| have)?(?: just| now| already)? moved (?:it|this|that|the request|your request|#\d+)\b|\b(?:has|have) been moved\b/i,
+    backed: () => false,
+    said: 'says a request was moved',
+    instead: 'I haven\'t moved it yet.',
   },
   {
     kind: 'reported',
@@ -1690,6 +1727,7 @@ async function runTool(pool, ctx, name, args) {
         ctx.offer = { app, title, details };
         return { ok: true, shown: 'They see it under your reply with File it and Not now. Nothing is filed until they tap File it.' };
       }
+      case 'offer_move_request': return await offerMoveRequest(pool, ctx, args);
       case 'reply': {
         ctx.reply = { text: clip(args.text, MAX_REPLY_CHARS), cards: args.cards, suggestions: args.suggestions };
         return { ok: true };
@@ -2339,15 +2377,22 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
   const dm = dmModule(deps);
   const name = o.app.name || o.app.slug;
   // #11 (WP3): an offer to withdraw one of its proposals is decided the same
-  // way, by a tap, and names the proposal (session_id) it is about.
+  // way, by a tap, and names the proposal (session_id) it is about. #4239:
+  // so is one to move a request to Homeroom's own board, which names the
+  // request (source_issue_number).
   const withdraw = o.kind === 'withdraw_proposal';
-  const kind = withdraw ? 'withdraw_proposal' : 'file_request';
+  const move = o.kind === 'move_request';
+  const kind = withdraw || move ? o.kind : 'file_request';
   const { rows: [action] } = await pool.query(
-    `INSERT INTO homeroom_bot_dm_actions (user_id, conversation_id, app_id, kind, title, details, session_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-    [user.id, conversationId, o.app.id, kind, o.title, o.details || null, withdraw ? o.sessionId : null],
+    `INSERT INTO homeroom_bot_dm_actions (user_id, conversation_id, app_id, kind, title, details, session_id, source_issue_number)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+    [user.id, conversationId, o.app.id, kind, o.title, o.details || null, withdraw ? o.sessionId : null,
+      move ? o.issueNumber : null],
   );
-  const body = withdraw
+  const moveSvc = require('./homeroom-bot-move');
+  const body = move
+    ? moveSvc.moveOfferText({ name, issueNumber: o.issueNumber, text, title: o.title, why: o.details })
+    : withdraw
     ? [
       text || `Want me to withdraw this proposal on ${name}?`,
       '',
@@ -2370,8 +2415,9 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
     // homeroom-bot-dm.js requestStart).
     replyToId: message.id,
     // The proposal it would withdraw, to open before deciding.
-    objects: withdraw ? [{ type: 'proposal', appId: Number(o.app.id), sessionId: Number(o.sessionId) }] : null,
-    metadata: {
+    objects: withdraw ? [{ type: 'proposal', appId: Number(o.app.id), sessionId: Number(o.sessionId) }]
+      : move ? [{ type: 'issue', appId: Number(o.app.id), issueNumber: Number(o.issueNumber) }] : null,
+    metadata: move ? moveSvc.moveOfferMeta({ app: o.app, actionId: action.id }) : {
       kind: 'confirm', appSlug: o.app.slug, appName: name, actionId: action.id,
       question: withdraw ? `Withdraw this proposal on ${name}?` : `File this as a request on ${name}?`,
       // `answers` for a client that predates `actions`.
@@ -2397,6 +2443,7 @@ function said(content, word) {
 const OFFER_WORDS = Object.freeze({
   file_request: { yes: new Set(['file it', 'file it please', 'please file it']), no: new Set(['not now']) },
   withdraw_proposal: { yes: new Set(['withdraw it', 'withdraw it please', 'please withdraw it']), no: new Set(['keep it']) },
+  move_request: { yes: new Set(['move it', 'move it to homeroom', 'move it please', 'please move it']), no: new Set(['keep it here']) },
 });
 const PLAIN_YES = new Set(['yes', 'yes please', 'yep', 'yeah', 'yup', 'sure', 'ok', 'okay', 'do it', 'go ahead', 'please do', 'file', 'go for it']);
 const PLAIN_NO = new Set(['no', 'nope', 'no thanks', 'cancel', 'don\'t', 'dont']);
@@ -2573,7 +2620,7 @@ async function settleOffer(pool, config, {
   );
   if (!claimed.length) {
     if (tapped) return { alreadyDecided: true };
-    if (action.status === 'done' && action.issue_number) return ack(...await alreadyFiled(pool, action));
+    if (action.status === 'done' && action.issue_number && action.kind !== 'move_request') return ack(...await alreadyFiled(pool, action));
     return ack('That one is already decided.');
   }
   // The buttons give way to the choice on every device it is open on.
@@ -2584,6 +2631,9 @@ async function settleOffer(pool, config, {
   }
   if (no && tapped) return { declined: true };
   if (action.kind === 'withdraw_proposal') return decideWithdraw(pool, { bot, user, action, yes, ack, deps });
+  if (action.kind === 'move_request') {
+    return require('./homeroom-bot-move').decideMove(pool, config, { bot, user, settings, action, yes, ack, deps });
+  }
   if (no) return ack('OK, I won\'t file it.');
   const { rows: apps } = await pool.query(
     `SELECT ${require('./app-access').nonSecretAppColumnList()} FROM apps WHERE id = $1`, [action.app_id],
@@ -2697,14 +2747,10 @@ async function fileRequest(pool, config, {
        asked_text = COALESCE(EXCLUDED.asked_text, homeroom_bot_requesters.asked_text)`,
     [app.id, issueNumber, user.id, title, askedText ? clip(askedText, 2000) : null],
   );
+  // The people who follow new requests on the project, and (#3952) the
+  // people it names with @, in their words: once each (#4271). Never rejects.
   try {
-    notifications.createIssueOpenedNotifications?.(pool, { appId: app.id, issueNumber, authorId: user.id })
-      ?.then((rows) => Promise.all(rows.map((row) => notifications.hydrateAndPush(pool, row))))
-      ?.catch((err) => log.warn('homeroom-bot-mayor', 'Issue-opened notification failed', { err: err.message }));
-  } catch {}
-  // #3952: the people it names with @, in their words. Never rejects.
-  try {
-    notifications.notifyIssueMentions?.(pool, { appId: app.id, issueNumber, authorId: user.id, text: `${title}\n\n${body}` });
+    notifications.notifyIssueFiled?.(pool, { appId: app.id, issueNumber, authorId: user.id, text: `${title}\n\n${body}` });
   } catch {}
   await ws.sendSystemMessage(pool, app.id, `${user.username} created issue: "${title}" (#${issueNumber})`,
     'system', null, { type: 'issue', ref: issueNumber }).catch(() => {});
@@ -3338,6 +3384,37 @@ async function withdrawProposal(pool, ctx, args) {
   };
 }
 
+/**
+ * #4239: offer_move_request. Nothing moves here: the offer goes under the
+ * reply with Move it to Homeroom and Keep it here, and a tap decides it
+ * (homeroom-bot-move.js decideMove), each gate read again then.
+ */
+async function offerMoveRequest(pool, ctx, args) {
+  const { user, deps } = ctx;
+  if (ctx.offer) return { ok: false, error: 'You already put one thing under this reply for them to decide; one per turn. Nothing was moved.' };
+  const app = await findApp(pool, args.project);
+  if (!app || !(await canView(pool, app, user))) return { ok: false, error: 'No such project. Check my_projects.' };
+  ctx.appIds.add(Number(app.id));
+  const moveSvc = require('./homeroom-bot-move');
+  const gate = await moveSvc.moveGate(pool, { app, issueNumber: args.number, user, deps });
+  if (!gate.ok) return { ok: false, error: `${gate.error} Nothing was moved.` };
+  const target = await findApp(pool, botModule(deps).PLATFORM_SELF_APP_SLUG);
+  if (!target) return { ok: false, error: 'Homeroom\'s own board is not available. Nothing was moved.' };
+  if (!(await canFile(pool, target, user))) {
+    return { ok: false, error: 'They are not a member of Homeroom\'s own community, so they cannot file there. They can join it from its page. Nothing was moved.' };
+  }
+  ctx.offer = {
+    kind: 'move_request', app, issueNumber: gate.issueNumber,
+    title: clip(withoutEmDashes(String(gate.issue.title || `Request ${gate.issueNumber}`).replace(/\s+/g, ' ')), MAX_TITLE_CHARS),
+    details: clip(withoutEmDashes(String(args.reason || '').replace(/\s+/g, ' ')), 600) || null,
+  };
+  return {
+    ok: true,
+    request: { project: app.slug, number: gate.issueNumber, title: gate.issue.title },
+    shown: 'They see it under your reply with Move it to Homeroom and Keep it here. Nothing moves until they tap Move it to Homeroom: ask them to, and never say it was moved.',
+  };
+}
+
 /** A tap under an offer to withdraw a proposal: Withdraw it withdraws it, if every gate still holds. */
 async function decideWithdraw(pool, { bot, user, action, yes, ack, deps = {} }) {
   if (!yes) return ack('OK, I\'ll leave it up.');
@@ -3524,6 +3601,8 @@ module.exports = {
   WITHDRAW_IT,
   KEEP_IT,
   OFFER_ANSWERS,
+  MOVE_IT,
+  KEEP_HERE,
   CANT_LOOK_TEXT,
   REPORT_SOURCE,
   MAX_REPORTS_PER_DAY,
@@ -3576,6 +3655,9 @@ module.exports = {
   decideTyped,
   typedDecision,
   fileRequest,
+  findApp,
+  canFile,
+  offerMoveRequest,
   // #3772, #3769, #3768, #3771
   REQUEST_TIMEOUT_MS,
   DEFER_DELAYS_MS,

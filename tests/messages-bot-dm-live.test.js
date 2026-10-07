@@ -109,7 +109,7 @@ function harness(initial) {
     store.messagesController.handleEvent({ type: 'conversation_message_created', conversationId: 42, messageId });
     await flush();
   };
-  return { store, server, state, contents, flush, settle, event };
+  return { store, server, api, state, contents, flush, settle, event };
 }
 
 async function openDm(h) {
@@ -128,8 +128,8 @@ test('#3705: a re-read after a realtime event asks the server, never the worker\
   await openDm(h);
   const opening = h.server.reads.splice(0);
   assert.ok(opening.some(([what]) => what === 'messages'), 'the open read the transcript');
-  for (const [what, options] of opening) {
-    assert.ok(!options?.fresh, `a first open keeps the ordinary read, and its offline copy (${what})`);
+  for (const [what, options] of opening.filter(([w]) => w !== 'list')) {
+    assert.equal(options?.fresh, true, `an open while online reads the server, not the last visit's offline copy (${what}, #4243)`);
   }
 
   h.server.messages.push(serverMessage(h.server.nextId++, BOT, 'Your request is up for a vote.'));
@@ -139,6 +139,87 @@ test('#3705: a re-read after a realtime event asks the server, never the worker\
     assert.ok(after.some(([w, options]) => w === what && options?.fresh === true), `the ${what} read is fresh`);
   }
   assert.deepEqual(h.contents(), ['I build things for you on Homeroom.', 'Your request is up for a vote.']);
+});
+
+test('#4243: an open reads the offline copy only when offline, or once the fresh read failed', async (t) => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  t.after(() => { if (original) Object.defineProperty(globalThis, 'navigator', original); else delete globalThis.navigator; });
+  Object.defineProperty(globalThis, 'navigator', { value: { onLine: false }, configurable: true, writable: true });
+  const offline = harness([serverMessage(1, BOT, 'Hello.')]);
+  await openDm(offline);
+  for (const [what, options] of offline.server.reads.filter(([w]) => w !== 'list')) {
+    assert.ok(!options?.fresh, `offline, the open takes the worker's copy (${what})`);
+  }
+
+  globalThis.navigator.onLine = true;
+  const failing = harness([serverMessage(1, BOT, 'Hello.')]);
+  const getConversation = failing.api.getConversation;
+  let failures = 1;
+  failing.api.getConversation = async (id, options) => {
+    if (options?.fresh && failures-- > 0) { failing.server.reads.push(['conversation', options]); throw new TypeError('Failed to fetch'); }
+    return getConversation(id, options);
+  };
+  await openDm(failing);
+  const reads = failing.server.reads.filter(([w]) => w === 'conversation').map(([, options]) => !!options?.fresh);
+  assert.deepEqual(reads, [true, false], 'the fresh read failed, so the open read again and took the copy');
+  assert.equal(failing.state().threadError, null, 'and drew it, with no error');
+});
+
+test('#4220: the bot stays "typing" until the message it sent is drawn, and no longer than the cap', async (t) => {
+  const h = harness([serverMessage(1, BOT, 'Hello.')]);
+  const timers = [];
+  Object.assign(globalThis.window, {
+    setTimeout: (fn, ms) => { timers.push({ fn, ms, live: true }); return timers.length; },
+    clearTimeout: (id) => { if (timers[id - 1]) timers[id - 1].live = false; },
+  });
+  const dm = {
+    ...DM,
+    members: [{ ...ME, status: 'member' }, { ...BOT, status: 'member' }],
+    peer: { id: BOT.id, bot: true, displayName: 'Homeroom bot' },
+  };
+  h.api.getConversation = async () => dm;
+  await openDm(h);
+  const typing = (on) => h.store.messagesController.handleEvent({ type: 'conversation_typing', conversationId: 42, userId: BOT.id, typing: on });
+
+  typing(true);
+  assert.deepEqual(h.state().typing[42], ['Homeroom bot']);
+  // The answer's re-read is slow: hold it until the test lets it go.
+  const listMessages = h.api.listMessages;
+  let release;
+  h.api.listMessages = (...args) => new Promise((resolve) => { release = () => resolve(listMessages(...args)); });
+  h.server.messages.push(serverMessage(h.server.nextId++, BOT, 'Done: it is up for a vote.'));
+  h.store.messagesController.handleEvent({ type: 'conversation_message_created', conversationId: 42, messageId: 2 });
+  await h.flush();
+  typing(false);
+  assert.deepEqual(h.state().typing[42], ['Homeroom bot'], 'the stop waits for the message it typed');
+  release();
+  await h.flush();
+  assert.ok(h.contents().includes('Done: it is up for a vote.'), 'the message is drawn');
+  assert.deepEqual(h.state().typing[42], [], 'and the line goes with it');
+
+  // A read that never comes back lets the line go at the cap.
+  typing(true);
+  h.api.listMessages = () => new Promise(() => {});
+  h.store.messagesController.handleEvent({ type: 'conversation_message_created', conversationId: 42, messageId: 3 });
+  await h.flush();
+  typing(false);
+  assert.deepEqual(h.state().typing[42], ['Homeroom bot']);
+  const cap = timers.filter((timer) => timer.live && timer.ms === 5000);
+  assert.equal(cap.length, 1, 'one cap of about five seconds');
+  cap[0].fn();
+  assert.deepEqual(h.state().typing[42], [], 'the cap clears it');
+});
+
+test('#4220: a stop with no new message on its way clears the line at once', async () => {
+  const h = harness([serverMessage(1, BOT, 'Hello.')]);
+  Object.assign(globalThis.window, { setTimeout: () => 1, clearTimeout: () => {} });
+  const dm = { ...DM, members: [{ ...ME, status: 'member' }, { ...BOT, status: 'member' }] };
+  h.api.getConversation = async () => dm;
+  await openDm(h);
+  h.store.messagesController.handleEvent({ type: 'conversation_typing', conversationId: 42, userId: BOT.id, typing: true });
+  assert.equal(h.state().typing[42].length, 1);
+  h.store.messagesController.handleEvent({ type: 'conversation_typing', conversationId: 42, userId: BOT.id, typing: false });
+  assert.deepEqual(h.state().typing[42], []);
 });
 
 test('#3706: a page read before the send landed does not take the sender\'s message away', async () => {
@@ -261,7 +342,7 @@ test('a fresh read is `cache: no-store`; an ordinary one is not', async (t) => {
   await api.listConversations({ fresh: true });
   await api.listThread(42, 9, null, { fresh: true });
   await api.listMessagesAround(42, 5, { fresh: true });
-  assert.equal(seen[0].cache, undefined, 'an open keeps the ordinary read');
+  assert.equal(seen[0].cache, undefined, 'an ordinary read (an open offline, or after a failed fresh one) is left to the worker');
   for (const call of seen.slice(1)) assert.equal(call.cache, 'no-store', call.url);
 });
 

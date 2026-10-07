@@ -188,6 +188,9 @@ export const LAST_WORDS: Record<HomeroomBotActivityOutcome, (name: string) => st
   stopped: (name) => `stopped on ${name}`,
   answer: (name) => `answered on ${name}`,
   revise: (name) => `updated the change for ${name}`,
+  checking: (name) => `checking ${name} before you try it`,
+  needs_look: (name) => `${name} needs a look`,
+  going_live: (name) => `${name} going live`,
 };
 
 function capitalized(text: string): string {

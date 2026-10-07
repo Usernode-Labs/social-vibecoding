@@ -16,7 +16,15 @@
 // Homeroom bot built, that line now reaches the bot, for a solo Don't approve
 // and a group's No alike (tests/vote-reasons.test.js, tests/homeroom-bot-
 // vote-line-postgres.test.js). The project's Needs you tab says Approve and
-// Don't approve too. The words, the status and ⋯ are B7's, unchanged.
+// Don't approve too. The words and the status are B7's, unchanged.
+//
+// #4270 tidied the two leftovers. ⋯ no longer carries B7's "Don't approve":
+// it was a second way to the picker's own No, asking for its line by prompt.
+// And the Communities screen's Needs you, the feed across every project,
+// says Approve and Don't approve for these changes as the project's own tab
+// does: the needs feed marks them `approve` (src/routes/workshop-overview.js,
+// the same three tests as AppView._approveSolo), and the reel carries it
+// onto the row's Yes. A group project's rows still ask for a vote.
 //
 // Run with: node --test tests/homeroom-bot-approve-solo.test.js
 
@@ -98,11 +106,9 @@ test('B7: the button, the status, the step and ⋯ on a project that is just you
   assert.equal(AppView._summarizeRequirements(
     [{ key: 'approvals', state: 'waiting', actor: 'group', label: 'Enough approvals' }], { hasVoted: false },
   ).headline, 'Waiting for your approval', 'B10a: a group\'s says it the same way');
-  const items = AppView._proposalMenuItems(change(), {});
-  const last = items[items.length - 1];
-  assert.equal(last.label, 'Don’t approve');
-  assert.equal(last.danger, true);
-  assert.ok(!AppView._proposalMenuItems(change({ my_vote: 'no' }), {}).some((i) => i.label === 'Don’t approve'), 'once said, not offered again');
+  // #4270: ⋯ has no "Don't approve" of its own any more (B7 put one there,
+  // last and red); the picker's other side is the one way to it.
+  assert.ok(!AppView._proposalMenuItems(change(), {}).some((i) => /approve/i.test(i.label)));
   AppView.appData = { slug: 'plant-pal', audience: 'invited' };
   assert.equal(AppView.statusPillState(change({ votes_required: 2 })).label, 'Vote · 0/2');
   assert.ok(!AppView._proposalMenuItems(change(), {}).some((i) => i.label === 'Don’t approve'));
@@ -223,10 +229,24 @@ test('#3977: a solo Don\'t approve sends its note the way a group\'s No sends it
   assert.deepEqual(vote.body, { vote: 'no', expectedEpoch: 3, reason: 'Sort the list by date' });
 });
 
-test('#3977: ⋯ keeps "Don\'t approve", a second way to the same No', () => {
-  // Left in place on purpose (B7's ⋯ item): the same castVote No, whose line
-  // castVote asks for itself. The picker's No side is the main road to it.
-  assert.match(SRC, /label: 'Don’t approve',[\s\S]{0,200}act: \(\) => AppView\.castVote\(pr\.id, 'no', \.\.\.\(epoch === null \? \[\] : \[epoch\]\)\),/);
+test('#4270: ⋯ no longer offers a separate "Don\'t approve"', () => {
+  // #3977 left B7's item in place: the same castVote No, whose line castVote
+  // asked for by its own prompt. With Approve opening the picker, that was
+  // two ways to one No, one of them without the box. It is gone; Don't
+  // approve is the picker's No side (the test above), on the board, the
+  // folded row and the change page alike.
+  const AppView = makeAppView();
+  AppView.appData = { slug: 'plant-pal', audience: 'solo' };
+  for (const pr of [change(), change({ my_vote: 'yes' }), change({ username: 'someone', user_id: 5 })]) {
+    const labels = AppView._proposalMenuItems(pr, {}).map((i) => i.label);
+    assert.ok(!labels.some((l) => /approve/i.test(l)), `no approval row in ⋯: ${labels.join(', ')}`);
+  }
+  const menu = SRC.slice(SRC.indexOf('  _proposalMenuItems(pr, state) {'), SRC.indexOf('  _proposalDetailsView(pr) {'));
+  assert.ok(menu.length > 0);
+  assert.doesNotMatch(menu, /castVote\(/, 'no vote is cast from ⋯');
+  assert.doesNotMatch(menu, /label: 'Don’t approve'/);
+  // The picker still has it, worded so, on every face that draws VoteButton.
+  assert.match(CARD_SRC, /const noWord = approve \? 'Don’t approve' :/);
 });
 
 test('#3977: the Needs you tab\'s vote sheet is the same picker, as an approval', () => {
@@ -253,4 +273,108 @@ test('#3977: the Needs you tab\'s vote sheet is the same picker, as an approval'
   const group = draw(false);
   assert.match(group, />Your vote<\/div>/);
   assert.match(group, />Vote yes<\/button>/);
+});
+
+// The needs feed's row for a change on a project that is just yours, and one
+// for a group's: the shape GET /api/workshop/needs-feed answers with.
+const feedItem = (over) => ({
+  kind: 'proposal', id: 7, title: 'Sunday reminder', summary: 'Sends a reminder on Sundays.', author: 'homeroom_bot',
+  number: 3, epoch: 3, at: null, yes: 0, no: 0,
+  app: { slug: 'plant-pal', name: 'Plant pal', icon_url: null, icon_emoji: null }, ...over,
+});
+
+test('#4270: the feed across every project says Approve and Don\'t approve for these changes', () => {
+  const reel = loadTsx('frontend/src/features/workshop/needs-reel.tsx');
+  // The flag rides onto the row's Yes, as `_cardVoteButtonSpecs` puts it
+  // there on a project's own Needs you; a group's Yes carries none.
+  const [solo, group, decision] = reel.reelRows([
+    feedItem({ approve: true }),
+    feedItem({ id: 8, title: 'Sort', author: 'ada', yes: 1, approve: undefined, app: { slug: 'garden', name: 'Garden', icon_url: null, icon_emoji: null } }),
+    { ...feedItem({ kind: 'governance', id: 9, epoch: null, yes: null, no: null }), approve: true },
+  ]);
+  assert.deepEqual(solo.yes, { label: 'Yes', act: { fn: 'castVote', args: [7, 'yes', 3] }, approve: true });
+  assert.ok(!('approve' in solo.no), 'the No is the same No either way');
+  assert.ok(!('approve' in group.yes));
+  assert.equal(decision.yes, null, 'a group decision still has no pair here');
+
+  // Drawn by the project's own feed: the rail and the swipe say it.
+  const draw = (items) => renderToHtml(createElement(reel.NeedsReel, { items, error: false, capped: false, onDone: () => {} }));
+  const html = draw([feedItem({ approve: true })]);
+  assert.match(html, /<span class="dev-ws-rail-lab">Approve<\/span>/);
+  assert.doesNotMatch(html, /<span class="dev-ws-rail-lab">Vote<\/span>/);
+  assert.match(html, /<span class="dev-ws-swipe-hint dev-ws-swipe-yes" aria-hidden="true">Approve<\/span>/);
+  assert.match(html, /<span class="dev-ws-swipe-hint dev-ws-swipe-no" aria-hidden="true">Don’t approve<\/span>/);
+  // The vote sheet's form is the card's picker, as an approval.
+  const { NeedsVoteForm } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
+  const noop = () => {};
+  const form = (row, side = 'yes') => renderToHtml(createElement(NeedsVoteForm, {
+    row, slug: '', side, line: '', onSide: noop, onLine: noop, onBoxKey: noop, onCancel: noop, onSend: noop,
+  }));
+  assert.match(form(solo), />Your approval<\/div>/);
+  assert.match(form(solo), /dev-vote-switch-yes" aria-pressed="true" data-act="castVote">[\s\S]*?Approve<\/button>/);
+  assert.match(form(solo), /dev-vote-switch-no" aria-pressed="false" data-act="castVote">[\s\S]*?Don’t approve<\/button>/);
+  assert.match(form(solo, 'no'), /dev-vote-reason-send-no" disabled="">Don’t approve<\/button>/);
+
+  // A group's row is a vote, word for word.
+  const groupHtml = draw([feedItem({ id: 8, title: 'Sort', author: 'ada', yes: 1, app: { slug: 'garden', name: 'Garden', icon_url: null, icon_emoji: null } })]);
+  assert.match(groupHtml, /<span class="dev-ws-rail-lab">Vote<\/span>/);
+  assert.match(groupHtml, /dev-ws-swipe-yes" aria-hidden="true">Yes<\/span>/);
+  assert.match(groupHtml, /dev-ws-swipe-no" aria-hidden="true">No<\/span>/);
+  assert.match(form(group), />Your vote<\/div>/);
+  assert.match(form(group), />Vote yes<\/button>/);
+
+  // Once answered, the feed's own facts line says it as the project's does:
+  // "You approved it" / "You didn't approve it", not "You voted yes".
+  const lander = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/dev-board/workshop/workshop.tsx'), 'utf8');
+  const facts = lander.slice(lander.indexOf('function factsFor('), lander.indexOf('function approves('));
+  assert.equal((facts.match(/text: youAnswered\(row, voted\)/g) || []).length, 2, 'both branches, the project\'s and the feed\'s');
+  assert.doesNotMatch(facts, /`You voted \$\{voted\}`/);
+});
+
+test('#4270: the needs feed marks a change approve by AppView._approveSolo\'s three tests', () => {
+  // The query says which rows are on a project that is just the viewer's
+  // and count their vote (`solo`); withVotesRequired adds the merge gate's
+  // count for those; the item is marked when that count is one.
+  const route = require('../src/routes/workshop-overview');
+  assert.match(route.NEEDS_FEED_SQL, /\(o\.kind = 'proposal'\s+AND \(CASE[\s\S]*?ELSE 'solo'\s+END\) = 'solo'\s+AND counts_toward_outcome\(\$1, a\.id\)\) AS solo/);
+  const row = (over) => ({
+    slug: 'plant-pal', name: 'Plant pal', icon_image_id: null, icon_emoji: null, app_id: 4,
+    kind: 'proposal', id: 7, title: 'Sunday reminder', summary: null, author: 'homeroom_bot', number: 3, epoch: 3,
+    at: null, yes: 0, no: 0, ...over,
+  });
+  const shaped = (over) => route.shapeNeedsFeed([row(over)])[0];
+  assert.equal(shaped({ solo: true, votes_required: 1 }).approve, true);
+  assert.equal(shaped({ solo: true }).approve, true, 'no count worked out: one person\'s project needs one');
+  assert.ok(!('approve' in shaped({ solo: true, votes_required: 2 })), 'a rule asking for two Yes votes keeps the vote');
+  assert.ok(!('approve' in shaped({ solo: false, votes_required: 1 })), 'a group, or a vote that does not count, keeps the vote');
+  assert.ok(!('approve' in shaped({})));
+  // And the route works the count out before it shapes.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src/routes/workshop-overview.js'), 'utf8');
+  assert.match(src, /const items = shapeNeedsFeed\(await withVotesRequired\(pool, rows\)\);/);
+  assert.match(src, /row\.votes_required = governance\.computeGate\(gov, electorate\.active, row\.yes, row\.no, row\.at, null\)\.required;/);
+});
+
+test('#4270: withVotesRequired asks only for the solo rows, once per project', async () => {
+  const route = require('../src/routes/workshop-overview');
+  const governance = require('../src/services/governance');
+  const asked = [];
+  const real = { getGovernance: governance.getGovernance, getElectorate: governance.getElectorate };
+  governance.getGovernance = async (pool, appId) => { asked.push(appId); return { approverPolicy: 'anyone', approvalsRequired: appId === 5 ? 2 : null }; };
+  governance.getElectorate = async () => ({ active: 1, approverIds: null, adminFallback: false });
+  try {
+    const rows = [
+      { app_id: 4, id: 1, kind: 'proposal', solo: true, yes: 0, no: 0, at: null },
+      { app_id: 4, id: 2, kind: 'proposal', solo: true, yes: 0, no: 0, at: null },
+      { app_id: 5, id: 3, kind: 'proposal', solo: true, yes: 0, no: 0, at: null },
+      { app_id: 6, id: 4, kind: 'proposal', solo: false, yes: 1, no: 0, at: null },
+      { app_id: 6, id: 5, kind: 'governance', solo: false, yes: null, no: null, at: null },
+    ];
+    const out = await route.withVotesRequired({}, rows);
+    assert.equal(out, rows);
+    assert.deepEqual(asked.sort(), [4, 5]);
+    assert.deepEqual(rows.map((r) => r.votes_required), [1, 1, 2, undefined, undefined]);
+    assert.deepEqual(route.shapeNeedsFeed(rows.map((r) => ({ ...r, slug: 'x' }))).map((it) => !!it.approve), [true, true, false, false, false]);
+  } finally {
+    Object.assign(governance, real);
+  }
 });

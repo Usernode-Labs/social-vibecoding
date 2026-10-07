@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react';
 
 import { CheckIcon } from '@/components/ui/icons';
+import { ProgressRing } from '@/components/ui/progress-ring';
 
 import type { HomeroomBotPlan } from './types';
 
@@ -25,7 +26,9 @@ import type { HomeroomBotPlan } from './types';
  * #4197: once Build it is pressed, each question stays as a small label
  * with the answer it went with under it, filled as the tapped answer was but
  * no longer a button (AnsweredChoices), and the line under it is a check and
- * "Building it". Until the server's update lands, the answers are the ones
+ * "Building it". #4227: while the build runs (`building`; by default, while
+ * Build it pressed here is on its way) the check is the activity card's
+ * spinner instead. Until the server's update lands, the answers are the ones
  * tapped here (a question left alone shows its suggested answer, as the
  * server decides it), so they never blink away.
  *
@@ -56,6 +59,8 @@ export interface PlanCardViewProps {
   choices?: string[];
   /** Build it was pressed here and is on its way. */
   busy?: boolean;
+  /** #4227: its build is running now; left out, while `busy`. */
+  building?: boolean;
   /** Build it, with the answer tapped for each choice (null for one left alone). */
   onBuild?: (answers: Array<string | null>) => void;
   onChange?: () => void;
@@ -91,11 +96,15 @@ export function AnsweredChoices({ items, className = '' }: { items: AnsweredChoi
   );
 }
 
-/** #4197: the line under a plan once Build it is pressed: a check, then its words. */
-export function DoneLine({ children }: { children: ReactNode }) {
+/** #4197: the line under a plan once Build it is pressed: a check, or the spinner while it builds, then its words. */
+export function DoneLine({ children, spinning = false }: { children: ReactNode; spinning?: boolean }) {
   return (
-    <p className="messages-bot-answered messages-bot-done" role="status">
-      <CheckIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
+    <p className="messages-bot-answered messages-bot-done" role="status" data-bot-plan-building={spinning ? '' : undefined}>
+      {spinning ? (
+        <ProgressRing pct={0} title="Building" spinning className="h-4 w-4" trackClassName="dark:stroke-zinc-700" aria-hidden="true" />
+      ) : (
+        <CheckIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
+      )}
       <span>{children}</span>
     </p>
   );
@@ -108,7 +117,7 @@ const SURFACES = {
 } as const;
 
 export function PlanCardView({
-  appName, plan, state, choices = [], busy = false, onBuild, onChange, surface = 'messages', footer = null,
+  appName, plan, state, choices = [], busy = false, building, onBuild, onChange, surface = 'messages', footer = null,
 }: PlanCardViewProps) {
   const [picked, setPicked] = useState<Array<string | null>>(() => plan.questions.map(() => null));
   // Build it pressed on this card: its picks stand in until `choices` land.
@@ -165,7 +174,7 @@ export function PlanCardView({
           <button type="button" className="messages-bot-secondary" data-bot-plan-change="" onClick={() => onChange?.()}>Change something</button>
         </div>
       ) : null}
-      {shown === 'built' ? <DoneLine>{PLAN_STATE_LINES.built}</DoneLine>
+      {shown === 'built' ? <DoneLine spinning={building ?? busy}>{PLAN_STATE_LINES.built}</DoneLine>
         : shown !== 'open' && shown !== 'replaced' ? <p className="messages-bot-answered" role="status">{PLAN_STATE_LINES[shown]}</p> : null}
       {footer}
     </div>

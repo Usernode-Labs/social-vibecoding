@@ -51,6 +51,13 @@
  * a run that succeeded gives Argo CD and the rollout their own grace, from
  * when the run finished rather than from the merge.
  *
+ * The queue can also stand still on purpose. Since 7 Oct 2026, when the
+ * platform rolled out four times in sixteen minutes, a run at main's tip
+ * waits in its release job until the run that published the previous release
+ * finished RELEASE_MIN_GAP_MINUTES ago. Nothing is stuck while it waits, so an
+ * unfinished run is late only once the queue has stood still for the grace
+ * plus that gap (RELEASE_MIN_GAP_MS).
+ *
  * Each (sha, kind) is reported once — an app_health notification to the
  * admins, and a record on apps.release_stall that the board banner draws
  * (dev-board/release-stall-store.ts words it) — and the record is cleared
@@ -68,6 +75,11 @@ function graceMs() {
   const v = parseInt(process.env.RELEASE_GRACE_MS, 10);
   return Number.isFinite(v) && v > 0 ? v : 10 * 60 * 1000;
 }
+
+// The release workflow's RELEASE_MIN_GAP_MINUTES: the longest a run at
+// main's tip waits for the previous release to age before it publishes.
+// tests/release-watch.test.js holds the two equal.
+const RELEASE_MIN_GAP_MS = 10 * 60 * 1000;
 
 const WORKFLOW_PATH = '.github/workflows/build-kubernetes-images.yml';
 const WORKFLOW_FILE = 'build-kubernetes-images.yml';
@@ -150,9 +162,10 @@ function classify({ ageMs, run, idleMs = null, doneAgoMs = null, grace = graceMs
   if (run && run.status === 'completed' && FAILED_CONCLUSIONS.has(run.conclusion)) return 'workflow_failed';
   if (!(ageMs >= grace)) return null;
   if (run && run.status !== 'completed') {
-    // Waiting behind earlier merges' releases, or running right after
-    // them: on its way while the queue keeps moving.
-    if (Number.isFinite(idleMs) && idleMs < grace) return null;
+    // Waiting behind earlier merges' releases, running right after them,
+    // or waiting out the release gap: on its way while the queue keeps
+    // moving, or has been still for no longer than that wait explains.
+    if (Number.isFinite(idleMs) && idleMs < grace + RELEASE_MIN_GAP_MS) return null;
     return 'workflow_running';
   }
   if (run && run.conclusion === 'success') {
@@ -362,6 +375,7 @@ module.exports = {
   classify,
   prNumberFrom,
   graceMs,
+  RELEASE_MIN_GAP_MS,
   WORKFLOW_PATH,
   _forTest: { resetFirstSeen: () => firstSeen.clear() },
 };

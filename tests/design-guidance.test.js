@@ -1,3 +1,4 @@
+// test:changed: when src/prompts/design-guidance.md (the guidance this suite pins, read through services/prompts.js; scripts/test-changed.js)
 'use strict';
 
 // #2817: every coding agent builds with the same written design guidance,

@@ -2004,6 +2004,22 @@ form.agent-session-composer:focus-within {
   .messages-layout.messages-has-reply-thread .messages-list-toggle { display: none; }
   .messages-layout.messages-has-reply-thread > .messages-thread-pane { margin-left: 12px; }
 }
+
+/* ── Too narrow for the list beside a conversation (#4229) ──────────────
+   From 768px up the list and the sheet share the strip, but a strip under
+   860px (the list's 22rem and 8px, the sheet's margins, and a 480px sheet)
+   leaves the conversation too narrow to read. There an open discussion takes
+   the strip, as on a phone: the list steps aside, the full-width toggle
+   would do nothing so it is not drawn, and the bar's back arrow returns to
+   the list. The class is the strip's own width, measured by the screen
+   (store.ts measureLayout), so folding the platform rail counts. It is not a
+   container query: containing the strip would make it the box every
+   `position: fixed` overlay inside it is placed against. */
+@media (min-width: 768px) {
+  .messages-layout.messages-list-crowded > .messages-list-pane { display: none; }
+  .messages-layout.messages-list-crowded .messages-list-toggle { display: none; }
+  .messages-layout.messages-list-crowded > .messages-thread-pane { margin-left: 12px; }
+}
 .messages-reply-count {
   display: flex;
   align-items: center;
@@ -11982,8 +11998,13 @@ html.web-browser-chrome {
 #header-title.is-centered {
   position: absolute;
   left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
+  /* `top: auto`, not 50%: the bar is pt-2/pb-4 (8px over the row, 16px
+     under it), so its middle is 4px below the row's and a title centred on
+     the box sat 4px under the bell and the mark beside it (#4237). Left at
+     auto, an absolute child of a flex container takes the row's own
+     `items-center` position, safe-area padding included. */
+  top: auto;
+  transform: translateX(-50%);
   flex: none;
   text-align: center;
 }
@@ -14675,6 +14696,21 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
 }
 .dev-topic-sheet.dev-topic-card { padding: 6px; }
+/* #4244: a closed request's one status band, the first thing in its card
+   (topic-head.tsx `ClosedBand`). Inset to the card's 6px padding, so its
+   radius is the card's 26px less that. Emerald when a merged change closed
+   it, the neutral grey when a vote or an admin did. */
+.dev-issue-closed-band {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px;
+  min-width: 0; margin-bottom: 6px; padding: 9px 14px;
+  border-radius: 20px; font-size: 13px; line-height: 1.35;
+  background: var(--state-neutral-bg); color: var(--text-secondary);
+}
+.dev-issue-closed-band[data-tone="merged"] { background: var(--state-ok-bg); color: var(--state-ok); }
+.dev-issue-closed-band-glyph { width: 16px; height: 16px; flex: none; stroke-width: 2.5; }
+.dev-issue-closed-band-k { font-weight: 700; }
+.dev-issue-closed-band-dot { opacity: .6; }
+.dev-issue-closed-band .dev-topic-issue { min-width: 0; }
 .dev-topic-sheet:empty { display: none; }
 .dev-topic-h {
   margin: 0 0 8px;
@@ -17485,9 +17521,9 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 }
 .dev-ws-hero-line { margin: 0; font-size: 13px; line-height: 18px; color: var(--text-muted); }
 /* WHO IS HERE, IN THE HERO (#3268). The people row: up to five faces, then
-   "Public community · 23 members". The activity line under the actions: this
-   week in words, and the last fourteen days as a small bar chart at its end,
-   the busiest day the tallest bar.
+   "Public community · 23 members". A public or private community draws it as
+   the pulse below, with this week's activity under the count; the row is
+   Just you's, and the invite preview's.
 
    THE ROW WRAPS (#3276). Nothing in it can shrink: the faces are a fixed
    stack and the count is `nowrap`. So when five faces and the count come to
@@ -17503,10 +17539,34 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 }
 .dev-ws-hero-face:last-child { margin-right: 0; }
 .dev-ws-hero-count { font-size: 14px; font-weight: 650; color: var(--text-primary); white-space: nowrap; }
-.dev-ws-hero-activity { display: flex; align-items: flex-end; gap: 14px; }
-.dev-ws-hero-activity-words { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.dev-ws-hero-activity-line { font-size: 14px; line-height: 19px; color: var(--text-primary); }
+/* WHO IS HERE AND HOW LIVELY, ONE BLOCK (community-card.tsx HeroPulse): the
+   faces, the count over this week in words, and the fortnight's chart across
+   from both, the busiest day the tallest bar.
+
+   ON A PHONE THE CHART MOVES UP, across from the faces, and the words take
+   the full width under them. Faces, words and chart in one row left the
+   words about 130px on a 390px phone, so the count and the activity line
+   broke into five short lines. The breakpoint is the tabs' own: under 768px
+   they are the coloured band. Each cell of the activity line stays whole,
+   so a line too long for a narrow phone breaks at its separator. */
+.dev-ws-hero-pulse {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas: "faces words chart";
+  align-items: center; gap: 8px 10px;
+}
+.dev-ws-hero-pulse > .dev-ws-hero-faces { grid-area: faces; }
+.dev-ws-hero-pulse > .dev-ws-hero-spark-wrap { grid-area: chart; }
+.dev-ws-hero-pulse-words { grid-area: words; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+@media (max-width: 767.98px) {
+  .dev-ws-hero-pulse {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "faces chart" "words words";
+    column-gap: 12px;
+  }
+}
+.dev-ws-hero-activity-line { font-size: 13px; line-height: 18px; color: var(--text-muted); }
 .dev-ws-hero-activity-line b { font-weight: 650; }
+.dev-ws-hero-activity-line > [data-ws-members-cell] { white-space: nowrap; }
 .dev-ws-hero-spark { flex: none; width: 112px; height: 30px; display: flex; align-items: flex-end; gap: 2px; }
 .dev-ws-hero-spark-bar {
   flex: 1 1 0; min-width: 0; border-radius: 2px 2px 1px 1px;
@@ -17568,8 +17628,35 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
   border-bottom-left-radius: 0;
   border-bottom-right-radius: 0;
 }
-html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #header-app-tile {
-  box-shadow: 0 0 0 1.5px rgba(255, 255, 255, .55);
+/* The tile's light ring is drawn INSIDE its edge (#4237). It was an outer
+   box-shadow, and the h1 around the tile is `truncate` (overflow: hidden)
+   with a line box exactly the tile's 28px, so the ring was clipped on the
+   top, bottom and left and only its right edge showed: the tile read as
+   nudged off its place. An outline pulled in by its own width paints over
+   the icon's edge, inside the box nothing clips. */
+html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #header-app-tile:not(:focus-visible) {
+  outline: 1.5px solid rgba(255, 255, 255, .55);
+  outline-offset: -1.5px;
+}
+/* ON ITS OWN, THE BAR'S ROW IS CENTRED (#4237). From 768px the band under
+   the bar is the page's own ink, so the tinted bar ends at its own 52px
+   foot, and its pt-2/pb-4 (8px over the row, 16px under) put every control
+   in it 4px above its middle. The same 52px, split 12 and 12. Below 768px
+   the band continues the colour and the 16px is part of one taller block,
+   so the shared split stays. The top keeps the safe-area inset, and the
+   browser-tab clamp (#2509) keeps its zero inset. */
+@media (min-width: 768px) {
+  html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
+    padding-bottom: 0.75rem;
+  }
+  @supports (padding: env(safe-area-inset-top)) {
+    html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header.un-safe-top-extend {
+      padding-top: calc(0.75rem + var(--un-safe-inset-top, env(safe-area-inset-top, 0px))) !important;
+    }
+    html.web-browser-chrome[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header.un-safe-top-extend {
+      padding-top: 0.75rem !important;
+    }
+  }
 }
 /* THE BAND: Hub, Discussion, Needs you, Workshop, under the header, in its
    colour. It keeps the old strip's box (`.dev-ws-tabs` > `.dev-ws-tabtrack`)

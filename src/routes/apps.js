@@ -3434,13 +3434,23 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // from "What should it do?" without a one-liner (the first session's
       // own words, not an example's) has none until somebody writes one, so
       // its hub opened on nothing but "Just you" (first-session run-through,
-      // 5 Oct 2026). Its description's first sentence stands in, cut the way
-      // the create dialog's suggestion is when no model answers
+      // 5 Oct 2026). Its card's tagline stands in (#4235; app-sketch.js
+      // saves it as the description once the card is ready, so this covers
+      // projects made before that): a model-written line about what the app
+      // is for. Without a card, its description's first sentence, cut the
+      // way the create dialog's suggestion is when no model answers
       // (homeroom-bot-dm.js firstSentence). It is the project's first
       // request, so nobody who can see the project is shown more than that.
       const botDm = require('../services/homeroom-bot-dm');
       let description = typeof app.description === 'string' && app.description.trim()
         ? app.description.replace(/\s+/g, ' ').trim() : null;
+      if (!description && !app.self_hosted) {
+        const { rows: sketchRows } = await pool.query(
+          `SELECT design FROM app_sketches WHERE app_id = $1 AND status = 'ready'`,
+          [app.id]
+        );
+        description = require('../services/app-sketch').taglineOf(sketchRows[0]) || null;
+      }
       if (!description && !app.self_hosted) {
         const { rows: briefRows } = await pool.query(
           'SELECT brief FROM homeroom_bot_first_versions WHERE app_id = $1',

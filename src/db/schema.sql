@@ -7134,6 +7134,57 @@ WHERE t.session_id = s.id
 -- means "just issue_number", exactly what it always meant.
 ALTER TABLE external_agent_tasks ADD COLUMN IF NOT EXISTS linked_issues INTEGER[] NOT NULL DEFAULT '{}';
 
+-- ── External-agent patch uploads (#4264) ─────────────────────────────
+--
+-- A patch reached submit_work only as a tool ARGUMENT, which the coding agent
+-- had to reproduce character by character: 63 KB and 134 KB in one session,
+-- and one slip in another (#4176) made the patch fail to apply and cost a
+-- round. prepare_work now also prints a one-time upload command; the agent
+-- pipes `git format-patch` into curl, the bytes land here, and submit_work
+-- takes the upload's id instead of `patch`. services/
+-- external-agent-patch-upload.js has the whole design.
+--
+-- Two tables, because a work order can be rendered more than once for one
+-- task (asking again for the same request returns the same task, with a
+-- fresh command) while a task keeps at most one upload.
+--
+-- external_agent_upload_tokens holds the credentials, as SHA-256 hashes only:
+-- the token itself is in the work order returned to the task's owner and
+-- nowhere else. Each is bound to one task, works on the upload route alone,
+-- and lapses after 24 hours (sooner if the task expires) or as soon as the
+-- task is no longer open. On the prod-debug deny list (debug-access.js).
+--
+-- external_agent_patch_uploads holds the newest patch uploaded for a task, as
+-- the exact bytes sent. Uploading again replaces it under a NEW id, so a
+-- submission naming an older id is refused rather than sending bytes the
+-- agent did not send. Deleted once the task is submitted with it, and swept
+-- when the task is closed or expires.
+--
+-- `staging:private`, like the tasks they belong to: unpublished work in
+-- flight, and credential hashes.
+CREATE TABLE IF NOT EXISTS external_agent_upload_tokens (
+  id          BIGSERIAL PRIMARY KEY,
+  task_id     BIGINT NOT NULL REFERENCES external_agent_tasks(id) ON DELETE CASCADE,
+  token_hash  TEXT NOT NULL UNIQUE CHECK (token_hash ~ '^[0-9a-f]{64}$'),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at  TIMESTAMPTZ NOT NULL
+);
+COMMENT ON TABLE external_agent_upload_tokens IS 'staging:private';
+COMMENT ON COLUMN external_agent_upload_tokens.token_hash IS 'staging:private';
+CREATE INDEX IF NOT EXISTS external_agent_upload_tokens_task_idx
+  ON external_agent_upload_tokens (task_id);
+
+CREATE TABLE IF NOT EXISTS external_agent_patch_uploads (
+  id          BIGSERIAL PRIMARY KEY,
+  task_id     BIGINT NOT NULL UNIQUE REFERENCES external_agent_tasks(id) ON DELETE CASCADE,
+  token_id    BIGINT REFERENCES external_agent_upload_tokens(id) ON DELETE SET NULL,
+  patch       BYTEA NOT NULL,
+  bytes       INTEGER NOT NULL CHECK (bytes > 0),
+  sha256      TEXT NOT NULL,
+  uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE external_agent_patch_uploads IS 'staging:private';
+
 -- ── Generic agent backend (Codex/OpenRouter BYOK; plan.md PR1) ───────
 -- chat_sessions today pins Claude continuity via cc_session_id. To add a
 -- second coding-agent backend (codex_openrouter) without breaking the
@@ -10115,6 +10166,10 @@ ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS plan_change TEXT;
 COMMENT ON COLUMN homeroom_bot_runs.plan_change IS 'staging:private';
 CREATE INDEX IF NOT EXISTS homeroom_bot_runs_awaiting_go_idx
   ON homeroom_bot_runs(awaiting_go_at) WHERE awaiting_go_at IS NOT NULL;
+-- #4239: a `person` verdict whose request is about the Homeroom platform
+-- itself rather than the project it was filed on (the triage's `platform`
+-- flag). Its requester is offered to move it to Homeroom's own board.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS about_platform BOOLEAN;
 
 -- B9: a request asked for in a project's group chat, by mentioning Homeroom
 -- bot or by "Make this a request" on your own message. The message stays
@@ -10593,7 +10648,7 @@ CREATE TABLE IF NOT EXISTS homeroom_bot_dm_actions (
   error           TEXT,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   decided_at      TIMESTAMPTZ,
-  CONSTRAINT homeroom_bot_dm_actions_kind_check CHECK (kind IN ('file_request', 'withdraw_proposal', 'build_plan')),
+  CONSTRAINT homeroom_bot_dm_actions_kind_check CHECK (kind IN ('file_request', 'withdraw_proposal', 'build_plan', 'move_request')),
   CONSTRAINT homeroom_bot_dm_actions_status_check
     CHECK (status IN ('open', 'done', 'declined', 'failed'))
 );
@@ -10603,13 +10658,18 @@ COMMENT ON TABLE homeroom_bot_dm_actions IS 'staging:private';
 -- skips an existing table, and its named CHECK allowed file_request only).
 -- B3: `build_plan`, the plan card a first version waits on (B6), decided by
 -- its buttons through the same action endpoint as an offer.
+-- #4239: `move_request`, an offer to move a request about Homeroom itself
+-- from a project's board to Homeroom's own (Move it to Homeroom / Keep it
+-- here). `app_id` is the project it is on and `source_issue_number` the
+-- request there; `issue_number` is the request it became on Homeroom's.
 ALTER TABLE homeroom_bot_dm_actions
   ADD COLUMN IF NOT EXISTS session_id INTEGER REFERENCES chat_sessions(id) ON DELETE CASCADE;
+ALTER TABLE homeroom_bot_dm_actions ADD COLUMN IF NOT EXISTS source_issue_number INTEGER;
 DO $$
 BEGIN
   ALTER TABLE homeroom_bot_dm_actions DROP CONSTRAINT IF EXISTS homeroom_bot_dm_actions_kind_check;
   ALTER TABLE homeroom_bot_dm_actions ADD CONSTRAINT homeroom_bot_dm_actions_kind_check
-    CHECK (kind IN ('file_request', 'withdraw_proposal', 'build_plan'));
+    CHECK (kind IN ('file_request', 'withdraw_proposal', 'build_plan', 'move_request'));
 END $$;
 
 -- The bot's own knobs, admin-tunable from its console section. `mode` is

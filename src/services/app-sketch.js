@@ -434,15 +434,33 @@ function sketchRecord({ design, model, createdAt }) {
  * already has one, or cannot be read: an icon somebody set is never replaced.
  */
 function manifestWithIcon(text, emoji) {
+  return manifestWithCard(text, { emoji });
+}
+
+/**
+ * The late commit's dapp.json: the card's emoji as its `icon` and its
+ * tagline as its `description`, each only where the file has none of its
+ * own (#4235: dapp.json's line always wins). Null when neither is added.
+ */
+function manifestWithCard(text, { emoji = null, tagline = null } = {}) {
   let manifest;
   try {
     manifest = JSON.parse(String(text || ''));
   } catch {
     return null;
   }
-  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest) || manifest.icon || !iconEmoji(emoji)) return null;
-  const { description, ...rest } = manifest;
-  return JSON.stringify({ ...(description !== undefined ? { description } : {}), icon: { emoji }, ...rest }, null, 2);
+  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) return null;
+  const addIcon = !manifest.icon && !!iconEmoji(emoji);
+  const line = typeof tagline === 'string' ? tagline.replace(/\s+/g, ' ').trim() : '';
+  const hasDescription = typeof manifest.description === 'string' && manifest.description.trim();
+  const addDescription = !hasDescription && !!line;
+  if (!addIcon && !addDescription) return null;
+  const { description, icon, ...rest } = manifest;
+  return JSON.stringify({
+    ...(addDescription ? { description: line } : (description !== undefined ? { description } : {})),
+    ...(addIcon ? { icon: { emoji } } : (icon !== undefined ? { icon } : {})),
+    ...rest,
+  }, null, 2);
 }
 
 // ── Generation ───────────────────────────────────────────────────────────
@@ -517,6 +535,40 @@ async function saveIcon(pool, app, emoji, deps = {}) {
   }
 }
 
+/**
+ * The card's tagline as the project's description (#4235), when it has none
+ * of its own: what the hub, the join screen and Discover read off
+ * `apps.manifest_snapshot`. A first-session project has no "What is it?"
+ * line, so without this its hub fell back on the first sentence of the
+ * creator's prompt ("I want a tier list for restaurants, that me and my
+ * friends can use…"). A line the creator gave, or one a deploy read from
+ * dapp.json, is never replaced. Best effort, never throws.
+ */
+async function saveDescription(pool, app, tagline) {
+  const line = typeof tagline === 'string' ? tagline.replace(/\s+/g, ' ').trim() : '';
+  if (!line) return false;
+  try {
+    const { rows } = await pool.query(
+      `UPDATE apps
+          SET manifest_snapshot = COALESCE(manifest_snapshot, '{"secrets": []}'::jsonb)
+                                  || jsonb_build_object('description', $2::text)
+        WHERE id = $1 AND COALESCE(btrim(manifest_snapshot->>'description'), '') = ''
+        RETURNING id`,
+      [app.id, line]
+    );
+    return rows.length > 0;
+  } catch (err) {
+    log.warn('app-sketch', 'Description not saved', { appId: app.id, err: err.message });
+    return false;
+  }
+}
+
+/** The tagline of a ready row's card, or null. */
+function taglineOf(sketch) {
+  const card = sketch ? cardOf(sketch.design) : null;
+  return card ? card.tagline : null;
+}
+
 const TIMED_OUT = Symbol('timed out');
 
 /** `promise`'s answer, or TIMED_OUT after `ms`. */
@@ -536,6 +588,7 @@ async function saveCard(pool, { app, card, model, error, deps }) {
     [app.id, JSON.stringify(card), model, error]
   );
   await saveIcon(pool, app, card.emoji, deps);
+  await saveDescription(pool, app, card.tagline);
 }
 
 /**
@@ -625,6 +678,7 @@ async function startSketch(pool, { app, user, brief, audience = null, solo = fal
     );
     if (!rows.length) return false;
     await saveIcon(pool, app, card.emoji, deps);
+    await saveDescription(pool, app, card.tagline);
     return true;
   }
   const { rows } = await pool.query(
@@ -682,7 +736,8 @@ async function markCommitted(pool, appId) {
  * A card that missed the repository's first commit: committed on its own
  * when it is ready, design/sketch.json and, when the repository's dapp.json
  * has no icon yet, the card's emoji as its `icon` (else the next deploy would
- * clear the icon saved to the project). Best effort, never throws.
+ * clear the icon saved to the project), and likewise its tagline as the
+ * `description` when it has none. Best effort, never throws.
  */
 async function commitWhenReady(pool, { appId, name, owner, repo }, deps = {}) {
   try {
@@ -695,8 +750,8 @@ async function commitWhenReady(pool, { appId, name, owner, repo }, deps = {}) {
     const manifest = typeof github.getFileContent === 'function'
       ? await github.getFileContent(owner, repo, 'dapp.json', 'main').catch(() => null)
       : null;
-    const withIcon = manifest ? manifestWithIcon(manifest, card.emoji) : null;
-    if (withIcon) files.push({ path: 'dapp.json', content: withIcon });
+    const withCard = manifest ? manifestWithCard(manifest, { emoji: card.emoji, tagline: card.tagline }) : null;
+    if (withCard) files.push({ path: 'dapp.json', content: withCard });
     await github.pushFiles(owner, repo, files, {
       message: `Add the card ${name} was made with`,
     });
@@ -733,9 +788,12 @@ module.exports = {
   makerLine,
   sketchRecord,
   manifestWithIcon,
+  manifestWithCard,
   readSketch,
   sketchStatus,
   saveIcon,
+  saveDescription,
+  taglineOf,
   makeCard,
   startSketch,
   whenReady,

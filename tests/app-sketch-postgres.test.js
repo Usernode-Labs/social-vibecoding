@@ -117,6 +117,32 @@ test('the sketch against the full PostgreSQL schema', { timeout: 120000 }, async
     assert.deepEqual(await iconOf(app.id), { icon_emoji: '🎸', icon_image_id: null });
   });
 
+  const descriptionOf = async (id) => (await pool.query(`SELECT manifest_snapshot->>'description' AS d FROM apps WHERE id = $1`, [id])).rows[0].d;
+
+  await t.test('its tagline is the project\'s description, never over one it has (#4235)', async () => {
+    const app = await project();
+    await sketch.startSketch(pool, { app, user, brief: 'I want to log our Sunday runs, that me and my friends can see' }, { llm: fakeLlm(), limits: fakeLimits(), ws: WS });
+    await sketch.whenReady(pool, app.id, 5000);
+    assert.equal(await descriptionOf(app.id), 'The club\'s Sunday runs, together');
+    assert.deepEqual((await pool.query('SELECT manifest_snapshot->\'secrets\' AS s FROM apps WHERE id = $1', [app.id])).rows[0].s, []);
+
+    // The creator's own "What is it?" line (POST /api/apps seeds it), or
+    // one a deploy read from dapp.json, stays.
+    const described = await project();
+    await pool.query('UPDATE apps SET manifest_snapshot = $2 WHERE id = $1', [described.id, JSON.stringify({ description: 'Our running log', secrets: [] })]);
+    await sketch.startSketch(pool, { app: described, user, brief: 'Log our Sunday runs' }, { llm: fakeLlm(), limits: fakeLimits(), ws: WS });
+    await sketch.whenReady(pool, described.id, 5000);
+    assert.equal(await descriptionOf(described.id), 'Our running log');
+    assert.equal(await sketch.saveDescription(pool, described, 'Something else'), false);
+
+    // A blank one is no description: the tagline fills it, keeping the rest.
+    const blank = await project();
+    await pool.query('UPDATE apps SET manifest_snapshot = $2 WHERE id = $1', [blank.id, JSON.stringify({ description: '  ', secrets: [{ key: 'K' }] })]);
+    assert.equal(await sketch.saveDescription(pool, blank, 'Runs, together'), true);
+    const { rows: [snap] } = await pool.query('SELECT manifest_snapshot FROM apps WHERE id = $1', [blank.id]);
+    assert.deepEqual(snap.manifest_snapshot, { description: 'Runs, together', secrets: [{ key: 'K' }] });
+  });
+
   await t.test('a refusal or an error is the description\'s card, with why, and creation is not held', async () => {
     const bad = await project();
     await sketch.startSketch(pool, { app: bad, user, brief: 'A tracker for our weekly miles, so we can see who is keeping up' },
@@ -180,5 +206,6 @@ test('the sketch against the full PostgreSQL schema', { timeout: 120000 }, async
     assert.equal(row.model, 'fallback');
     assert.deepEqual(sketch.cardOf(row.design), { emoji: '🎬', tagline: 'A poll to pick what we watch on movie night', points: [sketch.SHARED_POINT] });
     assert.equal((await iconOf(app.id)).icon_emoji, '🎬');
+    assert.equal(await descriptionOf(app.id), 'A poll to pick what we watch on movie night');
   });
 });

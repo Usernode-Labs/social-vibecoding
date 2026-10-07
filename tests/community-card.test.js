@@ -31,6 +31,15 @@ test('the approval rule is one sentence per regime, read from the server', () =>
   assert.equal(line({ electorate: 1, required: 1 }),
     'A change goes live when the only active member approves it.',
     'no wait to mention: the quiet path needs a Yes short of the threshold, and one Yes is the threshold');
+  const solo = { policy: 'anyone', approvals_required: null, electorate: 1, required: 1 };
+  assert.equal(approvalLine(solo, { audience: 'solo', is_member: true }),
+    'A change goes live when you approve it.', 'Just you: the one approver is the reader (#4246)');
+  assert.equal(approvalLine(solo, { audience: 'solo', is_member: false }),
+    'A change goes live when the only active member approves it.', 'a visitor is not the approver');
+  assert.equal(approvalLine(solo, { audience: 'invited', is_member: true }),
+    'A change goes live when the only active member approves it.', 'a private community keeps the generic line');
+  assert.equal(approvalLine({ ...solo, electorate: 2, required: 1 }, { audience: 'solo', is_member: true }),
+    'A change goes live when 1 of the 2 active members approves it.', 'only when the reader is the whole electorate');
   assert.equal(line({ electorate: 3, required: 3 }), 'A change goes live when all 3 active members approve it, or after a wait if one approves and nobody objects.');
   assert.equal(line({ electorate: 3, required: 1 }), 'A change goes live when 1 of the 3 active members approves it.');
   assert.equal(approvalLine({ policy: 'anyone', approvals_required: 2, electorate: 30, required: 2 }),

@@ -20,7 +20,8 @@
 // #2387 adds 'thread_reply': a reply in an app-chat reply thread you started
 // or replied in (chat_message_id is the reply; its thread_ref the root).
 // #3952 adds 'issue_mention': somebody named you with @ in a request they
-// filed (`detail` is its number, like 'issue_opened').
+// filed (`detail` is its number, like 'issue_opened'). #4271: it stands in
+// for 'issue_opened' when you would get both (notifyIssueFiled).
 // 'platform_limit' tells full admins a server-wide cap (MAX_APPS,
 // MAX_GLOBAL_SESSIONS) is nearly or completely used; `detail` carries the
 // cap, level and figures (services/platform-limit-alerts.js).
@@ -383,7 +384,12 @@ async function createThreadReplyNotifications(pool, {
 // and an issue is none of those; `detail` is the generic slot the schema
 // already keeps for exactly this ("a notification kind that needs a small
 // extra string"), and app_id + number is enough for the drawer to link.
-async function createIssueOpenedNotifications(pool, { appId, issueNumber, authorId }) {
+//
+// #4271: `mentioned` is who the request's own text already told
+// ('issue_mention', notifyIssueFiled writes it first). Those people hear
+// about this request once, from the row that says why they are told, unless
+// that would cost them the only buzz they asked for (mentionStandsIn).
+async function createIssueOpenedNotifications(pool, { appId, issueNumber, authorId, mentioned = [] }) {
   if (!appId || !issueNumber) return [];
 
   const { rows: appRows } = await pool.query(
@@ -412,6 +418,14 @@ async function createIssueOpenedNotifications(pool, { appId, issueNumber, author
   }));
   if (!recipientIds.size) return [];
 
+  // #4271: after the new_issues switch, so only somebody who would have had
+  // both rows is ever left out of this one.
+  const told = (mentioned || []).map(Number).filter((id) => recipientIds.has(id));
+  if (told.length) {
+    for (const id of await mentionStandsIn(pool, told)) recipientIds.delete(id);
+    if (!recipientIds.size) return [];
+  }
+
   // NOT EXISTS rather than a read-then-write, matching pr_proposed: two
   // concurrent creates of the same issue must not double-notify.
   const { rows } = await pool.query(
@@ -427,6 +441,36 @@ async function createIssueOpenedNotifications(pool, { appId, issueNumber, author
     [[...recipientIds], appId, authorId || null, String(issueNumber)]
   );
   return rows;
+}
+
+// #4271: of the people a request's mention told, the ones it tells in place
+// of 'issue_opened'. That is all of them but one case: somebody whose phone
+// rings for a new request and not for a mention (Direct interactions off,
+// App alerts on). For them the mention is a quiet row and this one is the
+// buzz they asked for, so they keep both rows rather than lose the buzz.
+// Read the way the push outbox reads it (enqueue_mobile_push_deliveries in
+// db/schema.sql): each kind's category, their own switch for it or else its
+// default. Everything else that decides a push (the phone, a muted project)
+// is the same for both rows. Fails toward sending: a read that breaks
+// leaves nobody out, which is the duplicate this replaces, not a silence.
+async function mentionStandsIn(pool, userIds) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT u AS user_id, policy.kind,
+              COALESCE(preference.enabled, policy.default_enabled) AS rings
+         FROM UNNEST($1::int[]) AS u
+         CROSS JOIN mobile_push_kind_categories policy
+         LEFT JOIN mobile_push_preferences preference
+           ON preference.user_id = u AND preference.category = policy.category
+        WHERE policy.kind IN ('issue_mention', 'issue_opened')`,
+      [userIds]
+    );
+    const rings = new Set(rows.filter((r) => r.rings).map((r) => `${r.user_id}:${r.kind}`));
+    return userIds.filter((id) => rings.has(`${id}:issue_mention`) || !rings.has(`${id}:issue_opened`));
+  } catch (err) {
+    log.warn('notifications', 'Request mention push read failed', { err: err.message });
+    return [];
+  }
 }
 
 // #3952: what a request's markdown draws as code, blanked before its
@@ -488,8 +532,9 @@ async function createIssueMentionNotifications(pool, { appId, issueNumber, autho
   return rows;
 }
 
-// The filing paths' one call (routes/issues.js, routes/feedback.js,
-// routes/sessions.js, homeroom-bot-mayor.js, feedback-reports.js): the rows
+// The filing paths' one call (routes/feedback.js, routes/sessions.js,
+// homeroom-bot-dm.js, feedback-reports.js; routes/issues.js and
+// homeroom-bot-mayor.js go through notifyIssueFiled below): the rows
 // above, then each one's live push. A path that knows only the repository
 // (the platform's own, filed with the bot's token) passes `owner` and `repo`,
 // and the project is looked up only once the text names somebody. Never
@@ -512,6 +557,29 @@ async function notifyIssueMentions(pool, { appId = null, owner = null, repo = nu
     });
     return [];
   }
+}
+
+// #4271: the one call for a request filed on a project, where the people
+// who follow its new requests are told as well as the people it names
+// (routes/issues.js, homeroom-bot-mayor.js). Since #3952 somebody in both
+// groups heard about one request twice, and their phone buzzed twice. The
+// mention goes first, then 'issue_opened' to everyone it did not already
+// tell (createIssueOpenedNotifications). Never rejects, like
+// notifyIssueMentions. Resolves the rows of each kind written.
+async function notifyIssueFiled(pool, { appId, issueNumber, authorId, text = '' }) {
+  const mentions = await notifyIssueMentions(pool, { appId, issueNumber, authorId, text });
+  let opened = [];
+  try {
+    opened = await createIssueOpenedNotifications(pool, {
+      appId, issueNumber, authorId, mentioned: mentions.map((row) => row.user_id),
+    });
+    await Promise.all(opened.map((row) => hydrateAndPush(pool, row)));
+  } catch (err) {
+    log.warn('notifications', 'Issue-opened notifications failed', {
+      appId, issueNumber, err: err.message,
+    });
+  }
+  return { mentions, opened };
 }
 
 // Your proposal merged. Addressed to its author, and the one notification in
@@ -1902,6 +1970,7 @@ module.exports = {
   createIssueOpenedNotifications,
   createIssueMentionNotifications,
   notifyIssueMentions,
+  notifyIssueFiled,
   createPrMergedNotification,
   createProposalVoteNotification,
   createRevisionRecheckNotifications,

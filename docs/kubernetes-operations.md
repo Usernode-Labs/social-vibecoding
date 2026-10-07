@@ -33,6 +33,41 @@ a new atomic release. Missing platform or capture artifacts fail closed and
 require the normal `main` workflow; the scheduled path never rebuilds them as
 an incidental side effect.
 
+Every stable release restarts the platform, and each restart re-runs the
+checks of every proposal in flight and interrupts the bot's builds. The
+workflow runs one push to `main` at a time, and its "Check branch tip before
+publishing" step decides which runs publish:
+
+- **Spacing.** A stable release goes out no sooner than
+  `RELEASE_MIN_GAP_MINUTES` (10) after the previous one. The gap is timed
+  from the end of the run that published the previous release, which is when
+  Argo CD was asked to roll it out.
+- **The tip run waits.** The run for `main`'s tip waits inside that step for
+  the rest of the gap, then publishes. A newer merge landing during the wait
+  ends it: the waiting run skips, and the newer merge's run, queued behind it,
+  publishes once built. The newest merge is always released.
+- **Runs behind the tip** publish only when the newest release's revision
+  merged at least `RELEASE_EVERY_MINUTES` (15) before theirs, and they skip
+  inside the gap.
+
+On 7 October 2026 the platform rolled out four times in sixteen minutes
+(21:41:57 to 21:57:49 UTC) while approved proposals merged one after another;
+that is what the gap prevents.
+
+If the age of the previous release cannot be read, the run publishes as it
+did before the gap existed. Feature-branch candidates never wait.
+
+**To release at once, for example an urgent fix,** run the workflow on
+`main` by hand:
+
+```bash
+gh workflow run build-kubernetes-images.yml --ref main
+```
+
+A dispatched run never waits. A run that is waiting when the dispatched run
+is queued behind it skips in its favour, so `main` goes out as soon as the
+dispatched run has built, with one restart.
+
 Argo owns the platform Deployment, database, namespaces, service accounts and
 runtime permissions. The platform owns generated apps, previews, workers and
 check Jobs. Keep each change with its owner; source commits do not themselves
@@ -63,11 +98,12 @@ admins. The Dev board shows an amber banner with the workflow run linked until
 the running build catches up. A red run is reported at once; a run still going,
 a run that succeeded without a rollout, or no run at all is reported after
 `RELEASE_GRACE_MS` (default ten minutes). The workflow runs one push at a time,
-so after a burst of merges the newest one's run waits for the others: a run
-that has not finished is reported only once no run of the workflow on `main`
-has finished for the grace, and a run that succeeded gives the rollout its own
-grace from when it finished. Re-running the failed workflow jobs, or the next
-merge, releases the commit; a build that already carries the recorded commit
+so after a burst of merges the newest one's run waits for the others. The
+tip's run may also wait out the release gap above. So a run that has not
+finished is reported only once no run of the workflow on `main` has finished
+for the grace plus `RELEASE_MIN_GAP_MINUTES`. A run that succeeded gives the
+rollout its own grace from when it finished. Re-running the failed workflow
+jobs, or the next merge, releases the commit; a build that already carries the recorded commit
 reads as resolved at once, and the poller clears the record on the new build's
 first tick at `main`. A token without `actions:read` degrades to the time-based
 verdict rather than failing.
@@ -217,6 +253,17 @@ stuck — and every `CHECK_HARVEST_SWEEP_MS` (30s) after, at most
 - **moot** when the session no longer wants the run — decided meanwhile, head
   moved, session closed, or (under the preview lifecycle) a newer run owns it.
 
+A platform process that shuts down hands its rows over first: it stamps
+their heartbeat as long past, so the next leader's boot sweep seats them at
+once instead of a minute later. A run whose process died without doing so is
+still covered: before the stale sweep starts a session over, it looks for that
+session's current run on the cluster. If the capture Job is still running, or
+the run finished less than `CHECKS_STALE_MS` ago, the harvest settles it
+instead. A run that starts stops the still-running Jobs of the session's runs
+for other commits (background deletion; their input Secrets go with them).
+Runs for the same commit are left to finish, because their verdict still
+counts.
+
 Under `PREVIEW_LIFECYCLE_ENABLED` the harvester adopts the run's
 `preview_operations` row first and writes through the same ownership check a
 live run does; a request for a newer revision aborts the harvest. Outside the
@@ -266,6 +313,33 @@ PostgreSQL connections and an isolated temporary schema. Set
 existing `SQL_CHECK_CONNECTION_URL` supplied by the unit runner. It never falls
 back to the application's `DATABASE_URL`. Kubernetes termination and cancellation
 are covered by `tests/kubernetes-preview-cancellation.test.js` with API doubles.
+
+## Check Jobs, their input Secrets and the worker quota
+
+A checks run creates a capture Job and a unit-suite Job in the worker namespace,
+each with an input Secret the Job owns. Once the run's verdict is stored and
+its `check_runs` manifest cleared, the run deletes its finished Jobs with
+background propagation, which takes their Pods and Secrets too; the harvester
+does the same after settling an orphan. The Jobs' `ttlSecondsAfterFinished`
+(3600 s) covers everything else: superseded or failed runs, the main-watch
+suite, and whatever a crash leaves. Keep it at least that long, because it is
+how late a harvest can still read a run after a slow leader handover.
+
+`services/check-retention.js` removes what no owner will. On the leader, every
+15 minutes and at most 50 deletions a pass, it deletes:
+
+- check input Secrets (`sv-capture-…-input`, `sv-unit-suite-…-input`) with no
+  owner, older than two hours, that no Pod or Job in the namespace names;
+- finished check Pods whose Job is gone, finished at least the Job TTL ago.
+
+It never touches a worker's `-env` Secret or anything with an owner. It needs
+`list` on Secrets and `delete` on Pods in the worker namespace, which nothing
+else in the platform uses; the foundation owns those grants. Without them each
+pass logs `Check leftover sweep stopped` and deletes nothing.
+
+The namespace's ResourceQuota counts Secrets and Jobs as well as CPU. Size
+`secrets` and `count/jobs.batch` for bursts of concurrent runs on top of the
+worker env Secrets; they are object counts, so headroom costs nothing.
 
 ## Workflow governance machine
 

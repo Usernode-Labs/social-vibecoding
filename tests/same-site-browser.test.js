@@ -204,6 +204,9 @@ const EXEMPT = new Map([
   ['feedback.js POST /api/feedback/video', RAW],
   ['feedback.js POST /api/feedback', JSON_FIELD],
   ['github-webhook.js POST /api/github/webhook', TOKEN],
+  // #4264: a coding agent's sandbox, authenticated by the task's one-time
+  // upload token in Authorization; no cookie is read.
+  ['external-agent-patch-upload.js POST /api/external-tasks/:taskId/patch', TOKEN],
   ['mail-webhooks.js POST /api/mail/webhooks/resend', 'Resend raw-body Svix signature; no cookie or browser session authorizes a callback'],
   ['global-chat.js POST /api/global-chat/threads/:id/direct-actions', JSON_FIELD],
   ['global-chat.js POST /api/global-chat/threads/:id/inline-actions', JSON_FIELD],

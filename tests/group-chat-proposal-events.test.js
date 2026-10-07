@@ -581,3 +581,23 @@ test('the Discussion reads who voted on an earlier version from the roster the p
   assert.match(av, /earlierVoters: \[\.\.\.earlierYes, \.\.\.earlierNo\],/);
   assert.match(av, /before !== \(view\.earlierVoters \|\| \[\]\)\.join\('\\n'\)\)\s*\{\s*GroupChat\.renderThread\(\);/);
 });
+
+// ── #4238: Homeroom bot's first-version line ──────────────────────────
+
+test('#4238: the bot\'s first-version message draws its Open button, and leaves the quiet card', () => {
+  const openApp = { label: 'Open Page Turners', target: '#app/page-turners/app' };
+  const bot = human('I\'ve made the first version of Page Turners! Let me know if you need anything else.');
+  const messages = [{ ...bot, username: 'homeroom_bot', openApp }];
+  const html = renderRows({ messages, lead: quietLead }, 'main');
+  assert.match(html, /data-gc-open-app=""[^>]*>Open Page Turners<\/button>/);
+  assert.match(html, /gc-quiet/, 'the bot is not a person speaking: the card still asks people in');
+  assert.doesNotMatch(renderRows({ messages: [human('hi')], lead: quietLead }, 'main'), /data-gc-open-app/, 'no button on a person\'s message');
+
+  const gc = loadGroupChat();
+  const action = { id: 'open_app', label: 'Open Page Turners', style: 'primary', type: 'open', target: '#app/page-turners/app' };
+  const row = { id: 30, msg_type: 'message', username: 'homeroom_bot', content: 'I\'ve made the first version of Page Turners!' };
+  assert.deepEqual(JSON.parse(JSON.stringify(gc._messageView({ ...row, metadata: { kind: 'first_version', actions: [action] } }).openApp)), openApp);
+  assert.equal(gc._messageView({ ...row, metadata: { actions: [action] } }).openApp, null, 'only the first-version line');
+  assert.equal(gc._messageView({ ...row, metadata: { kind: 'first_version', actions: [{ ...action, target: 'https://elsewhere.test' }] } }).openApp, null, 'only a way into the platform');
+  assert.equal(gc._messageView({ ...row, thread_type: 'issue', thread_ref: 4, metadata: { kind: 'first_version', actions: [action] } }).openApp, null, 'the channel only');
+});

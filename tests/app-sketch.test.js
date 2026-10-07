@@ -189,6 +189,13 @@ test('dapp.json gets the card\'s icon at the first commit, or in the late commit
   assert.equal(sketch.manifestWithIcon(JSON.stringify({ icon: { image: 'brand/icon.png' }, secrets: [] }), '🏃'), null, 'one set stays');
   assert.equal(sketch.manifestWithIcon('not json', '🏃'), null);
   assert.equal(sketch.manifestWithIcon('{"secrets":[]}', 'nope'), null);
+  // ...and the tagline as its description when it has none (#4235); a line
+  // of its own always wins.
+  assert.deepEqual(JSON.parse(sketch.manifestWithCard('{"secrets":[]}', { emoji: '🏃', tagline: 'Runs, together' })),
+    { description: 'Runs, together', icon: { emoji: '🏃' }, secrets: [] });
+  assert.deepEqual(JSON.parse(sketch.manifestWithCard(JSON.stringify({ icon: { emoji: '🎲' }, secrets: [] }), { emoji: '🏃', tagline: 'Runs, together' })),
+    { description: 'Runs, together', icon: { emoji: '🎲' }, secrets: [] });
+  assert.equal(sketch.manifestWithCard(JSON.stringify({ description: 'Ours', icon: { emoji: '🎲' } }), { emoji: '🏃', tagline: 'Runs, together' }), null);
 });
 
 // ── 3. Always a card ─────────────────────────────────────────────────────
@@ -302,7 +309,7 @@ test('without a model the card is made on the spot, ready, with its icon', () =>
   assert.ok(pool.queries.some((q) => /UPDATE apps SET icon_emoji/.test(q.sql) && q.params[1] === '🎬'));
 }));
 
-test('a late card is committed on its own, with dapp.json\'s icon when it has none', () => held(async () => {
+test('a late card is committed on its own, with dapp.json\'s icon and description when it has none', () => held(async () => {
   const pushes = [];
   const marks = [];
   const pool = {
@@ -318,11 +325,11 @@ test('a late card is committed on its own, with dapp.json\'s icon when it has no
   };
   assert.equal(await sketch.commitWhenReady(pool, { appId: 31, name: 'Run Club', owner: 'usernode-bot', repo: 'run-club' }, { github }), true);
   assert.deepEqual(pushes[0].files.map((f) => f.path), ['design/sketch.json', 'dapp.json']);
-  assert.deepEqual(JSON.parse(pushes[0].files[1].content), { icon: { emoji: '🏃' }, secrets: [] });
+  assert.deepEqual(JSON.parse(pushes[0].files[1].content), { description: 'Weekly miles for the whole club', icon: { emoji: '🏃' }, secrets: [] });
   assert.equal(pushes[0].opts.message, 'Add the card Run Club was made with');
   assert.deepEqual(marks, [31]);
-  // A dapp.json with an icon of its own keeps it.
-  github.getFileContent = async () => JSON.stringify({ icon: { emoji: '🎲' }, secrets: [] });
+  // A dapp.json with an icon and a description of its own keeps them.
+  github.getFileContent = async () => JSON.stringify({ description: 'Ours', icon: { emoji: '🎲' }, secrets: [] });
   await sketch.commitWhenReady(pool, { appId: 32, name: 'Run Club', owner: 'o', repo: 'r' }, { github });
   assert.deepEqual(pushes[1].files.map((f) => f.path), ['design/sketch.json']);
 }));
@@ -460,6 +467,8 @@ test('creation waits a little for the card, the route starts it with the maker\'
   const creator = read('src/services/app-creator.js');
   assert.match(creator, /const sketch = await appSketch\.whenReady\(pool, appId\)\.catch\(\(\) => null\);/);
   assert.match(creator, /template: templateOf\(appRow\), sketch \}\);/);
+  // The first dapp.json's description: the creator's line, else the card's tagline (#4235).
+  assert.match(creator, /description: descriptionOf\(appRow\) \|\| appSketch\.taglineOf\(sketch\), template/);
   assert.match(creator, /appSketch\.commitWhenReady\(pool, \{ appId, name, owner: botUsername, repo: slug \}\);/);
   assert.equal(sketch.SKETCH_WAIT_MS, 30 * 1000);
   const routes = read('src/routes/apps.js');
