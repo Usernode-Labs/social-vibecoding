@@ -491,7 +491,7 @@ export function AboutPane({ label }: { label: string }): ReactNode {
             data-added={String(yours)}
             disabled={yours}
             // The design's proportions: "✓ Added" is a compact state; "Add to
-            // Shortcuts" is sized to its words beside Open — a phone's sheet
+            // My Apps" is sized to its words beside Open — a phone's sheet
             // has not room for both at half width without truncating it —
             // and takes the whole row when Open is gone.
             className={`inline-flex ${!yours && running ? 'flex-1 basis-0' : 'shrink-0'} min-w-0 items-center justify-center gap-1.5 h-10 px-4 rounded-full text-sm font-semibold whitespace-nowrap `
@@ -516,7 +516,7 @@ export function AboutPane({ label }: { label: string }): ReactNode {
                 <CheckIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
                 <span className="truncate">Added</span>
               </>
-            ) : <span className="truncate">Add to Shortcuts</span>}
+            ) : <span className="truncate">Add to My Apps</span>}
           </button>
         </div>
       ) : null}

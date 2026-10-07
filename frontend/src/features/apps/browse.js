@@ -1163,7 +1163,7 @@ const Browse = {
             : app.status === 'error' ? 'Not running'
             : (app.status || 'Unavailable')),
         isAdded,
-        favLabel: isAdded ? 'Remove from Shortcuts' : 'Add to Shortcuts',
+        favLabel: isAdded ? 'Remove from My Apps' : 'Add to My Apps',
         // The Share row (shareDetailApp). A flag, not the URL: the click
         // resolves the link from the app record it is handed, the same one
         // Open and Add act on, rather than from a string frozen at paint.

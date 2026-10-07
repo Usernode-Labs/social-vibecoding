@@ -485,7 +485,7 @@ test('renderAppCard: an already-added app renders the ✓ state', () => {
   const added = app({ slug: 'mine', is_favorited: true });
   const html = Home.renderAppCard(added, { mode: 'browse' });
   assert.match(html, /data-added="true"/);
-  assert.match(html, /Remove mine from Shortcuts|Remove Some App from Shortcuts/);
+  assert.match(html, /Remove mine from My Apps|Remove Some App from My Apps/);
 });
 
 test('renderAppCard: home mode leaves the icon free of menu badges (#1616)', () => {

@@ -446,7 +446,7 @@ test('menu: plain user on a non-member app gets App details + the favorite toggl
   const items = Home.menuItemsFor(baseApp());
   assert.deepEqual(keys(items), ['app-details', 'github', 'favorite', 'notifications', 'report'],
     'nothing admin-gated leaks');
-  assert.equal(items[2].label, 'Add to Shortcuts');
+  assert.equal(items[2].label, 'Add to My Apps');
 });
 
 // "View on GitHub" was a row in the hamburger drawer's reference footer,
@@ -469,7 +469,7 @@ test('menu: favorited app flips the label to Remove', () => {
   const Home = makeHome({ id: ME });
   const fav = Home.menuItemsFor(baseApp({ is_favorited: true }))
     .find((i) => i.key === 'favorite');
-  assert.equal(fav.label, 'Remove from Shortcuts');
+  assert.equal(fav.label, 'Remove from My Apps');
 });
 
 test('menu: member apps get a WORKING Remove from Your apps item (#618)', () => {
@@ -482,7 +482,7 @@ test('menu: member apps get a WORKING Remove from Your apps item (#618)', () => 
     .find((i) => i.key === 'favorite');
   assert.ok(fav, 'favorite entry present on member apps');
   assert.equal(fav.disabled, undefined, 'active, not the old inert row');
-  assert.equal(fav.label, 'Remove from Shortcuts');
+  assert.equal(fav.label, 'Remove from My Apps');
   assert.equal(typeof fav.run, 'function', 'action wired');
 });
 
@@ -490,7 +490,7 @@ test('menu: hidden member apps flip to Add to Your apps (#618)', () => {
   const Home = makeHome({ id: ME });
   const fav = Home.menuItemsFor(baseApp({ is_collaborator: true, your_apps_hidden: true }))
     .find((i) => i.key === 'favorite');
-  assert.equal(fav.label, 'Add to Shortcuts');
+  assert.equal(fav.label, 'Add to My Apps');
   assert.equal(typeof fav.run, 'function');
 });
 
@@ -910,7 +910,7 @@ test('widget section: tiles in registry order, each with a remove button', () =>
   assert.doesNotMatch(empty, /widget-tile /);
   // The hint names "Your apps" as the drag source now: the home grid holds
   // that one section (every other app moved to the #apps browse screen).
-  assert.match(empty, /Drag a card from Shortcuts here/);
+  assert.match(empty, /Drag a card from My Apps here/);
 });
 
 test('widget section: help icon toggles the add-widget instructions', () => {

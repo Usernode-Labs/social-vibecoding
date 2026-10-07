@@ -35,8 +35,8 @@ function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).Home : null) || null;
 }
 
-const HINT_WITH_TILES = 'Drag tiles to reorder. Drag cards from Shortcuts here to add them.';
-const HINT_EMPTY = 'Drag a card from Shortcuts here (or use its menu) to add it to the '
+const HINT_WITH_TILES = 'Drag tiles to reorder. Drag cards from My Apps here to add them.';
+const HINT_EMPTY = 'Drag a card from My Apps here (or use its menu) to add it to the '
   + 'Homeroom widget on your home screen.';
 
 function TileIcon({ icon }: { icon: IconView }) {
