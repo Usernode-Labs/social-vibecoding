@@ -3255,6 +3255,10 @@ async function fileFirstVersion(pool, config, appId, deps = {}) {
     await ws.sendSystemMessage(pool, row.app_id, `${username} created issue: "${title}" (#${issueNumber})`,
       'system', null, { type: 'issue', ref: issueNumber }).catch(() => {});
     ws.pushIssueUpdate({ action: 'created', appSlug: row.slug, appId: row.app_id, issueId: issueRows[0]?.id, kind: 'general' });
+    // #3952: the people the creator's description names with @. Never rejects.
+    (deps.notifications || require('./notifications')).notifyIssueMentions?.(pool, {
+      appId: row.app_id, issueNumber, authorId: row.user_id, text: `${title}\n\n${body}`,
+    });
     if (botBuilds) settingsModule().noteIssueActivity({ appId: row.app_id, issueNumber, reason: 'created' });
     log.info('homeroom-bot-dm', 'Filed a first version', { app: row.slug, issueNumber, userId: row.user_id, botBuilds });
     return { issueNumber };

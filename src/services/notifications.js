@@ -19,6 +19,8 @@
 // historical render-only kind now that successful issuance is routine.
 // #2387 adds 'thread_reply': a reply in an app-chat reply thread you started
 // or replied in (chat_message_id is the reply; its thread_ref the root).
+// #3952 adds 'issue_mention': somebody named you with @ in a request they
+// filed (`detail` is its number, like 'issue_opened').
 // 'platform_limit' tells full admins a server-wide cap (MAX_APPS,
 // MAX_GLOBAL_SESSIONS) is nearly or completely used; `detail` carries the
 // cap, level and figures (services/platform-limit-alerts.js).
@@ -425,6 +427,91 @@ async function createIssueOpenedNotifications(pool, { appId, issueNumber, author
     [[...recipientIds], appId, authorId || null, String(issueNumber)]
   );
   return rows;
+}
+
+// #3952: what a request's markdown draws as code, blanked before its
+// mentions are read: `@Component` in a snippet names nobody, and the page
+// draws it as code rather than as a mention (group-chat.js
+// renderRequestMentions). Fenced blocks (to their closing fence, or the end),
+// then inline spans. The `@` guard safeMention adds on the way to GitHub
+// comes out first, so text that already went through it reads the same.
+function requestMentionText(text) {
+  return String(text || '')
+    .split('@​').join('@')
+    .replace(/(`{3,}|~{3,})[\s\S]*?(?:\1|$)/g, ' ')
+    .replace(/`[^`\n]*`/g, ' ');
+}
+
+// #3952: somebody named you with @ in a request they filed (kind
+// 'issue_mention'). A mention in a chat message, an issue's thread included,
+// already rang ('mention', in services/ws.js); a request's own text went to
+// GitHub and nowhere else, so "@snait lmk wyt" at the end of one reached
+// nobody. `text` is the title and body as the author wrote them.
+//
+// The people are the chat mention's: real accounts (never the Homeroom bot),
+// on a collab-private project only its members (filterToCollaborators), and
+// nobody who blocked the author. Never the author: unlike a chat message, a
+// request is not a "remind me" pad. Not gated per project
+// (notification-preferences.js keeps a mention account-level), and pushed
+// under Direct interactions beside 'mention'. The issue number rides in
+// `detail`, as for issue_opened, and one row per person per request, so a
+// filing path that runs twice does not ring twice.
+async function createIssueMentionNotifications(pool, { appId, issueNumber, authorId, text }) {
+  if (!appId || !issueNumber) return [];
+  const names = parseMentions(requestMentionText(text));
+  if (!names.length) return [];
+  const users = await resolveUsers(pool, names);
+  if (!users.length) return [];
+  const { rows: people } = await pool.query(
+    'SELECT id FROM users WHERE id = ANY($1::int[]) AND is_synthetic = FALSE',
+    [users.map((u) => u.id)]
+  );
+  const ids = people.map((r) => r.id).filter((id) => Number(id) !== Number(authorId));
+  const recipients = await filterToCollaborators(pool, appId, ids);
+  if (!recipients.length) return [];
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, source_user_id, kind, detail)
+     SELECT u, $2, $3, 'issue_mention', $4::text
+       FROM UNNEST($1::int[]) AS u
+      WHERE NOT EXISTS (
+              SELECT 1 FROM user_blocks blocked
+               WHERE blocked.blocker_id = u AND blocked.blocked_user_id = $3
+            )
+        AND NOT EXISTS (
+              SELECT 1 FROM notifications n
+               WHERE n.user_id = u AND n.app_id = $2
+                 AND n.kind = 'issue_mention' AND n.detail = $4::text
+            )
+     RETURNING id, user_id, app_id, source_user_id, kind, detail, created_at`,
+    [recipients, appId, authorId || null, String(issueNumber)]
+  );
+  return rows;
+}
+
+// The filing paths' one call (routes/issues.js, routes/feedback.js,
+// routes/sessions.js, homeroom-bot-mayor.js, feedback-reports.js): the rows
+// above, then each one's live push. A path that knows only the repository
+// (the platform's own, filed with the bot's token) passes `owner` and `repo`,
+// and the project is looked up only once the text names somebody. Never
+// rejects: the request is filed by the time this runs, and a notification
+// must not fail it. Resolves the rows written.
+async function notifyIssueMentions(pool, { appId = null, owner = null, repo = null, issueNumber, authorId, text }) {
+  try {
+    if (!issueNumber || !parseMentions(requestMentionText(text)).length) return [];
+    let id = appId;
+    if (!id && owner && repo) {
+      id = (await require('./issue-announce').findAppByRepo(pool, owner, repo))?.id || null;
+    }
+    if (!id) return [];
+    const rows = await createIssueMentionNotifications(pool, { appId: id, issueNumber, authorId, text });
+    await Promise.all(rows.map((row) => hydrateAndPush(pool, row)));
+    return rows;
+  } catch (err) {
+    log.warn('notifications', 'Request mention notifications failed', {
+      appId, issueNumber, err: err.message,
+    });
+    return [];
+  }
 }
 
 // Your proposal merged. Addressed to its author, and the one notification in
@@ -1813,6 +1900,8 @@ module.exports = {
   createReactionNotification,
   createStalePrNotification,
   createIssueOpenedNotifications,
+  createIssueMentionNotifications,
+  notifyIssueMentions,
   createPrMergedNotification,
   createProposalVoteNotification,
   createRevisionRecheckNotifications,

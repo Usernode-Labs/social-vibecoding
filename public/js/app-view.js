@@ -12978,8 +12978,10 @@ const AppView = {
     const body = issue && typeof issue.body === 'string'
       ? issue.body.replace(/^(\*\*Source:\*\*\s*)usernode (user|admin)\b/m, '$1Homeroom $2')
       : '';
+    // #3952: the people it names are links, as in chat (group-chat.js).
+    const mentions = typeof renderRequestMentions === 'function' ? renderRequestMentions : (h) => h;
     return body.trim()
-      ? `<div class="dev-issue-body">${renderMd(body)}</div>`
+      ? `<div class="dev-issue-body">${mentions(renderMd(body))}</div>`
       : '';
   },
 
@@ -13087,6 +13089,8 @@ const AppView = {
     const renderSpec = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
       ? (str) => DevChat.renderMarkdown(str, { breaks: false })
       : (str) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(str)}</pre>`;
+    // #3952: as in the request's body (_issueBodyHtml).
+    const mentions = typeof renderRequestMentions === 'function' ? renderRequestMentions : (h) => h;
     return {
       comments: list.map((c, i) => {
         const spec = AppView._botSpecOf(c);
@@ -13095,7 +13099,7 @@ const AppView = {
           author: c.author || 'unknown',
           bot: AppView._isBotCommentAuthor(c.author),
           createdAt: c.createdAt || '',
-          bodyHtml: renderMd(spec ? spec.lead : (c.body || '')),
+          bodyHtml: mentions(renderMd(spec ? spec.lead : (c.body || ''))),
           spec: spec ? { title: spec.title, html: renderSpec(spec.body) } : null,
         };
       }),

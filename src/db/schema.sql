@@ -2533,6 +2533,8 @@ END $$;
 -- #3181 adds 'session_stalled': a dev-session turn ended without finishing
 -- (an error, a timeout, a lost worker, or a system pause mid-turn);
 -- session_id points to the session, like 'session_done'.
+-- #3952 adds 'issue_mention': somebody named you with @ in a request they
+-- filed; `detail` holds its number, like 'issue_opened'.
 CREATE TABLE IF NOT EXISTS notifications (
   id              SERIAL PRIMARY KEY,
   user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -5311,6 +5313,8 @@ BEGIN
 END $$;
 INSERT INTO mobile_push_kind_categories (kind, category, default_enabled) VALUES
   ('mention', 'direct_interactions', TRUE),
+  -- #3952: named with @ in a request somebody filed. A mention, beside it.
+  ('issue_mention', 'direct_interactions', TRUE),
   ('reply', 'direct_interactions', TRUE),
   -- #2387: a reply in an app-chat reply thread you started or joined. A
   -- direct interaction like a reply to your message, so the same category.
@@ -5385,7 +5389,7 @@ ON CONFLICT (kind) DO UPDATE
       default_enabled = EXCLUDED.default_enabled;
 DELETE FROM mobile_push_kind_categories
  WHERE kind NOT IN (
-   'mention', 'reply', 'thread_reply', 'collab_invite', 'collab_invite_accepted',
+   'mention', 'issue_mention', 'reply', 'thread_reply', 'collab_invite', 'collab_invite_accepted',
    'approver_invite', 'approver_invite_accepted', 'spec_shared',
    'session_done', 'test_alert', 'auto_solve_done', 'stale_pr', 'check_failed',
    'pr_proposed', 'reaction', 'kudos',

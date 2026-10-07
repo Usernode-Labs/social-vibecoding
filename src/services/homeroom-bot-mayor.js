@@ -2702,6 +2702,10 @@ async function fileRequest(pool, config, {
       ?.then((rows) => Promise.all(rows.map((row) => notifications.hydrateAndPush(pool, row))))
       ?.catch((err) => log.warn('homeroom-bot-mayor', 'Issue-opened notification failed', { err: err.message }));
   } catch {}
+  // #3952: the people it names with @, in their words. Never rejects.
+  try {
+    notifications.notifyIssueMentions?.(pool, { appId: app.id, issueNumber, authorId: user.id, text: `${title}\n\n${body}` });
+  } catch {}
   await ws.sendSystemMessage(pool, app.id, `${user.username} created issue: "${title}" (#${issueNumber})`,
     'system', null, { type: 'issue', ref: issueNumber }).catch(() => {});
   ws.pushIssueUpdate?.({ action: 'created', appSlug: app.slug, appId: app.id, issueId: issueRows[0]?.id, kind: 'general' });

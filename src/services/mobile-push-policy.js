@@ -264,6 +264,14 @@ function buildCopy(kind, context, now) {
           ? `@${actor} mentioned you in ${quotedTitle}` : `@${actor} mentioned you`),
         body: message,
       };
+    // #3952: named with @ in a request somebody filed. `detail` is its number.
+    case 'issue_mention': {
+      const issue = /^\d+$/.test(detail) ? ` #${detail}` : '';
+      return actor && {
+        title: withApp(`@${actor} mentioned you in request${issue}`),
+        body: 'Open the request to see what they wrote',
+      };
+    }
     case 'reply':
       return actor && {
         title: withApp(quotedTitle

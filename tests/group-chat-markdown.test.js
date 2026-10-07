@@ -167,7 +167,7 @@ function loadGroupChat(extra = {}) {
   vm.createContext(sandbox);
   vm.runInContext(
     src + '\nglobalThis.__M = { GroupChat, renderMessageBody, renderWithMentions, '
-      + 'tokenizeMentionsAndRefs, decorateMentionsAndRefs, GC_MAX_MESSAGE_LEN, document };',
+      + 'tokenizeMentionsAndRefs, decorateMentionsAndRefs, renderRequestMentions, GC_MAX_MESSAGE_LEN, document };',
     sandbox
   );
   return sandbox.__M;
@@ -312,6 +312,71 @@ test('Homeroom bot\'s mention stays text (no person page) on both paths', () => 
     assert.match(out, /<span class="gc-mention">@homeroom_bot<\/span>/);
     assert.doesNotMatch(out, /leaderboard\/users/, 'the bot is never a link');
   }
+});
+
+// ─── (A5) #3952: @mentions in a request's text ─────────────────────────────
+//
+// A request's body and its GitHub comments reach the page as GitHub stores
+// them: everything Homeroom sent went through services/github.js safeMention,
+// which puts a zero-width space after each `@`. That guard is what marks a
+// name as typed on Homeroom, so it is what gets linked; a bare `@handle`
+// came from GitHub itself and stays text.
+
+const ZWSP = '​';
+const github = require('../src/services/github');
+
+test('a request names a person with the chat\'s mention link, guard removed', () => {
+  const { renderRequestMentions } = loadGroupChat();
+  // Exactly what GitHub holds for "Fix the header @snait lmk wyt".
+  const stored = github.safeMention('Fix the header @snait lmk wyt');
+  assert.ok(stored.includes(`@${ZWSP}snait`), 'the fixture is what safeMention writes');
+  const out = renderRequestMentions(`<p class="dc-p">${stored}</p>`);
+  assert.equal(out,
+    '<p class="dc-p">Fix the header <a class="gc-mention" href="#leaderboard/users/snait" data-mention="snait">@snait</a> lmk wyt</p>');
+  assert.ok(!out.includes(ZWSP), 'the guard is display-only and never shows');
+});
+
+test('a request\'s mentions keep chat\'s rules: self, the bot, emails, no refs', () => {
+  const { renderRequestMentions } = loadGroupChat(); // the viewer is alice
+  const text = github.safeMention('@alice and @Homeroom bot, mail me@example.com about #12 and PR#3');
+  const out = renderRequestMentions(`<p>${text}</p>`);
+  assert.match(out, /<a class="gc-mention gc-mention-self" href="#leaderboard\/users\/alice" data-mention="alice">@alice<\/a>/);
+  assert.match(out, /<span class="gc-mention">@Homeroom bot<\/span>/, 'the bot has no person page');
+  assert.match(out, /mail me@example\.com about #12 and PR#3/, 'an email is text, and so are refs here');
+  assert.doesNotMatch(out, /gc-ref|data-ref-number|gc-channel-ref/, 'a request\'s #12 opens nothing on its page');
+});
+
+test('a bare @handle (written on GitHub) is not a person here, and stays text', () => {
+  const { renderRequestMentions } = loadGroupChat();
+  const html = `<p>cc @octocat, and @${ZWSP}bob from Homeroom</p>`;
+  const out = renderRequestMentions(html);
+  assert.match(out, /cc @octocat, and <a class="gc-mention" href="#leaderboard\/users\/bob" data-mention="bob">@bob<\/a> from Homeroom/);
+  assert.doesNotMatch(out, /users\/octocat/);
+  // Nothing guarded at all: the markup comes back exactly as it went in.
+  const plain = '<p>cc @octocat</p>';
+  assert.equal(renderRequestMentions(plain), plain);
+});
+
+test('code and links keep their text literal, without the guard in it', () => {
+  const { renderRequestMentions } = loadGroupChat();
+  const out = renderRequestMentions(
+    `<p>run <code>npm i @${ZWSP}types/node</code> then ask <a href="https://example.com">@${ZWSP}carol</a></p>`
+    + `<pre><code>@${ZWSP}Component\nclass A {}</code></pre>`,
+  );
+  assert.match(out, /<code>npm i @types\/node<\/code>/, 'a copied command is what was typed');
+  assert.match(out, /<a href="https:\/\/example\.com">@carol<\/a>/, 'never a link inside a link');
+  assert.match(out, /<pre><code>@Component\nclass A \{\}<\/code><\/pre>/);
+  assert.doesNotMatch(out, /gc-mention/);
+  assert.ok(!out.includes(ZWSP));
+});
+
+test('tokenizeMentionsAndRefs mentionsOnly leaves refs and channels as text', () => {
+  const { tokenizeMentionsAndRefs } = loadGroupChat();
+  const segs = tokenizeMentionsAndRefs('see #12, PR#3 and #general, @bob', 'alice',
+    new Set(['general']), { mentionsOnly: true });
+  assert.deepEqual(Array.from(segs, (s) => s.type), ['text', 'mention']);
+  assert.equal(segs[0].value, 'see #12, PR#3 and #general, ');
+  assert.equal(segs[1].name, 'bob');
 });
 
 test('GC_MAX_MESSAGE_LEN is 8000', () => {

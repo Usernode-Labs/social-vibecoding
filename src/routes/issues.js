@@ -219,7 +219,11 @@ function stagingMockIssues(repoUrl) {
       'Staging-only mock issue for previewing the Dev card list.\n\n'
       + 'Power users vote on a lot of proposals — pressing Y/N while a '
       + 'proposal card is focused should cast the vote without reaching '
-      + 'for the mouse.', 9),
+      + 'for the mouse.\n\n'
+      // #3952: a person named with @, as GitHub stores a request filed on
+      // Homeroom (safeMention's zero-width space after the `@`), so its page
+      // shows the mention as a link to their page.
+      + '@​staging_tester lmk wyt', 9),
     mk(900003, '[Mock] Topic cards overflow on narrow phones',
       'Staging-only mock issue for previewing the Dev card list.\n\n'
       + 'On a 360px-wide viewport the action buttons on issue cards can '
@@ -1574,6 +1578,14 @@ function issueRoutes(config) {
           'Issue-opened notification failed', { appId: app.id, err: err.message }));
       } catch (err) {
         log.error('issues', 'Issue-opened notification threw', { appId: app.id, err: err.message });
+      }
+      // #3952: the people its text names with @. Never rejects, and not
+      // awaited, for the same reason as the one above.
+      if (githubIssueNumber) {
+        notifications.notifyIssueMentions?.(pool, {
+          appId: app.id, issueNumber: githubIssueNumber, authorId: req.user.id,
+          text: `${title}\n\n${description || ''}`,
+        });
       }
       // Post the creation into the topic's own thread so the
       // discussion opens with its origin in context: governance proposals
