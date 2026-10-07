@@ -231,7 +231,12 @@ test('B6: the plan card, drawn in every state', () => {
   const open = draw();
   assert.match(open, /data-bot-plan="open"/);
   assert.match(open, />My plan for Plant Pal<\/div>/, '#4046: its title, not a sentence ending in a colon');
-  assert.match(open, /<li class="[^"]*"><span aria-hidden="true" class="[^"]*rounded-full[^"]*"><\/span><span>A list of your plants<\/span><\/li>/);
+  // Owner, 7 October: each line a row of its own, as PR 5's plan page draws
+  // them: 15px over 22px, 12px above and below, a hairline between, no dot.
+  assert.match(open, /<ul class="mt-1 flex flex-col" data-bot-plan-lines=""><li class="py-3 text-\[0\.9375rem\] leading-\[22px\] text-zinc-900 dark:text-zinc-100">A list of your plants<\/li><li class="py-3 text-\[0\.9375rem\] leading-\[22px\] text-zinc-900 shadow-\[inset_0_1px_0_var\(--app-sheet-line\)\] dark:text-zinc-100">A Today view<\/li><\/ul>/);
+  assert.doesNotMatch(open, /rounded-full bg-zinc-400/, 'no dot before a line in the chat');
+  assert.match(draw({ surface: 'app' }), /<li class="flex items-start gap-2\.5"><span aria-hidden="true" class="[^"]*rounded-full[^"]*"><\/span><span>A list of your plants<\/span><\/li>/,
+    'the App tab\'s card keeps its dots');
   assert.match(open, /How should it remind you\?/);
   // #4046: one quiet single choice, the suggested answer already picked, and
   // no "suggested" chip beside it.
@@ -267,7 +272,7 @@ test('B6: the plan card, drawn in every state', () => {
   assert.match(replaced, /Replaced by a newer plan/);
   assert.ok(!/<li/.test(replaced), 'a replaced plan folds its bullets away');
   const stopped = draw({ state: 'stopped' });
-  assert.match(stopped, /<span>A list of your plants<\/span><\/li>/, 'a stopped plan keeps its bullets');
+  assert.match(stopped, />A list of your plants<\/li>/, 'a stopped plan keeps its lines');
   assert.match(stopped, /I stopped waiting on this plan\. Reply to pick it up again\./);
   assert.match(draw({ state: 'changing' }), /You asked for changes\. A new plan is on its way\./);
   assert.match(draw({ state: 'closed' }), /No longer needed\./);

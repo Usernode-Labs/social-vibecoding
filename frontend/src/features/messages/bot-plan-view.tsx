@@ -26,7 +26,8 @@ import type { HomeroomBotPlan } from './types';
  * the plan waits, then "Step 4 of 7 · Build it · 10 to 25 min" once Build it
  * is pressed, when the card folds to its title and the answers it went with.
  * A calm hierarchy (owner, 7 October): the title first, the step in words
- * with no bar, the answers as plain rows with no box behind them.
+ * with no bar, each line of the plan a row with no dot, the answers as
+ * plain rows with no box behind them.
  * The request's activity card is not drawn beside it (./bot-plan.tsx
  * planLayout), so nothing is said twice.
  *
@@ -83,6 +84,16 @@ const SURFACES = {
   app: 'flex w-full max-w-sm flex-col rounded-[20px] bg-[color:var(--dc-sheet-solid)] px-4 pb-3 pt-4 text-left shadow-[inset_0_0_0_1px_var(--app-sheet-line)]',
 } as const;
 
+// #4046 (owner, 7 October): in the chat each line of the plan is a row of
+// its own, as a grouped list draws rows (15px over a 22px line, 12px above
+// and below, a hairline between), with no dot before it: the same as PR 5's
+// plan page for members. No side padding, so the rows line up with the
+// card's text. The App tab's card keeps its dots (#4053).
+const PLAN_ROW = {
+  first: 'py-3 text-[0.9375rem] leading-[22px] text-zinc-900 dark:text-zinc-100',
+  next: 'py-3 text-[0.9375rem] leading-[22px] text-zinc-900 shadow-[inset_0_1px_0_var(--app-sheet-line)] dark:text-zinc-100',
+} as const;
+
 // One answer of a choice, picked or not: a 44px row with no side padding, so
 // its radio lines up with the card's text, and a hairline between rows.
 const ANSWER_ROW = {
@@ -129,6 +140,12 @@ export function PlanCardView({
             {chosen.map((answer, i) => (answer ? <li key={plan.questions[i]?.question || i}>{answer}</li> : null))}
           </ul>
         ) : null
+      ) : surface === 'messages' ? (
+        <ul className="mt-1 flex flex-col" data-bot-plan-lines="">
+          {plan.bullets.map((bullet, i) => (
+            <li key={bullet} className={i === 0 ? PLAN_ROW.first : PLAN_ROW.next}>{bullet}</li>
+          ))}
+        </ul>
       ) : (
         <ul className="mt-2.5 flex flex-col gap-[5px] text-[0.9375rem] leading-5 text-zinc-900 dark:text-zinc-100">
           {plan.bullets.map((bullet) => (
