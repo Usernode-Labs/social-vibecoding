@@ -4,8 +4,11 @@
 //
 // The bot never competes with a person who started on a request: a live
 // claim, a person's session on it or their proposal for it keeps the bot
-// off it (homeroom-bot.js issueHolders, classifyIssue). It used to keep off
-// SILENTLY, so "@homeroom_bot try again?" on a request somebody had claimed
+// off it (homeroom-bot.js issueHolders, classifyIssue). #4190: a claim made
+// once the bot is already on the request is not a hold: the bot finishes
+// and delivers, and only a claim made before it started keeps it off.
+//
+// It used to keep off SILENTLY, so "@homeroom_bot try again?" on a request somebody had claimed
 // three days earlier came to nothing, and the person asking could not tell
 // why (Todo List #75).
 //

@@ -359,11 +359,13 @@ function stagingMockIssues(repoUrl) {
     // The request the Homeroom bot is building. The bot does not run in a
     // preview, so the list route gives this row a synthetic `bot` state and
     // nothing else: its page says the bot is building it, its main button is
-    // the disabled "Homeroom bot is building…", and it offers no Claim.
+    // the disabled "Homeroom bot is building…", and (#4190) it still offers
+    // Claim, for working on it alongside the bot, but not Start work.
     mk(900018, '[Mock] The Homeroom bot is building this request',
       'Staging-only mock issue for previewing a request the Homeroom bot is '
-      + 'building. Nobody has claimed it and nobody needs to: the bot is on '
-      + 'it, so the page says so instead of offering Claim or Start work.', 2),
+      + 'building. Nobody has claimed it yet. The page says the bot is on it, '
+      + 'and still offers Claim for anyone who wants to work on it alongside '
+      + 'the bot, but not Start work.', 2),
   ];
 }
 
