@@ -2,10 +2,13 @@
 
 // The `frontend-design` skill every new project's repository starts with,
 // and what the Homeroom bot is told about it: App bench context pack 4
-// ("frontend-design-kit" v2), made live. Its content hashes, as the
+// ("frontend-design-kit" v2), made live. Its content hashed, as the
 // bench hashes a pack (services/bench/packs.js hashOf), to the pack's own
 // b6f8432f01512c04a2f90b14cc6e7880a7670f8afeb71b2ec905a23263b94577
-// (tests/design-skill.test.js).
+// until 7 October 2026, when four edits about colour were made to the live
+// skill (the colours a subject already has are its fit, not a cliché to
+// avoid). Undoing them gives pack 4 back byte for byte
+// (tests/design-skill.test.js); the stored pack is unchanged.
 //
 // In App bench studio run 8, GLM 5.3 Flash built three briefs (Tier List,
 // RSS Reader, Bread Bot) three ways: with no pack (the platform as it was),
@@ -18,7 +21,8 @@
 //     (services/template.js getTemplateFiles), at the path the bench's
 //     first commit put them (services/bench/scaffold.js), so it is in the
 //     repository when the spec and the build run. Its text is the pack's,
-//     byte for byte: src/templates/app-scaffold/frontend-design/, adapted
+//     byte for byte but for the colour edits above:
+//     src/templates/app-scaffold/frontend-design/, adapted
 //     from Anthropic's `frontend-design` skill (Apache License 2.0, its
 //     LICENSE.txt shipped beside it, the change noted at its top);
 //   * the nudge to read it, at the spec and the build, and the look-and-fix
@@ -41,8 +45,8 @@
 // builds through the same prompts, so its pack 0 ("today's platform") is now
 // what pack 4 was. A pack that repeats a paragraph said here (pack 2's
 // nudge; pack 4's nudge and loop) is not said twice (guidanceWith): pack 4
-// on the bench is pack 0, and its files replace the template's identical
-// ones at the same paths.
+// on the bench is pack 0 but for the colour edits, since its files replace
+// the template's at the same paths with the skill as it was before them.
 
 const fs = require('fs');
 const path = require('path');

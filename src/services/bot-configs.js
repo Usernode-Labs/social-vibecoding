@@ -60,6 +60,7 @@
 
 const crypto = require('crypto');
 const log = require('./logger');
+const stageCosts = require('./stage-costs');
 
 const GLM = 'z-ai/glm-5.3-flash';
 const OPUS = 'anthropic/claude-opus-5.5';
@@ -601,34 +602,44 @@ async function upgradeSeedConfigs(pool) {
  */
 async function recordResult(pool, {
   botRunId, configVersionId, source, trialId = null, status = 'done', built = null, booted = null,
-  costUsd = null, activeMs = null, sha = null, capture = null, error = null,
+  costUsd = null, activeMs = null, sha = null, capture = null, error = null, costParts = null,
 }) {
+  // What the cost was made of, stage by stage, adding up to it (stage-costs.js).
+  const breakdown = costParts ? stageCosts.breakdown(costUsd, costParts) : null;
   const { rows: [row] } = await pool.query(
     `INSERT INTO bot_config_results
        (bot_run_id, config_version_id, source, trial_id, status, built, booted, cost_usd, active_ms, sha, capture, error,
-        finished_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, CASE WHEN $5 = 'pending' THEN NULL ELSE NOW() END)
+        finished_at, cost_parts)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, CASE WHEN $5 = 'pending' THEN NULL ELSE NOW() END,
+             $13::jsonb)
      ON CONFLICT (bot_run_id, config_version_id) DO UPDATE
        SET source = EXCLUDED.source, trial_id = COALESCE(EXCLUDED.trial_id, bot_config_results.trial_id),
            status = EXCLUDED.status, built = EXCLUDED.built, booted = EXCLUDED.booted,
            cost_usd = EXCLUDED.cost_usd, active_ms = EXCLUDED.active_ms, sha = EXCLUDED.sha,
-           capture = EXCLUDED.capture, error = EXCLUDED.error, finished_at = EXCLUDED.finished_at
+           capture = EXCLUDED.capture, error = EXCLUDED.error, finished_at = EXCLUDED.finished_at,
+           cost_parts = EXCLUDED.cost_parts
        WHERE bot_config_results.status <> 'done'
      RETURNING id`,
     [Number(botRunId), Number(configVersionId), source, trialId == null ? null : Number(trialId), status,
       built == null ? null : !!built, booted == null ? null : !!booted, num(costUsd), num(activeMs) == null ? null : Math.round(num(activeMs)),
-      sha || null, capture ? JSON.stringify(capture) : null, error ? String(error).slice(0, 600) : null],
+      sha || null, capture ? JSON.stringify(capture) : null, error ? String(error).slice(0, 600) : null,
+      breakdown ? JSON.stringify(breakdown) : null],
   );
   return row ? Number(row.id) : null;
 }
 
-/** What the live run's own triage cost and took: shared by every configuration's result. */
+/** What the live run's own triage cost and took, and on which model: shared by every configuration's result. */
 async function triageShare(pool, botRunId) {
   const { rows: [r] } = await pool.query(
-    'SELECT cost_usd::float8 AS cost, duration_ms FROM homeroom_bot_runs WHERE id = $1',
+    'SELECT cost_usd::float8 AS cost, duration_ms, model FROM homeroom_bot_runs WHERE id = $1',
     [Number(botRunId)],
   );
-  return { costUsd: num(r?.cost) || 0, ms: num(r?.duration_ms) || 0 };
+  return { costUsd: num(r?.cost) || 0, ms: num(r?.duration_ms) || 0, model: r?.model || null };
+}
+
+/** The triage's part of a result's breakdown, from its share. Pure. */
+function triagePart(triage) {
+  return triage && triage.costUsd > 0 ? { triage: stageCosts.part({ usd: triage.costUsd, model: triage.model }) } : {};
 }
 
 const add = (a, b) => (a == null && b == null ? null : (Number(a) || 0) + (Number(b) || 0));
@@ -680,6 +691,14 @@ async function finishLive(pool, {
     const ledger = await sessionLedger(pool, built.sessionId, review?.startedAt || null).catch(() => ({ total: null, before: null }));
     const carried = Number(carriedUsd) > 0 ? Number(carriedUsd) : 0;
     const liveCost = ledger.total != null ? ledger.total + require('./bot-review').reviewerCost(review) + carried : built.costUsd;
+    // Its stages, on their models (stage-costs.js): the triage's share, and
+    // the build's own parts with their tokens from the ledger; the review's
+    // read from its state when the build did not carry them (a review a
+    // restart finished).
+    const parts = await stageCosts.withLedgerTokens(pool, {
+      ...stageCosts.reviewParts(review, { buildModel: version.recipe?.models?.build || null }),
+      ...stageCosts.fromStages(built.stageCosts),
+    });
     await recordResult(pool, {
       botRunId, configVersionId: version.id, source: 'live',
       built: builtOk,
@@ -689,6 +708,7 @@ async function finishLive(pool, {
       sha: built.sha || null,
       capture: finalCapture,
       error: builtOk ? null : (built.blocked ? `blocked: ${built.blocked}` : built.error || null),
+      costParts: { ...triagePart(triage), ...parts },
     });
     const round0 = review?.round0 || null;
     const sides = await pool.query(
@@ -696,10 +716,13 @@ async function finishLive(pool, {
         WHERE r.bot_run_id = $1 AND r.source = 'round0' AND r.status = 'pending'`,
       [Number(botRunId)],
     );
+    // The first build alone: its triage, spec and build, never the review.
+    const { review_reviewer: _rr, review_fixes: _rf, ...firstBuild } = parts;
     for (const s of sides.rows) {
       // eslint-disable-next-line no-await-in-loop
       await recordResult(pool, {
         botRunId, configVersionId: s.config_version_id, source: 'round0',
+        costParts: { ...triagePart(triage), ...(round0 ? firstBuild : parts) },
         built: round0 ? true : builtOk,
         booted: round0?.capture ? round0.capture.booted === true : (round0 ? null : (finalCapture ? finalCapture.booted === true : null)),
         costUsd: add(round0 ? (ledger.before != null ? ledger.before + carried : round0.costUsd) : liveCost, triage.costUsd),
@@ -740,6 +763,8 @@ async function finishSideTrial(pool, trialId) {
     const why = t.error || (t.parsed?.blocked ? `blocked: ${t.parsed.blocked}` : null);
     await recordResult(pool, {
       botRunId: t.bot_run_id, configVersionId: t.bot_config_version_id, source: 'trial', trialId: t.id,
+      // Its own stages (bench/runner.js buildStage), and the live run's triage.
+      costParts: { ...triagePart(triage), ...(t.parsed?.costParts || {}) },
       status: ranAtAll ? 'done' : 'skipped',
       built,
       booted: t.capture ? t.capture.booted === true : null,
@@ -1043,7 +1068,7 @@ async function listWithStats(pool) {
   const versions = await listVersions(pool);
   const current = versions.find((v) => v.role === 'current') || null;
   const { rows: results } = await pool.query(
-    `SELECT config_version_id, built, booted, cost_usd::float8 AS cost, active_ms::float8 AS ms
+    `SELECT config_version_id, built, booted, cost_usd::float8 AS cost, active_ms::float8 AS ms, cost_parts
        FROM bot_config_results WHERE status = 'done'`,
   );
   const { rows: pairs } = await pool.query(
@@ -1088,6 +1113,10 @@ async function listWithStats(pool) {
         builds: mine.length,
         built: builtN,
         avgCostUsd: costs.length ? costs.reduce((s, c) => s + c, 0) / costs.length : null,
+        // Beside it, what that cost was made of: each stage's average on the
+        // results that recorded their stages (n of them), on its models, with
+        // the remainder no stage names (stage-costs.js averages).
+        avgCostByStage: stageCosts.averages(mine.map((r) => r.cost_parts).filter(Boolean)),
         medianActiveMs: median(mine.map((r) => num(r.ms))),
         bootRate: bootKnown.length ? mine.filter((r) => r.booted === true).length / bootKnown.length : null,
         pairsWaiting: involving.filter((p) => p.status === 'waiting').length,

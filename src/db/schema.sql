@@ -12472,6 +12472,11 @@ CREATE TABLE IF NOT EXISTS bot_config_results (
 CREATE INDEX IF NOT EXISTS idx_bot_config_results_version ON bot_config_results(config_version_id, status);
 CREATE INDEX IF NOT EXISTS idx_bot_config_results_trial ON bot_config_results(trial_id) WHERE trial_id IS NOT NULL;
 COMMENT ON TABLE bot_config_results IS 'staging:private';
+-- What the cost was made of (services/stage-costs.js breakdown): each stage
+-- (triage, spec, build, the review's reviewer calls and fix turns) with its
+-- model and dollars, and the remainder no stage names. Null on a result
+-- recorded before stages were.
+ALTER TABLE bot_config_results ADD COLUMN IF NOT EXISTS cost_parts JSONB;
 
 -- A blind PAIR: the current version's result and one side version's, from
 -- the same live first version, for an admin's pick (left, right or a tie)

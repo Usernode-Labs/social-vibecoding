@@ -12,7 +12,7 @@ Hierarchy
 - One job and one primary (filled) button per view. Everything else is secondary or plain.
 - The most important content comes first and largest. At most three heading levels.
 - Use spacing, alignment, lists and dividers before cards. A card only when the card itself is what you tap. Never nest cards.
-- One accent colour, kept for the primary action and status.
+- One accent colour, kept for the primary action and status. Colours the app's "## Design" section gives its subject (a map's water and parks, team colours, card suits, traffic-light statuses) are not accents: use them as that section says.
 
 Words and naming (one idea, one word, across the whole app)
 - Reuse the words the app already uses for the same things. If the button says "Publish", the confirmation says "Published", not "Posted".
