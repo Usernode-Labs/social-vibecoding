@@ -42,6 +42,8 @@ const COMPONENTS = new Set([
   'homeroom_bot_build',
   // Its spec turn, just before that build (live and shadow alike).
   'homeroom_bot_spec',
+  // The reviewer's look at a first version's screenshots (services/bot-review.js).
+  'homeroom_bot_review',
   // #3654: a benchmark trial of one of its stages, on a candidate model.
   'homeroom_bench',
   // The hub's since-your-last-visit line (services/since-summary.js).
