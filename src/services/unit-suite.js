@@ -318,17 +318,44 @@ function unitFailureDetails(lines) {
   return { details, truncated };
 }
 
+// A TAP summary counter's last value (`# fail 18` is 18), or null when the
+// output printed none.
+function summaryCounter(lines, key) {
+  const re = new RegExp(`^# ${key} (\\d+)\\s*$`);
+  let value = null;
+  for (const l of lines) {
+    const m = re.exec(l);
+    if (m) value = parseInt(m[1], 10);
+  }
+  return value;
+}
+
+// Did `npm test` report any test at all? One TAP test line, or a summary
+// counter above zero, says it ran, whatever else went wrong. The setup
+// sentinel alone cannot answer that: a long run's log can come back without
+// its start. PR #4217's did (#4265): its summary counted 21,713 passing and
+// 18 failing tests, the sentinel and every `not ok` line were gone, and the
+// row read "the tests never ran".
+function testsReported(lines) {
+  return lines.some((l) => /^\s*(?:not )?ok \d+\b/.test(l))
+    || ['tests', 'pass', 'fail', 'cancelled', 'skipped', 'todo']
+      .some((key) => summaryCounter(lines, key) > 0);
+}
+
 // Distill a failed run's output into a bounded failureReason. When the
 // output is TAP (node:test, tap): the failing tests grouped by the file each
 // one is in, then the summary counters. Otherwise the last few non-empty
 // lines of output (jest & friends, npm/git errors). A timeout or a setup
-// failure leads, in words main-watch.js matches on.
+// failure leads, in words main-watch.js matches on. Setup failure is said
+// only when no test reported (#4265): a red suite whose log lost the
+// sentinel is a red suite, and a summary that counts failures the output
+// does not name says so ahead of the tail.
 function failureDetailFromLines(lines, { timedOut = false } = {}) {
   const parts = [];
   if (timedOut) {
     parts.push(`Suite run exceeded ${Math.round(UNIT_SUITE_TIMEOUT_MS / 1000)}s and was killed.`);
   }
-  if (!lines.join('\n').includes(SETUP_DONE_SENTINEL) && !timedOut) {
+  if (!lines.join('\n').includes(SETUP_DONE_SENTINEL) && !timedOut && !testsReported(lines)) {
     parts.push('Suite setup failed (clone / npm ci), so the tests never ran.');
   }
   const failures = failingTests(lines);
@@ -338,6 +365,11 @@ function failureDetailFromLines(lines, { timedOut = false } = {}) {
     const grouped = groupedFailures(failures, FAILURE_DETAIL_MAX - fixed);
     parts.push(...grouped, ...counters);
   } else {
+    const failed = summaryCounter(lines, 'fail');
+    if (failed > 0) {
+      parts.push(`${failed} test${failed === 1 ? '' : 's'} failed, but the saved output does not name `
+        + `${failed === 1 ? 'it' : 'them'}.`);
+    }
     const tail = lines.map((l) => l.trim())
       .filter((l) => l && !/^__UNIT_SUITE_[A-Z_]+__(=|$)/.test(l))
       .slice(-MAX_TAIL_LINES);

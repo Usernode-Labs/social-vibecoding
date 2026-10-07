@@ -62,6 +62,44 @@ function isUnitSuiteRow(r) {
     && (r.index === UNIT_CHECK_INDEX || (r.name === UNIT_CHECK_NAME && r.path === UNIT_CHECK_PATH));
 }
 
+// One `file (N): name; name…` group of the reason services/unit-suite.js
+// writes. The file is a repo path, or the group a test with no `location:`
+// lands in, so a jest or npm line in a tail cannot pass for one.
+const REASON_GROUP = /^(\(file not reported\)|\S+) \((\d+)\)(?:: (.+))?$/;
+
+// The failing tests a stored run's unit-suite row records (#4265): how many
+// failed and the first `max` of them as `{ file, test }`, or null when the
+// row is absent, passed, or names and counts no failing test (setup failed,
+// or the run was killed before it reported). A red run the platform runs
+// again can still carry these, and running the same code again does not fix
+// a test it fails, so a reader about to say "nothing to fix" asks this
+// first. The count is the TAP summary's when the row kept one.
+function unitSuiteFailures(testResults, { max = 2 } = {}) {
+  let rows = testResults;
+  if (typeof rows === 'string') {
+    try { rows = JSON.parse(rows); } catch { return null; }
+  }
+  if (!Array.isArray(rows)) return null;
+  const row = rows.find(isUnitSuiteRow);
+  if (!row || row.status === 'pass') return null;
+  const details = (Array.isArray(row.failureDetails) ? row.failureDetails : [])
+    .filter((d) => d && d.test)
+    .map((d) => ({ file: d.file ? String(d.file) : null, test: String(d.test) }));
+  const grouped = [];
+  let groupedCount = 0;
+  for (const part of String(row.failureReason || '').split(' | ')) {
+    const m = REASON_GROUP.exec(part.trim());
+    if (!m) continue;
+    groupedCount += parseInt(m[2], 10);
+    const name = m[3] ? m[3].split('; ')[0].replace(/…$/, '').trim() : '';
+    if (name) grouped.push({ file: m[1] === '(file not reported)' ? null : m[1], test: name });
+  }
+  const summaryFail = row.summary && Number.isInteger(row.summary.fail) ? row.summary.fail : 0;
+  const count = summaryFail > 0 ? summaryFail : Math.max(groupedCount, details.length);
+  if (!count) return null;
+  return { count, first: (details.length ? details : grouped).slice(0, max) };
+}
+
 module.exports = {
   UNIT_CHECK_NAME,
   UNIT_CHECK_PATH,
@@ -76,4 +114,5 @@ module.exports = {
   MAX_INLINE_EXCERPT_TESTS,
   MAX_INLINE_EXCERPT_CHARS,
   isUnitSuiteRow,
+  unitSuiteFailures,
 };

@@ -1247,10 +1247,18 @@ function shapeNextStep(session, checks) {
   }
   // A red run that overlapped a platform rollout is recorded as an error the
   // platform runs again on its own (visuals.js settleCaptureRun). Its failing
-  // rows are the rollout's, not the diff's, so there is nothing to fix yet.
+  // rows are the rollout's, not the diff's, so there is nothing to fix yet,
+  // unless its unit suite failed tests: the rerun is still said, and those
+  // are named beside it (#4265).
   if (rolloutRetry(session)) {
-    return `Checks on ${ref} ran while Homeroom was updating, so they will run again on their own. There is nothing `
-      + 'to fix yet and nothing to push: poll get_proposal for the new verdict.';
+    const rerun = `Checks on ${ref} ran while Homeroom was updating, so they will run again on their own.`;
+    const unit = rolloutUnitFailures(session);
+    if (!unit) return `${rerun} There is nothing to fix yet and nothing to push: poll get_proposal for the new verdict.`;
+    return `${rerun} ${unit} checks.failures has their errors and get_check_output the full output. If they fail `
+      + 'locally too, fix them, push to '
+      + `${branch.youCanPush ? (branch.name || 'this proposal\'s branch') + ' in your own fork' : 'a branch in your OWN fork'}`
+      + ` and call submit_work with proposalId ${session.id} and that branch; otherwise poll get_proposal for the `
+      + 'new verdict. Do not open a second proposal.';
   }
   // An errored run is a failure with no test to point at: the build or the
   // preview broke before the suite could report. Naming that is the difference
@@ -1280,6 +1288,21 @@ function shapeNextStep(session, checks) {
 function rolloutRetry(session) {
   return session.check_state === 'error'
     && session.check_error_detail === require('./staging-recovery').ROLLOUT_RETRY_DETAIL;
+}
+
+// The unit suite's own failing tests on such a run, as the sentence both
+// nextSteps add after the rerun note, or null when it recorded none (#4265).
+// The update explains a slow page load; it does not fix a test the code
+// fails, so "nothing to fix yet" would be wrong while these stand.
+function rolloutUnitFailures(session) {
+  const unit = unitSuiteRow.unitSuiteFailures(session.test_results);
+  if (!unit) return null;
+  const first = unit.first
+    .map((f) => untrusted(f.file ? `${f.file}: ${f.test}` : f.test, MAX_TITLE_CHARS))
+    .filter(Boolean);
+  return `That run's unit suite (npm test) also reported ${unit.count} failing test${unit.count === 1 ? '' : 's'}`
+    + `${first.length ? `, including ${first.join('; ')}` : ''}. A rerun will not fix a test the code itself fails, `
+    + 'so look at them now.';
 }
 
 // Why a plain push does not move this proposal, in one clause, for the two
@@ -1503,8 +1526,10 @@ function changeNextStep(session, checks, live, kind = 'agent_mayor') {
       : `Checks are running on ${ref}'s current commit. Call get_change again for the verdict.${paused}`;
   }
   if (rolloutRetry(session)) {
+    const unit = rolloutUnitFailures(session);
     return `Checks on ${ref} ran while Homeroom was updating, so they will run again on their own. `
-      + `Nothing to fix yet; call get_change again for the new verdict.${paused}`;
+      + (unit ? `${unit} ${words.fixTests}${paused}`
+        : `Nothing to fix yet; call get_change again for the new verdict.${paused}`);
   }
   if (failing) {
     return checks.state === 'error' && !(checks.failing && checks.failing.length)

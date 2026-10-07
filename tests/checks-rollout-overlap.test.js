@@ -365,6 +365,69 @@ test('the connector says the checks will run again, not to fix the tests', () =>
   assert.match(other.nextStep, /are failing and they gate merge/);
 });
 
+// #4265. PR #4217's later run was recorded as a rollout retry while its unit
+// suite had failed 18 tests the change itself broke (they failed locally
+// too), and nextStep said "There is nothing to fix yet". A rerun does not
+// fix a test the code fails, so the rerun note stays and the failing unit
+// tests are named beside it.
+const unitSuiteRow = require('../src/services/unit-suite-row');
+const unitRed = (over = {}) => ({
+  index: unitSuiteRow.UNIT_CHECK_INDEX, name: unitSuiteRow.UNIT_CHECK_NAME, path: unitSuiteRow.UNIT_CHECK_PATH,
+  status: 'fail', advisory: false, consoleErrors: [],
+  failureReason: 'tests/mayor-turn-golden.test.js (18): replays the recorded turn; keeps the tool order…'
+    + ' | # tests 21748 | # pass 21713 | # fail 18 | # cancelled 0',
+  summary: { tests: 21748, pass: 21713, fail: 18, cancelled: 0 },
+  failureDetails: [
+    { file: 'tests/mayor-turn-golden.test.js', test: 'replays the recorded turn', excerpt: "error: 'Expected values to be strictly equal'" },
+    { file: 'tests/mayor-turn-golden.test.js', test: 'keeps the tool order', excerpt: "error: 'Expected values to be strictly equal'" },
+  ],
+  ...over,
+});
+const withUnit = (unit) => rolloutRow({
+  test_results: [{ name: 'Board loads', status: 'fail', failureReason: 'Page failed to load: Timed out after 23861ms' }, unit],
+});
+const RERUN = 'Checks on PR #41 (proposal 58) ran while Homeroom was updating, so they will run again on their own.';
+
+test('#4265: a rerun whose unit suite failed tests names them beside the rerun note', () => {
+  const { nextStep } = tools.shapeProposal(withUnit(unitRed()), ORIGIN);
+  assert.ok(nextStep.startsWith(`${RERUN} That run's unit suite (npm test) also reported 18 failing tests, including `
+    + '<untrusted-content>tests/mayor-turn-golden.test.js: replays the recorded turn</untrusted-content>; '
+    + '<untrusted-content>tests/mayor-turn-golden.test.js: keeps the tool order</untrusted-content>. '
+    + 'A rerun will not fix a test the code itself fails, so look at them now.'), nextStep);
+  assert.doesNotMatch(nextStep, /nothing to fix/i);
+  assert.match(nextStep, /checks\.failures has their errors and get_check_output the full output\./);
+  assert.match(nextStep, /push to a branch in your OWN fork and call submit_work with proposalId 58 and that branch; otherwise poll get_proposal for the new verdict\. Do not open a second proposal\.$/);
+
+  const change = tools.changeNextStep(withUnit(unitRed()), tools.shapeChecks(withUnit(unitRed())), {}, 'external');
+  assert.match(change, /^Checks on PR #41 \(change 58\) ran while Homeroom was updating, so they will run again on their own\. That run's unit suite \(npm test\) also reported 18 failing tests, including /);
+  assert.match(change, /Its coding agent fixes them from the change's own page/);
+  assert.doesNotMatch(change, /Nothing to fix yet/);
+});
+
+test('#4265: failures the run counted but could not name are still counted', () => {
+  const unit = unitRed({
+    failureReason: '1 test failed, but the saved output does not name it. | # pass 21713 | # fail 1 | BackoffLimitExceeded: Error',
+    summary: { tests: 21731, pass: 21713, fail: 1 },
+    failureDetails: undefined,
+  });
+  assert.match(tools.shapeProposal(withUnit(unit), ORIGIN).nextStep,
+    /^Checks on PR #41 \(proposal 58\) ran while Homeroom was updating, so they will run again on their own\. That run's unit suite \(npm test\) also reported 1 failing test\. A rerun will not fix/);
+});
+
+test('#4265: a unit suite that never ran, or passed, leaves "nothing to fix yet" as it was', () => {
+  const setupFailed = unitRed({
+    failureReason: 'Suite setup failed (clone / npm ci), so the tests never ran. | npm error code E404 | BackoffLimitExceeded: Error',
+    summary: undefined, failureDetails: undefined,
+  });
+  for (const row of [rolloutRow(), withUnit(setupFailed), withUnit(unitRed({ status: 'pass', failureReason: '', failureDetails: undefined, summary: { tests: 9, pass: 9, fail: 0 } }))]) {
+    assert.equal(tools.shapeProposal(row, ORIGIN).nextStep,
+      `${RERUN} There is nothing to fix yet and nothing to push: poll get_proposal for the new verdict.`);
+    assert.equal(tools.changeNextStep(row, tools.shapeChecks(row), {}, 'external'),
+      'Checks on PR #41 (change 58) ran while Homeroom was updating, so they will run again on their own. '
+      + 'Nothing to fix yet; call get_change again for the new verdict.');
+  }
+});
+
 test('the merge requirements read it as running again, not as the author\'s to fix', () => {
   const step = (row) => mergeRequirements.provisional(row).find((s) => s.key === 'checks');
   const rollout = step(rolloutRow());
