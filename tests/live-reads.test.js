@@ -253,7 +253,7 @@ test('a fresh LISTEN nudges every events socket and every chat room on this serv
 const gcJs = read('public/js/group-chat.js');
 
 // `onScreen`: the channel's transcript is on the page (markRead needs it).
-function loadGroupChat({ fetch, liveReads, onScreen = false } = {}) {
+function loadGroupChat({ fetch, liveReads, onScreen = false, extra = {} } = {}) {
   const el = { scrollHeight: 1000, scrollTop: 0, clientHeight: 500, dataset: {}, querySelector: () => null };
   const document = {
     visibilityState: 'visible',
@@ -277,6 +277,7 @@ function loadGroupChat({ fetch, liveReads, onScreen = false } = {}) {
     fetch: fetch || (async () => ({ ok: true, json: async () => ({ messages: [] }) })),
     setTimeout, clearTimeout, setInterval, clearInterval,
     Date, Math, JSON,
+    ...extra,
   };
   sandbox.globalThis = sandbox;
   window.App = sandbox.App;
@@ -504,7 +505,7 @@ test('review 2.6: a failed catch-up stays owed, without retrying in a loop', asy
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(calls, 1, 'no loop');
   assert.equal(st.stale, true, 'remounting the thread catches it up');
-  assert.match(gcJs, /else if \(st\.stale\) void GroupChat\._refreshLatest\(\{ type, ref \}\);/);
+  assert.match(gcJs, /else if \(st\.stale && !st\.read\) void GroupChat\._refreshLatest\(\{ type, ref \}\);/);
 });
 
 // ── The review finding on f9e297e2 ────────────────────────────────────
@@ -754,7 +755,7 @@ test('the open thread catches up; a thread cached off screen is marked stale', a
   assert.deepEqual(ids(open.messages), [10, 11]);
   assert.equal(away.stale, true, 'caught up when it is mounted again');
   assert.notEqual(never.stale, true, 'a thread that never loaded is left to its own first read');
-  assert.match(gcJs, /else if \(st\.stale\) void GroupChat\._refreshLatest\(\{ type, ref \}\);/,
+  assert.match(gcJs, /else if \(st\.stale && !st\.read\) void GroupChat\._refreshLatest\(\{ type, ref \}\);/,
     'mountThread catches a stale thread up');
 });
 
@@ -1221,4 +1222,130 @@ test('"Load earlier" also waits for the catch-up queued behind the one it waited
   await page;
   assert.deepEqual(order, ['latest:0', 'latest:1', 'older:301'], 'the older page goes after both, from the final cursor');
   assert.deepEqual(ids(GroupChat.messages), range(251, 350).map((m) => m.id), 'no hole: paged back from 301');
+});
+
+// ── The second adversarial review (63c38fae) ──────────────────────────
+
+test('adversarial 2.1: a thread opened after a gap has no hole "Load earlier" cannot reach', async () => {
+  const T = { type: 'issue', ref: 7 };
+  const server = range(1, 161).map((m) => ({ ...m, thread: { ...T } }));
+  const page = (url) => {
+    const before = new URL(url, 'http://localhost').searchParams.get('before');
+    const rows = before ? server.filter((m) => m.id < Number(before)) : server;
+    return { messages: rows.slice(-50), has_more_before: rows.length > 50 };
+  };
+  const GroupChat = loadGroupChat({ fetch: async (url) => ({ ok: true, headers: fresh, json: async () => page(url) }) });
+  GroupChat.appSlug = 'demo';
+  GroupChat._streamLoaded = true;
+  GroupChat._syncedMax = 0;
+  GroupChat.handleIncoming({ type: 'chat', id: 100, content: 't100', thread: { ...T } }); // thread not open
+  GroupChat.resyncLoaded(); // the socket came back after 101..160 were posted
+  await tick();
+  GroupChat.handleIncoming({ type: 'chat', id: 161, content: 't161', thread: { ...T } }); // past the gap
+  GroupChat.activeThread = { ...T };
+  await GroupChat.loadThreadHistory(T.type, T.ref);
+  const st = GroupChat._threadState(T.type, T.ref);
+  for (let i = 0; i < 10 && st.hasMore; i++) await GroupChat.loadThreadHistory(T.type, T.ref);
+  const held = new Set(ids(st.messages));
+  const missing = range(1, 161).map((m) => m.id).filter((id) => !held.has(id));
+  assert.deepEqual(missing, [], 'every message in the thread is reachable');
+});
+
+for (const path of ['catch-up', 'load-earlier', 'socket']) {
+  test(`adversarial 2.2: a delete the server refuses during a ${path} read is not replayed`, async () => {
+    const g = gate();
+    const GroupChat = loadGroupChat({
+      fetch: async (url, init) => {
+        if (init && init.method === 'DELETE') return { ok: false, status: 403, headers: fresh, json: async () => ({}) };
+        await g.p;
+        return url.includes('before=')
+          ? { ok: true, headers: fresh, json: async () => ({ messages: range(1, 50), has_more_before: false }) }
+          : { ok: true, headers: fresh, json: async () => ({ messages: range(51, 100), has_more_before: true }) };
+      },
+    });
+    GroupChat.appSlug = 'demo';
+    GroupChat._streamLoaded = true;
+    GroupChat.messages = range(51, 100);
+    GroupChat.oldestMessageId = 51;
+    GroupChat.hasMore = true;
+    GroupChat._syncedMax = 100;
+    GroupChat._didInitialScroll = true;
+    if (path === 'socket') GroupChat.ws = { readyState: 1, send() {} };
+    const read = path === 'load-earlier' ? GroupChat.loadHistory() : GroupChat._refreshLatest(null);
+    await tick();
+    const del = GroupChat.deleteMessage(99);
+    if (path === 'socket') GroupChat.handleIncoming({ type: 'delete_error', id: 99, code: 'rate_limited' });
+    await assert.rejects(del);
+    g.release();
+    await read;
+    await tick();
+    const m = GroupChat.messages.find((x) => Number(x.id) === 99);
+    assert.ok(!m.deleted, 'the refused delete is not on the message');
+    assert.equal(m.content, 'm99');
+  });
+}
+
+test('adversarial 2.3: a pass that brings the tab back AND a reconnect still re-reads the chat', () => {
+  const { lr, win, doc, fire } = install();
+  const GroupChat = loadGroupChat({ liveReads: win.UsernodeReact.liveReads });
+  GroupChat.appSlug = 'demo';
+  GroupChat._streamLoaded = true;
+  let resyncs = 0;
+  GroupChat.resyncLoaded = () => { resyncs += 1; };
+  GroupChat._watchLiveReads();
+  const realNow = Date.now;
+  let now = 1_000_000;
+  Date.now = () => now;
+  try {
+    doc.visibilityState = 'hidden';
+    fire('doc', 'visibilitychange');
+    now += lr.AWAY_MS + 1000;
+    doc.visibilityState = 'visible';
+    fire('doc', 'visibilitychange'); // resync('visible')
+    lr.resync('reconnect'); // the events socket reopens in the same pass
+    lr.flush();
+  } finally {
+    Date.now = realNow;
+  }
+  assert.equal(resyncs, 1);
+  lr.resync('reconnect'); // a reconnect alone is still the chat socket's own business
+  lr.flush();
+  assert.equal(resyncs, 1);
+});
+
+test('a pass hands its watchers every reason it gathered', () => {
+  const { lr } = install();
+  const w = recorder();
+  lr.watch(w);
+  lr.resync('visible');
+  lr.resync('reconnect');
+  lr.resync('visible');
+  lr.flush();
+  assert.deepEqual(Array.from(w.calls[0].reasons), ['reconnect', 'visible']);
+  assert.equal(w.calls[0].reason, 'visible', 'the last trigger');
+});
+
+test('a catch-up times out even where AbortSignal.timeout does not exist', async () => {
+  const signals = [];
+  const GroupChat = loadGroupChat({
+    extra: { AbortSignal: {}, AbortController },
+    fetch: (url, init) => new Promise((resolve, reject) => {
+      signals.push(init && init.signal);
+      if (init && init.signal) init.signal.addEventListener('abort', () => reject(new Error('aborted')));
+    }),
+  });
+  GroupChat.CATCH_UP_TIMEOUT_MS = 30;
+  GroupChat.appSlug = 'demo';
+  GroupChat._streamLoaded = true;
+  GroupChat.messages = [msg(1)];
+  await GroupChat._refreshLatest(null);
+  assert.ok(signals[0], 'the read carries a signal');
+  assert.equal(signals[0].aborted, true, 'and it fired');
+  assert.equal(GroupChat._latestLoad, null, '"Load earlier" is not left waiting');
+  assert.equal(GroupChat._streamStale, true, 'still owed');
+});
+
+test('remounting while a catch-up is on the wire does not queue a second one', () => {
+  assert.match(gcJs, /if \(GroupChat\._streamStale && !GroupChat\._latestLoad\) void GroupChat\._refreshLatest\(null\);/);
+  assert.match(gcJs, /else if \(st\.stale && !st\.read\) void GroupChat\._refreshLatest\(\{ type, ref \}\);/);
 });

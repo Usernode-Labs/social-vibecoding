@@ -52,7 +52,10 @@ export type ResyncReason = 'reconnect' | 'visible' | 'online' | 'correction' | '
 
 /** What a watcher is asked to re-read: everything it shows, or these reads. */
 export interface Resync {
+  /** The last trigger of the pass; `reasons` has every one. */
   reason: ResyncReason;
+  /** Every trigger gathered into this pass, in order. */
+  reasons: ResyncReason[];
   /** Absolute URLs of the corrected reads this watcher owns; null for everything. */
   urls: string[] | null;
 }
@@ -86,7 +89,7 @@ export const AWAY_MS = 30_000;
 
 const watchers = new Set<Watcher>();
 let pendingAll = false;
-let pendingReason: ResyncReason | null = null;
+const pendingReasons = new Set<ResyncReason>();
 const pendingUrls = new Set<string>();
 let timer: ReturnType<typeof setTimeout> | null = null;
 let hiddenSince: number | null = null;
@@ -131,7 +134,8 @@ export function resync(reason: ResyncReason, url?: string | null): void {
   } else {
     pendingAll = true;
   }
-  pendingReason = reason;
+  pendingReasons.delete(reason);
+  pendingReasons.add(reason);
   schedule();
 }
 
@@ -156,19 +160,20 @@ export function flush(): void {
   if (isHidden()) return;
   const all = pendingAll;
   const urls = [...pendingUrls];
-  const reason = pendingReason || 'manual';
+  const reasons: ResyncReason[] = pendingReasons.size ? [...pendingReasons] : ['manual'];
+  const reason = reasons[reasons.length - 1];
   pendingAll = false;
   pendingUrls.clear();
-  pendingReason = null;
+  pendingReasons.clear();
   if (!all && !urls.length) return;
   for (const watcher of [...watchers]) {
-    if (all) { run(watcher, { reason, urls: null }); continue; }
+    if (all) { run(watcher, { reason, reasons, urls: null }); continue; }
     const reads = watcher.reads;
     if (!reads) continue;
     const owned = urls.filter((href) => {
       try { return reads(new URL(href)); } catch { return false; }
     });
-    if (owned.length) run(watcher, { reason, urls: owned });
+    if (owned.length) run(watcher, { reason, reasons, urls: owned });
   }
 }
 
@@ -221,7 +226,7 @@ export function _resetLiveReads(): void {
   if (timer) clearTimeout(timer);
   timer = null;
   pendingAll = false;
-  pendingReason = null;
+  pendingReasons.clear();
   pendingUrls.clear();
   hiddenSince = null;
   installed = false;

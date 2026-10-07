@@ -323,7 +323,7 @@ declare global {
       /** lib/live-reads.ts (#4177): re-read what is on screen after a gap. */
       liveReads?: {
         watch(
-          reread: (resync: { reason: string; urls: string[] | null }) => unknown,
+          reread: (resync: { reason: string; reasons: string[]; urls: string[] | null }) => unknown,
           options?: { reads?: (url: URL) => boolean },
         ): () => void;
         resync(reason: string, url?: string | null): void;

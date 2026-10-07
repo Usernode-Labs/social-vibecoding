@@ -272,8 +272,9 @@ const GroupChat = {
     const liveWs = GroupChat.ws && GroupChat.ws.readyState <= 1; // CONNECTING(0) or OPEN(1)
     if (GroupChat.appSlug === appSlug && liveWs) {
       GroupChat.render();
-      // #4177: a catch-up still owed (the last one failed) runs on the way in.
-      if (GroupChat._streamStale) void GroupChat._refreshLatest(null);
+      // #4177: a catch-up still owed (the last one failed) runs on the way in;
+      // one on the wire already will settle it.
+      if (GroupChat._streamStale && !GroupChat._latestLoad) void GroupChat._refreshLatest(null);
       GroupChat.attachScrollHandlers();
       GroupChat.restoreScroll();
       GroupChat._applyPendingReveal();
@@ -598,7 +599,7 @@ const GroupChat = {
           if (msg.thread.type === 'message' && !GroupChat.messages.some((m) => String(m.id) === String(msg.id))) {
             const shouldStick = GroupChat._lockedToBottom || GroupChat._isOwnMessage(msg);
             GroupChat.messages.push(msg);
-            if (!GroupChat._streamStale) GroupChat._syncedMax = Math.max(GroupChat._syncedMax, Number(msg.id) || -Infinity);
+            if (GroupChat._streamLoaded && !GroupChat._streamStale) GroupChat._syncedMax = Math.max(GroupChat._syncedMax, Number(msg.id) || -Infinity);
             GroupChat.appendMessage(msg);
             if (shouldStick) GroupChat.scrollToBottom();
           }
@@ -611,9 +612,10 @@ const GroupChat = {
         // you had scrolled up — you just sent it, so you expect to see it.
         const shouldStick = GroupChat._lockedToBottom || GroupChat._isOwnMessage(msg);
         GroupChat.messages.push(msg);
-        // #4177: a live message extends the gap-free span, unless a gap is
-        // pending, in which case it is past the gap and proves nothing.
-        if (!GroupChat._streamStale) GroupChat._syncedMax = Math.max(GroupChat._syncedMax, Number(msg.id) || -Infinity);
+        // #4177: a live message extends the gap-free span of a loaded stream,
+        // unless a gap is pending, in which case it is past the gap and proves
+        // nothing (before the first page there is no span to extend).
+        if (GroupChat._streamLoaded && !GroupChat._streamStale) GroupChat._syncedMax = Math.max(GroupChat._syncedMax, Number(msg.id) || -Infinity);
         GroupChat.appendMessage(msg);
         if (shouldStick) GroupChat.scrollToBottom();
         // #2387: a message landing on the open channel is read.
@@ -692,7 +694,7 @@ const GroupChat = {
     if (st.messages.some((m) => String(m.id) === String(msg.id))) return;
     st.messages.push(msg);
     // #4177: see the general stream's `_syncedMax`.
-    if (!st.stale) st.syncedMax = Math.max(st.syncedMax ?? -Infinity, Number(msg.id) || -Infinity);
+    if (st.loaded && !st.stale) st.syncedMax = Math.max(st.syncedMax ?? -Infinity, Number(msg.id) || -Infinity);
     const a = GroupChat.activeThread;
     if (a && a.type === type && Number(a.ref) === Number(ref)) {
       const el = document.getElementById('gc-thread-messages');
@@ -1287,7 +1289,7 @@ const GroupChat = {
     // gap left behind (#4177, `resyncLoaded`) catches up instead.
     const st = GroupChat._threadState(type, ref);
     if (!st.loaded) GroupChat.loadThreadHistory(type, ref);
-    else if (st.stale) void GroupChat._refreshLatest({ type, ref });
+    else if (st.stale && !st.read) void GroupChat._refreshLatest({ type, ref });
   },
 
   // Drop the active thread render target (its history cache survives in
@@ -1430,13 +1432,19 @@ const GroupChat = {
   },
 
   // A catch-up waits for the network (the worker's `no-cache` rule, sw.js),
-  // but not forever: a half-dead link would otherwise hold it, and every later
-  // ask would only queue behind it.
+  // but not forever: a half-dead link would otherwise hold it, and "Load
+  // earlier" and every later ask would wait behind it. A browser without
+  // `AbortSignal.timeout` (Safari before 16) gets the same from a timer.
   _freshInit() {
     const init = { cache: 'no-cache' };
+    const ms = GroupChat.CATCH_UP_TIMEOUT_MS;
     try {
       if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
-        init.signal = AbortSignal.timeout(GroupChat.CATCH_UP_TIMEOUT_MS);
+        init.signal = AbortSignal.timeout(ms);
+      } else if (typeof AbortController === 'function') {
+        const controller = new AbortController();
+        setTimeout(() => controller.abort(), ms);
+        init.signal = controller.signal;
       }
     } catch { /* no timeout: the browser's own applies */ }
     return init;
@@ -1471,6 +1479,15 @@ const GroupChat = {
   },
   _noteLive(event) {
     for (const log of GroupChat._liveWindows) log.push(event);
+  },
+  // A change that did not happen after all (a refused delete): out of every
+  // record, so it is not replayed onto an answer that never had it.
+  _forgetLive(kind, id) {
+    for (const log of GroupChat._liveWindows) {
+      for (let i = log.length - 1; i >= 0; i -= 1) {
+        if (log[i].kind === kind && String(log[i].id) === String(id)) log.splice(i, 1);
+      }
+    }
   },
 
   // A field event, applied to every held copy of its message (a reply is held
@@ -1565,7 +1582,9 @@ const GroupChat = {
     const full = typeof data.has_more_before === 'boolean' ? data.has_more_before : latest.length >= 50;
     const before = s.messages.filter((m) => log.held.has(String(m.id)));
     const arrived = s.messages.filter((m) => !log.held.has(String(m.id)));
-    const next = GroupChat._reconcileLatest(before, latest, full, { before: s.syncedMax });
+    // A first page has nothing known gap-free before it: whatever the socket
+    // delivered first may lie past a gap, so it is not a boundary.
+    const next = GroupChat._reconcileLatest(before, latest, full, { before: first ? -Infinity : s.syncedMax });
     let answer = next.messages;
     if (first) {
       const inAnswer = new Set(answer.map((m) => String(m.id)));
@@ -1679,7 +1698,10 @@ const GroupChat = {
   _onLiveResync(resync) {
     if (!GroupChat.appSlug || !resync) return;
     if (!resync.urls) {
-      if (resync.reason !== 'reconnect') GroupChat.resyncLoaded();
+      // Unless the pass ALSO carries another trigger (the tab back after a
+      // while, back online), which the chat's socket may not have noticed.
+      const reasons = resync.reasons || [resync.reason];
+      if (!reasons.every((r) => r === 'reconnect')) GroupChat.resyncLoaded();
       return;
     }
     for (const href of resync.urls) {
@@ -2333,6 +2355,15 @@ const GroupChat = {
     GroupChat._applyDelete({ id });
     const restore = () => {
       for (const [m, copy] of before) Object.assign(m, copy, { deleted: false });
+      // #4177: the delete did not happen, so it comes out of every read's
+      // record, and off a copy a read brought in meanwhile.
+      GroupChat._forgetLive('delete', id);
+      const was = before.length ? before[0][1] : null;
+      if (was) {
+        GroupChat._eachCopy(id, (m) => {
+          if (m.deleted) Object.assign(m, { deleted: false, content: was.content, reactions: was.reactions, metadata: was.metadata });
+        });
+      }
       GroupChat.render();
       if (GroupChat.activeThread) GroupChat.renderThread();
     };
