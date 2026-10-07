@@ -49,3 +49,20 @@ test('every Node image stage can strip types', () => {
     }
   }
 });
+
+// Platform convention: a variable the platform reads is declared in
+// dapp.json's platform_env, or nobody can set it (the flag could never be
+// turned on).
+test('every WF_* variable config.js reads is declared in platform_env', () => {
+  const fs = require('node:fs');
+  const read = new Set(fs.readFileSync(path.join(ROOT, 'src/config.js'), 'utf8').match(/process\.env\.WF_\w+/g)
+    .map((m) => m.slice('process.env.'.length)));
+  assert.ok(read.has('WF_GOVERNANCE_ENABLED'));
+  const declared = new Map(require(path.join(ROOT, 'dapp.json')).platform_env.map((e) => [e.key, e]));
+  for (const key of read) {
+    const entry = declared.get(key);
+    assert.ok(entry, `${key} is declared`);
+    assert.ok(!entry.required, `${key} must not block merges`);
+  }
+  assert.equal(declared.get('WF_GOVERNANCE_ENABLED').default, 'false', 'off unless someone turns it on');
+});

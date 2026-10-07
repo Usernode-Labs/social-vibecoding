@@ -253,6 +253,27 @@
       "description": "How often the fast governance-apply ticker applies vote-passed rename / env-var / close-issue / campaign proposals whose merge window has elapsed. Set to 0 to disable it (the hourly stale-proposal sweeper still applies them)."
     },
     {
+      "key": "WF_GOVERNANCE_ENABLED",
+      "group": "Proposals & retention",
+      "default": "false",
+      "description": "The workflow governance-proposal machine (src/workflow/, docs/workflows.md). true: it decides governance proposals (votes, applying, withdrawals, refusals) and the governance-apply ticker and the sweeper's Pass 0b leave them alone; open proposals are enrolled at boot. false (default): the old paths decide. Turning it off and on again is safe."
+    },
+    {
+      "key": "WF_SLOTS",
+      "group": "Proposals & retention",
+      "description": "How many workflow events the leader applies at once (pipeline slots). Unset: 4, or 2 on a staging preview. Only read while a workflow flag such as WF_GOVERNANCE_ENABLED is on."
+    },
+    {
+      "key": "WF_POOL_MAX",
+      "group": "Proposals & retention",
+      "description": "Connections in the workflow runtime's own database pool, kept apart from request traffic. Unset: 6, or 3 on a staging preview. Keep it above WF_SLOTS. Only read while a workflow flag is on."
+    },
+    {
+      "key": "WF_OWNERSHIP_MODE",
+      "group": "Proposals & retention",
+      "description": "What a write to a column a workflow machine owns does when it comes from outside the machine. log: recorded in wf_ownership_violations and allowed. raise: refused. Unset: log in production, raise everywhere else."
+    },
+    {
       "key": "CERT_WARM_TIMEOUT_MS",
       "group": "TLS",
       "default": "15000",
