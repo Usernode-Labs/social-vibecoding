@@ -58,12 +58,13 @@ export interface AppStatusView {
    * thumbnail in place of the message, with `buildLine` at its foot.
    */
   thumb?: FirstVersionThumb | null;
-  /** None: no line (a screen whose button already says it, such as Try it). */
+  /** None: no line (a screen that cannot know the step). */
   buildLine?: BuildLineState | null;
   /**
-   * The lines say what the first-session tour's card says over this screen
-   * ("It opens here when it’s ready."), so they hide while the tour is up
-   * (its layer, `[data-first-session-tour]`, is in the page).
+   * The lines say what a first-session tour card can say over this screen
+   * ("It opens here when it’s ready."), so they hide while a card that says
+   * it is on the page: one that carries `data-tour-says-where-it-opens`. A
+   * tour card that does not say it leaves the line in place.
    */
   tourSays?: boolean;
   /**
@@ -142,8 +143,8 @@ function press(action: StatusAction): void {
 
 const LINE = 'max-w-sm text-sm';
 const THUMB_LINE = 'max-w-sm pt-1 text-[15px] leading-5';
-// Hidden while the first-session tour's layer is in the page: its card says it.
-const THUMB_LINE_TOUR_SAYS = 'max-w-sm pt-1 text-[15px] leading-5 [body:has([data-first-session-tour])_&]:hidden';
+// Hidden while a tour card that says where the app opens is on the page.
+const THUMB_LINE_TOUR_SAYS = 'max-w-sm pt-1 text-[15px] leading-5 [body:has([data-tour-says-where-it-opens])_&]:hidden';
 
 export function AppStatusView_({ view }: { view: AppStatusView }): ReactNode {
   const action = view.action;

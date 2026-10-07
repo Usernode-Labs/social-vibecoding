@@ -307,9 +307,13 @@ test('card: the tile carries no users badge and no status dot', () => {
   // #4053: a first version Homeroom bot is making says its build line
   // instead, quiet, and blue only when it waits on the reader.
   assert.match(Home.renderAppCard(baseApp({ status: 'creating', first_version_line: 'planning' })),
-    /<p class="app-card-status truncate text-zinc-500 dark:text-zinc-400" data-build-line="planning">Planning it<\/p>/);
+    /<p class="app-card-status line-clamp-2 text-zinc-500 dark:text-zinc-400" data-build-line="planning">Homeroom bot is planning it<\/p>/);
   assert.match(Home.renderAppCard(baseApp({ first_version_line: 'plan' })),
-    /<p class="app-card-status truncate font-semibold text-\[color:var\(--accent\)\]" data-build-line="plan">Plan ready<\/p>/);
+    /<p class="app-card-status line-clamp-2 font-semibold text-\[color:var\(--accent\)\]" data-build-line="plan">Your plan is ready to review<\/p>/);
+  // While it shows one, the name takes one line so the caption has two.
+  assert.match(Home.renderAppCard(baseApp({ first_version_line: 'plan' })),
+    /<div class="app-card app-card-draggable [^"]* \[&_\.app-card-title\]:line-clamp-1 \[&_\.app-card-title\]:min-h-0"/);
+  assert.doesNotMatch(Home.renderAppCard(baseApp()), /line-clamp-1/);
   assert.match(Home.renderAppCard(baseApp({ status: 'error', first_version_line: 'planning' })), />Error</);
   assert.equal(Home.appView(baseApp({ first_version_line: 'building' })).statusLabel, 'Building it');
   assert.equal(Home.appView(baseApp({ first_version_line: 'building' })).buildLine, 'building');

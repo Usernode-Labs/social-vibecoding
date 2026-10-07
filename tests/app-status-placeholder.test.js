@@ -325,13 +325,13 @@ test('#4053: while it is being built, the thumbnail with its build line, and whe
   assert.doesNotMatch(out, /Start a new change|starter/i);
 });
 
-test('#4053: "It opens here when it’s ready." hides while the first-session tour is up; its card says the same', () => {
+test('#4053: "It opens here when it’s ready." hides only while a tour card that says it is on the page', () => {
   const { AppView } = makeAppView();
   const out = html(view(AppView, firstVersionApp()));
-  // Hidden by the tour's own layer being in the page, not by a state the tour
-  // would have to publish: the line is drawn either way.
-  assert.match(out, /<p data-app-first-version-note="" class="max-w-sm pt-1 text-\[15px\] leading-5 \[body:has\(\[data-first-session-tour\]\)_&amp;\]:hidden">It opens here when it’s ready\.<\/p>/);
-  assert.match(fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'features', 'first-session', 'index.tsx'), 'utf8'), /<div data-first-session-tour=\{index \+ 1\}/, 'the tour\'s layer carries the attribute');
+  // Hidden by a card that says where the app opens marking itself, not by the
+  // tour being up: a card that says something else leaves the line in place,
+  // so the screen reads right whichever of the tour and this lands first.
+  assert.match(out, /<p data-app-first-version-note="" class="max-w-sm pt-1 text-\[15px\] leading-5 \[body:has\(\[data-tour-says-where-it-opens\]\)_&amp;\]:hidden">It opens here when it’s ready\.<\/p>/);
   // Outside the tour it stays; the ready view's wait lines never hide.
   const ready = html(view(AppView, readyApp({}, { mustApprove: true })));
   assert.match(ready, /<p class="max-w-sm pt-1 text-\[15px\] leading-5">Waiting for your approval\.<\/p>/);
@@ -404,15 +404,17 @@ test('ready: a member who still has to approve it gets Try it and See the change
     message: 'Plant Pal',
     detail: null,
     thumb: THUMB,
-    buildLine: null,
+    buildLine: 'ready',
     lines: ['Waiting for your approval.'],
     action: { key: 'tryChange', label: 'Try it', slug: 'plant-pal', sessionId: 31 },
     alt: { key: 'seeChange', label: 'See the change', slug: 'plant-pal', sessionId: 31 },
   });
   const out = html(v);
   assert.doesNotMatch(out, /status-dot/);
-  // Try it says it: the thumbnail draws no "Ready to try" under it.
-  assert.doesNotMatch(out, /being built|is ready to try|Ready to try|data-build-line|data-featured-card-line/);
+  // Owner, 7 Oct (audit): "Ready to try" stays beside Try it. With the title
+  // gone it is the one thing on the screen that says it is ready.
+  assert.match(out, /data-build-line="ready"[^>]*>.*Ready to try/);
+  assert.doesNotMatch(out, /being built|is ready to try/);
   assert.match(out, /data-featured-card="ready"/);
   assert.match(out, />Waiting for your approval\.</);
   assert.match(out, /<button id="app-first-version-try" class="rounded-lg bg-violet-600[^"]*mt-3">Try it<\/button>/);
@@ -434,7 +436,7 @@ test('ready: once they approved it, whom it waits for and the day it goes live a
   assert.deepEqual(v.lines, [`You approved it. Waiting for @sam_t1004, or it goes live on ${weekday} if nobody objects.`]);
   assert.deepEqual(v.action, { key: 'tryChange', label: 'Try it', slug: 'plant-pal', sessionId: 31 });
   assert.equal(v.alt.key, 'seeChange');
-  assert.equal(v.buildLine, null, 'Try it is on the screen: no "Ready to try"');
+  assert.equal(v.buildLine, 'ready', '"Ready to try" stays beside Try it');
   // No clock runs (an "at least N" project): only whom it waits for.
   const noClock = view(AppView, readyApp({}, { approved: true, waitingOn: ['sam_t1004'] }));
   assert.equal(noClock.lines[0], 'You approved it. Waiting for @sam_t1004.');

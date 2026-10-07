@@ -31,21 +31,16 @@ import type { ReactNode } from 'react';
 
 import { CheckIcon, SpinnerRingIcon } from '@/components/ui/icons';
 
-export const BUILD_LINE_WORDS = Object.freeze({
-  planning: 'Homeroom bot is planning it',
-  plan: 'Your plan is ready to review',
-  'plan-member': 'Planning it',
-  question: 'Homeroom bot has a question for you',
-  building: 'Building it',
-  testing: 'Testing it',
-  ready: 'Ready to try',
-  live: 'Live',
-});
+// The words, once (./build-line-words.js, plain JavaScript so home.js and
+// its classic-script tests read the same ones).
+import { BUILD_LINE_WORDS } from './build-line-words.js';
+
+export { BUILD_LINE_WORDS };
 
 export type BuildLineState = keyof typeof BUILD_LINE_WORDS;
 
-/** The same lines on a Home tile, shortened to fit its caption (./build-line-words.js). */
-export { BUILD_LINE_TILE_WORDS, buildLineTileClass, buildLineTileOf } from './build-line-words.js';
+/** The same lines on a Home tile (./build-line-words.js). */
+export { BUILD_LINE_TILE_CARD, buildLineTileClass, buildLineTileOf } from './build-line-words.js';
 
 /** The line in an answer (`first_version.line`), or null for none or one this shell does not know. */
 export function buildLineOf(value: unknown): BuildLineState | null {

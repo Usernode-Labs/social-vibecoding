@@ -845,7 +845,7 @@ test('#15: the first-version screenshot state is self-contained, and mounts no f
   const waiting = h.status();
   assert.equal(bridge.frame(), null);
   assert.equal(waiting.thumb.name, 'Plant Pal');
-  assert.equal(waiting.buildLine, null, 'Try it says it: no "Ready to try" line');
+  assert.equal(waiting.buildLine, 'ready', '"Ready to try" stays beside Try it (owner, 7 Oct)');
   assert.deepEqual([...waiting.lines], ['Waiting for your approval.']);
   assert.deepEqual([waiting.action.key, waiting.alt.key], ['tryChange', 'seeChange']);
   assert.equal('secondary' in waiting, false);

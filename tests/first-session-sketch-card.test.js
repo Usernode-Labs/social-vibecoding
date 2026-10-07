@@ -104,27 +104,24 @@ test('the build line: the same words everywhere, a spinner that turns, one blue 
   assert.doesNotMatch(LINE_SRC, /className="[^"]*status-dot/);
 });
 
-test('the same lines on a Home tile: the words that fit stay, the long three are shortened, blue still asks', () => {
-  // Owner, 7 Oct 2026: a new project's tile says the build line, not "Spinning
-  // up...". Its caption is one 11px line about 70px wide on a phone.
-  assert.deepEqual({ ...lineMod.BUILD_LINE_TILE_WORDS }, {
-    planning: 'Planning it',
-    plan: 'Plan ready',
-    'plan-member': 'Planning it',
-    question: 'A question',
-    building: 'Building it',
-    testing: 'Testing it',
-    ready: 'Ready to try',
-    live: 'Live',
-  });
-  assert.deepEqual(Object.keys(lineMod.BUILD_LINE_TILE_WORDS), Object.keys(lineMod.BUILD_LINE_WORDS));
-  for (const words of Object.values(lineMod.BUILD_LINE_TILE_WORDS)) assert.ok(words.length <= 12, words);
+test('the same lines on a Home tile: the build line\'s own words, blue still asks, the name gives up a line', () => {
+  // Owner, 7 Oct 2026: a new project's tile says the build line, in its own
+  // words (not a shorter set), not "Spinning up...".
+  // One set of words: build-line.tsx takes them from build-line-words.js.
+  assert.match(LINE_SRC, /import \{ BUILD_LINE_WORDS \} from '\.\/build-line-words\.js';/);
+  assert.doesNotMatch(LINE_SRC, /BUILD_LINE_WORDS = /);
+  assert.equal(lineMod.BUILD_LINE_TILE_WORDS, undefined);
   for (const state of ['plan', 'question']) {
-    assert.equal(lineMod.buildLineTileClass(state), 'app-card-status truncate font-semibold text-[color:var(--accent)]', state);
+    assert.equal(lineMod.buildLineTileClass(state), 'app-card-status line-clamp-2 font-semibold text-[color:var(--accent)]', state);
   }
   for (const state of ['planning', 'plan-member', 'building', 'testing', 'ready', 'live']) {
-    assert.equal(lineMod.buildLineTileClass(state), 'app-card-status truncate text-zinc-500 dark:text-zinc-400', state);
+    assert.equal(lineMod.buildLineTileClass(state), 'app-card-status line-clamp-2 text-zinc-500 dark:text-zinc-400', state);
   }
+  // Two 12px caption lines and a one-line name fill the 38px the two-line
+  // name and one caption line do (app.css --home-cell-h), so the row holds.
+  assert.equal(lineMod.BUILD_LINE_TILE_CARD, '[&_.app-card-title]:line-clamp-1 [&_.app-card-title]:min-h-0');
+  assert.equal(lineMod.buildLineTileOf('plan'), 'plan');
+  assert.equal(lineMod.buildLineTileOf('Plan ready'), null);
 });
 
 test('while it is sketched: the same frame, the name in place, a band of light over the line to come', () => {

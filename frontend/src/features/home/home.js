@@ -27,7 +27,7 @@ import { AppCard } from '../apps/app-card.js';
 import { gridStore } from './grid-store';
 import { chromeStore } from './chrome-store';
 import { detectInstallHost } from '../mobile-install/environment';
-import { BUILD_LINE_TILE_WORDS, buildLineTileClass, buildLineTileOf } from '../first-session/build-line-words.js';
+import { BUILD_LINE_TILE_CARD, BUILD_LINE_WORDS, buildLineTileClass, buildLineTileOf } from '../first-session/build-line-words.js';
 
 // Which discovery cards and add badges already carry their listeners.
 // `_wireDiscoveryCards` runs again whenever a lane's tiles change identity,
@@ -1021,7 +1021,7 @@ const Home = {
     // is making says where it is in the build line's words, from the time it
     // is set up until it is live (Home.tileBuildLine), not "Spinning up...".
     const buildLine = Home.tileBuildLine(app);
-    const statusLabel = buildLine ? BUILD_LINE_TILE_WORDS[buildLine]
+    const statusLabel = buildLine ? BUILD_LINE_WORDS[buildLine]
       : isRunning ? ''
       : app.status === 'creating' ? 'Spinning up...'
       : isAwaiting ? 'Awaiting secrets'
@@ -2462,7 +2462,7 @@ const Home = {
     // statusLabel / warningHtml below — so "Spinning up…", "Awaiting
     // secrets" and "Error" are unaffected.
     const buildLine = Home.tileBuildLine(app);
-    const statusLabel = buildLine ? BUILD_LINE_TILE_WORDS[buildLine]
+    const statusLabel = buildLine ? BUILD_LINE_WORDS[buildLine]
       : app.status === 'running' ? ''
       : app.status === 'creating' ? 'Spinning up...'
       : isAwaiting ? 'Awaiting secrets'
@@ -2593,7 +2593,7 @@ const Home = {
     // would 404. They keep the long-press menu instead.
     const demoAttr = app.demo ? ' data-demo="true"' : '';
     return `
-      <div class="app-card app-card-draggable touch-pan-y relative rounded-xl transition-colors p-3 flex flex-col items-center text-center gap-1.5 ${cursorClass}" data-slug="${app.slug}" data-status="${app.status}" data-locked="${isLocked}"${demoAttr}>
+      <div class="app-card app-card-draggable touch-pan-y relative rounded-xl transition-colors p-3 flex flex-col items-center text-center gap-1.5 ${cursorClass}${buildLine ? ` ${BUILD_LINE_TILE_CARD}` : ''}" data-slug="${app.slug}" data-status="${app.status}" data-locked="${isLocked}"${demoAttr}>
         <div class="relative w-14 h-14 shrink-0${showRetry ? ' grayscale-[0.75]' : ''}">
           <div class="app-icon-tile w-14 h-14 rounded-xl overflow-hidden flex items-center justify-center font-bold text-xl" data-icon="${icon.kind}">
             ${icon.html}

@@ -55,8 +55,8 @@ test('#4053: the build line a first version\'s thumbnail shows, for its creator 
   assert.equal(line('nonsense'), null);
   assert.deepEqual(progress.BUILD_LINE_STATES, ['planning', 'plan', 'plan-member', 'question', 'building', 'testing', 'ready', 'live']);
   // The chat's step names for steps 4 to 7 are the line's own words
-  // (frontend/src/features/first-session/build-line.tsx).
-  const words = require('node:fs').readFileSync(require('node:path').join(__dirname, '../frontend/src/features/first-session/build-line.tsx'), 'utf8');
+  // (frontend/src/features/first-session/build-line-words.js).
+  const words = require('node:fs').readFileSync(require('node:path').join(__dirname, '../frontend/src/features/first-session/build-line-words.js'), 'utf8');
   for (const [state, step] of [['building', 4], ['testing', 5], ['ready', 6], ['live', 7]]) {
     assert.ok(words.includes(`${/-/.test(state) ? `'${state}'` : state}: '${progress.FIRST_VERSION_STEPS[step - 1]}',`), state);
   }
