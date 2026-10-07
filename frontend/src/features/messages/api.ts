@@ -107,7 +107,8 @@ const BOT_QUESTION_STATES = new Set(['open', 'answered', 'closed']);
 // HomeroomBotAction). An unknown one is dropped, never drawn as a dead button.
 // B7: a change's ready card adds three: its preview (Try it), the person's
 // own Yes (Approve) and a reply quoting the card (Change something).
-const BOT_ACTION_TYPES = new Set(['server', 'open', 'prompt', 'preview', 'vote', 'reply']);
+// #4231: and `invite`, under a new project's first version going live.
+const BOT_ACTION_TYPES = new Set(['server', 'open', 'prompt', 'preview', 'vote', 'reply', 'invite']);
 const MAX_BOT_ACTIONS = 3;
 
 /** B3: a bot message's buttons, as types.ts HomeroomBotAction: at most three, one primary. */
@@ -825,6 +826,7 @@ export async function listBlocks(): Promise<ConversationUser[]> {
 const ACTIVITY_OUTCOMES = new Set<HomeroomBotActivityOutcome>([
   'question', 'proposed', 'live', 'closed', 'blocked', 'build_failed',
   'person', 'empty', 'failed', 'held', 'stopped', 'answer', 'revise',
+  'checking', 'needs_look', 'going_live',
 ]);
 
 /** An in-app address (`#app/…`), or null: a card's link never leaves the shell. */
