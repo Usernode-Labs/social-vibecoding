@@ -94,6 +94,14 @@ managedKeys.usesIncludedKey = async () => false;
 
 const BUDGET_MS = bot.DEFAULTS.turnSeconds * 1000;
 const ago = (ms) => new Date(Date.now() - ms).toISOString();
+// What a build's clock has left when the last deploy's server takes it. The
+// adoption reads the clock only after its own queries (the session, whose
+// bot it is, the run's deadline). This was 400 ms, and on 7 Oct 2026 main's
+// unit suite took longer than that to get there under the full suite's
+// load: the clock read nothing left, the build was recorded as having run
+// too long on its own, and the next two subtests failed after it. Each
+// recovery waits this out, so it is a few seconds, not a minute.
+const CLOCK_LEFT_MS = 5000;
 // Still working when the bot's clock stops it.
 const untilStopped = () => new Promise((resolve) => { onStop = () => resolve({ exitCode: 143, pushOk: false, ahead: 0 }); });
 
@@ -174,9 +182,9 @@ test('a live build deploys land in goes round again; one that ran too long on it
   await t.test('Page Turners #3: the clock that ends a build after the deploys sends it round again', async () => {
     journalTail = untilStopped;
     stops.length = 0; posts.length = 0;
-    // Started its whole budget ago, less the 400 ms its clock has left when
-    // the last deploy's server takes it.
-    const { sessionId, runId } = await build(3, ago(BUDGET_MS - 400));
+    // Started its whole budget ago, less what its clock has left when the
+    // last deploy's server takes it.
+    const { sessionId, runId } = await build(3, ago(BUDGET_MS - CLOCK_LEFT_MS));
     const t0 = Date.now();
     await recover(sessionId);
     assert.deepEqual(stops, [sessionId], 'the bot\'s clock still ends the turn');
@@ -195,7 +203,7 @@ test('a live build deploys land in goes round again; one that ran too long on it
     journalTail = untilStopped;
     await pool.query('DELETE FROM homeroom_bot_queue');
     // The retriage's second build: round again (two in a row now).
-    const second = await build(3, ago(BUDGET_MS - 400));
+    const second = await build(3, ago(BUDGET_MS - CLOCK_LEFT_MS));
     posts.length = 0;
     await recover(second.sessionId);
     assert.match((await runRow(second.runId)).build_error, /^interrupted: .* by a restart; the issue was sent back to be triaged again$/);
@@ -204,7 +212,7 @@ test('a live build deploys land in goes round again; one that ran too long on it
 
     // The third: MAX_RESTARTED_BUILDS stops it going round for good.
     await pool.query('DELETE FROM homeroom_bot_queue');
-    const third = await build(3, ago(BUDGET_MS - 400));
+    const third = await build(3, ago(BUDGET_MS - CLOCK_LEFT_MS));
     await recover(third.sessionId);
     assert.deepEqual(await runRow(third.runId), {
       build_ok: false, build_error: 'the platform restarted in the middle of each of its last 3 tries at building this',
