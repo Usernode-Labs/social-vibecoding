@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } fro
 
 import { Button } from '@/components/ui/button';
 import { SectionHeader } from '@/components/ui/grouped-list';
-import { ChevronDownIcon, ClockIcon } from '@/components/ui/icons';
+import { ChevronDownIcon, ListLinesIcon, SpinnerRingIcon } from '@/components/ui/icons';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { agoStamp } from '../../lib/timestamp';
 import * as api from './api';
@@ -307,10 +307,16 @@ export function BotWorkStatusLine() {
  * #3770: the toggle, a disc among the header's discs (index.tsx
  * ThreadHeader), drawn on a phone too. A press on it is not "outside" the
  * panel, and Escape hands focus back to it: both find it by
- * `data-bot-work-toggle`. Its badge carries the tray's state as
- * `data-bot-work-status`, as the line does: the number of requests that
- * wait on the viewer, the accent's job (AGENTS.md), else the live dot while
- * the bot works, else nothing. A pure render.
+ * `data-bot-work-toggle`. Its badge is the number of requests that wait on
+ * the viewer, the accent's job (AGENTS.md), else nothing.
+ *
+ * #4198: its glyph says what the bot is doing. While it works, a turning
+ * ring, the same "building" cue the platform mark draws (header/
+ * platform-mark.tsx), held still where motion is unwelcome; otherwise a
+ * list, for what the panel holds. A clock read as "history". The ring
+ * carries the tray's state as `data-bot-work-status`, as the line and the
+ * count do, which is what the declared check (dapp.json
+ * homeroom-bot-dm-activity-tray) selects the toggle by. A pure render.
  */
 export function BotWorkButtonView({ work, open, onToggle }: { work: HomeroomBotWork | null; open: boolean; onToggle?: () => void }) {
   const { kind } = trayStatus(work);
@@ -322,9 +328,10 @@ export function BotWorkButtonView({ work, open, onToggle }: { work: HomeroomBotW
         {waiting > 9 ? '9+' : waiting}
       </span>
     );
-  } else if (kind === 'working') {
-    badge = <span className="messages-bot-work-badge messages-bot-work-dot" data-bot-work-status={kind}><PingDot /></span>;
   }
+  const glyph = kind === 'working'
+    ? <SpinnerRingIcon className="motion-safe:animate-spin motion-reduce:animate-none" data-bot-work-status={kind} aria-hidden="true" />
+    : <ListLinesIcon aria-hidden="true" />;
   return (
     <button
       type="button"
@@ -336,7 +343,7 @@ export function BotWorkButtonView({ work, open, onToggle }: { work: HomeroomBotW
       data-bot-work-toggle=""
       onClick={onToggle}
     >
-      <ClockIcon aria-hidden="true" />
+      {glyph}
       {badge}
     </button>
   );
@@ -398,7 +405,6 @@ function Tile({ job, group, tone, lead, eyebrow, status, ago }: TileProps) {
         {lead}
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-            {group === 'now' ? <PingDot /> : null}
             <span className="truncate">{eyebrow}</span>
           </div>
           <div className="line-clamp-2 text-[0.9375rem] font-semibold leading-5 text-zinc-900 dark:text-zinc-100">{jobTitle(job)}</div>
@@ -449,7 +455,7 @@ function NowTile({ job, at, ago }: { job: HomeroomBotCurrentJob; at: Date; ago: 
       job={job}
       group="now"
       tone={null}
-      lead={<ActivityLead step={job.step} of={job.of} stepName={job.stepName} />}
+      lead={<ActivityLead step={job.step} of={job.of} stepName={job.stepName} working />}
       eyebrow={eyebrow}
       status={withTime(capitalized(job.doing || PHASE_LABELS[job.phase]), elapsed ? `${elapsed} so far` : '')}
       ago={ago}

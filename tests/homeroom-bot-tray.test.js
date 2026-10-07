@@ -531,26 +531,29 @@ test('the status line under the bot\'s name: a dot while it works, both lengths,
   assert.doesNotMatch(quiet, /animate-ping|brand-ink/);
 });
 
-test('#3770: the Activity disc opens the panel, and its badge is the live dot, or what waits on the viewer', () => {
+test('#3770: the Activity disc opens the panel; #4198: its glyph is a turning ring while the bot works, its badge what waits on the viewer', () => {
   const { BotWorkButtonView } = loadTsx(TRAY);
   const draw = (w, open = false) => renderToHtml(createElement(BotWorkButtonView, { work: w, open }));
   const quiet = draw(work({ history: [past({ issueNumber: 9 })] }));
   assert.match(quiet, /^<button type="button" class="messages-thread-action messages-bot-work-button" aria-label="Activity" title="Activity" aria-expanded="false" aria-controls="messages-bot-work-panel" data-bot-work-toggle="">/,
     'one of the header\'s discs, named, and the toggle the panel\'s Escape and outside press find');
-  assert.match(quiet, /<svg [^>]*aria-hidden="true"><path [^>]*d="M12 6v6h4\.5m4\.5 0a9 9 0 11-18 0 9 9 0 0118 0z"><\/path><\/svg><\/button>$/,
-    'the clock, and no badge with nothing going on');
+  assert.match(quiet, /<svg [^>]*aria-hidden="true"><path [^>]*d="M4 6h16M4 12h16M4 18h16"><\/path><\/svg><\/button>$/,
+    'a list, for what the panel holds, and no badge with nothing going on');
+  assert.doesNotMatch(quiet, /M12 6v6h4\.5/, '#4198: not the clock, which read as "history"');
   assert.equal(draw(null), quiet, 'before the first read, the same');
   assert.match(draw(work({}), true), /aria-expanded="true"/, 'open');
 
-  // The bot working: the live dot, carrying the state the declared check
-  // (dapp.json homeroom-bot-dm-activity-tray) selects the toggle by.
+  // The bot working: the turning ring, still under reduced motion, carrying
+  // the state the declared check (dapp.json homeroom-bot-dm-activity-tray)
+  // selects the toggle by. No dot beside it (#4198).
   const busy = draw(work({ now: [working({ issueNumber: 14 })] }));
-  assert.match(busy, /<span class="messages-bot-work-badge messages-bot-work-dot" data-bot-work-status="working"><span class="relative flex h-2 w-2 shrink-0" aria-hidden="true">/);
-  assert.match(busy, /animate-ping/);
+  assert.match(busy, /<svg class="motion-safe:animate-spin motion-reduce:animate-none" fill="none" viewBox="0 0 24 24" data-bot-work-status="working" aria-hidden="true"><circle [^>]*stroke-dasharray="40 57"><\/circle><\/svg><\/button>$/);
+  assert.doesNotMatch(busy, /animate-ping|messages-bot-work-badge|M4 6h16/);
 
   // Something waiting on the viewer: how many, which wins over the dot.
   const both = draw(work({ now: [working({ issueNumber: 14 })], needsYou: [past({ issueNumber: 7, outcome: 'question' })] }));
   assert.match(both, /<span class="messages-bot-work-badge messages-bot-work-count" data-bot-work-status="working" aria-hidden="true">1<\/span><\/button>$/);
+  assert.match(both, /data-bot-work-status="working" aria-hidden="true"><circle /, 'the ring turns beside the count');
   assert.doesNotMatch(both, /animate-ping/);
   const waiting = draw(work({ needsYou: [past({ issueNumber: 7 }), past({ issueNumber: 8 })] }));
   assert.match(waiting, /data-bot-work-status="you" aria-hidden="true">2<\/span>/);
@@ -590,6 +593,8 @@ test('the panel: Now with the step it is at, Needs you, and History folded away'
   assert.match(html, />Now</);
   assert.match(html, /data-bot-work-tile="now" data-bot-work-tone="working"/);
   assert.match(html, /aria-label="Step 3 of 6: Build it"/, 'the ring the activity cards draw');
+  assert.match(html, /aria-label="Step 3 of 6: Build it" overflow="visible" data-progress-ring-spinning="">/, '#4199: with its arc circling it while it goes');
+  assert.doesNotMatch(html, /animate-ping/, 'and no pulsing dot on the tile');
   assert.match(html, /Step 3 of 6 · Build it/);
   assert.match(html, /Ear Trainer #12: Sort by date/);
   assert.match(html, /Building it · 4m so far/);

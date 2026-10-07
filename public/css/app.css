@@ -1449,8 +1449,9 @@ html:not(.dark) .messages-markdown .gc-ref-issue { background: rgba(16, 185, 129
 .messages-reply-draft .messages-bot-note { display: block; white-space: normal; }
 /* #3770: the Activity disc in the bot's DM header, which opens its activity
    panel. Shaded while the panel is open, as a disc is under the pointer.
-   Its badge sits on the disc's shoulder: the live dot while the bot works,
-   or, in the accent, the number of requests that wait on the viewer. */
+   Its badge sits on the disc's shoulder, in the accent: the number of
+   requests that wait on the viewer. While the bot works, the disc's glyph
+   is itself the live cue, a turning ring (#4198). */
 .messages-bot-work-button { position: relative; }
 .messages-bot-work-button[aria-expanded="true"] { background: var(--messages-surface-2); }
 .messages-bot-work-badge {
@@ -1460,7 +1461,6 @@ html:not(.dark) .messages-markdown .gc-ref-issue { background: rgba(16, 185, 129
   justify-content: center;
   pointer-events: none;
 }
-.messages-bot-work-dot { top: 6px; right: 6px; }
 .messages-bot-work-count {
   top: -3px;
   right: -3px;
