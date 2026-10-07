@@ -248,7 +248,8 @@ test('with the keyboard up nothing scrolls under the status bar: the bar stays, 
   // phone the mark used to hang 12px out of a 52px box), so what scrolls
   // stops below it.
   // (`relative`: from Create, its ✕ sits at the bar's leading edge.)
-  assert.match(src, /<div className=\{`relative flex h-\[max\(52px,calc\(env\(safe-area-inset-top\)\+32px\)\)\] shrink-0 items-center justify-center pt-\[env\(safe-area-inset-top\)\] \$\{motion\}`\}>/);
+  // (#4195: from Create under the platform header, the bar is only the ✕.)
+  assert.match(src, /<div className=\{underHeader \? `relative h-12 shrink-0 \$\{motion\}` : `relative flex h-\[max\(52px,calc\(env\(safe-area-inset-top\)\+32px\)\)\] shrink-0 items-center justify-center pt-\[env\(safe-area-inset-top\)\] \$\{motion\}`\}>/);
   // The scroller's class string is constant.
   assert.match(src, /<div ref=\{scrollerRef\} data-first-session-make-scroll="" className="flex min-h-0 grow flex-col overflow-y-auto">/);
   // #3894's arrival is untouched: the bar and the form still rise in.
