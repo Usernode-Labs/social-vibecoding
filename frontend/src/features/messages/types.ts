@@ -615,6 +615,12 @@ export interface MessagesSnapshot {
   nextAfter: number | null;
   /** #2387: the list pane folded away on a desktop — single-panel mode. */
   listCollapsed: boolean;
+  /**
+   * #4229: the strip is wider than a phone but too narrow for an open
+   * conversation to keep a readable measure beside the list, so the list
+   * steps aside while one is open and the bar's back arrow returns to it.
+   */
+  listCrowded: boolean;
   /** #2967: the channels outside Your apps shown, under "Show more". */
   showMoreChannels: boolean;
   /**

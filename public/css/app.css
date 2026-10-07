@@ -2004,6 +2004,22 @@ form.agent-session-composer:focus-within {
   .messages-layout.messages-has-reply-thread .messages-list-toggle { display: none; }
   .messages-layout.messages-has-reply-thread > .messages-thread-pane { margin-left: 12px; }
 }
+
+/* ── Too narrow for the list beside a conversation (#4229) ──────────────
+   From 768px up the list and the sheet share the strip, but a strip under
+   860px (the list's 22rem and 8px, the sheet's margins, and a 480px sheet)
+   leaves the conversation too narrow to read. There an open discussion takes
+   the strip, as on a phone: the list steps aside, the full-width toggle
+   would do nothing so it is not drawn, and the bar's back arrow returns to
+   the list. The class is the strip's own width, measured by the screen
+   (store.ts measureLayout), so folding the platform rail counts. It is not a
+   container query: containing the strip would make it the box every
+   `position: fixed` overlay inside it is placed against. */
+@media (min-width: 768px) {
+  .messages-layout.messages-list-crowded > .messages-list-pane { display: none; }
+  .messages-layout.messages-list-crowded .messages-list-toggle { display: none; }
+  .messages-layout.messages-list-crowded > .messages-thread-pane { margin-left: 12px; }
+}
 .messages-reply-count {
   display: flex;
   align-items: center;

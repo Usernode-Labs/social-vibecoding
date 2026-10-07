@@ -65,6 +65,7 @@ let state: InternalState = {
   thread: null,
   nextAfter: null,
   listCollapsed: false,
+  listCrowded: false,
   showMoreChannels: false,
   unreadMark: null,
 };
@@ -983,14 +984,18 @@ export function isOpen(): boolean {
 
 export function handleBack(): boolean {
   const onThread = !!state.route.conversationId || !!state.route.appSlug || !!state.route.agent;
-  if (!state.route.open || !onThread || !isMobile()) return false;
+  if (!state.route.open || !onThread || !listAside()) return false;
   // A CHANNEL is not a level of this list: it is its community's room, and
   // its way back is that community's hub, which the header's arrow names
   // (syncChrome). Declining leaves the press to follow it.
   if (!state.route.threadRootId && channelHub()) return false;
+  // #4229: wider than a phone a channel's reply thread sits beside it, and
+  // the arrow still names the hub.
+  if (!isMobile() && channelHub()) return false;
   // #2387: on a phone a reply thread is a level of its own over the
-  // conversation, so Back closes it first.
-  if (state.route.threadRootId) {
+  // conversation, so Back closes it first. Wider than a phone it sits beside
+  // its chat, and the arrow goes to the list (#4229).
+  if (state.route.threadRootId && isMobile()) {
     const parent = state.route.appSlug
       ? `#messages/app/${encodeURIComponent(state.route.appSlug)}`
       : `#messages/${state.route.conversationId}`;
@@ -1011,6 +1016,31 @@ export function handleBack(): boolean {
 export function isMobile(): boolean {
   try { return typeof window !== 'undefined' && !window.matchMedia('(min-width: 768px)').matches; }
   catch { return false; }
+}
+
+/**
+ * #4229: the narrowest strip an open conversation still reads well beside the
+ * list in: the list column (22rem and its 8px) plus the sheet's margins
+ * (8px and 12px) plus a 480px sheet, the width its cards are drawn at.
+ */
+export const LIST_BESIDE_MIN_WIDTH = 860;
+
+/**
+ * The strip's width, from the screen's ResizeObserver (#4229). It is the
+ * strip's own width rather than the window's, so folding the platform rail
+ * counts. A hidden screen measures 0 and changes nothing.
+ */
+export function measureLayout(width: number): void {
+  if (!(width > 0)) return;
+  const crowded = !isMobile() && width < LIST_BESIDE_MIN_WIDTH;
+  if (crowded === state.listCrowded) return;
+  publish({ listCrowded: crowded });
+  if (state.route.open) syncChrome();
+}
+
+/** One pane at a time: a phone, or a strip too narrow for both (#4229). */
+function listAside(): boolean {
+  return isMobile() || state.listCrowded;
 }
 
 /**
@@ -1071,7 +1101,9 @@ export function syncChrome(): void {
   // where the list is still beside it. It used to be a route into #app-view,
   // which is why backing out of one landed wherever that screen's slot
   // pointed — the Workshop, when that is where the app had been opened from.
-  const thread = isMobile() && !!(state.route.conversationId || state.route.appSlug || state.route.agent);
+  // #4229: and on a strip too narrow for the list beside it, where the list
+  // has stepped aside just as it does on a phone.
+  const thread = listAside() && !!(state.route.conversationId || state.route.appSlug || state.route.agent);
   // #2387: a reply thread, on a phone, is a level over its conversation: the
   // chevron goes back to the conversation, and the bar says "Thread".
   if (isMobile() && state.route.threadRootId && (state.route.conversationId || state.route.appSlug)) {
@@ -2271,6 +2303,7 @@ export const messagesController = {
   isOpen,
   handleBack,
   syncChrome,
+  measureLayout,
   handleEvent,
   refreshBlockedView: (userId: number, blocked: boolean) => { void refreshBlockedView(userId, blocked); },
   share,
