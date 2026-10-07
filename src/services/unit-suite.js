@@ -290,7 +290,17 @@ if node -e "const p=require('./package.json');process.exit(p.scripts?.['lint:sql
   # in parallel failed with "out of shared memory" (53200), and six bot
   # suites failed together on otherwise healthy changes. 1024 holds about
   # thirty-six, for some 43 MB more shared memory.
-  pg_ctl -D /home/node/pgdata -w -o "-c max_locks_per_transaction=1024" -l /tmp/unit-suite-postgres.log start >/dev/null
+  #
+  # Nothing here waits for the disk. Each of those suites ends by dropping
+  # its database, DROP DATABASE forces a checkpoint, and with fsync on a
+  # checkpoint returns only once everything is on disk, so the drops queued
+  # behind one another: the 108 database suites took 115 s, and 36 s without
+  # the wait (7 at a time, 7 October 2026). The three settings give up only
+  # what survives a crash, and this server has nothing to keep: its data
+  # directory is created empty with the image and discarded with the
+  # container. They belong to this server alone, never to a database that
+  # outlives its job.
+  pg_ctl -D /home/node/pgdata -w -o "-c max_locks_per_transaction=1024 -c fsync=off -c synchronous_commit=off -c full_page_writes=off" -l /tmp/unit-suite-postgres.log start >/dev/null
   trap 'pg_ctl -D /home/node/pgdata -m fast stop >/dev/null 2>&1 || true' EXIT
   export SQL_CHECK_CONNECTION_URL=postgres://postgres:postgres@127.0.0.1:5432/postgres
   npm run lint:sql
