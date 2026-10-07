@@ -2,20 +2,20 @@
  * "Made for you": the landing screen of a visitor who opened an invite link
  * (/invite/<token>, src/services/community-invites.js) while signed out.
  *
- * It is three pieces, top to bottom, each on its own card so each reads as
- * one thing:
+ * It is one hero and, under it, the rest: the hero card carries the
+ * project's tile, its name, the invitation itself ("Maya invited you to Run
+ * Tracker · 4 people are in it") and its one-line description, so the icon
+ * shows once and the page leads with who asked you in. Then:
  *
- *   who      the project's tile, "Maya made Run Tracker" (or "@ada invited
- *            you to join …" when the sender did not make it), how many
- *            people are in it, and its one-line description (#3700) unless
- *            the picture below is the tile that already carries it;
- *   picture  the project itself: the after-shot of its latest change, else
- *            the Discover card's image, else, while it is built, the
- *            featured card of the idea its maker was shown
- *            (../first-session/sketch-card.tsx, drawn here from its words),
- *            else a large tile with its one-line description
- *            (preview().project.picture);
- *   join     the sender's note, when they left one, and the one way in.
+ *   picture  the project itself, when there is more to show than the hero's
+ *            tile: the after-shot of its latest change, else the Discover
+ *            card's image, else, while it is built, the featured card of the
+ *            idea its maker was shown (../first-session/sketch-card.tsx,
+ *            drawn here from its words);
+ *   note     the sender's note, when they left one, on its own card;
+ *   join     the one way in, pinned to the foot of the screen — sticky, so
+ *            it stays in reach over a longer page and rests at the bottom of
+ *            a short one, with the home indicator's clearance as its own.
  *
  * Everything comes from GET /api/public/invites/:token, which discloses
  * nothing more than the invite offers to share. Joining needs an account:
@@ -108,20 +108,24 @@ export function madeForName(preview: InvitePreview): string | null {
 }
 
 /**
- * The card's headline. "Maya made Run Tracker" when whoever sent the link
- * made the project — the gift the link is — or "Maya made this for Sunday
- * Run Club" when the community it was made for has a name of its own; the
- * plain invitation otherwise. While its first version is still on its way
- * (`building`) it is "Maya is making Run Tracker": nothing is made yet.
+ * The hero's headline: "Maya invited you to Run Tracker · 4 people are in
+ * it" — the invitation the link is, said once, under the project it is to.
+ * It uses the inviter's display name where they have one and their handle
+ * otherwise, names the community when it has a name of its own apart from
+ * the project's, and reads the same while the project is still being built.
+ * With no inviter at all it is the plain invitation, with the count after
+ * it.
  */
-export function madeLine(preview: InvitePreview): string {
-  const name = preview.project?.name || 'a project';
-  if (preview.inviterMadeIt && preview.inviterName) {
-    const community = madeForName(preview);
-    const made = preview.building ? 'is making' : 'made';
-    return community ? `${preview.inviterName} ${made} this for ${community}` : `${preview.inviterName} ${made} ${name}`;
+export function invitationLine(preview: InvitePreview): string {
+  const who = preview.inviterName || (preview.inviter ? `@${preview.inviter}` : '');
+  const count = preview.memberCount || 0;
+  if (!who) {
+    const members = membersLine(count);
+    return members ? `${invitedLine(preview)} ${members}` : invitedLine(preview);
   }
-  return invitedLine(preview);
+  const target = madeForName(preview) || preview.project?.name || 'a project';
+  const members = count ? `${count} ${count === 1 ? 'person is' : 'people are'} in it` : '';
+  return members ? `${who} invited you to ${target} · ${members}` : `${who} invited you to ${target}`;
 }
 
 /**
@@ -137,16 +141,6 @@ export function seenLine(preview: InvitePreview): string {
 export function membersLine(count: number | undefined): string {
   if (!count) return '';
   return `${count} ${count === 1 ? 'person is' : 'people are'} in it.`;
-}
-
-/** The line under the headline: "and invited you to join · 4 people are in it". */
-export function underLine(preview: InvitePreview): string {
-  const count = preview.memberCount || 0;
-  const members = count ? `${count} ${count === 1 ? 'person is' : 'people are'} in it` : '';
-  if (preview.inviterMadeIt && preview.inviterName) {
-    return members ? `and invited you to join · ${members}` : 'and invited you to join';
-  }
-  return members ? `${members}.` : '';
 }
 
 // How long the landing waits on a preview before it shows its own pitch
@@ -211,9 +205,12 @@ export function pictureIsTile(project: Pick<NonNullable<InvitePreview['project']
 }
 
 /**
- * The project as a picture. A shot is phone-shaped, so it shows its top:
- * the part of a screen that says what the project is. An illustration has
- * a dark version when its group made one, and each theme shows its own.
+ * The project as a picture, under the hero that already carries its tile and
+ * name. A shot is phone-shaped, so it shows its top: the part of a screen
+ * that says what the project is. An illustration has a dark version when its
+ * group made one, and each theme shows its own. When the hero's tile is all
+ * the picture there is (no picture, or a sketch without a card to draw) it
+ * draws nothing: the hero IS the picture.
  */
 function Picture({ project, building = false }: { project: NonNullable<InvitePreview['project']>; building?: boolean }) {
   const picture = project.picture;
@@ -236,15 +233,7 @@ function Picture({ project, building = false }: { project: NonNullable<InvitePre
       </div>
     );
   }
-  return (
-    <div data-landing-invite-picture="tile" className={`${CARD} mt-3 flex flex-col items-center px-6 py-8 text-center`}>
-      <Tile project={project} size="hero" />
-      <p className="mt-3 text-[20px] font-bold leading-tight text-zinc-900 dark:text-zinc-100">{project.name}</p>
-      {project.description ? (
-        <p className="mt-1.5 text-[15px] leading-snug text-zinc-500 dark:text-zinc-400 text-pretty">{project.description}</p>
-      ) : null}
-    </div>
-  );
+  return null;
 }
 
 /**
@@ -284,7 +273,7 @@ export function MadeForYou({ preview, primaryClass, onJoin }: {
   onJoin: () => void;
 }) {
   const project = preview.project!;
-  const under = underLine(preview);
+  const headline = invitationLine(preview);
   const seen = seenLine(preview);
   // An anchor to the email-code screen, so it still works before the
   // script that opens the sheet has; the sheet takes the tap once it has.
@@ -303,36 +292,56 @@ export function MadeForYou({ preview, primaryClass, onJoin }: {
     : null;
   return (
     <>
-      <section data-landing-invite="live" className={`${CARD} mt-4`}>
-        <div className="flex items-center gap-3">
-          <Tile project={project} size="card" />
-          <div className="min-w-0">
-            <p className="text-[15px] font-[650] leading-snug text-zinc-900 dark:text-zinc-100">{madeLine(preview)}</p>
-            {under ? <p className="text-[13px] text-zinc-500 dark:text-zinc-400">{under}</p> : null}
-          </div>
-        </div>
-        {/* #3700: what it is, in its own line, beside the icon and the count:
-            the same proof the project's page gives somebody signed in. Not
-            when the picture below is the tile, which carries it already. */}
-        {project.description && !pictureIsTile(project) ? (
-          <p data-landing-invite-description="" className="mt-3 text-[15px] leading-snug text-zinc-700 dark:text-zinc-200 text-pretty">
+      {/*
+          The hero: the tile, the name, the invitation and the one-line
+          description in ONE card, so the icon shows once and the page leads
+          with who asked you in. The old tile picture's shape and classes —
+          the big rounded tile, the centred column — are the hero's now.
+      */}
+      <section data-landing-invite="live" className={`${CARD} mt-4 flex flex-col items-center px-6 py-8 text-center`}>
+        <Tile project={project} size="hero" />
+        <p className="mt-3 text-[20px] font-bold leading-tight text-zinc-900 dark:text-zinc-100">{project.name}</p>
+        <p data-landing-invite-headline="" className="mt-1.5 text-[15px] leading-snug text-zinc-600 dark:text-zinc-300 text-pretty">{headline}</p>
+        {/* #3700: what it is, in its own line under the invitation: the same
+            proof the project's page gives somebody signed in. The hero carries
+            it always now — the tile picture that used to hold it is gone. */}
+        {project.description ? (
+          <p data-landing-invite-description="" className="mt-2 text-[15px] text-zinc-500 dark:text-zinc-400">
             {project.description}
           </p>
         ) : null}
       </section>
       <Picture project={project} building={!!preview.building} />
       {preview.note ? (
-        <section data-landing-invite-join="" className={`${CARD} mt-3`}>
+        <section data-landing-invite-note-card="" className={`${CARD} mt-3`}>
           <p data-landing-invite-note="" className="rounded-2xl bg-violet-500/10 px-4 py-3 text-[15px] leading-snug text-zinc-700 dark:text-zinc-200">
             <span className="font-medium">{`${preview.inviterName || (preview.inviter ? `@${preview.inviter}` : 'They')}:`}</span>
             {` “${preview.note}”`}
           </p>
-          <div className="mt-4">{join}</div>
-          {seenNote}
         </section>
-      ) : (
-        <div data-landing-invite-join="" className="mx-4 mt-4">{join}{seenNote}</div>
-      )}
+      ) : null}
+      {/*
+          The free height of the wrapper's flex column (landing.tsx), so a
+          short page rests the footer at the foot of the screen instead of
+          leaving the lower half empty.
+      */}
+      <div className="grow" />
+      {/*
+          The way in, pinned to the foot of the screen the way a phone page
+          puts its main action: `sticky bottom-0` holds it at the scroller's
+          bottom edge while the page scrolls under the faded ground, and it
+          rests in its natural place at the end of the scroll, which is the
+          same spot. `-mb-[34px]` cancels the wrapper's `pb-[34px]`, so this
+          block's own `pb-[34px]` IS the home-indicator clearance whether it
+          is stuck or resting; the scroller's safe-area inset sits outside
+          both (.platform-safe-scroll). In Safari's browser mode the document
+          scrolls, and the sticky box's bottom edge follows the visible
+          viewport, so it ends above the browser's bottom bar. `max-w-sm`
+          keeps the pill at the pitch's column width on a wide screen.
+      */}
+      <div data-landing-invite-join="" className="sticky bottom-0 z-10 mt-4 -mb-[34px] px-4 pt-3 pb-[34px] bg-[linear-gradient(to_top,var(--home-ground)_70%,transparent)]">
+        <div className="mx-auto w-full max-w-sm">{join}{seenNote}</div>
+      </div>
     </>
   );
 }

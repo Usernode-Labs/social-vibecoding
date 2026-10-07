@@ -518,17 +518,31 @@ test('a private community\'s invite preview shows the community and Join, and no
 
 // ── Signed out ─────────────────────────────────────────────────────────
 
-test('the signed-out invite card says what the project is, beside its icon and count', () => {
+test('the signed-out invite card says what the project is', () => {
   const card = loadTsx('frontend/src/features/auth/invite-card.tsx');
   const preview = {
     live: true, reason: null, inviter: 'maya', inviterName: 'Maya', inviterMadeIt: false, memberCount: 4,
     project: { name: 'Arena', iconEmoji: '🏟', iconUrl: null, description: 'Who plays when', picture: { kind: 'illustration', url: '/app-illustrations/a', darkUrl: null } },
   };
   const html = renderToHtml(createElement(card.MadeForYou, { preview, primaryClass: 'x', onJoin() {} }));
+  assert.equal((html.match(/app-icon-tile/g) || []).length, 1, 'one icon: the hero carries it, so no second tile card');
+  assert.match(html, /data-landing-invite-headline="[^"]*"[^>]*>Maya invited you to Arena · 4 people are in it<\/p>/,
+    'the invitation line, inside the hero');
   assert.match(html, /data-landing-invite-description="[^"]*"[^>]*>Who plays when<\/p>/);
-  assert.match(html, /4 people are in it/);
-  const tile = renderToHtml(createElement(card.MadeForYou, { preview: { ...preview, project: { ...preview.project, picture: null } }, primaryClass: 'x', onJoin() {} }));
-  assert.doesNotMatch(tile, /data-landing-invite-description/, 'the tile carries it already');
-  assert.match(tile, /data-landing-invite-picture="tile"[\s\S]*Who plays when/);
+  // With a note, the footer comes last: after the picture and the note card.
+  const withNote = renderToHtml(createElement(card.MadeForYou, { preview: { ...preview, note: 'Come play' }, primaryClass: 'x', onJoin() {} }));
+  const picturePos = withNote.indexOf('data-landing-invite-picture');
+  const notePos = withNote.indexOf('data-landing-invite-note-card');
+  const joinPos = withNote.indexOf('data-landing-invite-join="" class="sticky bottom-0');
+  assert.ok(picturePos !== -1, 'the picture is drawn');
+  assert.ok(notePos !== -1 && notePos > picturePos, 'the note card follows the picture');
+  assert.ok(joinPos > notePos, 'the join footer comes after the picture and the note');
+  assert.match(withNote, />Join Arena<\/a>/);
+  assert.match(withNote, />Maya will see that you joined\.</);
+  // No picture: the hero is the only card, and there is no picture card at
+  // all — the tile it used to fall back to is gone.
+  const none = renderToHtml(createElement(card.MadeForYou, { preview: { ...preview, project: { ...preview.project, picture: null } }, primaryClass: 'x', onJoin() {} }));
+  assert.doesNotMatch(none, /data-landing-invite-picture/);
+  assert.match(none, /data-landing-invite-description="[^"]*"[^>]*>Who plays when<\/p>/, 'the hero carries the description either way');
   assert.equal(card.pictureIsTile({ picture: { kind: 'sketch', card: null } }), true);
 });

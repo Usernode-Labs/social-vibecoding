@@ -147,7 +147,10 @@ test('an invite to a project still being built shows the same card, drawn from i
   const plain = renderToHtml(createElement(MadeForYou, { preview: { ...preview, building: false }, primaryClass: 'x', onJoin() {} }));
   assert.match(plain, /data-featured-card="ready"/);
   assert.doesNotMatch(plain, /data-featured-card-stage|repeating-linear-gradient/);
-  // A picture without a usable card is the plain tile.
+  // A picture without a usable card draws nothing: the hero IS the picture,
+  // and it still shows the project and the invitation.
   const none = renderToHtml(createElement(MadeForYou, { preview: { ...preview, project: { ...preview.project, picture: { kind: 'sketch', card: null } } }, primaryClass: 'x', onJoin() {} }));
-  assert.match(none, /data-landing-invite-picture="tile"/);
+  assert.doesNotMatch(none, /data-landing-invite-picture/);
+  assert.match(none, />Plant Pal<\/p>/);
+  assert.match(none, /Maya invited you to Plant Pal/);
 });

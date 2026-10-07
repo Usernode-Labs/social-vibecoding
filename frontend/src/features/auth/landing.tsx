@@ -1350,8 +1350,12 @@ export function LandingScreen() {
             </button>
           </div>
           {/*
-              AN INVITE LINK'S CARDS (./invite-card.tsx): who made it, the
-              project itself, the note and the way in. Only on
+              AN INVITE LINK'S CARDS (./invite-card.tsx): the hero (the
+              project's tile, its name, the invitation and its description),
+              then the project's picture when there is one, the sender's
+              note, and the way in — which pins itself to the foot of this
+              wrapper's flex column, so Join stays at the bottom of the
+              screen whatever the page above it holds. Only on
               /invite/<token>, with a placeholder in their place until its
               preview is back — nothing here on any other visit. A dead link
               says why, above the pitch.
