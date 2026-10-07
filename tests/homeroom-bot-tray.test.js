@@ -309,6 +309,50 @@ test('History lists at most its limit of requests', () => {
   assert.equal(tray.arrange([], rows).history.length, tray.HISTORY_LIMIT);
 });
 
+test('#4201: every entry the endpoint returns carries its app\'s icon: its image, else its emoji, else nothing', async () => {
+  assert.deepEqual(tray.iconOf({ icon_image_id: 'ab12', icon_emoji: '🎵' }), { iconUrl: '/app-icons/ab12', iconEmoji: '🎵' });
+  assert.deepEqual(tray.iconOf({ icon_image_id: null, icon_emoji: '🎵' }), { iconUrl: null, iconEmoji: '🎵' });
+  assert.deepEqual(tray.iconOf({}), { iconUrl: null, iconEmoji: null });
+  assert.deepEqual(tray.iconOf(null), { iconUrl: null, iconEmoji: null });
+
+  // workFor reads the icon with the access columns, in the one static query.
+  const queries = [];
+  const pool = {
+    async query(sql, params) {
+      const s = String(sql);
+      queries.push(s);
+      if (/FROM homeroom_bot_requesters q/.test(s)) {
+        return { rows: [
+          run(10, 5, 0, { slug: 'ear-trainer', name: 'Ear Trainer', verdict: 'question', build_ok: null }),
+          run(11, 9, 5, { slug: 'note-board', name: 'Note Board', verdict: 'build', build_ok: true, proposal_session_id: 40, proposal_status: 'promoted' }),
+          run(12, 3, 9, { slug: 'seed-swap', name: 'Seed Swap', verdict: 'person' }),
+        ] };
+      }
+      if (/FROM apps WHERE slug = ANY\(\$1::text\[\]\)/.test(s)) {
+        return { rows: [
+          { id: 1, slug: 'ear-trainer', created_by: 7, view_visibility: 'public', icon_image_id: 'ab12', icon_emoji: '🎵' },
+          { id: 2, slug: 'note-board', created_by: 7, view_visibility: 'public', icon_image_id: null, icon_emoji: '📝' },
+          { id: 3, slug: 'seed-swap', created_by: 7, view_visibility: 'public', icon_image_id: null, icon_emoji: null },
+        ] };
+      }
+      return { rows: [] };
+    },
+  };
+  const w = await tray.workFor(pool, { user: { id: 7, username: 'ada' }, settings: { mode: 'off' } });
+  assert.match(queries.find((s) => /FROM apps WHERE slug/.test(s)), /icon_image_id, icon_emoji/);
+  const icons = Object.fromEntries([...w.now, ...w.needsYou, ...w.history].map((j) => [j.appSlug, [j.iconUrl, j.iconEmoji]]));
+  assert.deepEqual(icons, {
+    'ear-trainer': ['/app-icons/ab12', '🎵'],
+    'note-board': [null, '📝'],
+    'seed-swap': [null, null],
+  });
+  assert.equal(w.needsYou[0].appSlug, 'ear-trainer', 'Needs you carries it too');
+  // Every group is dressed, Now included.
+  const dressed = tray.withIcons({ now: [{ appSlug: 'a' }], needsYou: [], history: [{ appSlug: 'b' }] }, new Map([['a', tray.iconOf({ icon_emoji: '🧪' })]]));
+  assert.deepEqual(dressed.now[0], { appSlug: 'a', iconUrl: null, iconEmoji: '🧪' });
+  assert.deepEqual(dressed.history[0], { appSlug: 'b', iconUrl: null, iconEmoji: null }, 'an app with no icon known carries nulls');
+});
+
 test('the staging demo draws work in flight at the step its card shows, a question waiting, and a history, and links nowhere', () => {
   const now = Date.parse('2026-10-02T12:00:00Z');
   const demo = tray.demoWork(now);
@@ -427,8 +471,8 @@ const NOW = new Date('2026-10-02T12:00:00Z');
 const minutesAgo = (m) => new Date(NOW.getTime() - m * 60000).toISOString();
 const nowhere = { request: null, proposal: null, project: null };
 const job = (extra) => ({
-  key: `ear-trainer#${extra.issueNumber || 'first'}`, appSlug: 'ear-trainer', appName: 'Ear Trainer', issueNumber: null, title: null,
-  firstVersion: false, href: null, links: nowhere, earlier: [], ...extra,
+  key: `ear-trainer#${extra.issueNumber || 'first'}`, appSlug: 'ear-trainer', appName: 'Ear Trainer', iconUrl: null, iconEmoji: null,
+  issueNumber: null, title: null, firstVersion: false, href: null, links: nowhere, earlier: [], ...extra,
 });
 const working = (extra) => job({ phase: 'building', step: null, of: null, stepName: null, doing: null, since: null, ...extra });
 const past = (extra) => job({ id: 1, outcome: 'live', doing: null, at: minutesAgo(60), ...extra });
@@ -613,6 +657,35 @@ test('a tile with nowhere to open has no links', () => {
   assert.match(html, /Waiting in the queue \(number 1\) to follow up on the newest replies on the change · 1m so far/);
 });
 
+test('#4201: History leads with the app\'s own icon and a badge of how it ended; Now and Needs you keep theirs', () => {
+  const html = drawPanel({
+    historyOpen: true,
+    work: work({
+      now: [working({ issueNumber: 12, step: 3, of: 6, stepName: 'Build it', iconUrl: '/app-icons/ab12' })],
+      needsYou: [past({ id: 4, issueNumber: 14, outcome: 'question', iconUrl: '/app-icons/ab12' })],
+      history: [
+        past({ id: 2, issueNumber: 9, outcome: 'live', iconUrl: '/app-icons/ab12', iconEmoji: '🎵' }),
+        past({ id: 3, issueNumber: 8, outcome: 'closed', appSlug: 'note-board', appName: 'Note Board', key: 'note-board#8', iconEmoji: '📝' }),
+        past({ id: 5, issueNumber: 7, outcome: 'build_failed', appSlug: 'seed-swap', appName: 'Seed Swap', key: 'seed-swap#7' }),
+      ],
+    }),
+  });
+  const tiles = html.split('data-bot-work-tile="').slice(1);
+  const [now, you, ...history] = tiles;
+  assert.match(now, /aria-label="Step 3 of 6: Build it"/, 'Now keeps its ring');
+  assert.doesNotMatch(now, /data-bot-work-app-lead|app-icons/);
+  assert.doesNotMatch(you, /data-bot-work-app-lead|app-icons/, 'Needs you keeps its tile');
+  assert.equal(history.length, 3);
+  for (const tile of history) assert.match(tile, /data-bot-work-app-lead=""[^>]*>\s*<span class="app-icon-tile [^"]*h-\[38px\] w-\[38px\][^"]*"/);
+  assert.match(history[0], /data-icon="image" aria-hidden="true"><img src="\/app-icons\/ab12"/, 'its image first');
+  assert.match(history[0], /data-bot-work-badge="done"/);
+  assert.match(history[1], /data-icon="emoji"[^>]*><span class="text-3xl leading-none" aria-hidden="true">📝<\/span>/, 'else its emoji');
+  assert.match(history[1], /data-bot-work-badge="ended"/);
+  assert.match(history[2], /data-icon="letter" aria-hidden="true">S<\/span>/, 'else its initial');
+  assert.match(history[2], /data-bot-work-badge="trouble"/);
+  assert.match(history[0], />Done<\/span>[\s\S]*Built it\. It’s live/, 'the words stay');
+});
+
 test('every phase and ending has words', () => {
   const { PHASE_LABELS, SHORT_PHASES, LAST_WORDS, jobTitle, jobName, newestBotMessageId, WORK_CHANGED_EVENT } = loadTsx(TRAY);
   assert.deepEqual(Object.keys(PHASE_LABELS).sort(), [...tray.PHASES].sort());
@@ -709,6 +782,13 @@ test('the client keeps only the platform\'s own addresses as links, and known wo
   assert.equal(w.history[0].appName, 'a', 'a missing name falls back to the slug');
   assert.deepEqual(w.history[0].earlier, [{ id: 5, outcome: 'stopped', at: 'x' }], 'an unknown earlier ending reads as stopped; one without an id is dropped');
   assert.equal(w.history[1].outcome, 'failed');
+  const icons = normalizeBotWork({ history: [
+    { id: 1, appSlug: 'a', outcome: 'live', iconUrl: '/app-icons/ab12', iconEmoji: '🎵' },
+    { id: 2, appSlug: 'b', outcome: 'live', iconUrl: 'https://example.test/x.png' },
+    { id: 3, appSlug: 'c', outcome: 'live', iconUrl: 'javascript:alert(1)' },
+  ] }).history;
+  assert.deepEqual(icons.map((j) => [j.iconUrl, j.iconEmoji]), [['/app-icons/ab12', '🎵'], [null, null], [null, null]],
+    '#4201: an icon is only ever one the platform serves');
   assert.deepEqual(normalizeBotWork(null), { now: [], needsYou: [], history: [] });
 });
 

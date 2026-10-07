@@ -7,8 +7,9 @@ import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { agoStamp } from '../../lib/timestamp';
 import * as api from './api';
 import {
-  ACTIVITY_OUTCOME_LABELS, ACTIVITY_OUTCOME_TONES, ActivityLead, ActivityLink, TONE_WORDS, spanText, type ActivityTone,
+  ACTIVITY_OUTCOME_LABELS, ACTIVITY_OUTCOME_TONES, ActivityBadge, ActivityLead, ActivityLink, TONE_WORDS, spanText, type ActivityTone,
 } from './bot-activity';
+import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { POLL_MS } from './bot-activity-store';
 import { WORK_CHANGED_EVENT, jobName, jobTitle } from './bot-shared';
 import type {
@@ -40,7 +41,9 @@ export { WORK_CHANGED_EVENT, jobName, jobTitle };
  *     toggle beside it, which only widens the pane under it. Its tiles are
  *     the activity cards' language (./bot-activity.tsx): the ring with the
  *     step while the bot works, then Done / Needs you / Ended / Didn't
- *     finish, the request, what came of it, and where to open it. Each
+ *     finish, the request, what came of it, and where to open it. History's
+ *     tiles lead with the app's own icon instead, the ending a badge on its
+ *     corner (#4201). Each
  *     request is one tile, in the first group that fits: Now, Needs you,
  *     History. History starts folded away. A request's other runs fold into
  *     its tile.
@@ -454,6 +457,29 @@ function NowTile({ job, at, ago }: { job: HomeroomBotCurrentJob; at: Date; ago: 
   );
 }
 
+/**
+ * #4201: a History tile's lead: the app's own icon (its image, else its
+ * emoji, else its initial, as every app tile draws it) in the ring's 38px,
+ * with how the work ended as a badge on its corner. The tile is app.css's
+ * `.app-icon-tile`, which owns its face; the emoji and the initial are sized
+ * down to the box here. Not a link: the tile's own links say where to go.
+ */
+export function AppStatusLead({ job, tone }: { job: HomeroomBotJob; tone: ActivityTone }) {
+  const app = { icon_url: job.iconUrl, icon_emoji: job.iconEmoji, name: job.appName };
+  return (
+    <span className="relative shrink-0" data-bot-work-app-lead="">
+      <span
+        className="app-icon-tile flex h-[38px] w-[38px] items-center justify-center overflow-hidden rounded-xl text-base font-bold [&>span]:text-xl"
+        data-icon={appIconKind(app)}
+        aria-hidden="true"
+      >
+        <AppIconContent app={app} />
+      </span>
+      <ActivityBadge tone={tone} className="absolute -bottom-1 -right-1" />
+    </span>
+  );
+}
+
 function PastTile({ job, group, ago }: { job: HomeroomBotPastJob; group: 'you' | 'history'; ago: (value: string | null) => string }) {
   const tone: ActivityTone = group === 'you' ? 'you' : (job.outcome ? ACTIVITY_OUTCOME_TONES[job.outcome] : 'ended');
   const said = job.outcome ? ACTIVITY_OUTCOME_LABELS[job.outcome] : capitalized(job.doing || 'waiting on you');
@@ -462,7 +488,7 @@ function PastTile({ job, group, ago }: { job: HomeroomBotPastJob; group: 'you' |
       job={job}
       group={group}
       tone={tone}
-      lead={<ActivityLead tone={tone} />}
+      lead={group === 'history' ? <AppStatusLead job={job} tone={tone} /> : <ActivityLead tone={tone} />}
       eyebrow={TONE_WORDS[tone]}
       status={withTime(said, ago(job.at))}
       ago={ago}
