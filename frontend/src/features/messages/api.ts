@@ -471,8 +471,13 @@ function demoQuery(path: string): string {
  * bot's DM is where it showed, because its page is the slowest to answer.
  *
  * `cache: 'no-store'` is the worker's existing "leave this to the network"
- * signal: its fetch handler returns before classifying such a request. A
- * first open keeps the ordinary read, and with it the offline copy.
+ * signal: its fetch handler returns before classifying such a request.
+ *
+ * Opening a conversation reads fresh too while the browser is online
+ * (#4243): its offline copy was the last visit's transcript, drawn for a
+ * moment before the newest messages snapped in. The open takes the ordinary
+ * read, and with it the offline copy, only when the browser is offline or
+ * the fresh read failed (store.ts loadThread).
  */
 export interface ReadOptions {
   fresh?: boolean;
