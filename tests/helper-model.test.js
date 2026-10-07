@@ -109,8 +109,8 @@ test('GLM late or failing: Haiku answers as attempt 2 of the same call', async (
   await withHelpers({ reply: late }, async ({ client, events }) => {
     const out = await llm.generateSessionTitle({ requests: ['Remind us to water the plants'] });
     assert.equal(out.title, 'From Haiku');
-    assert.equal(out.model, 'claude-haiku-4-5');
-    assert.equal(client.calls[0].model, 'claude-haiku-4-5');
+    assert.equal(out.model, 'claude-haiku-5-5');
+    assert.equal(client.calls[0].model, 'claude-haiku-5-5');
     assert.equal(client.calls[0].max_tokens, 64, 'Haiku is asked exactly as before');
     assert.equal(events.length, 2);
     const [glm, haiku] = events;
@@ -123,7 +123,7 @@ test('GLM late or failing: Haiku answers as attempt 2 of the same call', async (
   // An answer with no usable tool call is not an answer.
   await withHelpers({ reply: null }, async ({ client, events }) => {
     const out = await llm.generateSessionTitle({ requests: ['x'] });
-    assert.equal(out.model, 'claude-haiku-4-5');
+    assert.equal(out.model, 'claude-haiku-5-5');
     assert.equal(client.calls.length, 1);
     assert.equal(events[0].outcome, 'error');
   });
@@ -136,7 +136,7 @@ test('never GLM: a BYOK key, HELPER_MODEL=haiku, no bot key, a named Claude mode
     const byok = await llm.helperMessage({
       helper: 'session_title', activeClient: client, params, schema: llm.SESSION_TITLE_SCHEMA, apiKey: 'sk-ant-own', defaults,
     });
-    assert.equal(byok.model, 'claude-haiku-4-5');
+    assert.equal(byok.model, 'claude-haiku-5-5');
     const named = await llm.helperMessage({
       helper: 'session_title', activeClient: client, params, schema: llm.SESSION_TITLE_SCHEMA, defaults, model: 'claude-sonnet-5-5',
     });
@@ -149,7 +149,7 @@ test('never GLM: a BYOK key, HELPER_MODEL=haiku, no bot key, a named Claude mode
     try {
       assert.equal(llm.helperRoute(), 'haiku');
       const off = await llm.generateSessionTitle({ requests: ['x'] });
-      assert.equal(off.model, 'claude-haiku-4-5');
+      assert.equal(off.model, 'claude-haiku-5-5');
       assert.equal(openrouter.calls.length, 0);
     } finally {
       if (prev === undefined) delete process.env.HELPER_MODEL; else process.env.HELPER_MODEL = prev;
@@ -158,7 +158,7 @@ test('never GLM: a BYOK key, HELPER_MODEL=haiku, no bot key, a named Claude mode
   });
   await withHelpers({ reply: { title: 'GLM' }, key: null }, async ({ openrouter, events }) => {
     const out = await llm.generateSessionTitle({ requests: ['x'] });
-    assert.equal(out.model, 'claude-haiku-4-5');
+    assert.equal(out.model, 'claude-haiku-5-5');
     assert.equal(openrouter.calls.length, 0);
     assert.equal(events.length, 1);
     assert.equal(events[0].attempt_number, 1, 'nothing was sent to GLM, so Haiku is the first attempt');
@@ -220,7 +220,7 @@ test('structured helpers read GLM\'s answer with their existing parse', async ()
     assert.equal(openrouter.calls[0].timeoutMs, llm.HELPER_TIME_LIMIT_MS.app_sketch);
     await llm.generateAppSketch({ system: 's', user: 'u', maxTokens: 400 });
     assert.equal(openrouter.calls.length, 1);
-    assert.equal(client.calls[0].model, 'claude-haiku-4-5');
+    assert.equal(client.calls[0].model, 'claude-haiku-5-5');
   });
 });
 
@@ -244,7 +244,7 @@ test('the bill: OpenRouter\'s figure when it gave one, else the published GLM pr
     llm.estimateCostCents({ input_tokens: 1e6, output_tokens: 1e6, cost_usd: null }, 'z-ai/glm-5.3-flash'),
     (published.inputPricePerMillion + published.outputPricePerMillion) * 100,
   );
-  assert.equal(llm.estimateCostCents({ input_tokens: 1000, output_tokens: 1000 }, 'claude-haiku-4-5'), 0.6, 'Claude rates unchanged');
+  assert.equal(llm.estimateCostCents({ input_tokens: 1000, output_tokens: 1000 }, 'claude-haiku-5-5'), 0.6, 'Claude rates unchanged');
 });
 
 test('every helper the switch names goes through the path, and telemetry knows each by name', () => {
@@ -256,7 +256,7 @@ test('every helper the switch names goes through the path, and telemetry knows e
       assert.match(src, new RegExp(`helperMessage\\(\\{\\s+helper: '${helper}',`), `${helper} asks through helperMessage`);
     }
   }
-  assert.equal((src.match(/'claude-haiku-4-5'/g) || []).length, 1, 'Haiku is named once, as the fallback');
+  assert.equal((src.match(/'claude-haiku-5-5'/g) || []).length, 1, 'Haiku is named once, as the fallback');
   const components = read('src/services/llm-telemetry.js');
   for (const c of [...Object.keys(llm.HELPER_TIME_LIMIT_MS).filter((h) => h !== 'challenge_grade'), 'challenge_grade_feedback', 'challenge_grade_proposal']) {
     assert.ok(components.includes(`'${c}'`), `${c} is a telemetry component`);
@@ -265,7 +265,7 @@ test('every helper the switch names goes through the path, and telemetry knows e
   const manifest = JSON.parse(read('dapp.json'));
   const entry = manifest.platform_env.find((e) => e.key === 'HELPER_MODEL');
   assert.equal(entry.default, 'glm');
-  assert.match(entry.description, /haiku: Haiku 4\.5 only/);
+  assert.match(entry.description, /haiku: Haiku 5\.5 only/);
   assert.equal(require('../src/services/app-sketch').SKETCH_MODEL, llm.HELPER_MODEL);
   assert.equal(require('../src/services/topochain/challenge-grader').GRADE_MODEL, llm.HELPER_MODEL);
   assert.match(read('src/services/mayor/pills.js'), /qrWithTimeout\(\(signal\) => llm\.generateQuickReplies\(\{[\s\S]*?signal,/,

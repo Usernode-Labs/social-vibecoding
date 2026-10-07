@@ -612,10 +612,10 @@ test('a refused ask writes nothing to the thread', async () => {
 // ── the generator's own contract ──────────────────────────────────────
 
 test('answerWorkshopQuestion defaults to Haiku and honours a resolved model', async () => {
-  await withStubClient(answerResp('Short answer.'), async (calls) => {
+  await withStubClient(answerResp('Short answer.', 'claude-haiku-5-5'), async (calls) => {
     const a = await llm.answerWorkshopQuestion({ contextJson: '{}', question: 'q' });
-    assert.equal(a.model, 'claude-haiku-4-5');
-    assert.equal(calls[0].model, 'claude-haiku-4-5');
+    assert.equal(a.model, 'claude-haiku-5-5');
+    assert.equal(calls[0].model, 'claude-haiku-5-5');
   });
   await withStubClient(answerResp('Short answer.', 'claude-sonnet-5'), async (calls) => {
     const b = await llm.answerWorkshopQuestion({ contextJson: '{}', question: 'q', model: 'claude-sonnet-5' });
