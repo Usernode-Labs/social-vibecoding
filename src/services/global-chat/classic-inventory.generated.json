@@ -6237,6 +6237,22 @@
       "classicPath": "#app/:slug/app"
     },
     {
+      "source": "src/routes/external-agent-patch-upload.js",
+      "method": "PUT",
+      "path": "/api/external-tasks/:taskId/patch",
+      "expression": null,
+      "status": "exempt",
+      "reason": "coding-agent patch upload authenticated by a one-time work-order token (#4264), never a signed-in Classic control"
+    },
+    {
+      "source": "src/routes/external-agent-patch-upload.js",
+      "method": "POST",
+      "path": "/api/external-tasks/:taskId/patch",
+      "expression": null,
+      "status": "exempt",
+      "reason": "coding-agent patch upload authenticated by a one-time work-order token (#4264), never a signed-in Classic control"
+    },
+    {
       "source": "src/routes/feedback.js",
       "method": "POST",
       "path": "/api/feedback/title",

@@ -4624,6 +4624,9 @@ function registerTools(server, ctx) {
       origin,
       restart: restart === true,
       targetProposal,
+      // #4264: a one-time upload command in the work order, for a patch too
+      // big to retype into submit_work. New work only; the service decides.
+      patchUpload: true,
       specs: requestSpecsToBuild,
     });
     if (!result.ok) return serviceError(result);
@@ -4790,6 +4793,8 @@ function registerTools(server, ctx) {
         .describe('The name of the fork you pushed to, if you forked under a name other than the app repository’s. The owner is always the user’s linked GitHub account and is never taken from here.'),
       patch: z.string().optional()
         .describe('The change as a patch, the default way to submit new work — the output of `git format-patch <baseSha>..HEAD --stdout`, or a plain `git diff`. Homeroom applies it at the task’s recorded base commit, commits it in the app’s own repository and opens the pull request, so you need no GitHub write access at all. Requires taskId. Roughly 250 KB max; push a branch for anything larger, or when you already push to your fork. Patch or branch is your decision: never ask the user to choose.'),
+      patchUploadId: z.number().int().positive().optional()
+        .describe('Instead of `patch`: the `uploadId` printed by the upload command in your work order, which sends `git format-patch` output straight to Homeroom so a large patch is never retyped into this call (#4264). Requires taskId. Homeroom applies the uploaded bytes exactly as it applies `patch`: same base commit, same pull request. Uploads may be up to 1 MB. Refused if that upload was made for another task, or was replaced by a newer upload (submit the newest uploadId). The upload command needs a sandbox that can reach Homeroom; if yours cannot, send `patch` inline.'),
       source: z.enum(['work_order', 'assistant']).optional()
         .describe('Set to "work_order" when you are the coding agent submitting your own finished work, "assistant" when a human relayed it to you. Advisory only.'),
       title: z.string().optional().describe('A short title for the proposal. Defaults to the task description. On a SESSION update (shape 4 targeting a work-order continuation) it is stored and names the pull request created when the session is proposed — with or without propose: true — instead of the "<user>\'s changes" placeholder. On a target that already has a PR it RENAMES it (panel and GitHub; votes untouched) — a same-commit resubmit with just a title is the fix for a wrong auto-generated name, and it works on a fork-tracked proposal too. The answer reports `titleUpdated`, and `titleRejected` when the rename was refused: `imported_pr` means the pull request was opened by a different GitHub account and keeps its own author\'s title.'),
@@ -4878,7 +4883,7 @@ function registerTools(server, ctx) {
   }, async ({
     taskId, slug, prNumber, proposalId, branch, forkRepo, patch, source, title, description, summary, agent,
     testingPaths, testingSteps, visibleChanges, visualEvidence,
-    expectedHeadSha, propose, recheck, share,
+    expectedHeadSha, propose, recheck, share, patchUploadId,
   }) => {
     const guard = scopeGuard(WRITE_SCOPE);
     if (guard) return guard;
@@ -4920,6 +4925,14 @@ function registerTools(server, ctx) {
         'An update needs `branch` too: the branch in the user\'s own fork that carries the new commits. Homeroom '
         + 'reads it from GitHub, so it has to be pushed first.'
       );
+    }
+    // #4264: an uploaded patch is named by the upload's id, and belongs to the
+    // one task whose work order printed the command.
+    if (patchUploadId !== undefined && !taskId) {
+      return toolError('invalid_request', 'patchUploadId needs the taskId from the work order: an upload belongs to one task.');
+    }
+    if (patchUploadId !== undefined && patch) {
+      return toolError('invalid_request', 'Send the patch inline as `patch` or name the one you uploaded with `patchUploadId`, not both.');
     }
     // Enumerate every accepted shape rather than naming one. An agent that
     // hits this error should learn the surface — the run that produced this
@@ -5040,6 +5053,8 @@ function registerTools(server, ctx) {
       forkRepo,
       expectedHeadSha,
       patch,
+      // #4264: the uploaded patch's id, resolved by the service under the task lock.
+      ...(patchUploadId !== undefined ? { patchUploadId } : {}),
       source,
       agent,
       title,

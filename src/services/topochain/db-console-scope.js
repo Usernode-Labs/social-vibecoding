@@ -257,6 +257,9 @@ const CONSOLE_CREDENTIAL_COLUMNS = {
   // public half of the exchange and stays readable.
   mcp_authorization_codes: ['code_hash'],
   mcp_tokens: ['token_hash', 'token_hint'],
+  // Work-order patch upload credentials (#4264): the hash locates a live
+  // upload capability. Which task it is for, and until when, stay readable.
+  external_agent_upload_tokens: ['token_hash'],
   // Social identity is private account metadata. The short-lived OAuth row
   // additionally contains the callback-state hash and live PKCE verifier.
   user_social_identities: ['provider_subject', 'handle'],
