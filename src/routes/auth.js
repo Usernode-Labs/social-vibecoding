@@ -337,8 +337,10 @@ function authRoutes(config) {
       // An invite link this visitor opened before signing in is NOT followed
       // here: an existing account is asked first, by the shell, which comes
       // back to the link as a remembered deep link (App._followInvite). The
-      // carried copy is dropped, so nothing follows it later without asking.
-      communityInvites.clearInviteCookie(res);
+      // carried copy is dropped, so nothing follows it later without asking,
+      // and the admin Journey counts this as a sign-in the link brought
+      // (dropCarried, never throws).
+      await communityInvites.dropCarried(pool, req, res, user.id);
 
       res.json({
         // Echo the account's real username, not the raw identifier — the
@@ -384,13 +386,14 @@ function authRoutes(config) {
       // (`followInvite`, sent by the sheet "Made for you" opens: the person
       // just pressed "Join …" on the link's own page). Anywhere else it is
       // asked by the shell instead, like a password sign-in, so the carried
-      // copy is only dropped. Never throws.
+      // copy is only dropped (and counted as a sign-in it brought). Never
+      // throws.
       const consented = verified.created || req.body?.followInvite === true;
       const invite = consented
         ? await communityInvites.redeemCarried(pool, req, res, verified.userId, {
           requirePhone: phoneAuth.offered(config),
         })
-        : (communityInvites.clearInviteCookie(res), null);
+        : await communityInvites.dropCarried(pool, req, res, verified.userId);
       // A link that joined this person (a private member's, or anybody's
       // with access) counts for its challenge now, not on the rule's next
       // pass (#3564). A queued one waits for release, and the schedule.

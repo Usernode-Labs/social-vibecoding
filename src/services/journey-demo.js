@@ -437,9 +437,14 @@ function firstSession(day, all = false) {
     : { label: DEMO_WEEK, finished: true };
   // The invite funnel, shaped as journey.INVITE_FUNNEL_SQL returns it. The
   // week's joins are its first sessions' (everyone's: a cohort has none).
+  // Its sign-ins in their two ways: from the link, and already signed in.
   const joined = DEMO_FIRST_SESSIONS.filter((r) => r.path === 'join' && inDemoSpan(r.intent_at, window)).length;
   const opens = journey.inviteFunnelReading(
-    { since: DEMO_RECORDED_FROM, opened: all ? 26 : 11, signed_in: all ? 12 : 5, joined: all ? 7 : joined },
+    {
+      since: DEMO_RECORDED_FROM, opened: all ? 26 : 11,
+      signed_in: all ? 12 : 5, signed_in_by_invite: all ? 8 : 3, signed_in_already: all ? 4 : 2,
+      joined: all ? 7 : joined,
+    },
     { week: window, cohort: !!ids },
   );
   return {

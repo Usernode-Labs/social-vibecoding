@@ -265,7 +265,8 @@ function communityInviteRoutes(config) {
       // Somebody signed in who is not in it yet (invite-activity.noteOpened
       // leaves out the maker and anybody already a member): the open its
       // maker hears about, and, for the admin Journey's invite funnel, a
-      // person with the link in hand signed in.
+      // person with the link in hand signed in: already signed in, unless
+      // the sign-in that brought them here recorded it first (#4272).
       if (standing.live && !standing.mine) {
         countOpen(req, res, req.params.token, req.user.id);
         void journeyEvents.noteInviteSignedIn(pool, { token: req.params.token, userId: req.user.id });
@@ -283,6 +284,13 @@ function communityInviteRoutes(config) {
   router.post('/api/invite-links/by-token/:token/redeem', drainGuard, inviteRedeemLimiter, sameOriginBrowserOnly, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     try {
+      // Signed in with the link in hand, for the admin Journey's invite
+      // funnel (#4272). The standing read above records it first, but the
+      // waiting room follows a link without reading it
+      // (features/auth/waiting.tsx). Before following it, while they are not
+      // in it yet; once per person per link, so a sign-in that carried the
+      // link stays the sign-in it was. Never throws.
+      await journeyEvents.noteInviteSignedIn(pool, { token: req.params.token, userId: req.user.id });
       const result = await invites.redeem(pool, {
         token: req.params.token, user: req.user, browser: inviteActivity.browserFrom(req),
         // A private member signs up with a phone (community-invites.js).
