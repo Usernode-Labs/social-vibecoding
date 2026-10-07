@@ -465,9 +465,9 @@ export function FeedbackDialog() {
             line, and the dialog closed itself 1.5 s later; now it is this
             section, drawn like the first-feedback moment above, and it stays
             until Done. The controller names where it went in the heading
-            ("Posted to Run Club", "Posted to Homeroom") and fills the notice
-            with any bounty outcome, so the notice renders empty and hidden
-            for the reason #feedback-status does.
+            ("Thanks! Posted to Run Club", "Thanks! Posted to Homeroom") and
+            fills the notice with any bounty outcome, so the notice renders
+            empty and hidden for the reason #feedback-status does.
         */}
         <section id="feedback-sent" className="hidden" aria-labelledby="feedback-sent-title" tabIndex={-1}>
           <h2 id="feedback-sent-title" className="text-lg font-bold mb-3">
@@ -475,12 +475,26 @@ export function FeedbackDialog() {
           </h2>
           <p id="feedback-sent-notice" className="hidden text-sm text-emerald-700 dark:text-emerald-400 mb-2" role="status"></p>
           {/* B8: where Homeroom bot builds it, this says so ("Homeroom bot is
-              on it, usually about 8 minutes."), Open chat leads, and building
-              it yourself is the small link at the foot. The controller words
-              the line and shows the two. */}
+              building it now, usually about 8 minutes. ...", #3971), Open
+              chat leads, and building it yourself is the small link at the
+              foot. The controller words the line and shows the two. */}
           <p id="feedback-sent-line" className="text-sm text-zinc-600 dark:text-zinc-400 mb-4">
-            Find it on your profile, under Your requests.
+            Your idea is on the board now. Find it on your profile, under Your requests.
           </p>
+          {/* #3971: a person's first request, where Homeroom bot builds it.
+              B8 answered that with the bot's confirmation alone, so nobody it
+              built for heard about their first request; this brings the moment
+              back beside it rather than in place of it (the moment's own next
+              steps would compete with Open chat). The controller shows it and
+              names the app in the line. */}
+          <div id="feedback-sent-first" className="hidden mb-4 rounded-lg bg-emerald-50 px-3 py-2.5 dark:bg-emerald-500/10">
+            <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">
+              Your first request!
+            </p>
+            <p id="feedback-sent-first-line" className="text-sm text-zinc-600 dark:text-zinc-400">
+              You just helped shape this app.
+            </p>
+          </div>
           <div className="flex flex-col gap-3">
             <Button id="feedback-sent-chat" className="hidden min-h-[44px]">Open chat</Button>
             <Button id="feedback-sent-mine" variant="neutral" ink="neutral" className="min-h-[44px]">See your requests</Button>
