@@ -11,6 +11,7 @@ public/css/tailwind.css
 public/shell/assets/
 public/shell/release.json
 public/shell/worker.js
+public.precompressed/
 SPEC.md
 TODO
 template/

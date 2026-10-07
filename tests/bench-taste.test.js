@@ -541,6 +541,185 @@ test('a first version the triage would not build builds nothing, and says what t
   assert.equal(graders.deterministicGrade({ stage: 'first_version', trial: { ...out, status: 'ok' } }).pass, false);
 });
 
+// ── A first version after a restart ─────────────────────────────────────
+//
+// A restart hands a first version back to the lane with what it finished
+// kept on the trial (services/bench/lane.js "After a restart"), and its next
+// claim goes on from there: each kept sub-step is taken as it is, never run
+// again. tests/bench-restart-recovery.test.js covers the hand-back itself.
+
+/** A first version run start to end, with every part of its checkpoint it kept. */
+async function keptRun(t) {
+  spySideEffects(t);
+  const h = harness();
+  const parts = [];
+  const out = await runner.runStage(ctx(h, 'first_version', FIRST, { onCheckpoint: async (p) => { parts.push(p); } }));
+  assert.equal(out.status, 'ok', out.error);
+  return { out, parts, kept: Object.assign({}, ...parts) };
+}
+
+// An earlier claim's triage session, apart from the sessions a fresh harness opens.
+const KEPT_TRIAGE = 6100;
+const keptTriageOf = (kept) => ({ triageSessionId: KEPT_TRIAGE, triage: { ...kept.triage, session_id: KEPT_TRIAGE } });
+
+test('a first version keeps each sub-step as it finishes: the triage\'s session before its turn, then its answer, the spec and the build that landed', async (t) => {
+  const { out, parts, kept } = await keptRun(t);
+  const order = parts.flatMap((p) => Object.keys(p).filter((k) => k !== 'sessions'));
+  assert.deepEqual(order, ['triageSessionId', 'triage', 'spec', 'build'], 'in the order they finish');
+  const [triageSession, buildSession] = out.session_ids;
+  assert.equal(kept.triageSessionId, triageSession, 'recovery tells the triage\'s turn from the spec\'s by it');
+  assert.deepEqual(kept.sessions, [triageSession, buildSession], 'every session the trial opened');
+  assert.equal(kept.triage.status, 'ok');
+  assert.equal(kept.triage.session_id, triageSession);
+  assert.equal(kept.triage.parsed.verdict, 'ready');
+  assert.equal(kept.triage.session, undefined, 'never the live session object');
+  assert.deepEqual(kept.spec, { sessionId: buildSession, specMd: '# Ear Trainer\n\nThe first version.' });
+  assert.equal(kept.build.ok, true);
+  assert.equal(kept.build.sha, 'c'.repeat(40));
+  assert.equal(kept.build.commits, 3);
+  assert.equal(kept.build.sessionId, buildSession);
+  assert.equal(out.parsed.resumedAfterRestart, undefined, 'a trial no restart touched says nothing about one');
+});
+
+test('a first version going on after a restart is never triaged again: the kept answer leads to the spec and the build', async (t) => {
+  const { kept } = await keptRun(t);
+  const h = harness();
+  const checkpoint = { ...keptTriageOf(kept), sessions: [KEPT_TRIAGE], handBacks: 1 };
+  const out = await runner.runStage(ctx(h, 'first_version', FIRST, { checkpoint }));
+  assert.equal(out.status, 'ok', out.error);
+  assert.deepEqual(h.calls.modes, ['scout', 'build'], 'the spec and the build, no triage');
+  assert.ok(!/now answer the triage request/i.test(h.calls.prompts[0]), 'the first turn is the spec');
+  assert.ok(h.calls.prompts[1].includes('Lessons list, a keyboard, both looks.'), 'built from the kept triage\'s plan');
+  assert.equal(out.parsed.triage.verdict, 'ready');
+  assert.deepEqual(h.calls.deleted, ['bench/r3-s12', 'bench/r3-t44'], 'the branch starts again at the first commit');
+  assert.equal(out.session_ids[0], KEPT_TRIAGE, 'the kept triage\'s session is still the trial\'s cost');
+  assert.equal(out.session_ids.length, 2);
+  assert.equal(out.parsed.resumedAfterRestart, 1);
+  assert.equal(h.calls.capture.length, 1);
+});
+
+test('a kept spec is built from as it is: one build turn, the spec\'s session counted', async (t) => {
+  const { kept } = await keptRun(t);
+  const realBuild = live.buildAndPropose;
+  let args = null;
+  live.buildAndPropose = async (a) => { args = a; return realBuild(a); };
+  t.after(() => { live.buildAndPropose = realBuild; });
+  const h = harness();
+  const spec = { sessionId: 6001, specMd: '# Ear Trainer\n\nThe kept spec.' };
+  const out = await runner.runStage(ctx(h, 'first_version', FIRST, {
+    checkpoint: { ...keptTriageOf(kept), sessions: [KEPT_TRIAGE, 6001], spec },
+  }));
+  assert.equal(out.status, 'ok', out.error);
+  assert.deepEqual(h.calls.modes, ['build']);
+  assert.equal(args.presetSpec, spec.specMd);
+  assert.ok(h.calls.prompts[0].includes('The kept spec.'));
+  assert.equal(out.parsed.spec, spec.specMd);
+  assert.ok(out.session_ids.includes(6001), 'the session that wrote the spec is the trial\'s cost');
+  assert.equal(out.session_ids.length, 3);
+});
+
+test('a build that landed before a restart keeps its branch at its commit: no turn, the screenshots on a fresh worker', async (t) => {
+  const { kept } = await keptRun(t);
+  const h = harness();
+  const sha = 'd'.repeat(40);
+  const build = { ...kept.build, sessionId: 6002, sha, commits: 2 };
+  const out = await runner.runStage(ctx(h, 'first_version', FIRST, {
+    checkpoint: { ...keptTriageOf(kept), sessions: [KEPT_TRIAGE, 6002], spec: { sessionId: 6002, specMd: kept.spec.specMd }, build },
+  }));
+  assert.equal(out.status, 'ok', out.error);
+  assert.deepEqual(h.calls.modes, [], 'no model turn');
+  assert.ok(!h.calls.deleted.includes('bench/r3-t44'), 'its branch is kept');
+  assert.ok(h.calls.pinned.some((p) => p.branch === 'bench/r3-t44' && p.sha === sha), 'and confirmed at the build\'s commit');
+  assert.equal(out.build_sha, sha);
+  assert.equal(out.build_commits, 2);
+  assert.match(out.diff, /public\/index\.html/, 'its diff read from the first commit');
+  assert.equal(out.parsed.built, true);
+  assert.equal(out.parsed.spec, kept.spec.specMd);
+  assert.equal(h.calls.capture.length, 1);
+  const shotSession = out.session_ids.at(-1);
+  assert.notEqual(shotSession, 6002);
+  assert.equal(h.calls.capture[0].containerName, `w-${shotSession}`, 'a fresh worker');
+  assert.equal(h.calls.ensured.at(-1).pinnedBase, SCAFFOLD, 'sealed at the first commit, as a live build\'s is');
+  assert.deepEqual(out.session_ids, [KEPT_TRIAGE, 6002, shotSession], 'the kept triage\'s and build\'s sessions, then the screenshots\'');
+  assert.equal(out.capture.booted, true);
+});
+
+test('a kept failure is the trial\'s outcome, recorded as the live stage would record it', async (t) => {
+  const { kept } = await keptRun(t);
+  const timedOut = harness();
+  const triage = { status: 'timeout', error: 'the turn ran past its time limit', session_id: 6003, cost_usd: null, raw_output: '', parsed: null };
+  const a = await runner.runStage(ctx(timedOut, 'first_version', FIRST, { checkpoint: { triageSessionId: 6003, sessions: [6003], triage } }));
+  assert.equal(a.status, 'timeout');
+  assert.deepEqual(timedOut.calls.modes, []);
+  assert.equal(a.parsed.built, false);
+
+  const failed = harness();
+  const build = { ok: false, sessionId: 6004, sha: null, commits: null, specMd: null, specNote: null, error: 'the build ran past its time limit (finished after a restart)' };
+  const b = await runner.runStage(ctx(failed, 'first_version', FIRST, { checkpoint: { ...keptTriageOf(kept), build } }));
+  assert.equal(b.status, 'timeout');
+  assert.deepEqual(failed.calls.modes, []);
+  assert.equal(failed.calls.capture.length, 0);
+
+  const blocked = harness();
+  const spec = { sessionId: 6005, blocked: 'needs a microphone the frame cannot have', error: 'blocked: needs a microphone the frame cannot have' };
+  const c = await runner.runStage(ctx(blocked, 'first_version', FIRST, { checkpoint: { ...keptTriageOf(kept), spec } }));
+  assert.equal(c.status, 'ok');
+  assert.equal(c.parsed.blocked, spec.blocked);
+  assert.deepEqual(blocked.calls.modes, []);
+
+  // A build said to have landed with no commit on record is built again.
+  const noSha = harness();
+  const d = await runner.runStage(ctx(noSha, 'first_version', FIRST, {
+    checkpoint: { ...keptTriageOf(kept), build: { ok: true, sessionId: 6006, sha: null, commits: 1 } },
+  }));
+  assert.equal(d.status, 'ok');
+  assert.deepEqual(noSha.calls.modes, ['scout', 'build']);
+});
+
+test('restart recovery follows every turn of a first version and reads what it produced as the live stage would', () => {
+  const scout = { mode: 'scout' };
+  const build = { mode: 'build' };
+  assert.equal(runner.resumableTurn('first_version', scout), true);
+  assert.equal(runner.resumableTurn('first_version', build), true);
+  assert.equal(runner.resumableTurn('first_version', { mode: 'shots' }), false);
+  assert.equal(runner.resumableTurn('first_version', scout, { reference: true }), false, 'a reference build has no turn');
+  assert.equal(runner.resumableTurn('first_version', null), false);
+
+  assert.equal(runner.firstVersionTurnOf({ triageSessionId: 5 }, 5, scout), 'triage');
+  assert.equal(runner.firstVersionTurnOf({ triageSessionId: 5 }, 6, scout), 'spec');
+  assert.equal(runner.firstVersionTurnOf({}, 6, scout), 'triage', 'nothing kept yet: the triage');
+  assert.equal(runner.firstVersionTurnOf({ triage: { status: 'ok' } }, 6, scout), 'spec');
+  assert.equal(runner.firstVersionTurnOf(null, 6, build), 'build');
+
+  const session = { id: 6, spec_md: '' };
+  const verdict = `\`\`\`json\n${JSON.stringify({ verdict: 'ready', determined: true, build_note: 'Lessons list.', reason: 'clear' })}\n\`\`\``;
+  const tri = runner.recoverFirstVersionTurn({ checkpoint: { triageSessionId: 6 }, session, activeTurn: scout, result: { lastResultText: verdict } });
+  assert.equal(tri.step, 'triage');
+  assert.equal(tri.keep.triage.status, 'ok');
+  assert.equal(tri.keep.triage.session_id, 6);
+  assert.equal(tri.keep.triage.parsed.buildNote, 'Lessons list.');
+  const lateTriage = runner.recoverFirstVersionTurn({ checkpoint: { triageSessionId: 6 }, session, activeTurn: scout, result: {}, timedOut: true });
+  assert.equal(lateTriage.keep.triage.status, 'timeout', 'a triage\'s failure is its outcome');
+
+  const cp = { triageSessionId: 5, triage: { status: 'ok' } };
+  const spec = runner.recoverFirstVersionTurn({ checkpoint: cp, session, activeTurn: scout, result: { lastResultText: '# Ear Trainer\n\nThe first version.' } });
+  assert.deepEqual(spec, { step: 'spec', keep: { spec: { sessionId: 6, specMd: '# Ear Trainer\n\nThe first version.' } } });
+  const blocked = runner.recoverFirstVersionTurn({ checkpoint: cp, session, activeTurn: scout, result: { lastResultText: 'BLOCKED: needs a microphone' } });
+  assert.equal(blocked.keep.spec.blocked, 'needs a microphone');
+  assert.equal(runner.recoverFirstVersionTurn({ checkpoint: cp, session, activeTurn: scout, result: {}, timedOut: true }), null,
+    'a spec that ran out of time is written again');
+  assert.equal(runner.recoverFirstVersionTurn({ checkpoint: cp, session, activeTurn: scout, result: { lastResultText: '' } }), null);
+
+  const withSpec = { ...cp, spec: { sessionId: 6, specMd: '# Kept' } };
+  const landed = runner.recoverFirstVersionTurn({ checkpoint: withSpec, session, activeTurn: build, result: { pushOk: true, ahead: 2, sha: 'd'.repeat(40) } });
+  assert.equal(landed.step, 'build');
+  assert.deepEqual(landed.keep.build, { ok: true, sessionId: 6, sha: 'd'.repeat(40), commits: 2, specMd: '# Kept', specNote: null, error: null });
+  const late = runner.recoverFirstVersionTurn({ checkpoint: withSpec, session, activeTurn: build, result: {}, timedOut: true });
+  assert.equal(late.keep.build.ok, false);
+  assert.match(late.keep.build.error, /ran past its time limit \(finished after a restart\)/);
+  assert.equal(runner.recoverFirstVersionTurn({ checkpoint: cp, session, activeTurn: { mode: 'shots' } }), null);
+});
+
 test('a capture trial checks the app out at its commit in a sealed worker and only takes the screenshots: no model turn', async (t) => {
   const side = spySideEffects(t);
   const h = harness();

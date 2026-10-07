@@ -327,6 +327,10 @@ function LimitsSection() {
   // cap" (nothing stored), and saving a blank clears a stored value.
   const [weeklySocial, setWeeklySocial] = useState('');
   const [weeklyZk, setWeeklyZk] = useState('');
+  const [weeklyPhone, setWeeklyPhone] = useState('');
+  // The verified-identity rule: on since `ruleSince`, or off (null).
+  const [ruleSince, setRuleSince] = useState<string | null>(null);
+  const [ruleOn, setRuleOn] = useState(false);
   const [global, setGlobal] = useState('');
   const [system, setSystem] = useState('');
   const [limitsStatus, setLimitsStatus] = useState<Status | null>(null);
@@ -349,6 +353,10 @@ function LimitsSection() {
       ? '' : console_().centsToDollars(data.user_weekly_limit_social_cents));
     setWeeklyZk(data.user_weekly_limit_zk_cents == null
       ? '' : console_().centsToDollars(data.user_weekly_limit_zk_cents));
+    setWeeklyPhone(data.user_weekly_limit_phone_cents == null
+      ? '' : console_().centsToDollars(data.user_weekly_limit_phone_cents));
+    setRuleSince(data.identity_rule_since || null);
+    setRuleOn(!!data.identity_rule_since);
     setGlobal(console_().centsToDollars(data.global_daily_limit_cents));
     setSystem(console_().centsToDollars(data.system_tokens_daily_limit_cents));
   }, []);
@@ -388,7 +396,7 @@ function LimitsSection() {
 
   const saveLimits = async () => {
     setLimitsStatus(null);
-    const body: Record<string, number | null> = {};
+    const body: Record<string, number | null | boolean> = {};
     try {
       const w = console_().parseDollarsToCents('Weekly cap, unverified', weekly.trim());
       const g = console_().parseDollarsToCents('Global', global.trim());
@@ -397,9 +405,13 @@ function LimitsSection() {
       // value so that tier inherits the unverified cap again.
       const ws = console_().parseDollarsToCents('Weekly cap, GitHub and X', weeklySocial.trim());
       const wz = console_().parseDollarsToCents('Weekly cap, zkPassport', weeklyZk.trim());
+      const wp = console_().parseDollarsToCents('Weekly cap, phone', weeklyPhone.trim());
       if (w !== null) body.weekly = w;
       body.weeklySocial = ws;
       body.weeklyZk = wz;
+      body.weeklyPhone = wp;
+      // Sent only when it changes: switching on records the time once.
+      if (ruleOn !== !!ruleSince) body.identityRule = ruleOn;
       if (g !== null) body.global = g;
       if (s !== null) body.system = s;
     } catch (err: any) {
@@ -479,10 +491,13 @@ function LimitsSection() {
             (the base weekly cap), now read as the unverified tier's, and a
             declared check selects on it. The two others inherit it while
             blank. */}
-        <div id="admin-limit-tiers" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-3">
+        <div id="admin-limit-tiers" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
           <MoneyField id="admin-limit-weekly" label="Default per-user weekly cap (no verified identity)" placeholder="50.00"
             title="The account's only AI limit, for accounts with no verified identity, and the value the other two tiers inherit while blank. It covers every kind of spend the platform funds. Set it to 0 and the account has no allowance at all."
             value={weekly} onChange={setWeekly} disabled={dis} />
+          <MoneyField id="admin-limit-weekly-phone" label="Weekly cap: phone verified" placeholder="same as unverified"
+            title="For accounts with a verified phone number, and, while the verified-identity rule is on, accounts let in before it was switched on. Blank inherits the unverified cap."
+            value={weeklyPhone} onChange={setWeeklyPhone} disabled={dis} />
           <MoneyField id="admin-limit-weekly-social" label="Weekly cap: GitHub and X verified" placeholder="same as unverified"
             title="For accounts that have verified both a GitHub and an X account. Blank inherits the unverified cap."
             value={weeklySocial} onChange={setWeeklySocial} disabled={dis} />
@@ -490,14 +505,24 @@ function LimitsSection() {
             title="For accounts that have completed a zkPassport-verified challenge. Blank inherits the unverified cap."
             value={weeklyZk} onChange={setWeeklyZk} disabled={dis} />
         </div>
+        {/* The verified-identity rule (schema.sql identity_rule_since):
+            saved with the caps, and on records the time once. */}
+        <label htmlFor="admin-identity-rule" data-admin-identity-rule="" className="flex items-start gap-2 mb-3 text-sm text-zinc-700 dark:text-zinc-300">
+          <input id="admin-identity-rule" type="checkbox" className="mt-1 accent-violet-600" checked={ruleOn} disabled={dis}
+            onChange={(e) => setRuleOn(e.target.checked)} />
+          <span>
+            <span className="font-medium">Verified identity rule</span>
+            {`: a vote on a public app counts only from an account with a verified phone, GitHub and X, or zkPassport, and accounts without one get the unverified cap. Accounts let in before it was switched on are exempt and get the phone cap. Off, every vote counts and nobody is exempt, so earlier members without one get the unverified cap too. ${ruleSince ? `On since ${new Date(ruleSince).toLocaleString()}.` : 'Off.'}`}
+          </span>
+        </label>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
             An account has ONE AI limit and it is weekly: the same pool covers work run on
             the platform's own Claude key and work run on the account's included OpenRouter
             key. Per-user overrides live in the Users section; these are the platform
             defaults. The weekly cap follows the account's identity tier: the default
-            applies to accounts with no verified identity, and the GitHub-and-X and
-            zkPassport tiers use the default while left blank. A cap set to 0 means the
+            applies to accounts with no verified identity, and the phone, GitHub-and-X
+            and zkPassport tiers use the default while left blank. A cap set to 0 means the
             account has no AI allowance at all. The two daily caps above are the platform's
             own safety limits, not a per-user one.
           </p>

@@ -37,14 +37,22 @@ function clip(line) {
   return text.length > LINE_CHARS ? `${text.slice(0, LINE_CHARS - 1)}…` : text;
 }
 
+/** Skills already seen, as a list of names a tracker may start from. Pure. */
+function skillNames(list) {
+  return Array.isArray(list) ? [...new Set(list.map(String))].slice(0, MAX_SKILLS) : [];
+}
+
 /**
  * A trial's progress, kept in memory and written to its row. `step(name)`
  * writes at once; `note(line)` within WRITE_EVERY_MS; `close()` writes what
  * is left and stops. A write that fails is logged and never stops the trial.
+ * `skills` are those an earlier claim of the same trial already saw (a first
+ * version going on after a restart), so its record keeps them.
  */
-function tracker(pool, trialId, { now = () => Date.now(), writeEveryMs = WRITE_EVERY_MS, log = null } = {}) {
+function tracker(pool, trialId, { now = () => Date.now(), writeEveryMs = WRITE_EVERY_MS, log = null, skills = null } = {}) {
   const iso = () => new Date(now()).toISOString();
-  const state = { step: null, stepAt: null, lines: [], skills: { invoked: [], read: [] }, updatedAt: iso() };
+  const seen = { invoked: skillNames(skills?.invoked), read: skillNames(skills?.read) };
+  const state = { step: null, stepAt: null, lines: [], skills: seen, updatedAt: iso() };
   let timer = null;
   let closed = false;
   let chain = Promise.resolve();
