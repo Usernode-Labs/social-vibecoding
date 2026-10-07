@@ -2586,7 +2586,9 @@ async function postOnRequest(pool, { user, target, text, prepared = false, reaso
  * reply is read after it), and null when it could not be put first: the
  * post still wakes the bot, as any reply there does.
  */
-async function postOnProposal(pool, { user, app, sessionId, issueNumber, text, deps = {}, payerId = null }) {
+async function postOnProposal(pool, {
+  user, app, sessionId, issueNumber, text, deps = {}, payerId = null, queueReason = 'dm_revise',
+}) {
   const ws = deps.ws || require('./ws');
   const posted = await ws.handleMessage(
     pool,
@@ -2605,7 +2607,7 @@ async function postOnProposal(pool, { user, app, sessionId, issueNumber, text, d
   let queued = null;
   try {
     queued = !!(await settingsModule().enqueueFront(pool, {
-      appId: app.id, issueNumber: Number(issueNumber), userId: user.id, reason: 'dm_revise',
+      appId: app.id, issueNumber: Number(issueNumber), userId: user.id, reason: queueReason,
       // Whoever asked for the change pays for it (homeroom-bot.js billingOf).
       payerId,
     }));
@@ -2616,6 +2618,89 @@ async function postOnProposal(pool, { user, app, sessionId, issueNumber, text, d
     app: app.slug, sessionId, issueNumber, userId: user.id, queued,
   });
   return { ok: true, queued };
+}
+
+// ── A No vote's line, on one of its own changes (#3977) ──────────────────
+//
+// A No comes with a line (#1688), and on a change the bot built that line
+// is what it should fix. It used to stop at the vote row in the change's
+// discussion, a system row the bot neither wakes on nor reads (its
+// follow-up reads people's messages there, homeroom-bot.js runFollowUp).
+// Now, while the change is still up for a vote, the line is handed to the
+// bot exactly as Change something hands a DM: posted in that discussion as
+// the voter's own reply (postOnProposal), with its follow-up queued first,
+// which revises the change (clearing its votes, as any revision does) or
+// asks one question. The vote row then reads "voted no" without the line,
+// so the discussion shows it once, as theirs (routes/votes.js).
+
+/**
+ * Pure: the line a vote just recorded hands the bot, or null. A No, with
+ * words sent with it now (not the earlier line a re-cast keeps), that moved
+ * something: a new vote, a flip, or new words on the same No. A re-cast
+ * with the same words (`unchanged`, the route's own test) hands nothing,
+ * so one line is handed once.
+ */
+function voteLineFor({ vote, reason, unchanged }) {
+  if (vote !== 'no' || unchanged) return null;
+  const line = typeof reason === 'string' ? reason.trim() : '';
+  return line || null;
+}
+
+/**
+ * Where a No's line on `sessionId` goes, when every gate a reply's
+ * follow-up meets holds now: the bot's own change, up for a vote (not
+ * merging, merged or closed), answering a request, on a project the bot
+ * works on and has not paused, revised fewer than MAX_REVISIONS times.
+ * Resolves { app, sessionId, issueNumber }, or null and the line stays on
+ * the vote row as it always has. Never throws.
+ */
+async function voteLineTarget(pool, { sessionId }) {
+  const id = Number(sessionId);
+  if (!Number.isInteger(id) || id <= 0) return null;
+  try {
+    const { rows: [row] } = await pool.query(
+      `SELECT cs.linked_issues, a.id AS app_id, a.slug, a.name
+         FROM chat_sessions cs
+         JOIN users u ON u.id = cs.user_id
+         JOIN apps a ON a.id = cs.app_id
+        WHERE cs.id = $1 AND u.username = $2 AND cs.status = 'promoted'
+          AND cs.is_headless IS NOT TRUE`,
+      [id, BOT_USERNAME],
+    );
+    if (!row) return null;
+    const issueNumber = Array.isArray(row.linked_issues) ? Number(row.linked_issues[0]) : null;
+    if (!Number.isInteger(issueNumber) || issueNumber <= 0) return null;
+    const app = { id: Number(row.app_id), slug: row.slug, name: row.name };
+    const settings = await settingsModule().readSettings(pool);
+    if (!require('./homeroom-bot-live').isLiveFor(settings, app)
+      || (settings?.pausedApps || []).includes(app.slug)) return null;
+    const { rows: [revisions] } = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM homeroom_bot_runs WHERE proposal_session_id = $1 AND verdict = 'revise'`,
+      [id],
+    );
+    if ((revisions?.n || 0) >= require('./homeroom-bot-followup').MAX_REVISIONS) return null;
+    return { app, sessionId: id, issueNumber };
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not read where a No\'s line goes', { sessionId: id, err: err.message });
+    return null;
+  }
+}
+
+/**
+ * Hand `line` to the bot as `user`'s reply on `target` (voteLineTarget).
+ * Resolves postOnProposal's answer; { ok: false } when it could not be
+ * posted, and the caller keeps the line on the vote row. Never throws.
+ */
+async function handVoteLine(pool, { user, target, line, deps = {} }) {
+  try {
+    return await postOnProposal(pool, {
+      user, app: target.app, sessionId: target.sessionId, issueNumber: target.issueNumber,
+      text: line, deps, queueReason: 'vote_no',
+    });
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not hand a No\'s line to the bot', { sessionId: target?.sessionId, err: err.message });
+    return { ok: false, why: 'something went wrong on my side' };
+  }
 }
 
 /** The deterministic path: words posted on the request, and the bot says where. */
@@ -3637,6 +3722,9 @@ module.exports = {
   newestOpenQuestion,
   postOnRequest,
   postOnProposal,
+  voteLineFor,
+  voteLineTarget,
+  handVoteLine,
   noteProposalMerged,
   // #7, #8, #20 (WP3)
   LIVE_PROBES,
