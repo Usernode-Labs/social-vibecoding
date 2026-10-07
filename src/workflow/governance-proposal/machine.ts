@@ -188,8 +188,9 @@ function apply(
   const how = by ? `by admin override (${by.admin})` : `by group vote (${tally.upCount}/${tally.required})`;
   const campaignTitle = String((typeof p.title === 'string' && p.title.trim()) || issue.title.replace(/^Maintenance campaign:\s*/, ''));
   const line = appliedLine(issue, how, campaignTitle);
+  // The row is locked since the facts read it: its payload is current.
   writes.push({ type: 'apply', kind: issue.kind, issueId: issue.id, appId: issue.appId, selfHosted: issue.app.selfHosted,
-    authorId: issue.createdBy, campaignTitle, admin: by?.admin || null });
+    authorId: issue.createdBy, payload: issue.payload, campaignTitle, admin: by?.admin || null });
   writes.push(chat(event, issue, line, governanceThread(issue)));
   const work: WorkRequest[] = [];
   const notify: Notification[] = [...(extra.notify || [])];
@@ -472,7 +473,7 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
       if (event.type === 'VoteCast' && facts.issue?.status === 'open' && facts.voter?.existing === event.payload.vote) {
         return { toggled: true };
       }
-      return { result: await kindResult(tx, (after.data as OpenData | ClosedData).issueId, after) };
+      return { result: await kindResult(tx, after, facts) };
     },
     notifiers: deps.notifiers,
   });
@@ -481,10 +482,10 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
 // ── Domain writes ───────────────────────────────────────────────────────
 
 // The per-kind result the client has always read off a vote or an admin
-// apply: { applied, superseded, refused, awaitingAdmin, ... }. An open
-// proposal answers from its evaluation; a closed one reads its row after the
-// projection, so an applied row's audit (and a campaign's id) is in place.
-async function kindResult(tx: Tx, issueId: number, after: GovState): Promise<Json> {
+// apply: { applied, superseded, refused, awaitingAdmin, ... }. It is what
+// the projection wrote into the row: the payload the facts read, and the
+// audit (only a campaign's id, set by the projection, is read back).
+async function kindResult(tx: Tx, after: GovState, facts: Facts): Promise<Json> {
   if (after.name === 'open') {
     const e: Partial<Evaluation> = after.data.evaluation || {};
     return { applied: false, awaitingAdmin: e.waiting === 'awaiting_admin', upCount: e.yes, required: e.required,
@@ -492,13 +493,16 @@ async function kindResult(tx: Tx, issueId: number, after: GovState): Promise<Jso
       checkingTarget: !!after.data.applyAfterCheck } as Json;
   }
   if (after.name === 'superseded') return { applied: false, superseded: true };
-  const { rows: [issue] } = await tx.query('SELECT payload FROM issues WHERE id = $1', [issueId]);
-  const p = issue?.payload || {};
+  const audit = (after.data as ClosedData).audit;
   if (after.name === 'applied') {
-    return { applied: true, issueNumber: p.issueNumber, newName: p.newName, campaignId: p.campaignId,
-      illustration: p.proposed || null, upCount: p.upCount, required: p.required, active: p.active };
+    const p = facts.issue?.payload || {};
+    const campaignId = facts.issue?.kind === 'maintenance_campaign'
+      ? (await tx.query('SELECT payload->\'campaignId\' AS id FROM issues WHERE id = $1', [facts.issue.id])).rows[0]?.id
+      : undefined;
+    return { applied: true, issueNumber: p.issueNumber, newName: p.newName, campaignId,
+      illustration: p.proposed || null, upCount: audit.upCount, required: audit.required, active: audit.active } as Json;
   }
-  if (after.name === 'refused') return { applied: false, refused: true, error: String(p.appliedBy || '').replace(/^refused:/, '') };
+  if (after.name === 'refused') return { applied: false, refused: true, error: String(audit.appliedBy || '').replace(/^refused:/, '') };
   return { applied: false };
 }
 
@@ -530,8 +534,7 @@ async function writeVote(tx: Tx, w: any) {
 
 // The kind's own change, in the transaction that closes the proposal.
 async function applyKind(tx: Tx, w: any, dataKey: string) {
-  const { rows: [issue] } = await tx.query('SELECT * FROM issues WHERE id = $1', [w.issueId]);
-  const p = issue.payload || {};
+  const p = w.payload || {};
   switch (w.kind) {
     case 'rename':
       await tx.query('UPDATE apps SET name = $1 WHERE id = $2', [String(p.newName).trim(), w.appId]);
@@ -557,11 +560,11 @@ async function applyKind(tx: Tx, w: any, dataKey: string) {
         `INSERT INTO maintenance_campaigns (issue_id, title, instructions, target_filter, status, created_by)
          VALUES ($1, $2, $3, $4, 'running', $5)`,
         [w.issueId, w.campaignTitle.slice(0, 300), p.instructions.trim(),
-          targetFilter ? JSON.stringify(targetFilter) : null, issue.created_by]);
+          targetFilter ? JSON.stringify(targetFilter) : null, w.authorId]);
       return;
     }
     case 'secret_change':
-      await applySecret(tx, w, p, issue.created_by, dataKey);
+      await applySecret(tx, w, p, w.authorId, dataKey);
       return;
     default:
       throw new Error(`governance-proposal: no apply for kind ${w.kind}`);

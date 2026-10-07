@@ -542,4 +542,50 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
       await pool.query(`DELETE FROM wf_settings WHERE key = 'ownership_mode'`);
     }
   });
+
+  await t.test('the reply says what the vote did, built from the facts and the outcome', async () => {
+    const a = await app({ approvals: 2 });
+    const [author, v1, v2] = [await user(), await user(), await user()];
+    const i = await issue(a, author, 'rename', { newName: 'Replied' });
+    await file(i);
+    const first = await vote(i, v1, 'up');
+    assert.deepEqual(first.reply.result, { applied: false, awaitingAdmin: false, upCount: 1, required: 2, active: 1,
+      windowEndsAt: first.reply.result.windowEndsAt, waitingForWindow: false, checkingTarget: false });
+    assert.deepEqual((await vote(i, v1, 'up')).reply, { toggled: true }, 'the same vote again takes it back');
+    await vote(i, v1, 'up');
+    const deciding = await vote(i, v2, 'up');
+    assert.deepEqual(deciding.reply.result, { applied: true, newName: 'Replied', illustration: null, upCount: 2, required: 2, active: 1 });
+    // A campaign's id comes from the projection.
+    const one = await app({ approvals: 1 });
+    const c = await issue(one, author, 'maintenance_campaign', { title: 'Reply', instructions: 'Bump deps' });
+    await file(c);
+    const campaign = await vote(c, v1, 'up');
+    const camp = (await pool.query('SELECT id FROM maintenance_campaigns WHERE issue_id = $1', [c.id])).rows[0];
+    assert.equal(campaign.reply.result.campaignId, camp.id);
+    // A row closed outside the machine records no vote and does not answer `toggled`.
+    const outside = await issue(a, author, 'rename', { newName: 'Outside' });
+    await file(outside);
+    await pool.query(`INSERT INTO wf_settings (key, value) VALUES ('ownership_mode', 'log')`);
+    try {
+      await pool.query(`UPDATE issues SET status = 'closed' WHERE id = $1`, [outside.id]);
+    } finally {
+      await pool.query(`DELETE FROM wf_settings WHERE key = 'ownership_mode'`);
+    }
+    const late = await vote(outside, v1, 'up');
+    assert.deepEqual(late.reply, { result: { applied: false, superseded: true } });
+    assert.equal((await pool.query('SELECT 1 FROM issue_votes WHERE issue_id = $1', [outside.id])).rowCount, 0);
+  });
+
+  await t.test('a refusal answers its reason to the vote that decided it', async () => {
+    const a = await app({ approvals: 1 });
+    const author = await user();
+    const ill = await issue(a, author, 'featured_illustration', { proposed: { url: '/api/illustrations/img-gone' } });
+    await pool.query('UPDATE apps SET approvals_required = 2 WHERE id = $1', [a.id]);
+    await file(ill);
+    await pool.query('UPDATE apps SET approvals_required = 1 WHERE id = $1', [a.id]);
+    const refused = await vote(ill, await user(), 'up');
+    assert.equal((await inst(ill)).state, 'refused');
+    assert.match(refused.reply.result.error, /^(no_image|image_unavailable)$/);
+    assert.deepEqual([refused.reply.result.applied, refused.reply.result.refused], [false, true]);
+  });
 });
