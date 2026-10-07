@@ -107,6 +107,11 @@ type Legacy = {
   AppView?: {
     _landOnHub?: (slug: string) => void;
   };
+  // ../auth/phone-first-run.tsx: on a phone, its step comes before this one.
+  PhoneFirstRun?: {
+    comesFirst?: (user: unknown) => boolean;
+    settled: () => Promise<void>;
+  };
   UsernodeReact?: Record<string, unknown>;
 };
 const legacy = (): Legacy => window as unknown as Legacy;
@@ -750,6 +755,13 @@ export function FirstSession() {
       let flagged = false;
       try { flagged = sessionStorage.getItem(MAKE_FLAG) === '1'; } catch { /* no make screen */ }
       if (!flagged) return;
+      // On a phone, the verified-identity rule's phone step comes first
+      // (../auth/phone-first-run.tsx): the make screen opens once it is done.
+      const phone = legacy().PhoneFirstRun;
+      if (now && phone?.comesFirst?.(legacy().App?.user)) {
+        void phone.settled().then(() => check(false));
+        return;
+      }
       try { sessionStorage.removeItem(MAKE_FLAG); } catch { /* shown once anyway */ }
       openMake(setMode, now);
     };

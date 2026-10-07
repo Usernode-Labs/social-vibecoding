@@ -35,11 +35,32 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const Module = require('node:module');
+const { createCompiledCodeCache } = require('./compiled-code-cache');
 
 const ROOT = path.join(__dirname, '..', '..');
 const FRONTEND = path.join(ROOT, 'frontend');
 
 const fromFrontend = (spec) => require(require.resolve(spec, { paths: [FRONTEND] }));
+const compiled = createCompiledCodeCache();
+
+// esbuild reports bundled files. Watch their directories too: adding a file
+// can change extension/index resolution without changing an existing input.
+// Config files may be absent today and appear later, so record those as well.
+function compilationInputs(files) {
+  const inputs = new Set(files);
+  for (const file of files) {
+    let dir = path.dirname(file);
+    while (dir === ROOT || dir.startsWith(ROOT + path.sep)) {
+      inputs.add(dir);
+      inputs.add(path.join(dir, 'tsconfig.json'));
+      inputs.add(path.join(dir, 'package.json'));
+      if (dir === ROOT) break;
+      dir = path.dirname(dir);
+    }
+  }
+  inputs.add(path.join(FRONTEND, 'tsconfig.json'));
+  return [...inputs];
+}
 
 /**
  * Bundle `entry` (a repo-relative .tsx/.ts path) and return its exports.
@@ -51,11 +72,15 @@ const fromFrontend = (spec) => require(require.resolve(spec, { paths: [FRONTEND]
  * `stubs` maps an import specifier, exactly as the source spells it, to the
  * exports that import should receive instead. tests/dialog-suspend-exit.test.js
  * uses it to run a hook against a React it can step through by hand — effects
- * included, which renderToStaticMarkup never runs.
+ * included, which renderToStaticMarkup never runs. Only compilation is
+ * reused: every call evaluates a fresh module with this call's stub values.
+ * Use `cache: false` for tests changing resolution outside the tracked input
+ * tree (for example, an extended tsconfig in another checkout).
  */
-function loadTsx(entry, { stubs = {} } = {}) {
+function loadTsx(entry, { stubs = {}, cache = true } = {}) {
   const esbuild = fromFrontend('esbuild');
-  const result = esbuild.buildSync({
+  const options = {
+    absWorkingDir: ROOT,
     entryPoints: [path.join(ROOT, entry)],
     bundle: true,
     write: false,
@@ -63,13 +88,22 @@ function loadTsx(entry, { stubs = {} } = {}) {
     platform: 'node',
     target: 'node22',
     jsx: 'automatic',
-    external: ['react', 'react-dom', 'react-dom/*', 'react/*', ...Object.keys(stubs)],
+    external: ['react', 'react-dom', 'react-dom/*', 'react/*', ...Object.keys(stubs).sort()],
     // `@/…` is the shell's alias for frontend/@ — the same one
     // frontend/tsconfig.json and vite.config.ts declare.
     alias: { '@': path.join(FRONTEND, '@') },
     logLevel: 'silent',
-  });
-  const code = result.outputFiles[0].text;
+    metafile: true,
+  };
+  const fn = compiled(JSON.stringify(options), () => {
+    const result = esbuild.buildSync(options);
+    const code = result.outputFiles[0].text;
+    return {
+      value: new Function('exports', 'require', 'module', '__filename', '__dirname', code),
+      bytes: Buffer.byteLength(code),
+      inputs: compilationInputs(Object.keys(result.metafile.inputs).map((file) => path.resolve(ROOT, file))),
+    };
+  }, { cache });
 
   const filename = path.join(ROOT, entry);
   const mod = new Module(filename, null);
@@ -79,7 +113,6 @@ function loadTsx(entry, { stubs = {} } = {}) {
   const req = (spec) => (Object.hasOwn(stubs, spec) ? stubs[spec] : fromFrontend(spec));
   req.resolve = (spec) => require.resolve(spec, { paths: [FRONTEND] });
   mod._compile = undefined;
-  const fn = new Function('exports', 'require', 'module', '__filename', '__dirname', code);
   fn(mod.exports, req, mod, filename, path.dirname(filename));
   return mod.exports;
 }
@@ -135,12 +168,16 @@ function renderComponent(entry, exportName, props) {
  */
 function transpileTs(entry) {
   const esbuild = fromFrontend('esbuild');
-  const result = esbuild.transformSync(fs.readFileSync(path.join(ROOT, entry), 'utf8'), {
+  const source = fs.readFileSync(path.join(ROOT, entry), 'utf8');
+  const options = {
     loader: 'ts',
     format: 'esm',
     target: 'node22',
+  };
+  return compiled(JSON.stringify({ transform: path.join(ROOT, entry), options, source }), () => {
+    const { code } = esbuild.transformSync(source, options);
+    return { value: code, bytes: Buffer.byteLength(source) + Buffer.byteLength(code), inputs: [] };
   });
-  return result.code;
 }
 
 module.exports = {

@@ -129,7 +129,16 @@
         && user.needsCommunitiesChoice === true
         && user.storyFirstSession === true
         && user.needsUsernameChoice !== true
+        && !CommunitiesFirstRun._phoneFirst(user)
         && !CommunitiesFirstRun._onInvitePath());
+    },
+
+    // On a phone, a member the verified-identity rule holds to it is asked
+    // for their phone number first (./phone-first-run.tsx), so the make
+    // screen waits for that step instead of opening with the shell.
+    _phoneFirst(user) {
+      const phone = window.PhoneFirstRun;
+      return !!(phone && typeof phone.comesFirst === 'function' && phone.comesFirst(user));
     },
 
     _onInvitePath() {
@@ -276,6 +285,15 @@
       // so a terms sheet left open for ten minutes does not hold this for
       // good.
       for (let i = 0; terms && (terms._inFlight || terms._presented) && i < 2400; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      // Then the phone step (./phone-first-run.tsx), which itself waits for
+      // the terms, the same way and for the same reason.
+      const phone = window.PhoneFirstRun;
+      if (phone && typeof phone.settled === 'function') {
+        try { await phone.settled(); } catch (_) { /* a broken gate must not block this one */ }
+      }
+      for (let i = 0; phone && (phone._inFlight || phone._presented) && i < 2400; i += 1) {
         await new Promise((resolve) => setTimeout(resolve, 250));
       }
     },

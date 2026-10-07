@@ -138,7 +138,8 @@ test('the vote routes refuse a private member on a public app before anything is
   const issueVote = issues.slice(issues.indexOf("router.post('/api/issues/:id/vote'"));
   assert.match(issueVote, /const issue = issueRows\[0\];\s+\/\/ A private member does not vote on a public app \(communities\.js\)\.\s+const privateRefusal = await communities\.privateVoteRefusal\(pool, issue\.app_id, req\.user\?\.id\);/);
   // And every tally and denominator leaves such a vote out (schema.sql).
-  assert.match(read('src/db/schema.sql'), /AND pa\.view_visibility = 'public'\s+\)\s+\$\$;/);
+  // (Followed by the verified-identity clause, tests/verified-identity-shell.test.js.)
+  assert.match(read('src/db/schema.sql'), /AND pa\.view_visibility = 'public'\s+\)\s+AND NOT public_vote_needs_identity\(voter_id, target_app_id\)\s+\$\$;/);
 });
 
 test('the waitlist card\'s routes: a code-mailing join behind the email code\'s limiters, for those still waiting', () => {

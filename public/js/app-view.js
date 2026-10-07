@@ -19818,17 +19818,40 @@ const AppView = {
         return { ...base, tier: 5, key: 'needs_vote', label: 'Waiting for your approval', tone: 'progress', fill: true, dot: true, reasons,
           title: 'Approve it, and it goes live' };
       }
+      // The member floor (#3826): the tally reads full and the vote is
+      // still open, which reads as a mistake. Where this viewer's Yes
+      // would count, theirs is the one it waits on, so the pill says so
+      // instead of repeating a count it just showed. In an invited-
+      // approver app a non-approver's vote is advisory, so it keeps the
+      // plain vote label and only says the floor is unmet.
+      if (yes >= maj && waitsOnMember) {
+        const counts = p.approval_policy !== 'invited';
+        return { ...base, tier: 5, key: 'needs_vote',
+          label: counts ? `Needs your Yes · ${yes}/${maj}` : `Vote · ${yes}/${maj}`,
+          tone: 'progress', fill: true, dot: true, reasons,
+          title: counts
+            ? `It has the Yes votes it needs (${yes} of ${maj}), but none is from another member yet. Your Yes would be it.`
+            : 'It has the Yes votes it needs, but a Yes from another member is still missing.' };
+      }
       return { ...base, tier: 5, key: 'needs_vote', label: `Vote · ${yes}/${maj}`, tone: 'progress', fill: true, dot: true, reasons,
         title: 'You haven’t voted on this yet' };
     }
-    // 6 — plain tally.
-    const outcome = yes >= maj ? (waitsOnMember ? 'progress' : 'ok') : no >= maj ? 'blocked' : 'progress';
+    // 6 — plain tally. The member floor's wait gets WORDS (#3826): the
+    // votes are in, so a bare "3 / 3" reads as passed, and the lock glyph
+    // alone never said why it is not going live. The words are the home
+    // strip's ("Needs another member's Yes", MergeStatus.lifecycle 8a),
+    // with the tally riding as the suffix the contested tier uses, and
+    // the amber the conversation tier wears.
+    if (yes >= maj && waitsOnMember) {
+      return { ...base, tier: 6, key: 'needs_member',
+        label: `Needs another member’s Yes · ${yes}/${maj}`, tone: 'attention', fill: true, reasons,
+        title: AppView._explicitCopy(p.explicit_approval_reason).sentence };
+    }
+    const outcome = yes >= maj ? 'ok' : no >= maj ? 'blocked' : 'progress';
     const activeAtMerge = parseInt(p.active_users_at_merge, 10);
     return { ...base, tier: 6, key: 'tally', label: `${yes} / ${maj}`, tone: outcome, fill: true, reasons,
-      title: (yes >= maj && waitsOnMember)
-        ? AppView._explicitCopy(p.explicit_approval_reason).sentence
-        : (hasSnap && Number.isFinite(activeAtMerge) && activeAtMerge > 0)
-          ? `needed ${snap} of ${activeAtMerge} active users at merge time` : undefined };
+      title: (hasSnap && Number.isFinite(activeAtMerge) && activeAtMerge > 0)
+        ? `needed ${snap} of ${activeAtMerge} active users at merge time` : undefined };
   },
 
   // The pill's MARKUP moved to card/dev-card.tsx (`StatusPill`), which
@@ -21669,6 +21692,17 @@ const AppView = {
   // (the line is in hand and the optimistic paint is about to happen), so
   // a caller can show that it is on its way without claiming it landed.
   // The onclick callers ignore the value, as they always have.
+  // A vote the verified-identity rule refused (identity_required): open the
+  // verify sheet and, once a phone is linked, cast it again. Runs after the
+  // refused call has returned, so its in-flight guard is clear. False when
+  // there is no sheet to open, and the caller says the server's words.
+  _verifyThenVote(again) {
+    const ask = window.UsernodeReact?.verifyIdentity?.ask;
+    if (typeof ask !== 'function') return false;
+    void Promise.resolve(ask()).then((verified) => { if (verified) again(); });
+    return true;
+  },
+
   async castVote(sessionId, vote, expectedEpoch = null, opts = null) {
     // Guard against double-click / mashing: one in-flight vote per session.
     // The server is idempotent on an unchanged vote, but blocking here
@@ -21743,6 +21777,10 @@ const AppView = {
           AppView._seenEpoch.set(sessionId, parseInt(data.approvalEpoch, 10));
         }
         await AppView.refreshDevData('vote');
+        // A public app's vote counts from a verified account: the sheet that
+        // verifies, then the same vote again (features/auth/verify-identity.tsx).
+        if (data.code === 'identity_required' && AppView._verifyThenVote(
+          () => AppView.castVote(sessionId, vote, expectedEpoch, opts))) return false;
         // #1688: a No the server would not take without its line says so in
         // the server's own words rather than as an opaque failure.
         PlatformUI.toast((data.error === 'reason_required' && data.message)
@@ -21845,6 +21883,12 @@ const AppView = {
         // 409 "Issue is not open" is the common one: someone else's vote
         // decided it between this card rendering and the click landing.
         finish();
+        // A public app's vote counts from a verified account (castVote).
+        if (data.code === 'identity_required' && AppView._verifyThenVote(
+          () => AppView.castIssueVote(issueId, vote, opts))) {
+          AppView.refreshDevData('vote');
+          return;
+        }
         // #2603: a No the server would not take without its line says so in
         // the server's own words rather than as an opaque failure.
         PlatformUI.toast((data.error === 'reason_required' && data.message)
