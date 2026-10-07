@@ -555,7 +555,8 @@ test('a live build always records its outcome, against the full PostgreSQL schem
     await pool.query('DELETE FROM homeroom_bot_queue');
   });
 
-  // WP1 (#9): a build a restart sent back to be built again is said, once.
+  // WP1 (#9): a build a restart sent back to be built again is said, once;
+  // one that carries on from its plan is not (#4210).
   await t.test('a plan a restart interrupted is kept: the build goes on from it, and the request is not planned again', async () => {
     bot._resetForTests();
     await pool.query('DELETE FROM homeroom_bot_runs');
@@ -582,7 +583,20 @@ test('a live build always records its outcome, against the full PostgreSQL schem
     assert.deepEqual(kept, { build_ok: null, build_error: null, build_session_id: null, build_spec_md: PLAN, waiting: true },
       'the same run waits for its build again, with its plan');
     assert.deepEqual(await queueRows(), [], 'not sent back to be triaged and planned again');
-    assert.deepEqual(told, [runId], 'its requester hears once that it started again');
+    // #4210: it is still building, so its requester is told nothing; the
+    // interruption is kept for admins instead.
+    assert.deepEqual(told, [], 'its requester is not told: it carries on');
+    const { rows: incidents } = await pool.query(
+      `SELECT app_id, session_id, metadata FROM events
+        WHERE event_type = 'platform_incident' AND metadata->>'runId' = $1`, [String(runId)],
+    );
+    assert.equal(incidents.length, 1, 'recorded for admins');
+    assert.equal(Number(incidents[0].session_id), Number(sessionId));
+    assert.deepEqual([incidents[0].metadata.kind, Number(incidents[0].metadata.runId), incidents[0].metadata.outcome],
+      ['build_interrupted', Number(runId), 'resumed']);
+    const { recent } = require('../src/services/platform-incidents');
+    const listed = await recent(pool);
+    assert.equal(listed.items.find((i) => i.runId === Number(runId))?.outcome, 'resumed', 'and listed in the console');
 
     // The lane hands it over with its plan, and the build is made from it.
     // What the plan cost, as recovery would have recorded it from the

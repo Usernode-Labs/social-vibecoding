@@ -70,6 +70,8 @@ function activity() { return require('./homeroom-bot-activity'); }
 // (services/bot-review.js). Lazy: they read this module's settings.
 function botConfigs() { return require('./bot-configs'); }
 function botReview() { return require('./bot-review'); }
+// #4210: interrupted builds, kept for admins.
+function incidents() { return require('./platform-incidents'); }
 
 // One name, in the live module, which compares thread authors against it.
 const { BOT_USERNAME } = live;
@@ -4308,13 +4310,13 @@ const RESTARTED_BUILD_NOTE = 'by a restart; the issue was sent back to be triage
 // triaged again. Nothing counted them: on 30 Sep, with 85 merges to main and
 // a deploy behind most of them, a request a restart kept catching went round
 // again each time (a new ready run, a new spec on the issue, more spend) and
-// never ended in a proposal or in a word about why. A spec turn that wrote a
-// plan no longer goes round (resumeLiveBuildFromSpec), so this is the
-// backstop for the rest: a worker lost with the restart, a spec turn cut
-// short before it had a plan, a build turn whose time ran out after a
-// restart reached it (restartRanItOut). The third one in a row within the
-// window is not sent back: it is recorded failed and said, as any failed
-// build is, and a reply or Run now starts it again.
+// never ended in a proposal or in a word about why. A build with a plan no
+// longer goes round (resumeLiveBuildFromSpec, #4210), but it is counted all
+// the same: a worker lost with the restart, a spec turn cut short, a build
+// turn whose time ran out after a restart reached it (restartRanItOut). The
+// third one in a row within the window is neither resumed nor sent back: it
+// is recorded failed and said, as any failed build is, and a reply or Run
+// now starts it again.
 const MAX_RESTARTED_BUILDS = 3;
 const RESTARTED_BUILDS_WINDOW_HOURS = 24;
 
@@ -4394,6 +4396,14 @@ async function resumeLiveBuildFromSpec(pool, { runId, appId, specMd, costUsd = n
   }
   wake({ appId });
   return true;
+}
+
+/** The plan a live run kept from an earlier build (resumeLiveBuildFromSpec), or null. Never throws. */
+async function keptRunSpec(pool, runId) {
+  const { rows: [r] = [] } = await pool.query(
+    'SELECT build_spec_md FROM homeroom_bot_runs WHERE id = $1', [Number(runId)],
+  ).catch(() => ({ rows: [] }));
+  return r?.build_spec_md || null;
 }
 
 /** The live run a session is the build of, while it has no proposal or recorded outcome yet. */
@@ -4642,13 +4652,17 @@ async function reviewRecoveredBuild({ pool, config, bot, app, repo, session, pla
  *     restart reached it, is said to have failed;
  *   - a spec turn that found the request impossible says so;
  *   - a spec turn that wrote a plan keeps it, and the build goes on from it
- *     (resumeLiveBuildFromSpec);
- *   - any other spec turn, a build turn whose time ran out after the restart
- *     reached it (restartRanItOut), and a turn recovery could not follow at
- *     all, send the issue back to be triaged again: its queue row is gone,
- *     and without this the issue would sit on "looking into it" for good.
- *     The third such build in a row (MAX_RESTARTED_BUILDS) is said to have
- *     failed instead.
+ *     (resumeLiveBuildFromSpec); so does (#4210) a build turn recovery could
+ *     not follow, or whose time ran out after the restart reached it
+ *     (restartRanItOut), from the plan it was building: nothing is said to
+ *     the person, whose activity card still shows it building;
+ *   - any other spec turn, and a turn with no plan to carry on from, send
+ *     the issue back to be triaged again: its queue row is gone, and
+ *     without this the issue would sit on "looking into it" for good. The
+ *     person is told it started again.
+ *   The third interruption in a row (MAX_RESTARTED_BUILDS), resumed or sent
+ *   back, is said to have failed instead. Each one is recorded for admins
+ *   (platform-incidents.js).
  * Never throws; returns what it did, or null when nothing was noted.
  */
 async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }) {
@@ -4704,34 +4718,53 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
         });
         return 'skipped';
       }
-      // The person it is for hears it once, so a card that goes back a step
-      // is never a mystery (WP1, #9). Never a reason recovery fails.
+      // What interrupted it, for the run and for admins.
+      const what = plan.lost ? (plan.why || 'the turn was lost')
+        : ranOut ? 'the build turn ran out of time after it was cut short'
+          : 'the spec turn was cut short';
+      // #4210: every interruption is kept where admins see it, whatever
+      // became of the build: it is an error that should not happen.
+      const noteIncident = (outcome) => incidents().record(pool, {
+        kind: incidents().KINDS.BUILD_INTERRUPTED, appId: app.id, sessionId: Number(sessionId),
+        detail: { runId: Number(plan.runId), issueNumber: Number(plan.issueNumber), mode: plan.mode || null, why: what, outcome },
+      });
+      // The person it is for hears it only when it has to start over from
+      // the request (WP1, #9): a build that carries on from its plan is
+      // still building, as their activity card shows. Never a reason
+      // recovery fails.
       const sayRestarted = () => (deps.dm || require('./homeroom-bot-dm')).noteBuildRestarted(pool, {
         app, issueNumber: plan.issueNumber, runId: plan.runId,
       }).catch((err) => log.warn('homeroom-bot', 'Could not say a build was started again', { sessionId, err: err.message }));
-      // A spec turn recovery followed to its end with a plan in it: the plan
-      // is kept and the build goes on from it, on the same run, as the shadow
-      // lane's does (finishRecoveredTurn). Thrown away, the request went back
-      // to be triaged and planned from the start, and the next restart could
-      // land in that plan too.
-      if (specRead?.ok && await resumeLiveBuildFromSpec(pool, {
-        runId: plan.runId, appId: plan.appId, specMd: specRead.specMd, costUsd,
-      })) {
-        log.info('homeroom-bot', 'Kept the plan of a live build a restart interrupted; its build goes on from it', {
-          app: app.slug, issueNumber: plan.issueNumber, sessionId,
-        });
-        await sayRestarted();
-        return 'resumed';
-      }
-      const before = await restartedBuildsBefore(pool, plan).catch(() => 0);
+      // Restarts in a row, back to back: the request's earlier builds sent
+      // back, and this run's own builds that carried on from their plan.
+      const before = (await restartedBuildsBefore(pool, plan).catch(() => 0))
+        + await incidents().resumesOfRun(pool, plan.runId, { hours: RESTARTED_BUILDS_WINDOW_HOURS });
       if (before + 1 < MAX_RESTARTED_BUILDS) {
+        // The plan to carry on from: a spec turn recovery followed to its
+        // end with one in it, or (#4210) the plan a build turn was building
+        // from, on its session or kept on its run. Thrown away, the request
+        // went back to be triaged and planned from the start (a new run, a
+        // new spec, the creator asked to Build it again), and the next
+        // restart could land in that plan too. The run keeps its build note,
+        // which holds what the creator approved. A bot session holds a spec
+        // only once its spec turn finished with one (homeroom-bot-live.js
+        // draftSpec publishes it after the turn), so a spec turn cut short
+        // has none to carry on from.
+        const keptSpec = specRead?.ok ? specRead.specMd
+          : session.spec_md || await keptRunSpec(pool, plan.runId);
+        if (keptSpec && await resumeLiveBuildFromSpec(pool, {
+          runId: plan.runId, appId: plan.appId, specMd: keptSpec, costUsd,
+        })) {
+          log.info('homeroom-bot', 'Kept the plan of a live build a restart interrupted; its build goes on from it', {
+            app: app.slug, issueNumber: plan.issueNumber, sessionId, why: what,
+          });
+          await noteIncident('resumed');
+          return 'resumed';
+        }
         // The run says what became of its build: it was interrupted, and the
         // issue goes round again as a new run, which speaks for itself. Left
         // unrecorded, it read as a build with a session and no outcome (run
         // 613), indistinguishable from one still going.
-        const what = plan.lost ? (plan.why || 'the turn was lost')
-          : ranOut ? 'the build turn ran out of time after it was cut short'
-            : 'the spec turn was cut short';
         await recordLiveBuild(pool, plan.runId, {
           ok: false, sessionId: Number(sessionId), costUsd,
           error: `interrupted: ${what} ${RESTARTED_BUILD_NOTE}`,
@@ -4742,9 +4775,11 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
         log.info('homeroom-bot', 'Sent a live issue back to be triaged after a restart', {
           app: app.slug, issueNumber: plan.issueNumber, sessionId, why: what,
         });
+        await noteIncident('requeued');
         await sayRestarted();
         return 'requeued';
       }
+      await noteIncident('failed');
       // Not sent round again: said below as a failed build, so the person
       // hears why, and recorded without RESTARTED_BUILD_NOTE, so their
       // activity card stops on it instead of reading past it.
@@ -6009,7 +6044,13 @@ async function actOnVerdict({
     // B6: a first version waits for its creator's Build it, under the plan
     // they are sent first. When the plan could not reach them, it is built
     // as it was before plans.
-    if (firstVersion && await awaitGo(pool, { runId, app, issueNumber, parsed, bot, deps })) {
+    // #4210: a first version its creator already said Build it to, that a
+    // restart sent back to be read again, is not asked again: it is built
+    // from what they approved.
+    if (firstVersion && await carryApprovedPlan(pool, { runId, appId: app.id, issueNumber })) {
+      await queueLiveBuild(pool, { runId, appId: app.id });
+      acted = 'build_queued';
+    } else if (firstVersion && await awaitGo(pool, { runId, app, issueNumber, parsed, bot, deps })) {
       acted = 'awaiting_go';
     } else {
       // Built after this turn, in a slot of its own (buildLive, started by
@@ -6131,6 +6172,41 @@ async function awaitGo(pool, { runId, app, issueNumber, parsed, bot, deps = {} }
   }
   await pool.query('UPDATE homeroom_bot_runs SET awaiting_go_at = NULL WHERE id = $1', [runId]).catch(() => {});
   return false;
+}
+
+/**
+ * #4210: when the request's previous live run is a first version its creator
+ * approved (Build it: its plan has `chosen`) and a restart sent it back to be
+ * read again (RESTARTED_BUILD_NOTE), carry what they approved onto this run:
+ * its plan, and the bullets and answers in its build note. Resolves true when
+ * it did, so the caller builds without sending the plan card again. Never
+ * throws.
+ */
+async function carryApprovedPlan(pool, { runId, appId, issueNumber }) {
+  try {
+    const { rows: [prev] = [] } = await pool.query(
+      `SELECT id, plan, build_error FROM homeroom_bot_runs
+        WHERE app_id = $1 AND issue_number = $2 AND mode = 'live' AND id < $3
+        ORDER BY id DESC LIMIT 1`,
+      [appId, issueNumber, runId],
+    );
+    if (!prev || !Array.isArray(prev.plan?.chosen)) return false;
+    if (!String(prev.build_error || '').endsWith(RESTARTED_BUILD_NOTE)) return false;
+    const note = creatorChoiceNote(prev.plan.chosen, { bullets: prev.plan.bullets });
+    const { rowCount } = await pool.query(
+      `UPDATE homeroom_bot_runs SET build_note = CONCAT(build_note, $2::text), plan = $3::jsonb
+        WHERE id = $1 AND build_ok IS NULL AND build_session_id IS NULL AND awaiting_go_at IS NULL`,
+      [runId, note, JSON.stringify(prev.plan)],
+    );
+    if (!rowCount) return false;
+    log.info('homeroom-bot', 'A first version a restart sent back keeps the plan its creator approved', {
+      appId, issueNumber, runId, from: Number(prev.id),
+    });
+    return true;
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not carry an approved plan across a restart', { appId, issueNumber, runId, err: err.message });
+    return false;
+  }
 }
 
 /**
@@ -8015,6 +8091,9 @@ async function adminPayload(pool, config, {
     // Before it is on for everyone: whether it is working, over the last
     // week (homeroom-bot-health.js).
     health: await require('./homeroom-bot-health').rolloutHealth(pool, { botUsername: BOT_USERNAME }),
+    // #4210: errors that should not happen (a build a restart cut short),
+    // the last week's, newest first (platform-incidents.js).
+    incidents: await incidents().recent(pool),
   };
 }
 
@@ -8437,6 +8516,7 @@ module.exports = {
   creatorChoiceNote,
   awaitGo,
   goAhead,
+  carryApprovedPlan,
   retireWaitingPlans,
   settleStalePlans,
   planChangesFor,
