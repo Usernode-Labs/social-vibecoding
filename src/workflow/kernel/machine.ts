@@ -62,6 +62,7 @@ export interface Machine<S extends State = State, F = unknown> {
   readonly decode: MachineDefinition<S, F>['decode'];
   readonly facts?: MachineDefinition<S, F>['facts'];
   readonly project?: MachineDefinition<S, F>['project'];
+  readonly reply?: MachineDefinition<S, F>['reply'];
   entryFor(state: string, type: string): TableEntry<S, F>;
   check(event: Event<any>, facts: F, state: S): Check;
 }
@@ -122,6 +123,7 @@ export function defineMachine<S extends State, F>(def: MachineDefinition<S, F>):
     decode: def.decode,
     facts: def.facts,
     project: def.project,
+    reply: def.reply,
     entryFor(state: string, type: string): TableEntry<S, F> {
       const row = transitions.get(state);
       if (state === NONE) return row?.get(type) || row?.get('*') || { ignore: 'no_instance' };

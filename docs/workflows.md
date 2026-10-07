@@ -99,6 +99,14 @@ row into `wf_events` and notifies the slots. An undeclared type is refused right
 3 s for the outcome. If the outcome is not there yet, the route answers `202` with the
 request key, and a retry with the same key returns the original result once it exists.
 
+**Answers.** A route answers from the outcome's `reply`, never by reading the tables
+afterwards. A machine that answers routes defines `reply(tx, event, after, ctx)`:
+- **When it runs.** In the event's transaction, after the writes and the projection.
+- **Where it is stored.** With the event and its receipt.
+- **On a replay.** A replayed request returns the stored reply. A route that reads the
+  tables later would describe today's state instead (a vote since retracted, counts
+  that moved on).
+
 **Consuming.** A free slot:
 
 1. picks an instance with a pending event that is not faulted and not in backoff;
@@ -113,8 +121,8 @@ request key, and a retry with the same key returns the original result once it e
    3. **Authorise, then guard.** A rejection marks the event `rejected` with its reason
       and writes **no receipt**, so a later retry with the same key can still succeed.
    4. **Transition.** It returns the outcome, and the next state must be declared.
-   5. **Persist,** in this order: the instance row, domain writes, projection, receipt,
-      work items, messages, and the event's own result.
+   5. **Persist,** in this order: the instance row, domain writes, projection, the
+      machine's reply, receipt, work items, messages, and the event's own result.
 5. commits, then wakes whoever waits for the outcome and runs the notifications (WebSocket
    pushes, which may be lost in a crash because the next read refreshes the client).
 
@@ -158,6 +166,10 @@ A service is a `WorkHandler` registered for a kind:
 - **A lease does not fence the outside world.** An earlier attempt may still be running,
   so handlers checkpoint before creating anything and treat "already done" (a 404 or 410
   on a close) as success.
+- **A retry the machine asks for keeps the progress.** A work request may name an earlier
+  item of the same kind with `continues: '<work key>'`. The new item then starts from that
+  item's last checkpoint, so a manual retry of a close that already commented does not
+  comment again. Without `continues`, a new key starts fresh.
 
 ## Timers and messages
 
@@ -278,6 +290,7 @@ defineMachine<State, Facts>({
   },
   writes: { vote: writeVote, chat: writeChat, apply: applyKind },   // named domain writes
   project: async (tx, before, after) => { /* UPDATE issues ... */ },
+  reply: async (tx, event, after) => ({ result: ... }),   // the routes' answer, replayed as recorded
   notifiers: { issueUpdate, ... },    // post-commit pushes
 });
 ```

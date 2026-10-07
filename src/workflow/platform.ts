@@ -144,24 +144,9 @@ const RESULT_KEYS = new Map([
   ['maintenance_campaign', 'campaignStarted'], ['featured_illustration', 'illustrationChanged'],
 ]);
 
-// The per-kind result object the client has always read off a vote or an
-// admin apply: { applied, superseded, refused, awaitingAdmin, ... }.
-async function kindResult(issueId: number): Promise<Record<string, unknown>> {
-  const [{ rows: [inst] }, { rows: [issue] }] = await Promise.all([
-    kernelPool!.query('SELECT state, data FROM wf_instances WHERE machine = $1 AND key = $2', [MACHINE, issueKey(issueId)]),
-    kernelPool!.query('SELECT kind, payload FROM issues WHERE id = $1', [issueId]),
-  ]);
-  const p = issue?.payload || {};
-  if (inst?.state === 'applied') {
-    return { applied: true, issueNumber: p.issueNumber, newName: p.newName, campaignId: p.campaignId,
-      illustration: p.proposed || null, upCount: p.upCount, required: p.required, active: p.active };
-  }
-  if (inst?.state === 'superseded') return { applied: false, superseded: true };
-  if (inst?.state === 'refused') return { applied: false, refused: true, error: String(p.appliedBy || '').replace(/^refused:/, '') };
-  const e = inst?.data?.evaluation || {};
-  return { applied: false, awaitingAdmin: e.waiting === 'awaiting_admin', upCount: e.yes, required: e.required,
-    active: e.active, windowEndsAt: e.windowEndsAt, waitingForWindow: e.waiting === 'waiting_for_window' };
-}
+// What the machine recorded as its answer (VoteCast, AdminApply): either
+// { toggled: true } or { result: <the per-kind result the client reads> }.
+const answer = (outcome: EventOutcome) => (outcome.reply || {}) as { toggled?: boolean; result?: Record<string, unknown> };
 
 export async function voteOnProposal(
   issue: { id: number; app_id: number; kind: string },
@@ -174,9 +159,9 @@ export async function voteOnProposal(
   }, { requestKey: vote.requestKey || `vote:${user.id}:${randomUUID()}`, source: { kind: 'route', name: 'vote' }, actor: `user:${user.id}`, appId: issue.app_id });
   const refused = failed(outcome);
   if (refused) return refused;
-  const { rows } = await kernelPool!.query('SELECT 1 FROM issue_votes WHERE issue_id = $1 AND user_id = $2', [issue.id, user.id]);
-  if (!rows.length) return { status: 200, body: { ok: true, toggled: true } };
-  return { status: 200, body: { ok: true, [RESULT_KEYS.get(issue.kind)!]: await kindResult(issue.id) } };
+  const { toggled, result } = answer(outcome);
+  if (toggled) return { status: 200, body: { ok: true, toggled: true } };
+  return { status: 200, body: { ok: true, [RESULT_KEYS.get(issue.kind)!]: result ?? null } };
 }
 
 export async function withdrawProposal(issue: { id: number; app_id: number }, user: { id: number; username: string }): Promise<Reply> {
@@ -199,7 +184,7 @@ export async function adminApplyProposal(
   if (outcome.status === 'rejected' && outcome.reason === 'no_instance') return REJECTIONS.get('not_open')!;
   const refused = failed(outcome);
   if (refused) return refused;
-  const applied = await kindResult(issue.id);
+  const applied = answer(outcome).result ?? null;
   return { status: 200, body: { ok: true, applied, secretChanged: issue.kind === 'secret_change' ? applied : null } };
 }
 

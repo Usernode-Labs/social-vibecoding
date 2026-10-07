@@ -68,7 +68,9 @@ function counter({ name = 'kt-counter', version = 1 } = {}) {
         Work: {
           to: (s, e) => ({
             ...same(s, { expect: e.payload.workKey }),
-            work: (e.payload.keys || [e.payload.workKey]).map((key) => ({ kind: 'kt.echo', key, input: { mode: e.payload.mode || 'ok' } })),
+            work: (e.payload.keys || [e.payload.workKey]).map((key) => ({
+              kind: 'kt.echo', key, input: { mode: e.payload.mode || 'ok' }, ...(e.payload.continues ? { continues: e.payload.continues } : {}),
+            })),
           }),
         },
         WorkSucceeded: {
@@ -102,6 +104,12 @@ function counter({ name = 'kt-counter', version = 1 } = {}) {
         `INSERT INTO kt_legacy (key, status, payload) VALUES ($1, $2, jsonb_build_object('appliedAt', $3::int))
          ON CONFLICT (key) DO UPDATE SET status = EXCLUDED.status, payload = kt_legacy.payload || EXCLUDED.payload`,
         [ctx.key, `${after.name}:${after.data.count}`, ctx.version]);
+    },
+    // The producer's answer, read in the transaction after the projection.
+    async reply(tx, event, after, ctx) {
+      if (event.type !== 'Add') return undefined;
+      const { rows: [l] } = await tx.query('SELECT status FROM kt_legacy WHERE key = $1', [ctx.key]);
+      return { count: after.data.count, projected: l.status };
     },
     notifiers: { counted: () => { notified++; } },
   });
@@ -456,6 +464,26 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     assert.equal((await pool.query(`SELECT count(*)::int AS n FROM wf_events WHERE key = 'k7' AND type LIKE 'Work%ed'`)).rows[0].n, 1);
   });
 
+  await t.test('K7 a work item that continues an earlier one starts from its checkpoint', async () => {
+    await create('k7c');
+    const seen = new Map();
+    handlers['k7c-1'] = async (ctx) => {
+      await ctx.checkpoint({ closed: true, commented: true });
+      throw Object.assign(new Error('after the comment'), { permanent: true });
+    };
+    handlers['k7c-2'] = handlers['k7c-3'] = async (ctx) => { seen.set(ctx.key, ctx.resumeFrom); return { done: true }; };
+    await route('k7c', 'Work', { workKey: 'k7c-1' });
+    await rt.drain();
+    await rt.runServices();
+    await rt.drain();
+    await route('k7c', 'Work', { workKey: 'k7c-2', continues: 'k7c-1' });
+    await route('k7c', 'Work', { workKey: 'k7c-3' });
+    await rt.drain();
+    await rt.runServices();
+    assert.deepEqual(seen.get('k7c-2'), { closed: true, commented: true }, 'the continuing item resumes');
+    assert.equal(seen.get('k7c-3'), null, 'an item that names nothing starts fresh');
+  });
+
   await t.test('K8/K13 retries are bounded and reported; accepted work runs with admission off', async () => {
     await create('k8');
     await route('k8', 'Work', { workKey: 'k8-fail', mode: 'fail' });
@@ -569,6 +597,9 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     assert.equal(waiting.requestKey, 'k17-a');
     await rt.drain();
     assert.equal((await event(waiting.eventId)).result, 'accepted');
+    // State moves on; the replay below still answers with the original reply.
+    await route('k17', 'Add', { n: 5 });
+    await rt.drain();
     const r = make({ slots: 1 });
     await r.start({ loops: true });
     const started = Date.now();
@@ -576,6 +607,8 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
       { requestKey: 'k17-a', source: { kind: 'route' }, actor: 'user:1', waitMs: 5000 });
     assert.equal(replay.status, 'replayed');
     assert.equal(replay.version, 2);
+    assert.deepEqual(replay.reply, { count: 1, projected: 'active:1' }, 'the reply recorded with the receipt');
+    assert.equal((await inst('k17')).data.count, 6);
     const fresh = await r.appendAndWait(machine, 'k17', { type: 'Add', payload: { n: 0 } },
       { requestKey: 'k17-b', source: { kind: 'route' }, actor: 'user:1', waitMs: 5000 });
     assert.deepEqual([fresh.status, fresh.reason], ['rejected', 'not_positive']);

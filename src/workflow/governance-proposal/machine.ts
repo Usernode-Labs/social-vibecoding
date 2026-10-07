@@ -301,7 +301,12 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
         const prev = s.data.followups[e.payload.workKey] as Followup;
         const key = `${e.payload.workKey.replace(/~\d+$/, '')}~${ctx.version + 1}`;
         const followups = { ...s.data.followups, [e.payload.workKey]: { ...prev, status: 'retried' }, [key]: { ...prev, status: 'pending' } };
-        return { next: { name: s.name, data: { ...s.data, followups } }, work: [{ kind: prev.kind, key, input: prev.input }] };
+        // The retry starts from the failed item's checkpoint: a close that
+        // already commented does not comment again.
+        return {
+          next: { name: s.name, data: { ...s.data, followups } },
+          work: [{ kind: prev.kind, key, input: prev.input, continues: e.payload.workKey }],
+        };
       },
     },
   } as const;
@@ -416,11 +421,39 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
           WHERE i.id = $1`,
         [data.issueId, JSON.stringify(data.audit), after.name === 'applied']);
     },
+    // What the vote and admin-apply routes answer, recorded with the receipt
+    // so a retried request gets the answer it got the first time.
+    async reply(tx, event, after): Promise<Json | undefined> {
+      if (event.type !== 'VoteCast' && event.type !== 'AdminApply') return undefined;
+      const issueId = (after.data as OpenData | ClosedData).issueId;
+      if (event.type === 'VoteCast') {
+        const { rowCount } = await tx.query('SELECT 1 FROM issue_votes WHERE issue_id = $1 AND user_id = $2', [issueId, event.payload.userId]);
+        if (!rowCount) return { toggled: true };
+      }
+      return { result: await kindResult(tx, issueId, after) };
+    },
     notifiers: deps.notifiers,
   });
 }
 
 // ── Domain writes ───────────────────────────────────────────────────────
+
+// The per-kind result the client has always read off a vote or an admin
+// apply: { applied, superseded, refused, awaitingAdmin, ... }. Read after the
+// projection, so an applied row's audit (and a campaign's id) is in place.
+async function kindResult(tx: Tx, issueId: number, after: GovState): Promise<Json> {
+  const { rows: [issue] } = await tx.query('SELECT payload FROM issues WHERE id = $1', [issueId]);
+  const p = issue?.payload || {};
+  if (after.name === 'applied') {
+    return { applied: true, issueNumber: p.issueNumber, newName: p.newName, campaignId: p.campaignId,
+      illustration: p.proposed || null, upCount: p.upCount, required: p.required, active: p.active };
+  }
+  if (after.name === 'superseded') return { applied: false, superseded: true };
+  if (after.name === 'refused') return { applied: false, refused: true, error: String(p.appliedBy || '').replace(/^refused:/, '') };
+  const e: Partial<Evaluation> = (after.name === 'open' && after.data.evaluation) || {};
+  return { applied: false, awaitingAdmin: e.waiting === 'awaiting_admin', upCount: e.yes, required: e.required,
+    active: e.active, windowEndsAt: e.windowEndsAt, waitingForWindow: e.waiting === 'waiting_for_window' } as Json;
+}
 
 async function writeVote(tx: Tx, w: any) {
   if (!w.vote) {

@@ -48,7 +48,7 @@ export async function append(
 
 export async function readOutcome(db: Queryable, eventId: number): Promise<EventOutcome | null> {
   const { rows } = await db.query(
-    `SELECT id, status, result, reason, state_after, version_after, request_key
+    `SELECT id, status, result, reason, state_after, version_after, request_key, reply
        FROM wf_events WHERE id = $1`, [eventId]);
   const row = rows[0];
   if (!row) return null;
@@ -59,6 +59,7 @@ export async function readOutcome(db: Queryable, eventId: number): Promise<Event
     reason: row.reason,
     state: row.state_after,
     version: row.version_after == null ? null : Number(row.version_after),
+    reply: row.reply ?? null,
   };
 }
 

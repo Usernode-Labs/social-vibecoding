@@ -57,7 +57,15 @@ export interface TransitionContext {
 }
 
 export interface DomainWrite { type: string; [field: string]: unknown }
-export interface WorkRequest { kind: string; key: string; input: Json; notBefore?: Date }
+export interface WorkRequest {
+  kind: string;
+  key: string;
+  input: Json;
+  notBefore?: Date;
+  // The key of an earlier item of the same kind on this instance: the new
+  // item starts from that item's last checkpoint (a retry keeps the progress).
+  continues?: string;
+}
 export interface MessageRequest {
   to: { machine: string; key: string };
   event: { type: string; payload: Json };
@@ -116,6 +124,10 @@ export interface MachineDefinition<S extends State = State, F = unknown> {
   transitions: Record<string, Record<string, TableEntry<S, F>>>;
   writes?: Record<string, WriteHandler>;
   project?: (tx: Tx, before: S, after: S, ctx: TransitionContext) => Promise<void>;
+  // The answer for whoever produced the event, built in its transaction after
+  // the writes and the projection. It is recorded with the event and its
+  // receipt, so a replay returns the original answer, not today's.
+  reply?: (tx: Tx, event: Event<any>, after: S, ctx: TransitionContext) => Promise<Json | undefined>;
   notifiers?: Record<string, Notifier>;
 }
 
@@ -146,4 +158,5 @@ export interface EventOutcome {
   reason?: string | null;
   state?: string | null;
   version?: number | null;
+  reply?: Json | null;      // the machine's reply, for accepted and replayed events
 }

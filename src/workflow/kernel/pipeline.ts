@@ -153,15 +153,16 @@ async function tryInstance(opts: PipelineOptions, c: Candidate): Promise<number 
 
 async function finishEvent(client: PoolClient, eventId: number, fields: {
   result: string; reason?: string | null; version: number; stateBefore: string; stateAfter: string;
-  versionAfter: number | null; emitted?: Json;
+  versionAfter: number | null; emitted?: Json; reply?: Json | null;
 }): Promise<void> {
   await client.query(
     `UPDATE wf_events SET status = 'processed', result = $2, reason = $3, machine_version = $4,
-            state_before = $5, state_after = $6, version_after = $7, emitted = $8,
+            state_before = $5, state_after = $6, version_after = $7, emitted = $8, reply = $9,
             retry_at = NULL, processed_at = clock_timestamp()
       WHERE id = $1`,
     [eventId, fields.result, fields.reason ?? null, fields.version, fields.stateBefore, fields.stateAfter,
-      fields.versionAfter, fields.emitted === undefined ? null : JSON.stringify(fields.emitted)]);
+      fields.versionAfter, fields.emitted === undefined ? null : JSON.stringify(fields.emitted),
+      fields.reply == null ? null : JSON.stringify(fields.reply)]);
   await client.query(`SELECT pg_notify('wf_outcome', $1)`, [String(eventId)]);
 }
 
@@ -201,7 +202,7 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, instan
     await dropPlaceholder();
     await finishEvent(client, eventId, {
       ...base, result: 'replayed', stateAfter: receipt.outcome.state, versionAfter: receipt.outcome.version,
-      emitted: { replayOf: Number(receipt.event_id) },
+      emitted: { replayOf: Number(receipt.event_id) }, reply: receipt.outcome.reply ?? null,
     });
     return [];
   }
@@ -266,23 +267,26 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, instan
     await handler(tx, write, after);
   }
   if (machine.project) await machine.project(tx, state, outcome.next, after);
+  const reply = (machine.reply ? await machine.reply(tx, event, outcome.next, after) : undefined) ?? null;
   if (tx.poisoned) throw tx.poisoned;
+  assertJson(reply);
   await client.query(
     `INSERT INTO wf_receipts (machine, key, request_key, payload_hash, outcome, event_id)
      VALUES ($1, $2, $3, $4, $5, $6)`,
     [machine.name, instance.key, row.request_key, hash,
-      JSON.stringify({ state: outcome.next.name, version: next }), eventId]);
+      JSON.stringify({ state: outcome.next.name, version: next, reply }), eventId]);
   const work = [];
   for (const w of outcome.work || []) {
     assertJson(w.input);
     const { rows: [created] } = await client.query(
       `WITH ins AS (
-         INSERT INTO wf_work (machine, key, kind, work_key, input, due_at, caused_by)
-         VALUES ($1, $2, $3, $4, $5, COALESCE($6::timestamptz, now()), $7)
+         INSERT INTO wf_work (machine, key, kind, work_key, input, due_at, caused_by, checkpoint)
+         VALUES ($1, $2, $3, $4, $5, COALESCE($6::timestamptz, now()), $7,
+                 (SELECT checkpoint FROM wf_work WHERE machine = $1 AND key = $2 AND kind = $3 AND work_key = $8))
          ON CONFLICT (machine, key, kind, work_key) DO NOTHING
          RETURNING id)
        SELECT id, pg_notify('wf_work', $3) FROM ins`,
-      [machine.name, instance.key, w.kind, w.key, JSON.stringify(w.input), w.notBefore ?? null, eventId]);
+      [machine.name, instance.key, w.kind, w.key, JSON.stringify(w.input), w.notBefore ?? null, eventId, w.continues ?? null]);
     work.push({ kind: w.kind, key: w.key, id: created?.id ?? null });
   }
   const messages = [];
@@ -299,7 +303,7 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, instan
     messages.push({ machine: m.to.machine, key: m.to.key, type: m.event.type, eventId: Number(sent.id) });
   }
   await finishEvent(client, eventId, {
-    ...base, result: 'accepted', stateAfter: outcome.next.name, versionAfter: next,
+    ...base, result: 'accepted', stateAfter: outcome.next.name, versionAfter: next, reply,
     emitted: {
       writes: (outcome.writes || []).map((w) => w.type),
       work, messages,

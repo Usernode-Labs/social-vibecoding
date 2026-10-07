@@ -81,9 +81,13 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
   const work = { calls: [], fail: new Set(), result: {} };
   const fake = (kind) => ({
     maxAttempts: 2, backoffMs: () => 0,
-    async run({ input, key }) {
-      work.calls.push({ kind, key, input });
-      if (work.fail.has(kind)) throw new Error(`${kind} down`);
+    async run({ input, key, resumeFrom, checkpoint }) {
+      work.calls.push({ kind, key, input, resumeFrom });
+      if (work.fail.has(kind)) {
+        // Progress made before the failure, as the real close-and-comment does.
+        if (!resumeFrom) await checkpoint({ closed: true, commented: true });
+        throw new Error(`${kind} down`);
+      }
       return work.result[kind] || { ok: true };
     },
   });
@@ -244,6 +248,10 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
     const retried = Object.entries(s.data.followups).find(([k]) => k.startsWith('target~'));
     assert.equal(s.data.followups.target.status, 'retried');
     assert.equal(retried[1].status, 'done');
+    // The retry resumed from the failed attempts' checkpoint: no second comment.
+    const last = work.calls.filter((c) => c.kind === 'github.closeIssue').at(-1);
+    assert.equal(last.key, retried[0]);
+    assert.deepEqual(last.resumeFrom, { closed: true, commented: true });
   });
 
   await t.test('G6 time alone applies a proposal through its own timer; the backstop is armed', async () => {

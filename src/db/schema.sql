@@ -12350,6 +12350,7 @@ CREATE TABLE IF NOT EXISTS wf_events (
   state_after     TEXT,
   version_after   BIGINT,
   emitted         JSONB,
+  reply           JSONB,           -- the machine's answer to the producer (kernel reply hook)
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   processed_at    TIMESTAMPTZ,
   CONSTRAINT wf_events_processed_shape

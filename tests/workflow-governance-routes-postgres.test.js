@@ -246,6 +246,22 @@ test('governance routes through the workflow machine', { timeout: 120000 }, asyn
     assert.deepEqual([closed.status, closed.body.error], [409, 'Issue is not open']);
   });
 
+  await t.test('a replayed vote answers what it answered the first time', async () => {
+    const keyed = (k) => (h) => (h === 'Idempotency-Key' ? k : undefined);
+    await pool.query('UPDATE apps SET approvals_required = 5 WHERE id = $1', [app.id]);
+    const i = await issue('close_issue', { issueNumber: 34, issueTitle: 'n' });
+    const voter = await user();
+    const up = await call(vote, { params: { id: String(i.id) }, body: { vote: 'up' }, user: voter, get: keyed('vote-up') });
+    assert.equal(up.status, 200, JSON.stringify(up.body));
+    assert.equal(up.body.issueClosed.upCount, 1);
+    const retract = await call(vote, { params: { id: String(i.id) }, body: { vote: 'up' }, user: voter, get: keyed('vote-retract') });
+    assert.deepEqual(retract.body, { ok: true, toggled: true });
+    const replay = await call(vote, { params: { id: String(i.id) }, body: { vote: 'up' }, user: voter, get: keyed('vote-up') });
+    assert.deepEqual([replay.status, replay.body], [200, up.body], 'the original answer, not toggled');
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM issue_votes WHERE issue_id = $1', [i.id])).rows[0].n, 0,
+      'and the replay changed nothing');
+  });
+
   await t.test('the workflow pool survives the server dropping its idle connections', async () => {
     await new Promise((res) => setTimeout(res, 100));
     const { rows } = await pool.query(
