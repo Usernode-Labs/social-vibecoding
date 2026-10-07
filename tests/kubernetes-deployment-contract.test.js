@@ -140,6 +140,14 @@ test('Kubernetes enables before & after shots by default with one explicit kill 
     'Helm default treats boolean false as empty and would defeat the kill switch');
 });
 
+test('Kubernetes passes the workflow governance flag through, off by default', () => {
+  const platform = read('deploy/helm/social-vibecoding-platform/templates/platform.yaml');
+  const values = read('deploy/helm/social-vibecoding-platform/values.yaml');
+  assert.match(values, /workflowGovernanceEnabled: false/);
+  assert.match(platform,
+    /name: WF_GOVERNANCE_ENABLED, value: \{\{ \.Values\.platform\.workflowGovernanceEnabled \| quote \}\}/);
+});
+
 test('Kubernetes workflow resolves all three images before publishing a release', () => {
   const workflow = read('.github/workflows/build-kubernetes-images.yml');
   const workerDockerfile = read('worker/Dockerfile');

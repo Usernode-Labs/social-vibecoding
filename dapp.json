@@ -256,7 +256,7 @@
       "key": "WF_GOVERNANCE_ENABLED",
       "group": "Proposals & retention",
       "default": "false",
-      "description": "The workflow governance-proposal machine (src/workflow/, docs/workflows.md). true: it decides governance proposals (votes, applying, withdrawals, refusals) and the governance-apply ticker and the sweeper's Pass 0b leave them alone; open proposals are enrolled at boot. false (default): the old paths decide. Turning it off and on again is safe."
+      "description": "The workflow governance-proposal machine (docs/workflows.md). true: it decides governance proposals and the governance-apply ticker and the sweeper's Pass 0b leave them alone; open proposals are enrolled at boot. false (default): the old paths decide. Turning it off and on again is safe. On Kubernetes, set by the Helm value platform.workflowGovernanceEnabled."
     },
     {
       "key": "WF_SLOTS",

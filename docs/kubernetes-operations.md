@@ -267,6 +267,50 @@ existing `SQL_CHECK_CONNECTION_URL` supplied by the unit runner. It never falls
 back to the application's `DATABASE_URL`. Kubernetes termination and cancellation
 are covered by `tests/kubernetes-preview-cancellation.test.js` with API doubles.
 
+## Workflow governance machine
+
+`platform.workflowGovernanceEnabled` (default `false`) becomes `WF_GOVERNANCE_ENABLED`.
+When it is on, the governance-proposal machine in `src/workflow/` decides governance
+proposals. The governance-apply ticker and the stale sweeper's Pass 0b then leave those
+proposals alone. `docs/workflows.md` explains the machine and where it runs.
+
+- **Where it runs.** The machine runs inside the platform Pod; there is no extra
+  workload. Every Pod listens for outcomes, and only the advisory-lock leader runs the
+  loops.
+- **Schema.** The schema it needs (`wf_*` tables and triggers) is additive and ships
+  with every release, whether the flag is on or off.
+
+### Activation and rollback
+
+Unlike the coordinated preview lifecycle, an ordinary rolling change is safe in both
+directions. No maintenance window or scale-to-zero is needed.
+
+1. **Set the value.** Set `platform.workflowGovernanceEnabled: true` in the platform's
+   values in the infra repository. Argo CD rolls the Deployment with the same image.
+2. **During the rollout overlap.**
+   - The old Pod may still be the leader and apply proposals the old way.
+   - The machine and the old apply functions both lock the proposal's row, so
+     whichever commits first applies it. The machine ends the other's instance
+     `superseded` (`closed_outside`).
+   - Until the new Pod is leader, its governance routes answer `202`. The vote or
+     withdrawal is recorded and applied once the loops start.
+3. **Verify.**
+   - **The new Pod's log.** It shows `Workflow runtime started` and, on the leader,
+     `Enrolled open governance proposals` with a count.
+   - **Admin → Workflows.** It lists the enrolled proposals, and its problems panel
+     is empty.
+   - **Votes.** A vote on a test proposal answers at once.
+4. **Watch for old writers.** In production the ownership trigger logs instead of
+   refusing (`WF_OWNERSHIP_MODE` defaults to `log`). Over the following days,
+   `wf_ownership_violations` should stay empty. A row there names a code path that
+   still writes a governance proposal outside the machine.
+
+**Rollback.** Set the value back to `false` and let Argo CD roll the Deployment.
+- **What happens to the proposals.** The old paths decide them again. The trigger
+  stops guarding them as soon as the new Pods record the flag off.
+- **Turning it on again later is safe.** A proposal decided or deleted in the
+  meantime ends its instance without being applied twice.
+
 ## Read-only inventory and logs
 
 These examples use the organization namespace and Deployment names. Substitute

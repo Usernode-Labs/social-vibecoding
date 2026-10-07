@@ -320,35 +320,73 @@ append and answer with the outcome.
 
 ## Running it
 
+**Where it runs.** The workflow runtime runs inside the platform process. There is no
+separate workflow Pod.
+
 - **Every process** records its flags in `wf_settings` at boot (`startWorkflow` in
-  `server.js`). With a flag on, it also starts the runtime and listens for outcomes, so
-  routes can wait for them. With every flag off, nothing else starts.
+  `server.js`). With a flag on, it also starts the runtime on its own pool
+  (`application_name` `homeroom-workflow`) and listens for outcomes, so routes can wait
+  for them. With every flag off, nothing else starts.
 - **The leader** also runs the loops (`startWorkflowLoops` in `becomeLeader`):
   - pipeline slots;
   - the timer and retention loop;
   - service loops;
   - a backfill that enrolls open rows the machine does not hold yet.
-- **A staging preview** never stands for election, so it runs the loops itself.
+- **A staging preview** never stands for election, so it runs the loops itself. A
+  preview has no GitHub credentials and no app fleet, so its work items fail and show in
+  Admin → Workflows, where [main]'s inline calls only failed in the logs.
 
-Correctness does not depend on the leader: the loops can run in more processes later
-without code changes.
+Correctness does not depend on the leader: the loops can move to more processes, or to a
+Deployment of their own, without changing the machines.
 
-| Variable | Default | Meaning |
-|---|---|---|
-| `WF_GOVERNANCE_ENABLED` | `false` | The governance-proposal machine decides governance proposals. The ticker and the sweeper's Pass 0b leave them alone. |
-| `WF_SLOTS` | 4 (2 on a staging preview) | Pipeline slots in the leader. |
-| `WF_POOL_MAX` | 6 (3 on a staging preview) | Connections in the runtime's own pool. Keep it above `WF_SLOTS`. |
-| `WF_OWNERSHIP_MODE` | `log` in production, `raise` elsewhere | What a write to an owned column from outside the machine does. |
+**Moving the loops to their own Deployment** is planned before the preview and checks
+machine, which drives far more external calls. It needs:
+- an entry point that starts the runtime with its loops and no HTTP server;
+- a second Deployment in the chart (same image, that command), with the web Pods no
+  longer running the loops;
+- a relay for the post-commit pushes. `pushIssueUpdate` and the other WebSocket
+  broadcasts reach only clients connected to the same process, so a separate Pod would
+  publish them (for example with Postgres `NOTIFY`) for the web Pods to re-broadcast;
+- a check of every post-commit call that relies on the platform Pod's Kubernetes
+  permissions or locks: the campaign start and the production rebuild.
 
-All four are declared in `dapp.json`'s `platform_env`.
+### In production (Kubernetes)
 
-**Turning a machine on.**
+- **The workloads.** Production is the `social-vibecoding-platform` Deployment, deployed
+  by Argo CD from the Helm chart in `deploy/helm/` with values from the infra repository.
+  It runs one replica (`platform.replicas`).
+- **During a rollout.** Old and new Pods serve together for a short time
+  (`maxSurge: 1`). `PLATFORM_LEADER_LOCK` lets only the Pod holding the Postgres advisory
+  lock run background work, the workflow loops included.
+- **Schema.** The `wf_*` tables and triggers come from `schema.sql`. The chart's
+  migration Job applies it before the Deployment rolls.
+- **Connections.** The runtime's pool adds `WF_POOL_MAX` connections per Pod while a
+  flag is on, beside the main pool's `DB_POOL_MAX`.
+
+| Variable | Default | Set in production by | Meaning |
+|---|---|---|---|
+| `WF_GOVERNANCE_ENABLED` | `false` | Helm value `platform.workflowGovernanceEnabled` | The governance-proposal machine decides governance proposals. The ticker and the sweeper's Pass 0b leave them alone. |
+| `WF_SLOTS` | 4 (2 on a staging preview) | the default | Pipeline slots in the leader. |
+| `WF_POOL_MAX` | 6 (3 on a staging preview) | the default | Connections in the runtime's own pool. Keep it above `WF_SLOTS`. |
+| `WF_OWNERSHIP_MODE` | `log` in production, `raise` elsewhere | the default | What a write to an owned column from outside the machine does. |
+
+**Where the variables are set.**
+- **The Helm chart.** A Kubernetes Pod gets only the variables the chart lists, so a
+  variable an operator needs to change is a chart value.
+- **`platform_env`.** All four are also declared in `dapp.json`'s `platform_env`, as
+  the platform requires of every variable it reads. Values stored through the Platform
+  variables panel only ever reached the retired VPS deploy.
+
+**Turning a machine on or off.** Change its chart value in the infra repository; Argo CD
+rolls the Deployment. `docs/kubernetes-operations.md` has the procedure for the
+governance machine.
 - **The settings.** The flag a process records in `wf_settings` at boot arms the
   ownership trigger.
-- **The rolling deploy.** While old and new processes overlap, an old one may still
-  decide a row the machine also decides. Both sides lock the row, so whichever commits
-  first wins and the other stands down. The machine ends such an instance `superseded`
-  (`closed_outside`).
+- **The rolling deploy.** While old and new Pods overlap, an old one may still decide a
+  row the machine also decides. Both sides lock the row, so whichever commits first wins
+  and the other stands down. The machine ends such an instance `superseded`
+  (`closed_outside`). Until the new Pod becomes leader, its routes answer `202` with the
+  request key: the event is recorded and applied once the loops start.
 - **Turning it off and on again** is safe:
   - a row decided or deleted while the flag was off ends its instance without being
     applied twice;
