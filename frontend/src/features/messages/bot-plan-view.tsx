@@ -23,7 +23,7 @@ import type { HomeroomBotPlan } from './types';
  *
  * #4046: IN THE CHAT IT IS THE ONE PLACE A STEP COUNT SHOWS. Its host passes
  * `progress`: "Step 3 of 7" over a thin bar while the plan waits, then
- * "Step 4 of 7 · Build it, usually 10 to 25 minutes" once Build it is
+ * "Step 4 of 7 · Build it · 10 to 25 min" once Build it is
  * pressed, when the card folds to its title and the answers it went with.
  * The request's activity card is not drawn beside it (./bot-plan.tsx
  * planLayout), so nothing is said twice.
@@ -111,7 +111,8 @@ export function PlanCardView({
     <div className={SURFACES[surface]} role="group" aria-label={`Plan for ${appName}`} data-bot-plan={shown}>
       {progress ? (
         <div className="mb-3.5 flex flex-col gap-1.5" data-bot-plan-progress="">
-          <span className="text-[0.8125rem] leading-4 text-zinc-500 dark:text-zinc-400" role="status">{progress.line}</span>
+          {/* One line, whatever the width: an ellipsis is the last resort (owner, 7 October). */}
+          <span className="min-w-0 truncate text-[0.8125rem] leading-4 text-zinc-500 dark:text-zinc-400" role="status" data-bot-plan-progress-line="">{progress.line}</span>
           {stepped ? (
             <span
               className="block h-1 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-700"

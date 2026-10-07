@@ -247,14 +247,15 @@ test('B6: the plan card, drawn in every state', () => {
   assert.doesNotMatch(open, /messages-bot-primary|messages-bot-secondary|data-bot-plan-progress/, 'no step without its host\'s progress');
   // #4046: in the chat, the step at its top and a thin bar: the one place a step count shows.
   const waiting = draw({ progress: { line: 'Step 3 of 7', step: 3, of: 7 } });
-  assert.match(waiting, /data-bot-plan-progress=""><span class="[^"]*" role="status">Step 3 of 7<\/span><span class="[^"]*" role="progressbar" aria-label="Step 3 of 7" aria-valuemin="0" aria-valuemax="7" aria-valuenow="3"><span class="[^"]*" style="width:42\.9%"><\/span><\/span><\/div>/);
+  assert.match(waiting, /data-bot-plan-progress=""><span class="[^"]*" role="status" data-bot-plan-progress-line="">Step 3 of 7<\/span><span class="[^"]*" role="progressbar" aria-label="Step 3 of 7" aria-valuemin="0" aria-valuemax="7" aria-valuenow="3"><span class="[^"]*" style="width:42\.9%"><\/span><\/span><\/div>/);
   const built = draw({ state: 'built', choices: ['Phone alert'] });
   assert.ok(!/Build it<\/button>/.test(built));
   assert.match(built, /<ul class="[^"]*" data-bot-plan-chosen=""><li>Phone alert<\/li><\/ul>/, 'the answer it went with, under its title');
   assert.ok(!/A list of your plants/.test(built), 'built, it folds to its title and its answers');
   assert.match(built, /You chose Build it/, 'with no step to say, it says what was chosen');
-  const building = draw({ state: 'built', choices: ['Phone alert'], progress: { line: 'Step 4 of 7 · Build it, usually 10 to 25 minutes', step: 4, of: 7 } });
-  assert.match(building, /role="status">Step 4 of 7 · Build it, usually 10 to 25 minutes<\/span>/);
+  const building = draw({ state: 'built', choices: ['Phone alert'], progress: { line: 'Step 4 of 7 · Build it · 10 to 25 min', step: 4, of: 7 } });
+  assert.match(building, /<span class="[^"]*\btruncate\b[^"]*" role="status" data-bot-plan-progress-line="">Step 4 of 7 · Build it · 10 to 25 min<\/span>/,
+    'the step line stays on one line, an ellipsis as the last resort');
   assert.match(building, /style="width:57\.1%"/);
   assert.doesNotMatch(building, /You chose Build it/, 'the step says it: nothing said twice');
   const replaced = draw({ state: 'replaced' });

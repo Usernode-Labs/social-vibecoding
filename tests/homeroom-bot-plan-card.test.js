@@ -65,7 +65,7 @@ test('#4046: while a plan or a question offers its own answers, the bot\'s quest
 });
 
 test('#4046: the plan is the one place its request\'s step shows: the card above it goes, the card under it is one line', () => {
-  const { planLayout, planProgress, PLAN_FOLLOW_UP_WORDS } = loadTsx('frontend/src/features/messages/bot-plan.tsx');
+  const { planLayout, planProgress, planTime, PLAN_FOLLOW_UP_WORDS } = loadTsx('frontend/src/features/messages/bot-plan.tsx');
   const card = (id, extra = {}) => botMsg(id, { kind: 'activity', ...fvMeta, ...extra });
   const plan = (id, status, extra = {}) => botMsg(id, { kind: 'plan', ...fvMeta, plan: RUN_PLAN, actionId: 4, status, ...extra });
   const other = botMsg(25, { kind: 'activity', appSlug: 'run-club', appName: 'Run Club', issueNumber: 2 });
@@ -100,7 +100,10 @@ test('#4046: the plan is the one place its request\'s step shows: the card above
   assert.deepEqual(planProgress(working({ step: 3, of: 7, stepName: 'Write a plan' }), 'open'), { line: 'Step 3 of 7', step: 3, of: 7 },
     'while it waits: the step, and nothing else');
   assert.deepEqual(planProgress(working({ step: 4, of: 7, stepName: 'Build it', typicalMinutes: { from: 10, to: 25 } }), 'built'),
-    { line: 'Step 4 of 7 · Build it, usually 10 to 25 minutes', step: 4, of: 7 });
+    { line: 'Step 4 of 7 · Build it · 10 to 25 min', step: 4, of: 7 }, 'the step, its name, the time: short enough for one line');
+  assert.equal(planTime({ from: 10, to: 25 }), '10 to 25 min');
+  assert.equal(planTime({ from: 3, to: 3 }), 'about 3 min');
+  assert.equal(planTime(null), null);
   assert.deepEqual(planProgress(working({ doing: 'ready to build; waiting its turn to be built' }), 'built'),
     { line: 'Ready to build; waiting its turn to be built', step: null, of: null }, 'a step it cannot count is said in words, with no bar');
   assert.deepEqual(planProgress({ ...working(), state: 'done', outcome: 'build_failed' }, 'built'),

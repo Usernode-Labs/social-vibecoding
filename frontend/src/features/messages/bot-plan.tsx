@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { InfoCircleIcon } from '@/components/ui/icons';
 
 import * as api from './api';
-import { ACTIVITY_OUTCOME_LABELS, isActivityMessage, isMovedActivity, typicalText } from './bot-activity';
+import { ACTIVITY_OUTCOME_LABELS, isActivityMessage, isMovedActivity } from './bot-activity';
 import { ensureBotActivity, useBotActivity } from './bot-activity-store';
 import { botMeta, requestPlace } from './bot-question';
 import { PlanCardView, type PlanCardState, type PlanProgress } from './bot-plan-view';
@@ -78,10 +78,22 @@ function capitalized(text: string): string {
 }
 
 /**
+ * Pure (#4046): how long a step usually takes, as the plan's line says it:
+ * "10 to 25 min", or "about 3 min". Short, so the line stays on one line at
+ * 375px (owner, 7 October); the activity card keeps its own words
+ * (./bot-activity.tsx typicalText).
+ */
+export function planTime(range?: { from: number; to: number } | null): string | null {
+  if (!range || !(range.to > 0)) return null;
+  return range.from >= range.to ? `about ${range.to} min` : `${range.from} to ${range.to} min`;
+}
+
+/**
  * Pure (#4046): the line at the top of a plan in `state`, from its request's
  * activity card (`card`, as the reads have it), or null for none. While the
- * plan waits: "Step 3 of 7". Once built: "Step 4 of 7 · Build it, usually 10
- * to 25 minutes", or how it ended. A plan that stopped waiting says so in its
+ * plan waits: "Step 3 of 7". Once built: "Step 4 of 7 · Build it · 10 to 25
+ * min" (the step, its name, how long it usually takes: one line on a phone,
+ * planTime), or how it ended. A plan that stopped waiting says so in its
  * own line instead.
  */
 export function planProgress(card: HomeroomBotActivity | null | undefined, state: PlanCardState): PlanProgress | null {
@@ -94,8 +106,8 @@ export function planProgress(card: HomeroomBotActivity | null | undefined, state
   const what = stepped
     ? `Step ${stepped.step} of ${stepped.of}${card.stepName ? ` · ${card.stepName}` : ''}`
     : capitalized(card.doing || 'working on it');
-  const usually = typicalText(card.typicalMinutes);
-  return { line: usually ? `${what}, ${usually}` : what, step: stepped?.step ?? null, of: stepped?.of ?? null };
+  const time = planTime(card.typicalMinutes);
+  return { line: time ? `${what} · ${time}` : what, step: stepped?.step ?? null, of: stepped?.of ?? null };
 }
 
 /**
