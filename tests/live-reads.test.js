@@ -480,6 +480,97 @@ test('review 2.6: a failed catch-up stays owed, without retrying in a loop', asy
   assert.match(gcJs, /else if \(st\.stale\) void GroupChat\._refreshLatest\(\{ type, ref \}\);/);
 });
 
+// ── The review finding on f9e297e2 ────────────────────────────────────
+
+const savedCopy = { get: (h) => (h === 'sw-cached-at' ? '1' : null) };
+const fresh = { get: () => null };
+const wideGapPage = Array.from({ length: 50 }, (_, i) => msg(61 + i));
+
+test('review 3.1: a live message that beats a saved-copy first page does not set the watermark (channel)', async () => {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const requests = [];
+  const GroupChat = loadGroupChat({
+    fetch: async (url, init) => {
+      requests.push({ url, init });
+      if (requests.length === 1) {
+        await gate;
+        return { ok: true, headers: savedCopy, json: async () => ({ messages: [msg(1), msg(2)] }) };
+      }
+      return { ok: true, headers: fresh, json: async () => ({ messages: wideGapPage, has_more_before: true }) };
+    },
+  });
+  GroupChat.appSlug = 'demo';
+  const first = GroupChat.loadHistory();
+  GroupChat.handleIncoming({ type: 'chat', ...msg(110) }); // live, before the page lands
+  release();
+  await first;
+  for (let i = 0; i < 3; i++) await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests.length, 2);
+  assert.equal(GroupChat.oldestMessageId, 61, 'started over: 3..60 are "Load earlier" away');
+  assert.equal(GroupChat.hasMore, true);
+  assert.equal(ids(GroupChat.messages)[0], 61);
+});
+
+test('review 3.1: a live message that beats a saved-copy first page does not set the watermark (thread)', async () => {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const requests = [];
+  const GroupChat = loadGroupChat({
+    fetch: async (url, init) => {
+      requests.push({ url, init });
+      if (requests.length === 1) {
+        await gate;
+        return { ok: true, headers: savedCopy, json: async () => ({ messages: [msg(1), msg(2)] }) };
+      }
+      return { ok: true, headers: fresh, json: async () => ({ messages: wideGapPage, has_more_before: true }) };
+    },
+  });
+  GroupChat.appSlug = 'demo';
+  GroupChat.activeThread = { type: 'session', ref: 6284, language: 'chat' };
+  const first = GroupChat.loadThreadHistory('session', 6284);
+  GroupChat.handleIncoming({ type: 'chat', ...msg(110), thread: { type: 'session', ref: 6284 } });
+  release();
+  await first;
+  for (let i = 0; i < 3; i++) await new Promise((resolve) => setImmediate(resolve));
+  const st = GroupChat._threadState('session', 6284);
+  assert.equal(requests.length, 2);
+  assert.equal(st.oldestId, 61);
+  assert.equal(st.hasMore, true);
+  assert.equal(ids(st.messages)[0], 61);
+});
+
+test('review 3.2: a catch-up that lands with another gap queued keeps that gap\'s boundary', async () => {
+  const releases = [];
+  const requests = [];
+  const GroupChat = loadGroupChat({
+    fetch: async (url) => {
+      requests.push(url);
+      if (requests.length === 1) {
+        await new Promise((resolve) => releases.push(resolve));
+        return { ok: true, headers: fresh, json: async () => ({ messages: [msg(1), msg(2), msg(3)] }) };
+      }
+      return { ok: true, headers: fresh, json: async () => ({ messages: wideGapPage, has_more_before: true }) };
+    },
+  });
+  GroupChat.appSlug = 'demo';
+  GroupChat._streamLoaded = true;
+  GroupChat._syncedMax = 2;
+  GroupChat.messages = [msg(1), msg(2)];
+  GroupChat.oldestMessageId = 1;
+  const read = GroupChat._refreshLatest(null);
+  await new Promise((resolve) => setImmediate(resolve));
+  GroupChat.resyncLoaded(); // a second gap opens during the read...
+  GroupChat.handleIncoming({ type: 'chat', ...msg(110) }); // ...and 110 arrives past it
+  releases[0]();
+  await read;
+  assert.equal(GroupChat._syncedMax, 3, 'the answer\'s own newest id, not the live 110');
+  for (let i = 0; i < 3; i++) await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests.length, 2, 'the queued catch-up ran');
+  assert.equal(GroupChat.oldestMessageId, 61);
+  assert.equal(GroupChat.hasMore, true);
+});
+
 test('a first page answered from the saved copy is caught up at once', async () => {
   const requests = [];
   const GroupChat = loadGroupChat({

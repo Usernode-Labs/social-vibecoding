@@ -543,12 +543,14 @@ const GroupChat = {
       // to be in it first (features/group-chat/mount.ts publishTranscript).
       GroupChat.render({ flush: true });
 
-      // #4177: the newest page is where "no gap" starts. One the service
-      // worker answered from its saved copy may be missing everything since,
-      // so it is caught up at once (in `finally`) rather than whenever the
-      // worker's own correction arrives.
+      // #4177: the newest page is where "no gap" starts: the PAGE's newest
+      // id, not the stream's, which may hold a live message delivered before
+      // this page landed and past whatever the page is missing. One the
+      // service worker answered from its saved copy may be missing
+      // everything since, so it is caught up at once (in `finally`) rather
+      // than whenever the worker's own correction arrives.
       if (isFirstLoad) {
-        GroupChat._syncedMax = GroupChat._maxId(GroupChat.messages);
+        GroupChat._syncedMax = GroupChat._maxId(messages);
         if (GroupChat._fromSavedCopy(res)) {
           GroupChat._streamStale = true;
           GroupChat._latestAgain = true;
@@ -1356,10 +1358,11 @@ const GroupChat = {
         st.messages = GroupChat._mergeHistory(messages, st.messages);
         st.oldestId = messages[0].id;
       }
-      // #4177: as in loadHistory, the newest page is where "no gap" starts,
-      // and one answered from the worker's saved copy is caught up at once.
+      // #4177: as in loadHistory, the page's newest id is where "no gap"
+      // starts, and one answered from the worker's saved copy is caught up
+      // at once.
       if (isFirstPage) {
-        st.syncedMax = GroupChat._maxId(st.messages);
+        st.syncedMax = GroupChat._maxId(messages);
         if (GroupChat._fromSavedCopy(res)) { st.stale = true; st.again = true; }
       }
       st.loaded = true;
@@ -1525,6 +1528,15 @@ const GroupChat = {
     return list;
   },
 
+  // Where the gap-free span ends after a catch-up: the answer's newest id,
+  // which is the server's own. The live messages replayed past it extend the
+  // span only when no other gap was asked about during the read (`again`):
+  // if one was, they may lie past THAT gap, and the next catch-up has to be
+  // able to see it.
+  _caughtUpTo(latest, list, again) {
+    return again ? GroupChat._maxId(latest) : GroupChat._maxId(list);
+  },
+
   _maxId(list) {
     let top = -Infinity;
     for (const m of list) {
@@ -1602,7 +1614,7 @@ const GroupChat = {
         if (st.messages.length) st.oldestId = st.messages[0].id;
         if (!full) st.hasMore = false;
         else if (next.reset || !next.older) st.hasMore = true;
-        st.syncedMax = GroupChat._maxId(st.messages);
+        st.syncedMax = GroupChat._caughtUpTo(latest, st.messages, st.again);
         if (!st.again) st.stale = false;
         const a = GroupChat.activeThread;
         if (a && a.type === thread.type && Number(a.ref) === Number(thread.ref)) {
@@ -1616,7 +1628,7 @@ const GroupChat = {
       if (GroupChat.messages.length) GroupChat.oldestMessageId = GroupChat.messages[0].id;
       if (!full) GroupChat.hasMore = false;
       else if (next.reset || !next.older) GroupChat.hasMore = true;
-      GroupChat._syncedMax = GroupChat._maxId(GroupChat.messages);
+      GroupChat._syncedMax = GroupChat._caughtUpTo(latest, GroupChat.messages, GroupChat._latestAgain);
       if (!GroupChat._latestAgain) GroupChat._streamStale = false;
       GroupChat._historyFailed = false;
       GroupChat.render({ flush: true });
