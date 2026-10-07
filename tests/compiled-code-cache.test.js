@@ -6,6 +6,15 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { createCompiledCodeCache } = require('./lib/compiled-code-cache');
+
+// These fixtures have random names. What render-tsx shares with other test
+// processes (lib/shared-bundle-cache.js) goes to a directory of this suite's
+// own, set before the helper reads it, so a run leaves no entries behind in
+// node_modules/.cache.
+const SHARED_BUNDLES = fs.mkdtempSync(path.join(os.tmpdir(), 'compile-test-shared-'));
+process.env.TEST_BUNDLE_CACHE_DIR = SHARED_BUNDLES;
+test.after(() => fs.rmSync(SHARED_BUNDLES, { recursive: true, force: true }));
+
 const { loadTsx, transpileTs, ROOT } = require('./lib/render-tsx');
 
 function fixture(t, insideRepo = false) {
