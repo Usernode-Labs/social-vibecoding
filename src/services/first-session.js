@@ -162,10 +162,18 @@ async function asksWhatToMake(pool, userId) {
 }
 
 /**
- * What the account told us on the waitlist that its group's own app should
- * do: the stage-2 survey's "What would its own app do that those tools
- * can't?" (answers.group.need, services/waitlist-questions.js). "What do you
- * want to make?" opens with it in "What should it do?" (#4040).
+ * What the account told us on the waitlist that its group would build:
+ * answers.group.need (services/waitlist-questions.js, `group_need`). People
+ * write it on the website's optional second waitlist step (/waitlist-success,
+ * "What would you build together?", saved through the stage-2 route
+ * POST /api/public/waitlist/more/:token); the in-app survey's own wording of
+ * the question is "What would its own app do that those tools can't?". The
+ * make screen ("Start your community") opens with it in "What should it
+ * do?" (#4040).
+ *
+ * So only somebody who filled in that optional step, and then signed up with
+ * the same email, gets it. A sign-up from the story's "Make an account"
+ * creates no waitlist row, and gets the plain screen.
  *
  * Only the waitlist row linked to the account (waitlist.linkUserByEmail,
  * when an email-code or provider sign-up uses the row's address): the
