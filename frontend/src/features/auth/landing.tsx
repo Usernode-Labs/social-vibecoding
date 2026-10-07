@@ -1707,6 +1707,11 @@ export function LandingScreen() {
         <SignInSheet
           open={sheet === 'join'}
           title={`Join ${invite!.project!.name}`}
+          intro={phoneSignIn
+            ? (invite!.project!.public
+              ? 'Just your phone number and a username. No app, no password.'
+              : 'Just your name and phone number. No app, no password.')
+            : undefined}
           followInvite
           providers={providers}
           native={nativeSignIn}

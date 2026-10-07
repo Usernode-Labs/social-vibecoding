@@ -407,6 +407,12 @@ export type SignInSheetProps = {
   open: boolean;
   /** "Join Sunday Run Club", "Make your account", "Sign in" */
   title: string;
+  /**
+   * The line under the title on the first step, only where the title and the
+   * field do not say it: the phone sign-up's "No app, no password". The
+   * email and provider steps have none (#4037).
+   */
+  intro?: string;
   /** This sign-in is the Join pressed on an invite's page. */
   followInvite?: boolean;
   /** Apple and Google, when an admin has set them up (inside the app, those its build can show). */
@@ -456,7 +462,7 @@ function rememberInviteJoin() {
 }
 
 export function SignInSheet({
-  open, title, followInvite = false, providers = [], native = false, phone = false, askName = true, from = 'signin',
+  open, title, intro = '', followInvite = false, providers = [], native = false, phone = false, askName = true, from = 'signin',
   returnTo = '/', resume = null, releaseToken = null, beforeFinish, onClose, primaryClass,
 }: SignInSheetProps) {
   const otherWays: Step = providers.length ? 'choose' : 'email';
@@ -942,12 +948,12 @@ export function SignInSheet({
       : step === 'phone-code' ? 'Check your texts'
         : step === 'password' ? 'Sign in'
           : step === 'username' ? 'Pick a username' : 'Finish your account';
-  // The first step says nothing under its title: "Make your account",
-  // "Join Sunday Run Club" and "Sign in" already say it, and the field or
-  // the providers come next (#4037). With the phone first, the other ways
-  // are for an account made before.
+  // The first step says nothing under its title unless it is given a line:
+  // "Make your account", "Join Sunday Run Club" and "Sign in" already say
+  // it, and the field or the providers come next (#4037). With the phone
+  // first, the other ways are for an account made before.
   const sub = step === firstStep
-    ? ''
+    ? intro
     : step === 'choose'
       ? 'Sign in to the account you have.'
       : step === 'email'

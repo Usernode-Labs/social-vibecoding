@@ -283,7 +283,11 @@ test('each way into the sheet says only what is true for it', () => {
     assert.doesNotMatch(html, /<p class="mt-1 text-\[15px\] leading-snug/);
   }
   const landing = read(LANDING);
-  assert.doesNotMatch(landing, /\bintro=|It takes a minute|Welcome back/);
+  assert.doesNotMatch(landing, /It takes a minute|Welcome back|Sign in or make an account/);
+  // The one line left is the phone sign-up's (#4069), on an invite's Join
+  // when the phone comes first; the email and provider steps get none.
+  assert.equal(landing.match(/\bintro=/g).length, 1);
+  assert.match(landing, /intro=\{phoneSignIn\s*\?[\s\S]{0,240}?No app, no password\.'\)\s*: undefined\}/);
 });
 
 // ─── the way out to the make screen ─────────────────────────────────────
