@@ -8983,6 +8983,12 @@ span.gc-vote-btn-icon { cursor: default; }
 .gc-mention {
   color: var(--accent);
   font-weight: 500;
+  text-decoration: none;
+}
+/* #4029: a person's mention is a link to their page, drawn as the channel
+   refs are: underlined on hover where there is a mouse. */
+@media (hover: hover) {
+  a.gc-mention:hover { text-decoration: underline; }
 }
 .gc-mention-self {
   background: rgba(31, 134, 255, 0.18);
