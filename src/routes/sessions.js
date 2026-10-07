@@ -3285,7 +3285,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // defer to — the route's whole job is to start one unattended turn
       // immediately, and that turn may push. Deferring would only move the
       // same mint a few lines down the same request.
-      const branchName = branchNames.devBranchName(`auto-issue-${issueNumber}`);
+      const branchName = branchNames.devBranchName(`auto-issue-${issueNumber}`, Date.now(), issue && issue.title);
       try {
         await github.createBranch(repoOwner, repoName, branchName);
       } catch (err) {
@@ -3463,7 +3463,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // `fromBranch` argument below. Defer it and the first turn would
       // branch off main instead, silently discarding the work the clone
       // was created to continue.
-      const branchName = branchNames.devBranchName(req.user.username);
+      const branchName = branchNames.devBranchName(req.user.username, Date.now(), src.session_title);
       const [, repoOwner, repoName] = (src.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
       let inheritedCodeBranch = false;
       if (github.isEnabled() && repoOwner && repoName) {
@@ -5230,8 +5230,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // this handler is already holding.
       if (!String(session.branch_name || '').trim()) {
         try {
+          // #3229: the branch is named after the change, from the same
+          // LLM-free title the session's first name comes from.
           const ensured = await sessionLifecycle.ensureSessionBranch({
             pool, sessionId: session.id, username: req.user.username,
+            label: session.session_title || sessionTitles.deterministicTitle(message || ''),
           });
           session.branch_name = ensured.branchName;
         } catch (err) {

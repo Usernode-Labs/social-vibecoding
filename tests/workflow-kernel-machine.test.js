@@ -6,6 +6,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { defineMachine, NONE, ok, reject, canonicalHash } = require('../src/workflow/kernel/index.ts');
+const { Signals } = require('../src/workflow/kernel/stream.ts');
 
 const base = () => ({
   name: 'kt-valid',
@@ -88,4 +89,44 @@ test('inherited object keys are not events, rules or table entries', () => {
     assert.deepEqual(m.entryFor('open', type), { ignore: 'unknown_event' }, type);
   }
   assert.deepEqual(m.entryFor(NONE, 'toString'), { ignore: 'no_instance' });
+});
+
+test('an event notification wakes one sleeping slot, and is kept when none sleeps', async () => {
+  const signals = new Signals({ connect: async () => { throw new Error('no database'); } }, { info() {}, warn() {}, error() {} });
+  const woken = [];
+  const slot = (n) => signals.sleep('wf_events', 5000).then(() => woken.push(n));
+  const sleepers = [slot(1), slot(2)];
+  signals.wake('wf_events', 'kt-counter');
+  await new Promise((r) => setTimeout(r, 10));
+  assert.deepEqual(woken, [1], 'one slot, not every slot');
+  signals.wake('wf_events', 'kt-counter');
+  await Promise.all(sleepers);
+  assert.deepEqual(woken, [1, 2]);
+  // Nobody asleep: the next slot to sleep does not sleep through it.
+  signals.wake('wf_events', 'kt-counter');
+  const started = Date.now();
+  await signals.sleep('wf_events', 5000);
+  assert.ok(Date.now() - started < 100, 'the kept notification wakes it at once');
+  // Other channels still wake everyone waiting on them.
+  const outcomes = [signals.sleep('wf_outcome:7', 5000), signals.sleep('wf_outcome:7', 5000)];
+  signals.wake('wf_outcome', '7');
+  await Promise.all(outcomes);
+  await signals.stop();
+});
+
+test('a sleeper can take only the notifications it wants', async () => {
+  const signals = new Signals({ connect: async () => { throw new Error('no database'); } }, { info() {}, warn() {}, error() {} });
+  let woke = false;
+  const until = Date.now() + 5000;
+  const sleeping = signals.sleep('wf_timer', 5000, (payload) => Number(payload) < until).then(() => { woke = true; });
+  signals.wake('wf_timer', String(until + 60000));
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(woke, false, 'a later deadline does not wake it');
+  signals.wake('wf_timer', String(until - 1000));
+  await sleeping;
+  // Losing or regaining the connection wakes every sleeper, filter or not.
+  const filtered = signals.sleep('wf_timer', 5000, () => false);
+  signals.wakeAll();
+  await filtered;
+  await signals.stop();
 });

@@ -10443,6 +10443,7 @@ const DevChat = {
       models: DevChat._modelPickerView(),
       drafts: DevChat._savedDraftsView(),
       attachError: DevChat._attachError,
+      dragging: DevChat._dragging && !DevChat._dropDisabled(),
       placeholder: DevChat._composerBusy
         ? DevChat._busyComposerPlaceholder()
         : DevChat.COMPOSER_PLACEHOLDER,
@@ -11011,12 +11012,47 @@ const DevChat = {
       if (!el) continue;
       DevChat._bindOnce(el, 'dragover', (e) => { e.preventDefault(); });
       DevChat._bindOnce(el, 'drop', (e) => {
+        DevChat._dropTracker()?.reset();
         if (e.dataTransfer?.files?.length) {
           e.preventDefault();
           DevChat._addFiles(e.dataTransfer.files);
         }
       });
+      // #4065: the drop zone. Counted in and out by one tracker shared by the
+      // messages and the card; `dragging` goes into the composer model and
+      // composer.tsx draws the outline inside #dc-form.
+      DevChat._bindOnce(el, 'dragenter', (e) => DevChat._dropTracker()?.enter(e));
+      DevChat._bindOnce(el, 'dragleave', (e) => DevChat._dropTracker()?.leave(e));
     }
+  },
+
+  // The drop zone lights only where `_addFiles` would take the drop: a
+  // session on screen, no turn streaming, and the composer showing.
+  _dragging: false,
+  _dropTrackerRef: null,
+  _dropTracker() {
+    if (DevChat._dropTrackerRef) return DevChat._dropTrackerRef;
+    const api = typeof window !== 'undefined' && window.UsernodeReact && window.UsernodeReact.fileDrag;
+    if (!api || !api.createFileDragTracker) return null;
+    DevChat._dropTrackerRef = api.createFileDragTracker({
+      isDisabled: () => DevChat._dropDisabled(),
+      onChange: (dragging) => {
+        DevChat._dragging = !!dragging;
+        DevChat._publishComposer();
+      },
+    });
+    return DevChat._dropTrackerRef;
+  },
+  _dropDisabled() {
+    return !DevChat.currentSession || !!DevChat.isStreaming
+      || !!DevChat._launchpadVenue() || !!DevChat._agentSessionBannerView(DevChat.currentSession);
+  },
+
+  // The line a drop or a pick shows when it left files out (#4065).
+  _refusalSummary(first, more) {
+    const api = typeof window !== 'undefined' && window.UsernodeReact && window.UsernodeReact.fileDrag;
+    if (api && api.refusalSummary) return api.refusalSummary(first, more);
+    return first;
   },
 
   // Mirror the server's four-way classifier (src/services/attachments.js
@@ -11070,14 +11106,25 @@ const DevChat = {
     }
     const sid = DevChat.currentSession.id;
     const L = DevChat.ATTACH_LIMITS;
-    for (const file of Array.from(fileList)) {
+    // #4065: one line for every file left out — the first reason, and how
+    // many more went with it — not whichever came last.
+    let firstRefusal = null;
+    let refused = 0;
+    const refuse = (reason, count = 1) => {
+      firstRefusal = firstRefusal || reason;
+      refused += count;
+      DevChat._setAttachError(DevChat._refusalSummary(firstRefusal, refused - 1));
+    };
+    const files = Array.from(fileList);
+    for (let i = 0; i < files.length; i += 1) {
+      const file = files[i];
       if (DevChat.pendingAttachments.length >= L.maxPerMessage) {
-        DevChat._setAttachError(`Up to ${L.maxPerMessage} files per message.`);
+        refuse(`Up to ${L.maxPerMessage} files per message.`, files.length - i);
         break;
       }
       const classified = await DevChat._classifyFile(file);
       if (classified.error) {
-        DevChat._setAttachError(classified.error);
+        refuse(classified.error);
         continue;
       }
       const entry = {

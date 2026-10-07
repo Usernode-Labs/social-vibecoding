@@ -375,6 +375,12 @@ const TRIAGE_PROMPT_PATH = path.join(__dirname, '..', 'prompts', 'homeroom-bot-t
 // starter's design kit ships quiet greys and a teal accent to re-point); the
 // plan names what the spec then decides (services/prompts.js
 // FIRST_VERSION_SPEC_DESIGN_BRIEF).
+//
+// 7 Oct 2026: as a first sketch, which the spec settles and may replace
+// (homeroom-bot-live.js specScopeLines): every first version an Opus 5.5
+// spec wrote over this note kept the GLM triage's accent, signature element
+// and layout. Its example subjects were two of the App bench's starter
+// briefs and are gone; its colours are no longer one accent plus neutrals.
 const FIRST_VERSION_NOTE = [
   'THIS REQUEST IS A NEW PROJECT\'S FIRST VERSION. Its creator just made the project and described what it should',
   'be; the repository is still the platform\'s starter template. Read "a small, bounded change" in the `ready`',
@@ -386,11 +392,12 @@ const FIRST_VERSION_NOTE = [
   'conventions\' "New apps: a light and a dark look, following the platform"). Only an app whose one fixed look is the',
   'point, such as a game drawn as its own scene, keeps a single look. Say which in `build_note`, list a single look',
   'under `assumptions` when you choose one, and never ask about it.',
-  'Plan a look of its own, too: the starter\'s screen is placeholder, so there is no existing screen for it to look',
-  'like. Say in `build_note` the screen\'s one job and its one primary action, an accent colour plus neutrals that',
-  'work in both looks (not the starter\'s default palette, unless chosen on purpose), ONE signature element',
-  'drawn from the app\'s subject (for example a staff or a keyboard for an ear trainer, a proofing timeline for a',
-  'bread app) and a rough layout. The spec settles the details; never ask about them.',
+  'Sketch a look of its own, too: the starter\'s screen is placeholder, so there is no existing screen for it to look',
+  'like. Say in `build_note` the screen\'s one job and its one primary action, its colours (neutrals, an action colour',
+  'and any set of colours the subject itself uses, each working in both looks; not the starter\'s default palette,',
+  'unless chosen on purpose), ONE signature element drawn from the app\'s subject, something no other app would have,',
+  'and a rough layout. It is a first sketch: the spec that follows settles the look, the layout and the scope, and may',
+  'replace any of it. Never ask about them.',
   // The first session's card (services/app-sketch.js): when the request
   // quotes it, its creator has seen a summary of the idea, never a screen.
   // Until 5 October 2026 it was a mock of the main screen, and this said to
@@ -4085,7 +4092,7 @@ async function finishRecoveredTurn({
   }
   const note = ' (finished after a restart)';
   if (activeTurn?.mode === 'scout') {
-    const read = timedOut ? { ok: false, error: 'the spec ran past its time limit' } : live.readSpec(result.lastResultText);
+    const read = timedOut ? { ok: false, error: 'the spec ran past its time limit' } : live.readSpec(result.lastResultText, { parts: result.answerParts });
     await putAwayRecoveredSession(pool, session, { archive: true });
     const specCostUsd = await sessionCostUsd(pool, session.id);
     await debitRecovered(pool, session, specCostUsd, deps);
@@ -4472,7 +4479,7 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
     const reviewerUsd = reviewing ? botReview().reviewerCost(reviewing) : 0;
     if (reviewerUsd > 0) await debitRecovered(pool, session, reviewerUsd, deps);
     const specRead = plan.mode === 'scout' && !plan.lost && !plan.timedOut
-      ? live.readSpec(plan.result?.lastResultText) : null;
+      ? live.readSpec(plan.result?.lastResultText, { parts: plan.result?.answerParts }) : null;
     // A build turn a restart reached in time, whose clock then ran out: not
     // the build's own failure (restartRanItOut).
     const ranOut = restartRanItOut(plan);
@@ -5816,7 +5823,8 @@ async function queueLiveBuild(pool, { runId, appId }) {
 // choices with the suggested answer first) with Build it and Change
 // something (homeroom-bot-dm.js sendPlanCard), and its run waits with
 // `awaiting_go_at`. Build it (goAhead) sets live_build_waiting_at, as a
-// ready verdict does, with the choices written into the build note.
+// ready verdict does, with the plan and its choices written into the build
+// note as what the creator approved.
 // Change something (dm.changePlan) and a new look at the request
 // (retireWaitingPlans) end the wait; so does a week with no tap
 // (settleStalePlans). A waiting plan is not a build: a new look at its
@@ -5848,15 +5856,22 @@ function choicesFrom(questions, answers = []) {
 }
 
 /**
- * Pure (B6): what a first version's build is told its creator chose, added
- * to the plan's build note once they tap Build it: '' when the plan asked
- * nothing. The benchmark adds the same line for a creator who taps Build it
- * without changing anything (services/bench/runner.js firstVersionStage).
+ * Pure (B6): what a first version's spec and build are told its creator
+ * approved, added to the plan's build note once they tap Build it: the
+ * plan's bullets they were shown (`bullets`) and the answer each choice goes
+ * with; '' when there is neither. The benchmark adds the same lines for a
+ * creator who taps Build it without changing anything (services/bench/
+ * runner.js firstVersionStage). The spec reads them apart from the triage's
+ * note, as binding (homeroom-bot-live.js splitApprovedPlan). Until 7 October
+ * 2026 only the choices were written, and the bullets reached neither turn.
  */
-function creatorChoiceNote(chosen) {
-  return Array.isArray(chosen) && chosen.length
-    ? `\n\nThe creator chose, from the plan they were shown:\n${chosen.map((c) => `- ${c.question} ${c.answer}`).join('\n')}`
-    : '';
+function creatorChoiceNote(chosen, { bullets = [] } = {}) {
+  const plan = (Array.isArray(bullets) ? bullets : []).map((b) => String(b || '').trim()).filter(Boolean);
+  const picks = Array.isArray(chosen) ? chosen : [];
+  const lines = [];
+  if (plan.length) lines.push(live.APPROVED_PLAN_HEAD, ...plan.map((b) => `- ${b}`));
+  if (picks.length) lines.push(live.CREATOR_CHOICES_HEAD, ...picks.map((c) => `- ${c.question} ${c.answer}`));
+  return lines.length ? `\n\n${lines.join('\n')}` : '';
 }
 
 /**
@@ -5888,10 +5903,11 @@ async function awaitGo(pool, { runId, app, issueNumber, parsed, bot, deps = {} }
 }
 
 /**
- * B6: Build it, under a first version's plan. The answers tapped (any left
- * go with the suggested one) are written into the build note the build
- * reads, and the build waits its turn as any ready verdict's does. Once: a
- * plan already built, replaced or stopped is `gone`. Resolves { ok: true,
+ * B6: Build it, under a first version's plan. The plan's bullets and the
+ * answers tapped (any left go with the suggested one) are written into the
+ * build note the spec and the build read, and the build waits its turn as
+ * any ready verdict's does. Once: a plan already built, replaced or stopped
+ * is `gone`. Resolves { ok: true,
  * appId, issueNumber, chosen } or { ok: false, why }.
  */
 async function goAhead(pool, { runId, answers = [] }) {
@@ -5902,7 +5918,7 @@ async function goAhead(pool, { runId, answers = [] }) {
   );
   if (!run) return { ok: false, why: 'gone' };
   const chosen = choicesFrom(run.plan?.questions, answers);
-  const note = creatorChoiceNote(chosen);
+  const note = creatorChoiceNote(chosen, { bullets: run.plan?.bullets });
   const { rows: [went] } = await pool.query(
     `UPDATE homeroom_bot_runs
         SET awaiting_go_at = NULL, live_build_waiting_at = NOW(), build_note = CONCAT(build_note, $2::text),

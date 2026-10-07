@@ -29,11 +29,12 @@
 
 import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
-import { CameraIcon, PhotoIcon, VideoCameraIcon } from '@/components/ui/icons';
+import { CameraIcon, PaperclipIcon, PhotoIcon, VideoCameraIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 
+import { HostDropOverlay } from '../attachments/file-drag';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { returnKeyHandler } from '../../lib/return-to-next';
 import { Feedback, init as initFeedback } from './feedback-controller';
@@ -53,6 +54,17 @@ interface OpenOptions {
    */
   target?: 'app';
   firstFeedback?: { userId: number; appSlug: string | null; issueNumber: number; canFix: boolean };
+}
+
+/** The form the drop zone listens on; the controller's node, found by id. */
+function feedbackForm(): HTMLElement | null {
+  return typeof document !== 'undefined' ? document.getElementById('feedback-form') : null;
+}
+
+/** The controller locks the description while a post or an upload runs. */
+function feedbackLocked(): boolean {
+  const text = typeof document !== 'undefined' ? document.getElementById('feedback-text') as HTMLTextAreaElement | null : null;
+  return !!text?.readOnly;
 }
 
 export function FeedbackDialog() {
@@ -80,6 +92,12 @@ export function FeedbackDialog() {
             markup: nothing here is written, so the controller still owns
             every node inside. ⌘/Ctrl+Enter still posts, from the controller. */}
         <div id="feedback-form" onKeyDown={returnKeyHandler()}>
+        {/* #4065: the drop zone while a file is held over the form. The
+            controller's own `drop` listener attaches the files (images to the
+            screenshot row, a clip to the video slot); this draws the outline
+            only, and nothing in the controller writes this node. Off while
+            the form is locked for a submit or an upload, as its drop is. */}
+        <HostDropOverlay host={feedbackForm} label="Drop images or a clip to attach" isDisabled={feedbackLocked} />
         {/* SUGGEST AN IMPROVEMENT, from every way in. It was "Send
             feedback", then "Ask for a change" from the hub's ⋯ (QA
             2026-09-24) and from every way in (UI overhaul); people read
@@ -247,8 +265,20 @@ export function FeedbackDialog() {
             takes several files at once (`multiple`); the controller keeps
             only as many as there is room for.
         */}
+        {/*
+            #4127: one line again. "Choose from Photos" and "Add video" were
+            two more buttons beside the capture one, and the row wrapped onto
+            a second line. They are now the two rows of a small popover under
+            one paperclip button (#feedback-attach-btn), drawn in the vote
+            popover's frame. The rows keep their ids, so the controller's
+            handlers, limits and disabled states are what they were; it also
+            opens and closes the popover (outside click, Escape, a choice).
+            Popover, rows and paperclip all render hidden for the same
+            hydration reason as the rest of the row: the controller shows
+            them on open.
+        */}
         <div className="mt-2">
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               id="feedback-screenshot-btn"
               type="button"
@@ -257,19 +287,53 @@ export function FeedbackDialog() {
               <CameraIcon className="w-3.5 h-3.5" />
               <span data-screenshot-label="">Attach screenshot</span>
             </button>
-            <button
-              id="feedback-screenshot-picker-btn"
-              type="button"
-              className="hidden inline-flex min-h-[48px] items-center gap-1.5 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
-            >
-              <PhotoIcon className="w-3.5 h-3.5" />
-              Choose from Photos
-            </button>
+            <div className="relative">
+              <button
+                id="feedback-attach-btn"
+                type="button"
+                aria-haspopup="menu"
+                aria-expanded="false"
+                aria-controls="feedback-attach-menu"
+                aria-label="Attach a photo or video"
+                title="Attach a photo or video"
+                className="hidden inline-flex min-h-[48px] min-w-[48px] items-center justify-center rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-900 dark:text-zinc-100 transition-colors"
+              >
+                <PaperclipIcon className="w-5 h-5" aria-hidden="true" />
+              </button>
+              <div id="feedback-attach-menu" role="menu" aria-label="Attach" className="feedback-attach-pop hidden">
+                <button
+                  id="feedback-screenshot-picker-btn"
+                  type="button"
+                  role="menuitem"
+                  className="feedback-attach-option hidden"
+                >
+                  <PhotoIcon aria-hidden="true" />
+                  Photo
+                </button>
+                <button
+                  id="feedback-video-btn"
+                  type="button"
+                  role="menuitem"
+                  className="feedback-attach-option hidden"
+                >
+                  <VideoCameraIcon aria-hidden="true" />
+                  <span data-video-label="">Video</span>
+                </button>
+              </div>
+            </div>
             <input
               id="feedback-screenshot-input"
               type="file"
               accept="image/png,image/jpeg"
               multiple
+              className="hidden"
+              tabIndex={-1}
+              aria-hidden="true"
+            />
+            <input
+              id="feedback-video-input"
+              type="file"
+              accept="video/mp4,video/webm,video/quicktime"
               className="hidden"
               tabIndex={-1}
               aria-hidden="true"
@@ -281,31 +345,13 @@ export function FeedbackDialog() {
           </div>
           {/*
             #3940: video clips. One clip per issue, chosen alongside the
-            images above: #feedback-video-btn picks an MP4/WebM/MOV file
-            (never `multiple`), #feedback-video-preview renders its
-            thumbnail row (first-frame preview, upload state, its own 48px
-            remove button) — both filled by the controller on open, hidden
-            for the same hydration reason as the screenshot controls.
+            images above: the popover's Video row (#feedback-video-btn) picks
+            an MP4/WebM/MOV file (never `multiple`), #feedback-video-preview
+            renders its thumbnail row (first-frame preview, upload state, its
+            own 48px remove button), filled by the controller, hidden for the
+            same hydration reason as the screenshot controls.
           */}
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <button
-              id="feedback-video-btn"
-              type="button"
-              className="hidden inline-flex min-h-[48px] items-center gap-1.5 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
-            >
-              <VideoCameraIcon className="w-3.5 h-3.5" />
-              <span data-video-label="">Add video</span>
-            </button>
-            <input
-              id="feedback-video-input"
-              type="file"
-              accept="video/mp4,video/webm,video/quicktime"
-              className="hidden"
-              tabIndex={-1}
-              aria-hidden="true"
-            />
-            <div id="feedback-video-preview" className="hidden mt-2 flex-wrap items-center gap-2">
-            </div>
+          <div id="feedback-video-preview" className="hidden mt-2 flex-wrap items-center gap-2">
           </div>
         </div>
         {/*

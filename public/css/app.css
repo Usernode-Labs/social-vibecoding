@@ -1864,7 +1864,8 @@ form.agent-session-composer:focus-within {
 .messages-emoji-option-glyph { flex: none; width: 24px; font-size: 20px; line-height: 24px; text-align: center; }
 .messages-emoji-option-code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .messages-composer-dragging .messages-composer-card { outline: 2px solid var(--accent); outline-offset: -2px; }
-.messages-drop-overlay {
+.messages-drop-overlay,
+.attach-drop-overlay {
   position: absolute;
   z-index: 30;
   inset: 4px 12px;
@@ -1879,6 +1880,21 @@ form.agent-session-composer:focus-within {
   font-weight: 700;
   pointer-events: none;
 }
+/* #4065: the same outline over the other composers. It lies over the card
+   itself rather than the bar around it, so it takes the card's own edges;
+   the card is the positioned parent. `#feedback-form` is "Suggest an
+   improvement", where the whole form is the drop zone. */
+.attach-drop-overlay { inset: 0; border-radius: inherit; background: color-mix(in srgb, var(--bg-primary) 94%, transparent); }
+.gc-composer-card,
+#gc-form,
+#gc-thread-form,
+.dc-card,
+.agent-session-composer,
+#feedback-form { position: relative; }
+#feedback-form > .attach-drop-overlay { inset: -6px; border-radius: 16px; }
+/* The boxed thread composer inside a board card has no card radius of its own. */
+#gc-form:not(.gc-composer-card) > .attach-drop-overlay,
+#gc-thread-form:not(.gc-composer-card) > .attach-drop-overlay { border-radius: 12px; }
 
 /* ── The two panes, and the width they are actually drawn at ────────────
    From 768px up both panes sit on the one strip: the list column fixed at
@@ -10708,6 +10724,47 @@ html .un-backdrop.platform-backdrop-dim {
   background-color: var(--dc-sheet-solid);
   box-shadow: 0 -1px 0 var(--app-sheet-line);
 }
+/* THE PAPERCLIP'S POPOVER (#4127): Photo and Video, in the vote popover's
+   frame (.dev-vote-pop / .messages-new-pop: same radius, surface, hairline
+   and shadow) and the "+" menu's rows. Absolute under the paperclip rather
+   than body-mounted and fixed: it lives inside the kit modal, which is a
+   transformed scroller, and scrolls with the field it hangs from. Above the
+   sticky Cancel/Post row (z-index 1), which it can overlap on a short form. */
+.feedback-attach-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 2;
+  width: 168px;
+  box-sizing: border-box;
+  padding: 6px;
+  border-radius: 16px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.feedback-attach-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.feedback-attach-option:hover, .feedback-attach-option:focus-visible { background: var(--bg-tertiary); outline: none; }
+.feedback-attach-option:disabled { opacity: .5; cursor: default; }
+.feedback-attach-option svg { flex: 0 0 auto; width: 20px; height: 20px; color: var(--brand-ink); }
 .un-sheet, .un-sheet::after, .un-panel, .un-panel::after,
 #apps-switcher-sheet, .un-sheet:has(#apps-switcher-sheet),
 .un-sheet:has(#apps-switcher-sheet)::after {

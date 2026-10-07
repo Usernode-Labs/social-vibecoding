@@ -410,3 +410,42 @@ test('#4065: a drop with nothing usable says what the form takes', async () => {
   assert.equal(h.list().length, 0);
   assert.match(h.el('feedback-status').textContent, /image or a video/i);
 });
+
+test('#4127: Photo and Video sit behind one paperclip whose popover a choice closes', async () => {
+  const h = makeHarness();
+  h.open();
+  const attach = h.el('feedback-attach-btn');
+  const menu = h.el('feedback-attach-menu');
+  const photo = h.el('feedback-screenshot-picker-btn');
+  const video = h.el('feedback-video-btn');
+  assert.equal(attach.classList.contains('hidden'), false, 'the paperclip is on the row');
+  assert.equal(attach.disabled, false);
+  assert.equal(menu.classList.contains('hidden'), true, 'its popover starts closed');
+  assert.equal(photo.classList.contains('hidden'), false);
+  assert.equal(video.classList.contains('hidden'), false);
+  assert.equal(video.querySelector('[data-video-label]') !== null, true);
+
+  await attach.click();
+  assert.equal(menu.classList.contains('hidden'), false, 'pressing the paperclip opens it');
+  assert.equal(attach.getAttribute('aria-expanded'), 'true');
+  await attach.click();
+  assert.equal(menu.classList.contains('hidden'), true, 'pressing it again closes it');
+
+  await attach.click();
+  await photo.click();
+  assert.equal(menu.classList.contains('hidden'), true, 'choosing Photo closes it');
+  assert.equal(attach.getAttribute('aria-expanded'), 'false');
+
+  await attach.click();
+  await video.click();
+  assert.equal(menu.classList.contains('hidden'), true, 'choosing Video closes it');
+
+  // Full of images: the Photo row steps aside, the paperclip stays for Video.
+  await h.pick('a.png', 'b.png', 'c.png');
+  assert.equal(photo.classList.contains('hidden'), true);
+  assert.equal(attach.classList.contains('hidden'), false);
+
+  await attach.click();
+  h.close();
+  assert.equal(menu.classList.contains('hidden'), true, 'closing the dialog closes the popover');
+});

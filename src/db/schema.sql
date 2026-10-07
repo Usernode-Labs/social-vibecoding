@@ -12472,6 +12472,11 @@ CREATE TABLE IF NOT EXISTS bot_config_results (
 CREATE INDEX IF NOT EXISTS idx_bot_config_results_version ON bot_config_results(config_version_id, status);
 CREATE INDEX IF NOT EXISTS idx_bot_config_results_trial ON bot_config_results(trial_id) WHERE trial_id IS NOT NULL;
 COMMENT ON TABLE bot_config_results IS 'staging:private';
+-- What the cost was made of (services/stage-costs.js breakdown): each stage
+-- (triage, spec, build, the review's reviewer calls and fix turns) with its
+-- model and dollars, and the remainder no stage names. Null on a result
+-- recorded before stages were.
+ALTER TABLE bot_config_results ADD COLUMN IF NOT EXISTS cost_parts JSONB;
 
 -- A blind PAIR: the current version's result and one side version's, from
 -- the same live first version, for an admin's pick (left, right or a tie)
@@ -12554,7 +12559,8 @@ COMMENT ON TABLE bot_capture_artifacts IS 'staging:private';
 -- never applies events to an instance a newer one has written. The
 -- pseudo-state '(none)' is a row the pipeline inserted to lock an instance
 -- that does not exist yet; it is deleted again unless a creating event is
--- accepted. app_id has no foreign key on purpose: an instance's history
+-- accepted, or kept to carry a stalled or faulted flag when that event
+-- timed out or threw. app_id has no foreign key on purpose: an instance's history
 -- outlives the app row, like receipts outlive what they describe.
 CREATE TABLE IF NOT EXISTS wf_instances (
   machine          TEXT NOT NULL,

@@ -3105,6 +3105,32 @@ test('the unit suite row leads the failure reasons and keeps its whole file list
   assert.ok(shaped.failures[1].reason.includes('… [truncated]'), 'other rows keep their clip');
 });
 
+test('a failing unit suite returns each test\'s error excerpt beside its unchanged reason (#3978)', () => {
+  const reason = 'tests/b.test.js (1): bot hello | # fail 1';
+  const shaped = tools.shapeChecks({
+    check_state: 'failing',
+    test_results: [
+      { name: 'Board loads', status: 'fail', failureReason: 'selector not found' },
+      {
+        index: -3, name: 'Repo unit suite (npm test) passes', path: 'package.json', status: 'fail', failureReason: reason,
+        failureDetails: [
+          { file: 'tests/b.test.js', test: 'bot hello', excerpt: "error: |-\n  1 !== 2\nexpected: 2\nactual: 1" },
+          { file: null, test: 'no excerpt', excerpt: '' },
+          ...Array.from({ length: 20 }, (_, i) => ({ file: 'tests/c.test.js', test: `t${i}`, excerpt: 'y'.repeat(4000) })),
+        ],
+      },
+    ],
+  });
+  const unit = shaped.failures[0];
+  assert.equal(unit.reason, `<untrusted-content>${reason}</untrusted-content>`, 'reason reads exactly as before');
+  assert.equal(unit.details.length, 10, 'capped at ten tests');
+  assert.equal(unit.details[0].file, '<untrusted-content>tests/b.test.js</untrusted-content>');
+  assert.equal(unit.details[0].test, '<untrusted-content>bot hello</untrusted-content>');
+  assert.match(unit.details[0].excerpt, /^<untrusted-content>error: \|-\n {2}1 !== 2/);
+  assert.ok(unit.details.every((d) => d.excerpt.length < 1600), 'each excerpt re-capped at read time');
+  assert.equal('details' in shaped.failures[1], false, 'a row without excerpts keeps its old shape');
+});
+
 test('checks degrade to a knowable nothing rather than a guess', () => {
   // A proposal whose checks have not run yet must not read as passing.
   const pending = tools.shapeChecks({});

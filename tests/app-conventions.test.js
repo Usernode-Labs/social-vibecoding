@@ -289,3 +289,27 @@ test('the excerpt and the full Tailwind section agree about the CDN (#1215)', ()
   assert.doesNotMatch(excerpt, /rejected by/i);
   assert.match(tailwind, /No proposal check rejects a `cdn\.tailwindcss\.com` tag/);
 });
+
+test('a first version\'s populated demo: the viewer\'s own data, a screen and a half, every control; nothing else changes (7 Oct 2026)', () => {
+  const doc = getAppConventions();
+  const mock = doc.slice(doc.indexOf('## Staging mock data'), doc.indexOf('### Seeded data must not fabricate a signal your logic reads'));
+  assert.match(mock, /- \*\*Small\.\*\* A handful of rows — just enough for the testing steps\.\n  \(A project's first version is the one exception: see "A first\n  version's populated demo" below\.\)/);
+  const demo = mock.slice(mock.indexOf("### A first version's populated demo"));
+  assert.ok(demo.length > 500, 'the carve-out is there, inside "Staging mock data"');
+  const flat = demo.replace(/\s+/g, ' ');
+  assert.match(flat, /For that build only, and on `\?demo=1` only, three seed rules change\. Every later change keeps the rules above\./);
+  assert.match(flat, /\*\*Enough to look lived in\.\*\* Varied, realistic rows filling about a screen and a half of the main screen at phone width \(390×844\), not a handful\. Each still reads "Staging demo …"\./);
+  assert.match(flat, /\*\*The viewer's own data too\.\*\*/);
+  assert.match(flat, /Either add the viewer's demo rows to the `\?demo=1` responses without storing them, or write them for the viewing account on its first `\?demo=1` request, once \(fixed ids, `ON CONFLICT DO NOTHING`/);
+  assert.match(flat, /the rows land only in staging's own database: that is not cloning production rows, so "Never reference real users" still holds\. Other people in the demo are still fake identities\./);
+  assert.match(flat, /\*\*Every control the real screen has\.\*\* .* A "view only" demo that hides them is not a populated screen\./);
+  // What does not move: staging only, ?demo=1 only, the plain route's test, and the signal rule.
+  assert.match(flat, /nothing is written outside staging, nothing is written by a route without `\?demo=1` \(the page passes `demo=1` on to its own API calls\), boot-time seeding stays with fake identities, and the plain route keeps its test of the production-shaped answer\./);
+  assert.match(flat, /The viewer's demo rows must never be what makes a check of the form "has this user done X" pass/);
+  assert.doesNotMatch(demo, /—/);
+  // The rule it bends says so, and so does the offline excerpt.
+  const signal = doc.slice(doc.indexOf('### Seeded data must not fabricate a signal your logic reads'), doc.indexOf('### Make the changed screen URL-reachable'));
+  assert.match(signal, /\(A first version's `\?demo=1` demo\n  may give the viewer rows of their own, within the limits of "A first\n  version's populated demo" above; nothing else may\.\)/);
+  const excerpt = doc.slice(doc.indexOf('<!-- work-order:begin -->'), doc.indexOf('<!-- work-order:end -->'));
+  assert.match(excerpt, /A project's first version is the one\n   exception, on `\?demo=1` only: see "A first version's populated demo"\./);
+});

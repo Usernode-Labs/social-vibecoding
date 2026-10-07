@@ -118,6 +118,11 @@ export interface CheckRow {
    */
   details?: { file: string | null; test: string; excerpt: string }[];
   errors?: { kind: string; message: string; source?: string | null }[];
+  /**
+   * The repo unit suite only (#3978): per failing test, its file, its name
+   * and a bounded, redacted excerpt of the error the runner printed.
+   */
+  details?: { file?: string | null; test: string; excerpt: string }[];
 }
 
 export interface ChecksVerdict {

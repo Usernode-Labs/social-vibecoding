@@ -318,6 +318,9 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── #4127: one paperclip for Photo and Video in Send feedback ─────────
+  'feedback-attach-btn': '#4127: the paperclip in Send feedback\'s attachment row. It opens #feedback-attach-menu, which holds the Photo (#feedback-screenshot-picker-btn) and Video (#feedback-video-btn) rows that were two buttons of their own, so the row fits on one line. dapp.json\'s feedback check selects on it.',
+  'feedback-attach-menu': '#4127: the paperclip\'s popover, in the vote popover\'s frame. Opened and closed by ./feedback-controller (outside click, Escape, a choice).',
   'report-modal': '#2721 shared reporting dialog',
   // ── B8: Suggest an improvement answered by Homeroom bot ─────────────────
   'feedback-sent-line': 'B8: the line under the filed-request confirmation\'s heading, worded by the controller: "Find it on your profile…", or "Homeroom bot is on it, usually about 8 minutes."',
@@ -997,7 +1000,7 @@ const ADDED_IDS = {
   // picker is a native surface, so the input never renders); the preview
   // row's one item is built by feedback-controller.js, like the screenshot
   // thumbnails, so it carries no id of its own.
-  'feedback-video-btn': '#3940: the Add video button (label becomes Replace video once a clip is attached). dapp.json\'s feedback check selects on it.',
+  'feedback-video-btn': '#3940: the Video row of the paperclip popover (#4127; label becomes Replace video once a clip is attached). dapp.json\'s feedback check selects on it.',
   'feedback-video-input': '#3940: the hidden video file input behind the button (MP4, WebM and MOV).',
   'feedback-video-preview': '#3940: the clip preview row (first-frame thumbnail, progress bar, status, remove), empty and hidden until a clip is chosen.',
 };

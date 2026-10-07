@@ -577,6 +577,9 @@ test('a ready request is built in a session of its own and proposed', async () =
     ok: true, sessionId: 5001, prNumber: 42, branchName: 'homeroom_bot/s5001', sha: 'a'.repeat(40), commits: 1,
     costUsd: 0.05,
     specNote: 'no spec (the spec turn returned nothing); the build worked from the plan',
+    // What each stage cost, on its model (services/stage-costs.js): a spec
+    // turn whose cost is unknown has no line.
+    stageCosts: { build: { usd: 0.05, model: 'z-ai/glm-5.3-flash' } },
   }, 'this harness writes no spec, and the result says so');
 
   const insert = h.calls.queries.find((q) => /INSERT INTO chat_sessions/.test(q.sql));
