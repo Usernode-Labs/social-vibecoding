@@ -53,6 +53,7 @@ import {
   loadOlder,
   loadOlderReplies,
   loadReplyThread,
+  measureLayout,
   messagesController,
   open as openConversation,
   openAgentThread,
@@ -2154,9 +2155,19 @@ export function EmbeddedConversation({ conversationId, active, at = null }: {
 
 export function MessagesScreen() {
   const screenRef = useRef<HTMLElement | null>(null);
+  const layoutRef = useRef<HTMLDivElement | null>(null);
   const snap = useMessagesSnapshot();
   useVisibilityHiddenClass(screenRef, 'messages-screen', false);
   useEffect(() => initializeMessagesStore(), []);
+  // #4229: the strip's width decides whether the list fits beside an open
+  // conversation. Its own width, so the platform rail folding counts too.
+  useEffect(() => {
+    const el = layoutRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    const sizes = new ResizeObserver(() => measureLayout(el.clientWidth));
+    sizes.observe(el);
+    return () => sizes.disconnect();
+  }, []);
   // THE AGENT HALF OF THIS INBOX HAS TO ASK FOR ITSELF (#2718 review).
   //
   // The list's `useGlobalChatSelector` reads a store that nothing on this screen
@@ -2210,14 +2221,17 @@ export function MessagesScreen() {
   // for it to sit beside, whatever the full-width preference says.
   const channelOpen = !!snap.route.appSlug
     || (!!snap.route.conversationId && snap.active?.id === snap.route.conversationId && snap.active?.kind === 'channel');
-  const layout = `messages-layout dc-lift dc-lift-strip${(snap.listCollapsed && discussionOpen) || channelOpen ? ' messages-list-collapsed' : ''}${chatOpen && snap.route.threadRootId ? ' messages-has-reply-thread' : ''}`;
+  // #4229: on a strip too narrow for a readable conversation beside the
+  // list, an open discussion takes the strip and the bar's back arrow returns
+  // to the list, as on a phone (store.ts measureLayout).
+  const layout = `messages-layout dc-lift dc-lift-strip${(snap.listCollapsed && discussionOpen) || channelOpen ? ' messages-list-collapsed' : ''}${chatOpen && snap.route.threadRootId ? ' messages-has-reply-thread' : ''}${discussionOpen && snap.listCrowded ? ' messages-list-crowded' : ''}`;
   // No background of its own: the route paints the wallpaper (the
   // body:has(#messages-screen) rules in app.css), and the two frosted planes
   // need a transparent ancestor chain to have anything to blur.
   return (
     <>
       <main ref={screenRef} id="messages-screen" className="hidden flex-1 min-h-0 overflow-hidden" style={{ position: 'relative' }}>
-        <div className={layout}>
+        <div ref={layoutRef} className={layout}>
           <ConversationList />
           <ConversationThread />
           {snap.route.conversationId && snap.route.threadRootId && !snap.route.embedded ? <ReplyThreadPanel /> : null}
