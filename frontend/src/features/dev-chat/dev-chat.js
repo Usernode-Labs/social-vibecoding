@@ -1064,6 +1064,8 @@ const DevChat = {
   // input to it now meets.
   _launchpadVenue() {
     if (!window.Launchpad) return null;
+    // #3976: a read-only session is handed to no venue; its strip says so.
+    if (DevChat._classicReadOnlyView(DevChat.currentSession)) return null;
     const venue = DevChat._currentVenueId();
     return Launchpad.isLaunchpad(venue) ? venue : null;
   },
@@ -3722,6 +3724,8 @@ const DevChat = {
   // Only the walkthrough renders in the transcript now — see _devFlowTarget
   // for what left and why.
   _devFlowHtml() {
+    // #3976: handing a read-only session's work to a web agent continues it.
+    if (DevChat._classicReadOnlyView(DevChat.currentSession)) return '';
     const target = DevChat._devFlowTarget();
     if (!target) return '';
     const flow = DevChat._devFlow;
@@ -4564,6 +4568,8 @@ const DevChat = {
   async _resumeCurrentSessionIfPaused({ silent = false } = {}) {
     const s = DevChat.currentSession;
     if (!s || !s.id) return false;
+    // #3976: a read-only session is never resumed for a turn it cannot run.
+    if (DevChat._classicReadOnlyView(s)) return false;
     const sessionId = s.id;
     try {
       const res = await fetch(`/api/sessions/${sessionId}`);
@@ -4736,7 +4742,11 @@ const DevChat = {
       // on the platform's session cap — the refusal toasts a 429, which reads
       // as a console error on the route and fails the check for a reason that
       // has nothing to do with what it asserts.
-      if (session.status === 'paused' && DevChat._ownsSession(session) && !DevChat._isShotDeepLink()) {
+      // #3976: …and never a read-only one, which has no turn to resume for:
+      // its proposal is promoted straight from paused, and a resume would
+      // spend one of the owner's active slots on a session nobody can use.
+      if (session.status === 'paused' && DevChat._ownsSession(session) && !DevChat._isShotDeepLink()
+          && !DevChat._classicReadOnlyView(session)) {
         try {
           const rr = await fetch(`/api/sessions/${sessionId}/resume`, { method: 'POST', signal });
           if (rr.ok) {
@@ -5067,6 +5077,9 @@ const DevChat = {
 
   async sendMessage(message, attachments = []) {
     if (!DevChat.currentSession || DevChat.isStreaming) return;
+    // #3976: nothing on a read-only session's screen sends, and the server
+    // would refuse it; a stray caller stops here rather than paint a turn.
+    if (DevChat._classicReadOnlyView(DevChat.currentSession)) return;
     // #450: attachments-only sends are allowed; the server stores a
     // "(attached files)" stub caption, mirrored here for the optimistic
     // bubble. `attachments` entries come from pendingAttachments (already
@@ -7895,7 +7908,9 @@ const DevChat = {
     for (let i = DevChat.messages.length - 1; i >= 0; i--) {
       if (DevChat.messages[i].role !== 'system') { qaLastConvoIdx = i; break; }
     }
-    const qaInteractive = !!session && (session.status === 'active' || session.status === 'promoted');
+    // #3976: an answer is a message, and a read-only session takes none.
+    const qaInteractive = !!session && (session.status === 'active' || session.status === 'promoted')
+      && !DevChat._classicReadOnlyView(session);
 
     // The one row a live turn is writing into: the last assistant row while a
     // turn is in flight. Only it subscribes to `streamStore`, which is what
@@ -8273,7 +8288,8 @@ const DevChat = {
       // or a hand-off launchpad, which answer "what now?" themselves. It
       // stays until the first message lands, so it is persistent rather than
       // a toast.
-      empty: !!session && !rows.length && !DevChat.isStreaming && !devFlowHtml && !DevChat._launchpadVenue(),
+      empty: !!session && !rows.length && !DevChat.isStreaming && !devFlowHtml && !DevChat._launchpadVenue()
+        && !DevChat._classicReadOnlyView(session),
       activity: DevChat._activitySpec(),
       // #1889: whether a turn is in flight. The transcript keeps the latest
       // Changes card in its turn's slot while the run's tail is painting and
@@ -9934,7 +9950,8 @@ const DevChat = {
         : '',
       newChangeTitle: 'This chat is one change → one pull request. A PR opens after the first build.',
       life: DevChat._headerLife(session),
-      venue: DevChat._headerVenue(session),
+      // #3976: where a read-only session is built is no longer a choice.
+      venue: DevChat._classicReadOnlyView(session) ? null : DevChat._headerVenue(session),
       // #1904: the strip's ⋯ menu — see _headerActions.
       actions: DevChat._headerActions(session),
     };
@@ -10209,12 +10226,19 @@ const DevChat = {
 
   _bannersView() {
     const session = DevChat.currentSession;
+    // #3976: a read-only session's strip already starts the next change, and
+    // credits matter only to a turn it will never run, so those three stand
+    // down. The sync banner stays: syncing a proposal with main is proposal
+    // upkeep, not new work.
+    const classicReadOnly = session ? DevChat._classicReadOnlyView(session) : null;
+    const live = !!session && !classicReadOnly;
     return {
       sync: session ? DevChat._syncBannerView(session) : null,
-      newChange: session ? DevChat._newChangeBannerView(session) : null,
-      credits: session ? DevChat._creditsBannerView() : null,
-      creditsLow: session ? DevChat._creditsLowBannerView() : null,
+      newChange: live ? DevChat._newChangeBannerView(session) : null,
+      credits: live ? DevChat._creditsBannerView() : null,
+      creditsLow: live ? DevChat._creditsLowBannerView() : null,
       agentSession: session ? DevChat._agentSessionBannerView(session) : null,
+      classicReadOnly,
     };
   },
 
@@ -10226,6 +10250,19 @@ const DevChat = {
     if (!session || !session.agent_session_id) return null;
     if (typeof App === 'undefined' || !App.user || Number(session.user_id) !== Number(App.user.id)) return null;
     return { href: `#messages/agent/${Number(session.agent_session_id)}` };
+  },
+
+  // #3976: a classic session is read-only. The server says which sessions
+  // are (`classic_read_only` on GET /api/sessions/:id, decided by
+  // services/classic-sessions.js) and refuses their new messages, so here it
+  // only decides what the screen offers: the transcript, its spec, its
+  // previews and its proposal stay; the composer, the quick replies, the
+  // questionnaire, the venue and the hand-off give way to a strip that says
+  // why and starts an agent session on the same app. Read by everyone, not
+  // only the owner: nobody can continue it.
+  _classicReadOnlyView(session) {
+    if (!session || session.classic_read_only !== true) return null;
+    return { canStart: !!DevChat._sessionAppSlug(session) };
   },
 
   // Start a sync, from the banner's button. Named, because the component
@@ -10439,7 +10476,8 @@ const DevChat = {
       // in the box while still not re-explaining a settled fact on the next
       // full render. See `renderChatView`.
       venueNoteHtml: DevChat._venueNoteForRender || '',
-      hidden: !!DevChat._launchpadVenue() || !!DevChat._agentSessionBannerView(DevChat.currentSession),
+      hidden: !!DevChat._launchpadVenue() || !!DevChat._agentSessionBannerView(DevChat.currentSession)
+        || !!DevChat._classicReadOnlyView(DevChat.currentSession),
       models: DevChat._modelPickerView(),
       drafts: DevChat._savedDraftsView(),
       attachError: DevChat._attachError,
@@ -10594,7 +10632,8 @@ const DevChat = {
       // Is there anything left in the bottom bar to draw a border around?
       // The composer is hidden in a launchpad and the venue note is usually
       // absent, and an empty bordered strip reads as a broken composer.
-      barEmpty: !!DevChat._launchpadVenue() && !DevChat._venueNoteForRender,
+      barEmpty: (!!DevChat._launchpadVenue() || !!DevChat._classicReadOnlyView(DevChat.currentSession))
+        && !DevChat._venueNoteForRender,
       // Saved widths from a previous drag. CSS clamps to a min/max, so a
       // stale value can't make the chat unusably narrow.
       spec: { open: viewerOpen, width: DevChat._readSpecViewerWidth() || null },
@@ -10602,7 +10641,8 @@ const DevChat = {
       // to be wider).
       staging: { open: stagingOpen, width: DevChat._readStagingPanelWidth() || null },
       proposalHint: !!DevChat._proposalHint,
-      returnHint: DevChat._showReturnHint(),
+      // #3976: "come back to this chat" is advice for one that goes on.
+      returnHint: !DevChat._classicReadOnlyView(DevChat.currentSession) && DevChat._showReturnHint(),
     };
   },
 
@@ -11045,7 +11085,8 @@ const DevChat = {
   },
   _dropDisabled() {
     return !DevChat.currentSession || !!DevChat.isStreaming
-      || !!DevChat._launchpadVenue() || !!DevChat._agentSessionBannerView(DevChat.currentSession);
+      || !!DevChat._launchpadVenue() || !!DevChat._agentSessionBannerView(DevChat.currentSession)
+      || !!DevChat._classicReadOnlyView(DevChat.currentSession);
   },
 
   // The line a drop or a pick shows when it left files out (#4065).
