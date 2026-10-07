@@ -704,12 +704,165 @@ function noteFileChange(state, path) {
   addObservedValue(state.telemetryFileChanges, path);
 }
 
+// ── Where a coding turn's time went (2026-10-07) ────────────────────────
+// A first-version build on 7 Oct 2026 (session 6937) took 27.9 minutes over
+// 226 model requests, 94 browser calls, 70 commands and 38 edits, and its
+// metrics held only those totals: nothing said how the minutes split between
+// the model, the browser, the shell and the edits, or when the app was first
+// booted. The OpenRouter request listener stamps each request's start and
+// end with atMs, ms since it started (worker/*-openrouter-request.js). That
+// is the turn's own clock. A restarted platform reads the journal again, so
+// the moment it reads a line says nothing about when the line was written.
+//
+// From those stamps:
+//   - model time is the time at least one request was open;
+//   - a gap runs from a request ending with none left open to the next one
+//     starting. The agent was running the tools the last reply asked for, so
+//     the gap is split evenly between the kinds of tool first seen since the
+//     request before it started (a tool_use line can land on either side of
+//     its own request's end line), and goes to `other` when none was;
+//   - a milestone is when the reply that asked for the tool finished.
+// A listener that sends no atMs (an older worker image) records none of it:
+// the fields stay null, which the ledger leaves out rather than calling 0.
+const CODING_TOOL_KIND_FIELDS = Object.freeze({
+  browser: 'browserToolMs', shell: 'shellToolMs', edit: 'editToolMs',
+  read: 'readToolMs', other: 'otherToolMs',
+});
+const CODING_TOOL_KINDS = Object.keys(CODING_TOOL_KIND_FIELDS);
+const CODING_CLOCK_MAX_MS = 86_400_000;
+const APP_BOOT_COMMAND = /usernode-run-inloop/;
+
+function codingToolKind(name) {
+  const n = typeof name === 'string' ? name : '';
+  // An MCP tool is mcp__<server>__<tool>, and Playwright's are browser_*.
+  const bare = n.startsWith('mcp__') ? n.slice(n.lastIndexOf('__') + 2) : n;
+  if (/playwright/i.test(n) || /^browser_/i.test(bare)) return 'browser';
+  if (['Bash', 'BashOutput', 'KillShell', 'KillBash'].includes(n)) return 'shell';
+  if (['Write', 'Edit', 'MultiEdit', 'NotebookEdit'].includes(n)) return 'edit';
+  if (['Read', 'Glob', 'Grep', 'LS', 'NotebookRead'].includes(n)) return 'read';
+  return 'other';
+}
+
+function codexToolKind(event) {
+  if (event.kind === 'command_started' || event.kind === 'command_completed') return 'shell';
+  if (event.kind === 'file_changed') return 'edit';
+  if (event.kind === 'file_read' || event.kind === 'file_read_completed') return 'read';
+  return codingToolKind(event.toolName);
+}
+
+function stampCodingMilestone(state, field, at) {
+  const prior = state[field];
+  if (field === 'lastBrowserCallMs') state[field] = prior == null ? at : Math.max(prior, at);
+  else state[field] = prior == null ? at : Math.min(prior, at);
+}
+
+function attributeCodingGap(state, clock, gapMs) {
+  const kinds = CODING_TOOL_KINDS.filter((kind) => clock.kinds.has(kind));
+  if (!kinds.length) kinds.push('other');
+  // Whole milliseconds, the remainder to the first kinds, so the kinds
+  // always sum to exactly the gaps.
+  const share = Math.floor(gapMs / kinds.length);
+  let remainder = gapMs - share * kinds.length;
+  for (const kind of kinds) {
+    state[CODING_TOOL_KIND_FIELDS[kind]] += share + (remainder > 0 ? 1 : 0);
+    remainder -= 1;
+  }
+}
+
+// One provider_request_start or provider_request_end, with its atMs.
+function noteCodingRequestClock(state, kind, ordinal, atMs) {
+  if (state.telemetryDiagnosticsEnabled !== true) return;
+  if (!Number.isSafeInteger(atMs) || atMs < 0 || atMs > CODING_CLOCK_MAX_MS) return;
+  const starting = kind === 'provider_request_start';
+  let clock = state.codingClock;
+  if (!clock) {
+    clock = state.codingClock = {
+      seen: new Set(), offsetMs: 0, latestMs: 0, maxOrdinal: 0, open: new Set(),
+      busySinceMs: null, idleSinceMs: null, lastEndMs: null, kinds: new Set(), awaiting: [],
+    };
+    state.modelRequestMs = 0;
+    for (const field of Object.values(CODING_TOOL_KIND_FIELDS)) state[field] = 0;
+  }
+  // Keyed by ordinal AND stamp: the same line read twice is one request,
+  // while a second listener's request 1 (below) is a different line.
+  const key = `${starting ? 'start' : 'end'}:${ordinal}:${atMs}`;
+  if (clock.seen.has(key)) return;
+  if (starting) {
+    // Ordinals only climb within one listener. A repeated one is a new
+    // listener: run-cc.sh starts Claude Code a second time when a resume
+    // fails, and that one counts again from request 1 and from 0 ms. Its
+    // clock is placed after the last stamp the first one sent, a floor
+    // since the time between the two goes unseen, and no gap spans them.
+    if (ordinal <= clock.maxOrdinal) {
+      if (clock.open.size) state.modelRequestMs += Math.max(0, clock.latestMs - clock.busySinceMs);
+      clock.offsetMs = clock.latestMs;
+      clock.maxOrdinal = 0;
+      clock.open.clear();
+      clock.busySinceMs = null;
+      clock.idleSinceMs = null;
+      clock.lastEndMs = null;
+      clock.kinds.clear();
+      clock.awaiting = [];
+    }
+    clock.seen.add(key);
+    clock.maxOrdinal = Math.max(clock.maxOrdinal, ordinal);
+    const at = clock.offsetMs + atMs;
+    clock.latestMs = Math.max(clock.latestMs, at);
+    if (!clock.open.size) {
+      if (clock.idleSinceMs != null) attributeCodingGap(state, clock, Math.max(0, at - clock.idleSinceMs));
+      clock.idleSinceMs = null;
+      clock.kinds.clear();
+      clock.busySinceMs = at;
+    }
+    clock.open.add(ordinal);
+    return;
+  }
+  // An end whose start was never seen, or that already ended, adds nothing.
+  if (!clock.open.has(ordinal)) return;
+  clock.seen.add(key);
+  clock.open.delete(ordinal);
+  const at = clock.offsetMs + atMs;
+  clock.latestMs = Math.max(clock.latestMs, at);
+  clock.lastEndMs = at;
+  for (const field of clock.awaiting) stampCodingMilestone(state, field, at);
+  clock.awaiting = [];
+  if (!clock.open.size) {
+    state.modelRequestMs += Math.max(0, at - clock.busySinceMs);
+    clock.busySinceMs = null;
+    clock.idleSinceMs = at;
+  }
+}
+
+// A tool the agent called, once per call (the callers' item-id dedupe).
+// Only a client-side tool runs between requests; a server tool's time is
+// inside its request already.
+function noteCodingToolClock(state, kind, { bootsApp = false } = {}) {
+  const clock = state.codingClock;
+  if (!clock) return;
+  clock.kinds.add(kind);
+  const milestones = [];
+  if (kind === 'edit') milestones.push('firstFileChangeMs');
+  if (kind === 'browser') milestones.push('firstBrowserCallMs', 'lastBrowserCallMs');
+  if (bootsApp) milestones.push('firstAppBootMs');
+  // Seen while a reply is still streaming: it is that reply's, and is
+  // stamped when that reply ends. Otherwise the last reply asked for it.
+  if (clock.open.size) clock.awaiting.push(...milestones);
+  else if (clock.lastEndMs != null) {
+    for (const field of milestones) stampCodingMilestone(state, field, clock.lastEndMs);
+  }
+}
+
 function noteClaudeToolCall(state, block) {
   const itemKey = block && block.id ? `claude:${block.id}` : null;
   if (itemKey && state.telemetryStartedItemIds.has(itemKey)) return false;
   if (itemKey) state.telemetryStartedItemIds.add(itemKey);
   const name = typeof block?.name === 'string' ? block.name : String(block?.type || 'tool');
   const input = block && block.input && typeof block.input === 'object' ? block.input : {};
+  if (block?.type === 'tool_use') {
+    noteCodingToolClock(state, codingToolKind(name), {
+      bootsApp: name === 'Bash' && APP_BOOT_COMMAND.test(String(input.command || '')),
+    });
+  }
   state.toolCallCount += 1;
   noteToolName(state, name);
   if (block?.type === 'server_tool_use' || block?.type === 'mcp_tool_use') {
@@ -738,6 +891,10 @@ function noteCodexToolStart(state, event) {
   if (key && state.telemetryStartedItemIds.has(key)) return false;
   if (key) state.telemetryStartedItemIds.add(key);
   noteFirstAgentOutput(state);
+  noteCodingToolClock(state, codexToolKind(event), {
+    bootsApp: event.kind === 'command_started'
+      && APP_BOOT_COMMAND.test(String(event.command || event.text || '')),
+  });
   state.toolCallCount += 1;
   state.responseToolCallCount += 1;
   noteToolName(state, event.toolName || event.kind);
@@ -1157,6 +1314,9 @@ function observeCodingProviderTiming(event, onProgress, state) {
   }
   const ordinal = event?.requestOrdinal;
   if (!Number.isSafeInteger(ordinal) || ordinal < 1 || ordinal > 1_000_000) return;
+  if (event.kind === 'provider_request_start' || event.kind === 'provider_request_end') {
+    noteCodingRequestClock(state, event.kind, ordinal, event.atMs);
+  }
   const requests = state.codingProviderRequests || (state.codingProviderRequests = new Map());
   if (event.kind === 'provider_request_result') {
     observeCodingProviderResult(event, ordinal, onProgress, state);
@@ -1532,6 +1692,20 @@ function newWatchState() {
     imageSentCount: null,
     imageMovedCount: null,
     imageOmittedCount: null,
+    // Where an OpenRouter turn's time went, read off its request listener's
+    // own clock (noteCodingRequestClock). All null when the listener sent
+    // no clock: an Anthropic turn, or a worker image from before atMs.
+    codingClock: null,
+    modelRequestMs: null,
+    browserToolMs: null,
+    shellToolMs: null,
+    editToolMs: null,
+    readToolMs: null,
+    otherToolMs: null,
+    firstFileChangeMs: null,
+    firstAppBootMs: null,
+    firstBrowserCallMs: null,
+    lastBrowserCallMs: null,
     requestMode: null,
     requestMessageCount: null,
     requestUserMessageCount: null,
