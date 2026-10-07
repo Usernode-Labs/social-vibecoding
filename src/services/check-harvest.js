@@ -181,6 +181,14 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
     await stagingRecovery.recheckSessionChecks({ config, pool, session, reason: 'orphaned-run' });
     return { outcome: 'redriven', why, ...base };
   };
+  // Once the verdict from the Jobs is stored and the manifest cleared, the
+  // Jobs are read out: delete them now, as a live run does, rather than hold
+  // the worker namespace's Job slots until their TTL. Detached; the TTL
+  // still collects any this misses.
+  const releaseJobs = () => {
+    kubernetes.deleteSettledCheckJobs(config, { sessionId, previewRunId: runId })
+      .catch((err) => log.warn('check-harvest', 'Settled check Jobs not deleted; their TTL will', { ...base, err: err.message }));
+  };
 
   try {
     const session = await loadSession(pool, sessionId);
@@ -307,6 +315,7 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
       });
       if (operation) await lifecycle.settleAdopted(config, operation, { result: { state: 'error' } });
       await checkRuns.finish(pool, runId);
+      releaseJobs();
       return { outcome: 'settled', state: 'error', why, ...base };
     }
 
@@ -358,6 +367,7 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
       visuals.noteBotChecksAfterChecks?.(pool, session, settled.result.state);
     }
     await checkRuns.finish(pool, runId);
+    releaseJobs();
     log.info('check-harvest', 'Orphaned run settled from its Jobs', {
       ...base, state: settled.result.state, durationMs: Date.now() - startedAt,
     });

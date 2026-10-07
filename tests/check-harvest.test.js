@@ -78,6 +78,16 @@ function stub(t, mod, patch) {
   t.after(() => { for (const [k, v] of Object.entries(saved)) mod[k] = v; });
 }
 
+// A settled harvest deletes the run's Jobs (kubernetes.deleteSettledCheckJobs).
+// Recorded for every test, so none reaches for a cluster.
+const realDeleteSettledCheckJobs = kubernetes.deleteSettledCheckJobs;
+let releasedJobs = [];
+test.beforeEach(() => {
+  releasedJobs = [];
+  kubernetes.deleteSettledCheckJobs = async (_cfg, run) => { releasedJobs.push(run); return 2; };
+});
+test.afterEach(() => { kubernetes.deleteSettledCheckJobs = realDeleteSettledCheckJobs; });
+
 function quietBroadcast(t) {
   const seen = [];
   stub(t, ws, { broadcastGlobal: (e) => seen.push(e) });
@@ -164,6 +174,9 @@ test('an orphan whose Jobs finished is settled from their output through settleC
   const evidence = [];
   let settledWith = null;
   stub(t, kubernetes, {
+    deleteSettledCheckJobs: async (_cfg, run) => {
+      releasedJobs.push({ ...run, manifestCleared: pool.deleted.includes(run.previewRunId) });
+    },
     findCheckJobs: async (_cfg, { sessionId, previewRunId }) => {
       assert.equal(sessionId, 42); assert.equal(previewRunId, 'run-1');
       return { capture: { name: 'sv-capture-s42-x', state: 'succeeded' }, unitSuite: { name: 'sv-unit-suite-s42-x', state: 'succeeded' } };
@@ -213,6 +226,9 @@ test('an orphan whose Jobs finished is settled from their output through settleC
     'a harvested run ran across a restart, so a red verdict from it runs again (tests/checks-rollout-overlap.test.js)');
   assert.equal(settledWith.operation, null, 'lifecycle off: settled with the plain pool');
   assert.deepEqual(pool.deleted, ['run-1'], 'the manifest is cleared once the verdict is stored');
+  assert.deepEqual(releasedJobs, [{ sessionId: 42, previewRunId: 'run-1', manifestCleared: true }],
+    'read out and settled, so the Jobs go now rather than holding Job slots until their TTL; '
+    + 'after the manifest, so no later harvest can come looking for them');
   assert.deepEqual(evidence, [{ id: 42, head: 'abc123', trigger: 'checks-harvested' }],
     'recovering checks must also hand the visual claim to the evidence runner');
   assert.equal(visuals.hasInFlightCapture(42), false, 'the seat is handed back');
@@ -297,6 +313,7 @@ test('a run whose session was decided meanwhile is moot: manifest cleared, nothi
   assert.equal(result.outcome, 'moot');
   assert.match(result.why, /passing/);
   assert.deepEqual(pool.deleted, ['run-1']);
+  assert.deepEqual(releasedJobs, [], 'a moot run deletes nothing; its Jobs are left to the TTL');
   assert.equal(visuals.hasInFlightCapture(42), false);
 });
 
@@ -396,6 +413,7 @@ test('a capture Job that vanished mid-read re-drives a still-current session and
     assert.deepEqual(rechecks, expected === 'redriven' ? ['orphaned-run'] : [], checkState);
     assert.equal(visuals.hasInFlightCapture(42), false);
     assert.deepEqual(pool.deleted, ['run-1'], checkState);
+    assert.deepEqual(releasedJobs, [], `${checkState}: only a settled run deletes its Jobs`);
   }
 });
 
@@ -452,6 +470,7 @@ test('a capture Job that failed with nothing to salvage records an error verdict
   assert.match(stores[0].detail, /BackoffLimitExceeded/);
   assert.deepEqual(evidence, [{ id: 42, head: 'abc123', trigger: 'checks-harvested' }]);
   assert.deepEqual(pool.deleted, ['run-1']);
+  assert.deepEqual(releasedJobs, [{ sessionId: 42, previewRunId: 'run-1' }], 'an error verdict is settled too');
 });
 
 test('a sweep outside the Kubernetes capture runtime is a no-op', async () => {

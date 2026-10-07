@@ -25,7 +25,11 @@ test('cancels capture and unit Jobs together and waits for foreground deletion',
   const pending = kubernetes.cancelPreviewChecks(config, 42).then(() => { complete = true; });
   await flush();
   assert.deepEqual(deleted.map(x => x.name), names);
-  assert.equal(deleted[0].propagationPolicy, 'Foreground');
+  // With a body the API server reads delete options from it alone. A policy
+  // in the query string beside one is ignored, and a batch/v1 Job deleted
+  // without a policy orphans its Pods and strips its input Secret's owner.
+  assert.equal(deleted[0].body.propagationPolicy, 'Foreground');
+  assert.equal(deleted[0].propagationPolicy, undefined, 'never only in the query string, where the body overrides it');
   assert.equal(deleted[0].body.preconditions.uid, `${names[0]}-uid`);
   assert.equal(complete, false, 'DELETE acknowledgement is insufficient');
   stopping = false; t.mock.timers.tick(250); await pending;

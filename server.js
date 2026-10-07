@@ -1276,6 +1276,10 @@ async function becomeLeader() {
       log.warn('server', 'Failed kpack Build sweep failed', { err: err.message });
     });
   require('./src/services/build-retention').start(config);
+  // Ownerless check input Secrets and finished check Pods whose Job is gone:
+  // nothing else collects either, and the Secrets count against the worker
+  // namespace's quota. Bounded, every quarter hour. See services/check-retention.js.
+  require('./src/services/check-retention').start(config);
 
   // Backfill `main_sha` for apps created before #21 added the column.
   // Non-blocking: we log and continue so a single slow/unauthorized
@@ -6277,6 +6281,7 @@ async function cleanup() {
     log.warn('server', 'Stopping the benchmark lane failed', { err: err.message });
   }
   const retentionStop = require('./src/services/build-retention').stop();
+  const checkRetentionStop = require('./src/services/check-retention').stop();
   const scorerStop = require('./src/services/topochain/challenge-scorer').stop();
   // Stop claiming push jobs immediately. The bounded drain runs in
   // parallel with HTTP/session draining and is awaited before pool close.
@@ -6453,7 +6458,7 @@ async function cleanup() {
     let poolTimer = null;
     try {
       await Promise.race([
-        Promise.all([retentionStop, scorerStop, workflowStop]).then(() => shutdownPool.end()),
+        Promise.all([retentionStop, checkRetentionStop, scorerStop, workflowStop]).then(() => shutdownPool.end()),
         new Promise((resolve) => { poolTimer = setTimeout(resolve, POOL_CLOSE_TIMEOUT_MS); }),
       ]);
       log.info('server', 'Pool closed', { durationMs: Date.now() - poolStartedAt });
