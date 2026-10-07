@@ -269,7 +269,11 @@ function loadGroupChat({ fetch, liveReads } = {}) {
 const ids = (list) => Array.from(list, (m) => Number(m.id));
 const msg = (id, extra) => ({ id, content: `m${id}`, ...(extra || {}) });
 
-const liveSet = (...list) => new Set(list.map(String));
+// A read's reconciled answer with the events that arrived meanwhile replayed.
+function caughtUp(GroupChat, current, latest, full, { before, events = [], thread = null, root = null } = {}) {
+  const next = GroupChat._reconcileLatest(current, latest, full, { before });
+  return { ...next, messages: GroupChat._replayLive(next.messages, root, events, thread, next.start) };
+}
 
 test('the newest page is the truth from its first id on', () => {
   const GroupChat = loadGroupChat();
@@ -277,37 +281,43 @@ test('the newest page is the truth from its first id on', () => {
   // over the socket while the read was in flight. The page spans 3..8.
   const current = [1, 2, 3, 4, 5, 6, 9].map((id) => msg(id));
   const latest = [msg(3), msg(4, { content: 'edited' }), msg(6), msg(7), msg(8)];
-  const { messages, reset } = GroupChat._reconcileLatest(current, latest, true, { before: 6, live: liveSet(9) });
+  const { messages, reset, older } = caughtUp(GroupChat, current, latest, true,
+    { before: 6, events: [{ kind: 'chat', msg: msg(9) }] });
   assert.equal(reset, false);
+  assert.equal(older, 2);
   assert.deepEqual(ids(messages), [1, 2, 3, 4, 6, 7, 8, 9]);
   assert.equal(messages[3].content, 'edited');
 });
 
 test('a page that is the whole stream replaces everything held', () => {
   const GroupChat = loadGroupChat();
-  const { messages } = GroupChat._reconcileLatest([msg(1), msg(2), msg(3)], [msg(2), msg(4)], false, { before: 3 });
+  const { messages } = caughtUp(GroupChat, [msg(1), msg(2), msg(3)], [msg(2), msg(4)], false, { before: 3 });
   assert.deepEqual(ids(messages), [2, 4], 'message 1 and 3 are gone from the server');
 });
 
 test('a gap wider than a page starts the stream over from the newest page', () => {
   const GroupChat = loadGroupChat();
-  const { messages, reset } = GroupChat._reconcileLatest([msg(1), msg(2)], [msg(60), msg(61)], true, { before: 2 });
+  const { messages, reset } = caughtUp(GroupChat, [msg(1), msg(2)], [msg(60), msg(61)], true, { before: 2 });
   assert.equal(reset, true);
   assert.deepEqual(ids(messages), [60, 61]);
+  const unknown = GroupChat._reconcileLatest([msg(1)], [msg(60)], true, {});
+  assert.equal(unknown.reset, true, 'an unknown boundary counts as a gap: "Load earlier" recovers it');
 });
 
-// ── The five review findings on 68127b4d ──────────────────────────────
+// ── The review findings on 68127b4d ───────────────────────────────────
 
 test('review 2: a socket edit, delete or reaction during the read outranks its older answer', () => {
   const GroupChat = loadGroupChat();
-  // Held 1..3. While the read is on the wire, 2 is edited, 3 is deleted and
-  // 1 gets a reaction; the answer was read before all three.
-  const current = [msg(1, { reactions: [{ emoji: '👍', count: 1 }] }), msg(2, { content: 'new' }), msg(3, { deleted: true, content: '' })];
   const latest = [msg(1, { reactions: [] }), msg(2, { content: 'old' }), msg(3, { content: 'still here' })];
-  const { messages } = GroupChat._reconcileLatest(current, latest, false, { before: 3, live: liveSet(1, 2, 3) });
+  const { messages } = caughtUp(GroupChat, [msg(1), msg(2), msg(3)], latest, false, { before: 3, events: [
+    { kind: 'reaction', id: 1, reactions: [{ emoji: '👍', count: 1 }] },
+    { kind: 'edit', id: 2, content: 'new', editedAt: 'now' },
+    { kind: 'delete', id: 3 },
+  ] });
   assert.equal(messages[0].reactions.length, 1);
   assert.equal(messages[1].content, 'new', 'old → new stays new, not back to old');
   assert.equal(messages[2].deleted, true);
+  assert.equal(messages[2].content, '');
 });
 
 test('review 2, end to end: an edit that lands during the catch-up survives it', async () => {
@@ -318,6 +328,7 @@ test('review 2, end to end: an edit that lands during the catch-up survives it',
   });
   GroupChat.appSlug = 'demo';
   GroupChat._streamLoaded = true;
+  GroupChat._syncedMax = 2;
   GroupChat.messages = [msg(1), msg(2, { content: 'old' })];
   GroupChat.oldestMessageId = 1;
   const pending = GroupChat._refreshLatest(null);
@@ -325,7 +336,7 @@ test('review 2, end to end: an edit that lands during the catch-up survives it',
   release();
   await pending;
   assert.equal(GroupChat.messages.find((m) => Number(m.id) === 2).content, 'new');
-  assert.equal(GroupChat._liveWindows.size, 0, 'the window closes with the read');
+  assert.equal(GroupChat._liveWindows.size, 0, 'the record closes with the read');
 });
 
 test('review 3: a message delivered after the gap does not hide it', () => {
@@ -333,41 +344,173 @@ test('review 3: a message delivered after the gap does not hide it', () => {
   // Held [1, 2] before the gap; 110 arrived over the socket during the read;
   // the newest page is 60..109, so 3..59 are missing.
   const page = Array.from({ length: 50 }, (_, i) => msg(60 + i));
-  const { messages, reset } = GroupChat._reconcileLatest([msg(1), msg(2), msg(110)], page, true,
-    { before: 2, live: liveSet(110) });
+  const { messages, reset } = caughtUp(GroupChat, [msg(1), msg(2), msg(110)], page, true,
+    { before: 2, events: [{ kind: 'chat', msg: msg(110) }] });
   assert.equal(reset, true, 'the stream starts over, so "Load earlier" pages back from 60');
   assert.deepEqual(ids(messages), [...page.map((m) => m.id), 110]);
 });
 
-test('review 3, end to end: the gap is measured from before the read', async () => {
+test('review 3, end to end: the gap is measured from where the stream was known whole', async () => {
   let release;
   const gate = new Promise((resolve) => { release = resolve; });
   const page = Array.from({ length: 50 }, (_, i) => msg(60 + i));
   const GroupChat = loadGroupChat({
-    fetch: async () => { await gate; return { ok: true, json: async () => ({ messages: page }) }; },
+    fetch: async () => { await gate; return { ok: true, json: async () => ({ messages: page, has_more_before: true }) }; },
   });
   GroupChat.appSlug = 'demo';
   GroupChat._streamLoaded = true;
+  GroupChat._syncedMax = 2;
   GroupChat.messages = [msg(1), msg(2)];
   GroupChat.oldestMessageId = 1;
   const pending = GroupChat._refreshLatest(null);
   GroupChat.handleIncoming({ type: 'chat', ...msg(110) });
+  assert.equal(GroupChat._syncedMax, 2, 'a message past a pending gap proves nothing');
   release();
   await pending;
   assert.equal(GroupChat.oldestMessageId, 60);
   assert.equal(GroupChat.hasMore, true);
   assert.deepEqual(ids(GroupChat.messages).slice(-2), [109, 110]);
   assert.equal(ids(GroupChat.messages)[0], 60);
+  assert.equal(GroupChat._syncedMax, 110);
 });
 
 test('review 4: a held message the answer lacks is gone, unless it arrived during the read', () => {
   const GroupChat = loadGroupChat();
   // 12 was the newest reply line, deleted on the server; 13 arrived live.
-  const { messages } = GroupChat._reconcileLatest([msg(10), msg(11), msg(12), msg(13)], [msg(10), msg(11)], false,
-    { before: 12, live: liveSet(13) });
+  const { messages } = caughtUp(GroupChat, [msg(10), msg(11), msg(12), msg(13)], [msg(10), msg(11)], false,
+    { before: 12, events: [{ kind: 'chat', msg: msg(13) }] });
   assert.deepEqual(ids(messages), [10, 11, 13]);
-  const empty = GroupChat._reconcileLatest([msg(1), msg(2)], [], false, { before: 2 });
+  const empty = caughtUp(GroupChat, [msg(1), msg(2)], [], false, { before: 2 });
   assert.deepEqual(ids(empty.messages), [], 'an empty whole-stream answer keeps nothing');
+});
+
+// ── The review findings on dc7daaef ───────────────────────────────────
+
+test('review 2.1: a reaction during the read keeps the answer\'s newer text', () => {
+  const GroupChat = loadGroupChat();
+  // The held copy missed an edit; the answer has it; a reaction lands live.
+  const { messages } = caughtUp(GroupChat, [msg(4, { content: 'before the edit' })],
+    [msg(4, { content: 'after the edit' })], false,
+    { before: 4, events: [{ kind: 'reaction', id: 4, reactions: [{ emoji: '🎉', count: 2 }] }] });
+  assert.equal(messages[0].content, 'after the edit', 'only the field the event changed is taken');
+  assert.equal(messages[0].reactions[0].count, 2);
+});
+
+test('review 2.2: an edit or reaction reaches every held copy, so a reply\'s thread copy agrees', () => {
+  const GroupChat = loadGroupChat();
+  GroupChat.appSlug = 'demo';
+  // A reply is held in the general stream and in its reply thread.
+  GroupChat.messages = [msg(5, { content: 'old', thread: { type: 'message', ref: 1 } })];
+  GroupChat._threadState('message', 1).messages = [msg(5, { content: 'old' })];
+  GroupChat.handleIncoming({ type: 'chat_edit', messageId: 5, content: 'new', editedAt: 'now' });
+  GroupChat.handleIncoming({ type: 'reaction', messageId: 5, reactions: [{ emoji: '👍', count: 1 }] });
+  for (const copy of [GroupChat.messages[0], GroupChat._threadState('message', 1).messages[0]]) {
+    assert.equal(copy.content, 'new');
+    assert.equal(copy.reactions.length, 1);
+  }
+});
+
+test('review 2.3: a thread root deleted during the read stays deleted', async () => {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const GroupChat = loadGroupChat({
+    fetch: async () => {
+      await gate;
+      return { ok: true, json: async () => ({ messages: [msg(8)], root: msg(3, { content: 'the root' }) }) };
+    },
+  });
+  GroupChat.appSlug = 'demo';
+  const st = GroupChat._threadState('message', 3);
+  Object.assign(st, { loaded: true, messages: [msg(8)], oldestId: 8, syncedMax: 8, root: msg(3, { content: 'the root' }) });
+  GroupChat.activeThread = { type: 'message', ref: 3 };
+  const pending = GroupChat._refreshLatest({ type: 'message', ref: 3 });
+  GroupChat.handleIncoming({ type: 'chat_delete', id: 3 });
+  release();
+  await pending;
+  assert.equal(st.root.deleted, true);
+  assert.equal(st.root.content, '');
+});
+
+test('review 2.4: a catch-up queued behind "Load earlier" still sees the gap', async () => {
+  const page = Array.from({ length: 50 }, (_, i) => msg(61 + i));
+  const GroupChat = loadGroupChat({
+    fetch: async () => ({ ok: true, json: async () => ({ messages: page, has_more_before: true }) }),
+  });
+  GroupChat.appSlug = 'demo';
+  GroupChat._streamLoaded = true;
+  GroupChat._syncedMax = 2;
+  GroupChat.messages = [msg(1), msg(2)];
+  GroupChat.oldestMessageId = 1;
+  GroupChat._historyLoad = {}; // "Load earlier" on the wire
+  GroupChat.resyncLoaded(); // a gap: queued behind it
+  assert.equal(GroupChat._latestAgain, true);
+  GroupChat.handleIncoming({ type: 'chat', ...msg(110) }); // arrives while queued
+  GroupChat._historyLoad = null;
+  await GroupChat._refreshLatest(null);
+  assert.equal(GroupChat.oldestMessageId, 61, 'started over: the middle is "Load earlier" away');
+  assert.equal(GroupChat.hasMore, true);
+  assert.equal(ids(GroupChat.messages)[0], 61);
+});
+
+test('review 2.5: correcting an empty discussion brings "Load earlier" back', async () => {
+  const page = Array.from({ length: 50 }, (_, i) => msg(100 + i));
+  const GroupChat = loadGroupChat({
+    fetch: async () => ({ ok: true, json: async () => ({ messages: page, has_more_before: true }) }),
+  });
+  GroupChat.appSlug = 'demo';
+  const st = GroupChat._threadState('session', 6284);
+  Object.assign(st, { loaded: true, messages: [], hasMore: false, oldestId: null }); // the empty saved copy
+  GroupChat.activeThread = { type: 'session', ref: 6284 };
+  await GroupChat._refreshLatest({ type: 'session', ref: 6284 });
+  assert.equal(st.hasMore, true);
+  assert.equal(st.oldestId, 100);
+});
+
+test('review 2.6: a failed catch-up stays owed, without retrying in a loop', async () => {
+  let calls = 0;
+  const GroupChat = loadGroupChat({ fetch: async () => { calls++; throw new Error('offline'); } });
+  GroupChat.appSlug = 'demo';
+  const st = GroupChat._threadState('session', 9);
+  Object.assign(st, { loaded: true, messages: [msg(5)], oldestId: 5, syncedMax: 5 });
+  GroupChat.activeThread = { type: 'session', ref: 9 };
+  await GroupChat._refreshLatest({ type: 'session', ref: 9 });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(calls, 1, 'no loop');
+  assert.equal(st.stale, true, 'remounting the thread catches it up');
+  assert.match(gcJs, /else if \(st\.stale\) void GroupChat\._refreshLatest\(\{ type, ref \}\);/);
+});
+
+test('a first page answered from the saved copy is caught up at once', async () => {
+  const requests = [];
+  const GroupChat = loadGroupChat({
+    fetch: async (url, init) => {
+      requests.push({ url, init });
+      if (requests.length === 1) {
+        return { ok: true, headers: { get: (h) => (h === 'sw-cached-at' ? '1' : null) }, json: async () => ({ messages: [] }) };
+      }
+      return { ok: true, headers: { get: () => null }, json: async () => ({ messages: [msg(1), msg(2)] }) };
+    },
+  });
+  GroupChat.appSlug = 'demo';
+  GroupChat.activeThread = { type: 'session', ref: 6284, language: 'chat' };
+  await GroupChat.loadThreadHistory('session', 6284);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests.length, 2, 'no waiting for the worker\'s correction');
+  assert.equal(requests[1].init.cache, 'no-cache');
+  assert.deepEqual(ids(GroupChat._threadState('session', 6284).messages), [1, 2]);
+});
+
+test('a catch-up the worker could only answer from its saved copy changes nothing', async () => {
+  const GroupChat = loadGroupChat({
+    fetch: async () => ({ ok: true, headers: { get: (h) => (h === 'sw-cached-at' ? '1' : null) }, json: async () => ({ messages: [] }) }),
+  });
+  GroupChat.appSlug = 'demo';
+  const st = GroupChat._threadState('session', 9);
+  Object.assign(st, { loaded: true, messages: [msg(5)], oldestId: 5, syncedMax: 5 });
+  GroupChat.activeThread = { type: 'session', ref: 9 };
+  await GroupChat._refreshLatest({ type: 'session', ref: 9 });
+  assert.deepEqual(ids(st.messages), [5]);
+  assert.equal(st.stale, true);
 });
 
 test('review 1: a catch-up asked for during a read runs again when it lands', async () => {
