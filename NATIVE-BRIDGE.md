@@ -740,6 +740,28 @@ This is a privileged trusted-top-frame action. Child dapps cannot request a
 capture of surrounding app chrome. Callers must feature-detect the capability;
 older app builds continue to use the feedback dialog's Photos/file fallback.
 
+#### `saveImage({ base64, contentType, filename })` → `true`
+
+Additive capability: `saveImage`. Saves a picture SV already holds to the
+phone: the photo library on iOS (add-only Photos permission), Pictures (or
+Downloads) on Android. SV calls it from the chat image viewer's Download and
+the message sheet's "Download image" (`features/image-viewer/save-image.ts`).
+The picture is a chat attachment served only with the session cookie, so the
+system browser (`openExternal`) cannot fetch it; SV fetches it in the page
+and hands over the bytes.
+
+- `contentType` must start with `image/`; `filename` is the attachment's
+  name with an extension, for platforms that keep one.
+- SV sends at most about 15 MB of image data; above that it uses the Web
+  Share sheet instead.
+- Privileged trusted-top-frame action, like `captureScreenshot`: an embedded
+  dapp cannot write into somebody's photos.
+- Resolve `true` once saved. Reject when the person refuses the permission
+  or the save fails; SV says "Couldn’t download this image."
+- Until a build advertises the capability, SV uses `navigator.share` with
+  files where the webview provides it, and otherwise hides its download
+  controls rather than showing one that does nothing.
+
 ### Settings (v3 — app-settings-to-web migration)
 
 All v3 methods are trusted-SV-origin gated like `openNativeScreen`. They

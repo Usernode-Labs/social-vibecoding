@@ -92,6 +92,7 @@
     openNativeScreen: true,
     setBackNavigationEnabled: true,
     captureScreenshot: true,
+    saveImage: true,
     getSettingsState: true,
     setNodeSleepEnabled: true,
     setDebugMode: true,
@@ -5161,6 +5162,25 @@
   // the surrounding app chrome.
   window.usernode.captureScreenshot = function () {
     return callNativeChromeAction("captureScreenshot", {}, 15000);
+  };
+
+  // saveImage({ base64, contentType, filename }) → true. Saves a picture the
+  // page already holds (a chat attachment it fetched with the session) to
+  // the phone: the photo library on iOS (add-only permission), Pictures on
+  // Android. Privileged and top-frame only, like captureScreenshot: an
+  // embedded dapp cannot write into somebody's photos. Feature-detect the
+  // `saveImage` capability; an old build times out and rejects.
+  window.usernode.saveImage = function (args) {
+    if (!args || typeof args.base64 !== "string" || !args.base64
+        || typeof args.contentType !== "string"
+        || args.contentType.indexOf("image/") !== 0) {
+      return Promise.reject(new Error("saveImage needs base64 image data"));
+    }
+    return callNativeChromeAction("saveImage", {
+      base64: args.base64,
+      contentType: args.contentType,
+      filename: typeof args.filename === "string" ? args.filename : "image",
+    }, 30000);
   };
 
   // getSettingsState() → { buildInfo: { appVersion, buildNumber,
