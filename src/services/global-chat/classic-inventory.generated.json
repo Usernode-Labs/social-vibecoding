@@ -13123,6 +13123,22 @@
     {
       "source": "src/routes/workshop-overview.js",
       "method": "GET",
+      "path": "/api/sessions/:id/votes",
+      "expression": null,
+      "status": "exempt",
+      "reason": "staging demo-card middleware represented by the concrete session vote capabilities"
+    },
+    {
+      "source": "src/routes/workshop-overview.js",
+      "method": "POST",
+      "path": "/api/sessions/:id/vote",
+      "expression": null,
+      "status": "exempt",
+      "reason": "staging demo-card middleware represented by the concrete session vote capabilities"
+    },
+    {
+      "source": "src/routes/workshop-overview.js",
+      "method": "GET",
       "path": "/api/workshop/counts",
       "expression": null,
       "status": "mapped",
