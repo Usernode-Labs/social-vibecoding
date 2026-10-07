@@ -322,6 +322,34 @@ test('a turn that ends empty after its tools is asked once, without tools, to an
     'the replies chosen before the nudge still show');
 });
 
+test('#4125: pills a model writes as text are cut from the reply and shown as pills', async () => {
+  const { pool, res } = await runTurn({
+    steps: [
+      { text: 'PR #39 is now up for the group vote. <suggest_replies> ["Start the next change", "How is the vote going?"] </suggest_replies>' },
+    ],
+  });
+  const row = assistantRow(pool);
+  assert.equal(row.params[2], 'PR #39 is now up for the group vote.', 'no raw tag is recorded');
+  assert.deepEqual(JSON.parse(row.params[5]).quickReplies, ['Start the next change', 'How is the vote going?']);
+  const events = res.events();
+  assert.equal(events.find((e) => e.type === 'mayor_reasoning').text, 'PR #39 is now up for the group vote.');
+  assert.deepEqual(events.find((e) => e.type === 'quick_replies').replies, ['Start the next change', 'How is the vote going?']);
+});
+
+test('#4125: a real suggest_replies call outranks pills written as text', async () => {
+  const { pool } = await runTurn({
+    steps: [
+      { text: 'Done. <suggest_replies>["From the text"]</suggest_replies>', toolUses: [
+        { id: 't1', name: 'suggest_replies', input: { replies: ['From the tool'] } },
+      ] },
+      { text: '' },
+    ],
+  });
+  const row = assistantRow(pool);
+  assert.equal(row.params[2], 'Done.');
+  assert.deepEqual(JSON.parse(row.params[5]).quickReplies, ['From the tool']);
+});
+
 test('a nudge that is empty too falls back to the fixed line, with no further calls', async () => {
   const { model, pool } = await runTurn({
     steps: [
