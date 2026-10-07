@@ -175,8 +175,13 @@ test('a no-cache or reload read asks the worker for the current answer', () => {
   assert.equal(sw.wantsFreshAnswer('reload'), true);
   assert.equal(sw.wantsFreshAnswer('default'), false);
   assert.equal(sw.wantsFreshAnswer(undefined), false);
-  assert.match(read('public/sw.js'), /const timeoutMs = wantsFreshAnswer\(event\.request\.cache\) \? null/,
+  const src = read('public/sw.js');
+  assert.match(src, /const fresh = wantsFreshAnswer\(event\.request\.cache\);[\s\S]{0,800}const timeoutMs = fresh \? null/,
     'networkFirstApi gives such a read no deadline');
+  // ...and leaves the correction marks for the next ordinary re-pull, which
+  // they exist to guard (adversarial review).
+  assert.match(src, /const settling = !fresh && awaitingNetwork\.delete\(event\.request\.url\);/);
+  assert.match(src, /const laned = !fresh && !correcting\.delete\(event\.request\.url\)/);
 });
 
 test('with no deadline, a slow network answer wins over the saved copy', async () => {
@@ -210,15 +215,25 @@ test('with no deadline, the saved copy still answers when the network fails', as
 
 // ── 3. The relay ──────────────────────────────────────────────────────
 
-test('each fresh LISTEN runs the listening handler, which cannot throw out', () => {
+test('each fresh LISTEN nudges this server\'s sockets, rationed and jittered', (t) => {
   const bus = require('../src/services/ws-bus');
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1_000_000 });
   let heard = 0;
   bus.start({ pool: null, connectionString: null, onMessage: () => {}, onListening: () => { heard++; } });
   bus._listening();
-  bus._listening();
-  assert.equal(heard, 2);
+  t.mock.timers.tick(2_000);
+  assert.equal(heard, 1, 'the first re-subscription nudges, within the jitter');
+  // A listener flapping once a second: one more nudge covers the next window,
+  // at its end, not one per flap (adversarial review: one per ~1s before).
+  for (let i = 0; i < 20; i++) { bus._listening(); t.mock.timers.tick(1_000); }
+  assert.equal(heard, 1, 'nothing more inside the window');
+  t.mock.timers.tick(bus.HINT_MIN_INTERVAL_MS);
+  assert.equal(heard, 2, 'one nudge at the end of it covers every flap');
+  assert.equal(bus._hintDelay(0, -Infinity, 0), 0);
+  assert.equal(bus._hintDelay(10_000, 0, 0), bus.HINT_MIN_INTERVAL_MS - 10_000);
   bus.start({ pool: null, connectionString: null, onMessage: () => {}, onListening: () => { throw new Error('boom'); } });
-  assert.doesNotThrow(() => bus._listening());
+  bus._listening();
+  assert.doesNotThrow(() => t.mock.timers.tick(bus.HINT_MIN_INTERVAL_MS + 2_000));
   const src = read('src/services/ws-bus.js');
   assert.match(src, /await client\.query\(`LISTEN \$\{CHANNEL\}`\);[\s\S]{0,200}_listening\(\);/,
     'the handler runs after every successful LISTEN, reconnects included');
@@ -237,10 +252,13 @@ test('a fresh LISTEN nudges every events socket and every chat room on this serv
 
 const gcJs = read('public/js/group-chat.js');
 
-function loadGroupChat({ fetch, liveReads } = {}) {
+// `onScreen`: the channel's transcript is on the page (markRead needs it).
+function loadGroupChat({ fetch, liveReads, onScreen = false } = {}) {
+  const el = { scrollHeight: 1000, scrollTop: 0, clientHeight: 500, dataset: {}, querySelector: () => null };
   const document = {
+    visibilityState: 'visible',
     createElement: () => ({ style: {} }),
-    getElementById: () => null,
+    getElementById: (id) => (onScreen && id === 'gc-messages' ? el : null),
     querySelector: () => null,
     querySelectorAll: () => [],
     addEventListener() {},
@@ -261,6 +279,7 @@ function loadGroupChat({ fetch, liveReads } = {}) {
     Date, Math, JSON,
   };
   sandbox.globalThis = sandbox;
+  window.App = sandbox.App;
   vm.createContext(sandbox);
   vm.runInContext(`${gcJs}\nglobalThis.__M = { GroupChat };`, sandbox);
   return sandbox.__M.GroupChat;
@@ -271,8 +290,16 @@ const msg = (id, extra) => ({ id, content: `m${id}`, ...(extra || {}) });
 
 // A read's reconciled answer with the events that arrived meanwhile replayed.
 function caughtUp(GroupChat, current, latest, full, { before, events = [], thread = null, root = null } = {}) {
-  const next = GroupChat._reconcileLatest(current, latest, full, { before });
-  return { ...next, messages: GroupChat._replayLive(next.messages, root, events, thread, next.start) };
+  // `events`: what happened during the read. A new message ({ kind: 'chat', msg })
+  // is held by then, as the socket handler holds it; the rest are field events.
+  const arrivedIds = new Set(events.filter((e) => e.kind === 'chat').map((e) => String(e.msg.id)));
+  const log = events.filter((e) => e.kind !== 'chat');
+  log.held = new Set(current.filter((m) => !arrivedIds.has(String(m.id))).map((m) => String(m.id)));
+  const held = [...current];
+  for (const e of events) if (e.kind === 'chat' && !held.some((m) => String(m.id) === String(e.msg.id))) held.push(e.msg);
+  const s = { messages: held, syncedMax: before ?? -Infinity, again: false, stale: true, hasMore: true, oldestId: null, root };
+  const next = GroupChat._takeNewest(s, thread, latest, { has_more_before: full }, log);
+  return { ...next, messages: s.messages };
 }
 
 test('the newest page is the truth from its first id on', () => {
@@ -506,7 +533,8 @@ test('review 3.1: a live message that beats a saved-copy first page does not set
   release();
   await first;
   for (let i = 0; i < 3; i++) await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(requests.length, 2);
+  // (the channel also reads its bot cards on first open)
+  assert.equal(requests.filter((r) => r.url.includes('/messages?')).length, 2);
   assert.equal(GroupChat.oldestMessageId, 61, 'started over: 3..60 are "Load earlier" away');
   assert.equal(GroupChat.hasMore, true);
   assert.equal(ids(GroupChat.messages)[0], 61);
@@ -946,7 +974,7 @@ test('review 4: a fresh roster read asked for during the first load follows it (
   await f.settle();
   await f.settle();
   assert.match(AppView._voteRoster[7].yes.names, /@voter2/, 'the newer answer is what shows');
-  assert.equal(AppView._voteRosterAgain.size, 0);
+  assert.equal(AppView._voteRosterStale.has(7), false, 'the mark is spent by the read it asked for');
 });
 
 test('review 4: a vote that invalidates the roster during its first load is not lost (proposal)', async () => {
@@ -984,4 +1012,213 @@ test('opening a governance topic marks its cached roster for a re-read', () => {
   const open = src.slice(src.indexOf('  async _renderTopicSubView(content, ref) {'));
   assert.match(open.slice(0, 2500), /if \(ref\.kind === 'gov'\) AppView\._invalidateGovVoteRoster\(ref\.id\);/);
   assert.match(open.slice(0, 2500), /AppView\._watchTopicLiveReads\(\);/);
+});
+
+// ── The adversarial review of f7523842, and the one-rule rewrite ──────
+
+const range = (a, b) => Array.from({ length: b - a + 1 }, (_, i) => msg(a + i));
+const tick = async (n = 5) => { for (let i = 0; i < n; i++) await new Promise((resolve) => setImmediate(resolve)); };
+function gate() { let release; const p = new Promise((resolve) => { release = resolve; }); return { p, release }; }
+
+test('adversarial 1: "Load earlier" waits for a catch-up that restarts the stream, so no hole opens', async () => {
+  const latest = gate();
+  const older = gate();
+  const GroupChat = loadGroupChat({
+    fetch: async (url) => {
+      if (url.includes('before=')) {
+        await older.p;
+        const before = Number(new URL(url, 'http://x').searchParams.get('before'));
+        return { ok: true, headers: fresh, json: async () => ({ messages: range(before - 50, before - 1), has_more_before: true }) };
+      }
+      await latest.p;
+      return { ok: true, headers: fresh, json: async () => ({ messages: range(251, 300), has_more_before: true }) };
+    },
+  });
+  GroupChat.appSlug = 'demo';
+  GroupChat._streamLoaded = true;
+  GroupChat.messages = range(51, 100);
+  GroupChat.oldestMessageId = 51;
+  GroupChat._syncedMax = 100;
+  GroupChat.resyncLoaded(); // a long drop: catch-up on the wire
+  const page = GroupChat.loadHistory(); // the reader reaches the top meanwhile
+  latest.release();
+  await tick();
+  older.release();
+  await page;
+  const held = ids(GroupChat.messages);
+  assert.deepEqual(held, range(201, 300).map((m) => m.id), 'the older page is read from the restarted cursor');
+  assert.equal(GroupChat.oldestMessageId, 201);
+});
+
+test('adversarial 5: "Load earlier" in a thread during its catch-up runs once the catch-up lands', async () => {
+  const g = gate();
+  const urls = [];
+  const GroupChat = loadGroupChat({
+    fetch: async (url) => {
+      urls.push(url);
+      if (url.includes('before=')) return { ok: true, headers: fresh, json: async () => ({ messages: range(1, 50), has_more_before: false }) };
+      await g.p;
+      return { ok: true, headers: fresh, json: async () => ({ messages: range(51, 100), has_more_before: true }) };
+    },
+  });
+  GroupChat.appSlug = 'demo';
+  const st = GroupChat._threadState('session', 9);
+  Object.assign(st, { loaded: true, messages: range(51, 100), oldestId: 51, hasMore: true, syncedMax: 100 });
+  GroupChat.activeThread = { type: 'session', ref: 9 };
+  GroupChat.resyncLoaded();
+  const earlier = GroupChat.loadThreadHistory('session', 9);
+  await tick();
+  assert.equal(urls.filter((u) => u.includes('before=')).length, 0, 'not while the catch-up is on the wire');
+  g.release();
+  await earlier;
+  assert.ok(urls.some((u) => u.includes('before=51')));
+  assert.deepEqual(ids(st.messages), range(1, 100).map((m) => m.id));
+});
+
+test('adversarial 4: what a catch-up brings onto the open channel is marked read', async () => {
+  const reads = [];
+  let first = true;
+  const GroupChat = loadGroupChat({
+    onScreen: true,
+    fetch: async (url, init) => {
+      if (url.includes('/messages/read')) { reads.push(JSON.parse(init.body).message_id); return { ok: true, json: async () => ({}) }; }
+      if (!url.includes('/messages?limit=50')) return { ok: true, headers: fresh, json: async () => ({}) };
+      if (first) {
+        first = false;
+        return { ok: true, headers: savedCopy, json: async () => ({ messages: [msg(1), msg(2)], read: { last_read_message_id: 2, unread_count: 0 } }) };
+      }
+      return { ok: true, headers: fresh, json: async () => ({ messages: range(1, 5), has_more_before: false }) };
+    },
+  });
+  GroupChat.appSlug = 'demo';
+  await GroupChat.loadHistory();
+  await tick(10);
+  assert.deepEqual(ids(GroupChat.messages), [1, 2, 3, 4, 5]);
+  assert.equal(GroupChat._readUpTo, 5);
+});
+
+test('adversarial 6: a live message during a catch-up keeps the server\'s order (no sort)', async () => {
+  const g = gate();
+  const answer = [msg(9902011), msg(9902012), msg(9902018), msg(640)];
+  const GroupChat = loadGroupChat({
+    fetch: async () => { await g.p; return { ok: true, headers: fresh, json: async () => ({ messages: answer, has_more_before: false }) }; },
+  });
+  GroupChat.appSlug = 'demo';
+  const st = GroupChat._threadState('issue', 900008);
+  Object.assign(st, { loaded: true, messages: answer.slice(), oldestId: 9902011, hasMore: false, syncedMax: 9902018 });
+  GroupChat.activeThread = { type: 'issue', ref: 900008, language: 'chat' };
+  const pending = GroupChat._refreshLatest({ type: 'issue', ref: 900008 });
+  GroupChat.handleIncoming({ type: 'chat', ...msg(641), thread: { type: 'issue', ref: 900008 } });
+  g.release();
+  await pending;
+  assert.deepEqual(ids(st.messages), [9902011, 9902012, 9902018, 640, 641]);
+});
+
+test('adversarial 3: one relay gap costs the open channel one read, not two', async () => {
+  const lr = live();
+  lr._resetLiveReads();
+  const win = { location: { origin: 'http://localhost' }, addEventListener() {}, UsernodeReact: {} };
+  lr.installLiveReads(win, { visibilityState: 'visible', addEventListener() {} });
+  const reads = [];
+  const GroupChat = loadGroupChat({
+    liveReads: win.UsernodeReact.liveReads,
+    fetch: async (url) => {
+      reads.push(url);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      return { ok: true, headers: fresh, json: async () => ({ messages: range(51, 100), has_more_before: true }) };
+    },
+  });
+  GroupChat.appSlug = 'demo';
+  GroupChat._streamLoaded = true;
+  GroupChat.messages = range(51, 100);
+  GroupChat.oldestMessageId = 51;
+  GroupChat._syncedMax = 100;
+  GroupChat._watchLiveReads();
+  GroupChat.handleIncoming({ type: 'resync_hint' }); // the chat room's copy of the hint
+  win.UsernodeReact.liveReads.resync('reconnect'); // the events socket's copy
+  lr.flush();
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.equal(reads.length, 1);
+  win.UsernodeReact.liveReads.resync('visible'); // a different gap is still answered
+  lr.flush();
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(reads.length, 2);
+});
+
+test('one rule: an edit during a first page or an older page survives it too', async () => {
+  const g = gate();
+  const GroupChat = loadGroupChat({
+    fetch: async (url) => {
+      await g.p;
+      return url.includes('before=')
+        ? { ok: true, headers: fresh, json: async () => ({ messages: [msg(1, { content: 'old' }), msg(2)], has_more_before: false }) }
+        : { ok: true, headers: fresh, json: async () => ({ messages: [msg(3, { content: 'old' }), msg(4)], has_more_before: true }) };
+    },
+  });
+  GroupChat.appSlug = 'demo';
+  const first = GroupChat.loadHistory();
+  GroupChat.handleIncoming({ type: 'chat_edit', messageId: 3, content: 'new', editedAt: 'now' });
+  GroupChat.handleIncoming({ type: 'chat', ...msg(5) }); // delivered before the page lands
+  g.release();
+  await first;
+  assert.deepEqual(ids(GroupChat.messages), [3, 4, 5], 'the live message is kept');
+  assert.equal(GroupChat.messages[0].content, 'new');
+  const g2 = gate();
+  const GC2 = loadGroupChat({
+    fetch: async () => { await g2.p; return { ok: true, headers: fresh, json: async () => ({ messages: [msg(1, { content: 'old' }), msg(2)], has_more_before: false }) }; },
+  });
+  GC2.appSlug = 'demo';
+  GC2._streamLoaded = true;
+  GC2.messages = [msg(3), msg(4)];
+  GC2.oldestMessageId = 3;
+  const older = GC2.loadHistory();
+  GC2.handleIncoming({ type: 'chat_edit', messageId: 1, content: 'new', editedAt: 'now' });
+  g2.release();
+  await older;
+  assert.deepEqual(ids(GC2.messages), [1, 2, 3, 4]);
+  assert.equal(GC2.messages[0].content, 'new');
+  assert.equal(GC2._liveWindows.size, 0);
+});
+
+test('one rule: the old merge is gone, and the vote rosters have one stale mark each', () => {
+  assert.doesNotMatch(gcJs, /_mergeHistory/);
+  const view = read('public/js/app-view.js');
+  assert.doesNotMatch(view, /RosterAgain/);
+  const detail = read('frontend/src/features/dev-board/topic/topic-head.tsx');
+  assert.match(detail, /if \(freshInFlight\) freshNext\.current = true;/,
+    'a fresh read cut short by a revision bump hands `fresh` to the next one');
+});
+
+test('"Load earlier" also waits for the catch-up queued behind the one it waited for', async () => {
+  const gates = [gate(), gate()];
+  let latestCalls = 0;
+  const order = [];
+  const GroupChat = loadGroupChat({
+    fetch: async (url) => {
+      if (url.includes('before=')) {
+        const before = Number(new URL(url, 'http://x').searchParams.get('before'));
+        order.push(`older:${before}`);
+        return { ok: true, headers: fresh, json: async () => ({ messages: range(before - 50, before - 1), has_more_before: true }) };
+      }
+      const n = latestCalls++;
+      order.push(`latest:${n}`);
+      await gates[n].p;
+      return { ok: true, headers: fresh, json: async () => ({ messages: n === 0 ? range(201, 250) : range(301, 350), has_more_before: true }) };
+    },
+  });
+  GroupChat.appSlug = 'demo';
+  GroupChat._streamLoaded = true;
+  GroupChat.messages = range(51, 100);
+  GroupChat.oldestMessageId = 51;
+  GroupChat._syncedMax = 100;
+  GroupChat.resyncLoaded(); // catch-up 0
+  await tick();
+  GroupChat.resyncLoaded(); // queued behind it (`again`)
+  const page = GroupChat.loadHistory();
+  gates[0].release();
+  await tick();
+  gates[1].release();
+  await page;
+  assert.deepEqual(order, ['latest:0', 'latest:1', 'older:301'], 'the older page goes after both, from the final cursor');
+  assert.deepEqual(ids(GroupChat.messages), range(251, 350).map((m) => m.id), 'no hole: paged back from 301');
 });

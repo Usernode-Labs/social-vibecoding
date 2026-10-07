@@ -1276,12 +1276,15 @@ if (typeof module !== 'undefined' && module.exports) {
     // just-missed response found it still false.
     const served = { fromCache: false };
 
+    // #4177: a read that asks for the current answer has no deadline at all,
+    // so it leaves the correction marks for the next ordinary re-pull.
+    const fresh = wantsFreshAnswer(event.request.cache);
     // Consume the correction mark, if any: this request pays the ordinary
     // deadline once and the next one is back in the lane.
-    const settling = awaitingNetwork.delete(event.request.url);
-    const laned = !correcting.delete(event.request.url) && !settling
+    const settling = !fresh && awaitingNetwork.delete(event.request.url);
+    const laned = !fresh && !correcting.delete(event.request.url) && !settling
       && bootLaneApplies(event.request.url, ORIGIN, Date.now(), refreshIntentUntil);
-    const timeoutMs = wantsFreshAnswer(event.request.cache) ? null
+    const timeoutMs = fresh ? null
       : settling ? CORRECTION_WAIT_MS
         : laned ? BOOT_API_TIMEOUT_MS : API_TIMEOUT_MS;
 

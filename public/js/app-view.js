@@ -16529,18 +16529,17 @@ const AppView = {
   // "Loading votes…" is reserved for a roster that has genuinely never been
   // loaded. A stale roster is at worst a few hundred milliseconds behind,
   // which is strictly better than a blank one.
+  //
+  // #4177: a roster marked stale while a read of it is on the wire (a vote, a
+  // gap) is read once more, fresh, when that read lands, since its answer may
+  // predate whatever asked. So a roster being read is marked, even before
+  // its first answer.
   _voteRosterStale: new Set(),
-  // #4177: rosters asked to re-read while a read of them was on the wire.
-  // That read's answer may predate whatever asked (a vote, a gap), so one
-  // fresh read follows it. A roster with no answer yet has no entry to mark
-  // stale, which is how the ask used to vanish during a topic's first load.
-  _voteRosterAgain: new Set(),
 
   _invalidateVoteRoster(sessionId) {
     if (sessionId == null) return;
     const id = Number(sessionId);
-    if (AppView._voteRosterInFlight.has(sessionId)) AppView._voteRosterAgain.add(id);
-    if (AppView._voteRoster[sessionId]) AppView._voteRosterStale.add(id);
+    if (AppView._voteRoster[sessionId] || AppView._voteRosterInFlight.has(sessionId)) AppView._voteRosterStale.add(id);
     else delete AppView._voteRoster[sessionId];
   },
 
@@ -16548,7 +16547,7 @@ const AppView = {
   // from the service worker's saved copy (`cache: 'no-cache'`, public/sw.js).
   async _loadVoteRoster(sessionId, { fresh = false } = {}) {
     if (AppView._voteRosterInFlight.has(sessionId)) {
-      if (fresh) AppView._voteRosterAgain.add(Number(sessionId));
+      if (fresh) AppView._voteRosterStale.add(Number(sessionId));
       return;
     }
     const stale = AppView._voteRosterStale.has(Number(sessionId));
@@ -16559,12 +16558,9 @@ const AppView = {
       AppView._voteRosterInFlight.delete(sessionId);
       const before = (AppView._voteRoster[sessionId]?.earlierVoters || []).join('\n');
       AppView._voteRoster[sessionId] = view;
-      // Asked again while this read was on the wire: read once more, fresh,
-      // before the repaint below could start a plain one.
-      if (AppView._voteRosterAgain.delete(Number(sessionId))) {
-        AppView._voteRosterStale.add(Number(sessionId));
-        void AppView._loadVoteRoster(sessionId, { fresh: true });
-      }
+      // Marked stale while this read was on the wire: once more, fresh,
+      // before the repaint below could start a plain read.
+      if (AppView._voteRosterStale.has(Number(sessionId))) void AppView._loadVoteRoster(sessionId, { fresh: true });
       AppView._renderTopicHead();
       // #3411: the Discussion marks the vote lines this roster says no longer
       // count, so repaint it when that set moves (and only then).
@@ -16644,14 +16640,11 @@ const AppView = {
   _govVoteRoster: Object.create(null),
   _govVoteRosterInFlight: new Set(),
   _govVoteRosterStale: new Set(),
-  // As `_voteRosterAgain`.
-  _govVoteRosterAgain: new Set(),
 
   _invalidateGovVoteRoster(issueId) {
     if (issueId == null) return;
     const id = Number(issueId);
-    if (AppView._govVoteRosterInFlight.has(issueId)) AppView._govVoteRosterAgain.add(id);
-    if (AppView._govVoteRoster[issueId]) AppView._govVoteRosterStale.add(id);
+    if (AppView._govVoteRoster[issueId] || AppView._govVoteRosterInFlight.has(issueId)) AppView._govVoteRosterStale.add(id);
     else delete AppView._govVoteRoster[issueId];
   },
 
@@ -16690,7 +16683,7 @@ const AppView = {
   async _loadGovVoteRoster(issueId, { fresh = false } = {}) {
     if (issueId == null || !AppView.appData) return;
     if (AppView._govVoteRosterInFlight.has(issueId)) {
-      if (fresh) AppView._govVoteRosterAgain.add(Number(issueId));
+      if (fresh) AppView._govVoteRosterStale.add(Number(issueId));
       return;
     }
     const stale = AppView._govVoteRosterStale.has(Number(issueId));
@@ -16700,11 +16693,8 @@ const AppView = {
     const publish = (view) => {
       AppView._govVoteRosterInFlight.delete(issueId);
       AppView._govVoteRoster[issueId] = view;
-      // As in `_loadVoteRoster`: asked again meanwhile, read once more.
-      if (AppView._govVoteRosterAgain.delete(Number(issueId))) {
-        AppView._govVoteRosterStale.add(Number(issueId));
-        void AppView._loadGovVoteRoster(issueId, { fresh: true });
-      }
+      // As in `_loadVoteRoster`: marked stale meanwhile, read once more.
+      if (AppView._govVoteRosterStale.has(Number(issueId))) void AppView._loadGovVoteRoster(issueId, { fresh: true });
       AppView._renderTopicHead();
     };
     try {

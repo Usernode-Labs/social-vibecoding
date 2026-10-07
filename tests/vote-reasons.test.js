@@ -857,7 +857,7 @@ test('the browser sends the line, and re-reads the roster once the vote lands', 
   // The roster is the governance twin of _loadVoteRoster, with the same
   // re-entry guard — publishing repaints, and a paint calls the loader. A
   // fresh read asked for meanwhile is queued behind it (#4177), not run.
-  assert.match(view, /if \(AppView\._govVoteRosterInFlight\.has\(issueId\)\) \{\s*if \(fresh\) AppView\._govVoteRosterAgain\.add\(Number\(issueId\)\);\s*return;\s*\}/);
+  assert.match(view, /if \(AppView\._govVoteRosterInFlight\.has\(issueId\)\) \{\s*if \(fresh\) AppView\._govVoteRosterStale\.add\(Number\(issueId\)\);\s*return;\s*\}/);
   assert.match(view, /`\/api\/apps\/\$\{slug\}\/governance\/\$\{issueId\}\/votes\$\{AppView\._demoQS\(\)\}`/);
   assert.match(view, /if \(t\.kind === 'gov'\) AppView\._loadGovVoteRoster\(item\.id\);/);
   assert.match(view, /roster: AppView\._govVoteRoster\[item\.id\] \|\| \{ phase: 'loading' \},/);

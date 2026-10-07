@@ -1576,6 +1576,9 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
     if (!id || !active) return;
     const abort = new AbortController();
     let skipped = false;
+    // A fresh read still on the wire when this effect is torn down (a
+    // revision bump aborts it): the next effect's read inherits `fresh`.
+    let freshInFlight = false;
     async function load() {
       // These portals can remain mounted while another screen is open, and a
       // hidden tab reads nothing; either reads when it is seen again.
@@ -1586,11 +1589,14 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
       skipped = false;
       const fresh = freshNext.current;
       freshNext.current = false;
+      freshInFlight = fresh;
       try {
         const session = await readChangeDetail(item, owner, abort.signal, { fresh });
         if (!abort.signal.aborted) { setLoaded(session); setError(''); }
       } catch (err) {
         if (!abort.signal.aborted) setError((err as Error).message);
+      } finally {
+        if (!abort.signal.aborted) freshInFlight = false;
       }
     }
     const refresh = (event: Event) => {
@@ -1619,6 +1625,7 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
     void load();
     return () => {
       abort.abort();
+      if (freshInFlight) freshNext.current = true;
       unwatch();
       window.removeEventListener('change-detail-refresh', refresh);
       document.removeEventListener('visibilitychange', seen);

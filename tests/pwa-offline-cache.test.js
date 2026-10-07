@@ -675,8 +675,9 @@ test('a correction does not answer itself from the cache it is correcting', () =
   // one request to mean anything.
   assert.match(SW_SRC, /const correcting = new Set\(\);/);
   const body = strategyBody('networkFirstApi');
-  // Consumed on read: exactly one lane-skipped request per correction.
-  assert.match(body, /const laned = !correcting\.delete\(event\.request\.url\)/,
+  // Consumed on read: exactly one lane-skipped request per correction. A
+  // fresh read (#4177) has no deadline to skip, so it leaves the mark alone.
+  assert.match(body, /const laned = !fresh && !correcting\.delete\(event\.request\.url\)/,
     'the mark is consumed when the deadline is chosen');
   assert.match(body, /if \(laned\) \{[\s\S]*?correcting\.add\(event\.request\.url\)/,
     'and set only by a LANE serve — a slow answer on the 1s deadline is not a loop');
@@ -695,11 +696,11 @@ test('a slow endpoint that differs every time is re-pulled from the network, not
   assert.match(SW_SRC, /const awaitingNetwork = new Set\(\);/);
   assert.match(SW_SRC, /const CORRECTION_WAIT_MS = \d+;/);
   const body = strategyBody('networkFirstApi');
-  assert.match(body, /const settling = awaitingNetwork\.delete\(event\.request\.url\);/,
+  assert.match(body, /const settling = !fresh && awaitingNetwork\.delete\(event\.request\.url\);/,
     'the mark is consumed when the deadline is chosen');
   // #4177: a read that asks for a fresh answer comes first, with no deadline
   // at all (tests/live-reads.test.js); the settling rule is the next one.
-  assert.match(body, /const timeoutMs = wantsFreshAnswer\(event\.request\.cache\) \? null\s*: settling \? CORRECTION_WAIT_MS/,
+  assert.match(body, /const timeoutMs = fresh \? null\s*: settling \? CORRECTION_WAIT_MS/,
     'and that request waits for the network instead of racing the cache');
   assert.match(body, /&& !settling\s*&& bootLaneApplies/, 'a settling request is never laned');
   assert.match(body, /\} else \{[\s\S]*?awaitingNetwork\.add\(event\.request\.url\)/,
