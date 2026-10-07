@@ -414,6 +414,11 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     assert.equal(run.awaiting_go_at, null);
     assert.ok(run.live_build_waiting_at, 'its build waits its turn, as a ready verdict\'s does');
     assert.match(run.build_note, /The creator chose, from the plan they were shown:\n- How should it remind you\? Phone alert\n- Who can see your plants\? Just me$/);
+    // And the plan they approved, which the spec reads as binding
+    // (homeroom-bot-live.js splitApprovedPlan): until 7 Oct 2026 its
+    // bullets reached neither the spec nor the build.
+    assert.match(run.build_note, /\n\nApproved by the creator, who tapped Build it under this plan:\n- A list of your plants\n- A Today view\nThe creator chose/);
+    assert.deepEqual(live.splitApprovedPlan(run.build_note).approved.split('\n').slice(1, 3), ['- A list of your plants', '- A Today view']);
     const after = await planMessage(first);
     assert.deepEqual([after.meta.status, after.meta.chosen, after.meta.choices], ['answered', 'build', ['Phone alert', 'Just me']]);
     const again = await mayor.decideOfferTap(pool, {}, { user: maya, actionId: card.meta.actionId, choice: 'build' });

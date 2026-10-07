@@ -86,8 +86,8 @@ function specSnippet(markdown, title) {
 function prepareSpec(text) {
   const raw = typeof text === 'string' ? text.trim() : '';
   if (!raw) return { ok: false, status: 400, code: 'invalid_request', message: 'spec is required.' };
-  if (specHtml.isHtmlSpec(raw)) {
-    const doc = specHtml.stripHtmlWrapperFence(raw).trim();
+  const doc = specHtml.extractHtmlSpec(raw);
+  if (doc !== null) {
     if (doc.length > MAX_SPEC_HTML_CHARS) {
       return {
         ok: false, status: 400, code: 'spec_too_long',

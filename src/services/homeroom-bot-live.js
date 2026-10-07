@@ -60,13 +60,15 @@
 
 const log = require('./logger');
 const { stripSpecWrapperFence } = require('./spec-format');
-const { agentApiFailure } = require('./agent-result-text');
+const { agentApiFailure, finalAnswerText } = require('./agent-result-text');
 const proposalDescription = require('./proposal-description');
 const { withoutEmDashes } = require('./em-dashes');
 const {
-  SPEC_DESIGN_BRIEF, FIRST_VERSION_SPEC_DESIGN_BRIEF, getDesignGuidance, specHtmlContract, getConventionSection,
+  SPEC_DESIGN_BRIEF, FIRST_VERSION_SPEC_DESIGN_BRIEF, FIRST_VERSION_SCREENS_BRIEF, getDesignGuidance, specHtmlContract,
+  getConventionSection,
 } = require('./prompts');
 const specHtml = require('./spec-html');
+const stageCosts = require('./stage-costs');
 const { IN_LOOP_BROWSER_GUIDANCE } = require('./in-loop-browser');
 const buildContract = require('./build-contract');
 const designSkill = require('./design-skill');
@@ -273,6 +275,39 @@ const MAX_SPEC_COMMENT_CHARS = 60_000;
 const PROGRESS_LINES_KEPT = 3;
 const PROGRESS_LINE_CHARS = 160;
 
+// ── What a first version's creator approved (B6) ─────────────────────────
+//
+// A first version's plan is shown to its creator, who taps Build it
+// (homeroom-bot.js goAhead): the plan's bullets and the answer each of its
+// choices goes with are then written under the triage's build note
+// (homeroom-bot.js creatorChoiceNote). The note is the triage's first
+// sketch, which the spec may improve on; what the creator approved is not,
+// so the spec and the build read it apart, labelled, and never clipped off
+// the end of a long note. A note approved before the bullets were written
+// down carries the choices alone.
+const APPROVED_PLAN_HEAD = 'Approved by the creator, who tapped Build it under this plan:';
+const CREATOR_CHOICES_HEAD = 'The creator chose, from the plan they were shown:';
+
+/** A build note as { sketch, approved }: the triage's note, and what its creator approved ('' when nothing). Pure. */
+function splitApprovedPlan(buildNote) {
+  const note = String(buildNote || '');
+  for (const head of [APPROVED_PLAN_HEAD, CREATOR_CHOICES_HEAD]) {
+    const at = note.lastIndexOf(`\n\n${head}`);
+    if (at >= 0) return { sketch: note.slice(0, at).trim(), approved: note.slice(at).trim() };
+    if (note.startsWith(head)) return { sketch: '', approved: note.trim() };
+  }
+  return { sketch: note, approved: '' };
+}
+
+/** The plan as a prompt shows it: clipped, but for what a first version's creator approved, kept whole. Pure. */
+function planNoteText(buildNote, firstVersion = false) {
+  const none = '(no plan recorded: work from the request itself)';
+  if (!firstVersion) return clipText(buildNote, 4000) || none;
+  const { sketch, approved } = splitApprovedPlan(buildNote);
+  if (!approved) return clipText(buildNote, 4000) || none;
+  return [clipText(sketch, 4000) || none, '', approved].join('\n');
+}
+
 /**
  * What a turn was last doing, so one stopped on its clock says what it was
  * waiting on (#3385): the last few distinct progress lines, clipped.
@@ -390,12 +425,56 @@ function teeProgress(progress, onProgress) {
 }
 
 // #3737: `firstVersion` swaps the design brief for a first version's own
-// (services/prompts.js FIRST_VERSION_SPEC_DESIGN_BRIEF); nothing else in the
-// spec prompt changes.
+// (services/prompts.js FIRST_VERSION_SPEC_DESIGN_BRIEF).
+// 7 Oct 2026: and hands a first version's spec its design and its scope.
+// The triage (GLM 5.3 Flash) already sketched the look, and the spec, told
+// "as small as the request: the plan above", only worked out the details of
+// that sketch: every first version an Opus 5.5 spec wrote kept its accent,
+// signature element and layout. Now the plan is a first sketch the spec may
+// improve on, the scope is a complete first version of what was asked, and
+// what binds the spec is the request and what its creator approved
+// (specPlanLines, specScopeLines). An HTML spec also draws the finished
+// screens (FIRST_VERSION_SCREENS_BRIEF). Every other spec is as it was.
 // #3699: `html` asks for the spec as an HTML document (before/after screens
 // and diagrams; services/spec-html.js) for apps in config.htmlSpecApps;
 // `platformStyles` says whose stylesheet its screens draw with. The markdown
 // wording below stays the spec for every other case.
+/** The plan as the spec reads it: for a first version, a first sketch, with what its creator approved apart. Pure. */
+function specPlanLines(buildNote, firstVersion = false) {
+  if (!firstVersion) {
+    return [
+      'You are the Homeroom bot. Your triage of this request concluded it is ready to build, with this plan:',
+      '',
+      clipText(buildNote, 4000) || '(no plan recorded: work from the request itself)',
+    ];
+  }
+  const { sketch, approved } = splitApprovedPlan(buildNote);
+  return [
+    'You are the Homeroom bot. Your triage of this request concluded it is ready to build. It is a new project\'s',
+    'FIRST VERSION, and this is the triage\'s plan for it, a first sketch written before anyone looked closely:',
+    '',
+    clipText(sketch, 4000) || '(no plan recorded: work from the request itself)',
+    ...(approved ? [
+      '',
+      'WHAT ITS CREATOR APPROVED, below, binds the spec as the request does: never contradict it.',
+      '',
+      approved,
+    ] : []),
+  ];
+}
+
+/** What the spec's scope is: a later change's, as small as the request; a first version's, complete, and its design the spec's own. Pure. */
+function specScopeLines(firstVersion = false) {
+  if (!firstVersion) return ['- As small as the request: the plan above, no refactoring or extra features.'];
+  return [
+    '- A complete first version of what the request asks for, done fully and well, including the small touches that',
+    '  make it feel finished. Not a new feature, screen or setting the request does not imply.',
+    '- Yours to design. The plan\'s look, layout and scope are the triage\'s first sketch: keep what is good in it,',
+    '  replace what a careful senior product designer would do better, and say under Assumptions what you replaced',
+    '  and why. What binds you is the request itself and what its creator approved, above.',
+  ];
+}
+
 function specPrompt({
   seed, buildNote, firstVersion = false, html = false, platformStyles = false, guidance = null,
 }) {
@@ -404,9 +483,7 @@ function specPrompt({
     seed,
     '',
     ...screenshotNote(seed),
-    'You are the Homeroom bot. Your triage of this request concluded it is ready to build, with this plan:',
-    '',
-    clipText(buildNote, 4000) || '(no plan recorded: work from the request itself)',
+    ...specPlanLines(buildNote, firstVersion),
     '',
     'Before it is built, write the SPEC for it: a markdown document the app\'s group can read, and that the build',
     'that follows will work from. You are running in PLAN MODE: read and search the repository with read-only',
@@ -423,7 +500,7 @@ function specPrompt({
     '- Titled with what the change DOES, because the proposal is named after it: the way a pull request title',
     '  reads ("Show the reason beside each challenge credit", not "Credits have no reason" or "Spec for issue',
     '  #12"), at most 72 characters, and no issue number: the proposal links the issue on its own.',
-    '- As small as the request: the plan above, no refactoring or extra features.',
+    ...specScopeLines(firstVersion),
     '- Written without em dashes: use a comma, a colon or a full stop. The group reads it, and its "User-facing',
     '  changes" half can become the change\'s description.',
     `- ${firstVersion ? FIRST_VERSION_SPEC_DESIGN_BRIEF : SPEC_DESIGN_BRIEF}`,
@@ -459,9 +536,7 @@ function specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles, guidanc
     seed,
     '',
     ...screenshotNote(seed),
-    'You are the Homeroom bot. Your triage of this request concluded it is ready to build, with this plan:',
-    '',
-    clipText(buildNote, 4000) || '(no plan recorded: work from the request itself)',
+    ...specPlanLines(buildNote, firstVersion),
     '',
     'Before it is built, write the SPEC for it: an HTML document, in the format described below, that the app\'s',
     'group can read and that the build that follows will work from. You are running in PLAN MODE: read and search',
@@ -477,7 +552,7 @@ function specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles, guidanc
     '- Titled with what the change DOES, because the proposal is named after it: the way a pull request title',
     '  reads ("Show the reason beside each challenge credit", not "Credits have no reason" or "Spec for issue',
     '  #12"), at most 72 characters, and no issue number: the proposal links the issue on its own.',
-    '- As small as the request: the plan above, no refactoring or extra features.',
+    ...specScopeLines(firstVersion),
     '- Written without em dashes: use a comma, a colon or a full stop. The group reads it, and its "User-facing',
     '  changes" half can become the change\'s description.',
     `- ${firstVersion ? FIRST_VERSION_SPEC_DESIGN_BRIEF : SPEC_DESIGN_BRIEF}`,
@@ -485,6 +560,7 @@ function specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles, guidanc
     ...requestRulesLines(),
     '',
     specHtmlContract(platformStyles),
+    ...(firstVersion ? ['', FIRST_VERSION_SCREENS_BRIEF] : []),
     '',
     'Nobody is available to answer questions: this run is unattended, and the build starts as soon as you finish.',
     'Where something is open, make the sensible choice yourself. End the "user" section with an <h3>Assumptions</h3>',
@@ -1503,17 +1579,34 @@ const FIRST_VERSION_DESIGN_LINES = Object.freeze([
   '',
   'This is the app\'s FIRST VERSION, so its look is not set yet: the spec\'s "### Design" subsection (or, without a',
   'spec, the plan) sets it, and the starter\'s screen and default colours are placeholder, not a look to copy. Build',
-  'it with the starter\'s design kit (`styles/tailwind-input.css`): set its colour tokens to this app\'s accent and',
-  'neutrals (a light and a dark value each, unless the app keeps one fixed look; every text pair at 4.5:1 or more),',
-  'and use only those tokens and the kit\'s components, its loading, empty and error states included: the design',
-  'guidance\'s "no new colours" means none beyond them. Then fill in the "## Design" section of the app\'s',
-  '`CLAUDE.md` (add it if it is missing): the palette by name, the signature element, the type scale, and the one',
-  'fixed look if the app keeps one. Every later change follows it.',
+  'it with the starter\'s design kit (`styles/tailwind-input.css`): set its colour tokens to this app\'s palette (its',
+  'neutrals, its action colour and any set of colours its subject uses, adding a token for a colour the kit has no',
+  'name for), a light and a dark value each, unless the app keeps one fixed look; every text pair at 4.5:1 or more.',
+  'Use only those tokens and the kit\'s components, its loading, empty and error states included: the design',
+  'guidance\'s "no new colours" means none beyond them, and every token the spec defines is one of them. Then fill',
+  'in the "## Design" section of the app\'s `CLAUDE.md` (add it if it is missing): the palette by name, the signature',
+  'element, the type scale, and the one fixed look if the app keeps one. Every later change follows it.',
   // The first session's card (services/app-sketch.js). Until 5 October 2026
   // it was a mock of the main screen, and this said to build that screen.
   'If the repository has `design/sketch.json`, it is the featured card its creator was shown while the app was made',
   '(an emoji, which is already the app\'s icon, a tagline and a few points summing up the idea): context for what the',
   'app is for, never a design. It shows no screen, so it sets no layout, words or colours. Keep the file as it is.',
+  // 7 Oct 2026: the spec owns a first version's design (specScopeLines), and
+  // an HTML spec draws its finished screens (FIRST_VERSION_SCREENS_BRIEF): a
+  // written spec carries structure, which the build copies faithfully, but
+  // not craft (its icons, proportions, weight and spacing).
+  'Where the spec\'s design differs from the plan\'s, follow the spec: the plan\'s look was the triage\'s first sketch.',
+  'When the spec draws screens (its "### Screen markup"), they are your visual target: reproduce them, reusing their',
+  'markup structure, inline SVG icons, proportions, spacing and type choices, translated onto the kit\'s tokens and',
+  'components rather than re-invented. In your look-and-fix rounds, compare your screenshots with the drawn screens and',
+  'fix what differs. Where a drawing and the spec\'s words disagree, the words decide what the app does and the drawing',
+  'decides how it looks.',
+  // And the populated demo the spec describes, which is how a first version
+  // is first seen (the staging preview with ?demo=1).
+  'Build the populated demo the spec describes, the staging preview opened with `?demo=1`: the viewer\'s own data as',
+  'well as other people\'s, varied realistic rows filling about a screen and a half at phone width, every control the',
+  'real screen has (never a view-only demo), and each row labelled "Staging demo". On staging and with `?demo=1` only,',
+  'and idempotent, as the platform conventions\' "Staging mock data" says.',
 ]);
 
 function buildPrompt({
@@ -1539,7 +1632,7 @@ function buildPrompt({
     'You are the Homeroom bot, building this request so the app\'s group can review it as a proposal.',
     'Your triage of the request concluded it is ready to build, with this plan:',
     '',
-    clipText(buildNote, 4000) || '(no plan recorded: work from the request itself)',
+    planNoteText(buildNote, firstVersion),
     ...specBlock,
     ...(firstVersion ? FIRST_VERSION_DESIGN_LINES : []),
     ...stageGuidanceLines('build', { firstVersion, guidance }),
@@ -1677,12 +1770,67 @@ function recipeSpecEffort(model) {
  * { ok, specMd } or { ok: false, error, blocked? }. Shared with the restart
  * recovery of a spec turn (#3401), which reads the same message back from
  * the turn's journal.
+ *
+ * `parts` are the turn's text blocks since its last tool call (worker.js
+ * answerParts). The final message alone is read first, as it always was;
+ * when it is only a FRAGMENT of a spec (no "# " title and no <article
+ * data-spec>: the end of an answer Claude Code continued past the output
+ * limit, App bench run 9 trial 1246), the whole answer is put back together
+ * from its parts and read instead. A fragment is never kept as the spec:
+ * with no whole answer to read, the capture fails with `fragment: true`,
+ * and the build goes on from the plan with that reason as its specNote.
+ * Anything a spec would start with or hold counts as whole (specShaped): a
+ * spec that begins at its "## User-facing changes" half, missing only its
+ * title, is kept as it always was.
  */
-function readSpec(text) {
+function readSpec(text, { parts = null } = {}) {
+  const first = readSpecText(text);
+  if (!first.fragment) return first;
+  const whole = finalAnswerText(parts, { opens: opensSpec });
+  if (!whole || whole.trim() === String(text || '').trim()) return first;
+  const again = readSpecText(whole);
+  return again.ok ? { ...again, joined: true } : first;
+}
+
+// The two halves every spec has (specPrompt), as their H2 headings.
+const USER_HALF_RE = /^##[ \t]+user[- ]facing changes\b/im;
+const TECH_HALF_RE = /^##[ \t]+technical implementation\b/im;
+
+// Within its first 40 lines, as specFromTitle looks for a title.
+function nearTop(text, re) {
+  return re.test(String(text || '').split('\n').slice(0, 41).join('\n'));
+}
+
+/**
+ * Whether a capture reads as a spec rather than a fragment of one: a "# "
+ * title in its first 40 lines, an <article data-spec>, or either of the two
+ * halves' headings. The end of an HTML answer cut at the output limit
+ * (trial 1246: list items, "</section>", "</article>") has none of them; a
+ * markdown spec that starts at "## User-facing changes" has. Pure.
+ */
+function specShaped(text, { isHtml = false } = {}) {
+  return isHtml || specHtml.isHtmlSpec(text) || nearTop(text, /^# \S/m)
+    || USER_HALF_RE.test(String(text || '')) || TECH_HALF_RE.test(String(text || ''));
+}
+
+// A piece of an answer that starts the spec document: its "# " title near
+// the top, its <article data-spec>, or, for a spec with no title, its
+// "## User-facing changes" half near the top. The technical half is never
+// where a spec starts, so a piece holding only that does not open one.
+function opensSpec(piece) {
+  return specHtml.isHtmlSpec(piece) || nearTop(piece, /^# \S/m) || nearTop(piece, USER_HALF_RE);
+}
+
+const FRAGMENT_ERROR = 'the spec turn\'s final message was only part of a spec (no "# " title, no <article data-spec> and neither half\'s "##" heading), so it was not kept';
+
+function readSpecText(text) {
   // #3699: an HTML spec reads as its markdown copy, the shape everything
   // below and every reader after it parses; the document rides along as
-  // specHtml to be stored beside it.
-  const captured = specHtml.normalizeSpecOutput(stripSpecWrapperFence(String(text || '').trim()));
+  // specHtml to be stored beside it. Invisible characters go first
+  // (spec-html.js stripInvisible): one inside "</article>" hid the end of a
+  // document.
+  const raw = specHtml.stripInvisible(String(text || '')).trim();
+  const captured = specHtml.normalizeSpecOutput(stripSpecWrapperFence(raw));
   const specMd = specFromTitle(String(captured.markdown || '').trim());
   if (!specMd) return { ok: false, error: 'the spec turn returned nothing' };
   const blocked = specBlocked(specMd);
@@ -1690,6 +1838,9 @@ function readSpec(text) {
   // A run that died on the wire can report the failure as its final message,
   // which would otherwise be stored as the spec.
   if (agentApiFailure(specMd)) return { ok: false, error: 'the spec turn ended on an API error' };
+  if (!specShaped(specMd, { isHtml: !!captured.html || specHtml.isHtmlSpec(raw) })) {
+    return { ok: false, fragment: true, error: FRAGMENT_ERROR };
+  }
   // The spec is read by the group (its card, its GitHub comment) and its
   // user-facing half can become the change's description: no em dashes in
   // it either. Its code is left as it is.
@@ -1764,14 +1915,23 @@ async function draftSpec({
     activeWorkers.delete(session.id);
   }
   const costUsd = Number.isFinite(routed && routed.estimatedCostUsd) ? routed.estimatedCostUsd : null;
-  if (stopped) return { ok: false, stopped: true, costUsd, error: `the spec ran past its time limit${progress.suffix()}` };
+  // The turn's ledger rows, for its tokens in a cost breakdown (stage-costs.js).
+  const turn = routed?.logicalTurnId ? { turnId: routed.logicalTurnId } : {};
+  if (stopped) return { ok: false, stopped: true, costUsd, ...turn, error: `the spec ran past its time limit${progress.suffix()}` };
   if (!routed) return { ok: false, costUsd, error: 'the spec turn did not run' };
-  if (routed.error) return { ok: false, costUsd, error: `the spec turn failed (${routed.error})` };
-  const read = readSpec(routed.result?.lastResultText);
-  if (!read.ok) return { ...read, costUsd };
+  if (routed.error) return { ok: false, costUsd, ...turn, error: `the spec turn failed (${routed.error})` };
+  const read = readSpec(routed.result?.lastResultText, { parts: routed.result?.answerParts });
+  if (!read.ok) {
+    if (read.fragment) log.warn('homeroom-bot', 'The spec turn left only part of a spec; building from the plan', { sessionId: session.id });
+    return { ...read, costUsd, ...turn };
+  }
+  if (read.joined) log.info('homeroom-bot', 'The spec came in several messages; kept it whole', { sessionId: session.id });
   const { specMd } = read;
   const version = await publishSpec({ pool, sessions, session, specMd, specHtml: read.specHtml, model });
-  return { ok: true, specMd, version, costUsd };
+  // How much its drawn screens hold (spec-html.js screenStats): measured,
+  // never cut.
+  const screens = read.specHtml ? specHtml.screenStats(read.specHtml) : [];
+  return { ok: true, specMd, version, costUsd, ...turn, ...(screens.length ? { screens } : {}) };
 }
 
 /**
@@ -1869,9 +2029,26 @@ async function buildAndPropose({
   // so the run records why the build worked from the plan alone.
   let spec = null;
   const specOut = () => {
-    if (spec?.ok) return { specMd: spec.specMd, specVersion: spec.version };
+    if (spec?.ok) return { specMd: spec.specMd, specVersion: spec.version, ...(spec.screens ? { specScreens: spec.screens } : {}) };
     if (spec && !spec.blocked && spec.error) return { specNote: `no spec (${spec.error}); the build worked from the plan` };
     return {};
+  };
+  // What each of its stages cost, on its model (services/stage-costs.js):
+  // the spec turn, the build turn (its look-and-fix loop is inside it), and
+  // a review's reviewer calls and fix turns. Carried on every outcome, as
+  // the spec is.
+  let buildPart = null;
+  let reviewed = null;
+  const fixTurnIds = [];
+  const costsOut = () => {
+    const stages = {};
+    const specPart = spec && !spec.preset ? stageCosts.part({
+      usd: spec.costUsd, model: specModel || model, turnIds: spec.turnId ? [spec.turnId] : [], screens: spec.screens || null,
+    }) : null;
+    if (specPart) stages.spec = specPart;
+    if (buildPart) stages.build = buildPart;
+    Object.assign(stages, stageCosts.reviewParts(reviewed, { buildModel: model, fixTurnIds }));
+    return Object.keys(stages).length ? { stageCosts: stages } : {};
   };
   const fail = async (error) => {
     // The bot's own failed attempt. Archived so it never reads as work
@@ -1881,7 +2058,7 @@ async function buildAndPropose({
         WHERE id = $1 AND user_id = $2 AND status IN ('active', 'paused')`,
       [session.id, bot.id],
     ).catch(() => {});
-    return { ok: false, sessionId: session.id, branchName: session.branch_name || null, error, ...specOut() };
+    return { ok: false, sessionId: session.id, branchName: session.branch_name || null, error, ...specOut(), ...costsOut() };
   };
   // A skip is put away as a failed attempt is, and says why it stopped.
   const skipNow = async () => {
@@ -2087,6 +2264,7 @@ async function buildAndPropose({
 
   const result = (routed && routed.result) || {};
   const buildCostUsd = Number.isFinite(routed && routed.estimatedCostUsd) ? routed.estimatedCostUsd : null;
+  buildPart = stageCosts.part({ usd: buildCostUsd, model, turnIds: routed?.logicalTurnId ? [routed.logicalTurnId] : [] });
   // Both turns, the spec's and the build's, are the build's cost (and a
   // review's, below).
   let costUsd = buildCostUsd == null && spec.costUsd == null
@@ -2112,13 +2290,12 @@ async function buildAndPropose({
   // reviewed and fixed before anybody sees it (bot-review.js). It fails
   // open: whatever stops the loop, what is committed goes on as it would
   // have without it. Its cost is the build's.
-  let reviewed = null;
   let landedSha = result.sha || null;
   let landedCommits = Number(result.ahead) || 0;
   if (review?.reviewer) {
     reviewed = await reviewLanded({
       pool, config, bot, app, repo, session, branchName, seed, spec: spec.ok ? spec.specMd : null,
-      review, deps, runBuildTurn, turnBudgetMs, readsImages, platformRepo, skipNow, onProgress,
+      review, deps, runBuildTurn, turnBudgetMs, readsImages, platformRepo, skipNow, onProgress, fixTurnIds,
       start: {
         sha: landedSha, commits: landedCommits,
         costUsd, activeMs: Date.now() - buildStartedMs, buildText: result.lastResultText || null,
@@ -2144,7 +2321,7 @@ async function buildAndPropose({
     ).catch(() => {});
     return {
       ok: true, sessionId: session.id, branchName: session.branch_name,
-      sha: landedSha, commits: landedCommits, costUsd, ...specOut(), ...reviewOut,
+      sha: landedSha, commits: landedCommits, costUsd, ...specOut(), ...reviewOut, ...costsOut(),
     };
   }
 
@@ -2166,10 +2343,13 @@ async function buildAndPropose({
     log.warn('homeroom-bot', 'Built but could not propose', { app: app.slug, issueNumber, sessionId: session.id, why });
     return {
       ok: false, sessionId: session.id, ...pushed, costUsd,
-      error: `the change was built but could not be proposed: ${why}`, ...specOut(), ...reviewOut,
+      error: `the change was built but could not be proposed: ${why}`, ...specOut(), ...reviewOut, ...costsOut(),
     };
   }
-  return { ok: true, sessionId: session.id, prNumber: promoted.body.prNumber || null, ...pushed, costUsd, ...specOut(), ...reviewOut };
+  return {
+    ok: true, sessionId: session.id, prNumber: promoted.body.prNumber || null, ...pushed, costUsd, ...specOut(), ...reviewOut,
+    ...costsOut(),
+  };
 }
 
 /**
@@ -2200,7 +2380,7 @@ async function rollbackReviewBranch({ github, repo, branchName, sha }) {
  */
 async function reviewLanded({
   pool, config, bot, app, repo, session, branchName, seed, spec, review, deps, runBuildTurn,
-  turnBudgetMs, readsImages, platformRepo, skipNow, onProgress, start,
+  turnBudgetMs, readsImages, platformRepo, skipNow, onProgress, start, fixTurnIds = null,
 }) {
   const botReview = require('./bot-review');
   const { worker } = deps;
@@ -2238,6 +2418,7 @@ async function reviewLanded({
     });
     const r = (turn.routed && turn.routed.result) || {};
     const costUsd = Number.isFinite(turn.routed && turn.routed.estimatedCostUsd) ? turn.routed.estimatedCostUsd : null;
+    if (Array.isArray(fixTurnIds) && turn.routed?.logicalTurnId) fixTurnIds.push(turn.routed.logicalTurnId);
     const ms = Date.now() - t0;
     if (turn.stopped) return { ok: false, stopped: true, costUsd, ms };
     if (turn.routed?.error) return { ok: false, error: `the fix turn failed (${turn.routed.error})`, costUsd, ms };
@@ -2333,6 +2514,12 @@ module.exports = {
   stampSessionModel,
   draftSpec,
   specPrompt,
+  specPlanLines,
+  specScopeLines,
+  splitApprovedPlan,
+  planNoteText,
+  APPROVED_PLAN_HEAD,
+  CREATOR_CHOICES_HEAD,
   specTitle,
   specSnippet,
   specCommentText,
@@ -2344,5 +2531,6 @@ module.exports = {
   postSpecOnProposal,
   SPEC_TURN_MAX_MS,
   readSpec,
+  specShaped,
   MAX_SPEC_COMMENT_CHARS,
 };

@@ -291,9 +291,27 @@ test('bot configurations against the full PostgreSQL schema', { timeout: 180000 
     const fin = { booted: true, shots: [{ ...shots('fi')[0], artifactId: ids2['phone-light-populated'] }] };
     const built = {
       ok: true, sha: 'sha3', commits: 3, costUsd: 1.95,
-      review: { round0: { sha: 'sha1', capture: r0, costUsd: 0.9, activeMs: 1_200_000 }, finalCapture: fin, stop: 'ship', rounds: [] },
+      review: {
+        reviewer: { model: OPUS, maxRounds: 2, budgetMinutes: 20 },
+        round0: { sha: 'sha1', capture: r0, costUsd: 0.9, activeMs: 1_200_000 }, finalCapture: fin, stop: 'ship',
+        rounds: [{ round: 1, verdict: 'fix', reviewerCostUsd: 0.3, fix: { ok: true, costUsd: 0.45 } }, { round: 2, verdict: 'ship', reviewerCostUsd: 0.25 }],
+      },
+      // What each stage cost (homeroom-bot-live.js buildAndPropose).
+      stageCosts: { spec: { usd: 0.5, model: OPUS }, build: { usd: 0.4, model: GLM } },
     };
     assert.equal(await configs.finishLive(pool, { botRunId: runId, version: current, built, activeMs: 2_100_000 }), true);
+    // Its cost stage by stage, adding up to it (services/stage-costs.js).
+    const parts = Object.fromEntries((await pool.query(
+      'SELECT source, cost_parts FROM bot_config_results WHERE bot_run_id = $1', [runId],
+    )).rows.map((r) => [r.source, r.cost_parts]));
+    assert.deepEqual(parts.live.stages.map((x) => [x.stage, x.model, x.usd]), [
+      ['triage', GLM, 0.04], ['spec', OPUS, 0.5], ['build', GLM, 0.4], ['review_reviewer', OPUS, 0.55], ['review_fixes', GLM, 0.45],
+    ]);
+    assert.equal(parts.live.totalUsd, 1.99);
+    assert.equal(parts.live.other.usd, 0.05, 'what no stage names, so the parts add up');
+    assert.deepEqual(parts.round0.stages.map((x) => x.stage), ['triage', 'spec', 'build'], 'the first build alone: no review');
+    assert.equal(parts.round0.totalUsd, 0.94);
+    assert.equal(parts.round0.other.usd, 0);
     const { rows } = await pool.query(
       `SELECT source, status, built, booted, cost_usd::float8 AS cost, active_ms::float8 AS ms, sha
          FROM bot_config_results WHERE bot_run_id = $1 ORDER BY source`, [runId],
@@ -314,7 +332,8 @@ test('bot configurations against the full PostgreSQL schema', { timeout: 180000 
     // The side trial finishes: built, but its app would not boot.
     const { rows: [{ trial_id: trialId }] } = await pool.query("SELECT trial_id FROM bot_config_results WHERE bot_run_id = $1 AND source = 'trial'", [runId]);
     await pool.query(
-      `UPDATE bench_trials SET status = 'ok', parsed = '{"built":true}'::jsonb, capture = $2::jsonb, cost_usd = 0.38,
+      `UPDATE bench_trials SET status = 'ok', parsed = '{"built":true,"costParts":{"spec":{"usd":0.2,"model":"z-ai/glm-5.3-flash"},"build":{"usd":0.18,"model":"z-ai/glm-5.3-flash","inputTokens":900,"outputTokens":120}}}'::jsonb,
+              capture = $2::jsonb, cost_usd = 0.38,
               interrupted_cost_usd = 0.02, duration_ms = 1500000, build_sha = 'sideSha', build_commits = 1
         WHERE id = $1`,
       [trialId, JSON.stringify({ booted: false, error: 'npm run build failed', shots: [] })],
@@ -325,6 +344,12 @@ test('bot configurations against the full PostgreSQL schema', { timeout: 180000 
     );
     assert.deepEqual([side.status, side.built, side.booted], ['done', true, false]);
     assert.ok(Math.abs(side.cost - (0.38 + 0.02 + 0.04)) < 1e-9, 'the trial\'s cost, its interrupted attempts and the shared triage');
+    const { rows: [{ cost_parts: sideParts }] } = await pool.query(
+      "SELECT cost_parts FROM bot_config_results WHERE bot_run_id = $1 AND source = 'trial'", [runId],
+    );
+    assert.deepEqual(sideParts.stages.map((x) => [x.stage, x.usd]), [['triage', 0.04], ['spec', 0.2], ['build', 0.18]]);
+    assert.deepEqual([sideParts.stages[2].inputTokens, sideParts.stages[2].outputTokens], [900, 120]);
+    assert.equal(sideParts.other.usd, 0.02, 'its interrupted attempts');
     assert.equal(side.ms, 1_500_000 + 90_000);
     const { rows: pairs2 } = await pool.query(
       'SELECT status, excluded_reason FROM bot_config_pairs WHERE bot_run_id = $1 ORDER BY id', [runId],
@@ -383,6 +408,12 @@ test('bot configurations against the full PostgreSQL schema', { timeout: 180000 
     const cur = by['opus-spec-review'].stats;
     assert.equal(cur.builds, 3);
     assert.ok(Math.abs(cur.avgCostUsd - (1.99 + 2.0 + 2.0) / 3) < 1e-9);
+    // Beside it, by stage, over the one result that recorded its stages.
+    assert.equal(cur.avgCostByStage.n, 1);
+    assert.equal(cur.avgCostByStage.totalUsd, 1.99);
+    assert.deepEqual(cur.avgCostByStage.stages.spec, { usd: 0.5, models: [OPUS] });
+    assert.deepEqual(cur.avgCostByStage.stages.review_reviewer, { usd: 0.55, models: [OPUS] });
+    assert.equal(cur.avgCostByStage.otherUsd, 0.05);
     assert.equal(cur.medianActiveMs, 1_800_000);
     assert.equal(cur.bootRate, 1);
     assert.equal(cur.vsCurrent, null, 'the baseline has no win rate against itself');

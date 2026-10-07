@@ -127,6 +127,8 @@ test('a spec is written first, read-only, stored as the session\'s spec doc, pos
   assert.deepEqual(out, {
     ok: true, sessionId: 5001, prNumber: 42, branchName: 'homeroom_bot/s5001', sha: 'a'.repeat(40), commits: 1,
     costUsd: 0.060000000000000005, specMd: SPEC, specVersion: 3,
+    // Each stage's own cost on its model (services/stage-costs.js).
+    stageCosts: { spec: { usd: 0.01, model: 'z-ai/glm-5.3-flash' }, build: { usd: 0.05, model: 'z-ai/glm-5.3-flash' } },
   });
 });
 

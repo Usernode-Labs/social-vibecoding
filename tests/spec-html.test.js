@@ -119,3 +119,63 @@ test('normalizeSpecOutput: markdown passes through; html gets a projection; over
   assert.equal(o.html, null);
   assert.match(o.markdown, /# Vote card/);
 });
+
+// A first version's spec draws up to two finished screens, each with a
+// <style> block and inline SVG icons (prompts.js FIRST_VERSION_SCREENS_BRIEF),
+// and the build takes their markup as its visual target. It reaches the build
+// through the markdown projection's "### Screen markup", whole.
+const ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M4 12h16"/><circle cx="12" cy="12" r="8"/></svg>';
+const DRAWN = (rows, { extra = '' } = {}) => `<article data-spec>
+  <h1>A first version</h1>
+  <section data-spec-tab="user">
+    <figure data-screens>
+      <ol data-changes><li data-change="1">The main screen, with the demo data</li></ol>
+      <template data-screen data-size="phone" data-height="1300">
+        <style>:root{--ground:250 250 249;--accent:15 118 110}.list-row{padding:12px 16px;color:rgb(var(--fg))}</style>
+        <div data-side="after" data-change="1"><header>${ICON}<h2>Today</h2></header>
+          <ul class="list">${Array.from({ length: rows }, (_, i) => `<li class="list-row">${ICON}<span>Staging demo row ${i}</span></li>`).join('')}</ul>${extra}
+        </div>
+      </template>
+    </figure>
+  </section>
+  <section data-spec-tab="tech"><p>Build it.</p></section>
+</article>`;
+
+test('a drawn screen\'s <style> block and inline SVG reach the build whole, in the projection\'s screen markup', () => {
+  const doc = DRAWN(3);
+  const md = specHtmlToMarkdown(doc);
+  const markup = md.slice(md.indexOf('### Screen markup'));
+  assert.match(markup, /Phone 390×1300:/);
+  assert.ok(markup.includes('<style>:root{--ground:250 250 249;--accent:15 118 110}.list-row{padding:12px 16px;color:rgb(var(--fg))}</style>'));
+  assert.equal(markup.split(ICON).length - 1, 4, 'every icon, as drawn');
+  assert.ok(markup.includes('<div data-side="after" data-change="1">'));
+  // And none of it in the half a non-developer reads.
+  assert.doesNotMatch(md.slice(0, md.indexOf('## Technical implementation')), /<svg|<style/);
+  assert.equal(normalizeSpecOutput(doc).html, doc, 'the document itself is stored as written');
+  // The viewer draws it with both kept: a screen loses only what would load,
+  // run or navigate (frontend/src/lib/spec-html.ts cleanScreenMarkup).
+  const viewer = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'frontend', 'src', 'lib', 'spec-html.ts'), 'utf8');
+  const dropped = /const SCREEN_DROP = '([^']*)'/.exec(viewer)[1].split(',');
+  for (const kept of ['style', 'svg', 'path', 'circle', 'rect']) assert.ok(!dropped.includes(kept), `${kept} stays in a screen`);
+});
+
+test('screenStats measures each drawn screen and flags one past twice its budget, cutting nothing', () => {
+  const { screenStats, SCREEN_CHAR_BUDGET } = require('../src/services/spec-html.js');
+  assert.equal(SCREEN_CHAR_BUDGET, 15000);
+  const [small] = screenStats(DRAWN(3));
+  assert.deepEqual(Object.keys(small), ['size', 'height', 'chars', 'svgs', 'shapes', 'overBudget']);
+  assert.equal(small.size, 'phone');
+  assert.equal(small.height, 1300);
+  assert.equal(small.svgs, 4);
+  assert.equal(small.shapes, 8);
+  assert.equal(small.overBudget, false);
+  assert.ok(small.chars > 500 && small.chars < SCREEN_CHAR_BUDGET);
+  const painting = DRAWN(3, { extra: `<svg viewBox="0 0 400 400">${'<path d="M0 0L1 1"/>'.repeat(1600)}</svg>` });
+  const [big] = screenStats(painting);
+  assert.equal(big.overBudget, true);
+  assert.ok(big.chars > 2 * SCREEN_CHAR_BUDGET);
+  assert.equal(big.shapes, 1608);
+  assert.ok(normalizeSpecOutput(painting).html.includes('M0 0L1 1'), 'measured, never cut');
+  assert.deepEqual(screenStats('# A markdown spec'), []);
+  assert.deepEqual(screenStats(null), []);
+});

@@ -836,6 +836,22 @@ function noteCodingProviderImages(images, state) {
   state.imageOmittedCount = (state.imageOmittedCount || 0) + count(images.omitted);
 }
 
+// The text blocks a Claude turn wrote since its last tool call, oldest
+// first: its final answer, when that answer came in more than one message.
+// Claude Code continues an answer cut at the output-token limit in a new
+// message, and its result (lastResultText) is the last message alone
+// (agent-result-text.js finalAnswerText). Bounded, oldest dropped first.
+const MAX_ANSWER_PARTS = 16;
+const MAX_ANSWER_CHARS = 1500000;
+
+function noteAnswerPart(state, text) {
+  const parts = Array.isArray(state.answerParts) ? state.answerParts : [];
+  parts.push(text);
+  let total = parts.reduce((sum, p) => sum + p.length, 0);
+  while (parts.length > 1 && (parts.length > MAX_ANSWER_PARTS || total > MAX_ANSWER_CHARS)) total -= parts.shift().length;
+  state.answerParts = parts;
+}
+
 function applyStreamEvent(event, onProgress, state) {
   liveAgentSpend.observe(state.liveSpend, event);
   if (event?.type === 'stream_event' && !state.shotsFirstStreamSeen) {
@@ -918,6 +934,7 @@ function applyStreamEvent(event, onProgress, state) {
         }
         if (block.text) {
           state.lastResultText = block.text;
+          noteAnswerPart(state, block.text);
           onProgress(block.text.substring(0, 300));
         }
       } else if (block.type === 'thinking') {
@@ -937,9 +954,11 @@ function applyStreamEvent(event, onProgress, state) {
       } else if (block.type === 'redacted_thinking') {
         if (observeDiagnostics) state.responseRedactedThinkingBlockCount += 1;
       } else if (block.type === 'server_tool_use' || block.type === 'mcp_tool_use') {
+        state.answerParts = [];
         if (observeDiagnostics) noteClaudeToolCall(state, block);
         observeShotsTool(state, { phase: 'start', id: block.id, name: block.name, input: block.input });
       } else if (block.type === 'tool_use') {
+        state.answerParts = [];
         if (observeDiagnostics) noteClaudeToolCall(state, block);
         observeShotsTool(state, { phase: 'start', id: block.id, name: block.name, input: block.input });
         const input = block.input || {};
@@ -1415,6 +1434,7 @@ function newWatchState() {
     // host-owned and never parsed from untrusted runner output.
     turnId: null,
     lastResultText: '',
+    answerParts: [],
     costUsd: 0,
     liveSpend: liveAgentSpend.createTracker(),
     liveSpendEnabled: false,

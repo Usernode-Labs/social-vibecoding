@@ -61,11 +61,70 @@ function stripHtmlWrapperFence(content) {
   return /^<article\b/i.test(inner) ? inner : content;
 }
 
-/** True when `text` is an HTML spec document (an <article data-spec> at the top). */
+// Characters that show nothing and that a model's final message has carried
+// into a spec: a zero-width space INSIDE a closing tag ("</artic​le>",
+// App bench run 9, trial 1246), and a byte-order mark. U+200B, U+2060 and
+// U+FEFF are removed wherever they are. U+200C and U+200D also join or keep
+// apart the letters of some scripts and build emoji sequences, so they are
+// removed only beside an ASCII character (a tag, a Latin word, punctuation)
+// or at an edge, where they never do either. Visible text is never touched.
+const ALWAYS_INVISIBLE_RE = /[​⁠﻿]/g;
+const JOINER_RE = /[‌‍]/g;
+
+/** `text` without the invisible characters above. Pure. */
+function stripInvisible(text) {
+  if (typeof text !== 'string') return text;
+  const asciiOrEdge = (ch) => ch === undefined || ch.charCodeAt(0) < 0x80;
+  return text
+    .replace(ALWAYS_INVISIBLE_RE, '')
+    .replace(JOINER_RE, (ch, at, s) => (asciiOrEdge(s[at - 1]) || asciiOrEdge(s[at + 1]) ? '' : ch));
+}
+
+const ARTICLE_OPEN_RE = /<article\b[^>]*\bdata-spec\b[^>]*>/i;
+const ARTICLE_CLOSE = '</article>';
+
+// What may come before an <article data-spec> that does not open the
+// message: stray markup with no words in it (`<aside support id="x-0">
+// </aside>`, App bench run 8, trial 1240), or a line or two of preamble, and
+// at most a code fence opened just before the article. Never a markdown
+// document that only mentions the format: one with a heading, or with the
+// opening tag in the middle of a sentence or in inline code.
+function strayLead(before) {
+  if (before.length > 4000) return false;
+  // A fence opened on the line just before the article wraps it.
+  const lead = before.replace(/(?:^|\n)[ \t]*[`~]{3,}[\w-]*[ \t]*\n?[ \t]*$/, '\n');
+  if (/^[ \t]{0,3}#{1,6}[ \t]/m.test(lead) || /[`~]{3,}/.test(lead)) return false;
+  // The tag starts a line or follows other markup.
+  const tail = lead.replace(/[ \t]+$/, '');
+  if (tail && !/[>\n]$/.test(tail)) return false;
+  return lead.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().length <= 400;
+}
+
+/**
+ * The <article data-spec> document in `text`, or null when it holds none:
+ * the whole of it when it opens the message (fenced or not, as before), or
+ * found further in after stray markup or a short preamble (strayLead). It
+ * runs to the last </article>, and whatever follows that is dropped. One
+ * found further in must close. Invisible characters are removed first
+ * (stripInvisible). Pure.
+ */
+function extractHtmlSpec(text) {
+  if (typeof text !== 'string') return null;
+  const t = stripHtmlWrapperFence(stripInvisible(text)).trim();
+  const upTo = (start, mustClose) => {
+    const end = t.toLowerCase().lastIndexOf(ARTICLE_CLOSE);
+    if (end < start) return mustClose ? null : t.slice(start);
+    return t.slice(start, end + ARTICLE_CLOSE.length);
+  };
+  if (/^<article\b[^>]*\bdata-spec\b/i.test(t)) return upTo(0, false);
+  const m = ARTICLE_OPEN_RE.exec(t);
+  if (!m || !strayLead(t.slice(0, m.index))) return null;
+  return upTo(m.index, true);
+}
+
+/** True when `text` is an HTML spec document (extractHtmlSpec finds one). */
 function isHtmlSpec(text) {
-  if (typeof text !== 'string') return false;
-  const t = stripHtmlWrapperFence(text).trim();
-  return /^<article\b[^>]*\bdata-spec\b/i.test(t);
+  return extractHtmlSpec(text) !== null;
 }
 
 // ── Tokenizer ───────────────────────────────────────────────────────────
@@ -411,17 +470,57 @@ function htmlSpecsEnabledFor(config, appSlug) {
  * projection alone, so it still reads as a spec rather than failing.
  */
 function normalizeSpecOutput(text) {
-  if (!isHtmlSpec(text)) return { markdown: text, html: null };
-  const html = stripHtmlWrapperFence(text).trim();
+  const html = extractHtmlSpec(text);
+  if (html === null) return { markdown: stripInvisible(text), html: null };
   const markdown = specHtmlToMarkdown(html);
   if (html.length > MAX_SPEC_HTML_CHARS) return { markdown, html: null };
   return { markdown, html };
 }
 
+// ── How much a spec's drawn screens hold ───────────────────────────────
+//
+// A first version's spec draws up to two screens in full (prompts.js
+// FIRST_VERSION_SCREENS_BRIEF), each asked to stay within about
+// SCREEN_CHAR_BUDGET characters, its <style> included. Nothing is cut or
+// dropped for going over: a dropped screen would leave the build with no
+// target, and the spec turn's clock already bounds what it can write. It is
+// measured instead, and a screen more than twice the budget is flagged.
+const SCREEN_CHAR_BUDGET = 15000;
+const SVG_SHAPE_RE = /<(?:path|rect|circle|ellipse|line|polyline|polygon)\b/gi;
+
+/**
+ * Each drawn screen of an HTML spec: its size, its height, its markup's
+ * characters (its <style> included), how many inline <svg> it holds and how
+ * many shapes they draw together, and whether it is over budget (more than
+ * twice SCREEN_CHAR_BUDGET). [] for anything that is not an HTML spec. Pure.
+ */
+function screenStats(text) {
+  const html = typeof text === 'string' ? extractHtmlSpec(text) : null;
+  if (!html) return [];
+  return tokenize(html)
+    .filter((tok) => tok.type === 'raw' && tok.name === 'template' && 'data-screen' in tok.attrs)
+    .map((tok) => {
+      const g = screenGeometry(tok.attrs);
+      const markup = String(tok.raw || '');
+      return {
+        size: g.kind,
+        height: g.height,
+        chars: markup.length,
+        svgs: (markup.match(/<svg\b/gi) || []).length,
+        shapes: (markup.match(SVG_SHAPE_RE) || []).length,
+        overBudget: markup.length > 2 * SCREEN_CHAR_BUDGET,
+      };
+    });
+}
+
 module.exports = {
   MAX_SPEC_HTML_CHARS,
   SCREEN_SIZES,
+  SCREEN_CHAR_BUDGET,
   isHtmlSpec,
+  extractHtmlSpec,
+  stripInvisible,
+  screenStats,
   normalizeSpecOutput,
   screenGeometry,
   specHtmlToMarkdown,

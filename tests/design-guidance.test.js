@@ -111,3 +111,10 @@ test('an OpenRouter scout is told it reads through the shell and changes nothing
   assert.match(SESSIONS, /: 'You are running in PLAN MODE: you can read files \(Read, Glob, Grep\) but you cannot edit, commit, or push anything\. Do not attempt to\.';/,
     'the Claude scout keeps its exact wording');
 });
+
+test('one accent, and the colours an app\'s "## Design" section gives its subject are not accents (7 Oct 2026)', () => {
+  const flat = prompts.getDesignGuidance().replace(/\s+/g, ' ');
+  assert.match(flat, /- One accent colour, kept for the primary action and status\. Colours the app's "## Design" section gives its subject \(a map's water and parks, team colours, card suits, traffic-light statuses\) are not accents: use them as that section says\./);
+  // Its examples are none of the App bench's starter briefs.
+  assert.doesNotMatch(flat, /bread|proofing|RSS|feed reader|ear train|voxel|tier list|ranking/i);
+});
