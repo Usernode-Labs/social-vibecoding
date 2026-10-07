@@ -375,6 +375,12 @@ const TRIAGE_PROMPT_PATH = path.join(__dirname, '..', 'prompts', 'homeroom-bot-t
 // starter's design kit ships quiet greys and a teal accent to re-point); the
 // plan names what the spec then decides (services/prompts.js
 // FIRST_VERSION_SPEC_DESIGN_BRIEF).
+//
+// 7 Oct 2026: as a first sketch, which the spec settles and may replace
+// (homeroom-bot-live.js specScopeLines): every first version an Opus 5.5
+// spec wrote over this note kept the GLM triage's accent, signature element
+// and layout. Its example subjects were two of the App bench's starter
+// briefs and are gone; its colours are no longer one accent plus neutrals.
 const FIRST_VERSION_NOTE = [
   'THIS REQUEST IS A NEW PROJECT\'S FIRST VERSION. Its creator just made the project and described what it should',
   'be; the repository is still the platform\'s starter template. Read "a small, bounded change" in the `ready`',
@@ -386,11 +392,12 @@ const FIRST_VERSION_NOTE = [
   'conventions\' "New apps: a light and a dark look, following the platform"). Only an app whose one fixed look is the',
   'point, such as a game drawn as its own scene, keeps a single look. Say which in `build_note`, list a single look',
   'under `assumptions` when you choose one, and never ask about it.',
-  'Plan a look of its own, too: the starter\'s screen is placeholder, so there is no existing screen for it to look',
-  'like. Say in `build_note` the screen\'s one job and its one primary action, an accent colour plus neutrals that',
-  'work in both looks (not the starter\'s default palette, unless chosen on purpose), ONE signature element',
-  'drawn from the app\'s subject (for example a staff or a keyboard for an ear trainer, a proofing timeline for a',
-  'bread app) and a rough layout. The spec settles the details; never ask about them.',
+  'Sketch a look of its own, too: the starter\'s screen is placeholder, so there is no existing screen for it to look',
+  'like. Say in `build_note` the screen\'s one job and its one primary action, its colours (neutrals, an action colour',
+  'and any set of colours the subject itself uses, each working in both looks; not the starter\'s default palette,',
+  'unless chosen on purpose), ONE signature element drawn from the app\'s subject, something no other app would have,',
+  'and a rough layout. It is a first sketch: the spec that follows settles the look, the layout and the scope, and may',
+  'replace any of it. Never ask about them.',
   // The first session's card (services/app-sketch.js): when the request
   // quotes it, its creator has seen a summary of the idea, never a screen.
   // Until 5 October 2026 it was a mock of the main screen, and this said to
@@ -2934,7 +2941,7 @@ async function runTriage(pool, config, {
     const version = await botConfigs().currentVersion(pool);
     if (version) {
       model = version.recipe.models.triage;
-      triageHarness = live.recipeHarness(model);
+      triageHarness = live.recipeHarness(model, config);
       triageGuidance = (await botConfigs().recipeGuidance(pool, version.recipe))?.triage || null;
     }
   }
@@ -4085,7 +4092,7 @@ async function finishRecoveredTurn({
   }
   const note = ' (finished after a restart)';
   if (activeTurn?.mode === 'scout') {
-    const read = timedOut ? { ok: false, error: 'the spec ran past its time limit' } : live.readSpec(result.lastResultText);
+    const read = timedOut ? { ok: false, error: 'the spec ran past its time limit' } : live.readSpec(result.lastResultText, { parts: result.answerParts });
     await putAwayRecoveredSession(pool, session, { archive: true });
     const specCostUsd = await sessionCostUsd(pool, session.id);
     await debitRecovered(pool, session, specCostUsd, deps);
@@ -4352,12 +4359,18 @@ async function runConfigVersion(pool, runId) {
   return r?.bot_config_version_id ? botConfigs().versionById(pool, r.bot_config_version_id).catch(() => null) : null;
 }
 
-/** A review a restart cut short: recorded as stopped `interrupted`, at the state it is proposed in. Never throws. */
-async function noteReviewInterrupted(pool, runId, review, pushed = {}) {
+/**
+ * A review a restart cut short: recorded as stopped `interrupted`, at the
+ * state it is proposed in (and `rolledBack` when that state is the last one
+ * a capture saw boot rather than a fix nobody looked at). Never throws.
+ */
+async function noteReviewInterrupted(pool, runId, review, pushed = {}, rolledBack = null) {
   const { configVersionId: _v, ...state } = review || {};
   const done = {
     ...state, state: 'done', stop: 'interrupted', stopDetail: 'the platform restarted during the review',
     finalSha: pushed.sha || state.finalSha || null, finishedAt: new Date().toISOString(),
+    ...(pushed.commits != null ? { finalCommits: pushed.commits } : {}),
+    ...(rolledBack ? { rolledBack } : {}),
   };
   await recordReviewState(pool, runId, done).catch((err) => {
     log.warn('homeroom-bot', 'Could not record an interrupted review', { runId, err: err.message });
@@ -4385,7 +4398,10 @@ async function finishInterruptedReviews(pool, config = {}, deps = {}) {
          JOIN chat_sessions cs ON cs.id = r.build_session_id
         WHERE (r.review->>'state') IN ('reviewing', 'capturing')
           AND r.mode = 'live' AND r.build_ok IS NULL AND r.proposal_session_id IS NULL
-          AND cs.active_turn IS NULL
+          -- A turn still on the session is restart recovery's to finish, for
+          -- as long as one could plausibly be running (ABANDONED_LIVE_SQL's
+          -- backstop): past a day, the review is proposed as it stands.
+          AND (cs.active_turn IS NULL OR r.created_at < NOW() - INTERVAL '1 day')
           AND COALESCE((r.review->>'updatedAt')::timestamptz, r.created_at) < NOW() - make_interval(mins => $1)
           AND NOT (r.id = ANY($2::int[]))
           AND NOT (r.build_session_id = ANY($3::int[]))
@@ -4457,8 +4473,13 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
     // state, and the review is recorded as interrupted. A fix turn cut short
     // left nothing (a failed turn is neither committed nor pushed).
     const reviewing = plan.mode !== 'scout' ? await reviewInProgress(pool, plan.runId) : null;
+    // Its reviewer calls are not agent turns, so the session's ledger above
+    // does not hold them: debited here as the live path debits them with
+    // the build.
+    const reviewerUsd = reviewing ? botReview().reviewerCost(reviewing) : 0;
+    if (reviewerUsd > 0) await debitRecovered(pool, session, reviewerUsd, deps);
     const specRead = plan.mode === 'scout' && !plan.lost && !plan.timedOut
-      ? live.readSpec(plan.result?.lastResultText) : null;
+      ? live.readSpec(plan.result?.lastResultText, { parts: plan.result?.answerParts }) : null;
     // A build turn a restart reached in time, whose clock then ran out: not
     // the build's own failure (restartRanItOut).
     const ranOut = restartRanItOut(plan);
@@ -4475,6 +4496,7 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
       });
       if (notNeeded) {
         await recordLiveBuild(pool, plan.runId, { ok: false, sessionId: Number(sessionId), costUsd, error: notNeeded });
+        await botConfigs().abandonSideBuilds(pool, plan.runId, 'not needed any more');
         log.info('homeroom-bot', 'A live build a restart interrupted is not needed any more', {
           app: app.slug, issueNumber: plan.issueNumber, sessionId, why: notNeeded,
         });
@@ -4513,6 +4535,8 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
           error: `interrupted: ${what} ${RESTARTED_BUILD_NOTE}`,
         });
         await requeueForRestart(pool, plan.appId, plan.issueNumber);
+        // The new run makes side builds of its own.
+        await botConfigs().abandonSideBuilds(pool, plan.runId, 'sent back to be built again after a restart');
         log.info('homeroom-bot', 'Sent a live issue back to be triaged after a restart', {
           app: app.slug, issueNumber: plan.issueNumber, sessionId, why: what,
         });
@@ -4523,6 +4547,7 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
       // hears why, and recorded without RESTARTED_BUILD_NOTE, so their
       // activity card stops on it instead of reading past it.
       restartedOut = before + 1;
+      await botConfigs().abandonSideBuilds(pool, plan.runId, 'cut short by restarts too many times');
       log.warn('homeroom-bot', 'Restarts cut a live build short too many times in a row; not sending it back', {
         app: app.slug, issueNumber: plan.issueNumber, sessionId, inARow: restartedOut,
         why: plan.why || (ranOut ? 'the build turn ran out of time after a restart' : plan.mode),
@@ -4535,6 +4560,10 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
     const issue = fetched?.issue || null;
     if (!issue || (issue.state && issue.state !== 'open')) {
       await archive();
+      await botConfigs().abandonSideBuilds(pool, plan.runId, 'for a request that is no longer open');
+      // Out of its review either way, so the sweep for reviews a restart cut
+      // short does not come back to it.
+      if (reviewing) await noteReviewInterrupted(pool, plan.runId, reviewing);
       return 'not_open';
     }
     // The session's own user: recovery hands the bot only its own sessions
@@ -4568,7 +4597,24 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
       } : {
         branchName: session.branch_name || null, sha: plan.result.sha || null, commits: Number(plan.result.ahead) || 0,
       };
-      if (reviewing) await noteReviewInterrupted(pool, plan.runId, reviewing, pushed);
+      // A fix no capture saw boot is not what is proposed (bot-review.js
+      // runReviewLoop's rule): the branch goes back to the last commit one
+      // did.
+      let rolledBack = null;
+      const booted = reviewing?.lastBooted?.sha || null;
+      if (booted && pushed.sha && pushed.sha !== booted && repo) {
+        try {
+          await live.rollbackReviewBranch({ github, repo, branchName: session.branch_name, sha: booted });
+          rolledBack = { from: pushed.sha, to: booted, why: 'not seen to boot before the restart' };
+          pushed.sha = booted;
+          if (Number(reviewing.lastBooted.commits) > 0) pushed.commits = Number(reviewing.lastBooted.commits);
+        } catch (err) {
+          log.warn('homeroom-bot', 'Could not roll an unchecked review fix back; proposing it as it stands', {
+            runId: plan.runId, sessionId, err: err.message,
+          });
+        }
+      }
+      if (reviewing) await noteReviewInterrupted(pool, plan.runId, reviewing, pushed, rolledBack);
       // WP1 (#2): not proposed once a proposal of the bot's answers the
       // request, or it was closed, as the live path does (whyNotBuild).
       const skipped = await whyNotBuild(pool, {
@@ -4617,18 +4663,21 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
       };
     }
     if (built.blocked) await archive();
-    built.costUsd = costUsd;
+    built.costUsd = reviewerUsd > 0 ? (Number(costUsd) || 0) + reviewerUsd : costUsd;
     // The configuration's results: the current one's from the state it was
     // proposed in (no final screenshots, so no pair to pick), and a derived
-    // side one's from the round-0 snapshot the review kept.
-    if (reviewing) {
-      const version = await botConfigs().versionById(pool, reviewing.configVersionId || 0).catch(() => null)
-        || await runConfigVersion(pool, plan.runId);
-      if (version) {
-        await botConfigs().finishLive(pool, {
-          botRunId: plan.runId, version, built: { ...built, review: { ...reviewing, finalCapture: null } },
-        });
-      }
+    // side one's from the round-0 snapshot the review kept. A configured
+    // first version whose own build turn the restart caught records its
+    // outcome too, so its round-0 result does not stay pending.
+    const version = reviewing
+      ? (await botConfigs().versionById(pool, reviewing.configVersionId || 0).catch(() => null) || await runConfigVersion(pool, plan.runId))
+      : await runConfigVersion(pool, plan.runId);
+    // (Not one restarts cut short too many times: that is the platform's
+    // failure, and its side builds were stopped above.)
+    if (version && !restartedOut) {
+      await botConfigs().finishLive(pool, {
+        botRunId: plan.runId, version, built: reviewing ? { ...built, review: { ...reviewing, finalCapture: null } } : built,
+      });
     }
     const acted = await announceBuilt({
       pool, ws: liveD.ws, app, bot, issueNumber: plan.issueNumber, runId: plan.runId, built, say, domain: liveD.domain,
@@ -4792,6 +4841,7 @@ async function settleAbandonedLiveBuilds(pool, settings, deps = {}) {
       settled += 1;
       if (!proposed) {
         await putAwayRecoveredSession(pool, { id: run.build_session_id }, { archive: true });
+        await botConfigs().abandonSideBuilds(pool, run.id, 'lost');
       }
       log.warn('homeroom-bot', 'Recorded a live build nothing finished', {
         runId: run.id, appId: run.app_id, issueNumber: run.issue_number, sessionId: run.build_session_id,
@@ -5773,7 +5823,8 @@ async function queueLiveBuild(pool, { runId, appId }) {
 // choices with the suggested answer first) with Build it and Change
 // something (homeroom-bot-dm.js sendPlanCard), and its run waits with
 // `awaiting_go_at`. Build it (goAhead) sets live_build_waiting_at, as a
-// ready verdict does, with the choices written into the build note.
+// ready verdict does, with the plan and its choices written into the build
+// note as what the creator approved.
 // Change something (dm.changePlan) and a new look at the request
 // (retireWaitingPlans) end the wait; so does a week with no tap
 // (settleStalePlans). A waiting plan is not a build: a new look at its
@@ -5805,15 +5856,22 @@ function choicesFrom(questions, answers = []) {
 }
 
 /**
- * Pure (B6): what a first version's build is told its creator chose, added
- * to the plan's build note once they tap Build it: '' when the plan asked
- * nothing. The benchmark adds the same line for a creator who taps Build it
- * without changing anything (services/bench/runner.js firstVersionStage).
+ * Pure (B6): what a first version's spec and build are told its creator
+ * approved, added to the plan's build note once they tap Build it: the
+ * plan's bullets they were shown (`bullets`) and the answer each choice goes
+ * with; '' when there is neither. The benchmark adds the same lines for a
+ * creator who taps Build it without changing anything (services/bench/
+ * runner.js firstVersionStage). The spec reads them apart from the triage's
+ * note, as binding (homeroom-bot-live.js splitApprovedPlan). Until 7 October
+ * 2026 only the choices were written, and the bullets reached neither turn.
  */
-function creatorChoiceNote(chosen) {
-  return Array.isArray(chosen) && chosen.length
-    ? `\n\nThe creator chose, from the plan they were shown:\n${chosen.map((c) => `- ${c.question} ${c.answer}`).join('\n')}`
-    : '';
+function creatorChoiceNote(chosen, { bullets = [] } = {}) {
+  const plan = (Array.isArray(bullets) ? bullets : []).map((b) => String(b || '').trim()).filter(Boolean);
+  const picks = Array.isArray(chosen) ? chosen : [];
+  const lines = [];
+  if (plan.length) lines.push(live.APPROVED_PLAN_HEAD, ...plan.map((b) => `- ${b}`));
+  if (picks.length) lines.push(live.CREATOR_CHOICES_HEAD, ...picks.map((c) => `- ${c.question} ${c.answer}`));
+  return lines.length ? `\n\n${lines.join('\n')}` : '';
 }
 
 /**
@@ -5845,10 +5903,11 @@ async function awaitGo(pool, { runId, app, issueNumber, parsed, bot, deps = {} }
 }
 
 /**
- * B6: Build it, under a first version's plan. The answers tapped (any left
- * go with the suggested one) are written into the build note the build
- * reads, and the build waits its turn as any ready verdict's does. Once: a
- * plan already built, replaced or stopped is `gone`. Resolves { ok: true,
+ * B6: Build it, under a first version's plan. The plan's bullets and the
+ * answers tapped (any left go with the suggested one) are written into the
+ * build note the spec and the build read, and the build waits its turn as
+ * any ready verdict's does. Once: a plan already built, replaced or stopped
+ * is `gone`. Resolves { ok: true,
  * appId, issueNumber, chosen } or { ok: false, why }.
  */
 async function goAhead(pool, { runId, answers = [] }) {
@@ -5859,7 +5918,7 @@ async function goAhead(pool, { runId, answers = [] }) {
   );
   if (!run) return { ok: false, why: 'gone' };
   const chosen = choicesFrom(run.plan?.questions, answers);
-  const note = creatorChoiceNote(chosen);
+  const note = creatorChoiceNote(chosen, { bullets: run.plan?.bullets });
   const { rows: [went] } = await pool.query(
     `UPDATE homeroom_bot_runs
         SET awaiting_go_at = NULL, live_build_waiting_at = NOW(), build_note = CONCAT(build_note, $2::text),
@@ -5943,12 +6002,23 @@ async function recordReviewState(pool, runId, state) {
   );
 }
 
-/** Why the bot may not spend more on a review round (its weekly allowance), or null. Never throws. */
-async function botBudgetStop(pool, bot, deps = {}) {
+/**
+ * Why the bot may not spend more on a review round (its weekly allowance),
+ * or null. `spentUsd` is what this build has spent so far, which is debited
+ * only once it is over, so the ledger alone does not have it yet. Never
+ * throws.
+ */
+async function botBudgetStop(pool, bot, deps = {}, { spentUsd = 0 } = {}) {
   try {
     const limits = deps.limits || require('./limits');
     const budget = await limits.checkBudget(pool, bot.id);
-    return budget && budget.error ? String(budget.reason || budget.error) : null;
+    if (budget && budget.error) return String(budget.reason || budget.error);
+    const spentCents = Number(spentUsd) > 0 ? Number(spentUsd) * 100 : 0;
+    const left = Number(budget?.weeklyRemaining);
+    if (spentCents > 0 && Number.isFinite(left) && spentCents >= left) {
+      return `weekly_limit: this build has spent $${(spentCents / 100).toFixed(2)}, and $${(left / 100).toFixed(2)} of the week was left`;
+    }
+    return null;
   } catch {
     return null;
   }
@@ -6026,7 +6096,7 @@ async function buildLive({
       reviewer: reviewing ? recipe.reviewer : { model: null, maxRounds: 0, budgetMinutes: CAPTURE_ONLY_MINUTES },
       owner: { botRunId: runId },
       onState: (state) => recordReviewState(pool, runId, state),
-      budgetCheck: () => botBudgetStop(pool, bot, deps),
+      budgetCheck: ({ spentUsd } = {}) => botBudgetStop(pool, bot, deps, { spentUsd }),
     } : null;
     const buildStartedMs = Date.now();
     built = await live.buildAndPropose({
@@ -6075,7 +6145,7 @@ async function buildLive({
   if (carriedCostUsd > 0) built.costUsd = (Number(built.costUsd) || 0) + carriedCostUsd;
   // What the current configuration made of it, and what its round-0
   // snapshot says for a side configuration with no reviewer; then the pairs.
-  if (version) await botConfigs().finishLive(pool, { botRunId: runId, version, built, activeMs: buildMs });
+  if (version) await botConfigs().finishLive(pool, { botRunId: runId, version, built, activeMs: buildMs, carriedUsd: carriedCostUsd });
   let acted;
   if (built.skipped) {
     // WP1 (#2): stopped, not failed, and nothing said: a proposal of the
@@ -7181,6 +7251,8 @@ async function runOnce(pool, config, deps = {}) {
       // stands, before anything could call its build lost.
       const reviewsFinished = await finishInterruptedReviews(pool, config, deps);
       if (reviewsFinished) out.reviewsFinished = reviewsFinished;
+      // And review screenshots past their keeping (a few times a day).
+      await botConfigs().maybePruneCaptureArtifacts(pool, now);
       const settledLive = await settleAbandonedLiveBuilds(pool, settings, deps);
       if (settledLive) out.liveBuildsSettled = settledLive;
       // B6: and a plan nobody tapped Build it under for a week stops waiting.

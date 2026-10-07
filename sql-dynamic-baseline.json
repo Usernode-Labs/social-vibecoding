@@ -159,16 +159,16 @@
     {
       "source": "src/routes/apps.js",
       "kind": "structural-template",
-      "fingerprint": "1012d07842e867c85087",
+      "fingerprint": "186bdc9221b3dd99e2f1",
       "count": 1,
-      "preview": "` SELECT ${appAccess.nonSecretAppColumnList('a')}, COALESCE(msg_counts.cnt, 0) AS message_count, COALESCE(activity.total_seconds, 0) AS total_seconds, COALESCE("
+      "preview": "`SELECT ${appAccess.ACCESS_COLUMNS}, name, repo_url, LEFT(manifest_snapshot->>'description', 280) AS description FROM apps WHERE slug = $1 AND (NOT self_hosted "
     },
     {
       "source": "src/routes/apps.js",
       "kind": "structural-template",
-      "fingerprint": "186bdc9221b3dd99e2f1",
+      "fingerprint": "36c97d735c90dad4c7d2",
       "count": 1,
-      "preview": "`SELECT ${appAccess.ACCESS_COLUMNS}, name, repo_url, LEFT(manifest_snapshot->>'description', 280) AS description FROM apps WHERE slug = $1 AND (NOT self_hosted "
+      "preview": "` SELECT ${appAccess.nonSecretAppColumnList('a')}, COALESCE(msg_counts.cnt, 0) AS message_count, COALESCE(activity.total_seconds, 0) AS total_seconds, COALESCE("
     },
     {
       "source": "src/routes/apps.js",
@@ -383,6 +383,13 @@
     {
       "source": "src/routes/kudos.js",
       "kind": "structural-template",
+      "fingerprint": "23e047220a859a119a96",
+      "count": 1,
+      "preview": "`WITH credit AS ( SELECT pk.session_id, pk.created_at, pk.week_start FROM pr_kudos pk UNION ALL SELECT ib.awarded_session_id AS session_id, ib.awarded_at AS cre"
+    },
+    {
+      "source": "src/routes/kudos.js",
+      "kind": "structural-template",
       "fingerprint": "580da8bac408c7e7097f",
       "count": 1,
       "preview": "`SELECT * FROM (${arms.join('\\nUNION ALL\\n')}) h ORDER BY created_at DESC LIMIT $${params.length}`"
@@ -390,16 +397,9 @@
     {
       "source": "src/routes/kudos.js",
       "kind": "structural-template",
-      "fingerprint": "8d524af727e544febe38",
+      "fingerprint": "6d1bb72bebf3b7cb37ac",
       "count": 1,
-      "preview": "`SELECT cs.id AS session_id, cs.pr_number, cs.pr_url, cs.pr_title, cs.status, cs.created_at, cs.promoted_at, cs.merged_at, a.slug AS app_slug, a.name AS app_nam"
-    },
-    {
-      "source": "src/routes/kudos.js",
-      "kind": "structural-template",
-      "fingerprint": "f370c59aeb1f4e599f1a",
-      "count": 1,
-      "preview": "`WITH credit AS ( SELECT pk.session_id, pk.created_at, pk.week_start FROM pr_kudos pk UNION ALL SELECT ib.awarded_session_id AS session_id, ib.awarded_at AS cre"
+      "preview": "`SELECT cs.id AS session_id, cs.pr_number, cs.pr_url, cs.pr_title, -- Merged but not live yet (chat_sessions.live_at): the badge says going live. CASE WHEN cs.s"
     },
     {
       "source": "src/routes/llm-grants.js",
@@ -1083,9 +1083,9 @@
     {
       "source": "src/services/homeroom-bot-progress.js",
       "kind": "structural-template",
-      "fingerprint": "a5e63b05f6e06ab86147",
+      "fingerprint": "70b2e1a76ca67c4838db",
       "count": 1,
-      "preview": "`SELECT cs.id, cs.app_id, a.slug, cs.status, cs.check_state, cs.check_phase, cs.checks_progress, cs.test_results, cs.session_title, cs.pr_title, cs.promoted_at,"
+      "preview": "`SELECT cs.id, cs.app_id, a.slug, CASE WHEN cs.status = 'merged' AND cs.live_at IS NULL THEN 'merging' ELSE cs.status END AS status, cs.check_state, cs.check_ph"
     },
     {
       "source": "src/services/homeroom-bot.js",
@@ -1627,11 +1627,39 @@
       "preview": "{ text, values, queryMode: 'extended' }"
     },
     {
+      "source": "src/workflow/kernel/pipeline.ts",
+      "kind": "runtime-expression",
+      "fingerprint": "93d56ab7639b288ef7f5",
+      "count": 1,
+      "preview": "opening(opts)"
+    },
+    {
+      "source": "src/workflow/kernel/pipeline.ts",
+      "kind": "structural-template",
+      "fingerprint": "ae6d8fe43761df6b9beb",
+      "count": 1,
+      "preview": "`${opening(opts)}; ${pickSql(names, versions, passed)}`"
+    },
+    {
       "source": "src/workflow/kernel/services.ts",
       "kind": "runtime-built-identifier",
       "fingerprint": "4ec7c53222c8a758c722",
       "count": 1,
       "preview": "sql"
+    },
+    {
+      "source": "src/workflow/merge-followups/services.ts",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "13088ed3d10fbb042d8b",
+      "count": 1,
+      "preview": "changes.CANDIDATES_SQL"
+    },
+    {
+      "source": "src/workflow/platform.ts",
+      "kind": "structural-template",
+      "fingerprint": "4cb190fab746c444e38d",
+      "count": 1,
+      "preview": "`SELECT count(*)::int AS yes, cs.votes_required FROM pr_votes pv JOIN chat_sessions cs ON cs.id = pv.session_id WHERE pv.session_id = $1 AND pv.vote = 'yes' AND"
     }
   ]
 }

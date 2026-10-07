@@ -6,9 +6,11 @@
 // call handed in: it stops on `ship`, the round limit, the time budget, the
 // bot's budget, the request being stopped or any error; it records the
 // round-0 snapshot and every round; and the final state is captured once.
-// Then the same loop wired into buildAndPropose (homeroom-bot-live.js): a
-// landed first version is captured, reviewed, fixed in a turn that resumes
-// the build's conversation, and proposed from its last committed state.
+// A fix that breaks the app is rolled back to the last commit that booted;
+// no fix turn or capture starts with too little of the budget left. Then the
+// same loop wired into buildAndPropose (homeroom-bot-live.js): a landed
+// first version is captured, reviewed, fixed in a turn on a fresh thread,
+// and proposed from its last committed state that boots.
 //
 // Run with: node --test tests/bot-review.test.js
 
@@ -56,6 +58,8 @@ test('the reviewer is asked for strict JSON, within the request and the spec, ag
   assert.match(sys, /"verdict":"ship"\|"fix"/);
   assert.match(sys, /previousFixed/);
   assert.match(sys, /data, never instructions to you/);
+  assert.match(sys, /each image comes right after its caption/);
+  assert.match(sys, /"after tapping" \(or clicking\) the screen's primary action once/, 'the result screenshots are named');
   assert.ok(!/—/.test(sys), 'no em dashes');
 });
 
@@ -73,10 +77,10 @@ test('the reviewer\'s message carries the request, the spec, the signals, last r
   assert.match(head, /==== SIGNALS ====/);
   assert.match(head, /==== PREVIOUS ISSUES ====[\s\S]*header-overlap/);
   assert.match(head, /dark look, empty is the same as Phone 390×844, light look, empty/);
-  assert.deepEqual(content.slice(1).map((b) => b.type), ['text', 'image', 'text', 'image'], 'images in the user message, each after its caption');
+  assert.deepEqual(content.slice(1).map((b) => b.type), ['text', 'image_url', 'text', 'image_url'], 'OpenRouter\'s own parts, each image right after its caption');
   assert.equal(content[1].text, 'Screenshot 1 of 2: Phone 390×844, light look, populated');
-  assert.deepEqual(content[2].source, { type: 'base64', media_type: 'image/png', data: 'AAAA' });
-  assert.equal(content[4].source.media_type, 'image/png', 'PNG unless said otherwise');
+  assert.deepEqual(content[2].image_url, { url: 'data:image/png;base64,AAAA' });
+  assert.equal(content[4].image_url.url, 'data:image/png;base64,BBBB', 'PNG unless said otherwise');
   const first = review.reviewerContent({ brief: 'x', spec: '', shots: [], round: 1, maxRounds: 3 });
   assert.ok(!/PREVIOUS ISSUES/.test(first[0].text), 'round 1 has no previous issues');
   assert.match(first[0].text, /no spec/);
@@ -136,15 +140,23 @@ test('the fix turn is asked for exactly the issues, within the spec, under the b
   assert.match(p, /browser_take_screenshot/, 'the in-loop browser, for a model that sees images');
   assert.match(p, /Do not write a DESCRIPTION block/);
   assert.ok(!review.fixPrompt({ issues: [] }).includes('==== SPEC'), 'no spec, no spec block');
+  // A fresh thread: it says what it needs to stand alone.
+  assert.ok(p.startsWith('ISSUE #1'), 'the request first');
+  assert.match(p, /this is a new session, so read what you need of it before you change it/);
+  assert.match(p, /"## Design" section/);
+  assert.match(p, /after the screen's primary action was tapped once \("after tapping \.\.\."\)/);
+  assert.match(p, /An issue on an "after tapping \.\.\." screen is about what the main action does/);
+  assert.match(p, /boot the app and look at the screen it was on in the in-loop browser/, 'its in-loop check');
 });
 
 // ── The loop ─────────────────────────────────────────────────────────────
 
 function loopHarness({
   verdicts = [], fixes = [], captures = {}, budgetMinutes = 25, maxRounds = 3, clockStep = 0, budget = null, skip = null,
+  rollback = 'ok',
 } = {}) {
   let clock = 1_000_000;
-  const calls = { capture: [], review: [], fix: [], states: [], progress: [] };
+  const calls = { capture: [], review: [], fix: [], states: [], progress: [], rollback: [], budget: [] };
   const opts = {
     reviewer: { model: OPUS, maxRounds, budgetMinutes },
     start: { sha: 'sha0', commits: 1, costUsd: 0.7, activeMs: 600_000, buildText: 'built it' },
@@ -152,12 +164,13 @@ function loopHarness({
     capture: async (index) => {
       calls.capture.push(index);
       clock += clockStep;
-      const c = captures[index];
+      const c = Array.isArray(captures[index]) ? captures[index].shift() : captures[index];
       if (c === 'fail') return { ok: false, error: 'worker gone', ms: 5 };
+      if (c === 'down') return { ok: true, capture: captureOf(index, { booted: false }), ms: 2000 };
       return { ok: true, capture: c || captureOf(index), ms: 2000 };
     },
-    review: async ({ round, capture, previousIssues }) => {
-      calls.review.push({ round, booted: capture?.booted, previous: previousIssues ? previousIssues.map((i) => i.id) : null });
+    review: async ({ round, capture, previousIssues, timeoutMs }) => {
+      calls.review.push({ round, booted: capture?.booted, previous: previousIssues ? previousIssues.map((i) => i.id) : null, timeoutMs });
       clock += clockStep;
       const v = verdicts[round - 1];
       if (v === 'error') return { ok: false, error: 'HTTP 502', costUsd: 0.05, ms: 100 };
@@ -172,7 +185,11 @@ function loopHarness({
       if (f === 'stopped') return { ok: false, stopped: true, costUsd: 0.05, ms: 100 };
       return { ok: true, sha: `sha${round}`, commits: 1 + round, costUsd: 0.13, ms: 60_000 };
     },
-    budgetCheck: budget ? async () => budget : null,
+    rollback: rollback === 'none' ? null : async (args) => {
+      calls.rollback.push(args);
+      if (rollback === 'fail') throw new Error('GitHub said 422');
+    },
+    budgetCheck: budget ? async (spent) => { calls.budget.push(spent); return typeof budget === 'function' ? budget(spent) : budget; } : null,
     skipCheck: skip ? async () => skip : null,
     onState: async (s) => { calls.states.push(s); },
     onProgress: (line) => calls.progress.push(line),
@@ -227,15 +244,61 @@ test('the round limit: three reviews and three fixes, each round recorded, and t
 });
 
 test('the time budget: the loop stops when the minutes are up, and keeps what is committed', async () => {
-  // Each step takes four minutes of a ten-minute budget.
-  const h = loopHarness({ verdicts: ['fix', 'fix', 'fix'], budgetMinutes: 10, clockStep: 4 * 60_000 });
+  // Each step takes four minutes of a fifteen-minute budget: the first
+  // capture, a review and a fix (12 minutes), then 3 left, a review, and
+  // no time for another fix.
+  const h = loopHarness({ verdicts: ['fix', 'fix', 'fix'], budgetMinutes: 15, clockStep: 4 * 60_000 });
   const out = await review.runReviewLoop(h.opts);
   assert.equal(out.stop, 'time_budget');
-  assert.ok(h.calls.fix.length < 3);
-  assert.ok(h.calls.fix.every((f) => f.budgetMs <= 10 * 60_000), 'a fix turn gets at most what is left');
+  assert.equal(h.calls.fix.length, 1);
+  assert.ok(h.calls.fix.every((f) => f.budgetMs <= 15 * 60_000), 'a fix turn gets at most what is left');
+  assert.equal(h.calls.fix[0].budgetMs, 7 * 60_000);
   assert.equal(out.finalCapture?.booted, true, 'the final state is captured even past the budget');
-  const sha = out.finalSha;
-  assert.equal(sha, `sha${h.calls.fix.length}`);
+  assert.equal(out.finalSha, 'sha1');
+  assert.deepEqual(h.calls.capture, [0, 1], 'the fix was looked at once; nothing more');
+});
+
+test('no fix turn or capture starts with less than three minutes of the budget left, and a reviewer call gets what is left', async () => {
+  assert.equal(review.MIN_STEP_MINUTES, 3);
+  // Ten minutes: the capture and the review take four each, two are left.
+  const h = loopHarness({ verdicts: ['fix'], budgetMinutes: 10, clockStep: 4 * 60_000 });
+  const out = await review.runReviewLoop(h.opts);
+  assert.equal(out.stop, 'time_budget');
+  assert.match(out.stopDetail, /less than 3 minutes of the review's time were left for a fix/);
+  assert.equal(h.calls.fix.length, 0, 'no fix turn that cannot finish');
+  assert.equal(out.rounds[0].verdict, 'fix', 'the review itself is kept');
+  assert.equal(h.calls.review[0].timeoutMs, 6 * 60_000 + review.REVIEW_TIMEOUT_MARGIN_MS, 'what is left of the budget, and a minute');
+  // A fix that leaves under three minutes: its state is not looked at for
+  // another round, only captured once as the final state.
+  const late = loopHarness({ verdicts: ['fix', 'fix'], budgetMinutes: 11, clockStep: 3 * 60_000 });
+  const l = await review.runReviewLoop(late.opts);
+  assert.equal(l.stop, 'time_budget');
+  assert.match(l.stopDetail, /left to look again/);
+  assert.deepEqual(late.calls.capture, [0, 1], 'the final capture only');
+  assert.equal(l.finalSha, 'sha1');
+  assert.equal(l.finalCapture.booted, true);
+});
+
+test('a reviewer call\'s timeout is its own, cut to what is left of the review', async () => {
+  const seen = [];
+  const deps = {
+    credentialStore: {
+      async readMetadata() { return { status: 'valid', revision: 3, metadata: {} }; },
+      async readSecret() { return 'sk-or-bot'; },
+    },
+    agentModels: { async resolveModelPricing() { return { id: OPUS, supportsImages: true }; } },
+    managedOpenRouter: { MANAGED_SOURCE: 'managed' },
+    openrouterMayor: {
+      createClient(opts) {
+        seen.push(opts.timeoutMs);
+        return { async streamChat() { return { text: '{"verdict":"ship"}', usage: {} }; }, estimateCostCents() { return 0; } };
+      },
+    },
+  };
+  await review.callReviewer({ pool: {}, userId: 5, model: OPUS, system: 'S', content: [], deps });
+  await review.callReviewer({ pool: {}, userId: 5, model: OPUS, system: 'S', content: [], timeoutMs: 90_000, deps });
+  await review.callReviewer({ pool: {}, userId: 5, model: OPUS, system: 'S', content: [], timeoutMs: 60 * 60_000, deps });
+  assert.deepEqual(seen, [review.REVIEW_TIMEOUT_MS, 90_000, review.REVIEW_TIMEOUT_MS]);
 });
 
 test('a fix turn stopped on the review\'s clock leaves the branch as it was', async () => {
@@ -276,6 +339,7 @@ test('fail open: a reviewer error, a failed fix, a failed capture or a thrown er
   const t = await review.runReviewLoop(threw.opts);
   assert.equal(t.stop, 'error');
   assert.equal(t.state, 'done');
+  assert.equal(t.finalCapture, t.round0.capture, 'what it stopped on is still the final state');
 });
 
 test('the bot\'s budget and a stopped request end the loop', async () => {
@@ -284,12 +348,96 @@ test('the bot\'s budget and a stopped request end the loop', async () => {
   assert.equal(out.stop, 'budget');
   assert.equal(b.calls.fix.length, 0, 'no fix turn is spent past the budget');
   assert.equal(out.finalCapture.booted, true);
+  // The check is told what the review has spent so far: the bot's
+  // allowance is debited only once the build is over.
+  const later = loopHarness({ verdicts: ['fix', 'fix'], budget: (spent) => (spent.spentUsd > 0.3 ? 'over' : null) });
+  const o2 = await review.runReviewLoop(later.opts);
+  assert.equal(o2.stop, 'budget');
+  assert.deepEqual(later.calls.budget.map((x) => Math.round(x.spentUsd * 100) / 100), [0.2, 0.53]);
+  assert.equal(later.calls.fix.length, 1);
 
   const s = loopHarness({ verdicts: ['fix'], skip: 'skipped: the request was closed before it was proposed' });
   const skipped = await review.runReviewLoop(s.opts);
   assert.equal(skipped.stop, 'skipped');
   assert.equal(s.calls.review.length, 0);
   assert.equal(skipped.finalCapture, null, 'a stopped request is not captured again');
+});
+
+test('a fix that stops the app booting is rolled back to the last commit that booted, and recorded as regressed', async () => {
+  // Round 1's fix (sha1) boots; round 2's (sha2) does not, and round 3's
+  // review is the platform's boot issue; its fix (sha3) still does not boot.
+  const h = loopHarness({ verdicts: ['fix', 'fix', 'fix'], captures: { 2: 'down', 3: 'down' } });
+  const out = await review.runReviewLoop(h.opts);
+  assert.equal(out.stop, 'regressed');
+  assert.deepEqual(h.calls.rollback, [{ sha: 'sha1', from: 'sha3' }], 'the branch goes back, through the caller');
+  assert.equal(out.finalSha, 'sha1', 'what is proposed is the last commit that booted');
+  assert.equal(out.finalCommits, 2);
+  assert.equal(out.finalCapture.booted, true, 'and its capture is the final one');
+  assert.equal(out.finalCapture.shots[0].artifactId, 'a11');
+  assert.deepEqual(out.rolledBack, { from: 'sha3', to: 'sha1', why: 'did not boot', stopBefore: 'round_limit' });
+  assert.match(out.stopDetail, /the last fix did not boot \(sha3\); back to sha1/);
+  assert.deepEqual(out.lastBooted, { sha: 'sha1', commits: 2 });
+  assert.equal(h.calls.states.at(-1).stop, 'regressed', 'recorded as it stands');
+});
+
+test('no regression: a fix that boots is kept, and nothing is rolled back', async () => {
+  const h = loopHarness({ verdicts: ['fix', 'ship'] });
+  const out = await review.runReviewLoop(h.opts);
+  assert.equal(out.stop, 'ship');
+  assert.equal(out.finalSha, 'sha1');
+  assert.deepEqual(h.calls.rollback, []);
+  assert.equal(out.rolledBack, undefined);
+  assert.deepEqual(out.lastBooted, { sha: 'sha1', commits: 2 });
+  // A first build that never booted has nothing to go back to: the fixes stand.
+  const never = loopHarness({ verdicts: ['fix'], maxRounds: 1, captures: { 0: 'down', 1: 'down' } });
+  const n = await review.runReviewLoop(never.opts);
+  assert.equal(n.stop, 'round_limit');
+  assert.equal(n.finalSha, 'sha1');
+  assert.deepEqual(never.calls.rollback, []);
+  assert.equal(n.lastBooted, null);
+});
+
+test('a loop that stops right after a fix looks at it once more, and rolls it back when it cannot be seen to boot', async () => {
+  // The round limit, right after a fix: the final capture is its check.
+  const limit = loopHarness({ verdicts: ['fix'], maxRounds: 1, captures: { 1: 'down' } });
+  const l = await review.runReviewLoop(limit.opts);
+  assert.deepEqual(limit.calls.capture, [0, 1]);
+  assert.equal(l.stop, 'regressed');
+  assert.equal(l.finalSha, 'sha0', 'back to the first build, which booted');
+  assert.equal(l.finalCommits, 1);
+  assert.equal(l.finalCapture, l.round0.capture);
+  // The time budget, right after a fix, and the capture fails: unchecked is
+  // not proposed either.
+  const time = loopHarness({ verdicts: ['fix', 'fix'], budgetMinutes: 11, clockStep: 3 * 60_000, captures: { 1: 'fail' } });
+  const t = await review.runReviewLoop(time.opts);
+  assert.equal(t.stop, 'regressed');
+  assert.equal(t.rolledBack.why, 'could not be captured');
+  assert.equal(t.rolledBack.stopBefore, 'time_budget');
+  assert.equal(t.finalCaptureError, 'worker gone');
+  assert.equal(t.finalSha, 'sha0');
+  // The bot's budget after a fix whose capture failed in the loop: it is
+  // captured again for the final state, and kept when that one boots.
+  const budget = loopHarness({ verdicts: ['fix', 'fix'], captures: { 1: ['fail', undefined] } });
+  const b = await review.runReviewLoop(budget.opts);
+  assert.equal(b.stop, 'capture_error');
+  assert.deepEqual(budget.calls.capture, [0, 1, 1]);
+  assert.equal(b.finalSha, 'sha1');
+  assert.deepEqual(budget.calls.rollback, []);
+  // A rollback that fails leaves what is committed, and says so.
+  const stuck = loopHarness({ verdicts: ['fix'], maxRounds: 1, captures: { 1: 'down' }, rollback: 'fail' });
+  const s = await review.runReviewLoop(stuck.opts);
+  assert.equal(s.stop, 'round_limit');
+  assert.equal(s.finalSha, 'sha1');
+  assert.equal(s.rollbackError, 'GitHub said 422');
+  const none = loopHarness({ verdicts: ['fix'], maxRounds: 1, captures: { 1: 'down' }, rollback: 'none' });
+  assert.match((await review.runReviewLoop(none.opts)).rollbackError, /no way to move the branch/);
+  // A stopped request is neither captured again nor rolled back.
+  const skipped = loopHarness({ verdicts: ['fix', 'fix'], captures: { 1: 'down' } });
+  let asks = 0;
+  skipped.opts.skipCheck = async () => { asks += 1; return asks > 1 ? 'skipped: the request was closed' : null; };
+  const k = await review.runReviewLoop(skipped.opts);
+  assert.equal(k.stop, 'skipped');
+  assert.deepEqual(skipped.calls.rollback, []);
 });
 
 test('no rounds: the first build is only captured, for the side builds it is compared with', async () => {
@@ -331,9 +479,9 @@ test('reviewCapture: the eight most telling screenshots go to the reviewer as im
   assert.deepEqual({ ok: out.ok, verdict: out.verdict, costUsd: out.costUsd, by: out.by }, { ok: true, verdict: 'ship', costUsd: 0.21, by: 'model' });
   assert.equal(seen[0].userId, 7, 'the key of the user the build runs as');
   assert.equal(seen[0].model, OPUS);
-  const images = seen[0].content.filter((b) => b.type === 'image');
+  const images = seen[0].content.filter((b) => b.type === 'image_url');
   assert.equal(images.length, 4);
-  assert.equal(images[0].source.data, PNG.toString('base64'));
+  assert.equal(images[0].image_url.url, `data:image/png;base64,${PNG.toString('base64')}`);
   assert.match(seen[0].content[1].text, /Phone 390×844, light look, populated/);
 
   deps.callReviewer = async () => ({ ok: true, text: 'I think it is fine.', costUsd: 0.2, ms: 500 });
@@ -373,7 +521,9 @@ test('callReviewer: the bot\'s own key, an image-reading model, and OpenRouter\'
   assert.equal(sent[0].apiKey, 'sk-or-bot');
   assert.equal(sent[0].billingPath, 'platform', 'the included key is the platform\'s spend');
   assert.equal(sent[0].catalogModel.supportsImages, true);
-  assert.deepEqual(sent[1].messages, [{ role: 'user', content: [{ type: 'text', text: 'x' }] }], 'one user message, images in it');
+  assert.equal(sent[0].imageFallback, false, 'a refused picture is an error, never a review without it');
+  assert.deepEqual(sent[1].chatMessages, [{ role: 'user', content: [{ type: 'text', text: 'x' }] }], 'one user message, sent as built');
+  assert.equal(sent[1].messages, undefined);
   assert.equal(sent[1].telemetryContext.component, review.TELEMETRY_COMPONENT);
 
   const textOnly = await review.callReviewer({ pool: {}, userId: 5, model: 'z-ai/glm-5.3-flash-text', system: 'S', content: [], deps });
@@ -386,6 +536,75 @@ test('callReviewer: the bot\'s own key, an image-reading model, and OpenRouter\'
   assert.equal((await review.callReviewer({ pool: {}, userId: 5, model: OPUS, system: 'S', content: [], deps })).ok, false, 'never throws');
   assert.match(require('node:fs').readFileSync(require.resolve('../src/services/llm-telemetry'), 'utf8'), /'homeroom_bot_review',/,
     'its telemetry component is one the ledger knows');
+});
+
+test('the request the reviewer sends: every caption right before its image; a refused image fails the call, never a blind review', async () => {
+  const bodies = [];
+  let status = 200;
+  const deps = {
+    credentialStore: {
+      async readMetadata() { return { status: 'valid', revision: 3, metadata: {} }; },
+      async readSecret() { return 'sk-or-bot'; },
+    },
+    agentModels: { async resolveModelPricing() { return { id: OPUS, supportsImages: true, inputPricePerMillion: 5, outputPricePerMillion: 25 }; } },
+    managedOpenRouter: { MANAGED_SOURCE: 'managed' },
+    fetchImpl: async (_url, init) => {
+      bodies.push(JSON.parse(init.body));
+      if (status !== 200) return { ok: false, status, async text() { return '{"error":{"message":"bad image"}}'; } };
+      return {
+        ok: true, status: 200,
+        async text() { return JSON.stringify({ choices: [{ message: { content: '{"verdict":"ship","issues":[]}' }, finish_reason: 'stop' }], usage: { prompt_tokens: 9000, completion_tokens: 200, cost: 0.11 } }); },
+      };
+    },
+  };
+  const out = await review.reviewCapture({
+    pool: {}, config: {}, userId: 7, model: OPUS, seed: 'REQ', spec: 'SPEC', capture: captureOf(0), round: 1, maxRounds: 2,
+    deps: { ...deps, readArtifacts: async (_pool, ids) => new Map(ids.map((id) => [id, { id, content_type: 'image/png', data: PNG }])) },
+  });
+  assert.equal(out.ok, true, out.error);
+  assert.equal(out.verdict, 'ship');
+  assert.equal(bodies.length, 1);
+  const [system, user] = bodies[0].messages;
+  assert.equal(system.role, 'system');
+  assert.equal(user.role, 'user');
+  const types = user.content.map((p) => p.type);
+  assert.deepEqual(types, ['text', 'text', 'image_url', 'text', 'image_url', 'text', 'image_url', 'text', 'image_url']);
+  for (let i = 1; i < user.content.length; i += 2) {
+    assert.match(user.content[i].text, new RegExp(`^Screenshot ${(i + 1) / 2} of 4: `), 'a caption');
+    assert.match(user.content[i + 1].image_url.url, /^data:image\/png;base64,/, 'and its image right after it');
+  }
+  assert.match(user.content[0].text, /==== REQUEST ====\nREQ/);
+
+  // The provider refuses the images: no second request without them.
+  status = 400;
+  bodies.length = 0;
+  const refused = await review.callReviewer({
+    pool: {}, config: {}, userId: 7, model: OPUS, system: 'S',
+    content: [{ type: 'text', text: 'Screenshot 1 of 1: Phone' }, { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } }], deps,
+  });
+  assert.equal(refused.ok, false);
+  assert.match(refused.error, /refused the request's images/);
+  assert.equal(bodies.length, 1, 'never sent again with "[image omitted]" in their place');
+  assert.ok(!JSON.stringify(bodies).includes('image omitted'));
+});
+
+test('another caller of the same client still gets its images-omitted retry', async () => {
+  const mayor = require('../src/services/openrouter-mayor');
+  const bodies = [];
+  const client = mayor.createClient({
+    apiKey: 'k', model: OPUS, catalogModel: { supportsImages: true },
+    fetchImpl: async (_url, init) => {
+      bodies.push(JSON.parse(init.body));
+      if (bodies.length === 1) return { ok: false, status: 400, async text() { return '{}'; } };
+      return { ok: true, status: 200, async text() { return JSON.stringify({ choices: [{ message: { content: 'ok' } }], usage: {} }); } };
+    },
+  });
+  const out = await client.streamChat({
+    messages: [{ role: 'user', content: [{ type: 'text', text: 'look' }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } }] }],
+  });
+  assert.equal(out.text, 'ok');
+  assert.equal(bodies.length, 2);
+  assert.match(JSON.stringify(bodies[1]), /image omitted: the model provider could not read it/);
 });
 
 // ── Through buildAndPropose ──────────────────────────────────────────────
@@ -458,7 +677,7 @@ test('a landed first version is reviewed and fixed in the same session before an
   const harnesses = h.calls.turns.filter((t) => t.harness);
   assert.deepEqual(harnesses.map((t) => [t.model, t.harness]), [[OPUS, 'claude'], ['z-ai/glm-5.3-flash', 'auto'], ['z-ai/glm-5.3-flash', 'auto']],
     'the Opus spec runs in Claude Code; GLM keeps the platform\'s choice');
-  assert.equal(turns[2].resume, 'thread-1', 'the fix continues the build\'s conversation');
+  assert.equal(turns[2].resume, null, 'the fix starts a fresh thread: its prompt stands alone');
   assert.match(turns[2].prompt, /\[major\] phone, empty: empty-state is wrong/);
   assert.equal(turns[2].commitMsg, 'Homeroom bot: review fixes, round 1');
   assert.equal(h.calls.captures.length, 2, 'after the build, after the fix; the second is the final state');
@@ -490,11 +709,45 @@ test('a reviewer that fails leaves the build exactly as it landed, and a build w
   assert.deepEqual(plain.calls.turns.filter((t) => t.harness).map((t) => t.harness), ['auto', 'auto'], 'every turn keeps the platform\'s CLI');
 });
 
+test('a review fix that broke the app is rolled back on the session branch before the first version goes on', async () => {
+  // The fix turn lands sha2, whose capture does not boot.
+  const h = buildHarness({ verdicts: ['fix'] });
+  const moved = [];
+  h.deps.github = { async forceBranchToSha(...args) { moved.push(args); return { updated: true }; } };
+  h.deps.captureRound = async () => {
+    h.calls.captures.push(true);
+    return { ok: true, capture: captureOf(h.calls.captures.length - 1, { booted: h.calls.captures.length === 1 }) };
+  };
+  const out = await live.buildAndPropose({
+    pool: h.pool, deps: h.deps, ...ARGS, review: { reviewer: { ...REVIEWER, maxRounds: 1 }, owner: { botRunId: 900 } },
+  });
+  assert.equal(out.ok, true, out.error);
+  assert.deepEqual(moved, [['o', 'r', 'b5001', 'sha1']], 'the session\'s own branch, back to the build that booted');
+  assert.equal(out.sha, 'sha1', 'what goes on is the commit that booted');
+  assert.equal(out.commits, 1);
+  assert.equal(out.review.stop, 'regressed');
+  // A bench trial's branch goes through its guarded client's own door.
+  const benchMoves = [];
+  await live.rollbackReviewBranch({ github: { async resetBenchBranch(...a) { benchMoves.push(a); } }, repo: { owner: 'o', repo: 'r' }, branchName: 'bench/r3-t44', sha: 'a'.repeat(40) });
+  assert.deepEqual(benchMoves, [['o', 'r', 'bench/r3-t44', 'a'.repeat(40)]]);
+  await assert.rejects(live.rollbackReviewBranch({ github: {}, repo: { owner: 'o', repo: 'r' }, branchName: 'main', sha: 'a'.repeat(40) }), /will not move the branch main/);
+  await assert.rejects(live.rollbackReviewBranch({ github: null, repo: { owner: 'o', repo: 'r' }, branchName: 'b1', sha: 'a'.repeat(40) }), /no GitHub client/);
+});
+
 test('recipeHarness: an Anthropic model runs in Claude Code; everything else keeps the platform\'s choice', () => {
   assert.equal(live.recipeHarness(OPUS), 'claude');
   assert.equal(live.recipeHarness('Anthropic/claude-sonnet-5'), 'claude');
   assert.equal(live.recipeHarness('z-ai/glm-5.3-flash'), 'auto');
   assert.equal(live.recipeHarness(null), 'auto');
+  // The operator's switch wins: OPENROUTER_MODEL_HARNESSES=none sends every
+  // model to Codex, a recipe's Opus included.
+  const registry0 = require('../src/agents/registry');
+  assert.equal(live.recipeHarness(OPUS, { openrouterModelHarnesses: registry0.parseOpenRouterHarnessMap('none') }), 'auto');
+  assert.equal(live.recipeHarness(OPUS, { openrouterModelHarnesses: registry0.parseOpenRouterHarnessMap('deepseek/deepseek-v4.1-flash=codex') }), 'auto');
+  assert.equal(live.recipeHarness(OPUS, { openrouterModelHarnesses: registry0.parseOpenRouterHarnessMap('z-ai/glm-5.3-flash=claude') }), 'claude');
+  // And a configuration's Opus spec thinks harder than the session's `low`.
+  assert.equal(live.recipeSpecEffort(OPUS), 'medium');
+  assert.equal(live.recipeSpecEffort('z-ai/glm-5.3-flash'), null, 'a GLM spec keeps the session\'s');
   // Why it is needed: the platform's own map does not list Opus.
   const registry = require('../src/agents/registry');
   assert.equal(registry.openRouterHarnessForModel(OPUS, {

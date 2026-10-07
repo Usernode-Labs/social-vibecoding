@@ -187,6 +187,11 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     const { rows } = await pool.query(`SELECT key FROM wf_settings WHERE key = 'enabled:merge-followups'`);
     assert.equal(rows.length, 0, 'the legacy merge path may move rows into merged again');
     await until(async () => (await state(s)) === 'live', 'the accepted merge finished');
+    // And every follow-up of it, the DM and journey record that follow live included.
+    await until(async () => !(await pool.query(
+      `SELECT 1 FROM wf_work WHERE machine = 'merge-followups' AND status <> 'settled'
+       UNION ALL SELECT 1 FROM wf_events WHERE machine = 'merge-followups' AND status = 'pending'`)).rows.length,
+    'every follow-up settled');
     await platform.stopWorkflow();
     await platform.startWorkflow(off, { loops: true });
     assert.equal(platform.workflowRunning(), false, 'nothing left: no runtime');

@@ -68,8 +68,11 @@ async function migrate(config) {
   await seedStagingDuplicateUser(pool);
   await seedSelfApp(pool, config);
   // The Homeroom bot's first-version configurations (services/bot-configs.js):
-  // the three it starts from, each written once.
+  // the three it starts from, each written once; then, once, an untouched
+  // seeded current version moved on to its next (two review rounds in 20
+  // minutes, where the first deploy seeded three in 25).
   await require('../services/bot-configs').seedConfigs(pool);
+  await require('../services/bot-configs').upgradeSeedConfigs(pool);
   finishPhase('coreSeedMs');
   await seedStagingNotifications(pool, config);
   // #1130: must run AFTER seedStagingNotifications — its delivery rows hang

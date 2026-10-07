@@ -12422,6 +12422,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_bot_config_versions_seed
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS bot_config_version_id INTEGER
   REFERENCES bot_config_versions(id) ON DELETE SET NULL;
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS review JSONB;
+-- The review's issues quote what a private project's screens show, and its
+-- rounds name where their screenshots are: private, as plan_change is.
+-- review_rounds and review_stop, two numbers, stay public.
+COMMENT ON COLUMN homeroom_bot_runs.review IS 'staging:private';
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS review_rounds INTEGER;
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS review_stop TEXT;
 CREATE INDEX IF NOT EXISTS idx_homeroom_bot_runs_reviewing
@@ -12468,6 +12472,11 @@ CREATE TABLE IF NOT EXISTS bot_config_results (
 CREATE INDEX IF NOT EXISTS idx_bot_config_results_version ON bot_config_results(config_version_id, status);
 CREATE INDEX IF NOT EXISTS idx_bot_config_results_trial ON bot_config_results(trial_id) WHERE trial_id IS NOT NULL;
 COMMENT ON TABLE bot_config_results IS 'staging:private';
+-- What the cost was made of (services/stage-costs.js breakdown): each stage
+-- (triage, spec, build, the review's reviewer calls and fix turns) with its
+-- model and dollars, and the remainder no stage names. Null on a result
+-- recorded before stages were.
+ALTER TABLE bot_config_results ADD COLUMN IF NOT EXISTS cost_parts JSONB;
 
 -- A blind PAIR: the current version's result and one side version's, from
 -- the same live first version, for an admin's pick (left, right or a tie)
@@ -12522,6 +12531,9 @@ CREATE TABLE IF NOT EXISTS bot_capture_artifacts (
 );
 CREATE INDEX IF NOT EXISTS idx_bot_capture_artifacts_run ON bot_capture_artifacts(bot_run_id, round) WHERE bot_run_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_bot_capture_artifacts_trial ON bot_capture_artifacts(trial_id, round) WHERE trial_id IS NOT NULL;
+-- Kept about 30 days, unless a pair still waiting for a pick shows them
+-- (services/bot-configs.js pruneCaptureArtifacts).
+CREATE INDEX IF NOT EXISTS idx_bot_capture_artifacts_created ON bot_capture_artifacts(created_at);
 COMMENT ON TABLE bot_capture_artifacts IS 'staging:private';
 
 -- ===================================================================
@@ -12547,7 +12559,8 @@ COMMENT ON TABLE bot_capture_artifacts IS 'staging:private';
 -- never applies events to an instance a newer one has written. The
 -- pseudo-state '(none)' is a row the pipeline inserted to lock an instance
 -- that does not exist yet; it is deleted again unless a creating event is
--- accepted. app_id has no foreign key on purpose: an instance's history
+-- accepted, or kept to carry a stalled or faulted flag when that event
+-- timed out or threw. app_id has no foreign key on purpose: an instance's history
 -- outlives the app row, like receipts outlive what they describe.
 CREATE TABLE IF NOT EXISTS wf_instances (
   machine          TEXT NOT NULL,

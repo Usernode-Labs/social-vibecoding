@@ -2753,7 +2753,9 @@ function adminRoutes(config) {
             GROUP BY status`,
           [kind]
         ),
-        require('../services/mail/reports').readReports(pool),
+        require('../services/mail/reports').readReports(pool, {
+          provider: (config && (config.mailProvider || config.mailTransport?.provider)) || null,
+        }),
       ]);
 
       const last24h = {};

@@ -1,6 +1,9 @@
 // What the merge-followups machine reads inside a transition: the proposal's
 // row and its app. Cheap, indexed, one row each. The row is locked only for
-// a creating event, whose transition moves it into 'merged'.
+// a creating event, whose transition moves it into 'merged'; the lock is
+// taken first, and everything is read by the next statement, because a
+// statement that waited for a lock keeps the snapshot it started with (what
+// the merge or a turn committed meanwhile would be missing).
 
 import type { Tx } from '../kernel/index.ts';
 
@@ -40,13 +43,14 @@ const issueNumbers = (v: unknown): number[] =>
   [...new Set((Array.isArray(v) ? v : []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
 
 export async function readFacts(tx: Tx, sessionId: number, { lock }: { lock: boolean }): Promise<Facts> {
+  if (lock) await tx.query('SELECT 1 FROM chat_sessions WHERE id = $1 FOR UPDATE', [sessionId]);
   const { rows: [s] } = await tx.query(
     `SELECT cs.id, cs.app_id, cs.status, cs.user_id, cs.pr_number, cs.pr_title, cs.linked_issues,
             cs.agent_session_id, cs.active_turn IS NOT NULL AS active_turn, cs.is_headless,
             cs.staging_image_ref, cs.staging_build_ref, cs.staging_commit_sha,
             EXISTS (SELECT 1 FROM pending_secret_declarations p
                      WHERE p.session_id = cs.id AND p.status = 'pending') AS pending_secrets
-       FROM chat_sessions cs WHERE cs.id = $1 ${lock ? 'FOR UPDATE OF cs' : ''}`, [sessionId]);
+       FROM chat_sessions cs WHERE cs.id = $1`, [sessionId]);
   if (!s) return { session: null, app: null };
   const { rows: [a] } = await tx.query(
     'SELECT id, slug, name, repo_url, self_hosted, demo_mode FROM apps WHERE id = $1', [s.app_id]);

@@ -47,13 +47,20 @@
 // make a blind PAIR (bot_config_pairs) for an admin to pick through the
 // connector: left or right is drawn at random, and nothing in what is shown
 // says which configuration made which. A pair where either side did not
-// build or boot is never offered; it is counted as that.
+// build or boot, or has no screenshots, is never offered; it is counted as
+// that. Nor is a pair whose two sides are the same commit (IDENTICAL: the
+// reviewer said ship at once, or the review changed nothing), which is
+// counted on its own and never as a tie: a win rate is people's picks.
 //
 // A version's win rate against the current version counts a tie as half,
 // with a 95% Wilson interval and its n.
+//
+// A version is made CURRENT only when every model it names is in the stored
+// OpenRouter catalog and its reviewer's reads images (checkRecipeModels).
 
 const crypto = require('crypto');
 const log = require('./logger');
+const stageCosts = require('./stage-costs');
 
 const GLM = 'z-ai/glm-5.3-flash';
 const OPUS = 'anthropic/claude-opus-5.5';
@@ -78,13 +85,19 @@ const SIDE_RUN_KIND = 'bot_config';
 const SIDE_RUN_CAP_FACTOR = 3;
 const MIN_SIDE_RUN_CAP_USD = 0.5;
 
+// The current configuration's reviewer: two rounds in twenty minutes. The
+// review phase is on top of the build's own 25 to 50 minutes, so it is kept
+// short (the owner's call, 2026-10-07).
+const SEED_REVIEWER = Object.freeze({ model: OPUS, maxRounds: 2, budgetMinutes: 20 });
+const SEED_CURRENT_NOTES = 'The first versions\' configuration: an Opus 5.5 spec, a GLM 5.3 Flash build, then up to two Opus review rounds that GLM fixes, within 20 minutes.';
+
 // The three configurations every deploy starts from. The models were
 // confirmed in OpenRouter's catalog on 2026-10-07.
 const SEED = Object.freeze([
   Object.freeze({
     seedKey: 'opus-spec-review-v1', key: 'opus-spec-review', label: 'Opus spec, GLM build, Opus review', role: 'current',
-    recipe: { models: { triage: GLM, spec: OPUS, build: GLM }, reviewer: { model: OPUS, maxRounds: 3, budgetMinutes: 25 }, pack: null },
-    notes: 'The first versions\' configuration: an Opus 5.5 spec, a GLM 5.3 Flash build, then up to three Opus review rounds that GLM fixes.',
+    recipe: { models: { triage: GLM, spec: OPUS, build: GLM }, reviewer: { ...SEED_REVIEWER }, pack: null },
+    notes: SEED_CURRENT_NOTES,
   }),
   Object.freeze({
     seedKey: 'all-glm-v1', key: 'all-glm', label: 'All GLM', role: 'side',
@@ -95,6 +108,24 @@ const SEED = Object.freeze([
     seedKey: 'opus-spec-no-review-v1', key: 'opus-spec-no-review', label: 'Opus spec + GLM, no reviewer', role: 'side',
     recipe: { models: { triage: GLM, spec: OPUS, build: GLM }, reviewer: null, pack: null },
     notes: 'The current configuration before any review round: taken from the live build\'s round-0 snapshot, never built on its own.',
+  }),
+]);
+
+// What the first deploy seeded as the current configuration's version 1,
+// before the review was cut to two rounds: three rounds in 25 minutes.
+// Production has it; upgradeSeedConfigs moves an untouched copy on.
+const SEED_UPGRADES = Object.freeze([
+  Object.freeze({
+    key: 'opus-spec-review',
+    from: Object.freeze({
+      seedKey: 'opus-spec-review-v1',
+      recipe: { models: { triage: GLM, spec: OPUS, build: GLM }, reviewer: { model: OPUS, maxRounds: 3, budgetMinutes: 25 }, pack: null },
+    }),
+    to: Object.freeze({
+      seedKey: 'opus-spec-review-v2',
+      recipe: { models: { triage: GLM, spec: OPUS, build: GLM }, reviewer: { ...SEED_REVIEWER }, pack: null },
+      notes: SEED_CURRENT_NOTES,
+    }),
   }),
 ]);
 
@@ -196,6 +227,44 @@ function derivableFrom(current, side) {
   const s = recipeOf(side);
   if (!c || !s || s.reviewer !== null) return false;
   return STAGES.every((st) => c.models[st] === s.models[st]) && (c.pack || null) === (s.pack || null);
+}
+
+/**
+ * Whether a recipe may be made CURRENT: every model it names is in the
+ * stored OpenRouter catalog (openrouter_model_catalog, the list
+ * agent-models.js keeps), and its reviewer's model, when it has one, takes
+ * images (the catalog's architecture.input_modalities). A version that
+ * builds every live first version must not fail on a misspelt id. Resolves
+ * null when it may, else a refusal saying why; with no stored catalog to
+ * check against it may not (`catalog_unavailable`). A side version is not
+ * checked: it is only ever a comparison.
+ */
+async function checkRecipeModels(pool, recipe) {
+  const r = recipeOf(recipe);
+  if (!r) return httpError(400, 'not a valid recipe');
+  let models = null;
+  try {
+    const { rows } = await pool.query('SELECT models FROM openrouter_model_catalog WHERE id = TRUE');
+    models = Array.isArray(rows[0]?.models) && rows[0].models.length ? rows[0].models : null;
+  } catch (err) {
+    log.warn('bot-configs', 'Could not read the OpenRouter catalog', { err: err.message });
+  }
+  if (!models) {
+    return httpError(503, 'The OpenRouter model catalog is not available to check this recipe\'s models against, so it cannot be made current now. It can be saved as a side version.', { code: 'catalog_unavailable' });
+  }
+  const byId = new Map(models.filter((m) => m && typeof m.id === 'string').map((m) => [m.id, m]));
+  const named = [...new Set([...STAGES.map((st) => r.models[st]), ...(r.reviewer ? [r.reviewer.model] : [])])];
+  const missing = named.filter((id) => !byId.has(id));
+  if (missing.length) {
+    return httpError(400, `Not in the OpenRouter catalog: ${missing.join(', ')}. A current configuration names only models OpenRouter lists.`, { code: 'unknown_model' });
+  }
+  if (r.reviewer) {
+    const modalities = byId.get(r.reviewer.model)?.architecture?.input_modalities;
+    if (!Array.isArray(modalities) || !modalities.includes('image')) {
+      return httpError(400, `The reviewer's model, ${r.reviewer.model}, does not take images in the OpenRouter catalog, and the reviewer judges screenshots.`, { code: 'reviewer_without_images' });
+    }
+  }
+  return null;
 }
 
 /** Whether a recipe reviews at all: a reviewer with at least one round. Pure. */
@@ -318,6 +387,10 @@ async function saveVersion(pool, {
     const { rows: [pack] } = await pool.query('SELECT id FROM bench_context_packs WHERE id = $1', [v.recipe.pack]);
     if (!pack) return httpError(404, `No App bench context pack ${v.recipe.pack}`);
   }
+  if (role === 'current') {
+    const refused = await checkRecipeModels(pool, v.recipe);
+    if (refused) return refused;
+  }
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -384,6 +457,10 @@ async function setRole(pool, { id, role } = {}) {
   if (target.role === 'current') {
     return httpError(409, 'That version is the current one. Promote another version to current first; this one then becomes a side version.', { code: 'current_required' });
   }
+  if (role === 'current') {
+    const refused = await checkRecipeModels(pool, target.recipe);
+    if (refused) return refused;
+  }
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -446,6 +523,75 @@ async function seedConfigs(pool) {
   return made;
 }
 
+/**
+ * The one-time moves of a seeded version an admin never touched (SEED_UPGRADES):
+ * when the current version is still exactly the seed's (its seed_key and
+ * its recipe, and no later version of its key exists), its next version is
+ * written as current with the new recipe and it is retired, in one
+ * transaction under the same lock every role change takes, so there is
+ * exactly one current throughout. Anything an admin changed (another
+ * version current, a later version of the key, a different recipe) leaves
+ * it alone. Idempotent: the next version carries its own seed_key. Never
+ * throws; resolves how many it moved.
+ */
+async function upgradeSeedConfigs(pool) {
+  let moved = 0;
+  for (const u of SEED_UPGRADES) {
+    const from = validateRecipe(u.from.recipe);
+    const to = validateRecipe(u.to.recipe);
+    if (!from.ok || !to.ok) {
+      log.warn('bot-configs', 'A seed upgrade does not validate; skipped', { key: u.key });
+      continue;
+    }
+    // eslint-disable-next-line no-await-in-loop
+    const client = await pool.connect();
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      await client.query('BEGIN');
+      // eslint-disable-next-line no-await-in-loop
+      await client.query("SELECT pg_advisory_xact_lock(hashtext('bot_config_versions'))");
+      // eslint-disable-next-line no-await-in-loop
+      const { rows: [seeded] } = await client.query(
+        `SELECT v.id, v.label, v.version FROM bot_config_versions v
+          WHERE v.role = 'current' AND v.key = $1 AND v.seed_key = $2 AND v.recipe = $3::jsonb
+            AND NOT EXISTS (SELECT 1 FROM bot_config_versions o WHERE o.key = v.key AND o.version > v.version)
+            AND NOT EXISTS (SELECT 1 FROM bot_config_versions n WHERE n.seed_key = $4)
+          FOR UPDATE`,
+        [u.key, u.from.seedKey, JSON.stringify(from.recipe), u.to.seedKey],
+      );
+      if (!seeded) {
+        // eslint-disable-next-line no-await-in-loop
+        await client.query('ROLLBACK');
+        continue;
+      }
+      // eslint-disable-next-line no-await-in-loop
+      await client.query(
+        "UPDATE bot_config_versions SET role = 'retired', role_changed_at = NOW() WHERE id = $1",
+        [seeded.id],
+      );
+      // eslint-disable-next-line no-await-in-loop
+      await client.query(
+        `INSERT INTO bot_config_versions (key, label, version, recipe, role, notes, seed_key)
+         VALUES ($1, $2, $3, $4::jsonb, 'current', $5, $6)`,
+        [u.key, seeded.label, Number(seeded.version) + 1, JSON.stringify(to.recipe), u.to.notes, u.to.seedKey],
+      );
+      // eslint-disable-next-line no-await-in-loop
+      await client.query('COMMIT');
+      moved += 1;
+      log.info('bot-configs', 'Moved an untouched seeded configuration on to its next version', {
+        key: u.key, from: Number(seeded.version), to: Number(seeded.version) + 1,
+      });
+    } catch (err) {
+      // eslint-disable-next-line no-await-in-loop
+      await client.query('ROLLBACK').catch(() => {});
+      log.warn('bot-configs', 'Could not upgrade a seeded configuration', { key: u.key, err: err.message });
+    } finally {
+      client.release();
+    }
+  }
+  return moved;
+}
+
 // ── Results ──────────────────────────────────────────────────────────────
 
 /**
@@ -456,37 +602,69 @@ async function seedConfigs(pool) {
  */
 async function recordResult(pool, {
   botRunId, configVersionId, source, trialId = null, status = 'done', built = null, booted = null,
-  costUsd = null, activeMs = null, sha = null, capture = null, error = null,
+  costUsd = null, activeMs = null, sha = null, capture = null, error = null, costParts = null,
 }) {
+  // What the cost was made of, stage by stage, adding up to it (stage-costs.js).
+  const breakdown = costParts ? stageCosts.breakdown(costUsd, costParts) : null;
   const { rows: [row] } = await pool.query(
     `INSERT INTO bot_config_results
        (bot_run_id, config_version_id, source, trial_id, status, built, booted, cost_usd, active_ms, sha, capture, error,
-        finished_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, CASE WHEN $5 = 'pending' THEN NULL ELSE NOW() END)
+        finished_at, cost_parts)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, CASE WHEN $5 = 'pending' THEN NULL ELSE NOW() END,
+             $13::jsonb)
      ON CONFLICT (bot_run_id, config_version_id) DO UPDATE
        SET source = EXCLUDED.source, trial_id = COALESCE(EXCLUDED.trial_id, bot_config_results.trial_id),
            status = EXCLUDED.status, built = EXCLUDED.built, booted = EXCLUDED.booted,
            cost_usd = EXCLUDED.cost_usd, active_ms = EXCLUDED.active_ms, sha = EXCLUDED.sha,
-           capture = EXCLUDED.capture, error = EXCLUDED.error, finished_at = EXCLUDED.finished_at
+           capture = EXCLUDED.capture, error = EXCLUDED.error, finished_at = EXCLUDED.finished_at,
+           cost_parts = EXCLUDED.cost_parts
        WHERE bot_config_results.status <> 'done'
      RETURNING id`,
     [Number(botRunId), Number(configVersionId), source, trialId == null ? null : Number(trialId), status,
       built == null ? null : !!built, booted == null ? null : !!booted, num(costUsd), num(activeMs) == null ? null : Math.round(num(activeMs)),
-      sha || null, capture ? JSON.stringify(capture) : null, error ? String(error).slice(0, 600) : null],
+      sha || null, capture ? JSON.stringify(capture) : null, error ? String(error).slice(0, 600) : null,
+      breakdown ? JSON.stringify(breakdown) : null],
   );
   return row ? Number(row.id) : null;
 }
 
-/** What the live run's own triage cost and took: shared by every configuration's result. */
+/** What the live run's own triage cost and took, and on which model: shared by every configuration's result. */
 async function triageShare(pool, botRunId) {
   const { rows: [r] } = await pool.query(
-    'SELECT cost_usd::float8 AS cost, duration_ms FROM homeroom_bot_runs WHERE id = $1',
+    'SELECT cost_usd::float8 AS cost, duration_ms, model FROM homeroom_bot_runs WHERE id = $1',
     [Number(botRunId)],
   );
-  return { costUsd: num(r?.cost) || 0, ms: num(r?.duration_ms) || 0 };
+  return { costUsd: num(r?.cost) || 0, ms: num(r?.duration_ms) || 0, model: r?.model || null };
+}
+
+/** The triage's part of a result's breakdown, from its share. Pure. */
+function triagePart(triage) {
+  return triage && triage.costUsd > 0 ? { triage: stageCosts.part({ usd: triage.costUsd, model: triage.model }) } : {};
 }
 
 const add = (a, b) => (a == null && b == null ? null : (Number(a) || 0) + (Number(b) || 0));
+
+/**
+ * What a live build's session spent, from the turn ledger (agent_turns), as
+ * a side trial's cost is read (bench/lane.js recordTrial): every attempt,
+ * failed ones included. `total`, and `before` the turns started before
+ * `beforeIso` (the review's start: what the first build cost). Nulls when
+ * the ledger priced none of its turns.
+ */
+async function sessionLedger(pool, sessionId, beforeIso = null) {
+  if (!sessionId) return { total: null, before: null };
+  const { rows: [r] } = await pool.query(
+    `SELECT COALESCE(SUM(estimated_cost_usd), 0)::float8 AS total, COUNT(estimated_cost_usd)::int AS priced,
+            COALESCE(SUM(estimated_cost_usd) FILTER (WHERE $2::timestamptz IS NOT NULL AND started_at < $2::timestamptz), 0)::float8 AS before,
+            COUNT(estimated_cost_usd) FILTER (WHERE $2::timestamptz IS NOT NULL AND started_at < $2::timestamptz)::int AS priced_before
+       FROM agent_turns WHERE session_id = $1`,
+    [Number(sessionId), beforeIso || null],
+  );
+  return {
+    total: Number(r?.priced) > 0 ? num(r.total) : null,
+    before: Number(r?.priced_before) > 0 ? num(r.before) : null,
+  };
+}
 
 /**
  * A live first version's outcome, recorded for the configurations it speaks
@@ -497,7 +675,9 @@ const add = (a, b) => (a == null && b == null ? null : (Number(a) || 0) + (Numbe
  * is the build's own time, spec to final capture, with no queue in it.
  * Never throws.
  */
-async function finishLive(pool, { botRunId, version, built = {}, activeMs = null }) {
+async function finishLive(pool, {
+  botRunId, version, built = {}, activeMs = null, carriedUsd = 0,
+}) {
   if (!botRunId || !version?.id) return null;
   try {
     const triage = await triageShare(pool, botRunId);
@@ -505,15 +685,30 @@ async function finishLive(pool, { botRunId, version, built = {}, activeMs = null
     const finalCapture = review?.finalCapture || null;
     const landed = !!(built.sha || built.commits) && !built.blocked && built.error !== 'the build produced no change to propose';
     const builtOk = !!built.ok || landed;
+    // The cost from the turn ledger, as a side trial's is, with the
+    // reviewer calls it does not hold (and a plan a restart kept, which its
+    // own session spent: `carriedUsd`); the build's own estimate without one.
+    const ledger = await sessionLedger(pool, built.sessionId, review?.startedAt || null).catch(() => ({ total: null, before: null }));
+    const carried = Number(carriedUsd) > 0 ? Number(carriedUsd) : 0;
+    const liveCost = ledger.total != null ? ledger.total + require('./bot-review').reviewerCost(review) + carried : built.costUsd;
+    // Its stages, on their models (stage-costs.js): the triage's share, and
+    // the build's own parts with their tokens from the ledger; the review's
+    // read from its state when the build did not carry them (a review a
+    // restart finished).
+    const parts = await stageCosts.withLedgerTokens(pool, {
+      ...stageCosts.reviewParts(review, { buildModel: version.recipe?.models?.build || null }),
+      ...stageCosts.fromStages(built.stageCosts),
+    });
     await recordResult(pool, {
       botRunId, configVersionId: version.id, source: 'live',
       built: builtOk,
       booted: finalCapture ? finalCapture.booted === true : null,
-      costUsd: add(built.costUsd, triage.costUsd),
+      costUsd: add(liveCost, triage.costUsd),
       activeMs: add(activeMs, triage.ms),
       sha: built.sha || null,
       capture: finalCapture,
       error: builtOk ? null : (built.blocked ? `blocked: ${built.blocked}` : built.error || null),
+      costParts: { ...triagePart(triage), ...parts },
     });
     const round0 = review?.round0 || null;
     const sides = await pool.query(
@@ -521,13 +716,16 @@ async function finishLive(pool, { botRunId, version, built = {}, activeMs = null
         WHERE r.bot_run_id = $1 AND r.source = 'round0' AND r.status = 'pending'`,
       [Number(botRunId)],
     );
+    // The first build alone: its triage, spec and build, never the review.
+    const { review_reviewer: _rr, review_fixes: _rf, ...firstBuild } = parts;
     for (const s of sides.rows) {
       // eslint-disable-next-line no-await-in-loop
       await recordResult(pool, {
         botRunId, configVersionId: s.config_version_id, source: 'round0',
+        costParts: { ...triagePart(triage), ...(round0 ? firstBuild : parts) },
         built: round0 ? true : builtOk,
         booted: round0?.capture ? round0.capture.booted === true : (round0 ? null : (finalCapture ? finalCapture.booted === true : null)),
-        costUsd: add(round0 ? round0.costUsd : built.costUsd, triage.costUsd),
+        costUsd: add(round0 ? (ledger.before != null ? ledger.before + carried : round0.costUsd) : liveCost, triage.costUsd),
         activeMs: add(round0 ? round0.activeMs : activeMs, triage.ms),
         sha: round0 ? round0.sha : (built.sha || null),
         capture: round0 ? round0.capture : finalCapture,
@@ -558,9 +756,15 @@ async function finishSideTrial(pool, trialId) {
     if (!t || !t.bot_run_id || !t.bot_config_version_id) return null;
     const triage = await triageShare(pool, t.bot_run_id);
     const built = t.status === 'ok' && t.parsed?.built === true;
-    const ranAtAll = !['cancelled', 'skipped_cap', 'not_applicable'].includes(t.status);
+    // A trial the platform failed (infra_fail: no worker, a capture step
+    // that did not run) says nothing about its configuration: skipped with
+    // why, like one never run, never counted as "didn't build".
+    const ranAtAll = !['cancelled', 'skipped_cap', 'not_applicable', 'infra_fail'].includes(t.status);
+    const why = t.error || (t.parsed?.blocked ? `blocked: ${t.parsed.blocked}` : null);
     await recordResult(pool, {
       botRunId: t.bot_run_id, configVersionId: t.bot_config_version_id, source: 'trial', trialId: t.id,
+      // Its own stages (bench/runner.js buildStage), and the live run's triage.
+      costParts: { ...triagePart(triage), ...(t.parsed?.costParts || {}) },
       status: ranAtAll ? 'done' : 'skipped',
       built,
       booted: t.capture ? t.capture.booted === true : null,
@@ -568,7 +772,7 @@ async function finishSideTrial(pool, trialId) {
       activeMs: add(t.duration_ms, triage.ms),
       sha: t.build_sha || null,
       capture: t.capture || null,
-      error: built ? null : (t.error || (t.parsed?.blocked ? `blocked: ${t.parsed.blocked}` : null)),
+      error: built ? null : (t.status === 'infra_fail' ? `the platform failed the side build: ${why || 'unknown'}` : why),
     });
     await settlePairs(pool, t.bot_run_id);
     return true;
@@ -578,9 +782,17 @@ async function finishSideTrial(pool, trialId) {
   }
 }
 
-/** Why a pair is not offered, or null when it is: either side not built, or not booted. Pure. */
+// Why a pair whose two sides are one commit is left out (exclusionOf).
+const IDENTICAL_REASON = 'identical: both sides are the same commit (the review changed nothing)';
+
+/**
+ * Why a pair is not offered, or null when it is: both sides the same commit
+ * (IDENTICAL_REASON), either side not built, no screenshots, or not booted.
+ * Pure.
+ */
 function exclusionOf(current, side) {
   const which = (r) => (r === current ? 'the current configuration' : 'the side configuration');
+  if (current.sha && side.sha && current.sha === side.sha) return IDENTICAL_REASON;
   for (const r of [current, side]) {
     if (r.built !== true) return `didn't build (${which(r)})`;
   }
@@ -597,7 +809,7 @@ function exclusionOf(current, side) {
  */
 async function settlePairs(pool, botRunId, { random = crypto.randomInt } = {}) {
   const { rows } = await pool.query(
-    `SELECT r.id, r.source, r.status, r.built, r.booted, r.capture IS NOT NULL AS has_capture, r.config_version_id
+    `SELECT r.id, r.source, r.status, r.built, r.booted, r.capture IS NOT NULL AS has_capture, r.config_version_id, r.sha
        FROM bot_config_results r
       WHERE r.bot_run_id = $1`,
     [Number(botRunId)],
@@ -608,8 +820,8 @@ async function settlePairs(pool, botRunId, { random = crypto.randomInt } = {}) {
   for (const side of rows) {
     if (side.source === 'live' || side.status !== 'done') continue;
     const why = exclusionOf(
-      { built: current.built, booted: current.booted, capture: current.has_capture ? {} : null },
-      { built: side.built, booted: side.booted, capture: side.has_capture ? {} : null },
+      { built: current.built, booted: current.booted, capture: current.has_capture ? {} : null, sha: current.sha || null },
+      { built: side.built, booted: side.booted, capture: side.has_capture ? {} : null, sha: side.sha || null },
     );
     // eslint-disable-next-line no-await-in-loop
     const { rowCount } = await pool.query(
@@ -622,6 +834,51 @@ async function settlePairs(pool, botRunId, { random = crypto.randomInt } = {}) {
     made += rowCount || 0;
   }
   return made;
+}
+
+// ── Keeping the review's screenshots ────────────────────────────────────
+
+// How long a review round's screenshots (bot_capture_artifacts) are kept:
+// long enough for the pairs they show to be picked. A pair still waiting
+// keeps its run's for as long as it waits.
+const CAPTURE_RETENTION_DAYS = 30;
+// At most this many rows a sweep, and a sweep at most this often.
+const CAPTURE_PRUNE_BATCH = 2000;
+const CAPTURE_PRUNE_EVERY_MS = 6 * 60 * 60 * 1000;
+let nextCapturePruneAt = 0;
+
+/**
+ * Delete review screenshots older than CAPTURE_RETENTION_DAYS, unless their
+ * run (a live run's own, or a side trial's) has a pair still waiting for a
+ * pick. Resolves how many rows it deleted; never throws.
+ */
+async function pruneCaptureArtifacts(pool, { days = CAPTURE_RETENTION_DAYS, limit = CAPTURE_PRUNE_BATCH } = {}) {
+  try {
+    const { rowCount } = await pool.query(
+      `DELETE FROM bot_capture_artifacts
+        WHERE id IN (
+          SELECT a.id FROM bot_capture_artifacts a
+            LEFT JOIN bench_trials t ON t.id = a.trial_id
+           WHERE a.created_at < NOW() - make_interval(days => $1)
+             AND NOT EXISTS (
+               SELECT 1 FROM bot_config_pairs p
+                WHERE p.status = 'waiting' AND p.bot_run_id = COALESCE(a.bot_run_id, t.bot_run_id))
+           LIMIT $2)`,
+      [Number(days), Number(limit)],
+    );
+    if (rowCount) log.info('bot-configs', 'Deleted old review screenshots', { rows: rowCount, days });
+    return rowCount || 0;
+  } catch (err) {
+    log.warn('bot-configs', 'Could not delete old review screenshots', { err: err.message });
+    return 0;
+  }
+}
+
+/** pruneCaptureArtifacts, at most every CAPTURE_PRUNE_EVERY_MS (the bot's sweep calls it each pass). Never throws. */
+async function maybePruneCaptureArtifacts(pool, now = Date.now()) {
+  if (now < nextCapturePruneAt) return 0;
+  nextCapturePruneAt = now + CAPTURE_PRUNE_EVERY_MS;
+  return pruneCaptureArtifacts(pool);
 }
 
 // ── Pairs, blind ─────────────────────────────────────────────────────────
@@ -648,28 +905,48 @@ async function readArtifactsById(pool, ids) {
   return new Map(rows.map((r) => [r.id, r]));
 }
 
-/** One side of a pair as a picker sees it: whether it booted, its eight screenshots' captions and, with `images`, the images. */
-async function sideView(pool, capture, { images = false } = {}) {
+/**
+ * Both sides of a pair as a picker sees them: whether each booted, its eight
+ * screenshots' captions and, with `images`, the images. Each side has half
+ * of PAIR_IMAGE_BYTES, and a screen that does not fit on EITHER side is
+ * left out on BOTH (by its place in the plan: its viewport, look and
+ * state), so neither side shows a screen the other cannot: a side with
+ * heavier images would otherwise be the one with gaps, which says which
+ * is which.
+ */
+async function pairViews(pool, captures, { images = false } = {}) {
   const { pickShots } = require('./bench/capture');
-  const picked = pickShots(capture || {});
-  const out = {
-    booted: capture?.booted === true,
-    screenshots: picked.chosen.map((sh) => sh.caption),
-    identicalScreens: picked.identical,
+  const picked = captures.map((c) => pickShots(c || {}));
+  const outs = captures.map((c, i) => ({
+    booted: c?.booted === true,
+    screenshots: picked[i].chosen.map((sh) => sh.caption),
+    identicalScreens: picked[i].identical,
+  }));
+  if (!images) return outs;
+  const stored = await readArtifactsById(pool, picked.flatMap((p) => p.chosen.map((sh) => sh.artifactId)));
+  const bytesOf = (sh) => {
+    const a = sh && stored.get(sh.artifactId);
+    const data = a && (Buffer.isBuffer(a.data) ? a.data : Buffer.from(a.data || ''));
+    return data && data.length ? { a, data } : null;
   };
-  if (images) {
-    const stored = await readArtifactsById(pool, picked.chosen.map((sh) => sh.artifactId));
-    let total = 0;
-    out.images = [];
-    for (const sh of picked.chosen) {
-      const a = stored.get(sh.artifactId);
-      const data = a && (Buffer.isBuffer(a.data) ? a.data : Buffer.from(a.data || ''));
-      if (!data || !data.length || total + data.length > PAIR_IMAGE_BYTES / 2) continue;
-      total += data.length;
-      out.images.push({ caption: sh.caption, mimeType: a.content_type || 'image/png', data: data.toString('base64') });
-    }
+  // The screens, in the order the sides chose them, and which fit.
+  const order = [...new Set(picked.flatMap((p) => p.chosen.map((sh) => sh.id)))];
+  const totals = captures.map(() => 0);
+  const kept = new Set();
+  for (const id of order) {
+    const sizes = picked.map((p) => bytesOf(p.chosen.find((sh) => sh.id === id))?.data.length || 0);
+    if (sizes.some((n, i) => totals[i] + n > PAIR_IMAGE_BYTES / 2)) continue;
+    sizes.forEach((n, i) => { totals[i] += n; });
+    kept.add(id);
   }
-  return out;
+  picked.forEach((p, i) => {
+    outs[i].images = [];
+    for (const sh of p.chosen) {
+      const b = kept.has(sh.id) ? bytesOf(sh) : null;
+      if (b) outs[i].images.push({ caption: sh.caption, mimeType: b.a.content_type || 'image/png', data: b.data.toString('base64') });
+    }
+  });
+  return outs;
 }
 
 /**
@@ -700,8 +977,9 @@ async function nextPair(pool, { images = false } = {}) {
   const snap = await snapshots.snapshotForRun(pool, p.bot_run_id, 'build').catch(() => null);
   const brief = snap?.texts?.seed || null;
   const plan = snap?.texts?.build_note || p.build_note || null;
-  const left = p.left_is_current ? p.current_capture : p.side_capture;
-  const right = p.left_is_current ? p.side_capture : p.current_capture;
+  const [left, right] = await pairViews(pool, p.left_is_current
+    ? [p.current_capture, p.side_capture]
+    : [p.side_capture, p.current_capture], { images });
   return {
     ok: true,
     waiting: Number(p.waiting) || 0,
@@ -710,8 +988,8 @@ async function nextPair(pool, { images = false } = {}) {
       appName: p.app_name || null,
       brief: brief ? clip(brief, MAX_BRIEF_CHARS) : null,
       plan: plan ? clip(plan, MAX_PLAN_CHARS) : null,
-      left: await sideView(pool, left, { images }),
-      right: await sideView(pool, right, { images }),
+      left,
+      right,
     },
   };
 }
@@ -790,7 +1068,7 @@ async function listWithStats(pool) {
   const versions = await listVersions(pool);
   const current = versions.find((v) => v.role === 'current') || null;
   const { rows: results } = await pool.query(
-    `SELECT config_version_id, built, booted, cost_usd::float8 AS cost, active_ms::float8 AS ms
+    `SELECT config_version_id, built, booted, cost_usd::float8 AS cost, active_ms::float8 AS ms, cost_parts
        FROM bot_config_results WHERE status = 'done'`,
   );
   const { rows: pairs } = await pool.query(
@@ -818,8 +1096,14 @@ async function listWithStats(pool) {
         against: current.id,
         ...winRateOf(picks, v.id),
         excluded: between.filter((p) => p.status === 'excluded').length,
-        didntBoot: between.filter((p) => p.status === 'excluded' && /^didn't boot|^no screenshots/.test(String(p.excluded_reason || ''))).length,
+        didntBoot: between.filter((p) => p.status === 'excluded' && /^didn't boot/.test(String(p.excluded_reason || ''))).length,
+        // A side with nothing captured (a restart that proposed a review
+        // as it stood, say): not a boot it failed.
+        noScreenshots: between.filter((p) => p.status === 'excluded' && /^no screenshots/.test(String(p.excluded_reason || ''))).length,
         didntBuild: between.filter((p) => p.status === 'excluded' && /^didn't build/.test(String(p.excluded_reason || ''))).length,
+        // The same commit on both sides: left out of the win rate, never
+        // counted as a tie, which is a person's pick.
+        identical: between.filter((p) => p.status === 'excluded' && /^identical/.test(String(p.excluded_reason || ''))).length,
         waiting: between.filter((p) => p.status === 'waiting').length,
       };
     }
@@ -829,6 +1113,10 @@ async function listWithStats(pool) {
         builds: mine.length,
         built: builtN,
         avgCostUsd: costs.length ? costs.reduce((s, c) => s + c, 0) / costs.length : null,
+        // Beside it, what that cost was made of: each stage's average on the
+        // results that recorded their stages (n of them), on its models, with
+        // the remainder no stage names (stage-costs.js averages).
+        avgCostByStage: stageCosts.averages(mine.map((r) => r.cost_parts).filter(Boolean)),
         medianActiveMs: median(mine.map((r) => num(r.ms))),
         bootRate: bootKnown.length ? mine.filter((r) => r.booted === true).length / bootKnown.length : null,
         pairsWaiting: involving.filter((p) => p.status === 'waiting').length,
@@ -928,15 +1216,16 @@ async function spawnSideBuilds(pool, config, {
       }
     }
     if (!toBuild.length) return out;
+    // Each stage at its own model's price: the spec, the build, and the
+    // reviewer's rounds with their fix turns (no triage: the live run's is
+    // replayed).
     const catalog = require('./bench/catalog');
-    const models = await catalog.listModels(pool, toBuild.map((s) => s.recipe.models.build)).catch(() => []);
+    const models = await catalog.listModels(pool, toBuild.flatMap((s) => catalog.recipeModelIds(s.recipe))).catch(() => []);
     const ests = toBuild.map((s) => {
-      const est = catalog.estimateTrialCost(catalog.modelInfo(models, s.recipe.models.build), 'first_version', []);
+      const est = catalog.estimateRecipeCost(models, s.recipe, { triage: false });
       return Math.round((Number(est) || 1) * 10000) / 10000;
     });
-    const budget = await sideBudget(pool);
-    const fits = [];
-    let left = budget.leftUsd;
+    const want = [];
     for (let i = 0; i < toBuild.length; i += 1) {
       if (!snapshotId) {
         // eslint-disable-next-line no-await-in-loop
@@ -945,67 +1234,87 @@ async function spawnSideBuilds(pool, config, {
           error: 'the live build recorded no snapshot to replay',
         });
         out.skipped += 1;
-      } else if (ests[i] > left) {
-        // eslint-disable-next-line no-await-in-loop
-        await recordResult(pool, {
-          botRunId, configVersionId: toBuild[i].id, source: 'trial', status: 'skipped',
-          error: `the side builds' weekly budget ($${budget.limitUsd.toFixed(2)}) is spent`,
-        });
-        out.skipped += 1;
       } else {
-        left -= ests[i];
-        fits.push({ side: toBuild[i], est: ests[i] });
+        want.push({ side: toBuild[i], est: ests[i] });
       }
     }
-    if (!fits.length) {
-      if (out.skipped) log.info('bot-configs', 'Side builds skipped', { botRunId, skipped: out.skipped, leftUsd: budget.leftUsd });
-      return out;
+    if (!want.length) return out;
+    // A first look, unlocked, so a week already spent makes no task.
+    const glance = await sideBudget(pool);
+    let suiteId = null;
+    let taskId = null;
+    if (want.some((w) => w.est <= glance.leftUsd)) {
+      suiteId = await ensureSideSuite(pool);
+      const { rows: [task0] } = await pool.query(
+        "SELECT id FROM bench_tasks WHERE suite_id = $1 AND source_run_id = $2 AND stage = 'first_version'",
+        [suiteId, Number(botRunId)],
+      );
+      taskId = task0?.id || null;
+      if (!taskId) {
+        const suites = require('./bench/suites');
+        const task = await suites.insertTask(pool, {
+          suiteId, stage: 'first_version', sourceRunId: Number(botRunId), snapshotId: Number(snapshotId),
+          appId: app.id, issueNumber: null,
+          tags: { bot_config: true, app_slug: app.slug || null, side_of_run: Number(botRunId) },
+          reference: {}, referenceSource: 'authored',
+        });
+        taskId = task.id;
+      }
     }
-    const suiteId = await ensureSideSuite(pool);
-    const { rows: [task0] } = await pool.query(
-      "SELECT id FROM bench_tasks WHERE suite_id = $1 AND source_run_id = $2 AND stage = 'first_version'",
-      [suiteId, Number(botRunId)],
-    );
-    let taskId = task0?.id || null;
-    if (!taskId) {
-      const suites = require('./bench/suites');
-      const task = await suites.insertTask(pool, {
-        suiteId, stage: 'first_version', sourceRunId: Number(botRunId), snapshotId: Number(snapshotId),
-        appId: app.id, issueNumber: null,
-        tags: { bot_config: true, app_slug: app.slug || null, side_of_run: Number(botRunId) },
-        reference: {}, referenceSource: 'authored',
-      });
-      taskId = task.id;
-    }
-    const estTotal = fits.reduce((s, f) => s + f.est, 0);
-    const capUsd = Math.max(MIN_SIDE_RUN_CAP_USD, Math.min(budget.leftUsd, estTotal * SIDE_RUN_CAP_FACTOR));
+    // The week's budget, read and spent in one transaction under one lock:
+    // two first versions starting at once each see what the other reserved
+    // (its trials, pending, are counted at their estimates), so together
+    // they never spend past it.
+    const fits = [];
+    let run = null;
+    let budget = glance;
+    let capUsd = 0;
     const client = await pool.connect();
-    let run;
     try {
       await client.query('BEGIN');
-      ({ rows: [run] } = await client.query(
-        `INSERT INTO bench_runs (suite_id, models, baseline_model, stages, repeats, cap_usd, concurrency, note, kind)
-         VALUES ($1, $2::text[], $3, ARRAY['first_version'], 1, $4, $5, $6, 'bot_config')
-         RETURNING id`,
-        [suiteId, [...new Set(fits.map((f) => f.side.recipe.models.build))], fits[0].side.recipe.models.build,
-          Math.round(capUsd * 100) / 100, Math.max(1, Math.min(fits.length, 3)),
-          `Side builds of Homeroom bot run ${Number(botRunId)}`],
-      ));
-      for (const f of fits) {
-        // eslint-disable-next-line no-await-in-loop
-        const { rows: [trial] } = await client.query(
-          `INSERT INTO bench_trials (run_id, task_id, model, attempt, status, est_cost_usd, item_token, bot_run_id, bot_config_version_id)
-           VALUES ($1, $2, $3, 1, 'pending', $4, $5, $6, $7)
+      await client.query("SELECT pg_advisory_xact_lock(hashtext('bot_config_side_budget'))");
+      budget = await sideBudget(client);
+      let left = budget.leftUsd;
+      for (const w of want) {
+        if (!taskId || w.est > left) {
+          // eslint-disable-next-line no-await-in-loop
+          await recordResult(client, {
+            botRunId, configVersionId: w.side.id, source: 'trial', status: 'skipped',
+            error: `the side builds' weekly budget ($${budget.limitUsd.toFixed(2)}) is spent`,
+          });
+          out.skipped += 1;
+        } else {
+          left -= w.est;
+          fits.push(w);
+        }
+      }
+      if (fits.length) {
+        const estTotal = fits.reduce((sum, f) => sum + f.est, 0);
+        capUsd = Math.max(MIN_SIDE_RUN_CAP_USD, Math.min(budget.leftUsd, estTotal * SIDE_RUN_CAP_FACTOR));
+        ({ rows: [run] } = await client.query(
+          `INSERT INTO bench_runs (suite_id, models, baseline_model, stages, repeats, cap_usd, concurrency, note, kind)
+           VALUES ($1, $2::text[], $3, ARRAY['first_version'], 1, $4, $5, $6, 'bot_config')
            RETURNING id`,
-          [run.id, taskId, `config:${f.side.id}`, f.est, crypto.randomBytes(12).toString('base64url'), Number(botRunId), f.side.id],
-        );
-        // eslint-disable-next-line no-await-in-loop
-        await client.query(
-          `INSERT INTO bot_config_results (bot_run_id, config_version_id, source, trial_id, status)
-           VALUES ($1, $2, 'trial', $3, 'pending')
-           ON CONFLICT (bot_run_id, config_version_id) DO NOTHING`,
-          [Number(botRunId), f.side.id, trial.id],
-        );
+          [suiteId, [...new Set(fits.map((f) => f.side.recipe.models.build))], fits[0].side.recipe.models.build,
+            Math.round(capUsd * 100) / 100, Math.max(1, Math.min(fits.length, 3)),
+            `Side builds of Homeroom bot run ${Number(botRunId)}`],
+        ));
+        for (const f of fits) {
+          // eslint-disable-next-line no-await-in-loop
+          const { rows: [trial] } = await client.query(
+            `INSERT INTO bench_trials (run_id, task_id, model, attempt, status, est_cost_usd, item_token, bot_run_id, bot_config_version_id)
+             VALUES ($1, $2, $3, 1, 'pending', $4, $5, $6, $7)
+             RETURNING id`,
+            [run.id, taskId, `config:${f.side.id}`, f.est, crypto.randomBytes(12).toString('base64url'), Number(botRunId), f.side.id],
+          );
+          // eslint-disable-next-line no-await-in-loop
+          await client.query(
+            `INSERT INTO bot_config_results (bot_run_id, config_version_id, source, trial_id, status)
+             VALUES ($1, $2, 'trial', $3, 'pending')
+             ON CONFLICT (bot_run_id, config_version_id) DO NOTHING`,
+            [Number(botRunId), f.side.id, trial.id],
+          );
+        }
       }
       await client.query('COMMIT');
     } catch (err) {
@@ -1013,6 +1322,10 @@ async function spawnSideBuilds(pool, config, {
       throw err;
     } finally {
       client.release();
+    }
+    if (!fits.length) {
+      if (out.skipped) log.info('bot-configs', 'Side builds skipped', { botRunId, skipped: out.skipped, leftUsd: budget.leftUsd });
+      return out;
     }
     out.trials = fits.length;
     out.runId = Number(run.id);
@@ -1024,6 +1337,51 @@ async function spawnSideBuilds(pool, config, {
   } catch (err) {
     log.warn('bot-configs', 'Could not queue the side builds (the live build goes on)', { botRunId, err: err.message });
     return out;
+  }
+}
+
+/**
+ * A live first version given up before it could be compared (sent back to
+ * be built again after a restart, its request gone, or lost): its side
+ * trials still waiting are cancelled, one running in this process is
+ * stopped (bench/lane.js cancelTrial), and every result still pending is
+ * recorded skipped with why. Without it each restart's new run spawned its
+ * own side builds beside the old run's, which went on building for nothing.
+ * Never throws; resolves how many trials it cancelled or stopped.
+ */
+async function abandonSideBuilds(pool, botRunId, why, deps = {}) {
+  if (!botRunId) return 0;
+  const reason = clip(`the live first version was ${why || 'given up'}`, 300);
+  try {
+    const { rows: waiting } = await pool.query(
+      `UPDATE bench_trials SET status = 'cancelled', finished_at = NOW(), error = $2
+        WHERE bot_run_id = $1 AND status IN ('pending', 'awaiting')
+        RETURNING id`,
+      [Number(botRunId), reason],
+    );
+    const { rows: running } = await pool.query(
+      "SELECT id FROM bench_trials WHERE bot_run_id = $1 AND status = 'running'",
+      [Number(botRunId)],
+    );
+    const lane = deps.lane || require('./bench/lane');
+    for (const t of running) {
+      // eslint-disable-next-line no-await-in-loop
+      await Promise.resolve(lane.cancelTrial(pool, t.id, deps)).catch(() => null);
+    }
+    await pool.query(
+      `UPDATE bot_config_results SET status = 'skipped', error = $2, finished_at = NOW()
+        WHERE bot_run_id = $1 AND status = 'pending'`,
+      [Number(botRunId), reason],
+    );
+    if (waiting.length || running.length) {
+      log.info('bot-configs', 'Side builds of a first version given up were stopped', {
+        botRunId, cancelled: waiting.length, stopping: running.length, why,
+      });
+    }
+    return waiting.length + running.length;
+  } catch (err) {
+    log.warn('bot-configs', 'Could not stop the side builds of a first version given up', { botRunId, err: err.message });
+    return 0;
   }
 }
 
@@ -1077,12 +1435,13 @@ async function seedStagingBotConfigs(pool) {
     if (!app || !current || !sides.length) return false;
     // Per first version: [current cost, minutes], then each side's [cost,
     // minutes, booted], and the pick against each side ('current', 'side',
-    // 'tie', or null for one still waiting).
+    // 'tie', 'identical' for one left out as the same commit, or null for
+    // one still waiting).
     const plan = [
       { cur: [2.12, 38], sides: [[0.41, 21, true], [1.04, 24, true]], picks: ['current', 'current'] },
       { cur: [1.97, 35], sides: [[0.38, 19, true], [0.98, 22, true]], picks: ['side', 'tie'] },
       { cur: [2.31, 41], sides: [[0.44, 23, false], [1.11, 26, true]], picks: [null, 'current'] },
-      { cur: [1.88, 33], sides: [[0.36, 18, true], [0.95, 21, true]], picks: ['current', 'current'] },
+      { cur: [1.88, 33], sides: [[0.36, 18, true], [0.95, 21, true]], picks: ['current', 'identical'] },
       { cur: [2.05, 37], sides: [[0.42, 22, true], [1.02, 24, true]], picks: [null, null] },
     ];
     for (const [i, row] of plan.entries()) {
@@ -1096,20 +1455,23 @@ async function seedStagingBotConfigs(pool) {
         [app.id, STAGING_ISSUES[i], GLM, current.id, 2, i % 2 ? 'ship' : 'round_limit', 5 - i],
       );
       const capture = { booted: true, shots: [] };
+      // The commit both sides of an identical pair share.
+      const sameSha = row.picks.includes('identical') ? `stagingdemo${i}` : null;
       // eslint-disable-next-line no-await-in-loop
       const curId = await recordResult(pool, {
         botRunId: run.id, configVersionId: current.id, source: 'live', built: true, booted: true,
-        costUsd: row.cur[0], activeMs: row.cur[1] * 60000, capture,
+        costUsd: row.cur[0], activeMs: row.cur[1] * 60000, capture, sha: sameSha,
       });
       for (const [j, side] of sides.entries()) {
         const [cost, mins, booted] = row.sides[j] || row.sides[0];
+        const pick = row.picks[j] ?? null;
         // eslint-disable-next-line no-await-in-loop
         const sideId = await recordResult(pool, {
           botRunId: run.id, configVersionId: side.id, source: derivableFrom(current.recipe, side.recipe) ? 'round0' : 'trial',
           built: true, booted, costUsd: cost, activeMs: mins * 60000, capture: { booted, shots: [] },
+          sha: pick === 'identical' ? sameSha : null,
         });
-        const pick = row.picks[j] ?? null;
-        const excluded = booted ? null : 'didn\'t boot (the side configuration)';
+        const excluded = pick === 'identical' ? IDENTICAL_REASON : (booted ? null : 'didn\'t boot (the side configuration)');
         // eslint-disable-next-line no-await-in-loop
         await pool.query(
           `INSERT INTO bot_config_pairs (token, bot_run_id, current_result_id, side_result_id, left_is_current, status,
@@ -1157,13 +1519,21 @@ module.exports = {
   sideVersions,
   saveVersion,
   setRole,
+  checkRecipeModels,
   seedConfigs,
+  upgradeSeedConfigs,
+  SEED_UPGRADES,
   recordResult,
   finishLive,
   finishSideTrial,
   exclusionOf,
+  IDENTICAL_REASON,
   settlePairs,
   readArtifactsById,
+  CAPTURE_RETENTION_DAYS,
+  pruneCaptureArtifacts,
+  maybePruneCaptureArtifacts,
+  pairViews,
   nextPair,
   submitPick,
   wilson,
@@ -1173,6 +1543,7 @@ module.exports = {
   sideWeeklyCents,
   sideBudget,
   spawnSideBuilds,
+  abandonSideBuilds,
   recipeGuidance,
   configIdOfModel,
   seedStagingBotConfigs,

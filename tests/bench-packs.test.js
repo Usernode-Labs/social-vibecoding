@@ -8,6 +8,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const packs = require('../src/services/bench/packs');
 const progress = require('../src/services/bench/progress');
@@ -102,6 +104,15 @@ test('the plan is approved as a creator tapping Build it would approve it', () =
   const note = bot.creatorChoiceNote([{ question: 'Units?', answer: 'Grams' }]);
   assert.equal(typeof note, 'string');
   assert.ok(note.length > 0);
+  // With the plan's bullets, as goAhead and the bench's firstVersionStage
+  // write them: what the creator approved, which the spec reads as binding.
+  assert.equal(
+    bot.creatorChoiceNote([{ question: 'Units?', answer: 'Grams' }], { bullets: ['A list of plants', ' '] }),
+    '\n\nApproved by the creator, who tapped Build it under this plan:\n- A list of plants\nThe creator chose, from the plan they were shown:\n- Units? Grams',
+  );
+  assert.equal(bot.creatorChoiceNote([], { bullets: [] }), '');
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'bench', 'runner.js'), 'utf8'),
+    /bot\.creatorChoiceNote\(chosen, \{ bullets: plan\.bullets \}\)/, 'the bench approves the plan as a creator would');
 });
 
 test('a progress line names a skill invoked or a skill file read, apart', () => {

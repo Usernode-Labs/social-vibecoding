@@ -56,6 +56,7 @@ const crypto = require('crypto');
 const bcrypt = require('bcrypt');
 const log = require('../logger');
 const snapshots = require('../homeroom-bot-snapshots');
+const stageCosts = require('../stage-costs');
 
 const BENCH_USERNAME = 'homeroom_bench';
 // The bench user's own weekly allowance: a backstop behind every run's cap
@@ -116,6 +117,12 @@ function guardedGithub(github) {
       await github.deleteBenchBranch(owner, repo, branch);
       await github.ensureBranchAtSha(owner, repo, branch, sha);
       return sha;
+    },
+    // A first version's review put back on the last commit that booted
+    // (homeroom-bot-live.js rollbackReviewBranch): the trial's own branch.
+    resetBenchBranch(owner, repo, branch, sha) {
+      assertBenchBranch(branch);
+      return github.forceBranchToSha(owner, repo, branch, sha);
     },
   };
   return new Proxy({}, {
@@ -508,7 +515,13 @@ async function buildResult({ built, base, branch, sessionId = null, deps, repo, 
     cost_usd: built.costUsd ?? null, build_sha: built.sha || null,
     build_commits: Number.isFinite(built.commits) ? built.commits : null,
   };
-  const parsed = { built: !!built.ok, spec: built.specMd || null, specNote: built.specNote || null };
+  const parsed = {
+    built: !!built.ok, spec: built.specMd || null, specNote: built.specNote || null,
+    // How much its drawn screens hold (spec-html.js screenStats), and what
+    // each stage cost on its model (services/stage-costs.js).
+    ...(Array.isArray(built.specScreens) && built.specScreens.length ? { specScreens: built.specScreens } : {}),
+    ...(built.stageCosts ? { costParts: stageCosts.fromStages(built.stageCosts) } : {}),
+  };
   if (built.blocked) return { ...out, status: 'ok', parsed: { ...parsed, blocked: built.blocked }, raw_output: rawOf(`BLOCKED: ${built.blocked}`) };
   if (!built.ok) {
     const error = String(built.error || 'unknown');
@@ -608,18 +621,19 @@ async function buildStage(ctx) {
   }
   const out = await buildResult({ built, base, branch, sessionId, deps, repo, task, trial });
   const reviewed = built.review ? require('../bot-review').slimState(built.review) : null;
+  const costParts = out.parsed?.costParts ? await stageCosts.withLedgerTokens(pool, out.parsed.costParts) : null;
   return {
     ...out,
-    parsed: { ...(out.parsed || {}), sight, ...(reviewed ? { review: reviewed } : {}) },
+    parsed: { ...(out.parsed || {}), sight, ...(reviewed ? { review: reviewed } : {}), ...(costParts ? { costParts } : {}) },
     // The reviewer calls are not agent turns, so the ledger the lane reads a
     // trial's cost from does not hold them (lane.recordTrial).
     ...(built.review ? { review_cost_usd: reviewerCost(built.review) } : {}),
   };
 }
 
-/** What a review's reviewer calls cost, together. Pure. */
+/** What a review's reviewer calls cost, together (bot-review.js reviewerCost). Pure. */
 function reviewerCost(review) {
-  return (review?.rounds || []).reduce((sum, r) => sum + (Number.isFinite(Number(r?.reviewerCostUsd)) ? Number(r.reviewerCostUsd) : 0), 0);
+  return require('../bot-review').reviewerCost(review);
 }
 
 /**
@@ -640,6 +654,8 @@ async function sideBuildStage(ctx) {
   const models = firstVersionModels(ctx);
   const step = (name) => { try { ctx.onStep?.(name); } catch { /* a watcher never stops a trial */ } };
   step('spec');
+  // A reviewed build's final state, as its review captured it.
+  let reviewedCapture = null;
   const built = await buildStage({
     ...ctx,
     model: models.build,
@@ -647,9 +663,17 @@ async function sideBuildStage(ctx) {
     snapshot: { ...snapshot, extra: { ...(snapshot.extra || {}), firstVersion: true } },
     // A first version's own clocks (homeroom-bot buildBudgets, firstVersion).
     budgets: ctx.budgets.firstVersion || ctx.budgets,
+    onBuilt: async (b) => {
+      reviewedCapture = b?.review?.finalCapture || null;
+      if (ctx.onBuilt) await ctx.onBuilt(b);
+    },
   });
   const out = { ...built, parsed: { ...(built.parsed || {}), models, side: { botRunId: ctx.sideBuild?.botRunId || null } } };
   if (built.status !== 'ok' || !built.parsed?.built || !built.session_id) return out;
+  // Its review captured the final state already, and when a fix broke the
+  // app that is the commit the branch went back to, which the worker's own
+  // checkout no longer is: taken as it is, not captured again.
+  if (reviewedCapture) return { ...out, capture: reviewedCapture };
   step('capture');
   const shot = await screenshotStep(ctx, built.session_id);
   if (!shot.ok) return { ...out, status: 'infra_fail', error: shot.error };
@@ -826,8 +850,8 @@ function firstVersionModels(ctx) {
  *   3. The triage with the first-version note (and the pack's guidance).
  *   4. The plan. The live bot shows it to the creator and waits for Build it
  *      (homeroom-bot.js awaitGo, goAhead); here the creator taps Build it
- *      without changing anything, so the build note gets exactly the line
- *      goAhead adds for the plan's suggested answers (creatorChoiceNote).
+ *      without changing anything, so the build note gets exactly the lines
+ *      goAhead adds for the plan and its suggested answers (creatorChoiceNote).
  *   5. The spec and the build on the first version's longer clocks
  *      (buildAndPropose, never proposed), each on its own model.
  *   6. The screenshot step on the build's worker.
@@ -939,7 +963,7 @@ async function firstVersionStage(ctx) {
   step('plan');
   const plan = bot.planFor(triaged.parsed);
   const chosen = bot.choicesFrom(plan.questions, []);
-  const buildNote = `${triage.buildNote || ''}${bot.creatorChoiceNote(chosen)}`;
+  const buildNote = `${triage.buildNote || ''}${bot.creatorChoiceNote(chosen, { bullets: plan.bullets })}`;
   let built;
   if (wasBuilt || done.spec?.blocked) {
     // What the build (or a spec that found it impossible) did before a
@@ -973,10 +997,17 @@ async function firstVersionStage(ctx) {
   }
   const ids = [...sessionIds, done.spec?.sessionId, built.session_id].filter(Boolean).map(Number);
   const cost = [triaged.cost_usd, built.cost_usd].filter(Number.isFinite);
+  // The triage's part of the cost breakdown, from its own session's ledger.
+  const triagePart = await stageCosts.sessionPart(pool, triaged.session_id, models.triage)
+    || stageCosts.part({ usd: triaged.cost_usd, model: models.triage });
+  const costParts = { ...(triagePart ? { triage: triagePart } : {}), ...(built.parsed?.costParts || {}) };
   const merged = {
     ...built, base_sha: base, build_branch: branch, session_id: built.session_id || triaged.session_id, session_ids: [...new Set(ids)],
     cost_usd: cost.length ? cost.reduce((a, b) => a + b, 0) : null,
-    parsed: { ...started, ...(built.parsed || {}), triage, plan: { bullets: plan.bullets, questions: plan.questions, chosen } },
+    parsed: {
+      ...started, ...(built.parsed || {}), triage, plan: { bullets: plan.bullets, questions: plan.questions, chosen },
+      ...(Object.keys(costParts).length ? { costParts } : {}),
+    },
   };
   if (built.status !== 'ok' || !built.parsed?.built || !built.session_id) return merged;
   step('capture');
@@ -1012,6 +1043,8 @@ function keptBuild(b) {
     commits: Number.isFinite(b.commits) ? b.commits : null, specMd: b.specMd || null, specNote: b.specNote || null,
     error: b.error || null, ...(b.blocked ? { blocked: b.blocked } : {}),
     ...(b.sight ? { sight: b.sight } : {}),
+    ...(b.stageCosts ? { stageCosts: b.stageCosts } : {}),
+    ...(Array.isArray(b.specScreens) && b.specScreens.length ? { specScreens: b.specScreens } : {}),
   };
 }
 
@@ -1206,7 +1239,7 @@ function recoverFirstVersionTurn({ checkpoint, session, activeTurn, result = {},
   }
   if (step === 'spec') {
     if (timedOut) return null;
-    const read = require('../homeroom-bot-live').readSpec(turn.result.lastResultText);
+    const read = require('../homeroom-bot-live').readSpec(turn.result.lastResultText, { parts: turn.result.answerParts });
     if (read.ok) return { step, keep: { spec: { sessionId: Number(session.id), specMd: read.specMd } } };
     if (read.blocked) return { step, keep: { spec: { sessionId: Number(session.id), blocked: read.blocked, error: read.error } } };
     return null;

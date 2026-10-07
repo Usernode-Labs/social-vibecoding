@@ -733,9 +733,11 @@ function load() {
     // live only once production runs it. Off by default.
     wfMergeFollowupsEnabled: ['1', 'true'].includes(process.env.WF_MERGE_FOLLOWUPS_ENABLED),
     // Its own pool, so pipeline slots and the outcome listener never take
-    // request connections, and how many slots the leader runs.
-    wfPoolMax: parseInt(process.env.WF_POOL_MAX || (IS_STAGING() ? '3' : '6'), 10),
-    wfSlots: parseInt(process.env.WF_SLOTS || (IS_STAGING() ? '2' : '4'), 10),
+    // request connections, and how many slots each process runs. A staging
+    // preview shares one Postgres server with the fleet: one slot, and a
+    // pool of two (the outcome listener and one working connection).
+    wfPoolMax: parseInt(process.env.WF_POOL_MAX || (IS_STAGING() ? '2' : '6'), 10),
+    wfSlots: parseInt(process.env.WF_SLOTS || (IS_STAGING() ? '1' : '4'), 10),
     // What a write to a machine-owned column outside the pipeline does:
     // 'raise' everywhere but production, where it is logged to
     // wf_ownership_violations until no legacy writer is left.

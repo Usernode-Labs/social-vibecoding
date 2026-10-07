@@ -70,7 +70,8 @@ Ordered by how badly an agent working offline gets each one wrong.
    preview, and never a signal your own logic reads ("has this user
    done X?"). Every check runs against staging, so seeding that
    fabricates the answer makes that code path untestable by the gate
-   and different for real users.
+   and different for real users. A project's first version is the one
+   exception, on `?demo=1` only: see "A first version's populated demo".
 4. **Tables are public by default; mark the sensitive ones private.**
    `COMMENT ON TABLE foo IS 'staging:private'` copies the schema to
    staging without the rows. Use it for auth material, direct messages,
@@ -549,6 +550,8 @@ Seed rules:
 - **Obviously fake.** Give seeded rows a consistent "Staging demo …"
   prefix so they can't be mistaken for real user content.
 - **Small.** A handful of rows — just enough for the testing steps.
+  (A project's first version is the one exception: see "A first
+  version's populated demo" below.)
 - **Never reference real users.** Use fake usernames/IDs
   (e.g. `staging-demo-user`), never rows cloned from prod.
 - **Strictly a no-op outside staging.** The whole block is gated on
@@ -557,6 +560,43 @@ Seed rules:
 Tie-in with testing instructions: the testing steps you emit must
 reference the seeded entities by name ("Open the thread 'Staging demo
 thread' and …"), so a tester knows exactly what they should be seeing.
+
+### A first version's populated demo
+
+A project's **first version** (the build that replaces the starter's
+placeholder screen) is first seen as its staging preview opened with
+`?demo=1`, and that screen should show the app in use, from the
+viewer's own seat. For that build only, and on `?demo=1` only, three
+seed rules change. Every later change keeps the rules above.
+
+- **Enough to look lived in.** Varied, realistic rows filling about a
+  screen and a half of the main screen at phone width (390×844), not
+  a handful. Each still reads "Staging demo …".
+- **The viewer's own data too.** What the app keeps for a person
+  (their items, choices, progress, saved things) is shown as the
+  viewer's: a demo where only made-up people have done anything shows
+  the viewer an empty "mine". Either add the viewer's demo rows to the
+  `?demo=1` responses without storing them, or write them for the
+  viewing account on its first `?demo=1` request, once (fixed ids,
+  `ON CONFLICT DO NOTHING`, so a reload changes nothing and what the
+  viewer did to them stays). The viewing account is whoever opened the
+  preview, a reviewer or a test account, and the rows land only in
+  staging's own database: that is not cloning production rows, so
+  "Never reference real users" still holds. Other people in the demo
+  are still fake identities.
+- **Every control the real screen has.** The populated demo is the
+  app, not a read-only tour: the actions a person has on that screen
+  (add, edit, refresh, mark done, reorder, delete) are there and work
+  on the demo rows. A "view only" demo that hides them is not a
+  populated screen.
+
+What does not change: nothing is written outside staging, nothing is
+written by a route without `?demo=1` (the page passes `demo=1` on to
+its own API calls), boot-time seeding stays with fake identities, and
+the plain route keeps its test of the production-shaped answer. The
+viewer's demo rows must never be what makes a check of the form "has
+this user done X" pass (see the next section): keep such checks off
+demo rows, or add the rows to the responses rather than storing them.
 
 ### Seeded data must not fabricate a signal your logic reads
 
@@ -586,7 +626,9 @@ app's own logic. Three habits keep them apart:
   reference real users" seed rule above, and it is the one that bites
   hardest — the visitor is the account every code path checks against,
   so attributing seeded rows to them is handing the preview a
-  credential production won't have.
+  credential production won't have. (A first version's `?demo=1` demo
+  may give the viewer rows of their own, within the limits of "A first
+  version's populated demo" above; nothing else may.)
 - **Request-time seeding only behind `?demo=1`.** Never seed from a
   route the app serves normally. A `GET /api/lists` that writes demo
   rows as a side effect leaves no way to ask the app what production

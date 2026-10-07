@@ -345,6 +345,107 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     assert.equal(Number(row.version), 2);
   });
 
+  await t.test('K16 a first event that times out or throws leaves only a flagged (none) row', async () => {
+    const flag = (name, on) => pool.query(
+      `INSERT INTO kt_flags VALUES ($1, $2) ON CONFLICT (name) DO UPDATE SET on_off = EXCLUDED.on_off`, [name, on]);
+    const birth = defineMachine({
+      name: 'kt-birth', version: 1,
+      events: { Create: (p) => p || {}, Poke: (p) => p || {} },
+      create: ['Create'],
+      decode: (row) => ({ name: row.state, data: row.data }),
+      async facts(tx) {
+        const { rows: [f] } = await tx.query(
+          `SELECT COALESCE((SELECT on_off FROM kt_flags WHERE name = 'birth-slow'), FALSE) AS slow,
+                  COALESCE((SELECT on_off FROM kt_flags WHERE name = 'birth-boom'), FALSE) AS boom`);
+        if (f.slow) await tx.query('SELECT pg_sleep(0.3)');
+        return f;
+      },
+      authorize: { Create: () => ok(), Poke: () => ok() },
+      transitions: {
+        [NONE]: { Create: { to: (s, e, f) => { if (f.boom) throw new Error('born broken'); return { next: { name: 'alive', data: { pokes: 0 } } }; } } },
+        alive: { Create: { ignore: 'exists' }, Poke: { to: (s) => ({ next: { name: 'alive', data: { pokes: s.data.pokes + 1 } } }) } },
+      },
+    });
+    const born = (key) => inst(key, 'kt-birth');
+    const add = (r, key, type) => r.append(birth, key, { type }, { requestKey: `${key}-${type}-${++seq}`, source: { kind: 'route' } });
+    // Timeouts: the row exists only to carry the stall, and goes once it gets through.
+    const slow = make({ machine: birth, statementTimeoutMs: 100, stallAfter: 1 });
+    await flag('birth-slow', true);
+    const created = await add(slow, 'b1', 'Create');
+    await slow.drain();
+    assert.deepEqual([(await event(created)).status, (await event(created)).attempts], ['pending', 1]);
+    assert.deepEqual([(await born('b1')).state, (await born('b1')).flag, Number((await born('b1')).version)], [NONE, 'stalled', 0]);
+    await flag('birth-slow', false);
+    await sleep(600);
+    await slow.drain();
+    assert.equal((await event(created)).result, 'accepted');
+    assert.deepEqual([(await born('b1')).state, (await born('b1')).flag, Number((await born('b1')).version)], ['alive', null, 1]);
+    // A throw: faulted, later events held, and a retry creates it as if nothing happened.
+    const r = make({ machine: birth });
+    await flag('birth-boom', true);
+    const boom = await add(r, 'b2', 'Create');
+    const poke = await add(r, 'b2', 'Poke');
+    await r.drain();
+    assert.deepEqual([(await event(boom)).result, (await event(boom)).state_before], ['faulted', NONE]);
+    assert.equal((await event(poke)).status, 'held');
+    assert.deepEqual([(await born('b2')).state, (await born('b2')).flag], [NONE, 'faulted']);
+    await flag('birth-boom', false);
+    await r.release('kt-birth', 'b2', { mode: 'retry', actor: 'admin:1' });
+    await r.drain();
+    assert.deepEqual([(await event(boom)).result, (await event(poke)).result], ['accepted', 'accepted']);
+    assert.deepEqual([(await born('b2')).state, (await born('b2')).data.pokes, Number((await born('b2')).version)], ['alive', 1, 2]);
+  });
+
+  await t.test('K15 a new instance is created once, even when an earlier event commits late', async () => {
+    // Event A is appended in a caller's transaction that commits after event
+    // B (both creating) is already being processed: the two slots hold
+    // different events of one instance that has no row yet.
+    const caller = await other.connect();
+    const second = make({ pool: other });
+    try {
+      await caller.query('BEGIN');
+      const a = await rt.append(machine, 'k15-new', { type: 'Create', payload: { start: 1 } },
+        { requestKey: 'k15-new-a', source: { kind: 'route' }, db: caller });
+      const b = await route('k15-new', 'Create', { start: 2, sleepMs: 400 });
+      const first = rt.processNext();          // takes B (A is not visible yet) and sleeps in its facts
+      await sleep(100);
+      await caller.query('COMMIT');
+      const late = second.processNext();       // takes A, the head now
+      await Promise.all([first, late]);
+      await rt.drain();
+      const results = [(await event(a)).result, (await event(b)).result];
+      assert.deepEqual(results.sort(), ['accepted', 'rejected'], 'one creation, the other refused');
+      assert.equal(Number((await inst('k15-new')).version), 1, 'one transition, not two at version 1');
+      assert.equal((await event(a)).reason, 'exists', 'A was applied after B, to the instance B created');
+    } finally {
+      caller.release();
+    }
+  });
+
+  await t.test('K1 a retry that waited behind its original replays it', async () => {
+    // The same request twice: the copy appended in a caller's transaction
+    // commits late, so it is picked while the original is being applied, and
+    // waits for the instance. Its receipt lookup must see the original's.
+    await create('k1-late');
+    const caller = await other.connect();
+    const second = make({ pool: other });
+    try {
+      await caller.query('BEGIN');
+      const copy = await rt.append(machine, 'k1-late', { type: 'Add', payload: { n: 1, sleepMs: 400 } },
+        { requestKey: 'k1-late-add', source: { kind: 'route' }, actor: 'user:1', db: caller });
+      const original = await route('k1-late', 'Add', { n: 1, sleepMs: 400 }, { requestKey: 'k1-late-add' });
+      const first = rt.processNext();
+      await sleep(100);
+      await caller.query('COMMIT');
+      await Promise.all([first, second.processNext()]);
+      assert.equal((await event(original)).result, 'accepted');
+      assert.deepEqual([(await event(copy)).result, (await event(copy)).emitted], ['replayed', { replayOf: original }]);
+      assert.equal((await inst('k1-late')).data.count, 1, 'applied once');
+    } finally {
+      caller.release();
+    }
+  });
+
   await t.test('K5 a transition locks only its own instance; a message to a locked instance does not wait', async () => {
     await create('k5-a');
     await create('k5-b');
@@ -526,6 +627,24 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     assert.equal(await rt.fireTimers(), 0);
   });
 
+  await t.test('K11 a deadline set earlier than the timer loop\'s wake-up wakes it, not the fallback', async () => {
+    const r = make({ pollMs: 60000 });
+    await r.start({ loops: true });
+    try {
+      await route('k11-wake', 'Create');
+      await sleep(300);  // the loop has looked and gone to sleep, a minute away at the earliest
+      const started = Date.now();
+      await route('k11-wake', 'Arm', { ms: 700 });
+      while (!(await inst('k11-wake'))?.data?.ticks) {
+        assert.ok(Date.now() - started < 5000, 'fired by its own announcement, not the 60 s fallback');
+        await sleep(50);
+      }
+      assert.ok(Date.now() - started >= 600, 'not before it was due');
+    } finally {
+      await r.stop();
+    }
+  });
+
   await t.test('K15 serial per instance, concurrent across instances and processes', async () => {
     const a = make({ slots: 4 });
     const b = make({ pool: other, slots: 4 });
@@ -587,6 +706,15 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     await pool.query(`DELETE FROM wf_settings WHERE key = 'ownership_mode'`);
     const { ownershipViolations } = await inspect.problems(pool);
     assert.deepEqual(ownershipViolations.map((v) => [v.table_name, v.column_path, v.count]), [['kt_legacy', 'status', 1]]);
+  });
+
+  await t.test('the problems name each write outside a machine: row, application, statement', async () => {
+    const { ownershipViolationRows: rows } = await inspect.problems(pool);
+    const legacyId = Number((await pool.query(`SELECT id FROM kt_legacy WHERE key = 'k12'`)).rows[0].id);
+    assert.equal(rows.length, 1);
+    assert.deepEqual([rows[0].table, rows[0].column, rows[0].row], ['kt_legacy', 'status', { id: legacyId }]);
+    assert.equal(typeof rows[0].application, 'string');
+    assert.match(rows[0].query, /UPDATE kt_legacy SET status = 'x'/);
   });
 
   await t.test('K17 appendAndWait answers with the outcome, or pending within its budget', async () => {

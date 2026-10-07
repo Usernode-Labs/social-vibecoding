@@ -43,6 +43,7 @@ const path = require('path');
 const log = require('../logger');
 const packs = require('./packs');
 const scaffold = require('./scaffold');
+const stageCosts = require('../stage-costs');
 
 const SUITE_NAME = 'App bench studio';
 const HOST_KEY = 'default';
@@ -68,6 +69,11 @@ const SHA_RE = /^[0-9a-f]{40}$/i;
 const MAX_NOTE_CHARS = 500;
 const ACTIVITY_CHARS = 200;
 const GALLERY_TRIALS_PER_BRIEF = 30;
+// A trial's spec as get_bench_trial gives it: whole, up to this. An HTML
+// spec's markdown copy carries its drawn screens' markup, and a first
+// version's can draw two full screens (~30-60K characters in all); it was
+// clipped at 12,000, which cut off everything after the opening section.
+const TRIAL_SPEC_CHARS = 120000;
 
 let lastPreviewSweepAt = 0;
 
@@ -329,6 +335,20 @@ function validateLaunch(body = {}) {
 async function launch(pool, config, body = {}, { actorId = null, deps = {} } = {}) {
   const v = validateLaunch(body);
   if (!v.ok) return v;
+  // A configuration arm (`config:<id>`): its recipe, read before anything is
+  // made, and what it is priced by (each stage at its own model's price, its
+  // reviewer's rounds included).
+  const recipes = new Map();
+  for (const m of v.models) {
+    const botConfigs = require('../bot-configs');
+    const id = botConfigs.configIdOfModel(m);
+    if (id == null) continue;
+    // eslint-disable-next-line no-await-in-loop
+    const version = await botConfigs.versionById(pool, id);
+    const recipe = version ? botConfigs.recipeOf(version.recipe) : null;
+    if (!recipe) return httpError(404, `No configuration version ${id} with a recipe that still validates`);
+    recipes.set(m, recipe);
+  }
   const briefs = await resolveBriefs(pool, body);
   if (!briefs.ok) return briefs;
   const loaded = await packs.loadForLaunch(pool, v.packIds);
@@ -347,14 +367,20 @@ async function launch(pool, config, body = {}, { actorId = null, deps = {} } = {
   const catalog = require('./catalog');
   const settings = await bot.readSettings(pool);
   const priced = (m) => (m === TODAY ? bot.stageModel(settings, config, 'build') : m);
-  const models = await catalog.listModels(pool, v.models.map(priced).filter(Boolean));
+  const models = await catalog.listModels(pool, [
+    ...v.models.filter((m) => !recipes.has(m)).map(priced).filter(Boolean),
+    ...[...recipes.values()].flatMap((r) => catalog.recipeModelIds(r)),
+  ]);
   const plan = { task: [], model: [], attempt: [], status: [], error: [], est: [], token: [], pack: [] };
   let estimate = 0;
   for (const t of tasks) {
     for (const m of v.models) {
-      const info = catalog.modelInfo(models, priced(m) || m);
-      const reason = m === TODAY ? null : catalog.notApplicableReason(info, 'first_version', t.brief.length);
-      const est = Math.round(catalog.estimateTrialCost(info, 'first_version', []) * 10000) / 10000;
+      const recipe = recipes.get(m) || null;
+      const info = catalog.modelInfo(models, recipe ? recipe.models.build : (priced(m) || m));
+      const reason = m === TODAY || recipe ? null : catalog.notApplicableReason(info, 'first_version', t.brief.length);
+      const est = Math.round((recipe
+        ? catalog.estimateRecipeCost(models, recipe)
+        : catalog.estimateTrialCost(info, 'first_version', [])) * 10000) / 10000;
       for (const packId of v.packIds) {
         for (let attempt = 1; attempt <= v.repeats; attempt += 1) {
           plan.task.push(t.taskId);
@@ -524,6 +550,52 @@ function verdictOf(row, grades = []) {
   };
 }
 
+/**
+ * A first version's review as one trial shows it (services/bot-review.js
+ * runReviewLoop's state, slimmed): the reviewer, the first build as round 0
+ * captured it, then each round's verdict, its issues (id, severity, screen,
+ * problem, fix), the earlier issues it called fixed, what its reviewer call
+ * and its fix turn cost and took and the commit the fix made, and why the
+ * review stopped. Null without one. Pure.
+ */
+function reviewRecord(review) {
+  if (!review || typeof review !== 'object') return null;
+  const n = (v) => (v == null || !Number.isFinite(Number(v)) ? null : Number(v));
+  const r0 = review.round0 || null;
+  return {
+    reviewer: review.reviewer ? {
+      model: review.reviewer.model || null, maxRounds: n(review.reviewer.maxRounds), budgetMinutes: n(review.reviewer.budgetMinutes),
+    } : null,
+    state: review.state || null,
+    round0: r0 ? {
+      sha: r0.sha || null, commits: n(r0.commits), booted: r0.capture ? r0.capture.booted === true : null,
+      captureError: r0.captureError ? clip(r0.captureError, 300) : null, costUsd: n(r0.costUsd), activeMs: n(r0.activeMs),
+    } : null,
+    rounds: (Array.isArray(review.rounds) ? review.rounds : []).slice(0, 10).map((r) => ({
+      round: n(r?.round),
+      sha: r?.sha || null,
+      booted: typeof r?.booted === 'boolean' ? r.booted : null,
+      verdict: r?.verdict || null,
+      reviewedBy: r?.reviewedBy || null,
+      issues: (Array.isArray(r?.issues) ? r.issues : []).slice(0, 20).map((i) => ({
+        id: clip(i?.id, 80), severity: i?.severity || null, screen: clip(i?.screen, 200),
+        problem: clip(i?.problem, 1000), fix: clip(i?.fix, 1000),
+      })),
+      previousFixed: (Array.isArray(r?.previousFixed) ? r.previousFixed : []).slice(0, 20).map((x) => clip(x, 80)),
+      reviewer: { costUsd: n(r?.reviewerCostUsd), ms: n(r?.reviewerMs), error: r?.reviewerError ? clip(r.reviewerError, 300) : null },
+      fix: r?.fix ? {
+        ok: !!r.fix.ok, costUsd: n(r.fix.costUsd), ms: n(r.fix.ms), sha: r.fix.sha || null, commits: n(r.fix.commits),
+        error: r.fix.error ? clip(r.fix.error, 300) : null,
+      } : null,
+    })),
+    stop: review.stop || null,
+    stopDetail: review.stopDetail ? clip(review.stopDetail, 300) : null,
+    finalSha: review.finalSha || null,
+    rolledBack: review.rolledBack ? { from: review.rolledBack.from || null, to: review.rolledBack.to || null, why: review.rolledBack.why || null } : null,
+    costUsd: n(review.costUsd),
+  };
+}
+
 /** A trial row as the watch and the gallery show it. Pure but for the preview and grades passed in. */
 function trialOut(row, { preview = null, grades = [] } = {}) {
   const { pickShots } = require('./capture');
@@ -559,6 +631,10 @@ function trialOut(row, { preview = null, grades = [] } = {}) {
       ? { restarts: handBacks, wallMs: firstStarted ? Math.max(0, (ended || Date.now()) - firstStarted) : null }
       : null,
     costUsd: Number.isFinite(row.cost_usd) ? row.cost_usd : null,
+    // What that cost was made of, stage by stage and model by model, adding
+    // up to it (services/stage-costs.js): null for a trial that recorded no
+    // stages (one from before they were, a triage-only task).
+    costBreakdown: parsed.costParts ? stageCosts.breakdown(Number.isFinite(row.cost_usd) ? row.cost_usd : null, parsed.costParts) : null,
     activity: Array.isArray(p.lines) ? p.lines.map((l) => clip(l, ACTIVITY_CHARS)) : [],
     skills: parsed.skills || p.skills || { invoked: [], read: [] },
     // Whether its build could look at its own screens: what its prompt told
@@ -932,8 +1008,10 @@ async function trialRows(pool, runId) {
 
 /**
  * One trial in full: its brief, arm, what the triage said and planned, its
- * spec (clipped), files changed, the automatic checks, the grade and
- * critique, its code and preview, and its screenshots (with `images`, as
+ * spec (whole up to TRIAL_SPEC_CHARS, and its drawn screens' sizes), what
+ * each stage cost (trialOut's costBreakdown), a first version's review
+ * round by round (reviewRecord), files changed, the automatic checks, the
+ * grade and critique, its code and preview, and its screenshots (with `images`, as
  * base64 PNGs, at most 8 MB). Refused like trialRows for a trial of a run
  * that is not a studio run while it waits for the judge.
  */
@@ -983,7 +1061,14 @@ async function trialDetail(pool, trialId, { images = false } = {}) {
       question: parsed.triage.question ? clip(parsed.triage.question, 600) : null,
       assumptions: (parsed.triage.assumptions || []).slice(0, 10).map((a) => clip(a, 300)),
     } : null,
-    spec: parsed.spec ? clip(parsed.spec, 12000) : null,
+    spec: parsed.spec ? clip(parsed.spec, TRIAL_SPEC_CHARS) : null,
+    specChars: parsed.spec ? String(parsed.spec).length : null,
+    specNote: parsed.specNote ? clip(parsed.specNote, 600) : null,
+    // Each drawn screen's size, characters, inline SVGs and SVG shapes, and
+    // whether it ran past twice its budget (spec-html.js screenStats).
+    specScreens: Array.isArray(parsed.specScreens) ? parsed.specScreens.slice(0, 6) : null,
+    // A reviewed first version's rounds (services/bot-review.js).
+    review: reviewRecord(parsed.review),
     blocked: parsed.blocked ? clip(parsed.blocked, 600) : null,
     changedFiles: Array.isArray(row.changed_files?.files) ? row.changed_files.files.slice(0, 200).map((f) => f.filename || f) : null,
     checks: row.capture ? grading.tasteSignals(row.capture) : null,
@@ -1208,6 +1293,7 @@ module.exports = {
   MAX_CONCURRENCY,
   MAX_LIVE_PREVIEWS,
   PREVIEW_HOURS,
+  TRIAL_SPEC_CHARS,
   CAPTURE_CONTRACT,
   HAND_BACK,
   isHostApp,
@@ -1224,6 +1310,7 @@ module.exports = {
   codeLinks,
   previewOut,
   verdictOf,
+  reviewRecord,
   trialOut,
   watchRun,
   referenceOrder,
