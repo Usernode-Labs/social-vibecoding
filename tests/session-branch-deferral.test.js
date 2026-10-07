@@ -154,6 +154,37 @@ test('ensureSessionBranch prefers the caller-supplied username', async () => {
   assert.match(out.branchName, /^dev\/ada-\d+$/);
 });
 
+test('#3229: ensureSessionBranch names the branch after the caller-supplied label', async () => {
+  const lifecycle = loadLifecycle();
+  const rows = new Map([[7, {
+    id: 7, branch_name: null, user_id: 3, username: 'evan', session_title: null, repo_url: null,
+  }]]);
+  const out = await lifecycle.ensureSessionBranch({
+    pool: fakePool(rows), sessionId: 7, label: 'Add a dark mode toggle',
+  });
+  assert.match(out.branchName, /^dev\/evan-add-a-dark-mode-toggle-\d+$/);
+});
+
+test('#3229: ensureSessionBranch falls back to the stored session title', async () => {
+  // The bot's build sessions and the dispatch backstop pass no label; the
+  // row's title is what they are about.
+  const lifecycle = loadLifecycle();
+  const rows = new Map([[7, {
+    id: 7, branch_name: null, user_id: 3, username: 'homeroom_bot',
+    session_title: '#3229 · Session branch names', repo_url: null,
+  }]]);
+  const out = await lifecycle.ensureSessionBranch({ pool: fakePool(rows), sessionId: 7 });
+  assert.match(out.branchName, /^dev\/homeroom_bot-3229-session-branch-names-\d+$/);
+});
+
+test('#3229: the first turn hands its deterministic title to the mint', () => {
+  const src = read('src/routes/sessions.js');
+  const chat = src.indexOf("router.post('/api/sessions/:id/chat'");
+  const ensure = src.indexOf('await sessionLifecycle.ensureSessionBranch(', chat);
+  const call = src.slice(ensure, src.indexOf('});', ensure));
+  assert.match(call, /label: session\.session_title \|\| sessionTitles\.deterministicTitle\(message/);
+});
+
 test('ensureSessionBranch still produces a valid name with no username at all', async () => {
   const lifecycle = loadLifecycle();
   const branchNames = require('../src/services/branch-names');
