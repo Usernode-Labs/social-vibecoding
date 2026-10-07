@@ -4034,10 +4034,38 @@ async function runOfSession(pool, sessionId) {
   return rows[0] || null;
 }
 
+// What a restart may cost a turn that runs on through it, given back on the
+// bot's clock once for each restart that reached the turn (server.js counts
+// them on the turn's record: turn-lifecycle.js noteRestart). The worker never
+// stops at a restart, and the new server follows its journal; the turn loses
+// only the calls it makes back to the platform while the platform is down
+// (its push, its Homeroom reads, the app's platform endpoints in-loop), a
+// minute at most, so two is generous on purpose.
+//
+// It replaces sending such a build round again. Until 7 Oct 2026 a build
+// whose clock ran out after any restart had reached it went back to be
+// triaged and built from the start (restartRanItOut, #3895), and with a
+// deploy behind most merges (26 to 42 restarts a day) that was most long
+// builds: that evening two requests that simply needed more than their 20
+// minutes were each built three times, their requesters told twice that the
+// build "was interrupted". A build whose clock still runs out, with this
+// given back, ran too long on its own and is said so. Capped, so a turn a
+// run of restarts keeps catching is not followed for ever.
+const RESTART_ALLOWANCE_MS = 2 * 60 * 1000;
+const MAX_RESTARTS_ALLOWED = 10;
+
+/** The time a turn's restarts so far give back on its clock (`activeTurn.restarts`). Pure. */
+function restartAllowanceMs(activeTurn) {
+  const n = Number(activeTurn?.restarts);
+  return Number.isInteger(n) && n > 0 ? Math.min(n, MAX_RESTARTS_ALLOWED) * RESTART_ALLOWANCE_MS : 0;
+}
+
 /**
  * When the bot's own clock ends a recovered turn: its start plus the budget
  * the turn had (a build's or a spec's, the platform's tripled, a first
- * version's doubled), or null to leave it unbounded (no start on record).
+ * version's doubled) and the time its restarts cost it
+ * (RESTART_ALLOWANCE_MS each), or null to leave it unbounded (no start on
+ * record).
  *
  * A live build is found by its own run (liveRunOfSession): runOfSession
  * reads the lane's, and a live build never has the lane's build_at. Before,
@@ -4048,6 +4076,7 @@ async function runOfSession(pool, sessionId) {
 async function recoveryDeadline(pool, config, session, activeTurn) {
   const startedAt = toMs(activeTurn?.startedAt);
   if (!startedAt) return null;
+  const allowance = restartAllowanceMs(activeTurn);
   const settings = await readSettings(pool);
   const turnMs = 1000 * clampInt(settings?.turnSeconds, DEFAULTS.turnSeconds, MIN_TURN_SECONDS, MAX_TURN_SECONDS);
   const app = { repo_url: session.repo_url };
@@ -4059,7 +4088,7 @@ async function recoveryDeadline(pool, config, session, activeTurn) {
     });
   } else {
     const liveRun = await liveRunOfSession(pool, session.id);
-    if (!liveRun) return startedAt + turnMs; // a triage turn: one turn's budget
+    if (!liveRun) return startedAt + turnMs + allowance; // a triage turn: one turn's budget
     // As buildOne passes it to the build: whether the request is the
     // project's first version, from who it is for.
     const { rows: [requester] = [] } = await pool.query(
@@ -4068,7 +4097,7 @@ async function recoveryDeadline(pool, config, session, activeTurn) {
     );
     budgets = buildBudgets(app, config, turnMs, { firstVersion: requester?.first_version === true });
   }
-  return startedAt + (activeTurn.mode === 'scout'
+  return startedAt + allowance + (activeTurn.mode === 'scout'
     ? Math.min(budgets.turnBudgetMs, budgets.specBudgetMs)
     : budgets.turnBudgetMs);
 }
@@ -4128,11 +4157,9 @@ async function debitRecovered(pool, session, costUsd, deps = {}) {
 /**
  * A recovered turn of the bot's, finished. `result` is what the journal
  * replay returned; `timedOut` says the bot's clock, re-armed by recovery,
- * ended it; `clockLeftMs` is what that clock had left when this recovery
- * took the turn (null with no clock), which says whether the restart
- * reached the turn before its time was up (completeRecoveredLive). Never
- * throws on the run's account: recovery clears the turn record whatever
- * this does.
+ * ended it, its time given back for each restart that reached the turn
+ * (recoveryDeadline). Never throws on the run's account: recovery clears
+ * the turn record whatever this does.
  *
  *   - a build turn: recorded on its run, built or failed, as shadowBuild
  *     records one, and its cost debited from the allowance;
@@ -4143,10 +4170,10 @@ async function debitRecovered(pool, session, costUsd, deps = {}) {
  *     row it held is released and triaged again.
  */
 async function finishRecoveredTurn({
-  pool, session, activeTurn, result = {}, timedOut = false, clockLeftMs = null, deps = {},
+  pool, session, activeTurn, result = {}, timedOut = false, deps = {},
 }) {
   const run = await runOfSession(pool, session.id);
-  if (!run && await noteRecoveredLive(pool, session, { mode: activeTurn?.mode, result, timedOut, clockLeftMs })) {
+  if (!run && await noteRecoveredLive(pool, session, { mode: activeTurn?.mode, result, timedOut })) {
     return 'live_pending';
   }
   if (!run) {
@@ -4174,31 +4201,6 @@ async function finishRecoveredTurn({
       await pool.query('UPDATE homeroom_bot_runs SET build_spec_md = $2 WHERE id = $1', [run.id, read.specMd]);
     }
     await handBackRun(pool, run.id, read.ok ? 'the spec is written; the build goes on from it' : read.error);
-    return 'requeued';
-  }
-
-  // A shadow build whose clock a restart ran out (restartRanItOut): not the
-  // build's own failure, so it goes round again from the spec it wrote, as
-  // the live path's does (#3895). The attempt stays spent, so the lane's own
-  // cap (MAX_BUILD_ATTEMPTS) bounds a request deploys keep catching: the
-  // next one that runs out is recorded as below. Before, it was recorded
-  // failed at once (one-minute-civilization #28, pourover #55, 10-03).
-  if (restartRanItOut({ mode: activeTurn?.mode, timedOut, clockLeftMs })
-      && Number(run.build_attempts) < MAX_BUILD_ATTEMPTS) {
-    const spentUsd = await sessionCostUsd(pool, session.id);
-    await pool.query(
-      `UPDATE homeroom_bot_runs r
-          SET build_at = NULL, build_session_id = NULL,
-              build_spec_md = COALESCE(r.build_spec_md, (SELECT spec_md FROM chat_sessions WHERE id = $2))
-        WHERE r.id = $1 AND r.build_ok IS NULL`,
-      [run.id, session.id],
-    );
-    await putAwayRecoveredSession(pool, session, { archive: true });
-    await debitRecovered(pool, session, spentUsd, deps);
-    log.info('homeroom-bot', 'A restart ran a shadow build out of time; it goes round again', {
-      runId: run.id, sessionId: session.id, attempts: Number(run.build_attempts), costUsd: spentUsd,
-    });
-    wakeBuilds();
     return 'requeued';
   }
 
@@ -4300,41 +4302,14 @@ const RESTARTED_BUILD_NOTE = 'by a restart; the issue was sent back to be triage
 // again each time (a new ready run, a new spec on the issue, more spend) and
 // never ended in a proposal or in a word about why. A spec turn that wrote a
 // plan no longer goes round (resumeLiveBuildFromSpec), so this is the
-// backstop for the rest: a worker lost with the restart, a spec turn cut
-// short before it had a plan, a build turn whose time ran out after a
-// restart reached it (restartRanItOut). The third one in a row within the
-// window is not sent back: it is recorded failed and said, as any failed
-// build is, and a reply or Run now starts it again.
+// backstop for the rest: a worker lost with the restart, or a spec turn cut
+// short before it had a plan. (A build turn whose time ran out is no longer
+// one of them: its restarts are given back on its clock, recoveryDeadline.)
+// The third one in a row within the window is not sent back: it is recorded
+// failed and said, as any failed build is, and a reply or Run now starts it
+// again.
 const MAX_RESTARTED_BUILDS = 3;
 const RESTARTED_BUILDS_WINDOW_HOURS = 24;
-
-/**
- * Pure: whether a build turn recovery followed ran out of time because a
- * restart reached it, rather than on its own. True when the bot's clock
- * ended it in recovery (`timedOut`) and still had time left when this
- * recovery took the turn (`clockLeftMs`): the restart reached the build
- * before its time was up.
- *
- * The clock is the turn's start plus its budget (recoveryDeadline), and it
- * counts every restart in between: the platform going down and coming back,
- * the turn followed by nobody, and the worker's own calls back to the
- * platform (its push, its Homeroom reads, the app's platform endpoints
- * in-loop), which can fail while it restarts. Nothing on the turn says how
- * much of its time that took, so a build caught by deploys is not told it
- * took too long: on
- * 5 Oct 2026 four deploys in eight minutes landed in the middle of Page
- * Turners #3's build, and its requester was told it "ran past its time
- * limit (finished after a restart)", with nobody to pick it up. It goes
- * round again instead, as any build a restart interrupted does, counted by
- * MAX_RESTARTED_BUILDS. A build whose time was up before any restart
- * reached it (the live path's clock ended it, or ran out while the platform
- * was down) ran too long on its own, and is said to have failed; so is one
- * that runs out of time on a try no restart reaches, on the live path.
- */
-function restartRanItOut(plan) {
-  return !!plan && plan.mode !== 'scout' && !plan.lost && plan.timedOut === true
-    && Number(plan.clockLeftMs) > 0;
-}
 
 /**
  * How many of the request's latest live builds before `runId`, back to back
@@ -4628,17 +4603,17 @@ async function reviewRecoveredBuild({ pool, config, bot, app, repo, session, pla
  * Finish a live build recovery noted, once the session is free:
  *   - a build turn that pushed commits is proposed, and the proposal (and its
  *     spec) said on the issue, as the live path would have;
- *   - a build turn that pushed nothing, or whose time was up before the
- *     restart reached it, is said to have failed;
+ *   - a build turn that pushed nothing, or whose time ran out (its clock
+ *     gave back what its restarts cost it: recoveryDeadline), is said to
+ *     have failed;
  *   - a spec turn that found the request impossible says so;
  *   - a spec turn that wrote a plan keeps it, and the build goes on from it
- *     (resumeLiveBuildFromSpec);
- *   - any other spec turn, a build turn whose time ran out after the restart
- *     reached it (restartRanItOut), and a turn recovery could not follow at
- *     all, send the issue back to be triaged again: its queue row is gone,
- *     and without this the issue would sit on "looking into it" for good.
- *     The third such build in a row (MAX_RESTARTED_BUILDS) is said to have
- *     failed instead.
+ *     (resumeLiveBuildFromSpec), with nothing said: nothing was lost;
+ *   - any other spec turn, and a turn recovery could not follow at all,
+ *     send the issue back to be triaged again: its queue row is gone, and
+ *     without this the issue would sit on "looking into it" for good. Its
+ *     requester hears that it started again. The third such build in a row
+ *     (MAX_RESTARTED_BUILDS) is said to have failed instead.
  * Never throws; returns what it did, or null when nothing was noted.
  */
 async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }) {
@@ -4672,13 +4647,10 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
     if (reviewerUsd > 0) await debitRecovered(pool, session, reviewerUsd, deps);
     const specRead = plan.mode === 'scout' && !plan.lost && !plan.timedOut
       ? live.readSpec(plan.result?.lastResultText, { parts: plan.result?.answerParts }) : null;
-    // A build turn a restart reached in time, whose clock then ran out: not
-    // the build's own failure (restartRanItOut).
-    const ranOut = restartRanItOut(plan);
     // Set when restarts have cut this request's builds short too many times
     // in a row to send it round again (MAX_RESTARTED_BUILDS).
     let restartedOut = 0;
-    if (!reviewing && (plan.lost || ranOut || (plan.mode === 'scout' && !specRead?.blocked))) {
+    if (!reviewing && (plan.lost || (plan.mode === 'scout' && !specRead?.blocked))) {
       await archive();
       // WP1 (#2): a build its request no longer needs (stopped by its merge,
       // or answered by another proposal of the bot's) is not started again:
@@ -4695,7 +4667,9 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
         return 'skipped';
       }
       // The person it is for hears it once, so a card that goes back a step
-      // is never a mystery (WP1, #9). Never a reason recovery fails.
+      // is never a mystery (WP1, #9), and only when it does: a kept plan
+      // goes on to its build as it would have anyway. Never a reason
+      // recovery fails.
       const sayRestarted = () => (deps.dm || require('./homeroom-bot-dm')).noteBuildRestarted(pool, {
         app, issueNumber: plan.issueNumber, runId: plan.runId,
       }).catch((err) => log.warn('homeroom-bot', 'Could not say a build was started again', { sessionId, err: err.message }));
@@ -4707,10 +4681,12 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
       if (specRead?.ok && await resumeLiveBuildFromSpec(pool, {
         runId: plan.runId, appId: plan.appId, specMd: specRead.specMd, costUsd,
       })) {
+        // Nothing said (7 Oct 2026): the spec ran to its end through the
+        // restart and its build starts from it as it would have, so "My
+        // build was interrupted, so I've started it again" was not true.
         log.info('homeroom-bot', 'Kept the plan of a live build a restart interrupted; its build goes on from it', {
           app: app.slug, issueNumber: plan.issueNumber, sessionId,
         });
-        await sayRestarted();
         return 'resumed';
       }
       const before = await restartedBuildsBefore(pool, plan).catch(() => 0);
@@ -4719,9 +4695,7 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
         // issue goes round again as a new run, which speaks for itself. Left
         // unrecorded, it read as a build with a session and no outcome (run
         // 613), indistinguishable from one still going.
-        const what = plan.lost ? (plan.why || 'the turn was lost')
-          : ranOut ? 'the build turn ran out of time after it was cut short'
-            : 'the spec turn was cut short';
+        const what = plan.lost ? (plan.why || 'the turn was lost') : 'the spec turn was cut short';
         await recordLiveBuild(pool, plan.runId, {
           ok: false, sessionId: Number(sessionId), costUsd,
           error: `interrupted: ${what} ${RESTARTED_BUILD_NOTE}`,
@@ -4742,7 +4716,7 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
       await botConfigs().abandonSideBuilds(pool, plan.runId, 'cut short by restarts too many times');
       log.warn('homeroom-bot', 'Restarts cut a live build short too many times in a row; not sending it back', {
         app: app.slug, issueNumber: plan.issueNumber, sessionId, inARow: restartedOut,
-        why: plan.why || (ranOut ? 'the build turn ran out of time after a restart' : plan.mode),
+        why: plan.why || plan.mode,
       });
     }
 
@@ -8473,7 +8447,8 @@ module.exports = {
   FAILED_TRIAGE_RETRY_AFTER_MS,
   RESTARTED_BUILD_NOTE,
   MAX_RESTARTED_BUILDS,
-  restartRanItOut,
+  restartAllowanceMs,
+  RESTART_ALLOWANCE_MS,
   APP_AGAIN_REASON,
   CHECKS_REASON,
   SELF_QUEUED_REASONS,

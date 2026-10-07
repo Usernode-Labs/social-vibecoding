@@ -4365,22 +4365,25 @@ async function resumeDetachedTurnInner({
   // Checked first: a trial's session is never the bot's, but the dev-chat
   // tail must be unreachable for it whatever the bot check says.
   //
-  // What the clock had left when this recovery took the turn goes to the
-  // bot with the result: a build whose time runs out after a restart reached
-  // it is sent round again, not said to have taken too long
-  // (homeroom-bot.js restartRanItOut).
+  // Each restart that reaches the turn is counted on its record first, and
+  // the bot's clock gives that time back (homeroom-bot.js
+  // RESTART_ALLOWANCE_MS): the worker ran on, so a restart costs a build only
+  // the calls it makes back to the platform while the platform is down. A
+  // build whose clock still runs out ran too long on its own (7 Oct 2026:
+  // two builds that ran on through every restart were each sent round again
+  // from the start, twice).
   const benchTurn = require('./src/services/bench/runner').isBenchSession(session);
   const botTurn = !benchTurn && homeroomBotRecovery().isRecoveredBotSession(session);
   let botTimedOut = false;
   let botClock = null;
-  let botClockLeftMs = null;
   if (botTurn || benchTurn) {
+    const restarts = await turnLifecycle.noteRestart(pool, { sessionId, turnId: activeTurn.turnId }).catch(() => null);
+    const clockTurn = Number.isInteger(restarts) ? { ...activeTurn, restarts } : activeTurn;
     const deadline = await (benchTurn
-      ? require('./src/services/bench/lane').recoveryDeadline(pool, config, session, activeTurn)
-      : homeroomBotRecovery().recoveryDeadline(pool, config, session, activeTurn)).catch(() => null);
+      ? require('./src/services/bench/lane').recoveryDeadline(pool, config, session, clockTurn)
+      : homeroomBotRecovery().recoveryDeadline(pool, config, session, clockTurn)).catch(() => null);
     if (deadline != null) {
       const botClockMs = Math.max(0, deadline - Date.now());
-      botClockLeftMs = botClockMs;
       botClock = setTimeout(() => {
         botTimedOut = true;
         Promise.resolve(worker.stopTurn(sessionId)).catch(() => {});
@@ -4666,7 +4669,7 @@ async function resumeDetachedTurnInner({
 
   if (botTurn) {
     await homeroomBotRecovery().finishRecoveredTurn({
-      pool, session, activeTurn: recoveryActiveTurn, result, timedOut: botTimedOut, clockLeftMs: botClockLeftMs,
+      pool, session, activeTurn: recoveryActiveTurn, result, timedOut: botTimedOut,
     });
     const botCleanup = turnCleanupArgs(recoveryActiveTurn);
     recoveryRetry.requireDurableTurnCleanup(

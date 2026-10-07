@@ -582,7 +582,7 @@ test('a live build always records its outcome, against the full PostgreSQL schem
     assert.deepEqual(kept, { build_ok: null, build_error: null, build_session_id: null, build_spec_md: PLAN, waiting: true },
       'the same run waits for its build again, with its plan');
     assert.deepEqual(await queueRows(), [], 'not sent back to be triaged and planned again');
-    assert.deepEqual(told, [runId], 'its requester hears once that it started again');
+    assert.deepEqual(told, [], 'nothing said: the plan ran to its end, and its build starts from it as it would have (7 Oct 2026)');
 
     // The lane hands it over with its plan, and the build is made from it.
     // What the plan cost, as recovery would have recorded it from the
