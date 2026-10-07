@@ -1510,10 +1510,14 @@ async function becomeLeader() {
   // on the cluster; services/check-harvest.js seats every such run and
   // reads its verdict rather than starting it over. Its claim phase is two
   // writes per run and completes before the chain moves on, so by the time
-  // reconcileStuckChecks looks, every harvestable session reads as in flight
-  // (checkRecoveryInFlight) and only genuinely ownerless rows get re-driven.
-  // The Job reads themselves run detached (`done`); boot never waits on a
-  // Job. No-op outside the Kubernetes capture runtime.
+  // reconcileStuckChecks looks, every run it could seat reads as in flight
+  // (checkRecoveryInFlight). It can seat a run only once its owner's
+  // heartbeat has lapsed: the old leader hands its rows over as it exits
+  // (check-runs.release in cleanup), and for a run whose process died
+  // without doing so, reconcileStuckChecks asks the cluster before it
+  // starts anything over (checkRunLeftToHarvest). The Job reads themselves
+  // run detached (`done`); boot never waits on a Job. No-op outside the
+  // Kubernetes capture runtime.
   const checkHarvest = require('./src/services/check-harvest');
   const mainWatch = require('./src/services/main-watch');
   const mergeFollowups = require('./src/services/merge-followup-recovery');
@@ -2108,6 +2112,25 @@ function checkRecoveryInFlight(sessionId) {
     || require('./src/services/check-harvest').isHarvesting(sessionId);
 }
 
+// The stale sweep's other question, the one no process can answer from its
+// own memory: does the session's run still have its Jobs on the cluster?
+// A run whose process has gone, or the harvest of one, is not in flight
+// here until the harvest seats it, which waits for the gone owner's
+// heartbeat to lapse. Starting it over in that gap threw finished suites
+// away and, under the preview lifecycle, cancelled running ones (7 Oct
+// 2026). The harvest settles it instead (check-harvest.runOnCluster).
+async function checkRunLeftToHarvest(config, pool, session, reason) {
+  const run = await require('./src/services/check-harvest').runOnCluster(config, pool, session, {
+    staleMs: CHECKS_STALE_MS,
+  });
+  if (run) {
+    log.info('server', 'Stuck checks still have their run on the cluster; leaving it to the harvest', {
+      sessionId: session.id, reason, ...run,
+    });
+  }
+  return !!run;
+}
+
 // #447: reconcile stuck proposal checks. check_state is only ever advanced
 // out of 'pending' by the same captureForSession invocation that set it, so
 // a process restart/crash mid-capture (or a staging rebuild that predated
@@ -2146,9 +2169,14 @@ async function reconcileStuckChecks(config) {
 
   const MAX_RECHECKS = 5;
   let rechecked = 0;
+  let leftToHarvest = 0;
   for (const session of rows) {
     if (rechecked >= MAX_RECHECKS) break;
     if (checkRecoveryInFlight(session.id)) continue;
+    if (await checkRunLeftToHarvest(config, pool, session, 'stuck-checks-boot')) {
+      leftToHarvest++;
+      continue;
+    }
     rechecked++;
     try {
       await stagingRecovery.recheckSessionChecks({
@@ -2161,7 +2189,7 @@ async function reconcileStuckChecks(config) {
     }
   }
   log.info('server', 'Stuck-check reconciliation complete', {
-    scanned: rows.length, rechecked,
+    scanned: rows.length, rechecked, leftToHarvest,
   });
 }
 
@@ -5442,6 +5470,7 @@ function startSessionAutoPauseSweeper(config) {
         if (checkRecoveryInFlight(session.id)) continue;
         const last = checkRecheckAttempts.get(session.id) || 0;
         if (Date.now() - last < STAGING_HEAL_COOLDOWN_MS) continue;
+        if (await checkRunLeftToHarvest(config, pool, session, 'stuck-checks-sweep')) continue;
         // Stamp BEFORE the (minutes-long) recheck so a later tick won't kick
         // off a duplicate concurrent run for the same session.
         checkRecheckAttempts.set(session.id, Date.now());
@@ -6442,6 +6471,27 @@ async function cleanup() {
       building: interruptedBuilds.slice(0, 20),
       marked: marked ? marked.length : 0,
       timedOut: marked === null,
+    });
+  }
+
+  // The checks runs this process launched, or was harvesting, go on without
+  // it: their Jobs belong to the cluster. Their rows still carry this
+  // process's heartbeat, though, and the next leader's boot harvest seats
+  // only a row whose heartbeat has lapsed, so hand them over
+  // (check-runs.release) BEFORE the leader lock is released below. Bounded
+  // like the build mark above.
+  const checkHarvest = require('./src/services/check-harvest');
+  if (shutdownPool && checkHarvest.isEnabled(config)) {
+    let releaseTimer = null;
+    const released = await Promise.race([
+      require('./src/services/check-runs').release(shutdownPool),
+      new Promise((resolve) => {
+        releaseTimer = setTimeout(() => resolve(null), BUILD_SHUTDOWN_MARK_TIMEOUT_MS);
+      }),
+    ]);
+    if (releaseTimer) clearTimeout(releaseTimer);
+    log.info('server', 'Handed this process\'s checks runs to the next harvest on shutdown', {
+      runs: released || 0, timedOut: released === null,
     });
   }
 

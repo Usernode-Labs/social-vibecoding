@@ -253,6 +253,17 @@ stuck — and every `CHECK_HARVEST_SWEEP_MS` (30s) after, at most
 - **moot** when the session no longer wants the run — decided meanwhile, head
   moved, session closed, or (under the preview lifecycle) a newer run owns it.
 
+A platform process that shuts down hands its rows over first: it stamps
+their heartbeat as long past, so the next leader's boot sweep seats them at
+once instead of a minute later. A run whose process died without doing so is
+still covered: before the stale sweep starts a session over, it looks for that
+session's current run on the cluster. If the capture Job is still running, or
+the run finished less than `CHECKS_STALE_MS` ago, the harvest settles it
+instead. A run that starts stops the still-running Jobs of the session's runs
+for other commits (background deletion; their input Secrets go with them).
+Runs for the same commit are left to finish, because their verdict still
+counts.
+
 Under `PREVIEW_LIFECYCLE_ENABLED` the harvester adopts the run's
 `preview_operations` row first and writes through the same ownership check a
 live run does; a request for a newer revision aborts the harvest. Outside the
