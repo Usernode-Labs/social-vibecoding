@@ -935,6 +935,14 @@ web revocation must still succeed before invoking native logout.
 Remote revocation is best effort on the offline path; this does not revoke a
 server-side session while the server is unreachable or queue a later retry.
 
+Social does not wait on native indefinitely (#3915). Once web revocation has
+succeeded it leaves for its public landing page 8 seconds after invoking
+`logout()` even if native has not answered, and 5 seconds after an answer that
+did not replace the document. Native must therefore keep cleanup independent of
+the old document once admitted, and still replace whatever document is showing
+when it finishes. On the offline path, where web revocation failed, Social waits
+for native's answer instead, because only native can delete the live cookie.
+
 ## Trust model
 
 - The native transaction confirm sheet remains the sole native chrome over
