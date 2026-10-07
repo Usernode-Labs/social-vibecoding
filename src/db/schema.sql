@@ -8721,6 +8721,46 @@ CREATE INDEX IF NOT EXISTS idx_waitlist_signups_project_invite
   ON waitlist_signups (project_invite_id) WHERE project_invite_id IS NOT NULL;
 COMMENT ON COLUMN waitlist_signups.project_invite_id IS 'staging:private';
 
+-- ── Phone rows on the waitlist (#4223) ─────────────────────────────────
+--
+-- An account with a verified phone (user_phone_identities) joins from
+-- Home's waitlist card with one tap and no email (services/member-waitlist.js,
+-- joinWithPhone). Its row has email NULL, linked_user_id set and
+-- confirmed_at stamped at insert: the verified phone stands for the
+-- confirmation. Releasing one is HELD until outbound SMS exists (#4096), so
+-- releaseWaitlistSignup refuses a row without an address.
+--
+-- The UNIQUE constraint on email stays: emails are stored lowercased by every
+-- writer, `ON CONFLICT (email)` names it, and NULLs are distinct under it, so
+-- any number of phone rows fit. The case-insensitive index below states the
+-- same rule on LOWER(email), created the way users_email_lower_unique is: a
+-- legacy case-variant pair downgrades to a warning, never a boot failure.
+--
+-- One phone row per account. Not one row of ANY kind per account: rows
+-- linked twice already exist (an account that confirmed two addresses on the
+-- card) and a full index would fail to build on them, and an account merge
+-- (services/user-merge.js) drops a merged account's rows that collide on a
+-- unique index, which would delete a real email signup. The member card's
+-- own writers keep the wider rule: joinWithPhone inserts only for an account
+-- with no listed row, and adding an email folds the phone row into it.
+ALTER TABLE waitlist_signups ALTER COLUMN email DROP NOT NULL;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+     WHERE schemaname = current_schema() AND indexname = 'waitlist_signups_email_lower_unique'
+  ) THEN
+    BEGIN
+      CREATE UNIQUE INDEX waitlist_signups_email_lower_unique
+        ON waitlist_signups (LOWER(email)) WHERE email IS NOT NULL;
+    EXCEPTION WHEN unique_violation THEN
+      RAISE WARNING 'waitlist_signups_email_lower_unique not created: case-variant duplicate emails exist; the raw-column UNIQUE (email) is kept';
+    END;
+  END IF;
+END $$;
+CREATE UNIQUE INDEX IF NOT EXISTS waitlist_signups_phone_row_unique
+  ON waitlist_signups (linked_user_id) WHERE email IS NULL;
+
 -- ── Proposal freshness (#1442) ─────────────────────────────────────────
 --
 -- Three numbers a voter reads off a promoted proposal — how far behind main

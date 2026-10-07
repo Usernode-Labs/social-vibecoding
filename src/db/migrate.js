@@ -12661,6 +12661,19 @@ async function seedStagingTopochain(pool, config) {
       [USERS.bpReleased]
     );
 
+    // 900507: a PHONE row (#4223), the eighth thing the screen renders
+    // differently. Joined from Home's card with a verified phone, so it has
+    // no email, is linked to its account and confirmed at once. The screen
+    // shows it by account ("@username", "Phone") with Admit disabled and
+    // "Needs SMS (#4096)", since nothing can tell it that it is in yet.
+    await pool.query(
+      `INSERT INTO waitlist_signups
+         (id, email, submitted_at, linked_user_id, confirmed_at, more_token)
+       VALUES (900507, NULL, NOW() - INTERVAL '5 days', $1, NOW() - INTERVAL '5 days', NULL)
+       ON CONFLICT (id) DO NOTHING`,
+      [USERS.bpPending]
+    );
+
     // ON CONFLICT DO NOTHING above means an edit to a seeded `answers`
     // literal only lands on a database that has never seen the row. Three
     // fixtures are re-asserted here so a staging DB seeded before this
