@@ -186,6 +186,16 @@ function CheckRowView({ r }: { r: CheckRow }): ReactNode {
               ))}
             </ul>
           ) : null}
+          {r.details && r.details.length ? (
+            <ul className="dev-ledger-why-details mt-1 space-y-1">
+              {r.details.map((d, i) => (
+                <li key={i}>
+                  <div className="font-medium">{d.file ? `${d.file} · ${d.test}` : d.test}</div>
+                  <pre className="dev-ledger-why-excerpt mt-0.5 max-h-60 overflow-auto whitespace-pre-wrap break-words rounded bg-zinc-500/10 p-2 font-mono text-[0.7rem]">{d.excerpt}</pre>
+                </li>
+              ))}
+            </ul>
+          ) : null}
         </div>
       </details>
     </li>

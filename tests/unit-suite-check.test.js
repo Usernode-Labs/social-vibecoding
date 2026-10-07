@@ -400,3 +400,109 @@ for (const failed of [false, true]) {
     if (failed) assert.match(out.row.failureReason, /^\(file not reported\) \(1\): regression \| # tests 2/);
   });
 }
+
+// ── failureExcerpts (#3978) ────────────────────────────────────────────
+//
+// The reason names which tests failed; it never said why. Six Postgres
+// suites failed in the check container and passed on the author's machine,
+// and with only their names nobody could tell an assertion from a schema
+// error, a timeout or the environment. Each failing test now keeps a
+// bounded, redacted excerpt of what the runner printed about it.
+
+// A describe() whose one subtest failed, the way node:test prints it: the
+// subtest's block (indented) comes BEFORE the parent's own `not ok`, and
+// the parent's block only says how many subtests failed.
+const nestedFail = (n, name, file) => [
+  `# Subtest: ${name}`,
+  '    # Subtest: inner case',
+  '    not ok 1 - inner case',
+  '      ---',
+  '      duration_ms: 3.1',
+  `      location: '${WS}/${file}:5:3'`,
+  "      failureType: 'testCodeFailure'",
+  '      error: |-',
+  '        Expected values to be strictly equal:',
+  '',
+  '        1 !== 2',
+  "      code: 'ERR_ASSERTION'",
+  '      expected: 2',
+  '      actual: 1',
+  "      operator: 'strictEqual'",
+  '      stack: |-',
+  ...Array.from({ length: 12 }, (_, i) => `        frame${i} (${WS}/${file}:${i + 7}:12)`),
+  '      ...',
+  '    1..1',
+  '# connecting to postgres://bot:hunter2secret@db:5432/app',
+  `not ok ${n} - ${name}`,
+  '  ---',
+  '  duration_ms: 5.2',
+  "  type: 'suite'",
+  `  location: '${WS}/${file}:3:1'`,
+  "  failureType: 'subtestsFailed'",
+  "  error: '1 subtest failed'",
+  "  code: 'ERR_TEST_FAILURE'",
+  '  ...',
+].join('\n');
+
+test('each failing test keeps the error, expected/actual and the first stack frames', () => {
+  const out = tapRun([tapFail(1, 'plain', 'tests/a.test.js'), nestedFail(2, 'bot hello', 'tests/b.test.js')]);
+  const details = unitSuite.failureExcerpts(out, '');
+  assert.equal(details.length, 2);
+  assert.deepEqual(details.map((d) => [d.file, d.test]), [['tests/a.test.js', 'plain'], ['tests/b.test.js', 'bot hello']]);
+  assert.match(details[0].excerpt, /error: 'boom'/);
+  assert.match(details[0].excerpt, /code: 'ERR_ASSERTION'/);
+  assert.doesNotMatch(details[0].excerpt, /duration_ms|location:/, 'timing and location are not the diagnosis');
+  const nested = details[1].excerpt;
+  assert.match(nested, /▸ inner case/, 'the failing subtest is named');
+  assert.match(nested, /1 !== 2/);
+  assert.match(nested, /expected: 2/);
+  assert.match(nested, /actual: 1/);
+  assert.match(nested, /frame0 \(tests\/b\.test\.js:7:12\)/, 'workspace paths read repo-relative');
+  assert.match(nested, /frame7 /);
+  assert.doesNotMatch(nested, /frame8 /, 'the stack is cut to its first frames');
+  assert.ok(!nested.includes(WS), 'no absolute workspace path survives');
+});
+
+test('excerpts are redacted with the log rules', () => {
+  const details = unitSuite.failureExcerpts(tapRun([nestedFail(1, 'db', 'tests/b.test.js')]), '');
+  assert.match(details[0].excerpt, /postgres:\/\/bot:\*\*\*\*@db:5432\/app/, 'the host stays, the password goes');
+  assert.ok(!details[0].excerpt.includes('hunter2secret'));
+  const token = tapRun([tapFail(1, 'gh', 'tests/a.test.js').replace("error: 'boom'", `error: 'bad ghp_${'a'.repeat(30)}'`)]);
+  assert.ok(!unitSuite.failureExcerpts(token, '')[0].excerpt.includes('ghp_aaaa'));
+});
+
+test('excerpts are capped per test, in count and in total', () => {
+  const { FAILURE_EXCERPT_TESTS_MAX, FAILURE_EXCERPT_MAX, FAILURE_EXCERPTS_TOTAL_MAX } = require('../src/services/unit-suite-row');
+  const huge = (n) => tapFail(n, `t${n}`, 'tests/a.test.js').replace("error: 'boom'", `error: '${'x'.repeat(5000)}'`);
+  const details = unitSuite.failureExcerpts(tapRun(Array.from({ length: 30 }, (_, i) => huge(i + 1))), '');
+  assert.ok(details.length <= FAILURE_EXCERPT_TESTS_MAX);
+  assert.ok(details.every((d) => d.excerpt.length <= FAILURE_EXCERPT_MAX));
+  assert.ok(details.reduce((n, d) => n + d.excerpt.length, 0) <= FAILURE_EXCERPTS_TOTAL_MAX);
+  const many = unitSuite.failureExcerpts(tapRun(Array.from({ length: 30 }, (_, i) => tapFail(i + 1, `t${i}`, 'tests/a.test.js'))), '');
+  assert.equal(many.length, FAILURE_EXCERPT_TESTS_MAX);
+});
+
+test('non-TAP output has no excerpts; the row carries them only on failure', async (t) => {
+  assert.deepEqual(unitSuite.failureExcerpts('npm error 404', ''), []);
+  const github = require('../src/services/github');
+  const docker = require('../src/services/docker');
+  const history = require('../src/services/check-history');
+  t.mock.method(github, 'isEnabled', () => true);
+  t.mock.method(github, 'getFileContent', async () => '{"scripts":{"test":"node --test"}}');
+  t.mock.method(github, 'getCloneUrl', async () => 'https://example.test/repo');
+  t.mock.method(history, 'loadGraduated', async () => new Set());
+  t.mock.method(docker, 'runOneShot', async () => {
+    throw Object.assign(new Error('exit 1'), { stdout: tapRun([nestedFail(1, 'bot hello', 'tests/b.test.js')]), code: 1 });
+  });
+  const out = await unitSuite.maybeRunUnitSuite({ config: {}, pool: { query: async () => ({ rows: [] }) }, appId: 10, sessionId: 7, repoOwner: 'example', repoName: 'repo', ref: 'a'.repeat(40) });
+  assert.match(out.row.failureReason, /^tests\/b\.test\.js \(1\): bot hello \| /, 'the reason is unchanged');
+  assert.equal(out.row.failureDetails.length, 1);
+  assert.match(out.row.failureDetails[0].excerpt, /1 !== 2/);
+  const harvested = await unitSuite.outcomeFromLog({
+    pool: { query: async () => ({ rows: [] }) }, appId: 10, sessionId: 7, succeeded: false,
+    stdout: tapRun([nestedFail(1, 'bot hello', 'tests/b.test.js')]),
+  });
+  assert.deepEqual(harvested.row.failureDetails, out.row.failureDetails, 'the harvest path shapes the same details');
+  const passed = await unitSuite.outcomeFromLog({ pool: { query: async () => ({ rows: [] }) }, appId: 10, sessionId: 7, succeeded: true, stdout: 'ok 1 - a\n' });
+  assert.equal('failureDetails' in passed.row, false);
+});

@@ -15742,6 +15742,16 @@ const AppView = {
         message: String((e && e.message) || '').slice(0, 500),
         source: (e && e.source) ? String(e.source).slice(0, 200) : null,
       })),
+      // #3978. The repo unit suite's per-test failure excerpts (error,
+      // expected/actual, first stack frames), already bounded and redacted
+      // when the run stored them.
+      details: (Array.isArray(r && r.failureDetails) ? r.failureDetails : []).slice(0, 10)
+        .filter((d) => d && d.excerpt)
+        .map((d) => ({
+          file: d.file ? String(d.file).slice(0, 200) : null,
+          test: String(d.test || 'test').slice(0, 200),
+          excerpt: String(d.excerpt).slice(0, 1500),
+        })),
     });
 
     const blockingRows = results.filter((r) => r && r.status !== 'pass' && !r.advisory);

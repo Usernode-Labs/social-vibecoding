@@ -912,6 +912,22 @@ function failureReasonOf(result) {
   return first ? String(first.message) : '';
 }
 
+// The per-test excerpts a unit-suite row stored (services/unit-suite.js
+// failureExcerpts), re-capped at read time so an older or hand-written row
+// cannot widen the answer. Empty object when there are none.
+function failureDetailsOf(row) {
+  const list = Array.isArray(row && row.failureDetails) ? row.failureDetails : [];
+  const details = list
+    .filter((d) => d && typeof d === 'object' && d.excerpt)
+    .slice(0, unitSuiteRow.FAILURE_EXCERPT_TESTS_MAX)
+    .map((d) => ({
+      file: d.file ? untrusted(String(d.file), MAX_TITLE_CHARS) || null : null,
+      test: untrusted(String(d.test || 'unnamed test'), MAX_TITLE_CHARS),
+      excerpt: untrusted(String(d.excerpt), unitSuiteRow.FAILURE_EXCERPT_MAX),
+    }));
+  return details.length ? { details } : {};
+}
+
 function shapeChecks(session) {
   const results = Array.isArray(session.test_results) ? session.test_results : [];
   const failed = results.filter((t) => t && t.status && t.status !== 'pass');
@@ -983,6 +999,10 @@ function shapeChecks(session) {
       path: t.path ? untrusted(String(t.path), MAX_TITLE_CHARS) : null,
       reason: untrusted(failureReasonOf(t), unitSuiteRow.isUnitSuiteRow(t)
         ? unitSuiteRow.FAILURE_DETAIL_MAX : MAX_FAILURE_REASON_CHARS) || null,
+      // #3978. Why each failing unit test failed: the error, expected and
+      // actual, the first stack frames. Only rows that recorded it carry it,
+      // so `reason` above reads exactly as it did.
+      ...failureDetailsOf(t),
     })),
     total: results.length,
     error: session.check_error_detail
@@ -3481,6 +3501,15 @@ function registerTools(server, ctx) {
           name: z.string(),
           path: z.string().nullable(),
           reason: z.string().nullable(),
+          details: z.array(z.object({
+            file: z.string().nullable(),
+            test: z.string(),
+            excerpt: z.string(),
+          })).optional()
+            .describe('The repo unit suite only: per failing test (up to 10), its file, its name and a clipped, '
+              + 'redacted excerpt of what the runner printed: the error message, code, expected/actual and the '
+              + 'first stack frames. Read it to tell an assertion on the change from a schema error, a timeout '
+              + 'or an environment difference before pushing a fix.'),
         })).describe('WHY the first few failed — the navigation or assertion error the run recorded, falling back '
           + 'to the first console error. When every entry carries the same reason, that reason is the whole '
           + 'diagnosis and no test needs fixing.'),
