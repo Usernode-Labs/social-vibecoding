@@ -59,7 +59,6 @@ const SETTINGS_READ_PATHS = Object.freeze({
   ],
   usage: ['/api/me/ai-budget'],
   'api-key': ['/api/auth/me', '/api/me/ai-budget'],
-  'build-venue': ['/api/auth/me'],
   connectors: ['/api/me/connectors'],
   'linked-accounts': ['/api/me/social-identities', '/api/me/github'],
   'app-ai': ['/api/me/llm-grants'],
@@ -82,7 +81,6 @@ const SETTINGS_ACTION_MATCHERS = Object.freeze({
   'global-chat': [/^manual:settings\.global_chat\.update$/],
   openrouter: [/coding-agent/, /credentials\/openrouter/],
   'api-key': [/anthropic|api-key|credential/i],
-  'build-venue': [/dev-flow/],
   connectors: [/connectors/],
   'linked-accounts': [/social-identities|github/],
   'app-ai': [/llm-grants/],
@@ -497,7 +495,6 @@ function authProjection(group, data) {
     profile: ['username', 'displayName'],
     username: ['username'],
     'api-key': ['hasApiKey', 'keyLast4', 'demoKey'],
-    'build-venue': ['devFlowPreference', 'externalFlowsAvailable'],
     experimental: ['aiProgressEstimate', 'sessionBridgeEnabled', 'homeroomBotDm'],
   }[group] || [];
   return Object.fromEntries(fields.filter((key) => Object.hasOwn(user, key)).map((key) => [key, user[key]]));

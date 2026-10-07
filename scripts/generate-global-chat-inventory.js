@@ -249,7 +249,7 @@ const DOMAIN_RULES = [
   [/^\/api\/(?:votes|apps\/[^/]+\/(?:proposals|governance)|approver)/, 'governance'],
   [/^\/api\/(?:leaderboard|kudos|me\/(?:kudos|history|challenges)|v4\/leaderboard|v4\/season-events)/, 'leaderboards'],
   [/^\/api\/admin/, 'admin'],
-  [/^\/api\/(?:me\/(?:credentials|coding-agent|api-key|llm-grants|permission-grants|agent-files|cli|connectors|dev-flow)|apps\/[^/]+\/(?:permissions|llm-grant|secrets|files))/, 'settings'],
+  [/^\/api\/(?:me\/(?:credentials|coding-agent|api-key|llm-grants|permission-grants|agent-files|cli|connectors)|apps\/[^/]+\/(?:permissions|llm-grant|secrets|files))/, 'settings'],
   [/^\/api\/(?:apps|favorites|gallery|home|workshop|campaigns)/, 'apps'],
 ];
 

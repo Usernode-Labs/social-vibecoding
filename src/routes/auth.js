@@ -69,12 +69,6 @@ const SESSION_DAYS = 90;
 // password_reset mail template copy (src/services/mail/templates.js).
 const RESET_TOKEN_TTL_MS = 30 * 60 * 1000;
 
-// Preferred development flow (#1049). The SAME allowlist as the CHECK on
-// users.dev_flow_preference and as DevFlowSelect.FLOWS in
-// public/js/dev-flow-select.js; tests/dev-flow-preference.test.js pins all
-// three together so a new flow can't land in one place only.
-const DEV_FLOWS = ['platform', 'claude-code', 'codex'];
-
 // Staging mock data (#555): llm_usage is staging:private, so in a
 // prod-cloned staging DB every viewer's AI-credit row would render a
 // pristine "$20.00 of $20.00 left" and a reviewer couldn't tell that from
@@ -722,11 +716,6 @@ function authRoutes(config) {
     } catch (err) {
       log.warn('auth', 'App allowance lookup failed', { message: err.message });
     }
-    // Preferred development flow (#1049). Read here rather than in the
-    // per-request session hydration for the same reason as the profile
-    // block above: this endpoint already pays for one users lookup, and
-    // only this endpoint renders the value.
-    let devFlowPreference = null;
     // #2563: has this account still never picked the handle other members
     // see? Read in the same users lookup as the block above — it is one
     // more column on a row this endpoint already fetches.
@@ -774,7 +763,7 @@ function authRoutes(config) {
     try {
       const { rows } = await pool.query(
         `SELECT u.anthropic_key_enc, u.anthropic_key_last4, u.usernode_pubkey,
-                u.display_name, u.bio, u.dev_flow_preference,
+                u.display_name, u.bio,
                 u.needs_username_choice,
                 u.needs_communities_choice,
                 (u.username_provisional_since IS NOT NULL) AS username_provisional,
@@ -806,9 +795,6 @@ function authRoutes(config) {
       // switch plus whether this account actually holds a usable key.
       openrouterAvailable = config.codexOpenrouterEnabled === true
         && rows[0]?.openrouter_credential_valid === true;
-      devFlowPreference = DEV_FLOWS.includes(rows[0]?.dev_flow_preference)
-        ? rows[0].dev_flow_preference
-        : null;
       needsUsernameChoice = rows[0]?.needs_username_choice === true;
       usernameProvisional = rows[0]?.username_provisional === true;
       needsCommunitiesChoice = rows[0]?.needs_communities_choice === true;
@@ -971,10 +957,6 @@ function authRoutes(config) {
         // client renders what the server reports, it never sniffs the
         // environment itself.
         cliAuthEnabled: isCliSurfaceEnabled(config),
-        // Preferred development flow (#1049): 'platform' | 'claude-code' |
-        // 'codex', or null for "ask me every time" (the default — the
-        // dev-chat picker renders). Written by POST /api/me/dev-flow.
-        devFlowPreference,
         // Whether the Claude Code / Codex hand-off is offerable AT ALL in
         // this deployment. The external-agent flow needs the identity-only
         // GitHub link to attribute the user's fork, so with no GitHub OAuth
@@ -1242,36 +1224,6 @@ function authRoutes(config) {
       res.json({ ok: true, enabled });
     } catch (err) {
       log.error('settings', 'Failed to toggle Homeroom bot DM', { userId: req.user.id, err: err.message });
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-
-  // Preferred development flow (issue #1049). Written by the "remember my
-  // option" checkbox on the dev-chat flow picker and by Settings →
-  // Connections. Body { flow: 'platform' | 'claude-code' | 'codex' | null }
-  // — null (or "") clears it back to "ask me every time", which is what
-  // unticking the checkbox sends.
-  router.post('/api/me/dev-flow', sameOriginBrowserOnly, async (req, res) => {
-    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
-    const { flow } = req.body || {};
-
-    let normalized = null;
-    if (flow !== null && flow !== undefined && flow !== '') {
-      if (typeof flow !== 'string' || !DEV_FLOWS.includes(flow)) {
-        return res.status(400).json({ error: `flow must be one of ${DEV_FLOWS.join(', ')} or null` });
-      }
-      normalized = flow;
-    }
-
-    try {
-      await pool.query(
-        'UPDATE users SET dev_flow_preference = $1 WHERE id = $2',
-        [normalized, req.user.id]
-      );
-      log.info('settings', 'Dev flow preference saved', { userId: req.user.id, flow: normalized });
-      res.json({ ok: true, flow: normalized });
-    } catch (err) {
-      log.error('settings', 'Failed to save dev flow preference', { userId: req.user.id, err: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -1998,4 +1950,4 @@ function authRoutes(config) {
 
 // Apple and Google sign-in (routes/sign-in-providers.js) mints the same
 // session, with the same cookie, and answers with the same role fields.
-module.exports = { authRoutes, DEV_FLOWS, createSession, createSessionCookie, roleFields };
+module.exports = { authRoutes, createSession, createSessionCookie, roleFields };

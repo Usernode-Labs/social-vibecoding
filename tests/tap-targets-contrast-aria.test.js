@@ -212,9 +212,6 @@ test('Q20: form controls the audit found unnamed have names', () => {
   assert.match(waitlist, /<label className=\{SURVEY_LABEL\} htmlFor="waitlist-country">\s*Country/,
     'the Country label points at its select');
   assert.match(waitlist, /id="waitlist-country"/);
-  const connectors = read('frontend/src/features/settings/sections/connectors.tsx');
-  assert.match(connectors, /id="settings-dev-flow"\n\s*aria-label="Where changes get built"/,
-    'the dev-flow select is named after its heading');
   // Four text boxes that took focus announcing only "edit text".
   assert.match(read('frontend/src/features/messages/message-row.tsx'),
     /<textarea ref=\{editRef\} aria-label="Edit message"/, 'the message edit box');
