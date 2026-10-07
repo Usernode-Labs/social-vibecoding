@@ -5,7 +5,9 @@
  *
  *   GET  /api/me/waitlist          where they stand
  *   POST /api/me/waitlist/join     { email }: joins with the account's own
- *                                  address, or mails a code to another
+ *                                  address, or mails a code to another;
+ *                                  { phone: true }: joins with the verified
+ *                                  phone, no address asked (joinWithPhone)
  *   POST /api/me/waitlist/verify   { email, code }: confirms it and joins
  *
  * Signed in only. Anybody may ask where they stand; joining from here is for
@@ -54,6 +56,16 @@ function memberWaitlistRoutes(config) {
   router.post('/api/me/waitlist/join', drainGuard, otpRequestLimiter, otpRequestEmailLimiter,
     sameOriginBrowserOnly, waiting, async (req, res) => {
       try {
+        // A verified phone with no address in the body joins with one tap
+        // (services/member-waitlist.js joinWithPhone). With an email, or
+        // without the phone flag, today's email branch runs.
+        if (req.body?.phone === true && !req.body?.email) {
+          const result = await memberWaitlist.joinWithPhone(pool, {
+            userId: req.user.id,
+            ip: req.ip || null,
+          });
+          return res.json({ ok: true, ...result });
+        }
         const result = await memberWaitlist.join(pool, {
           userId: req.user.id,
           rawEmail: req.body?.email,

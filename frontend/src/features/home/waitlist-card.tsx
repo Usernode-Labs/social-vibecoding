@@ -7,13 +7,19 @@
  * making and sharing apps of their own is what the waitlist is for, and this
  * card is where they join it. In order:
  *
- *   join    "Make and share your own apps", and Join the waitlist;
+ *   join    "Make and share your own apps", and Join the waitlist. An
+ *           account with a verified phone and no confirmed email joins with
+ *           that one tap (the phone stands for the confirmation); "Use an
+ *           email instead" opens the email step for anyone who would
+ *           rather be told by mail;
  *   email   the address to join with: the account's own confirmed one joins
  *           with one press, another is sent a 6-digit code first. An address
  *           another account holds is refused (the server says so);
  *   code    the code from that mail;
  *   listed  "On the waitlist", where the news will go, and the optional
  *           "Want in sooner?" questions (#more/<token>, ../auth/more.tsx).
+ *           A phone-joined row is told it will be texted, once texting
+ *           exists; until then nothing goes out on release.
  *
  * NOT IN THE PRERENDER. Who is signed in arrives after hydration (the nav
  * store's `privateMember`, published by App._syncViewer), so the first render
@@ -36,6 +42,8 @@ type Standing = {
   email: string | null;
   accountEmail: string | null;
   moreToken: string | null;
+  /** A verified phone on the account (user_phone_identities). */
+  phone: boolean;
 };
 
 type Step = { kind: 'join' } | { kind: 'email' } | { kind: 'code'; email: string };
@@ -99,6 +107,9 @@ export function WaitlistCardBody({ standing, onListed }: {
   const [error, setError] = useState<string | null>(null);
 
   const own = !!standing.accountEmail && email.trim().toLowerCase() === standing.accountEmail;
+  // A verified phone with no confirmed address on the account: the one-tap
+  // join, no email step in between.
+  const phoneOnly = standing.phone && !standing.accountEmail;
 
   const join = useCallback(async (address: string) => {
     setBusy(true);
@@ -107,6 +118,20 @@ export function WaitlistCardBody({ standing, onListed }: {
       const { ok, data } = await post(JOIN_PATH, { email: address });
       if (!ok) { setError(data?.error || 'Could not join the waitlist. Try again.'); return; }
       if (data.next === 'code') { setCode(''); setStep({ kind: 'code', email: data.email }); return; }
+      onListed(data as Standing);
+    } catch {
+      setError('Could not join the waitlist. Try again.');
+    } finally {
+      setBusy(false);
+    }
+  }, [onListed]);
+
+  const joinByPhone = useCallback(async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const { ok, data } = await post(JOIN_PATH, { phone: true });
+      if (!ok) { setError(data?.error || 'Could not join the waitlist. Try again.'); return; }
       onListed(data as Standing);
     } catch {
       setError('Could not join the waitlist. Try again.');
@@ -137,7 +162,7 @@ export function WaitlistCardBody({ standing, onListed }: {
         <p className={BODY}>
           {standing.email
             ? `You’re on the waitlist. We’ll email ${standing.email} when it’s your turn.`
-            : 'You’re on the waitlist. We’ll email you when it’s your turn.'}
+            : 'You’re on the waitlist. We’ll text you when it’s your turn.'}
         </p>
         <p className={SMALL}>We let people in from the waitlist in batches. Until then, your group&rsquo;s apps are yours to use and change.</p>
         {standing.moreToken ? <Sooner token={standing.moreToken} /> : null}
@@ -221,11 +246,22 @@ export function WaitlistCardBody({ standing, onListed }: {
         size="pill"
         layout="full"
         className="mt-1 disabled:opacity-60"
-        onClick={() => setStep({ kind: 'email' })}
+        disabled={phoneOnly && busy}
+        onClick={() => { if (phoneOnly) void joinByPhone(); else setStep({ kind: 'email' }); }}
       >
         Join the waitlist
       </Button>
+      {phoneOnly ? <p role="alert" className={msgClass(error ? 'error' : null)}>{error}</p> : null}
       <p className={`${SMALL} text-center`}>We let people in from the waitlist in batches.</p>
+      {phoneOnly ? (
+        <button
+          type="button"
+          className={`${LINK} self-start min-h-[44px]`}
+          onClick={() => { setError(null); setStep({ kind: 'email' }); }}
+        >
+          Use an email instead
+        </button>
+      ) : null}
     </div>
   );
 }

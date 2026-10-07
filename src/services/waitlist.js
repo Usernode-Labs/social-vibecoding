@@ -57,6 +57,29 @@ function parseEmailList(text) {
   return { entries, skipped, duplicates };
 }
 
+// Join the platform waitlist FROM AN ACCOUNT, with no address: a private
+// member's verified phone (user_phone_identities) is the confirmation, so
+// the row is born linked and confirmed (services/member-waitlist.js
+// joinWithPhone). Idempotent by account: the partial unique index on
+// linked_user_id makes a second tap a no-op, and the first join keeps its
+// own more_token — the same rule joinWaitlist applies by email.
+async function joinWaitlistAsAccount(pool, { userId, ip = null }) {
+  const moreToken = crypto.randomBytes(24).toString('hex');
+  const { rows } = await pool.query(
+    `INSERT INTO waitlist_signups (email, ip, more_token, linked_user_id, confirmed_at)
+     VALUES (NULL, $2, $3, $1, NOW())
+     ON CONFLICT (linked_user_id) WHERE linked_user_id IS NOT NULL DO NOTHING
+     RETURNING submitted_at`,
+    [userId, ip, moreToken]
+  );
+  const created = rows.length > 0;
+  return {
+    created,
+    moreToken: created ? moreToken : null,
+    submittedAt: created ? rows[0].submitted_at : null,
+  };
+}
+
 // Join the platform waitlist. Idempotent by email: re-joining is a
 // silent no-op at the DATABASE level (the original submitted_at is kept).
 // Returns { created, moreToken, submittedAt } — created=false means the
@@ -422,10 +445,16 @@ async function linkUserByEmail(pool, { userId, email }) {
   const normalized = normalizeEmail(email);
   if (!normalized || !userId) return;
   try {
+    // The account may already hold a linked row of its own (a phone join,
+    // services/member-waitlist.js). At most one row links to an account
+    // (schema.sql), so linking a second would turn an ordinary signup into
+    // a 500; leaving the address unlinked is the right no-op.
     const { rows } = await pool.query(
       `UPDATE waitlist_signups
           SET linked_user_id = $1
         WHERE email = $2
+          AND NOT EXISTS (SELECT 1 FROM waitlist_signups o
+                           WHERE o.linked_user_id = $1 AND o.id <> waitlist_signups.id)
         RETURNING released_at`,
       [userId, normalized]
     );
@@ -460,9 +489,11 @@ async function releaseWaitlistSignup(pool, signupId) {
   if (!row) return null;
 
   let userId = row.linked_user_id;
-  if (!userId) {
+  if (!userId && row.email) {
     // The account may predate the waitlist row (or linkage was missed) —
-    // resolve by email and backfill the link.
+    // resolve by email and backfill the link. A row with no email (a phone
+    // join) is always linked, and an unlinked one has no account left to
+    // find — it just gets released_at.
     const { rows: userRows } = await pool.query(
       'SELECT id FROM users WHERE email = $1',
       [row.email]
@@ -470,7 +501,9 @@ async function releaseWaitlistSignup(pool, signupId) {
     if (userRows[0]) {
       userId = userRows[0].id;
       await pool.query(
-        'UPDATE waitlist_signups SET linked_user_id = $1 WHERE id = $2',
+        `UPDATE waitlist_signups SET linked_user_id = $1 WHERE id = $2
+          AND NOT EXISTS (SELECT 1 FROM waitlist_signups o
+                           WHERE o.linked_user_id = $1 AND o.id <> $2)`,
         [userId, row.id]
       );
     }
@@ -485,6 +518,7 @@ module.exports = {
   normalizeEmail,
   parseEmailList,
   joinWaitlist,
+  joinWaitlistAsAccount,
   getSignupByMoreToken,
   getSignupByEmail,
   hasReusableCode,

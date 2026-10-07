@@ -27,6 +27,23 @@ const poolMod = require('../src/db/pool');
 let currentMockPool = null;
 poolMod.getPool = () => currentMockPool;
 
+// The release routes mail on admit; the sends are recorded here instead of
+// made, so a test can assert that a phone-only row's release mails nobody.
+// Installed before the composer require, because the route binds the
+// mailer's function at require time.
+const mailerPath = require.resolve('../src/services/topochain/mailer');
+const releaseMails = [];
+require.cache[mailerPath] = {
+  loaded: true,
+  id: mailerPath,
+  filename: mailerPath,
+  exports: {
+    sendWaitlistReleaseMail: async (_config, email, opts) => {
+      releaseMails.push({ email, opts });
+    },
+  },
+};
+
 const { topochainAdminRoutes } = require('../src/routes/topochain/admin');
 const { SECTIONS } = require('../src/services/waitlist-signals');
 
@@ -47,6 +64,7 @@ let signupRows;
 let userRows;
 let mailRows;
 let socialRows;
+let phoneRows;
 
 function resetFixtures() {
   signupRows = [
@@ -136,6 +154,11 @@ function resetFixtures() {
     { user_id: 12, provider: 'x', handle: 'admitted_on_x' },
     { user_id: 11, provider: 'github', handle: 'anchor-gh' },
   ];
+  // Verified phones on the linked accounts. User 12 has one; user 11 does
+  // not. Only the last 4 digits ever reach the payload.
+  phoneRows = [
+    { user_id: 12, phone_e164: '+15550007777' },
+  ];
 }
 
 // ─── Mock pool ──────────────────────────────────────────────────────────
@@ -195,12 +218,14 @@ function decorate(r) {
   const mail = mailRows
     .filter((m) => m.recipient === r.email && m.kind === 'waitlist_released')
     .sort((a, b) => (b.created_at - a.created_at) || (b.id - a.id))[0] || null;
+  const phone = (r.linked_user_id != null && phoneRows.find((x) => x.user_id === r.linked_user_id)) || null;
   return {
     ...r,
     invited_count: signupRows.filter((c) => c.invited_by === r.id).length,
     invited_by_email: parent ? parent.email : null,
     linked_username: u ? u.username : null,
     has_platform_access: u ? u.has_platform_access : null,
+    phone_last4: phone ? phone.phone_e164.slice(-4) : null,
     invite_mail_status: mail ? mail.status : null,
     invite_mail_at: mail ? mail.created_at : null,
     invite_mail_error: mail ? mail.error : null,
@@ -252,6 +277,31 @@ function handleQuery(rawSql, params = []) {
     const removed = signupRows.filter((r) => ids.includes(r.id));
     signupRows = signupRows.filter((r) => !ids.includes(r.id));
     return { rows: removed.map((r) => ({ id: r.id, email: r.email })) };
+  }
+
+  // Admin release (services/waitlist.js releaseWaitlistSignup): the CTE
+  // marks released_at and reports whether this is the first release.
+  if (sql.startsWith('WITH prev AS (')) {
+    const row = signupRows.find((r) => r.id === Number(params[0]));
+    if (!row) return { rows: [] };
+    const newly = row.released_at == null;
+    row.released_at = row.released_at ?? T(0);
+    return {
+      rows: [{
+        id: row.id,
+        email: row.email,
+        released_at: row.released_at,
+        linked_user_id: row.linked_user_id,
+        more_token: row.more_token ?? null,
+        newly_released: newly,
+      }],
+    };
+  }
+
+  // The access grant a release carries (grantPlatformAccess): idempotent,
+  // and nothing here reads it back.
+  if (sql.startsWith('UPDATE users SET has_platform_access = TRUE')) {
+    return { rows: [] };
   }
 
   throw new Error(`Unhandled mock query: ${sql}`);
@@ -316,6 +366,7 @@ async function mutate(method, path, body, role = 'admin') {
 test.beforeEach(() => {
   resetFixtures();
   seenSql.length = 0;
+  releaseMails.length = 0;
   currentMockPool = makeMockPool();
 });
 
@@ -393,6 +444,45 @@ test('the delivery lookup is scoped to the waitlist_released kind', async () => 
   // LEFT JOIN LATERAL, not an inner join: a row with no delivery must
   // still appear in the queue.
   assert.match(list, /LEFT JOIN LATERAL/);
+  // The verified phone behind a phone-only row is what names it on the
+  // screen: the join and the 4-digit slice travel with the row.
+  assert.match(list, /LEFT JOIN user_phone_identities ph ON ph\.user_id = w\.linked_user_id/);
+  assert.match(list, /RIGHT\(ph\.phone_e164, 4\) AS phone_last4/);
+});
+
+// ─── Phone-only rows ────────────────────────────────────────────────────
+
+test('a row carries the last 4 digits of its account\'s verified phone, and null without one', async () => {
+  const { body } = await get('/api/v4/admin/waitlist');
+  const byId = new Map(body.data.map((r) => [r.id, r]));
+  assert.equal(byId.get(3).phone_last4, '7777');
+  assert.equal(byId.get(1).phone_last4, null, 'no phone on the account, no digits');
+  assert.equal(byId.get(5).phone_last4, null, 'no account, no digits');
+});
+
+// Releasing a phone-only row grants access as usual but has no address to
+// mail: the "you're in" text waits for outbound SMS (#4096), so admitting
+// one sends nothing — and still answers like any other release.
+test('releasing a phone-only row sends no release mail and still answers 200', async () => {
+  resetFixtures();
+  signupRows = [
+    {
+      id: 9,
+      email: null,
+      submitted_at: T(-1),
+      released_at: null,
+      confirmed_at: T(-1),
+      linked_user_id: 12,
+      invited_by: null,
+      answers: null,
+      more_token: 'ab'.repeat(24),
+    },
+  ];
+  const { status, body } = await mutate('POST', '/api/v4/admin/waitlist/9/release');
+  assert.equal(status, 200);
+  assert.equal(body.success, true);
+  assert.equal(body.data.email, null);
+  assert.deepEqual(releaseMails, [], 'no address, no mail — access is granted without one');
 });
 
 // ─── ?sort=answered ─────────────────────────────────────────────────────

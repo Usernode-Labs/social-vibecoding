@@ -6400,6 +6400,10 @@ COMMENT ON TABLE native_epoch_delegation_policies IS 'staging:private';
 -- (OTP verify or classic register), the linkage step points
 -- `linked_user_id` here and — if already released — grants
 -- `has_platform_access` on the spot. Emails are stored lowercased.
+-- A row may also have NO email: a private member with a verified phone
+-- (user_phone_identities) joins from their Home card with one tap, and
+-- the verified phone stands for the confirmation. Such a row is always
+-- linked to its account, and at most one row is linked to any account.
 CREATE TABLE IF NOT EXISTS waitlist_signups (
   id             BIGSERIAL PRIMARY KEY,
   email          VARCHAR(255) NOT NULL UNIQUE,
@@ -6431,6 +6435,25 @@ COMMENT ON COLUMN waitlist_signups.more_token IS 'staging:private';
 -- address never proved it can receive mail, which is exactly what an
 -- admin wants to see before releasing a row.
 ALTER TABLE waitlist_signups ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMPTZ;
+
+-- A private member joins with their verified phone: the address becomes
+-- optional, and the verified phone (user_phone_identities) stands for the
+-- confirmation (services/member-waitlist.js joinWithPhone). Email
+-- uniqueness stays the column constraint — every writer stores the
+-- address lowercased, so it already means "unique on LOWER(email) where
+-- not null", and Postgres lets any number of NULLs past a UNIQUE.
+ALTER TABLE waitlist_signups ALTER COLUMN email DROP NOT NULL;
+-- At most one row per account. Older data could hold two; keep the row
+-- stateFor already picks (earliest confirmed) and unlink the rest. The
+-- dedupe re-runs on every boot and matches nothing once the index below
+-- exists.
+UPDATE waitlist_signups w SET linked_user_id = NULL
+ WHERE w.linked_user_id IS NOT NULL
+   AND w.id <> (SELECT k.id FROM waitlist_signups k
+                 WHERE k.linked_user_id = w.linked_user_id
+                 ORDER BY (k.confirmed_at IS NULL), k.submitted_at, k.id LIMIT 1);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_waitlist_signups_linked_user_unique
+  ON waitlist_signups (linked_user_id) WHERE linked_user_id IS NOT NULL;
 
 -- Outbound mail log (src/services/mail/). Every send attempt lands here
 -- with its outcome, and it is the ONLY place an operator can see what

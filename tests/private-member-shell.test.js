@@ -122,6 +122,39 @@ test('the waitlist card: join, an email, a code, then On the waitlist with "Want
   assert.match(read('frontend/src/features/home/index.tsx'), /<AppsMore \/>\s+<\/section>[\s\S]*<WaitlistCard \/>\s+[\s\S]*<DiscoverSection \/>/);
 });
 
+test('the waitlist card, on a phone: one tap to join, an email instead, then "We\'ll text you"', () => {
+  const card = 'frontend/src/features/home/waitlist-card.tsx';
+  const phoneOnly = renderComponent(card, 'WaitlistCardBody', {
+    standing: { state: 'none', email: null, accountEmail: null, moreToken: null, phone: true },
+    onListed: () => {},
+  });
+  assert.match(phoneOnly, /data-waitlist-card="join"/);
+  assert.match(phoneOnly, /id="home-waitlist-join"[^>]*>Join the waitlist</);
+  assert.match(phoneOnly, /Use an email instead/, 'the email step stays one link away');
+  assert.doesNotMatch(phoneOnly, /Add your email/);
+
+  const listed = renderComponent(card, 'WaitlistCardBody', {
+    standing: { state: 'listed', email: null, accountEmail: null, moreToken: 'cd'.repeat(24), phone: true },
+    onListed: () => {},
+  });
+  assert.match(listed, /We’ll text you when it’s your turn\./);
+  assert.doesNotMatch(listed, /We’ll email/);
+
+  // The tap posts the phone branch of the join route (the spec's one-tap
+  // body), and the phone-only listed copy never names an address.
+  const src = read(card);
+  assert.match(src, /post\(JOIN_PATH, \{ phone: true \}\)/);
+  assert.match(src, /We’ll text you when it’s your turn/);
+});
+
+test('the waitlist card\'s routes: a phone join rides the same join route and limiters', () => {
+  const routes = read('src/routes/member-waitlist.js');
+  assert.match(routes, /if \(req\.body\?\.phone === true && !req\.body\?\.email\) \{\s+const result = await memberWaitlist\.joinWithPhone\(pool, \{\s+userId: req\.user\.id,\s+ip: req\.ip \|\| null,\s+\}\);\s+return res\.json\(\{ ok: true, \.\.\.result \}\);\s+\}/);
+  // The middleware chain is unchanged (the email join's test above pins it
+  // too): the phone branch sits inside the same handler.
+  assert.match(routes, /router\.post\('\/api\/me\/waitlist\/join', drainGuard, otpRequestLimiter, otpRequestEmailLimiter,\s+sameOriginBrowserOnly, waiting,/);
+});
+
 test('Home for a private member: no New project tile, Discover kept, no Challenges or Create panels', () => {
   const home = read('frontend/src/features/home/home.js');
   assert.match(home, /if \(App\.user\?\.privateMember\) create = null;/);

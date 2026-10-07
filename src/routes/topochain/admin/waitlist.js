@@ -40,6 +40,10 @@ function formatSignup(row) {
     confirmed_at: iso(row.confirmed_at),
     linked_user_id: row.linked_user_id != null ? Number(row.linked_user_id) : null,
     linked_username: row.linked_username ?? null,
+    // Last 4 digits of the verified phone behind a phone-only row — the
+    // most the screen ever shows of a number, and the only part that
+    // leaves the server. Null for an email row.
+    phone_last4: row.phone_last4 ?? null,
     has_platform_access: row.has_platform_access ?? null,
     // The other half of the invite graph. `invited_count` (below, via
     // signals) says how many this row brought in; these two say who
@@ -287,6 +291,16 @@ function waitlistAdminRoutes(config) {
   // release. `mobile` is the store-listing lookup, done once by the caller
   // so a batch does not repeat it per row.
   async function sendReleaseMail(released, mobile) {
+    // A phone-only row has no address to mail: access is granted as usual
+    // (grantPlatformAccess), but nobody is told — they find out the next
+    // time they open Homeroom. This is the hook for the "you're in" text
+    // once outbound SMS exists (#4096).
+    if (!released.email) {
+      log.info('topochain-admin', 'Released a phone-only waitlist row: no address, no mail', {
+        signupId: Number(released.id), linkedUserId: released.linked_user_id ?? null,
+      });
+      return;
+    }
     await sendWaitlistReleaseMail(config, released.email, {
       mobile,
       hasAccount: released.linked_user_id != null,
@@ -358,10 +372,12 @@ function waitlistAdminRoutes(config) {
                   AS invited_count,
                 p.email AS invited_by_email,
                 u.username AS linked_username, u.has_platform_access,
+                RIGHT(ph.phone_e164, 4) AS phone_last4,
                 m.status AS invite_mail_status, m.created_at AS invite_mail_at,
                 m.error AS invite_mail_error
            FROM waitlist_signups w
            LEFT JOIN users u ON u.id = w.linked_user_id
+           LEFT JOIN user_phone_identities ph ON ph.user_id = w.linked_user_id
            LEFT JOIN waitlist_signups p ON p.id = w.invited_by
            LEFT JOIN LATERAL (
              SELECT d.status, d.created_at, d.error

@@ -101,7 +101,9 @@ const canWrite = () => !!topo()?.canWrite();
 
 type WaitlistRow = {
   id: number;
-  email: string;
+  email: string | null;
+  /** Last 4 digits of the verified phone behind a phone-only row. */
+  phone_last4?: string | null;
   confirmed_at?: string | null;
   submitted_at?: string | null;
   released_at?: string | null;
@@ -879,6 +881,18 @@ function plural(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`;
 }
 
+// What the Signup column names a row by: its address, or — for a row that
+// joined with a verified phone and has none — the account it is linked to,
+// the word "Phone" and at most the last 4 digits of the number (the only
+// part the server sends). Every confirm and label that names a signup
+// reads this, so a phone row is never a blank cell.
+function signupLabel(w: WaitlistRow): string {
+  if (w.email) return w.email;
+  const handle = w.linked_username ? `@${w.linked_username}` : `signup #${w.id}`;
+  const digits = w.phone_last4 ? ` ··${w.phone_last4}` : '';
+  return `${handle} · Phone${digits}`;
+}
+
 // ── The story landing: what a signed-out visitor is asked to do ─────────
 //
 // On (the default), the landing tells the first-session story and asks them
@@ -1241,11 +1255,13 @@ const WAITLIST_COLUMNS: Column<WaitlistRow>[] = [
     tdClass: 'font-mono',
     cell: (w) => (
       <>
-        {w.email}
+        {signupLabel(w)}
         {w.confirmed_at ? (
           <span
             className="text-emerald-700 dark:text-emerald-400 text-xs"
-            title={`Followed the confirm link in the join email on ${fmt(w.confirmed_at)}`}
+            title={w.email
+              ? `Followed the confirm link in the join email on ${fmt(w.confirmed_at)}`
+              : 'Joined with a verified phone'}
           >
             {' ✓ confirmed'}
           </span>
@@ -1435,11 +1451,18 @@ function WaitlistScreen() {
     const unconfirmed = !w.confirmed_at
       ? ' This address was never confirmed, so the email may not reach anyone.'
       : '';
+    // A phone-only row has no address to mail: admitting still grants
+    // access, but nobody is told until outbound texting exists (#4096).
+    const phoneOnly = !w.email;
     const okd = await topo()._confirm({
-      title: `Admit ${w.email} off the waitlist?`,
-      message: `They get platform access straight away if they already have an account, `
-        + `otherwise the moment they create one. They will be emailed a link to sign in or `
-        + `create their account.${unconfirmed} This cannot be undone from here.`,
+      title: `Admit ${signupLabel(w)} off the waitlist?`,
+      message: phoneOnly
+        ? `They get platform access straight away. This signup has no email and texts are not `
+          + `set up yet, so nobody is told: they will see it the next time they open Homeroom. `
+          + `This cannot be undone from here.`
+        : `They get platform access straight away if they already have an account, `
+          + `otherwise the moment they create one. They will be emailed a link to sign in or `
+          + `create their account.${unconfirmed} This cannot be undone from here.`,
       confirmLabel: 'Admit',
     });
     if (!okd) return;
@@ -1451,7 +1474,7 @@ function WaitlistScreen() {
   const deleteWaitlistEntry = useCallback(async (w: WaitlistRow, reload: () => void) => {
     if (!canWrite()) return;
     const okd = await topo()._confirm({
-      title: `Delete ${w.email} from the waitlist?`,
+      title: `Delete ${signupLabel(w)} from the waitlist?`,
       message: 'This removes the signup and its survey answers entirely. Anyone who used its invite '
         + 'link keeps their own place in line. This cannot be undone.',
       confirmLabel: 'Delete',
@@ -1548,7 +1571,7 @@ function WaitlistScreen() {
         extra={(w) => <WaitlistDetails row={w} />}
         deleteAction={write ? {
           bulkPath: '/api/v4/admin/waitlist/bulk-delete',
-          itemLabel: (w) => w.email,
+          itemLabel: (w) => signupLabel(w),
           confirmTitle: (n) => `Delete ${n} waitlist ${n === 1 ? 'entry' : 'entries'}?`,
           confirmMessage: (n) => `This removes ${n === 1 ? 'this signup' : 'these signups'} and `
             + `${n === 1 ? 'its' : 'their'} survey answers entirely. This cannot be undone.`,

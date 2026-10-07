@@ -230,7 +230,7 @@ test('private members, against the full schema', { timeout: 180000 }, async (t) 
     const ana = await account({ email: 'Ana@Example.com' });
     await invites.redeem(pool, { token: made.link.token, user: ana });
     const before = await memberWaitlist.stateFor(pool, ana.id);
-    assert.deepEqual(before, { state: 'none', email: null, accountEmail: 'ana@example.com', moreToken: null });
+    assert.deepEqual(before, { state: 'none', email: null, accountEmail: 'ana@example.com', moreToken: null, phone: false });
     const sent = [];
     const joined = await memberWaitlist.join(pool, { userId: ana.id, rawEmail: 'ana@example.com', send: (...a) => sent.push(a) });
     assert.equal(joined.next, 'listed');
@@ -266,6 +266,66 @@ test('private members, against the full schema', { timeout: 180000 }, async (t) 
     assert.deepEqual([done.next, done.state, done.email], ['listed', 'listed', 'ben@example.com']);
     const { rows } = await pool.query('SELECT email, email_confirmed FROM users WHERE id = $1', [ben.id]);
     assert.deepEqual(rows, [{ email: 'ben@example.com', email_confirmed: true }], 'an account with no address takes it');
+  });
+
+  await t.test('a phone account joins with one tap: no email, the phone stands for the confirmation', async () => {
+    const tia = await account();
+    await invites.redeem(pool, { token: made.link.token, user: tia });
+    await pool.query(
+      `INSERT INTO user_phone_identities (user_id, firebase_uid, phone_e164) VALUES ($1, 'uid-tia', '+15550004111')`,
+      [tia.id]
+    );
+    const joined = await memberWaitlist.joinWithPhone(pool, { userId: tia.id, ip: null });
+    assert.equal(joined.next, 'listed');
+    assert.deepEqual([joined.state, joined.email, joined.phone], ['listed', null, true],
+      'on the list, no address, and the card knows it can join by phone');
+    assert.match(joined.moreToken, /^[a-f0-9]{48}$/, 'the "Want in sooner?" questions\' link');
+    const { rows: [row] } = await pool.query(
+      `SELECT id, email, linked_user_id::int AS linked_user_id,
+              confirmed_at IS NOT NULL AS confirmed, more_token
+         FROM waitlist_signups WHERE linked_user_id = $1`, [tia.id]);
+    assert.deepEqual(
+      { email: row.email, linked_user_id: row.linked_user_id, confirmed: row.confirmed },
+      { email: null, linked_user_id: tia.id, confirmed: true },
+      'the verified phone stands for the confirmation');
+    assert.equal(row.more_token, joined.moreToken);
+    // A second tap is the same listed state, and no second row.
+    const again = await memberWaitlist.joinWithPhone(pool, { userId: tia.id });
+    assert.equal(again.state, 'listed');
+    assert.equal(again.moreToken, joined.moreToken, 'the first token stands');
+    assert.equal((await pool.query(
+      'SELECT COUNT(*)::int AS c FROM waitlist_signups WHERE linked_user_id = $1', [tia.id])).rows[0].c, 1);
+    // Let in the ordinary way: access granted, no mail path involved here.
+    await waitlist.releaseWaitlistSignup(pool, row.id);
+    assert.deepEqual(await tier(tia.id), { has_platform_access: true, private: true });
+  });
+
+  await t.test('a phone join is only for an account with a phone, and one row per account', async () => {
+    const noPhone = await account();
+    await invites.redeem(pool, { token: made.link.token, user: noPhone });
+    await assert.rejects(
+      memberWaitlist.joinWithPhone(pool, { userId: noPhone.id }),
+      (err) => err.code === 'no_phone' && err.status === 422
+    );
+    // An email join after a phone join is refused: one account, one signup.
+    const hold = await account();
+    await invites.redeem(pool, { token: made.link.token, user: hold });
+    await pool.query(
+      `INSERT INTO user_phone_identities (user_id, firebase_uid, phone_e164) VALUES ($1, 'uid-hold', '+15550004222')`,
+      [hold.id]
+    );
+    await memberWaitlist.joinWithPhone(pool, { userId: hold.id });
+    await assert.rejects(
+      memberWaitlist.join(pool, { userId: hold.id, rawEmail: 'hold@example.com', send: () => {} }),
+      (err) => err.code === 'already_listed' && err.status === 409
+    );
+    // And the schema holds the line by itself: a second linked row is
+    // refused by the partial unique index.
+    await assert.rejects(
+      pool.query('INSERT INTO waitlist_signups (email, linked_user_id, confirmed_at) VALUES ($1, $2, NOW())',
+        ['second@example.com', hold.id]),
+      (err) => /unique|duplicate/i.test(String(err.message))
+    );
   });
 
   await t.test('a private member uses public apps but never votes on one, even one that invited them', async () => {
