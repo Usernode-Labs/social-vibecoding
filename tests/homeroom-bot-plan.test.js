@@ -283,11 +283,14 @@ test('B6: the App tab shows the same plan, in place of the chat button, and buil
   const view = read('public/js/app-view.js');
   assert.match(view, /action: mine && !plan\s*\? \{ key: 'botChat'/);
   assert.match(view, /fetch\(`\/api\/conversations\/homeroom-bot\/actions\/\$\{id\}`, \{\s*method: 'POST',/);
-  assert.match(view, /body: JSON\.stringify\(\{ choice: 'build', answers:/);
+  assert.match(view, /const body = \{ choice: 'build', answers: \(Array\.isArray\(answers\) \? answers : \[\]\)\.map\(\(a\) => a \|\| ''\)\s*\};/);
+  assert.match(view, /body: JSON\.stringify\(body\)/);
+  assert.match(view, /\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/first-version\/answer/, '#4175: the second way, by the run');
+  assert.match(view, /body: JSON\.stringify\(\{ runId: run, choice: 'change', text: words \}\)/);
   assert.match(view, /messages\.quoteBotMessage\(conversationId, messageId\)/);
   const status = read('frontend/src/features/app-frame/app-status.tsx');
-  assert.match(status, /\{view\.plan \? <FirstVersionPlanCard key=\{view\.plan\.actionId\} plan=\{view\.plan\} \/> : null\}/);
-  assert.match(status, /call\('buildFirstVersion', plan\.slug, plan\.actionId, answers\)/);
+  assert.match(status, /\{view\.plan \? <FirstVersionPlanCard key=\{view\.plan\.actionId \?\? view\.plan\.runId\} plan=\{view\.plan\} \/> : null\}/);
+  assert.match(status, /call\('buildFirstVersion', plan\.slug, plan\.actionId, answers, plan\.runId\)/);
   assert.match(read('src/routes/apps.js'), /\.\.\.\(mine && state\.plan \? \{ plan: state\.plan \} : \{\}\),/);
   const route = read('src/routes/conversations.js');
   assert.match(route, /const answers = Array\.isArray\(req\.body\?\.answers\)/);
@@ -376,7 +379,7 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
   let first;
   await t.test('a ready first version waits under its plan, which rings as needing an answer', async () => {
     first = await readyRun();
-    assert.equal(await bot.awaitGo(pool, { runId: first, app, issueNumber: 1, parsed: { plan: PLAN }, bot: homeroomBot }), true);
+    assert.equal(await bot.awaitGo(pool, { runId: first, app, issueNumber: 1, parsed: { plan: PLAN }, bot: homeroomBot }), 'awaiting');
     const run = await runRow(first);
     assert.ok(run.awaiting_go_at, 'it waits');
     assert.equal(run.live_build_waiting_at, null, 'nothing is built yet');
@@ -430,7 +433,7 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
   let second;
   await t.test('Change something: a reply to the plan is kept private and read again first, and the card waits for the new one', async () => {
     second = await readyRun();
-    await bot.awaitGo(pool, { runId: second, app, issueNumber: 1, parsed: { plan: PLAN }, bot: homeroomBot });
+    assert.equal(await bot.awaitGo(pool, { runId: second, app, issueNumber: 1, parsed: { plan: PLAN }, bot: homeroomBot }), 'awaiting');
     const card = await planMessage(second);
     const sent = await conversations.sendMessage(pool, maya, card.conversation_id, {
       content: 'Make it work for my partner too', reply_to_id: card.id,
@@ -462,7 +465,7 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
 
   await t.test('the new plan replaces the old card; a new look at the request closes a waiting one', async () => {
     const third = await readyRun();
-    await bot.awaitGo(pool, { runId: third, app, issueNumber: 1, parsed: { plan: { bullets: ['A shared list'], questions: [] } }, bot: homeroomBot });
+    assert.equal(await bot.awaitGo(pool, { runId: third, app, issueNumber: 1, parsed: { plan: { bullets: ['A shared list'], questions: [] } }, bot: homeroomBot }), 'awaiting');
     assert.equal((await planMessage(second)).meta.replaced, true, 'Replaced by a newer plan');
     assert.notEqual((await planMessage(first)).meta.replaced, true, 'a plan that was built stays as it was');
     assert.deepEqual(await bot.retireWaitingPlans(pool, { appId: app.id, issueNumber: 1, why: 'the request was read again' }), [third]);
@@ -478,7 +481,7 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
 
   await t.test('a week with no tap stops it; "build it" written under a plan is its button; "yes" typed is never an offer\'s', async () => {
     const stale = await readyRun();
-    await bot.awaitGo(pool, { runId: stale, app, issueNumber: 1, parsed: { plan: PLAN }, bot: homeroomBot });
+    assert.equal(await bot.awaitGo(pool, { runId: stale, app, issueNumber: 1, parsed: { plan: PLAN }, bot: homeroomBot }), 'awaiting');
     await pool.query(`UPDATE homeroom_bot_runs SET awaiting_go_at = NOW() - INTERVAL '8 days' WHERE id = $1`, [stale]);
     const typed = await conversations.sendMessage(pool, maya, (await planMessage(stale)).conversation_id, { content: 'yes' });
     assert.equal(await mayor.decideTyped(pool, {}, {
@@ -492,7 +495,7 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     assert.deepEqual([card.meta.status, card.meta.stopped], ['closed', true]);
 
     const go = await readyRun();
-    await bot.awaitGo(pool, { runId: go, app, issueNumber: 1, parsed: { plan: PLAN }, bot: homeroomBot });
+    assert.equal(await bot.awaitGo(pool, { runId: go, app, issueNumber: 1, parsed: { plan: PLAN }, bot: homeroomBot }), 'awaiting');
     const goCard = await planMessage(go);
     const sent = await conversations.sendMessage(pool, maya, goCard.conversation_id, { content: 'Build it!', reply_to_id: goCard.id });
     const out = await dm.noteUserMessage(pool, {}, {
@@ -505,12 +508,75 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     assert.match((await runRow(go)).build_note, /How should it remind you\? In the app/);
   });
 
-  await t.test('a first version nobody can be shown the plan of is built at once, as before plans', async () => {
+  await t.test('a first version nobody can be shown the plan of never builds, and says why, silently (#4175)', async () => {
+    // Not somebody the bot works for: the plan is recorded as skipped, the
+    // run is not queued, and nothing waits for an answer nobody was asked.
     await set('homeroom_bot_dm_users', '[]');
     const lone = await readyRun();
-    assert.equal(await bot.awaitGo(pool, { runId: lone, app, issueNumber: 1, parsed: { plan: PLAN }, bot: homeroomBot }), false);
-    assert.equal((await runRow(lone)).awaiting_go_at, null);
+    assert.equal(await bot.awaitGo(pool, { runId: lone, app, issueNumber: 1, parsed: { plan: PLAN }, bot: homeroomBot }), 'stopped');
+    const loneRow = await runRow(lone);
+    assert.equal(loneRow.awaiting_go_at, null, 'it never waits');
+    assert.equal(loneRow.live_build_waiting_at, null, 'nothing is built');
+    assert.equal(loneRow.build_ok, false);
+    assert.equal(loneRow.build_error, 'skipped: its creator is not somebody the bot works for');
+
+    // And a requester the run cannot name at all.
+    await pool.query('DELETE FROM homeroom_bot_requesters WHERE app_id = $1 AND issue_number = 1', [app.id]);
+    const nameless = await readyRun();
+    assert.equal(await bot.awaitGo(pool, { runId: nameless, app, issueNumber: 1, parsed: { plan: PLAN }, bot: homeroomBot }), 'stopped');
+    assert.equal((await runRow(nameless)).build_error, 'skipped: its creator could not be found');
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title, first_version, asked_text)
+       VALUES ($1, 1, $2, 'First version of Plant Pal', TRUE, 'A plant watering app')`,
+      [app.id, maya.id],
+    );
     await set('homeroom_bot_dm_users', JSON.stringify(['maya']));
+  });
+
+  await t.test('a plan whose card could not be sent keeps waiting and is tried again later, then stopped (#4175)', async () => {
+    // The send fails: the run still waits, with when its last try went out.
+    const unsent = await readyRun();
+    const failing = { ...dm, sendPlanCard: async () => null };
+    assert.equal(
+      await bot.awaitGo(pool, { runId: unsent, app, issueNumber: 1, parsed: { plan: PLAN }, bot: homeroomBot, deps: { dm: failing } }),
+      'awaiting',
+    );
+    const waiting = await runRow(unsent);
+    assert.ok(waiting.awaiting_go_at, 'it waits');
+    assert.equal(waiting.build_ok, null, 'nothing has been decided');
+    assert.ok(waiting.plan_delivery_at, 'the failed try is marked');
+    assert.equal(await planMessage(unsent), undefined, 'no card arrived');
+    assert.equal((await progress.requestStates(pool, { userId: maya.id })).some((s) => s.state.stage === 'plan'), true,
+      'it still reads as the plan step, which the run carries');
+
+    // A later try, after the spacing, sends it and clears the mark.
+    const marked = (await runRow(unsent)).plan_delivery_at;
+    const early = await bot.retryUndeliveredPlans(pool, { dm: failing });
+    assert.equal(early, 0, 'too soon to try again: no try was made');
+    assert.equal((await runRow(unsent)).plan_delivery_at?.getTime(), marked.getTime(), 'and the mark is untouched');
+    await pool.query(`UPDATE homeroom_bot_runs SET plan_delivery_at = NOW() - INTERVAL '16 minutes' WHERE id = $1`, [unsent]);
+    assert.equal(await bot.retryUndeliveredPlans(pool, { dm: failing }), 1, 'it tried again, and could not send it');
+    assert.ok((await runRow(unsent)).plan_delivery_at, 'the failed try is marked again');
+    await pool.query(`UPDATE homeroom_bot_runs SET plan_delivery_at = NOW() - INTERVAL '16 minutes' WHERE id = $1`, [unsent]);
+    assert.equal(await bot.retryUndeliveredPlans(pool, {}), 1, 'the next look sends it');
+    const sentRow = await runRow(unsent);
+    assert.equal(sentRow.plan_delivery_at, null, 'the mark clears once it went out');
+    assert.equal((await planMessage(unsent)).meta.kind, 'plan', 'the card is in the chat at last');
+
+    // And after about an hour of tries it stops waiting, with why, silently.
+    const hopeless = await readyRun();
+    await bot.awaitGo(pool, { runId: hopeless, app, issueNumber: 1, parsed: { plan: PLAN }, bot: homeroomBot, deps: { dm: failing } });
+    await pool.query(
+      `UPDATE homeroom_bot_runs SET plan_delivery_at = NOW() - INTERVAL '16 minutes',
+         awaiting_go_at = NOW() - INTERVAL '61 minutes' WHERE id = $1`,
+      [hopeless],
+    );
+    assert.equal(await bot.retryUndeliveredPlans(pool, {}), 0, 'a run past the hour is not tried again');
+    const stopped = await runRow(hopeless);
+    assert.deepEqual([stopped.awaiting_go_at, stopped.build_ok], [null, false], 'it stopped waiting');
+    assert.equal(stopped.build_error, 'skipped: the plan could not be sent to its creator');
+    assert.equal(await planMessage(hopeless), undefined, 'still nothing in the chat');
+    await pool.query('UPDATE homeroom_bot_runs SET build_ok = NULL, build_error = NULL WHERE id = $1', [hopeless]);
   });
 
   // First session, 4 October: Build it collapsed the plan and nothing
@@ -521,7 +587,7 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     // Its card, from when it was queued (or the one an earlier Build it moved).
     await activity.startCard(pool, { app, issueNumber: 1, requester, bot: homeroomBot, jobKey: 'plan-under', queued: true });
     const run = await readyRun();
-    assert.equal(await bot.awaitGo(pool, { runId: run, app, issueNumber: 1, parsed: { plan: PLAN }, bot: homeroomBot }), true);
+    assert.equal(await bot.awaitGo(pool, { runId: run, app, issueNumber: 1, parsed: { plan: PLAN }, bot: homeroomBot }), 'awaiting');
     const plan = await planMessage(run);
     const above = await activity.requestCard(pool, { userId: maya.id, appId: app.id, issueNumber: 1 });
     assert.ok(above && above.messageId < Number(plan.id), 'the request\'s card sits above its plan');
@@ -564,16 +630,17 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
 
 test('B6: where the waiting state is read, and where it ends', () => {
   const src = read('src/services/homeroom-bot.js');
-  assert.match(src, /if \(firstVersion && await awaitGo\(pool, \{ runId, app, issueNumber, parsed, bot, deps \}\)\) \{\s*acted = 'awaiting_go';/);
+  assert.match(src, /if \(firstVersion\) \{\s*const go = await awaitGo\(pool, \{ runId, app, issueNumber, parsed, bot, deps \}\);\s*if \(go === 'awaiting'\) acted = 'awaiting_go';\s*else if \(go === 'stopped'\) acted = 'plan_stopped';/);
   assert.match(src, /await retireWaitingPlans\(pool, \{ appId: app\.id, issueNumber, why: 'the request was read again', deps: \{ dm: deps\.dm \} \}\);/);
   assert.match(src, /const stalePlans = await settleStalePlans\(pool, \{ dm: deps\.dm \}\);/);
+  assert.match(src, /const retriedPlans = await retryUndeliveredPlans\(pool, \{ dm: deps\.dm \}\);/, '#4175: the sweep rides the same passes');
   assert.match(src, /out\.skipped \+= \(await retireWaitingPlans\(pool, \{ appId, issues, why: why\.replace/);
   assert.match(src, /\.\.\.\(planChange \? \{ planChange: \{ \.\.\.planChange, requester: requester\.username \} \} : \{\}\),/);
   const progressSrc = read('src/services/homeroom-bot-progress.js');
   assert.match(progressSrc, /run\.awaiting_go_at AS plan_waiting_at/);
   assert.match(read('src/services/homeroom-bot-mayor.js'), /AND a\.kind <> 'build_plan'/);
   const schema = read('src/db/schema.sql');
-  for (const column of ['plan JSONB', 'awaiting_go_at TIMESTAMPTZ', 'plan_change TEXT']) {
+  for (const column of ['plan JSONB', 'awaiting_go_at TIMESTAMPTZ', 'plan_change TEXT', 'plan_delivery_at TIMESTAMPTZ']) {
     assert.ok(schema.includes(`ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS ${column};`), column);
   }
   assert.equal(live.questionText({ question: 'Q?' }).includes('If nobody answers'), false);

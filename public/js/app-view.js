@@ -3135,9 +3135,11 @@ const AppView = {
       lines.push(`Step ${fv.step} of ${fv.of}: ${fv.stepName}`);
     }
     // B6: the plan it waits on, with Build it, in place of the chat's button
-    // (Change something goes to that chat). The step line says the rest.
+    // (Change something goes to that chat). #4175: a plan whose card could
+    // not be sent has no action to decide — it is read from the waiting run
+    // and answered by its runId instead. The step line says the rest.
     const plan = mine && fv.plan && Array.isArray(fv.plan.bullets) && fv.plan.bullets.length
-      && Number.isInteger(fv.plan.actionId) ? fv.plan : null;
+      && (Number.isInteger(fv.plan.actionId) || Number.isInteger(fv.plan.runId)) ? fv.plan : null;
     // Built and up for approval: no longer "being built" (_firstVersionReadyView).
     if (!plan && fv.ready) return AppView._firstVersionReadyView(appData, lines);
     if (plan) {
@@ -3157,7 +3159,8 @@ const AppView = {
           slug: appData.slug,
           bullets: plan.bullets,
           questions: Array.isArray(plan.questions) ? plan.questions : [],
-          actionId: plan.actionId,
+          actionId: Number.isInteger(plan.actionId) ? plan.actionId : null,
+          runId: Number.isInteger(plan.runId) ? plan.runId : null,
           messageId: Number.isInteger(plan.messageId) ? plan.messageId : null,
           conversationId: Number.isInteger(plan.conversationId) ? plan.conversationId : null,
         },
@@ -3314,17 +3317,31 @@ const AppView = {
   /**
    * B6: Build it, under the plan on the App tab: the same tap the plan's card
    * in the chat sends, decided once on the server, with the choices tapped.
-   * The screen then reads the project again and shows the build's step.
+   * #4175: a plan whose card could not be sent has no action id — it goes to
+   * the first-version answer route by its run instead, which decides the
+   * waiting run the same way. The screen then reads the project again and
+   * shows the build's step.
    */
-  async buildFirstVersion(slug, actionId, answers) {
+  async buildFirstVersion(slug, actionId, answers, runId) {
     const id = Number(actionId);
-    if (!slug || !Number.isInteger(id) || id <= 0) return;
+    const run = Number(runId);
+    if (!slug) return;
+    const byAction = Number.isInteger(id) && id > 0;
+    const byRun = Number.isInteger(run) && run > 0;
+    if (!byAction && !byRun) return;
     try {
-      const resp = await fetch(`/api/conversations/homeroom-bot/actions/${id}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ choice: 'build', answers: (Array.isArray(answers) ? answers : []).map((a) => a || '') }),
-      });
+      const body = { choice: 'build', answers: (Array.isArray(answers) ? answers : []).map((a) => a || '') };
+      const resp = byAction
+        ? await fetch(`/api/conversations/homeroom-bot/actions/${id}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+        : await fetch(`/api/apps/${encodeURIComponent(slug)}/first-version/answer`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ runId: run, ...body }),
+        });
       if (!resp.ok && resp.status !== 409) {
         const data = await resp.json().catch(() => ({}));
         PlatformUI.toast(data.error || `Couldn't start building just now (HTTP ${resp.status}).`);
@@ -3339,11 +3356,40 @@ const AppView = {
   /** B6: Change something: the chat with Homeroom bot, with the plan quoted in its composer. */
   changeFirstVersionPlan(_slug, conversationId, messageId) {
     const messages = window.UsernodeReact && window.UsernodeReact.messages;
-    if (messages && typeof messages.quoteBotMessage === 'function') {
+    // #4175: a plan whose card could not be sent has no message to quote —
+    // the App tab asks for the words instead, so the chat is not opened empty.
+    if (messages && typeof messages.quoteBotMessage === 'function' && Number.isInteger(messageId) && messageId > 0) {
       messages.quoteBotMessage(conversationId, messageId);
       return;
     }
     AppView.openBotChat(_slug, conversationId);
+  },
+
+  /**
+   * #4175: the words behind Change something on a plan whose card could not
+   * be sent: they go with choice 'change' to the first-version answer route
+   * by the run, which ends the wait and asks for a new plan. The screen then
+   * reads the project again.
+   */
+  async answerFirstVersionPlan(slug, runId, text) {
+    const run = Number(runId);
+    const words = typeof text === 'string' ? text.trim() : '';
+    if (!slug || !Number.isInteger(run) || run <= 0 || !words) return;
+    try {
+      const resp = await fetch(`/api/apps/${encodeURIComponent(slug)}/first-version/answer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ runId: run, choice: 'change', text: words }),
+      });
+      if (!resp.ok && resp.status !== 409) {
+        const data = await resp.json().catch(() => ({}));
+        PlatformUI.toast(data.error || `Couldn't send that just now (HTTP ${resp.status}).`);
+      }
+    } catch (err) {
+      PlatformUI.toast(`Couldn't send that just now: ${err.message}`);
+    }
+    const current = AppView.appData;
+    if (current && current.slug === slug) AppView._recheckFirstVersion(current);
   },
 
   /** "Show the starter for now": the app as it runs, for this visit. */

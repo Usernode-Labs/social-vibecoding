@@ -1626,11 +1626,17 @@ async function changePlan(pool, { bot, user, target, message, deps = {} }) {
 
 /**
  * B6: the plan a first version waits on, for its App tab: { bullets,
- * questions, actionId, messageId, conversationId }, or null.
+ * questions, actionId, messageId, conversationId, runId }, or null. The
+ * card in the creator's DM decides, as always. #4175: when there is no open
+ * card — the plan's message never arrived — the run still holds the plan it
+ * waited under, so the project's screen can put it in front of its creator
+ * anyway: a failed message is never the only way in. Its `actionId` and
+ * `messageId` are then null, and its Build it and Change something answer
+ * through the run (POST /api/apps/:slug/first-version/answer).
  */
 async function waitingPlan(pool, { userId, appId, issueNumber }) {
   const { rows } = await pool.query(
-    `SELECT d.message_id, d.conversation_id, a.id AS action_id, m.metadata->'homeroomBot'->'plan' AS plan
+    `SELECT d.message_id, d.conversation_id, d.run_id, a.id AS action_id, m.metadata->'homeroomBot'->'plan' AS plan
        FROM homeroom_bot_dm_messages d
        JOIN conversation_messages m ON m.id = d.message_id AND m.deleted_at IS NULL
        JOIN homeroom_bot_dm_actions a ON a.message_id = d.message_id AND a.status = 'open'
@@ -1639,13 +1645,42 @@ async function waitingPlan(pool, { userId, appId, issueNumber }) {
     [userId, appId, issueNumber, PLAN_KIND],
   );
   const row = rows[0];
-  if (!row || !Array.isArray(row.plan?.bullets)) return null;
+  if (row && Array.isArray(row.plan?.bullets)) {
+    return {
+      bullets: row.plan.bullets,
+      questions: Array.isArray(row.plan.questions) ? row.plan.questions : [],
+      actionId: Number(row.action_id),
+      messageId: Number(row.message_id),
+      conversationId: Number(row.conversation_id) || null,
+      runId: Number(row.run_id) || null,
+    };
+  }
+  const { rows: waiting } = await pool.query(
+    `SELECT r.id AS run_id, r.plan,
+            (SELECT p.conversation_id
+               FROM users b
+               JOIN conversation_direct_pairs p
+                 ON p.user_low_id = LEAST(b.id, $1) AND p.user_high_id = GREATEST(b.id, $1)
+               JOIN conversation_members m
+                 ON m.conversation_id = p.conversation_id AND m.user_id = $1 AND m.status = 'member'
+              WHERE b.username = $4 AND b.is_synthetic = TRUE
+              LIMIT 1) AS conversation_id
+       FROM homeroom_bot_runs r
+      WHERE r.app_id = $2 AND r.issue_number = $3
+        AND r.awaiting_go_at IS NOT NULL AND r.build_ok IS NULL
+        AND r.build_session_id IS NULL AND r.live_build_waiting_at IS NULL
+      ORDER BY r.id DESC LIMIT 1`,
+    [userId, appId, issueNumber, BOT_USERNAME],
+  );
+  const run = waiting[0];
+  if (!run || !Array.isArray(run.plan?.bullets)) return null;
   return {
-    bullets: row.plan.bullets,
-    questions: Array.isArray(row.plan.questions) ? row.plan.questions : [],
-    actionId: Number(row.action_id),
-    messageId: Number(row.message_id),
-    conversationId: Number(row.conversation_id) || null,
+    bullets: run.plan.bullets,
+    questions: Array.isArray(run.plan.questions) ? run.plan.questions : [],
+    actionId: null,
+    messageId: null,
+    conversationId: Number(run.conversation_id) || null,
+    runId: Number(run.run_id),
   };
 }
 

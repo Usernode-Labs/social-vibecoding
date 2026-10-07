@@ -32,20 +32,27 @@ const PLAN = {
   messageId: 900,
   conversationId: 12,
 };
+// waitingPlan normalizes every id to null when it is absent (#4175 adds
+// runId, the way in when the plan's card could not be sent).
+const READ = { ...PLAN, runId: null };
 
 test('a plan waits for Build it when first_version carries one, read as the App tab reads it', () => {
   const { waitingPlan } = loadTsx(`${DIR}/made.tsx`);
-  assert.deepEqual(waitingPlan({ step: 3, of: 7, stepName: 'Write a plan', plan: PLAN }), PLAN);
+  assert.deepEqual(waitingPlan({ step: 3, of: 7, stepName: 'Write a plan', plan: PLAN }), READ);
   assert.deepEqual(waitingPlan({ plan: { bullets: ['a'], actionId: 5 } }),
-    { bullets: ['a'], questions: [], actionId: 5, messageId: null, conversationId: null });
+    { bullets: ['a'], questions: [], actionId: 5, runId: null, messageId: null, conversationId: null });
   assert.equal(waitingPlan(null), null);
   assert.equal(waitingPlan({ step: 2, of: 7 }), null, 'no plan yet');
-  assert.equal(waitingPlan({ plan: { ...PLAN, actionId: undefined } }), null, 'nothing to decide without its action');
+  // #4175: the plan whose card could not be sent has no action to decide,
+  // and still waits — its run is the way in.
+  assert.deepEqual(waitingPlan({ plan: { ...PLAN, actionId: undefined } }),
+    { ...READ, actionId: null }, 'a plan without a card still waits, by its run');
   assert.equal(waitingPlan({ plan: { ...PLAN, bullets: [] } }), null);
   assert.equal(waitingPlan({ ready: true, plan: PLAN }), null, 'a ready version waits on nobody');
-  // The same test the being-built screen makes.
+  // The same test the being-built screen makes. #4175: the run is a second
+  // way in, when the plan's card could not be sent.
   const view = read('public/js/app-view.js');
-  assert.match(view, /const plan = mine && fv\.plan && Array\.isArray\(fv\.plan\.bullets\) && fv\.plan\.bullets\.length\s+&& Number\.isInteger\(fv\.plan\.actionId\) \? fv\.plan : null;/);
+  assert.match(view, /const plan = mine && fv\.plan && Array\.isArray\(fv\.plan\.bullets\) && fv\.plan\.bullets\.length\s+&& \(Number\.isInteger\(fv\.plan\.actionId\) \|\| Number\.isInteger\(fv\.plan\.runId\)\) \? fv\.plan : null;/);
 });
 
 test('the made screen reads the project under `app`, past the service worker\'s cache', () => {
@@ -56,7 +63,7 @@ test('the made screen reads the project under `app`, past the service worker\'s 
   const { madeAppOf, madeAppUrl, waitingPlan } = loadTsx(`${DIR}/made.tsx`);
   const fv = { step: 3, of: 7, stepName: 'Write a plan', ready: false, plan: PLAN };
   assert.deepEqual(madeAppOf({ app: { status: 'running', first_version: fv } }), { firstVersion: fv, status: 'running' });
-  assert.deepEqual(waitingPlan(madeAppOf({ app: { first_version: fv } }).firstVersion), PLAN);
+  assert.deepEqual(waitingPlan(madeAppOf({ app: { first_version: fv } }).firstVersion), READ);
   assert.deepEqual(madeAppOf({ app: { status: 'creating' } }), { firstVersion: null, status: 'creating' });
   assert.equal(madeAppOf({ first_version: fv, status: 'running' }), null, 'a bare record is not the route\'s answer');
   assert.equal(madeAppOf(null), null);

@@ -19,7 +19,7 @@ const renamePr = require('../services/rename-pr');
 const staging = require('../services/staging');
 const { drainGuard } = require('../services/lifecycle');
 const deployFailure = require('../services/deploy-failure');
-const { appCreateLimiter, appAllowanceRequestLimiter, issueCreateLimiter, githubLookupLimiter, feedbackTitleLimiter } = require('../middleware/rate-limits');
+const { appCreateLimiter, appAllowanceRequestLimiter, issueCreateLimiter, githubLookupLimiter, feedbackTitleLimiter, conversationActionLimiter } = require('../middleware/rate-limits');
 const events = require('../services/events');
 const appOpenings = require('../services/app-openings');
 const appAccess = require('../services/app-access');
@@ -1609,6 +1609,78 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     } catch (err) {
       log.error('apps', 'Failed to get app', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // B6, #4175: Build it or Change something, under a first version's waiting
+  // plan, from the project's own screen (the App tab). The same decides the
+  // plan card in the chat makes — services/homeroom-bot.js goAhead, and what
+  // changePlan records there — for a plan whose message never arrived as
+  // much as for one that did, since the screen reads the plan from the run.
+  // Only its creator answers it: the run's app and request, matched against
+  // homeroom_bot_first_versions' maker.
+  //
+  //   POST /api/apps/:slug/first-version/answer  { runId, choice, answers?, text? }
+  //   → 200 { ok, choice } | 409 { error: 'plan_gone' } | 403 | 404
+  //
+  // A browser's own tap only (same-origin, no connector), and rate-limited
+  // like the chat's own plan tap.
+  router.post('/api/apps/:slug/first-version/answer', conversationActionLimiter, sameOriginBrowserOnly, async (req, res) => {
+    try {
+      const runId = Number(req.body?.runId);
+      const choice = req.body?.choice;
+      if (!Number.isInteger(runId) || runId <= 0 || (choice !== 'build' && choice !== 'change')) {
+        return res.status(400).json({ error: 'runId and a choice of build or change are needed' });
+      }
+      const { rows: [app] } = await pool.query('SELECT id, slug FROM apps WHERE slug = $1', [req.params.slug]);
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      const { rows: [run] } = await pool.query(
+        'SELECT id, app_id, issue_number FROM homeroom_bot_runs WHERE id = $1 AND app_id = $2',
+        [runId, app.id],
+      );
+      if (!run) return res.status(404).json({ error: 'No such plan' });
+      const { rows: [made] } = await pool.query(
+        'SELECT user_id FROM homeroom_bot_first_versions WHERE app_id = $1 AND issue_number = $2',
+        [run.app_id, run.issue_number],
+      );
+      if (!req.user?.id || !made || Number(made.user_id) !== Number(req.user.id)) {
+        return res.status(403).json({ error: 'Only the project\'s creator answers its plan' });
+      }
+      const botSvc = require('../services/homeroom-bot');
+      if (choice === 'build') {
+        const answers = Array.isArray(req.body?.answers)
+          ? req.body.answers.slice(0, 2).map((a) => (typeof a === 'string' ? a.slice(0, 200) : null))
+          : [];
+        const went = await botSvc.goAhead(pool, { runId, answers });
+        if (!went.ok) return res.status(409).json({ error: 'plan_gone' });
+        return res.json({ ok: true, choice });
+      }
+      // Change something: what changePlan records in the chat, minus its
+      // DM-only parts — the words kept with the run, the wait ended, and the
+      // request read again first in line. Nothing is sent to the DM here:
+      // that is the channel that is failing.
+      const text = typeof req.body?.text === 'string' ? req.body.text.trim().slice(0, 3000) : '';
+      if (!text) return res.status(400).json({ error: 'Write what you would like changed' });
+      const { rowCount } = await pool.query(
+        `UPDATE homeroom_bot_runs
+            SET plan_change = $2, awaiting_go_at = NULL,
+                build_ok = COALESCE(build_ok, FALSE),
+                build_error = COALESCE(build_error, 'skipped: its creator asked to change the plan')
+          WHERE id = $1 AND awaiting_go_at IS NOT NULL AND build_ok IS NULL
+            AND build_session_id IS NULL AND proposal_session_id IS NULL`,
+        [runId, text],
+      );
+      if (!rowCount) return res.status(409).json({ error: 'plan_gone' });
+      await botSvc.enqueueFront(pool, {
+        appId: Number(run.app_id), issueNumber: Number(run.issue_number), userId: req.user.id, reason: 'plan_change',
+      });
+      log.info('apps', 'A first version\'s plan is planned again from the project\'s screen', {
+        slug: req.params.slug, userId: req.user.id, runId,
+      });
+      return res.json({ ok: true, choice });
+    } catch (err) {
+      log.error('apps', 'A first version\'s plan could not be answered', { slug: req.params.slug, message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
     }
   });
 

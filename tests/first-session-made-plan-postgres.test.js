@@ -56,6 +56,7 @@ let pool = null;
 require('../src/db/pool').getPool = () => pool;
 
 const bot = require('../src/services/homeroom-bot');
+const dm = require('../src/services/homeroom-bot-dm');
 const progress = require('../src/services/homeroom-bot-progress');
 const { appRoutes } = require('../src/routes/apps');
 
@@ -146,7 +147,7 @@ test('the made screen reads the waiting plan off the real GET /api/apps/:slug, f
 
   let card;
   await t.test('the bot\'s own plan path leaves the first version waiting on its creator', async () => {
-    assert.equal(await bot.awaitGo(pool, { runId: run.id, app, issueNumber: 1, parsed: { plan: PLAN }, bot: homeroomBot }), true);
+    assert.equal(await bot.awaitGo(pool, { runId: run.id, app, issueNumber: 1, parsed: { plan: PLAN }, bot: homeroomBot }), 'awaiting');
     const state = (await progress.requestStates(pool, { userId: alex.id }))
       .find((s) => Number(s.row.issue_number) === 1).state;
     assert.deepEqual([state.stage, state.waitingOn], ['plan', 'them']);
@@ -177,6 +178,7 @@ test('the made screen reads the waiting plan off the real GET /api/apps/:slug, f
       bullets: PLAN.bullets,
       questions: PLAN.questions,
       actionId: card.meta.actionId,
+      runId: Number(run.id),
       messageId: Number(card.id),
       conversationId: Number(card.conversation_id),
     });
@@ -213,5 +215,34 @@ test('the made screen reads the waiting plan off the real GET /api/apps/:slug, f
     assert.ok(mine, 'the first version is in progress');
     assert.deepEqual([mine.step, mine.stepName], [4, 'Build it']);
     assert.doesNotMatch(String(mine.doing), /plan/);
+  });
+
+  await t.test('a plan whose card could not be sent still reaches the made screen, by its run (#4175)', async () => {
+    // The bot's plan path, with the send failing: the run waits unasked no
+    // longer, but it waits — and the route has a second way to the plan.
+    const { rows: [run2] } = await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_note)
+       VALUES ($1, 1, 'live', 'ready', 'Build the reading list again.') RETURNING id`,
+      [app.id],
+    );
+    const failing = { ...dm, sendPlanCard: async () => null };
+    assert.equal(
+      await bot.awaitGo(pool, { runId: run2.id, app, issueNumber: 1, parsed: { plan: PLAN }, bot: homeroomBot, deps: { dm: failing } }),
+      'awaiting',
+    );
+    const body = await get();
+    const fv = body.app.first_version;
+    assert.deepEqual([fv.step, fv.of, fv.stepName], [3, 7, 'Your turn: answer the plan'], 'the plan step, as ever');
+    assert.ok(Array.isArray(fv.plan.bullets) && fv.plan.bullets.length, 'the plan is there');
+    assert.equal(fv.plan.actionId, null, 'no card to decide in the chat');
+    assert.equal(fv.plan.runId, Number(run2.id), 'the waiting run is the way in');
+    const read = madeAppOf(body);
+    const plan = waitingPlan(read.firstVersion);
+    assert.ok(plan, 'the made screen still reads a plan waiting');
+    assert.deepEqual([plan.actionId, plan.runId], [null, Number(run2.id)]);
+    const { rows: [waiting] } = await pool.query(
+      'SELECT awaiting_go_at, plan_delivery_at FROM homeroom_bot_runs WHERE id = $1', [run2.id],
+    );
+    assert.ok(waiting.awaiting_go_at && waiting.plan_delivery_at, 'it waits, and its failed try is marked');
   });
 });

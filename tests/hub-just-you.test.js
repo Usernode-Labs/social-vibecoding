@@ -94,20 +94,24 @@ test('a just-you project being built: the step, as a ring and in words, and no b
   assert.doesNotMatch(card(building({ step: null, of: null })), /<svg/, 'no ring without a step');
 });
 
-test('a plan or a question waiting on its maker: Homeroom bot has a plan for you, and Go to chat', () => {
+test('a plan or a question waiting on its maker: Homeroom bot has a plan for you; a plan\'s door is the plan, a question\'s the chat', () => {
   const plan = card(building({ step: 3, step_name: 'Your turn: answer the plan', waits_on: 'plan' }));
   assert.match(plan, /data-ws-first-version="plan"/);
   assert.match(plan, /data-ws-first-version-step="">Step 3 of 7: Your turn: answer the plan</);
   assert.match(plan, /data-ws-first-version-note="">Homeroom bot has a plan for you\.</);
-  assert.match(plan, /<button[^>]*data-ws-first-version-chat=""[^>]*>Go to chat<\/button>/);
+  // #4175: the plan is decided on the project's screen, even when its card
+  // could not be sent to the chat — so the door says so and goes there.
+  assert.match(plan, /<button[^>]*data-ws-first-version-chat=""[^>]*>Review the plan<\/button>/);
   assert.match(plan, /data-ws-first-version-chat="" class="rounded-full bg-violet-600[^"]*self-start"/,
     'the accent: it is the one thing on the hub that waits on them');
   const question = card(building({ step: 2, step_name: 'Read the description', waits_on: 'question' }));
   assert.match(question, /data-ws-first-version="question"/);
   assert.match(question, /Homeroom bot has a question for you\./);
-  assert.match(question, /data-ws-first-version-chat=""/);
+  assert.match(question, /<button[^>]*data-ws-first-version-chat=""[^>]*>Go to chat<\/button>/);
   // The chat is theirs: their DM when the record names it, else the bot's door.
   const src = read(HUB);
+  assert.match(src, /waits_on === 'plan'/, '#4175: the plan\'s door is the plan, not the chat');
+  assert.match(src, /location\.hash = `#app\/\$\{encodeURIComponent\(slug\)\}`;/);
   assert.match(src, /if \(fv\.conversation_id\) openConversation\(fv\.conversation_id\);\s*else void openBot\(\);/);
   assert.match(src, /import \{ open as openConversation, openBot \} from '\.\.\/\.\.\/messages\/store';/);
 });

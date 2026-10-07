@@ -324,7 +324,7 @@ test('B6: while its plan waits, the creator gets the plan card in place of the c
   const v = view(AppView, firstVersionApp({}, { plan }));
   assert.deepEqual(v.lines, ['Step 3 of 7: Write a plan']);
   assert.equal(v.action, null);
-  assert.deepEqual(v.plan, { appName: 'Plant Pal', slug: 'plant-pal', ...plan });
+  assert.deepEqual(v.plan, { appName: 'Plant Pal', slug: 'plant-pal', ...plan, runId: null });
   const out = html(v);
   assert.match(out, /data-bot-plan="open"/);
   assert.match(out, /Here’s my plan for Plant Pal:/);
@@ -335,6 +335,16 @@ test('B6: while its plan waits, the creator gets the plan card in place of the c
   // Only the creator's, and only a plan it can build.
   assert.equal(view(AppView, firstVersionApp({}, { plan, mine: false, conversationId: null })).plan, undefined);
   assert.equal(view(AppView, firstVersionApp({}, { plan: { ...plan, actionId: null } })).plan, undefined);
+  // #4175: a plan whose card could not be sent has no action to decide — it
+  // is carried by its waiting run, and the card is still shown.
+  const byRun = view(AppView, firstVersionApp({}, { plan: { ...plan, actionId: null, messageId: null, runId: 3 } }));
+  assert.deepEqual(byRun.plan, {
+    appName: 'Plant Pal', slug: 'plant-pal', bullets: plan.bullets, questions: plan.questions,
+    actionId: null, runId: 3, messageId: null, conversationId: 42,
+  });
+  const byRunHtml = html(byRun);
+  assert.match(byRunHtml, /data-bot-plan="open"/);
+  assert.match(byRunHtml, /data-bot-plan-build="">Build it<\/button>/);
 });
 
 test('#15: anyone else is told whose description it is, and gets no chat of somebody else\'s', () => {

@@ -70,7 +70,13 @@ import { SketchCard, showsCard, useSketch } from './sketch-card';
 export type WaitingPlan = {
   bullets: string[];
   questions: HomeroomBotPlanQuestion[];
-  actionId: number;
+  /**
+   * #4175: null when the plan card could not be sent, so there is no card
+   * in the chat to decide — the waiting run answers instead.
+   */
+  actionId: number | null;
+  /** The waiting run, the way in when there is no card. */
+  runId: number | null;
   messageId: number | null;
   conversationId: number | null;
 };
@@ -112,11 +118,15 @@ export function madeAppUrl(slug: string): string {
  */
 export function waitingPlan(fv: FirstVersion): WaitingPlan | null {
   const plan = fv && !fv.ready ? fv.plan : null;
-  if (!plan || !Array.isArray(plan.bullets) || !plan.bullets.length || !Number.isInteger(plan.actionId)) return null;
+  // #4175: a plan whose card could not be sent has no action to decide — it
+  // is read from the waiting run and carried by its runId, so the card here
+  // still says the plan waits, and the way in still finds it.
+  if (!plan || !Array.isArray(plan.bullets) || !plan.bullets.length) return null;
   return {
     bullets: plan.bullets,
     questions: Array.isArray(plan.questions) ? plan.questions : [],
-    actionId: Number(plan.actionId),
+    actionId: Number.isInteger(plan.actionId) ? Number(plan.actionId) : null,
+    runId: Number.isInteger(plan.runId) ? Number(plan.runId) : null,
     messageId: Number.isInteger(plan.messageId) ? Number(plan.messageId) : null,
     conversationId: Number.isInteger(plan.conversationId) ? Number(plan.conversationId) : null,
   };

@@ -68,6 +68,7 @@ stub(ids.rateLimits, {
   // route module, not just the route that uses it.
   githubLookupLimiter: (_req, _res, next) => next(),
   feedbackTitleLimiter: (_req, _res, next) => next(),
+  conversationActionLimiter: (_req, _res, next) => next(),
 });
 
 const pool = {

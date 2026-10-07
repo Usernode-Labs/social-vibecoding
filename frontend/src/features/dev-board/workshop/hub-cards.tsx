@@ -354,8 +354,10 @@ export function firstVersionKind(fv: HubFirstVersion): 'ready' | 'plan' | 'quest
  * ring the bot's activity cards lead with.
  *
  * When the bot waits on its maker (its plan, for their Build it, or a
- * question), the card says so and "Go to chat" opens their chat with it,
- * where the plan is decided. Ready to try, "See the change" opens the change,
+ * question), the card says so. A plan's door is "Review the plan" (#4175:
+ * on the project's screen, where the plan is decided even when its card
+ * could not be sent to the chat); a question's is "Go to chat", which opens
+ * their chat with the bot. Ready to try, "See the change" opens the change,
  * where it is tried and approved. Nothing for a project the bot is not
  * building, or once its first version is live.
  *
@@ -405,17 +407,34 @@ export function FirstVersionCard({ slug, data }: { slug: string; data: Community
         </span>
       </div>
       {fv.waits_on ? (
-        <Button
-          type="button"
-          variant="pillAccent"
-          size="sm"
-          ink="solid"
-          className="self-start"
-          data-ws-first-version-chat=""
-          onClick={chat}
-        >
-          Go to chat
-        </Button>
+        fv.waits_on === 'plan' ? (
+          // #4175: a plan whose card could not be sent is still on the
+          // project's screen — the door goes to the plan, not to a chat
+          // that may have nothing in it.
+          <Button
+            type="button"
+            variant="pillAccent"
+            size="sm"
+            ink="solid"
+            className="self-start"
+            data-ws-first-version-chat=""
+            onClick={() => { location.hash = `#app/${encodeURIComponent(slug)}`; }}
+          >
+            Review the plan
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            variant="pillAccent"
+            size="sm"
+            ink="solid"
+            className="self-start"
+            data-ws-first-version-chat=""
+            onClick={chat}
+          >
+            Go to chat
+          </Button>
+        )
       ) : fv.ready && fv.session_id ? (
         <a
           href={`#app/${encodeURIComponent(slug)}/dev/proposals/${fv.session_id}`}

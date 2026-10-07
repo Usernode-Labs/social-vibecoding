@@ -31,9 +31,10 @@
  * is the whole point of that path — the frame must survive.
  */
 
-import { useState, type ReactNode } from 'react';
+import { useState, type FormEvent, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { PlanCardView } from '../messages/bot-plan-view';
@@ -84,28 +85,66 @@ export interface FirstVersionPlan {
   slug: string;
   bullets: string[];
   questions: HomeroomBotPlanQuestion[];
-  actionId: number;
+  /**
+   * Null when the plan card could not be sent (#4175), so there is no card
+   * in the chat to decide: Build it goes by the run instead.
+   */
+  actionId: number | null;
+  /** The waiting run, the way in when there is no card. */
+  runId: number | null;
   messageId: number | null;
   conversationId: number | null;
 }
 
-/** B6: the plan, with its taps handed to AppView (buildFirstVersion, changeFirstVersionPlan). */
+/**
+ * B6: the plan, with its taps handed to AppView (buildFirstVersion,
+ * changeFirstVersionPlan, answerFirstVersionPlan). On a plan whose card
+ * never reached the chat (#4175), Change something asks for the words here —
+ * there is no card to quote — and sends them by the run.
+ */
 function FirstVersionPlanCard({ plan }: { plan: FirstVersionPlan }): ReactNode {
   // Pressed here until the screen reads the project again and moves on.
   const [pressed, setPressed] = useState(false);
+  const [asked, setAsked] = useState('');
+  const [askShown, setAskShown] = useState(false);
+  const [sentChange, setSentChange] = useState(false);
   return (
     <div className="mt-3 flex w-full justify-center">
       <PlanCardView
         surface="app"
         appName={plan.appName}
         plan={{ bullets: plan.bullets, questions: plan.questions }}
-        state="open"
+        state={sentChange ? 'changing' : 'open'}
         busy={pressed}
         onBuild={(answers) => {
           setPressed(true);
-          call('buildFirstVersion', plan.slug, plan.actionId, answers);
+          call('buildFirstVersion', plan.slug, plan.actionId, answers, plan.runId);
         }}
-        onChange={() => call('changeFirstVersionPlan', plan.slug, plan.conversationId, plan.messageId)}
+        onChange={() => {
+          if (plan.messageId) call('changeFirstVersionPlan', plan.slug, plan.conversationId, plan.messageId);
+          else setAskShown(true);
+        }}
+        footer={askShown && !sentChange ? (
+          <form
+            className="mt-1 flex items-center gap-2"
+            onSubmit={(event: FormEvent<HTMLFormElement>) => {
+              event.preventDefault();
+              const text = asked.trim();
+              if (!text) return;
+              setSentChange(true);
+              call('answerFirstVersionPlan', plan.slug, plan.runId, text);
+            }}
+          >
+            <Input
+              width="flex"
+              placeholder="What would you like changed?"
+              aria-label="What would you like changed?"
+              value={asked}
+              onChange={(event) => setAsked(event.target.value)}
+            />
+            <Button type="submit" size="sm" variant="neutral" ink="neutral">Send</Button>
+          </form>
+        ) : null}
       />
     </div>
   );
@@ -142,7 +181,7 @@ export function AppStatusView_({ view }: { view: AppStatusView }): ReactNode {
       {view.dot ? <div className={`status-dot ${view.dot}`}></div> : null}
       <p className={titled ? 'max-w-sm text-base font-semibold text-zinc-900 dark:text-zinc-100' : 'text-sm'}>{view.message}</p>
       {titled ? view.lines!.map((line) => <p key={line} className="max-w-sm text-sm">{line}</p>) : null}
-      {view.plan ? <FirstVersionPlanCard key={view.plan.actionId} plan={view.plan} /> : null}
+      {view.plan ? <FirstVersionPlanCard key={view.plan.actionId ?? view.plan.runId} plan={view.plan} /> : null}
       {view.detail ? (
         <p className="text-xs font-mono text-red-700 max-w-md break-words dark:text-red-400">{view.detail}</p>
       ) : null}

@@ -293,3 +293,156 @@ test('the first version being built, from the records the bot leaves', { timeout
     assert.equal(await state(), null, 'filing gave up');
   });
 });
+
+// #4175: a plan whose card could not be sent is read from the waiting run and
+// answered from the project's own screen, through the route that decides the
+// run the same way the chat's card does. Only a real database can show the
+// deciding: what Build it writes, what Change something records and queues,
+// and that a decided run answers 409 to everybody, its creator included.
+test('#4175: the project screen answers a waiting plan by its run', { timeout: 180000 }, async (t) => {
+  const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
+  try { await admin.query('SELECT 1'); } catch (err) {
+    await admin.end();
+    if (process.env.TEST_DATABASE_URL) throw err;
+    t.skip('PostgreSQL unavailable; set TEST_DATABASE_URL to require this check');
+    return;
+  }
+  const name = `fv_answer_${crypto.randomBytes(6).toString('hex')}`;
+  await admin.query(`CREATE DATABASE ${name}`);
+  const url = new URL(DSN); url.pathname = `/${name}`;
+  pool = new Pool({ connectionString: String(url), max: 8 });
+  t.after(async () => {
+    await pool.end();
+    await admin.query(`DROP DATABASE ${name}`);
+    await admin.end();
+  });
+  await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
+
+  async function user(username, { synthetic = false } = {}) {
+    const { rows } = await pool.query(
+      `INSERT INTO users (username, password, has_platform_access, is_synthetic)
+       VALUES ($1, 'x', TRUE, $2) RETURNING id, username`,
+      [username, synthetic],
+    );
+    return rows[0];
+  }
+  await user('homeroom_bot', { synthetic: true });
+  const ada = await user('ada');
+  const sam = await user('sam');
+  const { rows: [app] } = await pool.query(
+    `INSERT INTO apps (name, slug, status, created_by, repo_url)
+     VALUES ('Plant Pal', 'plant-pal', 'running', $1, 'https://github.com/usernode-bot/plant-pal') RETURNING *`,
+    [ada.id],
+  );
+  await pool.query(
+    `INSERT INTO homeroom_bot_first_versions (app_id, user_id, brief, bot_builds, status, issue_number)
+     VALUES ($1, $2, 'Water my plants on time', TRUE, 'filed', 1)`,
+    [app.id, ada.id],
+  );
+  await pool.query(
+    `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title, first_version, asked_text)
+     VALUES ($1, 1, $2, 'First version of Plant Pal', TRUE, 'Water my plants on time')`,
+    [app.id, ada.id],
+  );
+  const PLAN = {
+    bullets: ['A list of your plants', 'A Today view'],
+    questions: [
+      { question: 'How should it remind you?', answers: ['In the app', 'Phone alert'] },
+      { question: 'Who can see your plants?', answers: ['Just me', 'People I invite'] },
+    ],
+  };
+  const waitingRun = async () => (await pool.query(
+    `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_note, awaiting_go_at, plan)
+     VALUES ($1, 1, 'live', 'ready', 'Build the plant list.', NOW(), $2::jsonb) RETURNING id`,
+    [app.id, JSON.stringify(PLAN)],
+  )).rows[0].id;
+  const runRow = async (id) => (await pool.query('SELECT * FROM homeroom_bot_runs WHERE id = $1', [id])).rows[0];
+
+  let viewer = ada;
+  const server = express();
+  server.use(express.json());
+  server.use((req, _res, next) => {
+    req.user = viewer ? { id: viewer.id, username: viewer.username } : null;
+    next();
+  });
+  server.use(appRoutes({}));
+  const listening = server.listen(0);
+  await new Promise((resolve) => listening.once('listening', resolve));
+  t.after(() => {
+    if (typeof listening.closeAllConnections === 'function') listening.closeAllConnections();
+    listening.close();
+  });
+  const answer = async (body, over = {}) => {
+    const res = await fetch(`http://127.0.0.1:${listening.address().port}/api/apps/plant-pal/first-version/answer`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), ...over,
+    });
+    return { status: res.status, body: await res.json().catch(() => ({})) };
+  };
+
+  await t.test('a run that is not a plan of this app is refused, and so is a bad ask', async () => {
+    assert.deepEqual(await answer({ runId: 424242, choice: 'build' }), { status: 404, body: { error: 'No such plan' } });
+    assert.deepEqual(await answer({ choice: 'build' }), {
+      status: 400, body: { error: 'runId and a choice of build or change are needed' },
+    });
+    assert.deepEqual(await answer({ runId: 1, choice: 'maybe' }), {
+      status: 400, body: { error: 'runId and a choice of build or change are needed' },
+    });
+    const other = (await pool.query(
+      `INSERT INTO apps (name, slug, status, created_by) VALUES ('Other', 'other', 'running', $1) RETURNING id`,
+      [ada.id],
+    )).rows[0].id;
+    const wrongApp = (await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict) VALUES ($1, 1, 'live', 'ready') RETURNING id`,
+      [other],
+    )).rows[0].id;
+    assert.deepEqual(await answer({ runId: wrongApp, choice: 'build' }), { status: 404, body: { error: 'No such plan' } });
+  });
+
+  let first;
+  await t.test('only the project\'s creator answers its plan', async () => {
+    first = await waitingRun();
+    viewer = sam;
+    assert.deepEqual(await answer({ runId: first, choice: 'build' }), {
+      status: 403, body: { error: 'Only the project\'s creator answers its plan' },
+    });
+    viewer = null;
+    assert.deepEqual(await answer({ runId: first, choice: 'build' }), {
+      status: 403, body: { error: 'Only the project\'s creator answers its plan' },
+    }, 'nobody signed in answers nobody\'s plan');
+    const row = await runRow(first);
+    assert.ok(row.awaiting_go_at, 'the plan still waits: the refusals decided nothing');
+    assert.equal(row.live_build_waiting_at, null, 'and nothing was built');
+    viewer = ada;
+  });
+
+  await t.test('Build it builds the waiting run, once, with the choices tapped', async () => {
+    assert.deepEqual(await answer({ runId: first, choice: 'build', answers: ['Phone alert', ''] }), {
+      status: 200, body: { ok: true, choice: 'build' },
+    });
+    const row = await runRow(first);
+    assert.equal(row.awaiting_go_at, null);
+    assert.ok(row.live_build_waiting_at, 'its build waits its turn, as the chat\'s Build it leaves it');
+    assert.match(row.build_note, /The creator chose, from the plan they were shown:\n- How should it remind you\? Phone alert\n- Who can see your plants\? Just me$/);
+    assert.deepEqual(await answer({ runId: first, choice: 'build' }), { status: 409, body: { error: 'plan_gone' } },
+      'a decided plan answers 409 to its creator too');
+  });
+
+  await t.test('Change something records the words, ends the wait, and reads the request first', async () => {
+    const second = await waitingRun();
+    assert.deepEqual(await answer({ runId: second, choice: 'change', text: '  Make it work for my partner too  ' }), {
+      status: 200, body: { ok: true, choice: 'change' },
+    });
+    const row = await runRow(second);
+    assert.deepEqual([row.plan_change, row.awaiting_go_at, row.build_ok], ['Make it work for my partner too', null, false]);
+    assert.equal(row.build_error, 'skipped: its creator asked to change the plan');
+    const { rows: [queued] } = await pool.query(
+      'SELECT priority, reason FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 1', [app.id],
+    );
+    assert.deepEqual(queued, { priority: 0, reason: 'plan_change' });
+    assert.deepEqual(await answer({ runId: second, choice: 'change', text: 'again' }), { status: 409, body: { error: 'plan_gone' } },
+      'a run whose wait has ended answers 409');
+    assert.deepEqual(await answer({ runId: second, choice: 'change', text: '   ' }), {
+      status: 400, body: { error: 'Write what you would like changed' },
+    }, 'nothing to read is no answer');
+  });
+});

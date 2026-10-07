@@ -10088,6 +10088,11 @@ CREATE INDEX IF NOT EXISTS homeroom_bot_runs_live_build_waiting_idx
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS plan JSONB;
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS awaiting_go_at TIMESTAMPTZ;
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS plan_change TEXT;
+-- #4175: the last failed try at sending the plan to its creator. Set when
+-- awaitGo or a later try could not deliver, cleared once the plan went out;
+-- the retry sweep reads it as the spacing between tries and the mark that a
+-- waiting run's plan still has to be sent. Null once it is out.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS plan_delivery_at TIMESTAMPTZ;
 COMMENT ON COLUMN homeroom_bot_runs.plan_change IS 'staging:private';
 CREATE INDEX IF NOT EXISTS homeroom_bot_runs_awaiting_go_idx
   ON homeroom_bot_runs(awaiting_go_at) WHERE awaiting_go_at IS NOT NULL;
