@@ -124,8 +124,11 @@ export function AddPhoneCard({ groups, title: titleOverride, lead, onJoined }: {
           ? lead || 'Add your phone number and you’re in, no waiting. The group sees your name, never your number.'
           : `We sent a 6-digit code to the number ending ${number.slice(-4)}.`}
       </p>
+      {/* Keyed: the two forms are one ternary, so without a key React keeps
+          the same uncontrolled <input> across the step and the number typed
+          into it shows up in the Code field (#4143). */}
       {step === 'phone' ? (
-        <form className="mt-4 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void requestCode(phoneField.current?.value || ''); }}>
+        <form key="phone" className="mt-4 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void requestCode(phoneField.current?.value || ''); }}>
           <div className={FIELD_GROUP}>
             <label htmlFor="add-phone-number" className={LABEL}>Phone number</label>
             <input ref={phoneField} id="add-phone-number" type="tel" autoComplete="tel" inputMode="tel" enterKeyHint="go" defaultValue={number} placeholder="+1 415 555 0123" className={INPUT} />
@@ -134,7 +137,7 @@ export function AddPhoneCard({ groups, title: titleOverride, lead, onJoined }: {
           <RecaptchaNotice />
         </form>
       ) : (
-        <form className="mt-4 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void verify(); }}>
+        <form key="code" className="mt-4 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void verify(); }}>
           <div className={FIELD_GROUP}>
             <label htmlFor="add-phone-code" className={LABEL}>Code</label>
             <input ref={codeField} id="add-phone-code" inputMode="numeric" autoComplete="one-time-code" enterKeyHint="go" maxLength={6} className={`${INPUT} tracking-[0.4em]`} />

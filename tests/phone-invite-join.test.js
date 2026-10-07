@@ -191,6 +191,10 @@ test('the waiting room: a queued group can be joined now by adding a phone, and 
   const two = renderToHtml(createElement(AddPhoneCard, { groups: ['A', 'B'], onJoined() {} }));
   assert.match(two, />Join them now</);
   const src = read('frontend/src/features/auth/add-phone.tsx');
+  // The phone and code forms share a slot: each is keyed, or React reuses the
+  // number's <input> as the Code field and the number shows up in it (#4143).
+  assert.match(src, /<form key="phone" /);
+  assert.match(src, /<form key="code" /);
   assert.match(src, /fetch\('\/api\/auth\/phone-link\/request'/);
   assert.match(src, /fetch\('\/api\/auth\/phone-link\/verify'/);
   const waiting = read('frontend/src/features/auth/waiting.tsx');
