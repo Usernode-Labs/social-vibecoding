@@ -845,6 +845,17 @@ test('#3772: "needs a person" says what to do about it, and a card already showi
   assert.match(src, /objects: dm\.card \? \[\] : cardsFor\(kind, dm, app, issueNumber\)\.filter\(\(c\) => !\(shown && c\.type === 'issue'\)\),/);
 });
 
+test('#4239: a request about Homeroom itself says so, and offers the move instead of Go ahead', () => {
+  const ctx = { appName: 'Ear Trainer', issueNumber: 13, issueTitle: 'Header colour' };
+  const text = dm.dmText('person', { reason: 'The header is drawn by Homeroom.', platform: true }, ctx);
+  assert.match(text, /This is about Homeroom itself rather than Ear Trainer, so no change to Ear Trainer can do it, and I haven't built anything: The header is drawn by Homeroom\./);
+  assert.match(text, /I can move it to Homeroom's own board, where the people who work on Homeroom look\. Tap below to choose\.$/);
+  assert.doesNotMatch(text, /\u2014/);
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot-dm.js'), 'utf8');
+  assert.match(src, /\.\.\.\(STUCK_ACTIONS\[kind\] && !\(kind === 'person' && dm\.platform\) \?/);
+  assert.match(src, /if \(kind === 'person' && dm\.platform\) \{\n    await require\('\.\/homeroom-bot-move'\)\.offerMove\(/);
+});
+
 test('"typing" goes out before the answer starts, bounded', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot-dm.js'), 'utf8');
   const fn = src.slice(src.indexOf('async function whileTyping('), src.indexOf('// ── Who a request is for'));

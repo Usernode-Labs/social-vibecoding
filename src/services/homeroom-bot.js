@@ -1216,6 +1216,9 @@ function readVerdict(text) {
           : demoted ? clip(`Asked "${demoted.question}", but it was not a blocker: built with its default, "${demoted.default}".`, 2000)
             : null,
       demoted: !!demoted,
+      // #4239: a request the bot leaves because it is about Homeroom itself,
+      // not the app it was filed on. Only a person verdict carries it.
+      platform: verdict === 'person' && obj.platform === true,
       stopMentioning: live.parseStopMentioning(obj.stop_mentioning),
       resumeMentioning: live.parseStopMentioning(obj.resume_mentioning),
     };
@@ -2128,6 +2131,11 @@ async function insertRun(pool, run) {
       'UPDATE homeroom_bot_runs SET plan = $2 WHERE id = $1',
       [id, JSON.stringify(run.plan)],
     ).catch((err) => log.warn('homeroom-bot', 'Could not record a plan', { runId: id, err: err.message }));
+  }
+  // #4239: a person verdict about Homeroom itself, the same way.
+  if (id && run.aboutPlatform) {
+    await pool.query('UPDATE homeroom_bot_runs SET about_platform = TRUE WHERE id = $1', [id])
+      .catch((err) => log.warn('homeroom-bot', 'Could not record a platform verdict', { runId: id, err: err.message }));
   }
   return id;
 }
@@ -3382,12 +3390,14 @@ async function runTriage(pool, config, {
     }
   }
   const capSuppressed = await simulateCaps(pool, bot, app.id, parsed.verdict, settings);
+  // #4239: about Homeroom itself means nothing on Homeroom's own board.
+  if (parsed.platform && (await platformAppSlugs(pool)).includes(app.slug)) parsed = { ...parsed, platform: false };
   const runId = await insertRun(pool, {
     ...billingOf(item, runMode),
     appId: app.id, issueNumber, sessionId: session.id, mode: runMode,
     verdict: parsed.verdict, determined: parsed.determined, missingFact: parsed.missingFact,
     question: parsed.question, questionDefault: parsed.questionDefault, questionAnswers: parsed.questionAnswers,
-    plan: parsed.plan,
+    plan: parsed.plan, aboutPlatform: !!parsed.platform,
     buildNote: parsed.buildNote, reason: parsed.reason, capSuppressed,
     threadSeenAt: item.thread_seen_at || null, model, costUsd,
     inputTokens: usage.inputTokens, outputTokens: usage.outputTokens,
@@ -5987,7 +5997,9 @@ async function actOnVerdict({
       },
     });
   } else if (parsed.verdict === 'person') {
-    await say('person', live.personText(parsed), { dm: { reason: parsed.reason } });
+    // #4239: about Homeroom itself, the requester's DM offers to move it to
+    // Homeroom's own board (homeroom-bot-dm.js relayIssuePost).
+    await say('person', live.personText(parsed), { dm: { reason: parsed.reason, ...(parsed.platform ? { platform: true } : {}) } });
   } else if (parsed.verdict === 'empty') {
     await say('empty', live.emptyText(parsed), { dm: { reason: parsed.reason } });
   } else if (parsed.verdict === 'ready') {
@@ -8342,6 +8354,9 @@ async function enqueueNow(pool, { slug, issueNumber, actorId }) {
 
 module.exports = {
   BOT_DISPLAY_NAME,
+  // #4239: Homeroom's own board, where a request about the platform moves.
+  PLATFORM_SELF_APP_SLUG,
+  platformAppSlugs,
   start,
   stop,
   runOnce,

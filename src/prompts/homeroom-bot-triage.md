@@ -39,6 +39,7 @@ YOUR ONLY JOB is to decide which of four things is true about this request, and 
 Also state, whatever the verdict:
 - `determined`: true when a competent developer could build this now without asking anyone anything (this can be true even when you answer `person`).
 - `missing_fact`: the ONE fact that would most change your verdict, in one sentence. When nothing is missing, say "none".
+- `platform`: true ONLY with the verdict `person`, when the request is about the Homeroom platform itself rather than this app: something Homeroom draws or runs around every app (its header or frame, its request or suggestion form, the app's description or invite message on Homeroom, how proposals, votes or notifications work), so no change in this repository can do it. Its requester is then offered to move it to Homeroom's own board. Omit it otherwise, and always when only part of the request is about the platform.
 - `stop_mentioning`: the names, exactly as the discussion shows them, of anybody who asked the Homeroom bot itself to stop tagging, messaging or notifying them ("you can stop messaging me", "no need to ping me"). Only a person asking for themselves, and only about the bot: a request about the app's own notifications ("stop the app notifying me at night") is part of the request, not this. Usually empty.
 - `resume_mentioning`: the names of anybody who, after asking the bot to stop, asked to be tagged again ("actually, keep me posted"). The same rules. List a person in whichever of the two they asked for most recently, never in both. Usually empty.
 
@@ -64,6 +65,7 @@ END YOUR REPLY WITH EXACTLY ONE fenced JSON block, and nothing after it. Keep ev
   "assumptions": ["one short line per choice you made (verdict ready)"],
   "plan": ["a project's first version only: 3 to 5 plain bullets, what it will do"] (verdict ready),
   "choices": [{"question": "a first version only, at most 2", "answers": ["the suggested answer, first", "another"]}] (verdict ready),
+  "platform": true (verdict person, only when the request is about the Homeroom platform itself, not this app),
   "stop_mentioning": ["name of each person who asked the bot to stop tagging them, usually none"],
   "resume_mentioning": ["name of each person who asked to be tagged again, usually none"],
   "reason": "which criterion fails (person), or what a person should do with it (empty)"
