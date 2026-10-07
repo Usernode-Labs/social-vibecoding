@@ -20836,13 +20836,16 @@ html.un-kb #platform-parked {
     padding-top: 10px;
     border-top: 1px solid var(--app-sheet-line);
   }
+  /* #4027: the shell's one section-label size (SectionHeader: 12px bold,
+     tracked .06em, muted). At 10.5px / 600 the ACTIVE and RECENTS labels
+     were too small and faint to scan the rail by. */
   .platform-recents-head {
     margin: 0 0 4px;
     padding: 0 12px;
     color: var(--text-muted);
-    font-size: 10.5px;
-    font-weight: 600;
-    letter-spacing: .04em;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .06em;
     line-height: 1.35;
     text-transform: uppercase;
   }
@@ -20957,14 +20960,14 @@ html.un-kb #platform-parked {
   /* ── RECENTS BY DAY (#2919) ──────────────────────────────────────────
      frontend/src/features/nav/recents.ts (groupRecents) carries the argument.
      A small label before each day that has a row, quieter than the RECENTS
-     heading above it: sentence case, no caps or tracking, and the muted ink
-     taken down a step so the rows stay the thing you read. Less air above
+     heading above it: sentence case, no caps or tracking, smaller and
+     lighter than the heading so the rows stay the thing you read. Full
+     muted ink, not a step below it (#4027: at 75% it was too faint). Less air above
      the first one, which already sits under the heading. */
   .platform-recents-day {
     flex: none;
     padding: 8px 12px 2px;
     color: var(--text-muted);
-    opacity: .75;
     font-size: 11px;
     font-weight: 500;
     letter-spacing: .01em;
