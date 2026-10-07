@@ -388,7 +388,7 @@
       cli: 'terminal token credentials revoke local agent opencode claude code',
       'agent-files': 'instructions skills agents md claude md prompt files',
       'global-chat': 'model cap chat',
-      experimental: 'beta labs progress estimate session bridge local agent homeroom bot dm messages',
+      experimental: 'beta labs progress estimate session bridge local agent homeroom bot dm messages keyboard shortcut suggest improvement',
       theme: 'dark light mode appearance sidebar',
       'dev-console': 'bug icon logs errors debug developer',
       language: 'locale translate',
@@ -621,6 +621,17 @@
       const botDmToggle = document.getElementById('homeroom-bot-dm-enabled');
       if (botDmToggle) {
         botDmToggle.addEventListener('change', (e) => this._saveHomeroomBotDm(e.target.checked));
+      }
+
+      // #4289: Press C to suggest an improvement. Kept on this device, not
+      // the account (features/improve/suggest-shortcut.ts), so there is no
+      // request to fail: the change is the save.
+      const shortcutToggle = document.getElementById('suggest-shortcut-enabled');
+      if (shortcutToggle) {
+        shortcutToggle.addEventListener('change', (e) => {
+          const pref = typeof window !== 'undefined' ? window.UsernodeReact?.suggestShortcut : null;
+          pref?.setEnabled(e.target.checked);
+        });
       }
 
       // Platform-level language preference (issue #757). Server-side
@@ -1575,6 +1586,9 @@
       if (botDmBlock) botDmBlock.classList.toggle('hidden', !!this.state.homeroomBotForEveryone);
       const botDmStatus = document.getElementById('homeroom-bot-dm-status');
       if (botDmStatus) { botDmStatus.classList.add('hidden'); botDmStatus.textContent = ''; }
+      const shortcut = document.getElementById('suggest-shortcut-enabled');
+      const shortcutPref = typeof window !== 'undefined' ? window.UsernodeReact?.suggestShortcut : null;
+      if (shortcut) shortcut.checked = !!shortcutPref?.enabled();
       this._renderLocalAgentsSection();
     },
 

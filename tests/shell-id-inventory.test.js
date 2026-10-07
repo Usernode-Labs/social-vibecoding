@@ -708,6 +708,10 @@ const ADDED_IDS = {
   // per-user opt-ins in Settings → Experimental.
   'homeroom-bot-dm-enabled': 'Opt-in switch that puts this account on the Homeroom bot\'s DM list (#3624).',
   'homeroom-bot-dm-status': 'Save/error line for the Homeroom bot switch, e.g. when the list is full (#3624).',
+  // #4289 — the experimental C shortcut for Suggest an improvement, beside
+  // the other opt-ins in Settings → Experimental. Kept on the device
+  // (features/improve/suggest-shortcut.ts), so it has no save/error line.
+  'suggest-shortcut-enabled': 'Opt-in switch for pressing C to open Suggest an improvement on a computer (#4289).',
   // Username changes — Settings -> Username, the change-your-@handle form. It sits in
   // Settings rather than the profile edit sheet because the endpoint requires
   // the current password, which is the same reason Change password is here.
