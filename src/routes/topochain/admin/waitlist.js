@@ -40,6 +40,12 @@ function formatSignup(row) {
     confirmed_at: iso(row.confirmed_at),
     linked_user_id: row.linked_user_id != null ? Number(row.linked_user_id) : null,
     linked_username: row.linked_username ?? null,
+    // A phone join (#4223) has no address; the verified number is PII
+    // (user_phone_identities is staging:private), so at most its last 4
+    // digits leave the database, and only alongside the account name.
+    phone_last4: typeof row.phone_e164 === 'string' && row.phone_e164.length >= 4
+      ? row.phone_e164.slice(-4)
+      : null,
     has_platform_access: row.has_platform_access ?? null,
     // The other half of the invite graph. `invited_count` (below, via
     // signals) says how many this row brought in; these two say who
@@ -287,6 +293,16 @@ function waitlistAdminRoutes(config) {
   // release. `mobile` is the store-listing lookup, done once by the caller
   // so a batch does not repeat it per row.
   async function sendReleaseMail(released, mobile) {
+    // A phone-only row (#4223) has no address to mail: it is released
+    // without a message, and the person finds out the next time they open
+    // Homeroom. #4096: once outbound SMS exists, the "you're in" text
+    // message sends here, in place of this guard's return.
+    if (!released.email) {
+      log.info('topochain-admin', 'Waitlist entry released with no address on the row; no release mail', {
+        signupId: released.id, linkedUserId: released.linked_user_id,
+      });
+      return;
+    }
     await sendWaitlistReleaseMail(config, released.email, {
       mobile,
       hasAccount: released.linked_user_id != null,
@@ -358,11 +374,13 @@ function waitlistAdminRoutes(config) {
                   AS invited_count,
                 p.email AS invited_by_email,
                 u.username AS linked_username, u.has_platform_access,
+                ph.phone_e164,
                 m.status AS invite_mail_status, m.created_at AS invite_mail_at,
                 m.error AS invite_mail_error
            FROM waitlist_signups w
            LEFT JOIN users u ON u.id = w.linked_user_id
            LEFT JOIN waitlist_signups p ON p.id = w.invited_by
+           LEFT JOIN user_phone_identities ph ON ph.user_id = w.linked_user_id
            LEFT JOIN LATERAL (
              SELECT d.status, d.created_at, d.error
                FROM mail_deliveries d

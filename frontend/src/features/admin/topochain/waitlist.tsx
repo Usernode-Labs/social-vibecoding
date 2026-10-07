@@ -101,7 +101,10 @@ const canWrite = () => !!topo()?.canWrite();
 
 type WaitlistRow = {
   id: number;
-  email: string;
+  /** A phone join (#4223) has no address; it is named by its account. */
+  email: string | null;
+  /** At most the last 4 digits of a phone row's verified number. */
+  phone_last4?: string | null;
   confirmed_at?: string | null;
   submitted_at?: string | null;
   released_at?: string | null;
@@ -1234,6 +1237,11 @@ function BatchAdmitPanel({ onClose, onAdmitted }: { onClose: () => void; onAdmit
   );
 }
 
+// What a row is called on this screen: its address — or, for a phone join,
+// which has none (#4223), its account, so no row shows a blank name.
+const wlIdent = (w: WaitlistRow) => w.email
+  || (w.linked_username ? `@${w.linked_username}` : `signup #${w.id}`);
+
 const WAITLIST_COLUMNS: Column<WaitlistRow>[] = [
   {
     label: 'Signup',
@@ -1241,7 +1249,17 @@ const WAITLIST_COLUMNS: Column<WaitlistRow>[] = [
     tdClass: 'font-mono',
     cell: (w) => (
       <>
-        {w.email}
+        {w.email ?? (
+          <span className="flex flex-col">
+            <span>{wlIdent(w)}</span>
+            <span
+              className="text-xs text-zinc-500 dark:text-zinc-400"
+              title="Joined with a verified phone number, so there is no address"
+            >
+              {w.phone_last4 ? `Phone ····${w.phone_last4}` : 'Phone'}
+            </span>
+          </span>
+        )}
         {w.confirmed_at ? (
           <span
             className="text-emerald-700 dark:text-emerald-400 text-xs"
@@ -1436,10 +1454,15 @@ function WaitlistScreen() {
       ? ' This address was never confirmed, so the email may not reach anyone.'
       : '';
     const okd = await topo()._confirm({
-      title: `Admit ${w.email} off the waitlist?`,
+      title: `Admit ${wlIdent(w)} off the waitlist?`,
       message: `They get platform access straight away if they already have an account, `
-        + `otherwise the moment they create one. They will be emailed a link to sign in or `
-        + `create their account.${unconfirmed} This cannot be undone from here.`,
+        + `otherwise the moment they create one.`
+        + (w.email
+          ? ` They will be emailed a link to sign in or create their account.`
+          // A phone join has no address: no mail goes, and until the
+          // platform can text (#4096) they find out on their next visit.
+          : ` They will find out the next time they open Homeroom.`)
+        + `${unconfirmed} This cannot be undone from here.`,
       confirmLabel: 'Admit',
     });
     if (!okd) return;
@@ -1451,7 +1474,7 @@ function WaitlistScreen() {
   const deleteWaitlistEntry = useCallback(async (w: WaitlistRow, reload: () => void) => {
     if (!canWrite()) return;
     const okd = await topo()._confirm({
-      title: `Delete ${w.email} from the waitlist?`,
+      title: `Delete ${wlIdent(w)} from the waitlist?`,
       message: 'This removes the signup and its survey answers entirely. Anyone who used its invite '
         + 'link keeps their own place in line. This cannot be undone.',
       confirmLabel: 'Delete',
@@ -1548,7 +1571,7 @@ function WaitlistScreen() {
         extra={(w) => <WaitlistDetails row={w} />}
         deleteAction={write ? {
           bulkPath: '/api/v4/admin/waitlist/bulk-delete',
-          itemLabel: (w) => w.email,
+          itemLabel: (w) => wlIdent(w),
           confirmTitle: (n) => `Delete ${n} waitlist ${n === 1 ? 'entry' : 'entries'}?`,
           confirmMessage: (n) => `This removes ${n === 1 ? 'this signup' : 'these signups'} and `
             + `${n === 1 ? 'its' : 'their'} survey answers entirely. This cannot be undone.`,

@@ -230,7 +230,7 @@ test('private members, against the full schema', { timeout: 180000 }, async (t) 
     const ana = await account({ email: 'Ana@Example.com' });
     await invites.redeem(pool, { token: made.link.token, user: ana });
     const before = await memberWaitlist.stateFor(pool, ana.id);
-    assert.deepEqual(before, { state: 'none', email: null, accountEmail: 'ana@example.com', moreToken: null });
+    assert.deepEqual(before, { state: 'none', email: null, accountEmail: 'ana@example.com', moreToken: null, hasPhone: false });
     const sent = [];
     const joined = await memberWaitlist.join(pool, { userId: ana.id, rawEmail: 'ana@example.com', send: (...a) => sent.push(a) });
     assert.equal(joined.next, 'listed');
@@ -266,6 +266,68 @@ test('private members, against the full schema', { timeout: 180000 }, async (t) 
     assert.deepEqual([done.next, done.state, done.email], ['listed', 'listed', 'ben@example.com']);
     const { rows } = await pool.query('SELECT email, email_confirmed FROM users WHERE id = $1', [ben.id]);
     assert.deepEqual(rows, [{ email: 'ben@example.com', email_confirmed: true }], 'an account with no address takes it');
+  });
+
+  await t.test('a verified phone joins with one tap, no address asked for', async () => {
+    // No phone identity yet: refused, and nothing written.
+    const val = await account();
+    await invites.redeem(pool, { token: made.link.token, user: val });
+    await assert.rejects(
+      memberWaitlist.joinWithPhone(pool, { userId: val.id }),
+      (err) => err.code === 'no_phone' && err.status === 422 && /phone/.test(err.message)
+    );
+    assert.equal((await memberWaitlist.stateFor(pool, val.id)).state, 'none', 'still not on it');
+    // The verified phone (services/firebase-phone-auth.js signIn made it)
+    // is the confirmation: one tap, one row, no address at all.
+    await pool.query(
+      `INSERT INTO user_phone_identities (user_id, firebase_uid, phone_e164) VALUES ($1, 'uid-val', '+15550004001')`,
+      [val.id]
+    );
+    assert.deepEqual(await memberWaitlist.stateFor(pool, val.id),
+      { state: 'none', email: null, accountEmail: null, moreToken: null, hasPhone: true });
+    const joined = await memberWaitlist.joinWithPhone(pool, { userId: val.id, ip: '127.0.0.1' });
+    assert.deepEqual([joined.next, joined.state, joined.email], ['listed', 'listed', null]);
+    assert.match(joined.moreToken, /^[a-f0-9]{48}$/, 'the "Want in sooner?" questions ride the row too');
+    const { rows: [row] } = await pool.query(
+      `SELECT email, linked_user_id::int AS linked_user_id,
+              confirmed_at IS NOT NULL AS confirmed,
+              more_token, submitted_at IS NOT NULL AS submitted
+         FROM waitlist_signups WHERE linked_user_id = $1`, [val.id]);
+    assert.deepEqual(row, {
+      email: null, linked_user_id: val.id, confirmed: true,
+      more_token: joined.moreToken, submitted: true,
+    });
+    // A second tap is idempotent: the same row, confirmed in place, never
+    // a second one (the one-row-per-account index would refuse it).
+    const again = await memberWaitlist.joinWithPhone(pool, { userId: val.id });
+    assert.deepEqual([again.next, again.state, again.email], ['listed', 'listed', null]);
+    const { rows: [{ count }] } = await pool.query(
+      'SELECT COUNT(*)::int AS count FROM waitlist_signups WHERE linked_user_id = $1', [val.id]);
+    assert.equal(count, 1);
+    // An old row linked to the account but never confirmed (the schema's
+    // legacy backfill shape) is phone-confirmed in place, not doubled.
+    const kim = await account();
+    await pool.query(
+      `INSERT INTO waitlist_signups (email, ip, linked_user_id, submitted_at)
+       VALUES ('kim@example.com', NULL, $1, NOW())`, [kim.id]);
+    await pool.query(
+      `INSERT INTO user_phone_identities (user_id, firebase_uid, phone_e164) VALUES ($1, 'uid-kim', '+15550004002')`,
+      [kim.id]
+    );
+    const kimJoin = await memberWaitlist.joinWithPhone(pool, { userId: kim.id });
+    assert.deepEqual([kimJoin.next, kimJoin.state, kimJoin.email], ['listed', 'listed', 'kim@example.com']);
+    const { rows: kimRows } = await pool.query(
+      'SELECT confirmed_at IS NOT NULL AS confirmed FROM waitlist_signups WHERE linked_user_id = $1', [kim.id]);
+    assert.deepEqual(kimRows, [{ confirmed: true }]);
+    // Released the ordinary way: the account is let in, with no message —
+    // mail_deliveries records every send attempt, and none happened.
+    const { rows: [{ id: signupId }] } = await pool.query(
+      'SELECT id FROM waitlist_signups WHERE linked_user_id = $1', [val.id]);
+    await waitlist.releaseWaitlistSignup(pool, signupId);
+    assert.deepEqual(await tier(val.id), { has_platform_access: true, private: true });
+    const { rows: [{ mails }] } = await pool.query(
+      "SELECT COUNT(*)::int AS mails FROM mail_deliveries WHERE kind = 'waitlist_released'");
+    assert.equal(mails, 0, 'a phone row is released without a message');
   });
 
   await t.test('a private member uses public apps but never votes on one, even one that invited them', async () => {

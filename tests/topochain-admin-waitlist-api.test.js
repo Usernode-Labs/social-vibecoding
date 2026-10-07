@@ -27,6 +27,14 @@ const poolMod = require('../src/db/pool');
 let currentMockPool = null;
 poolMod.getPool = () => currentMockPool;
 
+// The "you're in" mail is what sendReleaseMail calls; the stub records the
+// attempts so the phone-row test can pin that none is made for a row with
+// no address. Installed BEFORE the admin composer is required, whose route
+// module destructures the sender at require time.
+const mailer = require('../src/services/topochain/mailer');
+const releaseMails = [];
+mailer.sendWaitlistReleaseMail = async (config, email, opts) => { releaseMails.push({ email, opts }); };
+
 const { topochainAdminRoutes } = require('../src/routes/topochain/admin');
 const { SECTIONS } = require('../src/services/waitlist-signals');
 
@@ -47,6 +55,9 @@ let signupRows;
 let userRows;
 let mailRows;
 let socialRows;
+// The verified phone identity per linked account (user_phone_identities).
+// Empty by default: only a phone-join fixture row has one (#4223).
+let phoneRows;
 
 function resetFixtures() {
   signupRows = [
@@ -136,6 +147,7 @@ function resetFixtures() {
     { user_id: 12, provider: 'x', handle: 'admitted_on_x' },
     { user_id: 11, provider: 'github', handle: 'anchor-gh' },
   ];
+  phoneRows = [];
 }
 
 // ─── Mock pool ──────────────────────────────────────────────────────────
@@ -191,6 +203,7 @@ function sortRows(sql, rows) {
 
 function decorate(r) {
   const u = (r.linked_user_id != null && userRows.find((x) => x.id === r.linked_user_id)) || null;
+  const ph = (r.linked_user_id != null && phoneRows.find((x) => x.user_id === r.linked_user_id)) || null;
   const parent = (r.invited_by != null && signupRows.find((x) => x.id === r.invited_by)) || null;
   const mail = mailRows
     .filter((m) => m.recipient === r.email && m.kind === 'waitlist_released')
@@ -201,6 +214,7 @@ function decorate(r) {
     invited_by_email: parent ? parent.email : null,
     linked_username: u ? u.username : null,
     has_platform_access: u ? u.has_platform_access : null,
+    phone_e164: ph ? ph.phone_e164 : null,
     invite_mail_status: mail ? mail.status : null,
     invite_mail_at: mail ? mail.created_at : null,
     invite_mail_error: mail ? mail.error : null,
@@ -242,6 +256,32 @@ function handleQuery(rawSql, params = []) {
     const offset = params[1];
     const rows = sortRows(sql, filterRows(sql)).slice(offset, offset + limit).map(decorate);
     return { rows };
+  }
+
+  // grantPlatformAccess (services/waitlist.js), reached through the release
+// route: an idempotent grant.
+if (sql.startsWith('UPDATE users') && sql.includes('has_platform_access = TRUE')) {
+    const id = Number(params[0]);
+    const user = userRows.find((x) => x.id === id);
+    if (user && user.has_platform_access === false) user.has_platform_access = true;
+    return { rows: [] };
+  }
+
+  // Admin release (services/waitlist.js): idempotent, with newly_released
+// saying whether this call was the first.
+if (sql.startsWith('WITH prev AS')) {
+    const id = Number(params[0]);
+    const row = signupRows.find((r) => r.id === id);
+    if (!row) return { rows: [] };
+    const newly = row.released_at == null;
+    if (newly) row.released_at = T(0);
+    return {
+      rows: [{
+        id: row.id, email: row.email, released_at: row.released_at,
+        linked_user_id: row.linked_user_id, more_token: row.more_token ?? null,
+        newly_released: newly,
+      }],
+    };
   }
 
   // Delete (single, `= $1`, or bulk, `= ANY($1::bigint[])`): the first bound
@@ -316,7 +356,63 @@ async function mutate(method, path, body, role = 'admin') {
 test.beforeEach(() => {
   resetFixtures();
   seenSql.length = 0;
+  releaseMails.length = 0;
   currentMockPool = makeMockPool();
+});
+
+// ─── Phone rows (#4223) ─────────────────────────────────────────────────
+
+// A phone join writes a row with no address at all; the account names it
+// on the screen, and at most the last 4 digits of the number travel.
+function pushPhoneRow() {
+  signupRows.push({
+    id: 6,
+    email: null,
+    submitted_at: T(-3),
+    released_at: null,
+    confirmed_at: T(-3),
+    linked_user_id: 13,
+    invited_by: null,
+    answers: null,
+  });
+  userRows.push({ id: 13, username: 'phone-user', has_platform_access: false });
+  phoneRows = [{ user_id: 13, phone_e164: '+15551234567' }];
+}
+
+test('a phone row is named by its account and carries phone_last4, not an address', async () => {
+  pushPhoneRow();
+  const { body } = await get('/api/v4/admin/waitlist');
+  const row = body.data.find((r) => r.id === 6);
+  assert.equal(row.email, null);
+  assert.equal(row.linked_username, 'phone-user');
+  assert.equal(row.phone_last4, '4567');
+  // An email row carries no digits at all.
+  const emailRow = body.data.find((r) => r.id === 1);
+  assert.equal(emailRow.phone_last4, null);
+  assert.equal(emailRow.email, 'anchor@example.invalid');
+});
+
+test('releasing a phone row sends no mail; an email row still gets its "you\'re in"', async () => {
+  pushPhoneRow();
+  const phone = await mutate('POST', '/api/v4/admin/waitlist/6/release');
+  assert.equal(phone.status, 200);
+  assert.equal(phone.body.data.email, null);
+  assert.deepEqual(releaseMails, [], 'no address on the row: no mail attempted');
+
+  const email = await mutate('POST', '/api/v4/admin/waitlist/1/release');
+  assert.equal(email.status, 200);
+  assert.deepEqual(releaseMails.map((m) => m.email), ['anchor@example.invalid']);
+  assert.equal(releaseMails[0].opts.hasAccount, true);
+});
+
+test('export-csv leaves the email cell empty for a phone row', async () => {
+  pushPhoneRow();
+  const rows = parseCsv((await getCsv('/api/v4/admin/waitlist/export-csv')).text);
+  const row = rows.find((r) => r.signup_id === '6');
+  assert.equal(row.email, '');
+  assert.equal(row.status, 'waiting');
+  assert.equal(row.account_username, 'phone-user');
+  assert.equal(row.has_platform_access, 'false');
 });
 
 // ─── Auth + registration ────────────────────────────────────────────────

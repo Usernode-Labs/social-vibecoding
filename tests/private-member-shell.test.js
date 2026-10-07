@@ -120,6 +120,34 @@ test('the waitlist card: join, an email, a code, then On the waitlist with "Want
   assert.match(src, /if \(!privateMember \|\| !standing \|\| standing\.state === 'admitted'\) return null;/);
   for (const p of ["'/api/me/waitlist'", "'/api/me/waitlist/join'", "'/api/me/waitlist/verify'"]) assert.ok(src.includes(p), p);
   assert.match(read('frontend/src/features/home/index.tsx'), /<AppsMore \/>\s+<\/section>[\s\S]*<WaitlistCard \/>\s+[\s\S]*<DiscoverSection \/>/);
+
+  // A verified phone and no confirmed email (#4223): the join button IS the
+  // join — one tap posting { phone: true }, never the email step.
+  const phoneJoin = renderComponent(card, 'WaitlistCardBody', {
+    standing: { state: 'none', email: null, accountEmail: null, hasPhone: true, moreToken: null },
+    onListed: () => {},
+  });
+  assert.match(phoneJoin, /data-waitlist-card="join"/);
+  assert.match(phoneJoin, /id="home-waitlist-join"/);
+  assert.match(src, /post\(JOIN_PATH, \{ phone: true \}\)/);
+  assert.match(src, /standing\.hasPhone && !standing\.accountEmail \? void joinByPhone\(\) : setStep\(\{ kind: 'email' \}\)/);
+  // And an account with an email keeps today's card: the button opens the
+  // email step, which is rendered from the same source with hasPhone false.
+  const emailJoin = renderComponent(card, 'WaitlistCardBody', {
+    standing: { state: 'none', email: null, accountEmail: 'lina@example.com', hasPhone: true, moreToken: null },
+    onListed: () => {},
+  });
+  assert.match(emailJoin, /data-waitlist-card="join"/);
+
+  // Listed with no address: the news goes by text, not email.
+  const phoneListed = renderComponent(card, 'WaitlistCardBody', {
+    standing: { state: 'listed', email: null, accountEmail: null, hasPhone: true, moreToken: token },
+    onListed: () => {},
+  });
+  assert.match(phoneListed, /data-waitlist-card="listed"/);
+  assert.match(phoneListed, /We’ll text you when it’s your turn\./);
+  assert.doesNotMatch(phoneListed, /We’ll email/);
+  assert.match(phoneListed, new RegExp(`href="#more/${token}"[^>]*>Answer them now<`), '"Want in sooner?" unchanged');
 });
 
 test('Home for a private member: no New project tile, Discover kept, no Challenges or Create panels', () => {

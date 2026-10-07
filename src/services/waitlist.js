@@ -69,7 +69,14 @@ function parseEmailList(text) {
 // this flag plus the existing row's confirmed_at is what picks the
 // branch. The capability token is the part that did NOT widen: a
 // re-join still gets null, whatever else the response says.
-async function joinWaitlist(pool, { email, ip = null, answers = null, inviteCode = null }) {
+// `linkedUserId` and `confirmedAt` carry the phone join (#4223,
+// services/member-waitlist.js): a row with no address at all, linked to the
+// account and confirmed on the spot — the verified number stands for the
+// confirmation. Both stay null for an email join. A null email matches
+// nothing here: `ON CONFLICT (email)` never fires for NULL, and the
+// project-invite subquery compares the address.
+async function joinWaitlist(pool, { email, ip = null, answers = null, inviteCode = null,
+  linkedUserId = null, confirmedAt = null }) {
   const moreToken = crypto.randomBytes(24).toString('hex');
   const stored = answers
     ? { _version: ANSWERS_VERSION, ...answers }
@@ -99,15 +106,17 @@ async function joinWaitlist(pool, { email, ip = null, answers = null, inviteCode
   // block without a second round trip. ON CONFLICT DO NOTHING returns no
   // row, which is still exactly how a re-join is detected.
   const { rows } = await pool.query(
-    `INSERT INTO waitlist_signups (email, ip, answers, more_token, invited_by, project_invite_id)
+    `INSERT INTO waitlist_signups (email, ip, answers, more_token, invited_by, project_invite_id,
+                                   linked_user_id, confirmed_at)
      VALUES ($1, $2, $3, $4, $5,
        (SELECT id FROM app_email_invites
          WHERE email = $1::varchar AND claimed_at IS NULL
          ORDER BY created_at ASC, id ASC
-         LIMIT 1))
+         LIMIT 1), $6, $7)
      ON CONFLICT (email) DO NOTHING
      RETURNING submitted_at`,
-    [email, ip, stored ? JSON.stringify(stored) : null, moreToken, invitedBy]
+    [email, ip, stored ? JSON.stringify(stored) : null, moreToken, invitedBy,
+      linkedUserId, confirmedAt]
   );
   const created = rows.length > 0;
   return {

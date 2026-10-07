@@ -14,6 +14,10 @@
  *     account's own confirmed email joins with one press, and any other
  *     address is confirmed with the waitlist's 6-digit code first.
  *
+ * An account with a verified phone (user_phone_identities) needs neither:
+ * joinWithPhone writes a row with no address at all (#4223), the verified
+ * number standing for the confirmation.
+ *
  * An address that belongs to another Homeroom account is refused, whichever
  * way it arrives: there is no merging two accounts here.
  *
@@ -36,17 +40,19 @@ class MemberWaitlistError extends Error {
 const IN_USE = 'That email is already on another Homeroom account. Use a different one.';
 
 /**
- * Where `userId` stands: `{ state, email, accountEmail, moreToken }`.
+ * Where `userId` stands: `{ state, email, accountEmail, moreToken, hasPhone }`.
  *   state 'none'      not on the waitlist (or only an unconfirmed address);
- *         'listed'    on it, address confirmed;
+ *         'listed'    on it, address confirmed (or a phone join);
  *         'admitted'  their row was released.
  * `accountEmail` is the account's own confirmed address, which the join form
- * offers; null when it has none.
+ * offers; null when it has none. `hasPhone` says the account has a verified
+ * phone identity, which is what makes the card's one-tap join possible.
  */
 async function stateFor(pool, userId) {
   const { rows } = await pool.query(
     `SELECT u.email, u.email_confirmed,
-            w.email AS listed_email, w.confirmed_at, w.released_at, w.more_token
+            w.email AS listed_email, w.confirmed_at, w.released_at, w.more_token,
+            EXISTS (SELECT 1 FROM user_phone_identities p WHERE p.user_id = u.id) AS has_phone
        FROM users u
        LEFT JOIN LATERAL (
          SELECT email, confirmed_at, released_at, more_token
@@ -69,6 +75,7 @@ async function stateFor(pool, userId) {
     email: state === 'none' ? null : row.listed_email,
     accountEmail,
     moreToken: state === 'listed' ? row.more_token || null : null,
+    hasPhone: row.has_phone,
   };
 }
 
@@ -125,6 +132,53 @@ async function join(pool, { userId, rawEmail, ip = null, send }) {
   return { next: 'code', email };
 }
 
+/**
+ * Join with the account's verified phone (#4223): one tap, no address asked
+ * for. Refuses an account without a phone identity. A linked row already on
+ * file (the row the LATERAL stateFor reads) is confirmed in place — that
+ * covers a second tap and an unconfirmed linked row being phone-confirmed,
+ * and is what keeps the one-row-per-account index
+ * (schema.sql, idx_waitlist_signups_linked_user_one) from ever seeing a
+ * second INSERT for the same account. Otherwise a row is written with email
+ * NULL, linked_user_id set and confirmed_at NOW(): the verified phone stands
+ * for the confirmation. A more_token is minted the way an email join mints
+ * one, so "Want in sooner?" works the same.
+ * Returns `{ next: 'listed', ...state }` like an email join of the
+ * account's own address.
+ */
+async function joinWithPhone(pool, { userId, ip = null }) {
+  const { rows } = await pool.query(
+    'SELECT 1 FROM user_phone_identities WHERE user_id = $1 LIMIT 1',
+    [userId]
+  );
+  if (!rows.length) {
+    throw new MemberWaitlistError('no_phone', 'Add your phone number first.', 422);
+  }
+
+  // A row already linked to the account (the same row the LATERAL stateFor
+  // reads) is confirmed in place: that covers re-tapping the button and an
+  // old row linked but never confirmed (the schema's legacy backfill shape,
+  // which stateFor reports as 'none'), and is what keeps the
+  // one-row-per-account index from ever seeing a second INSERT.
+  const { rows: existing } = await pool.query(
+    `SELECT id FROM waitlist_signups
+      WHERE linked_user_id = $1
+      ORDER BY (confirmed_at IS NULL), submitted_at
+      LIMIT 1`,
+    [userId]
+  );
+  if (existing.length) {
+    await pool.query(
+      'UPDATE waitlist_signups SET confirmed_at = COALESCE(confirmed_at, NOW()) WHERE id = $1',
+      [existing[0].id]
+    );
+    return { next: 'listed', ...(await stateFor(pool, userId)) };
+  }
+
+  await waitlist.joinWaitlist(pool, { email: null, ip, linkedUserId: userId, confirmedAt: new Date() });
+  return { next: 'listed', ...(await stateFor(pool, userId)) };
+}
+
 /** Confirm `rawEmail` with the code mailed to it, and join. */
 async function verify(pool, { userId, rawEmail, code }) {
   const email = waitlist.normalizeEmail(rawEmail);
@@ -148,4 +202,4 @@ async function verify(pool, { userId, rawEmail, code }) {
   return { next: 'listed', ...(await stateFor(pool, userId)) };
 }
 
-module.exports = { MemberWaitlistError, stateFor, join, verify };
+module.exports = { MemberWaitlistError, stateFor, join, joinWithPhone, verify };

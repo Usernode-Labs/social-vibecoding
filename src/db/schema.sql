@@ -13037,3 +13037,27 @@ CREATE TRIGGER chat_sessions_wf_merge_owned
         OR OLD.live_at IS DISTINCT FROM NEW.live_at)
   EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=merge-followups/session:',
     'merged_at', 'merge_commit_sha', 'included_in_session_id', 'live_at');
+
+-- Joining the waitlist from a verified phone (#4223). A phone join writes
+-- a row with no address: the account's verified number
+-- (user_phone_identities) stands for the confirmation, confirmed_at set at
+-- the join. So the address column becomes nullable. The column's UNIQUE
+-- constraint stays and already permits many NULLs in Postgres; the partial
+-- index below keeps case-safety on top of it (addresses are stored
+-- lowercased today, so this is belt and braces, not a migration).
+ALTER TABLE waitlist_signups ALTER COLUMN email DROP NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_waitlist_signups_email_lower
+  ON waitlist_signups (LOWER(email)) WHERE email IS NOT NULL;
+-- One row per linked account. Dedupe BEFORE the index applies, keeping the
+-- row stateFor's LATERAL would have picked (earliest confirmed, then
+-- earliest submitted) and unlinking the rest — a delete would take
+-- referred rows' invite history with it. After the index exists this
+-- UPDATE matches nothing, so every later boot is a no-op.
+UPDATE waitlist_signups w SET linked_user_id = NULL
+ WHERE w.linked_user_id IS NOT NULL
+   AND w.id <> (SELECT e.id FROM waitlist_signups e
+                 WHERE e.linked_user_id = w.linked_user_id
+                 ORDER BY (e.confirmed_at IS NULL), e.submitted_at, e.id
+                 LIMIT 1);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_waitlist_signups_linked_user_one
+  ON waitlist_signups (linked_user_id) WHERE linked_user_id IS NOT NULL;
