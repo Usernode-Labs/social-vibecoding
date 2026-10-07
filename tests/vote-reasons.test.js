@@ -11,6 +11,9 @@
 //      needs none and its line reads exactly as before; the same side with
 //      new words updates the row without a second announcement; a re-cast
 //      No that already has its line passes the gate;
+//   3b. #3977: a No's line on a change Homeroom bot built goes to the bot
+//      (homeroom-bot-dm.js handVoteLine), and the vote row then leaves the
+//      line out, so the discussion shows it once, as the voter's reply;
 //   4. the roster names each counted vote's line, and the people whose vote
 //      was on an earlier version of the proposal;
 //   5. the merge credits: who is named when a proposal lands, and how the
@@ -351,6 +354,107 @@ test('a re-cast No that already has its line passes the gate; a flip to No does 
     const r = await ctx.post({ vote: 'no' });
     assert.equal(r.status, 400, 'the old line argued for the other side');
     assert.equal((await r.json()).error, 'reason_required');
+  });
+});
+
+// ── 3b. A No's line, on Homeroom bot's change (#3977) ─────────────────
+
+// The route asks homeroom-bot-dm.js where a No's line goes (its gates are
+// tests/homeroom-bot-vote-line-postgres.test.js) and hands it over; here
+// that module is a stand-in that says where, and records each hand-off
+// with how many vote rows the thread had at that moment.
+async function withBotDm({ target = null, handed = { ok: true, queued: true } } = {}, fn) {
+  const id = require.resolve('../src/services/homeroom-bot-dm');
+  const { voteLineFor } = require(id);
+  const orig = require.cache[id];
+  const asked = [];
+  const hands = [];
+  let rowsSoFar = () => 0;
+  stub(id, {
+    noteApproved: async () => null,
+    noteVoted: async () => null,
+    voteLineFor,
+    voteLineTarget: async (_pool, args) => { asked.push(args.sessionId); return target; },
+    handVoteLine: async (_pool, args) => {
+      hands.push({ userId: args.user.id, line: args.line, target: args.target, rowsBefore: rowsSoFar() });
+      return handed;
+    },
+  });
+  try {
+    await fn({ asked, hands, watch: (ctx) => { rowsSoFar = () => ctx.systemMessages.length; } });
+  } finally {
+    if (orig) require.cache[id] = orig; else delete require.cache[id];
+  }
+}
+const BOT_TARGET = { app: { id: 5, slug: 'widget', name: 'Widget' }, sessionId: 7, issueNumber: 3 };
+
+test('#3977: a No\'s line on the bot\'s change goes to the bot first, and the vote row leaves it out', async () => {
+  await withBotDm({ target: BOT_TARGET }, async (bot) => {
+    await withServer({}, async (ctx) => {
+      bot.watch(ctx);
+      const r = await ctx.post({ vote: 'no', reason: '  Sort the list   by date ' });
+      assert.equal(r.status, 200);
+      assert.deepEqual(ctx.pool.inserted[0].params, [7, 3, 'no', HEAD, 'Sort the list by date'], 'the vote keeps its line');
+      assert.deepEqual(bot.asked, [7]);
+      assert.deepEqual(bot.hands, [{ userId: 3, line: 'Sort the list by date', target: BOT_TARGET, rowsBefore: 0 }],
+        'handed once, as the voter, before the vote row');
+      assert.equal(ctx.systemMessages.length, 1);
+      assert.equal(ctx.systemMessages[0].content, 'evan voted no on PR #26: Native iOS look',
+        'the line is the voter\'s reply just above, so the row does not repeat it');
+      assert.deepEqual(ctx.systemMessages[0].metadata, { vote: { sessionId: 7, prNumber: 26, reason: null } });
+      assert.deepEqual(ctx.prompts, [7], 'everything else a No does, as before');
+    });
+  });
+});
+
+test('#3977: when the bot cannot take the line, or the change is not its own, the row keeps it', async () => {
+  await withBotDm({ target: BOT_TARGET, handed: { ok: false, why: 'something went wrong on my side' } }, async (bot) => {
+    await withServer({}, async (ctx) => {
+      await ctx.post({ vote: 'no', reason: 'Sort the list by date' });
+      assert.equal(bot.hands.length, 1);
+      assert.equal(ctx.systemMessages[0].content, 'evan voted no: “Sort the list by date”');
+    });
+  });
+  await withBotDm({ target: null }, async (bot) => {
+    await withServer({}, async (ctx) => {
+      await ctx.post({ vote: 'no', reason: 'Sort the list by date' });
+      assert.deepEqual(bot.asked, [7], 'asked where it goes');
+      assert.deepEqual(bot.hands, [], 'and it goes nowhere: not the bot\'s change, or past its gates');
+      assert.equal(ctx.systemMessages[0].content, 'evan voted no: “Sort the list by date”');
+    });
+  });
+});
+
+test('#3977: a Yes, with or without words, never reaches the bot', async () => {
+  await withBotDm({ target: BOT_TARGET }, async (bot) => {
+    await withServer({}, async (ctx) => {
+      await ctx.post({ vote: 'yes' });
+      await ctx.post({ vote: 'yes', reason: 'Love it' });
+      assert.deepEqual(bot.asked, [], 'not even asked');
+      assert.deepEqual(bot.hands, []);
+    });
+  });
+});
+
+test('#3977: new words on the same No reach the bot once; the same words again do not', async () => {
+  const prev = [{ vote: 'no', reason: 'Sort it', approval_epoch: 2, current_epoch: 2 }];
+  await withBotDm({ target: BOT_TARGET }, async (bot) => {
+    await withServer({ prev }, async (ctx) => {
+      const r = await ctx.post({ vote: 'no', reason: 'Sort it by date, newest first' });
+      assert.deepEqual(await r.json(), { ok: true, merged: false, unchanged: false, reasonUpdated: true });
+      assert.deepEqual(bot.hands.map((h) => h.line), ['Sort it by date, newest first']);
+      assert.equal(ctx.systemMessages.length, 0, 'no second vote row, as for any new words');
+    });
+  });
+  await withBotDm({ target: BOT_TARGET }, async (bot) => {
+    await withServer({ prev }, async (ctx) => {
+      const same = await ctx.post({ vote: 'no', reason: 'Sort it' });
+      assert.deepEqual(await same.json(), { ok: true, merged: false, unchanged: true });
+      const bare = await ctx.post({ vote: 'no' });
+      assert.deepEqual(await bare.json(), { ok: true, merged: false, unchanged: true });
+      assert.deepEqual(bot.asked, [], 'a re-cast that moved nothing is never handed again');
+      assert.deepEqual(bot.hands, []);
+    });
   });
 });
 

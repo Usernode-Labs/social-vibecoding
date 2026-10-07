@@ -10352,7 +10352,9 @@ const AppView = {
         // it (sanitised where it is built), for a proposal that has one.
         descriptionHtml: x.kind === 'proposal' ? AppView._proposalSummaryHtml(x.item) : '',
         ask: 'Should this change go in?',
-        yes: yes ? { label: yes.label, act: yes.act } : null,
+        // #3977: a Just-you change's Yes is its approval (B7), and the
+        // item says Approve / Don't approve, as its card does.
+        yes: yes ? { label: yes.label, act: yes.act, ...(yes.approve ? { approve: true } : {}) } : null,
         no: no ? { label: no.label, act: no.act } : null,
       });
     }
