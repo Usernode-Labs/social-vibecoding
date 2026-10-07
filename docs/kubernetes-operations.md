@@ -33,6 +33,41 @@ a new atomic release. Missing platform or capture artifacts fail closed and
 require the normal `main` workflow; the scheduled path never rebuilds them as
 an incidental side effect.
 
+Every stable release restarts the platform, and each restart re-runs the
+checks of every proposal in flight and interrupts the bot's builds. The
+workflow runs one push to `main` at a time, and its "Check branch tip before
+publishing" step decides which runs publish:
+
+- **Spacing.** A stable release goes out no sooner than
+  `RELEASE_MIN_GAP_MINUTES` (10) after the previous one. The gap is timed
+  from the end of the run that published the previous release, which is when
+  Argo CD was asked to roll it out.
+- **The tip run waits.** The run for `main`'s tip waits inside that step for
+  the rest of the gap, then publishes. A newer merge landing during the wait
+  ends it: the waiting run skips, and the newer merge's run, queued behind it,
+  publishes once built. The newest merge is always released.
+- **Runs behind the tip** publish only when the newest release's revision
+  merged at least `RELEASE_EVERY_MINUTES` (15) before theirs, and they skip
+  inside the gap.
+
+On 7 October 2026 the platform rolled out four times in sixteen minutes
+(21:41:57 to 21:57:49 UTC) while approved proposals merged one after another;
+that is what the gap prevents.
+
+If the age of the previous release cannot be read, the run publishes as it
+did before the gap existed. Feature-branch candidates never wait.
+
+**To release at once, for example an urgent fix,** run the workflow on
+`main` by hand:
+
+```bash
+gh workflow run build-kubernetes-images.yml --ref main
+```
+
+A dispatched run never waits. A run that is waiting when the dispatched run
+is queued behind it skips in its favour, so `main` goes out as soon as the
+dispatched run has built, with one restart.
+
 Argo owns the platform Deployment, database, namespaces, service accounts and
 runtime permissions. The platform owns generated apps, previews, workers and
 check Jobs. Keep each change with its owner; source commits do not themselves
@@ -63,11 +98,12 @@ admins. The Dev board shows an amber banner with the workflow run linked until
 the running build catches up. A red run is reported at once; a run still going,
 a run that succeeded without a rollout, or no run at all is reported after
 `RELEASE_GRACE_MS` (default ten minutes). The workflow runs one push at a time,
-so after a burst of merges the newest one's run waits for the others: a run
-that has not finished is reported only once no run of the workflow on `main`
-has finished for the grace, and a run that succeeded gives the rollout its own
-grace from when it finished. Re-running the failed workflow jobs, or the next
-merge, releases the commit; a build that already carries the recorded commit
+so after a burst of merges the newest one's run waits for the others. The
+tip's run may also wait out the release gap above. So a run that has not
+finished is reported only once no run of the workflow on `main` has finished
+for the grace plus `RELEASE_MIN_GAP_MINUTES`. A run that succeeded gives the
+rollout its own grace from when it finished. Re-running the failed workflow
+jobs, or the next merge, releases the commit; a build that already carries the recorded commit
 reads as resolved at once, and the poller clears the record on the new build's
 first tick at `main`. A token without `actions:read` degrades to the time-based
 verdict rather than failing.
