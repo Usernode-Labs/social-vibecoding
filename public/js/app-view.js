@@ -6040,15 +6040,16 @@ const AppView = {
       const ipClaims = (item.in_progress && Array.isArray(item.in_progress.claims))
         ? item.in_progress.claims : [];
       const myClaim = ipClaims.some((c) => c.mine);
-      // Nor is there anything to claim while the Homeroom bot is reading or
-      // building the request: a claim would only tell it to step back.
+      // A claim stays available while the Homeroom bot is on the request:
+      // claiming pulls the request back out of its queue (a build already
+      // underway is left to finish), so the bot's presence hides nothing.
       if (myClaim) {
         pills.push({
           key: 'claim', cls: 'gc-vote-btn', label: 'Stop working on this',
           title: 'Stop working on this so somebody else can pick it up',
           act: { fn: 'clearIssueClaim', args: [item.number] },
         });
-      } else if (!item.bot) {
+      } else {
         pills.push({
           key: 'claim', cls: 'gc-vote-btn', label: 'I\'ll work on this',
           title: "Let everyone know you'll work on this. It's not a promise of progress",
@@ -17947,8 +17948,7 @@ const AppView = {
       // with it before writing any code, and the chip it toggles is right
       // above in the status band — so the toggle belongs beside it, not two
       // taps away. Board only: the detail view already spells this action
-      // out in full in its own action list. None while the Homeroom bot is
-      // on it (see _issueProgressActionSpec).
+      // out in full in its own action list.
       const claim = noNav ? null : AppView._issueProgressActionSpec(issue);
       if (claim) actions.push(claim);
     }
@@ -18283,16 +18283,14 @@ const AppView = {
   // as the chip covering six OTHER states, so pressing it looked like it
   // ought to produce whichever of them the reader had last seen.
   //
-  // Null while the Homeroom bot is reading or building the request
-  // (issue.bot): there is nothing to take, and a claim tells the bot to step
-  // back from it mid-build. A claim the viewer already holds can still be
-  // released.
+  // A claim stays available while the Homeroom bot is reading or building
+  // the request (issue.bot): claiming pulls the request back out of its
+  // queue, and a build already underway is left to finish.
   _issueProgressActionSpec(issue) {
     const n = issue.number;
     const claims = (issue.in_progress && Array.isArray(issue.in_progress.claims))
       ? issue.in_progress.claims : [];
     const mine = claims.some((c) => c.mine);
-    if (!mine && issue.bot) return null;
     return mine
       ? {
         key: 'claim', cls: 'gc-vote-btn', label: 'Stop working on this',
@@ -18351,11 +18349,10 @@ const AppView = {
       // st.progressOnFace — the board card promotes this to a button
       // (_issueProgressActionSpec), so the row would duplicate it. It is
       // still a row wherever the face doesn't carry it (read-only boards).
-      // No Claim while the Homeroom bot is on the request, as on the face.
       const ipClaims = (issue.in_progress && Array.isArray(issue.in_progress.claims))
         ? issue.in_progress.claims : [];
       const myClaim = ipClaims.some((c) => c.mine);
-      if (!st.progressOnFace && (myClaim || !issue.bot)) {
+      if (!st.progressOnFace) {
         items.push(myClaim
           ? {
             label: 'Stop working on this',
@@ -21381,13 +21378,14 @@ const AppView = {
     } else if (s.key === 'working') {
       main = `${subj} ${is} working on this in an agent session${age ? `, last active ${age}` : ''}.`;
     } else if (s.key === 'bot') {
-      // B8: and who asked it to, when somebody did.
+      // B8: and who asked it to, when somebody did. The sentence stops at
+      // the bot's status: claiming stays available while it works.
       if (s.bot === 'queued') {
-        main = `${s.botAskedBy ? `${s.botAskedBy} asked` : 'Somebody asked'} Homeroom bot to build this. It starts as soon as a builder is free, so nobody needs to claim it.`;
+        main = `${s.botAskedBy ? `${s.botAskedBy} asked` : 'Somebody asked'} Homeroom bot to build this. It starts as soon as a builder is free.`;
       } else {
         main = s.botAskedBy
-          ? `${s.botAskedBy} asked Homeroom bot to build this. It started ${s.bot === 'reading' ? 'reading' : 'building'} it${when}, so nobody needs to claim it.`
-          : `The Homeroom bot started ${s.bot === 'reading' ? 'reading' : 'building'} this request${when}, so nobody needs to claim it.`;
+          ? `${s.botAskedBy} asked Homeroom bot to build this. It started ${s.bot === 'reading' ? 'reading' : 'building'} it${when}.`
+          : `The Homeroom bot started ${s.bot === 'reading' ? 'reading' : 'building'} this request${when}.`;
       }
     } else if (s.key === 'auto_solving') {
       main = 'An auto-solve run is working on this right now.';

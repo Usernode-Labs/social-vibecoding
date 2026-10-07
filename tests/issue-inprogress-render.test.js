@@ -609,11 +609,23 @@ test('#17: a request the bot is on is in progress, in its own state, naming nobo
   assert.equal(st.spinner, true, 'it is working this minute');
   assert.equal(st.tone, 'sky');
   assert.equal(st.who, null, 'there is no person to name');
-  assert.match(st.note, /^The Homeroom bot started building this request 20 minutes ago, so nobody needs to claim it\.$/);
+  assert.match(st.note, /^The Homeroom bot started building this request 20 minutes ago\.$/);
+  assert.ok(!st.note.includes('nobody needs to claim'), 'the note no longer says nobody needs to claim it');
 
   const reading = AppView._issueWorkState(baseIssue({ bot: building({ what: 'reading' }) }));
   assert.equal(reading.label, 'Homeroom bot is reading this');
   assert.match(reading.note, /^The Homeroom bot started reading this request/);
+
+  // None of the bot notes claims the work is unavailable to claim.
+  const botNotes = [
+    st.note,
+    reading.note,
+    AppView._workStateNote({ key: 'bot', bot: 'queued', botAskedBy: 'evan', at: st.at }),
+    AppView._workStateNote({ key: 'bot', bot: 'building', botAskedBy: 'evan', at: st.at }),
+  ];
+  for (const note of botNotes) {
+    assert.ok(!note.includes('nobody needs to claim'), `no bot note says nobody needs to claim: ${note}`);
+  }
 
   const chip = workChipHtml(AppView, baseIssue({ bot: building() }));
   assert.match(chip, /<span[^>]*data-work-state="bot"/, 'an informational chip');
@@ -636,15 +648,15 @@ test('#17: precedence: a person in review or at work outranks the bot; the bot o
   }).key, 'bot');
 });
 
-test('#17: the card: a disabled "Homeroom bot is building…" and no Claim, on the face or in ⋯', () => {
+test('#17: the card: a disabled "Homeroom bot is building…" beside Claim, on the face and in ⋯', () => {
   const AppView = makeAppView();
   const model = AppView._issueCardModel(baseIssue({ bot: building() }));
   const html = cardHtml(model);
   assert.match(html, /disabled[^>]*>Homeroom bot is building…</, 'the primary waits, like a run in flight');
   assert.ok(!hasAction(model, 'chooseIssueWork'), 'no Start work: a second session would build it twice');
-  assert.equal(claimLabels(AppView, html).join('|'), '', 'nothing to claim');
-  assert.ok(!hasAction(model, 'markIssueInProgress'));
-  assert.equal(model.actions.length, 1, 'the one disabled primary');
+  assert.equal(claimLabels(AppView, html).join('|'), 'I\'ll work on this', 'the claim toggle stays offered');
+  assert.ok(hasAction(model, 'markIssueInProgress'));
+  assert.equal(model.actions.length, 2, 'the disabled primary plus the claim');
   assert.match(cardHtml(AppView._issueCardModel(baseIssue({ bot: building({ what: 'reading' }) }))),
     /disabled[^>]*>Homeroom bot is reading…</);
 
@@ -657,21 +669,24 @@ test('#17: the card: a disabled "Homeroom bot is building…" and no Claim, on t
 
   // Where the face does not carry the toggle, the ⋯ row follows the same rule.
   const rows = (issue) => Array.from(AppView._issueMenuItems(issue, { progressOnFace: false }), (it) => it.label);
-  assert.ok(!rows(baseIssue({ bot: building() })).includes('I\'ll work on this'));
-  assert.ok(rows(baseIssue()).includes('I\'ll work on this'), 'and comes back once the bot is done');
+  assert.ok(rows(baseIssue({ bot: building() })).includes('I\'ll work on this'));
+  assert.ok(rows(baseIssue()).includes('I\'ll work on this'), 'and stays once the bot is done');
 });
 
-test('#17: the request page says so in a sentence and offers no Claim in its actions', () => {
+test('#17: the request page says so in a sentence and offers Claim in its actions', () => {
   const AppView = makeAppView();
   const issue = baseIssue({ bot: building() });
   const head = cardHtml(AppView._issueCardModel(issue, { noNav: true }));
   const note = head.match(/data-work-note="bot"[^>]*>([^<]*)</);
   assert.ok(note, 'the head carries the bot work note');
   assert.match(note[1], /The Homeroom bot started building this request/);
+  assert.ok(!note[1].includes('nobody needs to claim'));
   assert.match(head, /disabled[^>]*>Homeroom bot is building…</);
 
   const keys = (item) => Array.from(AppView._detailActionsView('issue', item).pills, (p) => p.key);
-  assert.ok(!keys(issue).includes('claim'), 'no Claim this issue while the bot builds it');
+  assert.ok(keys(issue).includes('claim'), 'Claim stays offered while the bot builds it');
+  const claim = AppView._detailActionsView('issue', issue).pills.find((p) => p.key === 'claim');
+  assert.equal(claim && claim.label, 'I\'ll work on this');
   assert.ok(keys(issue).includes('bounty') && keys(issue).includes('close'), 'the rest of the list stays');
   assert.ok(keys(baseIssue()).includes('claim'), 'an ordinary request still offers it');
   const held = baseIssue({
