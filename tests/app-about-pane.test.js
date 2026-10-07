@@ -348,10 +348,12 @@ test('offline: nothing is published, and a burst of screen changes does not retr
 test('the restricted row hides through a layout effect, so the prerendered menu is untouched', () => {
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
   // The discussion and invite rows that hid with it left the menu (UI
-  // overhaul, #3362); the workshop row is the one left to hide.
-  assert.match(sheet, /useIsomorphicLayoutEffect\(\(\) => \{\s*for \(const el of \[workshopRowRef\.current\]\)/);
-  assert.match(sheet, /el\.classList\.toggle\('hidden', !!restricted\);[\s\S]{0,40}\}, \[restricted, view\]\);/,
-    'and re-runs when the menu pane comes back from About, whose rows mount again');
+  // overhaul, #3362); the workshop row is the one left to hide. #4216 gives
+  // the toggle a second reason: a private member who has not yet used
+  // "Go to Homeroom" (tests/private-member-shell.test.js).
+  assert.match(sheet, /useIsomorphicLayoutEffect\(\(\) => \{\s*const hide = !!restricted\s*\|\| \(privateMember && !\(window as any\)\.App\?\._privateHomeVisited\?\.\(\)\);\s*for \(const el of \[workshopRowRef\.current\]\)/);
+  assert.match(sheet, /el\.classList\.toggle\('hidden', !!hide\);[\s\S]{0,40}\}, \[restricted, view, open, privateMember\]\);/,
+    'and re-runs when the menu pane comes back from About, whose rows mount again, and each time the sheet opens so Go to Homeroom brings the row back');
   assert.match(sheet, /id="app-menu-row-workshop"\s+dataContextRow="workshop"\s+elRef=\{workshopRowRef\}/);
   assert.doesNotMatch(sheet, /id="app-menu-row-(discussion|invite)"/);
   const html = read('public/index.html');

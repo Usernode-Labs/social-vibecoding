@@ -514,14 +514,22 @@ export function AppsSwitcherSheet(): ReactNode {
   // The discussion and invite rows that went with it left the menu in the UI
   // overhaul: the project's channel is on its hub, and invite links are the
   // hub's Invite (#3362).
+  // TWO REASONS TO HIDE (#4216): `restricted`, and a private member who has
+  // not yet used "Go to Homeroom" — the menu's one way onward is that row,
+  // so the community comes only after it. The same record that gives an app
+  // its ✕ back says whether they have (App._privateHomeVisited,
+  // public/js/app.js). `open` in the deps reads the record again each time
+  // the sheet opens, so the row is back the next time after Go to Homeroom.
   const workshopRowRef = useRef<HTMLAnchorElement | null>(null);
   useIsomorphicLayoutEffect(() => {
+    const hide = !!restricted
+      || (privateMember && !(window as any).App?._privateHomeVisited?.());
     for (const el of [workshopRowRef.current]) {
-      if (el && el.classList.contains('hidden') !== !!restricted) {
-        el.classList.toggle('hidden', !!restricted);
+      if (el && el.classList.contains('hidden') !== !!hide) {
+        el.classList.toggle('hidden', !!hide);
       }
     }
-  }, [restricted, view]);
+  }, [restricted, view, open, privateMember]);
   // AFTER MOUNT ONLY, for the viewer's own rows below (their agent
   // sessions): the hydrating render must print what the prerender printed
   // whatever the store says by then, or it is React #418 on every route. The
