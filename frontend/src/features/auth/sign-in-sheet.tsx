@@ -396,6 +396,21 @@ export async function releaseArrival(token: string, now = Date.now()): Promise<R
   return { address, send: true };
 }
 
+/**
+ * On a step's main button: the press keeps the caret where it is until its
+ * click. iPhone Safari, 7 Oct 2026 (#4214): with the keyboard up, a tap on
+ * "Text me a code" only closed the keyboard. The press blurred the field,
+ * the sheet rode down with the keys before the click was dispatched, and the
+ * click landed on nothing. A mousedown whose default is prevented moves no
+ * focus, so the sheet stays put under the finger and the one tap submits;
+ * the next step's field then takes the caret with the keys still up, or the
+ * keys go down with the field when the step has none. Messages' and the
+ * composers' Send do the same (lib/keyboard-open.ts).
+ */
+export const HOLD_FIELD_FOCUS = {
+  onMouseDown: (event: { preventDefault(): void }) => { event.preventDefault(); },
+} as const;
+
 // White cards with the sheets' hairline, on the sheet's plane colour (the make screen's own field card).
 const FIELD_GROUP = 'overflow-hidden rounded-2xl bg-white shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900';
 const FIELD = 'px-4 pt-3 pb-2 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800';
@@ -1012,7 +1027,7 @@ export function SignInSheet({
             <XIcon className="h-4 w-4" aria-hidden="true" />
           </button>
         </div>
-        <p className="mt-1 text-[15px] leading-snug text-zinc-500 dark:text-zinc-400">{sub}</p>
+        {sub ? <p className="mt-1 text-[15px] leading-snug text-zinc-500 dark:text-zinc-400">{sub}</p> : null}
 
         {step === 'choose' ? (
           <div className="mt-5 flex flex-col gap-2.5">
@@ -1048,7 +1063,7 @@ export function SignInSheet({
                 <input ref={firstField} id="sign-in-sheet-email" type="email" autoComplete="email" inputMode="email" enterKeyHint="go" defaultValue={email} className={INPUT} {...HANDLE_FIELD} />
               </div>
             </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Sending code…' : 'Send code'}</button>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? 'Sending code…' : 'Send code'}</button>
             {providers.length ? (
               <button type="button" className={QUIET} onClick={() => { setError(null); setStep('choose'); }}>Other ways to continue</button>
             ) : null}
@@ -1072,11 +1087,7 @@ export function SignInSheet({
                 <input ref={phoneField} id="sign-in-sheet-phone" type="tel" autoComplete="tel" inputMode="tel" enterKeyHint="go" defaultValue={phoneNumber} placeholder="+1 415 555 0123" className={INPUT} />
               </div>
             </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Sending code…' : 'Text me a code'}</button>
-            <p className="text-center text-[13px] text-zinc-500 dark:text-zinc-400">
-              {askName ? 'Only this group sees your name, never your number.' : 'Nobody sees your number.'}
-            </p>
-            <RecaptchaNotice />
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? 'Sending code…' : 'Text me a code'}</button>
           </form>
         ) : null}
 
@@ -1089,7 +1100,7 @@ export function SignInSheet({
               </div>
             </div>
             <p className="text-[13px] text-zinc-500 dark:text-zinc-400">The code fills itself in on most phones.</p>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Checking…' : 'Continue'}</button>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? 'Checking…' : 'Continue'}</button>
             <div className="flex items-center justify-between">
               <button type="button" className={QUIET} onClick={() => { setError(null); setStep('phone'); }}>Use another number</button>
               <button type="button" className={`${QUIET} disabled:text-zinc-500 disabled:dark:text-zinc-400 disabled:no-underline`} disabled={busy || waitLeft > 0} onClick={() => { void requestPhoneCode(phoneNumber); }}>
@@ -1107,7 +1118,7 @@ export function SignInSheet({
                 <input ref={providerUsernameField} id="sign-in-sheet-provider-username" autoComplete="username" enterKeyHint="go" className={INPUT} placeholder={USERNAME_RULE} {...HANDLE_FIELD} />
               </div>
             </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Finishing…' : 'Continue'}</button>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? 'Finishing…' : 'Continue'}</button>
           </form>
         ) : null}
 
@@ -1119,7 +1130,7 @@ export function SignInSheet({
                 <input ref={codeField} id="sign-in-sheet-code" inputMode="numeric" autoComplete="one-time-code" enterKeyHint="go" maxLength={6} className={`${INPUT} tracking-[0.4em]`} />
               </div>
             </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Checking…' : 'Continue'}</button>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? 'Checking…' : 'Continue'}</button>
             <div className="flex items-center justify-between">
               <button type="button" className={QUIET} onClick={() => { setError(null); setStep('email'); }}>Use another email</button>
               <button type="button" className={`${QUIET} disabled:text-zinc-500 disabled:dark:text-zinc-400 disabled:no-underline`} disabled={busy || waitLeft > 0} onClick={() => { void requestCode(email); }}>
@@ -1141,7 +1152,7 @@ export function SignInSheet({
                 <PasswordInput ref={currentPasswordField} id="sign-in-sheet-current-password" name="password" required autoComplete="current-password" enterKeyHint="go" box="card" hint="dim" ring="bare" />
               </div>
             </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Signing in…' : 'Sign in'}</button>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? 'Signing in…' : 'Sign in'}</button>
             <div className="flex items-center justify-between">
               <button type="button" className={QUIET} onClick={() => { setError(null); setDetails(null); setStep(otherWays); }}>
                 {providers.length ? 'Other ways to continue' : 'Use an email code'}
@@ -1170,7 +1181,7 @@ export function SignInSheet({
                 <input ref={confirmField} id="sign-in-sheet-confirm" type="password" autoComplete="new-password" enterKeyHint="go" className={INPUT} />
               </div>
             </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Finishing…' : 'Continue'}</button>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? 'Finishing…' : 'Continue'}</button>
           </form>
         ) : null}
 
@@ -1208,7 +1219,9 @@ export function SignInSheet({
             </a>
           </p>
         ) : null}
-        <TermsNotice className="mt-3" />
+        {/* The phone's steps run reCAPTCHA with its badge hidden (./recaptcha.ts):
+            Google's notice rides in the fine print there. */}
+        <TermsNotice className="mt-3" recaptcha={step === 'phone' || step === 'phone-code' ? RECAPTCHA_NOTICE : null} />
       </div>
     </div>
   );
