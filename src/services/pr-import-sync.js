@@ -569,6 +569,8 @@ async function refreshDriftState({ pool, session, pr, repo }) {
 async function rerunChecksForNewHead({
   config, pool, session, newHead, trigger = 'pr-import',
 }) {
+  // With WF_PREVIEWS_ENABLED on the preview machine builds and checks it.
+  if (await handOffImported({ pool, session, head: newHead, trigger })) return;
   const visuals = require('./visuals');
   const staging = require('./staging');
   const app = {
@@ -633,6 +635,20 @@ async function rerunChecksForNewHead({
     .catch((err) => log.warn('pr-import-sync', 'checks capture failed (non-fatal)', {
       sessionId: session.id, err: err.message,
     }));
+}
+
+// The preview machine's side of the two paths above: the new head goes to
+// the machine, or, in mock-GitHub mode, the gate-passing 'skipped' verdict
+// does. Answers whether the machine took it.
+async function handOffImported({ pool, session, head, trigger }) {
+  const workflow = require('./preview-workflow');
+  if (!workflow.enabled()) return false;
+  if (usesMockGithubForImports()) {
+    await workflow.skipped({ session, head, reason: 'mock GitHub preview: automated checks not run' });
+  } else {
+    await workflow.revision({ pool, session, head, source: 'imported', trigger });
+  }
+  return true;
 }
 
 // #866: is this proposal still one a staging preview belongs to?
@@ -747,6 +763,10 @@ async function kickImportedChecks({ config, pool, session, app, headSha }) {
   const visuals = require('./visuals');
   const staging = require('./staging');
   try {
+    if (await handOffImported({ pool, session, head: headSha, trigger: 'pr-import' })) {
+      if (usesMockGithubForImports()) noteShotsNotStarted(pool, session.id, 'no_staging_preview');
+      return;
+    }
     await visuals.setChecksPending(pool, session.id, headSha || null, 'building', 'pr-import')
       .catch((err) => log.warn('pr-import-sync', 'import setChecksPending failed (non-fatal)', {
         sessionId: session.id, err: err.message,

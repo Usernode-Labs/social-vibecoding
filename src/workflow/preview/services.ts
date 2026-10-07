@@ -285,6 +285,10 @@ export function previewNotifiers({ config, pool }: Deps): Record<string, (n: any
       });
       ws().pushSessionUpdate({ action: 'staging_ready', sessionId: n.sessionId, appSlug: r?.slug });
     },
+    // A Preview click's loader waits for this or staging_ready.
+    stagingFailed: (n) => ws().broadcastGlobal({
+      type: 'session_event', sessionId: n.sessionId, event: 'staging_failed', error: n.detail, errorName: 'PreviewFailed', missingKeys: [],
+    }),
     async visualsReady(n) {
       const stored = await visuals().getForSession(pool, n.sessionId, n.head);
       if (stored) visuals().notifyVisualsReady(n.sessionId, stored, null);

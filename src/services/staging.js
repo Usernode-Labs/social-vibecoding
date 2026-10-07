@@ -777,6 +777,17 @@ const warmStagingCert = verifyStagingEdge;
 //     that window is correct precisely because the container IS still
 //     serving that hostname.
 async function teardownStaging(session, app) {
+  // With WF_PREVIEWS_ENABLED on, a session the preview machine holds is
+  // retired by it, by identity: terminally once the row has left review
+  // (archived, merged, deleted), otherwise as an idle reclaim.
+  const previewWorkflow = require('./preview-workflow');
+  if (previewWorkflow.enabled() && session?.id && await previewWorkflow.held(session.id)) {
+    const { rows: [row] } = await getPool().query('SELECT app_id, status FROM chat_sessions WHERE id = $1', [session.id]);
+    const terminal = !row || !['active', 'paused', 'promoted', 'merging'].includes(row.status);
+    if (await previewWorkflow.retire({
+      session: { id: session.id, app_id: row?.app_id ?? session.app_id }, reason: terminal ? (row?.status || 'deleted') : 'idle', terminal,
+    })) return { removed: false, handedOff: true };
+  }
   const lifecycle = require('./preview-lifecycle');
   const config = { appRuntime: session.staging_runtime_kind, databaseUrl: process.env.DATABASE_URL,
     kubernetes: { workerNamespace: process.env.WORKER_NAMESPACE || 'social-workers' } };

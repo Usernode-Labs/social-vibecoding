@@ -83,6 +83,9 @@ async function markInterruptedBuilds(pool, sessionIds) {
 // One query shared by boot reconciliation and the live sweeper. Keeping the
 // scope here prevents the two recovery paths from drifting back to the old
 // promoted-only rule that stranded pre-vote CLI handoffs after a restart.
+//
+// A session the preview machine holds is left out: its runs are alive while
+// their work leases are, and its errors run again on its own timer.
 async function findStuckCheckSessions({
   pool,
   staleMs = checksStaleMs(),
@@ -93,7 +96,10 @@ async function findStuckCheckSessions({
   const { rows } = await pool.query(
     `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
        FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
-      WHERE (cs.status = 'promoted'
+      WHERE NOT EXISTS (SELECT 1 FROM wf_instances w
+                         WHERE w.machine = 'preview' AND w.key = 'session:' || cs.id
+                           AND w.state NOT IN ('retired', 'detached', '(none)'))
+        AND (cs.status = 'promoted'
              OR (cs.status = 'active'
                  AND cs.source = 'cli_handoff'
                  AND COALESCE(cs.checks_commit_sha, cs.handoff_head_sha) IS NOT NULL
@@ -303,6 +309,13 @@ function checkTriggerForReason(reason) {
 // and must stay skippable.
 const FORCED_RECHECK_REASONS = new Set(['manual-recheck', 'testing-update']);
 
+// With WF_PREVIEWS_ENABLED on, the paths below hand their request to the
+// preview machine (services/preview-workflow.js). The reasons that are an
+// observation of a runtime that is gone: for a session the machine holds,
+// those report PreviewLost and the machine rebuilds what served.
+const OBSERVED_REASONS = new Set(['startup', 'heal']);
+const workflow = () => require('./preview-workflow');
+
 // Rebuild the staging preview for a single session that has a branch +
 // commits ahead of main but a NULL/dead staging_url. Shared by the
 // startup recovery sweep (recoverSessions), the periodic sweeper's
@@ -323,6 +336,11 @@ const FORCED_RECHECK_REASONS = new Set(['manual-recheck', 'testing-update']);
 async function rebuildSessionStaging({ config, pool, session, reason }) {
   const staging = require('./staging');
   const { broadcastGlobal, pushSessionUpdate } = require('./ws');
+  const handOff = workflow().enabled();
+  if (handOff && OBSERVED_REASONS.has(reason) && await workflow().held(session.id)
+      && await workflow().lost({ session, detail: reason })) {
+    return 'handed_off';
+  }
 
   const [, owner, repo] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
   if (!owner || !repo) {
@@ -381,6 +399,13 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
     });
     compare = data;
   } catch (err) {
+    // The machine builds the head the row knows; a branch that is gone
+    // fails its build, which the error lane bounds.
+    if (handOff) {
+      await workflow().revision({ pool, session, head: importedHead || session.checks_commit_sha, source: reason,
+        trigger: checkTriggerForReason(reason) });
+      return 'handed_off';
+    }
     // Transient (API hiccup) or a deleted branch — record a retryable
     // 'error' verdict so the existing exponential backoff +
     // CHECK_MAX_AUTO_RETRIES bound the retries instead of the old silent
@@ -435,11 +460,13 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
   // allowed through storeChecks' latest-head CAS instead of being discarded
   // as stale and leaving the old commit permanently pending. Imported rows
   // remain pinned to importedHead above.
-  await visuals.setChecksPending(pool, session.id, commitHash, null, checkTriggerForReason(reason)).catch((err) =>
-    log.warn('staging-recovery', 'rebuild setChecksPending failed (non-fatal)', {
-      sessionId: session.id, err: err.message,
-    }));
-  visuals.notifyChecksPending(session.id, commitHash, null, checkTriggerForReason(reason));
+  if (!handOff) {
+    await visuals.setChecksPending(pool, session.id, commitHash, null, checkTriggerForReason(reason)).catch((err) =>
+      log.warn('staging-recovery', 'rebuild setChecksPending failed (non-fatal)', {
+        sessionId: session.id, err: err.message,
+      }));
+    visuals.notifyChecksPending(session.id, commitHash, null, checkTriggerForReason(reason));
+  }
 
   // Create PR if missing (active-session recovery only). Route through
   // applyPrMetadata — NOT a bare createPR — so the PR gets a real
@@ -507,6 +534,17 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
         ...require('./github').describeGithubError(err),
       });
     }
+  }
+
+  // The machine builds, checks and announces it (a Preview click asks for
+  // the preview itself, so a head it already serves is not rebuilt).
+  if (handOff) {
+    if (reason === 'preview-click') {
+      await workflow().request({ pool, session, head: commitHash, reason: 'ensure' });
+    } else {
+      await workflow().revision({ pool, session, head: commitHash, source: reason, trigger: checkTriggerForReason(reason) });
+    }
+    return 'handed_off';
   }
 
   // Announce the rebuild BEFORE it starts. Building a preview takes
@@ -686,6 +724,13 @@ async function announceRebuildStarted({ pool, session, imported }) {
 async function recordChecksSkipped({
   config, pool, session, commitSha, expectedCommitSha = commitSha, reason,
 }) {
+  if (workflow().enabled()) {
+    await workflow().skipped({ session, head: commitSha, reason }).catch((err) =>
+      log.warn('staging-recovery', 'Could not hand the skipped verdict to the preview machine', {
+        sessionId: session.id, err: err.message,
+      }));
+    return;
+  }
   const visuals = require('./visuals');
   try {
     const stored = await visuals.storeChecksSkipped(
@@ -883,6 +928,18 @@ async function recordStagingBootFailure({ config, pool, session, commitHash, err
 // no-op cases (no repo / no bot token → rebuildSessionStaging returns
 // 'skipped'); a genuine build failure propagates to the caller.
 async function recheckSessionChecks({ config, pool, session, reason }) {
+  // The machine decides between a run against what serves and a new build.
+  // A deferred head that merges cleanly now resumes its own episode.
+  if (workflow().enabled()) {
+    const platform = require('../workflow/platform.ts');
+    if (reason === 'conflict-resolved' && session.checks_commit_sha
+        && await platform.conflictResolved(Number(session.id), Number(session.app_id), session.checks_commit_sha)) {
+      return 'handed_off';
+    }
+    await workflow().recheck({ pool, session, reason, trigger: CHECK_TRIGGER_BY_REASON[reason] || null,
+      system: !FORCED_RECHECK_REASONS.has(reason) && reason !== 'preview-click' });
+    return 'handed_off';
+  }
   // #607: stamp 'pending' + tell open clients the moment the re-run is
   // requested — a needed staging rebuild can take minutes, and before this
   // the badge kept showing the stale verdict (or nothing at all for a

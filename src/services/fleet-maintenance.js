@@ -474,6 +474,15 @@ async function openCampaignProposal({ config, pool, campaign, app, files, summar
 // Never throws into the campaign loop.
 function kickChecks(config, pool, session, app) {
   (async () => {
+    // With WF_PREVIEWS_ENABLED on the preview machine builds and checks the
+    // campaign's exact head (its pin, else the branch tip), never 'latest'.
+    const previewWorkflow = require('./preview-workflow');
+    if (previewWorkflow.enabled()) {
+      const { rows: [row] } = await pool.query(
+        'SELECT cs.*, a.repo_url FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1', [session.id]);
+      if (row) await previewWorkflow.revision({ pool, session: row, source: 'fleet', trigger: 'fleet-maintenance' });
+      return;
+    }
     const visuals = require('./visuals');
     const staging = require('./staging');
     await visuals.setChecksPending(pool, session.id, null, 'building', 'fleet-maintenance')

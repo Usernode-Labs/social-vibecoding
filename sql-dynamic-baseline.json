@@ -915,14 +915,14 @@
     {
       "source": "src/services/cli-handoff-sync.js",
       "kind": "structural-template",
-      "fingerprint": "468267d2ba00b7bc7ac5",
+      "fingerprint": "1cb21f929c7ffb55e776",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET handoff_head_sha = $1, ${summaryFreshness.INVALIDATE_SQL}, handoff_uploaded_sha = $1, handoff_local_commit_sha = NULL, handoff_upload_"
     },
     {
       "source": "src/services/cli-handoff-sync.js",
       "kind": "structural-template",
-      "fingerprint": "dbc430251a0b764b430a",
+      "fingerprint": "6aa68d0ba5c2b91bab8a",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET handoff_head_sha = $1, ${summaryFreshness.INVALIDATE_SQL}, handoff_uploaded_sha = $1, handoff_local_commit_sha = NULL, handoff_upload_"
     },
@@ -1321,9 +1321,9 @@
     {
       "source": "src/services/proposal-update.js",
       "kind": "structural-template",
-      "fingerprint": "48b2cbd10645fd9ca1ec",
+      "fingerprint": "55e4f495d28528be3946",
       "count": 1,
-      "preview": "`UPDATE chat_sessions SET check_state = 'pending', checks_commit_sha = $1, check_error_detail = NULL, staging_container_id = NULL, staging_url = NULL, last_acti"
+      "preview": "`UPDATE chat_sessions SET check_state = CASE WHEN $4::boolean THEN check_state ELSE 'pending' END, checks_commit_sha = CASE WHEN $4::boolean THEN checks_commit_"
     },
     {
       "source": "src/services/proposal-update.js",

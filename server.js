@@ -3847,9 +3847,18 @@ async function finalizeRecoveredTurn({
     // retry. A failed outcome is checkpointed too so retrying Mayor/spend
     // work does not launch another expensive build known to have failed.
     const publishRecoveredStaging = async ({ outcome, stagingUrl = null, failure = null }) => {
-      const succeeded = outcome === 'success';
-      const content = succeeded ? 'Staging deployed!' : 'Staging build failed';
-      const metadata = succeeded
+      const succeeded = outcome === 'success' || outcome === 'building';
+      const content = outcome === 'building' ? 'Building staging preview...'
+        : succeeded ? 'Staging deployed!' : 'Staging build failed';
+      const metadata = outcome === 'building'
+        ? {
+            changesReady: true,
+            stagingBuild: 'running',
+            prNumber: prResult?.prNumber || session.pr_number || null,
+            prUrl: prResult?.prUrl || session.pr_url || null,
+            recovered: true,
+          }
+        : succeeded
         ? {
             stagingUrl,
             changesReady: true,
@@ -3923,7 +3932,7 @@ async function finalizeRecoveredTurn({
           testingMd: session.testing_md || null,
           testingPath: session.testing_path || null,
         });
-      } else if (applied) {
+      } else if (applied && value.outcome !== 'building') {
         emit('staging_failed', {
           error: value.metadata.error,
           errorName: value.metadata.stagingErrorName,
@@ -3967,6 +3976,16 @@ async function finalizeRecoveredTurn({
     }
 
     if (!reusedStaging) emit('status', { text: 'Building staging preview...' });
+
+    // With WF_PREVIEWS_ENABLED on the preview machine builds and checks the
+    // recovered commit (a preview it already serves for it is joined).
+    if (await require('./src/services/preview-workflow').revision({
+      pool, session, head: result.sha, source: 'turn', trigger: 'boot-reconcile',
+    })) {
+      await publishRecoveredStaging({ outcome: 'building' });
+      summaryParts.push('The staging preview is building; its checks run once it is up.');
+      return { outcome: 'done', summary: summaryParts.join('\n\n') };
+    }
 
     // #461 parity: pend the checks for the NEW commit before the build
     // starts, so the previous commit's verdict (e.g. a stale 'passing')

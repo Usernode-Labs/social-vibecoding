@@ -1382,12 +1382,13 @@ test('an ACTIVE session gets the commit, pending checks and a staging rebuild', 
 test('the checks UPDATE is guarded on the status and the commit it replaces', async () => {
   const log = {};
   await runSession('active', {}, log);
-  const update = queryOf(log, "SET check_state = 'pending'");
+  const update = queryOf(log, 'SET check_state = CASE WHEN $4::boolean');
   assert.match(update.sql, /status = 'active'/, 'a pause between the lock and here wins');
   assert.match(update.sql, /checks_commit_sha IS NOT DISTINCT FROM \$3/,
     'a newer head that took the session is not regressed to an older pending state');
-  assert.match(update.sql, /check_state = 'pending'/);
-  assert.deepEqual(update.params, [FORK_HEAD, 501, OTHER_HEAD]);
+  // The verdict is the preview machine's while its flag is on ($4).
+  assert.match(update.sql, /check_state = CASE WHEN \$4::boolean THEN check_state ELSE 'pending' END/);
+  assert.deepEqual(update.params, [FORK_HEAD, 501, OTHER_HEAD, false]);
 });
 
 test('an active session that stopped being active falls back to the paused tail', async () => {

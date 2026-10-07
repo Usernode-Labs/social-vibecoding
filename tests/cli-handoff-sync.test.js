@@ -76,11 +76,13 @@ test('active CLI handoff adopts every managed pin and starts sync-main checks', 
   const adoption = h.calls.find((call) => /UPDATE chat_sessions/.test(call.sql));
   assert.match(adoption.sql, /handoff_head_sha = \$1/);
   assert.match(adoption.sql, /handoff_uploaded_sha = \$1/);
-  assert.match(adoption.sql, /checks_commit_sha = \$1/);
+  // The verdict and the preview are the preview machine's while its flag is
+  // on ($7); off, the adoption claims them as before.
+  assert.match(adoption.sql, /checks_commit_sha = CASE WHEN \$7::boolean THEN checks_commit_sha ELSE \$1 END/);
   assert.match(adoption.sql, /handoff_head_sha IS NOT DISTINCT FROM \$4/);
   assert.match(adoption.sql, /handoff_uploaded_sha IS NOT DISTINCT FROM \$5/);
   assert.match(adoption.sql, /checks_commit_sha IS NOT DISTINCT FROM \$6/);
-  assert.deepEqual(adoption.params, [NEW, 41, 'dev/cli-u6-work', OLD, OLD, OLD]);
+  assert.deepEqual(adoption.params, [NEW, 41, 'dev/cli-u6-work', OLD, OLD, OLD, false]);
   assert.deepEqual(h.pending[0].slice(1), [41, NEW, 'building', 'sync-main']);
   assert.deepEqual(h.notified[0], [41, NEW, 'building', 'sync-main']);
   assert.equal(h.pipelines.length, 1);

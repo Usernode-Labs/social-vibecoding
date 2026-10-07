@@ -34,7 +34,7 @@ export const WORK = Object.freeze({
   scheduleShots: 'legacy.scheduleShots',
 });
 
-export const NOTIFIERS = ['chat', 'checksPending', 'checksReady', 'stagingReady', 'visualsReady', 'mergeKick'] as const;
+export const NOTIFIERS = ['chat', 'checksPending', 'checksReady', 'stagingReady', 'stagingFailed', 'visualsReady', 'mergeKick'] as const;
 
 // ── States ──────────────────────────────────────────────────────────────
 
@@ -103,9 +103,12 @@ const REQUEST_REASONS = new Set(['ensure', 'deploy', 'env_stale']);
 const EVENTS = {
   // A head announced by any source (a turn, an upload, an update, a sync,
   // an imported pull request, the merge gate, fleet, recovery).
+  // `carryFrom`: a mechanical merge of main into a tested head (votes.js
+  // reconcileNativeReviewedHead); a green verdict for that head carries.
   RevisionSubmitted: (p: any) => ({
     sessionId: int(p?.sessionId, 'sessionId'), head: sha(p?.head, 'head'),
     source: word(p?.source, 'source'), trigger: optWord(p?.trigger),
+    carryFrom: p?.carryFrom == null ? null : sha(p.carryFrom, 'carryFrom'),
   }),
   // A person or the platform asks for the preview itself.
   PreviewRequested: (p: any) => ({
@@ -113,6 +116,12 @@ const EVENTS = {
     reason: word(p?.reason, 'reason', REQUEST_REASONS),
   }),
   RecheckRequested: (p: any) => ({ reason: word(p?.reason, 'reason'), trigger: optWord(p?.trigger) }),
+  // Nothing to test: the head carries no commits beyond main (`head` is
+  // the commit the verdict describes). Settles 'skipped' without a build.
+  ChecksSkipped: (p: any) => {
+    if (typeof p?.reason !== 'string' || !p.reason.trim()) throw new Error('reason is required');
+    return { sessionId: int(p?.sessionId, 'sessionId'), head: sha(p?.head, 'head'), reason: p.reason.trim().slice(0, 300) };
+  },
   ConflictResolved: (p: any) => ({ head: sha(p?.head, 'head') }),
   // An observer found the serving runtime gone or broken.
   PreviewLost: (p: any) => {
@@ -144,6 +153,9 @@ const legacyDb = (slug: string, sessionId: number, head: string) =>
 const TRIGGERS = new Map([
   ['manual', 'manual-recheck'], ['testing-update', 'manual-recheck'], ['shots-update', 'manual-recheck'],
   ['promote', 'promote-kick'], ['stale-vote', 'promote-kick'],
+  // Recovery's reasons for a recheck (staging-recovery.CHECK_TRIGGER_BY_REASON
+  // names the rest) and the gate's kicks, labelled as what they are (bug 21).
+  ['promote-kick', 'promote-kick'], ['stale-pending-vote-kick', 'promote-kick'], ['stuck-checks-sweep', 'stuck-sweep'],
 ]);
 const recheckTrigger = (reason: string, trigger: string | null) => trigger || TRIGGERS.get(reason) || 'manual-recheck';
 
@@ -285,6 +297,28 @@ function fromRow(e: Event<any>, d: Data, f: Facts, head: string, trigger: string
   return startRun({ name: 'settled', data: { ...d, head } }, trigger, ctx);
 }
 
+// What an adopted row's verdict is, as a state, for the carry below.
+function fromRowVerdict(d: Data, f: Facts): Live {
+  const v = f.session!.checks.state;
+  const settled = (v === 'passing' || v === 'skipped') && f.session!.checks.commitSha === d.head;
+  return { name: settled ? 'settled' : 'idle', data: { ...d, verdict: settled ? v as Verdict : null } };
+}
+
+// A mechanical merge of main into a head whose verdict is green keeps that
+// verdict for the merged head (#2693: only green carries); what serves is
+// the tested head's preview until something asks for a new one.
+function carry(s: Live, p: { head: string; carryFrom: string | null }): Outcome<PState> | null {
+  if (!p.carryFrom || s.name !== 'settled' || s.data.head !== p.carryFrom) return null;
+  if (s.data.verdict !== 'passing' && s.data.verdict !== 'skipped') return null;
+  const d: Data = { ...s.data, head: p.head };
+  return step({ name: 'settled', data: d, writes: [{ type: 'carried', sessionId: d.sessionId, head: p.head }], timer: null });
+}
+
+// An instance that holds nothing starts again from its row: one that does
+// not exist yet, one handed back (detached), and one retired (an archived
+// proposal can be unarchived). Attempt numbering continues.
+const restarts = (s: { name: string }) => s.name === NONE || s.name === 'detached' || s.name === 'retired';
+
 // ── Guards ──────────────────────────────────────────────────────────────
 
 function admissible(f: Facts, head: string, ctx: TransitionContext, sessionId: number): Check {
@@ -314,12 +348,14 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
     guard: (s, e, f, ctx) => {
       const c = admissible(f, e.payload.head, ctx, e.payload.sessionId);
       if (c !== true) return c;
-      return s.name !== NONE && s.name !== 'detached' && sameHead(s, e.payload.head) ? reject('same_head') : ok();
+      return !restarts(s) && sameHead(s, e.payload.head) ? reject('same_head') : ok();
     },
     to: (s, e, f, ctx) => {
-      if (s.name === NONE || s.name === 'detached') {
-        return fromRow(e, adopt(e, f, s.name === 'detached' ? s.data : null), f, e.payload.head, e.payload.trigger, ctx, deps);
-      }
+      const live: Live = restarts(s)
+        ? { name: 'idle', data: adopt(e, f, s.name === NONE ? null : s.data) } : s;
+      const carried = carry(restarts(s) ? fromRowVerdict(live.data, f) : s, e.payload);
+      if (carried) return carried;
+      if (restarts(s)) return fromRow(e, live.data, f, e.payload.head, e.payload.trigger, ctx, deps);
       return begin(e, s, e.payload.head, e.payload.trigger, ctx, deps);
     },
   };
@@ -334,18 +370,40 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       if (e.payload.reason === 'deploy' && (f.session!.isHeadless || !['active', 'promoted'].includes(f.session!.status))) {
         return reject('not_deployable');
       }
-      if (e.payload.reason === 'ensure' && s.name !== NONE && s.name !== 'detached'
+      if (e.payload.reason === 'ensure' && !restarts(s)
           && s.data.serving?.head === e.payload.head && s.data.head === e.payload.head) return reject('already_serving');
       return ok();
     },
     to: (s, e, f, ctx) => {
       const trigger = e.payload.reason === 'env_stale' ? 'stuck-sweep' : null;
-      if (s.name === NONE || s.name === 'detached') {
-        const d = adopt(e, f, s.name === 'detached' ? s.data : null);
+      if (restarts(s)) {
+        const d = adopt(e, f, s.name === NONE ? null : s.data);
         if (e.payload.reason === 'ensure') return fromRow(e, d, f, e.payload.head, trigger, ctx, deps);
         return begin(e, { name: 'idle', data: d }, e.payload.head, trigger, ctx, deps);
       }
       return begin(e, s, e.payload.head, trigger, ctx, deps);
+    },
+  };
+
+  // A head with nothing to test settles 'skipped' (gate-passing), whatever
+  // serves; a build or run in progress decides instead.
+  const skipped: Entry = {
+    guard: (s, e, f, ctx) => {
+      if (ctx.key !== sessionKey(e.payload.sessionId)) return reject('key_mismatch');
+      if (!f.session || !f.app) return reject('no_session');
+      return OPEN.has(f.session.status) ? ok() : reject('not_open');
+    },
+    to: (s, e, f, ctx) => {
+      const d0: Data = restarts(s) ? adopt(e, f, s.name === NONE ? null : s.data) : s.data;
+      const d: Data = { ...d0, head: e.payload.head, verdict: 'skipped', failure: null, streak: 0 };
+      const base = { sessionId: d.sessionId, appId: d.appId, head: e.payload.head };
+      return step({
+        name: 'settled', data: d,
+        writes: [{ type: 'skipped', ...base, reason: e.payload.reason }],
+        work: [{ kind: WORK.botNote, key: `bot-note:skipped:${ctx.version + 1}`, input: { ...base, state: 'skipped' } }],
+        notify: [{ type: 'checksReady', ...base, state: 'skipped' }, { type: 'mergeKick', ...base, state: 'skipped' }],
+        timer: null,
+      });
     },
   };
 
@@ -421,9 +479,11 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
     [NONE]: {
       RevisionSubmitted: revision,
       PreviewRequested: request,
+      ChecksSkipped: skipped,
     },
     idle: {
       ...created,
+      ChecksSkipped: skipped,
       RecheckRequested: recheck,
       ConflictResolved: notHere('not_deferred'),
       PreviewLost: notHere('not_serving'),
@@ -434,6 +494,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
     },
     preparing: {
       ...created,
+      ChecksSkipped: notHere('in_progress'),
       RecheckRequested: notHere('run_outstanding'),
       ConflictResolved: notHere('not_deferred'),
       PreviewLost: notHere('preparing'),
@@ -444,6 +505,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
     },
     checking: {
       ...created,
+      ChecksSkipped: notHere('in_progress'),
       RecheckRequested: notHere('run_outstanding'),
       ConflictResolved: notHere('not_deferred'),
       PreviewLost: lost,
@@ -454,6 +516,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
     },
     deferred: {
       ...created,
+      ChecksSkipped: skipped,
       RecheckRequested: recheck,
       ConflictResolved: {
         guard: (s, e) => (e.payload.head === s.data.head ? ok() : reject('not_deferred_head')),
@@ -467,6 +530,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
     },
     settled: {
       ...created,
+      ChecksSkipped: skipped,
       RecheckRequested: recheck,
       ConflictResolved: notHere('not_deferred'),
       PreviewLost: lost,
@@ -477,6 +541,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
     },
     failed: {
       ...created,
+      ChecksSkipped: skipped,
       RecheckRequested: recheck,
       ConflictResolved: notHere('not_deferred'),
       PreviewLost: lost,
@@ -496,6 +561,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
         to: (s, e) => step({ name: 'retiring', data: { ...s.data, pending: { head: e.payload.head, trigger: e.payload.trigger } } }),
       },
       PreviewRequested: notHere('retiring'),
+      ChecksSkipped: notHere('retiring'),
       RecheckRequested: notHere('retiring'),
       ConflictResolved: notHere('retiring'),
       PreviewLost: notHere('retiring'),
@@ -511,10 +577,13 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
     },
     retired: {
       '*': notHere('retired'),
+      ...created,
+      ChecksSkipped: skipped,
       ...works('retired'),
     },
     detached: {
       ...created,
+      ChecksSkipped: skipped,
       RecheckRequested: notHere('detached'),
       ConflictResolved: notHere('detached'),
       PreviewLost: notHere('detached'),
@@ -638,7 +707,8 @@ function prepared(s: Live, e: Event<WorkResultPayload>, outcome: string, f: Fact
   return step({
     name: 'failed', data: servingRemoved && d0.serving ? { ...d, retiring: [...d.retiring, d0.serving] } : d,
     writes, work,
-    notify: [{ type: 'chat', appId: d.appId, eventId: e.id }, { type: 'checksReady', sessionId: d.sessionId, head: attempt.head, state: 'error' }],
+    notify: [{ type: 'chat', appId: d.appId, eventId: e.id }, { type: 'checksReady', sessionId: d.sessionId, head: attempt.head, state: 'error' },
+      { type: 'stagingFailed', sessionId: d.sessionId, detail }],
     timer: errorTimer(d, f, deps, ctx, streakBefore),
   });
 }
@@ -730,7 +800,7 @@ export function preview(deps: Deps): Machine<PState, Facts> {
     name: MACHINE,
     version: 1,
     events: EVENTS,
-    create: ['RevisionSubmitted', 'PreviewRequested'],
+    create: ['RevisionSubmitted', 'PreviewRequested', 'ChecksSkipped'],
     terminal: ['retired'],
     decode: (row) => ({ name: row.state, data: row.data } as PState),
     facts: (tx, state, event) => {
@@ -740,6 +810,7 @@ export function preview(deps: Deps): Machine<PState, Facts> {
     authorize: {
       RevisionSubmitted: produced,
       PreviewRequested: produced,
+      ChecksSkipped: produced,
       RecheckRequested: (e) => (PRODUCERS.has(e.source.kind) || e.source.kind === 'admin' ? ok() : reject('not_a_producer')),
       ConflictResolved: system,
       PreviewLost: system,
@@ -824,6 +895,15 @@ const WRITES = {
     if (w.capture) await visuals.storeCaptureOutcome(tx, w.sessionId, w.capture.state, w.capture.detail);
     const history = [...(w.history || [])].sort((a: any, b: any) => String(a.checkKey).localeCompare(String(b.checkKey)));
     if (history.length) await legacy('services/check-history').recordRun(tx, w.appId, history);
+  },
+
+  // A carried verdict now describes the merged head.
+  carried: (tx: Tx, w: any) => tx.query('UPDATE chat_sessions SET checks_commit_sha = $2 WHERE id = $1', [w.sessionId, w.head]),
+
+  // Nothing to test: storeChecksSkipped against the row's current pin.
+  async skipped(tx: Tx, w: any) {
+    const { rows: [r] } = await tx.query('SELECT checks_commit_sha FROM chat_sessions WHERE id = $1', [w.sessionId]);
+    await legacy('services/visuals').storeChecksSkipped(tx, w.sessionId, w.head, w.reason, r?.checks_commit_sha ?? null);
   },
 
   // A promoted head that conflicts with main: previewed, verdict deferred.

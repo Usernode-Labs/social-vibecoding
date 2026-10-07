@@ -432,12 +432,13 @@ async function derivedKey(sessionId: number, what: string): Promise<string> {
 const SHA40 = /^[0-9a-f]{40}$/;
 
 // A source announces a head (exact: resolve 'latest' first, P-A1).
-export async function submitRevision(r: { sessionId: number; appId: number; head: string; source: string; trigger?: string | null }): Promise<number | null> {
+export async function submitRevision(r: { sessionId: number; appId: number; head: string; source: string; trigger?: string | null; carryFrom?: string | null }): Promise<number | null> {
   if (!previewsEnabled()) return null;
   const head = String(r.head || '').toLowerCase();
   if (!SHA40.test(head)) throw new Error(`submitRevision: ${r.source} must resolve an exact head first`);
   return runtime!.append(previews!, previewKey(r.sessionId), {
-    type: 'RevisionSubmitted', payload: { sessionId: r.sessionId, head, source: r.source, trigger: r.trigger ?? null },
+    type: 'RevisionSubmitted', payload: { sessionId: r.sessionId, head, source: r.source, trigger: r.trigger ?? null,
+      carryFrom: r.carryFrom ? r.carryFrom.toLowerCase() : null },
   }, { requestKey: await derivedKey(r.sessionId, `rev:${head}:${r.source}`), source: { kind: 'system', name: r.source }, appId: r.appId });
 }
 
@@ -462,6 +463,15 @@ export async function requestRecheck(r: { sessionId: number; appId: number; reas
     source: r.system ? { kind: 'system', name: r.reason } : { kind: 'route', name: r.reason },
     actor: r.actor ?? undefined, appId: r.appId,
   });
+}
+
+// Nothing to test: the head carries no commits beyond main. `head` is the
+// commit the 'skipped' verdict describes.
+export async function checksSkipped(sessionId: number, appId: number, head: string, reason: string): Promise<number | null> {
+  if (!previewsEnabled()) return null;
+  return runtime!.append(previews!, previewKey(sessionId), {
+    type: 'ChecksSkipped', payload: { sessionId, head: String(head).toLowerCase(), reason },
+  }, { requestKey: await derivedKey(sessionId, `skipped:${head}`), source: { kind: 'system', name: 'skipped' }, appId });
 }
 
 // A deferred head merges cleanly with main now.

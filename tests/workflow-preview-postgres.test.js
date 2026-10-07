@@ -308,14 +308,22 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
     const retire = (await workOf(s, WORK.retire))[0];
     assert.deepEqual(retire.input.attempts.map((a) => a.n), [1]);
 
+    await pool.query(`UPDATE chat_sessions SET status = 'archived' WHERE id = $1`, [s.id]);
     await send(s, 'RetireRequested', { reason: 'archived', terminal: true });
     await settle();
     i = await instance(s);
     assert.equal(i.state, 'retired');
     assert.ok(i.data.closedAt);
-    const after = await submit(s, SHA('3'));
+    const archived = await submit(s, SHA('3'));
     await rt.drain();
-    assert.equal((await outcome(after)).reason, 'retired');
+    assert.equal((await outcome(archived)).reason, 'not_open');
+    // Unarchived: it starts again from its row, numbering on.
+    await pool.query(`UPDATE chat_sessions SET status = 'active' WHERE id = $1`, [s.id]);
+    const again = await submit(s, SHA('3'));
+    await rt.drain();
+    assert.equal((await outcome(again)).state_after, 'preparing');
+    assert.equal((await instance(s)).data.preparing.n, 3);
+    await settle();
   });
 
   await t.test('P8 detach cancels everything; the next event adopts the row again', async () => {
@@ -342,6 +350,33 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
     const retired = await workOf(s, WORK.retireAttempt);
     assert.deepEqual(retired.map((w) => [w.input.n, w.input.db]),
       [[0, `app_${s.app.slug.replace(/-/g, '_')}_staging_s${s.id}_555555`]], 'the adopted preview is retired by its [main] name');
+  });
+
+  await t.test('P10 a head with nothing beyond main settles skipped without a build, and kicks the queue', async () => {
+    const s = await proposal(await app(), { status: 'promoted', pin: SHA('8') });
+    const id = await send(s, 'ChecksSkipped', { sessionId: s.id, head: SHA('9'), reason: 'branch has no commits beyond main' });
+    await rt.drain();
+    assert.equal((await outcome(id)).state_after, 'settled');
+    const r = await row(s.id);
+    assert.deepEqual([r.check_state, r.checks_commit_sha, r.check_error_detail], ['skipped', SHA('9'), 'branch has no commits beyond main']);
+    assert.equal((await workOf(s, WORK.prepare)).length, 0);
+    assert.ok(notified.some((n) => n.type === 'mergeKick' && n.sessionId === s.id && n.state === 'skipped'));
+  });
+
+  await t.test('P11 a mechanical merge carries a green verdict to the merged head; anything else is checked', async () => {
+    work.answer.set(WORK.run, verdict('passing'));
+    const s = await proposal(await app(), { status: 'active' });
+    await submit(s, SHA('a'));
+    await settle();
+    const carried = await submit(s, SHA('b'), { carryFrom: SHA('a') });
+    await rt.drain();
+    assert.equal((await outcome(carried)).state_after, 'settled');
+    assert.deepEqual([(await row(s.id)).checks_commit_sha, (await row(s.id)).check_state], [SHA('b'), 'passing']);
+    assert.equal((await instance(s)).data.serving.head, SHA('a'), 'the tested head still serves');
+    const stale = await submit(s, SHA('c'), { carryFrom: SHA('a') });
+    await rt.drain();
+    assert.equal((await outcome(stale)).state_after, 'preparing', 'a carry from a head that is not the settled one is checked');
+    await settle();
   });
 
   await t.test('P9 manual requests: ensure joins what serves, deploy builds again, a recheck waits for the run', async () => {

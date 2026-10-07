@@ -165,6 +165,9 @@ const IMAGE_TAG_RE = /:([0-9a-f]{6})$/;
 //   torn_down_no_db  — container removed, but the staging DB name could not
 //                      be derived, so it was deliberately left alone
 //   skipped_gone     — container vanished between listing and teardown
+//   skipped_workflow — the preview machine holds the session (it retires
+//                      what it built; a preview it is building has no row
+//                      pointer yet)
 //   failed           — stopAndRemove threw
 const TORN_DOWN = 'torn_down';
 const TORN_DOWN_NO_DB = 'torn_down_no_db';
@@ -962,7 +965,11 @@ async function sweepOrphanDbs(config, { limit = null } = {}) {
 
     const [dbs, live, connected] = await Promise.all([
       pool.query(`SELECT datname FROM pg_database WHERE datname LIKE '%\\_staging\\_%'`),
-      pool.query(`SELECT id FROM chat_sessions WHERE staging_url IS NOT NULL`),
+      // A session the preview machine holds keeps its databases: its attempts
+      // exist before staging_url points at them, and it retires them itself.
+      pool.query(`SELECT id FROM chat_sessions WHERE staging_url IS NOT NULL
+                  UNION SELECT substr(key, length('session:') + 1)::int FROM wf_instances
+                   WHERE machine = 'preview' AND state NOT IN ('retired', 'detached', '(none)')`),
       pool.query(`SELECT DISTINCT datname FROM pg_stat_activity
                   WHERE backend_type = 'client backend' AND datname IS NOT NULL`),
     ]);
@@ -1198,6 +1205,9 @@ async function reapOne(item, config = {}) {
   if (!exists) return { outcome: 'skipped_gone' };
 
   const linked = namesPreview(item, item.session);
+  if (!linked && item.sessionId && await require('./preview-workflow').held(item.sessionId)) {
+    return { outcome: 'skipped_workflow' };
+  }
 
   if (linked) {
     try {
