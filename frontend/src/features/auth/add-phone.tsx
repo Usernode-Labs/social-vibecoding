@@ -22,9 +22,10 @@ import { useRef, useState } from 'react';
 
 import { buttonVariants } from '@/components/ui/button';
 
+import { PhoneField, type PhoneFieldHandle } from './phone-field';
 import { phoneRecaptchaToken } from './recaptcha';
 import { blockedOffline } from './shared';
-import { phoneE164, RecaptchaNotice } from './sign-in-sheet';
+import { RecaptchaNotice } from './sign-in-sheet';
 
 export type JoinedGroup = { slug: string; name: string };
 
@@ -37,6 +38,12 @@ const PRIMARY = `${buttonVariants({
 const FIELD_GROUP = 'overflow-hidden rounded-2xl bg-zinc-50 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-800';
 const LABEL = 'block px-4 pt-3 text-[13px] text-zinc-500 dark:text-zinc-400';
 const INPUT = 'w-full border-0 bg-transparent px-4 pt-1 pb-2 text-[17px] text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none';
+// The phone field carries the label and the number row itself
+// (./phone-field.tsx), so its paddings live on the card's field wrapper
+// rather than on the label and the input: the same card the Code field draws.
+const PHONE_FIELD = 'px-4 pt-3 pb-2';
+const PHONE_LABEL = 'block text-[13px] text-zinc-500 dark:text-zinc-400';
+const PHONE_INPUT = 'w-full border-0 bg-transparent px-0 py-1 text-[17px] text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none';
 const QUIET = 'py-1 text-[15px] font-medium text-violet-700 dark:text-violet-400 hover:underline disabled:text-zinc-500 disabled:no-underline';
 
 const RESEND_MS = 60 * 1000;
@@ -55,15 +62,14 @@ export function AddPhoneCard({ groups, title: titleOverride, lead, onJoined }: {
   const [number, setNumber] = useState('');
   const [resendAt, setResendAt] = useState(0);
   const session = useRef('');
-  const phoneField = useRef<HTMLInputElement>(null);
+  const phoneField = useRef<PhoneFieldHandle>(null);
   const codeField = useRef<HTMLInputElement>(null);
 
   const title = titleOverride || (groups.length === 1 ? `Join ${groups[0]} now` : 'Join them now');
 
-  async function requestCode(raw: string) {
+  // The E.164 the field built (`readPhone` refused anything else before this).
+  async function requestCode(value: string) {
     setError(null);
-    const value = phoneE164(raw);
-    if (!value) { setError('Enter your number with its country code, like +1 415 555 0123.'); return; }
     if (blockedOffline(setError)) return;
     setBusy(true);
     try {
@@ -128,10 +134,17 @@ export function AddPhoneCard({ groups, title: titleOverride, lead, onJoined }: {
           the same uncontrolled <input> across the step and the number typed
           into it shows up in the Code field (#4143). */}
       {step === 'phone' ? (
-        <form key="phone" className="mt-4 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void requestCode(phoneField.current?.value || ''); }}>
+        <form key="phone" className="mt-4 flex flex-col gap-3" onSubmit={(e) => {
+          e.preventDefault();
+          const read = phoneField.current?.read();
+          if (!read) return;
+          if (!read.ok) { setError(read.error); return; }
+          void requestCode(read.e164);
+        }}>
           <div className={FIELD_GROUP}>
-            <label htmlFor="add-phone-number" className={LABEL}>Phone number</label>
-            <input ref={phoneField} id="add-phone-number" type="tel" autoComplete="tel" inputMode="tel" enterKeyHint="go" defaultValue={number} placeholder="+1 415 555 0123" className={INPUT} />
+            <div className={PHONE_FIELD}>
+              <PhoneField ref={phoneField} id="add-phone-number" labelClassName={PHONE_LABEL} inputClassName={PHONE_INPUT} enterKeyHint="go" defaultValue={number} />
+            </div>
           </div>
           <button type="submit" disabled={busy} className={PRIMARY}>{busy ? 'Sending code…' : 'Text me a code'}</button>
           <RecaptchaNotice />
