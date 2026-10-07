@@ -1871,6 +1871,36 @@
       "classicPath": "#admin"
     },
     {
+      "source": "src/routes/admin.js",
+      "method": "GET",
+      "path": "/api/admin/sms/status",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.get.admin.sms.status.20cf80ce",
+      "domain": "admin",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin"
+    },
+    {
+      "source": "src/routes/admin.js",
+      "method": "POST",
+      "path": "/api/admin/sms/test",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.post.admin.sms.test.5f5b38ac",
+      "domain": "admin",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin"
+    },
+    {
       "source": "src/routes/agent-session-drafts.js",
       "method": "GET",
       "path": "/api/agent-sessions/:id/drafts",
