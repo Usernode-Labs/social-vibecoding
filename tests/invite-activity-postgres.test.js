@@ -4,8 +4,10 @@
 // invite link brings back to its maker. Opens are counted once per person
 // and never named, a join and a first hello name the person who came by the
 // link, each kind rings once a day per project and folds the rest into a
-// count, and none of it reaches anybody but the link's maker. An open is
-// news only until that person joins: the join replaces it.
+// count, and none of it reaches anybody but the link's maker. Only a
+// signed-in open is news (#4176): one signed out is remembered and recorded
+// for the admin Journey, and tells nobody. An open is news only until that
+// person joins: the join replaces it.
 //
 // Run with: TEST_DATABASE_URL=postgres://... node --test tests/invite-activity-postgres.test.js
 
@@ -50,6 +52,7 @@ test('invite activity against the full PostgreSQL schema', { timeout: 120000 }, 
   const maya = await user('maya');
   const sam = await user('sam');
   const alex = await user('alex');
+  const lee = await user('lee');
   const old = await user('old_member');
 
   let n = 0;
@@ -134,7 +137,25 @@ test('invite activity against the full PostgreSQL schema', { timeout: 120000 }, 
     return openEvents(invite);
   };
 
-  await t.test('three people on the first day ring once, and the push waits for a join', async () => {
+  await t.test('an open signed out tells nobody, but is one open for the Journey, once per browser (#4176)', async () => {
+    const { app, invite } = await project();
+    const before = (await pool.query('SELECT COUNT(*)::int AS n FROM mobile_push_deliveries')).rows[0].n;
+    for (let i = 0; i < 3; i += 1) {
+      assert.deepEqual(await activity.noteOpened(pool, { token: invite.token, browser: browser('clicked-a') }),
+        { row: null, fresh: false }, 'only clicked the link: the maker hears nothing');
+    }
+    assert.deepEqual(await activity.noteOpened(pool, { token: invite.token, browser: browser('clicked-b') }),
+      { row: null, fresh: false });
+    assert.equal((await rowsOf(maya.id, 'invite_opened')).filter((r) => r.app_id === app.id).length, 0, 'no notice');
+    assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM mobile_push_deliveries')).rows[0].n, before, 'no push');
+    assert.deepEqual((await opensOf(app)).map((r) => [r.user_id, r.notification_id]), [[null, null], [null, null]],
+      'each browser remembered, on no notice');
+    const recorded = await waitForEvents(invite, 2);
+    assert.deepEqual(recorded.map((r) => [r.user_id, r.app_id, r.metadata.signedIn]), Array(2).fill([null, app.id, false]),
+      'two browsers, two opens, with no name on either');
+  });
+
+  await t.test('three people signed in on the first day ring once, and the push waits for a join', async () => {
     const { app, invite } = await project();
     await pool.query(
       `INSERT INTO mobile_push_deployment_state (environment, firebase_project_id, send_enabled, send_not_before)
@@ -150,10 +171,10 @@ test('invite activity against the full PostgreSQL schema', { timeout: 120000 }, 
        VALUES ($1, $2, 'production', $3, $4, 'enc:opaque', 'ios', 'authorized', NOW() + INTERVAL '30 days')`,
       [maya.id, `nsc_${String(maya.id).padStart(43, '0')}`, crypto.randomUUID(), crypto.randomBytes(32).toString('hex')]);
     const before = (await pool.query('SELECT COUNT(*)::int AS n FROM mobile_push_deliveries')).rows[0].n;
-    const first = await activity.noteOpened(pool, { token: invite.token, browser: browser('ring-a') });
+    const first = await activity.noteOpened(pool, { token: invite.token, viewerId: sam.id, browser: browser('ring-a') });
     assert.equal(first.fresh, true);
-    assert.equal((await activity.noteOpened(pool, { token: invite.token, browser: browser('ring-b') })).fresh, false);
-    assert.equal((await activity.noteOpened(pool, { token: invite.token, browser: browser('ring-c') })).fresh, false);
+    assert.equal((await activity.noteOpened(pool, { token: invite.token, viewerId: alex.id, browser: browser('ring-b') })).fresh, false);
+    assert.equal((await activity.noteOpened(pool, { token: invite.token, viewerId: lee.id, browser: browser('ring-c') })).fresh, false);
     const rows = (await rowsOf(maya.id, 'invite_opened')).filter((r) => r.app_id === app.id);
     assert.equal(rows.length, 1);
     assert.equal(rows[0].detail, '3', 'three people');
@@ -166,20 +187,20 @@ test('invite activity against the full PostgreSQL schema', { timeout: 120000 }, 
     assert.deepEqual(deliveries, [{ waits: true, status: 'pending' }],
       `the open's push waits ${activity.OPEN_PUSH_DELAY_MINUTES} minutes, for a join to replace it`);
     // Each person's open is also an event for the admin Journey's first
-    // session, with no name on it when nobody is signed in.
+    // session, with the account on it.
     const recorded = await waitForEvents(invite, 3);
-    assert.equal(recorded.length, 3);
-    assert.deepEqual(recorded.map((r) => [r.user_id, r.app_id, r.metadata.signedIn]), Array(3).fill([null, app.id, false]));
+    assert.deepEqual(recorded.map((r) => [r.user_id, r.app_id, r.metadata.signedIn]).sort(),
+      [[sam.id, app.id, true], [alex.id, app.id, true], [lee.id, app.id, true]].sort());
   });
 
   await t.test('one person opening a link four times is one open: no count, no unread, no ring', async () => {
     const { app, invite } = await project();
-    const first = await activity.noteOpened(pool, { token: invite.token, browser: browser('one-person') });
+    const first = await activity.noteOpened(pool, { token: invite.token, viewerId: sam.id, browser: browser('one-person') });
     assert.equal(first.fresh, true);
     await pool.query('UPDATE notifications SET read_at = NOW() WHERE id = $1', [first.row.id]);
     for (let i = 0; i < 3; i += 1) {
-      assert.deepEqual(await activity.noteOpened(pool, { token: invite.token, browser: browser('one-person') }),
-        { row: null, fresh: false }, 'the same browser again');
+      assert.deepEqual(await activity.noteOpened(pool, { token: invite.token, viewerId: sam.id, browser: browser('one-person') }),
+        { row: null, fresh: false }, 'the same person again');
     }
     const rows = (await rowsOf(maya.id, 'invite_opened')).filter((r) => r.app_id === app.id);
     assert.equal(rows.length, 1);
@@ -205,10 +226,11 @@ test('invite activity against the full PostgreSQL schema', { timeout: 120000 }, 
   await t.test('two people are two, and a second link of the same maker\'s does not count them again', async () => {
     const { app, invite } = await project();
     await activity.noteOpened(pool, { token: invite.token, viewerId: sam.id, browser: browser('two-sam') });
+    await activity.noteOpened(pool, { token: invite.token, viewerId: alex.id, browser: browser('two-alex') });
     await activity.noteOpened(pool, { token: invite.token, browser: browser('two-stranger') });
     const rows = (await rowsOf(maya.id, 'invite_opened')).filter((r) => r.app_id === app.id);
     assert.equal(rows.length, 1);
-    assert.equal(rows[0].detail, '2', '"2 people opened your invite"');
+    assert.equal(rows[0].detail, '2', '"2 people opened your invite": the stranger only clicked it');
     // Maya made a second link to the same project: Sam opening it is not a third.
     const token = crypto.randomBytes(16).toString('base64url').slice(0, 22);
     await pool.query(
@@ -220,12 +242,33 @@ test('invite activity against the full PostgreSQL schema', { timeout: 120000 }, 
     assert.equal((await rowsOf(maya.id, 'invite_opened')).filter((r) => r.app_id === app.id)[0].detail, '2');
   });
 
+  await t.test('a browser opened signed out is news once it opens the link signed in, and is one person', async () => {
+    const { app, invite } = await project();
+    await activity.noteOpened(pool, { token: invite.token, browser: browser('later-v1') });
+    assert.equal((await rowsOf(maya.id, 'invite_opened')).filter((r) => r.app_id === app.id).length, 0);
+    // Alex signs in on that browser and opens the link again, not in it yet:
+    // now the maker hears.
+    const told = await activity.noteOpened(pool, { token: invite.token, viewerId: alex.id, browser: browser('later-v1') });
+    assert.equal(told.fresh, true);
+    assert.equal(told.row.kind, 'invite_opened');
+    const rows = (await rowsOf(maya.id, 'invite_opened')).filter((r) => r.app_id === app.id);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].detail, null, 'one person');
+    assert.deepEqual((await opensOf(app)).map((r) => [r.user_id, r.browser, r.notification_id]),
+      [[alex.id, browser('later-v1'), rows[0].id]], 'the browser was Alex all along');
+    // Counted once for the Journey: the open signed out was the person's open.
+    assert.deepEqual((await waitForEvents(invite, 1)).map((r) => [r.user_id, r.metadata.signedIn]), [[null, false]]);
+    // And quiet from then on, on any device.
+    assert.deepEqual(await activity.noteOpened(pool, { token: invite.token, viewerId: alex.id, browser: browser('later-v2') }),
+      { row: null, fresh: false });
+    assert.equal((await rowsOf(maya.id, 'invite_opened')).filter((r) => r.app_id === app.id)[0].detail, null);
+  });
+
   await t.test('a browser opened signed out and then signed in, and a person seen on two rows, are one', async () => {
     const { app, invite } = await project();
     await activity.noteOpened(pool, { token: invite.token, browser: browser('merge-v1') });
     await activity.noteOpened(pool, { token: invite.token, viewerId: alex.id, browser: browser('merge-v2') });
-    assert.equal((await rowsOf(maya.id, 'invite_opened')).filter((r) => r.app_id === app.id)[0].detail, '2',
-      'until they sign in there, two browsers are two people');
+    assert.equal((await opensOf(app)).length, 2, 'until they sign in there, two browsers are two opens');
     // Alex signs in on the first browser: that browser was Alex all along.
     assert.deepEqual(await activity.noteOpened(pool, { token: invite.token, viewerId: alex.id, browser: browser('merge-v1') }),
       { row: null, fresh: false });
@@ -235,34 +278,47 @@ test('invite activity against the full PostgreSQL schema', { timeout: 120000 }, 
     assert.equal((await opensOf(app)).length, 1);
   });
 
-  await t.test('a join replaces the open: off the notice, which goes when nobody is left, its waiting push with it', async () => {
+  await t.test('signed up from a link opened signed out and joined: the maker only hears the join', async () => {
     const { app, invite } = await project();
-    // Opened signed out, then signed up in the same browser and joined.
-    const opened = await activity.noteOpened(pool, { token: invite.token, browser: browser('join-sam') });
-    const notice = opened.row.id;
-    await pool.query(
-      `INSERT INTO mobile_push_deliveries (notification_id, environment, installation_id, available_at)
-       VALUES ($1, 'production', $2, NOW() + INTERVAL '15 minutes') ON CONFLICT DO NOTHING`,
-      [notice, crypto.randomUUID()]);
+    await activity.noteOpened(pool, { token: invite.token, browser: browser('join-sam') });
     await joinBy(invite, app, sam);
     const joined = await activity.noteJoined(pool, { inviteId: invite.id, user: { id: sam.id }, browser: browser('join-sam') });
     assert.equal(joined.fresh, true);
     assert.equal((await rowsOf(maya.id, 'invite_opened')).filter((r) => r.app_id === app.id).length, 0,
-      'the open is gone: "Joined through your invite" says it');
-    assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM mobile_push_deliveries WHERE notification_id = $1', [notice])).rows[0].n, 0,
-      'and its push never goes');
-    assert.equal((await rowsOf(maya.id, 'member_joined')).filter((r) => r.app_id === app.id).length, 1);
+      'never "Someone opened your invite"');
+    assert.equal((await rowsOf(maya.id, 'member_joined')).filter((r) => r.app_id === app.id).length, 1,
+      '"Joined through your invite" says it');
     // They are remembered, with their account: opening the link again
     // signed out in that browser is not news.
     assert.deepEqual((await opensOf(app)).map((r) => [r.user_id, r.notification_id]), [[sam.id, null]]);
     assert.deepEqual(await activity.noteOpened(pool, { token: invite.token, browser: browser('join-sam') }),
       { row: null, fresh: false });
     assert.equal((await rowsOf(maya.id, 'invite_opened')).filter((r) => r.app_id === app.id).length, 0);
+  });
+
+  await t.test('a join replaces the open: off the notice, which goes when nobody is left, its waiting push with it', async () => {
+    const { app, invite } = await project();
+    // Opened signed in, then joined.
+    const opened = await activity.noteOpened(pool, { token: invite.token, viewerId: sam.id, browser: browser('replace-sam') });
+    const notice = opened.row.id;
+    await pool.query(
+      `INSERT INTO mobile_push_deliveries (notification_id, environment, installation_id, available_at)
+       VALUES ($1, 'production', $2, NOW() + INTERVAL '15 minutes') ON CONFLICT DO NOTHING`,
+      [notice, crypto.randomUUID()]);
+    await joinBy(invite, app, sam);
+    const joined = await activity.noteJoined(pool, { inviteId: invite.id, user: { id: sam.id }, browser: browser('replace-sam') });
+    assert.equal(joined.fresh, true);
+    assert.equal((await rowsOf(maya.id, 'invite_opened')).filter((r) => r.app_id === app.id).length, 0,
+      'the open is gone: "Joined through your invite" says it');
+    assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM mobile_push_deliveries WHERE notification_id = $1', [notice])).rows[0].n, 0,
+      'and its push never goes');
+    assert.equal((await rowsOf(maya.id, 'member_joined')).filter((r) => r.app_id === app.id).length, 1);
+    assert.deepEqual((await opensOf(app)).map((r) => [r.user_id, r.notification_id]), [[sam.id, null]]);
 
     // Two opened; one joins: the other is still somebody who opened.
     const both = await project();
     await activity.noteOpened(pool, { token: both.invite.token, viewerId: alex.id, browser: browser('join-alex') });
-    await activity.noteOpened(pool, { token: both.invite.token, browser: browser('join-other') });
+    await activity.noteOpened(pool, { token: both.invite.token, viewerId: lee.id, browser: browser('join-other') });
     await joinBy(both.invite, both.app, alex);
     await activity.noteJoined(pool, { inviteId: both.invite.id, user: { id: alex.id } });
     const left = (await rowsOf(maya.id, 'invite_opened')).filter((r) => r.app_id === both.app.id);
@@ -328,11 +384,11 @@ test('invite activity against the full PostgreSQL schema', { timeout: 120000 }, 
 
   await t.test('a row from yesterday is not folded into: today rings again', async () => {
     const { app, invite } = await project();
-    await activity.noteOpened(pool, { token: invite.token, browser: browser('yesterday') });
+    await activity.noteOpened(pool, { token: invite.token, viewerId: sam.id, browser: browser('yesterday') });
     await pool.query(
       `UPDATE notifications SET created_at = NOW() - INTERVAL '25 hours' WHERE user_id = $1 AND app_id = $2 AND kind = 'invite_opened'`,
       [maya.id, app.id]);
-    const today = await activity.noteOpened(pool, { token: invite.token, browser: browser('today') });
+    const today = await activity.noteOpened(pool, { token: invite.token, viewerId: alex.id, browser: browser('today') });
     assert.equal(today.fresh, true);
     assert.equal((await rowsOf(maya.id, 'invite_opened')).filter((r) => r.app_id === app.id).length, 2);
   });
