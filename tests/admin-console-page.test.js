@@ -125,7 +125,10 @@ test('the console island imports every admin module, console first', () => {
     .map((m) => m[1]);
   assert.equal(order[0], 'admin-console', 'admin-console.js is imported first');
   assert.deepEqual(order.slice(1).sort(), [
-    'admin-analytics', 'admin-campaigns', 'admin-codes', 'admin-db-export',
+    'admin-analytics',
+    // How the Homeroom bot builds first versions, and how each configuration measures up.
+    'admin-bot-configs',
+    'admin-campaigns', 'admin-codes', 'admin-db-export',
     'admin-e2e', 'admin-estimator', 'admin-featured-apps', 'admin-features',
     'admin-gallery',
     // #2684: the Homeroom bot's shadow-mode verdicts and their ratings.
