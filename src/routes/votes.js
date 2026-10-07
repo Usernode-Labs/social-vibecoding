@@ -430,6 +430,20 @@ function stagingMockProposals(viewer) {
       needs_other_member_yes: true,
       other_member_yes_count: 0,
     },
+    // (d) Threshold met, floor not (#3826). All three Yes votes are the
+    // author's, so the tally reads full while the member floor is still
+    // unmet: the card says "Needs another member's Yes" (a viewer who has
+    // voted) or "Needs your Yes" (one who has not), instead of a bare
+    // "3 / 3" that reads as passed. No window, like (a) and (b).
+    {
+      ...mk(9000095, 900195,
+        '[Mock] Explicit-approval test: votes all in, waiting on another member (floor unmet)',
+        21, 3, 0, 2, { required: 3 }),
+      requires_explicit_approval: true,
+      explicit_approval_reason: 'visibility',
+      needs_other_member_yes: true,
+      other_member_yes_count: 0,
+    },
     // ── #1442 freshness fixtures ───────────────────────────────────────
     //
     // The three states the issue is about, each of which used to be

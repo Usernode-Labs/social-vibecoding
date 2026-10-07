@@ -1476,9 +1476,16 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // reads the Overview, which the Studio replaces rather than sits beside, so
   // there is no check on that route to fold into. 843 leaves 27 slots.
   //
+  // 843 → 844: +1 (#3826): the member floor's words on the card. The mock
+  // row whose votes are all in and whose floor is unmet (9000095) has a
+  // route of its own — the proposal page — and the #788 family's checks sit
+  // on other rows (below threshold, floor met, rejecting), so there was
+  // nothing to fold it into. The ceiling went 860 → 880 with it
+  // (services/app-manifest.js), leaving 36 slots.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 843);
+  checkCap.assertPinned(DAPP.tests.length, 844);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
