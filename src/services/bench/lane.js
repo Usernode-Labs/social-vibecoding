@@ -563,6 +563,7 @@ const TODAY = 'today';
  */
 async function studioContext(pool, config, row, settings) {
   const bot = require('../homeroom-bot');
+  const botConfigs = require('../bot-configs');
   const out = {};
   if (row.context_pack_id) {
     const packs = require('./packs');
@@ -571,7 +572,30 @@ async function studioContext(pool, config, row, settings) {
     out.pack = pack;
     out.guidance = Object.fromEntries(packs.STAGES.map((st) => [st, packs.guidanceFor(pack, st) || null]));
   }
-  if (row.model === TODAY) {
+  // A configuration version (services/bot-configs.js) the trial builds by:
+  // a side build of a live first version names it on the trial, a studio
+  // arm as its model (`config:<id>`), and `today` is the current one, which
+  // is how the live bot builds a first version now.
+  const namedId = row.bot_config_version_id || botConfigs.configIdOfModel(row.model);
+  const version = namedId ? await botConfigs.versionById(pool, namedId)
+    : (row.model === TODAY ? await botConfigs.currentVersion(pool) : null);
+  const recipe = version ? botConfigs.recipeOf(version.recipe) : null;
+  if (namedId && !recipe) throw new Error('the trial\'s configuration version is gone');
+  if (recipe) {
+    out.stageModels = { ...recipe.models };
+    out.harnessOf = require('../homeroom-bot-live').recipeHarness;
+    out.configVersionId = version.id;
+    if (botConfigs.reviews(recipe)) out.reviewer = recipe.reviewer;
+    if (recipe.pack && !row.context_pack_id) {
+      const packs = require('./packs');
+      const pack = await packs.packRow(pool, recipe.pack);
+      if (pack) {
+        out.pack = pack;
+        out.guidance = Object.fromEntries(packs.STAGES.map((st) => [st, packs.guidanceFor(pack, st) || null]));
+      }
+    }
+    if (row.bot_config_version_id) out.sideBuild = { botRunId: row.bot_run_id || null, versionId: version.id };
+  } else if (row.model === TODAY) {
     out.stageModels = {
       triage: bot.stageModel(settings, config, 'triage'),
       spec: bot.stageModel(settings, config, 'spec'),
@@ -599,7 +623,9 @@ async function noteSession(pool, trialId, sessionId, { baseSha = null, branch = 
 
 /** A first version, which keeps a checkpoint and goes on from it after a restart; a reference build has no turns to keep. */
 function goesOnAfterRestart(row) {
-  return !!row && row.stage === 'first_version' && !row.reference_label;
+  // A side build (services/bot-configs.js) is run again instead: its turns
+  // are not the first-version stage's.
+  return !!row && row.stage === 'first_version' && !row.reference_label && !row.bot_config_version_id;
 }
 
 /**
@@ -743,6 +769,9 @@ async function recordTrial(pool, { trialRow, row, patch, user, d, recovered = fa
   // counts every attempt the turn made, failed ones included.
   const sessionIds = [...new Set([patch.session_id, ...(patch.session_ids || [])].filter(Boolean))];
   let cost = Number.isFinite(patch.cost_usd) ? patch.cost_usd : null;
+  // What the trial spent beside its agent turns, which the ledger below
+  // does not hold: a first version's reviewer calls (services/bot-review.js).
+  const besideLedger = Number.isFinite(Number(patch.review_cost_usd)) ? Math.max(Number(patch.review_cost_usd), 0) : 0;
   let inputTokens = patch.input_tokens ?? null;
   let outputTokens = patch.output_tokens ?? null;
   const routedModels = new Set();
@@ -757,7 +786,7 @@ async function recordTrial(pool, { trialRow, row, patch, user, d, recovered = fa
     ledger.output += Number(usage.output_tokens) || 0;
     for (const m of usage.routed_models || []) routedModels.add(m);
   }
-  if (ledger.priced > 0) cost = ledger.cost;
+  if (ledger.priced > 0) cost = ledger.cost + besideLedger;
   if (ledger.input > 0) inputTokens = ledger.input;
   if (ledger.output > 0) outputTokens = ledger.output;
   // A first version that went on after a restart: a release already charged
@@ -826,8 +855,10 @@ async function recordTrial(pool, { trialRow, row, patch, user, d, recovered = fa
     ).catch(() => {});
     if (!recovered) for (const id of sessionIds) Promise.resolve(d.worker.evictWorker?.(id)).catch(() => {});
   }
-  // A branch with nothing on it is not kept.
-  if (patch.build_branch && !(patch.build_commits > 0) && row?.repo_url) {
+  // A branch with nothing on it is not kept. Nor is a side build's
+  // (services/bot-configs.js): it sits on the live project's own repository,
+  // and its diff and screenshots are on the trial already.
+  if (patch.build_branch && (!(patch.build_commits > 0) || row?.bot_config_version_id) && row?.repo_url) {
     await deleteBranch(pool, d.github, row.repo_url, patch.build_branch, trialRow.id);
   }
   // The deterministic grade, at once: a build's diff-scope rule reads the
@@ -836,6 +867,8 @@ async function recordTrial(pool, { trialRow, row, patch, user, d, recovered = fa
   await Promise.resolve(grade(pool, trialRow.id)).catch((err) => {
     log.warn('bench', 'After-trial grading failed', { trialId: trialRow.id, err: err.message });
   });
+  // A side build's result, and the pairs it completes (services/bot-configs.js).
+  if (row?.bot_config_version_id && after) await require('../bot-configs').finishSideTrial(pool, trialRow.id);
   log.info('bench', recovered ? 'Trial finished after a restart' : 'Trial finished', {
     trialId: trialRow.id, runId: trialRow.run_id, stage: row?.stage, status: after?.status || patch.status, costUsd: cost,
   });
@@ -1104,7 +1137,7 @@ async function recoveryPlan(pool, session, activeTurn) {
   if (!trial) return null;
   // A cancelled run's turn is stopped, not followed.
   const resumable = t.run_status !== 'cancelled'
-    && runner.resumableTurn(trial.stage, activeTurn, { reference: !!trial.reference_label });
+    && runner.resumableTurn(trial.stage, activeTurn, { reference: !!trial.reference_label, side: !!trial.bot_config_version_id });
   return { trial, resumable };
 }
 

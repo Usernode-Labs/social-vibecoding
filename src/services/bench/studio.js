@@ -288,8 +288,10 @@ function validateLaunch(body = {}) {
   const models = [...new Set((Array.isArray(body.models) ? body.models : [TODAY]).map((m) => String(m || '').trim()).filter(Boolean))];
   if (!models.length) return httpError(400, 'Pick at least one model, or "today"');
   if (models.length > MAX_MODELS) return httpError(400, `At most ${MAX_MODELS} models in one studio run`);
-  const bad = models.find((m) => m !== TODAY && !bot.MODEL_ID_RE.test(m));
-  if (bad) return httpError(400, `${bad} is not an OpenRouter model id (or "today")`);
+  // `config:<id>` builds by a Homeroom bot configuration version
+  // (services/bot-configs.js): its models, reviewer and pack.
+  const bad = models.find((m) => m !== TODAY && !/^config:\d{1,9}$/.test(m) && !bot.MODEL_ID_RE.test(m));
+  if (bad) return httpError(400, `${bad} is not an OpenRouter model id (or "today", or "config:<version id>")`);
   const packIds = body.contextPackIds == null ? [0] : [...new Set((Array.isArray(body.contextPackIds) ? body.contextPackIds : []).map(Number))];
   if (!packIds.length || packIds.length > MAX_PACKS || packIds.some((n) => !Number.isInteger(n) || n < 0)) {
     return httpError(400, `contextPackIds is 1 to ${MAX_PACKS} pack ids, 0 for no pack`);
