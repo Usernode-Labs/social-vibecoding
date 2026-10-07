@@ -345,10 +345,28 @@ const DevChat = {
     if (cents == null && notes?.typicalChange && catalogModel) {
       const input = Number(catalogModel.inputPricePerMillion);
       const output = Number(catalogModel.outputPricePerMillion);
-      if (Number.isFinite(input) && Number.isFinite(output)) {
-        const dollars = (Number(notes.typicalChange.inputTokens) / 1_000_000) * input
-          + (Number(notes.typicalChange.outputTokens) / 1_000_000) * output;
-        cents = Math.round(dollars * 100 * 100) / 100;
+      if (catalogModel.inputPricePerMillion != null && catalogModel.outputPricePerMillion != null
+        && Number.isFinite(input) && Number.isFinite(output)) {
+        // The server's arithmetic (services/model-costs.js tokenCostUsd):
+        // inputTokens is every prompt token, and its cache-read and
+        // cache-write parts are priced at the model's cache rates where the
+        // catalog lists them, at its prompt rate where it does not.
+        const profile = notes.typicalChange;
+        const rate = (value) => {
+          const n = value == null ? NaN : Number(value);
+          return Number.isFinite(n) && n >= 0 ? n : null;
+        };
+        const readRate = rate(catalogModel.cacheReadPricePerMillion);
+        const writeRate = rate(catalogModel.cacheWritePricePerMillion);
+        const tokens = Math.max(Number(profile.inputTokens) || 0, 0);
+        const part = (n, room) => Math.min(Math.max(Number(n) || 0, 0), Math.max(room, 0));
+        const reads = readRate == null ? 0 : part(profile.cachedInputTokens, tokens);
+        const writes = writeRate == null ? 0 : part(profile.cacheWriteInputTokens, tokens - reads);
+        let perMillion = (tokens - reads - writes) * input
+          + Math.max(Number(profile.outputTokens) || 0, 0) * output;
+        if (reads > 0) perMillion += reads * readRate;
+        if (writes > 0) perMillion += writes * writeRate;
+        cents = Math.round((perMillion / 1_000_000) * 100 * 100) / 100;
       }
     }
     // Under a cent is "<$0.01" rather than "$0.00": a model that costs
