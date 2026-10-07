@@ -151,12 +151,14 @@ function bustAndBroadcast({ owner, repo, appSlug, appId, closed }) {
 // service's siblings, never this file, so there's no cycle). `pool` is
 // optional: without one (older call sites, unit tests) this is a silent
 // no-op and the watcher behaves exactly as before. Fired-and-forgotten —
-// a failure must never affect the poll loop.
+// a failure must never affect the poll loop. Resolves when it is done (the
+// watch awaits it before it returns, so a durable caller that saw it return
+// knows the proposals were told).
 function resolveSupersededProposals({ pool, appId, appSlug, prNumber, numbers }) {
-  if (!pool || !appId || !Array.isArray(numbers) || !numbers.length) return;
+  if (!pool || !appId || !Array.isArray(numbers) || !numbers.length) return Promise.resolve();
   try {
     const { resolveSupersededCloseProposals } = require('../routes/issues');
-    resolveSupersededCloseProposals(pool, {
+    return resolveSupersededCloseProposals(pool, {
       appId,
       appSlug,
       numbers,
@@ -170,6 +172,7 @@ function resolveSupersededProposals({ pool, appId, appSlug, prNumber, numbers })
     log.warn('issue-close-watcher', 'Superseded close-proposal resolve setup failed', {
       pr: prNumber, err: err.message,
     });
+    return Promise.resolve();
   }
 }
 
@@ -184,9 +187,9 @@ function resolveSupersededProposals({ pool, appId, appSlug, prNumber, numbers })
 // resolveSupersededProposals: a no-op without a pool, fired-and-forgotten,
 // and a failure never touches the poll loop.
 function closeTwinRows({ pool, appId, prNumber, numbers }) {
-  if (!pool || !appId || !Array.isArray(numbers) || !numbers.length) return;
+  if (!pool || !appId || !Array.isArray(numbers) || !numbers.length) return Promise.resolve();
   try {
-    Promise.resolve(pool.query(
+    return Promise.resolve(pool.query(
       `UPDATE issues SET status = 'closed'
         WHERE app_id = $1 AND kind = 'general' AND status = 'open'
           AND github_issue_number = ANY($2::int[])`,
@@ -200,6 +203,7 @@ function closeTwinRows({ pool, appId, prNumber, numbers }) {
     log.warn('issue-close-watcher', 'Closing request twin rows failed', {
       pr: prNumber, issues: numbers, err: err.message,
     });
+    return Promise.resolve();
   }
 }
 
@@ -279,6 +283,8 @@ async function watchIssuesClosedAfterMerge({ owner, repo, prNumber, linkedIssues
 
   const closed = [];
   const skipped = [];
+  // The proposal and twin-row updates it starts, awaited before it returns.
+  const settling = [];
   let pending = numbers;
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS && pending.length; attempt++) {
@@ -294,7 +300,7 @@ async function watchIssuesClosedAfterMerge({ owner, repo, prNumber, linkedIssues
     if (newlyClosed.length) {
       closed.push(...newlyClosed);
       bustAndBroadcast({ owner, repo, appSlug, appId, closed: newlyClosed });
-      closeTwinRows({ pool, appId, prNumber, numbers: newlyClosed });
+      settling.push(closeTwinRows({ pool, appId, prNumber, numbers: newlyClosed }));
     }
     if (newlySkipped.length) skipped.push(...newlySkipped);
     // Retire close-issue proposals for closed AND skipped numbers: a
@@ -302,10 +308,10 @@ async function watchIssuesClosedAfterMerge({ owner, repo, prNumber, linkedIssues
     // and a skipped-because-PR number can never match a close proposal
     // (proposals only target numbers verified open at creation).
     if (newlyClosed.length || newlySkipped.length) {
-      resolveSupersededProposals({
+      settling.push(resolveSupersededProposals({
         pool, appId, appSlug, prNumber,
         numbers: [...newlyClosed, ...newlySkipped],
-      });
+      }));
     }
     pending = stillPending;
     if (pending.length && attempt < MAX_ATTEMPTS) {
@@ -332,8 +338,8 @@ async function watchIssuesClosedAfterMerge({ owner, repo, prNumber, linkedIssues
     if (selfClosed.length) {
       closed.push(...selfClosed);
       bustAndBroadcast({ owner, repo, appSlug, appId, closed: selfClosed });
-      resolveSupersededProposals({ pool, appId, appSlug, prNumber, numbers: selfClosed });
-      closeTwinRows({ pool, appId, prNumber, numbers: selfClosed });
+      settling.push(resolveSupersededProposals({ pool, appId, appSlug, prNumber, numbers: selfClosed }));
+      settling.push(closeTwinRows({ pool, appId, prNumber, numbers: selfClosed }));
       pending = pending.filter((n) => !selfClosed.includes(n));
     }
   }
@@ -349,6 +355,7 @@ async function watchIssuesClosedAfterMerge({ owner, repo, prNumber, linkedIssues
       });
     }
   }
+  await Promise.all(settling);
   log.info('issue-close-watcher', 'Post-merge close watch done', {
     repo: `${owner}/${repo}`, pr: prNumber, closed, skipped, stillOpen: pending,
   });

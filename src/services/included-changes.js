@@ -272,11 +272,13 @@ async function settleIncluded({ config, pool, row, carrier, sha, deployed = true
  * then read as closed everywhere (the open-issues cache, its twin row, a
  * close-issue vote on it). Resolves the numbers closed on GitHub.
  */
-async function closeRequests({ pool, row, carrier, github, repo, d }) {
+async function closeRequests({ pool, row, carrier, github, repo, d, bounties = true }) {
   const { sanitizeIssueNumbers } = require('./pr-metadata');
   const numbers = sanitizeIssueNumbers(row.linked_issues);
   if (!numbers.length) return [];
-  for (const n of numbers) {
+  // The merge-followups workflow machine pays the bounties itself, in the
+  // transition that marks the change merged (bounties: false).
+  if (bounties) for (const n of numbers) {
     await d.resolveIssueBounty(pool, {
       appId: row.app_id, sessionId: row.id, awardeeUserId: row.user_id || null, issueNumber: n,
     }).catch((err) => log.warn('included-changes', 'Bounty payout failed', { sessionId: row.id, issueNumber: n, err: err.message }));
@@ -300,8 +302,10 @@ async function closeRequests({ pool, row, carrier, github, repo, d }) {
   if (closed.length) {
     const prNumber = carrier.pr_number || null;
     d.watcher.bustAndBroadcast({ owner: repo.owner, repo: repo.repo, appSlug: row.app_slug, appId: row.app_id, closed });
-    d.watcher.closeTwinRows({ pool, appId: row.app_id, prNumber, numbers: closed });
-    d.watcher.resolveSupersededProposals({ pool, appId: row.app_id, appSlug: row.app_slug, prNumber, numbers: closed });
+    await Promise.all([
+      d.watcher.closeTwinRows({ pool, appId: row.app_id, prNumber, numbers: closed }),
+      d.watcher.resolveSupersededProposals({ pool, appId: row.app_id, appSlug: row.app_slug, prNumber, numbers: closed }),
+    ]);
   }
   return closed;
 }
@@ -309,6 +313,8 @@ async function closeRequests({ pool, row, carrier, github, repo, d }) {
 module.exports = {
   includeStackedChanges,
   settleIncluded,
+  closeRequests,
+  depsOf,
   containedIn,
   prLabel,
   closingComment,

@@ -6634,6 +6634,11 @@ async function buildOne(pool, config, { bot, app, run, settings, deps = {} }) {
  * Called by the merge (routes/votes.js finalizeMerge) once `session` is
  * merged. Only for a proposal of the bot's. Never throws; resolves what it
  * did ({ skipped, stopped, withdrawn, dequeued }), or null.
+ *
+ * `deps.before` (the merge's time) leaves alone the builds, proposals and
+ * queue rows that started after it: the merge-followups workflow machine
+ * can run this well after the merge, and work begun since is not what the
+ * merge made unneeded.
  */
 async function noteRequestMerged(pool, session, deps = {}) {
   if (!session?.id) return null;
@@ -6649,6 +6654,7 @@ async function noteRequestMerged(pool, session, deps = {}) {
     if (!issues.length) return null;
     const appId = Number(merged.app_id);
     const why = hasProposalSkip(merged.id);
+    const before = deps.before ? new Date(deps.before) : null;
     const out = { skipped: 0, stopped: 0, withdrawn: 0, dequeued: 0 };
     // Recorded before anything is stopped: whatever the stopped turn comes
     // to then reads as this skip, never as a failure.
@@ -6658,11 +6664,12 @@ async function noteRequestMerged(pool, session, deps = {}) {
         WHERE r.app_id = $1 AND r.issue_number = ANY($2::int[])
           AND r.mode = 'live' AND r.verdict = 'ready' AND r.build_ok IS NULL AND r.proposal_session_id IS NULL
           AND r.build_session_id IS DISTINCT FROM $4
+          AND ($5::timestamptz IS NULL OR r.created_at <= $5::timestamptz)
           AND ((r.live_build_waiting_at IS NOT NULL AND r.build_session_id IS NULL)
                OR EXISTS (SELECT 1 FROM chat_sessions bs
                            WHERE bs.id = r.build_session_id AND bs.status IN ('active', 'paused')))
         RETURNING r.id, r.build_session_id`,
-      [appId, issues, why, Number(merged.id)],
+      [appId, issues, why, Number(merged.id), before],
     );
     // B6: and a first version's plan still waiting for Build it.
     out.skipped += (await retireWaitingPlans(pool, { appId, issues, why: why.replace(/^skipped:\s*/, ''), deps })).length;
@@ -6682,8 +6689,9 @@ async function noteRequestMerged(pool, session, deps = {}) {
       `SELECT id FROM chat_sessions
         WHERE app_id = $1 AND user_id = $2 AND linked_issues && $3::int[] AND is_headless = FALSE
           AND status = 'promoted' AND id <> $4
+          AND ($5::timestamptz IS NULL OR created_at <= $5::timestamptz)
         ORDER BY id`,
-      [appId, merged.user_id, issues, Number(merged.id)],
+      [appId, merged.user_id, issues, Number(merged.id), before],
     );
     const sessionLifecycle = deps.sessionLifecycle || require('./session-lifecycle');
     for (const other of others) {
@@ -6696,8 +6704,9 @@ async function noteRequestMerged(pool, session, deps = {}) {
     }
     const { rowCount } = await pool.query(
       `DELETE FROM homeroom_bot_queue
-        WHERE app_id = $1 AND issue_number = ANY($2::int[]) AND priority > 0 AND started_at IS NULL`,
-      [appId, issues],
+        WHERE app_id = $1 AND issue_number = ANY($2::int[]) AND priority > 0 AND started_at IS NULL
+          AND ($3::timestamptz IS NULL OR enqueued_at <= $3::timestamptz)`,
+      [appId, issues, before],
     );
     out.dequeued = rowCount || 0;
     if (out.skipped || out.stopped || out.withdrawn || out.dequeued) {

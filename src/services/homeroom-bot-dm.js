@@ -2395,8 +2395,12 @@ function laterChatLive(pool, run, { config, sha, deps = {} }) {
  * card cannot be (a project the bot cannot see). Its ready card says it is
  * live by itself: that card reads where the change stands each time it is
  * read (readyStates), and this news landing is one of those times.
+ *
+ * `live: true` is the merge-followups workflow machine's word that production
+ * runs a build containing the change: then nothing is probed, and nothing is
+ * re-read later.
  */
-async function noteProposalMerged(pool, session, { config = null, sha = null, deps = {} } = {}) {
+async function noteProposalMerged(pool, session, { config = null, sha = null, live: known = null, deps = {} } = {}) {
   if (!session?.id) return null;
   const { rows } = await pool.query(
     `SELECT r.app_id, r.issue_number, a.slug, a.name, a.self_hosted, a.runtime_kind, a.runtime_name
@@ -2408,7 +2412,7 @@ async function noteProposalMerged(pool, session, { config = null, sha = null, de
   if (!rows.length) return null;
   const run = rows[0];
   const platform = !!run.self_hosted;
-  const live = await liveAfterMerge(config, { ...run, id: run.app_id }, { sha, deps });
+  const live = known === true ? true : await liveAfterMerge(config, { ...run, id: run.app_id }, { sha, deps });
   // B9: the chat message it was asked in, if it was, says it is live, once
   // it is (WP-F): an app that did not answer yet is asked again a little
   // later. The platform's own app has no health check to read here, so its

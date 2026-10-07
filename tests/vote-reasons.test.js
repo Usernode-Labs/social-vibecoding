@@ -429,7 +429,14 @@ test('mergeCredits: the author, the counted Yes voters, then the objectors with 
     const talk = pool.queries.find((q) => /FROM chat_messages cm/.test(q.sql));
     assert.match(talk.sql, /cm\.thread_type = 'session' AND cm\.thread_ref = \$2/, 'the proposal\'s own thread');
     assert.match(talk.sql, /cm\.msg_type = 'message'/, 'a word from a person, not a vote row or a notice');
-    assert.deepEqual(talk.params, [5, 41]);
+    assert.deepEqual(talk.params, [5, 41, null], 'no bound unless one is asked for');
+    // The merge-followups machine names them when the change goes live, which
+    // can be well after the merge: only those who spoke before it count.
+    const bounded = makeRecordingPool([]);
+    await subject.mergeCredits(bounded, { id: 41, app_id: 5, user_id: null }, { before: '2026-10-07T12:00:00.000Z' });
+    const boundedTalk = bounded.queries.find((q) => /FROM chat_messages cm/.test(q.sql));
+    assert.match(boundedTalk.sql, /cm\.created_at <= \$3::timestamptz/);
+    assert.deepEqual(boundedTalk.params, [5, 41, '2026-10-07T12:00:00.000Z']);
 
     const nobody = makeRecordingPool([]);
     assert.deepEqual(await subject.mergeCredits(nobody, { id: 41, app_id: 5, user_id: null }),

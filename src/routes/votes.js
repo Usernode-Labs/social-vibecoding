@@ -5230,7 +5230,10 @@ async function resolveIssueBounty(pool, { appId, sessionId, awardeeUserId, issue
 //   shapers — everyone else who took part: a No with a line on the version
 //             that merged (an objection that did not stop it), or a word in
 //             the proposal's thread before it landed. Nobody is named twice.
-async function mergeCredits(pool, session) {
+// `before` bounds the thread's speakers to those who spoke before it: the
+// merge-followups machine names them when the change goes live, which can
+// be well after the merge.
+async function mergeCredits(pool, session, { before = null } = {}) {
   const { rows: authorRows } = session.user_id
     ? await pool.query('SELECT username FROM users WHERE id = $1', [session.user_id])
     : { rows: [] };
@@ -5250,9 +5253,10 @@ async function mergeCredits(pool, session) {
        JOIN users u ON u.id = cm.user_id
       WHERE cm.app_id = $1 AND cm.thread_type = 'session' AND cm.thread_ref = $2
         AND cm.msg_type = 'message'
+        AND ($3::timestamptz IS NULL OR cm.created_at <= $3::timestamptz)
       GROUP BY u.username
       ORDER BY first_at ASC`,
-    [session.app_id, session.id]
+    [session.app_id, session.id, before]
   );
   const seen = new Set(author ? [author] : []);
   const backers = [];

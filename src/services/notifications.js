@@ -1487,8 +1487,12 @@ async function settleVoteDigests(pool, { userIds = null, appId = null, since = n
  * (routes/votes.js), a change carried by another's merge
  * (included-changes.js) and every close (session-lifecycle.js
  * finalizeArchivedSession).
+ *
+ * `status` stands for the row's when the caller decides it in the same
+ * transaction and writes it afterwards (the merge-followups workflow
+ * machine), and `push: false` leaves the push to that caller, after commit.
  */
-async function settleDecidedChange(pool, sessionId) {
+async function settleDecidedChange(pool, sessionId, { status = null, push = true } = {}) {
   const id = Number(sessionId);
   if (!Number.isSafeInteger(id) || id <= 0) return [];
   const { rows: [session] } = await pool.query(
@@ -1496,6 +1500,7 @@ async function settleDecidedChange(pool, sessionId) {
        FROM chat_sessions WHERE id = $1`,
     [id]
   );
+  if (session && status) session.status = status;
   if (!session || (session.status !== 'merged' && session.status !== 'archived')) return [];
   const touched = new Set();
   const note = (rows) => { for (const row of rows) touched.add(Number(row.user_id)); };
@@ -1539,7 +1544,7 @@ async function settleDecidedChange(pool, sessionId) {
   for (const userId of await settleVoteDigests(pool, { appId: session.app_id, since: session.asked_from })) {
     touched.add(userId);
   }
-  if (touched.size) {
+  if (touched.size && push) {
     try {
       const { pushNotificationToUser } = require('./ws');
       for (const userId of touched) pushNotificationToUser(userId, { type: 'notifications_changed' });

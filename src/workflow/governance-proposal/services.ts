@@ -3,58 +3,23 @@
 
 import type { Json, Pool, WorkHandler } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
+import { backoff, closeAndComment, gone, permanent } from '../github-work.ts';
 
 interface Deps { config: any; pool: Pool }
-
-const permanent = (message: string) => Object.assign(new Error(message), { permanent: true });
-const gone = (err: any) => err?.status === 404 || err?.status === 410;
-// How far before an attempt's own clock reading to look for its comment.
-const COMMENT_LOOKBACK_MS = 10 * 60 * 1000;
-const backoff = (attempt: number) => Math.min(30 * 60 * 1000, 30 * 1000 * 2 ** (attempt - 1));
 
 export function governanceServices({ config, pool }: Deps): Record<string, WorkHandler> {
   const github = () => legacy('services/github');
   return {
-    // Close a GitHub issue, then comment on it. Each step is checkpointed. A
-    // reply GitHub never delivered can still hide a comment it created, so
-    // the comment carries a marker, and a retry that may have posted it
-    // looks for the marker before posting again.
+    // Close a GitHub issue, then comment on it (github-work.ts), then keep
+    // the open-issues list from showing it again.
     'github.closeIssue': {
       maxAttempts: 6,
       backoffMs: backoff,
-      async run({ input, resumeFrom, checkpoint }): Promise<Json> {
+      async run(ctx): Promise<Json> {
+        const { input } = ctx;
+        const done = await closeAndComment(ctx, (gh, owner, repo, number) => gh.closeIssue(owner, repo, number));
+        if ((done as { gone?: boolean }).gone) return done;
         const gh = github();
-        if (!gh.isEnabled()) throw permanent('GitHub is not configured');
-        // `commenting` is when an attempt started posting the comment.
-        const done = (resumeFrom || {}) as { closed?: boolean; commenting?: string | boolean; commented?: boolean };
-        if (!done.closed) {
-          try { await gh.closeIssue(input.owner, input.repo, input.number); } catch (err) {
-            if (gone(err)) return { gone: true };
-            throw err;
-          }
-          await checkpoint({ closed: true });
-        }
-        if (input.comment && !done.commented) {
-          const marker = input.marker ? `<!-- ${input.marker} -->` : null;
-          let posted = false;
-          if (done.commenting && marker) {
-            // A comment that attempt created is newer than it, so read only
-            // the comments since then (less a margin for clocks). A thread
-            // still too long to read whole cannot say; try again later.
-            const started = typeof done.commenting === 'string' ? Date.parse(done.commenting) : NaN;
-            const since = Number.isFinite(started) ? new Date(started - COMMENT_LOOKBACK_MS).toISOString() : null;
-            const thread = await gh.fetchIssueComments(input.owner, input.repo, input.number, { since });
-            if (thread.note) throw new Error(`Could not read the issue's comments: ${thread.note}`);
-            posted = thread.comments.some((c: { body?: string }) => String(c.body || '').includes(marker));
-            if (!posted && thread.truncated) throw new Error('Could not read every recent comment to look for the earlier one');
-          }
-          if (!posted) {
-            await checkpoint({ closed: true, commenting: new Date().toISOString() });
-            await gh.createIssueComment(input.owner, input.repo, input.number,
-              marker ? `${input.comment}\n\n${marker}` : input.comment);
-          }
-          await checkpoint({ closed: true, commented: true });
-        }
         if (input.bustCache) {
           // Keep the eventually consistent open-issues list from showing it again.
           gh.noteIssuesClosed(input.owner, input.repo, [input.number]);
