@@ -220,6 +220,9 @@ export interface OpenRouterModel {
   /** The catalog's published prices, for the cost of a typical change. */
   inputPricePerMillion?: number | null;
   outputPricePerMillion?: number | null;
+  /** What a prompt-cache read and write cost, where the catalog lists them. */
+  cacheReadPricePerMillion?: number | null;
+  cacheWritePricePerMillion?: number | null;
   supportsReasoning?: boolean;
   isRecommended?: boolean;
   isDefaultFavorite?: boolean;
@@ -246,10 +249,12 @@ export interface ModelCatalog {
 /**
  * The platform's per-model notes and estimates (#2570): an estimate for each
  * curated model, and the token profile of a typical change, which prices any
- * other model from its catalog prices.
+ * other model from its catalog prices. `inputTokens` is every prompt token;
+ * `cachedInputTokens` and `cacheWriteInputTokens` are the parts of it read
+ * from and written to the prompt cache, absent from an older server.
  */
 export interface ModelNotes {
-  typicalChange: { inputTokens: number; outputTokens: number } | null;
+  typicalChange: { inputTokens: number; outputTokens: number; cachedInputTokens?: number; cacheWriteInputTokens?: number } | null;
   models: Record<string, { note?: string | null; estimateCents?: number | null }>;
 }
 
@@ -380,14 +385,26 @@ export async function loadModelCatalog(
       codexAvailable?: unknown;
       defaultReasoningEffort?: unknown;
     } | null,
-    { typicalChange?: { inputTokens?: unknown; outputTokens?: unknown } | null; models?: unknown } | null,
+    {
+      typicalChange?: { inputTokens?: unknown; outputTokens?: unknown; cachedInputTokens?: unknown; cacheWriteInputTokens?: unknown } | null;
+      models?: unknown;
+    } | null,
   ];
   if (notes && notes.models && typeof notes.models === 'object') {
     const profile = notes.typicalChange;
     const input = Number(profile?.inputTokens);
     const output = Number(profile?.outputTokens);
+    const cached = Number(profile?.cachedInputTokens);
+    const written = Number(profile?.cacheWriteInputTokens);
     catalog.notes = {
-      typicalChange: Number.isFinite(input) && Number.isFinite(output) ? { inputTokens: input, outputTokens: output } : null,
+      typicalChange: Number.isFinite(input) && Number.isFinite(output)
+        ? {
+          inputTokens: input,
+          outputTokens: output,
+          ...(Number.isFinite(cached) ? { cachedInputTokens: cached } : {}),
+          ...(Number.isFinite(written) ? { cacheWriteInputTokens: written } : {}),
+        }
+        : null,
       models: notes.models as ModelNotes['models'],
     };
   }
