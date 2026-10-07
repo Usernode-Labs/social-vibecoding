@@ -2389,6 +2389,38 @@ function laterChatLive(pool, run, { config, sha, deps = {} }) {
 }
 
 /**
+ * Pure (#4238): what Homeroom bot says in a new project's channel when its
+ * first version is made. Its Open button (openAppAction) is the way in.
+ */
+function firstVersionText({ appName, live }) {
+  const ready = live ? '' : ' It will be ready to open in a few minutes.';
+  return `I've made the first version of ${appName}!${ready} Let me know if you need anything else.`;
+}
+
+/**
+ * #4238: the one line the bot writes in a project's channel (the group
+ * chat), when its first version is made: ws.sendFirstVersionMessage, which
+ * writes it once per project. Never throws: the DM still goes.
+ */
+async function announceFirstVersion(pool, run, { live = false, deps = {} } = {}) {
+  try {
+    const bot = deps.bot || await botAccount(pool);
+    if (!bot) return null;
+    const appName = run.name || run.slug;
+    const open = openAppAction({ slug: run.slug, appName });
+    const ws = deps.ws || require('./ws');
+    return await ws.sendFirstVersionMessage(pool, run.app_id, {
+      user: bot,
+      content: firstVersionText({ appName, live }),
+      metadata: { appSlug: run.slug, ...(open ? { actions: [open] } : {}) },
+    });
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not announce a first version in its channel', { app: run?.slug, err: err.message });
+    return null;
+  }
+}
+
+/**
  * A proposal the bot built is merged: its requester hears it in their DM.
  * #7 (WP3): `sha` is what the merge deployed (routes/votes.js finalizeMerge),
  * and "live now" waits for the app to answer its health check on it
@@ -2426,6 +2458,8 @@ async function noteProposalMerged(pool, session, { config = null, sha = null, li
   // #8: their activity tray reads again, whether or not the DM says it.
   if (requester) require('./homeroom-bot-tray').noteWorkChanged(requester.userId, deps);
   const settings = await settingsModule().readSettings(pool);
+  // #4238: a new project's first version: the bot says so in its channel, once.
+  if (requester?.firstVersion && !platform) await announceFirstVersion(pool, run, { live, deps });
   if (!requester || !hasBot(settings, requester)) return null;
   const bot = await botAccount(pool);
   if (!bot) return null;
@@ -3726,6 +3760,8 @@ module.exports = {
   voteLineTarget,
   handVoteLine,
   noteProposalMerged,
+  firstVersionText,
+  announceFirstVersion,
   // #7, #8, #20 (WP3)
   LIVE_PROBES,
   LIVE_PROBE_WAIT_MS,

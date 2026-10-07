@@ -120,7 +120,7 @@ test('the buttons sit where Share link sat: after the note, before the status an
     assert.ok(i >= 0, needle);
     return i;
   };
-  assert.ok(at('Your note is also your first message in the group chat.') < at('data-first-session-invite-action="copy"'));
+  assert.ok(at('When you share, your note also goes in the group chat as your first message.') < at('data-first-session-invite-action="copy"'));
   assert.ok(at('data-first-session-invite-action="copy"') < at('data-first-session-invite-action="share"'));
   assert.ok(at('data-first-session-invite-action="share"') < at('Anyone with the link can join for the next 7 days, up to 25 people.'));
 });
@@ -133,8 +133,10 @@ test('Copy link copies the note and the link, then does what a share does', () =
 
   const src = read(MADE);
   // One "it went out" for both: said on the sheet, the note kept, posted
-  // once, the made screen told how. The sheet stays open (#4196).
-  assert.match(src, /const sent = useCallback\(async \(how: SentHow\) => \{\s+setStatus\(sentStatus\(how\)\);\s+setOut\(true\);\s+keepNote\(made\.slug, note\);\s+await postNote\(\);\s+onSent\(how\);\s+\}/);
+  // once when it was shared (notePostable), the made screen told how. The
+  // sheet stays open (#4196).
+  assert.match(src, /const sent = useCallback\(async \(how: SentHow\) => \{\s+setStatus\(sentStatus\(how\)\);\s+setOut\(true\);\s+keepNote\(made\.slug, note\);\s+await postNote\(how\);\s+onSent\(how\);\s+\}/);
+  assert.match(src, /const postNote = useCallback\(async \(how: SentHow\) => \{\s+if \(!notePostable\(how, note, made\.example\?\.note\)\) return;/);
   const share = src.slice(src.indexOf('const shareLink = useCallback'), src.indexOf('const copyLink = useCallback'));
   const copy = src.slice(src.indexOf('const copyLink = useCallback'), src.indexOf('const tile = '));
   assert.match(share, /await sent\('shared'\);/);
@@ -158,6 +160,17 @@ test('Copy link copies the note and the link, then does what a share does', () =
 
 // #4196: "Clicking Share link just immediately goes back to the prior screen
 // with ✓ Invite sent." The sheet closed the moment the share sheet resolved.
+test('#4238: the note goes in the group chat only when shared, and only a note they wrote', () => {
+  const { notePostable } = loadTsx(MADE);
+  assert.equal(notePostable('shared', 'Read with us', null), true);
+  assert.equal(notePostable('copied', 'Read with us', null), false, 'a copy may never be pasted');
+  assert.equal(notePostable('shared', 'Come try it with me!', null), false, 'the untouched default');
+  assert.equal(notePostable('shared', '  Come try it with me!  ', null), false);
+  assert.equal(notePostable('shared', 'Pick a book for June', 'Pick a book for June'), false, "the example's preset note");
+  assert.equal(notePostable('shared', 'Pick one for July', 'Pick a book for June'), true);
+  assert.equal(notePostable('shared', '   ', null), false);
+});
+
 test('after a share or a copy the sheet stays open, says so, and Done closes it', () => {
   const src = read(MADE);
   const sheet = src.slice(src.indexOf('export function InviteSheet('), src.indexOf('export function PlanWaitsCard('));

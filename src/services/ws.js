@@ -1602,6 +1602,47 @@ async function sendBotMessage(pool, appId, { user, content, metadata = null, thr
   return { id: rows[0].id, createdAt: rows[0].created_at };
 }
 
+/**
+ * #4238: the ONE line Homeroom writes into a project's channel. When a new
+ * project's first version goes live, Homeroom bot says so there, once, as
+ * its own message (a bubble with its name, not a system line), with an Open
+ * button (metadata.actions). Everything else Homeroom says still goes to a
+ * thread (sendSystemMessage, sendBotMessage): a channel is what people said,
+ * and this is the bot telling the people there that what they asked for is
+ * made. Once per project: a second call finds the first and writes nothing.
+ * Not wired to handleMessage, for the reasons sendBotMessage gives.
+ */
+const FIRST_VERSION_KIND = 'first_version';
+async function sendFirstVersionMessage(pool, appId, { user, content, metadata = null } = {}) {
+  if (!user || !Number.isInteger(Number(user.id)) || !Number.isInteger(Number(appId))) return null;
+  const text = String(content || '').trim().slice(0, MAX_CHAT_LEN);
+  if (!text) return null;
+  const meta = { ...(metadata || {}), kind: FIRST_VERSION_KIND };
+  const { rows } = await pool.query(
+    `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata)
+     SELECT $1, $2, $3, 'message', $4::jsonb
+      WHERE NOT EXISTS (
+        SELECT 1 FROM chat_messages
+         WHERE app_id = $1 AND user_id = $2 AND thread_type IS NULL
+           AND metadata->>'kind' = '${FIRST_VERSION_KIND}')
+     RETURNING id, created_at`,
+    [Number(appId), Number(user.id), text, JSON.stringify(meta)]
+  );
+  if (!rows.length) return null;
+  await broadcastFromSender(pool, Number(appId), {
+    type: 'chat',
+    id: rows[0].id,
+    userId: Number(user.id),
+    username: user.username,
+    content: text,
+    msgType: 'message',
+    metadata: meta,
+    createdAt: rows[0].created_at,
+    postedVia: null,
+  }, Number(user.id));
+  return { id: rows[0].id, createdAt: rows[0].created_at };
+}
+
 function getOnlineUsers(appId) {
   const room = rooms.get(appId);
   if (!room) return [];
@@ -1929,4 +1970,4 @@ function pushConversationEvent(memberUserIds, payload, { excludeUserId = null } 
 
 const pushNotificationToUser = pushToUser;
 
-module.exports = { connectedUserIds, disconnectUser, attach, broadcast, _onBusMessage, broadcastGlobal, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, sendBotMessage, getOnlineUsers, pushAppStatusUpdate, pushAppCreationPhase, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushWorkshopUpdate, onBoardChange, pushToUser, pushConversationEvent, pushNotificationToUser, pushPlatformVersion, getReactionsForMessages, validateThread, handleMessage, admitSocketFrame, SOCKET_RATE_BUDGETS, SOCKET_RATE_WINDOW_MS, MAX_CHAT_LEN };
+module.exports = { connectedUserIds, disconnectUser, attach, broadcast, _onBusMessage, broadcastGlobal, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, sendBotMessage, sendFirstVersionMessage, getOnlineUsers, pushAppStatusUpdate, pushAppCreationPhase, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushWorkshopUpdate, onBoardChange, pushToUser, pushConversationEvent, pushNotificationToUser, pushPlatformVersion, getReactionsForMessages, validateThread, handleMessage, admitSocketFrame, SOCKET_RATE_BUDGETS, SOCKET_RATE_WINDOW_MS, MAX_CHAT_LEN };
