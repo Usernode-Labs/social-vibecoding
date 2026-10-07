@@ -338,6 +338,7 @@ export function BotActivityCardView({ meta, card, loaded = false, failed = false
       aria-label={`Homeroom bot activity: ${title}`}
       data-bot-activity={card ? card.state : 'pending'}
       {...(card?.outcome ? { 'data-bot-activity-outcome': card.outcome } : {})}
+      data-bot-activity-request={meta.appSlug && meta.issueNumber && !meta.firstVersion ? `${meta.appSlug}#${meta.issueNumber}` : undefined}
     >
       <div className="flex items-center gap-3">
         {lead}
