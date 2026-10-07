@@ -282,10 +282,10 @@ function merged(e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFStat
   };
   // The platform's own release reports itself when it boots, to the merges
   // waiting then. A merge recorded after that boot (recovery finding it late)
-  // checks the build already running, which may contain it.
-  if (app.selfHosted && app.mainSha && d.mergeSha) {
-    if (app.mainSha === d.mergeSha) return toLive(e, d, app.mainSha, ctx, x);
-    if (d.repo) work.push(verifyWork(d, app.mainSha));
+  // checks the build a process last booted with, which may contain it.
+  if (app.selfHosted && app.bootedSha && d.mergeSha) {
+    if (app.bootedSha === d.mergeSha) return toLive(e, d, app.bootedSha, ctx, x);
+    if (d.repo) work.push(verifyWork(d, app.bootedSha));
   }
   return outcome('delivering', d, x);
 }

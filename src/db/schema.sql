@@ -12850,6 +12850,13 @@ CREATE TRIGGER issues_wf_governance_owned
 -- The backfill gives rows merged before the column the same reading, and
 -- leaves alone any row the machine holds.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS live_at TIMESTAMPTZ;
+-- booted_sha: the platform's own row only. The build a platform process
+-- last booted with, written by that process (src/workflow/platform.ts),
+-- never by the migration Job: main_sha is seeded from the incoming
+-- release's GIT_SHA by the migration that runs BEFORE the rollout, so it
+-- can name a build that does not serve yet. A merge recovery records late
+-- checks this one (merge-followups).
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS booted_sha VARCHAR(40);
 UPDATE chat_sessions cs SET live_at = COALESCE(cs.merged_at, cs.created_at, NOW())
  WHERE cs.status = 'merged' AND cs.live_at IS NULL
    AND NOT EXISTS (SELECT 1 FROM wf_instances w

@@ -281,9 +281,11 @@ async function settleIncluded({ config, pool, row, carrier, sha, deployed = true
  * then read as closed everywhere (the open-issues cache, its twin row, a
  * close-issue vote on it). Resolves the numbers closed on GitHub, or with
  * `report`, { closed, failed: [{ number, status }] }, so a durable caller
- * (the merge-followups workflow machine) can retry the ones that failed.
+ * (the merge-followups workflow machine) can retry the ones that failed;
+ * with `strict`, a failure to record a close here (twin rows, superseded
+ * proposals) throws, for the same caller to retry.
  */
-async function closeRequests({ pool, row, carrier, github, repo, d, bounties = true, report = false }) {
+async function closeRequests({ pool, row, carrier, github, repo, d, bounties = true, report = false, strict = false }) {
   const { sanitizeIssueNumbers } = require('./pr-metadata');
   const numbers = sanitizeIssueNumbers(row.linked_issues);
   const answer = (closed, failed) => (report ? { closed, failed } : closed);
@@ -315,8 +317,8 @@ async function closeRequests({ pool, row, carrier, github, repo, d, bounties = t
     const prNumber = carrier.pr_number || null;
     d.watcher.bustAndBroadcast({ owner: repo.owner, repo: repo.repo, appSlug: row.app_slug, appId: row.app_id, closed });
     await Promise.all([
-      d.watcher.closeTwinRows({ pool, appId: row.app_id, prNumber, numbers: closed }),
-      d.watcher.resolveSupersededProposals({ pool, appId: row.app_id, appSlug: row.app_slug, prNumber, numbers: closed }),
+      d.watcher.closeTwinRows({ pool, appId: row.app_id, prNumber, numbers: closed, strict }),
+      d.watcher.resolveSupersededProposals({ pool, appId: row.app_id, appSlug: row.app_slug, prNumber, numbers: closed, strict }),
     ]);
   }
   return answer(closed, failed);

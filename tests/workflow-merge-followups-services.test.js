@@ -24,9 +24,12 @@ const gh = {
 };
 stub('../src/services/github', gh);
 const watch = { result: { closed: [], skipped: [], stillOpen: [] } };
+const records = { fail: false, strict: [] };
 stub('../src/services/issue-close-watcher', {
-  async watchIssuesClosedAfterMerge() { return watch.result; },
-  bustAndBroadcast() {}, async closeTwinRows() {}, async resolveSupersededProposals() {},
+  async watchIssuesClosedAfterMerge(args) { records.strict.push(args.strict); return watch.result; },
+  bustAndBroadcast() {},
+  async closeTwinRows(args) { records.strict.push(args.strict); if (records.fail) throw new Error('db down'); },
+  async resolveSupersededProposals(args) { records.strict.push(args.strict); },
 });
 stub('../src/routes/issues', { async resolveSupersededCloseProposals() { return { resolved: [] }; } });
 const realWs = require('../src/services/ws');
@@ -54,4 +57,17 @@ test('a merge\'s requests: a linked one still open after the watch is retried; o
   await assert.rejects(run({ ...base, linkedIssues: [3, 4], closeOnly: false }), /Linked request #4 still open on GitHub/);
   watch.result = { closed: [3], skipped: [], stillOpen: [12] };
   assert.deepEqual(await run({ ...base, linkedIssues: [3, 4], closeOnly: false }), watch.result);
+});
+
+test('recording a close is part of the work: a database failure there is retried (review finding, second pass)', async () => {
+  gh.closes = new Map();
+  records.fail = true;
+  records.strict = [];
+  await assert.rejects(run({ ...base, linkedIssues: [7], closeOnly: true, carrierPrNumber: 9 }), /db down/);
+  assert.ok(records.strict.length && records.strict.every((s) => s === true), 'every recording step runs strict');
+  records.fail = false;
+  records.strict = [];
+  watch.result = { closed: [7], skipped: [], stillOpen: [] };
+  await run({ ...base, linkedIssues: [7], closeOnly: false });
+  assert.deepEqual(records.strict, [true], 'the watch runs strict too');
 });

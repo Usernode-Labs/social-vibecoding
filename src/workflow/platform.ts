@@ -63,10 +63,21 @@ async function mergesUnfinished(pool: Pool): Promise<boolean> {
   return !!rows[0]?.unfinished;
 }
 
+// The build this process booted with, on the platform's own row
+// (apps.booted_sha): what serves, unlike main_sha, which the migration Job
+// writes from the incoming release before the rollout. Every process
+// records it, flags or not, so it is there when a flag is turned on.
+async function recordBooted(pool: Pool): Promise<void> {
+  const sha = String(process.env.GIT_SHA || '').toLowerCase();
+  if (!/^[0-9a-f]{40}$/.test(sha)) return;
+  await pool.query('UPDATE apps SET booted_sha = $1 WHERE self_hosted = TRUE AND booted_sha IS DISTINCT FROM $1', [sha]);
+}
+
 export async function startWorkflow(config: any, opts: { loops: boolean }): Promise<void> {
   log = legacy('services/logger');
   const appPool = legacy('db/pool').getPool(config);
   await syncSettings(appPool, config);
+  await recordBooted(appPool).catch((err) => log!.warn('workflow', 'Could not record the booted build', { message: err.message }));
   if (runtime) return;
   const withMerges = !!config.wfMergeFollowupsEnabled || await mergesUnfinished(appPool).catch(() => false);
   if (!config.wfGovernanceEnabled && !withMerges) return;

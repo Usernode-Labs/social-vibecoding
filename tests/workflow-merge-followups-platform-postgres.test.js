@@ -104,10 +104,24 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
   const until = async (check, what) => {
     const deadline = Date.now() + 10000;
     while (!(await check())) {
-      assert.ok(Date.now() < deadline, what);
+      if (Date.now() >= deadline) {
+        const { rows } = await pool.query(
+          `SELECT key, kind, work_key, status, attempt_count, due_at, last_error FROM wf_work
+            WHERE machine = 'merge-followups' AND status <> 'settled'
+           UNION ALL SELECT key, type, request_key, status, attempts, retry_at, error FROM wf_events
+            WHERE machine = 'merge-followups' AND status = 'pending'`);
+        assert.fail(`${what}; unsettled: ${JSON.stringify(rows)}`);
+      }
       await new Promise((res) => setTimeout(res, 50));
     }
   };
+  // Every follow-up settled. Stopping the runtime while one runs leaves it
+  // `running` until its lease ends (a minute), so a subtest that stops it
+  // waits for this first.
+  const quiet = () => until(async () => !(await pool.query(
+    `SELECT 1 FROM wf_work WHERE machine = 'merge-followups' AND status <> 'settled'
+     UNION ALL SELECT 1 FROM wf_events WHERE machine = 'merge-followups' AND status = 'pending'`)).rows.length,
+  'every follow-up settled');
 
   await t.test('the flag is recorded for the ownership triggers', async () => {
     const { rows } = await pool.query(`SELECT key FROM wf_settings WHERE key LIKE 'enabled:%' ORDER BY key`);
@@ -175,6 +189,7 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
 
   await t.test('with the flag off, accepted work still finishes and nothing new is taken', async () => {
     const s = await proposal();
+    await quiet();
     await platform.stopWorkflow();
     // Accepted before the restart: the event waits for a runtime.
     await platform.startWorkflow(config, { loops: false });
@@ -188,10 +203,7 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     assert.equal(rows.length, 0, 'the legacy merge path may move rows into merged again');
     await until(async () => (await state(s)) === 'live', 'the accepted merge finished');
     // And every follow-up of it, the DM and journey record that follow live included.
-    await until(async () => !(await pool.query(
-      `SELECT 1 FROM wf_work WHERE machine = 'merge-followups' AND status <> 'settled'
-       UNION ALL SELECT 1 FROM wf_events WHERE machine = 'merge-followups' AND status = 'pending'`)).rows.length,
-    'every follow-up settled');
+    await quiet();
     await platform.stopWorkflow();
     await platform.startWorkflow(off, { loops: true });
     assert.equal(platform.workflowRunning(), false, 'nothing left: no runtime');
@@ -204,10 +216,7 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     await platform.mergeConfirmed({ sessionId: s.id, appId: app.id, mergeSha: SHA('9'), force: false, tally: { yes: 1, required: 1, active: 1 } });
     await until(async () => (await state(s)) === 'deploy_failed', 'deploy failed');
     deploys.fail = false;
-    await until(async () => !(await pool.query(
-      `SELECT 1 FROM wf_work WHERE machine = 'merge-followups' AND status <> 'settled'
-       UNION ALL SELECT 1 FROM wf_events WHERE machine = 'merge-followups' AND status = 'pending'`)).rows.length,
-    'its work settled; it now only waits for a deploy');
+    await quiet();  // it now only waits for a deploy
     await platform.stopWorkflow();
     const off = { ...config, wfMergeFollowupsEnabled: false };
     await platform.startWorkflow(off, { loops: true });
@@ -216,6 +225,24 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     // The drift poller's later deploy (a build GitHub says contains it) is heard.
     await platform.productionDeployed(app.id, SHA('c'));
     await until(async () => (await state(s)) === 'live', 'live after the flag went off');
+    await quiet();
     await platform.stopWorkflow();
+  });
+
+  await t.test('a booting process records the build it runs; the migration\'s main_sha is not that (review finding, second pass)', async () => {
+    const { rows: [self] } = await pool.query(
+      `INSERT INTO apps (name, slug, created_by, self_hosted, repo_url, main_sha)
+       VALUES ('Homeroom', 'homeroom-self', $1, TRUE, 'https://github.com/acme/homeroom', $2) RETURNING id`,
+      [author.id, SHA('7')]);
+    const was = process.env.GIT_SHA;
+    process.env.GIT_SHA = SHA('6');
+    try {
+      await platform.startWorkflow(config, { loops: false });
+      const { rows: [r] } = await pool.query('SELECT main_sha, booted_sha FROM apps WHERE id = $1', [self.id]);
+      assert.deepEqual({ ...r }, { main_sha: SHA('7'), booted_sha: SHA('6') }, 'what booted, not what the migration seeded');
+    } finally {
+      if (was === undefined) delete process.env.GIT_SHA; else process.env.GIT_SHA = was;
+      await platform.stopWorkflow();
+    }
   });
 });

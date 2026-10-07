@@ -132,7 +132,7 @@ export function mergeFollowupsServices({ config, pool }: Deps): Record<string, W
           const row = { id: input.sessionId, app_id: input.appId, app_slug: input.appSlug, linked_issues: numbers };
           const { closed, failed } = await changes.closeRequests({
             pool, row, carrier: { pr_number: input.carrierPrNumber || null }, github: gh,
-            repo: { owner: input.owner, repo: input.repo }, d: changes.depsOf(), bounties: false, report: true,
+            repo: { owner: input.owner, repo: input.repo }, d: changes.depsOf(), bounties: false, report: true, strict: true,
           });
           // A request that is gone (404, 410) is closed enough; any other
           // failure is retried (closing a closed request again is harmless).
@@ -146,13 +146,14 @@ export function mergeFollowupsServices({ config, pool }: Deps): Record<string, W
           gh.noteIssuesClosed(input.owner, input.repo, numbers);
           await legacy('routes/issues').resolveSupersededCloseProposals(pool, {
             appId: input.appId, appSlug: input.appSlug, numbers, cause: { kind: 'pr-merge', prNumber: input.prNumber },
+            strict: true,
           });
         }
         gh.invalidateIssuesCache(input.owner, input.repo);
         legacy('services/ws').pushIssueUpdate({ action: 'github_synced', appSlug: input.appSlug, appId: input.appId, source: 'pr_merged' });
         const out = await legacy('services/issue-close-watcher').watchIssuesClosedAfterMerge({
           owner: input.owner, repo: input.repo, prNumber: input.prNumber, linkedIssues: numbers,
-          appSlug: input.appSlug, appId: input.appId, pool,
+          appSlug: input.appSlug, appId: input.appId, pool, strict: true,
         });
         // A linked request the watcher could neither see closed nor close is
         // retried: the next attempt watches and closes again. A number only
