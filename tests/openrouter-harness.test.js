@@ -359,6 +359,60 @@ test('a stopped Claude Code turn is priced from the counts its finished requests
   assert.equal(agentTurn.usageTotalFromResult({ ...old, agentHarness: 'claude' }).source, 'stream');
 });
 
+test("a Claude Code turn's metrics say how many images its requests sent, moved out of tool results, and left out", async () => {
+  // The listener counts each request's images (claude-openrouter-request.js);
+  // the worker sums them per turn and the ledger row keeps the sums, so a
+  // build can be checked for whether its screenshots reached the model.
+  const state = worker.newWatchState();
+  state.agentBackend = 'codex_openrouter';
+  state.agentHarness = 'claude';
+  const provider = (event) => worker.parseLine(`__USERNODE_CODING_PROVIDER__ ${JSON.stringify(event)}`, () => {}, state);
+  provider({ kind: 'provider_request_result', requestOrdinal: 1, httpStatus: 200, outcome: 'ok',
+    images: { sent: 0, moved: 0, omitted: 0 } });
+  provider({ kind: 'provider_request_result', requestOrdinal: 2, httpStatus: 200, outcome: 'ok',
+    images: { sent: 1, moved: 1, omitted: 0 } });
+  provider({ kind: 'provider_request_result', requestOrdinal: 3, httpStatus: 200, outcome: 'ok',
+    images: { sent: 3, moved: 2, omitted: 0 } });
+  // A bogus count is ignored; a line without counts adds nothing.
+  provider({ kind: 'provider_request_result', requestOrdinal: 4, outcome: 'cancelled', images: { sent: -1, moved: 'x', omitted: 1.5 } });
+  provider({ kind: 'provider_request_result', requestOrdinal: 5, httpStatus: 200, outcome: 'ok' });
+  assert.equal(state.imageSentCount, 4);
+  assert.equal(state.imageMovedCount, 3);
+  assert.equal(state.imageOmittedCount, 0);
+  // Another turn's state never saw a count: unknown, not zero.
+  assert.equal(worker.newWatchState().imageMovedCount, null);
+
+  const llmTelemetry = require('../src/services/llm-telemetry');
+  const previousEnabled = llmTelemetry._setEnabledForTests(true);
+  try {
+    const row = {
+      session_id: 7, status: 'running', agent_thread_id: null, reasoning_effort: null,
+      metadata: {}, input_tokens: 0, cached_input_tokens: 0, cache_write_input_tokens: 0,
+      output_tokens: 0, reasoning_output_tokens: 0,
+    };
+    const client = {
+      async query(text, params) {
+        if (/FOR UPDATE/.test(text)) return { rows: [row] };
+        if (/^\s*UPDATE agent_turns/.test(text)) { row.updateParams = params; return { rowCount: 1 }; }
+        return { rows: [] };
+      },
+      release() {},
+    };
+    await agentTurn.completeCodexAttempt({
+      pool: { async connect() { return client; } }, turnUuid: 'u-img', status: 'completed', usageScope: 'run',
+      telemetryComponent: 'homeroom_bench', telemetryMetrics: state,
+    });
+    const metrics = JSON.parse(row.updateParams[18]).telemetry_metrics;
+    assert.equal(metrics.image_sent_count, 4);
+    assert.equal(metrics.image_moved_count, 3);
+    assert.equal(metrics.image_omitted_count, 0);
+    assert.deepEqual(llmTelemetry.normalizeDiagnostics({ toolCallCount: 1 }), { tool_call_count: 1 },
+      'a turn with no counts records none');
+  } finally {
+    llmTelemetry._setEnabledForTests(previousEnabled);
+  }
+});
+
 test('both ledger completions pass the routed provider the listener saw', () => {
   const fs = require('node:fs');
   const sessions = fs.readFileSync(require.resolve('../src/routes/sessions'), 'utf8');

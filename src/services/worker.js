@@ -823,6 +823,19 @@ function noteCodingProviderUsage(usage, state) {
   sum.outputTokens += output;
 }
 
+// What one model request did with its images, as the same listener counts
+// them (applyTurnPolicy): sent to the model, moved out of a tool result for
+// a non-Anthropic model, or left out for a text-only one. Summed for the
+// turn's telemetry_metrics. A request carries the whole conversation, so a
+// screenshot counts once for every request that carries it. Counts only.
+function noteCodingProviderImages(images, state) {
+  if (!images || typeof images !== 'object') return;
+  const count = (n) => (Number.isSafeInteger(n) && n >= 0 && n <= 100_000 ? n : 0);
+  state.imageSentCount = (state.imageSentCount || 0) + count(images.sent);
+  state.imageMovedCount = (state.imageMovedCount || 0) + count(images.moved);
+  state.imageOmittedCount = (state.imageOmittedCount || 0) + count(images.omitted);
+}
+
 function applyStreamEvent(event, onProgress, state) {
   liveAgentSpend.observe(state.liveSpend, event);
   if (event?.type === 'stream_event' && !state.shotsFirstStreamSeen) {
@@ -1078,6 +1091,7 @@ function observeCodingProviderResult(event, ordinal, onProgress, state) {
     : null;
   if (providerName) state.routedProvider = providerName;
   noteCodingProviderUsage(event.usage, state);
+  noteCodingProviderImages(event.images, state);
   const failed = (status != null && status >= 400) || !!errorType || !!errorMessage;
   if (!failed) return;
   state.providerRequestFailures = (state.providerRequestFailures || 0) + 1;
@@ -1493,6 +1507,11 @@ function newWatchState() {
     subagentCallCount: 0,
     webToolCallCount: 0,
     toolSearchCount: 0,
+    // Claude Code over OpenRouter only (noteCodingProviderImages); unknown
+    // stays null for every other turn.
+    imageSentCount: null,
+    imageMovedCount: null,
+    imageOmittedCount: null,
     requestMode: null,
     requestMessageCount: null,
     requestUserMessageCount: null,
