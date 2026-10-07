@@ -20,6 +20,7 @@ const buildContract = require('../services/build-contract');
 const staging = require('../services/staging');
 const topicAttrs = require('../services/topic-attributes');
 const agentSessions = require('../services/agent-sessions');
+const classicSessions = require('../services/classic-sessions');
 const { claimIssueForUser } = require('../services/issue-claims');
 const { appIdentityEnv } = require('../services/app-identity-env');
 const visuals = require('../services/visuals');
@@ -501,9 +502,13 @@ const MANUAL_SESSION_TITLE_MAX = 256;
 // Mayor creates each change through POST /api/apps/:slug/sessions on a
 // delegated grant; nothing else may create one any more (not a browser, a
 // shell cached before the switch, a CLI token, nor Global Chat's loopback),
-// and forking a chat into a new classic session is retired with them.
-// Sessions that already exist keep working exactly as they did: only the
-// creation routes read this.
+// and forking a chat into a new classic session is retired with them. Only
+// the creation routes read this.
+//
+// #3976: the sessions that already exist are read-only. Their chat takes no
+// new message and nothing continues their work; reading them and everything
+// about the proposal they became stays open. See services/classic-sessions.js
+// for the line between the two.
 const CLASSIC_SESSIONS_RETIRED = 'New work starts in an agent session now. '
   + 'Start one from Messages or New change.';
 
@@ -3941,6 +3946,10 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // live path delivers the same shape via the visuals_ready event).
       // Best-effort — a visuals hiccup must not break opening the session.
       const session = rows[0];
+      // #3976: the dev chat reads this to put its composer away and say why.
+      // Decided here, beside the routes that refuse, so the screen and the
+      // server cannot disagree about which sessions take no new message.
+      session.classic_read_only = classicSessions.isClassicSession(session);
       // #1650: a managed local handoff cannot be proposed merely because it
       // is active. Its exact submitted head must have live staging and a
       // terminal passing verdict, and the in-memory build/check/capture gates
@@ -4367,6 +4376,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       if (!Number.isFinite(sessionId)) {
         return res.status(400).json({ error: 'Bad session id' });
       }
+      // #3976: a classic session's coding agent and model are what its next
+      // turn would run on, and it has no next turn. Ahead of the resolvers,
+      // which can call out over the network and provision a key.
+      if (classicSessions.isClassicSession(
+        await classicSessions.loadOwned(pool, sessionId, req.user.id),
+      )) {
+        return res.status(409).json(classicSessions.refusal());
+      }
 
       // ── Phase 1: validate network-dependent inputs BEFORE locking ──
       // (plan 8.1). Backend resolution, feature/allowlist checks, and the
@@ -4483,6 +4500,13 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const sessionId = parseInt(req.params.id, 10);
       if (!Number.isFinite(sessionId)) {
         return res.status(400).json({ error: 'Bad session id' });
+      }
+      // #3976: a classic session is not built anywhere next, so there is no
+      // venue left to choose for it.
+      if (classicSessions.isClassicSession(
+        await classicSessions.loadOwned(pool, sessionId, req.user.id),
+      )) {
+        return res.status(409).json(classicSessions.refusal());
       }
       const venue = typeof (req.body || {}).venue === 'string' ? req.body.venue : null;
       // Clearing is legitimate: it returns the session to "nobody has
@@ -4956,13 +4980,18 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     async (req, res) => {
       try {
         const { rows: sessionRows } = await pool.query(
-          `SELECT cs.id FROM chat_sessions cs
+          `SELECT cs.id, cs.agent_session_id, cs.is_headless, cs.source FROM chat_sessions cs
            WHERE cs.id = $1 AND cs.user_id = $2
              AND cs.status IN ('active', 'promoted')
              AND cs.is_headless = FALSE`,
           [req.params.id, req.user.id]
         );
         if (!sessionRows.length) return res.status(404).json({ error: 'Active session not found' });
+        // #3976: a file is uploaded to go with a message, and a classic
+        // session takes no new message.
+        if (classicSessions.isClassicSession(sessionRows[0])) {
+          return res.status(409).json(classicSessions.refusal());
+        }
         const sessionId = sessionRows[0].id;
 
         const filename = String(req.query.filename || '').trim();
@@ -5086,32 +5115,26 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
            AND cs.source IS DISTINCT FROM 'imported'`,
         [req.params.id, req.user.id]
       );
-      let { rows: sessionRows } = await loadChatSession();
+      const { rows: sessionRows } = await loadChatSession();
       if (!sessionRows.length) {
-        // A message to a paused session resumes it (#2779 follow-up): paused
-        // is bookkeeping, never something the user is asked to undo first.
-        // The resume keeps every rule the resume route has (the caps, and
-        // pausing the user's least recently used session to make room).
+        // A paused session is refused for what it is, never resumed first: a
+        // resume spends a slot and may pause another of the user's sessions.
+        // (A message to a paused classic session used to resume it, #2779
+        // follow-up; since #3976 a classic session takes no message at all.)
         const { rows: pausedRows } = await pool.query(
-          `SELECT id, agent_session_id FROM chat_sessions
+          `SELECT id, agent_session_id, is_headless, source FROM chat_sessions
             WHERE id = $1 AND user_id = $2 AND status = 'paused'
               AND is_headless = FALSE AND source IS DISTINCT FROM 'imported'`,
           [req.params.id, req.user.id]
         );
-        // Refused below anyway, so it is never resumed first: a resume
-        // spends a slot and may pause another of the user's sessions.
         if (pausedRows.length && pausedRows[0].agent_session_id != null) {
           return res.status(409).json({
             error: 'This change belongs to an agent session. Continue it there.',
             agentSessionId: pausedRows[0].agent_session_id,
           });
         }
-        if (pausedRows.length) {
-          const resumed = await resumePausedSession({
-            pool, config, user: req.user, sessionId: Number(pausedRows[0].id),
-          });
-          if (!resumed.ok) return res.status(resumed.status).json({ error: resumed.error });
-          ({ rows: sessionRows } = await loadChatSession());
+        if (pausedRows.length && classicSessions.isClassicSession(pausedRows[0])) {
+          return res.status(409).json(classicSessions.refusal());
         }
       }
       if (!sessionRows.length) {
@@ -5145,6 +5168,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           sessionId: session.id, clientMessageId, viewer: req.user,
         });
         if (delivery.received) return chatDelivery.answerDuplicate(res, delivery);
+      }
+      // #3976: every other row this route loads is a classic session, and a
+      // classic session is read-only: new work starts in an agent session.
+      // After the duplicate lookup, so a retry of a message stored before
+      // this landed still learns it was received. The turn below is kept
+      // for now; deleting the classic dev chat is a later change.
+      if (classicSessions.isClassicSession(session)) {
+        return res.status(409).json(classicSessions.refusal());
       }
       const isOpenRouterSession = registry.resolveBackend(session.agent_backend) === 'codex_openrouter';
 

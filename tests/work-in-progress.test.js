@@ -267,18 +267,27 @@ test('new work at the cap pauses the user\'s least recently used session instead
   assert.match(read('src/services/connector-limits.js'), /lifecycle\.freeUserSlot\(\{ pool, userId: user\.id \}\)/);
 });
 
-test('a message to a paused session resumes it, with every rule the resume route keeps', () => {
+test('a message to a paused session is refused, and never resumes it first (#3976)', () => {
+  // It used to resume the session and then run the turn (#2779 follow-up).
+  // Every paused row the chat route can load is now refused: an agent
+  // session's change names its conversation, and a classic session is
+  // read-only. Neither is resumed first, because a resume spends a slot and
+  // may pause another of the user's sessions for a message that is refused.
   const sessions = read('src/routes/sessions.js');
   const chat = sessions.slice(sessions.indexOf("router.post('/api/sessions/:id/chat'"));
-  const resumeAt = chat.indexOf('await resumePausedSession({');
-  assert.ok(resumeAt > 0 && resumeAt < chat.indexOf("error: 'Active session not found'"),
-    'resumed before the session is looked for again, never refused as not found');
-  assert.match(chat.slice(0, resumeAt), /status = 'paused'\s+AND is_headless = FALSE AND source IS DISTINCT FROM 'imported'/);
-  assert.match(chat.slice(0, resumeAt), /pausedRows\[0\]\.agent_session_id != null\) \{\s+return res\.status\(409\)/,
-    'a change an agent session owns is refused before anything is resumed');
+  const chatBody = chat.slice(0, chat.indexOf('\n  router.', 1));
+  assert.doesNotMatch(chatBody, /resumePausedSession\(/, 'a message resumes nothing');
+  const notFound = chat.indexOf("error: 'Active session not found'");
+  assert.match(chat.slice(0, notFound), /status = 'paused'\s+AND is_headless = FALSE AND source IS DISTINCT FROM 'imported'/);
+  assert.match(chat.slice(0, notFound), /pausedRows\[0\]\.agent_session_id != null\) \{\s+return res\.status\(409\)/,
+    'a change an agent session owns is refused, naming its conversation');
+  assert.match(chat.slice(0, notFound),
+    /pausedRows\.length && classicSessions\.isClassicSession\(pausedRows\[0\]\)\) \{\s+return res\.status\(409\)\.json\(classicSessions\.refusal\(\)\)/,
+    'a classic one is refused as read-only');
+  // The resume route and sync-main keep the one implementation.
   const route = sessions.slice(sessions.indexOf("router.post('/api/sessions/:id/resume'"));
   assert.match(route.slice(0, 600), /await resumePausedSession\(\{ pool, config, user: req\.user, sessionId \}\)/,
-    'one implementation for the route and the chat');
+    'one implementation for the route and sync-main');
   const syncMain = sessions.slice(sessions.indexOf("router.post('/api/sessions/:id/sync-main'"));
   assert.match(syncMain.slice(0, 2000), /session\.status === 'paused'[\s\S]{0,200}resumePausedSession/);
   assert.equal(typeof require('../src/routes/sessions').resumePausedSession, 'function');
