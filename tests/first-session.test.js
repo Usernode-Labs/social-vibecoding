@@ -171,11 +171,13 @@ test('a new user\'s tour, numbered as its card numbers it, with what each step c
     { screen: 'home', target: '#platform-tab-workshop', alongside: undefined, endsAbove: undefined, press: undefined, tap: 'Tap Communities', title: 'You can find Friday Film Crew here' },
     // 4: the hub whole, with its header, down to the tab bar.
     { screen: 'hub', target: '#app-content', alongside: SCREEN_HEADER, endsAbove: BOTTOM_BARS, press: undefined, tap: undefined, title: 'The Friday Film Crew hub' },
-    { screen: 'hub', target: '#platform-tab-messages', alongside: undefined, endsAbove: undefined, press: undefined, tap: 'Tap Messages', title: 'Homeroom bot is in Messages' },
+    { screen: 'hub', target: '#platform-tab-messages', alongside: undefined, endsAbove: undefined, press: undefined, tap: 'Tap Messages', title: 'Your messages are here' },
     // 6: the chat with Homeroom bot, with the header over it.
     { screen: 'bot', target: `${BOT_CHAT_HEADER}, ${BOT_CHAT_MESSAGES}`, alongside: SCREEN_HEADER, endsAbove: undefined, press: undefined, tap: undefined, title: 'Homeroom bot is planning Friday Film Crew' },
   ]);
-  assert.equal(steps[4].text, 'Ask it for changes to your app.', 'why go to Messages, not what the bot is doing (#4044)');
+  // Why go to Messages: people, and Homeroom bot, by what it does (#4044;
+  // the owner, 7 October 2026).
+  assert.equal(steps[4].text, 'Talk to people, or ask Homeroom bot to build and change your app.');
   // The invited path's app and hub steps are the same cut-outs.
   const { invitedSteps } = loadTsx(`${DIR}/tour-steps.ts`);
   const invited = invitedSteps({ slug: 'film', name: 'Friday Film Crew' });
@@ -670,7 +672,7 @@ test('"Look around first" has its own four cards on Home, each pointing at one p
     ['home', '#home-create-tile', 'Make something any time', 'New project starts a community and its app.'],
     ['home', '#platform-tab-discover', 'Find apps in Discover', 'Open any app, or join its community.'],
     ['home', '#platform-tab-workshop', 'Communities you join show up here', 'Each one has its own hub and discussion.'],
-    ['home', '#platform-tab-messages', 'Homeroom bot is in Messages', 'Ask it for an app, or a change to one.'],
+    ['home', '#platform-tab-messages', 'Your messages are here', 'Talk to people, or ask Homeroom bot to build and change your app.'],
   ]);
   // Nobody is taken anywhere: no step is a tap, each rings its place, and
   // the last one ends it.

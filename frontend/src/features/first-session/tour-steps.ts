@@ -75,13 +75,12 @@ export type TourStep = {
    */
   revealWith?: string;
   /**
-   * A transcript in the cut-out: the newest of its `rows` is shown down to
-   * its foot, at the transcript's foot (./index.tsx showNewestToFoot). The
-   * plan's last lines are its Build it and Change something, which the card
-   * names; opened at the first unread message, the chat put them under the
-   * card.
+   * A transcript in the cut-out: the newest of its `rows` begins just under
+   * the coach card (./index.tsx showNewestBelow), so the plan's title and
+   * first lines are never under the card, and as much of the rest as the
+   * screen holds, its Build it included, shows below them.
    */
-  newestToFoot?: { scroller: string; rows: string };
+  newestBelowCard?: { scroller: string; rows: string };
   last?: boolean;
 };
 
@@ -251,8 +250,8 @@ export function privateSteps({ slug, name }: TourProject): TourStep[] {
       screen: 'home',
       target: '#platform-tab-messages',
       ringed: true,
-      title: 'Homeroom bot is in Messages',
-      text: `Ask it for a change to ${name}.`,
+      title: 'Your messages are here',
+      text: 'Talk to people, or ask Homeroom bot to build and change your app.',
     },
     {
       // The card's own heading says what it is for ("Make and share your
@@ -285,8 +284,8 @@ export function makerSteps({ slug, name, conversationId }: TourProject): TourSte
     {
       screen: 'hub',
       target: '#platform-tab-messages',
-      title: 'Homeroom bot is in Messages',
-      text: 'Ask it for changes to your app.',
+      title: 'Your messages are here',
+      text: 'Talk to people, or ask Homeroom bot to build and change your app.',
       tap: 'Tap Messages',
       opensNext: true,
     },
@@ -294,11 +293,11 @@ export function makerSteps({ slug, name, conversationId }: TourProject): TourSte
       screen: 'bot',
       target: `${BOT_CHAT_HEADER}, ${BOT_CHAT_MESSAGES}`,
       alongside: SCREEN_HEADER,
-      // The plan's foot, its Build it and Change something, at the foot of
-      // the transcript, and the card at its top, under the chat's header:
-      // at the foot of the screen it covered the very buttons it names
-      // (the owner's planned-vs-built review, 6 October 2026).
-      newestToFoot: { scroller: BOT_CHAT_MESSAGES, rows: 'article.messages-message' },
+      // The card at the top, under the chat's header, and the plan just
+      // under the card: at the foot of the screen the card covered the very
+      // buttons it names, and over the plan's top it covered its title and
+      // first lines (the owner, 6 and 7 October 2026).
+      newestBelowCard: { scroller: BOT_CHAT_MESSAGES, rows: 'article.messages-message' },
       title: `Homeroom bot is planning ${name}`,
       text: 'It messages you here when the plan is ready.',
       instead: {
@@ -348,8 +347,8 @@ export function lookAroundSteps(): TourStep[] {
       screen: 'home',
       target: '#platform-tab-messages',
       ringed: true,
-      title: 'Homeroom bot is in Messages',
-      text: 'Ask it for an app, or a change to one.',
+      title: 'Your messages are here',
+      text: 'Talk to people, or ask Homeroom bot to build and change your app.',
       last: true,
     },
   ];

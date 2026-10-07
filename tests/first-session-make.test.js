@@ -389,8 +389,9 @@ test('the maker\'s last step shows the chat with Homeroom bot whole: its header 
   assert.deepEqual(chat.target.split(',').map((s) => s.trim()), [BOT_CHAT_HEADER, BOT_CHAT_MESSAGES]);
   // The owner's planned-vs-built review, 6 October 2026: at the foot of the
   // screen the card covered the Build it it names. It sits under the chat's
-  // header now, and the newest card is shown down to its buttons.
-  assert.deepEqual(chat.newestToFoot, { scroller: BOT_CHAT_MESSAGES, rows: 'article.messages-message' });
+  // header, and (7 October) the newest card begins just under it, so the
+  // plan's title and first lines are never under the card.
+  assert.deepEqual(chat.newestBelowCard, { scroller: BOT_CHAT_MESSAGES, rows: 'article.messages-message' });
   assert.deepEqual(chat.place, { below: BOT_CHAT_HEADER });
   assert.equal(chat.text, 'It messages you here when the plan is ready.');
   // And the platform's top bar over them, as one cut-out (Evan, 5 Oct 2026:
@@ -404,7 +405,7 @@ test('the maker\'s last step shows the chat with Homeroom bot whole: its header 
     '.app-card[data-slug="film"]', '#app-view', '#platform-tab-workshop', '#app-content', '#platform-tab-messages',
   ]);
   assert.equal(steps[1].press, '#back-btn');
-  assert.deepEqual(steps.map((s) => !!s.newestToFoot), [false, false, false, false, false, true]);
+  assert.deepEqual(steps.map((s) => !!s.newestBelowCard), [false, false, false, false, false, true]);
   // The Messages screen draws what it names: a direct conversation's section,
   // whose first child is its header (none when embedded in a hub, which the
   // bot's chat never is), its scroller, and an <article> per message.
@@ -417,12 +418,12 @@ test('the maker\'s last step shows the chat with Homeroom bot whole: its header 
     /<article id=\{`messages-message-\$\{message\.id\}`\} data-message-id=\{message\.id\} className=\{`messages-message group /);
 });
 
-test('the newest card is shown down to its buttons: scrolled on just far enough, never back', () => {
-  const { scrollOnFor, showNewestToFoot } = loadTsx(`${DIR}/index.tsx`);
-  assert.equal(scrollOnFor(620, 700), 88, 'its foot below the transcript: on to 8px above its foot');
-  assert.equal(scrollOnFor(620, 600), 0);
-  assert.equal(scrollOnFor(620, 300), 0, 'ending higher up is in view: never back');
-  assert.equal(scrollOnFor(620, 612.5), 1, 'whole pixels, rounded up');
+test('the newest card begins just under the coach card: its title and first lines are never under it', () => {
+  const { scrollToBelow, showNewestBelow } = loadTsx(`${DIR}/index.tsx`);
+  assert.equal(scrollToBelow(300, 400), 92, 'below the card: on, until it begins 8px under it');
+  assert.equal(scrollToBelow(300, 150), -158, 'under the card: back');
+  assert.equal(scrollToBelow(300, 308), 0);
+  assert.equal(scrollToBelow(300, 308.4), 0, 'whole pixels');
 
   const box = (top, height = 40) => ({ getBoundingClientRect: () => ({ top, height }) });
   const transcript = ({ top = 120, height = 500, scrollTop = 900, rows = [] } = {}) => {
@@ -432,26 +433,28 @@ test('the newest card is shown down to its buttons: scrolled on just far enough,
   const rootOf = (...scrollers) => ({ querySelectorAll: (sel) => { rootOf.asked = sel; return scrollers; } });
   const spec = { scroller: '.messages-thread-direct > .messages-thread-scroll', rows: 'article.messages-message' };
 
-  // The chat opened at the first unread message: the plan card, newest,
-  // runs 300px past the transcript's foot (620), its buttons under the card.
+  // The chat opened at its foot: the plan card, newest, begins at 150, under
+  // the coach card (its foot at 290): it goes back 148px, to begin at 298.
   const hidden = transcript({ height: 0, rows: [box(400)] });
-  const shown = transcript({ rows: [box(100), box(220, 700)] });
-  assert.equal(showNewestToFoot(spec, rootOf(hidden, shown)), true);
+  const shown = transcript({ rows: [box(60), box(150, 330)] });
+  assert.equal(showNewestBelow(spec, 290, rootOf(hidden, shown)), true);
   assert.equal(rootOf.asked, spec.scroller);
   assert.equal(shown.asked, spec.rows);
-  assert.equal(shown.scrollTop, 900 + 308, 'the visible transcript, not one drawn nowhere');
+  assert.equal(shown.scrollTop, 900 - 148, 'the visible transcript, not one drawn nowhere');
   assert.equal(hidden.scrollTop, 900);
-  // Already at its foot, nothing loaded yet, or no transcript at all: nothing moves.
-  const fits = transcript({ rows: [box(500, 100)] });
-  assert.equal(showNewestToFoot(spec, rootOf(fits)), false);
-  assert.equal(fits.scrollTop, 900);
-  assert.equal(showNewestToFoot(spec, rootOf(transcript())), false);
-  assert.equal(showNewestToFoot(spec, rootOf()), false);
+  // Already in place, nothing loaded yet, or no transcript at all: nothing moves.
+  const placed = transcript({ rows: [box(298, 100)] });
+  assert.equal(showNewestBelow(spec, 290, rootOf(placed)), false);
+  assert.equal(placed.scrollTop, 900);
+  assert.equal(showNewestBelow(spec, 290, rootOf(transcript())), false);
+  assert.equal(showNewestBelow(spec, 290, rootOf()), false);
 
-  // Each frame, before the cut-out is measured, so the ring is drawn round
-  // what it shows, and it holds when the rows arrive after the step lands.
+  // Each frame, under the card as it is drawn, before the cut-out is
+  // measured, and it holds when the rows arrive after the step lands.
   const src = read(`${DIR}/index.tsx`);
-  assert.match(src, /const reveal = stepRef\.current\.newestToFoot;\s+if \(reveal\) showNewestToFoot\(reveal\);\s+const m = measure\(at, stepRef\.current\);/);
+  assert.match(src, /const reveal = stepRef\.current\.newestBelowCard;\s+const card = reveal \? document\.querySelector\(CARD_SELECTOR\)\?\.getBoundingClientRect\(\) : null;\s+if \(reveal && card && card\.height\) showNewestBelow\(reveal, card\.bottom\);\s+const m = measure\(at, stepRef\.current\);/);
+  assert.match(src, /const CARD_SELECTOR = '\[role="dialog"\]\[aria-labelledby="first-session-tour-title"\]';/);
+  assert.match(src, /role="dialog"\s+aria-labelledby="first-session-tour-title"/);
 });
 
 test('the admin Journey page says which first session answered the join screen', () => {

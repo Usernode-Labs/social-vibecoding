@@ -36,7 +36,7 @@ test('the private tour: four steps on Home, Next through each, ending on the wai
   assert.deepEqual(steps.map((s) => [s.title, s.text]), [
     ['Best brunch spots is on your Home', 'Open it any time from here.'],
     ['You can find Best brunch spots here', 'Communities lists every community you\'re in.'],
-    ['Homeroom bot is in Messages', 'Ask it for a change to Best brunch spots.'],
+    ['Your messages are here', 'Talk to people, or ask Homeroom bot to build and change your app.'],
     ['Your own apps start here', 'Join the waitlist to get your spot.'],
   ]);
   for (const s of steps) assert.equal(s.text.split(/[.?]\s/).length, 1, `one sentence: ${s.text}`);

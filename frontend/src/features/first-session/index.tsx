@@ -179,32 +179,36 @@ export function targetBox(selectors: string): Box | null {
   return unionBox(visibleBoxes(selectors));
 }
 
-/** How far above a transcript's foot a row shown down to its foot ends. */
+/** How far below the coach card the newest row of a transcript begins. */
 const ROW_INSET = 8;
 
 /**
- * Pure: how far a transcript scrolls on so a row whose foot is at `rowBottom`
- * ends ROW_INSET above the transcript's own foot (`scrollerBottom`): 0 when
- * it does already. Never back: a row that ends higher up is in view.
+ * Pure: how far a transcript scrolls so a row whose top is at `rowTop`
+ * begins ROW_INSET below the coach card's foot (`cardBottom`): positive on,
+ * negative back, 0 when it does already. The browser stops it at either end
+ * of the transcript.
  */
-export function scrollOnFor(scrollerBottom: number, rowBottom: number, inset: number = ROW_INSET): number {
-  const by = rowBottom - (scrollerBottom - inset);
-  return by > 0 ? Math.ceil(by) : 0;
+export function scrollToBelow(cardBottom: number, rowTop: number, inset: number = ROW_INSET): number {
+  return Math.round(rowTop - (cardBottom + inset));
 }
 
 type ScrollerLike = { scrollTop: number; getBoundingClientRect(): { top: number; height: number }; querySelectorAll(rows: string): ArrayLike<{ getBoundingClientRect(): { top: number; height: number } }> };
 
 /**
- * A step's transcript (TourStep.newestToFoot): its newest row is shown down
- * to its foot. The chat opens at the first unread message, and a plan card
- * taller than the space left its Build it and Change something under the
- * coach card that names them. Run every frame while the step is up, so it
- * holds when the rows arrive after the step lands and when a card grows; the
- * step covers its cut-out, so the reader is never scrolled against their own
- * hand. Answers whether it scrolled.
+ * A step's transcript (TourStep.newestBelowCard): its newest row begins just
+ * under the coach card, which sits under the chat's header. The plan's title
+ * and first lines show first, then as much of the rest as the screen holds,
+ * its Build it on a phone of ordinary height. Shown down to its foot, the
+ * plan had its title and first bullet under the card; at the foot of the
+ * screen, the card covered its Build it (the owner, 6 and 7 October 2026).
+ * Run every frame while the step is up, so it holds when the rows arrive
+ * after the step lands and when the card or a row grows; the step covers its
+ * cut-out, so the reader is never scrolled against their own hand. Answers
+ * whether it scrolled.
  */
-export function showNewestToFoot(
+export function showNewestBelow(
   spec: { scroller: string; rows: string },
+  cardBottom: number,
   root: { querySelectorAll(selectors: string): ArrayLike<unknown> } = document,
 ): boolean {
   const scroller = (Array.from(root.querySelectorAll(spec.scroller)) as ScrollerLike[])
@@ -213,13 +217,15 @@ export function showNewestToFoot(
   const rows = scroller.querySelectorAll(spec.rows);
   const newest = rows.length ? rows[rows.length - 1] : null;
   if (!newest) return false;
-  const s = scroller.getBoundingClientRect();
-  const r = newest.getBoundingClientRect();
-  const by = scrollOnFor(s.top + s.height, r.top + r.height);
+  const by = scrollToBelow(cardBottom, newest.getBoundingClientRect().top);
   if (!by) return false;
+  const before = scroller.scrollTop;
   scroller.scrollTop += by;
-  return true;
+  return scroller.scrollTop !== before;
 }
+
+/** The coach card on screen, for a step that places a transcript under it. */
+const CARD_SELECTOR = '[role="dialog"][aria-labelledby="first-session-tour-title"]';
 
 const PAD = 6;
 /** The ring's width (`ring-[3px]` below), kept on screen around a hole. */
@@ -492,8 +498,9 @@ export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo
           tries += 1;
         }
         // Before measuring, so the cut-out is drawn round what it shows.
-        const reveal = stepRef.current.newestToFoot;
-        if (reveal) showNewestToFoot(reveal);
+        const reveal = stepRef.current.newestBelowCard;
+        const card = reveal ? document.querySelector(CARD_SELECTOR)?.getBoundingClientRect() : null;
+        if (reveal && card && card.height) showNewestBelow(reveal, card.bottom);
         const m = measure(at, stepRef.current);
         // The words too: the plan coming into the chat moves no box.
         const key = `${at}:${boxKey(m.box)}:${boxKey(m.press)}:${m.instead ? 1 : 0}`;
