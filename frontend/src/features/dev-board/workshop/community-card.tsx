@@ -184,10 +184,18 @@ function whoApproves(required: number, of: number, one: string, many: string): s
  * 2 yes votes (2 active members), or unopposed after a wait" was the
  * sentence a newcomer met here.
  */
-export function approvalLine(approval: CommunityPayload['approval'] | null | undefined): string {
+export function approvalLine(
+  approval: CommunityPayload['approval'] | null | undefined,
+  viewer?: Pick<CommunityPayload, 'audience' | 'is_member'> | null,
+): string {
   if (!approval) return '';
   const required = Math.max(1, Number(approval.required) || 1);
   const electorate = Math.max(1, Number(approval.electorate) || 1);
+  // A Just you project's one approver is the person reading it (#4246).
+  if (viewer?.audience === 'solo' && viewer.is_member
+    && Number(approval.electorate) === 1 && Number(approval.required) === 1) {
+    return 'A change goes live when you approve it.';
+  }
   const fixed = approval.approvals_required != null;
   const quiet = !fixed && required > 1;
   if (approval.policy === 'invited') {
@@ -1065,7 +1073,7 @@ export function ApprovalRules({ slug }: { slug: string }) {
       <div className="dev-ws-head">
         <span className="dev-ws-head-title">Approval rules</span>
       </div>
-      <p className="dev-ws-rules-line" data-ws-community-rule="">{approvalLine(data.approval)}</p>
+      <p className="dev-ws-rules-line" data-ws-community-rule="">{approvalLine(data.approval, data)}</p>
     </section>
   );
 }

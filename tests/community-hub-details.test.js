@@ -106,7 +106,7 @@ test('#3268: the hero carries who is here and the fortnight, and who it is for r
   // How a change gets in is the Workshop page's Approval rules card now.
   const hero = src.slice(src.indexOf('export function CommunityCard('), src.indexOf('export function ApprovalRules('));
   assert.doesNotMatch(hero, /data-ws-community-rule/);
-  assert.match(src, /export function ApprovalRules\([\s\S]*?data-ws-approval-rules=""[\s\S]*?data-ws-community-rule="">\{approvalLine\(data\.approval\)\}/);
+  assert.match(src, /export function ApprovalRules\([\s\S]*?data-ws-approval-rules=""[\s\S]*?data-ws-community-rule="">\{approvalLine\(data\.approval, data\)\}/);
   assert.doesNotMatch(read(HUB), /export function MembersCard/, 'the hub has no Members & activity card any more');
 });
 
