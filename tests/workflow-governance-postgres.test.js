@@ -543,6 +543,32 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
     }
   });
 
+  await t.test('a vote waiting on [main]\'s lock on the row reads the votes [main] committed meanwhile', async () => {
+    // Old and new Pods overlap: [main] records a vote and holds the row
+    // while it decides. The same voter's second Up on the machine must see
+    // that vote (a retraction), not the votes from before it waited.
+    const [author, v1, v2] = [await user(), await user(), await user()];
+    const a = await app({ approvals: 2, members: [v1, v2] });
+    const i = await issue(a, author, 'rename', { newName: 'Not twice' });
+    await file(i);
+    await vote(i, v2, 'up');
+    const legacy = await pool.connect();
+    try {
+      await legacy.query('BEGIN');
+      await legacy.query(`INSERT INTO issue_votes (issue_id, user_id, vote) VALUES ($1, $2, 'up')`, [i.id, v1.id]);
+      await legacy.query('SELECT id FROM issues WHERE id = $1 FOR UPDATE', [i.id]);
+      const id = await send(i, 'VoteCast', { userId: v1.id, username: v1.username, vote: 'up' }, { actor: `user:${v1.id}` });
+      const draining = rt.drain();
+      await new Promise((r) => setTimeout(r, 300));
+      await legacy.query('COMMIT');
+      await draining;
+      assert.deepEqual((await event(id)).reply, { toggled: true }, 'the second Up takes the vote back');
+    } finally { legacy.release(); }
+    const s = await inst(i);
+    assert.deepEqual([s.state, s.data.evaluation.yes], ['open', 1], 'still open, with one Yes');
+    assert.equal((await pool.query('SELECT name FROM apps WHERE id = $1', [a.id])).rows[0].name, a.name, 'not renamed');
+  });
+
   await t.test('the reply says what the vote did, built from the facts and the outcome', async () => {
     const a = await app({ approvals: 2 });
     const [author, v1, v2] = [await user(), await user(), await user()];

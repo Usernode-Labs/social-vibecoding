@@ -4,9 +4,10 @@
 // Every query is a round trip the voter waits for (the production database
 // is tens of milliseconds away), so this counts every query any connection
 // sends while the vote route runs, with a counter on pg.Client.prototype.query,
-// and fails above a budget. The critical path today is 11: the route's own
+// and fails above a budget. The critical path today is 12: the route's own
 // checks (3), the append, the pipeline's opening batch with its pick, the
-// governance facts (2), the vote write, the finishing statement, COMMIT and
+// governance facts (3: the locked row, then its votes in a fresh statement,
+// then the electorate), the vote write, the finishing statement, COMMIT and
 // the outcome read. The budget leaves room for what runs beside it (the
 // post-commit notifiers, the slot looking for its next event).
 //
