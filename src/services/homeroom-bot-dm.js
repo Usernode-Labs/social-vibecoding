@@ -1507,7 +1507,7 @@ async function closePlanCards(pool, runIds, { stopped = false, ws = null } = {})
  * B6: Build it, tapped under a plan (`action`, a `build_plan`), on any device:
  * decided once, as decideOfferTap decides an offer. `answers` are the choices
  * tapped, in order; one left untouched goes with the suggested answer. The
- * card then reads "You chose Build it" everywhere. Resolves { ok: true,
+ * card then reads "Building it", with its answers, everywhere. Resolves { ok: true,
  * choice, label } or { ok: false, status, error }.
  */
 async function decidePlanTap(pool, { user, action, choice, answers = [], deps = {} }) {
