@@ -802,9 +802,9 @@
       "expectSelector": "#notifications-sheet[data-open] a[href$=\"/proposals/990102\"]:not(:has(.h-3.w-3.rounded-full)) .dc-status-spinner-arc"
     },
     {
-      "name": "Send Feedback offers a kudos bounty, unchecked by default (#964), room for up to three images (#3027), and a video option (#3940)",
+      "name": "Send Feedback offers a kudos bounty, unchecked by default (#964), room for up to three images (#3027), and a video option (#3940) behind one paperclip (#4127)",
       "path": "/?shot=feedback",
-      "expectSelector": "#feedback-form:has(#feedback-screenshot-count:not(.hidden)):has(#feedback-video-btn:not(.hidden)) #feedback-bounty-row:not(.hidden) #feedback-bounty-checkbox:not(:checked):not(:disabled)",
+      "expectSelector": "#feedback-form:has(#feedback-screenshot-count:not(.hidden)):has(#feedback-attach-btn:not(.hidden,:disabled)+.hidden>#feedback-video-btn:not(.hidden)) #feedback-bounty-row:not(.hidden) #feedback-bounty-checkbox:not(:checked):not(:disabled)",
       "expectText": "You can attach up to 3 images."
     },
     {

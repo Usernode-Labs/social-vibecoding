@@ -11,7 +11,8 @@ const dialog = read('frontend/src/features/dialogs/feedback.tsx');
 
 test('feedback offers native capture and a Photos fallback', () => {
   assert.match(dialog, /id="feedback-screenshot-picker-btn"/);
-  assert.match(dialog, /Choose from Photos/);
+  // #4127: the Photos fallback is the popover's "Photo" row under the paperclip.
+  assert.match(dialog, /role="menuitem"[\s\S]*?<PhotoIcon aria-hidden="true" \/>\s*Photo\s*</);
   assert.match(dialog, /id="feedback-screenshot-input"/);
   assert.match(dialog, /accept="image\/png,image\/jpeg"/);
   assert.match(controller, /capabilities\.includes\('captureScreenshot'\)/);

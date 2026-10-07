@@ -654,6 +654,47 @@ export function init() {
     // this module's, like every other node inside the card.
     const screenshotPreview = document.getElementById('feedback-screenshot-preview');
     const screenshotCount = document.getElementById('feedback-screenshot-count');
+    // #4127: Photos and the video picker are the two rows of a popover under
+    // one paperclip button (feedback.tsx), so the row stays on one line. The
+    // rows keep their own handlers below; this block only opens and closes
+    // the popover and keeps the paperclip in step with the rows: shown while
+    // either row is, inert while both are.
+    const attachBtn = document.getElementById('feedback-attach-btn');
+    const attachMenu = document.getElementById('feedback-attach-menu');
+    const attachRows = [screenshotPickerBtn, document.getElementById('feedback-video-btn')];
+    const attachMenuOpen = () => !!attachMenu && !attachMenu.classList.contains('hidden');
+    const setAttachMenuOpen = (open) => {
+      if (!attachMenu || !attachBtn) return;
+      attachMenu.classList.toggle('hidden', !open);
+      attachBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    };
+    const paintAttachButton = () => {
+      if (!attachBtn) return;
+      const shown = attachRows.filter((row) => row && !row.classList.contains('hidden'));
+      attachBtn.classList.toggle('hidden', shown.length === 0);
+      attachBtn.disabled = shown.length === 0 || shown.every((row) => row.disabled);
+      if (attachBtn.disabled || attachBtn.classList.contains('hidden')) setAttachMenuOpen(false);
+    };
+    if (attachBtn && attachMenu) {
+      attachBtn.addEventListener('click', (e) => {
+        if (e && e.stopPropagation) e.stopPropagation();
+        if (attachBtn.disabled) return;
+        setAttachMenuOpen(!attachMenuOpen());
+        if (attachMenuOpen()) {
+          const first = attachRows.find((row) => row && !row.classList.contains('hidden') && !row.disabled);
+          if (first) first.focus({ preventScroll: true });
+        }
+      });
+      // Any click outside the paperclip and its popover closes it. Capture
+      // phase, so a click something else stops still counts. (Escape is the
+      // kit modal's: it closes the dialog, and _reset closes this with it.)
+      document.addEventListener('click', (e) => {
+        if (!attachMenuOpen()) return;
+        const t = e && e.target;
+        if (t && (attachBtn.contains(t) || attachMenu.contains(t))) return;
+        setAttachMenuOpen(false);
+      }, true);
+    }
     const screenshotTools = window.ScreenshotSelect;
     const displayCaptureSupported = !!screenshotTools && screenshotTools.isSupported();
     let nativeCaptureSupported = false;
@@ -843,6 +884,7 @@ export function init() {
         : (count ? 'Attach another' : 'Attach screenshot');
       screenshotBtn.classList.toggle('hidden', full || !canCapture);
       screenshotPickerBtn.classList.toggle('hidden', full);
+      paintAttachButton();
       // #3027: say how many fit, so the second picture is not a guess.
       if (screenshotCount) {
         screenshotCount.textContent = count === 0
@@ -865,6 +907,7 @@ export function init() {
     const setScreenshotActionsDisabled = (disabled) => {
       screenshotBtn.disabled = disabled;
       screenshotPickerBtn.disabled = disabled;
+      paintAttachButton();
     };
 
     // Forget one attachment client-side. An already uploaded (now orphaned)
@@ -1135,6 +1178,8 @@ export function init() {
     });
 
     screenshotPickerBtn.addEventListener('click', () => {
+      // #4127: a choice closes the paperclip's popover.
+      setAttachMenuOpen(false);
       if (screenshotPickerBtn.disabled || screenshots.length >= MAX_SCREENSHOTS) return;
       // An image instead of the share the browser has not answered: that
       // attempt is over (see pendingCapture).
@@ -1221,13 +1266,16 @@ export function init() {
 
     const paintVideoActions = () => {
       videoBtn.classList.remove('hidden');
-      videoLabel.textContent = video ? 'Replace video' : 'Add video';
+      // #4127: a row in the paperclip's popover, beside "Photo".
+      videoLabel.textContent = video ? 'Replace video' : 'Video';
+      paintAttachButton();
       videoPreview.classList.toggle('hidden', !video);
       videoPreview.classList.toggle('flex', !!video);
     };
 
     const setVideoActionsDisabled = (disabled) => {
       videoBtn.disabled = disabled;
+      paintAttachButton();
     };
 
     const discardVideo = (entry) => {
@@ -1406,6 +1454,7 @@ export function init() {
     };
 
     videoBtn.addEventListener('click', () => {
+      setAttachMenuOpen(false);
       if (videoBtn.disabled) return;
       // Same page-death insurance as the Photos picker above: the file
       // picker is a native surface and the tab can be evicted behind it.
@@ -2021,8 +2070,10 @@ export function init() {
       const screenshotSession = ++screenshotProbeSequence;
       nativeCaptureSupported = false;
       resetScreenshotState();
-      // #3940: and clip-less, with the button repainted to "Add video".
+      // #3940: and clip-less, with the row repainted to "Video".
       resetVideoState();
+      // #4127: every open starts with the paperclip's popover shut.
+      setAttachMenuOpen(false);
       void probeNativeCaptureSupport(screenshotSession, true);
 
       // "This app" is only selectable when an app with a real repo is
@@ -2181,6 +2232,7 @@ export function init() {
     // line belongs to useStaticModal.
     Feedback._reset = () => {
       presentation += 1;
+      setAttachMenuOpen(false);
       clearTimeout(closeTimer);
       firstFeedback = null;
       firstSuccess?.classList.add('hidden');
