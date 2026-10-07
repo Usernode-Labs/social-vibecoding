@@ -38,7 +38,9 @@
  * welcome's frame first, `holdWelcome()`, drawn at once (flushSync) on the
  * same wallpaper, before the shell draws Home; welcome() fills it, and
  * `endHold()` takes it down for any other ending. The make screen's own
- * hand-off (#3894) works the same way.
+ * hand-off (#3894) works the same way. For a private member the frame
+ * outlives the welcome itself: it stays up until the app view is revealed
+ * (`openingApp`), so Home is never on screen between the sheet and the app.
  *
  * ── The island rules ──────────────────────────────────────────────────
  *
@@ -643,7 +645,9 @@ export function YoureIn({ info, onGo }: { info: FirstSessionInfo; onGo: (firstVe
 
 export type Mode =
   | { kind: 'none' }
-  | { kind: 'held' }
+  // `openingApp`: a private member has been sent to their app and the frame
+  // stays up until the app view is revealed (welcome(), below).
+  | { kind: 'held'; openingApp?: boolean }
   | { kind: 'welcome'; info: FirstSessionInfo }
   // `entry` 'create' is the Create button's (see the header); none is the first session's.
   | { kind: 'make'; entry?: MakeEntry; startImport?: boolean }
@@ -804,10 +808,30 @@ export function FirstSession() {
         // A PRIVATE MEMBER lands inside the app the link was for, full
         // screen, instead of "You're in" and the hub: Homeroom is what the
         // mark menu's "Go to Homeroom" opens, and its tour (goHome) runs
-        // then. A frame held for the welcome goes.
+        // then. A frame held for the welcome stays over the switch-over:
+        // navigateToApp does not reveal #app-view in this tick (a private
+        // community first checks whether to ask for a public username, and
+        // the reveal runs inside a view transition whose snapshot is taken
+        // after the callback), so Home drawn under the frame would show in
+        // that window (#4215). The frame comes down in the same mutation
+        // that reveals the app (navigateToApp's `onShown`), when opening
+        // it fails or is superseded, or after 8 s so it can never stick.
         if (legacy().App?.user?.privateMember) {
-          setMode((prev) => (prev.kind === 'held' ? { kind: 'none' } : prev));
-          enterScreen('app', info.slug);
+          setMode((prev) => (prev.kind === 'held' ? { kind: 'held', openingApp: true } : prev));
+          let done = false;
+          let timer: ReturnType<typeof setTimeout> | null = null;
+          const endOpening = () => {
+            if (done) return;
+            done = true;
+            if (timer !== null) clearTimeout(timer);
+            // Outside any React render: the callers are _followInvite's
+            // welcome() and the transition's own callback, as holdWelcome is.
+            flushSync(() => setMode((prev) => (prev.kind === 'held' && prev.openingApp ? { kind: 'none' } : prev)));
+          };
+          timer = setTimeout(endOpening, 8000);
+          void Promise.resolve(legacy().App.navigateToApp(info.slug, 'app', undefined, undefined, { onShown: endOpening }))
+            .catch(() => {})
+            .finally(endOpening);
           return true;
         }
         setMode({ kind: 'welcome', info });
@@ -842,9 +866,10 @@ export function FirstSession() {
         return held;
       },
       // The follow ended some other way (the hub, a confirm, a toast): the
-      // frame goes, and only the frame.
+      // frame goes, and only the frame. One sent to their app keeps it
+      // (openingApp): the reveal's onShown owns that frame's end.
       endHold(): void {
-        setMode((prev) => (prev.kind === 'held' ? { kind: 'none' } : prev));
+        setMode((prev) => (prev.kind === 'held' && !prev.openingApp ? { kind: 'none' } : prev));
       },
       // "What do you want to make?" for an account that is due the join
       // screen and did not come through the story's sheet, and for any

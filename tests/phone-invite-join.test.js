@@ -239,11 +239,14 @@ test('a provisional handle: private groups see it, public places ask for a usern
   assert.match(profile, /const result = provisional\s+\? await usernames\.replaceProvisionalUsername\(pool, req\.user\.id, next\)\s+: await usernames\.chooseFirstUsername\(pool, req\.user\.id, next\);/);
   assert.match(read('src/routes/auth.js'), /\(u\.username_provisional_since IS NOT NULL\) AS username_provisional,/);
 
-  // The shell asks before a public app, and on a refused public join.
+  // The shell asks before a public app, and on a refused public join. The
+  // caller's opts ride along (#4215): the ask is reached with them (so the
+  // invite's held frame can come down first) and forwarded on, marked as
+  // asked.
   const app = read('public/js/app.js');
-  assert.match(app, /if \(App\.user\?\.usernameProvisional && !opts\?\.usernameChecked\) \{\s+return App\._navigateAfterUsername\(slug, tab, ref, subTab\);/);
-  assert.match(app, /if \(!\(await App\._usernameBeforePublic\(slug\)\)\) \{[\s\S]{0,200}return App\.navigateToApp\(slug, tab, ref, subTab, \{ usernameChecked: true \}\);/);
-  assert.match(app, /if \(audience !== 'open'\) return true;\s+return !!\(await window\.UsernameFirstRun\?\.askForPublic\?\.\(\)\);/);
+  assert.match(app, /if \(App\.user\?\.usernameProvisional && !opts\?\.usernameChecked\) \{\s+return App\._navigateAfterUsername\(slug, tab, ref, subTab, opts\);/);
+  assert.match(app, /if \(!\(await App\._usernameBeforePublic\(slug, opts\?\.onShown\)\)\) \{[\s\S]{0,200}return App\.navigateToApp\(slug, tab, ref, subTab, \{ \.\.\.opts, usernameChecked: true \}\);/);
+  assert.match(app, /if \(beforeAsk\) \{ try \{ beforeAsk\(\); \} catch \(_\) \{\} \}\s+return !!\(await window\.UsernameFirstRun\?\.askForPublic\?\.\(\)\);/);
   assert.match(app, /await window\.UsernameFirstRun\.publicRetry\(redeem\)/);
   assert.match(read('frontend/src/features/home/home.js'), /const res = desired && retry \? await retry\(write\) : await write\(\);/);
   assert.match(read('frontend/src/features/dev-board/workshop/invite-offer.ts'), /if \(result\.reason === 'username_required'\) \{/);

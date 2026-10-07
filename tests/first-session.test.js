@@ -520,16 +520,24 @@ test('"You\'re in" fills its middle with the project, as its invite showed it', 
 const TOKEN = 'AAAAAAAAAAAAAAAAAAAAAA';
 
 /** App._followInvite (and _endWelcomeHold) from app.js, against stand-ins. */
-function followHarness({ fromLanding = true, pressed = false, standing }) {
+function followHarness({ fromLanding = true, pressed = false, landingMark = null, standing }) {
   const app = read('public/js/app.js');
   const methods = app.slice(app.indexOf('  async _followInvite(token) {'), app.indexOf('\n  _deepLinkTarget() {'));
   const events = [];
   let answer = null;
+  const removed = [];
   const sandbox = {
     console, Promise, setTimeout, clearTimeout, Date, JSON, encodeURIComponent,
     location: { pathname: `/invite/${TOKEN}`, search: '' },
     history: { replaceState() { events.push('address'); } },
-    sessionStorage: { getItem: () => (pressed ? `/invite/${TOKEN}` : null), removeItem() {} },
+    sessionStorage: {
+      getItem(key) {
+        if (key === 'usernode:invite-join') return pressed ? `/invite/${TOKEN}` : null;
+        if (key === 'usernode:invite-landing') return landingMark;
+        return null;
+      },
+      removeItem(key) { removed.push(key); },
+    },
     fetch: (url) => {
       events.push(url.endsWith('/redeem') ? 'redeem' : 'standing');
       if (url.endsWith('/redeem')) {
@@ -557,7 +565,7 @@ function followHarness({ fromLanding = true, pressed = false, standing }) {
     _inviteLandingToken: fromLanding ? TOKEN : null,
   });
   sandbox.App = App;
-  return { App, events, answer: () => answer() };
+  return { App, events, removed, answer: () => answer() };
 }
 
 const JOINED = {
@@ -576,6 +584,47 @@ test('a sign-in from the invite\'s page holds "You\'re in"\'s frame up before th
   await done;
   assert.ok(run.events.indexOf('welcome:geneva') > run.events.indexOf('home'), 'the welcome fills the frame once the standing is read');
   assert.equal(run.App._inviteLandingToken, null, 'the landing\'s mark is spent');
+  assert.deepEqual(run.removed, ['usernode:invite-landing'], 'the tab\'s marker is spent with it');
+});
+
+test('the tab\'s own marker holds the frame when the document was replaced during sign-in (#4215)', async () => {
+  // The live-build reload, or a provider round trip back to the invite:
+  // _inviteLandingToken died with the old document, the sessionStorage
+  // marker restoreFromHash wrote survives, and it takes the hold.
+  const run = followHarness({ fromLanding: false, landingMark: TOKEN, standing: JOINED });
+  const done = run.App._followInvite(TOKEN);
+  assert.deepEqual(run.events, ['hold', 'address', 'home'], 'held before Home is drawn');
+  await Promise.resolve();
+  run.answer();
+  await done;
+  assert.ok(run.events.indexOf('welcome:geneva') > run.events.indexOf('home'));
+  assert.deepEqual(run.removed, ['usernode:invite-landing'], 'read once and forgotten');
+
+  // Somebody else's link (or no marker): no hold, as before.
+  const other = followHarness({ fromLanding: false, landingMark: 'OTHER', standing: JOINED });
+  const otherDone = other.App._followInvite(TOKEN);
+  assert.deepEqual(other.events, ['address', 'home']);
+  await Promise.resolve();
+  other.answer();
+  await otherDone;
+  assert.equal(other.events.includes('hold'), false);
+  assert.deepEqual(other.removed, ['usernode:invite-landing'], 'spent whatever it said');
+});
+
+test('the frame ends where the app is revealed: onShown in the reveal, the ask, the marker', () => {
+  const app = read('public/js/app.js');
+  // navigateToApp's reveal callback fires onShown after #app-view is shown,
+  // in the same mutation: the frame is never the incoming snapshot either.
+  const nav = app.slice(app.indexOf('async navigateToApp(slug, tab, ref, subTab, opts) {'), app.indexOf('const load = {'));
+  assert.match(nav, /App\._setScreenVisible\('app-view', true\);[\s\S]*?try \{ AppView\.beginLaunch\(slug, tab\); \} catch \(err\) \{[\s\S]*?try \{ opts\?\.onShown\?\.\(\); \} catch \(_\) \{\}/);
+  // A provisional handle's navigation carries the caller's opts through:
+  // the ask is reached with them, hands onShown to it, and forwards them
+  // marked as asked.
+  const ask = app.slice(app.indexOf('async _usernameBeforePublic(slug, beforeAsk) {'), app.indexOf('async navigateToApp(slug, tab, ref, subTab, opts) {'));
+  assert.match(ask, /if \(beforeAsk\) \{ try \{ beforeAsk\(\); \} catch \(_\) \{\} \}\s+return !!\(await window\.UsernameFirstRun\?\.askForPublic\?\.\(\)\);/, 'the frame goes before the username ask');
+  assert.match(ask, /async _navigateAfterUsername\(slug, tab, ref, subTab, opts\) \{\s+if \(!\(await App\._usernameBeforePublic\(slug, opts\?\.onShown\)\)\) \{/);
+  assert.match(ask, /return App\.navigateToApp\(slug, tab, ref, subTab, \{ \.\.\.opts, usernameChecked: true \}\);/);
+  assert.match(app, /return App\._navigateAfterUsername\(slug, tab, ref, subTab, opts\);/);
 });
 
 test('the held frame goes for every other ending, and before a confirm', async () => {
@@ -619,11 +668,11 @@ test('the held frame goes for every other ending, and before a confirm', async (
 test('the island draws the held frame at once, and only the frame goes when the follow ends otherwise', () => {
   const src = read(`${DIR}/index.tsx`);
   assert.match(src, /holdWelcome\(\): boolean \{\s+let held = false;\s+flushSync\(\(\) => setMode\(\(prev\) => \{/);
-  assert.match(src, /endHold\(\): void \{\s+setMode\(\(prev\) => \(prev\.kind === 'held' \? \{ kind: 'none' \} : prev\)\);/);
+  assert.match(src, /endHold\(\): void \{\s+setMode\(\(prev\) => \(prev\.kind === 'held' && !prev\.openingApp \? \{ kind: 'none' \} : prev\)\);/);
   assert.match(src, /if \(mode\.kind === 'held'\) return <WelcomeHeld \/>;/);
   // The landing marks the link it showed signed out.
   const app = read('public/js/app.js');
-  assert.match(app, /App\._inviteLandingToken = inviteToken;\s+AuthScreens\.rememberDeepLink\(location\.pathname\);\s+AuthScreens\.show\('landing'\);/);
+  assert.match(app, /App\._inviteLandingToken = inviteToken;[\s\S]{0,400}?try \{ sessionStorage\.setItem\('usernode:invite-landing', inviteToken\); \} catch \(_\) \{[^}]*\}\s+AuthScreens\.rememberDeepLink\(location\.pathname\);\s+AuthScreens\.show\('landing'\);/);
   // The frame is "You're in"'s own ground, so the welcome arrives on it.
   const { WelcomeHeld } = loadTsx(`${DIR}/index.tsx`);
   const { renderToHtml, createElement } = require('./lib/render-tsx');

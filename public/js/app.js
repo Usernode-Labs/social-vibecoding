@@ -4286,8 +4286,18 @@ const App = {
       // goes up first, drawn before this returns, so Home is never on screen
       // between the sheet and the welcome (Evan, 5 October 2026; the make
       // screen's hand-off, #3894, works the same way). The welcome fills it;
-      // any other ending takes it down (_endWelcomeHold).
-      const fromLanding = App._inviteLandingToken === token;
+      // any other ending takes it down (_endWelcomeHold) — for a private
+      // member it lasts until the app view is revealed instead.
+      // In-page, the landing's mark still names the link. After the
+      // document was replaced (the live-build reload, or a provider round
+      // trip back to /invite/<token>), the tab's own marker says it (#4215);
+      // read once and forgotten, so only this follow may hold.
+      let fromLanding = App._inviteLandingToken === token;
+      try {
+        const landingMark = sessionStorage.getItem('usernode:invite-landing');
+        sessionStorage.removeItem('usernode:invite-landing');
+        if (!fromLanding && landingMark === token) fromLanding = true;
+      } catch (_) { /* asked as before */ }
       App._inviteLandingToken = null;
       const island = window.UsernodeReact && window.UsernodeReact.firstSession;
       held = !!(fromLanding && island && typeof island.holdWelcome === 'function' && island.holdWelcome());
@@ -4604,6 +4614,12 @@ const App = {
         if (!App.user) {
           // A sign-in from here comes back to this link (_followInvite).
           App._inviteLandingToken = inviteToken;
+          // Also remembered for the tab: the in-page mark dies with the
+          // document, so a reload during sign-in (_moveToLiveShell) or a
+          // provider round trip that returns signed in would otherwise
+          // lose the hold (App._followInvite, #4215). Read once and
+          // forgotten there.
+          try { sessionStorage.setItem('usernode:invite-landing', inviteToken); } catch (_) { /* asked as before */ }
           AuthScreens.rememberDeepLink(location.pathname);
           AuthScreens.show('landing');
           return;
@@ -7733,7 +7749,10 @@ const App = {
   // username (username-first-run.js askForPublic). True to go on. The
   // audience comes from the launcher's record, or the app's own read; an
   // unknown one goes on, and the server's refusal stands behind it.
-  async _usernameBeforePublic(slug) {
+  // `beforeAsk` runs just before the ask: the invite's held frame (#4215)
+  // comes down so the question is never asked under it, while the audience
+  // read stays under the frame as waiting work.
+  async _usernameBeforePublic(slug, beforeAsk) {
     let audience = null;
     try { audience = AppView.launchRecordFor?.(slug)?.audience || null; } catch (_) {}
     if (!audience) {
@@ -7743,19 +7762,20 @@ const App = {
       } catch (_) { /* the server decides */ }
     }
     if (audience !== 'open') return true;
+    if (beforeAsk) { try { beforeAsk(); } catch (_) {} }
     return !!(await window.UsernameFirstRun?.askForPublic?.());
   },
 
   // navigateToApp for a provisional handle: the ask first, then the same
   // navigation, marked as asked. Its own function so navigateToApp reads
   // everything it reads synchronously (the tab press) before any await.
-  async _navigateAfterUsername(slug, tab, ref, subTab) {
-    if (!(await App._usernameBeforePublic(slug))) {
+  async _navigateAfterUsername(slug, tab, ref, subTab, opts) {
+    if (!(await App._usernameBeforePublic(slug, opts?.onShown))) {
       // "Not now": stay out. An address that already names the app goes Home.
       if (location.hash.startsWith(`#app/${slug}`)) App.navigateHome?.();
       return false;
     }
-    return App.navigateToApp(slug, tab, ref, subTab, { usernameChecked: true });
+    return App.navigateToApp(slug, tab, ref, subTab, { ...opts, usernameChecked: true });
   },
 
   async navigateToApp(slug, tab, ref, subTab, opts) {
@@ -7763,7 +7783,7 @@ const App = {
     // tab asked for in there is the running app's job, beside it.
     if (App.embeddedPanel && App._forwardAppTab(slug, tab, ref, subTab)) return false;
     if (App.user?.usernameProvisional && !opts?.usernameChecked) {
-      return App._navigateAfterUsername(slug, tab, ref, subTab);
+      return App._navigateAfterUsername(slug, tab, ref, subTab, opts);
     }
     const generation = ++App._appNavigationGeneration;
     // Clean up whatever app we had mounted. This is a no-op on the first
@@ -7886,6 +7906,11 @@ const App = {
       // App tab wouldn't be a plain production iframe — self-hosted apps,
       // demo cards, non-running apps, an explicit non-app tab, offline.
       try { AppView.beginLaunch(slug, tab); } catch (err) { /* fall back to the plain path */ }
+      // The invite's held frame (#4215) goes in this same mutation: the
+      // reveal is what ends it, so Home drawn under the frame is never the
+      // incoming snapshot of the transition either. A caller without one
+      // (every other navigation) passes nothing.
+      try { opts?.onShown?.(); } catch (_) {}
     }, {
       type: App._entryTransition('zoom-in', appViewEl, viaTab),
       el: document.getElementById('app-view'),

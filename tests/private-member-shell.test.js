@@ -53,12 +53,19 @@ test('"Go to Homeroom" starts it once; a private member lands in the app instead
   const src = read('frontend/src/features/first-session/index.tsx');
   assert.match(src, /if \(mode\.path === 'private'\) return privateSteps\(project\);/);
   const welcome = src.slice(src.indexOf('welcome(info: FirstSessionInfo): boolean {'), src.indexOf('goHome('));
-  assert.match(welcome, /if \(legacy\(\)\.App\?\.user\?\.privateMember\) \{[\s\S]*enterScreen\('app', info\.slug\);[\s\S]*return true;/);
+  // The held frame outlives the welcome for a private member (#4215): the
+  // frame is marked `openingApp` and the app is opened with an `onShown`
+  // that ends the frame in the same mutation that reveals #app-view.
+  assert.match(welcome, /if \(legacy\(\)\.App\?\.user\?\.privateMember\) \{[\s\S]*\{ kind: 'held', openingApp: true \}[\s\S]*navigateToApp\(info\.slug, 'app', undefined, undefined, \{ onShown: endOpening \}\)[\s\S]*return true;/);
+  assert.match(welcome, /const endOpening = \(\) => \{[\s\S]*?prev\.kind === 'held' && prev\.openingApp \? \{ kind: 'none' \} : prev/, 'the frame goes when the app is revealed, the open fails or 8 s pass');
   assert.ok(welcome.indexOf('privateMember') < welcome.indexOf("setMode({ kind: 'welcome', info })"), 'before "You\'re in"');
   const goHome = src.slice(src.indexOf('goHome('), src.indexOf('holdWelcome(): boolean'));
   assert.match(goHome, /const first = !app\?\._privateHomeVisited\?\.\(\);\s+app\?\._notePrivateHome\?\.\(\);\s+app\?\.navigateHome\?\.\(\);/);
   assert.match(goHome, /if \(!first \|\| !info\?\.slug\) return;/, 'the tour runs the first time only');
   assert.match(goHome, /path: 'private'/);
+  // endHold leaves a frame that is waiting for the app: only the reveal's
+  // onShown (or the open's failure, or the 8 s bound) ends that one.
+  assert.match(src, /endHold\(\): void \{\s+setMode\(\(prev\) => \(prev\.kind === 'held' && !prev\.openingApp \? \{ kind: 'none' \} : prev\)\);/);
 });
 
 test('the app has no ✕ for a private member until they have gone to Homeroom, from either writer', () => {
