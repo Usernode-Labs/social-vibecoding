@@ -28,7 +28,7 @@
  *      (https://identitytoolkit.googleapis.com/v1):
  *        accounts:sendVerificationCode  { phoneNumber, recaptchaToken? }
  *              → { sessionInfo }
- *        accounts:verifyPhoneNumber     { sessionInfo, code }
+ *        accounts:signInWithPhoneNumber { sessionInfo, code }
  *              → { idToken }
  *      This leg needs the WEB API KEY, never a service account, and
  *      a web caller's request carries an app-verification token, the
@@ -176,12 +176,15 @@ const RECAPTCHA_REFUSALS = new Set([
  * log and answer 502: the caller cannot fix them by retrying differently,
  * and the message must not leak which config knob is missing.
  */
-function identityToolkitError(data, status) {
+function identityToolkitError(data, status, path = null) {
   const raw = typeof data?.error?.message === 'string' ? data.error.message : '';
   // Firebase writes `CODE : detail` (its web SDK splits on ' : '), so the
   // code is trimmed: untrimmed, every detailed refusal read as unmapped.
   const code = raw.split(':')[0].trim();
-  log.warn('phone-auth', 'Identity Toolkit refused', { status, code });
+  // The path is logged because an answer with no code at all (Google's HTML
+  // 404 for a method that does not exist) is otherwise indistinguishable
+  // from any other unmapped refusal.
+  log.warn('phone-auth', 'Identity Toolkit refused', { path, status, code });
   if (code === 'INVALID_CODE' || code === 'SESSION_EXPIRED'
       || code === 'CODE_EXPIRED' || code === 'INVALID_SESSION_INFO') {
     return new PhoneAuthError('invalid_or_expired_code', 'Invalid or expired code.');
@@ -223,7 +226,7 @@ async function identityToolkit(config, path, body, deps = {}) {
     log.warn('phone-auth', 'Identity Toolkit unreachable', { path, err: err.message });
     throw new PhoneAuthError('firebase_unreachable', 'Could not reach the sign-in service. Try again.', 502);
   }
-  if (!answer.ok) throw identityToolkitError(answer.data, answer.status);
+  if (!answer.ok) throw identityToolkitError(answer.data, answer.status, path);
   return answer.data;
 }
 
@@ -352,7 +355,7 @@ async function exchangeCode(config, rawSessionInfo, rawCode, deps = {}) {
       || !code || code.length > CODE_MAX) {
     throw new PhoneAuthError('invalid_or_expired_code', 'Invalid or expired code.');
   }
-  const data = await identityToolkit(config, 'accounts:verifyPhoneNumber', { sessionInfo, code }, deps);
+  const data = await identityToolkit(config, 'accounts:signInWithPhoneNumber', { sessionInfo, code }, deps);
   if (typeof data.idToken !== 'string' || !data.idToken
       || data.idToken.length > ID_TOKEN_MAX) {
     log.warn('phone-auth', 'Identity Toolkit sent no idToken');
