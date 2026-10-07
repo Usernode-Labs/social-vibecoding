@@ -169,12 +169,13 @@ function menuHarness(touch) {
     App: {
       openFeedbackModal: (opts) => {
         assert.equal(opts?.fromDev, true, 'the dev-context mode');
-        // #21: `target: 'app'` is what preselects the open app since #2707.
-        assert.equal(opts?.target, 'app', 'the open app is preselected as the target');
+        // #4236: no `target`, so "Where should this go?" opens with nothing
+        // chosen; only `target: 'app'` preselects since #2707.
+        assert.equal(opts?.target, undefined, 'no destination is preselected');
         // QA 2026-09-24: and the dialog is told what it was asked for, so it
         // is headed "Suggest an improvement" rather than "Send feedback".
         assert.equal(opts?.intent, 'issue', 'the dialog is headed with the row\'s own words');
-        assert.deepEqual(Object.keys(opts), ['fromDev', 'target', 'intent']);
+        assert.deepEqual(Object.keys(opts), ['fromDev', 'intent']);
         calls.push('issue');
       },
     },
@@ -286,10 +287,10 @@ test('Suggest an improvement is a real button[data-plus] row that leads the writ
   assert.match(VIEW, /const issueBtn = menu\.querySelector\('\[data-plus="issue"\]'\);/);
   const wired = VIEW.slice(VIEW.indexOf('const issueBtn = '));
   // QA 2026-09-24: with `intent: 'issue'`, so the dialog is headed with the
-  // row's own words ("Suggest an improvement") rather than "Send feedback". #21:
-  // and with `target: 'app'`, the one thing that preselects the open app
-  // since #2707; `fromDev` alone opened the dialog asking which one.
-  assert.match(wired.slice(0, 700), /App\.openFeedbackModal\(\{ fromDev: true, target: 'app', intent: 'issue' \}\)/);
+  // row's own words ("Suggest an improvement") rather than "Send feedback".
+  // #4236: and with no `target`, so the dialog asks where it goes with
+  // neither destination chosen (#2707).
+  assert.match(wired.slice(0, 700), /App\.openFeedbackModal\(\{ fromDev: true, intent: 'issue' \}\)/);
 });
 
 for (const touch of [false, true]) {
@@ -361,10 +362,10 @@ function improveHarness(currentApp = 'demo') {
 test('Give feedback still opens the shared dialog for the current app', () => {
   const { Improve, calls } = improveHarness();
   Improve.giveFeedback();
-  // #21: `target: 'app'` preselects the app the change is for. Since #2707
-  // `fromDev` alone opens the dialog asking which one, which is what "Ask
-  // for a change" from inside an app did.
-  assert.deepEqual(calls, [['close'], ['feedback', true, 'app']]);
+  // #4236: `fromDev` with no `target`, so the dialog asks where it goes
+  // with neither destination chosen (#2707). Only Getting started's
+  // "Suggest a change to <app>", which named the app, preselects it.
+  assert.deepEqual(calls, [['close'], ['feedback', true, undefined]]);
 });
 
 test('#21: from another app Give feedback names no target: there is no open app for "This app" to mean', () => {

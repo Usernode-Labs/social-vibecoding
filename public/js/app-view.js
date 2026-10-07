@@ -7116,12 +7116,11 @@ const AppView = {
     if (issueBtn) {
       issueBtn.addEventListener('click', () => {
         close();
-        // The shared feedback dialog with the open app preselected (#226):
-        // since #2707 only `target: 'app'` does that, and only where "This
-        // app" can be chosen. The same call Improve.giveFeedback() makes,
+        // The shared feedback dialog, asking where it goes with nothing
+        // chosen (#4236): no `target`, the same as Improve.giveFeedback(),
         // so the two entry points cannot drift. QA 2026-09-24: plus
         // `intent`, so the dialog is headed "File an issue".
-        App.openFeedbackModal({ fromDev: true, target: 'app', intent: 'issue' });
+        App.openFeedbackModal({ fromDev: true, intent: 'issue' });
       }, { signal });
     }
     const importPrBtn = menu.querySelector('[data-plus="import-pr"]');
