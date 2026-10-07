@@ -331,6 +331,19 @@ test('a sheet rides the keys: one transform from where it was, the keys\' quarte
   assert.equal(still.animations.length, 0);
 });
 
+test('a tap on the form\'s submit button is not taken: the surface leaves it alone, and with no blur there is no ride (#4214)', () => {
+  const r = rig();
+  const detach = surface.attachKeyboardSurface(r.scroller, r.win, r.doc, { ride: true });
+  r.doc.activeElement = r.field; // the field the keyboard serves
+  const event = r.tap(r.submit);
+  assert.equal(event.prevented, false, 'the press is the sheet\'s own to keep the field focused; the surface never touches the button');
+  assert.deepEqual(r.field.focused, []);
+  assert.equal(r.field.blurred, 0, 'no blur comes out of the surface: the field keeps the keyboard');
+  r.flush();
+  assert.equal(r.animations.length, 0, 'no focusout, so no ride: the sheet stays put under the finger');
+  detach();
+});
+
 // ── 4. app.css ──────────────────────────────────────────────────────────
 
 test('app.css pads a surface into the band, puts a sheet\'s foot on it, and clears Safari\'s toolbar under the story', () => {

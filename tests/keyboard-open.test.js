@@ -35,7 +35,8 @@
 //      been dispatched, so any button pressed with the keyboard up still gets
 //      its click;
 //   7. every composer's Send keeps its field focused through the press, the
-//      way Messages' does.
+//      way Messages' does, and the sign-in sheet's step buttons and links
+//      keep theirs the same way (#4214).
 //
 // What this cannot do is raise a real keyboard in the app's web view; the
 // numbers below are the iPhone 17 Pro's 874pt screen with a 336pt keyboard.
@@ -458,6 +459,26 @@ test('a Send that keeps focus never blurs, so nothing waits; a field the send di
   // landed, and takes the bars' return with the keys.
   h.blur();
   assert.equal(h.open, false);
+});
+
+test('a sheet step button that keeps focus, then the next step\'s field taking the caret (#4214)', () => {
+  const h = typing();
+  const before = h.toggles;
+  // "Text me a code" with the keyboard up: the press, its release and the
+  // click all land with the field still focused, so there is no focusout for
+  // the hold to cover and nothing moves under the finger.
+  h.press();
+  h.release();
+  h.click();
+  assert.equal(h.open, true, 'the field kept focus through the press');
+  assert.equal(h.timers, 0, 'no focusout, so no CLICK_WAIT_MS backstop was set');
+  // The submit takes the step to "Check your texts", whose field takes the
+  // caret with the keys still up: focusout to another field, then focusin.
+  h.focus(TEXT_INPUT);
+  h.advance(CLICK_WAIT_MS);
+  assert.equal(h.open, true, 'the keys stay up for the new field');
+  assert.equal(h.toggles, before, 'the class was never written in between');
+  assert.equal(h.timers, 0);
 });
 
 test('the keyboard\'s Done (no press in the page) and a press long gone still let go in the blur', () => {

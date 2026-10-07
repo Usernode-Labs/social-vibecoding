@@ -278,6 +278,79 @@ test('each way into the sheet says only what is true for it', () => {
   for (const html of [signin, start, join]) assert.doesNotMatch(html, /—/);
 });
 
+// ─── a press keeps the field, so one tap sends with the keyboard up ─────
+// iPhone 17 simulator, iOS 26 Safari, 7 Oct 2026 (#4214): with the keyboard
+// up, the first tap on "Text me a code" only closed the keyboard. The tap's
+// mousedown blurred the field with `relatedTarget: null`, the kit dropped
+// `un-kb` (and `--platform-vv-top` with it) in that blur, the sheet's
+// max-height cap changed, and the panel moved out from under the finger
+// before the click was dispatched. Every composer's Send already prevents
+// the press: the sheet's own buttons and links do the same now.
+
+// The opening tag at `at`, braces counted, so an arrow inside an attribute
+// does not end the tag.
+function tagAt(src, at, label) {
+  let depth = 0;
+  for (let i = at; i < src.length; i += 1) {
+    const c = src[i];
+    if (c === '{') depth += 1;
+    else if (c === '}') depth -= 1;
+    else if (c === '>' && depth === 0) return src.slice(at, i + 1);
+  }
+  return assert.fail(`${label}: the tag never closes`);
+}
+
+test('a press on a step\'s button or link keeps the field focused, so one tap sends (#4214)', () => {
+  const src = read(SHEET);
+  // The constant: the mousedown prevented, nothing else.
+  assert.match(src, /const KEEP_FIELD = \{ onMouseDown: \(event: MouseEvent<HTMLElement>\) => event\.preventDefault\(\) \} as const;/);
+  assert.match(src, /type MouseEvent,/);
+
+  // Every button inside the seven fielded steps' forms spreads it.
+  const formOf = (step) => {
+    const at = src.indexOf(`{step === '${step}' ? (`);
+    assert.ok(at >= 0, `${step}: the step is missing`);
+    const start = src.indexOf('<form', at);
+    return src.slice(start, src.indexOf('</form>', start));
+  };
+  let counted = 0;
+  for (const step of ['email', 'phone', 'phone-code', 'username', 'code', 'password', 'account']) {
+    const form = formOf(step);
+    let buttons = 0;
+    for (let at = form.indexOf('<button'); at >= 0; at = form.indexOf('<button', at + 1)) {
+      assert.match(tagAt(form, at, `${step}'s button`), /\{\.\.\.KEEP_FIELD\}/, `${step}'s button keeps the field`);
+      buttons += 1;
+    }
+    // No submit handler blurs the field: the next step's field takes the
+    // caret through the step effect, with the keys still up.
+    const onSubmit = /onSubmit=\{\(e\) => \{ e\.preventDefault\(\);([^}]*)\}\}/.exec(form);
+    assert.ok(onSubmit, `${step}: the form submits`);
+    assert.doesNotMatch(onSubmit[1], /blur/, `${step}'s submit never blurs`);
+    counted += buttons;
+  }
+  assert.ok(counted >= 14, `found ${counted} buttons across the seven forms`);
+
+  // The step-changing links, and the close, keep the field too.
+  assert.match(tagAt(src, src.indexOf('<a\n              href="#login"\n              data-sign-in-sheet-other-ways=""'), 'Sign in another way'), /\{\.\.\.KEEP_FIELD\}/);
+  assert.match(tagAt(src, src.indexOf('data-sign-in-sheet-password=""'), 'Sign in with a password'), /\{\.\.\.KEEP_FIELD\}/);
+  const closeAt = src.indexOf('aria-label="Close"');
+  assert.match(tagAt(src, src.lastIndexOf('<button', closeAt), 'Close'), /\{\.\.\.KEEP_FIELD\}/);
+  // "Forgot password?" leaves the sheet for the sign-in screen: no field
+  // follows it, so its press is left to the browser.
+  const forgotAt = src.indexOf('<a href="#login/forgot"');
+  assert.ok(forgotAt > 0, 'Forgot password is missing');
+  assert.doesNotMatch(tagAt(src, forgotAt, 'Forgot password'), /KEEP_FIELD/);
+  // The choose step has no field, so no keyboard is up there: its provider
+  // buttons and its own "Join with your phone" are left alone.
+  for (let at = src.indexOf('data-sign-in-provider'); at >= 0; at = src.indexOf('data-sign-in-provider', at + 1)) {
+    assert.doesNotMatch(tagAt(src, src.lastIndexOf('<button', at), 'provider button'), /KEEP_FIELD/, 'the choose step has no field');
+  }
+  const chooseAt = src.indexOf('{step === \'choose\' ? (');
+  const choose = src.slice(chooseAt, src.indexOf('{step === \'email\' ? (', chooseAt));
+  assert.match(choose, /data-sign-in-sheet-to-phone=""/);
+  assert.doesNotMatch(choose, /KEEP_FIELD/);
+});
+
 // ─── the way out to the make screen ─────────────────────────────────────
 
 test('a new account from the sheet, the mail\'s included, gets the make screen and hands off to it', async () => {

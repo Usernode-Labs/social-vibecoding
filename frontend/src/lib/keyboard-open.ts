@@ -53,15 +53,23 @@
  * blur, the bar and the strip came back, and the composer fell by the
  * keyboard's height before the click was dispatched, so the click landed on
  * nothing. Every composer's Send now keeps the field focused through the
- * press (`onMouseDown` prevents the default, as Messages' always did). This
- * is the net under every other button pressed with the keyboard up: a blur
- * during a press (a touch or pointer down in the last PRESS_WINDOW_MS,
- * counting its release, that has not yet ended in a click or a cancel) leaves
- * the class on until that click has been dispatched, or CLICK_WAIT_MS at the
- * most, and then reads the page again, so focus that moved to another field
- * keeps it. The keyboard's Done (the ✓ above the keys) is no press in the
- * page, and a tap on empty space ends in its click in the same moment, so
- * the bars still come back with the keys there.
+ * press (`onMouseDown` prevents the default, as Messages' always did), and
+ * so do the sign-in sheet's step buttons and links (`KEEP_FIELD` in
+ * features/auth/sign-in-sheet.tsx), whose panel is capped to the visible
+ * band and would have moved out from under the finger before the click
+ * (#4214). This is the net under every other button pressed with the
+ * keyboard up: a blur during a press (a touch or pointer down in the last
+ * PRESS_WINDOW_MS, counting its release, that has not yet ended in a click
+ * or a cancel) leaves the class on until that click has been dispatched, or
+ * CLICK_WAIT_MS at the most, and then reads the page again, so focus that
+ * moved to another field keeps it. The keyboard's Done (the ✓ above the
+ * keys) is no press in the page, and a tap on empty space ends in its click
+ * in the same moment, so the bars still come back with the keys there.
+ *
+ * The hold covers this module's class and cover only. The kit's `un-kb`, and
+ * the `--platform-vv-top` that follows it, still change in the blur itself,
+ * so a surface that reads them (`.platform-kb-sheet`'s max-height cap in
+ * app.css) needs the press to keep the field focused rather than the hold.
  *
  * Whether a focused element can be holding the keyboard is the kit's own
  * classifier (`unNative.physics.keyboardCanBeUp`), read at call time, so

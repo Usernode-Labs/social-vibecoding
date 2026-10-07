@@ -99,7 +99,10 @@
  * username, password, phone and its code. Return walks a step's fields, as
  * on the make screen (#3904): from any but the last it goes to the next
  * empty one, and only the
- * last field's Return (the keyboard says "go") submits (`returnTarget`). The
+ * last field's Return (the keyboard says "go") submits (`returnTarget`). A
+ * press on a step's button or link keeps the field focused (`KEEP_FIELD`), as
+ * every composer's Send does, so with the keys up the first tap lands and the
+ * next step's field takes the caret (#4214). The
  * Homeroom app is losing the keyboard's ‹ › bar (flutter-mobile-app #603),
  * and nothing here leans on that bar: what covers the page is measured from
  * the visual viewport, whatever iOS draws above the keys.
@@ -130,7 +133,7 @@
  * the same hairline, as on the make screen.
  */
 
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from 'react';
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type RefObject } from 'react';
 
 import { PLANE_FILL } from '@/components/ui/grouped-list';
 import { AppleIcon, GoogleIcon, XIcon } from '@/components/ui/icons';
@@ -402,6 +405,9 @@ const FIELD = 'px-4 pt-3 pb-2 [&:not(:last-child)]:border-b [&:not(:last-child)]
 const LABEL = 'block text-[13px] text-zinc-500 dark:text-zinc-400';
 const INPUT = 'w-full border-0 bg-transparent px-0 py-1 text-[17px] text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none';
 const QUIET = 'py-1 text-[15px] font-medium text-violet-700 dark:text-violet-400 hover:underline';
+/** On a step's buttons and links: the press keeps the field focused, so the
+ *  keyboard (and the sheet riding it) stays put until the click lands (#4214). */
+const KEEP_FIELD = { onMouseDown: (event: MouseEvent<HTMLElement>) => event.preventDefault() } as const;
 
 export type SignInSheetProps = {
   open: boolean;
@@ -1008,6 +1014,7 @@ export function SignInSheet({
             onClick={close}
             aria-label="Close"
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-200 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
+            {...KEEP_FIELD}
           >
             <XIcon className="h-4 w-4" aria-hidden="true" />
           </button>
@@ -1048,12 +1055,12 @@ export function SignInSheet({
                 <input ref={firstField} id="sign-in-sheet-email" type="email" autoComplete="email" inputMode="email" enterKeyHint="go" defaultValue={email} className={INPUT} {...HANDLE_FIELD} />
               </div>
             </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Sending code…' : 'Send code'}</button>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...KEEP_FIELD}>{busy ? 'Sending code…' : 'Send code'}</button>
             {providers.length ? (
-              <button type="button" className={QUIET} onClick={() => { setError(null); setStep('choose'); }}>Other ways to continue</button>
+              <button type="button" className={QUIET} onClick={() => { setError(null); setStep('choose'); }} {...KEEP_FIELD}>Other ways to continue</button>
             ) : null}
             {phone ? (
-              <button type="button" data-sign-in-sheet-to-phone="" className={QUIET} onClick={() => { setError(null); setStep('phone'); }}>New to Homeroom? Join with your phone</button>
+              <button type="button" data-sign-in-sheet-to-phone="" className={QUIET} onClick={() => { setError(null); setStep('phone'); }} {...KEEP_FIELD}>New to Homeroom? Join with your phone</button>
             ) : null}
           </form>
         ) : null}
@@ -1072,7 +1079,7 @@ export function SignInSheet({
                 <input ref={phoneField} id="sign-in-sheet-phone" type="tel" autoComplete="tel" inputMode="tel" enterKeyHint="go" defaultValue={phoneNumber} placeholder="+1 415 555 0123" className={INPUT} />
               </div>
             </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Sending code…' : 'Text me a code'}</button>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...KEEP_FIELD}>{busy ? 'Sending code…' : 'Text me a code'}</button>
             <p className="text-center text-[13px] text-zinc-500 dark:text-zinc-400">
               {askName ? 'Only this group sees your name, never your number.' : 'Nobody sees your number.'}
             </p>
@@ -1089,10 +1096,10 @@ export function SignInSheet({
               </div>
             </div>
             <p className="text-[13px] text-zinc-500 dark:text-zinc-400">The code fills itself in on most phones.</p>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Checking…' : 'Continue'}</button>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...KEEP_FIELD}>{busy ? 'Checking…' : 'Continue'}</button>
             <div className="flex items-center justify-between">
-              <button type="button" className={QUIET} onClick={() => { setError(null); setStep('phone'); }}>Use another number</button>
-              <button type="button" className={`${QUIET} disabled:text-zinc-500 disabled:dark:text-zinc-400 disabled:no-underline`} disabled={busy || waitLeft > 0} onClick={() => { void requestPhoneCode(phoneNumber); }}>
+              <button type="button" className={QUIET} onClick={() => { setError(null); setStep('phone'); }} {...KEEP_FIELD}>Use another number</button>
+              <button type="button" className={`${QUIET} disabled:text-zinc-500 disabled:dark:text-zinc-400 disabled:no-underline`} disabled={busy || waitLeft > 0} onClick={() => { void requestPhoneCode(phoneNumber); }} {...KEEP_FIELD}>
                 {waitLeft > 0 ? `Send a new code in ${waitLeft}s` : 'Send a new code'}
               </button>
             </div>
@@ -1107,7 +1114,7 @@ export function SignInSheet({
                 <input ref={providerUsernameField} id="sign-in-sheet-provider-username" autoComplete="username" enterKeyHint="go" className={INPUT} placeholder={USERNAME_RULE} {...HANDLE_FIELD} />
               </div>
             </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Finishing…' : 'Continue'}</button>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...KEEP_FIELD}>{busy ? 'Finishing…' : 'Continue'}</button>
           </form>
         ) : null}
 
@@ -1119,10 +1126,10 @@ export function SignInSheet({
                 <input ref={codeField} id="sign-in-sheet-code" inputMode="numeric" autoComplete="one-time-code" enterKeyHint="go" maxLength={6} className={`${INPUT} tracking-[0.4em]`} />
               </div>
             </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Checking…' : 'Continue'}</button>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...KEEP_FIELD}>{busy ? 'Checking…' : 'Continue'}</button>
             <div className="flex items-center justify-between">
-              <button type="button" className={QUIET} onClick={() => { setError(null); setStep('email'); }}>Use another email</button>
-              <button type="button" className={`${QUIET} disabled:text-zinc-500 disabled:dark:text-zinc-400 disabled:no-underline`} disabled={busy || waitLeft > 0} onClick={() => { void requestCode(email); }}>
+              <button type="button" className={QUIET} onClick={() => { setError(null); setStep('email'); }} {...KEEP_FIELD}>Use another email</button>
+              <button type="button" className={`${QUIET} disabled:text-zinc-500 disabled:dark:text-zinc-400 disabled:no-underline`} disabled={busy || waitLeft > 0} onClick={() => { void requestCode(email); }} {...KEEP_FIELD}>
                 {waitLeft > 0 ? `Send a new code in ${waitLeft}s` : 'Send a new code'}
               </button>
             </div>
@@ -1141,9 +1148,9 @@ export function SignInSheet({
                 <PasswordInput ref={currentPasswordField} id="sign-in-sheet-current-password" name="password" required autoComplete="current-password" enterKeyHint="go" box="card" hint="dim" ring="bare" />
               </div>
             </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Signing in…' : 'Sign in'}</button>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...KEEP_FIELD}>{busy ? 'Signing in…' : 'Sign in'}</button>
             <div className="flex items-center justify-between">
-              <button type="button" className={QUIET} onClick={() => { setError(null); setDetails(null); setStep(otherWays); }}>
+              <button type="button" className={QUIET} onClick={() => { setError(null); setDetails(null); setStep(otherWays); }} {...KEEP_FIELD}>
                 {providers.length ? 'Other ways to continue' : 'Use an email code'}
               </button>
               {/* The reset is the sign-in screen's (./login.tsx), reached by its own address. */}
@@ -1170,7 +1177,7 @@ export function SignInSheet({
                 <input ref={confirmField} id="sign-in-sheet-confirm" type="password" autoComplete="new-password" enterKeyHint="go" className={INPUT} />
               </div>
             </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Finishing…' : 'Continue'}</button>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...KEEP_FIELD}>{busy ? 'Finishing…' : 'Continue'}</button>
           </form>
         ) : null}
 
@@ -1189,6 +1196,7 @@ export function SignInSheet({
               href="#login"
               data-sign-in-sheet-other-ways=""
               onClick={(e) => { e.preventDefault(); setError(null); setDetails(null); setStep(otherWays); }}
+              {...KEEP_FIELD}
               className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
             >
               Sign in another way
@@ -1202,6 +1210,7 @@ export function SignInSheet({
               href="#login"
               data-sign-in-sheet-password=""
               onClick={(e) => { e.preventDefault(); setError(null); setDetails(null); setStep('password'); }}
+              {...KEEP_FIELD}
               className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
             >
               Sign in with a password
