@@ -600,6 +600,16 @@ const ADDED_IDS = {
   'waitlist-confirm': 'The confirm-your-email block on the join success state. Hides once the code is accepted.',
   'waitlist-code': 'Six-digit email verification code; confirms the same row the mailed link does.',
   'waitlist-code-submit': 'Submits the verification code.',
+  // ── #SMS: waitlist sign-up by phone, not only by email ──────────
+  // The join screen collects one key per row: an email or a phone
+  // number. The switch is always in the markup, `hidden` until GET
+  // /api/public/waitlist/options advertises `sms_signup` (an
+  // unconfigured transport advertises nothing, the same fail-closed
+  // shape phone sign-in uses), which is why the ids are here even on a
+  // build that has no transport yet.
+  'waitlist-channel-email': 'The Email half of the waitlist join screen\'s #SMS channel switch (role=group, not a tab list: it picks the field being collected, it is not navigation between two panels).',
+  'waitlist-channel-phone': 'The Phone number half of that switch. Choosing it reads a number instead of an address and sends a confirmation code by text.',
+  'waitlist-phone': 'The phone-number field the switch reveals; the SMS twin of #waitlist-email, with the same one-key-per-row rule.',
   'waitlist-enter-code': 'Step-1 link to the confirm step, for somebody who joined earlier and whose 15-minute code expired. Before it, that control was reachable only by submitting the join form again.',
   'waitlist-confirm-email': 'The address the code belongs to, asked for only when the confirm step was reached without a join. Hidden after a join, where the form field still holds it.',
   'waitlist-resend': 'Requests a fresh confirmation code (POST /api/public/waitlist/resend). Disabled for the advertised 60-second gap.',

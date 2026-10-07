@@ -859,6 +859,27 @@ function load() {
         topochainMailTransport: chosen.transport,
       };
     })(),
+    // Platform outbound SMS (waitlist sign-up by phone, waitlist release
+    // notices by text). src/services/sms/select.js picks the transport once,
+    // here, from platform_env: Twilio, a generic HTTP SMS API, or the log
+    // transport - and ALWAYS the log transport in a staging preview, which
+    // is a clone of production data and must never text real people from an
+    // unvoted branch.
+    //
+    // `smsTransport` is null when nothing can send, which is what makes the
+    // sms module's loud "NOT delivered" error fire instead of a boot
+    // failure: every key below is OPTIONAL, because a deploy without SMS
+    // configured must still come up.
+    ...(() => {
+      const chosen = require('./services/sms/select').chooseTransport(process.env);
+      return {
+        smsTransport: chosen.transport,
+        smsProvider: chosen.provider,
+        smsFrom: chosen.from,
+        smsStagingLogOnly: chosen.stagingLogOnly,
+        smsMaxPerHour: Number(process.env.PLATFORM_SMS_MAX_PER_HOUR) || 0,
+      };
+    })(),
   };
 
   for (const [name, value] of [
@@ -971,6 +992,9 @@ function load() {
   console.log(`  PLATFORM_MAIL=${config.mailTransport
     ? `${config.mailProvider}${config.mailStagingLogOnly ? ' (staging — rendered to the log, never delivered)' : ''} from=${config.mailFrom}`
     : '(no provider configured — OTP login codes and waitlist confirmations are NOT delivered)'}`);
+  console.log(`  PLATFORM_SMS=${config.smsTransport
+    ? `${config.smsProvider}${config.smsStagingLogOnly ? ' (staging — rendered to the log, never delivered)' : ''} from=${config.smsFrom}`
+    : '(no provider configured — waitlist texts are NOT delivered)'}`);
 
   return config;
 }

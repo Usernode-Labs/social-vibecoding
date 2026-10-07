@@ -34,6 +34,7 @@ class MemberWaitlistError extends Error {
 }
 
 const IN_USE = 'That email is already on another Homeroom account. Use a different one.';
+const PHONE_IN_USE = 'That phone number is already on another Homeroom account. Use a different one.';
 
 /**
  * Where `userId` stands: `{ state, email, accountEmail, moreToken }`.
@@ -46,10 +47,13 @@ const IN_USE = 'That email is already on another Homeroom account. Use a differe
 async function stateFor(pool, userId) {
   const { rows } = await pool.query(
     `SELECT u.email, u.email_confirmed,
-            w.email AS listed_email, w.confirmed_at, w.released_at, w.more_token
+            ph.phone_e164 AS account_phone,
+            w.email AS listed_email, w.phone_e164 AS listed_phone,
+            w.confirmed_at, w.released_at, w.more_token
        FROM users u
+       LEFT JOIN user_phone_identities ph ON ph.user_id = u.id
        LEFT JOIN LATERAL (
-         SELECT email, confirmed_at, released_at, more_token
+         SELECT email, phone_e164, confirmed_at, released_at, more_token
            FROM waitlist_signups
           WHERE linked_user_id = u.id
           ORDER BY (confirmed_at IS NULL), submitted_at
@@ -61,13 +65,23 @@ async function stateFor(pool, userId) {
   const row = rows[0];
   if (!row) throw new MemberWaitlistError('not_found', 'Account not found.', 404);
   const accountEmail = row.email_confirmed ? waitlist.normalizeEmail(row.email) : null;
+  // The account's own verified number, when it has one (user_phone_identities
+  // is one row per account). The card offers it as the one-press choice, the
+  // same role accountEmail plays for the email half.
+  const accountPhone = row.account_phone || null;
   let state = 'none';
   if (row.released_at) state = 'admitted';
   else if (row.confirmed_at) state = 'listed';
+  const listedKey = row.listed_phone || row.listed_email || null;
   return {
     state,
     email: state === 'none' ? null : row.listed_email,
+    phone: state === 'none' ? null : row.listed_phone,
     accountEmail,
+    accountPhone,
+    // Which key the card names for a listed/admitted row (a row is keyed by
+    // exactly one). null when not listed.
+    listedKey: state === 'none' ? null : listedKey,
     moreToken: state === 'listed' ? row.more_token || null : null,
   };
 }
@@ -84,6 +98,18 @@ async function heldByAnother(pool, userId, email) {
   return rows.length > 0;
 }
 
+/** Another account's phone identity or waitlist row holds this `phone`. */
+async function heldByAnotherPhone(pool, userId, phone) {
+  const { rows } = await pool.query(
+    `SELECT 1 FROM user_phone_identities WHERE phone_e164 = $1 AND user_id <> $2
+     UNION ALL
+     SELECT 1 FROM waitlist_signups WHERE phone_e164 = $1 AND linked_user_id IS NOT NULL AND linked_user_id <> $2
+     LIMIT 1`,
+    [phone, userId]
+  );
+  return rows.length > 0;
+}
+
 /** Link the (confirmed) row for `email` to `userId`, the way an account-creation link does. */
 async function linkConfirmed(pool, userId, email) {
   await pool.query(
@@ -96,6 +122,18 @@ async function linkConfirmed(pool, userId, email) {
   // A row that was released before it was linked lets them in now
   // (linkUserByEmail's own rule for an account made from a released address).
   await waitlist.linkUserByEmail(pool, { userId, email });
+}
+
+/** The phone twin of linkConfirmed: link the confirmed number's row. */
+async function linkConfirmedPhone(pool, userId, phone) {
+  await pool.query(
+    `UPDATE waitlist_signups
+        SET linked_user_id = $1,
+            confirmed_at = COALESCE(confirmed_at, NOW())
+      WHERE phone_e164 = $2 AND (linked_user_id IS NULL OR linked_user_id = $1)`,
+    [userId, phone]
+  );
+  await waitlist.linkUserByPhone(pool, { userId, phone });
 }
 
 /**
@@ -148,4 +186,49 @@ async function verify(pool, { userId, rawEmail, code }) {
   return { next: 'listed', ...(await stateFor(pool, userId)) };
 }
 
-module.exports = { MemberWaitlistError, stateFor, join, verify };
+/**
+ * Join with `rawPhone`. The phone twin of join(): when the number is the
+ * account's own verified one (user_phone_identities) it joins in one press;
+ * any other number is confirmed with a texted code first. `send(phone, code)`
+ * texts it.
+ */
+async function joinByPhone(pool, { userId, rawPhone, ip = null, send }) {
+  const phone = waitlist.normalizePhone(rawPhone);
+  if (!phone) throw new MemberWaitlistError('invalid_phone', 'Enter a valid phone number.');
+  if (await heldByAnotherPhone(pool, userId, phone)) {
+    throw new MemberWaitlistError('phone_in_use', PHONE_IN_USE, 409);
+  }
+
+  await waitlist.joinWaitlist(pool, { phone, ip });
+  const { rows } = await pool.query(
+    'SELECT phone_e164 FROM user_phone_identities WHERE user_id = $1', [userId]
+  );
+  const own = rows[0] && rows[0].phone_e164 === phone;
+  if (own) {
+    await linkConfirmedPhone(pool, userId, phone);
+    return { next: 'listed', ...(await stateFor(pool, userId)) };
+  }
+
+  if (!(await waitlist.hasReusablePhoneCode(pool, phone))) {
+    const code = await waitlist.issueVerificationPhoneCode(pool, phone);
+    send(phone, code);
+  }
+  return { next: 'code', phone };
+}
+
+/** Confirm `rawPhone` with the code texted to it, and join. */
+async function verifyPhone(pool, { userId, rawPhone, code }) {
+  const phone = waitlist.normalizePhone(rawPhone);
+  if (!phone) throw new MemberWaitlistError('invalid_phone', 'Enter a valid phone number.');
+  if (await heldByAnotherPhone(pool, userId, phone)) {
+    throw new MemberWaitlistError('phone_in_use', PHONE_IN_USE, 409);
+  }
+  const signup = await waitlist.confirmSignupByPhoneCode(
+    pool, phone, typeof code === 'string' ? code.trim() : ''
+  );
+  if (!signup) throw new MemberWaitlistError('invalid_code', 'That code is not right, or it has expired.');
+  await linkConfirmedPhone(pool, userId, phone);
+  return { next: 'listed', ...(await stateFor(pool, userId)) };
+}
+
+module.exports = { MemberWaitlistError, stateFor, join, verify, joinByPhone, verifyPhone };

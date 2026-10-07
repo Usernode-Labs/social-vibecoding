@@ -1,11 +1,19 @@
 // Platform waitlist + platform-access grants (onboarding flow alignment).
 //
-// The waitlist is keyed by EMAIL, not by user (waitlist_signups in
-// schema.sql): anyone can join from the public landing page with just an
-// email, and an admin can release an email before its owner has an
-// account. "Release" (released_at set) means: platform access is granted
-// the moment a matching account exists — immediately if one already
-// does, or at account creation via linkUserByEmail below.
+// The waitlist is keyed by EMAIL or by PHONE NUMBER, not by user
+// (waitlist_signups in schema.sql): anyone can join from the public landing
+// page with just an email OR a phone number, and an admin can release a key
+// before its owner has an account. "Release" (released_at set) means:
+// platform access is granted the moment a matching account exists —
+// immediately if one already does, or at account creation via
+// linkUserByEmail / linkUserByPhone below.
+//
+// ONE KEY PER ROW is the model. A row carries an email or a phone number,
+// never both, and it never gains the other later: that is what keeps "which
+// channel do we use at release?" from becoming a second decision. The phone
+// half has its own lookups (getSignupByPhone, the phone-keyed code
+// functions) and never routes through the email ones, so relaxing
+// `email`'s NOT NULL cannot make a phone lookup match an email row.
 //
 // `users.has_platform_access` gates the SV platform surfaces (home /
 // social / build — enforced in src/middleware/auth.js). It does NOT gate
@@ -26,6 +34,15 @@ function normalizeEmail(raw) {
   return trimmed;
 }
 
+// E.164, or null. Delegates to the ONE rule phone sign-in already owns
+// (services/firebase-phone-auth.js, `normalizePhone`), so a number means the
+// same thing on the waitlist as it does on the account. Required lazily to
+// keep the module graph acyclic (firebase-phone-auth -> email-signup ->
+// waitlist already exists).
+function normalizePhone(raw) {
+  return require('./firebase-phone-auth').normalizePhone(raw);
+}
+
 // Split a pasted blob of addresses — one per line, comma- or
 // space-separated, a column copied out of a spreadsheet, or a mail
 // client's `Jane Doe <jane@example.com>` list — into candidates, in the
@@ -41,18 +58,34 @@ function parseEmailList(text) {
   const seen = new Set();
   let skipped = 0;
   let duplicates = 0;
-  for (const raw of String(text == null ? '' : text).split(/[\s,;]+/)) {
+  // A pasted phone number may carry internal spaces ("+1 555 0100 001"),
+  // and the tokenizer below splits on whitespace. Collapse the whitespace
+  // inside any +-led run FIRST, so the number reaches the tokenizer as one
+  // token. An address never starts with `+`, so this can only ever join the
+  // parts of one number, never two entries (and the class excludes a
+  // newline, so a number cannot absorb the digits on the next line).
+  const collapsed = String(text == null ? '' : text)
+    .replace(/\+[\d()\-. \t]{5,}\d/g, (m) => m.replace(/[ \t]+/g, ''));
+  for (const raw of collapsed.split(/[\s,;]+/)) {
     const token = raw
       .replace(/^[<(["']+/, '')
-      .replace(/[>)\]"'.:]+$/, '')
+      .replace(/[>)\]"':.]+$/, '')
       .replace(/^mailto:/i, '');
     if (!token) continue;
-    if (!token.includes('@')) { skipped += 1; continue; }
-    const email = normalizeEmail(token);
-    const key = email || token.toLowerCase();
+    // Which key this token is. An address has an `@`; a phone number is
+    // either explicitly E.164 (a leading `+`) or a run of digits with
+    // separators long enough to be one. A bare word ("Jane", a header row)
+    // is neither and is skipped rather than reported as invalid, exactly as
+    // before phone support.
+    const isPhone = !token.includes('@')
+      && (token.startsWith('+') || /^[\d()\-. ]{7,}$/.test(token));
+    if (!token.includes('@') && !isPhone) { skipped += 1; continue; }
+    const email = isPhone ? null : normalizeEmail(token);
+    const phone = isPhone ? normalizePhone(token) : null;
+    const key = phone || email || token.toLowerCase();
     if (seen.has(key)) { duplicates += 1; continue; }
     seen.add(key);
-    entries.push({ input: token, email });
+    entries.push({ input: token, channel: isPhone ? 'phone' : 'email', email, phone });
   }
   return { entries, skipped, duplicates };
 }
@@ -69,7 +102,10 @@ function parseEmailList(text) {
 // this flag plus the existing row's confirmed_at is what picks the
 // branch. The capability token is the part that did NOT widen: a
 // re-join still gets null, whatever else the response says.
-async function joinWaitlist(pool, { email, ip = null, answers = null, inviteCode = null }) {
+// `email` OR `phone` (already normalized) is the row's one key; the caller
+// passes exactly one. A phone join never carries a project invite (those are
+// addressed to an email) and its idempotency is the phone column's own.
+async function joinWaitlist(pool, { email = null, phone = null, ip = null, answers = null, inviteCode = null }) {
   const moreToken = crypto.randomBytes(24).toString('hex');
   const stored = answers
     ? { _version: ANSWERS_VERSION, ...answers }
@@ -98,17 +134,34 @@ async function joinWaitlist(pool, { email, ip = null, answers = null, inviteCode
   // RETURNING submitted_at, so a first join can report its own status
   // block without a second round trip. ON CONFLICT DO NOTHING returns no
   // row, which is still exactly how a re-join is detected.
-  const { rows } = await pool.query(
-    `INSERT INTO waitlist_signups (email, ip, answers, more_token, invited_by, project_invite_id)
-     VALUES ($1, $2, $3, $4, $5,
-       (SELECT id FROM app_email_invites
-         WHERE email = $1::varchar AND claimed_at IS NULL
-         ORDER BY created_at ASC, id ASC
-         LIMIT 1))
-     ON CONFLICT (email) DO NOTHING
-     RETURNING submitted_at`,
-    [email, ip, stored ? JSON.stringify(stored) : null, moreToken, invitedBy]
-  );
+  //
+  // A PHONE join has its own INSERT rather than a shared one: it carries a
+  // different column and a different conflict target, and the project-invite
+  // subquery is addressed to an email. Keeping one statement per channel is
+  // what makes "which key was this row created under?" a property of the
+  // statement rather than of the values.
+  let rows;
+  if (phone) {
+    ({ rows } = await pool.query(
+      `INSERT INTO waitlist_signups (phone_e164, ip, answers, more_token, invited_by)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (phone_e164) DO NOTHING
+       RETURNING submitted_at`,
+      [phone, ip, stored ? JSON.stringify(stored) : null, moreToken, invitedBy]
+    ));
+  } else {
+    ({ rows } = await pool.query(
+      `INSERT INTO waitlist_signups (email, ip, answers, more_token, invited_by, project_invite_id)
+       VALUES ($1, $2, $3, $4, $5,
+         (SELECT id FROM app_email_invites
+           WHERE email = $1::varchar AND claimed_at IS NULL
+           ORDER BY created_at ASC, id ASC
+           LIMIT 1))
+       ON CONFLICT (email) DO NOTHING
+       RETURNING submitted_at`,
+      [email, ip, stored ? JSON.stringify(stored) : null, moreToken, invitedBy]
+    ));
+  }
   const created = rows.length > 0;
   return {
     created,
@@ -233,6 +286,23 @@ async function getSignupByEmail(pool, email) {
   return rows[0] || null;
 }
 
+// The phone twin of the lookup above, same columns and same reason. It keys
+// on `phone_e164` and never touches the email column, so relaxing email's
+// NOT NULL cannot make a phone lookup match a row that has no phone.
+async function getSignupByPhone(pool, phone) {
+  const normalized = normalizePhone(phone);
+  if (!normalized) return null;
+  const { rows } = await pool.query(
+    `SELECT id, email, phone_e164, submitted_at, confirmed_at, released_at,
+            linked_user_id, more_token
+       FROM waitlist_signups
+      WHERE phone_e164 = $1
+      LIMIT 1`,
+    [normalized]
+  );
+  return rows[0] || null;
+}
+
 // How long a just-issued code stays reusable. Mirrors
 // OTP_REUSE_WINDOW_SECONDS in services/email-signup.js, which solved this
 // exact bug class for the account OTP flow.
@@ -255,45 +325,73 @@ const CODE_REUSE_WINDOW_SECONDS = 60;
 // works" holds: unconsumed, unexpired, never guessed at (a wrong attempt
 // means they are typing one they have, so minting a new one is what they
 // asked for), and minted inside the reuse window above.
-async function hasReusableCode(pool, email) {
-  const normalized = normalizeEmail(email);
-  if (!normalized) return false;
+const CODE_KEY_COLUMNS = { email: 'email', phone: 'phone_e164' };
+
+async function hasReusableCodeFor(pool, column, value) {
   const { rows } = await pool.query(
     `SELECT 1
        FROM waitlist_verification_codes
-      WHERE email = $1
+      WHERE ${column} = $1
         AND consumed_at IS NULL
         AND attempts = 0
         AND expires_at > NOW()
         AND created_at > NOW() - INTERVAL '${CODE_REUSE_WINDOW_SECONDS} seconds'
       ORDER BY id DESC
       LIMIT 1`,
-    [normalized]
+    [value]
   );
   return rows.length > 0;
+}
+
+async function hasReusableCode(pool, email) {
+  const normalized = normalizeEmail(email);
+  if (!normalized) return false;
+  return hasReusableCodeFor(pool, CODE_KEY_COLUMNS.email, normalized);
+}
+
+// The phone twin: a text the recipient asked for again gets the same reuse
+// window the mail one does.
+async function hasReusablePhoneCode(pool, phone) {
+  const normalized = normalizePhone(phone);
+  if (!normalized) return false;
+  return hasReusableCodeFor(pool, CODE_KEY_COLUMNS.phone, normalized);
 }
 
 // Mint a six-digit verification code for an email on the waitlist.
 // Returns the PLAINTEXT code for the caller to mail; only its bcrypt hash
 // is stored. Any unconsumed code for the address is deleted first, so
 // exactly one code is ever live and a forwarded older mail is dead.
-async function issueVerificationCode(pool, email) {
-  const normalized = normalizeEmail(email);
-  if (!normalized) throw new Error('invalid email');
+async function issueVerificationCodeFor(pool, column, value) {
   // randomInt is the uniform generator; % 1000000 over random bytes is
-  // not, and this value protects an address someone else typed.
+  // not, and this value protects a key someone else typed.
   const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
   const hash = await bcrypt.hash(code, 10);
   await pool.query(
-    'DELETE FROM waitlist_verification_codes WHERE email = $1 AND consumed_at IS NULL',
-    [normalized]
+    `DELETE FROM waitlist_verification_codes WHERE ${column} = $1 AND consumed_at IS NULL`,
+    [value]
   );
   await pool.query(
-    `INSERT INTO waitlist_verification_codes (email, code_hash, expires_at)
+    `INSERT INTO waitlist_verification_codes (${column}, code_hash, expires_at)
      VALUES ($1, $2, NOW() + INTERVAL '${CODE_TTL_MINUTES} minutes')`,
-    [normalized, hash]
+    [value, hash]
   );
   return code;
+}
+
+async function issueVerificationCode(pool, email) {
+  const normalized = normalizeEmail(email);
+  if (!normalized) throw new Error('invalid email');
+  return issueVerificationCodeFor(pool, CODE_KEY_COLUMNS.email, normalized);
+}
+
+// Mint a six-digit code for a phone number on the waitlist. The returned
+// plaintext goes to the caller to text; only its bcrypt hash is stored, and
+// any unconsumed phone code for the number is deleted first so exactly one
+// code is live, exactly as the email side does.
+async function issueVerificationPhoneCode(pool, phone) {
+  const normalized = normalizePhone(phone);
+  if (!normalized) throw new Error('invalid phone');
+  return issueVerificationCodeFor(pool, CODE_KEY_COLUMNS.phone, normalized);
 }
 
 // Confirm a signup with the code from its join mail. Returns the signup
@@ -311,17 +409,20 @@ async function issueVerificationCode(pool, email) {
 // wrong code, expired, already consumed, too many attempts — so this can
 // never be used to test whether an address is on the list. That is the
 // same non-enumeration contract joinWaitlist keeps.
-async function confirmSignupByCode(pool, email, code) {
-  const normalized = normalizeEmail(email);
-  if (!normalized || typeof code !== 'string' || !/^[0-9]{6}$/.test(code)) return null;
+// Shared body: consume a code keyed by one column and stamp the matching
+// signup's confirmed_at. EVERY failure returns the same null, so this can
+// never be used to test whether a key is on the list - the same
+// non-enumeration contract joinWaitlist keeps.
+async function confirmSignupByCodeFor(pool, column, value, code) {
+  if (!value || typeof code !== 'string' || !/^[0-9]{6}$/.test(code)) return null;
 
   const { rows } = await pool.query(
     `SELECT id, code_hash, attempts, expires_at
        FROM waitlist_verification_codes
-      WHERE email = $1 AND consumed_at IS NULL
+      WHERE ${column} = $1 AND consumed_at IS NULL
       ORDER BY id DESC
       LIMIT 1`,
-    [normalized]
+    [value]
   );
   const entry = rows[0];
   if (!entry) return null;
@@ -346,12 +447,25 @@ async function confirmSignupByCode(pool, email, code) {
   const { rows: signup } = await pool.query(
     `UPDATE waitlist_signups
         SET confirmed_at = COALESCE(confirmed_at, NOW())
-      WHERE email = $1
-      RETURNING id, email, submitted_at, confirmed_at, released_at,
+      WHERE ${column} = $1
+      RETURNING id, email, phone_e164, submitted_at, confirmed_at, released_at,
                 linked_user_id, more_token`,
-    [normalized]
+    [value]
   );
   return signup[0] || null;
+}
+
+async function confirmSignupByCode(pool, email, code) {
+  const normalized = normalizeEmail(email);
+  if (!normalized) return null;
+  return confirmSignupByCodeFor(pool, CODE_KEY_COLUMNS.email, normalized, code);
+}
+
+// The phone twin: consume the code texted to a number and confirm its row.
+async function confirmSignupByPhoneCode(pool, phone, code) {
+  const normalized = normalizePhone(phone);
+  if (!normalized) return null;
+  return confirmSignupByCodeFor(pool, CODE_KEY_COLUMNS.phone, normalized, code);
 }
 
 // Merge a validated stage-2 payload into the signup's answers. Merging
@@ -438,6 +552,32 @@ async function linkUserByEmail(pool, { userId, email }) {
   }
 }
 
+// The phone twin of linkUserByEmail: point the number's waitlist row at the
+// account and, if it was already released, grant access on the spot. Called
+// after a phone sign-up or a phone link (routes/phone-auth.js), so an account
+// appearing on a released phone row is admitted immediately, the way an
+// account appearing on a released email row already is. Best-effort: a
+// failure here must never fail the sign-up itself.
+async function linkUserByPhone(pool, { userId, phone }) {
+  const normalized = normalizePhone(phone);
+  if (!normalized || !userId) return;
+  try {
+    const { rows } = await pool.query(
+      `UPDATE waitlist_signups
+          SET linked_user_id = $1
+        WHERE phone_e164 = $2
+        RETURNING released_at`,
+      [userId, normalized]
+    );
+    if (rows[0] && rows[0].released_at) {
+      await grantPlatformAccess(pool, userId, { manualRelease: true });
+      log.info('waitlist', 'Released waitlist phone registered — access granted', { userId });
+    }
+  } catch (err) {
+    log.error('waitlist', 'linkUserByPhone failed', { userId, message: err.message });
+  }
+}
+
 // Admin release of a waitlist row. Sets released_at (idempotent) and, if
 // an account is already linked (or one exists with the same email),
 // grants it platform access immediately. Returns the updated row or
@@ -452,7 +592,7 @@ async function releaseWaitlistSignup(pool, signupId) {
      UPDATE waitlist_signups w
         SET released_at = COALESCE(w.released_at, NOW())
       WHERE w.id = $1
-      RETURNING w.id, w.email, w.released_at, w.linked_user_id, w.more_token,
+      RETURNING w.id, w.email, w.phone_e164, w.released_at, w.linked_user_id, w.more_token,
                 (SELECT prev.released_at FROM prev) IS NULL AS newly_released`,
     [signupId]
   );
@@ -462,13 +602,22 @@ async function releaseWaitlistSignup(pool, signupId) {
   let userId = row.linked_user_id;
   if (!userId) {
     // The account may predate the waitlist row (or linkage was missed) —
-    // resolve by email and backfill the link.
-    const { rows: userRows } = await pool.query(
-      'SELECT id FROM users WHERE email = $1',
-      [row.email]
-    );
-    if (userRows[0]) {
-      userId = userRows[0].id;
+    // resolve by the row's own key and backfill the link. An email row uses
+    // the user's email; a phone row uses the phone identity table, which is
+    // where a phone account's number lives (user_phone_identities). One key
+    // per row means exactly one of these matches.
+    const byEmail = row.email
+      ? (await pool.query('SELECT id FROM users WHERE email = $1', [row.email])).rows[0]
+      : null;
+    const byPhone = (!byEmail && row.phone_e164)
+      ? (await pool.query(
+        'SELECT user_id AS id FROM user_phone_identities WHERE phone_e164 = $1',
+        [row.phone_e164]
+      )).rows[0]
+      : null;
+    const found = byEmail || byPhone;
+    if (found) {
+      userId = found.id;
       await pool.query(
         'UPDATE waitlist_signups SET linked_user_id = $1 WHERE id = $2',
         [userId, row.id]
@@ -483,14 +632,19 @@ module.exports = {
   MAX_CODE_ATTEMPTS,
   CODE_REUSE_WINDOW_SECONDS,
   normalizeEmail,
+  normalizePhone,
   parseEmailList,
   joinWaitlist,
   getSignupByMoreToken,
   getSignupByEmail,
+  getSignupByPhone,
   hasReusableCode,
+  hasReusablePhoneCode,
   confirmSignupByMoreToken,
   issueVerificationCode,
+  issueVerificationPhoneCode,
   confirmSignupByCode,
+  confirmSignupByPhoneCode,
   inviteCodeFor,
   invitedBySignup,
   maskEmail,
@@ -498,5 +652,6 @@ module.exports = {
   setVerifiedHandle,
   grantPlatformAccess,
   linkUserByEmail,
+  linkUserByPhone,
   releaseWaitlistSignup,
 };

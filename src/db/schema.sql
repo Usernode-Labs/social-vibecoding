@@ -6392,16 +6392,56 @@ COMMENT ON TABLE native_epoch_delegation_policies IS 'staging:private';
 -- `has_platform_access` on the spot. Emails are stored lowercased.
 CREATE TABLE IF NOT EXISTS waitlist_signups (
   id             BIGSERIAL PRIMARY KEY,
-  email          VARCHAR(255) NOT NULL UNIQUE,
+  -- One row carries exactly ONE key: an address OR a phone number. The
+  -- column keeps its per-column UNIQUE for rows that have it; the
+  -- positive-presence CHECK below is what refuses a row with neither.
+  -- `email` is nullable now so a phone-only signup can exist, which is a
+  -- real widening: every `WHERE LOWER(email) = ...` lookup in the codebase
+  -- (member-waitlist.js, journey.js, the admin list, user-merge.js,
+  -- account-deletion.js) must tolerate a null and never route the phone
+  -- half through the email one.
+  email          VARCHAR(255) UNIQUE,
   submitted_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   ip             VARCHAR(45),
   answers        JSONB,
   released_at    TIMESTAMPTZ,
   linked_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL
 );
+-- A table created before this change has email NOT NULL. CREATE TABLE IF NOT
+-- EXISTS will not relax it, so do it explicitly; DROP NOT NULL is a no-op
+-- once the column is already nullable.
+ALTER TABLE waitlist_signups ALTER COLUMN email DROP NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_waitlist_signups_released ON waitlist_signups (released_at);
 CREATE INDEX IF NOT EXISTS idx_waitlist_signups_linked_user ON waitlist_signups (linked_user_id);
 COMMENT ON COLUMN waitlist_signups.ip IS 'staging:private';
+
+-- ── Phone-number signups ───────────────────────────────────────────────
+--
+-- A signup may be keyed by a phone number instead of an address. Numbers
+-- are stored in E.164, the same shape user_phone_identities uses, so a
+-- number always means the same thing wherever it appears. The partial
+-- unique index is a phone twin of the email column's UNIQUE, and the CHECK
+-- is what keeps "which channel do we use at release?" from becoming a
+-- second decision on a row: exactly one key per row.
+ALTER TABLE waitlist_signups ADD COLUMN IF NOT EXISTS phone_e164 VARCHAR(16);
+-- A plain (non-partial) unique index, deliberately: it is the exact shape a
+-- unique constraint would take, NULLs are never equal to each other so
+-- email-keyed rows do not collide, and `ON CONFLICT (phone_e164)` infers it.
+-- A PARTIAL index (the `WHERE phone_e164 IS NOT NULL` form) would also
+-- tolerate the nulls, but every `INSERT ... ON CONFLICT (phone_e164)` in
+-- services/waitlist.js would then have to repeat that predicate to be
+-- accepted - one more place for the two to drift apart.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_waitlist_signups_phone_e164
+  ON waitlist_signups (phone_e164);
+DO $$
+BEGIN
+  ALTER TABLE waitlist_signups DROP CONSTRAINT IF EXISTS waitlist_signups_key_present_check;
+  ALTER TABLE waitlist_signups ADD CONSTRAINT waitlist_signups_key_present_check
+    CHECK (email IS NOT NULL OR phone_e164 IS NOT NULL);
+  ALTER TABLE waitlist_signups DROP CONSTRAINT IF EXISTS waitlist_signups_phone_e164_format_check;
+  ALTER TABLE waitlist_signups ADD CONSTRAINT waitlist_signups_phone_e164_format_check
+    CHECK (phone_e164 IS NULL OR phone_e164 ~ '^\+[1-9][0-9]{1,14}$');
+END $$;
 
 -- Two-stage waitlist survey (ported from the original topochain
 -- waitlist). `more_token` is the capability for the optional stage-2
@@ -6499,6 +6539,61 @@ CREATE TABLE IF NOT EXISTS mail_suppressions (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 COMMENT ON TABLE mail_suppressions IS 'staging:private';
+
+
+-- Outbound SMS log (src/services/sms/). The phone twin of mail_deliveries:
+-- every send attempt lands here with its outcome, and it is the ONLY place an
+-- operator can see what happened, because the endpoints that trigger a text
+-- are always-200 by contract.
+--
+-- It is also the throttle's state: src/services/sms/rate-limit.js counts the
+-- `sent` / `skipped_staging` rows for a recipient to cap how much one number
+-- can be made to receive, and counts them globally to bound the carrier bill.
+--
+-- `status` is one of:
+--   sent                  handed to the carrier
+--   skipped_staging       rendered to the log by a staging preview
+--   failed                the carrier refused or timed out (`error` says)
+--   suppressed_rate_limit the throttle declined it (`error` says why)
+--   suppressed_bounce     the number is on sms_suppressions
+--   no_transport          nothing was configured to send it
+-- `error` holds a bounded carrier complaint. It NEVER holds the message body,
+-- so a code cannot end up in this table.
+CREATE TABLE IF NOT EXISTS sms_deliveries (
+  id                  BIGSERIAL PRIMARY KEY,
+  kind                VARCHAR(64) NOT NULL,
+  recipient           VARCHAR(32) NOT NULL,
+  provider            VARCHAR(32),
+  status              VARCHAR(24) NOT NULL,
+  error               TEXT,
+  provider_message_id TEXT,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+-- The throttle's read path: newest rows for one recipient and kind.
+CREATE INDEX IF NOT EXISTS idx_sms_deliveries_recipient
+  ON sms_deliveries (recipient, kind, created_at DESC);
+-- The global hourly count and the retention sweep both walk the table by time.
+CREATE INDEX IF NOT EXISTS idx_sms_deliveries_created
+  ON sms_deliveries (created_at DESC);
+-- Staging privacy: a log of who the platform texted and when is private user
+-- content (it is a list of phone numbers in bulk), so a staging clone starts
+-- empty and gets obviously-fake seed rows instead.
+COMMENT ON TABLE sms_deliveries IS 'staging:private';
+-- Unlike mail_deliveries (which an admin debugging a login code may read),
+-- this table is ALSO denied in the prod-debug console and the DB export: a
+-- log of who the platform texted and when is a list of phone numbers, and a
+-- number is PII the platform does not hand out through a debug surface. See
+-- src/services/debug-access.js and src/services/db-export.js.
+
+-- Safety state survives the delivery log's retention sweep. Placeholder for
+-- a carrier STOP webhook; nothing writes a row yet beyond a future inbound
+-- handler, but a suppression is checked before every send so the path exists.
+CREATE TABLE IF NOT EXISTS sms_suppressions (
+  recipient  VARCHAR(32) PRIMARY KEY,
+  reason     TEXT NOT NULL CHECK (reason IN ('bounce', 'stop', 'complaint')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE sms_suppressions IS 'staging:private';
 
 
 -- Access + block-production state on the user. `has_platform_access`
@@ -8605,15 +8700,30 @@ END $$;
 -- exist before any account does. Schema only is migrated; rows are not.
 CREATE TABLE IF NOT EXISTS waitlist_verification_codes (
   id           BIGSERIAL PRIMARY KEY,
-  email        VARCHAR(255) NOT NULL,
+  email        VARCHAR(255),
   code_hash    VARCHAR(255) NOT NULL,
   attempts     SMALLINT NOT NULL DEFAULT 0,
   expires_at   TIMESTAMPTZ NOT NULL,
   consumed_at  TIMESTAMPTZ,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+ALTER TABLE waitlist_verification_codes ALTER COLUMN email DROP NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_waitlist_verification_codes_email
   ON waitlist_verification_codes (email);
+-- A code is keyed by exactly one of the two contact keys, the same rule the
+-- signup row itself keeps. A phone code and an email code never share a row.
+ALTER TABLE waitlist_verification_codes ADD COLUMN IF NOT EXISTS phone_e164 VARCHAR(16);
+CREATE INDEX IF NOT EXISTS idx_waitlist_verification_codes_phone
+  ON waitlist_verification_codes (phone_e164);
+DO $$
+BEGIN
+  ALTER TABLE waitlist_verification_codes DROP CONSTRAINT IF EXISTS waitlist_verification_codes_key_check;
+  ALTER TABLE waitlist_verification_codes ADD CONSTRAINT waitlist_verification_codes_key_check
+    CHECK ((email IS NOT NULL) <> (phone_e164 IS NOT NULL));
+  ALTER TABLE waitlist_verification_codes DROP CONSTRAINT IF EXISTS waitlist_verification_codes_phone_format_check;
+  ALTER TABLE waitlist_verification_codes ADD CONSTRAINT waitlist_verification_codes_phone_format_check
+    CHECK (phone_e164 IS NULL OR phone_e164 ~ '^\+[1-9][0-9]{1,14}$');
+END $$;
 COMMENT ON TABLE waitlist_verification_codes IS 'staging:private';
 
 -- ── Waitlist invite links ──────────────────────────────────────────────

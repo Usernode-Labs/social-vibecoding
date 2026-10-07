@@ -230,7 +230,14 @@ test('private members, against the full schema', { timeout: 180000 }, async (t) 
     const ana = await account({ email: 'Ana@Example.com' });
     await invites.redeem(pool, { token: made.link.token, user: ana });
     const before = await memberWaitlist.stateFor(pool, ana.id);
-    assert.deepEqual(before, { state: 'none', email: null, accountEmail: 'ana@example.com', moreToken: null });
+    // #SMS widened the payload: the card now also reports the account's
+    // verified number (accountPhone) and which key a listed row carries
+    // (phone / listedKey). A state:'none' answer is null in all of them.
+    assert.deepEqual(before, {
+      state: 'none', email: null, phone: null,
+      accountEmail: 'ana@example.com', accountPhone: null,
+      listedKey: null, moreToken: null,
+    });
     const sent = [];
     const joined = await memberWaitlist.join(pool, { userId: ana.id, rawEmail: 'ana@example.com', send: (...a) => sent.push(a) });
     assert.equal(joined.next, 'listed');
@@ -299,6 +306,66 @@ test('private members, against the full schema', { timeout: 180000 }, async (t) 
     assert.equal(await counts(square.id, kay.id), true);
     // Somebody with access was never held to it.
     assert.equal(await communities.privateVoteRefusal(pool, square.id, jordan.id), null);
+  });
+
+  await t.test('the waitlist card: a phone number joins the same way an address does (#SMS)', async () => {
+    const nia = await account();
+    await invites.redeem(pool, { token: made.link.token, user: nia });
+    // A number that is not the account's own is confirmed with a texted code
+    // first, exactly as another address is confirmed with a mailed one.
+    const sent = [];
+    const asked = await memberWaitlist.joinByPhone(pool, {
+      userId: nia.id, rawPhone: '+1 555 0100 777', send: (...a) => sent.push(a),
+    });
+    assert.deepEqual(asked, { next: 'code', phone: '+15550100777' });
+    assert.equal(sent.length, 1);
+    const [to, code] = sent[0];
+    assert.equal(to, '+15550100777');
+    assert.match(code, /^[0-9]{6}$/);
+    assert.equal((await memberWaitlist.stateFor(pool, nia.id)).state, 'none', 'not on it until the code is in');
+    await assert.rejects(
+      memberWaitlist.verifyPhone(pool, { userId: nia.id, rawPhone: '+15550100777', code: code === '000000' ? '111111' : '000000' }),
+      (err) => err.code === 'invalid_code'
+    );
+    const done = await memberWaitlist.verifyPhone(pool, { userId: nia.id, rawPhone: '+15550100777', code });
+    assert.deepEqual([done.next, done.state, done.phone], ['listed', 'listed', '+15550100777']);
+    assert.equal(done.listedKey, '+15550100777', 'the card names the number it joined with');
+    // The row was linked and confirmed, and carries the number, not an address.
+    const { rows: [row] } = await pool.query(
+      'SELECT email, phone_e164, linked_user_id::int AS linked_user_id, confirmed_at IS NOT NULL AS confirmed FROM waitlist_signups WHERE phone_e164 = $1',
+      ['+15550100777']);
+    assert.deepEqual(row, { email: null, phone_e164: '+15550100777', linked_user_id: nia.id, confirmed: true });
+    // Released the ordinary way, the account is let in.
+    const { rows: [{ id: signupId }] } = await pool.query(
+      'SELECT id FROM waitlist_signups WHERE phone_e164 = $1', ['+15550100777']);
+    await waitlist.releaseWaitlistSignup(pool, signupId);
+    assert.deepEqual(await tier(nia.id), { has_platform_access: true, private: true });
+  });
+
+  await t.test('the card joins in one press with the account\'s own verified number', async () => {
+    const omar = await account();
+    await invites.redeem(pool, { token: made.link.token, user: omar });
+    await pool.query(
+      "INSERT INTO user_phone_identities (user_id, firebase_uid, phone_e164) VALUES ($1, 'uid-omar', '+15550100888')",
+      [omar.id]
+    );
+    const sent = [];
+    const joined = await memberWaitlist.joinByPhone(pool, {
+      userId: omar.id, rawPhone: '+1 555 0100 888', send: (...a) => sent.push(a),
+    });
+    assert.equal(joined.next, 'listed', 'the account\'s own number needs no code');
+    assert.equal(joined.phone, '+15550100888');
+    assert.deepEqual(sent, [], 'nothing texted: the account verified it already');
+    // A number another account holds is refused, never re-pointed.
+    const somebody = await account();
+    await assert.rejects(
+      memberWaitlist.joinByPhone(pool, { userId: somebody.id, rawPhone: '+15550100888', send: () => {} }),
+      (err) => err.code === 'phone_in_use' && err.status === 409
+    );
+    await assert.rejects(
+      memberWaitlist.joinByPhone(pool, { userId: somebody.id, rawPhone: 'not a number', send: () => {} }),
+      (err) => err.code === 'invalid_phone'
+    );
   });
 
   await t.test('an address another account holds is refused, whichever way it arrives', async () => {

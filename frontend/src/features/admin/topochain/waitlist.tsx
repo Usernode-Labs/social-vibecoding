@@ -102,6 +102,9 @@ const canWrite = () => !!topo()?.canWrite();
 type WaitlistRow = {
   id: number;
   email: string;
+  /** The phone number on a phone-keyed row; null on an email-keyed row. A
+   *  row carries exactly one of the two keys. */
+  phone_e164?: string | null;
   confirmed_at?: string | null;
   submitted_at?: string | null;
   released_at?: string | null;
@@ -113,6 +116,8 @@ type WaitlistRow = {
   invited_by_email?: string | null;
   /** The one "you're in" mail admitting sends, if a delivery was recorded. */
   invite_email?: { status?: string | null; created_at?: string | null; error?: string | null } | null;
+  /** The phone twin of invite_email: the one "you're in" text. */
+  invite_text?: { status?: string | null; created_at?: string | null; error?: string | null } | null;
   /** Facts about what this signup did. Deliberately carries no score. */
   signals?: {
     confirmed: boolean;
@@ -323,18 +328,22 @@ function SurveyAnswers({ answers, options }: { answers: Answers; options?: Waitl
   return <>{lines}</>;
 }
 
-// What the row's own delivery record says about the one mail admitting sends.
-// Null on every row in a staging clone: mail_deliveries is staging:private,
-// so the table is copied schema-only and the seed writes its own fixtures.
-function inviteMailLine(row: WaitlistRow): string | null {
-  const m = row.invite_email;
-  if (!m || !m.status) {
+// What the row's own delivery record says about the one notice admitting
+// sends. Null on every row in a staging clone: mail_deliveries and
+// sms_deliveries are staging:private, so the tables are copied schema-only
+// and the seed writes its own fixtures.
+//
+// A row is keyed by exactly one channel, so the record is read off the
+// matching ledger and labelled for it. Both ledger shapes are identical
+// (kind, status, created_at, error).
+function noticeLine(record: WaitlistRow['invite_email'], row: WaitlistRow): string | null {
+  if (!record || !record.status) {
     if (!row.released_at) return null;
     return 'No delivery recorded.';
   }
-  const when = m.created_at ? ` (${fmt(m.created_at)})` : '';
-  if (m.status === 'sent') return `Sent${when}`;
-  return `${m.status}${when}${m.error ? `: ${m.error}` : ''}`;
+  const when = record.created_at ? ` (${fmt(record.created_at)})` : '';
+  if (record.status === 'sent') return `Sent${when}`;
+  return `${record.status}${when}${record.error ? `: ${record.error}` : ''}`;
 }
 
 // The expandable block under a waitlist row: the dates the columns compress,
@@ -343,7 +352,8 @@ function inviteMailLine(row: WaitlistRow): string | null {
 // shared options fetch, and a hook needs a component to live in.
 function WaitlistDetails({ row }: { row: WaitlistRow }) {
   const options = useWaitlistOptions();
-  const mail = inviteMailLine(row);
+  const byPhone = !!row.phone_e164;
+  const notice = noticeLine(byPhone ? row.invite_text : row.invite_email, row);
   const detail = (label: string, value: ReactNode) => (value ? (
     <div key={label}>
       <span className="text-zinc-500 dark:text-zinc-400">{`${label}: `}</span>
@@ -357,11 +367,13 @@ function WaitlistDetails({ row }: { row: WaitlistRow }) {
       </summary>
       <div className="mt-1 space-y-0.5 text-zinc-600 dark:text-zinc-300">
         {detail('Signed up', fmt(row.submitted_at))}
-        {detail('Address confirmed', row.confirmed_at
+        {detail(byPhone ? 'Phone confirmed' : 'Address confirmed', row.confirmed_at
           ? fmt(row.confirmed_at)
-          : 'Never. The link in the join email was not followed.')}
+          : (byPhone
+            ? 'Never. The code texted to this number was not entered.'
+            : 'Never. The link in the join email was not followed.'))}
         {detail('Admitted', row.released_at ? fmt(row.released_at) : 'Not yet.')}
-        {detail('Invite email', mail)}
+        {detail(byPhone ? 'Invite text' : 'Invite email', notice)}
         {detail('Invite link used by', row.signals?.invited
           ? `${row.signals.invited} signup${row.signals.invited === 1 ? '' : 's'}`
           : null)}
@@ -1241,8 +1253,15 @@ const WAITLIST_COLUMNS: Column<WaitlistRow>[] = [
     tdClass: 'font-mono',
     cell: (w) => (
       <>
-        {w.email}
-        {w.confirmed_at ? (
+        {w.phone_e164 || w.email}
+        {w.phone_e164 ? (
+          <span
+            className="text-zinc-500 dark:text-zinc-400 text-xs"
+            title="Signed up with a phone number; the code texted to it is what confirms the row"
+          >
+            {' by text'}
+          </span>
+        ) : w.confirmed_at ? (
           <span
             className="text-emerald-700 dark:text-emerald-400 text-xs"
             title={`Followed the confirm link in the join email on ${fmt(w.confirmed_at)}`}

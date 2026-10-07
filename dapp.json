@@ -425,6 +425,64 @@
       "description": "Legacy sender address, kept as a fallback for deploys configured before PLATFORM_MAIL_FROM existed. Prefer PLATFORM_MAIL_FROM; this is only consulted when that is unset. Not secret."
     },
     {
+      "key": "PLATFORM_SMS_PROVIDER",
+      "group": "Platform SMS",
+      "default": "auto",
+      "required": false,
+      "description": "Which transport sends platform texts: auto (default), twilio, http, or log. auto tries Twilio, then the generic HTTP API, and in production sends nothing rather than printing codes into the log. Naming a provider explicitly means a missing key is reported as broken, not silently downgraded. A staging preview ALWAYS logs instead of delivering, whatever this says." 
+    },
+    {
+      "key": "PLATFORM_SMS_FROM",
+      "group": "Platform SMS",
+      "required": false,
+      "description": "The sender number on every platform text, in E.164 (for example +18005550100). Defaults to +18005550100 so a fresh deploy needs no edit here, but the number still has to be registered with the carrier (a US A2P 10DLC campaign) before a text reaches a US handset. Not secret: it is on every text we send. Ignored by the Twilio transport when a Messaging Service SID is set." 
+    },
+    {
+      "key": "TWILIO_ACCOUNT_SID",
+      "group": "Platform SMS",
+      "required": false,
+      "description": "Twilio account SID (the basic-auth username for the Messages API). Set together with TWILIO_AUTH_TOKEN to send texts through Twilio. A partial config sends nothing — the transport logs the missing keys and is not a candidate."
+    },
+    {
+      "key": "TWILIO_AUTH_TOKEN",
+      "group": "Platform SMS",
+      "private": true,
+      "required": false,
+      "description": "Twilio auth token paired with TWILIO_ACCOUNT_SID. Private: it can send texts as your number, so it is encrypted at rest and never returned by any API. Note the platform-variable value constraints (src/services/platform-env.js): no single quote, no CR, no NUL, 8192 characters max."
+    },
+    {
+      "key": "TWILIO_MESSAGING_SERVICE_SID",
+      "group": "Platform SMS",
+      "required": false,
+      "description": "Twilio Messaging Service SID. When set it is used instead of PLATFORM_SMS_FROM as the sender, which is Twilio's recommended way to send A2P traffic because the service picks a registered number from the campaign. Optional: an operator using a plain sender number leaves it unset."
+    },
+    {
+      "key": "TOPOCHAIN_SMS_API_URL",
+      "group": "Platform SMS",
+      "required": false,
+      "description": "HTTPS send endpoint for the generic HTTP SMS provider — used when PLATFORM_SMS_PROVIDER is http, or when auto finds no Twilio config. POSTed as JSON with a bearer token; body shape lives in src/services/sms/transports/http.js. All three TOPOCHAIN_SMS_* keys must be set together — a partial config sends nothing."
+    },
+    {
+      "key": "TOPOCHAIN_SMS_API_KEY",
+      "group": "Platform SMS",
+      "private": true,
+      "required": false,
+      "description": "Bearer credential for TOPOCHAIN_SMS_API_URL. Private: it can send texts as your number, so it is encrypted at rest and never returned by any API. Only used by the http transport — one of several providers."
+    },
+    {
+      "key": "TOPOCHAIN_SMS_FROM",
+      "group": "Platform SMS",
+      "required": false,
+      "description": "Sender number for the generic HTTP SMS provider, in E.164. Required only by the http transport; the Twilio transport uses PLATFORM_SMS_FROM or its Messaging Service instead. Not secret."
+    },
+    {
+      "key": "PLATFORM_SMS_MAX_PER_HOUR",
+      "group": "Platform SMS",
+      "default": "200",
+      "required": false,
+      "description": "Global ceiling on outbound texts per rolling hour. Bounds the carrier bill and the reputation damage from a runaway loop or an abusive burst; per-recipient caps (1 waitlist welcome/day, 10 requested waitlist codes/day, 3 release texts/day, all a minute apart) are fixed in code (src/services/sms/rate-limit.js). Sends over the ceiling are recorded as suppressed_rate_limit." 
+    },
+    {
       "key": "MCP_CONNECTOR_REDIRECT_HOSTS",
       "group": "Chat connectors",
       "required": false,
@@ -2086,6 +2144,20 @@
       "name": "A confirmed re-join is never asked for a code (#2201)",
       "path": "/?shot=waitlist-rejoined",
       "expectSelector": "#waitlist-confirm.hidden",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Waitlist offers to join by phone, with the switch and the number field (#SMS)",
+      "path": "/?shot=waitlist-phone",
+      "expectSelector": "#auth-waitlist-screen #waitlist-form:has(#waitlist-channel-phone):has(#waitlist-phone)",
+      "expectText": "Phone number",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Admin Waitlist names a phone signup's number and its invite text (#SMS)",
+      "path": "/#admin/waitlist",
+      "expectSelector": "#admin-topo-wl-table",
+      "expectText": "by text",
       "allowConsoleErrors": true
     },
     {
