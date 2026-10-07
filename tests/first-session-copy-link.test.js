@@ -13,7 +13,7 @@
 //   - Copy link copies the note and the link, the text the share sheet's
 //     own fallback copied, and then does what a share does: keeps the note,
 //     posts it once as the maker's first chat message, and tells the made
-//     screen ("Invite sent");
+//     screen (since #4196 "Link copied", and the sheet stays open);
 //   - the copy survives Safari, which copies only inside the press and so
 //     refused a `writeText` made after the press had waited on POST
 //     .../invite-links: a link still being made goes on the clipboard as a
@@ -132,22 +132,67 @@ test('Copy link copies the note and the link, then does what a share does', () =
   assert.equal(inviteText('   ', 'https://h.test/invite/abc'), 'https://h.test/invite/abc', 'no note: the link alone');
 
   const src = read(MADE);
-  // One "it went out" for both: the note kept, posted once, the made screen told.
-  assert.match(src, /const sent = useCallback\(async \(\) => \{\s+keepNote\(made\.slug, note\);\s+await postNote\(\);\s+onSent\(\);\s+\}/);
+  // One "it went out" for both: said on the sheet, the note kept, posted
+  // once, the made screen told how. The sheet stays open (#4196).
+  assert.match(src, /const sent = useCallback\(async \(how: SentHow\) => \{\s+setStatus\(sentStatus\(how\)\);\s+setOut\(true\);\s+keepNote\(made\.slug, note\);\s+await postNote\(\);\s+onSent\(how\);\s+\}/);
   const share = src.slice(src.indexOf('const shareLink = useCallback'), src.indexOf('const copyLink = useCallback'));
   const copy = src.slice(src.indexOf('const copyLink = useCallback'), src.indexOf('const tile = '));
-  assert.match(share, /await sent\(\);/);
-  assert.match(copy, /await sent\(\);/);
+  assert.match(share, /await sent\('shared'\);/);
+  assert.match(share, /await sent\('copied'\);/);
+  assert.match(copy, /await sent\('copied'\);/);
   // The share sheet's own fallback copies the same text.
-  assert.match(share, /navigator\.clipboard\.writeText\(inviteText\(note, url\)\)/);
+  assert.match(share, /const outcome = await copyText\(inviteText\(note, url\)\);/);
   // The copy is started before the press awaits anything: a link already made
   // is copied as it is; one still to make goes in as a promise.
-  assert.match(copy, /setBusy\(true\); setError\(null\); setStatus\(null\);\s+try \{\s+const ready = linkRef\.current;\s+const outcome = await copyText\(ready \? inviteText\(note, ready\)\s+: link\(\)\.then\(\(url\) => \(url \? inviteText\(note, url\) : null\)\)\);/);
-  assert.equal((copy.match(/await /g) || []).length, 3, 'the copy, the pause on "Copied", the share\'s steps: nothing awaited before the copy');
-  // Said on the sheet, and seen before it goes.
-  assert.match(copy, /setCopied\(true\);\s+setStatus\('Link copied\. Paste it in your group chat\.'\);\s+await new Promise\(\(done\) => \{ setTimeout\(done, COPIED_MS\); \}\);\s+await sent\(\);/);
+  assert.match(copy, /setBusy\(true\); setError\(null\);\s+try \{\s+const ready = linkRef\.current;\s+const outcome = await copyText\(ready \? inviteText\(note, ready\)\s+: link\(\)\.then\(\(url\) => \(url \? inviteText\(note, url\) : null\)\)\);/);
+  assert.equal((copy.match(/await /g) || []).length, 2, 'the copy, then the share\'s steps: nothing awaited before the copy, and no pause before the sheet says so');
+  // Said on the sheet, which stays: "✓ Copied" on the button for a moment.
+  assert.match(copy, /setCopied\(Date\.now\(\)\);\s+await sent\('copied'\);/);
+  assert.match(src, /const t = window\.setTimeout\(\(\) => setCopied\(0\), COPIED_MS\);/);
   assert.match(src, /copied \? '✓ Copied' : 'Copy link'/);
   assert.match(src, /const COPIED_MS = 1200;/);
+  const { sentStatus } = loadTsx(MADE);
+  assert.equal(sentStatus('copied'), 'Link copied. Paste it in your group chat.');
+  assert.equal(sentStatus('shared'), '✓ Link shared', 'never "Invite sent": the page cannot know a message went');
+});
+
+// #4196: "Clicking Share link just immediately goes back to the prior screen
+// with ✓ Invite sent." The sheet closed the moment the share sheet resolved.
+test('after a share or a copy the sheet stays open, says so, and Done closes it', () => {
+  const src = read(MADE);
+  const sheet = src.slice(src.indexOf('export function InviteSheet('), src.indexOf('export function PlanWaitsCard('));
+  // Nothing in the sheet closes it but ✕, the backdrop, Escape and Done.
+  assert.equal((sheet.match(/onClose\(\)/g) || []).length, 1, 'Escape');
+  assert.equal((sheet.match(/onClick=\{onClose\}/g) || []).length, 3, 'the backdrop, ✕ and Done');
+  assert.match(sheet, /\{out \? \(\s+<Button\s+type="button"\s+data-first-session-invite-done=""\s+onClick=\{onClose\}\s+layout="full"\s+variant="pillRaised"\s+size="pillLg"\s+ink="neutral"/);
+  // Not drawn before anything went out.
+  assert.doesNotMatch(renderSheet({ touch: false, share: true }), /data-first-session-invite-done/);
+  // The made screen is told how, and does not close the sheet.
+  assert.match(src, /onSent=\{\(how\) => setSentHow\(how\)\}/);
+  assert.doesNotMatch(src, /setInviting\(false\); \}\}/);
+});
+
+test('a share: cancelled changes nothing; refused copies instead; a made link is shared from inside the press', () => {
+  const src = read(MADE);
+  const share = src.slice(src.indexOf('const shareLink = useCallback'), src.indexOf('const copyLink = useCallback'));
+  // A link already made is not waited on, so the press can still open the share sheet.
+  assert.match(share, /const url = linkRef\.current \|\| await link\(\);/);
+  // Cancelled: back where it was, the status untouched.
+  assert.match(share, /if \(\(err as Error\)\?\.name === 'AbortError'\) return;/);
+  assert.match(share, /setBusy\(true\); setError\(null\);\s+try/, 'no status cleared on the way in');
+  // Any other failure falls through to the copy; a refused copy leaves the
+  // link ready for the next press.
+  assert.match(share, /if \(outcome === 'copied'\) \{\s+setCopied\(Date\.now\(\)\);\s+await sent\('copied'\);\s+return;\s+\}/);
+  assert.match(share, /setStatus\('Your link is ready\. Press Share again to send it\.'\);/);
+  assert.doesNotMatch(share, /navigator\.clipboard\.writeText/, 'the copy goes through copyText and its fallbacks');
+});
+
+test('Escape closes the sheet, but not while it is dismissing the OS share sheet', () => {
+  const src = read(MADE);
+  assert.match(src, /if \(sharing\.current \|\| Date\.now\(\) - shareGoneAt\.current < SHARE_ESCAPE_MS\) return;\s+onClose\(\);/);
+  const share = src.slice(src.indexOf('const shareLink = useCallback'), src.indexOf('const copyLink = useCallback'));
+  assert.match(share, /sharing\.current = true;\s+try \{\s+await nav\.share\(/);
+  assert.match(share, /\} finally \{\s+sharing\.current = false;\s+shareGoneAt\.current = Date\.now\(\);\s+\}/);
 });
 
 test('opening the sheet makes no link: one is made only by a press', () => {
@@ -156,7 +201,7 @@ test('opening the sheet makes no link: one is made only by a press', () => {
   // The one POST that makes a link is link(), and only the two presses call it.
   assert.equal((sheet.match(/method: 'POST'/g) || []).length, 2, 'the link, and the note as a chat message');
   assert.equal((sheet.match(/\blink\(\)/g) || []).length, 2);
-  assert.match(sheet, /const url = await link\(\);/);
+  assert.match(sheet, /const url = linkRef\.current \|\| await link\(\);/);
   assert.match(sheet, /: link\(\)\.then\(/);
   // No effect reaches for it.
   for (const effect of sheet.match(/useEffect\(\(\) => \{[\s\S]*?\n {2}\}, \[[^\]]*\]\);/g) || []) {

@@ -193,9 +193,15 @@ test('the invite line says who joined, once somebody has', () => {
   assert.match(src, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/community`, \{ credentials: 'same-origin' \}\)/);
   assert.match(src, /if \(!on\) return undefined;/);
   const { sentLines } = loadTsx(`${DIR}/made.tsx`);
-  assert.deepEqual(sentLines(null), ['✓ Invite sent.']);
+  // #4196: what went out, said the way it went; never "Invite sent", which
+  // a share sheet cannot promise.
+  assert.deepEqual(sentLines(null), ['✓ Link shared.']);
+  assert.deepEqual(sentLines(null, 'shared'), ['✓ Link shared.']);
+  assert.deepEqual(sentLines(null, 'copied'), ['✓ Link copied.']);
   assert.deepEqual(sentLines('✓ priya joined.'), ['✓ priya joined.']);
-  assert.match(src, /\{sent \? sentLines\(joined\)\.map\(/);
+  assert.deepEqual(sentLines('✓ priya joined.', 'copied'), ['✓ priya joined.']);
+  assert.doesNotMatch(src, /'✓ Invite sent/);
+  assert.match(src, /\{sent \? sentLines\(joined, sentHow\)\.map\(/);
   // The route says who is in it: newest first after the maker, and how many.
   const route = read('src/routes/apps.js');
   assert.match(route, /router\.get\('\/api\/apps\/:slug\/community',/);

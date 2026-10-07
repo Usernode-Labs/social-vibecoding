@@ -290,9 +290,12 @@ test('the three unmounting surfaces close with release(); the dialogs keep dismi
 // opens "What do you want to make?", which is its own full-screen surface
 // on the wallpaper (tests/first-session-make.test.js pins its bar and the
 // status bar's inset).
-test('Create\'s screen covers the whole page in its own ground, and the dialog\'s layouts are gone', () => {
+test('Create\'s screen covers the page under the header in its own ground, and the dialog\'s layouts are gone', () => {
   const make = read('frontend/src/features/first-session/make.tsx');
-  assert.match(make, /className="platform-kb-surface fixed inset-0 z-\[9000\] flex flex-col /);
+  // The first session's covers the whole page; from Create it starts at the
+  // platform header's foot (#4195). Both are one opaque box, never a dialog card.
+  assert.match(make, /export const MAKE_ROOT = 'platform-kb-surface fixed inset-0 z-\[9000\] flex flex-col /);
+  assert.match(make, /export const MAKE_ROOT_UNDER_HEADER = 'platform-kb-surface platform-under-header fixed inset-x-0 bottom-0 z-\[9000\] flex flex-col /);
   assert.match(make, /style=\{\{ background: 'var\(--home-wallpaper, #f4f2e4\)' \}\}/);
   assert.doesNotMatch(APP_CSS, /#create-card|--create-modal-/);
 });

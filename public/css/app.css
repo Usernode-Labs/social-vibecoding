@@ -19521,6 +19521,24 @@ html.un-kb #platform-tabs {
   }
 }
 
+/* A FULL-SCREEN SURFACE THAT LEAVES THE PLATFORM HEADER SHOWING (#4195).
+   The make and made screens opened from Create are `fixed` from the header's
+   foot down rather than `inset-0` over it, so the header's back, bell and
+   menus stay where they always are (first-session/make.tsx MAKE_ROOT). The
+   tab bar stays covered. With the keyboard up, the band the
+   `.platform-kb-surface` rule above pads into starts at the pan
+   (`--platform-vv-top`) from the page's top, and this box starts the
+   header's height further down, so only the part of the pan past that is
+   padding here. */
+.platform-under-header {
+  top: calc(var(--browser-banner-h, 0px) + var(--platform-header-h) + var(--platform-safe-top));
+}
+@media (max-width: 767px) {
+  html.platform-kb-open .platform-kb-surface.platform-under-header {
+    padding-top: max(0px, calc(var(--platform-vv-top, 0px) - var(--browser-banner-h, 0px) - var(--platform-header-h) - var(--platform-safe-top)));
+  }
+}
+
 .platform-tabs {
   /* FIXED TO THE REAL VIEWPORT. `.dev-ws-tabs` above documents the three
      rounds this saves: `sticky` puts a bar's resting place at the mercy of
