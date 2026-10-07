@@ -152,6 +152,8 @@ test('the console island imports every admin module, console first', () => {
     'admin-topochain', 'admin-users',
     // Welcome messages: the group and first message somebody let in gets.
     'admin-welcome-dm',
+    // The workflow machines: problems, instances and timelines.
+    'admin-workflows',
   ], 'every section module is imported by the island');
 });
 

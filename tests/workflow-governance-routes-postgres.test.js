@@ -32,7 +32,7 @@ async function call(handler, req) {
       status(code) { this.statusCode = code; return this; },
       json(body) { resolve({ status: this.statusCode, body }); return this; },
     };
-    Promise.resolve(handler({ get: () => undefined, params: {}, body: {}, ...req }, res)).catch(reject);
+    Promise.resolve(handler({ get: () => undefined, params: {}, body: {}, query: {}, ...req }, res)).catch(reject);
   });
 }
 
@@ -82,6 +82,7 @@ test('governance routes through the workflow machine', { timeout: 120000 }, asyn
   const platform = require('../src/workflow/platform.ts');
   const { issueRoutes, resolveSupersededCloseProposals } = require('../src/routes/issues');
   const router = issueRoutes(config);
+  const adminRouter = require('../src/routes/admin-workflow').adminWorkflowRoutes(config);
   t.after(async () => {
     await platform.stopWorkflow();
     await pool.end();
@@ -184,5 +185,47 @@ test('governance routes through the workflow machine', { timeout: 120000 }, asyn
     } finally {
       appAccess.getAppForUser = origGet;
     }
+  });
+
+  await t.test('the admin console reads problems and timelines, and acts through events', async () => {
+    const adminUser = { ...(await user({ admin: true })), isAdmin: true, canAdminWrite: true };
+    const viewOnly = { ...(await user()), isAdmin: true, canAdminWrite: false };
+    const overview = await call(handlerFor(adminRouter, 'get', '/api/admin/workflow'), { user: adminUser });
+    assert.equal(overview.status, 200);
+    assert.equal(overview.body.running, true);
+    assert.deepEqual(overview.body.actions['governance-proposal'].sort(), ['AdminApply', 'Evaluate', 'RetryFollowup']);
+    assert.ok(overview.body.counts.some((c) => c.machine === 'governance-proposal' && c.state === 'applied'));
+
+    const i = await issue('close_issue', { issueNumber: 21, issueTitle: 'w' });
+    await pool.query('UPDATE apps SET approvals_required = 9 WHERE id = $1', [app.id]);
+    await platform.fileProposal(i.id, app.id);
+    await until(async () => (await instance(i))?.state === 'open', 'filed');
+    const detail = await call(handlerFor(adminRouter, 'get', '/api/admin/workflow/instance'),
+      { user: viewOnly, query: { machine: 'governance-proposal', key: `issue:${i.id}` } });
+    assert.equal(detail.status, 200);
+    assert.equal(detail.body.instance.state, 'open');
+    assert.deepEqual(detail.body.events.map((e) => [e.type, e.result]), [['Filed', 'accepted']]);
+
+    const evaluate = handlerFor(adminRouter, 'post', '/api/admin/workflow/event');
+    const recheck = await call(evaluate, { user: adminUser, body: { machine: 'governance-proposal', key: `issue:${i.id}`, type: 'Evaluate' } });
+    assert.equal(recheck.body.status, 'accepted');
+    const bad = await call(evaluate, { user: adminUser, body: { machine: 'governance-proposal', key: `issue:${i.id}`, type: 'Withdraw' } });
+    assert.equal(bad.status, 400);
+    const applied = await call(evaluate, { user: adminUser, body: { machine: 'governance-proposal', key: `issue:${i.id}`, type: 'AdminApply' } });
+    assert.equal(applied.body.status, 'accepted');
+    assert.equal((await status(i)).payload.appliedBy, `admin:${adminUser.username}`);
+
+    // A faulted instance is listed first and released by retrying its event.
+    const f = await issue('close_issue', { issueNumber: 22, issueTitle: 'v' });
+    await platform.fileProposal(f.id, app.id);
+    await until(async () => (await instance(f))?.state === 'open', 'filed');
+    await pool.query(`BEGIN; SET LOCAL app.wf_writer = 'transition';
+      UPDATE wf_instances SET flag = 'faulted', flag_detail = '{"eventId": 0, "message": "synthetic"}' WHERE key = 'issue:${f.id}'; COMMIT`);
+    const problems = await call(handlerFor(adminRouter, 'get', '/api/admin/workflow'), { user: viewOnly });
+    assert.ok(problems.body.problems.flagged.some((p) => p.key === `issue:${f.id}`));
+    const release = handlerFor(adminRouter, 'post', '/api/admin/workflow/release');
+    const released = await call(release, { user: adminUser, body: { machine: 'governance-proposal', key: `issue:${f.id}`, mode: 'skip' } });
+    assert.equal(released.body.released, true);
+    assert.equal((await pool.query(`SELECT flag FROM wf_instances WHERE key = $1`, [`issue:${f.id}`])).rows[0].flag, null);
   });
 });

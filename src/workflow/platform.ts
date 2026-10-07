@@ -201,3 +201,36 @@ export async function targetsClosed(appId: number, numbers: number[], cause: { k
   }
   return rows.map((r: { id: number }) => r.id);
 }
+
+// ── The admin console ───────────────────────────────────────────────────
+
+// The events an admin may append from the console, per machine, and the
+// payload each needs beyond the admin's own identity.
+const ADMIN_EVENTS = new Map<string, ReadonlySet<string>>([
+  [MACHINE, new Set(['Evaluate', 'AdminApply', 'RetryFollowup'])],
+]);
+
+export function adminEvents(): Record<string, string[]> {
+  return Object.fromEntries([...ADMIN_EVENTS].map(([m, types]) => [m, [...types]]));
+}
+
+export class AdminActionError extends Error {
+  status: number;
+  constructor(status: number, message: string) { super(message); this.status = status; }
+}
+
+export async function adminEvent(
+  machineName: string, key: string, type: string, payload: Record<string, unknown>, admin: { id: number; username: string },
+): Promise<EventOutcome> {
+  if (!runtime) throw new AdminActionError(409, 'The workflow runtime is not running here');
+  if (!ADMIN_EVENTS.get(machineName)?.has(type)) throw new AdminActionError(400, `${type} is not an admin action on ${machineName}`);
+  const body = type === 'AdminApply' ? { userId: admin.id, username: admin.username }
+    : type === 'RetryFollowup' ? { workKey: String(payload.workKey || '') } : {};
+  return runtime.appendAndWait(machineName === MACHINE ? machine! : machineName, key, { type, payload: body },
+    { requestKey: `admin:${randomUUID()}`, source: { kind: 'admin', name: 'console' }, actor: `user:${admin.id}` });
+}
+
+export async function adminRelease(machineName: string, key: string, mode: 'retry' | 'skip', admin: { id: number }) {
+  if (!runtime) throw new AdminActionError(409, 'The workflow runtime is not running here');
+  return runtime.release(machineName, key, { mode, actor: `user:${admin.id}` });
+}

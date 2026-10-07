@@ -41,6 +41,7 @@ const { issueRoutes } = require('./src/routes/issues');
 const { requestSpecRoutes } = require('./src/routes/request-specs');
 const { campaignRoutes } = require('./src/routes/campaigns');
 const { adminRoutes } = require('./src/routes/admin');
+const { adminWorkflowRoutes } = require('./src/routes/admin-workflow');
 const { adminSupportRoutes } = require('./src/routes/admin-support');
 const { adminUserMergeRoutes } = require('./src/routes/admin-user-merge');
 const { dashboardRoutes } = require('./src/routes/dashboard');
@@ -659,6 +660,7 @@ app.use(issueRoutes(config));
 app.use(requestSpecRoutes(config));
 app.use(campaignRoutes(config));
 app.use(adminRoutes(config));
+app.use(adminWorkflowRoutes(config));
 // #3654: the Homeroom bot's benchmark (services/bench/), beside its console.
 app.use(require('./src/routes/homeroom-bench').homeroomBenchRoutes(config));
 // The App bench studio, and the admin connector's reads of the bot and of the
