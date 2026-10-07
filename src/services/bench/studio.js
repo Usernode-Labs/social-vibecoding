@@ -636,7 +636,9 @@ const CAPTURE_CONTRACT = [
   '(USERNODE_ENV=staging) on a fresh, empty database, with one throwaway viewer signed in. It takes 16 screenshots:',
   '390x844 and 1280x800, light and dark (`?un-theme=light|dark`), and four states: populated (the app\'s staging seed',
   'plus `?demo=1`), empty (every table truncated), error (GET /api/* answering 500) and loading (GET /api/* held two',
-  'seconds). It also counts console errors, overflow at 360px, tap targets under 44px, text below WCAG AA and cards',
+  'seconds). Then, on the populated screen, it taps the screen\'s primary action once (its one `.btn-primary`, else a',
+  'form\'s submit button, else the button in the accent colour) and takes up to three more: phone light and dark,',
+  'desktop light. It also counts console errors, overflow at 360px, tap targets under 44px, text below WCAG AA and cards',
   'nested in cards, and lints the client source for emoji used as icons, uppercase tracked eyebrows, one-off text',
   'sizes and stray hex colours. A judge then grades the screenshots, blind, against the brief.',
 ].join('\n');

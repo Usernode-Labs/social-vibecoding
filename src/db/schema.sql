@@ -10375,7 +10375,7 @@ CREATE TABLE IF NOT EXISTS bench_trial_artifacts (
   shot_id       VARCHAR(64) NOT NULL,
   viewport      VARCHAR(16) NOT NULL,
   look          VARCHAR(8) NOT NULL CHECK (look IN ('light', 'dark')),
-  state         VARCHAR(16) NOT NULL CHECK (state IN ('populated', 'empty', 'error', 'loading')),
+  state         VARCHAR(16) NOT NULL CHECK (state IN ('populated', 'empty', 'error', 'loading', 'result')),
   content_type  VARCHAR(32) NOT NULL,
   data          BYTEA NOT NULL,
   width         INTEGER CHECK (width IS NULL OR width > 0),
@@ -10386,6 +10386,15 @@ CREATE TABLE IF NOT EXISTS bench_trial_artifacts (
   UNIQUE (trial_id, shot_id)
 );
 COMMENT ON TABLE bench_trial_artifacts IS 'staging:private';
+-- A fifth state, `result`: the populated screen after its primary action
+-- was tapped once (worker/usernode-bench-capture.js). Widening the CHECK on
+-- a table made before it rejects no row already stored.
+DO $$
+BEGIN
+  ALTER TABLE bench_trial_artifacts DROP CONSTRAINT IF EXISTS bench_trial_artifacts_state_check;
+  ALTER TABLE bench_trial_artifacts ADD CONSTRAINT bench_trial_artifacts_state_check
+    CHECK (state IN ('populated', 'empty', 'error', 'loading', 'result'));
+END $$;
 
 -- The App bench studio (services/bench/studio.js): first versions built from
 -- a brief the way the create-app flow builds them, driven from an admin's
