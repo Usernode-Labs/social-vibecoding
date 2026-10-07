@@ -201,6 +201,8 @@ test('an orphan whose Jobs finished is settled from their output through settleC
   assert.equal(settledWith.trigger, 'promote-kick');
   assert.equal(settledWith.testsCount, 3);
   assert.deepEqual(settledWith.capturePaths, ['/']);
+  assert.equal(settledWith.legacyMediaSuppressed, false,
+    'a manifest from before the flag reads as not superseded by before & after shots');
   assert.equal(settledWith.stdout, 'SHOT {"path":"/"}\n__USERNODE_TEST__ index=0 status=pass\n');
   assert.equal(settledWith.stderr, 'capture warning');
   assert.equal(settledWith.runPartial, false);
@@ -346,7 +348,7 @@ test('a launched run whose capture Job cannot be found is re-driven, not left pe
 test('a shots-only run over a range with no frontend files launches no capture Job, and that is not a re-drive', async (t) => {
   quietBroadcast(t);
   const pool = makePool({
-    orphans: [orphanRow({ manifest: { launched: true, trigger: 'promote-kick', shotsOnly: true, media: false, admissionReason: 'conflicts', startedAt: Date.now() - 30_000 } })],
+    orphans: [orphanRow({ manifest: { launched: true, trigger: 'promote-kick', shotsOnly: true, media: false, legacyMediaSuppressed: true, admissionReason: 'conflicts', startedAt: Date.now() - 30_000 } })],
     session: sessionRow(),
   });
   let settled = null;
@@ -361,6 +363,7 @@ test('a shots-only run over a range with no frontend files launches no capture J
   assert.equal(result.outcome, 'settled');
   assert.equal(settled.shotsOnly, true);
   assert.equal(settled.media, false);
+  assert.equal(settled.legacyMediaSuppressed, true, 'its outcome says before & after shots replaced its screenshots');
   assert.equal(settled.admissionReason, 'conflicts');
   assert.equal(settled.stdout, '');
 });

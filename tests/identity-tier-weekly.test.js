@@ -1,9 +1,11 @@
 // #838: the weekly credit cap follows the account's identity tier.
 //
-// Three tiers, each with an admin-set weekly default in platform_settings:
-// unverified (the base `user_weekly_limit_cents`), GitHub AND X verified
+// Four tiers, each with an admin-set weekly default in platform_settings:
+// unverified (the base `user_weekly_limit_cents`), phone verified
+// (`user_weekly_limit_phone_cents`, which also holds accounts the
+// verified-identity rule exempts), GitHub AND X verified
 // (`user_weekly_limit_social_cents`) and zkPassport verified
-// (`user_weekly_limit_zk_cents`). The two higher keys inherit the base while
+// (`user_weekly_limit_zk_cents`). The higher keys inherit the base while
 // unset. A per-user override still wins, tiers replace rather than stack,
 // and the daily cap is untouched. This drives src/services/limits.js over a
 // stubbed pool, the same way tests/identity-credit-tier.test.js does.
@@ -57,7 +59,7 @@ const TIERED = { ...BASE, user_weekly_limit_social_cents: '5000', user_weekly_li
 
 // ── the tier itself ──────────────────────────────────────────────────────
 
-test('the tier is read from the three proofs: both socials, or zkPassport, and zkPassport wins', () => {
+test('the tier is read from the proofs: a phone, both socials, or zkPassport, and zkPassport wins', () => {
   const t = limits.identityTierFromFlags;
   assert.equal(t(null).tier, 'unverified');
   assert.equal(t({}).tier, 'unverified');
@@ -68,12 +70,19 @@ test('the tier is read from the three proofs: both socials, or zkPassport, and z
   assert.equal(t({ has_github: true, has_x: true, has_zkpassport: true }).tier, 'zkpassport',
     'tiers replace, they do not stack');
   assert.deepEqual(t({ has_github: true, has_x: false }), {
-    tier: 'unverified', hasGithub: true, hasX: false, hasZkpassport: false,
+    tier: 'unverified', hasGithub: true, hasX: false, hasZkpassport: false, hasPhone: false, exempt: false,
   });
-  assert.deepEqual(limits.IDENTITY_TIERS, ['unverified', 'social', 'zkpassport']);
+  // A phone is the tier below GitHub and X; an account the verified-identity
+  // rule exempts (let in before it was switched on) sits in it too.
+  assert.equal(t({ has_phone: true }).tier, 'phone');
+  assert.equal(t({ has_phone: true, has_github: true, has_x: true }).tier, 'social');
+  assert.deepEqual([t({ identity_exempt: true }).tier, t({ identity_exempt: true }).exempt], ['phone', true]);
+  assert.equal(t({ identity_exempt: true, has_phone: true }).exempt, false, 'a phone is the reason, not the date');
+  assert.equal(t({ identity_exempt: true, has_zkpassport: true }).tier, 'zkpassport');
+  assert.deepEqual(limits.IDENTITY_TIERS, ['unverified', 'phone', 'social', 'zkpassport']);
 });
 
-test('getIdentityTier asks one query with the three EXISTS, and fails toward unverified', async () => {
+test('getIdentityTier asks one query with the four EXISTS and the exemption, and fails toward unverified', async () => {
   const pool = poolFor({ github: true, x: true });
   const r = await limits.getIdentityTier(pool, 7);
   assert.equal(r.tier, 'social');
@@ -82,7 +91,9 @@ test('getIdentityTier asks one query with the three EXISTS, and fails toward unv
   assert.match(q.text, /usi\.provider = 'github'/);
   assert.match(q.text, /usi\.provider = 'x'/);
   assert.match(q.text, /user_activities ua[\s\S]*ua\.source = 'zkpassport'/);
-  assert.equal((q.text.match(/EXISTS \(/g) || []).length, 3);
+  assert.match(q.text, /user_phone_identities up WHERE up\.user_id = \$1/);
+  assert.match(q.text, /identity_rule_exempt\(\$1\) AS identity_exempt/);
+  assert.equal((q.text.match(/EXISTS \(/g) || []).length, 4);
 
   const broken = poolFor({ tierError: new Error('identity store down') });
   assert.equal((await limits.getIdentityTier(broken, 7)).tier, 'unverified');

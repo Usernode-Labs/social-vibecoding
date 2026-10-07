@@ -9724,9 +9724,11 @@ CREATE INDEX IF NOT EXISTS idx_homeroom_bot_queue_order
 -- the model made it (`determined` / `missing_fact` are the belief model's
 -- prior), the text it would have posted, whether a live cap would have
 -- suppressed it, what the run cost, and how an admin rated it. Not marked
--- staging:private: every row derives from public GitHub issues and the
--- platform's own verdicts, and a staging preview of the dashboard needs
--- rows to show.
+-- staging:private as a table: the rows derive from public GitHub issues and
+-- the platform's own verdicts, a staging preview of the dashboard needs rows
+-- to show, and homeroom_bot_posts, the mention opt-outs and bench_tasks all
+-- point at it. One of its columns is a person's own words, `plan_change`
+-- (from their DM with the bot), and that column is private (below).
 CREATE TABLE IF NOT EXISTS homeroom_bot_runs (
   id               SERIAL PRIMARY KEY,
   app_id           INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
@@ -9877,6 +9879,8 @@ CREATE INDEX IF NOT EXISTS idx_homeroom_bot_requesters_user
 -- with it ("You asked: ..."), and the bot's change credits them by it. The
 -- issue's title stays the bot's short name for it.
 ALTER TABLE homeroom_bot_requesters ADD COLUMN IF NOT EXISTS asked_text TEXT;
+-- Their own words, often from their DM with the bot: not copied to staging.
+COMMENT ON COLUMN homeroom_bot_requesters.asked_text IS 'staging:private';
 
 -- B5: the bot is introduced once per person, ever: a maker at their first
 -- project, anybody else at their first request. Claimed by inserting the
@@ -10084,6 +10088,7 @@ CREATE INDEX IF NOT EXISTS homeroom_bot_runs_live_build_waiting_idx
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS plan JSONB;
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS awaiting_go_at TIMESTAMPTZ;
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS plan_change TEXT;
+COMMENT ON COLUMN homeroom_bot_runs.plan_change IS 'staging:private';
 CREATE INDEX IF NOT EXISTS homeroom_bot_runs_awaiting_go_idx
   ON homeroom_bot_runs(awaiting_go_at) WHERE awaiting_go_at IS NOT NULL;
 
@@ -10442,6 +10447,16 @@ BEGIN
     CHECK (status IN ('pending', 'running', 'ok', 'model_fail', 'infra_fail', 'timeout',
                       'not_applicable', 'skipped_cap', 'cancelled', 'awaiting'));
 END $$;
+-- A first version a restart interrupts goes on from where it was, as the
+-- bot's own builds do (services/bench/lane.js "After a restart"):
+-- `checkpoint` keeps what each finished sub-step left (the triage's answer,
+-- the spec, the build's commit), the sessions it opened and which of them a
+-- release already charged to the run. `prior_ms` is the time its earlier
+-- claims ran and `first_started_at` its first claim, so its elapsed time
+-- survives the restart.
+ALTER TABLE bench_trials ADD COLUMN IF NOT EXISTS checkpoint JSONB;
+ALTER TABLE bench_trials ADD COLUMN IF NOT EXISTS prior_ms BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE bench_trials ADD COLUMN IF NOT EXISTS first_started_at TIMESTAMPTZ;
 
 -- The first commit a brief's builds start from, made once per run, task and
 -- pack: today's starter rendered for the app's name, its sketch card, and the
@@ -11964,6 +11979,80 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS test_account_welcome_dm BOOLEAN NOT N
 CREATE INDEX IF NOT EXISTS idx_users_test_account_created_at
   ON users (test_account_created_at) WHERE test_account_created_at IS NOT NULL;
 
+-- The first-run "Add your phone number" step was answered, by "Not now" or
+-- by closing it (POST /api/me/phone-ask/answered): it is not asked again, and
+-- Home's card is where the phone is added after that. Adding the phone ends
+-- the ask on its own (identity_needed below).
+ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_ask_answered_at TIMESTAMPTZ;
+
+-- VERIFIED IDENTITY (sybil protection for public decisions and the full AI
+-- budget). An account is verified by any of: a verified phone
+-- (user_phone_identities), BOTH GitHub and X linked (user_social_identities,
+-- the "social" identity tier, services/limits.js), or a zkPassport proof
+-- (user_activities source 'zkpassport'). GitHub or X alone is not enough:
+-- either is free to make in bulk, and the link proves ownership only.
+CREATE OR REPLACE FUNCTION identity_verified(target_user_id INTEGER)
+RETURNS BOOLEAN
+LANGUAGE sql STABLE AS $$
+  SELECT EXISTS (SELECT 1 FROM user_phone_identities p WHERE p.user_id = target_user_id)
+      OR (EXISTS (SELECT 1 FROM user_social_identities g
+                   WHERE g.user_id = target_user_id AND g.provider = 'github')
+          AND EXISTS (SELECT 1 FROM user_social_identities x
+                       WHERE x.user_id = target_user_id AND x.provider = 'x'))
+      OR EXISTS (SELECT 1 FROM user_activities z
+                  WHERE z.user_id = target_user_id AND z.source = 'zkpassport')
+$$;
+-- When the verified-identity rule was switched on (Admin, Limits): the
+-- platform_settings row 'identity_rule_since', an ISO timestamp, absent while
+-- it is off. A value that is not a timestamp reads as off, never as an error
+-- in every tally that calls this.
+CREATE OR REPLACE FUNCTION identity_rule_since()
+RETURNS TIMESTAMPTZ
+LANGUAGE sql STABLE AS $$
+  SELECT CASE
+           WHEN ps.value ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}(:?[0-9]{2})?)$'
+           THEN ps.value::timestamptz
+         END
+    FROM platform_settings ps
+   WHERE ps.key = 'identity_rule_since'
+$$;
+-- Exempt from the rule: an account let in before it was switched on (or an
+-- admin). Existing members keep their public votes and their AI budget.
+CREATE OR REPLACE FUNCTION identity_rule_exempt(target_user_id INTEGER)
+RETURNS BOOLEAN
+LANGUAGE sql STABLE AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM users u
+     WHERE u.id = target_user_id
+       AND (u.is_admin
+            OR (u.has_platform_access
+                AND COALESCE(u.platform_access_granted_at, u.created_at) < identity_rule_since()))
+  )
+$$;
+-- Whether the rule holds this account to it: on, and the account is neither
+-- exempt nor verified. GET /api/auth/me's `identityNeeded`, which asks a new
+-- member for a phone (the first-run step, Home's card).
+CREATE OR REPLACE FUNCTION identity_needed(target_user_id INTEGER)
+RETURNS BOOLEAN
+LANGUAGE sql STABLE AS $$
+  SELECT identity_rule_since() IS NOT NULL
+     AND NOT identity_rule_exempt(target_user_id)
+     AND NOT identity_verified(target_user_id)
+$$;
+-- Whether a vote by `voter_id` on `target_app_id` needs a verified identity
+-- to count: the app is PUBLIC (view_visibility 'public') and the rule holds
+-- the voter to it (identity_needed above). Private groups' votes are never
+-- held to it. The vote routes refuse such a vote first
+-- (services/communities.js identityVoteRefusal); counts_toward_outcome
+-- leaves it out of every tally and denominator.
+CREATE OR REPLACE FUNCTION public_vote_needs_identity(voter_id INTEGER, target_app_id INTEGER)
+RETURNS BOOLEAN
+LANGUAGE sql STABLE AS $$
+  SELECT identity_rule_since() IS NOT NULL
+     AND EXISTS (SELECT 1 FROM apps a WHERE a.id = target_app_id AND a.view_visibility = 'public')
+     AND identity_needed(voter_id)
+$$;
+
 -- Whose vote counts toward an app's outcome (test accounts, D1). Everybody's,
 -- except a test account's on an app a real person made: that vote is recorded
 -- and shown, labelled, and left out of the tally and of the active-member
@@ -11980,6 +12069,9 @@ CREATE INDEX IF NOT EXISTS idx_users_test_account_created_at
 -- private groups. Invite links are cheap to make, so this keeps them from
 -- moving a public decision, and out of its denominator. The vote routes
 -- refuse such a vote first (services/communities.js privateVoteRefusal).
+--
+-- With the verified-identity rule on, a vote on a PUBLIC app counts only
+-- from a verified or exempt account (public_vote_needs_identity above).
 CREATE OR REPLACE FUNCTION counts_toward_outcome(voter_id INTEGER, target_app_id INTEGER)
 RETURNS BOOLEAN
 LANGUAGE sql STABLE AS $$
@@ -11999,6 +12091,7 @@ LANGUAGE sql STABLE AS $$
               AND NOT pv.has_platform_access AND NOT pv.is_admin
               AND pa.view_visibility = 'public'
          )
+     AND NOT public_vote_needs_identity(voter_id, target_app_id)
 $$;
 -- The same rule keyed by what was voted on, for the tallies that hold only a
 -- proposal's id (services/governance.js qualifiedCounts).

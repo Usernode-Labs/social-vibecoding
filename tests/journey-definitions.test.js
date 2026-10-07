@@ -114,13 +114,25 @@ test('next steps count moves and people, keep Left and Other, and flag dead ends
   assert.deepEqual(starts[0], { screen: 'home', visits: 6, people: 3 });
 });
 
-test('the real-person rule leaves out admins, bots, test accounts, restricted, deleted, service and left-out accounts', () => {
+test('the real-person rule leaves out admins, bots, test accounts, restricted, deleted, service, left-out accounts and team addresses', () => {
   const sql = journey.REAL_PERSON_SQL;
   for (const part of [
     'u.is_admin IS NOT TRUE', 'u.is_synthetic IS NOT TRUE', 'u.test_account_created_at IS NULL',
     'u.participation_restricted_at IS NULL',
     'u.anonymised_at IS NULL', 'NOT (LOWER(u.username) LIKE ANY($3::text[]))', 'NOT (u.id = ANY($4::int[]))',
+    `AND NOT (u.email IS NOT NULL AND (LOWER(split_part(u.email, '@', 2)) IN (${journey.TEAM_DOMAINS_SQL})`,
+    `IN (${journey.TEAM_ADDRESSES_SQL})`,
   ]) assert.ok(sql.includes(part), part);
+  // A team address: the team's domains, or a +tag of an admin's or a
+  // left-out account's address, read once per query (uncorrelated).
+  assert.deepEqual(journey.TEAM_DOMAINS, ['onhomeroom.com', 'usernodelabs.org', 'usernodelabs.com']);
+  assert.equal(journey.TEAM_DOMAINS_SQL, journey.TEAM_DOMAINS.map((d) => `'${d}'`).join(', '),
+    'the SQL list is the same three domains');
+  const team = journey.TEAM_ADDRESSES_SQL;
+  assert.ok(team.includes("regexp_replace(t.email, '\\+[^@]*@', '@')"), 'the +tag is dropped before comparing');
+  assert.ok(sql.includes("regexp_replace(u.email, '\\+[^@]*@', '@')"), 'on both sides');
+  assert.ok(team.includes('t.is_admin OR t.id = ANY($4::int[])'), 'admins and the left-out list name the team');
+  assert.doesNotMatch(team, /\bu\./, 'the team subquery does not reach back into the outer row');
   assert.equal(journey.REAL_VOTER_SQL, sql.replace(/\bu\./g, 'uy.'),
     'the yes-voters of a change are held to exactly the same rule');
   // B9: 'homeroom' joined the reserved prefixes with the bot's @mention.

@@ -187,7 +187,15 @@ async function provisionMissingRepo(config, pool, app) {
     repoUrl = repo.html_url;
 
     const dbUrl = dbManager.connectionUrl(dbManager.appDbName(app.slug), app.db_password);
-    const files = getTemplateFiles(app.name, app.slug, dbUrl);
+    // The app's own emoji icon, when that is what it has (apps.icon_emoji,
+    // and no icon image): the healed repo's starter screen shows the app's
+    // thumbnail rather than a bare letter, and dapp.json's icon block keeps
+    // the emoji through the first deploy's reconcile (#4047). An image icon
+    // cannot be carried by the template, so it is left alone — heal has
+    // never written one, and the template must not claim an emoji over it.
+    const files = getTemplateFiles(app.name, app.slug, dbUrl, null, {
+      iconEmoji: app.icon_emoji && !app.icon_image_id ? app.icon_emoji : null,
+    });
     await github.pushFiles(botUsername, app.slug, files, {
       message: `Initialize ${app.name} from Homeroom template (repo heal)`,
     });

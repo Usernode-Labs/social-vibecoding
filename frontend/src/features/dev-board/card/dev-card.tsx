@@ -158,7 +158,7 @@ export function CardIcon({ spec }: { spec: CardIconSpec }): ReactNode {
   const glyph = spec.small ? 'w-4 h-4' : 'w-5 h-5';
   return (
     <span
-      className={`${box} rounded-lg dev-card-icon ${spec.tint} flex items-center justify-center shrink-0${spec.pulse ? ' animate-pulse' : ''}`}
+      className={`${box} rounded-lg dev-card-icon ${spec.tint} flex items-center justify-center shrink-0${spec.pulse ? ' motion-safe:animate-pulse' : ''}`}
       title={spec.title}
     >
       <Glyph className={glyph} d={spec.path} aria-hidden="true" />

@@ -42,7 +42,7 @@
  * link on the open card.
  */
 
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { memo, useCallback, useEffect, useInsertionEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -1981,6 +1981,21 @@ function plural(n: number, one: string, many: string): string {
  * reader did and where those items are: above, still open, for a change of
  * mind; the way back up says the same.
  */
+/**
+ * The end card's ring total (#4031). `total` is the server's live count of
+ * open changes, and the vote the reader just cast takes its change out of
+ * it: one vote on the last open change dropped it to 0, the ring (112px and
+ * its gaps) left a card that centres its content, and everything under it
+ * jumped up 65px while the reader was looking. iOS left the button painted
+ * where it had been, a clipped second "See what changed this week". The
+ * ring never counts fewer than the votes cast in this pass plus the ones
+ * still waiting, so the pass that just finished shows a full ring instead
+ * of none.
+ */
+export function endRingTotal(total: number, votedHere: number, leftVotes: number): number {
+  return Math.max(Number(total) || 0, votedHere + leftVotes);
+}
+
 function DoneItem({ total, acted, left, leftVotes, onDone, onBack, doneLabel }: {
   total: number;
   acted: number;
@@ -2350,6 +2365,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
   const acted = items.filter((r) => !!answered[r.key]).length;
   const left = n - acted;
   const leftVotes = items.filter((r) => r.kind === 'vote' && !answered[r.key]).length;
+  const votedHere = items.filter((r) => r.kind === 'vote' && !!answered[r.key]).length;
   /**
    * Each row's tint, decided the first time it is seen and kept for life.
    * The tints alternate so a swipe reads as a new item, and a row seen for
@@ -2957,7 +2973,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
         {/* ALWAYS, after the last item: the swipe past the end lands here.
             With no items it is the whole screen. */}
         <DoneItem
-          total={total}
+          total={endRingTotal(total, votedHere, leftVotes)}
           acted={acted}
           left={left}
           leftVotes={leftVotes}
@@ -3467,8 +3483,23 @@ function useStripInsets(
       return undefined;
     }
     const measure = () => {
+      // EVERY READ, THEN EVERY WRITE, and the header's foot with them. A
+      // custom property inherits, so one that changes on `.dev-ws` or on
+      // #dev-workshop makes the browser re-apply the stylesheet to everything
+      // under it at the next question it is asked: about 9,000 elements and
+      // 75ms on the board with every card open. `usePinnedStrip` publishes
+      // the foot itself, in a later effect, and asks about the strip on its
+      // next line; published only there, a page's first frame paid for the
+      // board three times over (these properties, then the foot, after the
+      // pass that drew it). Published here as well, in the same breath as the
+      // other three, it is twice, and `usePinnedStrip` finds the value it was
+      // about to write already there.
+      const foot = headerFoot(host);
       const n = bar.getBoundingClientRect();
       const p = pane.getBoundingClientRect();
+      const cssHost = offsetHost(host);
+      if (foot == null) cssHost.style.removeProperty(HEAD_FOOT_PROP);
+      else cssHost.style.setProperty(HEAD_FOOT_PROP, `${Math.round(foot)}px`);
       if (!n.width || !p.width) return;
       host.style.setProperty('--dev-ws-head-top', `${Math.round(n.height) + WS_GAP_PX}px`);
       host.style.setProperty('--dev-ws-band-left', `${Math.round(p.left - n.left)}px`);
@@ -3585,6 +3616,82 @@ function usePinnedStrip(
       offsetHost(host).style.removeProperty(HEAD_FOOT_PROP);
     };
   }, [bar, hostRef, tab]);
+}
+
+/**
+ * Three facts about this page that app.css lays its HOSTS out by, written as
+ * classes on those hosts: `dev-ws-has-board` and `dev-ws-on-needs` on
+ * #dev-workshop, `dev-ws-has-band` on #dev-forum-scroll.
+ *
+ * app.css used to ask for them itself, with `#dev-workshop:has(.dev-ws-board)`,
+ * `#dev-workshop:has(.dev-ws[data-ws-tab="needs"])` and `#dev-forum-scroll:not(
+ * :has(.dev-ws-band))`, on rules that go on to pick what is INSIDE the host. A
+ * `:has()` like that is asked again whenever a node is added anywhere under
+ * the host, and its answer could move every element the rule reaches, so the
+ * browser re-applied the stylesheet to the whole board after every such
+ * write. With every card open that was 43 passes in one load, about 9,000
+ * elements and 67ms each (October 2026). None of the three facts changes
+ * unless this component says so, which is what a class is for.
+ *
+ * Neither host is this component's node: #dev-workshop is the mount point
+ * public/js/app-view.js creates, #dev-forum-scroll the frame's scroller. So
+ * the classes go on with classList, before paint, and no rendered className
+ * is involved (frontend/src/lib/legacy-dom.ts says why that matters). They
+ * come off when the component unmounts.
+ *
+ * AS EARLY AS THE COMMIT ALLOWS. Putting a class on a host is itself one pass
+ * over everything under it, and a layout effect here runs AFTER the layout
+ * effects of the cards this commit just mounted, whose first measurement has
+ * already made the browser draw the board once. Set there, the class made it
+ * draw the board again. An insertion effect runs before any layout effect of
+ * the commit, so the class is in place for that first pass and costs nothing
+ * of its own. The root is not attached yet on the very first mount, so the
+ * layout effect stays for that case, and does nothing when the insertion
+ * effect has already said the same.
+ *
+ * A body replaced WITHOUT unmounting this component takes #dev-workshop, and
+ * its two classes, with it. The scroller outlives that, which is why the
+ * pull-to-refresh reads the band again at the moment it starts
+ * (app-view.js, the `topEl` it hands the kit).
+ */
+const HOST_HAS_BOARD = 'dev-ws-has-board';
+const HOST_ON_NEEDS = 'dev-ws-on-needs';
+const SCROLLER_HAS_BAND = 'dev-ws-has-band';
+
+function syncWorkshopHosts(el: HTMLElement | null, band: boolean, board: boolean, needs: boolean): void {
+  if (!el) return;
+  const workshop = el.closest('#dev-workshop');
+  if (workshop) {
+    workshop.classList.toggle(HOST_HAS_BOARD, board);
+    workshop.classList.toggle(HOST_ON_NEEDS, needs);
+  }
+  const scroller = el.closest('#dev-forum-scroll');
+  if (scroller) scroller.classList.toggle(SCROLLER_HAS_BAND, band);
+}
+
+function useWorkshopHostState(
+  hostRef: React.RefObject<HTMLDivElement | null>,
+  band: boolean,
+  board: boolean,
+  needs: boolean,
+): void {
+  useInsertionEffect(() => {
+    syncWorkshopHosts(hostRef.current, band, board, needs);
+  }, [hostRef, band, board, needs]);
+  useLayoutEffect(() => {
+    syncWorkshopHosts(hostRef.current, band, board, needs);
+  }, [hostRef, band, board, needs]);
+  // The way out is its own effect, so a tab or a pane changing above does not
+  // take the classes off and put them straight back on.
+  useLayoutEffect(() => {
+    const el = hostRef.current;
+    const workshop = el ? el.closest('#dev-workshop') : null;
+    const scroller = el ? el.closest('#dev-forum-scroll') : null;
+    return () => {
+      if (workshop) workshop.classList.remove(HOST_HAS_BOARD, HOST_ON_NEEDS);
+      if (scroller) scroller.classList.remove(SCROLLER_HAS_BAND);
+    };
+  }, [hostRef]);
 }
 
 export function DevWorkshop(): ReactNode {
@@ -3783,6 +3890,18 @@ export function DevWorkshop(): ReactNode {
   // itself (`--dev-ptr-pull` on the scroller, public/js/app-view.js) and
   // app.css slides only what is under the band by it. Nothing in this
   // component takes part, which is how it stays the only writer of its tree.
+  //
+  // What it does say, here, is what app.css needs to know about this page on
+  // its HOSTS, one of which is that there is a band at all (see
+  // `useWorkshopHostState`). The loading skeleton below has no band, no board
+  // and no tab, so none of the three holds while it is up. The board is the
+  // All items page read by stage, and nothing else draws one.
+  useWorkshopHostState(
+    hostRef,
+    !v.loading,
+    !v.loading && tab === 'all' && group === 'stage',
+    !v.loading && tab === 'needs',
+  );
   // The toolbar's props reach this root through a store, not a prop — the
   // Workshop is a separate React root from the frame that receives them. See
   // ../actions-store.ts.

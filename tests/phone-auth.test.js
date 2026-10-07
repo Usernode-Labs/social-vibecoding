@@ -258,3 +258,51 @@ test('an ID token is spent once: the replay is refused, not signed in again', as
     (err) => err.code === 'bad_token',
   );
 });
+
+// ── Admin → SMS delivery's test send ────────────────────────────────────
+
+test('sendTestCode makes the same send and answers "sent" without the sessionInfo', async () => {
+  let seen = null;
+  const outcome = await phoneAuth.sendTestCode(FULL_CONFIG, '+1 (555) 123-4567', 'tok', {
+    fetch: fetchStub((url, body) => { seen = { url, body }; return { data: { sessionInfo: 'secret-session' } }; }),
+  });
+  assert.match(seen.url, /accounts:sendVerificationCode\?key=web-key/);
+  assert.deepEqual(seen.body, { phoneNumber: '+15551234567', recaptchaToken: 'tok' });
+  assert.equal(outcome.status, 'sent');
+  assert.equal(outcome.phoneNumber, '+15551234567');
+  assert.equal(outcome.providerCode, null);
+  assert.ok(!JSON.stringify(outcome).includes('secret-session'));
+});
+
+test('sendTestCode reports Firebase\'s own code on a refusal, without its detail', async () => {
+  const outcome = await phoneAuth.sendTestCode(FULL_CONFIG, '+15551234567', null, {
+    fetch: fetchStub(() => ({ ok: false, status: 400, data: { error: { message: 'INVALID_PHONE_NUMBER : TOO_SHORT' } } })),
+  });
+  assert.equal(outcome.status, 'refused');
+  assert.equal(outcome.providerCode, 'INVALID_PHONE_NUMBER');
+  assert.equal(outcome.httpStatus, 400);
+});
+
+test('sendTestCode does not echo a message that is not a code', async () => {
+  const outcome = await phoneAuth.sendTestCode(FULL_CONFIG, '+15551234567', null, {
+    fetch: fetchStub(() => ({ ok: false, status: 500, data: { error: { message: 'something <b>odd</b>' } } })),
+  });
+  assert.equal(outcome.status, 'refused');
+  assert.equal(outcome.providerCode, null);
+});
+
+test('sendTestCode answers "unreachable" when no answer comes back', async () => {
+  const outcome = await phoneAuth.sendTestCode(FULL_CONFIG, '+15551234567', null, {
+    fetch: async () => { throw new Error('ETIMEDOUT'); },
+  });
+  assert.equal(outcome.status, 'unreachable');
+});
+
+test('sendTestCode sends nothing when phone sign-in is not offered, or the number is malformed', async () => {
+  const never = { fetch: () => { throw new Error('must not be called'); } };
+  const outcome = await phoneAuth.sendTestCode({ ...FULL_CONFIG, firebaseProjectId: '' }, '+15551234567', null, never);
+  assert.equal(outcome.status, 'not_offered');
+  await assert.rejects(
+    () => phoneAuth.sendTestCode(FULL_CONFIG, '5551234567', null, never),
+    (e) => e.code === 'invalid_phone' && e.status === 400);
+});

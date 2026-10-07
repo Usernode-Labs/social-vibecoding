@@ -17,7 +17,7 @@ const http = require('node:http');
 const { spawn } = require('node:child_process');
 
 const {
-  startMessagesAdapter, applyTurnPolicy, makeRedactor, claudeChildEnv,
+  startMessagesAdapter, applyTurnPolicy, makeRedactor, claudeChildEnv, PROVIDER_PREFERENCES,
 } = require('../worker/claude-openrouter-request');
 
 const ROOT = path.join(__dirname, '..');
@@ -28,7 +28,7 @@ test('every request is pinned to the session model and capped at its output limi
   assert.deepEqual(
     applyTurnPolicy({ model: 'claude-haiku-4-5', max_tokens: 200_000, messages: [] },
       { model: GLM, maxOutputTokens: 64_000, countTokens: false }),
-    { model: GLM, max_tokens: 64_000, messages: [] },
+    { model: GLM, max_tokens: 64_000, messages: [], provider: PROVIDER_PREFERENCES },
   );
   // A smaller ask is kept; a missing or invalid one gets the cap.
   assert.equal(applyTurnPolicy({ max_tokens: 4096 }, { model: GLM, maxOutputTokens: 64_000 }).max_tokens, 4096);
@@ -53,6 +53,26 @@ test('every request is pinned to the session model and capped at its output limi
     applyTurnPolicy({ model: 'x', messages: [] }, { model: GLM, maxOutputTokens: 10, countTokens: true }),
     { model: GLM, messages: [] },
   );
+});
+
+test('every model request prefers hosts that answer promptly, without excluding any or overriding a preference sent', () => {
+  // A GLM build on 2026-10-06 sat on a host averaging 44 s a request until
+  // its clock ran out. OpenRouter moves a host that misses these to the end
+  // of its list; it never drops one, and price still decides among the rest.
+  assert.deepEqual(PROVIDER_PREFERENCES, {
+    preferred_max_latency: { p90: 15 },
+    preferred_min_throughput: { p50: 30 },
+  });
+  assert.equal(Object.isFrozen(PROVIDER_PREFERENCES), true);
+  const body = applyTurnPolicy({ max_tokens: 10, messages: [] }, { model: GLM, maxOutputTokens: 64_000 });
+  assert.deepEqual(body.provider, PROVIDER_PREFERENCES);
+  assert.equal(body.provider.sort, undefined, 'no sort or order: OpenRouter keeps balancing by price');
+  assert.equal(body.provider.order, undefined);
+  const asked = applyTurnPolicy({ max_tokens: 10, provider: { preferred_max_latency: 5, zdr: true } }, { model: GLM, maxOutputTokens: 64_000 });
+  assert.deepEqual(asked.provider, { preferred_max_latency: 5, preferred_min_throughput: { p50: 30 }, zdr: true });
+  assert.equal(applyTurnPolicy({ messages: [] }, { model: GLM, countTokens: true }).provider, undefined, 'counting tokens is not routed');
+  // The Codex listener asks for the same.
+  assert.deepEqual(require('../worker/codex-openrouter-request').PROVIDER_PREFERENCES, PROVIDER_PREFERENCES);
 });
 
 test('the thinking level is sent as output_config.effort, which OpenRouter maps for every model', () => {
@@ -242,7 +262,10 @@ test('the adapter forwards Messages requests to OpenRouter with the key and stre
   ]);
   assert.equal(timing[0].inputItems, 1);
   assert.equal(timing[0].maxOutputTokens, 64_000);
-  assert.deepEqual(timing[3], { kind: 'provider_request_result', requestOrdinal: 1, httpStatus: 200, outcome: 'ok', requestId: 'req-1' });
+  assert.deepEqual(timing[3], {
+    kind: 'provider_request_result', requestOrdinal: 1, httpStatus: 200, outcome: 'ok', requestId: 'req-1',
+    usage: { inputTokens: 12, outputTokens: 1 }, images: { sent: 0, moved: 0, omitted: 0 },
+  });
   assert.equal(timing[4].outcome, 'ok');
   assert.ok(!JSON.stringify(timing).includes('hi'), 'timing carries sizes and counts, never content');
 
@@ -302,9 +325,40 @@ test('a streamed reply names its generation and the provider OpenRouter routed i
   assert.deepEqual(result, {
     kind: 'provider_request_result', requestOrdinal: 1, httpStatus: 200, outcome: 'ok',
     requestId: 'req-9', generationId: 'gen-1759626000-abc', providerName: 'DeepInfra',
+    usage: { inputTokens: 12 }, images: { sent: 0, moved: 0, omitted: 0 },
   });
   assert.ok(!JSON.stringify(timing).includes('secret prompt') && !JSON.stringify(timing).includes('reply text'),
     'never content');
+});
+
+test('a reply\'s token counts are its closing ones: OpenRouter fills them in only on message_delta', async (t) => {
+  // As GLM's replies came through OpenRouter on 2026-10-06: message_start
+  // says 0 input tokens, and the counts arrive with the closing message_delta.
+  // A stopped turn is priced from these (worker.js), so they must be the
+  // closing ones, cache reads and writes kept apart as Anthropic splits them.
+  const { result, timing } = await outcomeOf(t, (res) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.write('event: message_start\ndata: {"type":"message_start","message":{"id":"gen-3","provider":"Fireworks","model":"m","usage":{"input_tokens":0,"output_tokens":1}}}\n\n');
+    res.write('event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"done"}}\n\n');
+    res.write('event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":1834,"output_tokens":712,"cache_read_input_tokens":96512,"cache_creation_input_tokens":0}}\n\n');
+    res.end('event: message_stop\ndata: {"type":"message_stop"}\n\n');
+  });
+  assert.deepEqual(result.usage, { inputTokens: 1834, outputTokens: 712, cacheReadInputTokens: 96512, cacheWriteInputTokens: 0 });
+  assert.equal(result.providerName, 'Fireworks');
+  assert.ok(!JSON.stringify(timing).includes('done'), 'counts, never content');
+});
+
+test('a whole JSON reply reports its counts; a reply that reports none carries none', async (t) => {
+  const json = await outcomeOf(t, (res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ id: 'gen-4', type: 'message', usage: { input_tokens: 20, output_tokens: 5, cache_read_input_tokens: 'x' } }));
+  });
+  assert.deepEqual(json.result.usage, { inputTokens: 20, outputTokens: 5 });
+  const silent = await outcomeOf(t, (res) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.end('event: message_start\ndata: {"type":"message_start","message":{"id":"gen-5","model":"m"}}\n\n');
+  });
+  assert.equal(silent.result.usage, undefined);
 });
 
 test('a refusal says its status, type, provider and a redacted message', async (t) => {
@@ -527,8 +581,10 @@ test('#3426: a model OpenRouter lists as taking images gets them; documents stay
     ],
   }, { model: GLM, maxOutputTokens: 10, imageInput: true });
   assert.deepEqual(body.messages[0].content[1].source.data, 'AAAA', 'the screenshot reaches the model');
-  assert.deepEqual(body.messages[1].content[0].content[0].source.data, 'BBBB', 'and one a tool read');
-  assert.deepEqual(body.messages[1].content[1], { type: 'text', text: '[document omitted: this model reads text only]' });
+  // And one a tool read, moved out of its tool result for a model that is
+  // not Anthropic's (below).
+  assert.deepEqual(body.messages[1].content[2].source.data, 'BBBB', 'and one a tool read');
+  assert.deepEqual(body.messages[1].content[3], { type: 'text', text: '[document omitted: this model reads text only]' });
   // Only exactly true opens it.
   for (const imageInput of [undefined, false, '1', 1]) {
     const plain = applyTurnPolicy({ messages: [{ role: 'user', content: [{ type: 'image', source: {} }] }] },
@@ -562,4 +618,118 @@ test('#3557: a model OpenRouter lists as taking files gets PDFs; any other gets 
   }
   const src = require('node:fs').readFileSync(require.resolve('../worker/claude-openrouter-request.js'), 'utf8');
   assert.match(src, /documentInput: env\.AGENT_MODEL_SUPPORTS_FILES === '1',/);
+});
+
+// ── Images inside tool results, for a model that is not Anthropic's ──────
+//
+// Claude Code's Read and the browser's screenshot tool return their image
+// inside a tool_result. A GLM 5.3 Flash build (App bench studio run 8, trial
+// 1236) said its screenshot "returns empty": for another provider the tool
+// message is text, so the image is moved after the tool results, where it is
+// an ordinary image part, and a pointer is left in its place.
+
+const png = (data) => ({ type: 'image', source: { type: 'base64', media_type: 'image/png', data } });
+
+function toolTurn() {
+  return [
+    { role: 'user', content: 'build it' },
+    { role: 'assistant', content: [
+      { type: 'text', text: 'looking' },
+      { type: 'tool_use', id: 'toolu_read', name: 'Read', input: { file_path: '/app/light-phone.png' } },
+      { type: 'tool_use', id: 'toolu_bash', name: 'Bash', input: { command: 'ls' } },
+      { type: 'tool_use', id: 'toolu_shot', name: 'mcp__playwright__browser_take_screenshot', input: {} },
+    ] },
+    { role: 'user', content: [
+      { type: 'tool_result', tool_use_id: 'toolu_read', content: [png('READ')] },
+      { type: 'tool_result', tool_use_id: 'toolu_bash', content: [{ type: 'text', text: 'a.js\nb.js' }], is_error: false },
+      { type: 'tool_result', tool_use_id: 'toolu_shot', content: [
+        { type: 'text', text: 'Took the screenshot' }, png('SHOT1'), png('SHOT2'),
+      ], cache_control: { type: 'ephemeral' } },
+      { type: 'text', text: '<system-reminder>keep going</system-reminder>' },
+    ] },
+  ];
+}
+
+const pointer = (n) => ({ type: 'text', text: `[image ${n} of this result follows after the tool results]` });
+
+test('a non-Anthropic model gets each tool-result image after the tool results, labelled and in order, with a pointer left behind', () => {
+  const original = toolTurn();
+  const counts = { sent: 0, moved: 0, omitted: 0 };
+  const body = applyTurnPolicy({ model: 'x', max_tokens: 10, messages: toolTurn() },
+    { model: GLM, maxOutputTokens: 10, imageInput: true, imageCounts: counts });
+  const [readResult, bashResult, shotResult, ...rest] = body.messages[2].content;
+  // Tool results stay first, in their order, ids and flags untouched.
+  assert.deepEqual(readResult, { type: 'tool_result', tool_use_id: 'toolu_read', content: [pointer(1)] });
+  assert.equal(JSON.stringify(bashResult), JSON.stringify(original[2].content[1]), 'a result with no image is byte-identical');
+  assert.deepEqual(shotResult, {
+    type: 'tool_result', tool_use_id: 'toolu_shot',
+    content: [{ type: 'text', text: 'Took the screenshot' }, pointer(1), pointer(2)],
+    cache_control: { type: 'ephemeral' },
+  });
+  // Then each image, after a line naming the result it came from, before
+  // whatever already followed the tool results.
+  assert.deepEqual(rest, [
+    { type: 'text', text: '[image 1 of the Read result (toolu_read):]' }, png('READ'),
+    { type: 'text', text: '[image 1 of the mcp__playwright__browser_take_screenshot result (toolu_shot):]' }, png('SHOT1'),
+    { type: 'text', text: '[image 2 of the mcp__playwright__browser_take_screenshot result (toolu_shot):]' }, png('SHOT2'),
+    { type: 'text', text: '<system-reminder>keep going</system-reminder>' },
+  ]);
+  // Every other message is byte-for-byte what Claude Code sent.
+  assert.equal(JSON.stringify(body.messages.slice(0, 2)), JSON.stringify(original.slice(0, 2)));
+  assert.deepEqual(counts, { sent: 3, moved: 3, omitted: 0 });
+
+  // A request whose tool results carry no image goes out exactly as sent,
+  // and the same history rewrites the same way every time (prompt caching).
+  const plain = [original[0], { role: 'user', content: [original[2].content[1], { type: 'text', text: 'hi' }, png('TOP')] }];
+  const untouched = applyTurnPolicy({ messages: structuredClone(plain) }, { model: GLM, maxOutputTokens: 10, imageInput: true });
+  assert.equal(JSON.stringify(untouched.messages), JSON.stringify(plain), 'an image already outside a tool result stays put');
+  const again = applyTurnPolicy({ model: 'x', max_tokens: 10, messages: toolTurn() }, { model: GLM, maxOutputTokens: 10, imageInput: true });
+  assert.equal(JSON.stringify(again.messages), JSON.stringify(body.messages));
+  // An id the assistant turn does not name still gets a label.
+  const orphan = applyTurnPolicy({ messages: [{ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_x', content: [png('X')] }] }] },
+    { model: GLM, maxOutputTokens: 10, imageInput: true });
+  assert.deepEqual(orphan.messages[0].content[1], { type: 'text', text: '[image 1 of the tool result (toolu_x):]' });
+});
+
+test('an Anthropic model keeps its tool-result images where they are; a text-only model still gets the note', () => {
+  for (const model of ['anthropic/claude-sonnet-5', '~anthropic/claude-opus-latest']) {
+    const counts = { sent: 0, moved: 0, omitted: 0 };
+    const body = applyTurnPolicy({ model: 'x', max_tokens: 10, messages: toolTurn() },
+      { model, maxOutputTokens: 10, imageInput: true, imageCounts: counts });
+    assert.equal(JSON.stringify(body.messages), JSON.stringify(toolTurn()), model);
+    assert.deepEqual(counts, { sent: 3, moved: 0, omitted: 0 }, model);
+  }
+  const counts = { sent: 0, moved: 0, omitted: 0 };
+  const text = applyTurnPolicy({ model: 'x', max_tokens: 10, messages: toolTurn() },
+    { model: GLM, maxOutputTokens: 10, imageInput: false, imageCounts: counts });
+  const note = { type: 'text', text: '[image omitted: this model reads text only]' };
+  assert.deepEqual(text.messages[2].content[0].content, [note]);
+  assert.deepEqual(text.messages[2].content[2].content, [{ type: 'text', text: 'Took the screenshot' }, note, note]);
+  assert.equal(text.messages[2].content.length, 4, 'nothing is moved');
+  assert.deepEqual(counts, { sent: 0, moved: 0, omitted: 3 });
+});
+
+test("each request's result line says how many images it sent, moved and left out", async (t) => {
+  const run = async (opts) => {
+    const upstream = await fakeOpenRouter((record, res) => sse(res));
+    const timing = [];
+    const adapter = await startMessagesAdapter({
+      baseUrl: upstream.base, apiKey: KEY, model: GLM, localToken: 'local-token',
+      onTiming: (event) => timing.push(event), ...opts,
+    });
+    t.after(async () => { await adapter.close(); await upstream.close(); });
+    const reply = await fetch(`${adapter.baseUrl}/v1/messages`, {
+      method: 'POST',
+      headers: { 'x-api-key': 'local-token', 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'x', max_tokens: 10, stream: true, messages: toolTurn() }),
+    });
+    await reply.text();
+    return { forwarded: upstream.seen[0].body, result: timing.find((e) => e.kind === 'provider_request_result') };
+  };
+  const sees = await run({ imageInput: true });
+  assert.deepEqual(sees.result.images, { sent: 3, moved: 3, omitted: 0 });
+  assert.deepEqual(sees.forwarded.messages[2].content[4], png('READ'), 'what OpenRouter receives');
+  const blind = await run({});
+  assert.deepEqual(blind.result.images, { sent: 0, moved: 0, omitted: 3 });
+  assert.ok(!JSON.stringify(sees.result).includes('READ'), 'counts, never content');
 });

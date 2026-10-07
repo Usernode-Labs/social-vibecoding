@@ -972,6 +972,7 @@ app.get('/usernode-bridge/v1/platform.json', (_req, res) => {
 // under the revalidate policy instead and the worker declines to cache it.
 // Same files as the handler below serves at their plain paths; see
 // src/services/static-cache.js.
+app.use(require('./src/middleware/precompressed-assets').precompressedAssets(path.join(__dirname, 'public')));
 app.use(buildScopedAssetHandler(path.join(__dirname, 'public')));
 app.get('/sw.js', (_req, res, next) => {
   if (!shellRelease) return next();

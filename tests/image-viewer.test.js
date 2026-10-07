@@ -67,7 +67,9 @@ test('it covers the screen, above the message sheet, and only exists after a tap
   assert.match(SRC, /document\.body,\n\s*\);/, 'portalled: a transcript\'s transformed ancestors would size a fixed layer to themselves');
   const sheet = read('public/css/app.css').match(/\.msgx-sheet-layer \{[^}]*z-index: (\d+);/);
   assert.ok(sheet && Number(sheet[1]) < 2200, 'above the long-press sheet');
-  assert.match(SRC, /<a\n\s*href=\{src\}\n\s*download=\{alt \|\| true\}/, 'Download saves the file rather than opening it');
+  // #4055: Download saves the file rather than opening it, through the one
+  // helper that knows each device's road (tests/image-save.test.js).
+  assert.match(SRC, /data-image-viewer-download=""\n\s*onClick=\{download\}/, 'Download saves the file rather than opening it');
 });
 
 test('the channel and a conversation both open their thumbnails in it, and keep the file as the link', () => {

@@ -322,6 +322,35 @@ test('the benchmark lane against the full PostgreSQL schema', { timeout: 180000 
     await pool.query("UPDATE bench_runs SET status = 'cancelled' WHERE id = $1", [run.id]);
   });
 
+  await t.test('a trial records the looks its turns took beside what its build could see; one that never looked records none', async () => {
+    lane._resetForTests();
+    const { run } = await lane.launchRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage'], repeats: 2 });
+    const [looked, never] = await trials(run.id);
+    runner.runStage = async (ctx) => {
+      if (ctx.trial.id === looked.id) {
+        for (const line of ['Using browser_navigate', 'Using browser_take_screenshot', 'Using browser_take_screenshot', 'Using mcp__playwright__browser_snapshot']) ctx.onActivity(line);
+        return { status: 'ok', parsed: { verdict: 'ready', sight: { told: true, passed: true } }, duration_ms: 5 };
+      }
+      ctx.onActivity('Editing public/app.js');
+      return { status: 'ok', parsed: { verdict: 'ready' }, duration_ms: 5 };
+    };
+    const parsedOf = async (id) => (await pool.query('SELECT parsed FROM bench_trials WHERE id = $1', [id])).rows[0].parsed;
+    try {
+      // One trial at a time, as the run's concurrency has it.
+      for (let i = 0; i < 6 && (!(await parsedOf(looked.id)) || !(await parsedOf(never.id))); i += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        await lane.tick(pool, {}, deps);
+        // eslint-disable-next-line no-await-in-loop
+        await lane._awaitTrialsForTests();
+      }
+      assert.deepEqual((await parsedOf(looked.id)).sight, { told: true, passed: true, screenshots: 2, snapshots: 1, navigations: 1 });
+      assert.equal((await parsedOf(never.id)).sight, undefined, 'no build and no look: nothing to say');
+    } finally {
+      await pool.query("UPDATE bench_runs SET status = 'cancelled' WHERE id = $1", [run.id]);
+      await pool.query("UPDATE bench_trials SET status = 'cancelled' WHERE run_id = $1 AND status IN ('pending', 'running')", [run.id]);
+    }
+  });
+
   await t.test('a second interruption fails the trial; a cancelled run\'s trial is cancelled; both still charged', async () => {
     lane._resetForTests();
     debits.length = 0;

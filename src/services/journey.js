@@ -51,17 +51,34 @@ const FEW_MOVES = 10;
 // a bot, not a test account (services/test-accounts.js; its own flag, so it
 // stays out whether or not it is on the left-out list), not restricted by
 // moderation, not deleted, not a platform service account (the reserved name
-// prefixes nobody else may take), and not on the admin-edited left-out list.
-// Every query that names people uses this, with $3 = the reserved prefixes as
-// LIKE patterns and $4 = the left-out ids.
+// prefixes nobody else may take), not on the admin-edited left-out list, and
+// not at a team address (below). Every query that names people uses this,
+// with $3 = the reserved prefixes as LIKE patterns and $4 = the left-out ids.
 const RESERVED_PATTERNS = Object.freeze(['usernode%', 'staging%', 'homeroom%']);
+
+// A team address: one on the team's own domains, or a +tag variant of an
+// admin's or a left-out account's address (snaitmouloud+wl0929@gmail.com is
+// the admin snaitmouloud@gmail.com testing). It is what keeps an admitted
+// waitlist test signup that never made an account out of the first mile,
+// where the left-out list (account ids) cannot reach, and it keeps out the
+// account that signup becomes. Spelled out as constants rather than built by
+// a function so scripts/check-sql.js can still validate every query that
+// uses it; the subquery is uncorrelated, so Postgres reads the team's
+// addresses once per query rather than once per row.
+const TEAM_DOMAINS = Object.freeze(['onhomeroom.com', 'usernodelabs.org', 'usernodelabs.com']);
+const TEAM_DOMAINS_SQL = `'onhomeroom.com', 'usernodelabs.org', 'usernodelabs.com'`;
+const TEAM_ADDRESSES_SQL = `SELECT LOWER(regexp_replace(t.email, '\\+[^@]*@', '@')) FROM users t
+       WHERE t.email IS NOT NULL AND (t.is_admin OR t.id = ANY($4::int[]))`;
+
 const REAL_PERSON_SQL = `u.is_admin IS NOT TRUE
   AND u.is_synthetic IS NOT TRUE
   AND u.test_account_created_at IS NULL
   AND u.participation_restricted_at IS NULL
   AND u.anonymised_at IS NULL
   AND NOT (LOWER(u.username) LIKE ANY($3::text[]))
-  AND NOT (u.id = ANY($4::int[]))`;
+  AND NOT (u.id = ANY($4::int[]))
+  AND NOT (u.email IS NOT NULL AND (LOWER(split_part(u.email, '@', 2)) IN (${TEAM_DOMAINS_SQL})
+    OR LOWER(regexp_replace(u.email, '\\+[^@]*@', '@')) IN (${TEAM_ADDRESSES_SQL})))`;
 
 // The same rule for the people who said yes to a change, joined as `uy`
 // wherever a query reads a change's votes.
@@ -71,7 +88,9 @@ const REAL_VOTER_SQL = `uy.is_admin IS NOT TRUE
   AND uy.participation_restricted_at IS NULL
   AND uy.anonymised_at IS NULL
   AND NOT (LOWER(uy.username) LIKE ANY($3::text[]))
-  AND NOT (uy.id = ANY($4::int[]))`;
+  AND NOT (uy.id = ANY($4::int[]))
+  AND NOT (uy.email IS NOT NULL AND (LOWER(split_part(uy.email, '@', 2)) IN (${TEAM_DOMAINS_SQL})
+    OR LOWER(regexp_replace(uy.email, '\\+[^@]*@', '@')) IN (${TEAM_ADDRESSES_SQL})))`;
 
 // Who a change is credited to: an expression over `cs` (chat_sessions). A
 // change is its author's, except one the Homeroom bot built. The bot is a
@@ -339,9 +358,11 @@ const ADMITTED_CTE = `admitted AS (
      ORDER BY COALESCE('u' || w.linked_user_id::text, 'w' || w.id::text), w.released_at, w.id
   )`;
 
-const NEWCOMER_OR_NO_ACCOUNT = `(u.id IS NULL OR (
+const NEWCOMER_OR_NO_ACCOUNT = `(NOT (a.email IS NOT NULL AND (LOWER(split_part(a.email, '@', 2)) IN (${TEAM_DOMAINS_SQL})
+      OR LOWER(regexp_replace(a.email, '\\+[^@]*@', '@')) IN (${TEAM_ADDRESSES_SQL})))
+    AND (u.id IS NULL OR (
       (u.platform_access_granted_at IS NULL OR u.platform_access_granted_at >= a.released_at)
-      AND ${REAL_PERSON_SQL}))`;
+      AND ${REAL_PERSON_SQL})))`;
 
 const COHORTS_SQL = `WITH ${ADMITTED_CTE}
   SELECT to_char((a.released_at AT TIME ZONE 'UTC')::date, 'YYYY-MM-DD') AS day,
@@ -2066,6 +2087,9 @@ module.exports = {
   REAL_VOTER_SQL,
   CHANGE_PERSON_SQL,
   RESERVED_PATTERNS,
+  TEAM_DOMAINS,
+  TEAM_DOMAINS_SQL,
+  TEAM_ADDRESSES_SQL,
   VISIT_GAP_MS,
   WEEK_MS,
   activeGroups,

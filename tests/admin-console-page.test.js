@@ -142,6 +142,8 @@ test('the console island imports every admin module, console first', () => {
     'admin-sign-in',
     // The watch-only small-change tag's verdicts.
     'admin-small-changes',
+    // #4128: SMS delivery, a test text through Firebase Phone Auth.
+    'admin-sms',
     'admin-staging-reap',
     // #2253: App storage, the per-app database cap's console section.
     'admin-status', 'admin-storage',

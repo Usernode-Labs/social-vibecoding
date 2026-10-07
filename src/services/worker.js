@@ -777,18 +777,63 @@ function isClaudeOnOpenRouter(state) {
 // to Anthropic Claude Code sessions. Idempotent; a no-op for other turns.
 //
 // It also fills the per-turn usage sum a Codex turn gets from its relay
-// (`relayUsage`, #3038), from the usage each model call reported as it
-// streamed. Claude Code reports a run's usage only on its result event, so a
-// turn stopped before that (the Homeroom bot's wall clock) had none at all
-// and was priced at nothing; this is what it can be priced from instead.
+// (`relayUsage`, #3038). Claude Code reports a run's usage only on its result
+// event, so a turn stopped before that (the Homeroom bot's wall clock) had
+// none at all and was priced at nothing; this is what it can be priced from
+// instead. First choice, the counts each finished model request's reply
+// closed on, as the request listener read them (observeCodingProviderResult):
+// exact for every request but the one the stop cut off. Otherwise what Claude
+// Code's own events said as they streamed, which through OpenRouter is
+// nearly nothing: its message_start reports no input, and the counts arrive
+// only on the closing message_delta (a 40-minute GLM build on 2026-10-06 was
+// priced at 0 input tokens and $0 that way).
 function finalizeHarnessResult(state) {
   if (!isClaudeOnOpenRouter(state)) return state;
   const claudeSessionId = state.sessionId || state.initSessionId || null;
   if (claudeSessionId) state.agentThreadId = claudeSessionId;
   state.sessionId = null;
   state.initSessionId = null;
-  if (!state.relayUsage) state.relayUsage = liveAgentSpend.usageTotals(state.liveSpend);
+  if (!state.relayUsage) {
+    state.relayUsage = state.providerUsage?.requests > 0
+      ? { ...state.providerUsage, source: 'requests' }
+      : liveAgentSpend.usageTotals(state.liveSpend);
+  }
   return state;
+}
+
+// One finished model request's token counts, as the Claude Code request
+// listener reports them in Anthropic's split, added to the turn's sum in the
+// relay's shape: input counts cache reads and writes, as OpenRouter bills it.
+// Counts only, each bounded.
+function noteCodingProviderUsage(usage, state) {
+  if (!usage || typeof usage !== 'object') return;
+  const count = (n) => (Number.isSafeInteger(n) && n >= 0 && n <= 100_000_000 ? n : 0);
+  const input = count(usage.inputTokens);
+  const output = count(usage.outputTokens);
+  const cacheRead = count(usage.cacheReadInputTokens);
+  const cacheWrite = count(usage.cacheWriteInputTokens);
+  if (!input && !output && !cacheRead && !cacheWrite) return;
+  const sum = state.providerUsage || (state.providerUsage = {
+    requests: 0, inputTokens: 0, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 0,
+  });
+  sum.requests += 1;
+  sum.inputTokens += input + cacheRead + cacheWrite;
+  sum.cachedInputTokens += cacheRead;
+  sum.cacheWriteInputTokens += cacheWrite;
+  sum.outputTokens += output;
+}
+
+// What one model request did with its images, as the same listener counts
+// them (applyTurnPolicy): sent to the model, moved out of a tool result for
+// a non-Anthropic model, or left out for a text-only one. Summed for the
+// turn's telemetry_metrics. A request carries the whole conversation, so a
+// screenshot counts once for every request that carries it. Counts only.
+function noteCodingProviderImages(images, state) {
+  if (!images || typeof images !== 'object') return;
+  const count = (n) => (Number.isSafeInteger(n) && n >= 0 && n <= 100_000 ? n : 0);
+  state.imageSentCount = (state.imageSentCount || 0) + count(images.sent);
+  state.imageMovedCount = (state.imageMovedCount || 0) + count(images.moved);
+  state.imageOmittedCount = (state.imageOmittedCount || 0) + count(images.omitted);
 }
 
 function applyStreamEvent(event, onProgress, state) {
@@ -1045,6 +1090,8 @@ function observeCodingProviderResult(event, ordinal, onProgress, state) {
     ? event.errorMessage.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 300) || null
     : null;
   if (providerName) state.routedProvider = providerName;
+  noteCodingProviderUsage(event.usage, state);
+  noteCodingProviderImages(event.images, state);
   const failed = (status != null && status >= 400) || !!errorType || !!errorMessage;
   if (!failed) return;
   state.providerRequestFailures = (state.providerRequestFailures || 0) + 1;
@@ -1460,6 +1507,11 @@ function newWatchState() {
     subagentCallCount: 0,
     webToolCallCount: 0,
     toolSearchCount: 0,
+    // Claude Code over OpenRouter only (noteCodingProviderImages); unknown
+    // stays null for every other turn.
+    imageSentCount: null,
+    imageMovedCount: null,
+    imageOmittedCount: null,
     requestMode: null,
     requestMessageCount: null,
     requestUserMessageCount: null,

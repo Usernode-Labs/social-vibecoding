@@ -58,7 +58,7 @@ import { Button } from '@/components/ui/button';
 import { ChatMessageRow, NewMessagesDivider, groupsWithPrevious } from '@/components/ui/chat';
 import { Avatar, ReactionPill } from '@/components/ui/feed';
 import {
-  BookmarkIcon, BookmarkSolidIcon, ChatIcon, CopyIcon, DraftTrashIcon, EnvelopeIcon, FlagIcon, LinkIcon, NoSymbolIcon,
+  BookmarkIcon, BookmarkSolidIcon, ChatIcon, CopyIcon, DownloadIcon, DraftTrashIcon, EnvelopeIcon, FlagIcon, LinkIcon, NoSymbolIcon,
   PencilSquareIcon, ReplyArrowIcon, ThreadIcon,
 } from '@/components/ui/icons';
 
@@ -68,6 +68,7 @@ import { useStoreState } from '../../lib/use-store-state';
 import { PostedViaChip } from './posted-via-chip';
 import { BotRequestCardView, BotStatusChip } from './bot-request';
 import { ImageViewer, openInViewer } from '../image-viewer/image-viewer';
+import { downloadLabel, downloadableImages, saveImages, useCanSaveImage } from '../image-viewer/save-image';
 import { EventRow } from './proposal-event';
 import { QuietCard } from './quiet-card';
 import { swatchFor } from './swatch';
@@ -644,6 +645,9 @@ export function messageMenuItems(
   }
   if (msg.showEdit) items.push({ key: 'edit', label: 'Edit message', icon: PencilSquareIcon, onSelect: () => chat?._startEdit?.(id) });
   if (msg.text) items.push({ key: 'copy', label: 'Copy text', icon: CopyIcon, onSelect: () => { void copyToClipboard(msg.text || '', 'Message text copied'); } });
+  // #4055: its pictures onto the device, whoever posted them.
+  const pictures = downloadableImages((msg.attachments || []).filter((att) => att.kind === 'image').map((att) => ({ src: att.url, name: att.name })));
+  if (pictures.length) items.push({ key: 'download', label: downloadLabel(pictures.length), icon: DownloadIcon, onSelect: () => { void saveImages(pictures); } });
   const link = chat?.messageAddress?.(id);
   if (link) items.push({ key: 'link', label: 'Copy link to message', icon: LinkIcon, onSelect: () => { void copyToClipboard(absoluteLink(link), 'Link copied'); } });
   if (!msg.mine && surface === 'main') {
@@ -710,6 +714,10 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
   const recents = useRecentReactions();
   const chat = controller();
   const live = !msg.deleted && !!msg.id;
+  // #4055: in the app, whether its build can save a picture is known only
+  // once asked; asking re-renders the row so the menu's Download line can
+  // appear. Nothing is asked for a row without a picture.
+  useCanSaveImage((msg.attachments || []).find((att) => att.kind === 'image')?.url || '');
   const longPress = useLongPress(() => setSheet(true), { disabled: !live });
   const reportMessage = () => msg.id && openReport({ targetType: 'app_message', target: msg.id, label: `Message from @${msg.username}`, userId: msg.senderId });
   const reacted = (emoji: string) => msg.reactions.some((r) => r.emoji === emoji && r.mine);

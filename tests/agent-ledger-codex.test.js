@@ -125,6 +125,194 @@ test('pricingSnapshotForModel: requires finite nonnegative prices', () => {
   assert.equal(pricingSnapshotForModel(null), null);
 });
 
+// ── Cache-aware pricing ────────────────────────────────────────────────
+// The ledger's inputTokens counts every prompt token, cache reads and writes
+// included (usageTotalFromResult). A coding turn is mostly cache reads: a
+// GLM 5.3 Flash build read 10.41M of its 10.69M input tokens from cache.
+
+// The figure every estimate was before cache prices: all input at the
+// prompt rate. A snapshot without cache prices must still give exactly this.
+function promptRateFigure(delta, pricing) {
+  const usd = ((delta.inputTokens ?? 0) / 1_000_000) * pricing.inputPricePerMillion
+    + ((delta.outputTokens ?? 0) / 1_000_000) * pricing.outputPricePerMillion;
+  return Math.round(usd * 1e8) / 1e8;
+}
+
+const GLM_FLASH = {
+  available: true, model: 'z-ai/glm-5.3-flash',
+  inputPricePerMillion: 0.15, outputPricePerMillion: 0.5, cacheReadPricePerMillion: 0.03,
+};
+const ANTHROPIC_LIKE = {
+  available: true, model: 'anthropic/opus-like',
+  inputPricePerMillion: 5, outputPricePerMillion: 25,
+  cacheReadPricePerMillion: 0.5, cacheWritePricePerMillion: 6.25,
+};
+const GLM_BUILD = {
+  inputTokens: 10_690_000, cachedInputTokens: 10_410_000, cacheWriteInputTokens: 0, outputTokens: 60_100,
+};
+
+test('estimate: a GLM-like profile prices cache reads at the cache-read rate', () => {
+  const cost = estimateRequestedModelCost(GLM_BUILD, GLM_FLASH);
+  // 280K uncached at $0.15/M + 10.41M cached at $0.03/M + 60.1K output at $0.50/M.
+  assert.equal(cost.estimatedCostUsd, 0.38435);
+  assert.equal(cost.costSource, 'requested_model_catalog_estimate', 'the cost source consumers switch on is unchanged');
+  assert.equal(promptRateFigure(GLM_BUILD, GLM_FLASH), 1.63355, 'what the ledger recorded before');
+});
+
+test('estimate: an Anthropic-like profile prices reads at 0.1x and writes at 1.25x separately', () => {
+  const delta = { inputTokens: 1_000_000, cachedInputTokens: 900_000, cacheWriteInputTokens: 50_000, outputTokens: 10_000 };
+  // 50K uncached at $5/M + 900K reads at $0.50/M + 50K writes at $6.25/M + 10K output at $25/M.
+  assert.equal(estimateRequestedModelCost(delta, ANTHROPIC_LIKE).estimatedCostUsd, 0.25 + 0.45 + 0.3125 + 0.25);
+  assert.equal(promptRateFigure(delta, ANTHROPIC_LIKE), 5.25);
+
+  // Only the share with its own price moves off the prompt rate.
+  const readOnly = { ...ANTHROPIC_LIKE, cacheWritePricePerMillion: undefined };
+  assert.equal(estimateRequestedModelCost(delta, readOnly).estimatedCostUsd, 0.5 + 0.45 + 0.25);
+  const writeOnly = { ...ANTHROPIC_LIKE, cacheReadPricePerMillion: null };
+  assert.equal(estimateRequestedModelCost(delta, writeOnly).estimatedCostUsd, 4.75 + 0.3125 + 0.25);
+});
+
+test('estimate: without cache prices the figure is exactly the prompt-rate one', () => {
+  const pricing = { available: true, inputPricePerMillion: 0.15, outputPricePerMillion: 0.5 };
+  for (const delta of [
+    GLM_BUILD,
+    { inputTokens: 1_234_567, cachedInputTokens: 1_000_000, cacheWriteInputTokens: 33_333, outputTokens: 7_777 },
+    { inputTokens: 0, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 1 },
+    { inputTokens: 314, outputTokens: 128 },
+    { outputTokens: 50 },
+  ]) {
+    assert.equal(estimateRequestedModelCost(delta, pricing).estimatedCostUsd, promptRateFigure(delta, pricing));
+  }
+  // Prices that are not usable count as absent.
+  for (const bad of [-0.03, Number.NaN, Infinity, '0.03', null]) {
+    const p = { ...pricing, cacheReadPricePerMillion: bad, cacheWritePricePerMillion: bad };
+    assert.equal(estimateRequestedModelCost(GLM_BUILD, p).estimatedCostUsd, promptRateFigure(GLM_BUILD, pricing));
+  }
+});
+
+test('estimate: a snapshot stored before cache prices keeps its old figure', () => {
+  // The shape an in-flight turn's metadata.pricing has from before this change.
+  const stored = {
+    available: true, model: 'z-ai/glm-5.3-flash',
+    inputPricePerMillion: 0.15, outputPricePerMillion: 0.5,
+    capturedAt: '2026-10-01T00:00:00.000Z',
+    pricingAssumption: 'cached input priced at ordinary prompt rate',
+  };
+  assert.deepEqual(estimateRequestedModelCost(GLM_BUILD, stored), {
+    costSource: 'requested_model_catalog_estimate', estimatedCostUsd: 1.63355,
+  });
+});
+
+test('estimate: cached shares never exceed the input, so nothing goes negative', () => {
+  // A per-dimension baseline can leave a cached delta larger than the input
+  // delta. Each share is capped at the input left for it.
+  const tooManyReads = estimateRequestedModelCost(
+    { inputTokens: 1_000_000, cachedInputTokens: 3_000_000, cacheWriteInputTokens: 500_000, outputTokens: 0 },
+    ANTHROPIC_LIKE,
+  );
+  assert.equal(tooManyReads.estimatedCostUsd, 0.5, 'all 1M input at the read rate, none below zero');
+  const tooManyWrites = estimateRequestedModelCost(
+    { inputTokens: 1_000_000, cachedInputTokens: 600_000, cacheWriteInputTokens: 900_000, outputTokens: 0 },
+    ANTHROPIC_LIKE,
+  );
+  assert.equal(tooManyWrites.estimatedCostUsd, 0.3 + 2.5, '600K reads, then the 400K left as writes');
+  const nonsense = estimateRequestedModelCost(
+    { inputTokens: 1_000_000, cachedInputTokens: -5, cacheWriteInputTokens: Number.NaN, outputTokens: 0 },
+    ANTHROPIC_LIKE,
+  );
+  assert.equal(nonsense.estimatedCostUsd, 5, 'unusable cached counts price the input at the prompt rate');
+  const noInput = estimateRequestedModelCost(
+    { inputTokens: 0, cachedInputTokens: 900, cacheWriteInputTokens: 100, outputTokens: 1_000_000 },
+    ANTHROPIC_LIKE,
+  );
+  assert.equal(noInput.estimatedCostUsd, 25);
+});
+
+test('estimate: a Claude-harness and a Codex turn with the same prompt cost the same', () => {
+  // Claude Code reports Anthropic's split (input excludes cache reads and
+  // writes); Codex reports the total. The ledger adds the first up, so each
+  // cached token is carved out of the total exactly once.
+  const claude = usageTotalFromResult({
+    agentHarness: 'claude', inputTokens: 50_000, cachedInputTokens: 900_000, cacheWriteInputTokens: 50_000, outputTokens: 10_000,
+  });
+  const codex = usageTotalFromResult({
+    agentHarness: 'codex', inputTokens: 1_000_000, cachedInputTokens: 900_000, cacheWriteInputTokens: 50_000, outputTokens: 10_000,
+  });
+  assert.equal(claude.inputTokens, 1_000_000);
+  const expected = 0.25 + 0.45 + 0.3125 + 0.25;
+  assert.equal(estimateRequestedModelCost(claude, ANTHROPIC_LIKE).estimatedCostUsd, expected);
+  assert.equal(estimateRequestedModelCost(codex, ANTHROPIC_LIKE).estimatedCostUsd, expected);
+});
+
+test('pricingSnapshotForModel: carries cache prices only where the catalog has them', () => {
+  const both = pricingSnapshotForModel({
+    id: 'a/opus-like', inputPricePerMillion: 5, outputPricePerMillion: 25,
+    cacheReadPricePerMillion: 0.5, cacheWritePricePerMillion: 6.25,
+  });
+  assert.equal(both.cacheReadPricePerMillion, 0.5);
+  assert.equal(both.cacheWritePricePerMillion, 6.25);
+  assert.equal(both.pricingAssumption, 'cache reads and cache writes priced at their catalog cache rates');
+
+  const readOnly = pricingSnapshotForModel({
+    id: 'z-ai/glm-5.3-flash', inputPricePerMillion: 0.15, outputPricePerMillion: 0.5,
+    cacheReadPricePerMillion: 0.03, cacheWritePricePerMillion: null,
+  });
+  assert.equal(readOnly.cacheReadPricePerMillion, 0.03);
+  assert.equal('cacheWritePricePerMillion' in readOnly, false);
+  assert.match(readOnly.pricingAssumption, /cache-read rate; cache writes at ordinary prompt rate/);
+
+  const writeOnly = pricingSnapshotForModel({
+    id: 'w', inputPricePerMillion: 1, outputPricePerMillion: 2, cacheWritePricePerMillion: 1.25,
+  });
+  assert.equal('cacheReadPricePerMillion' in writeOnly, false);
+  assert.match(writeOnly.pricingAssumption, /cache-write rate; cache reads at ordinary prompt rate/);
+
+  // No usable cache price: the snapshot is the one it always was.
+  for (const bad of [undefined, null, -1, Number.NaN, '0.03']) {
+    const snap = pricingSnapshotForModel({
+      id: 'm', inputPricePerMillion: 1.25, outputPricePerMillion: 10,
+      cacheReadPricePerMillion: bad, cacheWritePricePerMillion: bad,
+    });
+    assert.deepEqual(Object.keys(snap), [
+      'available', 'model', 'inputPricePerMillion', 'outputPricePerMillion', 'capturedAt', 'pricingAssumption',
+    ]);
+    assert.equal(snap.pricingAssumption, 'cached input priced at ordinary prompt rate');
+  }
+  // Cache prices never make an unpriced model priced.
+  assert.deepEqual(pricingSnapshotForModel({
+    id: 'm', inputPricePerMillion: null, outputPricePerMillion: 10, cacheReadPricePerMillion: 0.1,
+  }), { available: false });
+});
+
+test('pricingSnapshotForModel: reads the cache prices off a sanitized catalog model', () => {
+  const { sanitizeModel } = require('../src/services/agent-models');
+  const model = sanitizeModel({
+    id: 'z-ai/glm-5.3-flash',
+    pricing: { prompt: '0.00000015', completion: '0.0000005', input_cache_read: '0.00000003' },
+  }, { status: 'experimental', note: null });
+  const snap = pricingSnapshotForModel(model);
+  assert.equal(snap.cacheReadPricePerMillion, 0.03);
+  assert.equal('cacheWritePricePerMillion' in snap, false);
+  // Stored as JSON on the turn and read back at completion.
+  const stored = JSON.parse(JSON.stringify(snap));
+  assert.equal(estimateRequestedModelCost(GLM_BUILD, stored).estimatedCostUsd, 0.38435);
+});
+
+test('completeCodexAttempt prices a turn from its cache-priced snapshot', async () => {
+  const { pool, rowsById } = makeTransactionPool();
+  const started = await startCodexAttempt({
+    pool, session: { id: 12, agent_config_version: 1 }, userId: 1,
+    logicalTurnId: 'lt-cache', attemptNumber: 1, model: 'z-ai/glm-5.3-flash',
+    resumeThreadId: null, runtimeContext: { agentConfigVersion: 1, pricingSnapshot: GLM_FLASH },
+  });
+  const done = await completeCodexAttempt({
+    pool, turnUuid: started.turnUuid, status: 'completed', threadId: 'thr-cache',
+    usageTotal: GLM_BUILD,
+  });
+  assert.deepEqual(done.estimatedCost, { costSource: 'requested_model_catalog_estimate', estimatedCostUsd: 0.38435 });
+  assert.equal(rowsById.get(started.turnUuid).metadata.pricing.cacheReadPricePerMillion, 0.03);
+});
+
 test('runtimeModelMetadataForModel preserves OpenRouter context and capabilities', () => {
   assert.deepEqual(runtimeModelMetadataForModel({
     name: 'DeepSeek V4 Flash Latest',

@@ -22,6 +22,7 @@
 // context window with room left to work (contextFits).
 
 const log = require('../logger');
+const modelCosts = require('../model-costs');
 
 const CANDIDATES = Object.freeze([
   { id: 'z-ai/glm-5.3-flash', label: 'GLM 5.3 Flash', role: 'baseline' },
@@ -49,6 +50,8 @@ const WORKING_TOKENS = Object.freeze({
 // A rough upper estimate of what one trial reads and writes, for a model
 // with a price and no history yet (p90-ish of the bot's own runs on its
 // baseline: triage p90 was $0.26 and a build's $2.00 on a Flash model).
+// `input` is every prompt token, cache reads and writes included; most of
+// it is cache reads, priced at the model's cache rates (budgetTrialCost).
 const TOKEN_BUDGET = Object.freeze({
   triage: { input: 1_500_000, output: 20_000 },
   dm: { input: 3_000_000, output: 40_000 },
@@ -81,6 +84,10 @@ async function catalogFigures(pool, ids) {
         contextTokens: Number(m.context_length || m.top_provider?.context_length) || null,
         inputPerMillion: perToken(m.pricing?.prompt) == null ? null : perToken(m.pricing.prompt) * 1e6,
         outputPerMillion: perToken(m.pricing?.completion) == null ? null : perToken(m.pricing.completion) * 1e6,
+        // What a prompt-cache read and write cost, null where the catalog
+        // lists none (agent-models.js reads the same two fields).
+        cacheReadPerMillion: perToken(m.pricing?.input_cache_read) == null ? null : perToken(m.pricing.input_cache_read) * 1e6,
+        cacheWritePerMillion: perToken(m.pricing?.input_cache_write) == null ? null : perToken(m.pricing.input_cache_write) * 1e6,
         name: m.name || null,
       });
     }
@@ -109,6 +116,8 @@ async function listModels(pool, extra = []) {
       contextTokens: f.contextTokens || known.contextTokens || null,
       inputPerMillion: f.inputPerMillion ?? null,
       outputPerMillion: f.outputPerMillion ?? null,
+      cacheReadPerMillion: f.cacheReadPerMillion ?? null,
+      cacheWritePerMillion: f.cacheWritePerMillion ?? null,
       inCatalog: figures.has(id),
     };
   });
@@ -117,7 +126,8 @@ async function listModels(pool, extra = []) {
 /** A model's entry for one id, offered or not. */
 function modelInfo(models, id) {
   return models.find((m) => m.id === id) || {
-    id, label: id, role: null, stages: null, contextTokens: null, inputPerMillion: null, outputPerMillion: null, inCatalog: false,
+    id, label: id, role: null, stages: null, contextTokens: null, inputPerMillion: null, outputPerMillion: null,
+    cacheReadPerMillion: null, cacheWritePerMillion: null, inCatalog: false,
   };
 }
 
@@ -157,11 +167,29 @@ function estimateTrialCost(model, stage, history = []) {
   return budgetTrialCost(model, stage) ?? FALLBACK_USD[stage] ?? 1;
 }
 
-/** The stage's token budget at the model's price, or null without a price. Pure. */
+/**
+ * The stage's token budget at the model's price, or null without a price.
+ * The budget's input is split as the model picker's typical change splits
+ * its own (model-costs.js DOCUMENTED_CACHE_SHARES: 95% cache reads, 5%
+ * cache writes, below the 97-98% reads the bench's own GLM 5.3 Flash
+ * builds measured), and each part is priced at the model's cache rate
+ * where the catalog lists one and at its prompt rate where it does not
+ * (model-costs.js tokenCostUsd, the turn ledger's arithmetic). A model
+ * with no cache prices gets exactly the prompt-rate figure. Pure.
+ */
 function budgetTrialCost(model, stage) {
   const budget = TOKEN_BUDGET[stage];
   if (budget && Number.isFinite(model?.inputPerMillion) && Number.isFinite(model?.outputPerMillion)) {
-    return (budget.input * model.inputPerMillion + budget.output * model.outputPerMillion) / 1e6;
+    return modelCosts.tokenCostUsd({
+      inputPricePerMillion: model.inputPerMillion,
+      outputPricePerMillion: model.outputPerMillion,
+      cacheReadPricePerMillion: model.cacheReadPerMillion,
+      cacheWritePricePerMillion: model.cacheWritePerMillion,
+    }, {
+      inputTokens: budget.input,
+      ...modelCosts.cacheSplit(budget.input),
+      outputTokens: budget.output,
+    });
   }
   return null;
 }
@@ -178,8 +206,10 @@ function median(sorted) {
  * MIN_HISTORY trials at a stage and a price, the ratio of its median trial to
  * its budget estimate; per stage the median of those ratios, and `any` the
  * median across every stage, for a stage nothing has run at yet. The budget
- * reads every token as uncached, and the bot's turns are mostly cache reads,
- * so on the first production runs a Flash triage cost about a fifth of it.
+ * used to read every token as uncached, and the bot's turns are mostly cache
+ * reads, so on the first production runs a Flash triage cost about a fifth
+ * of it; with the cached share priced at the cache rates the ratio sits
+ * nearer one.
  * Pure. Returns { byStage: { stage: { ratio, from } }, any: { ratio, from } | null }.
  */
 function costCalibration(models, history) {

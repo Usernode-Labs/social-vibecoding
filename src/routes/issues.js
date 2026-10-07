@@ -1655,6 +1655,9 @@ function issueRoutes(config) {
       // A private member does not vote on a public app (communities.js).
       const privateRefusal = await communities.privateVoteRefusal(pool, issue.app_id, req.user?.id);
       if (privateRefusal) return res.status(403).json(privateRefusal);
+      // A public app's vote counts from a verified account (communities.js).
+      const identityRefusal = await communities.identityVoteRefusal(pool, issue.app_id, req.user?.id);
+      if (identityRefusal) return res.status(403).json(identityRefusal);
 
       // A vote can be the transition that decrypts and applies a proposed
       // secret value. api:access deliberately excludes credential management,

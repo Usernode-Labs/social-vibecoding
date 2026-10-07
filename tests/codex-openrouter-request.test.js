@@ -101,9 +101,11 @@ test('the wire cap is enforced on every GLM request, independently of history si
   for (let i = 0; i < calls.length; i++) {
     assert.equal(calls[i].url, '/api/v1/responses');
     assert.equal(calls[i].headers.authorization, `Bearer ${KEY}`);
-    const { max_output_tokens: _cap, ...rest } = calls[i].body;
+    const { max_output_tokens: _cap, provider, ...rest } = calls[i].body;
     const { max_output_tokens: _originalCap, ...expected } = bodies[i];
     assert.deepEqual(rest, expected, 'the adapter must preserve tools, history and reasoning');
+    assert.deepEqual(provider, { preferred_max_latency: { p90: 15 }, preferred_min_throughput: { p50: 30 } },
+      'and asks OpenRouter to prefer hosts that answer promptly');
   }
   assert.equal(diagnostics[0].maxOutputTokens, 32000);
   assert.equal(diagnostics[0].inputBytes, Buffer.byteLength(JSON.stringify(original.input)));

@@ -249,19 +249,28 @@ test('the legacy control is transcribed from the same Button call', () => {
   assert.doesNotMatch(cls, /\$\{/);
 });
 
-/** A stand-in for one rendered comment: a clamp span, its main, its button. */
-function fakeComment({ scrollHeight, clientHeight, expanded = false }) {
+/**
+ * A stand-in for one rendered comment: a clamp span, its main, its button.
+ * `log`, when given, receives 'read' for every layout question asked of the
+ * clamp and 'write' for every change to the control, in the order they happen.
+ */
+function fakeComment({ scrollHeight, clientHeight, expanded = false, log = null }) {
   const classes = new Set(['dev-feed-comment-clamp', ...(expanded ? ['is-expanded'] : [])]);
+  let hidden = true;
   const btn = {
-    hidden: true,
+    get hidden() { return hidden; },
+    set hidden(v) { hidden = v; if (log) log.push('write'); },
     textContent: 'Show more',
     attrs: {},
     setAttribute(k, v) { this.attrs[k] = v; },
     addEventListener(type, fn) { if (type === 'click') this.click = fn; },
   };
+  const box = { scrollHeight, clientHeight };
   const clamp = {
-    scrollHeight,
-    clientHeight,
+    get scrollHeight() { if (log) log.push('read'); return box.scrollHeight; },
+    set scrollHeight(v) { box.scrollHeight = v; },
+    get clientHeight() { return box.clientHeight; },
+    set clientHeight(v) { box.clientHeight = v; },
     classList: {
       contains: (c) => classes.has(c),
       toggle: (c) => {
@@ -336,10 +345,16 @@ test('the clamped slot is re-measured when it gains a box or changes width', () 
   // unfilled slot is `display: none` outright — the same deadlock the
   // IntersectionObserver above it already hit. So the first measurement is
   // "no", and only a re-measure can make the control appear.
-  const { clamp, btn, root } = fakeComment({ scrollHeight: 0, clientHeight: 0 });
+  const log = [];
+  const { clamp, btn, root } = fakeComment({ scrollHeight: 0, clientHeight: 0, log });
   AppView._clampFeedComments(root);
   assert.equal(btn.hidden, true, 'nothing measurable yet');
   assert.deepEqual(observed, [clamp], 'the clamped box is watched');
+  // And nothing was ASKED yet either. This runs on the line after the slot's
+  // innerHTML was written; a measurement there makes the browser restyle the
+  // page before it can answer, and on a board with every card open that was
+  // the whole board, once per slot. The observer asks after layout instead.
+  assert.deepEqual(log, [], 'no layout read on the line after the write');
 
   clamp.scrollHeight = 240;
   clamp.clientHeight = 80;
@@ -362,9 +377,38 @@ test('a repaint rebuilds the clamp observer with the comment observer', () => {
   // Both watch nodes that `_rerenderWorkshop` replaces outright, so both are
   // disconnected in the same place, on the same schedule.
   const src = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf('  _wireFeedComments(root) {'));
-  const head = src.slice(0, src.indexOf('if (!root) return;'));
+  const head = src.slice(0, src.indexOf('if (!root) {'));
+  assert.ok(head.length < 600, 'the head is the two disconnects, not the function after it');
   assert.match(head, /AppView\._feedCommentObserver\.disconnect\(\)/);
   assert.match(head, /AppView\._feedClampObserver\.disconnect\(\)/);
+});
+
+test('the observer measures every comment before it changes any control', () => {
+  // Showing or hiding a control is a style change, and the next
+  // `scrollHeight` makes the browser apply it before answering. Read, write,
+  // read, write pays for that once per comment; all the reads first pays once.
+  let fire = null;
+  const AppView = makeAppView({
+    ResizeObserver: function ResizeObserver(cb) {
+      fire = cb;
+      return { observe() {}, disconnect() {} };
+    },
+  });
+  const log = [];
+  const a = fakeComment({ scrollHeight: 240, clientHeight: 80, log });
+  const b = fakeComment({ scrollHeight: 240, clientHeight: 80, log });
+  AppView._clampFeedComments(a.root);
+  AppView._clampFeedComments(b.root);
+  fire([{ target: a.clamp }, { target: b.clamp }]);
+  assert.deepEqual(log, ['read', 'read', 'write', 'write']);
+  assert.equal(a.btn.hidden, false);
+  assert.equal(b.btn.hidden, false);
+
+  // Reported again with nothing changed (the observer reports every box
+  // after each wiring pass): measured, and no control is touched.
+  log.length = 0;
+  fire([{ target: a.clamp }, { target: b.clamp }]);
+  assert.deepEqual(log, ['read', 'read'], 'an unchanged answer writes nothing');
 });
 
 test('every painted slot is clamped, not just the one that was asked for', () => {
@@ -374,8 +418,169 @@ test('every painted slot is clamped, not just the one that was asked for', () =>
   const src = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf('  async _fillFeedComments(slot) {'));
   assert.match(
     src.slice(0, src.indexOf('const cached')),
-    /for \(const node of live\) \{\s*node\.innerHTML = html;\s*AppView\._clampFeedComments\(node\);\s*\}/,
+    /for \(const node of live\) \{[\s\S]*?if \(AppView\._feedSlotShows\(node, html\)\) continue;\s*node\.innerHTML = html;\s*AppView\._feedCommentsPainted\.set\(node, html\);\s*AppView\._clampFeedComments\(node\);\s*\}/,
   );
+});
+
+// ── 5b. How often the slots are wired, fetched and written ────────────
+//
+// Measured on the platform's own board with every card open (October 2026):
+// one load called `_wireFeedComments` 17 times, fetched the same three
+// threads six times each and wrote them 24 times, and each write was followed
+// by a measurement that restyled about 9,000 elements. These pin the three
+// things that stopped it.
+
+/** A page of comment slots, enough of a DOM for the wiring and the fill. */
+function fakeBoard(numbers) {
+  const slots = numbers.map((n) => {
+    const slot = {
+      number: n,
+      writes: 0,
+      html: '',
+      firstChild: null,
+      getAttribute: (k) => (k === 'data-comments-for' ? String(n) : null),
+      closest: () => null,
+      querySelectorAll: () => [],
+      querySelector: () => null,
+    };
+    Object.defineProperty(slot, 'innerHTML', {
+      get() { return slot.html; },
+      set(v) { slot.html = v; slot.writes += 1; slot.firstChild = v ? {} : null; },
+    });
+    return slot;
+  });
+  const root = {
+    isConnected: true,
+    querySelectorAll: (sel) => (sel.startsWith('.dev-feed-comments') ? slots : []),
+  };
+  const document = {
+    getElementById: () => null,
+    querySelector: () => null,
+    addEventListener: () => {},
+    body: { appendChild: () => {} },
+    querySelectorAll: (sel) => {
+      const m = /data-comments-for="(\d+)"/.exec(sel);
+      return m ? slots.filter((s) => s.number === Number(m[1])) : [];
+    },
+  };
+  return { slots, root, document };
+}
+
+/** Let every queued microtask and resolved fetch run. */
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+test('however many callers ask in one paint, the slots are wired once', async () => {
+  const { root, document } = fakeBoard([11, 12, 13, 14, 15]);
+  const requests = [];
+  const AppView = makeAppView({
+    document,
+    fetch: async (url) => {
+      requests.push(url);
+      return { ok: true, json: async () => ({ comments: [{ author: 'a', body: 'hi', createdAt: '2026-03-04T15:30:00Z' }] }) };
+    },
+  });
+  let passes = 0;
+  const now = AppView._wireFeedCommentsNow;
+  AppView._wireFeedCommentsNow = function wire() { passes += 1; return now.apply(this, arguments); };
+
+  // The Workshop's effect, four columns and the repaint, as one load makes them.
+  for (let i = 0; i < 6; i += 1) AppView._wireFeedComments(root);
+  assert.equal(passes, 0, 'nothing is wired on the caller\'s line');
+  await settle();
+  assert.equal(passes, 1, 'one pass for the six calls');
+  assert.equal(requests.length, AppView.FEED_COMMENT_EAGER, 'and only the first few slots are fetched');
+
+  // A teardown forgets what was queued before it.
+  AppView._wireFeedComments(root);
+  AppView._wireFeedComments(null);
+  await settle();
+  assert.equal(passes, 2, 'the pass still runs, and finds nothing to do');
+  assert.equal(AppView._feedCommentObserver, null);
+});
+
+test('a thread is requested once and written once, however often it is asked for', async () => {
+  const { slots, root, document } = fakeBoard([21, 22, 23]);
+  const requests = [];
+  let release = null;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const AppView = makeAppView({
+    document,
+    fetch: async (url) => {
+      requests.push(url);
+      await gate;
+      return { ok: true, json: async () => ({ comments: [{ author: 'a', body: 'hi', createdAt: '2026-03-04T15:30:00Z' }] }) };
+    },
+  });
+
+  // Asked for again and again while the first answers are still on the wire:
+  // the cache is only written when an answer lands, so it cannot stop this.
+  for (let i = 0; i < 4; i += 1) {
+    AppView._wireFeedComments(root);
+    await settle();
+  }
+  assert.equal(requests.length, 3, 'one request per thread, not one per ask');
+  assert.match(requests[0], /\/api\/apps\/demo-app\/github-issues\/21\/comments/);
+
+  release();
+  await settle();
+  assert.deepEqual(slots.map((s) => s.writes), [1, 1, 1], 'each slot is written when its answer lands');
+  assert.deepEqual(Object.keys(AppView._ghCommentsInFlight), [], 'and nothing is left marked as on the wire');
+
+  // And asked for after that, with the answer cached and already on screen:
+  // no request, and no second write of the same HTML.
+  for (let i = 0; i < 4; i += 1) {
+    AppView._wireFeedComments(root);
+    await settle();
+  }
+  assert.equal(requests.length, 3);
+  assert.deepEqual(slots.map((s) => s.writes), [1, 1, 1], 'a slot showing the cached answer is left alone');
+
+  // A slot something emptied is not believed: it is filled again.
+  slots[0].html = '';
+  slots[0].firstChild = null;
+  AppView._wireFeedComments(root);
+  await settle();
+  assert.equal(slots[0].writes, 2);
+
+  // A new answer for the same issue (the opened topic refetches the thread)
+  // is a different entry, and replaces what the slot shows.
+  AppView._ghComments[22] = { comments: [{ author: 'b', body: 'newer', createdAt: '2026-03-05T15:30:00Z' }], truncated: false };
+  AppView._wireFeedComments(root);
+  await settle();
+  assert.equal(slots[1].writes, 2);
+  assert.match(slots[1].html, /newer/);
+
+  // What is compared is the HTML a fill would write, not the answer it came
+  // from, because a comment's age ("5m ago") is rendered into it and nothing
+  // else keeps that fresh. Same answer, a minute later: written again, once.
+  const render = AppView._feedCommentsHtml;
+  AppView._feedCommentsHtml = (comments) => render(comments).replace(/dev-feed-comment-time"/g, 'dev-feed-comment-time" data-later="1"');
+  AppView._wireFeedComments(root);
+  await settle();
+  assert.deepEqual(slots.map((s) => s.writes), [3, 3, 2], 'a slot is rewritten when what it would say has changed');
+  AppView._wireFeedComments(root);
+  await settle();
+  assert.deepEqual(slots.map((s) => s.writes), [3, 3, 2], 'and only then');
+  assert.equal(requests.length, 3, 'none of it asked the server again');
+});
+
+test('a failed request is forgotten, so the next ask can try again', async () => {
+  const { root, document } = fakeBoard([31]);
+  let calls = 0;
+  const AppView = makeAppView({
+    document,
+    fetch: async () => {
+      calls += 1;
+      if (calls === 1) throw new Error('offline');
+      return { ok: true, json: async () => ({ comments: [] }) };
+    },
+  });
+  AppView._wireFeedComments(root);
+  await settle();
+  assert.deepEqual(Object.keys(AppView._ghCommentsInFlight), []);
+  AppView._wireFeedComments(root);
+  await settle();
+  assert.equal(calls, 2);
 });
 
 // ── 6. The stylesheet the legacy surface clamps with ──────────────────

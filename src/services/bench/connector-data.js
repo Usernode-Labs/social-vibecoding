@@ -20,6 +20,9 @@ const VERDICTS = Object.freeze(['question', 'ready', 'person', 'empty', 'failed'
 const SLUG_RE = /^[a-z0-9-]{1,120}$/;
 const MAX_SHOT_IMAGES = 12;
 const MAX_SHOT_IMAGE_BYTES = 8 * 1024 * 1024;
+// A failed run's reason in full: the gallery stores up to 2000 characters, and
+// the cause is usually past the first 200.
+const MAX_SHOT_FAILURE = 1200;
 
 /** The run filters the console's verdict ledger takes, checked. Pure. */
 function botFilters(q = {}) {
@@ -83,6 +86,7 @@ async function botOverview(pool, config, query = {}, deps = {}) {
       perPerson: num(s.perPerson),
       shadowBuilds: !!s.shadowBuilds,
       dmChat: !!s.dmChat,
+      continueReads: s.continueReads !== false,
       proposalCeiling: num(s.proposalCeiling),
       userWeeklyCents: num(s.userWeeklyCents),
     },
@@ -116,6 +120,42 @@ async function rateRun(pool, { runId, rating, note, labelVerdict, actorId }, dep
   return { ok: true, run: { id: Number(r.id), rating: r.rating || null, ratingNote: r.rating_note || null, labelVerdict: r.label_verdict || null } };
 }
 
+// Fixed-shape words only: codes and causes from the platform's own sets.
+const CODE_RE = /^[a-z][a-z0-9_]{0,63}$/;
+
+// How the shots agent ended on each failed run, from its last failed
+// dispatch: the platform's code for it, and, when the agent's process died,
+// the worker's exit code and cause (oom_killed, container_gone, …; see
+// docs/proposal-visuals/shots-agent-diagnostics.md). The failure reason
+// alone reads "The shots agent stopped with an error before it finished."
+// whatever happened. Best-effort: the listing never fails for it.
+async function agentExits(pool, sessionIds) {
+  const exits = new Map();
+  if (!pool || !sessionIds.length) return exits;
+  try {
+    const { rows } = await pool.query(
+      `SELECT cs.id AS session_id, r.trace_summary->'agentDispatches' AS dispatches
+         FROM chat_sessions cs JOIN shot_runs r ON r.id = cs.shots_run_id
+        WHERE cs.id = ANY($1::int[]) AND r.state = 'failed'`,
+      [sessionIds],
+    );
+    for (const row of rows) {
+      const failed = (Array.isArray(row.dispatches) ? row.dispatches : [])
+        .filter((d) => d && d.outcome === 'failed').at(-1);
+      if (!failed) continue;
+      const exit = {
+        code: CODE_RE.test(String(failed.code || '')) ? failed.code : null,
+        exitCode: Number.isSafeInteger(failed.exitCode) ? failed.exitCode : null,
+        exitCause: CODE_RE.test(String(failed.exitCause || '')) ? failed.exitCause : null,
+      };
+      if (exit.code || exit.exitCode != null || exit.exitCause) exits.set(Number(row.session_id), exit);
+    }
+  } catch {
+    return new Map();
+  }
+  return exits;
+}
+
 /**
  * The recent before/after screenshots, as the console's Screenshot gallery
  * lists them: merged proposals newest first (keyset paged), each with its
@@ -127,6 +167,8 @@ async function recentShots(pool, query = {}, deps = {}) {
   const page = await gallery.listProposals(pool, {
     app: query.app, problem: query.problem, before: query.before, before_id: query.beforeId, limit: query.limit,
   });
+  const exits = await agentExits(pool, (page.proposals || [])
+    .filter((p) => p.shots?.state === 'failed').map((p) => Number(p.id)));
   const proposals = (page.proposals || []).map((p) => {
     const shots = p.shots || null;
     const artifacts = Array.isArray(shots?.artifacts) ? shots.artifacts : [];
@@ -148,7 +190,9 @@ async function recentShots(pool, query = {}, deps = {}) {
         })),
         images: artifacts.filter((a) => a.media === 'png').length,
         clips: artifacts.filter((a) => a.media !== 'png').length,
-        failure: shots.failureReason ? clipText(shots.failureReason, 200) : null,
+        failureCode: shots.failureCode ? String(shots.failureCode).slice(0, 64) : null,
+        failure: shots.failureReason ? clipText(shots.failureReason, MAX_SHOT_FAILURE) : null,
+        ...(exits.has(Number(p.id)) ? { agentExit: exits.get(Number(p.id)) } : {}),
       } : null,
       legacyCaptures: Array.isArray(p.visuals) ? p.visuals.length : 0,
     };

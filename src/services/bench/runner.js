@@ -20,9 +20,10 @@
 //   * post, comment, DM, notify, open a pull request or a proposal. The
 //     trial never calls live.post, live.postOnProposal, live.promoteAsBot or
 //     anything in homeroom-bot-dm; buildAndPropose runs with propose:false,
-//     no onSpec and no votes router; and the GitHub client a trial is handed
-//     is guardedGithub's: reads, plus branches under `bench/` and nothing
-//     else. Any other call throws BenchSideEffectError
+//     no votes router, and no onSpec but a first version's, which keeps the
+//     spec on its own trial and nothing more; and the GitHub client a trial
+//     is handed is guardedGithub's: reads, plus branches under `bench/` and
+//     nothing else. Any other call throws BenchSideEffectError
 //     (tests/bench-runner.test.js spies on all of them).
 //   * spend the bot's money. Trials run as their own synthetic user,
 //     `homeroom_bench`, with its own included key and weekly allowance, so a
@@ -45,8 +46,11 @@
 // ends. A restart in the middle is never recovered into the dev-chat tail
 // (server.js adoptOrphanWorker, isBenchSession): a trial whose interrupted
 // turn is the last one it needs is followed to its end and finished here
-// (recoverStage, then the lane's shared finisher); any other is abandoned
-// and run again from the start (services/bench/lane.js).
+// (recoverStage, then the lane's shared finisher). A first version, whose
+// turns are several, is followed through any of them and goes on from what
+// it left, as the bot's own builds do (recoverFirstVersionTurn, then
+// firstVersionStage reading its checkpoint). Any other is abandoned and run
+// again from the start (services/bench/lane.js).
 
 const crypto = require('crypto');
 const bcrypt = require('bcrypt');
@@ -544,19 +548,35 @@ async function buildStage(ctx) {
       return { branchName: branch, created: true };
     },
   };
+  // Whether the build could look at its own screens, recorded on the trial
+  // (`parsed.sight`): `told` is what its prompt said (the design self-check
+  // asks for screenshots or for the page's text snapshot), decided here the
+  // way buildAndPropose decides it and handed to it, so the two cannot
+  // differ; `passed` is what the runtime of its turns said the model takes
+  // in, which is what makes the worker hand it an image or a note in its
+  // place (AGENT_MODEL_SUPPORTS_IMAGES). The lane adds the looks it took.
+  const sight = { told: await live.buildSeesImages({ pool, config, userId: user.id, model }), passed: null };
+  const agentTurn = observedRuntime(deps.agentTurn, (runtime) => {
+    const takesImages = runtime?.agentModelMetadata?.supportsImages;
+    if (typeof takesImages === 'boolean') sight.passed = takesImages;
+  });
   const built = await live.buildAndPropose({
     pool, config, bot: user, app, repo, issueNumber: snapshot.issueNumber,
     issue: { title: snapshot.thread?.issue?.title || `Issue #${snapshot.issueNumber}` },
     seed: snapshot.texts.seed, buildNote: snapshot.texts.build_note || '',
     turnBudgetMs: budgets.buildMs, specBudgetMs: budgets.specMs, model,
     deps: {
-      worker: deps.worker, sessions: deps.sessions, agentTurn: deps.agentTurn,
-      activeWorkers: deps.activeWorkers, sessionLifecycle,
+      worker: deps.worker, sessions: deps.sessions, agentTurn,
+      activeWorkers: deps.activeWorkers, sessionLifecycle, seesImages: sight.told,
     },
-    // Never proposed, never posted: no onSpec, no ceiling, no votes router.
+    // Never proposed, never posted: no ceiling, no votes router, and no
+    // onSpec but a first version's, which keeps the spec on its trial for a
+    // restart to go on from (firstVersionStage).
     propose: false,
-    onSpec: null,
+    onSpec: ctx.onSpecWritten ? ({ sessionId: id, specMd }) => ctx.onSpecWritten({ sessionId: id, specMd }) : null,
     proposalCeiling: null,
+    // A spec a restart's recovery kept: built from as it is, not written again.
+    ...(ctx.presetSpec ? { presetSpec: ctx.presetSpec } : {}),
     platformRepo: !!snapshot.extra?.platformRepo,
     firstVersion: !!snapshot.extra?.firstVersion,
     sessionTitle: title,
@@ -572,7 +592,34 @@ async function buildStage(ctx) {
     // A studio trial an admin cancelled stops before its build turn.
     ...(ctx.skipCheck ? { skipCheck: ctx.skipCheck } : {}),
   });
-  return buildResult({ built, base, branch, sessionId, deps, repo, task, trial });
+  if (ctx.onBuilt) {
+    try { await ctx.onBuilt({ ...built, sight }); } catch { /* a checkpoint never stops a trial */ }
+  }
+  const out = await buildResult({ built, base, branch, sessionId, deps, repo, task, trial });
+  return { ...out, parsed: { ...(out.parsed || {}), sight } };
+}
+
+/**
+ * The agent-turn module a build is handed, the same but for
+ * resolveCodexRuntimeContext, whose runtime is shown to `onRuntime` (the
+ * last one a build resolves is its build turn's) and then returned as it
+ * is. A watcher that throws never stops the turn.
+ */
+function observedRuntime(agentTurn, onRuntime) {
+  if (!agentTurn) return agentTurn;
+  return new Proxy(agentTurn, {
+    get(target, prop) {
+      if (prop === 'resolveCodexRuntimeContext') {
+        return async (...args) => {
+          const runtime = await target.resolveCodexRuntimeContext(...args);
+          try { onRuntime(runtime); } catch { /* a watcher never stops a turn */ }
+          return runtime;
+        };
+      }
+      const value = target[prop];
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
 }
 
 /** A follow-up's prompt and mode, rebuilt from its snapshot. */
@@ -730,6 +777,15 @@ function firstVersionModels(ctx) {
  *
  * A triage that does not answer `ready` builds nothing, as the bot would
  * not, and the trial says what it answered instead.
+ *
+ * Each sub-step's outcome is kept on the trial as it finishes
+ * (ctx.onCheckpoint): the triage's answer, the spec, a build that landed.
+ * A restart that interrupts the trial hands it back to the lane, and its
+ * next claim (ctx.checkpoint) takes each kept outcome as it is and goes on
+ * from the first sub-step without one, as the bot's own builds go on from a
+ * kept spec (homeroom-bot.js handBackRun, buildAndPropose's presetSpec). A
+ * build that landed keeps its branch; anything earlier starts the branch
+ * again at the first commit.
  */
 async function firstVersionStage(ctx) {
   const { pool, snapshot, repo, trial, deps, budgets } = ctx;
@@ -741,6 +797,21 @@ async function firstVersionStage(ctx) {
   const step = (name) => { try { ctx.onStep?.(name); } catch { /* a watcher never stops a trial */ } };
   const models = firstVersionModels(ctx);
   const branch = branchFor(trial);
+  const done = ctx.checkpoint || {};
+  const keep = async (part) => {
+    try { await ctx.onCheckpoint?.(part); } catch { /* a checkpoint never stops a trial */ }
+  };
+  // Every session the trial opens, in every claim: what a release charges.
+  const opened = Array.isArray(done.sessions) ? done.sessions.map(Number) : [];
+  const noteOpened = async (id) => {
+    if (!id || opened.includes(Number(id))) return;
+    opened.push(Number(id));
+    await keep({ sessions: [...opened] });
+  };
+  // A build is kept with its commit or not at all: one said to have landed
+  // with none on record is built again.
+  const wasBuilt = done.build && !(done.build.ok && !done.build.sha) ? done.build : null;
+  const landed = wasBuilt?.ok ? wasBuilt : null;
   step('scaffold');
   const made = await (deps.scaffold || scaffold.ensure)(pool, {
     runId: trial.run_id, taskId: ctx.task?.id, pack: ctx.pack || null, input, repo, github: deps.github, user: ctx.user, deps,
@@ -748,9 +819,15 @@ async function firstVersionStage(ctx) {
   if (!made || !made.ok) return { status: 'infra_fail', error: `scaffold: ${made?.error || 'not made'}` };
   let base;
   try {
-    // An earlier attempt's branch of the same trial (a restart) goes first.
-    await deps.github.deleteBenchBranch(repo.owner, repo.repo, branch);
-    base = await pinBranch(deps.github, repo, branch, made.sha);
+    if (landed) {
+      // Its build landed before a restart: the branch stays at its commit.
+      await pinBranch(deps.github, repo, branch, landed.sha);
+      base = made.sha;
+    } else {
+      // An earlier attempt's branch of the same trial (a restart) goes first.
+      await deps.github.deleteBenchBranch(repo.owner, repo.repo, branch);
+      base = await pinBranch(deps.github, repo, branch, made.sha);
+    }
   } catch (err) {
     return { status: 'infra_fail', error: `branch: ${err.message}` };
   }
@@ -767,9 +844,22 @@ async function firstVersionStage(ctx) {
     scaffold: { sha: made.sha, branch: made.branch || null },
     sketch: card ? { emoji: card.emoji || null, tagline: card.tagline || null, points: card.points || [] } : null,
     models,
+    ...(Number(done.handBacks) > 0 ? { resumedAfterRestart: Number(done.handBacks) } : {}),
   };
-  step('triage');
-  const triaged = await triageStage({ ...ctx, model: models.triage, snapshot: replay, baseSha: base });
+  let triaged = done.triage || null;
+  if (!triaged) {
+    step('triage');
+    triaged = await triageStage({
+      ...ctx, model: models.triage, snapshot: replay, baseSha: base,
+      // Which session is the triage's: recovery tells its turn from the spec's by it.
+      onSession: async (id, info) => {
+        await keep({ triageSessionId: Number(id) });
+        await noteOpened(id);
+        return ctx.onSession?.(id, info);
+      },
+    });
+    if (triaged.status === 'ok') await keep({ triage: keptTriage(triaged) });
+  }
   const sessionIds = [triaged.session_id].filter(Boolean);
   const common = { base_sha: base, build_branch: branch, session_ids: sessionIds };
   const triage = triaged.parsed ? {
@@ -792,16 +882,34 @@ async function firstVersionStage(ctx) {
   const plan = bot.planFor(triaged.parsed);
   const chosen = bot.choicesFrom(plan.questions, []);
   const buildNote = `${triage.buildNote || ''}${bot.creatorChoiceNote(chosen)}`;
-  step('spec');
-  const built = await buildStage({
-    ...ctx,
-    model: models.build,
-    specModel: models.spec !== models.build ? models.spec : null,
-    snapshot: { ...replay, texts: { seed, build_note: buildNote } },
-    // A first version's own clocks (homeroom-bot buildBudgets, firstVersion).
-    budgets: budgets.firstVersion || budgets,
-  });
-  const ids = [...sessionIds, built.session_id].filter(Boolean);
+  let built;
+  if (wasBuilt || done.spec?.blocked) {
+    // What the build (or a spec that found it impossible) did before a
+    // restart, read as the live stage reads it.
+    const was = wasBuilt || {
+      ok: false, sessionId: done.spec.sessionId, blocked: done.spec.blocked, error: done.spec.error || null, specMd: null,
+    };
+    built = await buildResult({ built: was, base, branch, sessionId: was.sessionId, deps, repo, task: ctx.task, trial });
+    if (was.sight) built.parsed = { ...(built.parsed || {}), sight: was.sight };
+  } else {
+    if (!done.spec) step('spec');
+    built = await buildStage({
+      ...ctx,
+      model: models.build,
+      specModel: models.spec !== models.build ? models.spec : null,
+      snapshot: { ...replay, texts: { seed, build_note: buildNote } },
+      // A first version's own clocks (homeroom-bot buildBudgets, firstVersion).
+      budgets: budgets.firstVersion || budgets,
+      presetSpec: done.spec?.specMd || null,
+      onSession: async (id, info) => {
+        await noteOpened(id);
+        return ctx.onSession?.(id, info);
+      },
+      onSpecWritten: ({ sessionId, specMd }) => keep({ spec: { sessionId: Number(sessionId), specMd } }),
+      onBuilt: (b) => (b.ok && b.sha ? keep({ build: keptBuild(b) }) : null),
+    });
+  }
+  const ids = [...sessionIds, done.spec?.sessionId, built.session_id].filter(Boolean).map(Number);
   const cost = [triaged.cost_usd, built.cost_usd].filter(Number.isFinite);
   const merged = {
     ...built, base_sha: base, build_branch: branch, session_id: built.session_id || triaged.session_id, session_ids: [...new Set(ids)],
@@ -810,11 +918,39 @@ async function firstVersionStage(ctx) {
   };
   if (built.status !== 'ok' || !built.parsed?.built || !built.session_id) return merged;
   step('capture');
-  const shot = await screenshotStep(ctx, built.session_id);
+  // On the build's own worker; or, for a build that landed before a restart
+  // (its worker gone, its session put away), on a fresh one at its branch.
+  let shotSession = built.session_id;
+  if (landed) {
+    const s = await openSession(pool, ctx.config, { user: ctx.user, app: ctx.app, model: models.build, branch, title: ctx.title });
+    await ctx.onSession?.(s.id, { baseSha: base, branch });
+    await noteOpened(s.id);
+    shotSession = s.id;
+    merged.session_ids = [...merged.session_ids, s.id];
+  }
+  const shot = await screenshotStep(ctx, shotSession);
   // The platform failing to run the step is not the build's fault: the
   // trial is a fault, kept out of quality, with its build still recorded.
   if (!shot.ok) return { ...merged, status: 'infra_fail', error: shot.error };
   return { ...merged, capture: shot.capture };
+}
+
+/** A triage's outcome as a checkpoint keeps it: everything but the live session. */
+function keptTriage(t) {
+  return {
+    status: t.status, error: t.error || null, session_id: t.session_id || null, cost_usd: t.cost_usd ?? null,
+    raw_output: t.raw_output ?? null, parsed: t.parsed || null,
+  };
+}
+
+/** A build's outcome (buildAndPropose's, or a recovered turn's) as a checkpoint keeps it. */
+function keptBuild(b) {
+  return {
+    ok: !!b.ok, sessionId: b.sessionId ? Number(b.sessionId) : null, sha: b.sha || null,
+    commits: Number.isFinite(b.commits) ? b.commits : null, specMd: b.specMd || null, specNote: b.specNote || null,
+    error: b.error || null, ...(b.blocked ? { blocked: b.blocked } : {}),
+    ...(b.sight ? { sight: b.sight } : {}),
+  };
 }
 
 /**
@@ -871,18 +1007,37 @@ const STAGE_RUNNERS = Object.freeze({
 // ── After a restart ─────────────────────────────────────────────────────
 
 /**
- * Whether restart recovery can finish a trial from its interrupted turn:
- * the turn is the trial's last, and nothing after it needs this process's
- * memory. A triage, a follow-up and a checks fix are one turn; a build is
- * two, a spec turn (`scout`) and then the build turn (`build`), and only the
- * second is its last. A DM conversation, a spec stage, or anything unknown is
- * run again instead. Pure.
+ * Whether restart recovery can follow a trial's interrupted turn to its end.
+ * For most trials, when the turn is the trial's last and nothing after it
+ * needs this process's memory: a triage, a follow-up and a checks fix are one
+ * turn; a build is two, a spec turn (`scout`) and then the build turn
+ * (`build`), and only the second is its last. A first version's every turn
+ * (its triage, spec and build) is followed, and what it produced kept for
+ * the trial's next claim to go on from (recoverFirstVersionTurn); a
+ * reference build has no turn. A DM conversation, a spec stage, or anything
+ * unknown is run again instead. Pure.
  */
-function resumableTurn(stage, activeTurn) {
+function resumableTurn(stage, activeTurn, { reference = false } = {}) {
   if (!activeTurn) return false;
   if (stage === 'triage' || stage === 'followup' || stage === 'checks_fix') return true;
   if (stage === 'build') return activeTurn.mode === 'build';
+  if (stage === 'first_version') return !reference && (activeTurn.mode === 'scout' || activeTurn.mode === 'build');
   return false;
+}
+
+/**
+ * Which of a first version's turns a session's turn is: 'triage', 'spec' or
+ * 'build', or null. The triage and the spec are both `scout` turns, told
+ * apart by the triage's session, which the trial keeps before its turn runs
+ * (firstVersionStage). Pure.
+ */
+function firstVersionTurnOf(checkpoint, sessionId, activeTurn) {
+  if (!activeTurn) return null;
+  if (activeTurn.mode === 'build') return 'build';
+  if (activeTurn.mode !== 'scout') return null;
+  const cp = checkpoint || {};
+  if (cp.triageSessionId != null) return Number(cp.triageSessionId) === Number(sessionId) ? 'triage' : 'spec';
+  return cp.triage ? 'spec' : 'triage';
 }
 
 /** A journal replay's result in the shape runTurn resolves, so the same readers apply. */
@@ -932,11 +1087,21 @@ async function recoverStage({
   }
   // The build turn. The spec turn before it stored its spec on the session.
   if (!baseSha) throw new Error('the build has no base on record');
+  const built = recoveredBuild({ session, result, timedOut });
+  return buildResult({ built, base: baseSha, branch: br, sessionId: session.id, deps, repo, task, trial });
+}
+
+/**
+ * A build turn restart recovery followed to its end, in the shape
+ * buildAndPropose resolves (buildResult reads it). `specMd` is the spec it
+ * was built from, when the caller has it; otherwise the session's. Pure.
+ */
+function recoveredBuild({ session, result = {}, timedOut = false, specMd: given = null }) {
   const r = result || {};
   const turnFailed = timedOut ? null : require('../homeroom-bot-live').failedClaudeTurn(r);
   const landed = !timedOut && !turnFailed && r.pushOk === true && Number(r.ahead) > 0;
-  const specMd = String(session.spec_md || '').trim() ? session.spec_md : null;
-  const built = {
+  const specMd = given || (String(session.spec_md || '').trim() ? session.spec_md : null);
+  return {
     ok: landed,
     sessionId: session.id,
     sha: landed ? (r.sha || null) : null,
@@ -949,7 +1114,37 @@ async function recoverStage({
         : turnFailed ? `the build turn failed (${turnFailed})${RECOVERED_NOTE}`
           : `the build produced no change to propose${RECOVERED_NOTE}`,
   };
-  return buildResult({ built, base: baseSha, branch: br, sessionId: session.id, deps, repo, task, trial });
+}
+
+/**
+ * A first version's turn, followed to its end by restart recovery: what it
+ * produced, as the part of the trial's checkpoint its next claim goes on
+ * from (firstVersionStage), read by the same readers the live stage uses.
+ * Resolves { step, keep }, or null when the turn left nothing to keep: a
+ * spec that failed or ran out of time (the live build would go on from the
+ * plan alone; the next claim writes the spec again instead), or a turn that
+ * is none of the three. A triage's or a build's failure is kept: it is the
+ * trial's outcome, and its next claim records it as the live stage would.
+ */
+function recoverFirstVersionTurn({ checkpoint, session, activeTurn, result = {}, timedOut = false }) {
+  const step = firstVersionTurnOf(checkpoint, session.id, activeTurn);
+  if (!step) return null;
+  const turn = recoveredTurn(result, timedOut);
+  if (step === 'triage') {
+    const out = { session_id: session.id, ...turnFields(turn) };
+    // A first version's triage prompt is rendered for the trial, never
+    // read from a snapshot, so there is no hash to compare it to.
+    return { step, keep: { triage: keptTriage(triageResult({ turn, out, prompt: '', snapshot: { promptHash: null } })) } };
+  }
+  if (step === 'spec') {
+    if (timedOut) return null;
+    const read = require('../homeroom-bot-live').readSpec(turn.result.lastResultText);
+    if (read.ok) return { step, keep: { spec: { sessionId: Number(session.id), specMd: read.specMd } } };
+    if (read.blocked) return { step, keep: { spec: { sessionId: Number(session.id), blocked: read.blocked, error: read.error } } };
+    return null;
+  }
+  const specMd = checkpoint?.spec?.specMd || null;
+  return { step, keep: { build: keptBuild(recoveredBuild({ session, result, timedOut, specMd })) } };
 }
 
 /**
@@ -1033,4 +1228,7 @@ module.exports = {
   resumableTurn,
   recoveredTurn,
   recoverStage,
+  recoveredBuild,
+  firstVersionTurnOf,
+  recoverFirstVersionTurn,
 };

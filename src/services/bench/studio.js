@@ -477,6 +477,7 @@ function previewOut(r) {
 const TRIAL_SQL = `SELECT tr.id, tr.run_id, tr.task_id, tr.model, tr.attempt, tr.status, tr.context_pack_id, tr.reference_label,
             tr.progress, tr.cost_usd::float8 AS cost_usd, tr.est_cost_usd::float8 AS est_cost_usd, tr.error,
             tr.created_at, tr.started_at, tr.finished_at, tr.duration_ms,
+            tr.prior_ms::float8 AS prior_ms, tr.first_started_at, (tr.checkpoint->>'handBacks')::int AS hand_backs,
             tr.build_branch, tr.build_sha, tr.base_sha, tr.capture_sha, tr.build_commits, tr.branch_deleted_at, tr.kept_at,
             tr.capture, tr.parsed, tr.deterministic,
             tk.tags, sn.extra->>'appName' AS app_name, a.slug AS app_slug, a.repo_url,
@@ -530,6 +531,12 @@ function trialOut(row, { preview = null, grades = [] } = {}) {
   const shots = row.capture ? pickShots(row.capture).chosen.map((sh) => ({ caption: sh.caption, artifactId: sh.artifactId })) : [];
   const started = row.started_at ? new Date(row.started_at).getTime() : null;
   const ended = row.finished_at ? new Date(row.finished_at).getTime() : null;
+  // A first version a restart handed back (services/bench/lane.js "After a
+  // restart") ran over several claims: its elapsed time is theirs together,
+  // the wait in the queue between them left out.
+  const priorMs = Number(row.prior_ms) || 0;
+  const handBacks = Number(row.hand_backs) || 0;
+  const firstStarted = row.first_started_at ? new Date(row.first_started_at).getTime() : null;
   return {
     trialId: Number(row.id),
     runId: Number(row.run_id),
@@ -544,10 +551,19 @@ function trialOut(row, { preview = null, grades = [] } = {}) {
     stepAt: p.stepAt || null,
     startedAt: iso(row.started_at),
     finishedAt: iso(row.finished_at),
-    elapsedMs: started ? Math.max(0, (ended || Date.now()) - started) : null,
+    elapsedMs: started ? priorMs + Math.max(0, (ended || Date.now()) - started) : (priorMs || null),
+    // How often a restart handed it back, and the wall clock from its first claim.
+    resumed: handBacks > 0
+      ? { restarts: handBacks, wallMs: firstStarted ? Math.max(0, (ended || Date.now()) - firstStarted) : null }
+      : null,
     costUsd: Number.isFinite(row.cost_usd) ? row.cost_usd : null,
     activity: Array.isArray(p.lines) ? p.lines.map((l) => clip(l, ACTIVITY_CHARS)) : [],
     skills: parsed.skills || p.skills || { invoked: [], read: [] },
+    // Whether its build could look at its own screens: what its prompt told
+    // it, what its model was handed, and the screenshots, text snapshots and
+    // page loads it took (runner.buildStage, progress.lookIn). Live from the
+    // watch while it runs.
+    sight: parsed.sight || (p.looks ? { told: null, passed: null, ...p.looks } : null),
     triage: parsed.triage ? { verdict: parsed.triage.verdict || null, question: parsed.triage.question ? clip(parsed.triage.question, 300) : null } : null,
     built: parsed.built === true,
     booted: row.capture ? row.capture.booted === true : null,
@@ -904,7 +920,7 @@ async function trialRows(pool, runId) {
       trialId: t.trialId, taskId: t.taskId, stage: stageOf.get(t.trialId)?.stage || null,
       issueNumber: stageOf.get(t.trialId)?.issue_number ?? null, ref: t.ref, appName: t.appName,
       arm: t.armLabel, attempt: t.attempt, status: t.status, final: t.final, criteria: t.criteria,
-      costUsd: t.costUsd, elapsedMs: t.elapsedMs, built: t.built, booted: t.booted, skills: t.skills,
+      costUsd: t.costUsd, elapsedMs: t.elapsedMs, built: t.built, booted: t.booted, skills: t.skills, sight: t.sight,
       error: t.error ? require('./report').reasonText(t.error) : null,
     })),
   };
@@ -922,6 +938,7 @@ async function trialDetail(pool, trialId, { images = false } = {}) {
     `SELECT tr.id, tr.run_id, tr.task_id, tr.model, tr.attempt, tr.status, tr.context_pack_id, tr.reference_label,
             tr.progress, tr.cost_usd::float8 AS cost_usd, tr.est_cost_usd::float8 AS est_cost_usd, tr.error,
             tr.created_at, tr.started_at, tr.finished_at, tr.duration_ms,
+            tr.prior_ms::float8 AS prior_ms, tr.first_started_at, (tr.checkpoint->>'handBacks')::int AS hand_backs,
             tr.build_branch, tr.build_sha, tr.base_sha, tr.capture_sha, tr.build_commits, tr.branch_deleted_at, tr.kept_at,
             tr.capture, tr.parsed, tr.deterministic, tr.changed_files,
             tk.tags, tk.stage, tk.snapshot_id, sn.extra->>'appName' AS app_name, a.slug AS app_slug, a.repo_url,

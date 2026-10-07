@@ -13,6 +13,14 @@
 // the same in screenshots. A Skill tool call names its skill in the turn's
 // progress ("Using skill <name>"); a model that reads the file instead shows
 // its path. Both are counted, apart.
+//
+// So are the in-loop browser's looks, for the same reason: a build told to
+// check its screens that never looked, one that read the page's text
+// snapshot, and one that took screenshots all look alike in the result. A
+// screenshot is the model looking at the page as an image, a snapshot reading
+// its accessibility text, a navigation loading it (one per look, roughly).
+// Both harnesses report a tool call as "Using <tool>": Claude Code with the
+// MCP prefix (mcp__playwright__browser_take_screenshot), Codex without it.
 
 const STEPS = Object.freeze(['scaffold', 'triage', 'plan', 'spec', 'build', 'capture']);
 const LINES_KEPT = 4;
@@ -21,6 +29,8 @@ const WRITE_EVERY_MS = 5000;
 const MAX_SKILLS = 20;
 const SKILL_CALL_RE = /^Using skill ([A-Za-z0-9._:/-]{1,80})/;
 const SKILL_FILE_RE = /\.(?:claude|agents)\/skills\/([A-Za-z0-9._-]{1,80})\/SKILL\.md/;
+const LOOK_RE = /^Using (?:mcp__playwright__)?browser_(take_screenshot|snapshot|navigate)\b/;
+const LOOK_KINDS = Object.freeze({ take_screenshot: 'screenshots', snapshot: 'snapshots', navigate: 'navigations' });
 
 /** Which skill a progress line shows the model invoking or reading, if any. Pure. */
 function skillIn(line) {
@@ -32,19 +42,36 @@ function skillIn(line) {
   return null;
 }
 
+/** Which look a progress line shows the model taking in the in-loop browser, if any. Pure. */
+function lookIn(line) {
+  const m = LOOK_RE.exec(String(line || ''));
+  return m ? LOOK_KINDS[m[1]] : null;
+}
+
 function clip(line) {
   const text = String(line || '').replace(/\s+/g, ' ').trim();
   return text.length > LINE_CHARS ? `${text.slice(0, LINE_CHARS - 1)}…` : text;
+}
+
+/** Skills already seen, as a list of names a tracker may start from. Pure. */
+function skillNames(list) {
+  return Array.isArray(list) ? [...new Set(list.map(String))].slice(0, MAX_SKILLS) : [];
 }
 
 /**
  * A trial's progress, kept in memory and written to its row. `step(name)`
  * writes at once; `note(line)` within WRITE_EVERY_MS; `close()` writes what
  * is left and stops. A write that fails is logged and never stops the trial.
+ * `skills` and `looks` are those an earlier claim of the same trial already
+ * saw (a first version going on after a restart), so its record keeps them.
  */
-function tracker(pool, trialId, { now = () => Date.now(), writeEveryMs = WRITE_EVERY_MS, log = null } = {}) {
+function tracker(pool, trialId, {
+  now = () => Date.now(), writeEveryMs = WRITE_EVERY_MS, log = null, skills = null, looks = null,
+} = {}) {
   const iso = () => new Date(now()).toISOString();
-  const state = { step: null, stepAt: null, lines: [], skills: { invoked: [], read: [] }, updatedAt: iso() };
+  const seen = { invoked: skillNames(skills?.invoked), read: skillNames(skills?.read) };
+  const state = { step: null, stepAt: null, lines: [], skills: seen, updatedAt: iso() };
+  state.looks = Object.fromEntries(Object.values(LOOK_KINDS).map((k) => [k, Math.max(Number(looks?.[k]) || 0, 0)]));
   let timer = null;
   let closed = false;
   let chain = Promise.resolve();
@@ -77,6 +104,9 @@ function tracker(pool, trialId, { now = () => Date.now(), writeEveryMs = WRITE_E
         const list = state.skills[skill.kind];
         if (!list.includes(skill.name) && list.length < MAX_SKILLS) list.push(skill.name);
       }
+      // Counted before a repeat is dropped: two screenshots in a row are two looks.
+      const look = lookIn(text);
+      if (look) state.looks[look] += 1;
       if (state.lines[state.lines.length - 1] === text) return;
       state.lines.push(text);
       if (state.lines.length > LINES_KEPT) state.lines.shift();
@@ -84,6 +114,9 @@ function tracker(pool, trialId, { now = () => Date.now(), writeEveryMs = WRITE_E
     },
     skills() {
       return { invoked: [...state.skills.invoked], read: [...state.skills.read] };
+    },
+    looks() {
+      return { ...state.looks };
     },
     snapshot() {
       return JSON.parse(JSON.stringify(state));
@@ -103,5 +136,6 @@ module.exports = {
   LINES_KEPT,
   WRITE_EVERY_MS,
   skillIn,
+  lookIn,
   tracker,
 };

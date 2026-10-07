@@ -94,3 +94,48 @@ test('a guest token is minted only for a view-public child app, as the edge woul
   delete process.env.EDGE_JWT_SECRET;
   assert.deepEqual(await identity(), { kind: 'unavailable', token: null }, 'no guests without a signer');
 });
+
+// Said to the building agent when it declares, so it can declare again:
+// a guest change on an app whose guests are shown nothing of it, and a
+// claim about signed-out visitors declared for a signed-in persona.
+test('persona warnings name guest changes guests cannot see and signed-out claims on signed-in personas', async (t) => {
+  const appAccess = require('../src/services/app-access');
+  const saved = { EDGE_JWT_SECRET: process.env.EDGE_JWT_SECRET, APP_HOST_SIGNIN: process.env.APP_HOST_SIGNIN };
+  t.after(() => {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+    appAccess.invalidateAllVisibility();
+  });
+  process.env.EDGE_JWT_SECRET = 'e'.repeat(64);
+  delete process.env.APP_HOST_SIGNIN;
+  let row = { id: 42, view_visibility: 'private', moderation_suspended_at: null };
+  const pool = { async query() { return { rows: row ? [row] : [] }; } };
+  const app = { id: 42, slug: 'vote-inbox' };
+  const story = (id, persona, claim) => ({ id, persona, claim });
+  const warn = async (stories, options) => {
+    appAccess.invalidateAllVisibility();
+    return identities.personaWarnings(pool, app, { stories }, options);
+  };
+
+  const privateGuest = await warn([story('summary-line', 'guest', 'A line under the header counts open proposals.')]);
+  assert.equal(privateGuest.length, 1);
+  assert.match(privateGuest[0], /^summary-line is declared for guest, but this app is private/);
+  assert.match(privateGuest[0], /declare it again with persona member/);
+
+  row = { id: 42, view_visibility: 'public', moderation_suspended_at: null };
+  assert.deepEqual(await warn([story('summary-line', 'guest', 'A line under the header.')]), [],
+    'a public app shows its guests a guest view');
+  assert.deepEqual(await warn([story('landing', 'guest', 'The landing page says hello.')], { selfApp: true }), [],
+    'Homeroom shows a signed-out browser its own pages');
+
+  const signedOut = await warn([
+    story('lobby', 'member', 'The lobby renders unchanged for a signed-out visitor.'),
+    story('board', 'member', 'The board shows a new column.'),
+  ]);
+  assert.equal(signedOut.length, 1);
+  assert.match(signedOut[0], /^lobby describes a visitor who is not signed in/);
+  assert.match(signedOut[0], /persona guest/);
+  assert.deepEqual(await warn([]), []);
+  assert.deepEqual(await identities.personaWarnings(pool, app, null), []);
+});

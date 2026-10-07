@@ -294,6 +294,11 @@ function normalizeDiagnostics(event = {}) {
     subagent_call_count: tokenCount(event.subagentCallCount),
     web_tool_call_count: tokenCount(event.webToolCallCount),
     tool_search_count: tokenCount(event.toolSearchCount),
+    // Claude Code over OpenRouter (worker.js noteCodingProviderImages): the
+    // images its requests sent, moved out of tool results, or left out.
+    image_sent_count: tokenCount(event.imageSentCount),
+    image_moved_count: tokenCount(event.imageMovedCount),
+    image_omitted_count: tokenCount(event.imageOmittedCount),
     usage_reset_detected: booleanOrNull(event.usageResetDetected),
   });
 }
@@ -410,6 +415,7 @@ const DIAGNOSTIC_METRIC_NAMES = Object.freeze([
   'file_read_count', 'distinct_file_read_count', 'file_search_count',
   'file_change_count', 'distinct_file_change_count', 'mcp_call_count',
   'subagent_call_count', 'web_tool_call_count', 'tool_search_count',
+  'image_sent_count', 'image_moved_count', 'image_omitted_count',
   'turn_duration_ms', 'turn_invocation_count', 'turn_result_count',
 ]);
 
