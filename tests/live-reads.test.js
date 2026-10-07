@@ -917,6 +917,68 @@ test('an open governance topic re-reads its roster, freshly, after a gap', async
   assert.equal(requests.length, 1, 'only a governance topic has this roster to re-read');
 });
 
+// ── The review finding on 287ad91b ────────────────────────────────────
+
+function gatedRosterFetch() {
+  const requests = [];
+  const releases = [];
+  const fetch = async (url, init) => {
+    requests.push({ url, init });
+    await new Promise((resolve) => releases.push(resolve));
+    return { ok: true, json: async () => ({ yes: [`voter${requests.length}`], no: [], reasons: [] }) };
+  };
+  const settle = () => new Promise((resolve) => setImmediate(resolve));
+  return { requests, releases, fetch, settle };
+}
+
+test('review 4: a fresh roster read asked for during the first load follows it (proposal)', async () => {
+  const f = gatedRosterFetch();
+  const AppView = loadAppView({ fetch: f.fetch });
+  const first = AppView._loadVoteRoster(7);
+  await AppView._loadVoteRoster(7, { fresh: true }); // a gap while the first is on the wire
+  assert.equal(f.requests.length, 1, 'not two at once');
+  f.releases[0]();
+  await first;
+  await f.settle();
+  assert.equal(f.requests.length, 2, 'one fresh read after the first lands');
+  assert.equal(f.requests[1].init.cache, 'no-cache');
+  f.releases[1]();
+  await f.settle();
+  await f.settle();
+  assert.match(AppView._voteRoster[7].yes.names, /@voter2/, 'the newer answer is what shows');
+  assert.equal(AppView._voteRosterAgain.size, 0);
+});
+
+test('review 4: a vote that invalidates the roster during its first load is not lost (proposal)', async () => {
+  const f = gatedRosterFetch();
+  const AppView = loadAppView({ fetch: f.fetch });
+  const first = AppView._loadVoteRoster(7);
+  AppView._invalidateVoteRoster(7); // no cached entry yet: nothing to mark stale
+  f.releases[0]();
+  await first;
+  await f.settle();
+  assert.equal(f.requests.length, 2);
+  f.releases[1]();
+});
+
+test('review 4: a fresh roster read asked for during the first load follows it (governance)', async () => {
+  const f = gatedRosterFetch();
+  const AppView = loadAppView({ fetch: f.fetch });
+  AppView._devTopic = { kind: 'gov', id: 9 };
+  const first = AppView._loadGovVoteRoster(9);
+  await AppView._rereadOpenTopic(); // the live-reads watcher, mid-load
+  assert.equal(f.requests.length, 1);
+  f.releases[0]();
+  await first;
+  await f.settle();
+  assert.equal(f.requests.length, 2);
+  assert.equal(f.requests[1].init.cache, 'no-cache');
+  f.releases[1]();
+  await f.settle();
+  await f.settle();
+  assert.match(AppView._govVoteRoster[9].yes.names, /@voter2/);
+});
+
 test('opening a governance topic marks its cached roster for a re-read', () => {
   const src = read('public/js/app-view.js');
   const open = src.slice(src.indexOf('  async _renderTopicSubView(content, ref) {'));
