@@ -9000,6 +9000,20 @@ CREATE INDEX IF NOT EXISTS chat_sessions_integration_measured_idx
 -- merges cleanly, at which point the checks run (services/check-admission.js).
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_resolved_epoch INTEGER;
 
+-- The one exception to "behind is not a reason to sync": a promoted
+-- proposal whose preview fails to START while it is behind main and merges
+-- cleanly is synced by the platform (services/boot-failure-sync.js).
+-- Previews boot against production's database, which runs main's schema, so
+-- a schema change on main can stop an older branch's preview at once (#4186
+-- against #4172).
+--
+--   boot_failure_sync_head  the head the platform last synced for that
+--                           reason. NULL: never. Equal to the failed head: it
+--                           was tried, and a further failure on the same head
+--                           waits for a person. The sync's own head contains
+--                           main, so nothing syncs again until main moves.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS boot_failure_sync_head TEXT;
+
 -- ── Main watch ─────────────────────────────────────────────────────────
 --
 -- The safety net under direct merges. Each merge lands a tree nobody ran
