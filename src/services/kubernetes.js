@@ -2,11 +2,17 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const stream = require('stream');
-const k8s = require('@kubernetes/client-node');
 const log = require('./logger');
 const { collectPodDiagnostics, conditionDetails, boundedText } = require('./kubernetes-diagnostics');
 const { waitForWorkerBootstrap } = require('./kubernetes-worker-bootstrap');
 const buildkit = require('./kubernetes-buildkit');
+
+// The client is 967 ES modules: about a quarter of a second and 70 MB to
+// load. Most processes that load this file never reach the cluster (341 of
+// 1,594 test processes required the client on 7 October 2026 and one used
+// it), so it is loaded by the first call that needs it. require() caches it
+// from then on.
+const kubernetesClient = () => require('@kubernetes/client-node');
 
 const MANAGED_BY = 'social-vibecoding-runtime';
 const PART_OF = 'social-vibecoding';
@@ -46,6 +52,7 @@ function setClientsForTest(value) { clients = value; }
 
 function getClients() {
   if (clients) return clients;
+  const k8s = kubernetesClient();
   const kc = new k8s.KubeConfig();
   if (process.env.KUBERNETES_SERVICE_HOST) kc.loadFromCluster();
   else kc.loadFromDefault();
@@ -2488,7 +2495,11 @@ function clientsLogApi(clients) {
   if (!clients) return null;
   if (clients.logs && typeof clients.logs.log === 'function') return clients.logs;
   if (clients.kc) {
-    try { clients.logs = new k8s.Log(clients.kc); return clients.logs; } catch { return null; }
+    try {
+      const k8s = kubernetesClient();
+      clients.logs = new k8s.Log(clients.kc);
+      return clients.logs;
+    } catch { return null; }
   }
   return null;
 }
@@ -2592,7 +2603,7 @@ async function execInWorker(config, runtimeName, command, stdinText = null, { ti
         if (workerState === 'not_found') error.code = 'WORKER_NOT_FOUND';
         throw error;
       }
-      const exec = api.exec || new k8s.Exec(api.kc);
+      const exec = api.exec || new (kubernetesClient().Exec)(api.kc);
       socket = await exec.exec(namespace, pod.metadata.name, 'worker', command, stdout, stderr, input, false, value => { status = value; });
       // Keep an error handler even after settling: terminating a late socket
       // can emit an error. Never let a timed-out connection resume stdin.
@@ -2616,6 +2627,7 @@ module.exports = {
   listStatusResources, listNamespaceCapacity, inspectWorkerTermination, getPlatformDeployStatus,
   _setClientsForTest: setClientsForTest, _envChecksumForTest: envChecksum,
   _attachLineObserverForTest: attachLineObserver,
+  _clientsLogApiForTest: clientsLogApi,
   _buildPhasesFromPodForTest: buildPhasesFromPod,
   _deploymentStateForTest: deploymentState,
   _terminalPodFailureDetailsForTest: terminalPodFailureDetails,
