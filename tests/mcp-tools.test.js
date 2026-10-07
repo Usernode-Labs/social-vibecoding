@@ -1904,6 +1904,45 @@ test('a proposal update keeps its own wording', async () => {
   }
 });
 
+test('a proposal update the classifier kept says the votes still stand', async () => {
+  // A push that only brings the approved code up to date with main keeps its
+  // approvals. It used to read "Any votes it had collected were cleared ...
+  // reviewers have been asked to look again", because votesCleared was 0.
+  const gh = require('../src/services/github');
+  const githubLink = require('../src/services/github-link');
+  const realGh = gh.isEnabled; const realLink = githubLink.isEnabled;
+  gh.isEnabled = () => true; githubLink.isEnabled = () => true;
+  const pool = { async query() { return { rows: [{ app_slug: 'recipe-box' }] }; } };
+  const submitted = (over) => connector(() => Object.assign({
+    updated: true, proposalId: 3140, appSlug: 'recipe-box', prNumber: 52,
+    votesCleared: 0, votesClearing: 'none', votesAtRisk: 2, votesKept: true,
+    submittedVia: 'update_branch', targetKind: 'proposal', previewRebuilding: false,
+  }, over), { scopes: [READ_SCOPE, WRITE_SCOPE], pool });
+  try {
+    let { handlers, restore } = submitted({});
+    try {
+      const res = await handlers.get('submit_work')({ proposalId: 3140, branch: 'my-fix' });
+      const step = res.structuredContent.nextStep;
+      assert.match(step, /^PR #52 \(proposal 3140\) now points at your new commit/);
+      assert.match(step, /2 votes it had collected still stand/);
+      assert.match(step, /passing checks carry over/);
+      assert.doesNotMatch(step, /were cleared/);
+      assert.doesNotMatch(step, /reviewers/i, 'nobody was asked to look again');
+      assert.equal(res.structuredContent.votesCleared, 0);
+    } finally { restore(); }
+
+    // A resolved conflict keeps the votes too, but its tree is re-checked.
+    ({ handlers, restore } = submitted({ previewRebuilding: true }));
+    try {
+      const res = await handlers.get('submit_work')({ proposalId: 3140, branch: 'my-fix' });
+      assert.match(res.structuredContent.nextStep, /still stand/);
+      assert.match(res.structuredContent.nextStep, /rebuilding against the merged code/);
+    } finally { restore(); }
+  } finally {
+    gh.isEnabled = realGh; githubLink.isEnabled = realLink;
+  }
+});
+
 // #2138. The connector half of the fix for a connector-opened proposal that
 // could never take its own title or description back. The rule lives in
 // services/proposal-update.js (a pull request the platform opened for the
