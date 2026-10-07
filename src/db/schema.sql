@@ -10115,6 +10115,10 @@ ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS plan_change TEXT;
 COMMENT ON COLUMN homeroom_bot_runs.plan_change IS 'staging:private';
 CREATE INDEX IF NOT EXISTS homeroom_bot_runs_awaiting_go_idx
   ON homeroom_bot_runs(awaiting_go_at) WHERE awaiting_go_at IS NOT NULL;
+-- #4239: a `person` verdict whose request is about the Homeroom platform
+-- itself rather than the project it was filed on (the triage's `platform`
+-- flag). Its requester is offered to move it to Homeroom's own board.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS about_platform BOOLEAN;
 
 -- B9: a request asked for in a project's group chat, by mentioning Homeroom
 -- bot or by "Make this a request" on your own message. The message stays
@@ -10593,7 +10597,7 @@ CREATE TABLE IF NOT EXISTS homeroom_bot_dm_actions (
   error           TEXT,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   decided_at      TIMESTAMPTZ,
-  CONSTRAINT homeroom_bot_dm_actions_kind_check CHECK (kind IN ('file_request', 'withdraw_proposal', 'build_plan')),
+  CONSTRAINT homeroom_bot_dm_actions_kind_check CHECK (kind IN ('file_request', 'withdraw_proposal', 'build_plan', 'move_request')),
   CONSTRAINT homeroom_bot_dm_actions_status_check
     CHECK (status IN ('open', 'done', 'declined', 'failed'))
 );
@@ -10603,13 +10607,18 @@ COMMENT ON TABLE homeroom_bot_dm_actions IS 'staging:private';
 -- skips an existing table, and its named CHECK allowed file_request only).
 -- B3: `build_plan`, the plan card a first version waits on (B6), decided by
 -- its buttons through the same action endpoint as an offer.
+-- #4239: `move_request`, an offer to move a request about Homeroom itself
+-- from a project's board to Homeroom's own (Move it to Homeroom / Keep it
+-- here). `app_id` is the project it is on and `source_issue_number` the
+-- request there; `issue_number` is the request it became on Homeroom's.
 ALTER TABLE homeroom_bot_dm_actions
   ADD COLUMN IF NOT EXISTS session_id INTEGER REFERENCES chat_sessions(id) ON DELETE CASCADE;
+ALTER TABLE homeroom_bot_dm_actions ADD COLUMN IF NOT EXISTS source_issue_number INTEGER;
 DO $$
 BEGIN
   ALTER TABLE homeroom_bot_dm_actions DROP CONSTRAINT IF EXISTS homeroom_bot_dm_actions_kind_check;
   ALTER TABLE homeroom_bot_dm_actions ADD CONSTRAINT homeroom_bot_dm_actions_kind_check
-    CHECK (kind IN ('file_request', 'withdraw_proposal', 'build_plan'));
+    CHECK (kind IN ('file_request', 'withdraw_proposal', 'build_plan', 'move_request'));
 END $$;
 
 -- The bot's own knobs, admin-tunable from its console section. `mode` is

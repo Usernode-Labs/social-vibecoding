@@ -1051,6 +1051,13 @@ function dmText(kind, dm, context) {
       return `${line}\n\n${words} It's as it was. ${next}`;
     }
     case 'person':
+      // #4239: about Homeroom itself, so nothing on this project can do it:
+      // the offer to move it to Homeroom's own board follows (relayIssuePost).
+      if (dm.platform) {
+        return `${line}\n\nThis is about Homeroom itself rather than ${context.appName}, so no change to ${context.appName} `
+          + `can do it, and I haven't built anything: ${clip(dm.reason, 600)}\n\n`
+          + 'I can move it to Homeroom\'s own board, where the people who work on Homeroom look. Tap below to choose.';
+      }
       // #3772: and what to do about it. "Left for the group" was a dead end
       // for somebody who was the group: a reply here is posted on the
       // request, and the bot looks at it again with it.
@@ -1295,7 +1302,9 @@ async function relayIssuePost({
     } : {}),
     ...(dm.link ? { link: dm.link } : {}),
     // Where it is stuck, what to tap (STUCK_ACTIONS).
-    ...(STUCK_ACTIONS[kind] ? { actions: STUCK_ACTIONS[kind], status: 'open' } : {}),
+    // #4239: not Go ahead on a request about Homeroom itself; its own
+    // message offers the move instead.
+    ...(STUCK_ACTIONS[kind] && !(kind === 'person' && dm.platform) ? { actions: STUCK_ACTIONS[kind], status: 'open' } : {}),
     // B7: a change ready to try, as a card with its buttons: whether it is
     // one person's project (the title), who else it waits on and how many of
     // them it needs, their words.
@@ -1364,6 +1373,14 @@ async function relayIssuePost({
   log.info('homeroom-bot-dm', 'Told the requester in their DM', {
     app: app.slug, issueNumber, kind, userId: requester.userId, question: asks,
   });
+  // #4239: and the offer to move a request about Homeroom itself to
+  // Homeroom's own board, under its own buttons. Never throws.
+  if (kind === 'person' && dm.platform) {
+    await require('./homeroom-bot-move').offerMove(pool, {
+      bot, userId: requester.userId, app, issueNumber, title: requester.issueTitle, reason: dm.reason,
+      key: `${app.id}-${issueNumber}-${runId || postId || sent.messageId}`,
+    });
+  }
   return told;
 }
 
