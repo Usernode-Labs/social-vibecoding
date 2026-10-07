@@ -21,6 +21,14 @@ const missing = () => Object.assign(new Error('missing'), { code: 404 });
 function cluster({ failRollout = false } = {}) {
   const store = new Map();
   const failing = { on: failRollout };
+  // The ReplicaSets the controller keeps, one per template a Deployment ran.
+  const replicaSets = [];
+  let revision = 0;
+  const keepReplicaSet = (d) => {
+    const template = structuredClone(d.spec.template);
+    template.metadata.labels = { ...template.metadata.labels, 'pod-template-hash': `h${revision + 1}` };
+    replicaSets.push({ metadata: { annotations: { 'deployment.kubernetes.io/revision': String(++revision) } }, spec: { template } });
+  };
   const calls = [];
   let uid = 0;
   const kind = (k) => ({
@@ -89,8 +97,10 @@ function cluster({ failRollout = false } = {}) {
           : { observedGeneration: d.metadata.generation, replicas: 1, updatedReplicas: 1, readyReplicas: 1, availableReplicas: 1 };
         return d;
       },
-      createNamespacedDeployment: deployment.create, replaceNamespacedDeployment: deployment.replace,
+      createNamespacedDeployment: async (req) => { const d = await deployment.create(req); keepReplicaSet(d); return d; },
+      replaceNamespacedDeployment: async (req) => { const d = await deployment.replace(req); keepReplicaSet(d); return d; },
       deleteNamespacedDeployment: deployment.delete,
+      listNamespacedReplicaSet: async () => ({ items: structuredClone(replicaSets) }),
     },
     networking: {
       readNamespacedIngress: ingress.read, createNamespacedIngress: ingress.create, replaceNamespacedIngress: ingress.replace,
@@ -101,9 +111,12 @@ function cluster({ failRollout = false } = {}) {
   return { store, calls, fail: (on) => { failing.on = on; }, image: (n) => app(store.get(`deployment/${NAME}`)).image, secretOf: (n) => store.get(`deployment/${NAME}`).spec.template.spec.containers[0].envFrom[0].secretRef.name };
 }
 
-const deploy = (attempt, imageRef = `app@sha256:${attempt}`) => kubernetes.deployApplication(CONFIG, {
-  app: { id: 1, slug: 'demo' }, environment: 'staging', sessionId: 2, imageRef, env: { N: String(attempt) }, internalOnly: true, attempt,
-});
+// `serving`: the attempt the machine says serves (null: nothing does).
+const deploy = (attempt, { imageRef = `app@sha256:${attempt}`, serving = attempt > 1 ? attempt - 1 : null } = {}) =>
+  kubernetes.deployApplication(CONFIG, {
+    app: { id: 1, slug: 'demo' }, environment: 'staging', sessionId: 2, imageRef, env: { N: String(attempt) },
+    internalOnly: true, attempt, servingAttempt: serving,
+  });
 
 test('each attempt has its own env Secret and the Deployment records the attempt', async () => {
   const c = cluster();
@@ -128,16 +141,33 @@ test('a failed rollout restores the serving template instead of deleting the pre
   const c = cluster();
   await deploy(1);
   c.fail(true);   // the next revision's pod cannot start
-  await assert.rejects(deploy(2, 'app@sha256:broken'), (err) => err.healthcheckFailed === true);
+  await assert.rejects(deploy(2, { imageRef: 'app@sha256:broken' }), (err) => err.healthcheckFailed === true);
   assert.equal(c.image(), 'app@sha256:1', 'the serving revision\'s template is back (bug 2)');
   assert.equal(c.secretOf(), `${NAME}-env-a1`);
   assert.equal(c.store.get(`deployment/${NAME}`).metadata.annotations[ANNOTATION], '2', 'the fence keeps the highest attempt');
   assert.ok(!c.calls.some((x) => x.startsWith('delete')), 'nothing was deleted');
 });
 
+test('a failed rollout restores the attempt that serves, not a cancelled candidate written since (review finding)', async () => {
+  const c = cluster();
+  await deploy(1);
+  await deploy(2);              // a candidate the machine cancelled: attempt 1 still serves
+  c.fail(true);
+  await assert.rejects(deploy(3, { imageRef: 'app@sha256:broken', serving: 1 }));
+  assert.equal(c.image(), 'app@sha256:1', 'attempt 1, found among the ReplicaSets');
+  assert.equal(c.secretOf(), `${NAME}-env-a1`, 'never the retired candidate\'s Secret');
+  assert.equal(c.store.get(`deployment/${NAME}`).spec.template.metadata.labels['pod-template-hash'], undefined);
+});
+
+test('a failed attempt with no serving template left deletes only the Deployment it wrote', async () => {
+  const c = cluster({ failRollout: true });
+  await assert.rejects(deploy(4, { imageRef: 'app@sha256:broken', serving: 3 }));
+  assert.ok(c.calls.includes(`delete deployment ${NAME} by uid`), 'the Deployment was lost: nothing serves');
+});
+
 test('a failed first attempt deletes only the Deployment it wrote', async () => {
   const c = cluster({ failRollout: true });
-  await assert.rejects(deploy(1, 'app@sha256:broken'));
+  await assert.rejects(deploy(1, { imageRef: 'app@sha256:broken' }));
   assert.ok(c.calls.includes(`delete deployment ${NAME} by uid`));
   assert.ok(!c.store.has(`deployment/${NAME}`));
 });

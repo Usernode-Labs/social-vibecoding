@@ -123,6 +123,10 @@ const EVENTS = {
     return { sessionId: int(p?.sessionId, 'sessionId'), head: sha(p?.head, 'head'), reason: p.reason.trim().slice(0, 300) };
   },
   ConflictResolved: (p: any) => ({ head: sha(p?.head, 'head') }),
+  // The branch moved on to code nothing checks yet (a CLI upload before it
+  // is submitted, an update to a paused proposal): the verdict no longer
+  // describes it, and whatever ran for the old head is obsolete.
+  ChecksCleared: (p: any) => ({ reason: word(p?.reason, 'reason') }),
   // An observer found the serving runtime gone or broken.
   PreviewLost: (p: any) => {
     if (!Number.isInteger(p?.attempt) || p.attempt < 0) throw new Error('attempt must be an attempt number');
@@ -339,6 +343,7 @@ function sameHead(s: Live, head: string): boolean {
   const d = s.data;
   if (s.name === 'preparing') return d.preparing?.head === head;
   if (s.name === 'failed') return d.head === head;
+  if (s.name === 'settled' && d.verdict === null) return false;   // cleared: a submission of it is checked again
   if (s.name === 'checking' || s.name === 'settled' || s.name === 'deferred') return d.head === head && d.serving?.head === head;
   return false;
 }
@@ -408,6 +413,18 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
         work: [{ kind: WORK.botNote, key: `bot-note:skipped:${ctx.version + 1}`, input: { ...base, state: 'skipped' } }],
         notify: [{ type: 'checksReady', ...base, state: 'skipped' }, { type: 'mergeKick', ...base, state: 'skipped' }],
         timer: null,
+      });
+    },
+  };
+
+  const cleared: Entry = {
+    to: (s, e, f, ctx) => {
+      const d0: Data = s.data;
+      const old = obsolete(d0, ctx, deps);
+      const d: Data = { ...d0, preparing: null, run: null, verdict: null, failure: null, streak: 0, retiring: old.retiring };
+      return step({
+        name: d.serving ? 'settled' : 'idle', data: d, cancel: old.cancel, work: old.work,
+        writes: [{ type: 'cleared', sessionId: d.sessionId }], timer: null,
       });
     },
   };
@@ -491,6 +508,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       ChecksSkipped: skipped,
       RecheckRequested: recheck,
       ConflictResolved: notHere('not_deferred'),
+      ChecksCleared: cleared,
       PreviewLost: notHere('not_serving'),
       RetireRequested: { guard: (s, e) => (e.payload.terminal ? ok() : reject('already_idle')), to: retire.to },
       Detach: detach, AdminRetry: adminRetry, AdminRetire: adminRetire,
@@ -502,6 +520,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       ChecksSkipped: notHere('in_progress'),
       RecheckRequested: notHere('run_outstanding'),
       ConflictResolved: notHere('not_deferred'),
+      ChecksCleared: cleared,
       PreviewLost: notHere('preparing'),
       RetireRequested: retire,
       Detach: detach, AdminRetry: notHere('in_progress'), AdminRetire: adminRetire,
@@ -513,6 +532,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       ChecksSkipped: notHere('in_progress'),
       RecheckRequested: notHere('run_outstanding'),
       ConflictResolved: notHere('not_deferred'),
+      ChecksCleared: cleared,
       PreviewLost: lost,
       RetireRequested: retire,
       Detach: detach, AdminRetry: notHere('in_progress'), AdminRetire: adminRetire,
@@ -527,6 +547,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
         guard: (s, e) => (e.payload.head === s.data.head ? ok() : reject('not_deferred_head')),
         to: (s, e, f, ctx) => startRun(s, 'conflict-resolved', ctx),
       },
+      ChecksCleared: cleared,
       PreviewLost: lost,
       RetireRequested: retire,
       Detach: detach, AdminRetry: adminRetry, AdminRetire: adminRetire,
@@ -538,6 +559,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       ChecksSkipped: skipped,
       RecheckRequested: recheck,
       ConflictResolved: notHere('not_deferred'),
+      ChecksCleared: cleared,
       PreviewLost: lost,
       RetireRequested: retire,
       Detach: detach, AdminRetry: adminRetry, AdminRetire: adminRetire,
@@ -549,6 +571,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       ChecksSkipped: skipped,
       RecheckRequested: recheck,
       ConflictResolved: notHere('not_deferred'),
+      ChecksCleared: cleared,
       PreviewLost: lost,
       RetireRequested: retire,
       Detach: detach, AdminRetry: adminRetry, AdminRetire: adminRetire,
@@ -569,6 +592,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       ChecksSkipped: notHere('retiring'),
       RecheckRequested: notHere('retiring'),
       ConflictResolved: notHere('retiring'),
+      ChecksCleared: notHere('retiring'),
       PreviewLost: notHere('retiring'),
       RetireRequested: {
         guard: (s, e) => (e.payload.terminal && !s.data.exit.terminal ? ok() : reject('already_retiring')),
@@ -591,6 +615,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       ChecksSkipped: skipped,
       RecheckRequested: notHere('detached'),
       ConflictResolved: notHere('detached'),
+      ChecksCleared: notHere('detached'),
       PreviewLost: notHere('detached'),
       RetireRequested: notHere('detached'),
       Detach: notHere('detached'),
@@ -768,7 +793,7 @@ function ran(s: Live, e: Event<WorkResultPayload>, outcome: string, f: Facts, ct
     name: 'settled', data: d,
     writes: [settle],
     work: [
-      { kind: WORK.publish, key: `publish:${run.key}`, input: { ...base, visuals: !!r?.visuals } },
+      { kind: WORK.publish, key: `publish:${run.key}`, input: { ...base, state, visuals: !!r?.visuals } },
       { kind: WORK.botNote, key: `bot-note:${run.key}`, input: { ...base, state } },
       { kind: WORK.scheduleShots, key: `schedule-shots:${run.key}`, input: { ...base, trigger: d0.trigger } },
     ],
@@ -818,6 +843,7 @@ export function preview(deps: Deps): Machine<PState, Facts> {
       ChecksSkipped: produced,
       RecheckRequested: (e) => (PRODUCERS.has(e.source.kind) || e.source.kind === 'admin' ? ok() : reject('not_a_producer')),
       ConflictResolved: system,
+      ChecksCleared: produced,
       PreviewLost: system,
       RetireRequested: system,
       Detach: system,
@@ -901,6 +927,15 @@ const WRITES = {
     const history = [...(w.history || [])].sort((a: any, b: any) => String(a.checkKey).localeCompare(String(b.checkKey)));
     if (history.length) await legacy('services/check-history').recordRun(tx, w.appId, history);
   },
+
+  // No verdict for the branch's code: what the CLI upload route cleared.
+  cleared: (tx: Tx, w: any) => tx.query(
+    `UPDATE chat_sessions
+        SET check_state = NULL, check_phase = NULL, check_error_detail = NULL, test_results = '[]'::jsonb,
+            checks_checked_at = NULL, consecutive_check_failures = 0, first_check_failure_at = NULL,
+            last_check_failure_at = NULL, check_next_retry_at = NULL, check_error_notified_at = NULL,
+            capture_state = NULL, capture_detail = NULL, captured_at = NULL
+      WHERE id = $1`, [w.sessionId]),
 
   // A carried verdict now describes the merged head.
   carried: (tx: Tx, w: any) => tx.query('UPDATE chat_sessions SET checks_commit_sha = $2 WHERE id = $1', [w.sessionId, w.head]),

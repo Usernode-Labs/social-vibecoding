@@ -159,6 +159,8 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
     const { rows: history } = await pool.query('SELECT pass_count FROM app_check_history WHERE app_id = $1', [s.app_id]);
     assert.deepEqual(history.map((h) => h.pass_count), [1]);
     assert.ok(notified.some((n) => n.type === 'mergeKick' && n.sessionId === s.id), 'a passing verdict kicks the merge queue');
+    const publish = (await workOf(s, WORK.publish))[0];
+    assert.equal(publish.input.state, 'passing', 'the platform-variables check refreshes on a verdict (review finding 4)');
     const kinds = (await workOf(s)).map((w) => w.kind).sort();
     assert.deepEqual(kinds, [WORK.botNote, WORK.run, WORK.publish, WORK.prepare, WORK.scheduleShots, WORK.startShots].sort());
   });
@@ -391,6 +393,30 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
     await settle();
     const retired = (await workOf(s, WORK.retireAttempt)).map((w) => [w.input.n, w.input.db]);
     assert.deepEqual(retired, [[before.n, before.db]], 'the attempt it built is retired, under the name it was built with');
+  });
+
+  await t.test('P13 code nothing checks yet clears the verdict through the machine and cancels the old run', async () => {
+    work.answer.set(WORK.run, verdict('passing'));
+    const s = await proposal(await app(), { status: 'active' });
+    await submit(s, SHA('a'));
+    await rt.drain();
+    await rt.runServices();   // prepare
+    await rt.drain();
+    assert.equal((await instance(s)).state, 'checking');
+    const id = await send(s, 'ChecksCleared', { reason: 'upload' });
+    await rt.drain();
+    assert.equal((await outcome(id)).state_after, 'settled');
+    const i = await instance(s);
+    assert.equal(i.data.verdict, null);
+    assert.deepEqual((await workOf(s, WORK.run)).map((w) => w.result), [{ cancelled: true }]);
+    const r = await row(s.id);
+    assert.deepEqual([r.check_state, r.check_phase, r.capture_state], [null, null, null]);
+    assert.equal(r.staging_url, `https://pv--s${s.id}.apps.test`, 'the preview still serves');
+    // Submitting the same head again checks it: a cleared verdict is not a join.
+    const again = await submit(s, SHA('a'));
+    await rt.drain();
+    assert.equal((await outcome(again)).state_after, 'preparing');
+    await settle();
   });
 
   await t.test('P9 manual requests: ensure joins what serves, deploy builds again, a recheck waits for the run', async () => {

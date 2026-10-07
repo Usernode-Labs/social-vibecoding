@@ -474,6 +474,14 @@ export async function checksSkipped(sessionId: number, appId: number, head: stri
   }, { requestKey: await derivedKey(sessionId, `skipped:${head}`), source: { kind: 'system', name: 'skipped' }, appId });
 }
 
+// The branch moved on to code nothing checks yet: the verdict stops
+// describing it, and what ran for the old head is cancelled.
+export async function checksCleared(sessionId: number, appId: number, reason: string): Promise<number | null> {
+  if (!previewsEnabled()) return null;
+  return runtime!.append(previews!, previewKey(sessionId), { type: 'ChecksCleared', payload: { reason } },
+    { requestKey: await derivedKey(sessionId, `cleared:${reason}`), source: { kind: 'system', name: reason }, appId });
+}
+
 // A deferred head merges cleanly with main now.
 export async function conflictResolved(sessionId: number, appId: number, head: string): Promise<number | null> {
   if (!previewsEnabled()) return null;

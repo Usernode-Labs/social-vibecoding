@@ -56,7 +56,7 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
         const { input } = ctx;
         const [row, a] = await Promise.all([session(input.sessionId), app(input.appId)]);
         if (!row || !a) return { ok: false, detail: 'The proposal or its app no longer exists' };
-        const attempt = { n: input.n, dbName: input.db, servingRemoved: false,
+        const attempt = { n: input.n, dbName: input.db, servingN: input.serving?.n ?? null, servingRemoved: false,
           checkpoint: (v: Json) => ctx.checkpoint(v) };
         try {
           const built = await staging().prepareAttempt(config, row, a, input.head, attempt);

@@ -446,7 +446,7 @@
     {
       "source": "src/routes/proposal-handoff.js",
       "kind": "structural-template",
-      "fingerprint": "1b33c1367f728315daa1",
+      "fingerprint": "de2bbf1356dca5b8a5e8",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET handoff_uploaded_sha = $1, handoff_local_commit_sha = $5, ${summaryFreshness.INVALIDATE_SQL}, handoff_upload_checked_sha = checks_comm"
     },

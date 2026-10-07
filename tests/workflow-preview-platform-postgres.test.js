@@ -124,6 +124,23 @@ test('previews through the platform runtime', { timeout: 120000 }, async (t) => 
     await quiet();
   });
 
+  await t.test('a CLI upload to a held session clears its verdict through the machine, with no ownership violation (review finding 1)', async () => {
+    const s = await proposal();
+    await platform.submitRevision({ sessionId: s.id, appId: app.id, head: SHA('d'), source: 'cli' });
+    await until(async () => (await state(s)) === 'settled', 'settled');
+    // The upload route's statement for a held session ($7 = true): its own
+    // columns move, the verdict's stay, in 'raise' mode.
+    await pool.query(
+      `UPDATE chat_sessions SET handoff_uploaded_sha = $2,
+              check_state = CASE WHEN $3::boolean THEN check_state END,
+              test_results = CASE WHEN $3::boolean THEN test_results ELSE '[]'::jsonb END
+        WHERE id = $1`, [s.id, SHA('e'), true]);
+    assert.equal(await require('../src/services/preview-workflow').clear({ session: s, reason: 'upload' }), true);
+    await until(async () => (await pool.query('SELECT check_state FROM chat_sessions WHERE id = $1', [s.id])).rows[0].check_state === null,
+      'cleared by the machine');
+    await quiet();
+  });
+
   await t.test('with the flag off, the next boot detaches every held session and the old paths own it again', async () => {
     const s = await proposal();
     await platform.submitRevision({ sessionId: s.id, appId: app.id, head: SHA('c'), source: 'turn' });

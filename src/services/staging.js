@@ -288,7 +288,8 @@ function makeImageProgressReporter(config, session, timings, startedAt, now = ()
 
 // `attempt` (the workflow's preview machine, preview.prepare): build attempt
 // `n` into its own checkout and database `dbName`, deploy it with its own
-// env Secret and the attempt fence, call `checkpoint()` before each thing it
+// env Secret and the attempt fence (restoring attempt `servingN`'s template
+// if the rollout fails), call `checkpoint()` before each thing it
 // creates (it throws once the attempt is cancelled), and record nothing on
 // the row: the machine publishes the receipt. Without it, [main]'s build.
 async function buildAndDeployStagingInner(config, session, app, commitHash, { attempt = null } = {}) {
@@ -623,7 +624,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, { at
       labels: {
         [stagingEnv.LABEL_ENV_FP]: stagingEnv.envFingerprint(platformEnv),
       },
-      ...(attempt ? { attempt: attempt.n } : {}),
+      ...(attempt ? { attempt: attempt.n, servingAttempt: attempt.servingN ?? null } : {}),
     });
     timings.healthMs = Date.now() - healthStartedAt;
     const { hostname, url: stagingUrl } = deployed;

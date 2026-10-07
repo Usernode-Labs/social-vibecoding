@@ -84,6 +84,16 @@ async function skipped({ session, head, reason }) {
   return true;
 }
 
+// The branch's code is no longer what the verdict describes (a CLI upload
+// not submitted yet, an update to a paused proposal). For a session the
+// machine holds, it clears the verdict; answers false otherwise, and the
+// caller clears it itself.
+async function clear({ session, reason }) {
+  if (!await held(session.id)) return false;
+  await platform().checksCleared(Number(session.id), Number(session.app_id), reason);
+  return true;
+}
+
 // Retire a session's preview: terminal for a row that has left review
 // (archived, merged, deleted), otherwise an idle or pressure reclaim.
 // Answers false when the machine does not hold the session.
@@ -101,4 +111,4 @@ async function lost({ session, detail = null }) {
   return true;
 }
 
-module.exports = { enabled, held, exactHead, revision, request, recheck, skipped, retire, lost };
+module.exports = { enabled, held, exactHead, revision, request, recheck, skipped, clear, retire, lost };

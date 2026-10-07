@@ -61,7 +61,7 @@ function dnsAlias({ environment, sessionId, dockerName }) {
 async function deploy(config, {
   app, environment, sessionId, imageRef, env, dockerName,
   port = 3000, memory, cpus, labels, runtimeName = null, internalOnly = false,
-  command = [], runAsUser = null, attempt = null,
+  command = [], runAsUser = null, attempt = null, servingAttempt = null,
 }) {
   if (mode(config) === 'docker') {
     const name = runtimeName || dockerName;
@@ -100,7 +100,7 @@ async function deploy(config, {
   // has no runAsNonRoot to refuse a root image.
   return kubernetes.deployApplication(config, {
     app, environment, sessionId, imageRef, env, cpus, labels, runtimeName, internalOnly,
-    command, ...(runAsUser != null ? { runAsUser } : {}), ...(attempt ? { attempt } : {}),
+    command, ...(runAsUser != null ? { runAsUser } : {}), ...(attempt ? { attempt, servingAttempt } : {}),
   });
 }
 

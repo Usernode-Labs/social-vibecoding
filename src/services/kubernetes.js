@@ -1036,7 +1036,7 @@ async function reconcileAppGateIngresses(config, { force = null } = {}) {
 async function deployApplication(config, {
   app, environment, sessionId, imageRef, env, cpus = null,
   labels: extraLabels = {}, runtimeName = null, internalOnly = false,
-  command = [], runAsUser = null, attempt = null,
+  command = [], runAsUser = null, attempt = null, servingAttempt = null,
 }) {
   if (!imageRef?.includes('@sha256:')) throw new Error('Kubernetes deployments require an immutable image digest');
   if (attempt != null && (!Number.isSafeInteger(attempt) || attempt <= 0 || environment === 'production')) {
@@ -1064,8 +1064,10 @@ async function deployApplication(config, {
   // Check before creating or updating any Kubernetes resources.
   require('./caddy').assertAppHostname(hostname, cfg.platformDomain);
   const { core, apps, networking } = getClients();
-  // The template the preview served before this attempt, restored if the
-  // attempt's rollout fails (attempts only; [main] deletes the preview).
+  // The Deployment as this attempt found it (the fence). When its rollout
+  // fails, what goes back is the template of the attempt that serves
+  // (`servingAttempt`), which need not be this one: a cancelled candidate
+  // may have written it since (attempts only; [main] deletes the preview).
   let previous = null;
   if (attempt) {
     previous = await readFencedDeployment(apps, namespace, name, attempt);
@@ -1184,14 +1186,19 @@ async function deployApplication(config, {
     // template that served before it: the old ReplicaSet never stopped
     // (maxUnavailable 0), so the preview keeps serving the older revision,
     // and the failed pod goes. Only without one is the preview deleted.
-    if (attempt && previous) {
-      await restoreTemplate(apps, namespace, name, attempt, previous).catch((restoreErr) => {
-        err.restoreFailed = restoreErr.message;
-        log.warn('kubernetes', 'Could not restore the serving preview template', {
-          namespace, name, attempt, err: restoreErr.message,
-        });
-      });
-    } else if (environment !== 'production') {
+    // 'restored', 'superseded' (a newer attempt owns it), 'missing' (no
+    // template of the serving attempt is left: nothing serves), or 'failed'.
+    const restore = attempt && servingAttempt != null
+      ? await restoreTemplate(apps, namespace, name, attempt, attemptSecretName(name, servingAttempt), previous)
+        .catch((restoreErr) => {
+          err.restoreFailed = restoreErr.message;
+          log.warn('kubernetes', 'Could not restore the serving preview template', {
+            namespace, name, attempt, err: restoreErr.message,
+          });
+          return 'failed';
+        })
+      : 'missing';
+    if (restore === 'missing' && environment !== 'production') {
       // A failed preview has no serving value but its declared CPU limit still
       // consumes ResourceQuota. Production keeps its prior ReplicaSet for a
       // recoverable rollout; previews are disposable and are rebuilt on retry.
@@ -1244,16 +1251,36 @@ async function writeFencedDeployment(apps, namespace, name, attempt, body, curre
   }
 }
 
-async function restoreTemplate(apps, namespace, name, attempt, previous) {
+// The pod template whose env comes from `secret`: the one this attempt
+// read, else the newest of the Deployment's ReplicaSets that ran it (as
+// `kubectl rollout undo` finds an earlier revision).
+async function servingTemplate(apps, namespace, name, secret, previous) {
+  const usesSecret = (template) => (template?.spec?.containers || [])
+    .some((c) => (c.envFrom || []).some((e) => e.secretRef?.name === secret));
+  if (usesSecret(previous?.spec?.template)) return previous.spec.template;
+  const sets = await apps.listNamespacedReplicaSet({ namespace, labelSelector: `social.usernode.io/runtime-name=${name}` });
+  const found = (sets.items || [])
+    .filter((rs) => usesSecret(rs.spec?.template))
+    .sort((a, b) => Number(b.metadata?.annotations?.['deployment.kubernetes.io/revision'] || 0)
+      - Number(a.metadata?.annotations?.['deployment.kubernetes.io/revision'] || 0))[0];
+  if (!found) return null;
+  const template = structuredClone(found.spec.template);
+  if (template.metadata?.labels) delete template.metadata.labels['pod-template-hash'];
+  return template;
+}
+
+async function restoreTemplate(apps, namespace, name, attempt, servingSecret, previous) {
+  const template = await servingTemplate(apps, namespace, name, servingSecret, previous);
+  if (!template) return 'missing';
   for (let i = 0; ; i++) {
     const current = await apps.readNamespacedDeployment({ name, namespace });
     const written = Number(current.metadata?.annotations?.[PREVIEW_ATTEMPT_ANNOTATION]);
     // A newer attempt owns the Deployment now; its template is not ours to undo.
-    if (Number.isInteger(written) && written > attempt) return;
-    current.spec.template = previous.spec.template;
+    if (Number.isInteger(written) && written > attempt) return 'superseded';
+    current.spec.template = template;
     try {
       await apps.replaceNamespacedDeployment({ name, namespace, body: current });
-      return;
+      return 'restored';
     } catch (err) {
       if (!isConflict(err) || i >= 3) throw err;
     }

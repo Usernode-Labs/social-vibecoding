@@ -1480,17 +1480,27 @@ function proposalHandoffRoutes(config) {
           const alreadyRecorded = session.handoff_uploaded_sha === uploaded.sha
             && session.handoff_local_commit_sha === input.localCommitSha;
           if (!alreadyRecorded) {
+            // A session the preview machine holds has its verdict cleared by
+            // the machine (ChecksCleared, below); $7 keeps those columns here.
+            const machineHeld = await previewWorkflow.held(session.id);
             const advanced = await pool.query(
               `UPDATE chat_sessions
                 SET handoff_uploaded_sha = $1, handoff_local_commit_sha = $5,
                     ${summaryFreshness.INVALIDATE_SQL},
                     handoff_upload_checked_sha = checks_commit_sha,
-                    check_state = NULL, check_phase = NULL,
-                    check_error_detail = NULL, test_results = '[]'::jsonb,
-                    checks_checked_at = NULL, consecutive_check_failures = 0,
-                    first_check_failure_at = NULL, last_check_failure_at = NULL,
-                    check_next_retry_at = NULL, check_error_notified_at = NULL,
-                    capture_state = NULL, capture_detail = NULL, captured_at = NULL,
+                    check_state = CASE WHEN $7::boolean THEN check_state END,
+                    check_phase = CASE WHEN $7::boolean THEN check_phase END,
+                    check_error_detail = CASE WHEN $7::boolean THEN check_error_detail END,
+                    test_results = CASE WHEN $7::boolean THEN test_results ELSE '[]'::jsonb END,
+                    checks_checked_at = CASE WHEN $7::boolean THEN checks_checked_at END,
+                    consecutive_check_failures = CASE WHEN $7::boolean THEN consecutive_check_failures ELSE 0 END,
+                    first_check_failure_at = CASE WHEN $7::boolean THEN first_check_failure_at END,
+                    last_check_failure_at = CASE WHEN $7::boolean THEN last_check_failure_at END,
+                    check_next_retry_at = CASE WHEN $7::boolean THEN check_next_retry_at END,
+                    check_error_notified_at = CASE WHEN $7::boolean THEN check_error_notified_at END,
+                    capture_state = CASE WHEN $7::boolean THEN capture_state END,
+                    capture_detail = CASE WHEN $7::boolean THEN capture_detail END,
+                    captured_at = CASE WHEN $7::boolean THEN captured_at END,
                     last_activity_at = NOW()
               WHERE id = $2 AND status = $6 AND source = $3
                 AND (CASE
@@ -1502,11 +1512,12 @@ function proposalHandoffRoutes(config) {
                                      handoff_head_sha, handoff_base_sha)
                      END) IS NOT DISTINCT FROM $4`,
               [uploaded.sha, session.id, SOURCE, expectedParent, input.localCommitSha,
-                session.status]
+                session.status, machineHeld]
             );
             if (!advanced.rowCount) {
               return res.status(409).json({ error: 'session_state_changed' });
             }
+            if (machineHeld) await previewWorkflow.clear({ session, reason: 'upload' });
           }
           if (revisionKind === 'session' && !session.pr_number) {
             try {

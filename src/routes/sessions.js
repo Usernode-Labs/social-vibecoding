@@ -12979,25 +12979,6 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
       // "Chat error" toast and has no breadcrumb to follow.
       let stagingResult = null;
       let stagingErr = null;
-      // With WF_PREVIEWS_ENABLED on the preview machine builds and checks
-      // the commit; the turn ends without waiting for it, and the page hears
-      // staging_ready and the verdict over the WebSocket bus.
-      const previewHandedOff = await previewWorkflow.revision({
-        pool, session, head: commitHash, source: 'turn', trigger: 'commit-push',
-      });
-      if (!previewHandedOff) {
-        // #461: pend the checks for the NEW commit before the build starts, so
-        // the previous commit's verdict (e.g. a stale 'passing') can't satisfy
-        // the merge gate while this build runs — or after it fails.
-        await visuals.setChecksPending(pool, session.id, commitHash, 'building')
-          .catch((err) => log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message }));
-        try {
-          stagingResult = await staging.buildAndDeployStaging(config, session, app, commitHash);
-        } catch (e) {
-          stagingErr = e;
-        }
-      }
-
       // A promoted proposal's votes were on the previous version.
       const retireVotesForCommit = async () => {
         if (session.status !== 'promoted') return;
@@ -13048,6 +13029,31 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
         }
       };
 
+      // With WF_PREVIEWS_ENABLED on the preview machine builds and checks
+      // the commit; the turn ends without waiting for it, and the page hears
+      // staging_ready and the verdict over the WebSocket bus. A promoted
+      // proposal's reviewed head moves to the commit first: it is the pin the
+      // machine checks a revision against.
+      let previewHandedOff = false;
+      if (previewWorkflow.enabled()) {
+        await retireVotesForCommit();
+        previewHandedOff = await previewWorkflow.revision({
+          pool, session, head: commitHash, source: 'turn', trigger: 'commit-push',
+        });
+      }
+      if (!previewHandedOff) {
+        // #461: pend the checks for the NEW commit before the build starts, so
+        // the previous commit's verdict (e.g. a stale 'passing') can't satisfy
+        // the merge gate while this build runs — or after it fails.
+        await visuals.setChecksPending(pool, session.id, commitHash, 'building')
+          .catch((err) => log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message }));
+        try {
+          stagingResult = await staging.buildAndDeployStaging(config, session, app, commitHash);
+        } catch (e) {
+          stagingErr = e;
+        }
+      }
+
       if (previewHandedOff) {
         // The "Changes ready" card renders from changesReady; its Preview
         // button appears when the machine's staging_ready arrives.
@@ -13058,7 +13064,6 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
           prUrl: session.pr_url || null,
         });
         summaryParts.push('The staging preview is building; its checks run once it is up.');
-        await retireVotesForCommit();
       } else if (stagingResult) {
         await pool.query(
           `UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3`,

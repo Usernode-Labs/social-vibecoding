@@ -1933,6 +1933,8 @@ async function settleActiveSession({ config, pool, session, sessionId, headSha, 
 // looking like it had never been checked at all.
 async function settlePausedSession({ pool, session, sessionId, headSha, parts }) {
   const { lifecycle: sessionLifecycle, pushSessionUpdate } = parts;
+  // A session the preview machine holds has its verdict cleared by it.
+  const machineHeld = await require('./preview-workflow').held(sessionId);
   // The same column list the CLI commit-upload route clears for a commit
   // nothing has run yet, minus the 'pending' verdict itself — nothing IS
   // running, and a 'pending' no pipeline will ever resolve is a spinner
@@ -1948,11 +1950,17 @@ async function settlePausedSession({ pool, session, sessionId, headSha, parts })
             first_check_failure_at = NULL, last_check_failure_at = NULL,
             capture_state = NULL, capture_detail = NULL, captured_at = NULL,
             last_activity_at = NOW()
-      WHERE id = $1 AND status = 'paused'`,
-    [sessionId]
+      WHERE id = $1 AND status = 'paused' AND NOT $2::boolean`,
+    [sessionId, machineHeld]
   ).catch((err) => log.warn('proposal-update', 'could not clear the stale verdict', {
     sessionId, err: err.message,
   }));
+  if (machineHeld) {
+    await pool.query(`UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = $1 AND status = 'paused'`, [sessionId])
+      .catch(() => {});
+    await require('./preview-workflow').clear({ session: { ...session, id: sessionId }, reason: 'paused-update' })
+      .catch((err) => log.warn('proposal-update', 'could not clear the stale verdict', { sessionId, err: err.message }));
+  }
 
   await recordChangesReadyCard({ pool, session, sessionId, headSha });
 
