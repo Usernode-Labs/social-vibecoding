@@ -27,6 +27,7 @@ const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
 const dm = require('../src/services/homeroom-bot-dm');
+const { createSchemaDatabase } = require('./lib/schema-database');
 
 // ── What the card offers, and says ──
 
@@ -234,7 +235,7 @@ test('B7: who approves, who is told, and the card, against the full PostgreSQL s
     return;
   }
   const name = `hrbot_ready_${crypto.randomBytes(6).toString('hex')}`;
-  await admin.query(`CREATE DATABASE ${name}`);
+  await createSchemaDatabase(admin, name);
   const url = new URL(DSN); url.pathname = `/${name}`;
   const pool = new Pool({ connectionString: String(url), max: 4 });
   t.after(async () => {
@@ -242,7 +243,6 @@ test('B7: who approves, who is told, and the card, against the full PostgreSQL s
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  await pool.query(read('src/db/schema.sql'));
   const governance = require('../src/services/governance');
   const user = async (username, synthetic = false) => (await pool.query(
     `INSERT INTO users (username, password, has_platform_access, is_synthetic) VALUES ($1, 'x', TRUE, $2)

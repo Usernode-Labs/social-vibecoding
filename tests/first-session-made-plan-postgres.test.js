@@ -21,7 +21,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const express = require('express');
 const { Pool } = require('pg');
 
@@ -58,6 +57,7 @@ require('../src/db/pool').getPool = () => pool;
 const bot = require('../src/services/homeroom-bot');
 const progress = require('../src/services/homeroom-bot-progress');
 const { appRoutes } = require('../src/routes/apps');
+const { createSchemaDatabase } = require('./lib/schema-database');
 
 test('the made screen reads the waiting plan off the real GET /api/apps/:slug, for its creator', { timeout: 180000 }, async (t) => {
   const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
@@ -68,7 +68,7 @@ test('the made screen reads the waiting plan off the real GET /api/apps/:slug, f
     return;
   }
   const name = `made_plan_${crypto.randomBytes(6).toString('hex')}`;
-  await admin.query(`CREATE DATABASE ${name}`);
+  await createSchemaDatabase(admin, name);
   const url = new URL(DSN); url.pathname = `/${name}`;
   pool = new Pool({ connectionString: String(url), max: 6 });
   t.after(async () => {
@@ -76,7 +76,6 @@ test('the made screen reads the waiting plan off the real GET /api/apps/:slug, f
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
 
   const user = async (username, synthetic = false) => (await pool.query(
     `INSERT INTO users (username, password, has_platform_access, is_synthetic) VALUES ($1, 'x', TRUE, $2)

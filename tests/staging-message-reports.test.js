@@ -2,14 +2,13 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
 const crypto = require('node:crypto');
 const express = require('express');
 const { Client, Pool } = require('pg');
 const { seedStagingGeneralChannel } = require('../src/db/migrate');
 const { demoConversations, demoMessages } = require('../src/routes/conversations');
 const { moderationRoutes } = require('../src/routes/moderation');
+const { createSchemaDatabase } = require('./lib/schema-database');
 
 const savedEnvironment = process.env.USERNODE_ENV;
 test.after(() => {
@@ -31,11 +30,10 @@ test('demo inbox users can be reported through the real API with multiline detai
   let pool, server;
   const connectionsClosed = [];
   try {
-    await root.query(`CREATE DATABASE ${database}`);
+    await createSchemaDatabase(root, database);
     const url = new URL(dsn); url.pathname = `/${database}`;
     pool = new Pool({ connectionString: url.toString() });
     pool.on('connect', client => connectionsClosed.push(new Promise(resolve => client.once('end', resolve))));
-    await pool.query(fs.readFileSync(path.join(__dirname, '../src/db/schema.sql'), 'utf8'));
     const reporter = (await pool.query("INSERT INTO users(username,password) VALUES ('fixture-reporter','unused') RETURNING id,username")).rows[0];
     const unrelated = (await pool.query("INSERT INTO users(username,password,profile_published) VALUES ('ada','unused',TRUE) RETURNING id")).rows[0];
     const web = express(); web.use(express.json());

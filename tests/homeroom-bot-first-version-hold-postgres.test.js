@@ -33,12 +33,12 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const { Pool } = require('pg');
 
 const bot = require('../src/services/homeroom-bot');
 const progress = require('../src/services/homeroom-bot-progress');
 const logger = require('../src/services/logger');
+const { createSchemaDatabase } = require('./lib/schema-database');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
   || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -52,7 +52,7 @@ test('a project\'s first version goes first, against the full PostgreSQL schema'
     return;
   }
   const name = `hbot_fvhold_${crypto.randomBytes(6).toString('hex')}`;
-  await admin.query(`CREATE DATABASE ${name}`);
+  await createSchemaDatabase(admin, name);
   const url = new URL(DSN); url.pathname = `/${name}`;
   const pool = new Pool({ connectionString: String(url), max: 8 });
   t.after(async () => {
@@ -61,7 +61,6 @@ test('a project\'s first version goes first, against the full PostgreSQL schema'
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
 
   const user = async (username, synthetic = false) => (await pool.query(
     `INSERT INTO users (username, password, is_synthetic) VALUES ($1, 'x', $2) RETURNING id, username`,

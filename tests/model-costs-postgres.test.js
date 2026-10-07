@@ -17,10 +17,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const { Pool } = require('pg');
 
 const modelCosts = require('../src/services/model-costs');
+const { createSchemaDatabase } = require('./lib/schema-database');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
   || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -34,7 +34,7 @@ test('the measured typical change counts input once, against the full PostgreSQL
     return;
   }
   const name = `model_costs_${crypto.randomBytes(6).toString('hex')}`;
-  await admin.query(`CREATE DATABASE ${name}`);
+  await createSchemaDatabase(admin, name);
   const url = new URL(DSN); url.pathname = `/${name}`;
   const pool = new Pool({ connectionString: String(url), max: 4 });
   t.after(async () => {
@@ -42,7 +42,6 @@ test('the measured typical change counts input once, against the full PostgreSQL
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
 
   const { rows: [app] } = await pool.query(
     "INSERT INTO apps (name, slug, status, repo_url) VALUES ('Todo', 'todo', 'running', 'https://github.com/o/todo') RETURNING id",

@@ -21,11 +21,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const { Pool } = require('pg');
 const communities = require('../src/services/communities');
 const scorer = require('../src/services/topochain/challenge-scorer');
 const { loadOnboarding } = require('../src/services/topochain/challenge-onboarding');
+const { createSchemaDatabase } = require('./lib/schema-database');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 
@@ -37,7 +37,7 @@ test('community challenges count a join at once, against the full PostgreSQL sch
     t.skip('PostgreSQL unavailable; set TEST_DATABASE_URL to require this check'); return;
   }
   const name = 'join_scoring_' + crypto.randomBytes(6).toString('hex');
-  await admin.query(`CREATE DATABASE ${name}`);
+  await createSchemaDatabase(admin, name);
   const url = new URL(DSN); url.pathname = '/' + name;
   const pool = new Pool({ connectionString: String(url), max: 6 });
   t.after(async () => {
@@ -45,7 +45,6 @@ test('community challenges count a join at once, against the full PostgreSQL sch
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
 
   let seq = 0;
   async function user({ platform = true } = {}) {

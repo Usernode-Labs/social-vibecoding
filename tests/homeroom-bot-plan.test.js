@@ -32,6 +32,7 @@ const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const bot = require('../src/services/homeroom-bot');
 const dm = require('../src/services/homeroom-bot-dm');
 const live = require('../src/services/homeroom-bot-live');
+const { createSchemaDatabase } = require('./lib/schema-database');
 
 const fence = (obj) => `Done.\n\n\`\`\`json\n${JSON.stringify(obj)}\n\`\`\``;
 
@@ -310,7 +311,7 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     return;
   }
   const name = `hrbot_plan_${crypto.randomBytes(6).toString('hex')}`;
-  await admin.query(`CREATE DATABASE ${name}`);
+  await createSchemaDatabase(admin, name);
   const url = new URL(DSN); url.pathname = `/${name}`;
   const pool = new Pool({ connectionString: String(url), max: 4 });
   t.after(async () => {
@@ -318,7 +319,6 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  await pool.query(read('src/db/schema.sql'));
   const mayor = require('../src/services/homeroom-bot-mayor');
   const progress = require('../src/services/homeroom-bot-progress');
   const conversations = require('../src/services/conversations');

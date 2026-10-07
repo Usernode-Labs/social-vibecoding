@@ -19,6 +19,7 @@ const { loadTsx } = require('./lib/render-tsx');
 
 const policy = require('../src/services/mobile-push-policy');
 const dm = require('../src/services/homeroom-bot-dm');
+const { createSchemaDatabase } = require('./lib/schema-database');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
   || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -146,7 +147,7 @@ test('B4: what one first version rings for its maker, against the full PostgreSQ
     return;
   }
   const name = `hrbot_notify_${crypto.randomBytes(6).toString('hex')}`;
-  await admin.query(`CREATE DATABASE ${name}`);
+  await createSchemaDatabase(admin, name);
   const url = new URL(DSN); url.pathname = `/${name}`;
   const pool = new Pool({ connectionString: String(url), max: 4 });
   t.after(async () => {
@@ -154,7 +155,6 @@ test('B4: what one first version rings for its maker, against the full PostgreSQ
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
   const user = async (username, synthetic = false) => (await pool.query(
     `INSERT INTO users (username, password, has_platform_access, is_synthetic) VALUES ($1, 'x', TRUE, $2) RETURNING id, username`,
     [username, synthetic],

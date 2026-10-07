@@ -2,7 +2,6 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const crypto = require('node:crypto');
 const { Client, Pool } = require('pg');
 const express = require('express');
@@ -14,6 +13,7 @@ const { conversationRoutes } = require('../src/routes/conversations');
 const { moderationRoutes } = require('../src/routes/moderation');
 const { moderationGuard } = require('../src/middleware/moderation');
 const { appRoutes } = require('../src/routes/apps');
+const { createSchemaDatabase } = require('./lib/schema-database');
 
 test('fixture reconciliation is inert outside staging', async () => {
   process.env.USERNODE_ENV = 'production';
@@ -48,11 +48,10 @@ test('Preview lists and actions share persisted identities, with private viewer 
   let pool, server;
   const closed = [];
   try {
-    await admin.query(`CREATE DATABASE ${name}`);
+    await createSchemaDatabase(admin, name);
     const url = new URL(dsn); url.pathname = `/${name}`;
     pool = new Pool({ connectionString: url.toString() });
     pool.on('connect', client => closed.push(new Promise(resolve => client.once('end', resolve))));
-    await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
     const viewers = (await pool.query(
       "INSERT INTO users (username, password) VALUES ('usernode-capture-admin', 'unused'), ('viewer-two', 'unused') RETURNING id, username")).rows;
     await pool.query("INSERT INTO users (id, username, password) VALUES (900001, 'staging-demo-user', 'staging-demo-not-a-login')");

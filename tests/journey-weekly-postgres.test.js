@@ -8,10 +8,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const { Pool } = require('pg');
 
 const journey = require('../src/services/journey');
+const { createSchemaDatabase } = require('./lib/schema-database');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 
@@ -23,7 +23,7 @@ test('stages, groups and coverage for one finished week', { timeout: 120000 }, a
     t.skip('PostgreSQL unavailable; set TEST_DATABASE_URL to require this check'); return;
   }
   const name = 'journey_week_' + crypto.randomBytes(6).toString('hex');
-  await admin.query(`CREATE DATABASE ${name}`);
+  await createSchemaDatabase(admin, name);
   const url = new URL(DSN); url.pathname = '/' + name;
   const pool = new Pool({ connectionString: String(url), max: 4 });
   t.after(async () => {
@@ -31,7 +31,6 @@ test('stages, groups and coverage for one finished week', { timeout: 120000 }, a
     await admin.query(`DROP DATABASE IF EXISTS ${name}`);
     await admin.end();
   });
-  await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
 
   // The week under test: Monday 21 Sep 2026. Its next week ends 5 Oct.
   const now = new Date('2026-10-07T12:00:00Z');

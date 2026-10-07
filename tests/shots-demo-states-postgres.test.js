@@ -12,7 +12,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const { Pool } = require('pg');
 const dbManager = require('../src/services/db-manager');
 const shotsFixtures = require('../src/services/shots-fixtures');
@@ -27,6 +26,7 @@ const suggestBack = require('../src/services/suggest-back');
 const conversations = require('../src/services/conversations');
 const botActivity = require('../src/services/homeroom-bot-activity');
 const { currentVotePredicateSql } = require('../src/services/pr-vote-revision');
+const { createSchemaDatabase } = require('./lib/schema-database');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 const SLUG = 'usernode-2d5619';
@@ -79,14 +79,12 @@ async function pairOfCopies(t) {
     return null;
   }
   const runId = crypto.randomBytes(16).toString('hex');
-  const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
   const sides = {};
   for (const side of ['base', 'head']) {
     const name = dbManager.shotsDbName(SLUG, runId, side);
-    await admin.query(`CREATE DATABASE ${name}`);
+    await createSchemaDatabase(admin, name);
     const url = new URL(DSN); url.pathname = `/${name}`;
     const pool = new Pool({ connectionString: String(url), max: 4 });
-    await pool.query(schema);
     await seedCopy(pool);
     const input = { databaseUrl: String(url), slug: SLUG, runId, side, selfAppSlug: SLUG };
     await shotsFixtures.ensureFullAdminIdentity(input);

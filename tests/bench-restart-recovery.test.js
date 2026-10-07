@@ -30,7 +30,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const { Pool } = require('pg');
 
 process.env.DATABASE_URL = process.env.DATABASE_URL || 'postgres://test:test@localhost:5/test';
@@ -70,6 +69,7 @@ require.cache[workerPath].exports = {
 
 const wsPath = require.resolve('../src/services/ws');
 const realWs = require(wsPath);
+const { createSchemaDatabase } = require('./lib/schema-database');
 require.cache[wsPath].exports = { ...realWs, broadcastGlobal: () => {}, pushNotificationToUser: () => 0, pushToUser: () => 0 };
 
 const origSetInterval = global.setInterval;
@@ -136,7 +136,7 @@ test('restart recovery of benchmark trials, against the full PostgreSQL schema',
     return;
   }
   const name = `bench_recover_${crypto.randomBytes(6).toString('hex')}`;
-  await admin.query(`CREATE DATABASE ${name}`);
+  await createSchemaDatabase(admin, name);
   const url = new URL(DSN); url.pathname = `/${name}`;
   const pool = new Pool({ connectionString: String(url), max: 8 });
   t.after(async () => {
@@ -145,7 +145,6 @@ test('restart recovery of benchmark trials, against the full PostgreSQL schema',
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
 
   const { rows: [app] } = await pool.query(
     "INSERT INTO apps (name, slug, status, repo_url) VALUES ('Todo', 'todo', 'running', 'https://github.com/o/todo') RETURNING id",

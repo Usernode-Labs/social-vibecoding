@@ -56,6 +56,7 @@ require.cache[pushId] = {
 
 const dm = require('../src/services/homeroom-bot-dm');
 const activity = require('../src/services/homeroom-bot-activity');
+const { createSchemaDatabase } = require('./lib/schema-database');
 
 const READY = 'frontend/src/features/messages/bot-ready.tsx';
 const CARD = 'frontend/src/features/messages/bot-activity.tsx';
@@ -310,7 +311,7 @@ test('Page Turners, read as it stands: the ready card after each Yes and after t
       return;
     }
     const name = `hrbot_live_cards_${crypto.randomBytes(6).toString('hex')}`;
-    await admin.query(`CREATE DATABASE ${name}`);
+    await createSchemaDatabase(admin, name);
     const url = new URL(DSN); url.pathname = `/${name}`;
     const pool = new pg.Pool({ connectionString: String(url), max: 6 });
     pool.on('error', () => {});
@@ -319,7 +320,6 @@ test('Page Turners, read as it stands: the ready card after each Yes and after t
       await admin.query(`DROP DATABASE IF EXISTS ${name}`).catch(() => {});
       await admin.end().catch(() => {});
     });
-    await pool.query(read('src/db/schema.sql'));
     const governance = require('../src/services/governance');
 
     const user = async (username, synthetic = false) => (await pool.query(

@@ -16,6 +16,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { Pool } = require('pg');
+const { createSchemaDatabase } = require('./lib/schema-database');
 
 const ROOT = path.join(__dirname, '..');
 const read = (file) => fs.readFileSync(path.join(ROOT, file), 'utf8');
@@ -29,7 +30,7 @@ test('the tour keeps how it ended and the join screen keeps join or skip, the fi
     t.skip('PostgreSQL unavailable; set TEST_DATABASE_URL to require this check'); return;
   }
   const name = 'journey_marks_' + crypto.randomBytes(6).toString('hex');
-  await admin.query(`CREATE DATABASE ${name}`);
+  await createSchemaDatabase(admin, name);
   const url = new URL(DSN); url.pathname = '/' + name;
   const pool = new Pool({ connectionString: String(url), max: 4 });
   t.after(async () => {
@@ -37,7 +38,6 @@ test('the tour keeps how it ended and the join screen keeps join or skip, the fi
     await admin.query(`DROP DATABASE IF EXISTS ${name}`);
     await admin.end();
   });
-  await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
   const onboarding = require('../src/services/onboarding');
 
   const { rows: people } = await pool.query(

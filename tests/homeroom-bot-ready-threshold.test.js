@@ -26,6 +26,7 @@ const path = require('node:path');
 const { Pool } = require('pg');
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { createSchemaDatabase } = require('./lib/schema-database');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
   || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -138,7 +139,7 @@ test('Page Turners: two of three must approve, against the full PostgreSQL schem
     return;
   }
   const name = `hrbot_threshold_${crypto.randomBytes(6).toString('hex')}`;
-  await admin.query(`CREATE DATABASE ${name}`);
+  await createSchemaDatabase(admin, name);
   const url = new URL(DSN); url.pathname = `/${name}`;
   const pool = new Pool({ connectionString: String(url), max: 4 });
   t.after(async () => {
@@ -146,7 +147,6 @@ test('Page Turners: two of three must approve, against the full PostgreSQL schem
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  await pool.query(read('src/db/schema.sql'));
   const dm = require('../src/services/homeroom-bot-dm');
   const botChat = require('../src/services/homeroom-bot-chat');
   const governance = require('../src/services/governance');

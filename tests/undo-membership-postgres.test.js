@@ -23,6 +23,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { Pool } = require('pg');
+const { createSchemaDatabase } = require('./lib/schema-database');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 
@@ -44,7 +45,7 @@ test('undo is for members, against the full PostgreSQL schema', { timeout: 18000
     t.skip('PostgreSQL unavailable; set TEST_DATABASE_URL to require this check'); return;
   }
   const name = 'undo_gate_' + crypto.randomBytes(6).toString('hex');
-  await admin.query(`CREATE DATABASE ${name}`);
+  await createSchemaDatabase(admin, name);
   const url = new URL(DSN); url.pathname = '/' + name;
   const pool = new Pool({ connectionString: String(url), max: 6 });
   const cleanup = [];
@@ -54,7 +55,6 @@ test('undo is for members, against the full PostgreSQL schema', { timeout: 18000
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
 
   const communities = require('../src/services/communities');
 

@@ -13,6 +13,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { Pool } = require('pg');
+const { createSchemaDatabase } = require('./lib/schema-database');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
@@ -25,10 +26,9 @@ test('a waiting email invite becomes a project invite when its address is confir
     t.skip('PostgreSQL unavailable; set TEST_DATABASE_URL to require this check'); return;
   }
   const name = 'email_invites_' + crypto.randomBytes(6).toString('hex');
-  await admin.query(`CREATE DATABASE ${name}`);
+  await createSchemaDatabase(admin, name);
   const url = new URL(DSN); url.pathname = '/' + name;
   const pool = new Pool({ connectionString: String(url), max: 4 });
-  await pool.query(read('src/db/schema.sql'));
   t.after(async () => {
     await pool.end();
     await admin.query(`DROP DATABASE ${name}`);

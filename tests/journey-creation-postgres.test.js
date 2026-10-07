@@ -9,11 +9,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const { Pool } = require('pg');
 
 const journey = require('../src/services/journey');
 const journeyEvents = require('../src/services/journey-events');
+const { createSchemaDatabase } = require('./lib/schema-database');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 
@@ -26,7 +26,7 @@ async function freshDatabase(t, prefix) {
     return null;
   }
   const name = prefix + crypto.randomBytes(6).toString('hex');
-  await admin.query(`CREATE DATABASE ${name}`);
+  await createSchemaDatabase(admin, name);
   const url = new URL(DSN); url.pathname = '/' + name;
   const pool = new Pool({ connectionString: String(url), max: 4 });
   t.after(async () => {
@@ -34,7 +34,6 @@ async function freshDatabase(t, prefix) {
     await admin.query(`DROP DATABASE IF EXISTS ${name}`);
     await admin.end();
   });
-  await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
   const user = async (username, cols = {}) => {
     const base = { has_platform_access: true, ...cols };
     const keys = Object.keys(base);

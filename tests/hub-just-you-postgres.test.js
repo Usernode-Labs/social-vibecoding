@@ -25,7 +25,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const express = require('express');
 const { Pool } = require('pg');
 
@@ -60,6 +59,7 @@ const bot = require('../src/services/homeroom-bot');
 const dm = require('../src/services/homeroom-bot-dm');
 const conversations = require('../src/services/conversations');
 const { appRoutes } = require('../src/routes/apps');
+const { createSchemaDatabase } = require('./lib/schema-database');
 
 const BRIEF = 'Plan hikes around Geneva with friends. Pick a trail, a date and who is coming, '
   + 'and see the weather for the day.';
@@ -73,7 +73,7 @@ test('a just-you project\'s hub: what it is, and where its first version stands'
     return;
   }
   const name = `hub_just_you_${crypto.randomBytes(6).toString('hex')}`;
-  await admin.query(`CREATE DATABASE ${name}`);
+  await createSchemaDatabase(admin, name);
   const url = new URL(DSN); url.pathname = `/${name}`;
   pool = new Pool({ connectionString: String(url), max: 6, connectionTimeoutMillis: 10000 });
   t.after(async () => {
@@ -81,7 +81,6 @@ test('a just-you project\'s hub: what it is, and where its first version stands'
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
-  await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
 
   const user = async (username, synthetic = false) => (await pool.query(
     `INSERT INTO users (username, password, has_platform_access, is_synthetic) VALUES ($1, 'x', TRUE, $2)
