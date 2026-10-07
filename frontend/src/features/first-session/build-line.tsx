@@ -44,6 +44,9 @@ export const BUILD_LINE_WORDS = Object.freeze({
 
 export type BuildLineState = keyof typeof BUILD_LINE_WORDS;
 
+/** The same lines on a Home tile, shortened to fit its caption (./build-line-words.js). */
+export { BUILD_LINE_TILE_WORDS, buildLineTileClass, buildLineTileOf } from './build-line-words.js';
+
 /** The line in an answer (`first_version.line`), or null for none or one this shell does not know. */
 export function buildLineOf(value: unknown): BuildLineState | null {
   return typeof value === 'string' && Object.prototype.hasOwnProperty.call(BUILD_LINE_WORDS, value)
@@ -54,6 +57,7 @@ export function buildLineOf(value: unknown): BuildLineState | null {
 export function buildLineAsks(state: BuildLineState): boolean {
   return state === 'plan' || state === 'question';
 }
+
 
 /** The lines that are done: a check. */
 export function buildLineDone(state: BuildLineState): boolean {

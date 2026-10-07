@@ -27,6 +27,7 @@ import { AppCard } from '../apps/app-card.js';
 import { gridStore } from './grid-store';
 import { chromeStore } from './chrome-store';
 import { detectInstallHost } from '../mobile-install/environment';
+import { BUILD_LINE_TILE_WORDS, buildLineTileClass, buildLineTileOf } from '../first-session/build-line-words.js';
 
 // Which discovery cards and add badges already carry their listeners.
 // `_wireDiscoveryCards` runs again whenever a lane's tiles change identity,
@@ -1016,7 +1017,12 @@ const Home = {
     // The status DOT and the active-users badge are gone from the tile face —
     // a launcher icon should read as an app, not a dashboard row. Every
     // non-running status still says so in words.
-    const statusLabel = isRunning ? ''
+    // #4053 (owner, 7 Oct 2026): a project whose first version Homeroom bot
+    // is making says where it is in the build line's words, from the time it
+    // is set up until it is live (Home.tileBuildLine), not "Spinning up...".
+    const buildLine = Home.tileBuildLine(app);
+    const statusLabel = buildLine ? BUILD_LINE_TILE_WORDS[buildLine]
+      : isRunning ? ''
       : app.status === 'creating' ? 'Spinning up...'
       : isAwaiting ? 'Awaiting secrets'
       : 'Error';
@@ -1036,6 +1042,7 @@ const Home = {
       locked: !!app.locked,
       demo: !!app.demo,
       statusLabel,
+      buildLine,
       isAwaiting,
       isError,
       // Awaiting-secrets cards stay clickable so the viewer can open the app
@@ -1050,6 +1057,17 @@ const Home = {
       // public community, which draws no mark.
       audience: app.audience === 'invited' || app.audience === 'solo' ? app.audience : 'open',
     };
+  },
+
+  /**
+   * #4053: the build line a tile shows (frontend/src/features/first-session/
+   * build-line-words.js), from the list's `first_version_line` (GET /api/apps:
+   * the line homeroom-bot-dm.js firstVersionState says for this viewer), or
+   * null. An app that failed to set up says that instead: Error and Retry.
+   */
+  tileBuildLine(app) {
+    if (!app || app.status === 'error') return null;
+    return buildLineTileOf(app.first_version_line);
   },
 
   // One placed item -> its view-model entry. The string version spliced
@@ -2443,7 +2461,9 @@ const Home = {
     // Every non-running status still says so in words on the tile — see
     // statusLabel / warningHtml below — so "Spinning up…", "Awaiting
     // secrets" and "Error" are unaffected.
-    const statusLabel = app.status === 'running' ? ''
+    const buildLine = Home.tileBuildLine(app);
+    const statusLabel = buildLine ? BUILD_LINE_TILE_WORDS[buildLine]
+      : app.status === 'running' ? ''
       : app.status === 'creating' ? 'Spinning up...'
       : isAwaiting ? 'Awaiting secrets'
       : 'Error';
@@ -2482,8 +2502,12 @@ const Home = {
     const failureTip = isError && app.last_failure_reason
       ? ` title="${escapeHtml(String(app.last_failure_reason)).replace(/"/g, '&quot;')}"`
       : '';
+    // #4053: a first version's build line is quiet (blue when it asks), not
+    // the status colours below.
     const warningHtml = statusLabel
-      ? `<p class="app-card-status ${isAwaiting ? 'text-[color:var(--state-attention)]' : 'text-[color:var(--state-blocked)]'}"${failureTip}>${statusLabel}</p>`
+      ? (buildLine
+        ? `<p class="${buildLineTileClass(buildLine)}" data-build-line="${buildLine}">${statusLabel}</p>`
+        : `<p class="app-card-status ${isAwaiting ? 'text-[color:var(--state-attention)]' : 'text-[color:var(--state-blocked)]'}"${failureTip}>${statusLabel}</p>`)
       : '';
 
     const isLocked = !!app.locked;

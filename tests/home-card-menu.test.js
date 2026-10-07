@@ -304,6 +304,16 @@ test('card: the tile carries no users badge and no status dot', () => {
   assert.match(Home.renderAppCard(baseApp({ status: 'creating' })), /Spinning up/);
   assert.match(Home.renderAppCard(baseApp({ status: 'awaiting_secrets' })), /Awaiting secrets/);
   assert.match(Home.renderAppCard(baseApp({ status: 'error' })), /Error/);
+  // #4053: a first version Homeroom bot is making says its build line
+  // instead, quiet, and blue only when it waits on the reader.
+  assert.match(Home.renderAppCard(baseApp({ status: 'creating', first_version_line: 'planning' })),
+    /<p class="app-card-status truncate text-zinc-500 dark:text-zinc-400" data-build-line="planning">Planning it<\/p>/);
+  assert.match(Home.renderAppCard(baseApp({ first_version_line: 'plan' })),
+    /<p class="app-card-status truncate font-semibold text-\[color:var\(--accent\)\]" data-build-line="plan">Plan ready<\/p>/);
+  assert.match(Home.renderAppCard(baseApp({ status: 'error', first_version_line: 'planning' })), />Error</);
+  assert.equal(Home.appView(baseApp({ first_version_line: 'building' })).statusLabel, 'Building it');
+  assert.equal(Home.appView(baseApp({ first_version_line: 'building' })).buildLine, 'building');
+  assert.equal(Home.appView(baseApp()).buildLine, null);
 });
 
 test('card: no pills/chips of any kind on the card face', () => {

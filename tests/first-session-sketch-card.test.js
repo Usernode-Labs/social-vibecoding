@@ -104,6 +104,29 @@ test('the build line: the same words everywhere, a spinner that turns, one blue 
   assert.doesNotMatch(LINE_SRC, /className="[^"]*status-dot/);
 });
 
+test('the same lines on a Home tile: the words that fit stay, the long three are shortened, blue still asks', () => {
+  // Owner, 7 Oct 2026: a new project's tile says the build line, not "Spinning
+  // up...". Its caption is one 11px line about 70px wide on a phone.
+  assert.deepEqual({ ...lineMod.BUILD_LINE_TILE_WORDS }, {
+    planning: 'Planning it',
+    plan: 'Plan ready',
+    'plan-member': 'Planning it',
+    question: 'A question',
+    building: 'Building it',
+    testing: 'Testing it',
+    ready: 'Ready to try',
+    live: 'Live',
+  });
+  assert.deepEqual(Object.keys(lineMod.BUILD_LINE_TILE_WORDS), Object.keys(lineMod.BUILD_LINE_WORDS));
+  for (const words of Object.values(lineMod.BUILD_LINE_TILE_WORDS)) assert.ok(words.length <= 12, words);
+  for (const state of ['plan', 'question']) {
+    assert.equal(lineMod.buildLineTileClass(state), 'app-card-status truncate font-semibold text-[color:var(--accent)]', state);
+  }
+  for (const state of ['planning', 'plan-member', 'building', 'testing', 'ready', 'live']) {
+    assert.equal(lineMod.buildLineTileClass(state), 'app-card-status truncate text-zinc-500 dark:text-zinc-400', state);
+  }
+});
+
 test('while it is sketched: the same frame, the name in place, a band of light over the line to come', () => {
   const html = sketchCard({ sketch: { state: 'loading', card: null } });
   assert.match(html, /data-first-session-sketch="loading"/);

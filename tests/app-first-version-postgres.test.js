@@ -258,12 +258,25 @@ test('the first version being built, from the records the bot leaves', { timeout
         governance.governedGate = realGate;
       }
 
+      // #4053 (owner, 7 Oct): the Home tile says the same line, read from
+      // the list (GET /api/apps) for whoever is looking.
+      const listed = async () => {
+        const res = await fetch(`http://127.0.0.1:${listening.address().port}/api/apps`);
+        assert.equal(res.status, 200);
+        return (await res.json()).apps.find((a) => a.slug === 'plant-pal');
+      };
+      viewer = ada;
+      assert.equal((await listed()).first_version_line, 'ready');
+      viewer = sam;
+      assert.equal((await listed()).first_version_line, 'ready');
+
       // A read that fails is no state, never a failed page.
       viewer = ada;
       const real = dm.firstVersionState;
       dm.firstVersionState = async () => { throw new Error('boom'); };
       try {
         assert.equal(await get(), null);
+        assert.equal((await listed()).first_version_line, null, 'the tile says what it said before');
       } finally {
         dm.firstVersionState = real;
       }
@@ -276,6 +289,10 @@ test('the first version being built, from the records the bot leaves', { timeout
   await t.test('merged: the app is the first version now', async () => {
     await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW() WHERE id = $1`, [proposal.id]);
     assert.equal(await state(), null);
+    // Its tile says nothing more (routes/apps.js firstVersionLinesFor).
+    const routes = require('../src/routes/apps');
+    assert.equal(typeof routes.firstVersionLinesFor, 'function');
+    assert.equal((await routes.firstVersionLinesFor(pool, [app], ada.id)).size, 0);
   });
 
   await t.test('any other ending is the end of the state too', async () => {
