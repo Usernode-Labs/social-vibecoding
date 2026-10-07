@@ -152,13 +152,15 @@ export function SettingsScreen() {
                 survives the trip. "Sign out", not "Log out" (5 Oct 2026):
                 the way in says Sign in everywhere, and a search for "Sign
                 out" found nothing. The id keeps its old name, which the
-                declared checks select on.
+                declared checks select on. While a sign-out runs, settings.js
+                disables it and it reads "Signing out…" (#3915): the disabled
+                styling is what tells a phone user the tap landed.
             */}
             <div id="settings-footer" className="mt-6 pt-2">
               <SettingsAccountRows />
               <button
                 id="settings-logout"
-                className="w-full rounded-full bg-red-500/10 px-4 py-2.5 text-[17px] font-semibold text-red-700 dark:text-red-400 hover:bg-red-500/15 transition-colors"
+                className="w-full rounded-full bg-red-500/10 px-4 py-2.5 text-[17px] font-semibold text-red-700 dark:text-red-400 hover:bg-red-500/15 transition-colors disabled:opacity-60 disabled:cursor-default disabled:hover:bg-red-500/10"
               >
                 Sign out
               </button>
