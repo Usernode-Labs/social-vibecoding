@@ -1778,7 +1778,8 @@ form.agent-session-composer:focus-within {
      right-hand cap;
    - the field is 36px tall (7 + 22 + 7) and keeps its 17px type;
    - the count's line is not laid out until the text nears the limit, where
-     it appears in amber (`data-near-limit`);
+     it appears in amber (`data-near-limit`); #4202 made that true at every
+     width (the rule after this block);
    - the "+" and the disc are drawn at 36px and stay 44px tap targets, the
      platform's minimum: a pseudo-element overhangs each by 4px, into the
      card's padding and the row's 6px gap, and so never over the field.
@@ -1804,8 +1805,17 @@ form.agent-session-composer:focus-within {
   .messages-send { position: relative; }
   .messages-composer-action::after,
   .messages-send::after { content: ''; position: absolute; inset: -4px; }
-  .messages-composer-count:not([data-near-limit]) { display: none; }
 }
+/* #4202: THE SAME CARD ON DESKTOP AS AN APP CHANNEL'S. The count's line was
+   laid out on desktop even while empty, a 4px gap and a 15px blank band
+   under the row, so every Messages composer (the Homeroom bot's thread, a
+   DM, a group, #general, a reply thread) stood about 75px against the app
+   channel's 56px (`.gc-composer-card`: 8 + 40 + 8). It is now laid out at
+   every width only once the text nears the limit, where it appears in amber,
+   so the card is that same 8 + 40 + 8. The element stays in the DOM (a
+   declared check selects it). Two selectors' worth of specificity, so it
+   outranks the element's own `flex` although tailwind.css loads later. */
+.messages-composer-count:not([data-near-limit]) { display: none; }
 .messages-reply-draft,
 .messages-pending-object { margin-bottom: 6px; }
 .messages-reply-draft {
