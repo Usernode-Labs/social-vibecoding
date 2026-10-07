@@ -234,6 +234,14 @@ app.use(explorerProxyRoutes(config));
 app.use(githubWebhookRoutes(config));
 app.use(require('./src/routes/mail-webhooks').mailWebhookRoutes(config));
 
+// ── Work-order patch uploads (#4264) ───────────────────────────────────────
+// A coding agent's one-time upload of a large patch for a connector work
+// order. HERE for the webhook's two reasons: the body is raw patch bytes
+// under whatever Content-Type curl sends, so it must precede the JSON
+// parser, and the caller is a sandbox with no session, authenticated by the
+// task's own token. src/routes/external-agent-patch-upload.js has the rest.
+app.use(require('./src/routes/external-agent-patch-upload').externalAgentPatchUploadRoutes(config));
+
 // ── Challenges API (SV web shell) ──────────────────────────────────────────
 // /challenges-api/* used to be a READ-ONLY proxy to the (now retired)
 // external leaderboard deployment. Since the topochain merge the same five

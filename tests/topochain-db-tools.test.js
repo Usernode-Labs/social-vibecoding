@@ -760,6 +760,7 @@ test('#1130: no credential-SHAPED column name in schema.sql is readable without 
     'cli_auth_audit_events.access_token_id',
     'session_agent_leases.access_token_id',
     'mcp_auth_audit_events.access_token_id',
+    'external_agent_patch_uploads.token_id', // #4264: which upload credential row sent it; the hash is denied
     'agent_turns.credential_id',
     'agent_turns.credential_revision',     // an INTEGER version counter
 

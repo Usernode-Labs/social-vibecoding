@@ -61,6 +61,9 @@ const githubService = require('./github');
 const githubBudget = require('./github-budget');
 const externalAgentHead = require('./external-agent-head');
 const externalAgentPatch = require('./external-agent-patch');
+// #4264: the work order's one-time upload command, and the stored upload
+// submit_work can name instead of an inline patch.
+const patchUploads = require('./external-agent-patch-upload');
 // Only `branchHomeOf` is used from here, and only as a definition: one
 // function decides where a proposal's head lives, so a work order and the
 // submission that follows it can never disagree about it. The update path
@@ -560,6 +563,7 @@ function buildWorkOrder({
   appName, appSlug, upstreamUrl, upstreamSlug, forkUrl, forkCloneUrl, forkRepo,
   forkPageUrl, forkStatus, branch, baseSha, issueNumber, issueNumbers, brief, webPath,
   taskId, agentLabelText, platformRules, targetProposal, startedFromWalkthrough, specs = [],
+  patchUpload = null,
 }) {
   // Where the connector is added, for the agent that finds it has none. The
   // page carries the connector URL and the click-by-click steps for both
@@ -1092,6 +1096,19 @@ function buildWorkOrder({
   // the web asked the user "patch or branch?", which a non-developer cannot
   // answer and should never be asked.
   const patchFirst = hasTask && !update;
+  // #4264: the one-time upload command, when prepare_work minted one for this
+  // task. Inline stays the way in for a small patch and for a sandbox that
+  // cannot reach Homeroom; the upload is for the patch too big to retype
+  // safely; the branch is the last resort. The token is printed here, in the
+  // work order its owner asked for, and nowhere else.
+  const upload = patchFirst && patchUpload && patchUpload.token && patchUpload.url ? patchUpload : null;
+  const uploadExpiry = upload && upload.expiresAt instanceof Date && !Number.isNaN(upload.expiresAt.getTime())
+    ? `${upload.expiresAt.toISOString().slice(0, 16).replace('T', ' ')} UTC`
+    : 'it expires';
+  const uploadBytes = (upload && Number(upload.maxBytes)) || patchUploads.MAX_UPLOADED_PATCH_BYTES;
+  const uploadLimit = uploadBytes % (1024 * 1024) === 0
+    ? `${uploadBytes / (1024 * 1024)} MB`
+    : `${Math.round(uploadBytes / 1024)} KB`;
   lines.push('', 'WHEN YOU ARE DONE', '');
   if (patchFirst) {
     lines.push(
@@ -1099,8 +1116,26 @@ function buildWorkOrder({
       '   hand the change in: you do NOT need GitHub write access, a fork or a',
       '   push for it.',
       `${CMD}git format-patch ${baseSha}..HEAD --stdout`,
-      '   Patches over about 250 KB are refused. For a change that large, or when',
-      '   you already push to your fork, push a branch instead (any branch name):',
+      ...(upload
+        ? [
+          '   For a patch over a few KB, UPLOAD it instead of copying it into the',
+          '   tool call: nothing gets retyped. It needs your sandbox to reach',
+          '   Homeroom (an agent on the user\'s own machine usually can, a hosted',
+          '   sandbox usually cannot), so try it once, from your checkout:',
+          `${CMD}git format-patch ${baseSha}..HEAD --stdout | curl -sS --max-time 120 -X PUT \\`,
+          `${CMD}  -H 'Authorization: Bearer ${upload.token}' \\`,
+          `${CMD}  --data-binary @- ${upload.url}`,
+          `   Its token works only for this task's patch, until ${uploadExpiry}:`,
+          '   never print, commit or share it. If it answers "ok":true, pass its',
+          '   `uploadId` as `patchUploadId` in step 2 instead of `patch`; otherwise',
+          `   send the patch inline. Uploads take up to ${uploadLimit}, inline patches`,
+          '   about 250 KB. For a change larger still, or when you already push to',
+          '   your fork, push a branch instead (any branch name):',
+        ]
+        : [
+          '   Patches over about 250 KB are refused. For a change that large, or when',
+          '   you already push to your fork, push a branch instead (any branch name):',
+        ]),
       `${CMD}git push -u origin HEAD`,
       `${CMD}git rev-parse --abbrev-ref HEAD`,
       '   The second command prints the branch name you just pushed. You need it.',
@@ -1256,8 +1291,16 @@ function buildWorkOrder({
     lines.push(
       '',
       '2. SUBMIT IT YOURSELF, through the Homeroom connector. Call `submit_work`',
-      `   with taskId ${taskRef} and the patch text from step 1 as \`patch\` (or, if`,
-      '   you pushed instead, `branch` set to the name you actually pushed),',
+      ...(upload
+        ? [
+          `   with taskId ${taskRef} and the patch text from step 1 as \`patch\` (or the`,
+          '   `patchUploadId` its upload printed, or, if you pushed instead, `branch`',
+          '   set to the name you actually pushed),',
+        ]
+        : [
+          `   with taskId ${taskRef} and the patch text from step 1 as \`patch\` (or, if`,
+          '   you pushed instead, `branch` set to the name you actually pushed),',
+        ]),
       `   agent "${agentValue}", source "work_order", and a short title, plus`,
       '   BOTH pieces of prose described next. Homeroom applies a patch at that',
       '   exact commit in the app\'s own repository and opens the pull request',
@@ -1338,9 +1381,18 @@ function buildWorkOrder({
       '   number, call `submit_work`',
       `   again with slug "${appSlug}" and prNumber set to it.`,
       '',
-      '4. IF THE PATCH IS REFUSED as too large, push a branch as in step 1 and',
-      `   call \`submit_work\` with taskId ${taskRef} and that \`branch\` instead. If`,
-      '   that push is refused, the remedy above is the fix.',
+      ...(upload
+        ? [
+          '4. IF THE PATCH IS REFUSED as too large, upload it as in step 1. If the',
+          '   upload cannot reach Homeroom or is too large as well, push a branch as',
+          `   in step 1 and call \`submit_work\` with taskId ${taskRef} and that`,
+          '   `branch` instead. If that push is refused, the remedy above is the fix.',
+        ]
+        : [
+          '4. IF THE PATCH IS REFUSED as too large, push a branch as in step 1 and',
+          `   call \`submit_work\` with taskId ${taskRef} and that \`branch\` instead. If`,
+          '   that push is refused, the remedy above is the fix.',
+        ]),
       '',
       '5. ON A CONNECTOR ERROR, relay it plainly rather than giving up:',
       '   `insufficient_scope` — ask the user to reconnect Homeroom and approve',
@@ -1707,6 +1759,25 @@ async function prepareWork(deps, params) {
     ? []
     : await findOpenProposalsForRequest(pool, app.id, issues, user.id);
 
+  // #4264: the work order's one-time upload command, minted for the task it
+  // is about to render, so a reused job's re-rendered order carries a working
+  // one too (the earlier one keeps working until it expires). Only when the
+  // caller asked (the connector does; the browser walkthrough does not), and
+  // only for NEW work: an update submits a branch on this base. Advisory, like
+  // the claim: a credential that cannot be minted costs the command, and the
+  // work order still offers the inline patch and the branch.
+  const uploadFor = async (task) => {
+    if (params.patchUpload !== true || update || !task) return null;
+    try {
+      return await patchUploads.issueUploadCredential(pool, { taskId: task.id, userId: user.id, origin });
+    } catch (err) {
+      log.warn('external-agent-tasks', 'patch upload command not issued (continuing)', {
+        taskId: task.id, err: err.message,
+      });
+      return null;
+    }
+  };
+
   // ── Look before minting ──────────────────────────────────────────────
   //
   // BEFORE the open-work-order check, deliberately: re-rendering a work
@@ -1728,6 +1799,7 @@ async function prepareWork(deps, params) {
         specs: Array.isArray(params.specs) ? params.specs : [],
         task: existing, app, owner, repo, origin, clientId, clientName,
         prompts, agent, reused: true, targetProposal: update, openProposals,
+        patchUpload: await uploadFor(existing),
       });
     }
   } else {
@@ -1885,6 +1957,7 @@ async function prepareWork(deps, params) {
         specs: Array.isArray(params.specs) ? params.specs : [],
         task: raced, app, owner, repo, origin, clientId, clientName,
         prompts, agent, reused: true, targetProposal: update, openProposals,
+        patchUpload: await uploadFor(raced),
       });
     }
 
@@ -1932,6 +2005,7 @@ async function prepareWork(deps, params) {
     },
     app, owner, repo, origin, clientId, clientName, prompts, agent,
     forkStatus, reused: false, targetProposal: update, openProposals,
+    patchUpload: await uploadFor(row),
   });
 }
 
@@ -2099,6 +2173,7 @@ async function findOpenProposalsForRequest(pool, appId, issueNumbers, viewerId) 
 function renderPreparedTask({
   task, app, owner, repo, origin, clientId, clientName, prompts,
   forkStatus, reused, agent: requestedAgent, targetProposal, openProposals, specs = [],
+  patchUpload = null,
 }) {
   const forkOwner = task.fork_owner;
   const forkRepo = task.fork_repo;
@@ -2156,6 +2231,8 @@ function renderPreparedTask({
     // (routes/dev-flow.js); everything else is a chat assistant's connector.
     startedFromWalkthrough: String(task.client_id || '').startsWith('usernode-web'),
     specs,
+    // #4264: minted by prepareWork for this rendering only, never stored.
+    patchUpload,
   });
 
   return {
@@ -3228,8 +3305,50 @@ async function submitUpdate(deps, params, proposalId) {
 // Serialized per task: see withTaskLock above for why one piece of work can
 // now have two callers racing on it.
 async function submitWork(deps, params) {
-  if (!params || !params.taskId) return submitWorkLocked(deps, params);
-  return withTaskLock(deps.pool, params.taskId, () => submitWorkLocked(deps, params));
+  // `uploadedPatch` is this file's own marker for a patch it read from the
+  // upload store (#4264), and it raises the size ceiling: it is never taken
+  // from a caller.
+  const clean = params ? { ...params, uploadedPatch: undefined } : params;
+  if (!clean || !clean.taskId) {
+    if (clean && clean.patchUploadId != null) {
+      return fail('invalid_request', 'patchUploadId needs the taskId from the work order: an upload belongs to one task.');
+    }
+    return submitWorkLocked(deps, clean);
+  }
+  return withTaskLock(deps.pool, clean.taskId, () => submitWithUploadedPatch(deps, clean));
+}
+
+// #4264. `patchUploadId` names a patch the agent uploaded with its work
+// order's one-time command instead of pasting it into `patch`. It is read
+// here, under the task lock, and from then on it IS the inline patch: the
+// same submitWorkLocked, the same apply at the recorded base, the same pull
+// request. Only the size ceiling differs (applyPatch's, raised for uploads).
+async function submitWithUploadedPatch(deps, params) {
+  if (params.patchUploadId == null) return submitWorkLocked(deps, params);
+  if (params.patch) {
+    return fail('invalid_request', 'Send the patch inline as `patch` or name the one you uploaded with `patchUploadId`, not both.');
+  }
+  // A task that is no longer open has nothing left to apply: submitWorkLocked
+  // answers it (already submitted, or not yours) exactly as it would for any
+  // other submission, and a used upload is gone by then anyway.
+  const open = await loadOpenTask(deps.pool, params.user.id, params.taskId);
+  if (!open) return submitWorkLocked(deps, { ...params, patchUploadId: undefined });
+  const upload = await patchUploads.loadUploadForSubmit(deps.pool, {
+    userId: params.user.id, taskId: Number(open.id), uploadId: params.patchUploadId,
+  });
+  if (!upload.ok) return upload;
+  const result = await submitWorkLocked(deps, {
+    ...params,
+    patch: upload.patch,
+    uploadedPatch: { uploadId: upload.uploadId, bytes: upload.bytes },
+  });
+  if (result && result.ok && !result.alreadySubmitted) {
+    await patchUploads.consumeUploads(deps.pool, Number(open.id));
+    log.info('external-agent-tasks', 'uploaded patch submitted', {
+      taskId: Number(open.id), uploadId: upload.uploadId, bytes: upload.bytes,
+    });
+  }
+  return result;
 }
 
 // #1405 path A. Tell the OWNER that their agent put work somewhere.
@@ -3630,6 +3749,8 @@ async function submitWorkLocked(deps, params) {
       baseSha: task.base_sha,
       userId: user.id,
       taskId: task.id,
+      // #4264: an uploaded patch is bounded by the upload's own ceiling.
+      ...(params.uploadedPatch ? { maxBytes: externalAgentPatch.MAX_UPLOADED_PATCH_BYTES } : {}),
     });
     if (!applied.ok) return applied;
     platformOwnedHead = applied;
