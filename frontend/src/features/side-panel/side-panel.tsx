@@ -159,6 +159,9 @@ export function SidePanel(): ReactNode {
         </Button>
       </div>
       <div id="side-panel-body" className="side-panel-body">
+        {/* data-un-keyboard-relay: a tap in the panel that closes the
+            keyboard is reported here, so the app beside it puts its field
+            away too (the kit, native.js; request #4314). */}
         {s.frameSrc ? (
           <iframe
             key={s.frameKey}
@@ -167,6 +170,7 @@ export function SidePanel(): ReactNode {
             title="Side panel"
             src={s.frameSrc}
             className={s.loading ? 'side-panel-frame' : 'side-panel-frame side-panel-frame-ready'}
+            data-un-keyboard-relay=""
           />
         ) : null}
         <div
