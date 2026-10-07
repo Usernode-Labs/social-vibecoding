@@ -160,10 +160,13 @@ test('a new user\'s tour, numbered as its card numbers it, with what each step c
 
 /** A document of fixed boxes, by selector, for as long as `fn` runs. */
 function withBoxes(boxes, fn) {
+  const el = (b) => ({ getBoundingClientRect: () => ({ ...b, right: b.left + b.width, bottom: b.top + b.height }) });
   const doc = {
     querySelectorAll: (selectors) => selectors.split(',').map((s) => s.trim())
       .flatMap((s) => (boxes[s] ? [boxes[s]] : []))
-      .map((b) => ({ getBoundingClientRect: () => ({ ...b, right: b.left + b.width, bottom: b.top + b.height }) })),
+      .map(el),
+    getElementById: (id) => (Object.hasOwn(boxes, `#${id}`) ? el(boxes[`#${id}`]) : null),
+    querySelector: (sel) => (Object.hasOwn(boxes, sel) ? el(boxes[sel]) : null),
   };
   const had = Object.hasOwn(globalThis, 'document');
   const before = globalThis.document;
@@ -240,6 +243,62 @@ test('3, 5 and 7 of 7 cut out their screen with its header: the whole app, the h
   assert.match(src, /const ring = hole && step\.tap && pressBox \? holeFor\(pressBox, viewport\) : null;/);
   assert.match(src, /const covers = hole \? \(ring \? aroundBox\(hole, ring\) : \[hole\]\) : \[\];/);
   assert.match(src, /\{covers\.map\(\(cover, i\) => <div key=\{i\} className="pointer-events-auto fixed" style=\{cover\} \/>\)\}/);
+});
+
+// The card was placed from #platform-tabs' top edge alone, so on a desktop,
+// where that element is the rail down the side, a bottom-placed card ended
+// 44px from the top of an 800px window and started above it: only Skip, Back
+// and Next showed (issue #4182, both screenshots). The Home tour has read the
+// same element as a bottom bar only when one is docked along the foot
+// (#3240, spotlight.bottomBarInset); the card is now clamped inside the
+// window besides.
+test('the tour card stays inside the screen, and the rail is not a bottom bar', () => {
+  const { cardPlacement } = loadTsx(`${DIR}/index.tsx`);
+  const { makerSteps } = loadTsx(`${DIR}/tour-steps.ts`);
+  const steps = makerSteps({ slug: 'film', name: 'Friday Film Crew', conversationId: 12 });
+  const place = (step, viewport, boxes, h, box = null) => withBoxes(boxes, () => cardPlacement(box, step, viewport, h));
+
+  // 1280x800: the rail runs down the side, so the bottom-placed card sits at
+  // the foot of the window, 16px from its bottom edge. Before, its bottom
+  // landed at y=44 and its top above the screen.
+  const desktop = { width: 1280, height: 800 };
+  const railBoxes = { '#platform-tabs': { left: 0, top: 60, width: 224, height: 740 } };
+  const hub = place(steps[4], desktop, railBoxes, 150);
+  assert.equal(hub.top, 800 - 16 - 150, 'the hub step\'s card at the foot of the window');
+  assert.ok(hub.top >= 16 && hub.top + 150 <= 800 - 16);
+  const chat = place(steps[6], desktop, railBoxes, 150);
+  assert.equal(chat.top, 800 - 16 - 150, 'the last step\'s card there too');
+  assert.ok(chat.top >= 16);
+
+  // A phone keeps today's spot: 16px above the bar docked along the foot.
+  const phone = { width: 390, height: 844 };
+  const barBoxes = { '#platform-tabs': { left: 0, top: 754, width: 390, height: 90 } };
+  assert.equal(place(steps[4], phone, barBoxes, 150).top, 754 - 16 - 150);
+
+  // A card under its target that would run off the bottom is kept inside
+  // instead: the box sits at the bottom of the upper half, and the card is
+  // taller than the room left below it.
+  const lowBox = { left: 400, top: 340, width: 200, height: 80 };
+  const under = place(steps[0], desktop, railBoxes, 390, lowBox);
+  assert.ok(under.top + 390 <= 800 - 16, 'the card below its target stays inside');
+  assert.equal(under.top, 800 - 16 - 390);
+
+  // And a card that would run off the top is kept inside: one over a target
+  // whose centre is in the screen's lower half, and one just above a high
+  // element, both with a card taller than the space there.
+  const lowerHalf = { left: 400, top: 420, width: 200, height: 100 };
+  assert.ok(lowerHalf.top + lowerHalf.height / 2 > 400);
+  assert.equal(place(steps[0], desktop, railBoxes, 500, lowerHalf).top, 16);
+  const highForm = { ...railBoxes, '#gc-form': { left: 400, top: 28, width: 440, height: 40 } };
+  const above = place({ screen: 'discussion', target: '#gc-messages', place: { above: '#gc-form' } }, desktop, highForm, 150, lowerHalf);
+  assert.equal(above.top, 16, 'above a high element, the card is kept inside');
+
+  // In a very short window a card taller than the room is pinned at the top
+  // and scrolls inside itself.
+  const short = place(steps[4], { width: 800, height: 400 }, {}, 500);
+  assert.equal(short.top, 16);
+  assert.equal(short.maxHeight, 400 - 32);
+  assert.equal(short.overflowY, 'auto');
 });
 
 // "Make 'tap to open it' also clickable (and the other steps like it) in the
