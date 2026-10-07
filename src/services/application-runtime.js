@@ -66,14 +66,34 @@ async function deploy(config, {
   if (mode(config) === 'docker') {
     const name = runtimeName || dockerName;
     if (!name) throw new Error('Docker deployment requires a runtime name');
+    // A preview attempt (the preview machine): the container carries its
+    // attempt number, and an older attempt never replaces a newer one.
+    if (attempt) {
+      const current = await docker.inspectContainer(name).catch(() => null);
+      const written = Number(current?.labels?.[kubernetes.PREVIEW_ATTEMPT_ANNOTATION]);
+      if (Number.isInteger(written) && written > attempt) {
+        throw Object.assign(new Error(`Preview attempt ${attempt} was superseded by attempt ${written}`),
+          { code: 'attempt_superseded', permanent: true });
+      }
+    }
     await docker.stopAndRemove(name).catch(() => {});
     const alias = internalOnly ? null : dnsAlias({ environment, sessionId, dockerName: name });
-    await docker.runContainer(name, {
-      image: imageRef, env, port, memory, cpus, labels,
-      aliases: alias ? [alias] : [],
-      command,
-    });
-    await docker.waitForHealthy(name, port, '/health');
+    let containerId = null;
+    try {
+      containerId = await docker.runContainer(name, {
+        image: imageRef, env, port, memory, cpus,
+        labels: attempt ? { ...labels, [kubernetes.PREVIEW_ATTEMPT_ANNOTATION]: String(attempt) } : labels,
+        aliases: alias ? [alias] : [],
+        command,
+      });
+      await docker.waitForHealthy(name, port, '/health');
+    } catch (err) {
+      // Docker has one container per session: what served is gone. What
+      // this deploy started is named by its id, since by now the name may
+      // be a newer attempt's container.
+      if (attempt) Object.assign(err, { servingRemoved: true, containerId: containerId || null });
+      throw err;
+    }
     if (internalOnly) {
       return {
         runtimeKind: 'docker', runtimeName: name, imageRef,

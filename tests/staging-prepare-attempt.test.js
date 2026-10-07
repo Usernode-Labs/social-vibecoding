@@ -15,7 +15,7 @@ function stub(id, exports) {
   require.cache[id] = { id, filename: id, loaded: true, exports, paths: [] };
 }
 
-function loadStaging({ failGit = false, failRun = false } = {}) {
+function loadStaging({ failGit = false, failRun = false, failHealth = false, liveAttempt = null } = {}) {
   const ids = {
     logger: require.resolve('../src/services/logger'),
     docker: require.resolve('../src/services/docker'),
@@ -52,8 +52,11 @@ function loadStaging({ failGit = false, failRun = false } = {}) {
       return { stdout: '' };
     },
     buildImage: async () => {},
-    runContainer: async () => { if (failRun) throw new Error('container exited'); return 'cid'; },
-    waitForHealthy: async () => {},
+    runContainer: async () => { if (failRun) throw new Error('container exited'); return 'cid-mine'; },
+    waitForHealthy: async () => { if (failHealth) throw new Error('never healthy'); },
+    // The container by the session's name, as the platform labelled it.
+    inspectContainer: async () => (liveAttempt == null ? { status: 'not_found', labels: {} }
+      : { status: 'running', labels: { 'social.usernode.io/preview-attempt': String(liveAttempt) } }),
     stopAndRemove: async (name) => { calls.removed.push(name); return { removed: true }; },
     getHostPort: async () => null,
     STAGING_STOP_GRACE_SEC: 2,
@@ -81,7 +84,7 @@ const APP = { id: 5, slug: 'widget', name: 'Widget', repo_url: 'https://github.c
 const SHA = 'a'.repeat(40);
 const SERVING = { id: 7, branch_name: 'dev/work', staging_runtime_name: 'usernode-staging-widget--7', staging_runtime_kind: 'docker' };
 const attempt = (calls) => ({
-  n: 3, dbName: 'app_widget_staging_s7_abc123', servingRemoved: false,
+  n: 3, dbName: 'app_widget_staging_s7_abc123',
   checkpoint: async (v) => { calls.checkpoints.push(v.step); },
 });
 
@@ -107,11 +110,22 @@ test('a candidate that fails before its deploy step leaves the serving container
   } finally { restore(); }
 });
 
-test('on Docker, a candidate that fails after replacing the container says so', async () => {
-  const { subject, calls, restore } = loadStaging({ failRun: true });
+test('on Docker, a candidate that fails after replacing the container says so, and removes only what it started', async () => {
+  const { subject, calls, restore } = loadStaging({ failHealth: true });
   try {
     await assert.rejects(subject.prepareAttempt({ appRuntime: 'docker' }, SERVING, APP, SHA, attempt(calls)),
-      (err) => err.servingRemoved === true);
-    assert.ok(calls.removed.length > 0);
+      (err) => err.servingRemoved === true && err.containerId === 'cid-mine');
+    // The replace by name, then its own cleanup by id: never by name, which
+    // could by now be a newer attempt's container (review finding).
+    assert.equal(calls.removed.at(-1), 'cid-mine');
+  } finally { restore(); }
+});
+
+test('on Docker, an older attempt never replaces a newer one\'s container', async () => {
+  const { subject, calls, restore } = loadStaging({ liveAttempt: 4 });
+  try {
+    await assert.rejects(subject.prepareAttempt({ appRuntime: 'docker' }, SERVING, APP, SHA, attempt(calls)),
+      (err) => err.code === 'attempt_superseded');
+    assert.ok(!calls.removed.includes('usernode-staging-widget--7'), 'the newer container is untouched');
   } finally { restore(); }
 });

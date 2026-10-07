@@ -39,6 +39,11 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
     `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
       WHERE cs.id = $1`, [id])).rows[0] || null;
   const app = async (id: number) => (await pool.query('SELECT * FROM apps WHERE id = $1', [id])).rows[0] || null;
+  // The machine cancelled this work item (the kernel's `cancel`), as opposed
+  // to its claim having expired; an error reading it is not a cancel.
+  const cancelledByMachine = async (workId: string) => (await pool.query(
+    `SELECT COALESCE((result->>'cancelled')::boolean, FALSE) AS cancelled FROM wf_work WHERE id = $1`, [workId])
+    .catch(() => ({ rows: [] }))).rows[0]?.cancelled === true;
   // The session's runtime on Kubernetes: one name per session, every attempt.
   const runtimeName = (appId: number, sessionId: number) =>
     kubernetes().appResourceName({ id: appId }, 'staging', sessionId);
@@ -56,7 +61,7 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
         const { input } = ctx;
         const [row, a] = await Promise.all([session(input.sessionId), app(input.appId)]);
         if (!row || !a) return { ok: false, detail: 'The proposal or its app no longer exists' };
-        const attempt = { n: input.n, dbName: input.db, servingN: input.serving?.n ?? null, servingRemoved: false,
+        const attempt = { n: input.n, dbName: input.db, servingN: input.serving?.n ?? null,
           checkpoint: (v: Json) => ctx.checkpoint(v) };
         try {
           const built = await staging().prepareAttempt(config, row, a, input.head, attempt);
@@ -67,9 +72,11 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
           };
         } catch (err) {
           if (cancelled(ctx, err) || (err as { code?: string }).code === 'attempt_superseded') {
-            // What this attempt created after it was cancelled is its own to
-            // undo; the machine's retirement covers everything before.
-            await dbManager().dropDatabase(input.db).catch(() => {});
+            // Only a cancelled attempt undoes what it created after the
+            // cancel (the machine's retirement covers everything before). A
+            // lost lease authorizes nothing: a retry of this same attempt
+            // may be using the database right now.
+            if (await cancelledByMachine(ctx.workId)) await dbManager().dropDatabase(input.db).catch(() => {});
             throw err;
           }
           const detail = visuals().summarizeBootFailure(err);

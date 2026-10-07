@@ -557,9 +557,9 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, { at
     // SILENT (#851) — a resource that resists removal is still worth surfacing.
     await require('./preview-lifecycle').current()?.check();
     if (attempt) await attempt.checkpoint({ step: 'deploy', db: stagingDbNameStr });
-    // Docker has one container per session: from here on what served is gone.
-    if (attempt && applicationRuntime.mode(config) === 'docker') attempt.servingRemoved = true;
-    if (applicationRuntime.mode(config) === 'docker' && (session.staging_runtime_name || session.staging_container_id)) {
+    // An attempt leaves the replacement to the deploy, after its fence (an
+    // older attempt never removes a newer one's container).
+    if (!attempt && applicationRuntime.mode(config) === 'docker' && (session.staging_runtime_name || session.staging_container_id)) {
       const runtimeName = session.staging_runtime_name || session.staging_container_id;
       const stopped = await applicationRuntime.remove(config, {
         runtimeKind: session.staging_runtime_kind || 'docker',
@@ -678,7 +678,6 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, { at
     };
   } catch (err) {
     if (require('./preview-lifecycle').isCancelled(err)) throw err;
-    if (attempt?.servingRemoved) err.servingRemoved = true;
     log.error('staging', 'Staging build failed', { sessionId: session.id, err: err.message });
     // Cleanup on failure — short grace, this container is being discarded.
     // Best-effort (the build already failed; nothing downstream forgets this
@@ -686,15 +685,18 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, { at
     // than swallowed, same reasoning as step 4 above (#851).
     // Kubernetes deploys reconcile deterministic resource names on retry;
     // Docker needs an explicit by-name cleanup after a partial start. An
-    // attempt that failed before its deploy step started nothing, and the
-    // container by that name is the one still serving.
-    if (applicationRuntime.mode(config) === 'docker' && (!attempt || attempt.servingRemoved)) {
-      const cleaned = await docker.stopAndRemove(containerName, {
+    // attempt removes only the container it started, by its id: one that
+    // failed before its deploy step started nothing (the container by that
+    // name still serves), and by name a superseded attempt failing late
+    // would remove its successor.
+    const failedContainer = attempt ? (err.servingRemoved && err.containerId) : containerName;
+    if (applicationRuntime.mode(config) === 'docker' && failedContainer) {
+      const cleaned = await docker.stopAndRemove(failedContainer, {
         stopTimeoutSec: docker.STAGING_STOP_GRACE_SEC,
       }).catch((e) => ({ removed: false, error: e.message })) || {};
       if (cleaned.removed === false) {
         log.warn('staging', 'Failed-build cleanup left a container behind', {
-          sessionId: session.id, containerName, err: cleaned.error || null,
+          sessionId: session.id, container: failedContainer, err: cleaned.error || null,
         });
       }
     }

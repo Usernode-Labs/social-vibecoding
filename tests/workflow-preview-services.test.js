@@ -57,7 +57,9 @@ const { previewServices } = require('../src/workflow/preview/services.ts');
 const { WORK } = require('../src/workflow/preview/machine.ts');
 const { LeaseLost } = require('../src/workflow/kernel/index.ts');
 
+const work = { cancelled: true };
 const pool = { async query(text) {
+  if (/FROM wf_work WHERE id/.test(text)) return { rows: [{ cancelled: work.cancelled }] };
   if (/FROM chat_sessions cs JOIN apps/.test(text)) return { rows: [{ id: 5, app_id: 2, app_slug: 'shop', repo_url: '' }] };
   if (/FROM apps WHERE id/.test(text)) return { rows: [{ id: 2, slug: 'shop' }] };
   return { rows: [] };
@@ -89,9 +91,19 @@ test('a built attempt returns its receipt; a failed one returns why, for the mac
 
 test('a cancelled attempt drops the database it was building and reports nothing', async () => {
   calls.length = 0;
+  work.cancelled = true;
   const input = { sessionId: 5, appId: 2, n: 4, head, db: 'app_shop_staging_s5_444444' };
-  await assert.rejects(handlers[WORK.prepare].run(ctx(input, { checkpoint: async () => { throw new LeaseLost(); } })), LeaseLost);
+  await assert.rejects(handlers[WORK.prepare].run(ctx(input, { workId: 'w4', checkpoint: async () => { throw new LeaseLost(); } })), LeaseLost);
   assert.deepEqual(calls.filter((c) => c[0] === 'drop'), [['drop', 'app_shop_staging_s5_444444']]);
+});
+
+test('a claim that only lost its lease deletes nothing: a retry of the same attempt may be using it (review finding)', async () => {
+  calls.length = 0;
+  work.cancelled = false;
+  const input = { sessionId: 5, appId: 2, n: 4, head, db: 'app_shop_staging_s5_444444' };
+  await assert.rejects(handlers[WORK.prepare].run(ctx(input, { workId: 'w4', checkpoint: async () => { throw new LeaseLost(); } })), LeaseLost);
+  assert.deepEqual(calls.filter((c) => c[0] === 'drop'), []);
+  work.cancelled = true;
 });
 
 test('a retried checks run cancels the earlier claim\'s Jobs and runs under its own id', async () => {
