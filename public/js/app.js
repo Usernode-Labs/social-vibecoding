@@ -7522,11 +7522,7 @@ const App = {
       if (App.currentTab === 'dev') {
         if (ref == null && App.currentSubTab === 'sessions'
             && typeof DevChat !== 'undefined' && DevChat.currentSession) {
-          // #2241: an unsent change has no id, and `null` here would
-          // normalize the whole route back to the board — so it serializes
-          // as the word the router reserves for it.
-          ref = DevChat.currentSession.id
-            || (DevChat.currentSession.pending ? DevChat.NEW_SESSION_REF : null);
+          ref = DevChat.currentSession.id || null;
         } else if (ref == null && App.currentSubTab === 'topic'
             && typeof AppView !== 'undefined' && AppView._devTopic) {
           ref = AppView._devTopic;
@@ -8402,11 +8398,12 @@ const App = {
 
     if (subTab === 'sessions') {
       // #2241: `new` is the one session ref that is a WORD rather than an
-      // id — /app/<slug>/dev/sessions/new is the change you have not sent
-      // yet, which has no row and therefore no id to be addressed by. It
-      // needs a route of its own precisely because of the line below: a
-      // session sub-tab with no ref normalizes to the card list, so a
-      // screen with nothing to name could not be navigated to at all.
+      // id — /app/<slug>/dev/sessions/new was the classic change you had
+      // not sent yet. That screen is gone (#2779, #4268), but the address
+      // still resolves to an unsent agent session
+      // (App.openNewChangeAsAgentSession). It needs a route of its own
+      // because of the line below: a session sub-tab with no ref
+      // normalizes to the card list.
       // DevChat.NEW_SESSION_REF holds the only other copy of this literal.
       if (ref === 'new') return { tab: 'dev', subTab: 'sessions', ref: 'new' };
       const id = (ref && typeof ref === 'object') ? ref.id : parseInt(ref, 10);
