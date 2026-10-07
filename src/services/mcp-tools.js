@@ -151,6 +151,9 @@ const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 //                            the whole group reads
 //   prepare_work           — claims the request on the app's board; mints a
 //                            work order that dangles if it is never used
+//   close_work_order       — puts one of the user's own unsubmitted work
+//                            orders away, so an agent holding it can no
+//                            longer submit it (#4266)
 //   start_platform_build   — spends the user's daily Homeroom credits
 //   submit_platform_build  — puts that build to a group vote
 //   update_proposal_issues — changes which requests an existing proposal
@@ -191,6 +194,9 @@ const ACTING_TOOLS = Object.freeze([
   'post_message',
   'propose_close_request',
   'prepare_work',
+  // #4266: the other half of list_my_work_orders. It touches only the
+  // caller's own reservation, but it ends one an agent may still be using.
+  'close_work_order',
   'start_platform_build',
   'submit_platform_build',
   'update_proposal_issues',
@@ -859,6 +865,28 @@ function isoOrNull(value) {
   if (!value) return null;
   const d = value instanceof Date ? value : new Date(value);
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+// One work order as list_my_work_orders returns it (#4266), from a row of
+// external-agent-tasks.listHeldWorkOrders. The app's name and the order's
+// title (a request's title, or the first line of somebody's brief) are other
+// people's writing, so both keep the envelope.
+function shapeWorkOrder(w) {
+  return {
+    taskId: Number(w.taskId),
+    appSlug: String(w.appSlug || ''),
+    appName: untrusted(w.appName, MAX_TITLE_CHARS),
+    title: untrusted(w.title, MAX_TITLE_CHARS),
+    requestNumbers: Array.isArray(w.requestNumbers) ? w.requestNumbers.map(Number) : [],
+    createdAt: isoOrNull(w.createdAt),
+    lastActivityAt: isoOrNull(w.lastActivityAt) || isoOrNull(w.createdAt),
+    expiresAt: isoOrNull(w.expiresAt),
+    branch: w.branch ? String(w.branch) : null,
+    agent: w.agent || 'external',
+    revisesProposal: Number(w.revisesProposalId) > 0
+      ? { proposalId: Number(w.revisesProposalId), prNumber: Number(w.revisesPrNumber) > 0 ? Number(w.revisesPrNumber) : null }
+      : null,
+  };
 }
 
 // How much of a build failure to quote. The summarizer upstream
@@ -4626,6 +4654,17 @@ function registerTools(server, ctx) {
       targetProposal,
       specs: requestSpecsToBuild,
     });
+    // #4266: at the work-order cap, name the two tools that let the caller see
+    // the work orders holding its slots and put one away, rather than leaving
+    // it to stop and ask the user to free one somewhere it cannot name.
+    // Appended here, not written into the shared refusal, because the
+    // browser walkthrough shows that sentence too.
+    if (!result.ok && result.code === 'at_capacity') {
+      return serviceError({
+        ...result,
+        message: `${result.message} ${connectorLimits.OPEN_WORK_ORDERS_CONNECTOR_HINT}`,
+      });
+    }
     if (!result.ok) return serviceError(result);
 
     // Mark the request as being worked on (#1225). An in-platform session
@@ -5409,6 +5448,165 @@ function registerTools(server, ctx) {
         + 'Checks and the staging preview build automatically — use get_proposal to follow it. It merges when the group approves it.'
         + testingRouteNote(testing, false)
         + await unlinkedRequestsNote(result),
+    });
+  });
+
+  // ── list_my_work_orders / close_work_order (#4266) ───────────────────
+  //
+  // prepare_work's `at_capacity` used to be a dead end: the cap counts work
+  // orders held open across every app and every session, and nothing here
+  // could say which ones or put one away. One session found all ten slots held
+  // by older work orders from other sessions and had to stop and ask the user.
+  // The list is exactly the set the cap counts (listHeldWorkOrders shares its
+  // WHERE clause), and the close is the same `abandoned` ending prepare_work's
+  // `restart` writes. No expiry is added: a work order still stops counting
+  // after its fourteen days, as before, and otherwise lasts until it is
+  // submitted or put away.
+  const revisedProposalSchema = () => z.object({
+    proposalId: z.number(),
+    prNumber: z.number().nullable(),
+  }).nullable()
+    .describe('The proposal this work order REVISES, for one prepared with proposalId: name it as "PR #2151 (proposal 4223)". Null for a work order that opens a new proposal.');
+
+  server.registerTool('list_my_work_orders', {
+    title: 'List your unsubmitted work orders',
+    description: `List the user's own work orders that were prepared and not yet submitted: exactly the ones that count toward the limit of ${connectorLimits.LIMITS.openTasks} that prepare_work holds open at once, across every app and every chat. Read it when prepare_work answers at_capacity, or before starting more work. Each row has its taskId, the app, the requests it implements, the proposal it revises if it updates one, when it was created, its last activity and when it stops counting by itself, most recently active first. A work order shared as an in-progress card holds no slot and is not listed. A slot comes back when a work order is submitted with submit_work, or put away with close_work_order; check with the user before closing one, since a coding agent may still be building it. Read-only.`,
+    inputSchema: {},
+    outputSchema: {
+      workOrders: z.array(z.object({
+        taskId: z.number()
+          .describe('What close_work_order and submit_work take, and what the work order text prints.'),
+        appSlug: z.string(),
+        appName: z.string(),
+        title: z.string(),
+        requestNumbers: z.array(z.number())
+          .describe('The requests it implements. Empty for a brief with no request behind it.'),
+        createdAt: z.string().nullable(),
+        lastActivityAt: z.string().nullable()
+          .describe('The latest of when it was prepared and when the user last claimed one of its requests: prepare_work asked for it again, claim_request, or a progress note. Nothing else is recorded against a work order, so an agent can be building one without moving this.'),
+        expiresAt: z.string().nullable()
+          .describe('When it stops counting toward the limit by itself if nobody submits or closes it.'),
+        branch: z.string().nullable(),
+        agent: z.enum(['claude-code', 'codex', 'external']),
+        revisesProposal: revisedProposalSchema(),
+      })),
+      count: z.number().describe('How many slots are in use: the number the limit is checked against.'),
+      limit: z.number(),
+      atCapacity: z.boolean().describe('True when prepare_work would refuse new work until one is freed.'),
+      truncated: z.boolean(),
+      nextStep: z.string(),
+    },
+    annotations: readAnnotations,
+  }, async () => {
+    const guard = scopeGuard(READ_SCOPE);
+    if (guard) return guard;
+    let held;
+    try {
+      held = await externalAgentTasks.listHeldWorkOrders(pool, user.id);
+    } catch (err) {
+      log.warn('mcp-tools', 'list_my_work_orders failed', { err: err.message });
+      return toolError('platform_unavailable', 'Homeroom could not read your work orders just now. Try again shortly.', { retryable: true });
+    }
+    const limit = connectorLimits.LIMITS.openTasks;
+    const count = held.length;
+    const atCapacity = count >= limit;
+    return readResult('list_my_work_orders', {
+      workOrders: held.slice(0, MAX_LIST_ITEMS).map(shapeWorkOrder),
+      count,
+      limit,
+      atCapacity,
+      truncated: count > MAX_LIST_ITEMS,
+      nextStep: count === 0
+        ? `The user holds no unsubmitted work orders, so all ${limit} slots are free.`
+        : `${count} of ${limit} work-order slots are in use${atCapacity
+          ? ', which is the limit, so prepare_work refuses new work until one is freed'
+          : ''}. A slot comes back when its work order is submitted with submit_work, or put away with `
+          + 'close_work_order and its taskId. Check with the user before closing one: a coding agent may still '
+          + 'be building it, and once closed it can no longer be submitted. The least recently active are last.',
+    });
+  });
+
+  server.registerTool('close_work_order', {
+    title: 'Close one of your unsubmitted work orders',
+    description: `Put away ONE of the user's own unsubmitted work orders by its taskId, from list_my_work_orders, which frees the slot it holds toward prepare_work's limit of ${connectorLimits.LIMITS.openTasks} straight away. It is the same close prepare_work's restart makes, and it cannot be undone: a coding agent still building that work order can no longer submit it. So check with the user which one to close, unless they already named it. Nothing else changes: no branch, fork or pull request is touched, a proposal it was revising stays up for its vote, and its requests stay claimed by the user (release_request clears a claim). Refused with already_submitted for work already handed in, already_closed for one closed before, already_shared for one shared as an in-progress card, which holds no slot, and unknown_task for an id that is not the user's. To build the same request again later, call prepare_work.`,
+    inputSchema: {
+      taskId: z.number().int().positive()
+        .describe('The work order\'s taskId, as list_my_work_orders and prepare_work report it.'),
+    },
+    outputSchema: {
+      closed: z.boolean(),
+      taskId: z.number(),
+      appSlug: z.string(),
+      appName: z.string(),
+      title: z.string(),
+      requestNumbers: z.array(z.number()),
+      revisesProposal: revisedProposalSchema(),
+      freedSlot: z.boolean()
+        .describe('False only for a work order already past its expiry, which had stopped counting before it was closed.'),
+      openWorkOrders: z.number().nullable()
+        .describe('How many slots the user holds now. Null if the count could not be read after the close.'),
+      limit: z.number(),
+      nextStep: z.string(),
+    },
+    annotations: writeAnnotations,
+  }, async ({ taskId }) => {
+    const guard = scopeGuard(WRITE_SCOPE);
+    if (guard) return guard;
+    if (!Number.isSafeInteger(taskId) || taskId <= 0) {
+      return toolError('invalid_request', 'taskId must be the id of one of your work orders, as list_my_work_orders reports it.');
+    }
+    let result;
+    try {
+      result = await externalAgentTasks.closeWorkOrder(pool, user.id, taskId);
+    } catch (err) {
+      log.warn('mcp-tools', 'close_work_order failed', { taskId, err: err.message });
+      return toolError('platform_unavailable', 'Homeroom could not close that work order just now. Try again shortly.', { retryable: true });
+    }
+    if (!result.ok) {
+      return toolError(result.code, result.message, {
+        ...(result.retryable ? { retryable: true } : {}),
+        ...(result.proposalId ? { proposalId: result.proposalId } : {}),
+        ...(result.sessionId ? { sessionId: result.sessionId } : {}),
+      });
+    }
+
+    // What the caller holds now, from the same list the cap counts. Advisory:
+    // the close has happened, so a failed count is reported as unknown.
+    let openWorkOrders = null;
+    try {
+      openWorkOrders = (await externalAgentTasks.listHeldWorkOrders(pool, user.id)).length;
+    } catch (err) {
+      log.warn('mcp-tools', 'close_work_order recount failed (continuing)', { err: err.message });
+    }
+    const limit = connectorLimits.LIMITS.openTasks;
+    const shaped = shapeWorkOrder(result);
+    const requests = shaped.requestNumbers;
+    const refs = requests.map((n) => `#${n}`).join(', ');
+    const proposal = shaped.revisesProposal;
+    return toolResult({
+      closed: true,
+      taskId: shaped.taskId,
+      appSlug: shaped.appSlug,
+      appName: shaped.appName,
+      title: shaped.title,
+      requestNumbers: requests,
+      revisesProposal: proposal,
+      freedSlot: result.freedSlot === true,
+      openWorkOrders,
+      limit,
+      nextStep: `Work order ${shaped.taskId} is closed`
+        + (result.freedSlot === true
+          ? `, and its slot is free${openWorkOrders === null ? '' : `: the user now holds ${openWorkOrders} of ${limit}`}. `
+          : '. It had already stopped counting toward the limit. ')
+        + (requests.length
+          ? `The user may still be marked as working on request${requests.length === 1 ? '' : 's'} ${refs}; `
+            + 'if they have stopped, release_request clears that. '
+          : '')
+        + (proposal
+          ? `${proposalRefSentence(proposal.proposalId, proposal.prNumber)}, which it was revising, is unchanged and still up for its vote. `
+          : '')
+        + 'Nothing on GitHub was touched. To build the same request again, call prepare_work: it starts from the '
+        + 'app\'s current code.',
     });
   });
 
@@ -7808,6 +8006,7 @@ module.exports = {
   pageRequests,
   shapeProposal,
   shapeChange,
+  shapeWorkOrder,
   changeNextStep,
   proposalRef,
   shapeChecks,

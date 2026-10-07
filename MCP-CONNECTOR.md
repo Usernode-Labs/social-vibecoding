@@ -158,6 +158,7 @@ issue, a build — and the platform merges none of it without a group vote:
 | `submit_work` | Opens or advances a proposal, for the group to vote on |
 | `create_request` | Files on the app's board and as a GitHub issue |
 | `prepare_work` | Claims the request on the app's board; mints a work order |
+| `close_work_order` | Puts away one of the user's own unsubmitted work orders, freeing its slot; touches no branch, proposal or vote |
 | `start_platform_build` | Spends the user's daily Homeroom credits |
 | `submit_platform_build` | Puts that build to a group vote |
 | `recheck_change` | Re-runs a proposal's checks on the commit it already has; no code or vote moves |

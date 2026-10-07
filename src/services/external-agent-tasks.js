@@ -2392,6 +2392,157 @@ async function discardTask(pool, userId, appId, taskId) {
   return rows[0] ? Number(rows[0].id) : null;
 }
 
+// ── The work orders that hold the caller's slots (#4266) ──────────────
+//
+// prepare_work refuses with `at_capacity` once ten work orders are held open,
+// and until this existed nothing on the connector could say WHICH ten. One
+// session found every slot held by work orders started from other sessions,
+// with no way to list them or put one away, so it had to stop and ask the user
+// to free a slot somewhere it could not name.
+//
+// The WHERE clause is connector-limits.checkOpenWorkOrders' own, clause for
+// clause: this list is the explanation of that refusal, so it has to be exactly
+// the set the cap counts. That is why it is not listOpenWorkOrders, which feeds
+// the Improve panel and also drops a row whose request has since closed
+// (#1948). A row like that still holds a slot, and it is the likeliest one to
+// close.
+//
+// `last_activity_at` is derived, not stored: nothing is written to a work order
+// after it is minted. It is the latest of when the order was prepared and when
+// the caller last claimed one of the requests it implements, which prepare_work
+// does on every call (asking again for the same order included) and
+// claim_request does on every renewal and progress note. An order with no
+// request behind it has only its creation time.
+//
+// A database failure throws: the caller is a read that answers "could not
+// check", which is not the same answer as "you hold none".
+async function listHeldWorkOrders(pool, userId) {
+  const id = Number(userId);
+  if (!Number.isSafeInteger(id) || id <= 0) return [];
+  const { rows } = await pool.query(
+    `SELECT t.id, t.issue_number, t.linked_issues, t.brief, t.branch_name,
+            t.client_id, t.target_session_id, t.created_at, t.expires_at,
+            GREATEST(t.created_at, (
+              SELECT MAX(c.claimed_at) FROM issue_claims c
+               WHERE c.app_id = t.app_id AND c.user_id = t.user_id
+                 AND (c.github_issue_number = t.issue_number
+                      OR c.github_issue_number = ANY(t.linked_issues))
+            )) AS last_activity_at,
+            a.slug AS app_slug, a.name AS app_name,
+            s.pr_number AS target_pr_number
+       FROM external_agent_tasks t
+       JOIN apps a ON a.id = t.app_id
+       LEFT JOIN chat_sessions s ON s.id = t.target_session_id
+      WHERE t.user_id = $1 AND t.status = 'open' AND t.expires_at > NOW()
+        AND t.session_id IS NULL
+      ORDER BY last_activity_at DESC, t.id DESC`,
+    [id]
+  );
+  return rows.map((r) => ({
+    taskId: Number(r.id),
+    appSlug: r.app_slug,
+    appName: r.app_name,
+    title: workOrderTitle(r.brief, r.issue_number),
+    requestNumbers: linkedIssuesFor(r),
+    createdAt: r.created_at,
+    lastActivityAt: r.last_activity_at || r.created_at,
+    expiresAt: r.expires_at,
+    branch: r.branch_name,
+    agent: normalizeAgent(r.client_id, r.client_id),
+    // The proposal an UPDATE work order revises (#1054), with its pull request
+    // number when it has one.
+    revisesProposalId: r.target_session_id == null ? null : Number(r.target_session_id),
+    revisesPrNumber: Number(r.target_pr_number) > 0 ? Number(r.target_pr_number) : null,
+  }));
+}
+
+// Put ONE of the caller's work orders away by its id, from anywhere (#4266).
+//
+// The ending prepare_work's `restart` writes, and the walkthrough's "Start
+// over": `abandoned`. So nothing downstream learns a new state. A later
+// submit_work for the id is refused as closed, and prepare_work for the same
+// request mints a fresh order at the app's current head. Unlike discardTask it
+// is not scoped to one app, because whoever reads list_my_work_orders is
+// looking at every app at once.
+//
+// What it will not close, each with its own answer, because "nothing matched"
+// is four different situations to the person asking:
+//   * somebody else's, or one that does not exist: `unknown_task`, in the same
+//     words for both, so a task id cannot probe another account;
+//   * one already submitted: `already_submitted`. That work is a proposal now,
+//     and closing its paperwork would not take the proposal down, nor should it;
+//   * one already closed: `already_closed`;
+//   * one shared as an in-progress card: `already_shared`. It holds no slot
+//     (the cap leaves those out), and its open row is what lets the agent keep
+//     pushing onto that card.
+//
+// Under the submit lock, so a close racing the coding agent's own submit_work
+// waits for it and then answers `already_submitted`, rather than abandoning
+// the row a proposal was opened from a moment earlier.
+//
+// It leaves the request's claim alone, as `restart` does: the claim says the
+// person is on the request, which closing one attempt at it does not settle.
+// release_request is the deliberate way to say so.
+async function closeWorkOrder(pool, userId, taskId) {
+  const id = Number(taskId);
+  if (!Number.isSafeInteger(id) || id <= 0) {
+    return fail('invalid_request', 'taskId must be the id of one of your work orders.');
+  }
+  return withTaskLock(pool, id, async () => {
+    const { rows } = await pool.query(
+      `UPDATE external_agent_tasks t
+          SET status = 'abandoned'
+         FROM apps a
+        WHERE t.id = $1 AND t.user_id = $2 AND t.status = 'open'
+          AND t.session_id IS NULL AND a.id = t.app_id
+        RETURNING t.id, t.issue_number, t.linked_issues, t.brief,
+                  t.target_session_id, (t.expires_at > NOW()) AS held_slot,
+                  (SELECT s.pr_number FROM chat_sessions s
+                    WHERE s.id = t.target_session_id) AS target_pr_number,
+                  a.slug AS app_slug, a.name AS app_name`,
+      [id, userId]
+    );
+    const row = rows[0];
+    if (row) {
+      return {
+        ok: true,
+        taskId: Number(row.id),
+        appSlug: row.app_slug,
+        appName: row.app_name,
+        title: workOrderTitle(row.brief, row.issue_number),
+        requestNumbers: linkedIssuesFor(row),
+        revisesProposalId: row.target_session_id == null ? null : Number(row.target_session_id),
+        revisesPrNumber: Number(row.target_pr_number) > 0 ? Number(row.target_pr_number) : null,
+        // False only for an order past its 14-day expiry, which had already
+        // stopped counting. Closing it is still the honest bookkeeping.
+        freedSlot: row.held_slot === true,
+      };
+    }
+
+    const any = await loadAnyTask(pool, userId, id);
+    if (!any) {
+      return fail('unknown_task', 'That is not one of your work orders. A work order belongs to the Homeroom '
+        + 'account that prepared it; list_my_work_orders lists yours.');
+    }
+    if (any.status === 'submitted') {
+      const proposalId = Number(any.session_id || any.proposal_id) || null;
+      return fail('already_submitted', 'That work order was already submitted, so it holds no slot. The '
+        + 'proposal it became stays up for the group\'s vote; closing a work order never takes a proposal down.',
+      { proposalId });
+    }
+    if (any.status === 'abandoned') {
+      return fail('already_closed', 'That work order is already closed, so it holds no slot.');
+    }
+    if (any.session_id) {
+      return fail('already_shared', `That work is shared as in-progress session ${Number(any.session_id)}, `
+        + 'so it holds no work-order slot. It stays open so the coding agent can keep pushing onto that card.',
+      { sessionId: Number(any.session_id) });
+    }
+    return fail('platform_unavailable', 'Homeroom could not close that work order just now. Try again shortly.',
+      { retryable: true });
+  });
+}
+
 // Close out the EXPIRED open rows sitting on one request key.
 //
 // Only ever called after an insert has already conflicted on that key and
@@ -3168,7 +3319,9 @@ async function submitWorkLocked(deps, params) {
       };
     }
     if (any && any.status === 'abandoned') {
-      return fail('unknown_task', 'That piece of work was closed out and restarted. Ask for the current work order.');
+      // Started over, or put away with close_work_order (#4266): one state.
+      return fail('unknown_task', 'That piece of work was closed without being submitted: it was started over '
+        + 'or put away. Ask for the current work order, or call prepare_work to start it again.');
     }
     return fail(
       'unknown_task',
@@ -3981,6 +4134,11 @@ module.exports = {
   // away without submitting it, and the reason a stale one stops being
   // permanent.
   discardTask,
+  // Its connector counterpart (#4266): the work orders holding the caller's
+  // slots, exactly as the cap counts them, and putting one away by its id
+  // from any app.
+  listHeldWorkOrders,
+  closeWorkOrder,
   abandonExpiredRequest,
   // The walkthrough's own lookup (per session), and the adoption behind it.
   loadOpenTaskForSession,
