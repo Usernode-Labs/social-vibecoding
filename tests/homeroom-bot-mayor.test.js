@@ -531,8 +531,8 @@ test('B2: the chat never runs out with building time, and allows 120 messages an
 // #4145: "check in main how it works" was answered with "I can't read the
 // app's code from here". It reads a project's code on main now, for anybody
 // who can build on that project, and never a file that holds secrets.
-function sourceFixture({ collab = 'public', files, contents = {} } = {}) {
-  const app = { id: 7, slug: 'mail-app', name: 'Mail app', repo_url: 'https://github.com/Usernode-Labs/mail-app', collab_visibility: collab, view_visibility: 'public' };
+function sourceFixture({ collab = 'public', view = 'public', files, contents = {} } = {}) {
+  const app = { id: 7, slug: 'mail-app', name: 'Mail app', repo_url: 'https://github.com/Usernode-Labs/mail-app', collab_visibility: collab, view_visibility: view };
   const pool = { async query(sql) { return /FROM apps/.test(String(sql)) ? { rows: [app] } : { rows: [] }; } };
   const reads = [];
   const github = {
@@ -575,11 +575,18 @@ test('#4145: the DM reads a project\'s code on main, found by path, paged by lin
   }
 });
 
-test('#4145: a project they cannot build on is not read', async () => {
+test('#4145: a project they cannot both see and build on is not read', async () => {
   const f = sourceFixture({ collab: 'collaborators', files: [{ path: 'server.js', size: 1 }], contents: { 'server.js': 'x' } });
   assert.match((await mayor.listSource(f.pool, { user: f.user, project: 'mail-app', deps: f.deps })).error, /No such project/);
   assert.match((await mayor.readSource(f.pool, { user: f.user, project: 'mail-app', path: 'server.js', deps: f.deps })).error, /No such project/);
   assert.equal(f.reads.length, 0);
+  // Open to any builder but seen only by its members: still not read.
+  const hidden = sourceFixture({ view: 'collaborators', files: [{ path: 'server.js', size: 1 }], contents: { 'server.js': 'x' } });
+  assert.match((await mayor.listSource(hidden.pool, { user: hidden.user, project: 'mail-app', deps: hidden.deps })).error, /No such project/);
+  assert.match((await mayor.readSource(hidden.pool, { user: hidden.user, project: 'mail-app', path: 'server.js', deps: hidden.deps })).error, /No such project/);
+  assert.equal(hidden.reads.length, 0);
+  // Nobody signed in reads nothing.
+  assert.match((await mayor.listSource(f.pool, { user: null, project: 'mail-app', deps: f.deps })).error, /No such project/);
   const tools = Object.fromEntries(mayor.TOOLS.map((t) => [t.function.name, t.function]));
   assert.deepEqual(tools.read_source.parameters.required, ['project', 'path']);
   assert.match(mayor.systemPrompt({ username: 'snait' }), /Read the code of a project they can build on, as it is on main/);

@@ -888,12 +888,21 @@ function sourcePath(value) {
   return parts.join('/');
 }
 
-/** The project and its repository, when this person can build on it. */
+/**
+ * The project and its repository, when this person can both see it and build
+ * on it. Both, because the two are set apart: a project open to any builder
+ * may still be seen only by its members, and its code is no more public than
+ * the project is.
+ */
 async function sourceRepo(pool, { user, project, deps = {} }) {
   const app = await findApp(pool, project);
   let allowed = false;
-  if (app) {
-    try { allowed = await require('./app-access').checkAppAccess(pool, app, user, 'collab'); } catch { allowed = false; }
+  if (app && user?.id) {
+    const access = require('./app-access');
+    try {
+      allowed = await access.checkAppAccess(pool, app, user, 'view')
+        && await access.checkAppAccess(pool, app, user, 'collab');
+    } catch { allowed = false; }
   }
   if (!allowed) return { error: 'No such project whose code they can read. Check my_projects.' };
   const repo = botModule(deps).parseRepo(app.repo_url);
