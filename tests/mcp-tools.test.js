@@ -2502,6 +2502,9 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     // #3654. One benchmark run's results, as aggregates only.
     'get_bench_run',
     'get_bench_studio', 'get_bench_studio_run', 'get_bench_suite', 'get_bench_trial',
+    // The Homeroom bot's first-version configurations (routes/bot-configs.js):
+    // the next blind pair to pick. Full platform admins only, like the rest.
+    'get_bot_config_pair',
     // #2779. A native change, read the way the change page reads it.
     'get_change',
     // #1433. Read-only, and named `get_` so the shipped allow rules already
@@ -2524,7 +2527,7 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     // get_bench_run and cancel_bench_run above): the same full-admin gate.
     'launch_bench_run', 'launch_bench_studio',
     'list_apps', 'list_bench_context_packs', 'list_bench_grading_queue', 'list_bench_runs',
-    'list_bench_suites', 'list_bench_trials',
+    'list_bench_suites', 'list_bench_trials', 'list_bot_configs',
     'list_my_proposals', 'list_recent_shots', 'list_requests', 'list_test_accounts',
     // #1405. They write a row, but only into the CALLER'S OWN notification
     // feed — see the allow-rule reasoning in services/mcp-connect-constants.js
@@ -2550,8 +2553,10 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     'release_request',
     'rerun_bench_trial',
     'retire_test_account',
+    // The configurations' writes: a version saved, a role set, a pick.
+    'save_bot_config', 'set_bot_config_role',
     'start_change',
-    'start_platform_build', 'submit_bench_grade', 'submit_bench_reference', 'submit_platform_build', 'submit_work',
+    'start_platform_build', 'submit_bench_grade', 'submit_bench_reference', 'submit_bot_config_pick', 'submit_platform_build', 'submit_work',
     'sync_change',
     'update_proposal_description', 'update_proposal_issues', 'whoami',
     'withdraw_change',
@@ -2766,8 +2771,10 @@ test('ACTING_TOOLS names every user-directed action, and every one is a write', 
     'label_bench_task', 'launch_bench_run', 'launch_bench_studio',
     'post_message', 'post_spec', 'prepare_work', 'promote_change', 'propose_close_request',
     'rate_homeroom_bot_run', 'recheck_change', 'rerun_bench_trial',
-    'retire_test_account', 'start_change',
-    'start_platform_build', 'submit_bench_grade', 'submit_bench_reference',
+    'retire_test_account',
+    // The Homeroom bot's first-version configurations: full admins only.
+    'save_bot_config', 'set_bot_config_role', 'start_change',
+    'start_platform_build', 'submit_bench_grade', 'submit_bench_reference', 'submit_bot_config_pick',
     'submit_platform_build', 'submit_work', 'sync_change',
     'update_proposal_description', 'update_proposal_issues', 'withdraw_change',
   ]);

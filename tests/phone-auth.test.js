@@ -98,6 +98,25 @@ test('an invalid number is refused locally, before any text is sent', async () =
   );
 });
 
+test('each leg calls the Identity Toolkit method that exists', async () => {
+  // accounts:verifyPhoneNumber is not a v1 method: Google answers it with an
+  // HTML 404, which read as "Could not reach the sign-in service" on every
+  // code check. The code is traded at accounts:signInWithPhoneNumber.
+  const paths = [];
+  const deps = {
+    fetch: fetchStub((url) => {
+      paths.push(new URL(url).pathname);
+      return { data: { sessionInfo: 'session', idToken: 'token' } };
+    }),
+  };
+  await phoneAuth.requestCode(FULL_CONFIG, '+15551234567', null, deps);
+  await phoneAuth.exchangeCode(FULL_CONFIG, 'session', '123456', deps);
+  assert.deepEqual(paths, [
+    '/v1/accounts:sendVerificationCode',
+    '/v1/accounts:signInWithPhoneNumber',
+  ]);
+});
+
 test('Identity Toolkit errors map onto this API’s codes', async () => {
   const refusing = (message) => ({
     fetch: fetchStub(() => ({ ok: false, status: 400, data: { error: { message } } })),

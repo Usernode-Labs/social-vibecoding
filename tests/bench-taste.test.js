@@ -129,16 +129,21 @@ test('taste-v1 seeds four first versions on the Empty starter, Ear Trainer\'s br
 
 // ── The screenshot step ─────────────────────────────────────────────────
 
-test('the capture plan: two viewports by two looks by four states, the empty state last', () => {
+test('the capture plan: two viewports by two looks by four states, the result state on three screens, the empty state last', () => {
   const plan = step.capturePlan();
-  assert.equal(plan.length, 16);
+  assert.equal(plan.length, 19);
   assert.deepEqual([...new Set(plan.map((s) => `${s.width}x${s.height}`))], ['390x844', '1280x800']);
   assert.deepEqual([...new Set(plan.map((s) => s.look))], ['light', 'dark']);
-  assert.deepEqual([...new Set(plan.map((s) => s.state))], ['populated', 'error', 'loading', 'empty']);
+  assert.deepEqual([...new Set(plan.map((s) => s.state))], ['populated', 'error', 'loading', 'result', 'empty']);
   assert.ok(plan.slice(-4).every((s) => s.state === 'empty'), 'the empty state empties the database the others read');
-  assert.equal(new Set(plan.map((s) => s.id)).size, 16);
-  // The platform's half plans the same sixteen.
+  // The result state, most telling screen first, just before the empty
+  // state: a tap may write to the database the earlier states read.
+  assert.deepEqual(plan.slice(-7, -4).map((s) => s.id), ['phone-light-result', 'phone-dark-result', 'desktop-light-result']);
+  assert.deepEqual(step.RESULT_SCREENS, capture.RESULT_SCREENS);
+  assert.equal(new Set(plan.map((s) => s.id)).size, 19);
+  // The platform's half plans the same nineteen.
   assert.deepEqual(capture.plannedShots().map((s) => s.id).sort(), plan.map((s) => s.id).sort());
+  assert.deepEqual([...capture.STATES].sort(), [...step.STATES].sort());
   assert.equal(step.LOADING_DELAY_MS, 2000);
   assert.equal(step.LOADING_SHOT_MS, 300);
   assert.equal(step.OVERFLOW_WIDTH, 360);
@@ -149,11 +154,121 @@ test('each screenshot opens the app\'s root signed in, in its look, with the sta
   const base = 'http://localhost:3190';
   assert.equal(step.shotUrl(base, { look: 'dark', state: 'populated' }, 'tok'), `${base}/?token=tok&un-theme=dark&demo=1`);
   assert.equal(step.shotUrl(`${base}/`, { look: 'light', state: 'empty' }, 'tok'), `${base}/?token=tok&un-theme=light`);
+  assert.equal(step.shotUrl(base, { look: 'light', state: 'result' }, 'tok'), `${base}/?token=tok&un-theme=light&demo=1`, 'the result starts from the populated screen');
+  // A tap may navigate within the app, never away from it.
+  assert.equal(step.sameOrigin(base, `${base}/recipes/3?x=1`), true);
+  assert.equal(step.sameOrigin(base, 'http://localhost:3191/'), false);
+  assert.equal(step.sameOrigin(base, 'https://example.com/'), false);
+  assert.equal(step.sameOrigin(base, 'not a url'), false);
   // Error and loading hold the app's own API, and nothing else.
   assert.equal(step.interceptsApi(base, 'GET', `${base}/api/loaves?x=1`), true);
   assert.equal(step.interceptsApi(base, 'POST', `${base}/api/loaves`), false);
   assert.equal(step.interceptsApi(base, 'GET', `${base}/usernode-bridge/v1/bridge.js`), false);
   assert.equal(step.interceptsApi(base, 'GET', 'https://feeds.example/api/rss'), false);
+});
+
+// The result state's choice of control, from the descriptors the page
+// gives (actionCandidates): every flag false unless a case sets it.
+function control(over) {
+  return {
+    index: 0, label: 'Calculate', visible: true, disabled: false, region: 'main',
+    marked: false, kitPrimary: false, formSubmit: false, accent: false, offOrigin: false, area: 358 * 44, ...over,
+  };
+}
+
+test('the result state taps the control the page marks, else the single most prominent primary button in the main content', () => {
+  // The explicit marker wins over a larger kit button, wherever it is.
+  const marked = step.chooseAction([
+    control({ index: 0, label: 'Save', kitPrimary: true, area: 90000 }),
+    control({ index: 1, label: 'Show the recipe', marked: true, region: 'chrome', area: 2000 }),
+  ]);
+  assert.deepEqual(marked, { index: 1, label: 'Show the recipe', rule: 'marked', why: `the control marked ${step.ACTION_MARKER}, the only one` });
+  // A single .btn-primary in the main content; the header's is passed over,
+  // and so is a submit button, which only counts when there is no kit button.
+  const kit = step.chooseAction([
+    control({ index: 0, label: 'Upgrade', kitPrimary: true, region: 'chrome', area: 99999 }),
+    control({ index: 1, label: 'Reset', formSubmit: true, area: 99999 }),
+    control({ index: 2, label: '  Calculate\n ', kitPrimary: true, formSubmit: true }),
+  ]);
+  assert.equal(kit.index, 2);
+  assert.equal(kit.label, 'Calculate');
+  assert.equal(kit.rule, 'kit-primary');
+  assert.match(kit.why, /primary button \(\.btn-primary\), the only one in the main content/);
+  // Then a form's submit button, then the button filled with the accent.
+  assert.equal(step.chooseAction([control({ index: 4, formSubmit: true })]).rule, 'form-submit');
+  assert.equal(step.chooseAction([control({ index: 5, accent: true })]).rule, 'accent');
+  // Of several, the one clearly the largest; a hidden one does not count.
+  const big = step.chooseAction([
+    control({ index: 0, label: 'Add', kitPrimary: true, area: 44 * 44 }),
+    control({ index: 1, label: 'Calculate', kitPrimary: true, area: 358 * 44 }),
+    control({ index: 2, label: 'Hidden', kitPrimary: true, area: 900 * 400, visible: false }),
+  ]);
+  assert.equal(big.index, 1);
+  assert.match(big.why, /^the largest of 2 design kit primary buttons/);
+  // The header's button only when the main content has no candidate at all.
+  assert.match(step.chooseAction([control({ label: 'New loaf', kitPrimary: true, region: 'chrome' })]).why, /header or navigation/);
+});
+
+test('the result state taps nothing when no control is clearly the primary action, or the one that is is disabled or leaves the app', () => {
+  const skip = (list) => step.chooseAction(list).skipped;
+  assert.match(skip([]), /^no clear primary action: no marked control/);
+  assert.match(skip([control({ visible: false, kitPrimary: true })]), /^no clear primary action/);
+  // Two of a kind, equally prominent: which is "the" action is a guess.
+  const two = skip([
+    control({ index: 0, label: 'Save', kitPrimary: true, area: 160 * 44 }),
+    control({ index: 1, label: 'Share', kitPrimary: true, area: 150 * 44 }),
+    control({ index: 2, label: 'Go', formSubmit: true, area: 999 * 44 }),
+  ]);
+  assert.equal(two, 'no clear primary action: 2 equally prominent design kit primary buttons (.btn-primary) in the main content ("Save", "Share")');
+  assert.match(skip([control({ marked: true }), control({ index: 1, marked: true })]), /2 equally prominent controls marked data-capture-action/);
+  assert.equal(skip([control({ label: 'Open the shop', kitPrimary: true, offOrigin: true })]), 'the primary action "Open the shop" leads to another site');
+  assert.equal(skip([control({ kitPrimary: true, disabled: true })]), 'the primary action "Calculate" is disabled');
+  // A disabled primary button is a skip, not a reason to tap a lesser one.
+  assert.ok(skip([control({ kitPrimary: true, disabled: true }), control({ index: 1, label: 'Reset', formSubmit: true })]));
+  assert.equal(skip([control({ label: '', accent: true, disabled: true })]), 'the primary action an unlabelled control is disabled');
+  // Labels as captions quote them.
+  assert.equal(step.actionLabel('  Say "hi"\n now '), 'Say \'hi\' now');
+  assert.equal(step.actionLabel('x'.repeat(60)).length, 40);
+});
+
+test('the capture keeps, per result screen, the control tapped and why, or why none was', () => {
+  const rec = step.primaryActionRecord([
+    { id: 'phone-light-populated', state: 'populated' },
+    { id: 'phone-light-result', state: 'result', action: { used: { label: 'Calculate', rule: 'kit-primary', why: 'the only one' }, settled: 'network idle', changes: 2, revealed: true, dialogs: 0, blocked: 0, ms: 1200 } },
+    { id: 'phone-dark-result', state: 'result', skipped: 'no clear primary action: x', sameAs: 'phone-light-result' },
+    { id: 'desktop-light-result', state: 'result', failed: 'the primary action failed: boom', action: { failed: 'boom', ms: 8000 } },
+  ]);
+  assert.deepEqual(rec.map((r) => r.id), ['phone-light-result', 'phone-dark-result', 'desktop-light-result']);
+  assert.equal(rec[0].used.label, 'Calculate');
+  assert.deepEqual(rec[1], { id: 'phone-dark-result', skipped: 'no clear primary action: x', sameAs: 'phone-light-result' });
+  assert.equal(rec[2].failed, 'boom');
+  // Tapped, but the screenshot after it failed: both are said.
+  const after = step.primaryActionRecord([{ id: 'phone-light-result', state: 'result', failed: 'Target closed', action: { used: { label: 'Go' } } }]);
+  assert.equal(after[0].used.label, 'Go');
+  assert.equal(after[0].failed, 'Target closed');
+  // The platform keeps it next to the checks, cleaned: planned ids only,
+  // a known rule, a quoted label, no stray fields.
+  const summary = capture.summarize({
+    booted: true,
+    primaryAction: [...rec, { id: '../../etc/passwd', skipped: 'x' }, { id: 'phone-light-result', skipped: 'a second entry' }],
+    checks: { a: 1 },
+  });
+  assert.deepEqual(summary.primaryAction.map((a) => a.id), ['phone-light-result', 'phone-dark-result', 'desktop-light-result']);
+  assert.deepEqual(summary.primaryAction[0], {
+    id: 'phone-light-result', used: { label: 'Calculate', rule: 'kit-primary', why: 'the only one' },
+    settled: 'network idle', changes: 2, revealed: true, dialogs: 0, blocked: 0, ms: 1200,
+  });
+  assert.deepEqual(summary.primaryAction[1], { id: 'phone-dark-result', skipped: 'no clear primary action: x', sameAs: 'phone-light-result', ms: null });
+  assert.equal(capture.summarize({ booted: true }).primaryAction, null, 'a capture from before the result state has none');
+  assert.equal(capture.summarize({ booted: true, primaryAction: [{ id: 'phone-light-result', used: { label: 'x', rule: 'bogus' } }] }).primaryAction[0].used.rule, null);
+  // In words, for the judge's signals and the studio's trial view.
+  assert.deepEqual(capture.describeActions(summary), [
+    'Phone 390×844, light look: tapped "Calculate", the only one',
+    'Phone 390×844, dark look: nothing tapped, no clear primary action: x',
+    'Desktop 1280×800, light look: not shown, the tap failed: boom',
+  ]);
+  assert.deepEqual(grading.tasteSignals(summary).primaryAction, capture.describeActions(summary));
+  assert.equal(grading.tasteSignals({ booted: true, checks: {} }).primaryAction, null);
 });
 
 test('the app signs its viewer in with a throwaway key the step made: the token verifies as the starter verifies it', () => {
@@ -269,21 +384,33 @@ test('the step\'s output is read from its marker line; only planned, real, small
     { id: 'phone-dark-error', png: Buffer.from('<html>not a picture</html>').toString('base64') },
     { id: 'phone-dark-loading', failed: 'net::ERR_ABORTED' },
     { id: '../../etc/passwd', png: good },
+    // The result state: one tapped, one with nothing to tap, one whose tap failed.
+    { id: 'phone-light-result', png: good, status: 200, action: { used: { label: 'Calculate "now"', rule: 'kit-primary', why: 'the only one' }, settled: 'network idle' } },
+    { id: 'phone-dark-result', skipped: 'no clear primary action: x', sameAs: 'phone-light-result' },
+    { id: 'desktop-light-result', failed: 'the primary action failed: Timeout 2000ms exceeded', action: { failed: 'Timeout 2000ms exceeded' } },
   ]);
-  assert.deepEqual(kept.map((s) => s.id), ['phone-light-populated']);
+  assert.deepEqual(kept.map((s) => s.id), ['phone-light-populated', 'phone-light-result']);
   assert.equal(kept[0].width, 390);
   assert.equal(kept[0].height, 844);
   assert.equal(kept[0].sha256.length, 64);
   assert.equal(kept[0].lowContrast, 3);
-  assert.deepEqual(dropped, [{ id: 'phone-dark-error', reason: 'not a PNG' }, { id: 'phone-dark-loading', reason: 'net::ERR_ABORTED' }]);
+  assert.deepEqual(kept[1].action, { label: 'Calculate \'now\'', rule: 'kit-primary' });
+  assert.equal(kept[1].lowContrast, undefined, 'the checks are measured on the populated and empty screens');
+  assert.deepEqual(dropped, [
+    { id: 'phone-dark-error', reason: 'not a PNG' }, { id: 'phone-dark-loading', reason: 'net::ERR_ABORTED' },
+    { id: 'desktop-light-result', reason: 'the primary action failed: Timeout 2000ms exceeded' },
+  ], 'a result screen with nothing to tap is not a lost screenshot');
   const summary = capture.summarize({ booted: true, checks: { a: 1 }, tells: { b: 2 }, steps: { install: { ran: true, ok: true, ms: 5 } } }, kept, dropped, { 'phone-light-populated': 'f'.repeat(32) });
   assert.equal(summary.shots[0].artifactId, 'f'.repeat(32));
   assert.equal(summary.shots[0].data, undefined, 'no image bytes in the trial\'s row');
+  assert.equal(summary.shots[0].action, undefined);
+  assert.deepEqual(summary.shots[1].action, { label: 'Calculate \'now\'', rule: 'kit-primary' });
   assert.deepEqual(summary.checks, { a: 1 });
 });
 
 test('grading shows the eight most telling screenshots, captioned by size, look and state, and names the identical ones', () => {
-  const shots = capture.plannedShots().map((s, i) => ({
+  // A capture with no result screen (taken before the state existed).
+  const shots = capture.plannedShots().filter((s) => s.state !== 'result').map((s, i) => ({
     ...s, artifactId: String(i).padStart(32, '0'),
     // Every error and loading screen looks exactly like its populated one.
     sha256: (s.state === 'error' || s.state === 'loading' ? `${s.viewport}-${s.look}-populated` : s.id),
@@ -291,7 +418,7 @@ test('grading shows the eight most telling screenshots, captioned by size, look 
   const picked = capture.pickShots({ shots });
   assert.equal(picked.chosen.length, 8);
   assert.deepEqual(picked.chosen.slice(0, 6).map((s) => s.id), [
-    'phone-light-populated', 'phone-dark-populated', 'desktop-light-populated', 'desktop-dark-populated', 'phone-light-empty', 'phone-dark-empty',
+    'phone-light-populated', 'phone-dark-populated', 'desktop-light-populated', 'phone-light-empty', 'phone-dark-empty', 'desktop-dark-populated',
   ]);
   assert.ok(picked.chosen.every((s) => s.state === 'populated' || s.state === 'empty'), 'a screen identical to one already shown is skipped');
   assert.ok(picked.identical.some((x) => x.caption === capture.caption({ viewport: 'phone', look: 'light', state: 'error' })
@@ -299,6 +426,53 @@ test('grading shows the eight most telling screenshots, captioned by size, look 
   assert.equal(capture.caption({ viewport: 'phone', look: 'dark', state: 'empty' }), 'Phone 390×844, dark look, empty (no data yet)');
   assert.equal(capture.caption({ viewport: 'desktop', look: 'light', state: 'loading' }), 'Desktop 1280×800, light look, loading (the app\'s API held, taken at about 300 ms)');
   assert.equal(capture.pickShots({ shots: [] }).chosen.length, 0);
+  // Every screen different, no result: the same eight as before the result
+  // state, the desktop's dark look last of them.
+  const distinct = capture.plannedShots().filter((s) => s.state !== 'result').map((s, i) => ({ ...s, artifactId: String(i).padStart(32, '0'), sha256: s.id }));
+  assert.deepEqual(capture.pickShots({ shots: distinct }).chosen.map((s) => s.id), [
+    'phone-light-populated', 'phone-dark-populated', 'desktop-light-populated', 'phone-light-empty', 'phone-dark-empty',
+    'phone-light-error', 'phone-light-loading', 'desktop-dark-populated',
+  ]);
+});
+
+test('a result screen that differs from the populated one comes right after the populated pair; one that does not is named identical', () => {
+  const shots = (resultHash) => capture.plannedShots().map((s, i) => ({
+    ...s, artifactId: String(i).padStart(32, '0'),
+    sha256: s.state === 'result' ? resultHash(s) : s.id,
+    ...(s.state === 'result' ? { action: { label: 'Calculate', rule: 'kit-primary' } } : {}),
+  }));
+  // Every screen different: the phone's result is third, and it pushes the
+  // desktop's dark look out of the eight, not a state.
+  const differs = capture.pickShots({ shots: shots((s) => s.id) });
+  assert.deepEqual(differs.chosen.map((s) => s.id), [
+    'phone-light-populated', 'phone-dark-populated', 'phone-light-result', 'desktop-light-populated',
+    'phone-light-empty', 'phone-dark-empty', 'phone-light-error', 'phone-light-loading',
+  ]);
+  assert.equal(differs.chosen[2].caption, 'Phone 390×844, light look, after tapping "Calculate" (the screen\'s primary action)');
+  assert.equal(differs.total, 19);
+  // An app with no data at all, a calculator whose empty, error and loading
+  // screens all look like its populated one, shows its result in both looks
+  // and on the desktop instead.
+  const calculator = capture.pickShots({
+    shots: shots((s) => s.id).map((s) => (['empty', 'error', 'loading'].includes(s.state) ? { ...s, sha256: `${s.viewport}-${s.look}-populated` } : s)),
+  });
+  assert.deepEqual(calculator.chosen.map((s) => s.id), [
+    'phone-light-populated', 'phone-dark-populated', 'phone-light-result', 'desktop-light-populated',
+    'desktop-dark-populated', 'phone-dark-result', 'desktop-light-result',
+  ]);
+  assert.equal(calculator.identical.length, 12);
+  assert.equal(calculator.chosen[6].caption, 'Desktop 1280×800, light look, after clicking "Calculate" (the screen\'s primary action)');
+  // A tap that changed nothing visible: the result is the populated screen
+  // again, skipped and named, and the eight are the eight without it.
+  const same = capture.pickShots({ shots: shots((s) => `${s.viewport}-${s.look}-populated`) });
+  assert.ok(same.chosen.every((s) => s.state !== 'result'));
+  assert.equal(same.chosen.length, 8);
+  assert.ok(same.identical.some((x) => x.caption === 'Phone 390×844, light look, after tapping "Calculate" (the screen\'s primary action)'
+    && x.sameAs === 'Phone 390×844, light look, populated (the app\'s own staging data)'));
+  // Without the control's name (a capture that lost it), the caption still says what the screen is.
+  assert.equal(capture.caption({ viewport: 'phone', look: 'dark', state: 'result', action: null }), 'Phone 390×844, dark look, after tapping the screen\'s primary action');
+  assert.equal(capture.SHOT_PRIORITY.length, capture.plannedShots().length);
+  assert.deepEqual([...capture.SHOT_PRIORITY].sort(), capture.plannedShots().map((s) => s.id).sort(), 'every planned screen has a place');
 });
 
 // ── The rubric and the grade ────────────────────────────────────────────
@@ -573,7 +747,8 @@ const keptTriageOf = (kept) => ({ triageSessionId: KEPT_TRIAGE, triage: { ...kep
 test('a first version keeps each sub-step as it finishes: the triage\'s session before its turn, then its answer, the spec and the build that landed', async (t) => {
   const { out, parts, kept } = await keptRun(t);
   const order = parts.flatMap((p) => Object.keys(p).filter((k) => k !== 'sessions'));
-  assert.deepEqual(order, ['triageSessionId', 'triage', 'spec', 'build'], 'in the order they finish');
+  assert.deepEqual(order, ['triageSessionId', 'triage', 'sight', 'spec', 'sight', 'build'],
+    'in the order they finish, with what the build could see before each of its turns');
   const [triageSession, buildSession] = out.session_ids;
   assert.equal(kept.triageSessionId, triageSession, 'recovery tells the triage\'s turn from the spec\'s by it');
   assert.deepEqual(kept.sessions, [triageSession, buildSession], 'every session the trial opened');
@@ -763,6 +938,58 @@ test('a build records whether it could see its own screens: what its prompt told
   const d = await runner.runStage(ctx(resumed, 'first_version', FIRST, { checkpoint: { ...checkpoint, build: { ...checkpoint.build, sessionId: 6007 } } }));
   assert.deepEqual(resumed.calls.modes, [], 'no turn');
   assert.deepEqual(d.parsed.sight, { told: true, passed: true });
+});
+
+test('what a build could see is kept before its build turn runs, so a build restart recovery finished keeps it too', async (t) => {
+  spySideEffects(t);
+  const realSees = live.buildSeesImages;
+  t.after(() => { live.buildSeesImages = realSees; });
+  live.buildSeesImages = async () => true;
+  const h = harness({ takesImages: false });
+  const parts = [];
+  const realExec = h.deps.worker.execInWorker;
+  let atBuildTurn = null;
+  h.deps.worker.execInWorker = async (id, opts) => {
+    if (opts.mode === 'build') atBuildTurn = Object.assign({}, ...parts);
+    return realExec(id, opts);
+  };
+  const out = await runner.runStage(ctx(h, 'first_version', FIRST, { onCheckpoint: async (p) => { parts.push(p); } }));
+  assert.equal(out.status, 'ok', out.error);
+  assert.deepEqual(atBuildTurn.sight, { told: true, passed: false }, 'on the checkpoint before the build turn started');
+  assert.equal(atBuildTurn.build, undefined, 'long before the build is kept');
+
+  // The build turn was finished by restart recovery, which reads only how it
+  // ended: its kept build says nothing of what it could see.
+  const checkpoint = Object.assign({}, ...parts.filter((p) => !p.build));
+  const recovered = runner.recoverFirstVersionTurn({
+    checkpoint, session: { id: checkpoint.spec.sessionId, spec_md: '' }, activeTurn: { mode: 'build' },
+    result: { pushOk: true, ahead: 2, sha: 'd'.repeat(40) },
+  });
+  assert.equal(recovered.keep.build.ok, true);
+  assert.equal(recovered.keep.build.sight, undefined);
+  const resumed = harness();
+  const next = await runner.runStage(ctx(resumed, 'first_version', FIRST, { checkpoint: { ...checkpoint, ...recovered.keep } }));
+  assert.equal(next.status, 'ok', next.error);
+  assert.deepEqual(resumed.calls.modes, [], 'no turn');
+  assert.deepEqual(next.parsed.sight, { told: true, passed: false }, 'the next claim reads it from the checkpoint');
+});
+
+test('a turn followed after a restart adds its replayed looks to the counts its step began with, never twice', () => {
+  const cp = {
+    stepLooks: { step: 'build', screenshots: 0, snapshots: 1, navigations: 1 },
+    // Kept while it ran, until a few seconds before the restart.
+    looks: { screenshots: 2, snapshots: 1, navigations: 2 },
+  };
+  const lines = ['Using browser_navigate', 'Using browser_take_screenshot', 'Using browser_take_screenshot',
+    'Using browser_take_screenshot', 'Using browser_navigate', 'Using browser_take_screenshot', '[done]'];
+  const looks = lane.recoveredLooks(cp, 'build', lines);
+  assert.deepEqual(looks, { screenshots: 4, snapshots: 1, navigations: 3 }, 'the step\'s counts plus the whole turn\'s');
+  assert.deepEqual(lane.recoveredLooks({ ...cp, looks }, 'build', lines), looks, 'followed again: the same, not more');
+  assert.equal(lane.recoveredLooks(cp, 'spec', lines), null, 'a turn of another step: the checkpoint\'s stay');
+  assert.equal(lane.recoveredLooks({ looks: cp.looks }, 'build', lines), null, 'no step on record: the checkpoint\'s stay');
+  assert.equal(lane.recoveredLooks(cp, 'build', []), null, 'no lines replayed: the checkpoint\'s stay');
+  assert.deepEqual(lane.recoveredLooks({ ...cp, looks: { screenshots: 9, snapshots: 0, navigations: 0 } }, 'build', lines),
+    { screenshots: 9, snapshots: 1, navigations: 3 }, 'never below what the checkpoint holds');
 });
 
 test('a capture trial checks the app out at its commit in a sealed worker and only takes the screenshots: no model turn', async (t) => {

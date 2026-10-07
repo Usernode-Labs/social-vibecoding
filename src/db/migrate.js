@@ -67,6 +67,9 @@ async function migrate(config) {
   await seedStagingSupportUser(pool);
   await seedStagingDuplicateUser(pool);
   await seedSelfApp(pool, config);
+  // The Homeroom bot's first-version configurations (services/bot-configs.js):
+  // the three it starts from, each written once.
+  await require('../services/bot-configs').seedConfigs(pool);
   finishPhase('coreSeedMs');
   await seedStagingNotifications(pool, config);
   // #1130: must run AFTER seedStagingNotifications — its delivery rows hang
@@ -182,6 +185,8 @@ async function migrate(config) {
   await require('../services/bench/demo').seedStagingTaste(pool);
   // And the App bench studio's gallery, with builds side by side.
   await require('../services/bench/demo').seedStagingStudio(pool);
+  // The Homeroom bot's configurations table, with first versions to measure.
+  await require('../services/bot-configs').seedStagingBotConfigs(pool);
   // After the proposal seeds above: the platform-env fixture stamps a
   // failing verdict onto an existing staging proposal.
   await seedStagingPlatformEnv(pool, config);

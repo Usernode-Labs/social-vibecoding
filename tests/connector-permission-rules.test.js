@@ -308,10 +308,13 @@ test('the connector scaffold has ONE source, which the full template spreads', (
     '.claude/README.md',
   ]);
 
+  // The frontend-design skill (services/design-skill.js) is a new
+  // repository's own, not part of the scaffold an import or a fork gets.
   const fromTemplate = template.getTemplateFiles('Demo App', 'demo-app', 'postgres://x/y')
-    .filter((f) => f.path.startsWith('.claude/'));
+    .filter((f) => f.path.startsWith('.claude/') && !f.path.startsWith('.claude/skills/'));
   assert.deepEqual(fromTemplate, scaffoldFiles,
     'getTemplateFiles must spread the helper, not repeat it');
+  assert.ok(!scaffoldFiles.some((f) => f.path.startsWith('.claude/skills/')));
 
   assert.match(TEMPLATE_SRC, /\.\.\.getConnectorScaffoldFiles\(\)/,
     'the full template spreads the shared helper');
