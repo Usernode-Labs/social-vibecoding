@@ -342,14 +342,14 @@ export function phoneE164(raw: string): string | null {
 }
 
 /**
- * The one line under the first step's button. The first step is the title,
- * the field, the button and this one line, nothing more (#4037, the owner's
- * review of 7 October). Where the sheet makes an account (the story's Make
- * an account, an invite's Join) it is the terms line, since continuing is
- * agreeing (tests/terms-first-run.test.js); somebody with an account signs
- * in from the story's own Sign in, or with the same email code. The story's
- * Sign in, and the other ways after an invite's phone step, are for an
- * account somebody has, so there it is the way to its password.
+ * What sits under the first step's button (#4037, the owner's ruling of
+ * 7 October). Where the sheet makes an account (the story's Make an account,
+ * an invite's Join) it is the terms line alone, since continuing is agreeing
+ * (tests/terms-first-run.test.js); somebody with an account signs in from
+ * the story's own Sign in, or with the same email code. The story's Sign in,
+ * and the other ways after an invite's phone step, are for an account
+ * somebody has: "Sign in with a password" right under the button, then the
+ * terms line.
  */
 export function firstStepLine(from: 'invite' | 'story' | 'signin', phone = false): 'terms' | 'password' {
   return from === 'signin' || phone ? 'password' : 'terms';
@@ -945,16 +945,19 @@ export function SignInSheet({
   if (!open) return null;
 
   const oneLine = firstStepLine(from, phone) === 'password' ? (
-    <p className="text-center text-[13px] text-zinc-500 dark:text-zinc-400">
-      <a
-        href="#login"
-        data-sign-in-sheet-password=""
-        onClick={(e) => { e.preventDefault(); setError(null); setDetails(null); setStep('password'); }}
-        className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
-      >
-        Sign in with a password
-      </a>
-    </p>
+    <>
+      <p className="text-center text-[13px] text-zinc-500 dark:text-zinc-400">
+        <a
+          href="#login"
+          data-sign-in-sheet-password=""
+          onClick={(e) => { e.preventDefault(); setError(null); setDetails(null); setStep('password'); }}
+          className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
+        >
+          Sign in with a password
+        </a>
+      </p>
+      <TermsNotice />
+    </>
   ) : <TermsNotice />;
 
   const waitLeft = Math.max(0, Math.ceil((cooldownUntil - now) / 1000));
@@ -1218,7 +1221,7 @@ export function SignInSheet({
             </a>
           </p>
         ) : null}
-        {/* The first step's one line is its own (above); every later step keeps the terms. */}
+        {/* The first step's terms sit in its group (above); every later step keeps them here. */}
         {step === 'choose' || step === 'email' ? null : <TermsNotice className="mt-3" />}
       </div>
     </div>
