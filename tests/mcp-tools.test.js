@@ -2528,7 +2528,11 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     // one registered only for a full platform admin, and every route behind
     // them (routes/bench-studio.js) refuses anybody else.
     'cancel_bench_trial',
-    'claim_request', 'create_bench_context_pack', 'create_request',
+    'claim_request',
+    // #4266. Puts away one of the user's own unsubmitted work orders, freeing
+    // its slot; list_my_work_orders, below, is the list it is chosen from.
+    'close_work_order',
+    'create_bench_context_pack', 'create_request',
     // Test accounts for first-run testing (create_test_account,
     // create_test_phone_sign_in, list_test_accounts, retire_test_account):
     // registered only for a full platform admin, and every route behind them
@@ -2572,7 +2576,10 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     'launch_bench_run', 'launch_bench_studio',
     'list_apps', 'list_bench_context_packs', 'list_bench_grading_queue', 'list_bench_runs',
     'list_bench_suites', 'list_bench_trials', 'list_bot_configs',
-    'list_my_proposals', 'list_recent_shots', 'list_requests', 'list_test_accounts',
+    'list_my_proposals',
+    // #4266. Exactly the work orders prepare_work's open-work-order cap counts.
+    'list_my_work_orders',
+    'list_recent_shots', 'list_requests', 'list_test_accounts',
     // #1405. They write a row, but only into the CALLER'S OWN notification
     // feed — see the allow-rule reasoning in services/mcp-connect-constants.js
     // for why that is a different category from the acting tools below.
@@ -2810,6 +2817,7 @@ test('ACTING_TOOLS names every user-directed action, and every one is a write', 
   assert.deepEqual([...tools.ACTING_TOOLS].sort(), [
     'add_bench_task',
     'cancel_bench_run', 'cancel_bench_trial',
+    'close_work_order',
     'create_bench_context_pack', 'create_request', 'create_test_account', 'create_test_phone_sign_in',
     'demo_mode', 'demo_promote', 'demo_propose', 'demo_reset', 'demo_vote',
     'deploy_bench_preview', 'edit_bench_task', 'keep_bench_trial',
