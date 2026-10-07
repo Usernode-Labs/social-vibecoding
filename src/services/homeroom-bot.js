@@ -3541,6 +3541,20 @@ function shadowBuildsApply(settings, app, config = {}) {
   return shadowBuildSkipReason(settings, app, config) === null;
 }
 
+/**
+ * Why a later change's side builds (services/bot-configs.js) are not made,
+ * or null when they are. They follow the shadow builds' rule for the
+ * platform's own repository: each is a branch in the repository everybody's
+ * proposals are made against, so it is left out unless an admin includes it
+ * (homeroom_bot_shadow_build_platform). Without settings to read it, left out.
+ */
+function laterSideSkipReason(settings, app, config = {}) {
+  if (isPlatformRepo(app, config) && !settings?.shadowBuildPlatform) {
+    return "the platform's own repository is left out of side builds (homeroom_bot_shadow_build_platform is off)";
+  }
+  return null;
+}
+
 /** Drop a queued, unstarted build of an older verdict on the same issue. */
 async function supersedeQueuedBuilds(pool, { appId, issueNumber, runId }) {
   await pool.query(
@@ -3670,19 +3684,38 @@ async function recordBuildSnapshot(pool, {
 /**
  * The build itself, for a claimed run: the same build live runs, with
  * `propose: false`, so the only thing it leaves is its branch. Debited from
- * the weekly allowance like any turn, and recorded on the run. Resolves
- * 'shadow_built', 'shadow_failed', or 'infra' when the platform could not
- * run it (the claim is handed back and the lane backs off).
+ * the weekly allowance like any turn, and recorded on the run. A later
+ * change is built by the `later` configuration as a live one is (buildLive):
+ * its models, harness and spec effort, its side versions queued beside it,
+ * its result recorded. Resolves 'shadow_built', 'shadow_failed', or 'infra'
+ * when the platform could not run it (the claim is handed back and the lane
+ * backs off).
  */
 async function shadowBuild({
   pool, config, bot, app, repo, issueNumber, issue, seed, parsed, runId,
-  turnBudgetMs, model, specModel = null, deps, presetSpec = null, firstVersion = false,
+  turnBudgetMs, model: stageBuildModel, specModel: stageSpecModel = null, deps, presetSpec = null, firstVersion = false,
+  settings = null,
 }) {
   const { limits, managedOpenRouter } = deps;
-  await recordBuildSnapshot(pool, {
+  const version = firstVersion ? null : await botConfigs().laterVersion(pool);
+  const recipe = version ? version.recipe : null;
+  const model = recipe ? recipe.models.build : stageBuildModel;
+  const specModel = recipe ? recipe.models.spec : stageSpecModel;
+  const guidance = recipe ? await botConfigs().recipeGuidance(pool, recipe) : null;
+  if (version) {
+    await pool.query('UPDATE homeroom_bot_runs SET bot_config_version_id = $2 WHERE id = $1', [runId, version.id])
+      .catch((err) => log.warn('homeroom-bot', 'Could not record the run\'s configuration', { runId, err: err.message }));
+  }
+  const snapshotId = await recordBuildSnapshot(pool, {
     runId, app, repo, issueNumber, seed, buildNote: parsed.buildNote, github: deps.github, presetSpec,
     firstVersion, platformRepo: isPlatformRepo(app, config), model, specModel,
   });
+  if (version) {
+    await botConfigs().spawnSideBuilds(pool, config, {
+      botRunId: runId, app, snapshotId, current: version, scope: 'later', skipReason: laterSideSkipReason(settings, app, config),
+    });
+  }
+  const buildStartedMs = Date.now();
   // A first version builds as the live lane builds it: its doubled clock,
   // and the spec and build that decide its look (buildOne).
   const built = await live.buildAndPropose({
@@ -3693,8 +3726,14 @@ async function shadowBuild({
     onSession: (session) => pool.query(
       'UPDATE homeroom_bot_runs SET build_session_id = $2 WHERE id = $1', [runId, session.id],
     ),
+    ...(version ? {
+      harnessOf: live.recipeHarness,
+      specGuidance: guidance?.spec || null,
+      buildGuidance: guidance?.build || null,
+    } : {}),
     propose: false,
   });
+  const buildMs = Date.now() - buildStartedMs;
   if (built.costUsd > 0) {
     try {
       if (await managedOpenRouter.usesIncludedKey(pool, bot.id)) {
@@ -3736,7 +3775,10 @@ async function shadowBuild({
   log.info('homeroom-bot', 'Shadow build', {
     app: app.slug, issueNumber, runId, ok: !!built.ok, branch: built.branchName || null,
     commits: built.commits ?? null, costUsd: built.costUsd ?? null, error: built.ok ? null : built.error,
+    ...(version ? { configVersionId: version.id } : {}),
   });
+  // What the later configuration made of it; then its pairs.
+  if (version) await botConfigs().finishLive(pool, { botRunId: runId, version, built, activeMs: buildMs });
   return built.ok ? 'shadow_built' : 'shadow_failed';
 }
 
@@ -3809,7 +3851,7 @@ async function runQueuedBuild(pool, config, { bot, claim, settings, deps = {} })
     pool, config, bot, app, repo, issueNumber, issue, seed,
     parsed: { buildNote: claim.build_note }, runId, turnBudgetMs, presetSpec: claim.build_spec_md || null,
     firstVersion: await isFirstVersionRequest(pool, app.id, issueNumber),
-    model: stageModel(settings, config, 'build'), specModel: stageModel(settings, config, 'spec'),
+    model: stageModel(settings, config, 'build'), specModel: stageModel(settings, config, 'spec'), settings,
     deps: {
       worker, agentTurn, limits, managedOpenRouter, sessions, activeWorkers, sessionLifecycle, github,
     },
@@ -4102,6 +4144,7 @@ async function finishRecoveredTurn({
           WHERE id = $1 AND build_ok IS NULL`,
         [run.id, clip(read.error + note, MAX_ERROR_CHARS), specCostUsd],
       );
+      await finishConfiguredShadow(pool, run.id, { ok: false, sessionId: session.id, blocked: read.blocked, error: read.error });
       wakeBuilds();
       return 'blocked';
     }
@@ -4155,11 +4198,26 @@ async function finishRecoveredTurn({
   );
   await putAwayRecoveredSession(pool, session, { archive: true });
   await debitRecovered(pool, session, costUsd, deps);
+  await finishConfiguredShadow(pool, run.id, {
+    ok: built, sessionId: session.id, sha: built ? result.sha || null : null,
+    commits: built ? Number(result.ahead) : null, error, costUsd,
+  });
   log.info('homeroom-bot', 'Recorded a shadow build that finished after a restart', {
     runId: run.id, sessionId: session.id, ok: built, commits: result.ahead ?? null, costUsd,
   });
   wakeBuilds();
   return built ? 'shadow_built' : 'shadow_failed';
+}
+
+/**
+ * A later change's shadow build a restart finished, recorded for the
+ * configuration that built it (bot_config_version_id), as shadowBuild
+ * records one: its result, then its pairs. Nothing for any other run.
+ * Never throws.
+ */
+async function finishConfiguredShadow(pool, runId, built) {
+  const version = await runConfigVersion(pool, runId).catch(() => null);
+  if (version) await botConfigs().finishLive(pool, { botRunId: runId, version, built });
 }
 
 /**
@@ -4956,12 +5014,15 @@ async function queueShadowBackfill(pool, config = {}) {
  * nothing while they do, so a benchmark never takes a worker a person is
  * waiting on. Shadow builds in the lane do not count: like a benchmark trial
  * they are an experiment nobody waits for, and counting them let a busy
- * shadow lane hold the benchmark back indefinitely. `counts` is for tests.
+ * shadow lane hold the benchmark back indefinitely. `counts.besides` adds
+ * builds that share the live builds' slots: a later change's side builds
+ * use only the slots live builds leave free (lane.js). `counts.live` is for
+ * tests.
  */
 function isLiveLaneSaturated(settings = null, counts = null) {
   const limit = clampInt(settings?.buildConcurrency, DEFAULTS.buildConcurrency, 1, MAX_BUILD_CONCURRENCY);
   const live = counts && Number.isFinite(counts.live) ? counts.live : liveBuildsInFlight.size;
-  return live >= limit;
+  return live + (Number(counts?.besides) || 0) >= limit;
 }
 
 async function buildLaneSummary(pool) {
@@ -6037,15 +6098,18 @@ async function botBudgetStop(pool, bot, deps = {}, { spentUsd = 0 } = {}) {
 async function buildLive({
   pool, config, bot, app, repo, issueNumber, issue, parsed, runId,
   seed, seedReadAt, postedAt = [], turnBudgetMs, model: stageBuildModel, specModel: stageSpecModel = null, botLogin = null,
-  proposalCeiling = PROPOSALS_PER_APP_CAP, firstVersion = false, presetSpec = null, carriedCostUsd = 0, deps,
+  proposalCeiling = PROPOSALS_PER_APP_CAP, firstVersion = false, presetSpec = null, carriedCostUsd = 0, settings = null, deps,
 }) {
   const { github, ws } = deps;
   // A project's first version is built by the CURRENT CONFIGURATION
   // (services/bot-configs.js): its spec and build models, its pack's
   // guidance, and its reviewer (services/bot-review.js); its side
-  // configurations are built beside it on the App bench lane. Every other
-  // build keeps the per-stage settings it was handed.
-  const version = firstVersion ? await botConfigs().currentVersion(pool) : null;
+  // configurations are built beside it on the App bench lane. Every LATER
+  // change is built by the `later` scope's current version the same way,
+  // with no review and no capture; with none (or one the catalog cannot
+  // run, or a lookup that fails: laterVersion) it keeps the per-stage
+  // settings it was handed, exactly as before.
+  const version = firstVersion ? await botConfigs().currentVersion(pool) : await botConfigs().laterVersion(pool);
   const recipe = version ? version.recipe : null;
   const model = recipe ? recipe.models.build : stageBuildModel;
   const specModel = recipe ? recipe.models.spec : stageSpecModel;
@@ -6090,12 +6154,16 @@ async function buildLive({
     // The side builds, queued on the App bench lane before the live build
     // starts, from the same request, plan and commit (the snapshot above).
     const sides = version
-      ? await botConfigs().spawnSideBuilds(pool, config, { botRunId: runId, app, snapshotId, current: version })
+      ? await botConfigs().spawnSideBuilds(pool, config, {
+        botRunId: runId, app, snapshotId, current: version,
+        ...(firstVersion ? {} : { scope: 'later', skipReason: laterSideSkipReason(settings, app, config) }),
+      })
       : null;
-    const reviewing = version && botConfigs().reviews(recipe);
-    // The first build is captured whenever something is compared with it:
-    // its own review rounds, or a side configuration.
-    const review = version && (reviewing || (sides && sides.derived + sides.trials > 0)) ? {
+    const reviewing = firstVersion && version && botConfigs().reviews(recipe);
+    // A first version's first build is captured whenever something is
+    // compared with it: its own review rounds, or a side configuration. A
+    // later change's never is: its pairs compare specs and diffs.
+    const review = firstVersion && version && (reviewing || (sides && sides.derived + sides.trials > 0)) ? {
       reviewer: reviewing ? recipe.reviewer : { model: null, maxRounds: 0, budgetMinutes: CAPTURE_ONLY_MINUTES },
       owner: { botRunId: runId },
       onState: (state) => recordReviewState(pool, runId, state),
@@ -6148,7 +6216,14 @@ async function buildLive({
   if (carriedCostUsd > 0) built.costUsd = (Number(built.costUsd) || 0) + carriedCostUsd;
   // What the current configuration made of it, and what its round-0
   // snapshot says for a side configuration with no reviewer; then the pairs.
-  if (version) await botConfigs().finishLive(pool, { botRunId: runId, version, built, activeMs: buildMs, carriedUsd: carriedCostUsd });
+  // A later change stopped before it was proposed (its request merged or
+  // closed) says nothing about its configuration: its side builds are
+  // stopped instead.
+  if (version && built.skipped && !firstVersion) {
+    await botConfigs().abandonSideBuilds(pool, runId, `stopped before it was proposed (${clip(built.skipped, 120)})`);
+  } else if (version) {
+    await botConfigs().finishLive(pool, { botRunId: runId, version, built, activeMs: buildMs, carriedUsd: carriedCostUsd });
+  }
   let acted;
   if (built.skipped) {
     // WP1 (#2): stopped, not failed, and nothing said: a proposal of the
@@ -6664,7 +6739,7 @@ async function buildOne(pool, config, { bot, app, run, settings, deps = {} }) {
     parsed: { verdict: 'ready', buildNote: run.build_note || '' },
     seed, seedReadAt, postedAt: [], turnBudgetMs, botLogin,
     model: stageModel(settings, config, 'build'), specModel: stageModel(settings, config, 'spec'),
-    proposalCeiling: botProposalCeiling(settings), firstVersion: !!requester?.firstVersion, deps: buildDeps,
+    proposalCeiling: botProposalCeiling(settings), firstVersion: !!requester?.firstVersion, settings, deps: buildDeps,
     // The plan of a build a restart interrupted, kept by recovery
     // (resumeLiveBuildFromSpec), and what writing it cost.
     presetSpec: run.build_spec_md || null,
@@ -8227,6 +8302,7 @@ module.exports = {
   queueShadowBackfill,
   buildLaneSummary,
   shadowBuildSkipReason,
+  laterSideSkipReason,
   isPlatformRepo,
   buildBudgets,
   PLATFORM_BUILD_TIME_FACTOR,

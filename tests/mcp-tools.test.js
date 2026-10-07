@@ -2558,8 +2558,9 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     'release_request',
     'rerun_bench_trial',
     'retire_test_account',
-    // The configurations' writes: a version saved, a role set, a pick.
-    'save_bot_config', 'set_bot_config_role',
+    // The configurations' writes: a version saved, a role set, a scope's
+    // side-build budget set, a pick.
+    'save_bot_config', 'set_bot_config_budget', 'set_bot_config_role',
     'start_change',
     'start_platform_build', 'submit_bench_grade', 'submit_bench_reference', 'submit_bot_config_pick', 'submit_platform_build', 'submit_work',
     'sync_change',
@@ -2777,8 +2778,8 @@ test('ACTING_TOOLS names every user-directed action, and every one is a write', 
     'post_message', 'post_spec', 'prepare_work', 'promote_change', 'propose_close_request',
     'rate_homeroom_bot_run', 'recheck_change', 'rerun_bench_trial',
     'retire_test_account',
-    // The Homeroom bot's first-version configurations: full admins only.
-    'save_bot_config', 'set_bot_config_role', 'start_change',
+    // The Homeroom bot's configurations: full admins only.
+    'save_bot_config', 'set_bot_config_budget', 'set_bot_config_role', 'start_change',
     'start_platform_build', 'submit_bench_grade', 'submit_bench_reference', 'submit_bot_config_pick',
     'submit_platform_build', 'submit_work', 'sync_change',
     'update_proposal_description', 'update_proposal_issues', 'withdraw_change',

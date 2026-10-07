@@ -120,7 +120,7 @@ test('bot configurations against the full PostgreSQL schema', { timeout: 180000 
        VALUES ($1, 'Opus spec, GLM build, Opus review', 1, $2::jsonb, 'current', 'up to three rounds', $3)`,
       [u.key, JSON.stringify(u.from.recipe), u.from.seedKey],
     );
-    assert.equal(await configs.seedConfigs(pool), 2, 'the two side ones; the current one was written already');
+    assert.equal(await configs.seedConfigs(pool), 4, 'the two side ones and the later changes\' two; the current one was written already');
     assert.equal(await configs.upgradeSeedConfigs(pool), 1);
     assert.equal(await configs.upgradeSeedConfigs(pool), 0, 'once');
     assert.equal(await configs.seedConfigs(pool), 0, 'a second deploy writes nothing');
@@ -128,7 +128,8 @@ test('bot configurations against the full PostgreSQL schema', { timeout: 180000 
     assert.deepEqual(list.map((v) => [v.key, v.version, v.role]), [
       ['opus-spec-review', 2, 'current'], ['all-glm', 1, 'side'], ['opus-spec-no-review', 1, 'side'], ['opus-spec-review', 1, 'retired'],
     ]);
-    const { rows: [{ n: currents }] } = await pool.query("SELECT COUNT(*)::int AS n FROM bot_config_versions WHERE role = 'current'");
+    // One current per scope: the later changes' has its own (bot-configs-later-postgres.test.js).
+    const { rows: [{ n: currents }] } = await pool.query("SELECT COUNT(*)::int AS n FROM bot_config_versions WHERE role = 'current' AND scope = 'first_version'");
     assert.equal(currents, 1);
     current = await configs.currentVersion(pool);
     assert.equal(current.key, 'opus-spec-review');
@@ -196,7 +197,7 @@ test('bot configurations against the full PostgreSQL schema', { timeout: 180000 
     const v3 = await configs.saveVersion(pool, { key: 'glm-with-review', recipe, role: 'current' });
     assert.equal(v3.version.role, 'current');
     assert.equal((await configs.versionById(pool, v2.version.id)).role, 'retired', 'its own earlier version is retired, not kept as a side');
-    const { rows: [{ n }] } = await pool.query("SELECT COUNT(*)::int AS n FROM bot_config_versions WHERE role = 'current'");
+    const { rows: [{ n }] } = await pool.query("SELECT COUNT(*)::int AS n FROM bot_config_versions WHERE role = 'current' AND scope = 'first_version'");
     assert.equal(n, 1);
     // Back to the seeded current, with its sides, for what follows.
     await configs.setRole(pool, { id: current.id, role: 'current' });
@@ -812,7 +813,7 @@ test('bot configurations against the full PostgreSQL schema', { timeout: 180000 
     );
     // A fresh database: the seed is two rounds already.
     await pool.query('DELETE FROM bot_config_versions');
-    assert.equal(await configs.seedConfigs(pool), 3);
+    assert.equal(await configs.seedConfigs(pool), 5, 'the first versions\' three and the later changes\' two');
     assert.equal(await configs.upgradeSeedConfigs(pool), 0);
     assert.deepEqual((await configs.currentVersion(pool)).recipe.reviewer, { model: OPUS, maxRounds: 2, budgetMinutes: 20 });
     // An admin saved a later version of the key (as side): left alone.

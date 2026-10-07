@@ -281,8 +281,9 @@ test('a restart runs a side build again rather than following one of its turns; 
   const src = require('node:fs').readFileSync(require.resolve('../src/services/bench/lane'), 'utf8');
   assert.match(src, /return !!row && row\.stage === 'first_version' && !row\.reference_label && !row\.bot_config_version_id;/);
   assert.match(src, /\{ reference: !!trial\.reference_label, side: !!trial\.bot_config_version_id \}/);
-  // A side build's branch is not kept, whatever it holds.
-  assert.match(src, /\(!\(patch\.build_commits > 0\) \|\| row\?\.bot_config_version_id\)/);
+  // A first version's side build's branch is not kept, whatever it holds (a
+  // later change's keeps its commits for the sweep, for its pair's compare link).
+  assert.match(src, /\(!\(patch\.build_commits > 0\) \|\| \(row\?\.bot_config_version_id && row\?\.run_kind !== LATER_SIDE_RUN_KIND\)\)/);
 
   const writes = [];
   const pool = {
