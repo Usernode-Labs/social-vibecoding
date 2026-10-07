@@ -1936,6 +1936,83 @@ async function draftSpec({
 }
 
 /**
+ * One build-mode turn in a bot session: the build itself, and each review
+ * round's fix (bot-review.js), which starts a fresh thread with a prompt
+ * that stands alone. The same wall clock a triage turn has, ended the same
+ * way. A function of its own, not a closure inside buildAndPropose, so that
+ * restart recovery can run a review's fix turns in a session whose build a
+ * restart caught (homeroom-bot.js reviewRecoveredBuild). Resolves
+ * { routed, stopped }.
+ */
+function buildTurnRunner({
+  pool, config, bot, session, model, branchName, containerName, deps,
+  harness = 'auto', telemetry = null, onProgress = null,
+}) {
+  const { worker, sessions, agentTurn, activeWorkers } = deps;
+  return async ({
+    prompt: turnPrompt, budgetMs, resumeThreadId = null, commitMsg, progress: turnProgress,
+  }) => {
+    let turnStopped = false;
+    let stopping = null;
+    const timer = setTimeout(() => {
+      turnStopped = true;
+      stopping = Promise.resolve(worker.stopTurn(session.id)).catch(() => {});
+    }, budgetMs);
+    if (typeof timer.unref === 'function') timer.unref();
+    activeWorkers.add(session.id);
+    let turnRouted;
+    try {
+      turnRouted = await sessions.runCodexAttemptLoop({
+        pool, session, userId: bot.id, config, isCodexSession: true,
+        turnModel: model, resumeThreadId, mode: 'build',
+        telemetryComponent: telemetry || 'homeroom_bot_build',
+        resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
+          pool, session, userId: bot.id, model, resumeThreadId, config,
+          // The dev chat's build makes the same choice (#3296). The bot's
+          // build works as it is under either CLI: the worker, not the agent,
+          // commits and pushes what the turn leaves (buildPrompt's commits:
+          // 'harness'; both runners use worker/session-branch.sh), and an
+          // OpenRouter build needs no handbook as system context in either
+          // (run-cc.sh).
+          harness,
+        }),
+        dispatchOnce: (ctx) => worker.execInWorker(session.id, {
+          mode: 'build',
+          prompt: turnPrompt,
+          model,
+          commitMsg,
+          resumeSessionId: resumeThreadId,
+          branchName,
+          // A failed turn's work is neither committed nor pushed, under either
+          // CLI (failedClaudeTurn).
+          discardFailedTurn: true,
+          ...(ctx || {}),
+          telemetryComponent: telemetry || 'homeroom_bot_build',
+          onProgress: teeProgress(turnProgress, onProgress),
+        }),
+        retryPredicate: () => null,
+        sendStatus: async () => {},
+        waitForStopped: async () => {},
+        prepareRetry: async () => false,
+        classifyAttemptStatus: ({ failed }) => (failed ? 'failed' : 'completed'),
+        containerName,
+      });
+    } catch (err) {
+      turnRouted = { error: `dispatch: ${err.message}` };
+    } finally {
+      clearTimeout(timer);
+      if (stopping) await stopping;
+      activeWorkers.delete(session.id);
+      await pool.query(
+        "UPDATE chat_sessions SET status = 'paused', last_activity_at = NOW() WHERE id = $1 AND status = 'active'",
+        [session.id],
+      ).catch(() => {});
+    }
+    return { routed: turnRouted, stopped: turnStopped };
+  };
+}
+
+/**
  * Store a spec on its build's session with the same three effects a
  * person's scout has: spec_md, a numbered version, and the spec card in the
  * session's own transcript. Resolves the version, or null when it could not
@@ -2187,71 +2264,10 @@ async function buildAndPropose({
 
   if (onStage) { try { await onStage('build'); } catch { /* a watcher never stops a build */ } }
   const buildHarness = harnessOf ? harnessOf(model, config) : 'auto';
-  // One build-mode turn in this session: the build itself, and each review
-  // round's fix (bot-review.js), which starts a fresh thread with a prompt
-  // that stands alone. The same wall clock a triage turn has, ended the
-  // same way.
-  const runBuildTurn = async ({
-    prompt: turnPrompt, budgetMs, resumeThreadId = null, commitMsg, progress: turnProgress,
-  }) => {
-    let turnStopped = false;
-    let stopping = null;
-    const timer = setTimeout(() => {
-      turnStopped = true;
-      stopping = Promise.resolve(worker.stopTurn(session.id)).catch(() => {});
-    }, budgetMs);
-    if (typeof timer.unref === 'function') timer.unref();
-    activeWorkers.add(session.id);
-    let turnRouted;
-    try {
-      turnRouted = await sessions.runCodexAttemptLoop({
-        pool, session, userId: bot.id, config, isCodexSession: true,
-        turnModel: model, resumeThreadId, mode: 'build',
-        telemetryComponent: telemetry || 'homeroom_bot_build',
-        resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
-          pool, session, userId: bot.id, model, resumeThreadId, config,
-          // The dev chat's build makes the same choice (#3296). The bot's
-          // build works as it is under either CLI: the worker, not the agent,
-          // commits and pushes what the turn leaves (buildPrompt's commits:
-          // 'harness'; both runners use worker/session-branch.sh), and an
-          // OpenRouter build needs no handbook as system context in either
-          // (run-cc.sh).
-          harness: buildHarness,
-        }),
-        dispatchOnce: (ctx) => worker.execInWorker(session.id, {
-          mode: 'build',
-          prompt: turnPrompt,
-          model,
-          commitMsg,
-          resumeSessionId: resumeThreadId,
-          branchName,
-          // A failed turn's work is neither committed nor pushed, under either
-          // CLI (failedClaudeTurn).
-          discardFailedTurn: true,
-          ...(ctx || {}),
-          telemetryComponent: telemetry || 'homeroom_bot_build',
-          onProgress: teeProgress(turnProgress, onProgress),
-        }),
-        retryPredicate: () => null,
-        sendStatus: async () => {},
-        waitForStopped: async () => {},
-        prepareRetry: async () => false,
-        classifyAttemptStatus: ({ failed }) => (failed ? 'failed' : 'completed'),
-        containerName,
-      });
-    } catch (err) {
-      turnRouted = { error: `dispatch: ${err.message}` };
-    } finally {
-      clearTimeout(timer);
-      if (stopping) await stopping;
-      activeWorkers.delete(session.id);
-      await pool.query(
-        "UPDATE chat_sessions SET status = 'paused', last_activity_at = NOW() WHERE id = $1 AND status = 'active'",
-        [session.id],
-      ).catch(() => {});
-    }
-    return { routed: turnRouted, stopped: turnStopped };
-  };
+  const runBuildTurn = buildTurnRunner({
+    pool, config, bot, session, model, branchName, containerName, deps,
+    harness: buildHarness, telemetry, onProgress,
+  });
   const prompt = buildPrompt({
     seed, buildNote, spec: spec.ok ? spec.specMd : null, platformRepo, readsImages, firstVersion, guidance: buildGuidance,
   });
@@ -2505,6 +2521,7 @@ module.exports = {
   PLATFORM_TEST_NOTE,
   screenshotNote,
   buildAndPropose,
+  buildTurnRunner,
   reviewLanded,
   rollbackReviewBranch,
   recipeHarness,
