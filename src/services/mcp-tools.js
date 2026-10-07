@@ -1436,9 +1436,9 @@ const CHANGE_NEXT_STEP_WORDS = Object.freeze({
     build: 'Dispatch the coding agent to start it.',
     fixTests: 'Dispatch the coding agent to fix the failing tests. Use recheck_change only when the failure came from outside this change.',
     fixBuild: 'Dispatch the coding agent to fix the build; checks gate merge.',
-    deferred: 'sync_change merges main in (the user confirms it, and it clears any votes).',
+    deferred: 'sync_change merges main in and resolves the conflict once the user confirms it; its votes stand as long as the resolution stays inside the files that conflicted.',
     ready: 'promote_change puts it there once the user confirms.',
-    behind: 'sync_change would clear its votes, so only when needed.',
+    behind: 'that alone needs no sync, and sync_change keeps its votes when main merges in cleanly.',
     closed: 'Further work on it is a new change (start_change).',
   },
   worker_read: {
@@ -1447,16 +1447,16 @@ const CHANGE_NEXT_STEP_WORDS = Object.freeze({
     fixBuild: 'Fix the build in this turn; the checks run again after your push.',
     deferred: 'The Mayor can sync it with main, with the user\'s confirmation.',
     ready: 'the Mayor puts it there once the user confirms.',
-    behind: 'syncing it would clear its votes.',
+    behind: 'that alone needs no sync, and a clean sync with main keeps its votes.',
     closed: 'Further work on it is a new change.',
   },
   external: {
     build: 'Its coding agent runs inside Homeroom, from the change\'s own page.',
     fixTests: 'Its coding agent fixes them from the change\'s own page; recheck_change re-runs the checks when the failure came from outside this change.',
     fixBuild: 'The build needs fixing from the change\'s own page; checks gate merge.',
-    deferred: 'Syncing it with main from its page merges main in and clears any votes.',
+    deferred: 'Syncing it with main from its page merges main in and resolves the conflict; its votes stand as long as the resolution stays inside the files that conflicted.',
     ready: 'its owner puts it there from its page on Homeroom.',
-    behind: 'syncing it with main would clear its votes.',
+    behind: 'that alone needs no sync, and syncing it with main cleanly keeps its votes.',
     closed: 'Further work on it is a new change.',
   },
 });
@@ -4145,7 +4145,7 @@ function registerTools(server, ctx) {
   // ── sync_change ──────────────────────────────────────────────────────
   server.registerTool('sync_change', {
     title: 'Sync a change with main',
-    description: 'Merge the app\'s latest main into one of the user\'s changes, resolving conflicts with the coding agent when there are any: the same act as its "Sync with main" button. This revises the change, so a change that is up for a vote LOSES the votes it has collected. Can take a few minutes; if the call times out, the sync carries on and get_change reports it.',
+    description: 'Merge the app\'s latest main into one of the user\'s changes, resolving conflicts with the coding agent when there are any: the same act as its "Sync with main" button. A change that is up for a vote KEEPS the votes it has collected: a clean merge is plain git and changes nothing anyone approved, and a conflict resolution that edits only the files that conflicted keeps them too, though the checks run again on the merged code. Only a resolution that edits any other file counts as a revision and clears them. Can take a few minutes; if the call times out, the sync carries on and get_change reports it.',
     inputSchema: { changeId: changeIdSchema() },
     outputSchema: {
       changeId: z.number(),
