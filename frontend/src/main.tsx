@@ -147,6 +147,10 @@ import './lib/reset-time';
 // file dropped where nothing takes it no longer opens in place of the app.
 import './features/attachments/file-drag';
 import './lib/file-drop-guard';
+// #4289: the C key opens Suggest an improvement, behind Settings, Experimental's
+// switch (off by default). Two listeners on the document, the shell's own keys
+// and the bridge's message from inside an app, and no markup of its own.
+import './features/improve/suggest-shortcut';
 // #1084 chunk G: the retired public/js/dev-chat.js, moved into the bundle
 // verbatim. Imported HERE rather than from a Shell island for the same reason
 // as the dev board above — #dc-view is written into an empty #app-content at

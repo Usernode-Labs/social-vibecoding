@@ -2786,7 +2786,10 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
       }
       if (k === 'd' || k === 'D') { toggleSheet('description'); return; }
       if (k === 'a' || k === 'A') { toggleSheet('ask'); return; }
-      if (k === 'c' || k === 'C') { toggleSheet('comments'); return; }
+      // Claimed with preventDefault: C is also the experimental Suggest an
+      // improvement shortcut (#4289), which leaves a key alone once a screen
+      // has used it.
+      if (k === 'c' || k === 'C') { e.preventDefault(); toggleSheet('comments'); return; }
       if ((k === 't' || k === 'T') && canTry) { tryIt(); return; }
       if ((k === 'm' || k === 'M') && moreRef.current) moreRef.current.click();
     };
