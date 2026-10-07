@@ -160,6 +160,14 @@ const DENIED_COLUMNS = {
     'secret_key',        // topochain: on-chain account private key (SPEC §6)
     'registration_code', // topochain: single-use account claim code (SPEC §6)
   ],
+  // A person's own words to the Homeroom bot, often from their DM with it,
+  // tagged staging:private in schema.sql: never read while debugging.
+  homeroom_bot_requesters: [
+    'asked_text', // what they asked for, in their words
+  ],
+  homeroom_bot_runs: [
+    'plan_change', // what a creator asked the bot's plan changed with; never posted anywhere
+  ],
   waitlist_signups: [
     'ip',         // submitter IP — same treatment as users.waitlist_ip
     'more_token', // stage-2 survey capability — editing rights over the signup's answers

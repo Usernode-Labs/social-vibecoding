@@ -409,6 +409,31 @@ test('every declared change saved publishes the ready files, tears the builds do
   ]);
 });
 
+test('a change whose screens differ only by noise is published with a note saying they look the same', async () => {
+  const fixture = setup({
+    dispatch: async (options) => {
+      const control = controlFor(options);
+      // Two images whose bytes differ but whose colours are within the
+      // comparison's tolerance: antialiasing, not a change.
+      control.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before', kind: 'screen' },
+        fixtures.png({ shade: 10 }));
+      control.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'after', kind: 'screen' },
+        fixtures.png({ shade: 12 }));
+      saveStills(control, 'invite-empty');
+      return { backend: 'claude_code', threadId: 'shots-thread' };
+    },
+  });
+  fixture.run.intent = twoChangeIntent();
+  const result = await execute(fixture);
+
+  assert.equal(result.state, 'verified', 'people still judge the shots');
+  const verified = fixture.transitions.find((entry) => entry.next === 'verified').patch;
+  assert.deepEqual(verified.hardVerdict.stories, [
+    { id: 'invite-suggestions', status: 'ready', files: 2, unchanged: true, note: shots.UNCHANGED_NOTE },
+    { id: 'invite-empty', status: 'ready', files: 2 },
+  ]);
+});
+
 test('useful shots publish with cleanup pending when teardown leaves a runtime', async () => {
   const fixture = setup();
   fixture.dependencies.environment.cleanupPair = async () => ({ cleaned: false, errors: ['API unavailable'] });
@@ -1897,6 +1922,46 @@ test('a shots agent that died says how: its exit code and the worker\'s reason, 
   assert.equal('exitCause' in oddDispatch, false);
 });
 
+
+test('a shots agent whose process died is dispatched once more, keeping what it saved', async () => {
+  let attempt = 0;
+  const died = (cause) => Object.assign(new Error('The shots agent stopped with an error before it finished.'), {
+    code: 'shots_agent_failed', shotsExitCode: -1, shotsExitCause: cause,
+    detail: { exit: 'exit -1', exitCode: -1, exitCause: cause },
+  });
+  const fixture = setup({
+    dispatch: async (options) => {
+      attempt += 1;
+      const control = controlFor(options);
+      if (attempt === 1) {
+        control.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before', kind: 'screen' },
+          fixtures.png({ shade: 10 }));
+        throw died('container_gone');
+      }
+      assert.equal(control.saved.size, 1, 'the second dispatch finds the first one\'s shot');
+      control.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'after', kind: 'screen' },
+        fixtures.png({ shade: 200 }));
+      return { backend: 'claude_code', threadId: 'shots-thread' };
+    },
+  });
+  const result = await execute(fixture, { maxAgentMs: 120_000 });
+  assert.equal(result.state, 'verified');
+  assert.equal(fixture.calls.dispatches, 2);
+  const trace = fixture.transitions.at(-1).patch.traceSummary;
+  assert.deepEqual(trace.agentDispatches.map((d) => [d.outcome, d.exitCause]),
+    [['failed', 'container_gone'], ['completed', undefined]]);
+
+  // Once only, and only for a death that says nothing about the proposal.
+  for (const [cause, dispatches] of [['oom_killed', 2], ['probe_unobservable', 1]]) {
+    const again = setup({ dispatch: async () => { throw died(cause); } });
+    await assert.rejects(execute(again, { maxAgentMs: 120_000 }), { code: 'shots_agent_failed' });
+    assert.equal(again.calls.dispatches, dispatches, cause);
+  }
+  // Nor when too little of the budget is left to do anything.
+  const short = setup({ dispatch: async () => { throw died('container_gone'); } });
+  await assert.rejects(execute(short), { code: 'shots_agent_failed' });
+  assert.equal(short.calls.dispatches, 1);
+});
 test('the trace keeps the worker\'s memory as a summary of numbers, outside the agent\'s event ring', () => {
   const metrics = orchestrator.newRunMetrics();
   orchestrator.recordAgentDiagnostic(metrics, { kind: 'tool_start', tool: 'get_brief', sequence: 1 });

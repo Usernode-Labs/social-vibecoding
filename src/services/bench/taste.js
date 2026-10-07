@@ -129,16 +129,20 @@ function notRunnableReason(task) {
   return null;
 }
 
-/** The request the bot reads for this first version, as it would be filed. Pure. */
-function firstVersionRequest(input) {
+/**
+ * The request the bot reads for this first version, as it would be filed.
+ * `card` is the first session's card (services/bench/scaffold.js
+ * requestCard), quoted as a project's first request quotes it. Pure.
+ */
+function firstVersionRequest(input, card = null) {
   const { firstVersionIssue } = require('../homeroom-bot-dm');
-  return firstVersionIssue({ name: input.appName, username: REQUESTER, brief: input.brief, botBuilds: true });
+  return firstVersionIssue({ name: input.appName, username: REQUESTER, brief: input.brief, botBuilds: true, card });
 }
 
 /** The seed the triage and the build read, as the bot builds one from a filed request. */
-function seedFor(input, botLogin = null) {
+function seedFor(input, botLogin = null, card = null) {
   const sessions = require('../../routes/sessions');
-  return sessions.buildHeadlessSeed(ISSUE_NUMBER, firstVersionRequest(input), [], botLogin, []);
+  return sessions.buildHeadlessSeed(ISSUE_NUMBER, firstVersionRequest(input, card), [], botLogin, []);
 }
 
 /**

@@ -331,8 +331,13 @@ async function mintHomeroomReadGrant(sessionId, mode) {
     if (!rows.length) return null;
     // A benchmark trial replays a request as it stood at a past commit, and
     // these tools read the platform as it is now (later discussion, later
-    // proposals): they would hand it the answer.
-    if (require('./bench/runner').isBenchSession(rows[0])) return null;
+    // proposals): they would hand it the answer. The one exception is a trial
+    // in the App bench studio's own host app (services/bench/studio.js): a
+    // private project with no history of its own, where these reads are what
+    // a new app's first version is given (its conventions above all) and can
+    // hand it nothing later.
+    if (require('./bench/runner').isBenchSession(rows[0])
+        && !(await require('./bench/studio').isHostApp(pool, rows[0].app_id))) return null;
     const grant = await require('./mcp-oauth').issueDelegatedAccess(pool, {
       userId: rows[0].user_id,
       kind: 'worker_read',
@@ -906,6 +911,10 @@ function applyStreamEvent(event, onProgress, state) {
           label = `Editing ${input.file_path}`;
         } else if (block.name === 'Bash' && input.command) {
           label = `$ ${input.command.substring(0, 150)}`;
+        } else if (block.name === 'Skill' && typeof (input.skill || input.command) === 'string') {
+          // Which skill, so a turn's record says what it reached for (the App
+          // bench studio counts them: services/bench/progress.js).
+          label = `Using skill ${String(input.skill || input.command).substring(0, 80)}`;
         } else {
           label = `Using ${block.name}`;
         }

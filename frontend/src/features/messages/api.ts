@@ -134,6 +134,7 @@ function normalizeBotActions(input: unknown): HomeroomBotAction[] {
       ...(target ? { target } : {}),
       ...(sessionId ? { sessionId } : {}),
       ...(epoch !== null ? { epoch } : {}),
+      ...(type === 'prompt' && pick(row, 'quote') === true ? { quote: true } : {}),
     });
   }
   return out;

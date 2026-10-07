@@ -37,9 +37,13 @@ function threeChanges() {
 
 const statuses = (run) => run.progress().map((entry) => [entry.change, entry.status]);
 
+// A before and an after that differ, as the shots of a real change do: the
+// same image on both sides is its own case (see the tests at the end).
+const sideShot = (side) => fixtures.png({ shade: side === 'after' ? 200 : 0 });
+
 function shootBothSides(run, change) {
   for (const side of ['before', 'after']) {
-    run.saveShot({ change, screen: 'desktop', side }, fixtures.png());
+    run.saveShot({ change, screen: 'desktop', side }, sideShot(side));
   }
 }
 
@@ -127,7 +131,7 @@ test('progress reports each change as missing, ready or skipped', () => {
   });
   // The agent may still come back to a change it skipped and shoot it.
   for (const side of ['before', 'after']) {
-    run.saveShot({ change: 'saved-toast', screen: 'desktop', side }, fixtures.png());
+    run.saveShot({ change: 'saved-toast', screen: 'desktop', side }, sideShot(side));
     run.saveShot({ change: 'saved-toast', screen: 'desktop', side, kind: 'clip' }, fixtures.webm());
   }
   assert.deepEqual(statuses(run), [['invite-suggestions', 'ready'], ['saved-toast', 'ready']]);
@@ -334,4 +338,29 @@ test('a request reaches a control only for its own session while the run is live
   });
   assert.throws(() => controlPlane.forRequest({ runId: expiredRun, sessionId: 42 }),
     { code: 'shots_control_expired', status: 410 });
+});
+
+test('saving the same image on both sides warns the agent while it can still retake them', () => {
+  const run = control();
+  const before = run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before' }, fixtures.png());
+  assert.equal(Object.hasOwn(before, 'sameAsOtherSide'), false, 'nothing to compare with yet');
+  const after = run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'after' }, fixtures.png());
+  assert.equal(after.sameAsOtherSide, true);
+  assert.match(after.warning, /same image/);
+  assert.deepEqual(after.progress.find((entry) => entry.change === 'invite-suggestions'),
+    { change: 'invite-suggestions', status: 'ready', note: 'any visible difference. The before and after screens came out the same, so these shots cannot show this change.' });
+
+  const retake = run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'after' }, sideShot('after'));
+  assert.equal(Object.hasOwn(retake, 'warning'), false);
+  assert.deepEqual(retake.progress.find((entry) => entry.change === 'invite-suggestions'),
+    { change: 'invite-suggestions', status: 'ready' });
+});
+
+test('an element shot wider than its screen is refused and saves nothing', () => {
+  const run = control();
+  run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before' }, fixtures.png({ width: 1280, height: 800 }));
+  assert.throws(() => run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before', kind: 'element' },
+    fixtures.png({ width: 1300, height: 40 })), { code: 'element_shot_too_wide', status: 400 });
+  assert.equal(run.saved.size, 1);
+  assert.equal(run.lastToolFailure.operation, 'save-shot');
 });

@@ -8,6 +8,8 @@ import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals
 import { UserFieldRow, userHandle } from './admin-user-field';
 import { BenchmarkArea, loadBenchSummary } from './admin-homeroom-bench';
 import type { Best, BenchModel } from './admin-homeroom-bench';
+import { RolloutHealth } from './admin-homeroom-bot-health';
+import type { ChatFailure, RolloutHealthData } from './admin-homeroom-bot-health';
 
 // Homeroom bot (#admin/homeroom-bot) — #2684, and laid out again in #3710.
 //
@@ -37,7 +39,7 @@ import type { Best, BenchModel } from './admin-homeroom-bench';
 //              Save button per field, and nothing said which.
 //   Benchmark  admin-homeroom-bench.tsx, with places of its own below this
 //              tab's address (/benchmark/runs, /benchmark/runs/<id>,
-//              /benchmark/suites[/<id>]), which it writes while it is the tab
+//              /benchmark/suites[/<id>], /benchmark/studio), which it writes while it is the tab
 //              on screen. Its "Use for <stage>" fills in the model here and
 //              switches to Settings; Save is still pressed by a person. It
 //              reads the model each stage runs on now from this section's
@@ -81,6 +83,9 @@ interface Settings {
   liveAtOnce: number;
   perPerson: number;
   dmChat: boolean;
+  // Whether reading a request again continues the conversation that read it
+  // last, rather than starting from the repository again.
+  continueReads?: boolean;
   // Who has the bot: the people on dmUsers (and their projects), or everyone
   // with platform access (every project but a paused one and, unless
   // livePlatform, the platform's own). audienceSince is when it was switched
@@ -108,6 +113,7 @@ interface DmChat {
   failed: number;
   people: number;
   costUsd: number;
+  recentFailures?: ChatFailure[];
 }
 
 // #3654: the stages that each run on a model of their own. `followup` is
@@ -288,6 +294,7 @@ interface Payload {
   builtFor?: BuiltFor[];
   workingNow?: Working[];
   dmChat?: DmChat;
+  health?: RolloutHealthData;
 }
 
 // Somebody who asked the bot to stop tagging them on one issue.
@@ -1043,6 +1050,7 @@ interface Form {
   userCap: string;
   dmUsers: string[];
   dmChat: boolean;
+  continueReads: boolean;
   shadowBuilds: boolean;
   shadowBuildPlatform: boolean;
   buildConcurrency: string;
@@ -1067,6 +1075,7 @@ const FIELD_LABEL: Record<FormKey, string> = {
   userCap: 'the budget per person',
   dmUsers: 'people in DMs',
   dmChat: 'reading DMs',
+  continueReads: 'continuing its last read',
   shadowBuilds: 'shadow builds',
   shadowBuildPlatform: 'shadow builds of the platform',
   buildConcurrency: 'shadow builds at once',
@@ -1095,6 +1104,7 @@ export function savedForm(p: Pick<Payload, 'settings' | 'bot'>): Form {
     userCap: ((s.userWeeklyCents ?? 5000) / 100).toFixed(2),
     dmUsers: s.dmUsers || [],
     dmChat: s.dmChat !== false,
+    continueReads: s.continueReads !== false,
     shadowBuilds: !!s.shadowBuilds,
     shadowBuildPlatform: !!s.shadowBuildPlatform,
     buildConcurrency: String(s.buildConcurrency ?? 2),
@@ -1148,7 +1158,7 @@ export function buildPatch(form: Form, saved: Form, dirty: FormKey[]): { patch: 
     else if (key === 'liveApps') patch.liveApps = [...new Set(form.liveApps.filter(Boolean))];
     else if (key === 'pausedApps') patch.pausedApps = [...new Set(form.pausedApps.filter(Boolean))];
     else if (key === 'dmUsers') patch.dmUsers = form.dmUsers;
-    else if (key === 'dmChat' || key === 'shadowBuilds' || key === 'shadowBuildPlatform' || key === 'livePlatform') patch[key] = form[key];
+    else if (key === 'dmChat' || key === 'continueReads' || key === 'shadowBuilds' || key === 'shadowBuildPlatform' || key === 'livePlatform') patch[key] = form[key];
     else if (key === 'audience') patch.audience = form.audience;
     else if (key === 'models') {
       const changed: Record<string, string> = {};
@@ -1549,6 +1559,8 @@ function HomeroomBotSection() {
             </p>
           </details>
         </div>
+
+        <RolloutHealth health={payload?.health} failures={payload?.dmChat?.recentFailures} />
 
         <div className={`${AdminUI.card} p-4`}>
           <div className="grid gap-6 md:grid-cols-2">
@@ -2090,6 +2102,21 @@ function HomeroomBotSection() {
                 people. It takes one request per app at a time and shares the slots between people in turns. Shadow triage
                 runs in slots of its own, so it never holds up live work. Each slot uses a worker from the same pool as
                 people&apos;s own coding sessions.
+              </p>
+              <label className="flex items-center gap-2 mt-4 text-sm" htmlFor="admin-homeroom-bot-continue-reads">
+                <input
+                  id="admin-homeroom-bot-continue-reads" type="checkbox"
+                  className="h-4 w-4 rounded border-zinc-600 bg-zinc-800 text-violet-700 focus:ring-violet-500 dark:text-violet-400"
+                  checked={form.continueReads}
+                  disabled={!canWrite}
+                  onChange={(e) => setField('continueReads', e.target.checked)}
+                />
+                <span>Reading a request again continues its last read</span>
+              </label>
+              <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bot-continue-reads-note">
+                When somebody adds to a request, the bot picks up the conversation it read the request in, with what changed,
+                instead of reading the app&apos;s code from the start. It reads afresh when that conversation is gone (a new
+                worker), after three continued reads in a row, or a day after the last one.
               </p>
             </details>
 

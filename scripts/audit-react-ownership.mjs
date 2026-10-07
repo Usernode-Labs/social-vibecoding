@@ -407,7 +407,7 @@ const ROUTES = [
   // The Benchmark's own places, in the same host (`when: '#admin/homeroom-bot'`
   // covers them): runs, one run of each kind on the staging demo, and suites.
   '#admin/homeroom-bot/benchmark/runs', '#admin/homeroom-bot/benchmark/runs/936551', '#admin/homeroom-bot/benchmark/runs/936550',
-  '#admin/homeroom-bot/benchmark/suites', '#admin/homeroom-bot/benchmark/suites/936542',
+  '#admin/homeroom-bot/benchmark/suites', '#admin/homeroom-bot/benchmark/suites/936542', '#admin/homeroom-bot/benchmark/studio',
   '#admin/api-tester', '#admin/sql-console', '#admin/settings', '#admin/app-version', '#admin/waitlist', '#admin/onchain-accounts', '#admin/user-activities', '#admin/delegations',
   '#admin/challenge-templates', '#admin/challenge-scoring', '#admin/seasons', '#admin/season-events',
 ];

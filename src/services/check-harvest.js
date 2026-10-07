@@ -319,6 +319,7 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
       runStartedAt: Number(manifest.startedAt) || Date.parse(row.started_at) || startedAt,
       shotsOnly: !!manifest.shotsOnly, admissionReason: manifest.admissionReason || null,
       media: !!manifest.media,
+      legacyMediaSuppressed: manifest.legacyMediaSuppressed === true,
       capturePaths: Array.isArray(manifest.capturePaths) && manifest.capturePaths.length
         ? manifest.capturePaths : ['/'],
       pathDefaulted: !!manifest.pathDefaulted,

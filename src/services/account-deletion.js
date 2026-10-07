@@ -100,6 +100,40 @@ async function placeholderUsername(db, userId) {
   throw new Error('No free placeholder username for the anonymised account');
 }
 
+// The Homeroom bot's copies of a person's words and name that no foreign key
+// reaches, so neither the purge nor the anonymised row takes them: what they
+// asked a plan changed with (homeroom_bot_runs.plan_change, on the requests
+// they asked for, found through their requester rows before the purge takes
+// those), and their username on the bot's opt-in list (platform_settings
+// homeroom_bot_dm_users, a JSON array of usernames). A list that does not
+// parse is left as it is; the bot reads it the same way (readSettings).
+async function forgetBotWords(db, userId) {
+  await db.query(
+    `UPDATE homeroom_bot_runs r SET plan_change = NULL
+       FROM homeroom_bot_requesters q
+      WHERE q.user_id = $1 AND r.app_id = q.app_id AND r.issue_number = q.issue_number
+        AND r.plan_change IS NOT NULL`,
+    [userId]
+  );
+  const { rows } = await db.query(
+    `SELECT s.value, LOWER(u.username) AS username
+       FROM platform_settings s JOIN users u ON u.id = $1
+      WHERE s.key = 'homeroom_bot_dm_users'
+      FOR UPDATE OF s`,
+    [userId]
+  );
+  if (!rows.length || !rows[0].username) return;
+  let list;
+  try { list = JSON.parse(rows[0].value); } catch { return; }
+  if (!Array.isArray(list)) return;
+  const kept = list.filter((name) => String(name).toLowerCase() !== rows[0].username);
+  if (kept.length === list.length) return;
+  await db.query(
+    `UPDATE platform_settings SET value = $1, updated_at = NOW() WHERE key = 'homeroom_bot_dm_users'`,
+    [JSON.stringify(kept)]
+  );
+}
+
 async function anonymiseUser(db, userId, unusablePassword) {
   // What the users BEFORE DELETE trigger did: hand group ownership on,
   // archive direct conversations. Then leave the remaining groups.
@@ -110,6 +144,7 @@ async function anonymiseUser(db, userId, unusablePassword) {
   await db.query(`UPDATE conversation_members cm SET status = 'declined', responded_at = NOW()
     FROM conversations c WHERE c.id = cm.conversation_id AND c.kind = 'group'
       AND cm.user_id = $1 AND cm.status = 'invited'`, [userId]);
+  await forgetBotWords(db, userId);
   await purgeCascadingRows(db, userId);
   const username = await placeholderUsername(db, userId);
   await db.query(

@@ -4138,9 +4138,9 @@
       "expectText": "Estimates are per-token pricing times a typical change"
     },
     {
-      "name": "Homeroom bot dashboard renders its verdict table and mode (#2684)",
+      "name": "Homeroom bot dashboard renders its verdict table and mode (#2684) under its rollout health: proposals merged, time to a proposal, questions waiting, failed turns and DM answers, with the week's failed answers",
       "path": "/#admin/homeroom-bot",
-      "expectSelector": "#admin-homeroom-bot-table",
+      "expectSelector": "#admin-homeroom-bot:has(#admin-homeroom-bot-rollout-rows [data-rollout=\"chat\"]):has(#admin-homeroom-bot-rollout-failures) #admin-homeroom-bot-table",
       "expectText": "Verdict"
     },
     {
@@ -4154,6 +4154,12 @@
       "path": "/#admin/homeroom-bot/benchmark",
       "expectSelector": "#admin-homeroom-bench[data-bench-view=\"overview\"]:has(#admin-homeroom-bench-tab-runs span):has(#admin-homeroom-bench-now a[href$=\"/runs/936551\"]):has([data-bench-taste-score=\"capture\"]) #admin-homeroom-bench-best-table [data-bench-stage-row=\"triage\"]",
       "expectText": "Staging demo core v1"
+    },
+    {
+      "name": "Homeroom bot Benchmark's Studio place shows the App bench studio's gallery of first versions built from briefs, its runs, its context packs and its launcher",
+      "path": "/#admin/homeroom-bot/benchmark/studio",
+      "expectSelector": "#admin-homeroom-bench[data-bench-view=\"studio\"]:has(#admin-homeroom-bench-tab-studio[aria-current=\"page\"]) #admin-bench-studio-gallery [data-studio-brief=\"bread\"] h4",
+      "expectText": "Bread Bot"
     },
     {
       "name": "Welcome messages lets an admin choose who greets somebody let in, and what the first message says",
@@ -5522,9 +5528,9 @@
       ]
     },
     {
-      "name": "#4097: the Homeroom bot's news about a request leads with the request's card in its DM, in place of the line naming it, and its words follow the card",
+      "name": "#4097: the Homeroom bot's news about a request leads with the request's card in its DM, in place of the line naming it, and its words follow the card; a build that did not finish offers Try again",
       "path": "/?demo=1#messages/910005",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-message [data-bot-request-card=\"12\"]:has(> .messages-object-card .messages-object-icon) + .messages-markdown",
+      "expectSelector": "#messages-screen:not(.hidden):has(.messages-message button.messages-bot-primary[data-bot-prompt]) .messages-message [data-bot-request-card=\"12\"]:has(> .messages-object-card .messages-object-icon) + .messages-markdown",
       "expectText": "Staging demo, sort the list by date"
     },
     {
