@@ -151,6 +151,10 @@ const DENIED_COLUMNS = {
     // derived from auth material, so it is denied rather than reviewed.
     'token_hash',
   ],
+  test_phone_sign_ins: [
+    // bcrypt hash of a live one-time sign-in code for a test number.
+    'code_hash',
+  ],
   agent_session_actions: [
     // The sealed exact input of a pending write and its fingerprint (#2779).
     'input_hash',

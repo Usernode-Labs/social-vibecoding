@@ -186,3 +186,36 @@ test('with Firebase set up too, a real number still texts through it', async () 
   assert.match(called.url, /accounts:sendVerificationCode/);
   assert.equal(called.body.phoneNumber, '+447700900123');
 });
+
+test('without PHONE_TEST_CODE (production), a test number is still never texted', async () => {
+  const sent = await phoneAuth.requestCode(FIREBASE, '+1 212 555 0142', 'tok', { fetch: noFetch });
+  assert.match(sent.sessionInfo, /^hr-test-session\./);
+  await assert.rejects(
+    () => phoneAuth.exchangeCode(FIREBASE, sent.sessionInfo, '123456', { fetch: noFetch }),
+    (err) => err.code === 'invalid_or_expired_code',
+    'no fixed code, and no one-time code minted (no pool to spend one from)',
+  );
+});
+
+test('a one-time code is spent through the pool, and its token carries who minted it', async () => {
+  const bcrypt = require('bcrypt');
+  const hash = bcrypt.hashSync('654321', 4);
+  const tried = [];
+  const pool = {
+    async query(sql, params) {
+      tried.push(sql.trim().split(/\s+/).slice(0, 3).join(' '));
+      if (/SET attempts = attempts \+ 1/.test(sql)) return { rows: [{ id: '7', code_hash: hash, created_by: 3 }] };
+      if (/SET used_at = NOW\(\)/.test(sql)) return { rows: [{ id: 7 }] };
+      if (/INSERT INTO phone_sign_in_tokens/.test(sql)) return { rows: [{ token_hash: params[0] }] };
+      throw new Error(`unexpected query: ${sql}`);
+    },
+  };
+  const sent = await phoneAuth.requestCode(FIREBASE, '+12125550142', null, { fetch: noFetch });
+  withEnv({ NODE_ENV: 'production' }, () => assert.equal(phoneAuth.testNumbersOn(BOTH), false));
+  const { idToken } = await phoneAuth.exchangeCode(FIREBASE, sent.sessionInfo, '654321', { pool, fetch: noFetch });
+  const claims = await phoneAuth.verifyIdToken(pool, FIREBASE, idToken, { auth: { verifyIdToken: noFetch } });
+  assert.deepEqual(claims, {
+    uid: 'test-phone:+12125550142', phoneNumber: '+12125550142', test: true, testMintId: 7, testCreatedBy: 3,
+  });
+  assert.deepEqual(tried, ['UPDATE test_phone_sign_ins SET', 'UPDATE test_phone_sign_ins SET', 'INSERT INTO phone_sign_in_tokens']);
+});

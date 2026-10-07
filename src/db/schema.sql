@@ -12002,6 +12002,28 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS test_account_welcome_dm BOOLEAN NOT N
 CREATE INDEX IF NOT EXISTS idx_users_test_account_created_at
   ON users (test_account_created_at) WHERE test_account_created_at IS NOT NULL;
 
+-- One-time phone sign-ins for test accounts (services/test-accounts.js
+-- mintPhoneSignIn, the connector's create_test_phone_sign_in): a full admin
+-- gets a fictional test number (+1 … 555 0100–0199) and a random six-digit
+-- code, and the code signs in once, within 30 minutes and five tries, in any
+-- environment, production included. The account it makes is a test account
+-- (services/firebase-phone-auth.js, TEST NUMBERS). Only the code's bcrypt
+-- hash is kept. used_by is the account the code signed in.
+CREATE TABLE IF NOT EXISTS test_phone_sign_ins (
+  id          BIGSERIAL PRIMARY KEY,
+  phone_e164  VARCHAR(16) NOT NULL CHECK (phone_e164 ~ '^\+1[2-9][0-9]{2}55501[0-9]{2}$'),
+  code_hash   TEXT NOT NULL,
+  created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at  TIMESTAMPTZ NOT NULL,
+  attempts    SMALLINT NOT NULL DEFAULT 0,
+  used_at     TIMESTAMPTZ,
+  used_by     INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_test_phone_sign_ins_unused
+  ON test_phone_sign_ins (phone_e164) WHERE used_at IS NULL;
+COMMENT ON TABLE test_phone_sign_ins IS 'staging:private';
+
 -- The first-run "Add your phone number" step was answered, by "Not now" or
 -- by closing it (POST /api/me/phone-ask/answered): it is not asked again, and
 -- Home's card is where the phone is added after that. Adding the phone ends

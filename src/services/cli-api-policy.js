@@ -289,6 +289,9 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   { method: 'POST', pattern: '/api/test-accounts' },
   { method: 'GET', pattern: '/api/test-accounts' },
   { method: 'POST', pattern: '/api/test-accounts/:id/retire' },
+  // A one-time phone sign-in for a test number, the same gate: what it signs
+  // in to is a test account (services/test-accounts.js mintPhoneSignIn).
+  { method: 'POST', pattern: '/api/test-accounts/phone-sign-ins' },
 ]);
 
 // ── Delegated grants (#2779) ───────────────────────────────────────────
