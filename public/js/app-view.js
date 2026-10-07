@@ -13331,13 +13331,47 @@ const AppView = {
   // container. Empty string when no summary was generated (legacy proposals,
   // or an LLM-unavailable turn) so nothing renders and the rest of the view
   // is unchanged.
-  _proposalSummaryHtml(pr) {
+  //
+  // #4098: a summary may end with an `explain` fence holding its structured
+  // blocks (services/explain-blocks.js). `opts.blocks` says what this sink
+  // does with them: 'markdown' (the default, for a sink that can only show
+  // HTML: the Description sheet) draws them as a table and a numbered list
+  // through the same renderer; 'native' leaves them out, for the change
+  // page, which draws them itself from `summaryBlocks`. Without the React
+  // bridge (a stale shell) the fence stays in the text and renders as the
+  // code block it is.
+  _proposalSummaryHtml(pr, opts = {}) {
     const md = pr && typeof pr.pr_summary_md === 'string' ? pr.pr_summary_md.trim() : '';
     if (!md) return '';
     const renderMd = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
       ? (s) => DevChat.renderMarkdown(s)
       : (s) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(s)}</pre>`;
-    return `<div class="dev-issue-body">${renderMd(md)}</div>`;
+    const { text, blocks } = AppView._splitExplainBlocks(md);
+    let src = md;
+    if (blocks.length) {
+      if (opts.blocks === 'native') src = text;
+      else {
+        const rb = AppView._reactDevBoard();
+        const tail = rb && typeof rb.explainBlocksToMarkdown === 'function' ? rb.explainBlocksToMarkdown(blocks) : '';
+        src = tail ? (text ? `${text}\n\n${tail}` : tail) : md;
+      }
+    }
+    if (!src) return '';
+    return `<div class="dev-issue-body">${renderMd(src)}</div>`;
+  },
+
+  // The summary's words and its blocks, through the React bridge where the
+  // validator lives (lib/explain-blocks.ts). No bridge: the words as given
+  // and no blocks.
+  _splitExplainBlocks(md) {
+    const rb = AppView._reactDevBoard();
+    if (rb && typeof rb.splitExplainBlocks === 'function') {
+      try {
+        const out = rb.splitExplainBlocks(md);
+        if (out && typeof out.text === 'string' && Array.isArray(out.blocks)) return out;
+      } catch (err) { /* fall through: the words as given */ }
+    }
+    return { text: typeof md === 'string' ? md : '', blocks: [] };
   },
 
   // First-session run-through, 4 Oct 2026: the summary on a first version
@@ -13402,8 +13436,11 @@ const AppView = {
   // rest. `html` is DevChat.renderMarkdown's output, sanitised where built.
   _changeSummaryView(item) {
     const { lead, more } = AppView._summaryParts(item);
-    const summaryHtml = AppView._proposalSummaryHtml({ pr_summary_md: lead });
-    if (!more) return { summaryHtml, summaryMore: null };
+    // #4098: the lead's blocks come off its words here and the hero draws
+    // them natively (topic/explain-blocks.tsx); the words render as before.
+    const summaryBlocks = AppView._splitExplainBlocks(lead).blocks;
+    const summaryHtml = AppView._proposalSummaryHtml({ pr_summary_md: lead }, { blocks: 'native' });
+    if (!more) return { summaryHtml, summaryBlocks, summaryMore: null };
     const id = Number(item && item.id);
     const hasStableId = Number.isInteger(id) && id > 0;
     const renderMd = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
@@ -13411,6 +13448,7 @@ const AppView = {
       : (s) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(s)}</pre>`;
     return {
       summaryHtml,
+      summaryBlocks,
       summaryMore: {
         id: hasStableId ? id : null,
         open: hasStableId && AppView._summaryMoreOpen.has(id),

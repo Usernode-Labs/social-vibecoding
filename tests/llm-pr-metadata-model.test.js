@@ -97,3 +97,29 @@ test('a fallback-served answer is billed at the model that answered', async () =
   const out = await withClient(c, () => llm.generatePrMetadata({ userRequest: 'x', ccSummary: 'y' }));
   assert.equal(out.model, 'claude-opus-5-5');
 });
+
+test('#4098: the prompt asks for the explanation blocks as data, and says most changes need none', async () => {
+  const c = client([reply()]);
+  const out = await withClient(c, () => llm.generatePrMetadata({ userRequest: 'x', ccSummary: 'y' }));
+  const { system } = c.calls[0].params;
+  assert.match(system, /blocks: an array of at most TWO objects/);
+  assert.match(system, /Most changes need none/);
+  assert.match(system, /"kind": "comparison"/);
+  assert.match(system, /"kind": "steps"/);
+  assert.match(system, /"kind": "table"/);
+  assert.match(system, /"terms"\?: \[\{"term": "\.\.\.", "meaning": "\.\.\."\}\]/, 'the definitions the request asked for');
+  assert.match(system, /The summary must stand on its own without them/);
+  assert.match(system, /\{"title": "\.\.\.", "body": "\.\.\.", "summary": "\.\.\.", "blocks": \[\.\.\.\]\}/, 'the response line names them');
+  assert.deepEqual(out.blocks, [], 'an answer without them is no blocks');
+});
+
+test('#4098: blocks in the answer come back validated', async () => {
+  const answer = JSON.stringify({
+    title: 'Verified votes', body: '- x',
+    summary: 'Votes on public apps count only from verified people.',
+    blocks: [{ kind: 'steps', steps: ['Votes', 'Asked for a phone', 'Verifies', 'The vote counts'], extra: true }],
+  });
+  const c = client([reply({ content: [{ type: 'text', text: answer }] })]);
+  const out = await withClient(c, () => llm.generatePrMetadata({ userRequest: 'x', ccSummary: 'y' }));
+  assert.deepEqual(out.blocks, [{ kind: 'steps', steps: ['Votes', 'Asked for a phone', 'Verifies', 'The vote counts'] }]);
+});

@@ -139,8 +139,26 @@ test('an over-long summary is capped rather than costing the submission', () => 
   // refusing a finished push over a long field.
   const { parse, max } = loadParseImportSummary();
   assert.ok(max > 0 && max < 4000, 'much smaller than the testing note cap');
+  // #4098: room for the sentences and an `explain` fence holding two blocks
+  // at their limits, which the earlier 600 cut in half.
+  assert.equal(max, 2400);
   const long = 'x'.repeat(max + 500);
   assert.equal(parse({ summary: long }).length, max);
+});
+
+test('#4098: the import callers store an explain fence canonically and keep a cut one as text', () => {
+  const explainBlocks = require('../src/services/explain-blocks');
+  const { parse, max } = loadParseImportSummary();
+  const steps = { kind: 'steps', steps: ['Votes', 'Verifies'] };
+  const sent = `Words.\n\n\`\`\`explain\n${JSON.stringify({ v: 1, blocks: [{ ...steps, colour: 'x' }] }, null, 2)}\n\`\`\``;
+  assert.equal(explainBlocks.normalize(parse({ summary: sent })), explainBlocks.embed('Words.', [steps]));
+  const cut = parse({ summary: `${'w'.repeat(max - 20)}\n\n\`\`\`explain\n${JSON.stringify({ v: 1, blocks: [steps] })}\n\`\`\`` });
+  assert.equal(cut.length, max);
+  assert.equal(explainBlocks.normalize(cut), cut, 'a fence the cap cut open is plain text, not a broken block');
+  assert.equal(explainBlocks.normalize(parse({})), null, 'no summary stays null');
+  for (const src of [VOTES_SRC, read('src/routes/proposal-handoff.js')]) {
+    assert.match(src, /explainBlocks\.normalize\((?:require\('\.\/votes'\)\.)?parseImportSummary\(/, 'every caller normalises');
+  }
 });
 
 test('the import writes the summary to the column the About sheet reads', () => {
@@ -149,7 +167,9 @@ test('the import writes the summary to the column the About sheet reads', () => 
     VOTES_SRC.indexOf('RETURNING id, status')
   );
   assert.match(insert, /pr_summary_md/, 'the column is in the imported-proposal insert');
-  assert.match(VOTES_SRC, /const importSummary = parseImportSummary\(req\.body\)/);
+  // #4098: stored canonically (an `explain` fence re-serialised, an invalid
+  // one kept as text), so the caller normalises what the parser returns.
+  assert.match(VOTES_SRC, /const importSummary = explainBlocks\.normalize\(parseImportSummary\(req\.body\)\)/);
   assert.match(VOTES_SRC, /\n\s*importSummary,\n/, 'and its value is bound');
 });
 

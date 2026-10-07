@@ -11128,7 +11128,18 @@ change on this branch does for someone using the app.
     ("Done", "I updated…"), list files, quote commit hashes, or report
     check results; that belongs in the rest of your message.
   - Put it after the rest of your message and BEFORE the testing block,
-    which stays last. Skip it when you changed no files.`;
+    which stays last. Skip it when you changed no files.
+  - It may END with one fenced code block whose language is explain, holding
+    one JSON object {"v": 1, "blocks": [...]} with at most two blocks, only
+    when one explains the change better than another sentence would; most
+    changes need none. Every string is one short plain line, no Markdown,
+    at most 120 characters (a title at most 60). The shapes:
+    {"kind": "comparison", "title"?, "rows": [{"who", "before", "after"}]
+    (1 to 6), "terms"?: [{"term", "meaning"}] (0 to 4)} when people or
+    situations get different outcomes before and after; {"kind": "steps",
+    "title"?, "steps": [...]} (2 to 7) for a path a person follows;
+    {"kind": "table", "title"?, "columns": [...] (2 to 4), "rows": [[...]]
+    (1 to 6, one cell per column)} only when neither fits.`;
 
 // A build the Mayor dispatches. It replaced the platform's first prompt
 // (2026-04-25: "Spend minimal time reading files … stage everything with

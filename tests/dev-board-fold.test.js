@@ -1483,9 +1483,15 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // nothing to fold it into. The ceiling went 860 → 880 with it
   // (services/app-manifest.js), leaving 36 slots.
   //
+  // 844 → 845: +1 (#4098): a change's explanation blocks on the proposal
+  // page (the Before and after card, its Terms, the numbered Steps under the
+  // summary, on mock 9000001). Folding it into that route's one check put
+  // its selector past the 256 characters the runner reads, so it is a check
+  // of its own. 845 leaves 35 slots.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 844);
+  checkCap.assertPinned(DAPP.tests.length, 845);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

@@ -21,6 +21,8 @@
 // on the text testing-notes has already cleaned, because the testing block is
 // the one that must come last.
 
+const explainBlocks = require('./explain-blocks');
+
 const DESCRIPTION_MAX = 4000;
 // How much of a turn's raw message the fallback keeps when no block was given.
 const FALLBACK_MAX = 1500;
@@ -67,7 +69,9 @@ function extract(text) {
   const description = text.slice(blockStart, blockEnd).trim();
   return {
     cleanedText,
-    description: description ? clip(description, DESCRIPTION_MAX) : null,
+    // #4098: an `explain` fence the agent ended with is stored canonically;
+    // one the clip cut, or one that does not validate, stays as plain text.
+    description: description ? explainBlocks.normalize(clip(description, DESCRIPTION_MAX)) : null,
   };
 }
 

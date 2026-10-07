@@ -47,6 +47,7 @@
 // group has read.
 
 const log = require('./logger');
+const explainBlocks = require('./explain-blocks');
 const summaryFreshness = require('./summary-freshness');
 const externalAgentHead = require('./external-agent-head');
 const visibleChangesContract = require('./visible-changes');
@@ -769,8 +770,12 @@ async function applyProposedSummary({ pool, gh, owner, repo, session, summary, v
 // leads with none, the summary is prepended, which is the shape pr-metadata
 // gives a retained summary. Returns null on success or nothing to do, else a
 // reason. Best-effort: the summary itself is already stored.
-async function syncSummaryIntoBody({ pool, gh, owner, repo, session, summary, previousSummary }) {
+async function syncSummaryIntoBody({ pool, gh, owner, repo, session, summary: storedSummary, previousSummary: storedPrevious }) {
   if (String(session.source) === 'imported' || !session.pr_number || !gh || !owner || !repo) return null;
+  // #4098: GitHub leads with the summary's own form, its blocks as a table
+  // and a list rather than the `explain` fence the column stores.
+  const summary = explainBlocks.forGitHub(storedSummary);
+  const previousSummary = storedPrevious ? explainBlocks.forGitHub(storedPrevious) : storedPrevious;
   let existing;
   try {
     const pr = await gh.getPR(owner, repo, session.pr_number);

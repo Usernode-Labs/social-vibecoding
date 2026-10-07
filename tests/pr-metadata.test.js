@@ -1448,3 +1448,61 @@ test('a STALE author summary is replaced by a regeneration, as it always could b
     restore();
   }
 });
+
+// ---- #4098: the explanation's structured blocks ----
+
+test('a draft with blocks stores them as the summary\'s fence and leads the PR body with their Markdown', async () => {
+  const explainBlocks = require('../src/services/explain-blocks');
+  const githubCalls = [];
+  const steps = { kind: 'steps', title: 'Path', steps: ['Votes', 'Verifies', 'The vote counts'] };
+  const { subject, restore } = loadWithStubs({
+    onGenerate: () => {}, githubCalls,
+    generate: async () => ({
+      title: 'Verified votes', body: 'Cumulative body',
+      summary: 'Votes on public apps count only from verified people.',
+      blocks: [steps, { kind: 'steps', steps: ['only one'] }],
+      usage: undefined, model: 'claude-sonnet-5-5',
+    }),
+  });
+  try {
+    const pool = mockPool([{ role: 'user', content: 'x', metadata: {} }], {});
+    const session = { id: 1, branch_name: 'feat/x', pr_number: null };
+    await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'x', ccSummary: 'y', username: 'evan',
+    });
+    const stored = explainBlocks.embed('Votes on public apps count only from verified people.', [steps]);
+    assert.ok(stored.includes('```explain'), 'the fixture carries the fence');
+    const upd = pool.queries.find((q) => /UPDATE chat_sessions SET pr_number/.test(q.sql));
+    assert.equal(upd.params[6], stored, 'the column stores the words and the fence; the invalid block is gone');
+    assert.equal(
+      githubCalls[0].opts.body,
+      'Votes on public apps count only from verified people.\n\n**Path**\n\n1. Votes\n2. Verifies\n3. The vote counts\n\n'
+      + 'Cumulative body\n\n---\n_Dev session by evan via Usernode_',
+      'GitHub gets the words, then the blocks as a list, never the fence'
+    );
+  } finally {
+    restore();
+  }
+});
+
+test('a draft without blocks is byte-identical to before', async () => {
+  const githubCalls = [];
+  const { subject, restore } = loadWithStubs({
+    onGenerate: () => {}, githubCalls,
+    generate: async () => ({ title: 'T', body: 'Cumulative body', summary: 'Plain words.', blocks: [], usage: undefined, model: 'm' }),
+  });
+  try {
+    const pool = mockPool([{ role: 'user', content: 'x', metadata: {} }], {});
+    const session = { id: 1, branch_name: 'feat/x', pr_number: null };
+    await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'x', ccSummary: 'y', username: 'evan',
+    });
+    const upd = pool.queries.find((q) => /UPDATE chat_sessions SET pr_number/.test(q.sql));
+    assert.equal(upd.params[6], 'Plain words.');
+    assert.equal(githubCalls[0].opts.body, 'Plain words.\n\nCumulative body\n\n---\n_Dev session by evan via Usernode_');
+  } finally {
+    restore();
+  }
+});

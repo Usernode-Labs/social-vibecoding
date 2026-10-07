@@ -281,3 +281,17 @@ test('the route reads with the app view rule and is mounted', () => {
   assert.equal(demo.state, 'ai');
   assert.match(demo.text, /^Staging demo:/);
 });
+
+test('#4098: the excerpt the model reads carries a summary\'s words, never its explain fence', async () => {
+  await withModel(async (calls) => {
+    const fence = '```explain\n{"v":1,"blocks":[{"kind":"steps","steps":["a","b"]}]}\n```';
+    const merged = [1, 2, 3, 4, 5].map((n) => change(n, NOW - n * HOUR, { summary: `Summary ${n}.\n\n${fence}` }));
+    const pool = fakePool({ merged });
+    await since.getSummary(pool, APP, { since: visit, now: NOW });
+    assert.equal(calls.length, 1);
+    for (const c of calls[0].changes) {
+      assert.doesNotMatch(c.summary, /explain|blocks/);
+      assert.match(c.summary, /^Summary \d\.$/);
+    }
+  });
+});

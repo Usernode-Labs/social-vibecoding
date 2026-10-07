@@ -69,6 +69,9 @@ const clip = (s, n) => {
   const t = String(s || '').replace(/\s+/g, ' ').trim();
   return t.length > n ? `${t.slice(0, n - 1).trimEnd()}…` : t;
 };
+// A summary's fenced blocks (#4098, its `explain` fence) are not its words:
+// off before the excerpt, so the model reads sentences, not JSON.
+const withoutFences = (s) => String(s || '').replace(/```[\s\S]*?(?:```|$)/g, ' ');
 const toMs = (v) => (v instanceof Date ? v.getTime() : Date.parse(v));
 
 /**
@@ -95,7 +98,7 @@ async function fetchWindow(pool, appId, fromMs) {
     changes: rows.map((r) => ({
       pr: r.pr_number || null,
       title: clip(r.pr_title, TITLE_MAX),
-      summary: clip(r.pr_summary_md, EXCERPT_MAX) || null,
+      summary: clip(withoutFences(r.pr_summary_md), EXCERPT_MAX) || null,
     })),
   };
 }

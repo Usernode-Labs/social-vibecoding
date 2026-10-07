@@ -2255,6 +2255,12 @@
       "expectText": "Explore in a coding agent"
     },
     {
+      "name": "A change's explanation blocks (#4098): under the summary, the Before and after card, its Terms and the numbered Steps are drawn as the shell's list rows",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000001",
+      "expectSelector": "#gc-thread-head .dev-topic-hero > .dev-topic-hero-summary + [data-topic-part=\"summary-blocks\"] > h2 + [data-explain-block=\"comparison\"] ~ [data-explain-block=\"terms\"] ~ h2 + [data-explain-block=\"steps\"]",
+      "expectText": "Before and after"
+    },
+    {
       "name": "At-least-approvals proposal renders the approvals pill (#646)",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000023",
       "expectText": "of 1 approval"

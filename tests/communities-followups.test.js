@@ -177,3 +177,16 @@ test('#3271, #852: the Communities screen\'s header is its switcher, at every wi
   assert.doesNotMatch(read('frontend/src/features/workshop/index.tsx'), /AllAppsScope|id="workshop-scope"/);
   assert.doesNotMatch(read('public/css/app.css'), /#workshop-scope\b/);
 });
+
+test('#4098: a card shows a summary\'s words alone, its explain fence off, even one a cap cut open', () => {
+  const reel = loadTsx('frontend/src/features/workshop/needs-reel.tsx');
+  const fence = '```explain\n{"v":1,"blocks":[{"kind":"steps","steps":["a","b"]}]}\n```';
+  assert.equal(reel.plainSummary(`Words first.\n\n${fence}`), 'Words first.');
+  assert.equal(reel.plainSummary('Words first.\n\n```explain\n{"v":1,"blocks":[{"kind":"st'), 'Words first.',
+    'an unclosed fence (the feed\'s 2000-char cut) is off too');
+  const app = { slug: 'g', name: 'G', icon_url: null, icon_emoji: null };
+  const [row] = reel.reelRows([
+    { kind: 'proposal', id: 8, title: 'Sort', summary: `Words first.\n\n${fence}`, author: 'ada', number: 12, epoch: 3, at: null, yes: 2, no: 1, app },
+  ], (md) => `<p>${md}</p>`);
+  assert.equal(row.summary, 'Words first.');
+});

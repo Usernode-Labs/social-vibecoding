@@ -46,6 +46,7 @@ import { topicHeadStore } from './topic-store';
 import { ChangeConversation } from './conversation';
 import { TopicBack } from './topic-back';
 import { DescriptionEditor } from './description-editor';
+import { ExplainBlocks } from './explain-blocks';
 import type {
   ChecksVerdict,
   CheckRow,
@@ -1114,6 +1115,9 @@ function ChangeHero({ id, card, body, linkedIssues, onIssuesSaved }: {
         : null}
       {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
       <Html className="dev-topic-hero-summary dev-topic-about-body" data-topic-part="summary" html={body.summaryHtml || ''} />
+      {/* #4098: the explanation's blocks, under its words, as the shell's
+          own lists; nothing when the summary has none. */}
+      <ExplainBlocks blocks={body.summaryBlocks} />
       {body.summaryMore ? <SummaryMore m={body.summaryMore} /> : null}
       {body.summaryStale && body.summaryHtml
         ? <p className="dev-topic-note" role="note">This summary may describe an earlier revision.</p>
@@ -1793,6 +1797,7 @@ export function TopicBodySections({ body }: { body: TopicBody }): ReactNode {
             <>
               <h5 className="dev-topic-sub">What changes for you</h5>
               <Html className="dev-topic-about-body" html={summaryHtml} />
+              <ExplainBlocks blocks={body.summaryBlocks} />
             </>
           ) : null}
           {issueEditor ? <IssueBody key={issueEditor.issue} html={issueHtml || ''} editor={issueEditor} />

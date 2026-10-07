@@ -1,6 +1,7 @@
 'use strict';
 
 const summaryFreshness = require('./summary-freshness');
+const explainBlocks = require('./explain-blocks');
 const proposalUpdate = require('./proposal-update');
 const github = require('./github');
 const { serializeHandoffSubmission } = require('./handoff-pipeline');
@@ -22,7 +23,9 @@ function parseEdit(body) {
   if (!Number.isSafeInteger(body.expectedVersion) || body.expectedVersion < 0) {
     throw new Error('Read the current description and send its expectedVersion.');
   }
-  return { description: body.description.trim(), expectedVersion: body.expectedVersion };
+  // #4098: an `explain` fence is stored canonically; one that does not
+  // validate stays the plain text the author typed, so they can fix it.
+  return { description: explainBlocks.normalize(body.description.trim()), expectedVersion: body.expectedVersion };
 }
 
 async function readEditable(pool, sessionId, userId) {

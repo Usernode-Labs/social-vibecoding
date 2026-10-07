@@ -861,9 +861,10 @@ test('an update may carry a summary, capped exactly as the import caps it', () =
     assert.equal(subject.parseUpdateFromForkBody({ branch: 'dev/x', summary: '   ' }).summary, null,
       'blank is "said nothing", never "blank it"');
     const { MAX_IMPORT_SUMMARY } = require('../src/routes/votes');
-    assert.equal(MAX_IMPORT_SUMMARY, 600);
+    // #4098: room for the sentences and an `explain` fence holding two blocks.
+    assert.equal(MAX_IMPORT_SUMMARY, 2400);
     assert.equal(subject.parseUpdateFromForkBody({
-      branch: 'dev/x', summary: 'y'.repeat(2000),
+      branch: 'dev/x', summary: 'y'.repeat(3000),
     }).summary.length, MAX_IMPORT_SUMMARY);
     assert.throws(() => subject.parseUpdateFromForkBody({ branch: 'dev/x', summary: 42 }), /summary/);
   } finally { restore(); }

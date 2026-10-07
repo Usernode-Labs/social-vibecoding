@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const explainBlocks = require('../services/explain-blocks');
 const express = require('express');
 const { getPool } = require('../db/pool');
 const appAccess = require('../services/app-access');
@@ -421,7 +422,7 @@ function parseShareInProgressBody(body) {
   if (body.summary != null && typeof body.summary !== 'string') {
     throw new ValidationError('summary must be a string');
   }
-  const summary = require('./votes').parseImportSummary(body);
+  const summary = explainBlocks.normalize(require('./votes').parseImportSummary(body));
   // Which coding agent wrote it — a badge, resolved by the connector service
   // and carried through so the shared card reads the same as a proposal from
   // the same agent. Bounded like any other caller-supplied label.
@@ -494,7 +495,7 @@ function parseUpdateFromForkBody(body) {
   if (body.summary != null && typeof body.summary !== 'string') {
     throw new ValidationError('summary must be a string');
   }
-  const summary = require('./votes').parseImportSummary(body);
+  const summary = explainBlocks.normalize(require('./votes').parseImportSummary(body));
   // #1323. A re-run of the checks against the commit already on the proposal.
   // Until this existed the only way an agent could get one was to CHANGE a
   // capture route so the testing-metadata write happened to trigger it.

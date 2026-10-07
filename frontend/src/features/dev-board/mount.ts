@@ -24,6 +24,8 @@
  * Node, and this file is in it.
  */
 
+import { split as splitExplain, toMarkdown as explainToMarkdown } from '../../lib/explain-blocks';
+import type { ExplainBlock } from '../../lib/explain-blocks';
 import { createElement } from 'react';
 import { flushSync } from 'react-dom';
 
@@ -89,6 +91,8 @@ export interface MountBoardOptions extends DevBoardFrameProps {
 }
 
 export interface DevBoardBridge {
+  splitExplainBlocks(md: unknown): { text: string; blocks: ExplainBlock[] };
+  explainBlocksToMarkdown(blocks: unknown): string;
   mountBoard(host: Element | null, options: MountBoardOptions): void;
   mountChatSubView(host: Element | null): void;
   mountTopicSubView(
@@ -376,6 +380,12 @@ export const devBoardBridge: DevBoardBridge = {
     aiEnabledStore.set({ enabled });
   },
 
+  // #4098: a change's explanation blocks. app-view.js splits the summary
+  // through these so the hero draws the blocks natively and an HTML-only
+  // sink shows them as Markdown; absent (a stale shell), the fence renders
+  // as the code block it is.
+  splitExplainBlocks: splitExplain,
+  explainBlocksToMarkdown: explainToMarkdown,
   publishViewMode,
   publishWorkshopGroup,
   publishInviteOffer,
