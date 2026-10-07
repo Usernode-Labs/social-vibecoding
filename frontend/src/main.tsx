@@ -99,6 +99,9 @@ import './features/app-frame/mount';
 // must exist before DOMContentLoaded (the earliest App.init() can navigate) —
 // module scope here, not first render of the header island.
 import './features/header/mount';
+// Publishes window.UsernodeReact.verifyIdentity: the sheet a public vote the
+// verified-identity rule refused opens (public/js/app-view.js castVote).
+import './features/auth/verify-identity';
 // The platform tab bar's bridge: publishes window.UsernodeReact.nav. Same
 // window as the header's — App._syncPlatformTabs() runs inside
 // PlatformUI.transition's reveal callback on every screen swap, the earliest
@@ -156,6 +159,10 @@ import './features/dev-chat/dev-chat.js';
 // route, not only on one screen's first reveal. Its listener is guarded, so
 // an anonymous document costs it nothing.
 import './features/auth/username-first-run.js';
+// The verified-identity rule's "Add your phone number", the first step on a
+// phone after the username and the terms, before the communities step below
+// (which waits on it), imported here for the same two reasons.
+import './features/auth/phone-first-run';
 // Communities, stage 5: "What communities do you want to join?", the step
 // after the username and the terms, imported here for the same two reasons.
 import './features/auth/communities-first-run.js';

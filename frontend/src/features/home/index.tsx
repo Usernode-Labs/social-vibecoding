@@ -92,6 +92,7 @@ import { AppsMore } from './apps-more';
 import { GettingStarted } from './getting-started';
 import { ChallengesSection, DiscoverSection } from './panels/sections';
 import { SectionHeading } from './panels/ui';
+import { VerifyCard } from './verify-card';
 import { WaitlistCard } from './waitlist-card';
 import { WidgetStrip } from './widget-strip';
 
@@ -279,6 +280,12 @@ export function HomeScreen() {
             Challenges (src/routes/home-panels.js leaves it out).
         */}
         <WaitlistCard />
+        {/*
+            "VERIFY YOUR ACCOUNT" (./verify-card.tsx): a member the
+            verified-identity rule holds to it adds a phone here, or links
+            GitHub and X. Nothing in the prerender, like the card above.
+        */}
+        <VerifyCard />
         {/*
             ── AREAS 2-3: DISCOVER, CHALLENGES ────────────────────────
 

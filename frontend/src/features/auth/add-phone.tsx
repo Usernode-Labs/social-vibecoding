@@ -41,9 +41,12 @@ const QUIET = 'py-1 text-[15px] font-medium text-violet-700 dark:text-violet-400
 
 const RESEND_MS = 60 * 1000;
 
-export function AddPhoneCard({ groups, onJoined }: {
+export function AddPhoneCard({ groups, title: titleOverride, lead, onJoined }: {
   /** The groups this account is queued for, the first named in the title. */
   groups: readonly string[];
+  /** Instead of "Join … now": the verify sheet before a public vote (./verify-identity.tsx). */
+  title?: string;
+  lead?: string;
   onJoined: (joined: JoinedGroup[]) => void;
 }) {
   const [step, setStep] = useState<'phone' | 'code'>('phone');
@@ -55,7 +58,7 @@ export function AddPhoneCard({ groups, onJoined }: {
   const phoneField = useRef<HTMLInputElement>(null);
   const codeField = useRef<HTMLInputElement>(null);
 
-  const title = groups.length === 1 ? `Join ${groups[0]} now` : 'Join them now';
+  const title = titleOverride || (groups.length === 1 ? `Join ${groups[0]} now` : 'Join them now');
 
   async function requestCode(raw: string) {
     setError(null);
@@ -118,7 +121,7 @@ export function AddPhoneCard({ groups, onJoined }: {
       <h2 className="text-[17px] font-[650] text-zinc-900 dark:text-zinc-100">{step === 'phone' ? title : 'Check your texts'}</h2>
       <p className="mt-1 text-[15px] leading-snug text-zinc-500 dark:text-zinc-400">
         {step === 'phone'
-          ? 'Add your phone number and you’re in, no waiting. The group sees your name, never your number.'
+          ? lead || 'Add your phone number and you’re in, no waiting. The group sees your name, never your number.'
           : `We sent a 6-digit code to the number ending ${number.slice(-4)}.`}
       </p>
       {step === 'phone' ? (

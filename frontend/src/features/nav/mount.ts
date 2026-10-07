@@ -118,6 +118,14 @@ if (typeof window !== 'undefined') {
       if (!!on !== navStore.get().privateMember) navStore.set({ privateMember: !!on });
     },
     /**
+     * Whether the verified-identity rule holds the viewer to it
+     * (nav-store.js): written by `App._syncViewer()`, and cleared by the
+     * phone sheets once a number is linked.
+     */
+    setIdentityNeeded(on: boolean) {
+      if (!!on !== navStore.get().identityNeeded) navStore.set({ identityNeeded: !!on });
+    },
+    /**
      * Offer `app` above the tab bar until it is resumed or dismissed, or
      * clear the offer with null.
      *

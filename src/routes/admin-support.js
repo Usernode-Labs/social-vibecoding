@@ -86,7 +86,9 @@ const HEADER_SQL = `
          u.created_at, u.is_admin, u.admin_readonly, u.usernode_pubkey, u.exclude_podium,
          EXISTS (SELECT 1 FROM user_social_identities gh WHERE gh.user_id = u.id AND gh.provider = 'github') AS has_github,
          EXISTS (SELECT 1 FROM user_social_identities xi WHERE xi.user_id = u.id AND xi.provider = 'x') AS has_x,
-         EXISTS (SELECT 1 FROM user_activities zk WHERE zk.user_id = u.id AND zk.source = 'zkpassport') AS has_zkpassport
+         EXISTS (SELECT 1 FROM user_activities zk WHERE zk.user_id = u.id AND zk.source = 'zkpassport') AS has_zkpassport,
+         EXISTS (SELECT 1 FROM user_phone_identities ph WHERE ph.user_id = u.id) AS has_phone,
+         identity_rule_exempt(u.id) AS identity_exempt
     FROM users u
    WHERE u.id = $1`;
 
