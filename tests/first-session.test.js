@@ -147,10 +147,12 @@ test('a new user\'s tour, numbered as its card numbers it, with what each step c
     { screen: 'home', target: '#platform-tab-workshop', alongside: undefined, endsAbove: undefined, press: undefined, tap: 'Tap Communities', title: 'Your group lives in Communities' },
     // 5: the hub whole, with its header, down to the tab bar.
     { screen: 'hub', target: '#app-content', alongside: SCREEN_HEADER, endsAbove: BOTTOM_BARS, press: undefined, tap: undefined, title: 'The Friday Film Crew hub' },
-    { screen: 'hub', target: '#platform-tab-messages', alongside: undefined, endsAbove: undefined, press: undefined, tap: 'Tap Messages', title: 'Homeroom bot is in Messages' },
+    { screen: 'hub', target: '#platform-tab-messages', alongside: undefined, endsAbove: undefined, press: undefined, tap: 'Tap Messages', title: 'Your Homeroom Assistant' },
     // 7: the chat with Homeroom bot, with the header over it.
     { screen: 'bot', target: `${BOT_CHAT_HEADER}, ${BOT_CHAT_MESSAGES}`, alongside: SCREEN_HEADER, endsAbove: undefined, press: undefined, tap: undefined, title: 'Your chat with Homeroom bot' },
   ]);
+  // 6: the assistant lives in Messages, and names the app it is building.
+  assert.equal(steps[5].text, 'It can always be found in Messages. It\'s currently building Friday Film Crew.');
   // The invited path's close and hub steps are the same cut-outs.
   const { invitedSteps } = loadTsx(`${DIR}/tour-steps.ts`);
   const invited = invitedSteps({ slug: 'film', name: 'Friday Film Crew' });

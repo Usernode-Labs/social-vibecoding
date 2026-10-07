@@ -294,8 +294,8 @@ export function makerSteps({ slug, name, conversationId }: TourProject): TourSte
     {
       screen: 'hub',
       target: '#platform-tab-messages',
-      title: 'Homeroom bot is in Messages',
-      text: `It's building ${name} now.`,
+      title: 'Your Homeroom Assistant',
+      text: `It can always be found in Messages. It's currently building ${name}.`,
       tap: 'Tap Messages',
       opensNext: true,
     },
