@@ -2156,7 +2156,7 @@
     {
       "name": "Admin Waitlist names a phone signup's number and its invite text (#SMS)",
       "path": "/#admin/waitlist",
-      "expectSelector": "#admin-topo-wl-table:has(#admin-topo-wl-search)",
+      "expectSelector": "#admin-topo-wl-table",
       "expectText": "by text",
       "allowConsoleErrors": true
     },

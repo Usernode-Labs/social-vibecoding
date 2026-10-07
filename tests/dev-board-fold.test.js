@@ -1464,9 +1464,19 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // with no check on it to fold into. MAX_DECLARED_TESTS went 860 → 870 in
   // the same change (services/app-manifest.js), so 841 leaves 29 slots.
   //
+  // 841 → 843: +2 (#SMS): the phone channel on the waitlist. One check pins
+  // the join screen's channel switch and number field on the
+  // ?shot=waitlist-phone state; the other pins the admin Waitlist row naming
+  // its phone signup ("by text") and the "Invite text:" line. Both are new
+  // STATES on routes that already exist, but neither route had an SMS half to
+  // fold into — the switch and the number field are new markup on the join
+  // form, and the phone column is new on the admin table — so they are two
+  // declared checks rather than extensions of the existing ones. 843 leaves
+  // 27 slots against MAX_DECLARED_TESTS (870).
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 841);
+  checkCap.assertPinned(DAPP.tests.length, 843);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

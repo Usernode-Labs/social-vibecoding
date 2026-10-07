@@ -59,10 +59,17 @@ test('#1548: the release link carries a TOKEN in a query, not the address', () =
 test('#1548: the release path supplies the token it promises', () => {
   // The mail can only carry a token the caller hands it, so the release
   // query has to return one and the admin route has to pass it on.
-  assert.match(read('src/services/waitlist.js'), /RETURNING w\.id, w\.email, w\.released_at, w\.linked_user_id, w\.more_token,/,
-    'releaseWaitlistSignup returns more_token');
+  // #SMS added `phone_e164` to the returned row (the channel-aware release
+  // notice reads it to choose a text over the mail), so the shape is matched
+  // field by field rather than as one frozen run: the two columns this test
+  // is about — `email` and `more_token` — must be there, in the query under
+  // `releaseWaitlistSignup`, whether or not a channel column now sits between
+  // them.
+  const release = read('src/services/waitlist.js');
+  assert.match(release, /RETURNING w\.id, w\.email,[\s\S]*?w\.more_token,/,
+    'releaseWaitlistSignup returns the address and its more_token');
   assert.match(read('src/routes/topochain/admin/waitlist.js'), /moreToken: released\.more_token \|\| null,/,
-    'the release route passes it to the mail');
+    'the release notice passes the token to the mail');
 });
 
 test('signup is a login-screen route and the segment reaches the screen', () => {

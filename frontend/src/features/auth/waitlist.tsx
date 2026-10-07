@@ -1229,32 +1229,40 @@ export function WaitlistScreen() {
                 : 'hidden'
             }
           >
-            <button
+            {/*
+                Both segments route through <Button>; only the CURRENT one
+                takes the accent (`pill` — the same `rounded-md
+                bg-violet-600` box the switch is drawn with), the other stays
+                on the same metrics and goes muted. The cva group order emits
+                exactly this string for the active half, so the rendered class
+                attribute is what the hand-written version wrote. The segment
+                takes no hover fill of its own beyond the primitive's, which is
+                the decision the shell sets for a segmented control (see the
+                Kudos pane's toggles): a segment's fill is not a primary
+                button's fill.
+            */}
+            <Button
               id="waitlist-channel-email"
               type="button"
+              variant={channel === 'email' ? 'pill' : 'unstyled'}
+              size="xs"
+              ink={channel === 'email' ? 'solid' : 'muted'}
               aria-pressed={channel === 'email'}
               onClick={() => setChannel('email')}
-              className={
-                channel === 'email'
-                  ? 'rounded-md bg-violet-600 px-3 py-1 text-sm font-medium text-white'
-                  : 'rounded-md px-3 py-1 text-sm font-medium text-zinc-600 dark:text-zinc-300'
-              }
             >
               Email
-            </button>
-            <button
+            </Button>
+            <Button
               id="waitlist-channel-phone"
               type="button"
+              variant={channel === 'phone' ? 'pill' : 'unstyled'}
+              size="xs"
+              ink={channel === 'phone' ? 'solid' : 'muted'}
               aria-pressed={channel === 'phone'}
               onClick={() => setChannel('phone')}
-              className={
-                channel === 'phone'
-                  ? 'rounded-md bg-violet-600 px-3 py-1 text-sm font-medium text-white'
-                  : 'rounded-md px-3 py-1 text-sm font-medium text-zinc-600 dark:text-zinc-300'
-              }
             >
               Phone number
-            </button>
+            </Button>
           </div>
           {/*
               The phone field, revealed by the switch. Always in the markup
