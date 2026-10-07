@@ -158,6 +158,16 @@ function packageRunsScript(sourceDir, scriptName) {
   }
 }
 
+// Whether a build reads its `sourceDir` below the root. The source itself
+// never comes from that directory here: kpack is given the repository and
+// revision, and the BuildKit Job fetches the commit itself. The directory is
+// read for two things, package.json's scripts (above) and which Dockerfile
+// the tree carries (buildkit.selectDockerfile), and both sit at the root
+// unless BUILDKIT_DOCKERFILES names a Dockerfile in a subdirectory.
+function buildReadsBelowSourceRoot(config) {
+  return (config?.kubernetes?.buildkitDockerfiles || []).some((name) => /[\\/]/.test(String(name)));
+}
+
 async function deleteBuild(config, name) {
   await deleteIfPresent(
     getClients().custom,
@@ -2617,7 +2627,8 @@ async function execInWorker(config, runtimeName, command, stdinText = null, { ti
 }
 
 module.exports = {
-  dnsName, withSuffix, labels, appResourceName, createBuild, deployApplication, getApplicationStatus, inspectApplication,
+  dnsName, withSuffix, labels, appResourceName, createBuild, buildReadsBelowSourceRoot,
+  deployApplication, getApplicationStatus, inspectApplication,
   getApplicationLogs, getDebugLogs, restartApplication, deleteApplication, deleteBuilds, deleteFailedBuilds, ensureWorker,
   listManagedBuilds, readBuild, deleteBuildSnapshot,
   runCaptureJob, runUnitSuiteJob, cancelPreviewChecks, findCheckJobs, collectCheckJob,
@@ -2626,6 +2637,7 @@ module.exports = {
   listWorkerVolumes, listPreviews, listShotsRuntimes, isQuotaExceeded,
   listStatusResources, listNamespaceCapacity, inspectWorkerTermination, getPlatformDeployStatus,
   _setClientsForTest: setClientsForTest, _envChecksumForTest: envChecksum,
+  _packageRunsScriptForTest: packageRunsScript,
   _attachLineObserverForTest: attachLineObserver,
   _clientsLogApiForTest: clientsLogApi,
   _buildPhasesFromPodForTest: buildPhasesFromPod,
