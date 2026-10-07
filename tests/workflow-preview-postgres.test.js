@@ -379,6 +379,20 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
     await settle();
   });
 
+  await t.test('P12 detached and re-enabled with nothing rebuilt: the instance\'s own attempt is kept, by its own name', async () => {
+    work.answer.set(WORK.run, verdict('passing'));
+    const s = await proposal(await app(), { status: 'active' });
+    await submit(s, SHA('d'));
+    await settle();
+    const before = (await instance(s)).data.serving;
+    await send(s, 'Detach');
+    await rt.drain();
+    await submit(s, SHA('e'));
+    await settle();
+    const retired = (await workOf(s, WORK.retireAttempt)).map((w) => [w.input.n, w.input.db]);
+    assert.deepEqual(retired, [[before.n, before.db]], 'the attempt it built is retired, under the name it was built with');
+  });
+
   await t.test('P9 manual requests: ensure joins what serves, deploy builds again, a recheck waits for the run', async () => {
     const s = await proposal(await app(), { status: 'active' });
     await submit(s, SHA('7'));

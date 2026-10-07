@@ -271,11 +271,16 @@ function errorTimer(d: Data, f: Facts, deps: Deps, ctx: TransitionContext, strea
 function adopt(e: Event<any>, f: Facts, prior: Data | null): Data {
   const s = f.session!;
   const st = s.staging;
-  const serving: Served | null = st.url && st.runtimeName && st.commitSha ? {
+  // A detached instance whose own attempt still serves (nothing rebuilt it
+  // meanwhile) keeps that attempt's record: its database has this
+  // instance's name, not [main]'s.
+  const own = prior?.serving && prior.serving.url === st.url && prior.serving.head === st.commitSha
+    && prior.serving.runtimeName === st.runtimeName ? prior.serving : null;
+  const serving: Served | null = own ?? (st.url && st.runtimeName && st.commitSha ? {
     n: 0, head: st.commitSha, db: legacyDb(f.app!.slug, s.id, st.commitSha), url: st.url,
     runtimeKind: st.runtimeKind || 'docker', runtimeName: st.runtimeName, containerId: st.containerId,
     imageRef: st.imageRef, buildRef: st.buildRef,
-  } : null;
+  } : null);
   return {
     sessionId: s.id, appId: s.appId, appSlug: f.app!.slug, seed: prior?.seed ?? e.id,
     head: serving?.head ?? s.checks.commitSha, trigger: null, last: prior?.last ?? 0,
