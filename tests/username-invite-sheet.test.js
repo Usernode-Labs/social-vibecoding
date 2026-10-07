@@ -67,8 +67,9 @@ test('1. the made screen\'s sheet is a link alone; a username is invited from Me
   assert.equal(made.inviteError, undefined);
   const src = read(MADE);
   assert.doesNotMatch(src, /Invite by username|@username|\/invites`/);
-  assert.match(src, /await postNote\(\);\s+onSent\(\);/);
-  assert.match(src, /onSent=\{\(\) => \{ setSent\(true\); setInviting\(false\); \}\}/);
+  assert.match(src, /await postNote\(\);\s+onSent\(how\);/);
+  // #4196: the made screen is told how it went; the sheet stays open (Done closes it).
+  assert.match(src, /onSent=\{\(how\) => setSentHow\(how\)\}/);
   assert.match(src, /role="status" data-first-session-invite-status=""/);
   assert.match(read('frontend/src/features/dialogs/members-controller.js'), /\/invites`/);
   withStorage({}, () => {
