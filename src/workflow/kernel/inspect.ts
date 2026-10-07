@@ -32,10 +32,11 @@ export interface ProblemOptions { overdueMs?: number; longRunningMs?: number; li
 
 // Everything that needs a person: faulted or stalled instances, held events,
 // deadlines that did not fire, exhausted or long-running work, and
-// ownership violations recorded in log mode.
+// ownership violations recorded in log mode: counted per column, and the
+// latest rows (which row, which application wrote it, when).
 export async function problems(db: Queryable, opts: ProblemOptions = {}) {
   const limit = opts.limit ?? 100;
-  const [flagged, overdue, work, violations] = await Promise.all([
+  const [flagged, overdue, work, violations, latest] = await Promise.all([
     db.query(
       `SELECT i.*, (SELECT count(*) FROM wf_events e
                      WHERE e.machine = i.machine AND e.key = i.key AND e.status = 'held') AS held
@@ -56,6 +57,9 @@ export async function problems(db: Queryable, opts: ProblemOptions = {}) {
     db.query(
       `SELECT table_name, column_path, count(*)::int AS count, max(created_at) AS last_at
          FROM wf_ownership_violations GROUP BY table_name, column_path ORDER BY last_at DESC LIMIT $1`, [limit]),
+    db.query(
+      `SELECT id, table_name, column_path, row_ref, application, left(query, 300) AS query, created_at
+         FROM wf_ownership_violations ORDER BY created_at DESC, id DESC LIMIT $1`, [Math.min(limit, 20)]),
   ]);
   return {
     flagged: flagged.rows.map((r) => ({ ...instanceRow(r), heldEvents: Number(r.held) })),
@@ -66,6 +70,10 @@ export async function problems(db: Queryable, opts: ProblemOptions = {}) {
       createdAt: r.created_at, startedAt: r.started_at, serviceId: r.service_id,
     })),
     ownershipViolations: violations.rows,
+    ownershipViolationRows: latest.rows.map((r) => ({
+      id: Number(r.id), table: r.table_name, column: r.column_path, row: r.row_ref,
+      application: r.application, query: r.query, createdAt: r.created_at,
+    })),
   };
 }
 
