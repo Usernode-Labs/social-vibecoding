@@ -16,6 +16,7 @@
 //     endpoint returns a percentage.
 
 const { NAV_SCREENS } = require('./ui-telemetry');
+const changePerson = require('./change-person');
 const { loadOnboarding } = require('./topochain/challenge-onboarding');
 const { fetchCurrentSeason } = require('../routes/home-panels');
 
@@ -92,24 +93,10 @@ const REAL_VOTER_SQL = `uy.is_admin IS NOT TRUE
   AND NOT (uy.email IS NOT NULL AND (LOWER(split_part(uy.email, '@', 2)) IN (${TEAM_DOMAINS_SQL})
     OR LOWER(regexp_replace(uy.email, '\\+[^@]*@', '@')) IN (${TEAM_ADDRESSES_SQL})))`;
 
-// Who a change is credited to: an expression over `cs` (chat_sessions). A
-// change is its author's, except one the Homeroom bot built. The bot is a
-// synthetic account and the session's author, so its changes used to count
-// for nobody; such a change is the person's who asked for it, recorded in
-// homeroom_bot_requesters for the request it was built from, else whoever
-// filed that request on Homeroom (the same join as
-// topochain/challenge-scorer.js and homeroom-bot.js liveCandidates). A bot
-// build with neither is NULL, and still counts for nobody.
-const CHANGE_PERSON_SQL = `(CASE
-      WHEN EXISTS (SELECT 1 FROM users bu WHERE bu.id = cs.user_id AND bu.is_synthetic)
-      THEN COALESCE(
-        (SELECT r.user_id FROM homeroom_bot_requesters r
-          WHERE r.app_id = cs.app_id AND r.issue_number = cs.created_from_issue_number),
-        (SELECT ri.created_by FROM issues ri
-          WHERE ri.app_id = cs.app_id AND ri.github_issue_number = cs.created_from_issue_number
-          ORDER BY ri.id LIMIT 1))
-      ELSE cs.user_id
-    END)`;
+// Who a change is credited to (its author, or the person a Homeroom bot
+// build was for). Shared with the admin analytics dashboard and funnels:
+// see services/change-person.js.
+const CHANGE_PERSON_SQL = changePerson.CHANGE_PERSON_SQL;
 
 function notRecorded(reason) {
   return { recorded: false, reason };
