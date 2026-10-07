@@ -157,3 +157,20 @@ test('#4238: an empty channel\'s demo stream ends with Homeroom bot\'s first-ver
   assert.ok(!stagingDemoTranscript(7, DEMO_ISSUE, [], app).some((r) => r.id === 9902009), 'a topic never carries it');
   assert.ok(!stagingDemoTranscript(7, null, []).some((r) => r.id === 9902009), 'no app, no line');
 });
+
+test('#4238: the read cursor on the mock first-version line answers from the mock, not a 404', () => {
+  const { stagingMockUnreadCount } = require('../src/routes/chat');
+  assert.equal(stagingMockUnreadCount(7, 9902009, 'read'), 0);
+  assert.equal(stagingMockUnreadCount(7, 9902009, 'unread'), 1, 'just the line itself');
+  assert.equal(stagingMockUnreadCount(7, 9902008, 'unread'), 2, 'the agent row and the line after it');
+});
+
+test('#4238: a permalink or catch-up on the mock first-version line answers from the mock', () => {
+  const { stagingMockStreamPage } = require('../src/routes/chat');
+  const app = { id: 7, slug: 'staging-demo-app', name: 'Staging demo app' };
+  const around = stagingMockStreamPage(7, { around: 9902009, app });
+  assert.deepEqual(around.focus, { message_id: 9902009, thread_ref: null });
+  assert.equal(around.messages[around.messages.length - 1].id, 9902009);
+  assert.ok(stagingMockStreamPage(7, { after: 9902008, app }).messages.some((m) => m.id === 9902009), 'catch-up after the agent row brings it');
+  assert.equal(stagingMockStreamPage(7, { around: 9902009 }), null, 'no app, no line: the real read');
+});

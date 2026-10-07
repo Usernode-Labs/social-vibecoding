@@ -282,8 +282,10 @@ function stagingMockReplyThread(appId, rootId) {
 // on a mock row (or a mock reply, which opens on its root) answers the whole
 // mock transcript with its focus; `after` answers what follows. Null when
 // the id is not a mock one, so the real read runs.
-function stagingMockStreamPage(appId, { around = null, after = null } = {}) {
-  const rows = stagingMockGeneralStream(appId);
+function stagingMockStreamPage(appId, { around = null, after = null, app = null } = {}) {
+  // #4238: with the first-version line the first page ends with.
+  const firstVersion = stagingMockFirstVersion(appId, app);
+  const rows = [...stagingMockGeneralStream(appId), ...(firstVersion ? [firstVersion] : [])];
   const ids = new Set(rows.filter((m) => !m.thread_type).map((m) => m.id));
   if (around != null) {
     if (ids.has(around)) {
@@ -315,7 +317,9 @@ function stagingMockStreamPage(appId, { around = null, after = null } = {}) {
 // nothing unread; an unread leaves the mock rows from other people at and
 // after the message — the same definition of "unread" as the real one.
 function stagingMockUnreadCount(appId, messageId, move) {
-  const rows = stagingMockGroupChat(appId, null);
+  // #4238: the first-version line ends the stream the route answers with,
+  // so the cursor reaches it; which app it names does not change the count.
+  const rows = [...stagingMockGroupChat(appId, null), stagingMockFirstVersion(appId, { slug: 'demo' })];
   if (!rows.some((m) => m.id === messageId)) return null;
   if (move === 'read') return 0;
   return rows.filter((m) => m.id >= messageId && m.msg_type === 'message'
@@ -459,7 +463,7 @@ function chatRoutes(config) {
         if (mock) return res.json(mock);
       }
       if (demo && !thread && (around != null || after != null)) {
-        const mock = stagingMockStreamPage(appId, { around, after });
+        const mock = stagingMockStreamPage(appId, { around, after, app });
         if (mock) return res.json(mock);
       }
 
