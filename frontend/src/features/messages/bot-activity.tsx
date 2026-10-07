@@ -1,7 +1,7 @@
 import { useEffect, useState, type MouseEvent, type ReactNode } from 'react';
 
 import { Button, buttonVariants } from '@/components/ui/button';
-import { ChatIcon, CheckIcon, ClockIcon, InfoCircleIcon, WarningTriangleIcon } from '@/components/ui/icons';
+import { ChatIcon, CheckIcon, ClockIcon, InfoCircleIcon, SpinnerArcIcon, WarningTriangleIcon } from '@/components/ui/icons';
 import { IconTile } from '@/components/ui/icon-tile';
 import { ProgressRing } from '@/components/ui/progress-ring';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -260,6 +260,11 @@ export function BotActivityCardView({ meta, card, loaded = false, failed = false
     status = (
       <>
         {project ? <span>{`${project} · `}</span> : null}
+        <SpinnerArcIcon
+          className="mr-1 inline-block h-3.5 w-3.5 align-[-0.125rem] text-[color:var(--accent)] motion-safe:animate-spin"
+          aria-hidden="true"
+          data-bot-activity-spinner=""
+        />
         <span role="status">{capitalized(card.doing || 'working on it')}</span>
         {usually ? <span>{` · ${usually}`}</span> : null}
         {elapsed ? <span>{` · ${elapsed} so far${waited ? `, ${waited}` : ''}`}</span> : null}

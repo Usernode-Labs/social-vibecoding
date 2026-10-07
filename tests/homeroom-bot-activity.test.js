@@ -497,6 +497,11 @@ test('a card going: its step as a ring and in words, what it is doing, how long 
   assert.match(html, />Ear Trainer #12: Sort by date</);
   assert.match(html, /<span role="status">Building it<\/span><span> · 9m so far<\/span>/,
     'only what it is doing is announced; the clock beside it is not, every half minute');
+  assert.match(html, /<svg [^>]*aria-hidden="true" data-bot-activity-spinner="">/,
+    'a spinning mark beside what it is doing');
+  assert.match(html, /<svg class="[^"]*motion-safe:animate-spin[^"]*"[^>]*data-bot-activity-spinner/, 'it spins, still under reduced motion');
+  assert.match(html, /<svg class="[^"]*text-\[color:var\(--accent\)\][^"]*"[^>]*data-bot-activity-spinner/, 'the live dot\'s blue');
+  assert.match(html, /<\/svg><span role="status">Building it</, 'just before what it is doing');
   assert.match(html, /<a href="#app\/ear-trainer\/dev\/issues\/12" class="[^"]*rounded-full[^"]*" data-bot-activity-link="">Request #12<\/a>/);
   assert.doesNotMatch(html, /Open change/);
 
@@ -506,6 +511,7 @@ test('a card going: its step as a ring and in words, what it is doing, how long 
   assert.match(unstepped, /data-bot-activity-eyebrow="">Working on it</);
   assert.doesNotMatch(unstepped, /role="img"/);
   assert.match(unstepped, /<span role="status">Working on it<\/span>/);
+  assert.match(unstepped, /data-bot-activity-spinner=""/, 'the unstepped card that is going has the mark too');
 });
 
 test('a card done: what it came to, at a glance and in words, how long it took, and where to open it', () => {
@@ -520,6 +526,7 @@ test('a card done: what it came to, at a glance and in words, how long it took, 
   assert.match(proposed, /d="M5 13l4 4L19 7"/, 'a check where the ring was');
   assert.match(proposed, />Open change<\/a><a [^>]*>Request #12<\/a>/, 'the change first');
   assert.doesNotMatch(proposed, /animate-ping|role="img"/);
+  assert.doesNotMatch(proposed, /data-bot-activity-spinner/, 'no spinning mark once the work has ended');
 
   const asked = draw({ card: done('question') });
   assert.match(asked, /data-bot-activity-eyebrow="">Needs you</);
@@ -544,6 +551,7 @@ test('a card before its state is read, when the read failed, and when there is n
   const none = draw({ card: null, loaded: true });
   assert.match(none, /No progress to show for this one\./);
   assert.doesNotMatch(none, /data-bot-activity-link/);
+  for (const html of [pending, failed, none]) assert.doesNotMatch(html, /data-bot-activity-spinner/, 'no spinning mark before its state is known');
 });
 
 test('every ending has words and a look, and the title is the tray\'s name for the same work', () => {
