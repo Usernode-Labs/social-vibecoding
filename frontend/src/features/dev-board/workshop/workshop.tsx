@@ -1981,6 +1981,21 @@ function plural(n: number, one: string, many: string): string {
  * reader did and where those items are: above, still open, for a change of
  * mind; the way back up says the same.
  */
+/**
+ * The end card's ring total (#4031). `total` is the server's live count of
+ * open changes, and the vote the reader just cast takes its change out of
+ * it: one vote on the last open change dropped it to 0, the ring (112px and
+ * its gaps) left a card that centres its content, and everything under it
+ * jumped up 65px while the reader was looking. iOS left the button painted
+ * where it had been, a clipped second "See what changed this week". The
+ * ring never counts fewer than the votes cast in this pass plus the ones
+ * still waiting, so the pass that just finished shows a full ring instead
+ * of none.
+ */
+export function endRingTotal(total: number, votedHere: number, leftVotes: number): number {
+  return Math.max(Number(total) || 0, votedHere + leftVotes);
+}
+
 function DoneItem({ total, acted, left, leftVotes, onDone, onBack, doneLabel }: {
   total: number;
   acted: number;
@@ -2350,6 +2365,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
   const acted = items.filter((r) => !!answered[r.key]).length;
   const left = n - acted;
   const leftVotes = items.filter((r) => r.kind === 'vote' && !answered[r.key]).length;
+  const votedHere = items.filter((r) => r.kind === 'vote' && !!answered[r.key]).length;
   /**
    * Each row's tint, decided the first time it is seen and kept for life.
    * The tints alternate so a swipe reads as a new item, and a row seen for
@@ -2957,7 +2973,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
         {/* ALWAYS, after the last item: the swipe past the end lands here.
             With no items it is the whole screen. */}
         <DoneItem
-          total={total}
+          total={endRingTotal(total, votedHere, leftVotes)}
           acted={acted}
           left={left}
           leftVotes={leftVotes}
