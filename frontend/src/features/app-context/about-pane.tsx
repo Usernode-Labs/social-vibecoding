@@ -6,17 +6,19 @@
  * ── What it says, in the design's order ────────────────────────────────
  *
  *   1. WHO IT IS. A large tile, the name, the tagline, the builders' avatars
- *      and a "<version> · <updated>" pill.
+ *      and how many members the community has. The version's commit is not
+ *      here: it is a plain row at the end of MORE, for whoever needs it.
  *   2. WHAT YOU CAN DO WITH IT (an app): Open — Resume for the app you
  *      parked, and nothing at all for the app already running — and Add to
  *      your apps. HOW BIG IT IS (the platform): apps, members, merged.
- *   3. HOW IT IS BUILT. One sentence, true for THIS app's approval rules
- *      (./about-model.ts says why it is assembled rather than fixed).
+ *   3. HOW IT IS BUILT. One warm line (./about-model.ts); the mechanics
+ *      live in the Workshop's "How voting works" popover.
  *   4. WHO BUILDS IT. Contributors, each with what they have merged, each
  *      opening that person's page.
  *   5. MORE. Share, Add to home screen, Code (public on GitHub), Remix
- *      (a fork, to the code; "Remix" to people). A remix also says what
- *      it was remixed from, under its description.
+ *      (a fork, to the code; "Remix" to people), App version (the short
+ *      commit, plain text). A remix also says what it was remixed from,
+ *      under its description.
  *
  * ── It is still a PANE, not a sheet ────────────────────────────────────
  *
@@ -71,10 +73,10 @@ import {
   CheckIcon,
   Glyph,
   GitHubIcon,
+  InfoCircleIcon,
   ShareIcon,
 } from '@/components/ui/icons';
 
-import { agoStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { improveStore } from '../improve/improve-store.js';
@@ -90,7 +92,6 @@ import {
   shortVersionOf,
   statCards,
   taglineOf,
-  versionPillText,
   type AppRow,
 } from './about-model';
 import {
@@ -283,7 +284,7 @@ export function ContributorsFold({ people, total, showAll, onToggle }: {
 
 export function AboutPane({ label }: { label: string }): ReactNode {
   const {
-    slug, target, restricted, repoUrl, canShare, version, iconUrl, iconEmoji, tab, deploying,
+    slug, target, restricted, repoUrl, canShare, version, iconUrl, iconEmoji, tab,
   } = useStoreState(improveStore);
   const { app: parked } = useStoreState(parkedStore);
   const platform = target === 'platform';
@@ -320,13 +321,15 @@ export function AboutPane({ label }: { label: string }): ReactNode {
   const shortSha = platform
     ? (about?.version || version || shortVersionOf(row))
     : (shortVersionOf(row) || version);
-  const updatedAt = platform
-    ? (about?.updatedAt || row?.last_deploy_at || null)
-    : (row?.last_deploy_at || row?.created_at || null);
-  const updated = updatedAt ? agoStamp(updatedAt) : null;
-  const pill = deploying && !platform
-    ? 'Deploying…'
-    : versionPillText(shortSha || null, updated?.text || null);
+  // How many people are in the community — the number the list row has
+  // always carried, the cold-link detail payload gained with it, and the
+  // platform figures' member count for About Homeroom. Zero or not yet
+  // loaded says nothing, as every count here does.
+  const rawMembers = platform ? about?.stats.members : row?.member_count;
+  const memberCount = (() => {
+    const n = typeof rawMembers === 'number' ? rawMembers : parseInt(String(rawMembers ?? ''), 10);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  })();
   const ready = contributors.state === 'ready' ? contributors.items : [];
   const stack = ready.slice(0, 4).map(contributorView);
   const record = {
@@ -354,22 +357,18 @@ export function AboutPane({ label }: { label: string }): ReactNode {
   const showFork = isApp && !!forkItem;
   const lineage = isApp ? lineageOf(row) : null;
 
-  // The platform's rules are its row's, which a cold tab may still be loading
-  // (./about-data.ts asks Home for the list): no sentence until they are here,
-  // rather than the default rules for a moment and then the platform's own.
-  const note = platform
-    ? (restricted || row ? platformNote(row, !!restricted) : null)
-    : appNote(row);
+  // One warm line, for the platform as much as for an app and for every
+  // viewer of it: the mechanics are the Workshop's to spell out.
+  const note = platform ? platformNote() : appNote(label);
   const people = ready.map(contributorView);
 
   return (
     <div id="app-about-pane" className="pb-1">
       {/*
           WHO IT IS. The name is always here, so the pane never opens empty
-          whatever else is missing: an app with no manifest description shows
-          its ADDRESS in the tagline's place — what a URL says, what a support
-          conversation quotes, and the only name two apps called the same thing
-          do not share.
+          whatever else is missing. A description shows when the manifest has
+          one; an app's ADDRESS no longer stands in under the name — it is
+          plumbing, not who the app is.
       */}
       <div id="app-about-identity" className="flex items-start gap-3.5 px-5 pt-2 pb-3">
         {platform ? (
@@ -407,11 +406,7 @@ export function AboutPane({ label }: { label: string }): ReactNode {
             <p id="app-about-tagline" className="mt-0.5 line-clamp-3 text-[0.8125rem] leading-snug text-zinc-500 dark:text-zinc-400">
               {tagline}
             </p>
-          ) : (!platform && slug ? (
-            <p className="mt-0.5 text-[0.8125rem] text-zinc-500 dark:text-zinc-400 truncate">
-              {`/app/${slug}`}
-            </p>
-          ) : null)}
+          ) : null}
           {/* A remix says what it was remixed from, under its description:
               the line Discover's page draws under its version, in the same
               amber, opening the original the way a contributor row opens a
@@ -432,21 +427,16 @@ export function AboutPane({ label }: { label: string }): ReactNode {
               )}
             </p>
           ) : null}
-          {stack.length || pill ? (
+          {stack.length || memberCount ? (
             <div id="app-about-pills" className="mt-2 flex flex-wrap items-center gap-2">
               {stack.length ? (
                 <span className="flex -space-x-1.5" aria-hidden="true">
                   {stack.map((c) => <Avatar key={c.who} who={c.who} size="xs" />)}
                 </span>
               ) : null}
-              {pill ? (
-                <span
-                  id="app-about-version"
-                  title={[shortSha ? `Version ${shortSha}` : null, updated?.title ? `live since ${updated.title}` : null]
-                    .filter(Boolean).join(', ') || undefined}
-                  className="inline-flex items-center rounded-full bg-zinc-100 dark:bg-zinc-800 px-2 py-0.5 text-xs font-medium text-zinc-500 dark:text-zinc-400 whitespace-nowrap"
-                >
-                  {pill}
+              {memberCount ? (
+                <span id="app-about-members" className="text-xs font-medium text-zinc-500 dark:text-zinc-400 whitespace-nowrap">
+                  {`${memberCount.toLocaleString()} ${memberCount === 1 ? 'member' : 'members'}`}
                 </span>
               ) : null}
             </div>
@@ -572,7 +562,7 @@ export function AboutPane({ label }: { label: string }): ReactNode {
         </section>
       ) : null}
 
-      {showShare || showHomeScreen || repo || showFork ? (
+      {showShare || showHomeScreen || repo || showFork || shortSha ? (
         <section id="app-about-more" aria-label="More">
           <h4 className={SECTION}>More</h4>
           {showShare ? (
@@ -637,6 +627,16 @@ export function AboutPane({ label }: { label: string }): ReactNode {
               sub="Make your own copy"
               onClick={() => afterDismiss(() => forkItem.run())}
             />
+          ) : null}
+          {/* The commit the pill at the top used to print, quietly at the end
+              of More: plain text, not a button, for whoever needs it. It keeps
+              the pill's id. */}
+          {shortSha ? (
+            <div id="app-about-version" className={ROW}>
+              <Icon><InfoCircleIcon /></Icon>
+              <span className="flex-1 min-w-0 truncate font-medium">App version</span>
+              <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">{shortSha}</span>
+            </div>
           ) : null}
         </section>
       ) : null}

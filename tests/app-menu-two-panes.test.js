@@ -24,13 +24,27 @@ const CONTROLLER = read('frontend/src/features/app-context/app-context-controlle
 // setting it changes nothing the component can see.
 const ui = loadTsx('tests/fixtures/about-pane-api.ts');
 
-const render = (patch) => {
+const render = (patch, { apps = null } = {}) => {
+  const savedWindow = globalThis.window;
   const before = { ...ui.improveStore.get() };
   ui.improveStore.set({ ...before, ...patch });
+  // The app rows a tab has already loaded (Home._apps), for the assertions
+  // that need the pane's data reads — the member count among them.
+  if (apps) {
+    globalThis.window = {
+      ...(savedWindow || {}),
+      location: { search: '' },
+      Home: { _apps: apps, _appsLoaded: true },
+    };
+  }
   try {
     return renderToHtml(createElement(ui.AboutPane, { label: patch.name || 'Notes' }));
   } finally {
     ui.improveStore.set(before);
+    if (apps) {
+      if (savedWindow === undefined) delete globalThis.window;
+      else globalThis.window = savedWindow;
+    }
   }
 };
 
@@ -40,24 +54,25 @@ test('About never opens empty', () => {
   // it may never have deployed, a home screen the device may not have — and
   // all of them are absent at once often enough that a pane without an
   // unconditional line would regularly open blank. A row that sometimes leads
-  // nowhere is the one thing a menu row must not be. The address stands in
-  // the tagline's place when there is no tagline.
+  // nowhere is the one thing a menu row must not be. The name is that line;
+  // the app's address no longer stands in under it when there is no tagline.
   const bare = render({ target: 'app', name: 'Notes', slug: 'notes-ab12', repoUrl: null, canShare: false, version: null });
   assert.match(bare, /id="app-about-identity"/);
   assert.match(bare, />Notes</, 'the app is named');
-  assert.match(bare, /\/app\/notes-ab12/, 'and addressed');
+  assert.doesNotMatch(bare, /\/app\/notes-ab12/, 'no address drawn');
 });
 
 test('each fact appears only when there is one', () => {
   const bare = render({ target: 'app', name: 'Notes', slug: 'notes-ab12', repoUrl: null, canShare: false, version: null });
   assert.doesNotMatch(bare, /improve-row-github/, 'no repository, no row');
   assert.doesNotMatch(bare, /improve-row-share/, 'no share, no row');
-  assert.doesNotMatch(bare, /app-about-version/, 'no version, no pill');
+  assert.doesNotMatch(bare, /app-about-version/, 'no version, no row');
+  assert.doesNotMatch(bare, /app-about-members/, 'no count, no member line');
 
   const full = render({
     target: 'app', name: 'Notes', slug: 'notes-ab12',
     repoUrl: 'https://github.com/example/notes', canShare: true, version: '14',
-  });
+  }, { apps: [{ slug: 'notes-ab12', member_count: 14 }] });
   assert.match(full, /id="improve-row-github"[\s\S]{0,200}href="https:\/\/github\.com\/example\/notes"/);
   assert.match(full, /target="_blank"/, 'the repository opens away from the shell');
   // The row says what the code is: every repository is public on GitHub
@@ -66,11 +81,15 @@ test('each fact appears only when there is one', () => {
     'Code, with Public on GitHub muted at the end of the row');
   assert.doesNotMatch(full, /View on GitHub/);
   assert.match(full, /id="improve-row-share"/);
-  // The design draws the version as a PILL beside the builders' avatars —
-  // "v41 · 2h ago" — and it is still not a row: there is nowhere for it to
-  // go. The platform names a version by its commit, so the pill does too.
-  assert.match(full, /id="app-about-pills"[\s\S]*?id="app-about-version"[^>]*>14</,
-    'the version is a pill in the identity block, not a row');
+  // The member count leads where the version pill used to be, beside the
+  // builders' avatars.
+  assert.match(full, /id="app-about-pills"[\s\S]*?id="app-about-members"[^>]*>14 members</,
+    'how many people are here, in the identity block');
+  // The version, quietly: a plain row at the end of More, the store's
+  // version naming what is running when the row carries no commit of its own.
+  assert.ok(full.indexOf('id="app-about-more"') < full.lastIndexOf('id="app-about-version"'),
+    'the version row sits under More, not in the identity block');
+  assert.match(full, /id="app-about-version"[^>]*>[\s\S]*?App version<\/span><span class="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">14<\/span><\/div>/);
   // The design's MORE order: Share, Add to home screen, then the source
   // (the Code row is its "Source code"), then Fork.
   assert.ok(full.indexOf('improve-row-share') < full.indexOf('improve-row-github'),
@@ -85,6 +104,16 @@ test('two panes of ONE sheet, not two sheets', () => {
   assert.match(SHEET, /view === 'about' \? <AboutPane label=\{appLabel\} \/> : view === 'invite' \? \(\s*<InvitePane slug=\{slug \|\| null\} label=\{appLabel\} \/>\s*\) : \(/,
     'the pane replaces the rows inside the same scroller');
   assert.match(SHEET, /id="app-about-back"/, 'and the label row becomes the way back');
+  // The way back is the platform's round back disc — the side panel's and
+  // the Workshop page's — with the app's name beside it, not the label row
+  // itself. `un-touch-target` grows the 36px disc to a 44px tap target.
+  const backAt = SHEET.indexOf('id="app-about-back"');
+  const back = SHEET.slice(SHEET.lastIndexOf('<button', backAt), SHEET.indexOf('</button>', backAt));
+  assert.match(back, /w-9 h-9 rounded-full /, 'the disc, at the Workshop page-back\'s 36px size');
+  assert.match(back, /border-\[color:var\(--brand-line\)\] bg-\[color:var\(--brand-tint\)\] /);
+  assert.match(back, /text-\[color:var\(--brand-ink\)\] un-touch-target/,
+    'brand-tint disc, and a 44px hit box on the 36px disc');
+  assert.match(back, /aria-label="Back"/);
   // The label row's own text is the pane switch's other half: the menu names
   // the app, a second pane's back arrow (About's, Invite's) names it again
   // beside a chevron.

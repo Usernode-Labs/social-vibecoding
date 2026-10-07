@@ -662,24 +662,31 @@ export function AppsSwitcherSheet(): ReactNode {
             the class string cannot be. */}
         <div className="flex items-center gap-3 px-5 pt-4 pb-1 shrink-0">
           {/*
-              THE BACK ARROW IS THE SECOND PANES' (About, Invite), and it
-              replaces the label
-              rather than sitting beside it: About is one level inside this
-              sheet, so the row that names the level has to be the row that
-              leaves it. On the menu it is the "Apps" label it has always
-              been.
+              THE BACK DISC IS THE SECOND PANES' (About, Invite) way back —
+              the platform's own round back control, the side panel's and the
+              Workshop page's, at a 44px tap target (`un-touch-target` grows
+              the 36px disc's hit box). The app's name stays beside it as its
+              own span, the menu pane's label row's twin. On the menu it is
+              the "Apps"-that-names-the-app label it has always been.
           */}
           {view !== 'menu' ? (
-            <button
-              id="app-about-back"
-              type="button"
-              className={'flex-1 min-w-0 flex items-center gap-1.5 text-left un-touch-target '
-                + SECTION_TYPE}
-              onClick={() => AppContext.showMenu()}
-            >
-              <ChevronLeftIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
-              <span className="min-w-0 truncate">{appLabel}</span>
-            </button>
+            <>
+              <button
+                id="app-about-back"
+                type="button"
+                aria-label="Back"
+                title="Back"
+                className={'shrink-0 inline-flex items-center justify-center w-9 h-9 rounded-full '
+                  + 'border border-[color:var(--brand-line)] bg-[color:var(--brand-tint)] '
+                  + 'text-[color:var(--brand-ink)] un-touch-target'}
+                onClick={() => AppContext.showMenu()}
+              >
+                <ChevronLeftIcon className="w-5 h-5" aria-hidden="true" />
+              </button>
+              <span className={'flex-1 min-w-0 block truncate ' + SECTION_TYPE}>
+                {appLabel}
+              </span>
+            </>
           ) : (
             /*
                 IT SAID "Apps" while a strip of every app sat under it. With

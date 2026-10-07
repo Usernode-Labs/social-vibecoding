@@ -1443,9 +1443,16 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // `audience` (services/communities.js) rides along, the same column
       // the /api/apps list carries, so the app's own screens can tell a
       // project that is just its creator's from a group's: the preview
-      // banner and the vote picker word themselves by it.
+      // banner and the vote picker word themselves by it. `member_count`
+      // rides along for the same reason — the figure the list row has
+      // always carried (routes/apps.js serialization), so a cold deep
+      // link into an app can say how many members it has too. Both
+      // survive into the payload through stripAppSecrets, a pass-through
+      // copy.
       const { rows } = await pool.query(
         `SELECT ${appAccess.nonSecretAppColumnList()},
+                (SELECT COUNT(*)::int FROM community_members m WHERE m.community_id = apps.community_id)
+                  AS member_count,
                 ${communities.audienceSql('apps', '(SELECT COUNT(*) FROM community_members m WHERE m.community_id = apps.community_id)')}
                   AS audience
            FROM apps WHERE slug = $1`,
