@@ -181,6 +181,10 @@ test('each kind renders its own title and body from send-time context', () => {
     ['issue_opened', { ...CONTEXT, detail: '2273' },
       '@alice filed request #2273 · MyPage',
       'Open the request to see what needs attention'],
+    // #3952: named with @ in a request somebody filed.
+    ['issue_mention', { ...CONTEXT, detail: '3952' },
+      '@alice mentioned you in request #3952 · MyPage',
+      'Open the request to see what they wrote'],
     ['vote_digest', { ...CONTEXT, detail: '3' },
       '3 changes are waiting for your approval',
       'See them under Needs you in Communities'],

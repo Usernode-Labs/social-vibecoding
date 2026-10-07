@@ -187,7 +187,9 @@ test('#3490: Homeroom bot\'s spec comment splits into its sentence and the spec'
   // spec (paragraph semantics), and the Workshop row's preview names it.
   const view = code.match(/_issueCommentsView\(comments, truncated, htmlUrl\) \{([\s\S]*?)\n {2}\},/)[1];
   assert.match(view, /DevChat\.renderMarkdown\(str, \{ breaks: false \}\)/);
-  assert.match(view, /bodyHtml: renderMd\(spec \? spec\.lead : \(c\.body \|\| ''\)\),\n\s*spec: spec \? \{ title: spec\.title, html: renderSpec\(spec\.body\) \} : null,/);
+  // #3952: the lead is the comment's own words, so its @mentions are linked
+  // (group-chat.js renderRequestMentions); the spec is the bot's, left as is.
+  assert.match(view, /bodyHtml: mentions\(renderMd\(spec \? spec\.lead : \(c\.body \|\| ''\)\)\),\n\s*spec: spec \? \{ title: spec\.title, html: renderSpec\(spec\.body\) \} : null,/);
   const feed = code.match(/_feedCommentsHtml\(comments\) \{([\s\S]*?)\n {2}\},/)[1];
   assert.match(feed, /const spec = AppView\._botSpecOf\(c\);/);
   assert.match(feed, /escapeHtml\(spec\.title \? `The spec: \$\{spec\.title\}` : 'The spec'\)/);

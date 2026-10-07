@@ -144,6 +144,23 @@ test('"New issue #N" opens issue #N, not the app chat', () => {
   assert.deepEqual(nav(other.calls), [['discussion', 'garden-ab12']]);
 });
 
+// #3952: named with @ in a request somebody filed. It opens the request,
+// where the words that named you are, and reads like a chat mention.
+test('"Mentioned you" in request #N opens request #N', () => {
+  const { N, calls } = load();
+  N.items = [row({ kind: 'issue_mention', detail: '3952', sourceUsername: 'evan' })];
+  N._onItemClick(1);
+  assert.deepEqual(nav(calls), [['openAppTab', 'garden-ab12', 'dev', { subTab: 'issues', ref: 3952 }]]);
+  const view = N._rowView({ ...N.items[0], createdAt: new Date().toISOString() });
+  assert.equal(view.label, 'Mentioned you');
+  assert.deepEqual(JSON.parse(JSON.stringify(view.segments)), [{ t: 'strong', v: 'request #3952' }]);
+  assert.equal(view.by, 'evan');
+  const other = load();
+  other.N.items = [row({ kind: 'issue_mention', detail: null })];
+  other.N._onItemClick(1);
+  assert.deepEqual(nav(other.calls), [['discussion', 'garden-ab12']]);
+});
+
 test('a proposal row still opens its proposal', () => {
   const { N, calls } = load();
   N.items = [row({ kind: 'pr_proposed', sessionId: 77 })];

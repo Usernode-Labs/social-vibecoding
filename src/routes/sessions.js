@@ -4251,6 +4251,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       await issueAnnounce.announceIssueCreated(pool, owner, repo, issue, isAppTarget
         ? { id: row.app_id, slug: row.app_slug, name: row.app_name }
         : null);
+      // #3952: the people the confirmed draft names with @. Never rejects.
+      notifications.notifyIssueMentions?.(pool, {
+        ...(isAppTarget ? { appId: row.app_id } : { owner, repo }),
+        issueNumber: issue.number, authorId: req.user.id,
+        text: `${draft.title || ''}\n\n${draft.body || ''}`,
+      });
 
       log.info('sessions', 'Issue filed after user confirm', {
         sessionId, msgId, number: issue.number, user: req.user.username,
