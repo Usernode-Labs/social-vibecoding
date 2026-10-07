@@ -147,6 +147,8 @@ test('an embed draws the answers that came back available, and nothing else', as
   const html = draw();
   assert.match(html, /class="messages-object-list messages-link-embeds" data-link-embeds=""/);
   assert.match(html, /<a href="#app\/recipes\/dev\/issues\/12" class="messages-object-card"/);
+  assert.match(html, /Request<span data-object-number="12"> · #12<\/span></,
+    'the request’s number beside its label (#4212), to match the link it came from');
   assert.match(html, /Sort the list/);
   assert.equal((html.match(/messages-object-card/g) || []).length, 1,
     'the hub the reader cannot see draws no card, not an "Unavailable" one');

@@ -226,7 +226,13 @@ export function ObjectCard({ object, compact = false, inboxOnly = false }: {
     <>
       <span className="messages-object-icon">{objectGlyph(object.type)}</span>
       <div className="min-w-0 flex-1">
-        <div className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400 font-semibold">{OBJECT_LABELS[object.type]}</div>
+        <div className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400 font-semibold">
+          {OBJECT_LABELS[object.type]}
+          {/* #4212: the request's own number, so the card can be matched with the "#N" the bot's text names. */}
+          {object.type === 'issue' && object.issueNumber
+            ? <span data-object-number={object.issueNumber}>{` · #${object.issueNumber}`}</span>
+            : null}
+        </div>
         <div className="text-base font-semibold text-zinc-900 dark:text-zinc-100 truncate">{object.title || 'Untitled'}</div>
         {!compact && (object.subtitle || object.state || object.author) ? (
           <div className="text-sm text-zinc-500 dark:text-zinc-400 truncate">

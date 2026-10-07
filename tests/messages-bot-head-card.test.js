@@ -189,10 +189,11 @@ test('the request card the message carries is the card, and nothing is fetched f
   assert.deepEqual(asked, [[]], 'no link asked for');
   assert.match(html, /^<div class="mb-1\.5 mt-1 max-w-\[480px\]" data-bot-head-card="request" data-bot-request-card="93"><a href="#app\/todo-list-b91765\/dev\/issues\/93" class="messages-object-card"/,
     'the card leads, linking the request');
-  assert.match(html, />Request</);
+  assert.match(html, />Request<span data-object-number="93"> · #93<\/span></,
+    'its number beside the label (#4212), to match the "#93" the words name');
   assert.match(html, /Only close a category when its last item is checked/);
   assert.match(html, />Todo List</, 'its project alone');
-  assert.doesNotMatch(html, /closed|by usernode-bot|request #93|#93</,
+  assert.doesNotMatch(html, /closed|by usernode-bot|request #93</,
     'no status (a live request is GitHub\'s "closed", which read as turned down), no "by", and no line');
   assert.ok(html.indexOf('messages-object-card') < html.indexOf('messages-markdown'), 'then the words');
   assert.match(html, /<div class="messages-markdown gc-msg-content">I couldn't finish building this/);
@@ -236,6 +237,7 @@ test('a project’s card opens its App tab, and a first version gone live with i
   assert.match(html, /data-bot-head-card="project"><a href="#app\/todo-list-b91765\/app" class="messages-object-card" rel="noopener noreferrer"><span class="messages-object-icon">◆<\/span>/);
   assert.match(html, />Todo List<\/div><div class="text-sm text-zinc-500 dark:text-zinc-400 truncate">First version</);
   assert.doesNotMatch(html, /data-bot-request-card|Never asked/);
+  assert.doesNotMatch(html, /data-object-number/, 'a project’s card has no request number (#4212)');
 
   const live = { ...FIRST, kind: 'merged', actions: [{ id: 'open_app', label: 'Open Todo List', style: 'primary', type: 'open', target: '#app/todo-list-b91765/app' }] };
   const said = draw(botHead('**Todo List**, its first version\n\nIt\'s live now. Open Todo List below to try it.', live));
