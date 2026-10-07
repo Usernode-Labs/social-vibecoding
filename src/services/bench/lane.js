@@ -660,6 +660,7 @@ async function executeTrial(pool, config, trialRow, deps = {}) {
   let patch;
   let user = null;
   let watch = null;
+  let writes = Promise.resolve();
   try {
     if (!row) throw new Error('the trial is gone');
     if (!row.app_id) throw new Error('the task\'s app is gone');
@@ -676,8 +677,18 @@ async function executeTrial(pool, config, trialRow, deps = {}) {
     // A first version goes on after a restart from what it kept ("After a
     // restart", below), the skills it already reached for included.
     const resumes = goesOnAfterRestart(row);
+    // Every write to its checkpoint, one after another, each with the skills
+    // and looks seen by the time it is written: a later write never lands
+    // under an earlier one's counts. The watch keeps them there as they
+    // change too, so a restart mid-turn loses only the last few seconds.
+    const keepOnTrial = (part) => {
+      const write = writes.then(() => saveCheckpoint(pool, row.id, { ...part, skills: watch.skills(), looks: watch.looks() }));
+      writes = write.catch(() => {});
+      return write;
+    };
     watch = progress.tracker(pool, row.id, {
       log, skills: resumes ? row.checkpoint?.skills : null, looks: resumes ? row.checkpoint?.looks : null,
+      ...(resumes ? { keep: keepOnTrial } : {}),
     });
     const cancelled = () => !!inFlight.get(row.id)?.cancelled;
     patch = await runner.runStage({
@@ -702,10 +713,7 @@ async function executeTrial(pool, config, trialRow, deps = {}) {
         if (f) f.sessionId = sessionId;
         await noteSession(pool, row.id, sessionId, where);
       },
-      ...(resumes ? {
-        checkpoint: row.checkpoint || null,
-        onCheckpoint: (part) => saveCheckpoint(pool, row.id, { ...part, skills: watch.skills(), looks: watch.looks() }),
-      } : {}),
+      ...(resumes ? { checkpoint: row.checkpoint || null, onCheckpoint: keepOnTrial } : {}),
     });
     const skills = watch.skills();
     if (skills.invoked.length || skills.read.length || row.context_pack_id) {
@@ -722,6 +730,7 @@ async function executeTrial(pool, config, trialRow, deps = {}) {
     patch = { status: 'infra_fail', error: `setup: ${err.message}` };
   } finally {
     if (watch) await watch.close();
+    await writes;
   }
   return recordTrial(pool, { trialRow, row, patch, user, d });
 }
@@ -1161,12 +1170,15 @@ async function recoveryDeadline(pool, config, session, activeTurn) {
  * way the live stage reads it (runner.recoverStage) and recorded through
  * the same finisher (recordTrial). `result` is what the journal replay
  * returned; `timedOut` says the trial's clock, re-armed by recovery, ended
- * it. A first version's turn, whichever it is, is kept and its trial handed
- * back to go on instead (handBackFirstVersion). Never throws: whatever goes
- * wrong puts the trial back in the queue (releaseTrial), as though recovery
- * had abandoned it.
+ * it; `progress` is every progress line the replay showed, from the turn's
+ * start. A first version's turn, whichever it is, is kept and its trial
+ * handed back to go on instead (handBackFirstVersion). Never throws:
+ * whatever goes wrong puts the trial back in the queue (releaseTrial), as
+ * though recovery had abandoned it.
  */
-async function finishRecoveredTrial({ pool, config, session, activeTurn, result = {}, timedOut = false, deps = {} }) {
+async function finishRecoveredTrial({
+  pool, config, session, activeTurn, result = {}, timedOut = false, progress: lines = null, deps = {},
+}) {
   try {
     const plan = await recoveryPlan(pool, session, activeTurn);
     if (!plan) {
@@ -1175,7 +1187,7 @@ async function finishRecoveredTrial({ pool, config, session, activeTurn, result 
     }
     const row = plan.trial;
     if (!plan.resumable) throw new Error(`a ${row.stage} trial's ${activeTurn?.mode || 'unknown'} turn is not its last`);
-    if (goesOnAfterRestart(row)) return await handBackFirstVersion({ pool, row, session, activeTurn, result, timedOut, deps });
+    if (goesOnAfterRestart(row)) return await handBackFirstVersion({ pool, row, session, activeTurn, result, timedOut, lines, deps });
     const d = liveDeps(deps);
     const bot = require('../homeroom-bot');
     const repo = bot.parseRepo(row.repo_url);
@@ -1205,19 +1217,39 @@ async function finishRecoveredTrial({ pool, config, session, activeTurn, result 
 }
 
 /**
- * A first version's turn, followed to its end: what it produced kept on the
- * trial's checkpoint (runner.recoverFirstVersionTurn), its session put away
- * as a finished one is, and the trial handed back to the lane (releaseTrial),
- * whose next claim goes on from there. Kept work costs it no claim. Resolves
- * 'handed_back', or 'gone' when the trial was no longer on this session.
+ * The looks a first version has taken once restart recovery followed one of
+ * its turns, or null to leave its checkpoint's as they are. The replay shows
+ * the turn's lines from its start, so its looks are added to the counts its
+ * step began with (`stepLooks`, kept by the watch before the turn ran), never
+ * to the checkpoint's own, which may hold some of them already; and the
+ * result is never below what the checkpoint holds. Pure.
  */
-async function handBackFirstVersion({ pool, row, session, activeTurn, result, timedOut, deps }) {
+function recoveredLooks(checkpoint, step, lines) {
+  const cp = checkpoint || {};
+  if (!step || cp.stepLooks?.step !== step || !Array.isArray(lines) || !lines.length) return null;
+  const base = progress.lookCounts(cp.stepLooks);
+  const turn = progress.looksIn(lines);
+  const held = progress.lookCounts(cp.looks);
+  return Object.fromEntries(Object.keys(held).map((k) => [k, Math.max(held[k], base[k] + turn[k])]));
+}
+
+/**
+ * A first version's turn, followed to its end: what it produced kept on the
+ * trial's checkpoint (runner.recoverFirstVersionTurn) with the looks it took
+ * (recoveredLooks), its session put away as a finished one is, and the trial
+ * handed back to the lane (releaseTrial), whose next claim goes on from
+ * there. Kept work costs it no claim. Resolves 'handed_back', or 'gone' when
+ * the trial was no longer on this session.
+ */
+async function handBackFirstVersion({ pool, row, session, activeTurn, result, timedOut, lines = null, deps }) {
   const kept = runner.recoverFirstVersionTurn({ checkpoint: row.checkpoint, session, activeTurn, result, timedOut });
-  if (kept) {
+  const looks = recoveredLooks(row.checkpoint, runner.firstVersionTurnOf(row.checkpoint, session.id, activeTurn), lines);
+  if (kept || looks) {
     await pool.query(
-      `UPDATE bench_trials SET checkpoint = COALESCE(checkpoint, '{}'::jsonb) || $3::jsonb, recovered_at = NOW()
+      `UPDATE bench_trials SET checkpoint = COALESCE(checkpoint, '{}'::jsonb) || $3::jsonb,
+              recovered_at = CASE WHEN $4::boolean THEN NOW() ELSE recovered_at END
         WHERE id = $1 AND status = 'running' AND session_id = $2`,
-      [row.id, Number(session.id), JSON.stringify(kept.keep)],
+      [row.id, Number(session.id), JSON.stringify({ ...(kept ? kept.keep : {}), ...(looks ? { looks } : {}) }), !!kept],
     );
   }
   await pool.query(
@@ -1468,6 +1500,7 @@ module.exports = {
   noteSession,
   saveCheckpoint,
   stepsKept,
+  recoveredLooks,
   sweepBranches,
   releaseStale,
   releaseTrial,

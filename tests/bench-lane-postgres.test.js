@@ -351,6 +351,67 @@ test('the benchmark lane against the full PostgreSQL schema', { timeout: 180000 
     }
   });
 
+  await t.test('a first version keeps its looks on the trial as its turns run; the claim after a restart counts the kept ones once', async () => {
+    lane._resetForTests();
+    const token = () => crypto.randomBytes(8).toString('hex');
+    const { rows: [snap] } = await pool.query('SELECT id FROM homeroom_bot_run_snapshots ORDER BY id LIMIT 1');
+    const { rows: [task] } = await pool.query(
+      `INSERT INTO bench_tasks (suite_id, stage, app_id, snapshot_id, reference_source, label_token)
+       VALUES ($1, 'first_version', $2, $3, 'authored', $4) RETURNING id`,
+      [suite.id, app.id, snap.id, token()],
+    );
+    const { rows: [run] } = await pool.query(
+      `INSERT INTO bench_runs (suite_id, models, baseline_model, stages, repeats, cap_usd, concurrency, status, kind)
+       VALUES ($1, ARRAY['z-ai/glm-5.3-flash'], 'z-ai/glm-5.3-flash', ARRAY['first_version'], 1, 50, 1, 'running', 'studio') RETURNING id`,
+      [suite.id],
+    );
+    // What the claim before a restart kept: what its build could see, and its
+    // looks, recovery's followed turn included.
+    const sight = { told: true, passed: false };
+    const earlier = { screenshots: 4, snapshots: 1, navigations: 3 };
+    const { rows: [trial] } = await pool.query(
+      `INSERT INTO bench_trials (run_id, task_id, model, attempt, status, item_token, checkpoint)
+       VALUES ($1, $2, 'z-ai/glm-5.3-flash', 1, 'pending', $3, $4::jsonb) RETURNING id`,
+      [run.id, task.id, token(), JSON.stringify({ sight, looks: earlier, handBacks: 1 })],
+    );
+    await claimAs(trial.id, null);
+    const checkpointOf = async () => (await pool.query('SELECT checkpoint FROM bench_trials WHERE id = $1', [trial.id])).rows[0].checkpoint;
+    const seen = {};
+    runner.runStage = async (ctx) => {
+      seen.given = ctx.checkpoint;
+      await ctx.onStep('build');
+      seen.atStep = await checkpointOf();
+      ctx.onActivity('Using browser_take_screenshot');
+      for (let i = 0; i < 100 && (await checkpointOf()).looks.screenshots < 5; i += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise((r) => { setTimeout(r, 10); });
+      }
+      seen.afterLook = await checkpointOf();
+      // Within the interval: held back, not written on every line.
+      ctx.onActivity('Using browser_navigate');
+      await new Promise((r) => { setTimeout(r, 50); });
+      seen.afterSecond = await checkpointOf();
+      // As firstVersionStage reads it back from the checkpoint for a kept build.
+      return { status: 'ok', parsed: { built: true, sight: ctx.checkpoint.sight }, duration_ms: 5 };
+    };
+    try {
+      assert.equal(await lane.executeTrial(pool, {}, { id: trial.id, run_id: run.id }, deps), 'ok');
+      assert.deepEqual(seen.given.looks, earlier, 'the claim is handed what the last one kept');
+      assert.deepEqual(seen.atStep.stepLooks, { step: 'build', ...earlier }, 'a step keeps the counts its turn starts from');
+      assert.deepEqual(seen.atStep.looks, earlier, 'starting from the kept counts, not adding them again');
+      assert.deepEqual(seen.atStep.sight, sight);
+      assert.deepEqual(seen.afterLook.looks, { ...earlier, screenshots: 5 }, 'a look is kept while the turn runs');
+      assert.deepEqual(seen.afterSecond.looks, { ...earlier, screenshots: 5 }, 'the next, within the interval, waits');
+      const { rows: [done] } = await pool.query('SELECT status, parsed FROM bench_trials WHERE id = $1', [trial.id]);
+      assert.equal(done.status, 'ok');
+      assert.deepEqual(done.parsed.sight, { told: true, passed: false, screenshots: 5, snapshots: 1, navigations: 4 },
+        'what it could see, and every look of both claims, each once');
+    } finally {
+      await pool.query("UPDATE bench_runs SET status = 'cancelled' WHERE id = $1", [run.id]);
+      await pool.query("UPDATE bench_trials SET status = 'cancelled' WHERE run_id = $1 AND status IN ('pending', 'running')", [run.id]);
+    }
+  });
+
   await t.test('a second interruption fails the trial; a cancelled run\'s trial is cancelled; both still charged', async () => {
     lane._resetForTests();
     debits.length = 0;

@@ -4618,6 +4618,8 @@ async function resumeDetachedTurnInner({
   if (benchTurn) {
     await require('./src/services/bench/lane').finishRecoveredTrial({
       pool, config, session, activeTurn: recoveryActiveTurn, result, timedOut: botTimedOut || !!handle.stopped,
+      // Every line of the turn, from its start: the looks it took (progress.js).
+      progress: progressLines,
     });
     const benchCleanup = turnCleanupArgs(recoveryActiveTurn);
     recoveryRetry.requireDurableTurnCleanup(

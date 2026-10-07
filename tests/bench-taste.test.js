@@ -573,7 +573,8 @@ const keptTriageOf = (kept) => ({ triageSessionId: KEPT_TRIAGE, triage: { ...kep
 test('a first version keeps each sub-step as it finishes: the triage\'s session before its turn, then its answer, the spec and the build that landed', async (t) => {
   const { out, parts, kept } = await keptRun(t);
   const order = parts.flatMap((p) => Object.keys(p).filter((k) => k !== 'sessions'));
-  assert.deepEqual(order, ['triageSessionId', 'triage', 'spec', 'build'], 'in the order they finish');
+  assert.deepEqual(order, ['triageSessionId', 'triage', 'sight', 'spec', 'sight', 'build'],
+    'in the order they finish, with what the build could see before each of its turns');
   const [triageSession, buildSession] = out.session_ids;
   assert.equal(kept.triageSessionId, triageSession, 'recovery tells the triage\'s turn from the spec\'s by it');
   assert.deepEqual(kept.sessions, [triageSession, buildSession], 'every session the trial opened');
@@ -763,6 +764,58 @@ test('a build records whether it could see its own screens: what its prompt told
   const d = await runner.runStage(ctx(resumed, 'first_version', FIRST, { checkpoint: { ...checkpoint, build: { ...checkpoint.build, sessionId: 6007 } } }));
   assert.deepEqual(resumed.calls.modes, [], 'no turn');
   assert.deepEqual(d.parsed.sight, { told: true, passed: true });
+});
+
+test('what a build could see is kept before its build turn runs, so a build restart recovery finished keeps it too', async (t) => {
+  spySideEffects(t);
+  const realSees = live.buildSeesImages;
+  t.after(() => { live.buildSeesImages = realSees; });
+  live.buildSeesImages = async () => true;
+  const h = harness({ takesImages: false });
+  const parts = [];
+  const realExec = h.deps.worker.execInWorker;
+  let atBuildTurn = null;
+  h.deps.worker.execInWorker = async (id, opts) => {
+    if (opts.mode === 'build') atBuildTurn = Object.assign({}, ...parts);
+    return realExec(id, opts);
+  };
+  const out = await runner.runStage(ctx(h, 'first_version', FIRST, { onCheckpoint: async (p) => { parts.push(p); } }));
+  assert.equal(out.status, 'ok', out.error);
+  assert.deepEqual(atBuildTurn.sight, { told: true, passed: false }, 'on the checkpoint before the build turn started');
+  assert.equal(atBuildTurn.build, undefined, 'long before the build is kept');
+
+  // The build turn was finished by restart recovery, which reads only how it
+  // ended: its kept build says nothing of what it could see.
+  const checkpoint = Object.assign({}, ...parts.filter((p) => !p.build));
+  const recovered = runner.recoverFirstVersionTurn({
+    checkpoint, session: { id: checkpoint.spec.sessionId, spec_md: '' }, activeTurn: { mode: 'build' },
+    result: { pushOk: true, ahead: 2, sha: 'd'.repeat(40) },
+  });
+  assert.equal(recovered.keep.build.ok, true);
+  assert.equal(recovered.keep.build.sight, undefined);
+  const resumed = harness();
+  const next = await runner.runStage(ctx(resumed, 'first_version', FIRST, { checkpoint: { ...checkpoint, ...recovered.keep } }));
+  assert.equal(next.status, 'ok', next.error);
+  assert.deepEqual(resumed.calls.modes, [], 'no turn');
+  assert.deepEqual(next.parsed.sight, { told: true, passed: false }, 'the next claim reads it from the checkpoint');
+});
+
+test('a turn followed after a restart adds its replayed looks to the counts its step began with, never twice', () => {
+  const cp = {
+    stepLooks: { step: 'build', screenshots: 0, snapshots: 1, navigations: 1 },
+    // Kept while it ran, until a few seconds before the restart.
+    looks: { screenshots: 2, snapshots: 1, navigations: 2 },
+  };
+  const lines = ['Using browser_navigate', 'Using browser_take_screenshot', 'Using browser_take_screenshot',
+    'Using browser_take_screenshot', 'Using browser_navigate', 'Using browser_take_screenshot', '[done]'];
+  const looks = lane.recoveredLooks(cp, 'build', lines);
+  assert.deepEqual(looks, { screenshots: 4, snapshots: 1, navigations: 3 }, 'the step\'s counts plus the whole turn\'s');
+  assert.deepEqual(lane.recoveredLooks({ ...cp, looks }, 'build', lines), looks, 'followed again: the same, not more');
+  assert.equal(lane.recoveredLooks(cp, 'spec', lines), null, 'a turn of another step: the checkpoint\'s stay');
+  assert.equal(lane.recoveredLooks({ looks: cp.looks }, 'build', lines), null, 'no step on record: the checkpoint\'s stay');
+  assert.equal(lane.recoveredLooks(cp, 'build', []), null, 'no lines replayed: the checkpoint\'s stay');
+  assert.deepEqual(lane.recoveredLooks({ ...cp, looks: { screenshots: 9, snapshots: 0, navigations: 0 } }, 'build', lines),
+    { screenshots: 9, snapshots: 1, navigations: 3 }, 'never below what the checkpoint holds');
 });
 
 test('a capture trial checks the app out at its commit in a sealed worker and only takes the screenshots: no model turn', async (t) => {

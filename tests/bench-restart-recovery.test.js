@@ -469,6 +469,45 @@ test('restart recovery of benchmark trials, against the full PostgreSQL schema',
     assert.deepEqual(outward, []);
   });
 
+  await t.test('a first version\'s build turn followed after a restart keeps what it could see, and every look its turn took, none twice', async () => {
+    reset();
+    const fvb = await firstVersionTrial();
+    const triSid = await newSession(null);
+    const buildSid = await newSession(turnOf('build'));
+    await claimAs(fvb.id, buildSid);
+    // What the claim kept before the restart: what its build was told and
+    // handed (kept as its build turn started), the counts its build step began
+    // with, and its looks as last kept, a few seconds before the restart.
+    const sight = { told: true, passed: true };
+    await keep(fvb.id, {
+      triageSessionId: triSid, sessions: [triSid, buildSid],
+      triage: { status: 'ok', session_id: triSid, parsed: { verdict: 'ready', buildNote: 'One board.' } },
+      spec: { sessionId: buildSid, specMd: SPEC },
+      sight,
+      stepLooks: { step: 'build', screenshots: 0, snapshots: 1, navigations: 1 },
+      looks: { screenshots: 2, snapshots: 1, navigations: 2 },
+    });
+    // The replay shows the turn from its start: the looks kept before the
+    // restart, one the restart lost, and the ones after it.
+    journalTail = async (_sid, opts) => {
+      for (const line of ['Using browser_navigate', 'Using mcp__playwright__browser_take_screenshot', 'Using mcp__playwright__browser_take_screenshot',
+        'Using mcp__playwright__browser_take_screenshot', 'Using browser_navigate', 'Using mcp__playwright__browser_take_screenshot']) {
+        opts.onProgress(line);
+      }
+      return { exitCode: 0, resultSeen: true, pushOk: true, ahead: 2, sha: 'd'.repeat(40) };
+    };
+    await adopt(buildSid);
+
+    const row = await fvRow(fvb.id);
+    assert.equal(row.status, 'pending', 'handed back to go on');
+    assert.equal(row.checkpoint.build.ok, true);
+    assert.deepEqual(row.checkpoint.sight, sight, 'what it could see is still there for the next claim');
+    assert.deepEqual(row.checkpoint.looks, { screenshots: 4, snapshots: 1, navigations: 3 },
+      'the step\'s counts plus the whole turn\'s: none counted twice, none lost after the restart');
+    assert.ok(row.recovered_at);
+    assert.deepEqual(outward, []);
+  });
+
   await t.test('a recovery that cannot finish the trial puts it back in the queue', async () => {
     reset();
     const { trials } = await launch(['triage', 'build']);
