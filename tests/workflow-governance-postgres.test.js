@@ -569,6 +569,29 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
     assert.equal((await pool.query('SELECT name FROM apps WHERE id = $1', [a.id])).rows[0].name, a.name, 'not renamed');
   });
 
+  await t.test('a vote waiting on the row lock reads the app\'s settings as they are after it', async () => {
+    // A settings change committed while the vote waited for the row lock
+    // (here by a transaction holding it, as [main]'s apply does) decides it.
+    const [author, v1] = [await user(), await user()];
+    const a = await app({ approvals: 1, members: [v1] });
+    const i = await issue(a, author, 'rename', { newName: 'Not yet' });
+    await file(i);
+    const holder = await pool.connect();
+    try {
+      await holder.query('BEGIN');
+      await holder.query('SELECT id FROM issues WHERE id = $1 FOR UPDATE', [i.id]);
+      await holder.query('UPDATE apps SET approvals_required = 2 WHERE id = $1', [a.id]);
+      await send(i, 'VoteCast', { userId: v1.id, username: v1.username, vote: 'up' }, { actor: `user:${v1.id}` });
+      const draining = rt.drain();
+      await new Promise((r) => setTimeout(r, 300));
+      await holder.query('COMMIT');
+      await draining;
+    } finally { holder.release(); }
+    const s = await inst(i);
+    assert.deepEqual([s.state, s.data.evaluation.yes, s.data.evaluation.required], ['open', 1, 2], 'two now required');
+    assert.equal((await pool.query('SELECT name FROM apps WHERE id = $1', [a.id])).rows[0].name, a.name, 'not renamed');
+  });
+
   await t.test('the reply says what the vote did, built from the facts and the outcome', async () => {
     const a = await app({ approvals: 2 });
     const [author, v1, v2] = [await user(), await user(), await user()];
