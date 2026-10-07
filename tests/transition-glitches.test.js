@@ -287,12 +287,13 @@ test('the three unmounting surfaces close with release(); the dialogs keep dismi
 
 // The create dialog's full-screen layouts (an opaque backdrop, no lift
 // shadow, the status bar's band as a border) are retired with it. Create
-// opens "What do you want to make?", which is its own full-screen surface
-// on the wallpaper (tests/first-session-make.test.js pins its bar and the
+// opens "What do you want to make?", its own surface on the wallpaper —
+// full screen for the first session, from Create below the platform
+// header (#4195; tests/first-session-make.test.js pins its bar and the
 // status bar's inset).
 test('Create\'s screen covers the whole page in its own ground, and the dialog\'s layouts are gone', () => {
   const make = read('frontend/src/features/first-session/make.tsx');
-  assert.match(make, /className="platform-kb-surface fixed inset-0 z-\[9000\] flex flex-col /);
+  assert.match(make, /'platform-kb-surface fixed inset-0 z-\[9000\] flex flex-col /);
   assert.match(make, /style=\{\{ background: 'var\(--home-wallpaper, #f4f2e4\)' \}\}/);
   assert.doesNotMatch(APP_CSS, /#create-card|--create-modal-/);
 });

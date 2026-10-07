@@ -348,7 +348,10 @@ test('app.css pads a surface into the band, puts a sheet\'s foot on it, and clea
 // ── 5. The two screens ──────────────────────────────────────────────────
 
 test('the make screen is a surface whose fields are the keyboard surface\'s, every focus without a scroll', () => {
-  assert.match(MAKE, /className="platform-kb-surface fixed inset-0 z-\[9000\] flex flex-col/);
+  // Both doors' roots are keyboard surfaces: the first session full screen,
+  // from Create (#4195) offset below the platform header.
+  assert.match(MAKE, /: 'platform-kb-surface fixed inset-0 z-\[9000\] flex flex-col/);
+  assert.match(MAKE, /\? 'platform-kb-surface fixed inset-x-0 bottom-0 top-\[calc\(/);
   assert.match(MAKE, /useKeyboardSurface\(scrollerRef\);/);
   assert.doesNotMatch(MAKE, /\.focus\(\)/, 'no focus that lets iOS reveal on its own');
   // Make it is the form's submit button, so the reveal finds it.

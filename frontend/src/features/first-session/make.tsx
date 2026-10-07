@@ -55,6 +55,13 @@
  *     with the bar as its top (lib/composer-keyboard.ts), as every chat
  *     column has it: a tap on a field is focused without the browser's pan,
  *     and the field is revealed once, between the bar and the keys.
+ *   - FROM CREATE (#4195) the screen starts under the platform header, not
+ *     over it: its root is offset down by the same sum app.css pins other
+ *     things under the bar with (--browser-banner-h + --platform-header-h
+ *     + --platform-safe-top), and z-[35] leaves the bar's menu and
+ *     notification layers (40, 50) above it, so the header stays usable.
+ *     Its own bar is then a plain 48px strip for the ✕, with no wordmark:
+ *     the header's logo is already right above where the mark would sit.
  *   - The two answers are one sequence: the description's Return says
  *     "next" and goes on to the name (Shift+Return is a new line), and the
  *     name's Return makes it. In the app the keyboard's own next chevron
@@ -305,20 +312,33 @@ export function MakeScreen({
   // account never is. The wrapper goes with it when there is nothing to say.
   const allowance = fromCreate ? <div className="mt-4 empty:hidden"><AppAllowance id="make-app-quota" surface="pane" quiet /></div> : null;
 
+  // Two complete literals per branch: Tailwind's extractor reads source
+  // text, so a computed class name is a class name that never gets compiled.
   return (
     <div
       role="dialog"
       aria-labelledby="first-session-make-title"
       data-first-session-make=""
       data-make-entry={entry}
-      className="platform-kb-surface fixed inset-0 z-[9000] flex flex-col text-zinc-900 dark:text-zinc-100"
+      className={fromCreate
+        // From Create the screen starts under the platform header: the sum
+        // app.css pins other things under the bar with (#browse-search-bar).
+        // z-[35] sits over the screens and the tab bar (30) but under the
+        // header's menu and notification layers (40, 50), so the bar keeps
+        // working over the maker.
+        ? 'platform-kb-surface fixed inset-x-0 bottom-0 top-[calc(var(--browser-banner-h,0px)+var(--platform-header-h)+var(--platform-safe-top))] z-[35] flex flex-col text-zinc-900 dark:text-zinc-100'
+        : 'platform-kb-surface fixed inset-0 z-[9000] flex flex-col text-zinc-900 dark:text-zinc-100'}
       style={{ background: 'var(--home-wallpaper, #f4f2e4)' }}
     >
       {/* Stays put over the scroller, so nothing scrolls under the status bar.
-          At least 32px tall under the status bar's inset, so the whole mark
-          is inside it and what scrolls stops below the mark, not beside it.
-          From Create, ✕ at its leading edge closes the screen. */}
-      <div className={`relative flex h-[max(52px,calc(env(safe-area-inset-top)+32px))] shrink-0 items-center justify-center pt-[env(safe-area-inset-top)] ${motion}`}>
+          First session: at least 32px tall under the status bar's inset, so
+          the whole mark is inside it and what scrolls stops below the mark,
+          not beside it. From Create: a plain 48px strip for the ✕, no
+          wordmark (the header's logo is right above) and no inset (the
+          header carries it). ✕ at its leading edge closes the screen. */}
+      <div className={fromCreate
+        ? `relative flex h-12 shrink-0 items-center justify-center ${motion}`
+        : `relative flex h-[max(52px,calc(env(safe-area-inset-top)+32px))] shrink-0 items-center justify-center pt-[env(safe-area-inset-top)] ${motion}`}>
         {onClose ? (
           <button
             type="button"
@@ -330,7 +350,7 @@ export function MakeScreen({
             <XIcon className="h-4 w-4" aria-hidden="true" />
           </button>
         ) : null}
-        <Wordmark className="h-6 w-auto text-[color:var(--brand-ink)]" />
+        {!fromCreate ? <Wordmark className="h-6 w-auto text-[color:var(--brand-ink)]" /> : null}
       </div>
       {/* The scroller the keyboard surface reveals fields in. Its className
           stays constant: nothing here varies it. */}

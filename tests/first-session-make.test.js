@@ -247,12 +247,41 @@ test('with the keyboard up nothing scrolls under the status bar: the bar stays, 
   // The bar holds the whole mark under the status bar's inset (on a notched
   // phone the mark used to hang 12px out of a 52px box), so what scrolls
   // stops below it.
-  // (`relative`: from Create, its ✕ sits at the bar's leading edge.)
-  assert.match(src, /<div className=\{`relative flex h-\[max\(52px,calc\(env\(safe-area-inset-top\)\+32px\)\)\] shrink-0 items-center justify-center pt-\[env\(safe-area-inset-top\)\] \$\{motion\}`\}>/);
+  // (`relative`: from Create, its ✕ sits at the bar's leading edge. #4195:
+  // from Create the bar is the plain 48px strip on the other branch.)
+  assert.match(src, /<div className=\{fromCreate\s+\? `relative flex h-12 shrink-0 items-center justify-center \$\{motion\}`\s+: `relative flex h-\[max\(52px,calc\(env\(safe-area-inset-top\)\+32px\)\)\] shrink-0 items-center justify-center pt-\[env\(safe-area-inset-top\)\] \$\{motion\}`\}>/);
   // The scroller's class string is constant.
   assert.match(src, /<div ref=\{scrollerRef\} data-first-session-make-scroll="" className="flex min-h-0 grow flex-col overflow-y-auto">/);
   // #3894's arrival is untouched: the bar and the form still rise in.
   assert.match(src, /className=\{`mx-auto flex w-full max-w-sm grow flex-col px-4 pb-\[max\(34px,env\(safe-area-inset-bottom\)\)\] \$\{motion\}`\}/);
+});
+
+// #4195 (Evan): from the home page's Create button the maker covered the
+// platform header, and its own wordmark stacked a second Homeroom logo
+// right under the header's.
+test('from Create the maker opens under the platform header: no second logo, the ✕ stays, the header keeps working', () => {
+  const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', {
+    who: 'Jordan', onMade() {}, entry: 'create', onClose() {},
+  });
+  const root = /<div role="dialog"[^>]*>/.exec(html)[0];
+  // Below the platform header by the same sum app.css pins other things
+  // under the bar with (#browse-search-bar); z-[35] over the screens and
+  // the tab bar (30), under the header's menu and notification layers
+  // (40, 50), so the bar keeps working over the maker.
+  assert.match(root, /class="platform-kb-surface fixed inset-x-0 bottom-0 top-\[calc\(var\(--browser-banner-h,0px\)\+var\(--platform-header-h\)\+var\(--platform-safe-top\)\)\] z-\[35\] flex flex-col /);
+  assert.doesNotMatch(root, /inset-0|z-\[9000\]/, 'not over the header');
+  // The ✕ stays; the wordmark goes (the header's logo is right above).
+  assert.match(html, /data-make-close=""/);
+  assert.doesNotMatch(html, /text-\[color:var\(--brand-ink\)\]/, 'no second logo under the header\'s');
+  // No safe-area padding in the bar: the header carries the inset.
+  assert.doesNotMatch(html, /pt-\[env\(safe-area-inset-top\)\]/);
+  // The scroller still follows the bar.
+  const bar = html.indexOf('data-make-close=""');
+  const scroller = html.indexOf('data-first-session-make-scroll=""');
+  assert.ok(bar > -1 && scroller > bar && html.indexOf('<form') > scroller);
+  // The first session keeps its own full-screen layout and its wordmark.
+  const first = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Jordan', onMade() {}, onLookAround() {} });
+  assert.match(first, /<svg class="h-6 w-auto text-\[color:var\(--brand-ink\)\]"/);
 });
 
 // Evan, 5 Oct 2026: a chosen example stayed chosen after he started writing
