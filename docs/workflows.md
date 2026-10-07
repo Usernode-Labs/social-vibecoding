@@ -113,9 +113,12 @@ afterwards. A machine that answers routes defines `reply(tx, event, after, ctx, 
 
 1. picks the oldest pending event that is its instance's head (the instance's oldest
    pending event), not in backoff, of an instance that is not faulted;
-2. locks the event, skipping any another slot holds (`SKIP LOCKED`), and its instance's
-   row. Only head events are picked, so holding one is holding the instance's turn: two
-   slots never process one instance at once;
+2. locks the event, skipping any another slot holds (`SKIP LOCKED`), then its instance's
+   row, which is what keeps two slots from processing one instance at once. An event
+   appended in a caller's transaction can commit after a later one, so two slots can
+   hold two events of one instance; the second waits for the first's row lock, then
+   reads the receipt again. An instance with no row yet first gets a placeholder row in
+   the pseudo-state `(none)`, so its first events are serialised the same way;
 3. leaves it alone if a newer machine version last wrote the instance (old and new code
    overlap during a deploy);
 4. runs one transaction for that event:
@@ -128,8 +131,7 @@ afterwards. A machine that answers routes defines `reply(tx, event, after, ctx, 
    4. **Transition.** It returns the outcome, and the next state must be declared.
    5. **Persist,** in this order: domain writes, projection, the machine's reply, work
       items, messages, then the instance row, receipt and the event's own result in one
-      statement. An instance that does not exist yet is inserted by its creating event
-      there; nothing is written for one whose first event is rejected.
+      statement. A placeholder row whose event is rejected is deleted again.
 5. commits, then wakes whoever waits for the outcome and runs the notifications (WebSocket
    pushes, which may be lost in a crash because the next read refreshes the client).
 

@@ -396,6 +396,56 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     assert.deepEqual([(await born('b2')).state, (await born('b2')).data.pokes, Number((await born('b2')).version)], ['alive', 1, 2]);
   });
 
+  await t.test('K15 a new instance is created once, even when an earlier event commits late', async () => {
+    // Event A is appended in a caller's transaction that commits after event
+    // B (both creating) is already being processed: the two slots hold
+    // different events of one instance that has no row yet.
+    const caller = await other.connect();
+    const second = make({ pool: other });
+    try {
+      await caller.query('BEGIN');
+      const a = await rt.append(machine, 'k15-new', { type: 'Create', payload: { start: 1 } },
+        { requestKey: 'k15-new-a', source: { kind: 'route' }, db: caller });
+      const b = await route('k15-new', 'Create', { start: 2, sleepMs: 400 });
+      const first = rt.processNext();          // takes B (A is not visible yet) and sleeps in its facts
+      await sleep(100);
+      await caller.query('COMMIT');
+      const late = second.processNext();       // takes A, the head now
+      await Promise.all([first, late]);
+      await rt.drain();
+      const results = [(await event(a)).result, (await event(b)).result];
+      assert.deepEqual(results.sort(), ['accepted', 'rejected'], 'one creation, the other refused');
+      assert.equal(Number((await inst('k15-new')).version), 1, 'one transition, not two at version 1');
+      assert.equal((await event(a)).reason, 'exists', 'A was applied after B, to the instance B created');
+    } finally {
+      caller.release();
+    }
+  });
+
+  await t.test('K1 a retry that waited behind its original replays it', async () => {
+    // The same request twice: the copy appended in a caller's transaction
+    // commits late, so it is picked while the original is being applied, and
+    // waits for the instance. Its receipt lookup must see the original's.
+    await create('k1-late');
+    const caller = await other.connect();
+    const second = make({ pool: other });
+    try {
+      await caller.query('BEGIN');
+      const copy = await rt.append(machine, 'k1-late', { type: 'Add', payload: { n: 1, sleepMs: 400 } },
+        { requestKey: 'k1-late-add', source: { kind: 'route' }, actor: 'user:1', db: caller });
+      const original = await route('k1-late', 'Add', { n: 1, sleepMs: 400 }, { requestKey: 'k1-late-add' });
+      const first = rt.processNext();
+      await sleep(100);
+      await caller.query('COMMIT');
+      await Promise.all([first, second.processNext()]);
+      assert.equal((await event(original)).result, 'accepted');
+      assert.deepEqual([(await event(copy)).result, (await event(copy)).emitted], ['replayed', { replayOf: original }]);
+      assert.equal((await inst('k1-late')).data.count, 1, 'applied once');
+    } finally {
+      caller.release();
+    }
+  });
+
   await t.test('K5 a transition locks only its own instance; a message to a locked instance does not wait', async () => {
     await create('k5-a');
     await create('k5-b');

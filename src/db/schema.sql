@@ -12551,11 +12551,11 @@ COMMENT ON TABLE bot_capture_artifacts IS 'staging:private';
 -- One row per machine instance. `state` is the phase name, `data` its
 -- payload; `version` counts accepted transitions and `machine_version` is
 -- the definition version that last wrote the row, so an older process
--- never applies events to an instance a newer one has written. A row in
--- the pseudo-state '(none)' only carries a flag (stalled or faulted) for an
--- instance whose first event keeps timing out or threw; it is replaced when
--- a creating event is accepted and deleted when an event is otherwise
--- processed. app_id has no foreign key on purpose: an instance's history
+-- never applies events to an instance a newer one has written. The
+-- pseudo-state '(none)' is a row the pipeline inserted to lock an instance
+-- that does not exist yet; it is deleted again unless a creating event is
+-- accepted, or kept to carry a stalled or faulted flag when that event
+-- timed out or threw. app_id has no foreign key on purpose: an instance's history
 -- outlives the app row, like receipts outlive what they describe.
 CREATE TABLE IF NOT EXISTS wf_instances (
   machine          TEXT NOT NULL,

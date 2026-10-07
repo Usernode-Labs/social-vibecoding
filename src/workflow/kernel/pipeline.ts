@@ -96,6 +96,7 @@ function deepFreeze<T>(value: T): T {
 interface Picked {
   id: string; machine: string; key: string; app_id: number | null; type: string; payload: any; source: any;
   actor: string | null; request_key: string; caused_by: string | null; attempts: number;
+  seen_version: string | null;   // the instance's version in the pick's snapshot
   now: Date;
   instance: Instance | null;
   receipt: { payload_hash: string; outcome: any; event_id: number } | null;
@@ -103,11 +104,13 @@ interface Picked {
 interface Instance { state: string; data: unknown; version: number; machine_version: number; app_id: number | null; flag: string | null }
 
 // The oldest pending event of any instance, locked with SKIP LOCKED so a
-// slot never waits for another slot's event. Only an instance's head event
-// is ever picked, so holding it is holding the instance's turn; the instance
-// row is then locked too (it may be held for a moment by the timer loop or a
-// release, never by another slot). Both locks are rechecked against the
-// latest row versions, so an event processed meanwhile is not picked again.
+// slot never waits for another slot's event, then its instance's row, which
+// is what serialises an instance: an event appended in a caller's
+// transaction can commit after a later one, so two slots may hold two
+// events of one instance, and the second waits here for the first to
+// commit (an instance with no row yet gets one first, claimNew). The event
+// lock is rechecked against the latest row version, so an event processed
+// meanwhile is not picked again.
 //
 // It travels in the batch that opens the transaction, so its arguments are
 // literals: machine names are kebab-case (defineMachine checks), versions
@@ -117,7 +120,7 @@ function pickSql(names: string[], versions: number[], passed: number[]): string 
   const ints = (xs: number[]) => xs.map((x) => { if (!Number.isSafeInteger(x)) throw new Error(`workflow: not an integer ${x}`); return String(x); });
   return `
   WITH pick AS (
-    SELECT e.*
+    SELECT e.*, i.version AS seen_version
       FROM (SELECT DISTINCT ON (machine, key) id FROM wf_events
              WHERE status = 'pending' AND machine = ANY(${machines})
              ORDER BY machine, key, id) h
@@ -133,7 +136,7 @@ function pickSql(names: string[], versions: number[], passed: number[]): string 
      LIMIT 1
      FOR UPDATE OF e SKIP LOCKED)
   SELECT p.id, p.machine, p.key, p.app_id, p.type, p.payload, p.source, p.actor, p.request_key,
-         p.caused_by, p.attempts, now() AS now,
+         p.caused_by, p.attempts, p.seen_version, now() AS now,
          CASE WHEN i.machine IS NULL THEN NULL ELSE json_build_object(
            'state', i.state, 'data', i.data, 'version', i.version, 'machine_version', i.machine_version,
            'app_id', i.app_id, 'flag', i.flag) END AS instance,
@@ -189,6 +192,25 @@ async function processOne(opts: PipelineOptions, names: string[], versions: numb
       return { kind: 'none', retryInMs };
     }
     picked = row;
+    // An instance with no row yet gets its placeholder first: the lock that
+    // serialises its first events. Without it, an event committed late (one
+    // appended in a caller's transaction) could be processed by another slot
+    // at the same time as a later one, both creating the instance.
+    let waited = row.instance !== null && Number(row.instance.version) !== Number(row.seen_version);
+    if (!row.instance) {
+      try {
+        ({ instance: row.instance, waited } = await claimNew(client, machine, row));
+      } catch (err) {
+        if (!RETRYABLE.has((err as { code?: string }).code || '')) throw err;
+        await client.query('ROLLBACK');
+        return { kind: 'pass', id: Number(row.id) };
+      }
+    }
+    // Another slot applied an event to this instance after the pick's
+    // snapshot (this one waited for its lock): the receipt it may have
+    // written is read again, so a retry that waited behind its original
+    // replays it.
+    if (waited) row.receipt = (await client.query(READ_RECEIPT, [row.machine, row.key, row.request_key])).rows[0] ?? null;
     const instance = row.instance;
     // Faulted or written by a newer version between the pick and the lock.
     if (instance && (instance.flag === 'faulted' || instance.machine_version > machine.version)) {
@@ -223,13 +245,35 @@ async function processOne(opts: PipelineOptions, names: string[], versions: numb
   }
 }
 
+// Insert the placeholder of an instance that has no row. If another
+// transaction is creating it, the insert waits for that one, and the row it
+// committed is locked and read in a fresh statement (this statement's
+// snapshot predates it).
+const CLAIM_NEW = `
+  INSERT INTO wf_instances (machine, key, app_id, state, machine_version)
+  VALUES ($1, $2, $3::int, $4, $5::int)
+  ON CONFLICT (machine, key) DO NOTHING
+  RETURNING state, data, version, machine_version, app_id, flag`;
+const LOCK_INSTANCE = `
+  SELECT state, data, version, machine_version, app_id, flag FROM wf_instances
+   WHERE machine = $1 AND key = $2 FOR UPDATE`;
+
+const READ_RECEIPT = `
+  SELECT payload_hash, outcome, event_id FROM wf_receipts WHERE machine = $1 AND key = $2 AND request_key = $3`;
+
+async function claimNew(client: PoolClient, machine: Machine<any, any>, row: Picked): Promise<{ instance: Instance; waited: boolean }> {
+  const { rows: [created] } = await client.query(CLAIM_NEW, [row.machine, row.key, row.app_id, NONE, machine.version]);
+  if (created) return { instance: created, waited: false };
+  return { instance: (await client.query(LOCK_INSTANCE, [row.machine, row.key])).rows[0], waited: true };
+}
+
 // The statements that end an event, each one round trip. Kept as constants
 // so scripts/check-sql.js checks them against the schema.
 
 // A rejected or replayed event: its result, the outcome notification, and
-// the instance left as it was, except that a '(none)' row carrying a stall
-// or a fault goes ($1: drop it) and a stall clears ($4), since the event
-// got through.
+// the instance left as it was, except that a '(none)' row (a placeholder,
+// or one carrying a stall or fault) goes ($1: drop it) and a stall clears
+// ($4), since the event got through.
 const FINISH_UNCHANGED = `
   WITH dropped AS (
     DELETE FROM wf_instances WHERE $1::boolean AND machine = $2 AND key = $3),
@@ -242,8 +286,7 @@ const FINISH_UNCHANGED = `
      WHERE id = $13 RETURNING id)
   SELECT pg_notify('wf_outcome', id::text) FROM finished`;
 
-// An accepted event: the instance row (inserted by its creating event),
-// the receipt, the event's result and the outcome notification. $10 says
+// An accepted event: the instance row, the receipt, the event's result and the outcome notification. $10 says
 // whether the outcome set or cleared the deadline ($8, $9) or left it. A
 // deadline set is announced on wf_timer (epoch milliseconds), so the timer
 // loop can wake for it if it is earlier than what it sleeps until.
@@ -422,8 +465,6 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, row: P
     messages.push({ machine: m.to.machine, key: m.to.key, type: m.event.type, eventId: Number(sent.id) });
   }
 
-  // The instance row is inserted by its creating event (no placeholder is
-  // written first: holding the head event is holding the instance's turn).
   await client.query(FINISH_ACCEPTED, [
     machine.name, row.key, ctx.appId, outcome.next.name, JSON.stringify(data), next, machine.version,
     timer ? timer.at : null, timer ? JSON.stringify({ type: timer.event.type, payload: timer.event.payload ?? {} }) : null,
