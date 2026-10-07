@@ -452,9 +452,7 @@ const AgentChatRow = memo(function AgentChatRow({ chat, active }: { chat: AgentC
  * from the Improve store's own list (`sessions` + `otherSessions`, one
  * fetch of /api/me/active-sessions). So this reads that store and draws that
  * row: a second copy of the list would drift, and a second row would let a
- * change's Working / Ready state say two things in two places. The store is
- * also what `Improve.onSessionCreated` publishes into, which is what makes a
- * change started a moment ago appear here at once.
+ * change's Working / Ready state say two things in two places.
  *
  * NOT GATED ON THE GLOBAL-CHAT FLAGS. Those decide whether the experimental
  * chat exists; a change is not that chat, and every collaborator has one.

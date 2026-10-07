@@ -99,7 +99,6 @@ async function migrate(config) {
   await seedStagingAgentSession(pool, config);
   await seedStagingAgentFailingChecks(pool, config);
   await seedStagingSavedDrafts(pool, config);
-  await seedStagingDraftDelete(pool, config);
   await seedStagingVenueLine(pool, config);
   await seedStagingDevFlowWizard(pool, config);
   await seedStagingSessionOptions(pool, config);
@@ -112,7 +111,6 @@ async function migrate(config) {
   await seedStagingForkedChat(pool, config);
   await seedStagingCcProgressRun(pool, config);
   await seedStagingTranscriptShowcase(pool, config);
-  await seedStagingQuestionnaire(pool, config);
   await seedStagingCcEstimateRun(pool, config);
   await seedStagingCcCohortRuns(pool, config);
   await seedStagingPlatformIssueDrafts(pool, config);
@@ -3764,77 +3762,6 @@ async function seedStagingSavedDrafts(pool, config) {
   });
 }
 
-// #1960: the fixture the DELETE check trashes from.
-//
-// A dedicated session, and the reason is the same one 990402 gives for not
-// living on 990401: this check is DESTRUCTIVE. `?shot=draft-delete` really
-// trashes `dropthisdraft` through the real handler, the real route and the
-// real table, because a delete that only pretends to happen cannot catch a
-// delete that comes back. Putting that on 990402 would empty the fixture
-// whose two rows another check asserts by text, and check order is not
-// something a proposal gets to choose.
-//
-// Idempotent on retry as well as on reboot: the shot deletes ONE KNOWN ID,
-// so a second run finds it already gone and the surviving row is the same
-// either way. The two texts are deliberately self-describing, because the
-// only thing the check can see is which of them is on screen.
-//
-// 990414 continues the 9904xx dev-session block (990401-990413 are taken).
-const STAGING_DRAFT_DELETE_SESSION_ID = 990414;
-
-const STAGING_DRAFT_DELETE_DRAFTS = [
-  { id: 'dropthisdraft', text: 'Staging demo draft: the one this check trashes.', minutesAgo: 6 },
-  { id: 'keepthisdraft', text: 'Staging demo draft: the one that is still here afterwards.', minutesAgo: 5 },
-];
-
-async function seedStagingDraftDelete(pool, config) {
-  if (process.env.USERNODE_ENV !== 'staging') return;
-
-  const { rows: appRows } = await pool.query(
-    'SELECT id FROM apps WHERE slug = $1',
-    [config.selfAppSlug]
-  );
-  const appId = appRows[0]?.id;
-  if (!appId) {
-    log.warn('db', 'Staging draft-delete fixture skipped: self-app row missing', {
-      slug: config.selfAppSlug,
-    });
-    return;
-  }
-
-  const owner = await getStagingCheckViewer(pool, 'Staging draft-delete fixture');
-  if (!owner) return;
-
-  const { rowCount } = await pool.query(
-    `INSERT INTO chat_sessions
-       (id, app_id, user_id, branch_name, pr_title, session_title, status, created_at, last_activity_at)
-     VALUES ($1, $2, $3, 'staging-fixture/draft-delete', NULL,
-             '[staging fixture] Trashing a saved draft', 'active',
-             NOW() - INTERVAL '8 minutes', NOW() - INTERVAL '4 minutes')
-     ON CONFLICT (id) DO UPDATE SET user_id = EXCLUDED.user_id`,
-    [STAGING_DRAFT_DELETE_SESSION_ID, appId, owner.id]
-  );
-
-  let drafts = 0;
-  for (const d of STAGING_DRAFT_DELETE_DRAFTS) {
-    const { rowCount: added } = await pool.query(
-      `INSERT INTO chat_session_drafts (session_id, user_id, draft_id, content, saved_at)
-       VALUES ($1, $2, $3, $4, NOW() - ($5::int * INTERVAL '1 minute'))
-       ON CONFLICT (session_id, draft_id) DO UPDATE SET user_id = EXCLUDED.user_id`,
-      [STAGING_DRAFT_DELETE_SESSION_ID, owner.id, d.id, d.text, d.minutesAgo]
-    );
-    drafts += added;
-  }
-
-  log.info('db', 'Staging draft-delete fixture seeded', {
-    appId,
-    owner: owner.username,
-    sessionId: STAGING_DRAFT_DELETE_SESSION_ID,
-    sessionInserted: rowCount,
-    draftsInserted: drafts,
-  });
-}
-
 // #1049 / #1086: the venue line above the composer, and the walkthrough
 // behind one of its answers.
 //
@@ -3842,9 +3769,9 @@ async function seedStagingDraftDelete(pool, config) {
 // build this change?" at the top of every untouched session. The picker is
 // gone; the venue is stated on the composer instead, always, and changed
 // from a sheet. So the fixture keeps its id and its shape and now shows
-// the statement rather than the question. Its two siblings exist because
-// the interesting part of that statement is the venues a reviewer cannot
-// reach by hand on a staging clone.
+// the statement rather than the question. Its sibling exists because the
+// interesting part of that statement is the venues a reviewer cannot reach
+// by hand on a staging clone.
 //
 //   990403 — /#app/<self-slug>/dev/sessions/990403
 //            the line in its ordinary state: Homeroom · Claude, the
@@ -3852,11 +3779,6 @@ async function seedStagingDraftDelete(pool, config) {
 //   990409 — /#app/<self-slug>/dev/sessions/990409
 //            Homeroom · OpenRouter — a pinned backend with a model, which
 //            is also the one venue that renders the model row underneath.
-//   990410 — /#app/<self-slug>/dev/sessions/990410
-//            the same session AFTER a silent fallback: the saved default
-//            was OpenRouter, the deployment could not honour it, and the
-//            note under the line says so. Seeded through the session's
-//            own columns, so it needs no failing credential.
 //   990404 — /#app/<self-slug>/dev/sessions/990404?demo=1
 //            the five-step walkthrough, resumed from a real open
 //            external_agent_tasks row. `?demo=1` is what unlocks
@@ -3877,7 +3799,6 @@ async function seedStagingDraftDelete(pool, config) {
 const STAGING_VENUE_LINE_SESSION_ID = 990403;
 const STAGING_DEV_FLOW_WIZARD_SESSION_ID = 990404;
 const STAGING_VENUE_OPENROUTER_SESSION_ID = 990409;
-const STAGING_VENUE_FALLBACK_SESSION_ID = 990410;
 const STAGING_DEV_FLOW_BRANCH = 'usernode/staging-fixture-1049';
 const STAGING_DEV_FLOW_BASE_SHA = '0123456789abcdef0123456789abcdef01234567';
 
@@ -3906,12 +3827,10 @@ async function seedStagingVenueLine(pool, config) {
 
   // The venue is read off the session's own columns (build-venues.js's
   // currentVenue precedence), so each row IS its fixture: leave the backend
-  // defaulted for Homeroom · Claude, pin it for Homeroom · OpenRouter. The
-  // third row is the OpenRouter DEFAULT that could not be honoured, which
-  // is why it is seeded as a claude_code session — landing somewhere the
-  // default did not name is the whole point of it. The note that explains
-  // that is a creation-moment fact rather than a column, so it is reached
-  // with ?shot=venue-fallback (see DevChat._shotVenueFallbackReason).
+  // defaulted for Homeroom · Claude, pin it for Homeroom · OpenRouter.
+  // (#4268 removed a third, 990410, the session an OpenRouter default fell
+  // back from: its note is reached with ?shot=venue-fallback on any session
+  // that draws the line, and a read-only classic session draws none.)
   const rows = [
     {
       id: STAGING_VENUE_LINE_SESSION_ID,
@@ -3926,13 +3845,6 @@ async function seedStagingVenueLine(pool, config) {
       title: '[staging fixture] Venue line — Homeroom · OpenRouter',
       backend: 'codex_openrouter',
       model: 'openai/gpt-5.3-codex',
-    },
-    {
-      id: STAGING_VENUE_FALLBACK_SESSION_ID,
-      branch: 'staging-fixture/venue-fallback',
-      title: '[staging fixture] Venue line — fell back to Claude',
-      backend: 'claude_code',
-      model: null,
     },
   ];
 
@@ -4612,7 +4524,9 @@ async function seedStagingCcProgressRun(pool, config) {
 // reads as red — and neither can be judged from a fixture holding only one.
 //
 // The questionnaire is not here: it renders only on the LAST non-system row
-// of a session, so it cannot follow anything. It has its own fixture below.
+// of a session, so it cannot follow anything. (Its own fixture, 990413, was
+// removed in #4268: on a read-only classic session the answers are put away,
+// so it showed nothing.)
 //
 // Its id is explicit so the route is stable for dapp.json and for the
 // before/after screenshots. 990412 continues the 9904xx dev-session block
@@ -4776,105 +4690,6 @@ async function seedStagingTranscriptShowcase(pool, config) {
   log.info('db', 'Staging transcript fixture seeded', {
     appId, owner: owner.username,
     sessionId: STAGING_TRANSCRIPT_SESSION_ID,
-    inserted: rowCount,
-  });
-}
-
-// The questionnaire, staged on its own route.
-//
-// It cannot live in the showcase above: the chips render only on the LAST
-// non-system row of an interactive session, so anything after them hides
-// them. Hence a second session whose whole point is to END on the question.
-//
-// TWO groups on purpose, because the interesting behaviour is the difference
-// between them. The first is ordinary chips and carries the escape hatch —
-// the last chip in the row, which opens a one-line input scoped to that
-// question instead of sending the reader to the composer to do a form's job.
-// The second is answers that are all bare numbers sharing one unit, which is
-// not a set of choices at all; it draws as a stepper with the first answer as
-// its suggestion. Past one question neither sends on tap: they select, and a
-// shared Send answers row commits both at once.
-//
-// 990413 continues the 9904xx dev-session block.
-const STAGING_QUESTIONNAIRE_SESSION_ID = 990413;
-
-async function seedStagingQuestionnaire(pool, config) {
-  if (process.env.USERNODE_ENV !== 'staging') return;
-
-  const { rows: appRows } = await pool.query(
-    'SELECT id FROM apps WHERE slug = $1',
-    [config.selfAppSlug]
-  );
-  const appId = appRows[0]?.id;
-  if (!appId) {
-    log.warn('db', 'Staging questionnaire fixture skipped: self-app row missing', {
-      slug: config.selfAppSlug,
-    });
-    return;
-  }
-
-  const owner = await getStagingCheckViewer(pool, 'Staging questionnaire fixture');
-  if (!owner) return;
-
-  const { rowCount } = await pool.query(
-    `INSERT INTO chat_sessions
-       (id, app_id, user_id, branch_name, session_title, pr_title,
-        status, created_at, last_activity_at)
-     VALUES ($1, $2, $3, 'staging-fixture/questionnaire',
-             '[staging fixture] Flag a proposal that has gone quiet',
-             '[staging fixture] Flag a proposal that has gone quiet',
-             'active', NOW() - INTERVAL '9 minutes', NOW() - INTERVAL '8 minutes')
-     ON CONFLICT (id) DO UPDATE SET user_id = EXCLUDED.user_id`,
-    [STAGING_QUESTIONNAIRE_SESSION_ID, appId, owner.id]
-  );
-
-  const { rows: already } = await pool.query(
-    'SELECT 1 FROM chat_session_messages WHERE session_id = $1 LIMIT 1',
-    [STAGING_QUESTIONNAIRE_SESSION_ID]
-  );
-  if (already.length) return;
-
-  // The prose and the chips say the same thing, which is the product's own
-  // arrangement: the sentence is what a shared transcript and a plain-text
-  // export show, and the chips are how you answer without typing.
-  const assistantContent = 'Two things I need before I dispatch anything:\n\n'
-    + '1. Where should the flag show? (suggested: on the proposal card)\n'
-    + '2. How long is "gone quiet"? (suggested: 3 days)';
-  const suggestions = [
-    {
-      question: 'Where should the flag show?',
-      answers: ['On the proposal card', 'In the session header', 'Both'],
-    },
-    {
-      question: 'How long is "gone quiet"?',
-      answers: ['3 days', '5 days', '7 days'],
-    },
-  ];
-
-  const messages = [
-    {
-      role: 'user',
-      content: '[staging fixture] Flag a proposal that has gone quiet.',
-      metadata: {}, minutesAgo: 9,
-    },
-    {
-      role: 'assistant', model: 'claude-opus-5',
-      content: assistantContent,
-      metadata: { suggestions, costCents: 2 }, minutesAgo: 8,
-    },
-  ];
-  for (const m of messages) {
-    await pool.query(
-      `INSERT INTO chat_session_messages (session_id, role, content, model, metadata, created_at)
-       VALUES ($1, $2, $3, $4, $5, NOW() - ($6::int * INTERVAL '1 minute'))`,
-      [STAGING_QUESTIONNAIRE_SESSION_ID, m.role, m.content, m.model || null,
-       JSON.stringify(m.metadata), m.minutesAgo]
-    );
-  }
-
-  log.info('db', 'Staging questionnaire fixture seeded', {
-    appId, owner: owner.username,
-    sessionId: STAGING_QUESTIONNAIRE_SESSION_ID,
     inserted: rowCount,
   });
 }
@@ -5062,24 +4877,6 @@ async function seedStagingCcCohortRuns(pool, config) {
         'Editing tests/cc-progress-summary.test.js',
         '  ⎿ Edit: ok',
       ]),
-    },
-    {
-      // #1378: the not-stoppable screen. A turn adopted after a platform
-      // restart is genuinely running but has no in-process stop handle, so
-      // /status reports `stoppable: false` and the composer paints a muted
-      // spinner instead of a red Stop the server could not honour. There is
-      // no way for a tester to produce that state on demand — it needs a
-      // restart landing mid-turn — so it is seeded.
-      //
-      // The branch SUFFIX is the contract: stagingCohortFixtureSessions() in
-      // src/routes/sessions.js keys this fixture's stoppability off
-      // `-unstoppable`, so renaming the branch silently turns the screen
-      // back into an ordinary stoppable one and its dapp.json check with it.
-      id: 900812,
-      branch: 'staging-fixture/cc-cohort-unstoppable',
-      title: '[staging fixture] Busy with platform work — Stop not offered',
-      minutesAgo: 8,
-      progressLog: baseLog,
     },
   ];
 
