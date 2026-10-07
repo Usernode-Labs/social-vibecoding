@@ -174,7 +174,7 @@ function phoneAuthRoutes(config) {
       const consented = result.created || req.body?.followInvite === true;
       const invite = consented
         ? await communityInvites.redeemCarried(pool, req, res, result.userId, { requirePhone: true })
-        : (communityInvites.clearInviteCookie(res), null);
+        : await communityInvites.dropCarried(pool, req, res, result.userId);
       if (invite && invite.status === 'joined') await challengeScorer.scoreOnJoin(pool, config);
 
       if (result.created) {
