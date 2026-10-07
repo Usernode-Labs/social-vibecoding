@@ -1049,14 +1049,16 @@ test('no user GitHub credential is used, held or forwarded', async () => {
   assert.deepEqual(log.push[0].githubPublic, { marker: 'public-reader' });
 });
 
-test('recordPlatformPush is never called, so the head classifies as the author\'s', () => {
-  // If this path recorded a platform push, classifyNativeHeadMove would carry
-  // every existing approval onto code nobody in the group has read. The
-  // comment says so; this makes it true.
-  assert.doesNotMatch(CODE, /recordPlatformPush/);
+test('nothing here decides what the push costs the approvals', () => {
+  // Since #2038 the head-moved machinery asks services/integration.js's
+  // classifyHeadMove what the move was and spends the answer on
+  // chat_sessions.approval_epoch. A path that classified the move or moved
+  // the epoch itself could keep every existing approval on code nobody in
+  // the group has read. The comment says so; this makes it true.
+  assert.doesNotMatch(CODE, /classifyHeadMove|clearApprovals|approval_epoch/);
   assert.doesNotMatch(CODE, /sync-main/);
-  // And the header comment says WHY, so the next person does not add it back.
-  assert.match(SRC, /recordPlatformPush/, 'the omission is documented, not accidental');
+  // And the header comment says WHY, so the next person does not add it.
+  assert.match(SRC, /classifyHeadMove/, 'the omission is documented, not accidental');
 });
 
 test('the vote-clearing and check-rerunning machinery is reused, not reimplemented', () => {
