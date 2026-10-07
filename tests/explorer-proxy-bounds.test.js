@@ -84,13 +84,15 @@ test.before(async () => {
 
 test.after(() => { upstream?.close(); });
 
-function buildApp() {
+// `windows` is the proxy's idle timeout and deadline, for the one test that
+// has to watch a timeout fire; every other test runs on the real ones.
+function buildApp(windows) {
   const app = express();
   // Mounted BEFORE any body parser, exactly as server.js does it.
   app.use(explorerProxyRoutes({
     explorerUpstream: `127.0.0.1:${upstreamPort}`,
     explorerUpstreamBase: '/api',
-  }));
+  }, windows));
   return app;
 }
 
@@ -338,13 +340,24 @@ test('the upstream response stream has an error handler', () => {
 
 test('a hanging upstream does not hang the caller forever', async () => {
   upstreamMode = 'hang';
-  const server = await listen(buildApp());
+  // The real windows are ten and thirty seconds. This test passes them in
+  // short, in the same order, so it waits a fifth of a second for the idle
+  // timeout instead of ten. What production runs with is pinned below.
+  const idleTimeoutMs = 200;
+  const deadlineMs = 4000;
+  const server = await listen(buildApp({ idleTimeoutMs, deadlineMs }));
   try {
     // The idle timeout is the one that fires here (no bytes at all), and it
     // must produce a controlled answer rather than an unhandled throw.
     const started = Date.now();
     const res = await call(server, '/explorer-api/active_chain');
     assert.equal(res.status, 502, 'a dead upstream is a 502, not a hang');
-    assert.ok(Date.now() - started < UPSTREAM_IDLE_TIMEOUT_MS + 5000);
+    assert.match(res.text, /upstream timed out/, 'answered by the idle timeout');
+    assert.ok(Date.now() - started < deadlineMs - 1000, 'and well before the deadline would have');
   } finally { server.close(); }
+  const src = read('src/routes/explorer-proxy.js');
+  assert.match(src, /idleTimeoutMs = UPSTREAM_IDLE_TIMEOUT_MS, deadlineMs = UPSTREAM_DEADLINE_MS,/,
+    'left alone, the proxy runs on its own two constants');
+  assert.match(src, /timeout: idleTimeoutMs,/);
+  assert.match(read('server.js'), /app\.use\(explorerProxyRoutes\(config\)\);/, 'and server.js passes it nothing else');
 });

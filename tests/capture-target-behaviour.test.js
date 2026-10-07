@@ -21,6 +21,13 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { captureTarget, setFrameSink } = require('../capture/capture');
+const { inVirtualTime } = require('./lib/virtual-time');
+
+// captureTarget settles, holds and scrolls on real sleeps: two to three
+// seconds for every target, against a fake page that answers at once. `timed`
+// runs a test on a mocked clock (lib/virtual-time.js), so the sleeps keep
+// their lengths and their order and none of them is waited for.
+const timed = (name, fn) => test(name, (t) => inVirtualTime(t, fn));
 
 // Fake page. `scrollable` controls what the in-page scrollability probe
 // reports; `log` records every interesting call in order.
@@ -90,7 +97,7 @@ const shotFrames = (frames) => frames.filter((l) => l.startsWith('__USERNODE_SHO
 
 // ── Fix 3: don't record what cannot be recorded ────────────────────────
 
-test('a non-scrollable page skips the recording entirely, with its own reason', async () => {
+timed('a non-scrollable page skips the recording entirely, with its own reason', async () => {
   const { frames, log } = await run({ opts: { media: true } }, { scrollable: false });
 
   // No screencast started, so no ffmpeg transcode either.
@@ -112,7 +119,7 @@ test('a non-scrollable page skips the recording entirely, with its own reason', 
     'the old empty-webm / no-webm-to-transcode pair is not what a short page reports');
 });
 
-test('the scrollability probe runs BEFORE any recording setup', async () => {
+timed('the scrollability probe runs BEFORE any recording setup', async () => {
   const { log } = await run({ opts: { media: true } }, { scrollable: true });
   const probeAt = log.findIndex((c) => c.call === 'scrollProbe');
   const castAt = log.findIndex((c) => c.call === 'screencast');
@@ -120,7 +127,7 @@ test('the scrollability probe runs BEFORE any recording setup', async () => {
   assert.ok(castAt > probeAt, 'the probe gates the screencast, it does not follow it');
 });
 
-test('a scrollable page still records, and waits for a real repaint first', async () => {
+timed('a scrollable page still records, and waits for a real repaint first', async () => {
   const { log } = await run({ opts: { media: true } }, { scrollable: true });
   assert.equal(calls(log, 'screencast').length, 1, 'the recording still happens');
   // The fixed 300ms sleep after the viewport switch was a guess at how long
@@ -131,7 +138,7 @@ test('a scrollable page still records, and waits for a real repaint first', asyn
   assert.ok(repaintAt < castAt, 'and it precedes the screencast');
 });
 
-test('a console-only run (MEDIA=0) touches neither probe nor recording', async () => {
+timed('a console-only run (MEDIA=0) touches neither probe nor recording', async () => {
   const { frames, log } = await run({ opts: { media: false, collectConsole: true } });
   assert.equal(calls(log, 'screencast').length, 0);
   assert.equal(calls(log, 'scrollProbe').length, 0);
@@ -141,7 +148,7 @@ test('a console-only run (MEDIA=0) touches neither probe nor recording', async (
 
 // ── Fix 2: one navigation per side, companion reloads the same page ────
 
-test('the phone companion reuses the loaded page instead of opening a second one', async () => {
+timed('the phone companion reuses the loaded page instead of opening a second one', async () => {
   const { frames, log, browser } = await run({
     opts: { media: true, companion: { index: 1, viewport: { width: 390, height: 844 } } },
   }, { scrollable: true });
@@ -157,7 +164,7 @@ test('the phone companion reuses the loaded page instead of opening a second one
   assert.ok(shots.some((f) => /media=png/.test(f) && /index=1/.test(f)), 'phone still at index 1');
 });
 
-test('the companion is shot at the phone frame, after the desktop artifacts', async () => {
+timed('the companion is shot at the phone frame, after the desktop artifacts', async () => {
   const { log } = await run({
     opts: { media: true, companion: { index: 1, viewport: { width: 390, height: 844 } } },
   }, { scrollable: true });
@@ -172,7 +179,7 @@ test('the companion is shot at the phone frame, after the desktop artifacts', as
   assert.ok(log.indexOf(phoneSet[0]) < reloadAt, 'and set before the reload, so the app boots narrow');
 });
 
-test('a still-only target also gets its companion, and no recording', async () => {
+timed('a still-only target also gets its companion, and no recording', async () => {
   // The legacy sibling-target shape: still:true carries no recording. It must
   // keep working (rolling deploy) and still honour a companion if one comes.
   const { frames, log } = await run({
@@ -185,7 +192,7 @@ test('a still-only target also gets its companion, and no recording', async () =
   assert.ok(shots.some((f) => /index=3/.test(f)));
 });
 
-test('no companion means no extra load — the plain single-frame target is unchanged', async () => {
+timed('no companion means no extra load — the plain single-frame target is unchanged', async () => {
   const { frames, log, browser } = await run({ opts: { media: true } }, { scrollable: true });
   assert.equal(browser.pagesOpened, 1);
   assert.equal(calls(log, 'goto').length, 1);
@@ -199,7 +206,7 @@ test('no companion means no extra load — the plain single-frame target is unch
   assert.ok(all.every((f) => /index=0/.test(f)), all.join('\n'));
 });
 
-test('a companion failure is reported but never costs the target its own shots', async () => {
+timed('a companion failure is reported but never costs the target its own shots', async () => {
   const log = [];
   const browser = {
     async newPage() {
@@ -218,7 +225,7 @@ test('a companion failure is reported but never costs the target its own shots',
     'the companion failure is attributed to its own index');
 });
 
-test('a dead navigation reports the companion index too, so no group goes unaccounted', async () => {
+timed('a dead navigation reports the companion index too, so no group goes unaccounted', async () => {
   const log = [];
   const browser = {
     async newPage() {

@@ -58,6 +58,7 @@ const stopRegistry = require('../src/services/stop-registry');
 const chatDelivery = require('../src/services/chat-delivery');
 const { sessionRoutes } = require('../src/routes/sessions');
 const express = require('express');
+const { closeConnections } = require('./lib/close-connections');
 
 const VIEWER = { id: 7, username: 'tester' };
 const SESSION_ID = 3177;
@@ -105,6 +106,9 @@ function installHandlers({ lookup = () => [], insert = () => [{ id: 1001 }] } = 
 
 function startServer() {
   const app = express();
+  // Every test here mocks setTimeout; see lib/close-connections.js for what
+  // that costs a fetch on a kept-alive connection under Node 22.
+  app.use(closeConnections);
   app.use(express.json());
   app.use((req, res, next) => { req.user = VIEWER; next(); });
   app.use(sessionRoutes({ jwtSecret: 's' }));

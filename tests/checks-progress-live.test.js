@@ -21,6 +21,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { PassThrough } = require('node:stream');
+const { inVirtualTime } = require('./lib/virtual-time');
 
 const ROOT = path.join(__dirname, '..');
 const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
@@ -62,7 +63,7 @@ test('docker: an observer that throws cannot break the run', () => {
   return new Promise((resolve) => setImmediate(resolve)); // no unhandled throw
 });
 
-test('kubernetes: the observer gets only NEW complete lines from successive pod-log reads', async () => {
+test('kubernetes: the observer gets only NEW complete lines from successive pod-log reads', async (t) => {
   const seen = [];
   let reads = 0;
   let jobReads = 0;
@@ -90,14 +91,21 @@ test('kubernetes: the observer gets only NEW complete lines from successive pod-
     },
   });
   const cfg = { kubernetes: { captureImage: 'img@sha256:abc', workerNamespace: 'ns', workerServiceAccount: 'sa' } };
-  // Speed the 2s tick up by stubbing setTimeout inside the module's scope is
-  // not possible without a seam; run for real but the loop only needs ~7
-  // ticks. Keep the test bounded by a generous timeout on the runner.
-  const started = Date.now();
-  const result = await kubernetes.runCaptureJob(cfg, {
-    sessionId: 7, env: {}, timeoutMs: 60000, onStdoutLine: (l) => seen.push(l),
+  // The loop needs about seven of its two-second ticks, and everything it
+  // waits on between them is a fake that answers at once, so the ticks are
+  // taken on a mocked clock (lib/virtual-time.js). Date is mocked with them:
+  // the loop's own deadline and the elapsed time below read the same clock.
+  let elapsed = null;
+  const result = await inVirtualTime(t, async () => {
+    const started = Date.now();
+    const finished = await kubernetes.runCaptureJob(cfg, {
+      sessionId: 7, env: {}, timeoutMs: 60000, onStdoutLine: (l) => seen.push(l),
+    });
+    elapsed = Date.now() - started;
+    return finished;
   });
-  assert.ok(Date.now() - started < 30000, 'finished inside the job poll budget');
+  assert.ok(elapsed < 30000, 'finished inside the job poll budget');
+  assert.ok(elapsed >= 12000, 'after the six waits between its seven reads of the Job');
   assert.equal(typeof result.stdout, 'string', 'the final verdict read is unchanged');
   const headers = seen.filter((l) => l.startsWith('__USERNODE_TEST__ '));
   assert.deepEqual(headers.map((l) => /index=(\d+)/.exec(l)[1]), ['0', '1'],
