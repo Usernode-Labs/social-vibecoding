@@ -133,6 +133,9 @@ Re-theme by changing the token values there, keeping every text pair at
   \`text-fg\`, \`text-muted\`, \`border-line\`, \`bg-accent\` with
   \`text-on-accent\`, ...): never a raw hex value or a stock palette class.
 - Tap targets are at least 44 px; the buttons and fields already are.
+- A field's label says what it is; its placeholder, if any, is an example
+  that says so ("e.g. 5.0"), never a bare value that could pass for one
+  already entered.
 - Every screen that loads data has honest loading, empty and error states.
   Never show the empty state while loading or after a failure; an error says
   what failed, what still works, and offers Retry.
@@ -222,10 +225,12 @@ const DESIGN_KIT_CSS = `
     @apply border border-line bg-surface text-fg hover:bg-raised;
   }
 
-  /* Text inputs, selects and textareas: <input class="field">, 44 px tall. */
+  /* Text inputs, selects and textareas: <input class="field">, 44 px tall.
+     The placeholder is a faint hint (muted at 60%), so an example such as
+     "5.0" never reads as a value somebody already typed in. */
   .field {
     @apply block min-h-11 w-full rounded-lg border border-line bg-surface px-3 py-2 text-body text-fg
-      placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-focus;
+      placeholder:text-muted/60 focus:outline-none focus:ring-2 focus:ring-focus;
   }
 
   /* A grouped list: <ul class="list"> of <li class="list-row">. The usual
