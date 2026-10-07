@@ -62,7 +62,7 @@ const IncidentUI = Object.freeze({
   rowWhen: 'text-xs text-zinc-500 dark:text-zinc-400 tabular-nums',
   rowWhat: 'text-sm text-zinc-900 dark:text-zinc-100 mt-1 break-words',
   rowWhere: 'flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-xs text-zinc-500 dark:text-zinc-400',
-  count: 'tabular-nums text-right',
+  count: 'tabular-nums',
 });
 
 /** What a kind is called on screen. Pure. */

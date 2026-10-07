@@ -1333,6 +1333,21 @@
     {
       "source": "src/routes/admin.js",
       "method": "GET",
+      "path": "/api/admin/incidents",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.get.admin.incidents.862da7fa",
+      "domain": "admin",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin"
+    },
+    {
+      "source": "src/routes/admin.js",
+      "method": "GET",
       "path": "/api/admin/limits",
       "expression": null,
       "status": "mapped",
