@@ -12,7 +12,7 @@
 //
 // #800: Haiku 4.5 was removed from this allowlist — it is the weakest
 // tier for multi-step coding work. The platform still uses
-// `claude-haiku-4-5` DIRECTLY (not via this map) for cheap housekeeping
+// `claude-haiku-5-5` DIRECTLY (not via this map) for cheap housekeeping
 // calls — session / issue titling and progress estimates in
 // src/services/llm.js, plus src/routes/auth.js — so those are
 // unaffected. PR titling moved to Sonnet 5.5 (llm.PR_METADATA_MODEL),
