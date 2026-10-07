@@ -298,6 +298,47 @@ test('test and native-local entrypoints materialize ignored shell artifacts', ()
     'dev Compose must restore image-built artifacts hidden by its public bind mount');
 });
 
+// The suites read public/index.html and never the bundle, so their preflight
+// builds the document alone. The client pass was the slower half of the build
+// (about 4.5 s of 8 in the unit-suite job, 7 October 2026) and gave them
+// nothing: the document is composed from src/head.html and the prerender.
+test('the test preflight builds the document alone; everything that serves the bundle still builds both', () => {
+  const ensureScript = fs.readFileSync(
+    path.join(ROOT, 'scripts', 'ensure-shell-artifacts.js'), 'utf8');
+
+  assert.match(ensureScript, /runNode\('frontend\/scripts\/build-shell\.mjs', htmlOnly \? \['--html-only'\] : \[\]\)/,
+    'only the --html-only preflight may ask the builder to skip the bundle');
+  assert.match(ensureScript, /builtHtmlStamp !== stamp \|\| \(!htmlOnly && builtJsStamp !== stamp\)/,
+    'a build that was asked for the bundle must still prove it wrote one');
+  assert.match(ensureScript, /const needsShell = !htmlFresh \|\| \(!htmlOnly && !jsFresh\);/,
+    'a runtime preflight must rebuild a bundle the test preflight left stale or absent');
+
+  assert.match(buildScript, /const htmlOnly = process\.argv\.includes\('--html-only'\);/);
+  assert.match(buildScript, /if \(!htmlOnly\) buildClientBundle\(\);/,
+    'the client pass, with its no-stylesheet gate, runs unless the document alone was asked for');
+  const clientPass = buildScript.slice(
+    buildScript.indexOf('function buildClientBundle()'), buildScript.indexOf('if (!htmlOnly) buildClientBundle();'));
+  assert.match(clientPass, /runVite\(\['build'\]\)/);
+  assert.match(clientPass, /strayCss\.length/, 'the stylesheet gate belongs to the pass that can emit one');
+  // The document must not be made of anything the client pass writes, or a
+  // document-only build would differ from the one the image serves.
+  const compose = buildScript.slice(buildScript.indexOf('// ── Compose the document'), buildScript.indexOf('fs.writeFileSync(path.join(ROOT, HTML_OUTPUT), html);'));
+  assert.doesNotMatch(compose, /jsPath|emittedAssets|readFileSync\([^)]*shell/,
+    'the document is head.html plus the prerender, never a read of the bundle');
+
+  for (const file of ['Dockerfile', 'Dockerfile.kubernetes']) {
+    const source = fs.readFileSync(path.join(ROOT, file), 'utf8');
+    assert.match(source, /node frontend\/scripts\/build-shell\.mjs\s*$/m,
+      `${file} must build the bundle as well as the document`);
+    assert.doesNotMatch(source, /--html-only/);
+  }
+  const packageJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+  for (const script of ['prestart', 'predev', 'ensure:shell', 'build:shell']) {
+    assert.doesNotMatch(packageJson.scripts[script], /--html-only/,
+      `${script} serves or ships the bundle and must build it`);
+  }
+});
+
 test('kpack excludes dependency trees from the platform source', () => {
   const project = fs.readFileSync(path.join(ROOT, 'project.toml'), 'utf8');
   assert.match(project, /schema-version = "0\.2"/);

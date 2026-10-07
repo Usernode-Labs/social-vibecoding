@@ -61,6 +61,15 @@ function resolveViteCli() {
 
 const vite = resolveViteCli();
 
+// `--html-only` writes the document and nothing else. The root test suite's
+// preflight asks for it (scripts/ensure-shell-artifacts.js): those suites read
+// public/index.html and never the bundle, and the document is composed below
+// from src/head.html and the prerender alone, so the client pass, the slower
+// of the two, has nothing to give them. Every image build and every runtime
+// preflight still runs both passes, so the bundle and its no-stylesheet gate
+// are checked wherever the bundle is actually used.
+const htmlOnly = process.argv.includes('--html-only');
+
 function runVite(args) {
   try {
     execFileSync(process.execPath, [vite, ...args], { cwd: FRONTEND, stdio: ['ignore', 'inherit', 'inherit'] });
@@ -70,31 +79,38 @@ function runVite(args) {
 }
 
 // ── Pass 1: the browser bundle ─────────────────────────────────────────
-console.log('[build-shell] pass 1/2 — client bundle');
-runVite(['build']);
-
 const jsPath = path.join(ROOT, JS_OUTPUT);
-if (!fs.existsSync(jsPath)) fail(`the client build did not emit ${JS_OUTPUT}`);
 
-// Nothing in the shell tree imports CSS today (shadcn components are Tailwind
-// classes in TSX and the shell's stylesheet is the existing compiled v3
-// build). An emitted stylesheet therefore means something pulled in CSS of
-// its own and the document would need a FOURTH <link> — which would land
-// after /css/tailwind.css and break the cascade contract the head asserts.
-// Fail loudly rather than ship a silently restyled shell.
-const emittedAssets = fs.readdirSync(path.join(ROOT, 'public', 'shell', 'assets'));
-const strayCss = emittedAssets.filter((f) => f.endsWith('.css'));
-if (strayCss.length) {
-  fail(
-    `the client build emitted a stylesheet (${strayCss.join(', ')}). The shell gets ALL of its `
-    + 'CSS from the existing compiled /css/tailwind.css; something under frontend/ now imports '
-    + 'its own CSS. Remove that import rather than adding a fourth <link> — see the cascade '
-    + 'note in frontend/src/head.html.',
-  );
+function buildClientBundle() {
+  console.log('[build-shell] pass 1/2 — client bundle');
+  runVite(['build']);
+
+  if (!fs.existsSync(jsPath)) fail(`the client build did not emit ${JS_OUTPUT}`);
+
+  // Nothing in the shell tree imports CSS today (shadcn components are Tailwind
+  // classes in TSX and the shell's stylesheet is the existing compiled v3
+  // build). An emitted stylesheet therefore means something pulled in CSS of
+  // its own and the document would need a FOURTH <link> — which would land
+  // after /css/tailwind.css and break the cascade contract the head asserts.
+  // Fail loudly rather than ship a silently restyled shell.
+  const emittedAssets = fs.readdirSync(path.join(ROOT, 'public', 'shell', 'assets'));
+  const strayCss = emittedAssets.filter((f) => f.endsWith('.css'));
+  if (strayCss.length) {
+    fail(
+      `the client build emitted a stylesheet (${strayCss.join(', ')}). The shell gets ALL of its `
+      + 'CSS from the existing compiled /css/tailwind.css; something under frontend/ now imports '
+      + 'its own CSS. Remove that import rather than adding a fourth <link> — see the cascade '
+      + 'note in frontend/src/head.html.',
+    );
+  }
 }
 
+if (!htmlOnly) buildClientBundle();
+
 // ── Pass 2: prerender the shell tree ───────────────────────────────────
-console.log('[build-shell] pass 2/2 — SSG prerender');
+console.log(htmlOnly
+  ? '[build-shell] document only — SSG prerender'
+  : '[build-shell] pass 2/2 — SSG prerender');
 const ssrDir = path.join(FRONTEND, '.ssr');
 fs.rmSync(ssrDir, { recursive: true, force: true });
 runVite(['build', '--config', 'vite.ssr.config.ts', '--logLevel', 'warn']);
@@ -216,13 +232,18 @@ ${prefixShellAssetUrls(head, buildSha).replace(/\s*$/, '\n')}${entryTag}</head>
 
 fs.writeFileSync(path.join(ROOT, HTML_OUTPUT), html);
 
-// Stamp the JS too so a running image can identify the exact source set that
-// produced it. The image copies HTML and JS from this same builder invocation.
-const js = fs.readFileSync(jsPath, 'utf8').replace(/^﻿/, '');
-fs.writeFileSync(jsPath, `${formatJsStamp(stamp)}\n${js}`);
-
 fs.rmSync(ssrDir, { recursive: true, force: true });
 
-console.log(`[build-shell] wrote ${HTML_OUTPUT} (${html.length} bytes) and ${JS_OUTPUT} (${js.length} bytes)`);
+if (htmlOnly) {
+  // Whatever bundle is on disk keeps the stamp of the sources it was built
+  // from, so a runtime preflight still sees it as stale and rebuilds it.
+  console.log(`[build-shell] wrote ${HTML_OUTPUT} (${html.length} bytes); ${JS_OUTPUT} was not built`);
+} else {
+  // Stamp the JS too so a running image can identify the exact source set that
+  // produced it. The image copies HTML and JS from this same builder invocation.
+  const js = fs.readFileSync(jsPath, 'utf8').replace(/^﻿/, '');
+  fs.writeFileSync(jsPath, `${formatJsStamp(stamp)}\n${js}`);
+  console.log(`[build-shell] wrote ${HTML_OUTPUT} (${html.length} bytes) and ${JS_OUTPUT} (${js.length} bytes)`);
+}
 console.log(`[build-shell] stamped ${stamp.slice(0, 16)}… over ${files.length} input files`);
 console.log(`[build-shell] platform build id: ${buildSha}${buildSha === 'dev' ? ' (plain asset paths)' : ' (assets scoped under /b/<sha>/)'}`);
