@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { XIcon } from '@/components/ui/icons';
 import { useHiddenClass } from '../../lib/legacy-dom';
+import { whenPlatformViewer } from '../../lib/platform-viewer';
 import { isEmbeddedPanel } from '../../lib/side-panel-mode';
 import {
   A2HS_STEPS, detectMobileOs, installOffer, storeLabel,
@@ -89,7 +90,8 @@ export function MobileInstallBanner() {
 
   // The fetch is skipped entirely for anyone who cannot be offered anything —
   // a desktop visitor, the native app, an installed PWA, someone who already
-  // said no. That is most pageviews, and this is one request each.
+  // said no. That is most pageviews, and this is one request each. It is also
+  // skipped for anyone not signed in (#4204) — see the gate below.
   useEffect(() => {
     const nav = window.navigator;
     const onAPhone = detectMobileOs(nav.userAgent || '', nav.maxTouchPoints || 0) !== null;
@@ -99,16 +101,28 @@ export function MobileInstallBanner() {
     if (!onAPhone || isNativeApp() || isStandalone() || readDismissed()
         || isEmbeddedPanel()) return undefined;
 
+    // #4204: only a signed-in viewer gets the offer. The invite page, the
+    // landing and the sign-in screens are all served this one document, and
+    // the strip must not ask a stranger to commit to Homeroom before they
+    // have seen what they were invited to — it sat on top of the invite
+    // page's one action, Join. So the fetch waits on `whenPlatformViewer`,
+    // which runs right away when `window.App.user` is set and has platform
+    // access, and otherwise once on `sv:authed` (a reload-free sign-in from
+    // the invite page included). Fetching /api/auth/me here directly would
+    // answer 401 while signed out, and that refusal is a console error on a
+    // route — the seam already reads the answer app.js got.
     let live = true;
-    fetch('/api/public/mobile-app')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((body) => {
-        if (live && body) setUrls({ ios: body.ios ?? null, android: body.android ?? null });
-      })
-      .catch(() => {
-        /* Offline, or the endpoint is unreachable: no banner, no console noise. */
-      });
-    return () => { live = false; };
+    const stop = whenPlatformViewer(() => {
+      fetch('/api/public/mobile-app')
+        .then((res) => (res.ok ? res.json() : null))
+        .then((body) => {
+          if (live && body) setUrls({ ios: body.ios ?? null, android: body.android ?? null });
+        })
+        .catch(() => {
+          /* Offline, or the endpoint is unreachable: no banner, no console noise. */
+        });
+    });
+    return () => { live = false; stop(); };
   }, []);
 
   // Recomputed from the real environment whenever the inputs change, rather

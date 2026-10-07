@@ -417,6 +417,47 @@ test('#1513: the first render is still the hidden, offer-less strip', () => {
   assert.match(html, /Get the app/);
 });
 
+// ── The sign-in gate (#4204) ────────────────────────────────────────
+
+test('#4204: the store-URL fetch waits for a signed-in viewer', () => {
+  // The invite page, the landing and the sign-in screens are all served the
+  // one shell document, so the strip used to ask a stranger to commit to
+  // Homeroom before they had seen what they were invited to. The gate is the
+  // shell's own answer to "who is signed in" — the seam the global-chat and
+  // agent-session stores already use — not a direct /api/auth/me fetch,
+  // which answers 401 while signed out and that refusal is a console error
+  // on a route.
+  //
+  // Asserted on the source because the gate is an effect decision: the strip's
+  // first render is hidden either way (#1513).
+  const src = fs.readFileSync(
+    path.join(ROOT, 'frontend/src/features/mobile-install/install-banner.tsx'), 'utf8');
+
+  // The gate comes from the shell's own seam.
+  assert.match(
+    src,
+    /import\s*\{\s*whenPlatformViewer\s*\}\s*from\s*'\.\.\/\.\.\/lib\/platform-viewer'/,
+  );
+
+  // The fetch is gated: it comes after the whenPlatformViewer call, inside
+  // its callback rather than beside it.
+  const gateAt = src.indexOf('whenPlatformViewer(() => {');
+  assert.ok(gateAt !== -1, 'the effect wraps the fetch in whenPlatformViewer');
+  const callback = src.slice(gateAt, src.indexOf('return () => { live = false;', gateAt));
+  assert.match(callback, /fetch\('\/api\/public\/mobile-app'\)/);
+
+  // The cleanup disposes the pending sv:authed listener as well as the live
+  // flag, so an unmount before sign-in cannot fire the fetch.
+  const cleanup = src.slice(src.indexOf('return () => { live = false;'));
+  assert.match(cleanup, /stop\(\)/);
+
+  // The gate reads the answer /api/auth/me already produced; asking the
+  // endpoint again while signed out would be a 401 and a console error. Prose
+  // in the comment still names the endpoint, so this looks for a CALL rather
+  // than the word.
+  assert.doesNotMatch(src, /fetch\(\s*['"]\/api\/auth\/me['"]/);
+});
+
 // ── The dismissal's lifetime ────────────────────────────────────────
 
 test('#1514: the dismissal is session-scoped, and does not read the old forever key', () => {
