@@ -64,18 +64,29 @@
  * oauth_signup_sessions continuation Apple and Google ride, completed by
  * sign-in-providers.js's provider-agnostic completeUsername.
  *
- * TEST NUMBERS, for walking a newcomer's first run on a local stack
- * (PHONE_TEST_CODE, config.js). The fictional numbers the North American
- * plan sets aside, +1 <any area code> 555 0100 to 0199, sign in with that
- * one code. They stand in for Firebase's two legs only: no text is sent,
- * no reCAPTCHA is asked, and the ID token is minted and checked here. From
- * the claims on — the spent-once token, the account, the invite, the
- * private membership — it is the same code a real number runs. An account a
- * test number MAKES is a test account (test-accounts.js), so it stays out of
- * outcomes and Journey and retire_test_account removes it. Never in
- * production: config.js refuses the code there and testNumbersOn re-checks
- * the environment. With only the code set, phone sign-in is offered and any
- * other number is refused; with Firebase set up too, other numbers text.
+ * TEST NUMBERS, for walking a newcomer's first run. The fictional numbers
+ * the North American plan sets aside, +1 <any area code> 555 0100 to 0199,
+ * are never texted, in any environment; they sign in with one of two codes:
+ *
+ *   PHONE_TEST_CODE (config.js), one fixed code for every test number, for
+ *     a local stack. Never in production: config.js refuses it there and
+ *     testNumbersOn re-checks the environment. With only the code set, phone
+ *     sign-in is offered and any other number is refused; with Firebase set
+ *     up too, other numbers text.
+ *   A one-time code a full admin mints for one number (test-accounts.js
+ *     mintPhoneSignIn; the connector's create_test_phone_sign_in, registered
+ *     for a full admin's connector only; Admin → Test accounts). Works in any
+ *     environment, production included: random, once, within 30 minutes and
+ *     five tries, and only its hash is kept.
+ *
+ * They stand in for Firebase's two legs only: no text is sent, no reCAPTCHA
+ * is checked, and the ID token is minted and checked here. From the claims
+ * on — the spent-once token, the account, the invite, the private
+ * membership — it is the same code a real number runs. An account a test
+ * number MAKES is a test account (test-accounts.js), so it stays out of
+ * outcomes and Journey and retire_test_account removes it, which frees the
+ * number. A one-time code adds its number only to a test account
+ * (linkPhone).
  */
 
 const crypto = require('crypto');
@@ -214,11 +225,14 @@ function signTest(body) {
   return crypto.createHmac('sha256', TEST_TOKEN_KEY).update(body).digest('base64url');
 }
 
-function mintTestToken(phoneNumber, now = Date.now()) {
+// `mint` is the one-time sign-in (test-accounts.js redeemPhoneSignIn) the
+// code spent, { id, createdBy }, or absent for PHONE_TEST_CODE.
+function mintTestToken(phoneNumber, mint = null, now = Date.now()) {
   const body = Buffer.from(JSON.stringify({
     p: phoneNumber,
     n: crypto.randomBytes(12).toString('base64url'),
     e: now + TEST_TOKEN_TTL_MS,
+    ...(mint ? { m: mint.id, b: mint.createdBy } : {}),
   })).toString('base64url');
   return `${TEST_TOKEN_PREFIX}${body}.${signTest(body)}`;
 }
@@ -238,7 +252,13 @@ function readTestToken(token, now = Date.now()) {
     return null;
   }
   if (!data || !isTestNumber(data.p) || !(Number(data.e) > now)) return null;
-  return { phoneNumber: data.p, expiresAt: new Date(Number(data.e)) };
+  const mintId = Number.isSafeInteger(data.m) && data.m > 0 ? data.m : null;
+  return {
+    phoneNumber: data.p,
+    expiresAt: new Date(Number(data.e)),
+    mintId,
+    createdBy: mintId && Number.isSafeInteger(data.b) && data.b > 0 ? data.b : null,
+  };
 }
 
 function assertOffered(config) {
@@ -341,11 +361,14 @@ async function requestCode(config, rawPhone, recaptchaToken, deps = {}) {
   if (!phoneNumber) {
     throw new PhoneAuthError('invalid_phone', 'Enter a valid phone number.');
   }
-  if (testNumbersOn(config) && isTestNumber(phoneNumber)) {
-    // No text: the test code is the code. The sessionInfo names the number
-    // so the verify leg can mint its token; it grants nothing without the
-    // code, and the number in it must still be a test number there.
-    log.info('phone-auth', 'Test number: no text sent, sign in with PHONE_TEST_CODE', {
+  if (isTestNumber(phoneNumber)) {
+    // No text, in any environment (no person holds the number): the code is
+    // PHONE_TEST_CODE where that is on, or a one-time code a full admin
+    // minted (test-accounts.js mintPhoneSignIn). The sessionInfo names the
+    // number so the verify leg can check the code and mint its token; it
+    // grants nothing without the code, and the number in it must still be a
+    // test number there.
+    log.info('phone-auth', 'Test number: no text sent', {
       phone: `…${phoneNumber.slice(-4)}`,
     });
     const tag = Buffer.from(phoneNumber).toString('base64url');
@@ -476,11 +499,18 @@ async function exchangeCode(config, rawSessionInfo, rawCode, deps = {}) {
   if (sessionInfo.startsWith(TEST_SESSION_PREFIX)) {
     const tag = sessionInfo.slice(TEST_SESSION_PREFIX.length).split('.')[0];
     const phoneNumber = Buffer.from(tag, 'base64url').toString('utf8');
-    if (!testNumbersOn(config) || !isTestNumber(phoneNumber)
-        || !sameCode(code, config.phoneTestCode)) {
+    if (!isTestNumber(phoneNumber)) {
       throw new PhoneAuthError('invalid_or_expired_code', 'Invalid or expired code.');
     }
-    return { idToken: mintTestToken(phoneNumber) };
+    if (testNumbersOn(config) && sameCode(code, config.phoneTestCode)) {
+      return { idToken: mintTestToken(phoneNumber) };
+    }
+    // A one-time code a full admin minted for this number, spent here.
+    const mint = deps.pool
+      ? await require('./test-accounts').redeemPhoneSignIn(deps.pool, phoneNumber, code)
+      : null;
+    if (!mint) throw new PhoneAuthError('invalid_or_expired_code', 'Invalid or expired code.');
+    return { idToken: mintTestToken(phoneNumber, mint) };
   }
   if (!firebaseOffered(config)) {
     throw new PhoneAuthError('invalid_or_expired_code', 'Invalid or expired code.');
@@ -552,15 +582,16 @@ async function verifyIdToken(pool, config, rawToken, deps = {}) {
   let uid;
   let phoneNumber;
   let expiresAt;
-  let test = false;
+  let test = null;
   if (rawToken.startsWith(TEST_TOKEN_PREFIX)) {
-    // Minted by exchangeCode above for a test number and its code. The uid's
-    // prefix keeps it apart from every Firebase uid.
-    const claims = testNumbersOn(config) ? readTestToken(rawToken) : null;
-    if (!claims) throw badToken();
+    // Minted by exchangeCode above for a test number and its code: a
+    // one-time admin code in any environment, PHONE_TEST_CODE only where it
+    // is on. The uid's prefix keeps it apart from every Firebase uid.
+    const claims = readTestToken(rawToken);
+    if (!claims || (!claims.mintId && !testNumbersOn(config))) throw badToken();
     ({ phoneNumber, expiresAt } = claims);
     uid = `${TEST_UID_PREFIX}${phoneNumber}`;
-    test = true;
+    test = { mintId: claims.mintId, createdBy: claims.createdBy };
   } else {
     if (!firebaseOffered(config)) throw badToken();
     let payload;
@@ -601,7 +632,10 @@ async function verifyIdToken(pool, config, rawToken, deps = {}) {
     log.warn('phone-auth', 'ID token used twice');
     throw badToken();
   }
-  return test ? { uid, phoneNumber, test: true } : { uid, phoneNumber };
+  if (!test) return { uid, phoneNumber };
+  return test.mintId
+    ? { uid, phoneNumber, test: true, testMintId: test.mintId, testCreatedBy: test.createdBy }
+    : { uid, phoneNumber, test: true };
 }
 
 /**
@@ -622,20 +656,33 @@ async function cleanupExpired(pool) {
  * An account a test number just made is a test account, fenced the way
  * test-accounts.js fences the ones an admin makes: marked for good (votes on
  * a real person's app shown but not counted, no welcome DM, retire_test_account
- * removes it), off the leaderboards, and left out of Journey. Nobody made it
- * on anyone's behalf, so test_account_created_by stays NULL.
+ * removes it), off the leaderboards, and left out of Journey. Made with a
+ * one-time code, it is the minting admin's (test_account_created_by), the
+ * code records the account it made, and support_actions gets the row
+ * create_test_account writes. With PHONE_TEST_CODE nobody made it on anyone's
+ * behalf, so test_account_created_by stays NULL.
  */
-async function markTestAccount(client, userId, phoneNumber) {
+async function markTestAccount(client, userId, claims) {
+  const createdBy = claims.testCreatedBy || null;
   await client.query(
     `UPDATE users
-        SET test_account_created_at = NOW(), exclude_podium = TRUE, updated_at = NOW()
+        SET test_account_created_at = NOW(), test_account_created_by = $2,
+            exclude_podium = TRUE, updated_at = NOW()
       WHERE id = $1`,
-    [userId]
+    [userId, createdBy]
   );
   const journeyLeftOut = require('./journey-left-out');
   await journeyLeftOut.addTestInTransaction(client, {
-    userId, note: `Phone test number …${phoneNumber.slice(-4)}`,
-  });
+    userId, note: `Phone test number …${claims.phoneNumber.slice(-4)}`,
+  }, { actorId: createdBy });
+  if (claims.testMintId) {
+    await client.query('UPDATE test_phone_sign_ins SET used_by = $2 WHERE id = $1', [claims.testMintId, userId]);
+    await client.query(
+      `INSERT INTO support_actions (actor_user_id, target_user_id, action, payload)
+       VALUES ($1, $2, 'test_account_create', $3::jsonb)`,
+      [createdBy, userId, JSON.stringify({ via: 'phone_sign_in', phoneLast4: claims.phoneNumber.slice(-4) })]
+    );
+  }
 }
 
 /**
@@ -695,7 +742,7 @@ async function signIn(pool, claims, { createSession } = {}) {
           }
           throw error;
         }
-        if (claims.test === true) await markTestAccount(client, user.id, claims.phoneNumber);
+        if (claims.test === true) await markTestAccount(client, user.id, claims);
       }
 
       if (user.needs_username_choice === true) {
@@ -816,6 +863,18 @@ async function linkPhone(pool, claims, userId) {
   }
   const inUse = () => new PhoneAuthError('phone_in_use', 'That phone number already has an account.');
   return withTransaction(pool, async (client) => {
+    // A one-time admin code verifies a fictional number, so it may only be
+    // added to a test account: never to a real one, where it would stand in
+    // for a phone that person does not have.
+    if (claims.testMintId) {
+      const { rows: [target] } = await client.query(
+        'SELECT test_account_created_at IS NOT NULL AS test_account FROM users WHERE id = $1',
+        [userId]
+      );
+      if (!target || !target.test_account) {
+        throw new PhoneAuthError('test_number_not_allowed', 'A test number can only be added to a test account.');
+      }
+    }
     const { rows: mine } = await client.query(
       'SELECT firebase_uid FROM user_phone_identities WHERE user_id = $1 FOR UPDATE',
       [userId]

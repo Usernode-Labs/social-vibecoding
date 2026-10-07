@@ -10529,6 +10529,21 @@
     {
       "source": "src/routes/test-accounts.js",
       "method": "POST",
+      "path": "/api/test-accounts/phone-sign-ins",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.test.accounts.phone.sign.ins.1a7f5403",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps"
+    },
+    {
+      "source": "src/routes/test-accounts.js",
+      "method": "POST",
       "path": "/api/test-accounts/:id/retire",
       "expression": null,
       "status": "mapped",

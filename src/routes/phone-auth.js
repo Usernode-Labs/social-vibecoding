@@ -150,10 +150,12 @@ function phoneAuthRoutes(config) {
       const claims = req.body?.idToken
         ? await phoneAuth.verifyIdToken(pool, config, req.body.idToken)
         : await (async () => {
+            // The pool spends a test number's one-time admin code.
             const exchanged = await phoneAuth.exchangeCode(
               config,
               req.body?.sessionInfo,
-              req.body?.code
+              req.body?.code,
+              { pool }
             );
             return phoneAuth.verifyIdToken(pool, config, exchanged.idToken);
           })();
@@ -314,7 +316,7 @@ function phoneAuthRoutes(config) {
     signedIn,
     async (req, res) => {
       try {
-        const exchanged = await phoneAuth.exchangeCode(config, req.body?.sessionInfo, req.body?.code);
+        const exchanged = await phoneAuth.exchangeCode(config, req.body?.sessionInfo, req.body?.code, { pool });
         const claims = await phoneAuth.verifyIdToken(pool, config, exchanged.idToken);
         const linked = await phoneAuth.linkPhone(pool, claims, req.user.id);
         const joined = await communityInvites.joinQueued(pool, req.user.id);

@@ -2491,9 +2491,10 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     'cancel_bench_trial',
     'claim_request', 'create_bench_context_pack', 'create_request',
     // Test accounts for first-run testing (create_test_account,
-    // list_test_accounts, retire_test_account): registered only for a full
-    // platform admin, and every route behind them refuses anybody else.
-    'create_test_account',
+    // create_test_phone_sign_in, list_test_accounts, retire_test_account):
+    // registered only for a full platform admin, and every route behind them
+    // refuses anybody else.
+    'create_test_account', 'create_test_phone_sign_in',
     // Demo mode: the four acting tools of a creator's synthetic partner, and
     // its read — see ACTING_TOOLS and routes/demo-mode.js.
     'demo_mode', 'demo_promote', 'demo_propose', 'demo_reset', 'demo_vote',
@@ -2769,7 +2770,7 @@ test('ACTING_TOOLS names every user-directed action, and every one is a write', 
   assert.deepEqual([...tools.ACTING_TOOLS].sort(), [
     'add_bench_task',
     'cancel_bench_run', 'cancel_bench_trial',
-    'create_bench_context_pack', 'create_request', 'create_test_account',
+    'create_bench_context_pack', 'create_request', 'create_test_account', 'create_test_phone_sign_in',
     'demo_mode', 'demo_promote', 'demo_propose', 'demo_reset', 'demo_vote',
     'deploy_bench_preview', 'edit_bench_task', 'keep_bench_trial',
     'label_bench_task', 'launch_bench_run', 'launch_bench_studio',

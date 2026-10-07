@@ -234,6 +234,7 @@ const ACTING_TOOLS = Object.freeze([
   // deletes an account with the apps it made, so both stay out of the setup
   // hint and the shipped read-only allow rules like every write.
   'create_test_account',
+  'create_test_phone_sign_in',
   'retire_test_account',
 ]);
 
@@ -7150,18 +7151,21 @@ function registerTools(server, ctx) {
 
   // ── Test accounts (full platform admins only) ──────────────────────────
   //
-  // Three tools over routes/test-accounts.js: make a genuinely new account for
-  // first-time-user testing, list the live ones, and retire one with the apps
-  // it made. services/test-accounts.js has the whole design, and the
-  // charter's "test-accounts" section the rules for the session using them.
+  // Four tools over routes/test-accounts.js: make a genuinely new account for
+  // first-time-user testing, mint a one-time phone sign-in for a test number
+  // (the invite's Join sheet signs up with a phone), list the live ones, and
+  // retire one with the apps it made. services/test-accounts.js has the whole
+  // design, and the charter's "test-accounts" section the rules for the
+  // session using them.
   //
   // Admin-only three times over, like the benchmark's: registered only for a
   // connector whose user is a full platform admin, refused in every handler
   // for a user who is not one before any call, and refused by every route
   // they reach (requireAdminWrite), which is the wall that counts. The
-  // password create_test_account returns is the one credential any tool here
-  // hands back: it is minted for a throwaway, flagged account that is fenced
-  // from every real outcome, it is shown once, and the platform keeps only
+  // password create_test_account returns and the code
+  // create_test_phone_sign_in returns are the only credentials any tool here
+  // hands back: each signs in to a throwaway, flagged account that is fenced
+  // from every real outcome, each is shown once, and the platform keeps only
   // its hash.
   if (user && user.canAdminWrite) {
     const testAccountAdminOnly = () => (user && user.canAdminWrite
@@ -7240,6 +7244,48 @@ function registerTools(server, ctx) {
         },
         retireWith: `retire_test_account({ userId: ${userId}, confirm: "RETIRE" })`,
         nextStep: 'Give the person the username and password once, with the sign-in steps. Do not repeat the password later in the conversation. Retire the account when they have finished testing.',
+      });
+    });
+
+    // Registered here, inside the full-admin block, so a connector whose user
+    // is not a full platform admin never sees it; the handler and the route
+    // (requireAdminWrite) refuse anyone else again.
+    server.registerTool('create_test_phone_sign_in', {
+      title: 'Test accounts: a one-time phone sign-in',
+      description: 'Admin only. Get a one-time phone sign-in for first-run testing, in any environment (production included): a fictional test number (+1 415 555 01xx unless you name another +1 … 555 0100–0199 number) and a random six-digit code that works once, within 30 minutes and five tries. It is for the flows that ask for a phone, above all an invite\'s Join sheet: the tester types the number, taps Text me a code (no text is sent to a test number), then types the code. The account it makes is a test account, fenced like one create_test_account makes and retired with retire_test_account, which frees the number. Naming the number of a live test account signs in to that account again. Relay the code ONCE with the number and the steps, and never repeat it later in the conversation. Read get_connector_guidance\'s "test-accounts" section first.',
+      inputSchema: {
+        phoneNumber: z.string().optional().describe('A test number to use: +1, any area code, then 555 0100 to 0199. Omit it for a free +1 415 555 01xx number.'),
+      },
+      outputSchema: {
+        phoneNumber: z.string(),
+        code: z.string(),
+        expiresAt: z.string(),
+        signsInTo: z.string().nullable(),
+        steps: z.array(z.string()),
+        nextStep: z.string(),
+      },
+      annotations: writeAnnotations,
+    }, async ({ phoneNumber }) => {
+      const guard = scopeGuard(WRITE_SCOPE) || testAccountAdminOnly();
+      if (guard) return guard;
+      const r = await callPlatform(baseUrl, accessToken, 'POST', '/api/test-accounts/phone-sign-ins', { phoneNumber });
+      if (!r.ok) return testAccountRefusal(r);
+      const s = (r.body && r.body.signIn) || {};
+      const signsInTo = s.signsInTo ? String(s.signsInTo) : null;
+      return toolResult({
+        phoneNumber: String(s.phoneNumber || ''),
+        code: String(s.code || ''),
+        expiresAt: String(s.expiresAt || ''),
+        signsInTo,
+        steps: [
+          'If the device or browser is signed in, sign out first.',
+          'Open the invite link (or wherever Homeroom asks for a phone number) and enter the number above.',
+          'Tap Text me a code. No text is sent to a test number.',
+          'Enter the code above. It works once, before it expires.',
+        ],
+        nextStep: signsInTo
+          ? `Give the person the number and code once, with the steps. It signs in to the test account @${signsInTo}.`
+          : 'Give the person the number and code once, with the steps. Do not repeat the code later in the conversation. The account it makes is a test account: retire it with retire_test_account when testing is done (list_test_accounts finds it).',
       });
     });
 

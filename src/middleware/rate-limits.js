@@ -682,14 +682,16 @@ const benchStudioLimiter = makeLimiter({
 });
 
 // Test accounts (routes/test-accounts.js /api/test-accounts), reached by a
-// full admin's connector session. Each admin gets 10 creates and 10 retires an
-// hour, counted apart so retiring yesterday's accounts never spends today's
-// creates; the list is a read and gets more room. Only requests that went
+// full admin's connector session. Each admin gets 10 creates, 10 one-time
+// phone sign-ins and 10 retires an hour, counted apart so retiring
+// yesterday's accounts never spends today's creates; the list is a read and
+// gets more room. Only requests that went
 // through count (the live cap's own refusal is a 429 that spends nothing).
 // Admins are NOT exempt, for the reason given above: only full admins can
 // call these at all.
 function testAccountAction(req) {
   if (req.method === 'GET') return 'list';
+  if (/\/phone-sign-ins\/?$/.test(req.path || '')) return 'phone';
   return /\/retire\/?$/.test(req.path || '') ? 'retire' : 'create';
 }
 const testAccountLimiter = makeLimiter({
