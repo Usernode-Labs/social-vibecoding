@@ -48,6 +48,35 @@ test('Kubernetes platform image builds and contains the generated shell assets',
   assert.doesNotMatch(shellStage, /RUN npm ci/,
     'asset dependencies must stay outside the generated-output snapshot');
 
+  // The commit id sits BELOW the two expensive steps. A build arg above a RUN
+  // is part of that step's cache key, so with GIT_SHA above them every commit
+  // rebuilt the bundle and the stylesheet whatever it had changed: 167 of 167
+  // preview builds in the logs this order was measured against. Nothing above
+  // the id may read it, and everything that does comes after it.
+  const order = (needle) => {
+    const at = shellStage.indexOf(needle);
+    assert.ok(at > -1, `the shell stage must contain \`${needle}\``);
+    assert.equal(shellStage.indexOf(needle, at + 1), -1, `the shell stage must contain \`${needle}\` once`);
+    return at;
+  };
+  const bundle = order('node frontend/scripts/build-shell.mjs --keep-prerender');
+  const css = order('node scripts/build-tailwind.js');
+  const commitArg = order('ARG GIT_SHA=dev');
+  const commitEnv = order('ENV GIT_SHA=$GIT_SHA');
+  const document = order('node frontend/scripts/build-shell.mjs --document');
+  const release = order('RUN node scripts/build-shell-release.js');
+  const precompress = order('RUN node scripts/precompress-static-assets.js');
+  assert.ok(bundle < css && css < commitArg,
+    'the Vite passes and Tailwind run before GIT_SHA is declared, so a commit that left their inputs alone can reuse them');
+  assert.ok(commitArg < commitEnv && commitEnv < document,
+    'the document this build serves is written with the commit id');
+  assert.ok(document < release && release < precompress,
+    'the release file and the precompressed copies describe that final document');
+  assert.equal(shellStage.split('build-shell.mjs').length - 1, 2,
+    'the shell build runs twice in this stage: the bundle, then the document. A plain third run would redo Vite under the commit id');
+  assert.match(shellStage, /from=asset-deps[^\n]+node_modules[^\n]+\\\n\s+node frontend\/scripts\/build-shell\.mjs --document/,
+    'the document step renders with the prerender bundle, which loads react from the dependency stage');
+
   const runtime = dockerfile.slice(dockerfile.lastIndexOf('\nFROM node:22-alpine\n'));
   assert.doesNotMatch(runtime, /^COPY --chown=node:node \. \.$/m,
     'the runtime image must not ship tests, docs, or builder sources');

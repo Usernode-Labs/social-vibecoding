@@ -12,20 +12,29 @@ RUN npm ci --ignore-scripts
 # Build every generated browser asset in a lightweight output stage. The
 # outputs are intentionally excluded from the build context, so every
 # Kubernetes image must create them itself.
+#
+# GIT_SHA is NOT declared yet, on purpose. Neither Vite pass reads the commit
+# id and Tailwind only needs a document to scan, so the two expensive steps
+# below are keyed by their inputs alone and BuildKit can answer them from its
+# layer cache for any commit that left frontend/, public/ and the Tailwind
+# config untouched. Declared above them, as it was, the id made every commit
+# rebuild all three. This run therefore writes a `dev` document, and keeps the
+# prerender bundle so the document can be written again once the id is known.
 FROM node:22-alpine AS shell
 WORKDIR /build
 COPY frontend ./frontend
 COPY scripts/shell-stamp.js ./scripts/shell-stamp.js
 COPY src/services/countries.json ./src/services/countries.json
-ARG GIT_SHA=dev
-ENV GIT_SHA=$GIT_SHA
 RUN --mount=type=bind,from=asset-deps,source=/build/frontend/node_modules,target=/build/frontend/node_modules,rw \
-    node frontend/scripts/build-shell.mjs
+    node frontend/scripts/build-shell.mjs --keep-prerender
 
 # Compile Tailwind in the same stage, only after the current shell has been
 # prerendered because public/index.html is one of the compiler's content
 # sources. Generated files are excluded by .dockerignore, so merging public/
-# here cannot replace the shell output produced above.
+# here cannot replace the shell output produced above. The document it scans
+# differs from the final one only by the commit id in a <meta> and in a
+# /b/<sha>/ path prefix, neither of which is a class
+# (tests/tailwind-build.test.js holds that).
 WORKDIR /build
 COPY tailwind.config.js ./
 COPY styles ./styles
@@ -33,6 +42,15 @@ COPY scripts/build-tailwind.js ./scripts/build-tailwind.js
 COPY public ./public
 RUN --mount=type=bind,from=asset-deps,source=/build/frontend/node_modules,target=/build/frontend/node_modules,rw \
     node scripts/build-tailwind.js
+
+# Everything from here down belongs to one commit. Write the document this
+# build actually serves: the same render, with the id in its <meta> and on
+# every asset URL. The release file and the precompressed copies follow it
+# because both read that id.
+ARG GIT_SHA=dev
+ENV GIT_SHA=$GIT_SHA
+RUN --mount=type=bind,from=asset-deps,source=/build/frontend/node_modules,target=/build/frontend/node_modules \
+    node frontend/scripts/build-shell.mjs --document
 COPY scripts/build-shell-release.js ./scripts/build-shell-release.js
 RUN node scripts/build-shell-release.js
 COPY scripts/precompress-static-assets.js ./scripts/precompress-static-assets.js

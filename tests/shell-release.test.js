@@ -216,7 +216,16 @@ test('every image path generates the release after CSS and retains its revision 
     const source = read(file);
     assert.ok(source.lastIndexOf('ARG GIT_SHA=dev') > source.indexOf('FROM node:22-alpine\n'));
     assert.ok(source.indexOf('node scripts/build-shell-release.js') > source.indexOf('build-tailwind.js'));
-    assert.ok(source.indexOf('ENV GIT_SHA=$GIT_SHA') < source.indexOf('node frontend/scripts/build-shell.mjs'));
+    // The document carries the revision, so whichever run writes the final
+    // one comes after the id. Dockerfile.kubernetes bundles first without it
+    // (tests/kubernetes-deployment-contract.test.js) and writes the document
+    // in a second run; Dockerfile has the one run.
+    const documentRun = file === 'Dockerfile.kubernetes'
+      ? 'node frontend/scripts/build-shell.mjs --document'
+      : 'node frontend/scripts/build-shell.mjs';
+    assert.ok(source.includes(documentRun), file);
+    assert.ok(source.indexOf('ENV GIT_SHA=$GIT_SHA') < source.indexOf(documentRun), file);
+    assert.ok(source.indexOf(documentRun) < source.indexOf('node scripts/build-shell-release.js'), file);
   }
   const ensure = read('scripts/ensure-shell-artifacts.js');
   assert.ok(ensure.indexOf("runNode('scripts/build-shell-release.js')") > ensure.indexOf("runNode('scripts/build-tailwind.js')"));
