@@ -81,6 +81,7 @@ import { improveStore } from '../improve/improve-store.js';
 import { A2HS_STEPS, detectMobileOs } from '../mobile-install/detect';
 import { isNativeApp, isStandalone } from '../mobile-install/environment';
 import { parkedStore } from '../nav/parked-store.js';
+import { navStore } from '../nav/nav-store.js';
 import { AppContext } from './app-context-controller.js';
 import {
   appNote,
@@ -347,7 +348,18 @@ export function AboutPane({ label }: { label: string }): ReactNode {
 
   // ── More ──────────────────────────────────────────────────────────
   const repo = platform ? (about?.repoUrl || repoUrl) : (repoUrl || row?.repo_url || null);
-  const showShare = platform || canShare;
+  // A PRIVATE MEMBER who has not yet used "Go to Homeroom" gets the reduced
+  // menu (#4216): the sheet hides "Go to community" in the same state, and
+  // Share hides here for the same reason — it hands out the app's (or the
+  // platform's) address, and a newcomer should not invite anyone in before
+  // they have been to Homeroom themselves. The same record that gives an
+  // app its ✕ back (App._privateHomeVisited, public/js/app.js), remembered
+  // per device like the tours. The pane mounts on each About open, so the
+  // record is read fresh each time.
+  const { privateMember } = useStoreState(navStore);
+  const homeOwed = privateMember
+    && !(window as unknown as { App?: { _privateHomeVisited?: () => boolean } }).App?._privateHomeVisited?.();
+  const showShare = (platform || canShare) && !homeOwed;
   const platformA2hs = platform && !!os
     && typeof window !== 'undefined' && !isStandalone() && !isNativeApp();
   const showHomeScreen = platform ? platformA2hs : !!homeScreenItem;

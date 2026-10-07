@@ -94,6 +94,29 @@ test('the mark menu: "Go to Homeroom" for a private member, and no terminal or B
   assert.ok(sheet.indexOf('id="app-menu-row-homeroom"') < sheet.indexOf('id="app-menu-row-about"'));
 });
 
+test('the reduced menu (#4216): Go to community and About\'s Share hide until Go to Homeroom is used', () => {
+  const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  // The workshop row keeps its id and markup — declared checks select on it —
+  // and hides in the same layout-effect seam `restricted` uses, for a private
+  // member who has not yet used "Go to Homeroom": the same record that gives
+  // an app its ✕ back.
+  assert.match(sheet, /const hide = !!restricted\s*\|\| \(privateMember && !\(window as any\)\.App\?\._privateHomeVisited\?\.\(\)\);/);
+  assert.match(sheet, /el\.classList\.toggle\('hidden', !!hide\);/);
+  // `open` in the deps: the record is read again each time the sheet opens,
+  // so the row is back the next time after Go to Homeroom.
+  assert.match(sheet, /\}, \[restricted, view, open, privateMember\]\);/);
+  // The "Go to Homeroom" row itself is unchanged: still there for a private
+  // member after they have used it.
+  assert.match(sheet, /\{mounted && privateMember \? \(\s+<button\s+id="app-menu-row-homeroom"/);
+
+  const about = read('frontend/src/features/app-context/about-pane.tsx');
+  assert.match(about, /import \{ navStore \} from '\.\.\/nav\/nav-store\.js';/);
+  // Share keeps its id but is out of the pane while Homeroom is owed.
+  assert.match(about, /const homeOwed = privateMember\s+&& !\(window as unknown as \{ App\?: \{ _privateHomeVisited\?: \(\) => boolean \} \}\)\.App\?\._privateHomeVisited\?\.\(\);/);
+  assert.match(about, /const showShare = \(platform \|\| canShare\) && !homeOwed;/);
+  assert.match(about, /id="improve-row-share"/);
+});
+
 test('the waitlist card: join, an email, a code, then On the waitlist with "Want in sooner?"', () => {
   const card = 'frontend/src/features/home/waitlist-card.tsx';
   const none = renderComponent(card, 'WaitlistCardBody', {

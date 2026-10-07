@@ -763,8 +763,10 @@ test('the menu\'s action leads it, shaped like the pill that used to open it', (
   assert.ok(aboutPane.indexOf('id="improve-row-share"') < aboutPane.indexOf('id="improve-row-github"'),
     'Share leads, View on GitHub follows, in the design\'s order');
   // An app's Share is still gated on canShare — a live address to hand over;
-  // Homeroom always has one, so its Share always shows (./about-pane.tsx).
-  assert.match(aboutPane, /const showShare = platform \|\| canShare;/, 'still gated on canShare for an app');
+  // Homeroom always has one, so its Share always shows (./about-pane.tsx) —
+  // except for a private member who has not yet used Go to Homeroom (#4216,
+  // tests/private-member-shell.test.js).
+  assert.match(aboutPane, /const showShare = \(platform \|\| canShare\) && !homeOwed;/, 'still gated on canShare for an app, and hidden while Homeroom is owed');
   assert.doesNotMatch(panel, /id="improve-row-share"/, 'and not in two places');
 
   // Everything else left: the view toggle is the view STRIP now.
