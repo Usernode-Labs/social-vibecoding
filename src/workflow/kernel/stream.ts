@@ -108,7 +108,9 @@ export class Signals {
         this.wakeAll();
         if (!this.#stopped) setTimeout(() => { this.start(); }, 1000).unref?.();
       });
-      await client.query('LISTEN wf_events; LISTEN wf_outcome; LISTEN wf_work');
+      await client.query('LISTEN wf_events');
+      await client.query('LISTEN wf_outcome');
+      await client.query('LISTEN wf_work');
       this.#client = client;
       // Whatever was announced while nobody listened: look once.
       this.wakeAll();

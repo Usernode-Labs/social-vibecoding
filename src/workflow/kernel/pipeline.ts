@@ -223,32 +223,82 @@ async function processOne(opts: PipelineOptions, names: string[], versions: numb
   }
 }
 
-// Builds one statement from data-modifying CTEs, numbering parameters as
-// they are added.
-class Statement {
-  values: unknown[] = [];
-  parts: string[] = [];
-  p(v: unknown): string { this.values.push(v); return `$${this.values.length}`; }
-  with(name: string, sql: string): this { this.parts.push(`${name} AS (${sql})`); return this; }
-  text(main: string): string { return `${this.parts.length ? `WITH ${this.parts.join(',\n')}\n` : ''}${main}`; }
-}
+// The statements that end an event, each one round trip. Kept as constants
+// so scripts/check-sql.js checks them against the schema.
 
-interface Fields {
-  result: 'accepted' | 'rejected' | 'replayed'; reason?: string | null; version: number; stateBefore: string;
-  stateAfter: string; versionAfter: number | null; emitted?: Json; reply?: Json | null;
-}
+// A rejected or replayed event: its result, the outcome notification, and
+// the instance left as it was, except that a '(none)' row carrying a stall
+// or a fault goes ($1: drop it) and a stall clears ($4), since the event
+// got through.
+const FINISH_UNCHANGED = `
+  WITH dropped AS (
+    DELETE FROM wf_instances WHERE $1::boolean AND machine = $2 AND key = $3),
+  unflagged AS (
+    UPDATE wf_instances SET flag = NULL, flag_detail = NULL WHERE $4::boolean AND machine = $2 AND key = $3),
+  finished AS (
+    UPDATE wf_events SET status = 'processed', result = $5, reason = $6, machine_version = $7,
+           state_before = $8, state_after = $9, version_after = $10, emitted = $11, reply = $12,
+           retry_at = NULL, processed_at = clock_timestamp()
+     WHERE id = $13 RETURNING id)
+  SELECT pg_notify('wf_outcome', id::text) FROM finished`;
 
-// The event's own result and the outcome notification; `s` may already hold
-// the instance's and receipt's CTEs, which commit with it.
-async function finishEvent(client: PoolClient, s: Statement, eventId: number, f: Fields): Promise<void> {
-  const id = s.p(eventId);
-  s.with('finished', `UPDATE wf_events SET status = 'processed', result = ${s.p(f.result)}, reason = ${s.p(f.reason ?? null)},
-            machine_version = ${s.p(f.version)}, state_before = ${s.p(f.stateBefore)}, state_after = ${s.p(f.stateAfter)},
-            version_after = ${s.p(f.versionAfter)}, emitted = ${s.p(f.emitted === undefined ? null : JSON.stringify(f.emitted))},
-            reply = ${s.p(f.reply == null ? null : JSON.stringify(f.reply))}, retry_at = NULL, processed_at = clock_timestamp()
-      WHERE id = ${id} RETURNING id`);
-  await client.query({ text: s.text(`SELECT pg_notify('wf_outcome', id::text) FROM finished`), values: s.values });
-}
+// An accepted event: the instance row (inserted by its creating event),
+// the receipt, the event's result and the outcome notification. $10 says
+// whether the outcome set or cleared the deadline ($8, $9) or left it.
+const FINISH_ACCEPTED = `
+  WITH instance AS (
+    INSERT INTO wf_instances AS i (machine, key, app_id, state, data, version, machine_version,
+                                   deadline_at, deadline_event, deadline_version)
+    VALUES ($1, $2, $3::int, $4, $5::jsonb, $6::bigint, $7::int, $8::timestamptz, $9::jsonb,
+            CASE WHEN $8::timestamptz IS NULL THEN NULL ELSE $6::bigint END)
+    ON CONFLICT (machine, key) DO UPDATE
+       SET state = EXCLUDED.state, data = EXCLUDED.data, version = EXCLUDED.version,
+           machine_version = EXCLUDED.machine_version, app_id = COALESCE(i.app_id, EXCLUDED.app_id),
+           deadline_at = CASE WHEN $10::boolean THEN EXCLUDED.deadline_at ELSE i.deadline_at END,
+           deadline_event = CASE WHEN $10::boolean THEN EXCLUDED.deadline_event ELSE i.deadline_event END,
+           deadline_version = CASE WHEN $10::boolean THEN EXCLUDED.deadline_version ELSE i.deadline_version END,
+           flag = NULL, flag_detail = NULL, updated_at = now()),
+  receipt AS (
+    INSERT INTO wf_receipts (machine, key, request_key, payload_hash, outcome, event_id)
+    VALUES ($1, $2, $11, $12, $13, $14)),
+  finished AS (
+    UPDATE wf_events SET status = 'processed', result = 'accepted', reason = NULL, machine_version = $7,
+           state_before = $15, state_after = $4, version_after = $6, emitted = $16, reply = $17,
+           retry_at = NULL, processed_at = clock_timestamp()
+     WHERE id = $14 RETURNING id)
+  SELECT pg_notify('wf_outcome', id::text) FROM finished`;
+
+// A timeout: the event back to pending with a backoff, and once it has
+// timed out often enough ($6) the instance flagged stalled (an instance
+// that does not exist yet gets a '(none)' row, $4, to carry the flag).
+const RECORD_TIMEOUT = `
+  WITH flagged AS (
+    INSERT INTO wf_instances AS i (machine, key, app_id, state, machine_version, flag, flag_detail)
+    SELECT $1, $2, $3::int, $4, $5::int, 'stalled', $7::jsonb WHERE $6::boolean
+    ON CONFLICT (machine, key) DO UPDATE SET flag = EXCLUDED.flag, flag_detail = EXCLUDED.flag_detail
+     WHERE i.flag IS NULL),
+  retried AS (
+    UPDATE wf_events SET attempts = $8, retry_at = now() + make_interval(secs => $9::float8 / 1000), error = $10
+     WHERE id = $11)
+  SELECT 1`;
+
+// A fault: the event faulted, the instance flagged (or a '(none)' row made
+// to carry the flag), its later pending events held.
+const RECORD_FAULT = `
+  WITH flagged AS (
+    INSERT INTO wf_instances AS i (machine, key, app_id, state, machine_version, flag, flag_detail)
+    VALUES ($1, $2, $3::int, $4, $5::int, 'faulted', $6::jsonb)
+    ON CONFLICT (machine, key) DO UPDATE SET flag = EXCLUDED.flag, flag_detail = EXCLUDED.flag_detail),
+  faulted AS (
+    UPDATE wf_events SET status = 'processed', result = 'faulted', reason = 'transition_threw',
+           error = $7, state_before = $8, state_after = $8, processed_at = clock_timestamp()
+     WHERE id = $9),
+  held AS (
+    UPDATE wf_events SET status = 'held'
+     WHERE machine = $1 AND key = $2 AND status = 'pending' AND id > $9)
+  SELECT pg_notify('wf_outcome', $9::text)`;
+
+const json = (v: Json | undefined) => (v == null ? null : JSON.stringify(v));
 
 async function applyEvent(client: PoolClient, machine: Machine<any, any>, row: Picked): Promise<Notification[]> {
   const eventId = Number(row.id);
@@ -260,22 +310,18 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, row: P
   const ctx: TransitionContext = Object.freeze({
     machine: machine.name, key: row.key, appId: inst?.app_id ?? row.app_id ?? null, version, now: new Date(row.now),
   });
-  const base = { version: machine.version, stateBefore: state.name, stateAfter: state.name, versionAfter: version };
 
   // Anything but an accepted event leaves no instance behind that was not
   // there, and clears a stall (the event got through).
-  const unchanged = () => {
-    const s = new Statement();
-    if (inst && isNew && version === 0) {
-      s.with('dropped', `DELETE FROM wf_instances WHERE machine = ${s.p(machine.name)} AND key = ${s.p(row.key)}`);
-    } else if (inst?.flag === 'stalled') {
-      s.with('unflagged', `UPDATE wf_instances SET flag = NULL, flag_detail = NULL
-        WHERE machine = ${s.p(machine.name)} AND key = ${s.p(row.key)}`);
-    }
-    return s;
+  const finishUnchanged = async (f: { result: 'rejected' | 'replayed'; reason?: string; stateAfter?: string;
+    versionAfter?: number; emitted?: Json; reply?: Json | null }) => {
+    const drop = !!inst && isNew && version === 0;
+    await client.query(FINISH_UNCHANGED, [drop, machine.name, row.key, !drop && inst?.flag === 'stalled',
+      f.result, f.reason ?? null, machine.version, state.name, f.stateAfter ?? state.name, f.versionAfter ?? version,
+      json(f.emitted), json(f.reply), eventId]);
   };
   const rejectWith = async (reason: string) => {
-    await finishEvent(client, unchanged(), eventId, { ...base, result: 'rejected', reason });
+    await finishUnchanged({ result: 'rejected', reason });
     return [];
   };
 
@@ -285,8 +331,8 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, row: P
   if (receipt) {
     if (receipt.payload_hash !== hash) return rejectWith('request_key_conflict');
     await settleWork(client, machine, row.key, row);
-    await finishEvent(client, unchanged(), eventId, {
-      ...base, result: 'replayed', stateAfter: receipt.outcome.state, versionAfter: receipt.outcome.version,
+    await finishUnchanged({
+      result: 'replayed', stateAfter: receipt.outcome.state, versionAfter: receipt.outcome.version,
       emitted: { replayOf: Number(receipt.event_id) }, reply: receipt.outcome.reply ?? null,
     });
     return [];
@@ -373,36 +419,19 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, row: P
 
   // The instance row is inserted by its creating event (no placeholder is
   // written first: holding the head event is holding the instance's turn).
-  const s = new Statement();
-  const setTimer = s.p(timer !== undefined);
-  const at = s.p(timer ? timer.at : null);
-  const nextVersion = s.p(next);
-  s.with('instance', `
-    INSERT INTO wf_instances AS i (machine, key, app_id, state, data, version, machine_version,
-                                   deadline_at, deadline_event, deadline_version)
-    VALUES (${s.p(machine.name)}, ${s.p(row.key)}, ${s.p(ctx.appId)}::int, ${s.p(outcome.next.name)}, ${s.p(JSON.stringify(data))}::jsonb,
-            ${nextVersion}::bigint, ${s.p(machine.version)}::int, ${at}::timestamptz,
-            ${s.p(timer ? JSON.stringify({ type: timer.event.type, payload: timer.event.payload ?? {} }) : null)}::jsonb,
-            CASE WHEN ${at}::timestamptz IS NULL THEN NULL ELSE ${nextVersion}::bigint END)
-    ON CONFLICT (machine, key) DO UPDATE
-       SET state = EXCLUDED.state, data = EXCLUDED.data, version = EXCLUDED.version,
-           machine_version = EXCLUDED.machine_version, app_id = COALESCE(i.app_id, EXCLUDED.app_id),
-           deadline_at = CASE WHEN ${setTimer}::boolean THEN EXCLUDED.deadline_at ELSE i.deadline_at END,
-           deadline_event = CASE WHEN ${setTimer}::boolean THEN EXCLUDED.deadline_event ELSE i.deadline_event END,
-           deadline_version = CASE WHEN ${setTimer}::boolean THEN EXCLUDED.deadline_version ELSE i.deadline_version END,
-           flag = NULL, flag_detail = NULL, updated_at = now()`);
-  s.with('receipt', `INSERT INTO wf_receipts (machine, key, request_key, payload_hash, outcome, event_id)
-    VALUES (${s.p(machine.name)}, ${s.p(row.key)}, ${s.p(row.request_key)}, ${s.p(hash)},
-            ${s.p(JSON.stringify({ state: outcome.next.name, version: next, reply }))}, ${s.p(eventId)})`);
-  await finishEvent(client, s, eventId, {
-    ...base, result: 'accepted', stateAfter: outcome.next.name, versionAfter: next, reply,
-    emitted: {
+  await client.query(FINISH_ACCEPTED, [
+    machine.name, row.key, ctx.appId, outcome.next.name, JSON.stringify(data), next, machine.version,
+    timer ? timer.at : null, timer ? JSON.stringify({ type: timer.event.type, payload: timer.event.payload ?? {} }) : null,
+    timer !== undefined, row.request_key, hash, JSON.stringify({ state: outcome.next.name, version: next, reply }), eventId,
+    state.name,
+    JSON.stringify({
       writes: (outcome.writes || []).map((w) => w.type),
       work, messages,
       timer: timer === undefined ? undefined : timer && { at: timer.at.toISOString(), type: timer.event.type },
       notify: (outcome.notify || []).map((n) => n.type),
-    } as Json,
-  });
+    }),
+    json(reply),
+  ]);
   return outcome.notify || [];
 }
 
@@ -436,39 +465,23 @@ async function recordFailure(client: PoolClient, opts: PipelineOptions, machine:
       await client.query('ROLLBACK');
       return;
     }
-    // Flag the instance; an instance that does not exist yet gets a '(none)'
-    // row to carry the flag, deleted again when an event gets through.
-    const s = new Statement();
-    const flagInstance = (flag: string, detail: object, onlyIfUnflagged: boolean) => s.with('flagged', `
-      INSERT INTO wf_instances AS i (machine, key, app_id, state, machine_version, flag, flag_detail)
-      VALUES (${s.p(row.machine)}, ${s.p(row.key)}, ${s.p(row.instance?.app_id ?? row.app_id)}::int, ${s.p(NONE)},
-              ${s.p(machine.version)}::int, ${s.p(flag)}, ${s.p(JSON.stringify(detail))}::jsonb)
-      ON CONFLICT (machine, key) DO UPDATE SET flag = EXCLUDED.flag, flag_detail = EXCLUDED.flag_detail
-        ${onlyIfUnflagged ? 'WHERE i.flag IS NULL' : ''}`);
+    const appId = row.instance?.app_id ?? row.app_id;
     if (code && RETRYABLE.has(code)) {
       const attempts = Number(row.attempts) + 1;
       const backoffMs = Math.min(30000, 500 * 2 ** (attempts - 1));
-      if (attempts >= opts.stallAfter) flagInstance('stalled', { eventId, attempts, code }, true);
-      s.with('retried', `UPDATE wf_events SET attempts = ${s.p(attempts)},
-          retry_at = now() + make_interval(secs => ${s.p(backoffMs)}::float8 / 1000),
-          error = ${s.p(JSON.stringify({ code, message, kind: 'timeout' }))} WHERE id = ${s.p(eventId)}`);
-      await client.query({ text: s.text('SELECT 1'), values: s.values });
+      await client.query(RECORD_TIMEOUT, [row.machine, row.key, appId, NONE, machine.version,
+        attempts >= opts.stallAfter, JSON.stringify({ eventId, attempts, code }),
+        attempts, backoffMs, JSON.stringify({ code, message, kind: 'timeout' }), eventId]);
       await client.query('COMMIT');
       opts.log.warn('workflow', 'event timed out; retrying', { ...where, attempts, code });
       return;
     }
     // A transition that throws is a bug or a broken invariant: hold this
     // instance (and only this instance) until an admin releases it.
-    const id = s.p(eventId);
-    const stateBefore = s.p(current.state ?? NONE);
-    flagInstance('faulted', { eventId, code, message }, false);
-    s.with('faulted', `UPDATE wf_events SET status = 'processed', result = 'faulted', reason = 'transition_threw',
-            error = ${s.p(JSON.stringify({ code, message, stack: String((err as Error)?.stack || '').slice(0, 4000) }))},
-            state_before = ${stateBefore}, state_after = ${stateBefore}, processed_at = clock_timestamp()
-      WHERE id = ${id}`);
-    s.with('held', `UPDATE wf_events SET status = 'held'
-      WHERE machine = ${s.p(row.machine)} AND key = ${s.p(row.key)} AND status = 'pending' AND id > ${id}`);
-    await client.query({ text: s.text(`SELECT pg_notify('wf_outcome', ${id}::text)`), values: s.values });
+    await client.query(RECORD_FAULT, [row.machine, row.key, appId, NONE, machine.version,
+      JSON.stringify({ eventId, code, message }),
+      JSON.stringify({ code, message, stack: String((err as Error)?.stack || '').slice(0, 4000) }),
+      current.state ?? NONE, eventId]);
     await client.query('COMMIT');
     opts.log.error('workflow', 'transition faulted; instance held', { ...where, message });
   } catch (failure) {
