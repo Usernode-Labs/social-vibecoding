@@ -51,8 +51,23 @@ const COLOUR_EDITS = [
   ['- Color: the kit\'s tokens as 4–6 named colours, each with',
     '- Color: the kit\'s tokens as named colours, as many as the subject needs: the neutrals, one action colour, and any set of colours the subject itself uses, each with'],
 ];
-const LIVE_SHA = 'c54317ceca8932b4c485dd6a89171a06696461236f40509bc4d264cc3f7fe6fe';
-const LIVE_PACK_2_SHA = '37c5ea8a2cfce1378069a44d258063dd3d38c7060c65bf25446bf92f3ed78c14';
+// And three about its visual language (later on 7 October 2026, "V1": a
+// spec prompt telling Opus this drew closer to what Opus makes building an
+// app alone): one visual language drawn from the subject and carried
+// through the screen, its signature element and the details that carry it,
+// rather than one bold element and nothing around it; Chanel's "remove one
+// accessory" goes with it. Undoing them too gives pack 4 back.
+const LANGUAGE_EDITS = [
+  ['including its one signature element.',
+    'including its signature element and the details that carry it.'],
+  ['Spend your boldness in one place. Let one element be the memorable thing — the signature element in `## Design` — keep everything around it quiet and disciplined, and cut any decoration that does not serve the brief.',
+    'Give the app one visual language drawn from its subject and carry it through the screen: the signature element in `## Design`, and the small consistent details that make the subject recognisable at a glance (a drawn icon for each kind of thing, the subject\'s own colours and materials, a typeface that suits it). Keep it coherent rather than loud, and cut decoration that carries no meaning, not detail that does.'],
+  ['states. Consider Chanel\'s advice: before leaving the house, take a look in the mirror and remove one accessory. Human creatives',
+    'states. Human creatives'],
+];
+const LIVE_EDITS = [...COLOUR_EDITS, ...LANGUAGE_EDITS];
+const LIVE_SHA = '8fc6f2b344386dfaf474d3f28a306eb5b69e04e48b6aff645fde849f8f50bdb8';
+const LIVE_PACK_2_SHA = 'cfe11e58b071e25f36374b5075ada6c27ce2ac7170849bf6dfc9092dbd781a76';
 
 const { NUDGE, FIRST_VERSION_LOOP, SKILL_PATH } = designSkill;
 const FIRST = { spec: designSkill.stageGuidance('spec', { firstVersion: true }), build: designSkill.stageGuidance('build', { firstVersion: true }) };
@@ -65,13 +80,13 @@ const SPEC = '# Title\n\n## User-facing changes\n\nx\n\n## Technical implementat
 
 // ── What it is ───────────────────────────────────────────────────────────
 
-test('the skill and the texts are App bench context pack 4, byte for byte but for its colour edits', () => {
+test('the skill and the texts are App bench context pack 4, byte for byte but for its colour and visual-language edits', () => {
   assert.equal(packs.hashOf({ guidance: '', stageGuidance: FIRST, files: designSkill.skillFiles() }), LIVE_SHA);
   assert.equal(packs.hashOf({ guidance: '', stageGuidance: { spec: NUDGE, build: NUDGE }, files: designSkill.skillFiles() }), LIVE_PACK_2_SHA);
-  // Undo the colour edits and it is pack 4 again; its parent, v1, was the
-  // same files and the nudge at both stages.
+  // Undo the colour and visual-language edits and it is pack 4 again; its
+  // parent, v1, was the same files and the nudge at both stages.
   let skill = designSkill.skillFiles()[1].content;
-  for (const [was, now] of COLOUR_EDITS) {
+  for (const [was, now] of LIVE_EDITS) {
     assert.equal(skill.split(now).length, 2, `the edit is there once: ${now.slice(0, 60)}`);
     skill = skill.replace(now, was);
   }

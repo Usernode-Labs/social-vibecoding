@@ -1864,7 +1864,8 @@ form.agent-session-composer:focus-within {
 .messages-emoji-option-glyph { flex: none; width: 24px; font-size: 20px; line-height: 24px; text-align: center; }
 .messages-emoji-option-code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .messages-composer-dragging .messages-composer-card { outline: 2px solid var(--accent); outline-offset: -2px; }
-.messages-drop-overlay {
+.messages-drop-overlay,
+.attach-drop-overlay {
   position: absolute;
   z-index: 30;
   inset: 4px 12px;
@@ -1879,6 +1880,21 @@ form.agent-session-composer:focus-within {
   font-weight: 700;
   pointer-events: none;
 }
+/* #4065: the same outline over the other composers. It lies over the card
+   itself rather than the bar around it, so it takes the card's own edges;
+   the card is the positioned parent. `#feedback-form` is "Suggest an
+   improvement", where the whole form is the drop zone. */
+.attach-drop-overlay { inset: 0; border-radius: inherit; background: color-mix(in srgb, var(--bg-primary) 94%, transparent); }
+.gc-composer-card,
+#gc-form,
+#gc-thread-form,
+.dc-card,
+.agent-session-composer,
+#feedback-form { position: relative; }
+#feedback-form > .attach-drop-overlay { inset: -6px; border-radius: 16px; }
+/* The boxed thread composer inside a board card has no card radius of its own. */
+#gc-form:not(.gc-composer-card) > .attach-drop-overlay,
+#gc-thread-form:not(.gc-composer-card) > .attach-drop-overlay { border-radius: 12px; }
 
 /* ── The two panes, and the width they are actually drawn at ────────────
    From 768px up both panes sit on the one strip: the list column fixed at

@@ -142,6 +142,11 @@ import './lib/transition-ground';
 // Publishes window.ResetTime: allowance resets worded in the viewer's own
 // clock, for the classic scripts that cannot import it (#3230).
 import './lib/reset-time';
+// #4065: the drop-zone tracker for the classic chat scripts
+// (window.UsernodeReact.fileDrag), and the floor under every drop zone: a
+// file dropped where nothing takes it no longer opens in place of the app.
+import './features/attachments/file-drag';
+import './lib/file-drop-guard';
 // #1084 chunk G: the retired public/js/dev-chat.js, moved into the bundle
 // verbatim. Imported HERE rather than from a Shell island for the same reason
 // as the dev board above — #dc-view is written into an empty #app-content at

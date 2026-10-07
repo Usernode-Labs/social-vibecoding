@@ -485,7 +485,7 @@ function normalizeSpecOutput(text) {
 // dropped for going over: a dropped screen would leave the build with no
 // target, and the spec turn's clock already bounds what it can write. It is
 // measured instead, and a screen more than twice the budget is flagged.
-const SCREEN_CHAR_BUDGET = 15000;
+const SCREEN_CHAR_BUDGET = 20000;
 const SVG_SHAPE_RE = /<(?:path|rect|circle|ellipse|line|polyline|polygon)\b/gi;
 
 /**

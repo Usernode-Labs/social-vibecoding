@@ -2791,6 +2791,46 @@ const GroupChat = {
         }
       });
     }
+    GroupChat._wireDropZone(dropEls, t);
+  },
+
+  // #4065: show the drop zone while a file is held over the composer or its
+  // messages. The drop itself is the listener above; this only counts the
+  // drag in and out (features/attachments/file-drag.tsx's tracker, reached
+  // through the bridge) and publishes `dragging` into the composer's slot,
+  // where the React card draws the outline. One tracker per composer scope,
+  // shared by both elements, so moving from the messages to the box is one
+  // drag. Never lit on a read-only thread, where nothing can be dropped.
+  _dropTrackers: { general: null, thread: null },
+  _wireDropZone(els, thread) {
+    const api = typeof window !== 'undefined' && window.UsernodeReact && window.UsernodeReact.fileDrag;
+    if (!api || !api.createFileDragTracker) return;
+    const scope = GroupChat._composerScope(thread);
+    const previous = GroupChat._dropTrackers[scope];
+    if (previous) { previous.reset(); previous.dispose(); }
+    const tracker = api.createFileDragTracker({
+      isDisabled: () => GroupChat._readOnly(),
+      onChange: (dragging) => GroupChat._publishComposer(scope, { dragging }),
+    });
+    GroupChat._dropTrackers[scope] = tracker;
+    for (const el of els) {
+      if (!el) continue;
+      // The form survives a re-render now (it is React's), so its listeners
+      // are bound once and read whichever tracker is current for the scope.
+      if (el._gcDropZone) continue;
+      el._gcDropZone = true;
+      el.addEventListener('dragenter', (e) => GroupChat._dropTrackers[scope]?.enter(e));
+      el.addEventListener('dragleave', (e) => GroupChat._dropTrackers[scope]?.leave(e));
+      el.addEventListener('drop', () => GroupChat._dropTrackers[scope]?.reset());
+    }
+  },
+
+  // The line a drop or a pick shows when it left files out: the first reason,
+  // and how many more went with it (#4065).
+  _refusalSummary(first, more) {
+    const api = typeof window !== 'undefined' && window.UsernodeReact && window.UsernodeReact.fileDrag;
+    if (api && api.refusalSummary) return api.refusalSummary(first, more);
+    return first;
   },
 
   // Mirror the server's classifier (src/services/attachments.js
@@ -2839,14 +2879,25 @@ const GroupChat = {
     GroupChat._setAttachError(null, thread);
     const key = GroupChat._attachScopeKey(thread);
     const L = GroupChat.ATTACH_LIMITS;
-    for (const file of Array.from(fileList)) {
+    // #4065: one line for every file this drop or pick left out — the first
+    // reason, and how many more went with it — not whichever came last.
+    let firstRefusal = null;
+    let refused = 0;
+    const refuse = (reason, count = 1) => {
+      firstRefusal = firstRefusal || reason;
+      refused += count;
+      GroupChat._setAttachError(GroupChat._refusalSummary(firstRefusal, refused - 1), thread);
+    };
+    const files = Array.from(fileList);
+    for (let i = 0; i < files.length; i += 1) {
+      const file = files[i];
       if (GroupChat.pendingAttachments.filter((a) => a.scope === key).length >= L.maxPerMessage) {
-        GroupChat._setAttachError(`Up to ${L.maxPerMessage} files per message.`, thread);
+        refuse(`Up to ${L.maxPerMessage} files per message.`, files.length - i);
         break;
       }
       const classified = await GroupChat._classifyChatFile(file);
       if (classified.error) {
-        GroupChat._setAttachError(classified.error, thread);
+        refuse(classified.error);
         continue;
       }
       const entry = {
