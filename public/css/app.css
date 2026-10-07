@@ -17521,9 +17521,9 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 }
 .dev-ws-hero-line { margin: 0; font-size: 13px; line-height: 18px; color: var(--text-muted); }
 /* WHO IS HERE, IN THE HERO (#3268). The people row: up to five faces, then
-   "Public community · 23 members". The activity line under the actions: this
-   week in words, and the last fourteen days as a small bar chart at its end,
-   the busiest day the tallest bar.
+   "Public community · 23 members". A public or private community draws it as
+   the pulse below, with this week's activity under the count; the row is
+   Just you's, and the invite preview's.
 
    THE ROW WRAPS (#3276). Nothing in it can shrink: the faces are a fixed
    stack and the count is `nowrap`. So when five faces and the count come to
@@ -17539,10 +17539,34 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 }
 .dev-ws-hero-face:last-child { margin-right: 0; }
 .dev-ws-hero-count { font-size: 14px; font-weight: 650; color: var(--text-primary); white-space: nowrap; }
-.dev-ws-hero-activity { display: flex; align-items: flex-end; gap: 14px; }
-.dev-ws-hero-activity-words { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.dev-ws-hero-activity-line { font-size: 14px; line-height: 19px; color: var(--text-primary); }
+/* WHO IS HERE AND HOW LIVELY, ONE BLOCK (community-card.tsx HeroPulse): the
+   faces, the count over this week in words, and the fortnight's chart across
+   from both, the busiest day the tallest bar.
+
+   ON A PHONE THE CHART MOVES UP, across from the faces, and the words take
+   the full width under them. Faces, words and chart in one row left the
+   words about 130px on a 390px phone, so the count and the activity line
+   broke into five short lines. The breakpoint is the tabs' own: under 768px
+   they are the coloured band. Each cell of the activity line stays whole,
+   so a line too long for a narrow phone breaks at its separator. */
+.dev-ws-hero-pulse {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas: "faces words chart";
+  align-items: center; gap: 8px 10px;
+}
+.dev-ws-hero-pulse > .dev-ws-hero-faces { grid-area: faces; }
+.dev-ws-hero-pulse > .dev-ws-hero-spark-wrap { grid-area: chart; }
+.dev-ws-hero-pulse-words { grid-area: words; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+@media (max-width: 767.98px) {
+  .dev-ws-hero-pulse {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "faces chart" "words words";
+    column-gap: 12px;
+  }
+}
+.dev-ws-hero-activity-line { font-size: 13px; line-height: 18px; color: var(--text-muted); }
 .dev-ws-hero-activity-line b { font-weight: 650; }
+.dev-ws-hero-activity-line > [data-ws-members-cell] { white-space: nowrap; }
 .dev-ws-hero-spark { flex: none; width: 112px; height: 30px; display: flex; align-items: flex-end; gap: 2px; }
 .dev-ws-hero-spark-bar {
   flex: 1 1 0; min-width: 0; border-radius: 2px 2px 1px 1px;
