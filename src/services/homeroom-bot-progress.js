@@ -87,6 +87,9 @@ const STEP_OF_STAGE = Object.freeze({
   planning: 'plan',
   stalled: 'plan',
   building: 'build',
+  // A first version's screens reviewed and fixed (services/bot-review.js):
+  // still building it, as far as its creator is concerned.
+  reviewing: 'build',
   proposing: 'build',
   checks: 'checks',
   checks_failed: 'checks',
@@ -102,7 +105,7 @@ const STEP_OF_STAGE = Object.freeze({
 // something this minute, rather than waiting on the person, the group, the
 // checks or its queue: what "working on now" means.
 const BUSY_STAGES = new Set([
-  'setting_up', 'reading', 'revising', 'fixing', 'starting', 'planning', 'building', 'proposing', 'merging',
+  'setting_up', 'reading', 'revising', 'fixing', 'starting', 'planning', 'building', 'reviewing', 'proposing', 'merging',
 ]);
 
 // #3734: what the bot has in hand for the person: doing this minute, or in
@@ -279,6 +282,18 @@ function stageOf(input, { now = new Date() } = {}) {
       return { stage: 'stalled', since: row.run_at, doing: 'it was found ready to build, but nothing about the build has been recorded since' };
     }
     if (row.build_status === 'archived') return null;
+    // A first version whose build landed and whose screens are being
+    // reviewed and fixed before it is proposed (services/bot-review.js).
+    if (row.review_state === 'reviewing') {
+      const of = Math.max(1, Number(row.review_max_rounds) || 1);
+      const round = Math.max(1, Math.min(Number(row.review_round) || 1, of));
+      return {
+        stage: 'reviewing',
+        since: row.review_started_at || row.build_last_activity || null,
+        doing: `reviewing the screens (round ${round} of ${of}) and fixing what the review finds`,
+        limit: 'review',
+      };
+    }
     if (row.build_status === 'paused' || row.build_status === 'promoted') {
       return { stage: 'proposing', since: row.build_last_activity || null, doing: 'the build finished; getting it ready to try now' };
     }
@@ -325,6 +340,7 @@ function limitsFor(row, { settings, config, botSvc }) {
       reading: Math.round(turnSeconds / 60),
       plan: Math.round(budgets.specBudgetMs / MINUTE_MS),
       build: Math.round(budgets.turnBudgetMs / MINUTE_MS),
+      ...(Number(row.review_minutes) > 0 ? { review: Number(row.review_minutes) } : {}),
     };
   } catch {
     return {};
@@ -342,6 +358,7 @@ const TYPICAL_MINUTES = Object.freeze({
   starting: Object.freeze([1, 5]),
   planning: Object.freeze([3, 8]),
   building: Object.freeze([10, 25]),
+  reviewing: Object.freeze([5, 25]),
   proposing: Object.freeze([1, 3]),
   checks: Object.freeze([5, 20]),
   revising: Object.freeze([5, 20]),
@@ -384,6 +401,7 @@ async function requestRows(pool, userId) {
             run.cap_suppressed,
             run.build_ok, run.build_error, run.build_session_id, run.proposal_session_id AS run_proposal,
             run.live_build_waiting_at AS build_waiting_at, run.awaiting_go_at AS plan_waiting_at,
+            run.review_state, run.review_started_at, run.review_round, run.review_max_rounds, run.review_minutes,
             bs.status AS build_status, bs.created_at AS build_started_at, bs.last_activity_at AS build_last_activity,
             bs.active_turn->>'mode' AS build_turn_mode, bs.active_turn->>'startedAt' AS build_turn_at,
             spec.created_at AS spec_at,
@@ -396,7 +414,11 @@ async function requestRows(pool, userId) {
        LEFT JOIN homeroom_bot_queue q ON q.app_id = m.app_id AND q.issue_number = m.issue_number
        LEFT JOIN LATERAL (
          SELECT id, mode, verdict, created_at, duration_ms, cap_suppressed, build_ok, build_error, build_session_id,
-                proposal_session_id, live_build_waiting_at, awaiting_go_at
+                proposal_session_id, live_build_waiting_at, awaiting_go_at,
+                review->>'state' AS review_state, review->>'startedAt' AS review_started_at,
+                jsonb_array_length(COALESCE(review->'rounds', '[]'::jsonb)) AS review_round,
+                (review->'reviewer'->>'maxRounds')::int AS review_max_rounds,
+                (review->'reviewer'->>'budgetMinutes')::int AS review_minutes
            FROM homeroom_bot_runs
           WHERE app_id = m.app_id AND issue_number = m.issue_number
           ORDER BY id DESC LIMIT 1

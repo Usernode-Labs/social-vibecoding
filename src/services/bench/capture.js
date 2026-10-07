@@ -324,7 +324,12 @@ async function storeShots(pool, trialId, kept) {
  * not) or { ok: false, error } when the platform could not run the step.
  * Never throws.
  */
-async function captureTrial({ pool, trialId, worker, containerName, appId, timeoutMs = CAPTURE_TIMEOUT_MS }) {
+async function captureTrial({
+  pool, trialId, worker, containerName, appId, timeoutMs = CAPTURE_TIMEOUT_MS,
+  // Where the screenshots go when they are not a trial's own (the bot's
+  // review rounds, services/bot-review.js storeRoundShots): kept => ids.
+  store = null,
+}) {
   let stdout;
   try {
     stdout = await worker.runBenchCapture(containerName, {
@@ -340,7 +345,7 @@ async function captureTrial({ pool, trialId, worker, containerName, appId, timeo
   const { kept, dropped } = acceptShots(output.shots);
   let artifacts = {};
   try {
-    artifacts = await storeShots(pool, trialId, kept);
+    artifacts = store ? await store(kept) : await storeShots(pool, trialId, kept);
   } catch (err) {
     log.warn('bench', 'Could not store a trial\'s screenshots', { trialId, err: err.message });
     return { ok: false, error: `the screenshots could not be stored: ${err.message}` };

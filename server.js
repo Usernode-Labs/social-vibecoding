@@ -664,6 +664,8 @@ app.use(require('./src/routes/homeroom-bench').homeroomBenchRoutes(config));
 // The App bench studio, and the admin connector's reads of the bot and of the
 // recent screenshots (routes/bench-studio.js).
 app.use(require('./src/routes/bench-studio').benchStudioRoutes(config));
+// The Homeroom bot's first-version configurations, and their blind pairs.
+app.use(require('./src/routes/bot-configs').botConfigRoutes(config));
 // Test accounts for first-run testing, minted by a full admin's connector
 // session (services/test-accounts.js).
 app.use(require('./src/routes/test-accounts').testAccountRoutes(config));

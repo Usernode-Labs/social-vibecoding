@@ -439,7 +439,7 @@ function buildUnderWay(row) {
 
 // The progress stages (homeroom-bot-progress.js) that are a ready verdict's
 // build: its plan, the build, the proposal it opens.
-const BUILD_STAGES = new Set(['build_queued', 'starting', 'planning', 'building', 'proposing']);
+const BUILD_STAGES = new Set(['build_queued', 'starting', 'planning', 'building', 'reviewing', 'proposing']);
 
 // ── How long it took: the work, not the wait ──
 //
@@ -826,7 +826,7 @@ async function activityCards(pool, { user, userId, settings, config, deps, now }
 // waiting its turn to be built (when its build starts), not a follow-up on
 // its proposal or a merge (the card before them ended at "proposal up"),
 // and nothing waiting on the person, the group or a cap.
-const UNDER_WAY_STAGES = Object.freeze(['reading', 'starting', 'planning', 'building', 'proposing']);
+const UNDER_WAY_STAGES = Object.freeze(['reading', 'starting', 'planning', 'building', 'reviewing', 'proposing']);
 // The most of the person's cards looked through for the one that already
 // follows a request. Their work under way is recent, and so is its card.
 const COVER_LIMIT = 100;

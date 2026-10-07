@@ -1633,6 +1633,18 @@ async function stampSessionModel(pool, session, model) {
 }
 
 /**
+ * Which CLI runs a turn of a first version built under a configuration
+ * (services/bot-configs.js). An Anthropic model runs in Claude Code, against
+ * OpenRouter's Anthropic-compatible endpoint (#3296's `claude` harness):
+ * the platform's per-model map (config.openrouterModelHarnesses) lists only
+ * GLM and DeepSeek, so under 'auto' Opus would run in Codex. Every other
+ * model keeps the platform's own choice. Pure.
+ */
+function recipeHarness(model) {
+  return /^anthropic\//i.test(String(model || '')) ? 'claude' : 'auto';
+}
+
+/**
  * Build the change in a dev session of the bot's own and put it up for a
  * vote. Resolves { ok, sessionId, prNumber, costUsd, error }; never throws.
  */
@@ -1674,6 +1686,9 @@ async function draftSpec({
   specBudgetMs = SPEC_TURN_MAX_MS, telemetryComponent = 'homeroom_bot_spec', firstVersion = false,
   // The studio's pack guidance and a trial's watch (services/bench/studio.js).
   guidance = null, onProgress = null,
+  // Which CLI runs the turn: the platform's per-model choice ('auto'), or
+  // a configuration's (recipeHarness).
+  harness = 'auto',
 }) {
   const { worker, sessions, agentTurn, activeWorkers } = deps;
   const budgetMs = Math.min(turnBudgetMs, specBudgetMs);
@@ -1700,8 +1715,9 @@ async function draftSpec({
       resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
         pool, session, userId: bot.id, model, resumeThreadId: null, config,
         // The platform's per-model choice of CLI, as the dev chat's scout
-        // makes it (#3296): GLM runs in Claude Code.
-        harness: 'auto',
+        // makes it (#3296): GLM runs in Claude Code. A configuration's
+        // Anthropic model runs there too (recipeHarness).
+        harness,
       }),
       dispatchOnce: (ctx) => worker.execInWorker(session.id, {
         mode: 'scout',
@@ -1780,8 +1796,15 @@ async function buildAndPropose({
   // before it is proposed. A reason ends the build there: its session put
   // away, nothing proposed, and `skipped` on the result.
   skipCheck = null,
+  // A configuration's turns (services/bot-configs.js): which CLI each
+  // model runs in (recipeHarness), and the REVIEW of a first version
+  // (services/bot-review.js): { reviewer, owner: { botRunId } | { trialId },
+  // onState, budgetCheck }. Neither for any other build.
+  harnessOf = null,
+  review = null,
 }) {
   const { worker, sessions, agentTurn, sessionLifecycle, activeWorkers } = deps;
+  const buildStartedMs = Date.now();
   const title = clipText(issue?.title || `Issue #${issueNumber}`, 120);
   // A shadow build (`propose: false`) is the same build, on a session of the
   // bot's own that links no issue, so no board reads it as work under way
@@ -1911,6 +1934,7 @@ async function buildAndPropose({
       pool, config, bot, session, containerName, seed, buildNote, turnBudgetMs,
       model: specModel || model, deps, specBudgetMs, firstVersion, guidance: specGuidance, onProgress,
       ...(telemetry ? { telemetryComponent: telemetry } : {}),
+      ...(harnessOf ? { harness: harnessOf(specModel || model) } : {}),
     });
   // The build turn runs the build's model again.
   await stampSessionModel(pool, session, model);
@@ -1962,15 +1986,72 @@ async function buildAndPropose({
     : await buildSeesImages({ pool, config, userId: bot.id, model });
 
   if (onStage) { try { await onStage('build'); } catch { /* a watcher never stops a build */ } }
-  // The same wall clock a triage turn has, ended the same way.
-  let stopped = false;
-  let stopping = null;
-  const timer = setTimeout(() => {
-    stopped = true;
-    stopping = Promise.resolve(worker.stopTurn(session.id)).catch(() => {});
-  }, turnBudgetMs);
-  if (typeof timer.unref === 'function') timer.unref();
-  activeWorkers.add(session.id);
+  const buildHarness = harnessOf ? harnessOf(model) : 'auto';
+  // One build-mode turn in this session: the build itself, and each review
+  // round's fix (bot-review.js), which continues the build's conversation
+  // when the runtime can resume it. The same wall clock a triage turn has,
+  // ended the same way.
+  const runBuildTurn = async ({
+    prompt: turnPrompt, budgetMs, resumeThreadId = null, commitMsg, progress: turnProgress,
+  }) => {
+    let turnStopped = false;
+    let stopping = null;
+    const timer = setTimeout(() => {
+      turnStopped = true;
+      stopping = Promise.resolve(worker.stopTurn(session.id)).catch(() => {});
+    }, budgetMs);
+    if (typeof timer.unref === 'function') timer.unref();
+    activeWorkers.add(session.id);
+    let turnRouted;
+    try {
+      turnRouted = await sessions.runCodexAttemptLoop({
+        pool, session, userId: bot.id, config, isCodexSession: true,
+        turnModel: model, resumeThreadId, mode: 'build',
+        telemetryComponent: telemetry || 'homeroom_bot_build',
+        resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
+          pool, session, userId: bot.id, model, resumeThreadId, config,
+          // The dev chat's build makes the same choice (#3296). The bot's
+          // build works as it is under either CLI: the worker, not the agent,
+          // commits and pushes what the turn leaves (buildPrompt's commits:
+          // 'harness'; both runners use worker/session-branch.sh), and an
+          // OpenRouter build needs no handbook as system context in either
+          // (run-cc.sh).
+          harness: buildHarness,
+        }),
+        dispatchOnce: (ctx) => worker.execInWorker(session.id, {
+          mode: 'build',
+          prompt: turnPrompt,
+          model,
+          commitMsg,
+          resumeSessionId: resumeThreadId,
+          branchName,
+          // A failed turn's work is neither committed nor pushed, under either
+          // CLI (failedClaudeTurn).
+          discardFailedTurn: true,
+          ...(ctx || {}),
+          telemetryComponent: telemetry || 'homeroom_bot_build',
+          onProgress: teeProgress(turnProgress, onProgress),
+        }),
+        retryPredicate: () => null,
+        sendStatus: async () => {},
+        waitForStopped: async () => {},
+        prepareRetry: async () => false,
+        classifyAttemptStatus: ({ failed }) => (failed ? 'failed' : 'completed'),
+        containerName,
+      });
+    } catch (err) {
+      turnRouted = { error: `dispatch: ${err.message}` };
+    } finally {
+      clearTimeout(timer);
+      if (stopping) await stopping;
+      activeWorkers.delete(session.id);
+      await pool.query(
+        "UPDATE chat_sessions SET status = 'paused', last_activity_at = NOW() WHERE id = $1 AND status = 'active'",
+        [session.id],
+      ).catch(() => {});
+    }
+    return { routed: turnRouted, stopped: turnStopped };
+  };
   const prompt = buildPrompt({
     seed, buildNote, spec: spec.ok ? spec.specMd : null, platformRepo, readsImages, firstVersion, guidance: buildGuidance,
   });
@@ -1978,59 +2059,15 @@ async function buildAndPropose({
   // it was waiting on (#3385): 12 of the first 18 shadow failures were
   // time-outs, most of them cheap, with nothing recorded about why.
   const progress = lastActivity();
-  let routed;
-  try {
-    routed = await sessions.runCodexAttemptLoop({
-      pool, session, userId: bot.id, config, isCodexSession: true,
-      turnModel: model, resumeThreadId: null, mode: 'build',
-      telemetryComponent: telemetry || 'homeroom_bot_build',
-      resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
-        pool, session, userId: bot.id, model, resumeThreadId: null, config,
-        // The dev chat's build makes the same choice (#3296). The bot's
-        // build works as it is under either CLI: the worker, not the agent,
-        // commits and pushes what the turn leaves (buildPrompt's commits:
-        // 'harness'; both runners use worker/session-branch.sh), and an
-        // OpenRouter build needs no handbook as system context in either
-        // (run-cc.sh).
-        harness: 'auto',
-      }),
-      dispatchOnce: (ctx) => worker.execInWorker(session.id, {
-        mode: 'build',
-        prompt,
-        model,
-        commitMsg: `Homeroom bot: #${issueNumber} ${title}`.slice(0, 120),
-        resumeSessionId: null,
-        branchName,
-        // A failed turn's work is neither committed nor pushed, under either
-        // CLI (failedClaudeTurn).
-        discardFailedTurn: true,
-        ...(ctx || {}),
-        telemetryComponent: telemetry || 'homeroom_bot_build',
-        onProgress: teeProgress(progress, onProgress),
-      }),
-      retryPredicate: () => null,
-      sendStatus: async () => {},
-      waitForStopped: async () => {},
-      prepareRetry: async () => false,
-      classifyAttemptStatus: ({ failed }) => (failed ? 'failed' : 'completed'),
-      containerName,
-    });
-  } catch (err) {
-    routed = { error: `dispatch: ${err.message}` };
-  } finally {
-    clearTimeout(timer);
-    if (stopping) await stopping;
-    activeWorkers.delete(session.id);
-    await pool.query(
-      "UPDATE chat_sessions SET status = 'paused', last_activity_at = NOW() WHERE id = $1 AND status = 'active'",
-      [session.id],
-    ).catch(() => {});
-  }
+  const { routed, stopped } = await runBuildTurn({
+    prompt, budgetMs: turnBudgetMs, commitMsg: `Homeroom bot: #${issueNumber} ${title}`.slice(0, 120), progress,
+  });
 
   const result = (routed && routed.result) || {};
   const buildCostUsd = Number.isFinite(routed && routed.estimatedCostUsd) ? routed.estimatedCostUsd : null;
-  // Both turns, the spec's and the build's, are the build's cost.
-  const costUsd = buildCostUsd == null && spec.costUsd == null
+  // Both turns, the spec's and the build's, are the build's cost (and a
+  // review's, below).
+  let costUsd = buildCostUsd == null && spec.costUsd == null
     ? null
     : (buildCostUsd || 0) + (spec.costUsd || 0);
   // WP1 (#2): and once the build turn is over, whatever it came to, just
@@ -2049,6 +2086,32 @@ async function buildAndPropose({
     return { ...(await fail('the build produced no change to propose')), costUsd };
   }
 
+  // A first version under a configuration with a reviewer: its screens are
+  // reviewed and fixed before anybody sees it (bot-review.js). It fails
+  // open: whatever stops the loop, what is committed goes on as it would
+  // have without it. Its cost is the build's.
+  let reviewed = null;
+  let landedSha = result.sha || null;
+  let landedCommits = Number(result.ahead) || 0;
+  if (review?.reviewer) {
+    reviewed = await reviewLanded({
+      pool, config, bot, app, repo, session, branchName, seed, spec: spec.ok ? spec.specMd : null,
+      review, deps, runBuildTurn, turnBudgetMs, readsImages, platformRepo, skipNow, onProgress,
+      start: {
+        sha: landedSha, commits: landedCommits, threadId: result.agentThreadId || null,
+        costUsd, activeMs: Date.now() - buildStartedMs, buildText: result.lastResultText || null,
+      },
+    });
+    if (reviewed) {
+      if (reviewed.finalSha) landedSha = reviewed.finalSha;
+      if (Number(reviewed.finalCommits) > 0) landedCommits = Number(reviewed.finalCommits);
+      if (Number(reviewed.costUsd) > 0) costUsd = (Number(costUsd) || 0) + Number(reviewed.costUsd);
+    }
+    const skippedLate = await skipNow();
+    if (skippedLate) return { ...(await fail(skippedLate)), skipped: skippedLate, costUsd, review: reviewed };
+  }
+  const reviewOut = reviewed ? { review: reviewed } : {};
+
   if (!propose) {
     // Built, pushed, and put away: the session is archived exactly as a
     // failed attempt is, and nothing is promoted, posted or shown.
@@ -2059,12 +2122,12 @@ async function buildAndPropose({
     ).catch(() => {});
     return {
       ok: true, sessionId: session.id, branchName: session.branch_name,
-      sha: result.sha || null, commits: Number(result.ahead) || 0, costUsd, ...specOut(),
+      sha: landedSha, commits: landedCommits, costUsd, ...specOut(), ...reviewOut,
     };
   }
 
   // What the build pushed, recorded on a live run as a shadow build's is (#3509).
-  const pushed = { branchName: session.branch_name, sha: result.sha || null, commits: Number(result.ahead) || 0 };
+  const pushed = { branchName: session.branch_name, sha: landedSha, commits: landedCommits };
   // Named and described first: the route reads both as it opens the pull
   // request (#3518).
   await prepareProposal({
@@ -2081,10 +2144,90 @@ async function buildAndPropose({
     log.warn('homeroom-bot', 'Built but could not propose', { app: app.slug, issueNumber, sessionId: session.id, why });
     return {
       ok: false, sessionId: session.id, ...pushed, costUsd,
-      error: `the change was built but could not be proposed: ${why}`, ...specOut(),
+      error: `the change was built but could not be proposed: ${why}`, ...specOut(), ...reviewOut,
     };
   }
-  return { ok: true, sessionId: session.id, prNumber: promoted.body.prNumber || null, ...pushed, costUsd, ...specOut() };
+  return { ok: true, sessionId: session.id, prNumber: promoted.body.prNumber || null, ...pushed, costUsd, ...specOut(), ...reviewOut };
+}
+
+/**
+ * The review of a first version that landed (services/bot-review.js
+ * runReviewLoop), wired to this build: captures in the build's own worker,
+ * stored as the run's or the trial's round screenshots; the reviewer called
+ * with the key of the user the build runs as; fixes as build-mode turns of
+ * the same session. Resolves the loop's final state, or null when it could
+ * not start; never throws.
+ */
+async function reviewLanded({
+  pool, config, bot, app, repo, session, branchName, seed, spec, review, deps, runBuildTurn,
+  turnBudgetMs, readsImages, platformRepo, skipNow, onProgress, start,
+}) {
+  const botReview = require('./bot-review');
+  const { worker } = deps;
+  const reviewer = review.reviewer;
+  const owner = review.owner || {};
+  let threadId = start.threadId || null;
+  const capture = async (index) => {
+    const t0 = Date.now();
+    let containerName;
+    try {
+      await worker.ensureWorkerImage();
+      containerName = await worker.ensureWorker(session.id, {
+        repoOwner: repo.owner, repoName: repo.repo, branchName, temporary: true, onProgress: () => {},
+      });
+    } catch (err) {
+      return { ok: false, error: `worker: ${err.message}`, ms: Date.now() - t0 };
+    }
+    const step = deps.captureRound || ((args) => require('./bench/capture').captureTrial(args));
+    const out = await step({
+      pool, trialId: owner.trialId ?? null, worker, containerName, appId: app.id,
+      store: (kept) => botReview.storeRoundShots(pool, { ...owner, round: index }, kept),
+    });
+    return { ...out, ms: Date.now() - t0 };
+  };
+  const fix = async ({ round, issues, budgetMs }) => {
+    const t0 = Date.now();
+    worker.clearPendingStop?.(session.id);
+    const turn = await runBuildTurn({
+      prompt: botReview.fixPrompt({
+        seed, spec, issues, round, maxRounds: reviewer.maxRounds, readsImages, platformRepo,
+      }),
+      budgetMs: Math.max(1000, Math.min(budgetMs, turnBudgetMs)),
+      resumeThreadId: threadId,
+      commitMsg: `Homeroom bot: review fixes, round ${round}`,
+      progress: lastActivity(),
+    });
+    const r = (turn.routed && turn.routed.result) || {};
+    const costUsd = Number.isFinite(turn.routed && turn.routed.estimatedCostUsd) ? turn.routed.estimatedCostUsd : null;
+    const ms = Date.now() - t0;
+    if (turn.stopped) return { ok: false, stopped: true, costUsd, ms };
+    if (turn.routed?.error) return { ok: false, error: `the fix turn failed (${turn.routed.error})`, costUsd, ms };
+    const failed = failedClaudeTurn(r);
+    if (failed) return { ok: false, error: `the fix turn failed (${failed})`, costUsd, ms };
+    if (r.agentThreadId) threadId = r.agentThreadId;
+    return {
+      ok: true, sha: r.pushOk ? (r.sha || null) : null, commits: Number(r.ahead) > 0 ? Number(r.ahead) : null, costUsd, ms,
+    };
+  };
+  try {
+    return await botReview.runReviewLoop({
+      reviewer,
+      start,
+      capture,
+      review: ({ round, capture: shot, previousIssues }) => botReview.reviewCapture({
+        pool, config, userId: bot.id, model: reviewer.model, seed, spec, capture: shot, previousIssues,
+        round, maxRounds: reviewer.maxRounds, appId: app.id, sessionId: session.id, deps: deps.reviewDeps || {},
+      }),
+      fix,
+      budgetCheck: review.budgetCheck || null,
+      skipCheck: skipNow,
+      onState: review.onState || null,
+      onProgress,
+    });
+  } catch (err) {
+    log.warn('homeroom-bot', 'The review could not run; proposing what is built', { sessionId: session.id, err: err.message });
+    return null;
+  }
 }
 
 module.exports = {
@@ -2139,6 +2282,9 @@ module.exports = {
   PLATFORM_TEST_NOTE,
   screenshotNote,
   buildAndPropose,
+  reviewLanded,
+  recipeHarness,
+  browserLines,
   failedClaudeTurn,
   stampSessionModel,
   draftSpec,

@@ -88,6 +88,7 @@ const PHASE_OF_STAGE = Object.freeze({
   starting: 'building',
   planning: 'building',
   building: 'building',
+  reviewing: 'building',
   proposing: 'building',
   followup_queued: 'follow_up_queued',
   fix_queued: 'follow_up_queued',

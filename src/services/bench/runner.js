@@ -598,12 +598,62 @@ async function buildStage(ctx) {
     ...(ctx.onStep ? { onStage: ctx.onStep } : {}),
     // A studio trial an admin cancelled stops before its build turn.
     ...(ctx.skipCheck ? { skipCheck: ctx.skipCheck } : {}),
+    // A configuration's (services/bot-configs.js, through the lane's
+    // studioContext): which CLI each model runs in, and its review.
+    ...(ctx.harnessOf ? { harnessOf: ctx.harnessOf } : {}),
+    ...(ctx.reviewer ? { review: { reviewer: ctx.reviewer, owner: { trialId: trial.id }, onState: ctx.onReviewState || null } } : {}),
   });
   if (ctx.onBuilt) {
     try { await ctx.onBuilt({ ...built, sight }); } catch { /* a checkpoint never stops a trial */ }
   }
   const out = await buildResult({ built, base, branch, sessionId, deps, repo, task, trial });
-  return { ...out, parsed: { ...(out.parsed || {}), sight } };
+  const reviewed = built.review ? require('../bot-review').slimState(built.review) : null;
+  return {
+    ...out,
+    parsed: { ...(out.parsed || {}), sight, ...(reviewed ? { review: reviewed } : {}) },
+    // The reviewer calls are not agent turns, so the ledger the lane reads a
+    // trial's cost from does not hold them (lane.recordTrial).
+    ...(built.review ? { review_cost_usd: reviewerCost(built.review) } : {}),
+  };
+}
+
+/** What a review's reviewer calls cost, together. Pure. */
+function reviewerCost(review) {
+  return (review?.rounds || []).reduce((sum, r) => sum + (Number.isFinite(Number(r?.reviewerCostUsd)) ? Number(r.reviewerCostUsd) : 0), 0);
+}
+
+/**
+ * A SIDE BUILD of a live first version (services/bot-configs.js
+ * spawnSideBuilds): one configuration's spec, build and review of the request
+ * the live build is building, on the live project's own repository, from the
+ * commit the live build started at. No first commit and no triage: the live
+ * run's triage outcome and plan (its build snapshot's seed and build note,
+ * with the creator's choices in it) are replayed as they are, so only the
+ * spec, the build and the review differ. Then the screenshot step, as a
+ * first version's.
+ */
+async function sideBuildStage(ctx) {
+  const { snapshot } = ctx;
+  if (!snapshot?.texts?.seed || !snapshot.baseSha) {
+    return { status: 'infra_fail', error: 'the live run recorded no build snapshot to replay' };
+  }
+  const models = firstVersionModels(ctx);
+  const step = (name) => { try { ctx.onStep?.(name); } catch { /* a watcher never stops a trial */ } };
+  step('spec');
+  const built = await buildStage({
+    ...ctx,
+    model: models.build,
+    specModel: models.spec !== models.build ? models.spec : null,
+    snapshot: { ...snapshot, extra: { ...(snapshot.extra || {}), firstVersion: true } },
+    // A first version's own clocks (homeroom-bot buildBudgets, firstVersion).
+    budgets: ctx.budgets.firstVersion || ctx.budgets,
+  });
+  const out = { ...built, parsed: { ...(built.parsed || {}), models, side: { botRunId: ctx.sideBuild?.botRunId || null } } };
+  if (built.status !== 'ok' || !built.parsed?.built || !built.session_id) return out;
+  step('capture');
+  const shot = await screenshotStep(ctx, built.session_id);
+  if (!shot.ok) return { ...out, status: 'infra_fail', error: shot.error };
+  return { ...out, capture: shot.capture };
 }
 
 /**
@@ -1012,7 +1062,11 @@ const STAGE_RUNNERS = Object.freeze({
   dm: (ctx) => require('./dm-sim').dmStage(ctx),
   // A reference build handed in from outside is a first version too,
   // only captured (referenceStage).
-  first_version: (ctx) => (ctx.trial?.reference_label ? referenceStage(ctx) : firstVersionStage(ctx)),
+  first_version: (ctx) => {
+    if (ctx.trial?.reference_label) return referenceStage(ctx);
+    // A side build of a live first version replays its plan (sideBuildStage).
+    return ctx.sideBuild ? sideBuildStage(ctx) : firstVersionStage(ctx);
+  },
   capture: captureStage,
 });
 
@@ -1029,8 +1083,10 @@ const STAGE_RUNNERS = Object.freeze({
  * reference build has no turn. A DM conversation, a spec stage, or anything
  * unknown is run again instead. Pure.
  */
-function resumableTurn(stage, activeTurn, { reference = false } = {}) {
+function resumableTurn(stage, activeTurn, { reference = false, side = false } = {}) {
   if (!activeTurn) return false;
+  // A side build of a live first version (sideBuildStage) is run again.
+  if (side) return false;
   if (stage === 'triage' || stage === 'followup' || stage === 'checks_fix') return true;
   if (stage === 'build') return activeTurn.mode === 'build';
   if (stage === 'first_version') return !reference && (activeTurn.mode === 'scout' || activeTurn.mode === 'build');
@@ -1230,6 +1286,8 @@ module.exports = {
   STAGE_RUNNERS,
   triageStage,
   firstVersionStage,
+  sideBuildStage,
+  reviewerCost,
   firstVersionModels,
   referenceStage,
   captureStage,

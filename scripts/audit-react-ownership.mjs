@@ -357,6 +357,7 @@ const OWNED = [
   // the section reads itself), both one React tree in the section host.
   { sel: '#admin-section-content', when: '#admin/homeroom-bot' }, // features/admin/admin-homeroom-bot.tsx (+ admin-homeroom-bench.tsx, and its /benchmark/… places)
   { sel: '#admin-section-content', when: '#admin/small-changes' }, // features/admin/admin-small-changes.tsx
+  { sel: '#admin-section-content', when: '#admin/bot-configs' }, // features/admin/admin-bot-configs.tsx
   // The programme console's screens convert one at a time (#1120 slice 24).
   // The host is #admin-topo-content, not the section host: admin-topochain.js
   // still owns the shell around it and recreates that node on every screen
@@ -409,6 +410,8 @@ const ROUTES = [
   // covers them): runs, one run of each kind on the staging demo, and suites.
   '#admin/homeroom-bot/benchmark/runs', '#admin/homeroom-bot/benchmark/runs/936551', '#admin/homeroom-bot/benchmark/runs/936550',
   '#admin/homeroom-bot/benchmark/suites', '#admin/homeroom-bot/benchmark/suites/936542', '#admin/homeroom-bot/benchmark/studio',
+  // The Homeroom bot's configurations, versioned recipes and how each measures up.
+  '#admin/bot-configs',
   '#admin/api-tester', '#admin/sql-console', '#admin/settings', '#admin/app-version', '#admin/waitlist', '#admin/onchain-accounts', '#admin/user-activities', '#admin/delegations',
   '#admin/challenge-templates', '#admin/challenge-scoring', '#admin/seasons', '#admin/season-events',
 ];

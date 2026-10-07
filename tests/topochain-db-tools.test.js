@@ -749,6 +749,10 @@ test('#1130: no credential-SHAPED column name in schema.sql is readable without 
     // and every route that takes one also requires an admin who can write.
     'bench_tasks.label_token',
     'bench_trials.item_token',
+    // The same for a blind pair of two bot configurations' first versions
+    // (services/bot-configs.js): it hides which side is which from the admin
+    // picking, and the pick route also requires an admin who can write.
+    'bot_config_pairs.token',
 
     // Foreign keys TO a credential row. The id is a row number; the secret
     // itself lives in a column that IS denied (or, for user_ai_credentials,

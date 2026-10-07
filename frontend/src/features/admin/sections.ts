@@ -27,6 +27,7 @@ import './admin-db-export.tsx';
 import './admin-storage.tsx';
 import './admin-model-costs.tsx';
 import './admin-homeroom-bot.tsx';
+import './admin-bot-configs.tsx';
 import './admin-small-changes.tsx';
 import './admin-features.tsx';
 import './admin-limits.tsx';
