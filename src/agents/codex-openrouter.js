@@ -414,9 +414,12 @@ function normalizeCodexLine(line, state) {
       const cmd = item.command || '';
       const label = cmd ? `$ ${String(cmd).slice(0, 150)}` : 'Running command';
       if (item.id) state.toolUses.set(item.id, { label, kind: 'command' });
+      // The whole command too, unclipped, so the worker can tell the
+      // command that booted the app (usernode-run-inloop) from a long one
+      // whose 150-character label stops before it. Read there, never stored.
       return [{
         kind: 'command_started', text: label, lifecycle: 'started',
-        itemId: item.id || null, toolName: 'command',
+        itemId: item.id || null, toolName: 'command', command: cmd ? String(cmd) : null,
       }];
     }
     if (t === 'file_change' || t === 'file.edit' || t === 'file.write') {

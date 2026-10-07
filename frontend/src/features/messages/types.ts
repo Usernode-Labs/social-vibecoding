@@ -186,6 +186,10 @@ export interface HomeroomBotJob {
   key: string;
   appSlug: string | null;
   appName: string;
+  /** #4201: the app's own icon, `/app-icons/<id>`, else null. */
+  iconUrl: string | null;
+  /** #4201: the app's emoji icon, for an app with no image; else null. */
+  iconEmoji: string | null;
   issueNumber: number | null;
   title: string | null;
   firstVersion: boolean;

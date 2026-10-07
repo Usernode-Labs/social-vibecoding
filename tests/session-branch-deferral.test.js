@@ -476,20 +476,17 @@ test('staging seeds a branchless session, and it is the only branchless fixture'
   assert.match(body, /\[staging fixture\]/, 'seeded rows must be obviously fake');
 });
 
-test('the deep links for both banner states are declared as checks', () => {
+test('the launchpad banner states are no longer declared checks (#3976)', () => {
+  // Both resume-banner states were checked through the launchpad shot link
+  // on classic sessions (990401, and this branchless 990411). Classic
+  // sessions are read-only now and are handed to no venue, so the launchpad
+  // never shows there and those checks were retired with the chat. The
+  // fixture stays until the classic dev chat itself is removed.
   const dapp = JSON.parse(read('dapp.json'));
   const paths = (dapp.tests || []).map((t) => String(t.path || ''));
-  assert.ok(
-    paths.some((p) => p.includes('/dev/sessions/990411')),
-    'the branchless fixture needs a check, or nothing renders that state'
-  );
-  const resume = (dapp.tests || []).filter((t) =>
-    String(t.expectSelector || '').includes('data-launchpad-resume'));
-  assert.ok(resume.length >= 2, 'both banner states must be checked');
-  for (const t of resume) {
-    assert.match(t.path, /^\/\?shot=launchpad&venue=/,
-      'the banner is only reachable through the launchpad shot link');
-  }
+  assert.ok(!paths.some((p) => p.includes('/dev/sessions/990411')));
+  assert.ok(!(dapp.tests || []).some((t) =>
+    String(t.expectSelector || '').includes('data-launchpad-resume')));
 });
 
 // ── the copy rule ───────────────────────────────────────────────────────

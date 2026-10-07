@@ -369,18 +369,18 @@ test('the drawer row renders the remainder and shares the reset wording', () => 
 
 // ── The checks that keep it visible ─────────────────────────────────────
 
-test('dapp.json points at the credits indicator and the warning', () => {
+test('dapp.json points at the credits indicator', () => {
   const named = DAPP.tests.filter((t) => /#593/.test(t.name));
-  assert.ok(named.length >= 4, `#593 checks present (found ${named.length})`);
-  const shot = named.filter((t) => /shot=credits-low/.test(t.path));
-  assert.ok(shot.length >= 2, 'the screenshot-state deep link is checked, not just added');
   assert.ok(named.some((t) => /data-credits-remaining/.test(t.expectSelector || '')),
     'the visible remainder has a check — the drawer row\'s, since #1353 took '
       + 'the composer meter\'s copy of the figure out');
-  assert.ok(named.some((t) => /dc-credits-low-banner/.test(t.expectSelector || '')),
-    'so does the low-balance warning');
-  assert.ok(named.some((t) => /dc-credits-banner \[data-credits-reset\]/.test(t.expectSelector || '')),
-    'and the exhausted banner’s reset statement');
+  // #3976: the dev chat's low-balance warning and the exhausted banner's
+  // reset statement were checked on classic sessions (?shot=credits-low,
+  // /dev/sessions/9904xx). Classic sessions are read-only now and their
+  // banners stand down, so those checks were retired with the chat; the
+  // unit assertions in this file still pin both banners.
+  assert.ok(!DAPP.tests.some((t) => /dc-credits-(low-)?banner/.test(t.expectSelector || '')),
+    'no declared check drives a banner a read-only session no longer shows');
 });
 
 test('?shot=credits-exhausted reaches the refusal state (#1348)', () => {

@@ -1100,7 +1100,9 @@ const Notifications = {
       // A new issue opens THAT ISSUE. `detail` is its number (the producer
       // has no issue column), and this row fell through to the app's general
       // chat, a screen that says nothing about the issue it announces.
-      const issueNumber = item.kind === 'issue_opened' && /^\d+$/.test(String(item.detail || ''))
+      // #3952: so does a mention in one, where the words that named you are.
+      const issueNumber = (item.kind === 'issue_opened' || item.kind === 'issue_mention')
+        && /^\d+$/.test(String(item.detail || ''))
         ? Number(item.detail) : null;
       if (!toProposals && !issueNumber) {
         // Everything else is about a message in the app's general chat — a
@@ -2512,6 +2514,17 @@ function rowView(n) {
       by: n.sourceUsername || null,
       icon: '\u{1F4DD}',
       ...headline('New request', n.detail ? `#${n.detail}` : 'filed'),
+    };
+  }
+
+  // #3952: somebody named you with @ in a request they filed. Said the way a
+  // chat mention is, with the request in place of the message: its number,
+  // since `detail` carries nothing else.
+  if (n.kind === 'issue_mention') {
+    return {
+      ...base,
+      by: n.sourceUsername || null,
+      ...headline('Mentioned you', /^\d+$/.test(String(n.detail || '')) ? `request #${n.detail}` : 'a request'),
     };
   }
 

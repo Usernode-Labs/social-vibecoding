@@ -442,20 +442,19 @@ test('the fixture id does not collide with an existing 99xxxx fixture', () => {
   assert.equal(declarations.length, 1);
 });
 
-test('dapp.json covers both the demo paint and the DB-backed path', () => {
+test('dapp.json checks saved drafts where they can still be sent (#3976)', () => {
+  // The dev chat's drafts were checked on two classic sessions: the
+  // DB-backed list on 990402 and the ?shot=drafts paint on 990401. Classic
+  // sessions are read-only now, so their composer, and the drafts above it,
+  // are put away and those checks were retired with the chat. An agent
+  // session's drafts (this file's limits and helpers, per conversation) are
+  // checked on its seeded conversation instead.
   const tests = DAPP.tests || [];
-  const dbBacked = tests.find((t) => t.path === '/?workspace=1#app/usernode-2d5619/dev/sessions/990402');
-  assert.ok(dbBacked, 'a check must render drafts straight from the database');
-  assert.match(dbBacked.expectSelector, /dc-draft-row/);
-  assert.match(dbBacked.expectText, /Staging demo draft/);
-
-  const label = tests.find((t) => (t.expectText || '').includes('on all your devices'));
-  assert.ok(label, 'the cross-device header label must be pinned by a check');
-  assert.equal(label.path, '/?shot=drafts#app/usernode-2d5619/dev/sessions/990401');
-
-  // The pre-existing demo-paint check must survive — it is the regression
-  // guard that the ?shot fallback still works when the server list is empty.
-  assert.ok(tests.some((t) => (t.name || '').includes('send/edit/trash (#798)')));
+  assert.ok(!tests.some((t) => /dc-draft/.test(t.expectSelector || '')),
+    'no declared check drives the classic composer\'s drafts');
+  const agent = tests.find((t) => t.path === '/#messages/agent/990801'
+    && /\[data-agent-session-draft="dstagingfixture1"\]/.test(t.expectSelector || ''));
+  assert.ok(agent, 'an agent session\'s saved draft is a declared check');
 });
 
 test('the client cap matches the server cap', () => {

@@ -4733,13 +4733,21 @@ function decorateMentionsAndRefs(node) {
   }
 }
 
+// The viewer's username, lower-cased: their own mention gets `-self`.
+function viewerMentionKey() {
+  return (typeof App !== 'undefined' && App.user && App.user.username
+    ? App.user.username : '').toLowerCase();
+}
+
 // Replace one text node with [text, <a class="gc-mention">…</a>,
 // <span class="gc-ref">…</span>, …] when it contains mentions/refs.
 function decorateTextNode(textNode) {
   const value = textNode.nodeValue != null ? textNode.nodeValue : (textNode.textContent || '');
-  const me = (typeof App !== 'undefined' && App.user && App.user.username
-    ? App.user.username : '').toLowerCase();
-  const segs = tokenizeMentionsAndRefs(value, me, knownChannelHandles());
+  replaceTextWithSegments(textNode, tokenizeMentionsAndRefs(value, viewerMentionKey(), knownChannelHandles()));
+}
+
+// The tokenizer's segments, built through DOM APIs in place of `textNode`.
+function replaceTextWithSegments(textNode, segs) {
   if (segs.length === 1 && segs[0].type === 'text') return; // nothing to decorate
   const parent = textNode.parentNode;
   if (!parent) return;
@@ -4787,7 +4795,10 @@ function decorateTextNode(textNode) {
 // path and the server-side mention parser (MENTION_CHARS, length 1..32). The
 // leading boundary char each pattern requires is preserved as text. One
 // combined regex so `PR#12` is never half-consumed by the bare `#N` pattern.
-function tokenizeMentionsAndRefs(text, me, channels) {
+// `opts.mentionsOnly` (#3952, a request's text) leaves every ref and channel
+// as text, the way an unknown `#word` is left.
+function tokenizeMentionsAndRefs(text, me, channels, opts) {
+  const mentionsOnly = !!(opts && opts.mentionsOnly);
   // #2783: a third alternative, `#name` for a channel — a letter first, so it
   // never competes with `#123`. Only a handle in `channels` is one; any other
   // `#word` is left as text.
@@ -4805,6 +4816,7 @@ function tokenizeMentionsAndRefs(text, me, channels) {
   };
   while ((m = RE.exec(text)) !== null) {
     if (m[6] != null && !known.has(m[6].toLowerCase())) continue;
+    if (mentionsOnly && m[3] == null) continue;
     pushText(text.slice(pos, m.index));
     pushText(m[1]); // boundary char (start-of-string is '')
     if (m[3] != null) {
@@ -4819,6 +4831,83 @@ function tokenizeMentionsAndRefs(text, me, channels) {
   pushText(text.slice(pos));
   if (segs.length === 0) segs.push({ type: 'text', value: '' });
   return segs;
+}
+
+// ── #3952: @mentions in a request's text ──────────────────────────────
+//
+// A request's description and its comments name people the way a chat
+// message does ("@snait lmk wyt"), so they get the chat's mention links: the
+// same tokenizer, markup and Homeroom bot exception as above, mentions only.
+// A request's `#12` or `PR#3` opens nothing on its page, so it stays text.
+//
+// Only a mention Homeroom wrote is linked. Everything Homeroom sends to
+// GitHub goes through services/github.js safeMention, which puts a
+// zero-width space after each `@` so GitHub pings nobody; that guard is how a
+// name typed here is told apart from a GitHub handle in an issue or comment
+// written on GitHub itself, which names a GitHub account rather than a person
+// here, and stays text. The guard comes out of every text node, display
+// only, so what reads (and copies) is what was typed, a code block's
+// `@scope/pkg` included. Takes and returns sanitized HTML (the output of
+// DevChat.renderMarkdown); app-view.js calls it for a request's body and its
+// GitHub comments.
+const GC_MENTION_GUARD = '@​';
+
+function renderRequestMentions(html) {
+  const text = html == null ? '' : String(html);
+  if (text.indexOf(GC_MENTION_GUARD) === -1) return text;
+  if (typeof document === 'undefined' || !document.createElement) return text;
+  const root = document.createElement('div');
+  root.innerHTML = text;
+  decorateRequestMentions(root, false);
+  return root.innerHTML;
+}
+
+// Walk like decorateMentionsAndRefs, but into <a>/<code>/<pre> too
+// (`literal`): the guard comes out there, and nothing is linked.
+function decorateRequestMentions(node, literal) {
+  const children = node.childNodes ? Array.prototype.slice.call(node.childNodes) : [];
+  for (const child of children) {
+    if (child.nodeType === 3) {
+      const value = child.nodeValue != null ? child.nodeValue : (child.textContent || '');
+      if (value.indexOf(GC_MENTION_GUARD) === -1) continue;
+      if (literal) child.nodeValue = value.split(GC_MENTION_GUARD).join('@');
+      else decorateGuardedMentions(child, value);
+    } else if (child.nodeType === 1) {
+      decorateRequestMentions(child, literal || GC_DECORATE_SKIP.has((child.tagName || '').toUpperCase()));
+    }
+  }
+}
+
+function decorateGuardedMentions(textNode, value) {
+  // The text without the guard, and where each guarded `@` lands in it.
+  const guarded = new Set();
+  let plain = '';
+  for (let i = 0; i < value.length; i += 1) {
+    if (value.startsWith(GC_MENTION_GUARD, i)) {
+      guarded.add(plain.length);
+      i += GC_MENTION_GUARD.length - 1;
+      plain += '@';
+    } else {
+      plain += value[i];
+    }
+  }
+  const segs = [];
+  let offset = 0;
+  let linked = false;
+  for (const seg of tokenizeMentionsAndRefs(plain, viewerMentionKey(), null, { mentionsOnly: true })) {
+    const raw = seg.type === 'text' ? seg.value : `@${seg.name}`;
+    if (seg.type === 'mention' && guarded.has(offset)) {
+      segs.push(seg);
+      linked = true;
+    } else if (segs.length && segs[segs.length - 1].type === 'text') {
+      segs[segs.length - 1].value += raw;
+    } else {
+      segs.push({ type: 'text', value: raw });
+    }
+    offset += raw.length;
+  }
+  if (linked) replaceTextWithSegments(textNode, segs);
+  else textNode.nodeValue = plain;
 }
 
 // ── #87: @mention autocomplete ─────────────────────────────────────────

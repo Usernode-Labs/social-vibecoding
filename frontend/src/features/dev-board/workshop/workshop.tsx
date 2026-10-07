@@ -1321,7 +1321,7 @@ function factsFor(row: QueueRow, voted: string | null): Fact[] {
   const out: Fact[] = [];
   const st = row.card.pill ? row.card.pill.state : null;
   if (row.kind === 'vote' && st) {
-    if (voted) out.push({ key: 'voted', tone: 'ok', text: `You voted ${voted}` });
+    if (voted) out.push({ key: 'voted', tone: 'ok', text: youAnswered(row, voted) });
     // The count in the change page's own words: an at-least-N rule's pill
     // reads "1 of 2 approvals" there (AppView.statusPillState), and every
     // rule's count reads the same way here.
@@ -1340,6 +1340,26 @@ function factsFor(row: QueueRow, voted: string | null): Fact[] {
     }
   }
   return out.slice(0, 4);
+}
+
+/**
+ * #3977: a change on a project that is just yours, whose Yes is the one it
+ * needs (B7: the row's `yes.approve`, from `_cardVoteButtonSpecs`), is
+ * approved rather than voted on, here as on its card: the rail, the sheet,
+ * the swipe and the confirmation say Approve and Don't approve.
+ */
+function approves(row: QueueRow): boolean {
+  return row.kind === 'vote' && !!(row.yes && row.yes.approve);
+}
+/** The confirmation once the item is answered: "Voted yes", or "Approved" / "Not approved". */
+function answeredWords(row: QueueRow, voted: string): string {
+  if (!approves(row)) return `Voted ${voted}`;
+  return voted === 'yes' ? 'Approved' : 'Not approved';
+}
+/** The same, as the facts line says it. */
+function youAnswered(row: QueueRow, voted: string): string {
+  if (!approves(row)) return `You voted ${voted}`;
+  return voted === 'yes' ? 'You approved it' : 'You didn’t approve it';
 }
 
 /** The line under the vote question: where the vote stands, and what follows. */
@@ -1382,6 +1402,7 @@ export function NeedsVoteForm({ row, slug, side, line, boxRef, onSide, onLine, o
         tally={labelTally}
         withLine
         solo={solo}
+        approve={approves(row)}
         onSide={onSide}
         onLine={onLine}
         onBoxKey={onBoxKey}
@@ -1881,7 +1902,7 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
         {voted ? (
           <span className="dev-ws-item-done" data-ws-item-done="">
             <CheckIcon className="dev-ws-item-tick" aria-hidden="true" />
-            {`Voted ${voted} · ${wide ? 'press ↓ or scroll' : 'swipe up'} for the next`}
+            {`${answeredWords(row, voted)} · ${wide ? 'press ↓ or scroll' : 'swipe up'} for the next`}
           </span>
         ) : (
           // First-session run-through, 5 Oct 2026: a newcomer read
@@ -1936,8 +1957,8 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
       {/* The swipe's two hints, last so the item's reading order is
           untouched. Hidden until a drag fades one in (app.css), and
           aria-hidden: the Vote sheet's buttons are the accessible way. */}
-      {swipe ? <span className="dev-ws-swipe-hint dev-ws-swipe-yes" aria-hidden="true">Yes</span> : null}
-      {swipe ? <span className="dev-ws-swipe-hint dev-ws-swipe-no" aria-hidden="true">No</span> : null}
+      {swipe ? <span className="dev-ws-swipe-hint dev-ws-swipe-yes" aria-hidden="true">{approves(row) ? 'Approve' : 'Yes'}</span> : null}
+      {swipe ? <span className="dev-ws-swipe-hint dev-ws-swipe-no" aria-hidden="true">{approves(row) ? 'Don’t approve' : 'No'}</span> : null}
     </section>
   );
 });
@@ -2996,7 +3017,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
               onClick={() => toggleSheet('vote')}
             >
               <span className="dev-ws-rail-ic">{voted ? <CheckIcon aria-hidden="true" /> : <BallotIcon aria-hidden="true" />}</span>
-              <span className="dev-ws-rail-lab">{voted ? `Voted ${voted}` : (sending[row.key] ? 'Sending…' : 'Vote')}</span>
+              <span className="dev-ws-rail-lab">{voted ? answeredWords(row, voted) : (sending[row.key] ? 'Sending…' : (approves(row) ? 'Approve' : 'Vote'))}</span>
               <kbd className="dev-ws-rail-key" aria-hidden="true">V</kbd>
             </button>
           ) : (
@@ -3122,7 +3143,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
                     <button type="button" className="dev-ws-vote-later" onClick={closeSheet}>Decide later</button>
                   </>
                 )}
-                <p className="dev-ws-keys-hint" aria-hidden="true">Y yes · N no · Enter vote · Esc close</p>
+                <p className="dev-ws-keys-hint" aria-hidden="true">{approves(row) ? 'Y approve · N don’t approve · Enter send · Esc close' : 'Y yes · N no · Enter vote · Esc close'}</p>
               </div>
             </div>
           ) : null}

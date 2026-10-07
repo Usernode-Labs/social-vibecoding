@@ -1498,9 +1498,30 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // came back on the make screen (/?shot=create-quota#create). 840 leaves
   // 40 slots.
   //
+  // 840 → 732: −109 +1 (#3976). A deprecation, not room-making: classic dev
+  // sessions are read-only now (services/classic-sessions.js), so the checks
+  // that drove the classic dev chat went with the chat they drove. 105 loaded
+  // a classic session's own page (#app/…/dev/sessions/<id> on the 9008xx and
+  // 9904xx fixtures: its composer, drafts and model picker, quick-reply
+  // pills, venue line and sheet, launchpads and the hand-off walkthrough, the
+  // credits banners and card, the session bar, the transcript's failure,
+  // stop, questionnaire and status rows, its Changes-ready card and capture
+  // tiles), three the Messages pane that hosts one (#messages/session/…),
+  // and one the ?conversation=workspace redirect into one. The five
+  // coding-run card checks on 990412 became ONE on the agent-session fixture
+  // (#messages/agent/990801), because that card is the dev chat's `Attached`,
+  // which agent sessions draw too. It could not fold into the three 990801
+  // checks on that route: their selectors leave at most 43 of the runner's
+  // 256 characters, and this one needs 191 of its own. Three groups stay,
+  // because none is the classic chat's own: the spec panel's (900830,
+  // 900831), where a shared spec still opens and whose HTML-spec frames
+  // (lib/spec-html) agent sessions draw; the published chat's (990002), the
+  // reader any change's chat gets; and the retired /dev/sessions/new
+  // address's, which opens an agent session. 732 leaves 148 slots.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 840);
+  checkCap.assertPinned(DAPP.tests.length, 732);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

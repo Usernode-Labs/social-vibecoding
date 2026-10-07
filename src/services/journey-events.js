@@ -214,10 +214,54 @@ async function noteFirstArtefactShown(pool, { appId, userId }) {
   }
 }
 
+// The invite funnel's middle step (journey.js firstSession): `userId` has a
+// live invite link in hand signed in. Once per person per link (the unique
+// index in schema.sql is the rule), and only for somebody it could still
+// bring in: not its maker, not already in its community, which is also why
+// a sign-in records it before following the link. `$4` is whether the
+// sign-in carried the link; an account made by that sign-in (within the
+// hour, as standing() reads a new account) signed up, any other signed in.
+const INVITE_SIGNED_IN_SQL = `INSERT INTO events (user_id, app_id, event_type, metadata)
+  SELECT u.id, ci.app_id, $3::text,
+         jsonb_build_object('inviteId', ci.id, 'how',
+           CASE WHEN NOT $4::boolean THEN 'was_signed_in'
+                WHEN u.created_at > NOW() - INTERVAL '1 hour' THEN 'signed_up'
+                ELSE 'signed_in' END)
+    FROM community_invites ci
+    JOIN users u ON u.id = $2::int
+   WHERE ci.token = $1::text AND ci.revoked_at IS NULL
+     AND (ci.expires_at IS NULL OR ci.expires_at > NOW())
+     AND (ci.max_uses IS NULL OR ci.uses < ci.max_uses)
+     AND ci.created_by IS DISTINCT FROM u.id
+     AND NOT EXISTS (SELECT 1 FROM community_members m
+                      WHERE m.community_id = ci.community_id AND m.user_id = u.id)
+  ON CONFLICT (user_id, (metadata->>'inviteId')) WHERE event_type = 'invite_signed_in' DO NOTHING
+  RETURNING metadata->>'how' AS how`;
+
+/**
+ * `userId` signed up or in carrying the invite link `token` (`carried`,
+ * communityInvites.redeemCarried), or opened it already signed in. Resolves
+ * how ('signed_up', 'signed_in' or 'was_signed_in') when this call wrote the
+ * record, else null.
+ */
+async function noteInviteSignedIn(pool, { token, userId, carried = false } = {}) {
+  try {
+    const user = Number(userId);
+    if (typeof token !== 'string' || !token || !Number.isSafeInteger(user) || user <= 0) return null;
+    const { rows } = await pool.query(INVITE_SIGNED_IN_SQL, [token, user, events.EVENT_TYPES.INVITE_SIGNED_IN, !!carried]);
+    return rows[0] ? rows[0].how : null;
+  } catch (err) {
+    log.warn('journey-events', 'Could not record a sign-in through an invite', { err: err && err.message });
+    return null;
+  }
+}
+
 module.exports = {
   APP_FOR_LIVE_SQL,
   FIRST_ARTEFACT_SQL,
+  INVITE_SIGNED_IN_SQL,
   noteFirstArtefactShown,
+  noteInviteSignedIn,
   CHANGE_LIVE_SQL,
   MARK_FIRST_RUNNING_SQL,
   PREVIEW_OPENED_SQL,

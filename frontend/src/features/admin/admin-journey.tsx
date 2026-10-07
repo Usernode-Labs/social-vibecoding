@@ -27,7 +27,9 @@ import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals
 //   `{ recorded: false, reason }` and reads "not recorded yet", never 0;
 // - Hear back arrives as `{ status: 'coming' }` and reads "coming";
 // - every mark carries its count, and no share is printed as a percentage:
-//   at one to six people a rate claims more than the data holds.
+//   at one to six people a rate claims more than the data holds. The one
+//   exception is the invite funnel's conversion from step to step (#4176),
+//   printed beside its counts and only from FUNNEL_RATE_FROM people.
 //
 // Analytics is a separate section with its own definitions; this one does
 // not read or change it. On screen it is "project", never "app".
@@ -1099,18 +1101,20 @@ function CreationCard({ scope, onOpen }: { scope: Scope; onOpen: OpenPerson }) {
 // somebody who joined one through an invite link, each timed from the start
 // of that session. The aha in the first session: the maker sent an invite,
 // or the person who joined wrote in its chat or filed a request, within the
-// hour.
+// hour. Under them, the invite funnel: links opened, sign-ins through one,
+// joins, and what dropped off between each.
 
 type FirstSessionStep = {
   key: string; reached: number; inSession: number; medianSeconds: number | null;
   targetSeconds: number | null; withinTarget: number | null;
 };
+type InviteFunnel = { from: string; opened: number; signedIn: number; joined: number };
 type FirstSessionData = {
   week: string; finished: boolean; sessionMinutes: number;
   make: { people: number; notRecorded: NotRecorded | null; steps: FirstSessionStep[]; aha: number };
   join: { people: number; steps: FirstSessionStep[]; aha: number };
-  opens: { opened: Count; joined: number };
-  recordedFrom: { make: string | null; reward: string | null; opens: string | null };
+  opens: InviteFunnel | NotRecorded;
+  recordedFrom: { make: string | null; reward: string | null; opens: string | null; signedIn: string | null };
   examples: Array<{
     path: 'make' | 'join'; userId: number; name: string; slug: string; project: string; startedAt: string | null;
     steps: Record<string, number | null>;
@@ -1150,11 +1154,58 @@ function FirstSessionRows({ steps, people, minutes }: { steps: FirstSessionStep[
   );
 }
 
+// The invite funnel (journey.js inviteFunnelReading): [key, label, what it
+// counts]. Everyone's only: an open signed out names nobody, so it is in no
+// cohort, and a cohort view leaves the funnel out.
+const FUNNEL_STEPS: Array<['opened' | 'signedIn' | 'joined', string, string]> = [
+  ['opened', 'Opened the link', 'opened an invite link, signed in or not: a person, or a browser, once per project'],
+  ['signedIn', 'Signed in', 'signed up or in from an invite link, or opened one already signed in'],
+  ['joined', 'Joined', 'joined a project through an invite link'],
+];
+
+// A step's share of the one before it is printed only from this many
+// people: below it, "2 of 3" says all there is.
+const FUNNEL_RATE_FROM = 10;
+
+/** "5 of 11", with its share as a percentage once that can mean something. */
+function conversion(n: number, of: number): string {
+  if (of < FUNNEL_RATE_FROM) return `${n} of ${of}`;
+  return `${n} of ${of} · ${Math.round((n / of) * 100)}%`;
+}
+
+function InviteFunnelRows({ funnel }: { funnel: InviteFunnel }) {
+  const most = Math.max(funnel.opened, funnel.signedIn, funnel.joined);
+  return (
+    <div className="space-y-2.5">
+      {FUNNEL_STEPS.map(([key, label, means], i) => {
+        const n = funnel[key];
+        const before = i ? funnel[FUNNEL_STEPS[i - 1][0]] : null;
+        return (
+          <div key={key} data-journey-invite-funnel-step={key} title={means}>
+            <div className="flex items-baseline justify-between gap-2 text-sm">
+              <span>{label}</span>
+              <span className="tabular-nums shrink-0">{before == null ? plural(n, 'person', 'people') : conversion(n, before)}</span>
+            </div>
+            <UnitBar n={n} of={most} fill={key === 'joined' ? 'bg-emerald-500' : 'bg-violet-500'} />
+            {before == null ? null : (
+              <div className={`mt-0.5 ${JUI.fine}`}>{before > n ? `${before - n} dropped off` : 'nobody dropped off'}</div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function FirstSessionCard({ scope, onOpen }: { scope: Scope; onOpen: OpenPerson }) {
   const { data, failed } = useJourney<FirstSessionData>(scoped('/api/admin/journey/first-session', scope));
   if (!data) return <Card id="admin-journey-first-session" title="First session"><Loading failed={failed} what="the first session" /></Card>;
   const minutes = data.sessionMinutes;
   const rewardTarget = data.make.steps.find((st) => st.key === 'reward')?.targetSeconds ?? null;
+  // The funnel counts from its first sign-in through an invite: said when
+  // that is later than the start of what is shown.
+  const funnelDay = isNotRecorded(data.opens) ? null : data.opens.from.slice(0, 10);
+  const funnelFrom = funnelDay && (data.week === 'all' || funnelDay > data.week) ? funnelDay : null;
   return (
     <Card id="admin-journey-first-session" title="First session"
       note={`${data.week === 'all' ? 'all time' : `week of ${weekLabel(data.week)}`} · timed from the start of it`}>
@@ -1178,11 +1229,14 @@ function FirstSessionCard({ scope, onOpen }: { scope: Scope; onOpen: OpenPerson 
             <span className={JUI.fine}>{`of ${plural(data.join.people, 'person', 'people')} wrote or asked for something within ${minutes} min`}</span>
           </div>
           <div className="mt-3"><FirstSessionRows steps={data.join.steps} people={data.join.people} minutes={minutes} /></div>
-          <p className={`${JUI.fine} mt-2`} id="admin-journey-first-session-opens">
-            Invite links opened: <Num v={data.opens.opened} /> · joined: {data.opens.joined}
-          </p>
         </div>
       </div>
+      {scope.cohort ? null : (
+        <div id="admin-journey-first-session-opens">
+          <div className={`${JUI.label} mt-4 mb-1.5`}>{funnelFrom ? `Invite links · from ${weekLabel(funnelFrom)}` : 'Invite links'}</div>
+          {isNotRecorded(data.opens) ? <Num v={data.opens} /> : <InviteFunnelRows funnel={data.opens} />}
+        </div>
+      )}
       <div className={`${JUI.label} mt-4 mb-1.5`}>Newest first sessions</div>
       {data.examples.length ? (
         <div className="space-y-2" id="admin-journey-first-session-examples">

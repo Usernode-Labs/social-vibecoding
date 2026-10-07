@@ -1299,7 +1299,8 @@ async function listApps(pool) {
 }
 
 /**
- * Everything that makes an issue "somebody's": a live human claim, a live
+ * Everything that makes an issue "somebody's": a live human claim (#4190:
+ * one made before the bot was on the request; see below), a live
  * non-synthetic session that declared it, a human auto-solve run on it, or
  * an open proposal addressing it. One query per kind, per app.
  *
@@ -1318,12 +1319,33 @@ async function issueHolders(pool, appId) {
     }
   };
   const sessionKind = (r) => (r.status === 'promoted' || r.status === 'merging' ? 'proposal' : 'session');
+  // #4190: a claim made once the bot was already on the request is a person
+  // working on it ALONGSIDE the bot, not a hold: the bot keeps going and
+  // delivers. "On it" is what the request page shows as the bot's work
+  // (homeroom-bot-progress.js botWorkByIssue): a request somebody asked it to
+  // build (a priority-0 row), one it has started reading (a started row), and
+  // a live build waiting its turn or under way, or a plan waiting for its
+  // Build it, measured from when that run's read began. A claim made before
+  // any of those still holds the bot off, as before; and once the bot's run
+  // is over, the claim is an ordinary one again.
   const claims = await pool.query(
     `SELECT ic.github_issue_number AS n, u.username, ic.claimed_at AS since
        FROM issue_claims ic JOIN users u ON u.id = ic.user_id
       WHERE ic.app_id = $1 AND u.is_synthetic IS NOT TRUE
-        AND ic.claimed_at > NOW() - make_interval(days => $2)`,
-    [appId, CLAIM_TTL_DAYS],
+        AND ic.claimed_at > NOW() - make_interval(days => $2)
+        AND NOT EXISTS (
+          SELECT 1 FROM homeroom_bot_queue q
+           WHERE q.app_id = ic.app_id AND q.issue_number = ic.github_issue_number
+             AND (CASE WHEN q.priority = 0 THEN q.enqueued_at ELSE q.started_at END) <= ic.claimed_at)
+        AND NOT EXISTS (
+          SELECT 1 FROM homeroom_bot_runs r
+           WHERE r.app_id = ic.app_id AND r.issue_number = ic.github_issue_number
+             AND r.mode = 'live' AND r.build_ok IS NULL AND r.proposal_session_id IS NULL
+             AND ((r.verdict = 'ready' AND (r.live_build_waiting_at IS NOT NULL OR r.build_session_id IS NOT NULL)
+                   AND r.created_at > NOW() - make_interval(days => $3))
+                  OR r.awaiting_go_at IS NOT NULL)
+             AND r.created_at - make_interval(secs => COALESCE(r.duration_ms, 0) / 1000.0) <= ic.claimed_at)`,
+    [appId, CLAIM_TTL_DAYS, ABANDONED_LIVE_WINDOW_DAYS],
   );
   add(claims.rows, () => 'claim');
   const linked = await pool.query(
@@ -4491,6 +4513,118 @@ async function finishInterruptedReviews(pool, config = {}, deps = {}) {
 }
 
 /**
+ * Review a first version whose own build turn a restart caught, before
+ * recovery proposes it: the review the live path runs once its build turn
+ * lands (live.reviewLanded, bot-review.js runReviewLoop), with what that
+ * path had in hand rebuilt from what the run kept. Its request from the
+ * build snapshot (recordBuildSnapshot), its spec from the session, its
+ * reviewer from the configuration the run was built under, its fix turns
+ * run in the same session by the same runner (live.buildTurnRunner).
+ *
+ * On 7 Oct 2026 five restarts in half an hour caught a first version's
+ * build (run 1077) and recovery proposed it as it stood: its configuration
+ * named a reviewer, and the reviewer never saw it.
+ *
+ * Holds the project's build slot while it reviews, as the turn it follows
+ * did. A restart during the review is the case recovery already handles: a
+ * fix turn in flight is followed and proposed as it stands, and a capture
+ * or a reviewer call is finished by finishInterruptedReviews. Resolves the
+ * loop's final state, or null when there is nothing to review (no reviewer,
+ * not a first version, no snapshot to rebuild the request from) or it could
+ * not start. Never throws: a review that cannot run leaves the build to be
+ * proposed as it stands, as the live path's does.
+ */
+async function reviewRecoveredBuild({ pool, config, bot, app, repo, session, plan, costUsd, deps = {} }) {
+  try {
+    if (!repo || !session.branch_name) return null;
+    const version = await runConfigVersion(pool, plan.runId);
+    const recipe = version ? version.recipe : null;
+    if (!recipe || !botConfigs().reviews(recipe)) return null;
+    if (!(await isFirstVersionRequest(pool, app.id, plan.issueNumber))) return null;
+    const snapshot = await snapshots.snapshotForRun(pool, plan.runId, 'build');
+    const seed = snapshot && snapshot.texts ? String(snapshot.texts.seed || '') : '';
+    if (!seed) {
+      log.warn('homeroom-bot', 'No build snapshot to review a first version a restart caught; proposing it as it stands', {
+        runId: plan.runId, sessionId: session.id,
+      });
+      return null;
+    }
+    const model = recipe.models.build;
+    const settings = await readSettings(pool).catch(() => null);
+    const turnMs = 1000 * clampInt(settings?.turnSeconds, DEFAULTS.turnSeconds, MIN_TURN_SECONDS, MAX_TURN_SECONDS);
+    const { turnBudgetMs } = buildBudgets(app, config, turnMs, { firstVersion: true });
+    const github = deps.github || require('./github');
+    const turnDeps = {
+      github,
+      worker: deps.worker || require('./worker'),
+      sessions: deps.sessions || require('../routes/sessions'),
+      agentTurn: deps.agentTurn || require('./agent-turn'),
+      activeWorkers: deps.activeWorkers || require('./active-workers').activeWorkers,
+      ...(deps.captureRound ? { captureRound: deps.captureRound } : {}),
+      ...(deps.reviewDeps ? { reviewDeps: deps.reviewDeps } : {}),
+    };
+    const { rows: [full] } = await pool.query(
+      `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url, a.self_hosted AS app_self_hosted
+         FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
+        WHERE cs.id = $1`,
+      [session.id],
+    );
+    if (!full) return null;
+    const readsImages = typeof deps.seesImages === 'boolean'
+      ? deps.seesImages
+      : await live.buildSeesImages({ pool, config, userId: bot.id, model });
+    await turnDeps.worker.ensureWorkerImage();
+    const containerName = await turnDeps.worker.ensureWorker(session.id, {
+      repoOwner: repo.owner, repoName: repo.repo, branchName: session.branch_name,
+      temporary: true, onProgress: () => {},
+    });
+    const runBuildTurn = live.buildTurnRunner({
+      pool, config, bot, session: full, model, branchName: session.branch_name, containerName,
+      deps: turnDeps, harness: live.recipeHarness(model, config),
+    });
+    log.info('homeroom-bot', 'Reviewing a first version a restart caught before proposing it', {
+      app: app.slug, issueNumber: plan.issueNumber, runId: plan.runId, sessionId: session.id,
+    });
+    // Under way in this process from before its first step, so the sweep
+    // for lost live builds cannot take it while the slot is being held.
+    liveBuildsInFlight.add(Number(plan.runId));
+    try {
+      const reviewing = live.reviewLanded({
+        pool, config, bot, app, repo, session: full, branchName: session.branch_name, seed,
+        spec: session.spec_md || null,
+        review: {
+          reviewer: recipe.reviewer,
+          owner: { botRunId: plan.runId },
+          onState: (state) => recordReviewState(pool, plan.runId, state),
+          budgetCheck: ({ spentUsd } = {}) => botBudgetStop(pool, bot, deps, { spentUsd }),
+        },
+        deps: turnDeps, runBuildTurn, turnBudgetMs, readsImages, platformRepo: isPlatformRepo(app, config),
+        skipNow: () => whyNotBuild(pool, {
+          runId: plan.runId, botId: bot.id, appId: app.id, issueNumber: plan.issueNumber, github, repo,
+        }),
+        onProgress: null,
+        start: {
+          sha: plan.result?.sha || null, commits: Number(plan.result?.ahead) || 0,
+          costUsd, activeMs: null, buildText: plan.result?.lastResultText || null,
+        },
+      });
+      // Handled where it is awaited below: holding the slot reads the run
+      // first, and a review that fails at once must not reject unhandled
+      // meanwhile.
+      reviewing.catch(() => {});
+      return await holdSlotDuringRecovery(pool, session.id, reviewing);
+    } finally {
+      liveBuildsInFlight.delete(Number(plan.runId));
+    }
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not review a first version a restart caught; proposing it as it stands', {
+      runId: plan.runId, sessionId: session.id, err: err.message,
+    });
+    return null;
+  }
+}
+
+/**
  * Finish a live build recovery noted, once the session is free:
  *   - a build turn that pushed commits is proposed, and the proposal (and its
  *     spec) said on the issue, as the live path would have;
@@ -4637,6 +4771,9 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
     const turnFailed = plan.mode === 'scout' || plan.timedOut
       ? null : live.failedClaudeTurn(plan.result);
     let built;
+    // The review recovery ran itself, when the restart caught the build turn
+    // rather than the review (reviewRecoveredBuild).
+    let reviewedNow = null;
     if (restartedOut) {
       built = {
         ok: false, sessionId: Number(sessionId),
@@ -4655,6 +4792,17 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
       } : {
         branchName: session.branch_name || null, sha: plan.result.sha || null, commits: Number(plan.result.ahead) || 0,
       };
+      // A first version whose own build turn the restart caught is reviewed
+      // now, as the live path would have reviewed it, before it is proposed
+      // (reviewRecoveredBuild). The loop puts the branch where it ends and
+      // rolls back a fix it did not see boot itself.
+      if (!reviewing) {
+        reviewedNow = await reviewRecoveredBuild({ pool, config, bot, app, repo, session, plan, costUsd, deps });
+        if (reviewedNow) {
+          if (reviewedNow.finalSha) pushed.sha = reviewedNow.finalSha;
+          if (Number(reviewedNow.finalCommits) > 0) pushed.commits = Number(reviewedNow.finalCommits);
+        }
+      }
       // A fix no capture saw boot is not what is proposed (bot-review.js
       // runReviewLoop's rule): the branch goes back to the last commit one
       // did.
@@ -4722,6 +4870,11 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
     }
     if (built.blocked) await archive();
     built.costUsd = reviewerUsd > 0 ? (Number(costUsd) || 0) + reviewerUsd : costUsd;
+    // What the review recovery ran cost (its reviewer calls and fix turns),
+    // added as the live path adds a review's cost to its build's.
+    if (reviewedNow && Number(reviewedNow.costUsd) > 0) {
+      built.costUsd = (Number(built.costUsd) || 0) + Number(reviewedNow.costUsd);
+    }
     // The configuration's results: the current one's from the state it was
     // proposed in (no final screenshots, so no pair to pick), and a derived
     // side one's from the round-0 snapshot the review kept. A configured
@@ -4734,7 +4887,9 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
     // failure, and its side builds were stopped above.)
     if (version && !restartedOut) {
       await botConfigs().finishLive(pool, {
-        botRunId: plan.runId, version, built: reviewing ? { ...built, review: { ...reviewing, finalCapture: null } } : built,
+        botRunId: plan.runId, version,
+        built: reviewing ? { ...built, review: { ...reviewing, finalCapture: null } }
+          : reviewedNow ? { ...built, review: reviewedNow } : built,
       });
     }
     const acted = await announceBuilt({
@@ -8309,6 +8464,7 @@ module.exports = {
   isRecoveredBotSession,
   settleReapedTurn,
   completeRecoveredLive,
+  reviewRecoveredBuild,
   liveSayer,
   announceBuilt,
   RESTART_REASON,

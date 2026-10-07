@@ -742,6 +742,29 @@ export function openCreate(setMode: Dispatch<SetStateAction<Mode>>, startImport 
   return opened;
 }
 
+/**
+ * Whether the platform header is on screen, for the Create door's screens
+ * to sit below it (#4195). Not inside an app, where the header gives way to
+ * the chromeless pill, nor in the side panel: there they take the whole
+ * screen as before, rather than leave a band where no header is.
+ */
+export function platformHeaderShown(doc: Pick<Document, 'getElementById'> | null = typeof document === 'undefined' ? null : document): boolean {
+  const header = doc?.getElementById('platform-header');
+  return !!header && header.getClientRects().length > 0;
+}
+
+/**
+ * Whether a press in the page leaves the Create door: a control in the
+ * platform header (back, the bell, the workshop chip, the sidebar, the
+ * mark's menu), now that the header shows above the door's screens.
+ */
+export function leavesDoor(target: EventTarget | null): boolean {
+  const el = target as { closest?: (sel: string) => Element | null } | null;
+  if (!el || typeof el.closest !== 'function') return false;
+  const control = el.closest('a, button, [role="button"]');
+  return !!control && !!control.closest('#platform-header');
+}
+
 export function FirstSession() {
   const [mode, setMode] = useState<Mode>({ kind: 'none' });
 
@@ -881,6 +904,24 @@ export function FirstSession() {
     release?.(navigating ? { navigating: true } : undefined);
     setMode({ kind: 'none' });
   }, []);
+  // From Create the door's screens sit below the platform header when it
+  // shows (#4195), read once as the door opens and kept from make to made.
+  const underHeader = useMemo(() => createDoor && platformHeaderShown(), [createDoor]);
+  // Going somewhere else leaves the door, as its own ways out do: a route
+  // change (the hash), and any press on the header's controls, whose sheets
+  // and menus open below the door's screens otherwise. The press goes on to
+  // its control; the door only gets out of the way.
+  useEffect(() => {
+    if (!createDoor) return undefined;
+    const onRoute = () => leaveDoor(true);
+    const onPress = (e: Event) => { if (leavesDoor(e.target)) leaveDoor(true); };
+    window.addEventListener('hashchange', onRoute);
+    document.addEventListener('click', onPress, true);
+    return () => {
+      window.removeEventListener('hashchange', onRoute);
+      document.removeEventListener('click', onPress, true);
+    };
+  }, [createDoor, leaveDoor]);
   const steps = useMemo(() => {
     if (mode.kind !== 'tour') return [];
     const project = {
@@ -896,6 +937,7 @@ export function FirstSession() {
         who={viewerName()}
         entry="create"
         startImport={!!mode.startImport}
+        underHeader={underHeader}
         botBuilds={viewerBotBuilds(legacy().App?.user)}
         // Nothing is answered: the tile behind is refreshed, so the new
         // project is in the grid when the made screen goes, and the
@@ -933,6 +975,7 @@ export function FirstSession() {
         made={made}
         me={viewerName()}
         entry={mode.entry}
+        underHeader={fromCreate && underHeader}
         onContinue={() => {
           const info = { slug: made.slug, name: made.name, iconEmoji: made.emoji, conversationId: made.conversationId };
           markSeen(made.slug);

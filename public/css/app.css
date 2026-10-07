@@ -1388,6 +1388,43 @@ html:not(.dark) .messages-markdown .gc-ref-issue { background: rgba(16, 185, 129
   color: var(--text-muted);
   font-size: 13px;
 }
+/* #4197: a question once answered: its words as a small label, the answer
+   under it as the tapped answer's accent pill, drawn as a chip (it is not a
+   button any more). Only the answer chosen; the other options go. */
+.messages-bot-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+}
+.messages-bot-choices dd { margin: 0; }
+.messages-bot-choice-label {
+  margin-bottom: 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.messages-bot-chosen {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-height: 32px;
+  padding: 6px 13px;
+  border-radius: 9999px;
+  color: var(--accent-ink);
+  background: var(--accent);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+/* #4197: Build it pressed: a check, then "Building it". */
+.messages-bot-done {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
 /* B8: Homeroom bot's row in Messages' "+" wears its mark, at the glyphs' size. */
 .messages-new-option-mark {
   width: 20px;
@@ -1412,8 +1449,9 @@ html:not(.dark) .messages-markdown .gc-ref-issue { background: rgba(16, 185, 129
 .messages-reply-draft .messages-bot-note { display: block; white-space: normal; }
 /* #3770: the Activity disc in the bot's DM header, which opens its activity
    panel. Shaded while the panel is open, as a disc is under the pointer.
-   Its badge sits on the disc's shoulder: the live dot while the bot works,
-   or, in the accent, the number of requests that wait on the viewer. */
+   Its badge sits on the disc's shoulder, in the accent: the number of
+   requests that wait on the viewer. While the bot works, the disc's glyph
+   is itself the live cue, a turning ring (#4198). */
 .messages-bot-work-button { position: relative; }
 .messages-bot-work-button[aria-expanded="true"] { background: var(--messages-surface-2); }
 .messages-bot-work-badge {
@@ -1423,7 +1461,6 @@ html:not(.dark) .messages-markdown .gc-ref-issue { background: rgba(16, 185, 129
   justify-content: center;
   pointer-events: none;
 }
-.messages-bot-work-dot { top: 6px; right: 6px; }
 .messages-bot-work-count {
   top: -3px;
   right: -3px;
@@ -1778,7 +1815,8 @@ form.agent-session-composer:focus-within {
      right-hand cap;
    - the field is 36px tall (7 + 22 + 7) and keeps its 17px type;
    - the count's line is not laid out until the text nears the limit, where
-     it appears in amber (`data-near-limit`);
+     it appears in amber (`data-near-limit`); #4202 made that true at every
+     width (the rule after this block);
    - the "+" and the disc are drawn at 36px and stay 44px tap targets, the
      platform's minimum: a pseudo-element overhangs each by 4px, into the
      card's padding and the row's 6px gap, and so never over the field.
@@ -1804,8 +1842,17 @@ form.agent-session-composer:focus-within {
   .messages-send { position: relative; }
   .messages-composer-action::after,
   .messages-send::after { content: ''; position: absolute; inset: -4px; }
-  .messages-composer-count:not([data-near-limit]) { display: none; }
 }
+/* #4202: THE SAME CARD ON DESKTOP AS AN APP CHANNEL'S. The count's line was
+   laid out on desktop even while empty, a 4px gap and a 15px blank band
+   under the row, so every Messages composer (the Homeroom bot's thread, a
+   DM, a group, #general, a reply thread) stood about 75px against the app
+   channel's 56px (`.gc-composer-card`: 8 + 40 + 8). It is now laid out at
+   every width only once the text nears the limit, where it appears in amber,
+   so the card is that same 8 + 40 + 8. The element stays in the DOM (a
+   declared check selects it). Two selectors' worth of specificity, so it
+   outranks the element's own `flex` although tailwind.css loads later. */
+.messages-composer-count:not([data-near-limit]) { display: none; }
 .messages-reply-draft,
 .messages-pending-object { margin-bottom: 6px; }
 .messages-reply-draft {
@@ -14135,8 +14182,10 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   transition: background 150ms, color 150ms;
 }
 .dev-vote-btn svg { width: 14px; height: 14px; }
-/* B7: the one-tap Approve on a project that is just yours has no caret. */
-.dev-vote-btn-approve { padding: 0 11px; }
+/* B7: on a project that is just yours, "Approved" is the one face with no
+   caret (nothing is left to pick), so its sides are even. "Approve" opens the
+   picker like any vote and keeps the caret's padding (#3977). */
+.dev-vote-btn-approve[data-vote-btn="approved"] { padding: 0 11px; }
 .dev-vote-btn .dev-vote-caret { width: 12px; height: 12px; opacity: 0.7; }
 .dev-vote-btn:hover { background: var(--accent-light); }
 .dev-vote-btn-yes, .dev-vote-btn-yes:hover { background: var(--accent-tint); color: var(--accent); }
@@ -19469,6 +19518,24 @@ html.un-kb #platform-tabs {
     max-height: calc(100% - var(--platform-vv-top, 0px) - var(--platform-kb-cover, 0px) - 12px);
     /* The home indicator is behind the keys. */
     padding-bottom: 1.25rem;
+  }
+}
+
+/* A FULL-SCREEN SURFACE THAT LEAVES THE PLATFORM HEADER SHOWING (#4195).
+   The make and made screens opened from Create are `fixed` from the header's
+   foot down rather than `inset-0` over it, so the header's back, bell and
+   menus stay where they always are (first-session/make.tsx MAKE_ROOT). The
+   tab bar stays covered. With the keyboard up, the band the
+   `.platform-kb-surface` rule above pads into starts at the pan
+   (`--platform-vv-top`) from the page's top, and this box starts the
+   header's height further down, so only the part of the pan past that is
+   padding here. */
+.platform-under-header {
+  top: calc(var(--browser-banner-h, 0px) + var(--platform-header-h) + var(--platform-safe-top));
+}
+@media (max-width: 767px) {
+  html.platform-kb-open .platform-kb-surface.platform-under-header {
+    padding-top: max(0px, calc(var(--platform-vv-top, 0px) - var(--browser-banner-h, 0px) - var(--platform-header-h) - var(--platform-safe-top)));
   }
 }
 

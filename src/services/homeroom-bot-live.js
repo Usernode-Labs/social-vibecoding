@@ -1522,10 +1522,13 @@ const PLATFORM_TEST_NOTE = Object.freeze([
 // one rule of its own: a change a person will see is looked at before the
 // turn ends. How it looks follows the design self-check, by whether the
 // model reads images.
-function browserLines({ readsImages = false } = {}) {
+function browserLines({ readsImages = false, clocked = false } = {}) {
   const look = readsImages
     ? 'take screenshots (`browser_take_screenshot`) of each changed screen'
     : 'walk each changed screen through its accessibility snapshot (`browser_snapshot`; you read text, not images)';
+  const withinTime = clocked
+    ? 'Do it in the order, and by the time, the TIME section above sets.'
+    : 'Stay within the time budget above.';
   return [
     '',
     'The in-loop browser, as the platform\'s dev chat describes it. For you, "commit" in it means finishing your turn,',
@@ -1537,11 +1540,74 @@ function browserLines({ readsImages = false } = {}) {
     `  ${look}`,
     '  at 390x844 and at a desktop width, in both looks (`?un-theme=light` and `?un-theme=dark`, unless the app keeps',
     '  one fixed look), and in its empty and error states. Fix what is wrong, and only then finish. Skip it only when',
-    '  the app cannot boot promptly, and then say why in your summary. Stay within the time budget above.',
+    `  the app cannot boot promptly, and then say why in your summary. ${withinTime}`,
     '- A page that renders is not a button that works. Signed in as a person would be, do the main thing the change',
     '  is for yourself (add it, save it, mark it done), and check that it works: the screen shows the result, the',
     '  request it sends answers without an error (`browser_network_requests`), and the result is still there after a',
     '  reload. Homeroom tries the same thing on its own copy before anybody is asked to approve the change.',
+    ...DRAG_TEST_LINES,
+  ];
+}
+
+// How a drag is tried in the in-loop browser. A first version on 7 Oct 2026
+// (a drag-to-sort screen) spent most of a 28-minute build, 94 browser calls
+// and 226 model requests, getting a simulated drag to move anything; part of
+// what failed was the simulation, not the app. The browser has `browser_drag`
+// and `browser_evaluate` (the coordinate tools are not enabled), and a
+// gesture the tools cannot make is said, not fought.
+const DRAG_TEST_LINES = Object.freeze([
+  '- A drag (reordering a list, moving a card to another column) is tried with `browser_drag`, from the thing to',
+  '  where it goes. If the app moves things on pointer or touch events and `browser_drag` does not move it, try once',
+  '  more by dispatching `pointerdown`, `pointermove` and `pointerup` on those elements with `browser_evaluate`. If',
+  '  that does not move it either, the simulated gesture is what failed, not necessarily the app: read the drop',
+  '  handler instead, make sure the same move can also be made without dragging (a button or a menu), and say in',
+  '  your summary that the drag was not tried in the browser. Two tries at simulating a gesture is the limit.',
+]);
+
+// The build's clock, said to the build (7 Oct 2026). A build is stopped on
+// its turn budget and thrown away, and it could not see the time: the prompt
+// asked for "a couple of launch, check and fix cycles and a minute or two",
+// which nothing enforced, and a first version spent 28 minutes of its 40
+// testing a drag. So the build is told when it started, when it is stopped,
+// and, on a clock longer than the soft budget, when to stop starting new
+// testing or polish. Building what the plan asks for is never what the soft
+// budget cuts: it orders the work, it does not end the turn.
+const BUILD_SOFT_BUDGET_MS = 30 * 60 * 1000;
+
+function utcClock(ms) {
+  return new Date(ms).toISOString().slice(11, 16);
+}
+
+/**
+ * The TIME section of a build prompt, or [] without a clock. `startedAt` is
+ * when the turn starts (ms), `budgetMs` the clock it is stopped on. Pure.
+ */
+function clockLines({ startedAt, budgetMs, softMs = BUILD_SOFT_BUDGET_MS } = {}) {
+  if (!Number.isFinite(startedAt) || !(Number(budgetMs) > 0)) return [];
+  const minutes = (ms) => Math.round(ms / 60000);
+  const stopAt = utcClock(startedAt + budgetMs);
+  const soft = Number(softMs) > 0 && softMs < budgetMs;
+  const softAt = soft ? utcClock(startedAt + softMs) : null;
+  return [
+    '',
+    `TIME. This build started at ${utcClock(startedAt)} UTC. The platform stops it at ${stopAt} UTC`
+      + ` (${minutes(budgetMs)} minutes), and a build it stops is thrown away: nothing is proposed.`,
+    ...(soft ? [`Aim to be finished by ${softAt} UTC (${minutes(softMs)} minutes).`] : []),
+    'Read the time with `date -u +%H:%M` whenever you are about to start another round of testing or polish.',
+    'Spend the time in this order:',
+    '1. Build everything the spec and the plan ask for. This is never what gets cut.',
+    '2. Boot the app and do its main thing once, as a person would.',
+    '3. Fix what that shows is broken.',
+    soft
+      ? `4. Only then, while it is before ${softAt} UTC: the other screens, sizes and looks, the empty and error states,`
+        + ' and polish.'
+      : '4. Only then, with time to spare: the other screens, sizes and looks, the empty and error states, and polish.',
+    soft
+      ? `After ${softAt} UTC, start no new round of testing or polish. Finish building what the spec asks for if you`
+        + ' still are, finish the fix you are in, check the app still boots, and finish your turn. Say in your summary'
+        + ' what you did not get to check.'
+      : `Leave time before ${stopAt} UTC to check the app still boots and to finish your turn. Say in your summary`
+        + ' what you did not get to check.',
   ];
 }
 
@@ -1612,7 +1678,9 @@ const FIRST_VERSION_DESIGN_LINES = Object.freeze([
 
 function buildPrompt({
   seed, buildNote, spec = null, platformRepo = false, readsImages = false, firstVersion = false, guidance = null,
+  clock = null,
 }) {
+  const time = clock ? clockLines(clock) : [];
   const specBlock = spec
     ? [
       '',
@@ -1646,7 +1714,8 @@ function buildPrompt({
     }),
     ...requestRulesLines(),
     ...(platformRepo ? PLATFORM_TEST_NOTE : []),
-    ...browserLines({ readsImages }),
+    ...time,
+    ...browserLines({ readsImages, clocked: time.length > 0 }),
     '',
     // #3737: the same design guidance the dev chat builds with (#2817).
     getDesignGuidance({ readsImages }),
@@ -1936,6 +2005,83 @@ async function draftSpec({
 }
 
 /**
+ * One build-mode turn in a bot session: the build itself, and each review
+ * round's fix (bot-review.js), which starts a fresh thread with a prompt
+ * that stands alone. The same wall clock a triage turn has, ended the same
+ * way. A function of its own, not a closure inside buildAndPropose, so that
+ * restart recovery can run a review's fix turns in a session whose build a
+ * restart caught (homeroom-bot.js reviewRecoveredBuild). Resolves
+ * { routed, stopped }.
+ */
+function buildTurnRunner({
+  pool, config, bot, session, model, branchName, containerName, deps,
+  harness = 'auto', telemetry = null, onProgress = null,
+}) {
+  const { worker, sessions, agentTurn, activeWorkers } = deps;
+  return async ({
+    prompt: turnPrompt, budgetMs, resumeThreadId = null, commitMsg, progress: turnProgress,
+  }) => {
+    let turnStopped = false;
+    let stopping = null;
+    const timer = setTimeout(() => {
+      turnStopped = true;
+      stopping = Promise.resolve(worker.stopTurn(session.id)).catch(() => {});
+    }, budgetMs);
+    if (typeof timer.unref === 'function') timer.unref();
+    activeWorkers.add(session.id);
+    let turnRouted;
+    try {
+      turnRouted = await sessions.runCodexAttemptLoop({
+        pool, session, userId: bot.id, config, isCodexSession: true,
+        turnModel: model, resumeThreadId, mode: 'build',
+        telemetryComponent: telemetry || 'homeroom_bot_build',
+        resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
+          pool, session, userId: bot.id, model, resumeThreadId, config,
+          // The dev chat's build makes the same choice (#3296). The bot's
+          // build works as it is under either CLI: the worker, not the agent,
+          // commits and pushes what the turn leaves (buildPrompt's commits:
+          // 'harness'; both runners use worker/session-branch.sh), and an
+          // OpenRouter build needs no handbook as system context in either
+          // (run-cc.sh).
+          harness,
+        }),
+        dispatchOnce: (ctx) => worker.execInWorker(session.id, {
+          mode: 'build',
+          prompt: turnPrompt,
+          model,
+          commitMsg,
+          resumeSessionId: resumeThreadId,
+          branchName,
+          // A failed turn's work is neither committed nor pushed, under either
+          // CLI (failedClaudeTurn).
+          discardFailedTurn: true,
+          ...(ctx || {}),
+          telemetryComponent: telemetry || 'homeroom_bot_build',
+          onProgress: teeProgress(turnProgress, onProgress),
+        }),
+        retryPredicate: () => null,
+        sendStatus: async () => {},
+        waitForStopped: async () => {},
+        prepareRetry: async () => false,
+        classifyAttemptStatus: ({ failed }) => (failed ? 'failed' : 'completed'),
+        containerName,
+      });
+    } catch (err) {
+      turnRouted = { error: `dispatch: ${err.message}` };
+    } finally {
+      clearTimeout(timer);
+      if (stopping) await stopping;
+      activeWorkers.delete(session.id);
+      await pool.query(
+        "UPDATE chat_sessions SET status = 'paused', last_activity_at = NOW() WHERE id = $1 AND status = 'active'",
+        [session.id],
+      ).catch(() => {});
+    }
+    return { routed: turnRouted, stopped: turnStopped };
+  };
+}
+
+/**
  * Store a spec on its build's session with the same three effects a
  * person's scout has: spec_md, a numbered version, and the spec card in the
  * session's own transcript. Resolves the version, or null when it could not
@@ -2187,73 +2333,14 @@ async function buildAndPropose({
 
   if (onStage) { try { await onStage('build'); } catch { /* a watcher never stops a build */ } }
   const buildHarness = harnessOf ? harnessOf(model, config) : 'auto';
-  // One build-mode turn in this session: the build itself, and each review
-  // round's fix (bot-review.js), which starts a fresh thread with a prompt
-  // that stands alone. The same wall clock a triage turn has, ended the
-  // same way.
-  const runBuildTurn = async ({
-    prompt: turnPrompt, budgetMs, resumeThreadId = null, commitMsg, progress: turnProgress,
-  }) => {
-    let turnStopped = false;
-    let stopping = null;
-    const timer = setTimeout(() => {
-      turnStopped = true;
-      stopping = Promise.resolve(worker.stopTurn(session.id)).catch(() => {});
-    }, budgetMs);
-    if (typeof timer.unref === 'function') timer.unref();
-    activeWorkers.add(session.id);
-    let turnRouted;
-    try {
-      turnRouted = await sessions.runCodexAttemptLoop({
-        pool, session, userId: bot.id, config, isCodexSession: true,
-        turnModel: model, resumeThreadId, mode: 'build',
-        telemetryComponent: telemetry || 'homeroom_bot_build',
-        resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
-          pool, session, userId: bot.id, model, resumeThreadId, config,
-          // The dev chat's build makes the same choice (#3296). The bot's
-          // build works as it is under either CLI: the worker, not the agent,
-          // commits and pushes what the turn leaves (buildPrompt's commits:
-          // 'harness'; both runners use worker/session-branch.sh), and an
-          // OpenRouter build needs no handbook as system context in either
-          // (run-cc.sh).
-          harness: buildHarness,
-        }),
-        dispatchOnce: (ctx) => worker.execInWorker(session.id, {
-          mode: 'build',
-          prompt: turnPrompt,
-          model,
-          commitMsg,
-          resumeSessionId: resumeThreadId,
-          branchName,
-          // A failed turn's work is neither committed nor pushed, under either
-          // CLI (failedClaudeTurn).
-          discardFailedTurn: true,
-          ...(ctx || {}),
-          telemetryComponent: telemetry || 'homeroom_bot_build',
-          onProgress: teeProgress(turnProgress, onProgress),
-        }),
-        retryPredicate: () => null,
-        sendStatus: async () => {},
-        waitForStopped: async () => {},
-        prepareRetry: async () => false,
-        classifyAttemptStatus: ({ failed }) => (failed ? 'failed' : 'completed'),
-        containerName,
-      });
-    } catch (err) {
-      turnRouted = { error: `dispatch: ${err.message}` };
-    } finally {
-      clearTimeout(timer);
-      if (stopping) await stopping;
-      activeWorkers.delete(session.id);
-      await pool.query(
-        "UPDATE chat_sessions SET status = 'paused', last_activity_at = NOW() WHERE id = $1 AND status = 'active'",
-        [session.id],
-      ).catch(() => {});
-    }
-    return { routed: turnRouted, stopped: turnStopped };
-  };
+  const runBuildTurn = buildTurnRunner({
+    pool, config, bot, session, model, branchName, containerName, deps,
+    harness: buildHarness, telemetry, onProgress,
+  });
   const prompt = buildPrompt({
     seed, buildNote, spec: spec.ok ? spec.specMd : null, platformRepo, readsImages, firstVersion, guidance: buildGuidance,
+    // The turn's own clock, from about when it starts (runBuildTurn's timer).
+    clock: { startedAt: Date.now(), budgetMs: turnBudgetMs },
   });
   // What the build was last doing, so a turn stopped on its clock says what
   // it was waiting on (#3385): 12 of the first 18 shadow failures were
@@ -2494,6 +2581,9 @@ module.exports = {
   specUserFacing,
   buildDescription,
   buildPrompt,
+  clockLines,
+  BUILD_SOFT_BUDGET_MS,
+  DRAG_TEST_LINES,
   buildSeesImages,
   revisionDesignText,
   FIRST_VERSION_DESIGN_LINES,
@@ -2505,6 +2595,7 @@ module.exports = {
   PLATFORM_TEST_NOTE,
   screenshotNote,
   buildAndPropose,
+  buildTurnRunner,
   reviewLanded,
   rollbackReviewBranch,
   recipeHarness,

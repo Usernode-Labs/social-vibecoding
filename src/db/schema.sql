@@ -2533,6 +2533,8 @@ END $$;
 -- #3181 adds 'session_stalled': a dev-session turn ended without finishing
 -- (an error, a timeout, a lost worker, or a system pause mid-turn);
 -- session_id points to the session, like 'session_done'.
+-- #3952 adds 'issue_mention': somebody named you with @ in a request they
+-- filed; `detail` holds its number, like 'issue_opened'.
 CREATE TABLE IF NOT EXISTS notifications (
   id              SERIAL PRIMARY KEY,
   user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -3018,6 +3020,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_events_change_live_once
 CREATE UNIQUE INDEX IF NOT EXISTS idx_events_first_artefact_once
   ON events (app_id)
   WHERE event_type = 'first_artefact_shown';
+-- Its invite funnel (#4176): signing in through an invite link is recorded
+-- once per person per link, however often they sign in carrying it or
+-- open it signed in.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_events_invite_signed_in_once
+  ON events (user_id, (metadata->>'inviteId'))
+  WHERE event_type = 'invite_signed_in';
 
 -- Tagged staging:private so the analytics log (which is derived from
 -- chat_sessions / pr_kudos, both already private) is TRUNCATEd in staging
@@ -5305,6 +5313,8 @@ BEGIN
 END $$;
 INSERT INTO mobile_push_kind_categories (kind, category, default_enabled) VALUES
   ('mention', 'direct_interactions', TRUE),
+  -- #3952: named with @ in a request somebody filed. A mention, beside it.
+  ('issue_mention', 'direct_interactions', TRUE),
   ('reply', 'direct_interactions', TRUE),
   -- #2387: a reply in an app-chat reply thread you started or joined. A
   -- direct interaction like a reply to your message, so the same category.
@@ -5379,7 +5389,7 @@ ON CONFLICT (kind) DO UPDATE
       default_enabled = EXCLUDED.default_enabled;
 DELETE FROM mobile_push_kind_categories
  WHERE kind NOT IN (
-   'mention', 'reply', 'thread_reply', 'collab_invite', 'collab_invite_accepted',
+   'mention', 'issue_mention', 'reply', 'thread_reply', 'collab_invite', 'collab_invite_accepted',
    'approver_invite', 'approver_invite_accepted', 'spec_shared',
    'session_done', 'test_alert', 'auto_solve_done', 'stale_pr', 'check_failed',
    'pr_proposed', 'reaction', 'kudos',
@@ -11935,7 +11945,9 @@ END $$;
 -- SHA-256 of a random HttpOnly cookie (hr_iv) that names nothing and says
 -- nothing about where it is. A browser that later opens a link signed in,
 -- or joins through one, is given its account, so the person stays one row.
--- `notification_id` is the open notice they are counted on. It goes NULL
+-- `notification_id` is the open notice they are counted on: none for a
+-- browser only ever seen signed out, which tells nobody (#4176) until it
+-- opens a link signed in. It goes NULL
 -- when they join through the maker's link, whose own notice ("Joined
 -- through your invite") replaces their open; the row stays, so opening the
 -- link again later is still not news. staging:private: it says who looked

@@ -30,19 +30,21 @@ test('declared checks do not require removed All Apps UI or write access from th
   assert.equal(names.has("Dev '+' menu shows Proposal approvals on the self-app (#646)"), false);
 });
 
-test('the out-of-credits check asserts the routes, not how many there are', () => {
+test('no check asserts how many ways to keep building there are', () => {
   // #2571 renamed it: the allowance the card appears for is weekly now.
-  const check = dapp.tests.find((entry) => entry.name.startsWith('Out of weekly credits:')
-    && /ways to keep building/.test(entry.expectText || ''));
-  assert.ok(check);
   // CreditOptions.introFor spells the count from the list it was handed, so
   // the number moves with the deployment's own gating (four here, five where
   // the external agent flows are available, fewer with no CLI). Freezing
-  // "Four" into the check made a correct card read as a regression the first
-  // time a route was added; the sentence's stable half is what it asserts.
-  assert.equal(check.expectText, 'ways to keep building right now');
-  assert.doesNotMatch(check.expectText, /^(?:No|One|Two|Three|Four|Five|Six|Seven|Eight|Nine)\b/);
-  // The card is identified by its routes instead — the connector handoff is
-  // the one that only exists when the card actually rendered.
-  assert.match(check.expectSelector, /\[data-credits-card\] \[data-credits-hash=/);
+  // "Four" into a check made a correct card read as a regression the first
+  // time a route was added; only the sentence's stable half may be asserted.
+  //
+  // #3976: the check that read it was on a classic session's out-of-credits
+  // card (/dev/sessions/990402). Classic sessions are read-only now and take
+  // no turn to be refused, so it was retired with the chat; the rule stands
+  // for any check that reads the sentence again.
+  for (const entry of dapp.tests) {
+    if (!/ways to keep building/.test(entry.expectText || '')) continue;
+    assert.doesNotMatch(entry.expectText, /^(?:No|One|Two|Three|Four|Five|Six|Seven|Eight|Nine)\b/, entry.name);
+  }
+  assert.ok(!dapp.tests.some((entry) => /\/dev\/sessions\/990402/.test(entry.path)));
 });

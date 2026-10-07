@@ -489,22 +489,31 @@ function draw(props) {
 test('a card going: its step as a ring and in words, what it is doing, how long so far, and its request', () => {
   const html = draw({ card: working() });
   assert.match(html, /^<div class="[^"]*rounded-2xl[^"]*" role="group" aria-label="Homeroom bot activity: Ear Trainer #12: Sort by date" data-bot-activity="working">/);
-  assert.match(html, /<svg [^>]*role="img" aria-label="Step 3 of 6: Build it">/);
+  assert.match(html, /<svg [^>]*role="img" aria-label="Step 3 of 6: Build it"[ >]/);
   assert.match(html, />3\/6<\/text>/);
   assert.match(html, /stroke-dasharray="47\.125 94\.25"/, 'half the ring: step 3 of 6');
   assert.match(html, /data-bot-activity-eyebrow="">Step 3 of 6 · Build it</);
-  assert.match(html, /motion-safe:animate-ping/, 'a live dot while it goes');
+  // #4199: an arc circling the ring while it goes, still under reduced
+  // motion; the ring and its step stay. No pulsing dot beside the eyebrow.
+  assert.match(html, /<svg [^>]*overflow="visible" data-progress-ring-spinning="">/);
+  assert.match(html, /<circle [^>]*r="20" [^>]*stroke-dasharray="18 125\.66" class="[^"]*motion-safe:animate-\[spin_1\.6s_linear_infinite\] motion-reduce:animate-none[^"]*"/);
+  assert.doesNotMatch(html, /animate-ping/);
   assert.match(html, />Ear Trainer #12: Sort by date</);
   assert.match(html, /<span role="status">Building it<\/span><span> · 9m so far<\/span>/,
     'only what it is doing is announced; the clock beside it is not, every half minute');
   assert.match(html, /<a href="#app\/ear-trainer\/dev\/issues\/12" class="[^"]*rounded-full[^"]*" data-bot-activity-link="">Request #12<\/a>/);
+  // #4200: the link pill is one step darker than the card in both themes,
+  // and neutral: zinc-100 and zinc-800 were the card's own fills.
+  assert.match(html, /class="[^"]*rounded-full bg-zinc-200 hover:bg-zinc-300 dark:bg-zinc-700 dark:hover:bg-zinc-600[^"]*" data-bot-activity-link=""/);
   assert.doesNotMatch(html, /Open change/);
 
   const queued = draw({ card: working({ step: 1, stepName: 'Read the request', doing: 'waiting in the queue (number 3) to be read', startedAt: minutesAgo(75) }) });
   assert.match(queued, /Waiting in the queue \(number 3\) to be read<\/span><span> · 1h 15m so far/);
   const unstepped = draw({ card: working({ step: null, of: null, stepName: null, doing: null }) });
   assert.match(unstepped, /data-bot-activity-eyebrow="">Working on it</);
-  assert.doesNotMatch(unstepped, /role="img"/);
+  assert.match(unstepped, /<svg [^>]*role="img" aria-label="Working on it" overflow="visible" data-progress-ring-spinning="">/,
+    'no step yet: an empty ring with the arc circling it, in place of the clock');
+  assert.doesNotMatch(unstepped, /stroke-dasharray="[0-9.]+ 94\.25"|<text/);
   assert.match(unstepped, /<span role="status">Working on it<\/span>/);
 });
 
@@ -519,7 +528,7 @@ test('a card done: what it came to, at a glance and in words, how long it took, 
   assert.match(proposed, /<span role="status">Built it\. Waiting for approval<\/span><span> · took 23m<\/span>/);
   assert.match(proposed, /d="M5 13l4 4L19 7"/, 'a check where the ring was');
   assert.match(proposed, />Open change<\/a><a [^>]*>Request #12<\/a>/, 'the change first');
-  assert.doesNotMatch(proposed, /animate-ping|role="img"/);
+  assert.doesNotMatch(proposed, /animate-ping|role="img"|data-progress-ring-spinning/);
 
   const asked = draw({ card: done('question') });
   assert.match(asked, /data-bot-activity-eyebrow="">Needs you</);
@@ -979,7 +988,7 @@ test('B6: Build it moves the card once it is decided, before the tray hears; Cha
   const answered = body.indexOf("status: 'answered', chosen: 'build', answer: BUILD_IT");
   const move = body.indexOf("require('./homeroom-bot-activity').cardUnderPlan(pool, {");
   const tray = body.indexOf("require('./homeroom-bot-tray').noteWorkChanged(user.id, deps)");
-  assert.ok(answered > -1 && move > answered && tray > move, 'after the plan reads "You chose Build it", before the tray re-reads');
+  assert.ok(answered > -1 && move > answered && tray > move, 'after the plan reads "Building it", before the tray re-reads');
   assert.match(body, /if \(app && requester && Number\(requester\.userId\) === Number\(user\.id\) && bot\) \{/,
     'only for the person the plan was for');
   assert.match(body, /runId: Number\(card\.run_id\), planMessageId: Number\(action\.message_id\),/);

@@ -31,7 +31,8 @@
  * (features/app-context/invite-pane.tsx, with live links, their limits, an
  * invite by username and the project's joining rule, which stays where it
  * is): what they'll get, "<maker> is making <name>" while its first version
- * is not live, with the note edited in place, then Share link. Nothing else:
+ * is not live, with the note edited in place, then Share link and Copy link
+ * (inviteActions: which one leads depends on the device). Nothing else:
  * somebody brand new knows nobody on Homeroom to invite by username yet, and
  * the joining rule is the project's business later (both taken out after
  * Evan's run-through, 5 October 2026). The link it makes works until it is
@@ -75,6 +76,7 @@ import { Wordmark } from '@/components/ui/wordmark';
 import { askForPingWhileBotBuilds } from '../dialogs/ping-ask';
 import type { HomeroomBotPlanQuestion } from '../messages/types';
 
+import { copyText, inviteText } from './copy-invite';
 import type { Made, MakeEntry } from './make';
 import { SketchCard, showsCard, useSketch } from './sketch-card';
 
@@ -245,20 +247,87 @@ export function linkNote(links: unknown): string | null {
   return mine ? (mine as { note: string }).note : null;
 }
 
+/** One of the sheet's two ways to send the link. */
+export type InviteAction = 'share' | 'copy';
+
+/**
+ * The sheet's buttons, the main one first (#4180). On a phone or tablet the
+ * share sheet leads, with Copy link beside it. On a computer Copy link leads,
+ * with Share… beside it: a desktop share sheet (Safari's: AirDrop, Mail,
+ * Messages, Notes) has no plain way to copy the link. With no share sheet at
+ * all, Copy link alone.
+ */
+export function inviteActions(touch: boolean, canShare: boolean): InviteAction[] {
+  if (!canShare) return ['copy'];
+  return touch ? ['share', 'copy'] : ['copy', 'share'];
+}
+
+/** PlatformUI.isTouch(): a phone or tablet, as the native kit tells them apart. */
+function onTouch(): boolean {
+  const ui = (globalThis as unknown as { PlatformUI?: { isTouch?: () => boolean } }).PlatformUI;
+  return typeof ui?.isTouch === 'function' && ui.isTouch();
+}
+
+function hasShareSheet(): boolean {
+  return typeof navigator !== 'undefined' && typeof navigator.share === 'function';
+}
+
+// How long "✓ Copied" stays on the button before it reads Copy link again.
+const COPIED_MS = 1200;
+
+// How long after the share sheet goes an Escape is still taken as its own:
+// the key that dismissed the OS popover can reach the page after the share's
+// promise has settled.
+const SHARE_ESCAPE_MS = 400;
+
+/**
+ * How the link went out. A share says only that it was handed to the share
+ * sheet: the page cannot know a message was actually sent (#4196).
+ */
+export type SentHow = 'shared' | 'copied';
+
+/** The sheet's status once the link has gone out, said the way it went. */
+export function sentStatus(how: SentHow): string {
+  return how === 'shared' ? '✓ Link shared' : 'Link copied. Paste it in your group chat.';
+}
+
+/**
+ * The sheet stays open once the link has gone out, with what happened said
+ * on it, and Done closes it (#4196: closing at once read as "Share link just
+ * goes back"). Share link and Copy link can be pressed again.
+ *
+ * The link is still made only on a press (copy-invite.ts). A share press
+ * that has to make it first waits on that request, and a browser may then
+ * refuse the share sheet for want of the press (NotAllowedError, Safari
+ * above all). Such a refusal copies instead, the way a missing share sheet
+ * always did; when even the copy is refused, the sheet says the link is
+ * ready, and the next press shares at once, because the link exists by then
+ * and is not waited on. Cancelling the share sheet (AbortError) changes
+ * nothing.
+ */
 export function InviteSheet({ made, me, making = true, onClose, onSent }: {
   made: Made;
   me: string;
   /** Its first version is not live yet: "<me> is making <name>" (makerLine). */
   making?: boolean;
   onClose: () => void;
-  /** The link went out (shared or copied). */
-  onSent: () => void;
+  /** The link went out, shared or copied. The sheet stays open. */
+  onSent: (how: SentHow) => void;
 }) {
   const [note, setNote] = useState(() => openingNote(made.slug, made.example?.note));
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [shown, setShown] = useState(false);
+  // When Copy link last copied (0: not lately), for "✓ Copied" on its button.
+  const [copied, setCopied] = useState(0);
+  // Something went out from this sheet: Done is offered.
+  const [out, setOut] = useState(false);
+  // The OS share sheet is up, or has only just gone (SHARE_ESCAPE_MS).
+  const sharing = useRef(false);
+  const shareGoneAt = useRef(0);
+  // Which button leads, read once as the sheet opens (inviteActions).
+  const [actions] = useState(() => inviteActions(onTouch(), hasShareSheet()));
   const linkRef = useRef<string | null>(null);
   // Whether the note in the box is theirs from this device (kept, or typed
   // here); until it is, a note on one of their own links replaces it.
@@ -277,11 +346,22 @@ export function InviteSheet({ made, me, making = true, onClose, onSent }: {
       .catch(() => {});
     return () => { live = false; };
   }, [made.slug]);
+  // Escape closes the sheet, unless it is dismissing the OS share sheet
+  // over it (or has just done so).
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (sharing.current || Date.now() - shareGoneAt.current < SHARE_ESCAPE_MS) return;
+      onClose();
+    };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
+  useEffect(() => {
+    if (!copied) return undefined;
+    const t = window.setTimeout(() => setCopied(0), COPIED_MS);
+    return () => window.clearTimeout(t);
+  }, [copied]);
 
   // The maker's note, as their first message in the group's chat, once.
   const postNote = useCallback(async () => {
@@ -311,33 +391,76 @@ export function InviteSheet({ made, me, making = true, onClose, onSent }: {
     return linkRef.current;
   }, [made.slug, note]);
 
+  // The link went out, shared or copied: said on the sheet, which stays
+  // open; the note kept, posted once as their first message in the group
+  // chat, and the made screen told.
+  const sent = useCallback(async (how: SentHow) => {
+    setStatus(sentStatus(how));
+    setOut(true);
+    keepNote(made.slug, note);
+    await postNote();
+    onSent(how);
+  }, [made.slug, note, postNote, onSent]);
+
   const shareLink = useCallback(async () => {
     if (busy) return;
-    setBusy(true); setError(null); setStatus(null);
+    setBusy(true); setError(null);
     try {
-      const url = await link();
+      // A link already made is shared from inside the press; one still to
+      // make is waited on first (see the header).
+      const url = linkRef.current || await link();
       if (!url) return;
       const title = makerLine(me, made.name, making);
       const nav = navigator as Navigator & { share?: (d: ShareData) => Promise<void> };
-      let shared = false;
       if (typeof nav.share === 'function') {
-        try { await nav.share({ title, text: note.trim() || undefined, url }); shared = true; } catch (err) {
+        sharing.current = true;
+        try {
+          await nav.share({ title, text: note.trim() || undefined, url });
+          await sent('shared');
+          return;
+        } catch (err) {
           if ((err as Error)?.name === 'AbortError') return;
+          // Refused (no press left to open it with) or failed: copy below.
+        } finally {
+          sharing.current = false;
+          shareGoneAt.current = Date.now();
         }
       }
-      if (!shared) {
-        await navigator.clipboard.writeText(note.trim() ? `${note.trim()} ${url}` : url);
-        setStatus('Link copied. Paste it in your group chat.');
+      const outcome = await copyText(inviteText(note, url));
+      if (outcome === 'copied') {
+        setCopied(Date.now());
+        await sent('copied');
+        return;
       }
-      keepNote(made.slug, note);
-      await postNote();
-      onSent();
+      // Nothing went out, but the link is made: the next press shares it at once.
+      setStatus('Your link is ready. Press Share again to send it.');
     } catch {
       setError('Could not share the link. Try again.');
     } finally {
       setBusy(false);
     }
-  }, [busy, link, me, made.name, making, note, postNote, onSent]);
+  }, [busy, link, me, made.name, making, note, sent]);
+
+  // Copy link: the note and the link, put on the clipboard inside the press
+  // even while the link is still being made (copyText: Safari copies nothing
+  // after the press has waited on a request), then what a share does.
+  const copyLink = useCallback(async () => {
+    if (busy) return;
+    setBusy(true); setError(null);
+    try {
+      const ready = linkRef.current;
+      const outcome = await copyText(ready ? inviteText(note, ready)
+        : link().then((url) => (url ? inviteText(note, url) : null)));
+      if (outcome === 'no-link') { setError((was) => was || 'Could not make a link. Try again.'); return; }
+      if (outcome === 'refused') { setError('Could not copy the link. Try again.'); return; }
+      setCopied(Date.now());
+      await sent('copied');
+    } catch {
+      setError('Could not copy the link. Try again.');
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, link, note, sent]);
 
   const tile = made.emoji || made.name.slice(0, 1);
   return (
@@ -382,13 +505,49 @@ export function InviteSheet({ made, me, making = true, onClose, onSent }: {
           </div>
         </div>
         <p className="mt-2 text-[13px] text-zinc-500 dark:text-zinc-400">Your note is also your first message in the group chat.</p>
-        <div className="mt-4">
-          <Button type="button" onClick={() => { void shareLink(); }} disabled={busy} layout="full" variant="pillAccent" size="pillLg" ink="solidLate" className="flex items-center justify-center disabled:opacity-60">
-            Share link
-          </Button>
+        {/* The main button, then the other way beside it (inviteActions), a
+            white pill on the sheet's grey (pillRaised). Not dimmed while
+            "✓ Copied" shows: busy then only holds off a second press. */}
+        <div className="mt-4 flex gap-2.5">
+          {actions.map((action, i) => {
+            const label = action === 'share' ? (i === 0 ? 'Share link' : 'Share…') : copied ? '✓ Copied' : 'Copy link';
+            const press = () => { void (action === 'share' ? shareLink() : copyLink()); };
+            const main = i === 0;
+            return (
+              <Button
+                key={action}
+                type="button"
+                data-first-session-invite-action={action}
+                onClick={press}
+                disabled={busy && !copied}
+                layout={main ? 'flex' : 'shrink'}
+                variant={main ? 'pillAccent' : 'pillRaised'}
+                size="pillLg"
+                ink={main ? 'solidLate' : 'neutral'}
+                className="flex items-center justify-center disabled:opacity-60"
+              >
+                {label}
+              </Button>
+            );
+          })}
         </div>
         {status ? <p role="status" data-first-session-invite-status="" className="mt-3 text-center text-[14px] text-emerald-700 dark:text-emerald-400">{status}</p> : null}
         {error ? <p id="first-session-invite-error" role="alert" className="mt-3 text-center text-[14px] text-red-600 dark:text-red-400">{error}</p> : null}
+        {/* Once the link has gone out the sheet stays, with Done to close it. */}
+        {out ? (
+          <Button
+            type="button"
+            data-first-session-invite-done=""
+            onClick={onClose}
+            layout="full"
+            variant="pillRaised"
+            size="pillLg"
+            ink="neutral"
+            className="mt-3 flex items-center justify-center"
+          >
+            Done
+          </Button>
+        ) : null}
         <p className="mt-3 text-center text-[13px] text-zinc-500 dark:text-zinc-400">Anyone with the link can join for the next 7 days, up to 25 people.</p>
       </div>
     </div>
@@ -468,11 +627,13 @@ type CommunityMember = { username?: string; display_name?: string | null; source
 type Community = { member_count?: number; members?: CommunityMember[] } | null;
 
 /**
- * The made screen's line once an invite is out: who has joined (joinedLine),
- * or, before anyone has, "✓ Invite sent."
+ * The made screen's line once the link is out: who has joined (joinedLine),
+ * or, before anyone has, how it went out, "✓ Link shared." or "✓ Link
+ * copied." Never "Invite sent": handing the link to the share sheet is not
+ * a message known to have gone (#4196).
  */
-export function sentLines(joined: string | null): string[] {
-  return [joined || '✓ Invite sent.'];
+export function sentLines(joined: string | null, how: SentHow = 'shared'): string[] {
+  return [joined || (how === 'copied' ? '✓ Link copied.' : '✓ Link shared.')];
 }
 
 /**
@@ -513,7 +674,11 @@ function useCommunity(slug: string, on: boolean): Community {
   return community;
 }
 
-export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-session', onSetSecrets }: {
+/** The made screen's root, full screen or under the platform header as make.tsx MAKE_ROOT is. */
+export const MADE_ROOT = 'fixed inset-0 z-[9000] flex flex-col overflow-y-auto text-zinc-900 dark:text-zinc-100';
+export const MADE_ROOT_UNDER_HEADER = 'platform-under-header fixed inset-x-0 bottom-0 z-[9000] flex flex-col overflow-y-auto text-zinc-900 dark:text-zinc-100';
+
+export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-session', onSetSecrets, underHeader = false }: {
   made: Made;
   me: string;
   /** "Invite people later" / "Go to …" (continueLabel): `skipped` when nothing went out. */
@@ -523,11 +688,15 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
   entry?: MakeEntry;
   /** Set secrets, on a setup that waits on them: the project's secrets dialog. */
   onSetSecrets?: () => void;
+  /** From Create, with the platform header showing: below it, with no wordmark bar of its own. */
+  underHeader?: boolean;
 }) {
   const [fv, setFv] = useState<FirstVersion>(null);
   const [appStatus, setAppStatus] = useState<string | null>('creating');
   const [inviting, setInviting] = useState(false);
-  const [sent, setSent] = useState(false);
+  // How the link last went out from the invite sheet, or null.
+  const [sentHow, setSentHow] = useState<SentHow | null>(null);
+  const sent = sentHow !== null;
   const [retrying, setRetrying] = useState(false);
   const imported = !!made.imported;
   // Whether a first version has been read as on its way: once it has, a read
@@ -599,12 +768,14 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
       aria-labelledby="first-session-made-title"
       data-first-session-made=""
       data-make-entry={entry}
-      className="fixed inset-0 z-[9000] flex flex-col overflow-y-auto text-zinc-900 dark:text-zinc-100"
+      className={underHeader ? MADE_ROOT_UNDER_HEADER : MADE_ROOT}
       style={{ background: 'var(--home-wallpaper, #f4f2e4)' }}
     >
-      <div className="flex h-[52px] shrink-0 items-center justify-center pt-[env(safe-area-inset-top)]">
-        <Wordmark className="h-6 w-auto text-[color:var(--brand-ink)]" />
-      </div>
+      {underHeader ? null : (
+        <div className="flex h-[52px] shrink-0 items-center justify-center pt-[env(safe-area-inset-top)]">
+          <Wordmark className="h-6 w-auto text-[color:var(--brand-ink)]" />
+        </div>
+      )}
       <div className="mx-auto flex w-full max-w-sm grow flex-col px-4 pb-[max(34px,env(safe-area-inset-bottom))]">
         {card ? (
           <SketchCard made={made} sketch={sketch} line={line} note={note} busy={busy} botBuilds={botBuilds && !stalled} built={!making || !!(fv && fv.ready)} />
@@ -628,7 +799,7 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
         <div className="mt-6">
           <p className="text-[17px] font-semibold">{`Invite people to ${made.name}`}</p>
           <p className="mt-0.5 text-[14px] leading-snug text-zinc-500 dark:text-zinc-400">They can follow along and chat with you while it's being built.</p>
-          {sent ? sentLines(joined).map((line) => (
+          {sent ? sentLines(joined, sentHow).map((line) => (
             <p key={line} data-first-session-sent={joined ? 'joined' : ''} className="mt-2 text-[14px] font-semibold text-emerald-700 dark:text-emerald-400">
               {line}
             </p>
@@ -655,7 +826,7 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
           me={me}
           making={making}
           onClose={() => setInviting(false)}
-          onSent={() => { setSent(true); setInviting(false); }}
+          onSent={(how) => setSentHow(how)}
         />
       ) : null}
     </div>

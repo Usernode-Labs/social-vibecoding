@@ -112,6 +112,31 @@ function ToneIcon({ tone }: { tone: Tone }) {
   return <InfoCircleIcon aria-hidden="true" />;
 }
 
+// #4201: the same endings as a badge on an app icon's corner (the activity
+// tray's History leads with the app's own icon). Solid faces, not the tiles'
+// tints, so the icon under them never shows through; the ring is the tray
+// tile's own face, which cuts the badge out of the icon. Complete literals.
+const TONE_BADGES: Record<Tone, string> = {
+  done: 'bg-[color:var(--brand-ink)] text-white dark:text-zinc-900',
+  built: 'bg-[color:var(--brand-ink)] text-white dark:text-zinc-900',
+  you: 'bg-[color:var(--brand-ink)] text-white dark:text-zinc-900',
+  ended: 'bg-zinc-500 text-white dark:bg-zinc-400 dark:text-zinc-900',
+  trouble: 'bg-red-600 text-white dark:bg-red-500 dark:text-zinc-900',
+};
+
+/** How a piece of work ended, as a small round badge for an icon's corner. */
+export function ActivityBadge({ tone, className = '' }: { tone: Tone; className?: string }) {
+  return (
+    <span
+      className={`flex h-[18px] w-[18px] items-center justify-center rounded-full ring-2 ring-zinc-50 dark:ring-zinc-950 [&>svg]:h-3 [&>svg]:w-3 ${TONE_BADGES[tone]} ${className}`}
+      data-bot-work-badge={tone}
+      aria-hidden="true"
+    >
+      <ToneIcon tone={tone} />
+    </span>
+  );
+}
+
 function capitalized(text: string): string {
   return text ? text[0].toUpperCase() + text.slice(1) : text;
 }
@@ -182,7 +207,9 @@ export function typicalText(range?: { from: number; to: number } | null): string
 
 // ── The view ──
 
-const LINK_CLASS = buttonVariants({ layout: 'iconRow', variant: 'pillNeutral', size: 'sm', ink: 'neutral' });
+// #4200: `pillOnCard`, one step darker than the card it sits on in both
+// themes; `pillNeutral`'s fills are the card's own, and the pill read as text.
+const LINK_CLASS = buttonVariants({ layout: 'iconRow', variant: 'pillOnCard', size: 'sm', ink: 'neutral' });
 
 /**
  * A card's way out: a pill link to the platform's own page. Also the
@@ -205,21 +232,32 @@ export function ActivityLink({ href, children, data = 'bot-activity' }: { href: 
 
 const CardLink = ActivityLink;
 
+// #4199: the ring's track, a step lighter in dark, where the ring's own
+// zinc-800 is the card's colour and an empty ring would vanish.
+const RING_TRACK = 'dark:stroke-zinc-700';
+
 /**
  * The round thing a card leads with: the ring with its step while the work
- * goes, a clock while it goes without one, then the tile of how it ended.
- * The activity tray's tiles lead with the same.
+ * goes, an empty ring while it goes without one, then the tile of how it
+ * ended; a clock before anything is known. The activity tray's tiles lead
+ * with the same.
+ *
+ * #4199: while the bot is `working` on it, a short arc circles the ring
+ * (ProgressRing `spinning`), the card's one live cue.
  */
-export function ActivityLead({ step, of, stepName, tone }: { step?: number | null; of?: number | null; stepName?: string | null; tone?: Tone | null }) {
+export function ActivityLead({ step, of, stepName, tone, working = false }: { step?: number | null; of?: number | null; stepName?: string | null; tone?: Tone | null; working?: boolean }) {
   if (!tone && step && of) {
     return (
       <ProgressRing
         pct={Math.round((step / of) * 100)}
         label={`${step}/${of}`}
         title={`Step ${step} of ${of}${stepName ? `: ${stepName}` : ''}`}
+        spinning={working}
+        trackClassName={RING_TRACK}
       />
     );
   }
+  if (!tone && working) return <ProgressRing pct={0} title="Working on it" spinning trackClassName={RING_TRACK} />;
   if (tone) return <IconTile size="xs" className={TONE_TILES[tone]}><ToneIcon tone={tone} /></IconTile>;
   return <IconTile size="xs" className={PLAIN_TILE}><ClockIcon aria-hidden="true" /></IconTile>;
 }
@@ -251,7 +289,7 @@ export function BotActivityCardView({ meta, card, loaded = false, failed = false
   let status: ReactNode;
   if (card && working) {
     const stepped = card.step && card.of;
-    lead = <ActivityLead step={card.step} of={card.of} stepName={card.stepName} />;
+    lead = <ActivityLead step={card.step} of={card.of} stepName={card.stepName} working />;
     eyebrow = stepped ? `Step ${card.step} of ${card.of}${card.stepName ? ` · ${card.stepName}` : ''}` : 'Working on it';
     // The work's time, not the wait's (clockFrom), with the wait said apart.
     const elapsed = spanText(clockFrom(card), at);
@@ -305,12 +343,6 @@ export function BotActivityCardView({ meta, card, loaded = false, failed = false
         {lead}
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-            {working ? (
-              <span className="relative flex h-2 w-2 shrink-0" aria-hidden="true">
-                <span className="absolute inline-flex h-full w-full rounded-full bg-[color:var(--accent)] opacity-60 motion-safe:animate-ping" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-[color:var(--accent)]" />
-              </span>
-            ) : null}
             <span className="truncate" data-bot-activity-eyebrow="">{eyebrow}</span>
           </div>
           {asked ? (

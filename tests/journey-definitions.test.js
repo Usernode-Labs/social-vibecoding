@@ -189,6 +189,21 @@ test('a change the Homeroom bot built is credited to the person who asked for it
   assert.doesNotMatch(stages, /<> cs\.user_id/);
 });
 
+test('the admin analytics dashboard and funnels credit a change by the same rule as Journey', () => {
+  // #3970: one definition, so a bot-built change counts for the same person
+  // on every admin surface.
+  const shared = require('../src/services/change-person').CHANGE_PERSON_SQL;
+  assert.equal(journey.CHANGE_PERSON_SQL, shared);
+  const { PROPOSAL_FUNNEL_SQL } = require('../src/services/analytics-funnels');
+  assert.ok(PROPOSAL_FUNNEL_SQL.includes(shared), 'the dev-session funnels credit bot builds');
+  const fs = require('node:fs');
+  const route = fs.readFileSync(require.resolve('../src/routes/dashboard'), 'utf8');
+  assert.match(route, /CROSS JOIN LATERAL \(SELECT \$\{changePerson\.CHANGE_PERSON_SQL\} AS user_id\) cp/);
+  assert.doesNotMatch(route, /JOIN chat_sessions cs ON cs\.user_id = u\.id/,
+    'no dashboard reading credits a change to the session account directly');
+  assert.doesNotMatch(route, /users \w+ ON \w+\.id = cs\.user_id/);
+});
+
 test('creation path: people once each, the shortest time, and an absent record before recording is not a no', () => {
   const recordedFrom = { running: new Date('2026-09-22T00:00:00Z'), preview: null, change_live: new Date('2026-09-22T00:00:00Z') };
   const row = (userId, createdAt, extra = {}) => ({

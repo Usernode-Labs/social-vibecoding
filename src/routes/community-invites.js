@@ -30,6 +30,7 @@ const path = require('path');
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const inviteActivity = require('../services/invite-activity');
+const journeyEvents = require('../services/journey-events');
 const log = require('../services/logger');
 const appAccess = require('../services/app-access');
 const invites = require('../services/community-invites');
@@ -189,11 +190,13 @@ function communityInviteRoutes(config) {
     }
   });
 
-  // WP-E: a live link opened counts once per PERSON for its maker
-  // (services/invite-activity.js), never by name: by account when they are
-  // signed in, on any device, else by browser (an HttpOnly cookie that names
-  // nothing). Counted from the page's own reads below, not from the HTML
-  // route a link unfurler fetches.
+  // WP-E: a live link opened counts once per PERSON (services/invite-
+  // activity.js), never by name: by account when they are signed in, on any
+  // device, else by browser (an HttpOnly cookie that names nothing). Only a
+  // signed-in open tells the link's maker (#4176): somebody who only clicked
+  // it has not shown up yet. A signed-out one is remembered and recorded for
+  // the admin Journey, and tells nobody. Counted from the page's own reads
+  // below, not from the HTML route a link unfurler fetches.
   const countOpen = (req, res, token, viewerId = null) => {
     const seenBefore = inviteActivity.countedBefore(req, token);
     const browser = inviteActivity.ensureBrowser(req, res);
@@ -201,7 +204,8 @@ function communityInviteRoutes(config) {
   };
 
   // Anonymous: under /api/public/, so authMiddleware never resolves a user
-  // here, and the answer is the same whoever asks.
+  // here, and the answer is the same whoever asks. Its open is a signed-out
+  // one: recorded, never told.
   router.get('/api/public/invites/:token', invitePreviewLimiter, async (req, res) => {
     try {
       const preview = await invites.preview(pool, req.params.token);
@@ -259,8 +263,13 @@ function communityInviteRoutes(config) {
         showSelfHosted: !!req.user.isAdmin || !!config.selfAppPublicVoting,
       });
       // Somebody signed in who is not in it yet (invite-activity.noteOpened
-      // leaves out the maker and anybody already a member).
-      if (standing.live && !standing.mine) countOpen(req, res, req.params.token, req.user.id);
+      // leaves out the maker and anybody already a member): the open its
+      // maker hears about, and, for the admin Journey's invite funnel, a
+      // person with the link in hand signed in.
+      if (standing.live && !standing.mine) {
+        countOpen(req, res, req.params.token, req.user.id);
+        void journeyEvents.noteInviteSignedIn(pool, { token: req.params.token, userId: req.user.id });
+      }
       res.setHeader('Cache-Control', 'no-store');
       return res.status(standing.reason === 'unknown' ? 404 : 200).json(standing);
     } catch (err) {

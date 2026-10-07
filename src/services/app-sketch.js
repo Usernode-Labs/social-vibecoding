@@ -51,7 +51,7 @@
 const log = require('./logger');
 const sketchDates = require('./sketch-dates');
 
-// GLM 5.3 Flash, and Haiku 4.5 when it does not answer in time (llm.js
+// GLM 5.3 Flash, and Haiku 5.5 when it does not answer in time (llm.js
 // helperMessage); the card row keeps the model that answered.
 const SKETCH_MODEL = 'z-ai/glm-5.3-flash';
 // How long app creation waits for the card before seeding the repository

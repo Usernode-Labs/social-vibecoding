@@ -118,8 +118,10 @@ test('the composer is HIDDEN, never removed', () => {
   // #2779 adds the one other reason the composer gives way: a change its
   // owner started from an agent session is revised in that conversation, and
   // a banner leads there. Same field, same hidden-not-removed guarantee.
+  // #3976 adds the third: a classic session is read-only, and its strip says
+  // why and starts an agent session instead.
   assert.match(DEV_CHAT_SRC,
-    /hidden: !!DevChat\._launchpadVenue\(\) \|\| !!DevChat\._agentSessionBannerView\(DevChat\.currentSession\),/,
+    /hidden: !!DevChat\._launchpadVenue\(\) \|\| !!DevChat\._agentSessionBannerView\(DevChat\.currentSession\)\n\s*\|\| !!DevChat\._classicReadOnlyView\(DevChat\.currentSession\),/,
     'the model carries the swap');
   const VIEW_TSX2 = fs.readFileSync(
     path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'view.tsx'), 'utf8');
@@ -282,8 +284,10 @@ test('dismissing a launchpad repaints BOTH halves of the swap', () => {
     'and neither needs the screen rebuilt to land');
   // Both read the same predicate, so they cannot disagree about the swap.
   // (The composer's `hidden` also has #2779's agent-session clause, pinned
-  // above; that one has no launchpad and so no slot to agree with.)
-  assert.match(DEV_CHAT_SRC, /barEmpty: !!DevChat\._launchpadVenue\(\)/);
+  // above; that one has no launchpad and so no slot to agree with. #3976's
+  // read-only clause is in both: a read-only session's bar is as empty as a
+  // launchpad's.)
+  assert.match(DEV_CHAT_SRC, /barEmpty: \(!!DevChat\._launchpadVenue\(\) \|\| !!DevChat\._classicReadOnlyView\(DevChat\.currentSession\)\)/);
   assert.match(DEV_CHAT_SRC, /hidden: !!DevChat\._launchpadVenue\(\) \|\| /);
 });
 

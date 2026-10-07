@@ -248,7 +248,8 @@ test('with the keyboard up nothing scrolls under the status bar: the bar stays, 
   // phone the mark used to hang 12px out of a 52px box), so what scrolls
   // stops below it.
   // (`relative`: from Create, its ✕ sits at the bar's leading edge.)
-  assert.match(src, /<div className=\{`relative flex h-\[max\(52px,calc\(env\(safe-area-inset-top\)\+32px\)\)\] shrink-0 items-center justify-center pt-\[env\(safe-area-inset-top\)\] \$\{motion\}`\}>/);
+  // (#4195: from Create under the platform header, the bar is only the ✕.)
+  assert.match(src, /<div className=\{underHeader \? `relative h-12 shrink-0 \$\{motion\}` : `relative flex h-\[max\(52px,calc\(env\(safe-area-inset-top\)\+32px\)\)\] shrink-0 items-center justify-center pt-\[env\(safe-area-inset-top\)\] \$\{motion\}`\}>/);
   // The scroller's class string is constant.
   assert.match(src, /<div ref=\{scrollerRef\} data-first-session-make-scroll="" className="flex min-h-0 grow flex-col overflow-y-auto">/);
   // #3894's arrival is untouched: the bar and the form still rise in.
@@ -360,7 +361,9 @@ test('after Make it: the build\'s step, then one invite, and the second button s
     made: { slug: 'page-turners', name: 'Page Turners', emoji: '📚', description: null, example: null, conversationId: 3 },
     me: 'alex', onClose() {}, onSent() {},
   }));
-  assert.match(sheet, />Share link</);
+  // Copy link, and Share link where the device has a share sheet (#4180,
+  // tests/first-session-copy-link.test.js).
+  assert.match(sheet, />Copy link</);
   assert.doesNotMatch(sheet, /username|say yes|goes live/i);
   assert.match(read('frontend/src/features/app-context/invite-pane.tsx'), /joiningRule/, 'the project\'s own pane keeps the rule');
   assert.match(src, /Your note is also your first message in the group chat\./);

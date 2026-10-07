@@ -2,6 +2,7 @@ import { useState } from 'react';
 
 import { InfoCircleIcon } from '@/components/ui/icons';
 
+import { AnsweredChoices } from './bot-plan-view';
 import { answerBotQuestion, scopeKey, setReply, tapBotAction } from './store';
 import type { ConversationMessage, HomeroomBotAction, HomeroomBotMeta } from './types';
 
@@ -13,7 +14,9 @@ import type { ConversationMessage, HomeroomBotAction, HomeroomBotMeta } from './
  * in the composer for an answer of one's own. Tapping an answer sends it at
  * once, quoting the question, which is how the server knows which request
  * it answers (services/homeroom-bot-dm.js). Once answered (or closed by
- * newer news on the same request) the buttons go and the answer stays.
+ * newer news on the same request) the buttons go and the answer stays:
+ * #4197, a filled chip under a small "You answered" label, the tapped
+ * answer's look without its button (./bot-plan-view.tsx AnsweredChoices).
  *
  * EVERY ANSWER IS PUBLIC, and the line under an open question says so
  * before anybody taps: the bot posts it on the request's discussion, where
@@ -101,7 +104,8 @@ export function BotQuestion({ message, conversationId }: { message: Conversation
           {offer ? null : <button type="button" className="messages-bot-other" onClick={somethingElse}>Something else</button>}
         </div>
       ) : null}
-      {answered ? <p className="messages-bot-answered">{offer ? `You chose: ${answered}` : `You answered: ${answered}`}</p> : null}
+      {answered && offer ? <p className="messages-bot-answered">{`You chose: ${answered}`}</p> : null}
+      {answered && !offer ? <AnsweredChoices items={[{ question: 'You answered', answer: answered }]} /> : null}
       {(open || chosen) && mirrorsReplies(meta) ? (
         <p className="messages-bot-note">
           <InfoCircleIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />

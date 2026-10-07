@@ -294,6 +294,44 @@ test('the adapter forwards Messages requests to OpenRouter with the key and stre
   assert.equal(upstream.seen.length, 2, 'nothing refused locally reached OpenRouter');
 });
 
+test("each request's start and end say when, in ms since the listener started", async (t) => {
+  // The platform reads a turn's journal again after a restart, so only the
+  // turn's own clock says when a request ran (2026-10-07, worker.js
+  // noteCodingRequestClock): atMs climbs, and the gap between one request's
+  // end and the next one's start is the time the agent spent in its tools.
+  const upstream = await fakeOpenRouter((record, res) => sse(res));
+  const timing = [];
+  const adapter = await startMessagesAdapter({
+    baseUrl: upstream.base, apiKey: KEY, model: GLM, localToken: 'local-token',
+    onTiming: (event) => timing.push(event),
+  });
+  t.after(async () => { await adapter.close(); await upstream.close(); });
+  const send = () => fetch(`${adapter.baseUrl}/v1/messages`, {
+    method: 'POST',
+    headers: { 'x-api-key': 'local-token', 'content-type': 'application/json' },
+    body: JSON.stringify({ model: 'x', max_tokens: 10, stream: true, messages: [{ role: 'user', content: 'hi' }] }),
+  }).then((reply) => reply.text());
+  await send();
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  await send();
+  const starts = timing.filter((e) => e.kind === 'provider_request_start');
+  const ends = timing.filter((e) => e.kind === 'provider_request_end');
+  assert.deepEqual(starts.map((e) => e.requestOrdinal), [1, 2]);
+  assert.deepEqual(ends.map((e) => e.requestOrdinal), [1, 2]);
+  for (const event of [...starts, ...ends]) {
+    assert.ok(Number.isSafeInteger(event.atMs) && event.atMs >= 0, `${event.kind} carries atMs`);
+  }
+  for (let i = 0; i < 2; i++) {
+    assert.ok(ends[i].atMs >= starts[i].atMs);
+    assert.ok(Math.abs(ends[i].atMs - ends[i].durationMs - starts[i].atMs) <= 2,
+      'an end is its start plus its duration, on the same clock');
+  }
+  assert.ok(starts[1].atMs >= ends[0].atMs + 10, 'the wait between requests shows between them');
+  for (const event of timing.filter((e) => !['provider_request_start', 'provider_request_end'].includes(e.kind))) {
+    assert.equal('atMs' in event, false, `${event.kind} is unchanged`);
+  }
+});
+
 // ── What each request came to (G, 2026-10-05) ───────────────────────────
 
 async function outcomeOf(t, handler) {

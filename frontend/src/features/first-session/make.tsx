@@ -168,8 +168,19 @@ export function makeEyebrow(entry: MakeEntry, who: string): string {
 export const IMPORT_TITLE = 'Import a GitHub repo';
 export const IMPORT_LINE = 'Bring an app that already exists. Your group builds on it from here.';
 
+/**
+ * The screen's root. On the first session it is the whole screen: it
+ * arrives on the wallpaper after sign-in, over everything. From Create
+ * (#4195) it is a screen like the others, below the platform header
+ * (`.platform-under-header`, app.css), so the header's back, bell and menus
+ * stay where they are; using one leaves this screen (./index.tsx). The tab
+ * bar stays covered either way: this is one thing to do, not a tab.
+ */
+export const MAKE_ROOT = 'platform-kb-surface fixed inset-0 z-[9000] flex flex-col text-zinc-900 dark:text-zinc-100';
+export const MAKE_ROOT_UNDER_HEADER = 'platform-kb-surface platform-under-header fixed inset-x-0 bottom-0 z-[9000] flex flex-col text-zinc-900 dark:text-zinc-100';
+
 export function MakeScreen({
-  who, onMade, onLookAround, entry = 'first-session', botBuilds = true, onClose, startImport = false,
+  who, onMade, onLookAround, entry = 'first-session', botBuilds = true, onClose, startImport = false, underHeader = false,
 }: {
   who: string;
   onMade: (made: Made) => void;
@@ -182,6 +193,8 @@ export function MakeScreen({
   onClose?: () => void;
   /** From Create: open on the import form (#create/import). */
   startImport?: boolean;
+  /** From Create, with the platform header showing: below it, not over it (MAKE_ROOT). */
+  underHeader?: boolean;
 }) {
   const fromCreate = entry === 'create';
   // At the allowance's limit (or a full server), Make it and Import it are
@@ -311,14 +324,16 @@ export function MakeScreen({
       aria-labelledby="first-session-make-title"
       data-first-session-make=""
       data-make-entry={entry}
-      className="platform-kb-surface fixed inset-0 z-[9000] flex flex-col text-zinc-900 dark:text-zinc-100"
+      className={underHeader ? MAKE_ROOT_UNDER_HEADER : MAKE_ROOT}
       style={{ background: 'var(--home-wallpaper, #f4f2e4)' }}
     >
       {/* Stays put over the scroller, so nothing scrolls under the status bar.
           At least 32px tall under the status bar's inset, so the whole mark
           is inside it and what scrolls stops below the mark, not beside it.
-          From Create, ✕ at its leading edge closes the screen. */}
-      <div className={`relative flex h-[max(52px,calc(env(safe-area-inset-top)+32px))] shrink-0 items-center justify-center pt-[env(safe-area-inset-top)] ${motion}`}>
+          From Create, ✕ at its leading edge closes the screen. Under the
+          platform header the header is the top of the screen: this bar is
+          only the ✕, with no mark of its own and no inset to clear. */}
+      <div className={underHeader ? `relative h-12 shrink-0 ${motion}` : `relative flex h-[max(52px,calc(env(safe-area-inset-top)+32px))] shrink-0 items-center justify-center pt-[env(safe-area-inset-top)] ${motion}`}>
         {onClose ? (
           <button
             type="button"
@@ -330,7 +345,7 @@ export function MakeScreen({
             <XIcon className="h-4 w-4" aria-hidden="true" />
           </button>
         ) : null}
-        <Wordmark className="h-6 w-auto text-[color:var(--brand-ink)]" />
+        {underHeader ? null : <Wordmark className="h-6 w-auto text-[color:var(--brand-ink)]" />}
       </div>
       {/* The scroller the keyboard surface reveals fields in. Its className
           stays constant: nothing here varies it. */}

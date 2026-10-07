@@ -550,7 +550,7 @@ test('a question in the DM draws its answers, the default marked, and says an an
   const answered = { ...message, metadata: { homeroomBot: { ...message.metadata.homeroomBot, status: 'answered', answer: 'Oldest first' } } };
   const after = renderToHtml(createElement(BotQuestion, { message: answered, conversationId: 3 }));
   assert.doesNotMatch(after, /Something else/, 'no buttons once answered');
-  assert.match(after, /You answered: Oldest first/);
+  assert.match(after, /<dt class="messages-bot-choice-label">You answered<\/dt><dd><span class="messages-bot-chosen">Oldest first<\/span><\/dd>/, '#4197: the answer as a chip, not a button');
 
   const person = { ...message, sender: { id: 4, username: 'ada' } };
   assert.equal(renderToHtml(createElement(BotQuestion, { message: person, conversationId: 3 })), '', 'only the bot\'s own');

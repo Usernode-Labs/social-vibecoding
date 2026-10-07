@@ -545,10 +545,10 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
         <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={submit} disabled={!!uploading || (!value.trim() && !attachments.length && !object)} className="messages-send" aria-label="Send message"><ArrowUpIcon aria-hidden="true" /></button>
       </div>
       {error ? <p role="alert" className="mt-1 text-xs text-red-700 dark:text-red-400">{error}</p> : null}
-      {/* The count's line is always laid out, empty or not: it appearing
-          with the first keystroke pushed the whole composer up by a line.
-          On a phone (#3735) it is not laid out at all until the text nears
-          the limit (`data-near-limit`, app.css), so the card stays one row. */}
+      {/* The count's line is not laid out until the text nears the limit
+          (`data-near-limit`, app.css): on a phone since #3735, and at every
+          width since #4202, so the card stays one row and the first
+          keystroke does not push the composer up by a line. */}
       <div className="messages-composer-count mt-1 px-1 flex justify-end h-[15px]" data-near-limit={nearLimit ? '' : undefined} aria-hidden={!value.length}><span className={`text-[10px] leading-[15px] ${nearLimit ? 'text-amber-800 dark:text-amber-300' : 'text-zinc-500 dark:text-zinc-400'}`}>{value.length ? `${value.length}/8000` : ''}</span></div>
       </div>
       {dragging ? <DropOverlay className="messages-drop-overlay" /> : null}
