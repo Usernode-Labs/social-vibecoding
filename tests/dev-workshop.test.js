@@ -5631,3 +5631,18 @@ test('a refetch keeps every theme where it was; only a chip press re-sorts', () 
   assert.deepEqual(orderThemesStable({ key: 'activity', ids: ['b', 'a'] },
     [theme('a', 9), theme('b', 3)], 'people').map((t) => t.id), ['a', 'b']);
 });
+
+test('#4031: the end card keeps its ring when the last vote takes the open count to zero', () => {
+  const { endRingTotal } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
+  // One open change, voted on here: the server's count is 0 by the time the
+  // end card shows. The ring was dropped, the centred card jumped 65px under
+  // the reader, and iOS left the old button painted below the new one.
+  assert.equal(endRingTotal(0, 1, 0), 1, 'a full 1/1 ring, not none');
+  // The live count still wins whenever it is larger: three open, none voted.
+  assert.equal(endRingTotal(3, 0, 3), 3);
+  // Two voted here, one still waiting, server already down to one.
+  assert.equal(endRingTotal(1, 2, 1), 3);
+  // Nothing to vote on and nothing voted: still no ring.
+  assert.equal(endRingTotal(0, 0, 0), 0);
+  assert.match(WORKSHOP, /<DoneItem\s+total=\{endRingTotal\(total, votedHere, leftVotes\)\}/, 'the feed draws the end card with it');
+});
