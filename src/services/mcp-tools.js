@@ -5188,14 +5188,28 @@ function registerTools(server, ctx) {
         : result.previewRebuilding
           ? ' Its staging preview is rebuilding now; use get_proposal to follow it.'
           : ' No preview build started for this push.';
-      const landedStep = result.targetKind === 'session'
-        ? 'The shared card now points at your new commit. Nothing is gated on it and no votes are being '
-          + `collected.${buildNote}${shotOn}`
-        : `${named} now points at your new commit.${cleared > 0
+      // A head move services/integration.js classifies as mechanical or
+      // resolved keeps the approvals: the new commit only brings the approved
+      // code up to date with main. Saying the votes were cleared there sends
+      // the author to chase re-reviews nobody was asked for.
+      const atRisk = Number.isInteger(result.votesAtRisk) ? result.votesAtRisk : 0;
+      const votesStep = result.votesKept === true
+        ? `${atRisk > 0
+          ? ` The ${atRisk} vote${atRisk === 1 ? '' : 's'} it had collected still stand`
+          : ' Its votes were not reset'}, because the new commit only brings the approved code up to date with main.`
+          + (result.previewRebuilding
+            ? ' Its checks and staging preview are rebuilding against the merged code; use get_proposal to follow them.'
+            : ' Its passing checks carry over to the merged commit.')
+          + shotOn
+        : `${cleared > 0
           ? ` The ${cleared} vote${cleared === 1 ? '' : 's'} it had collected were cleared, because they were cast on the old code`
           : ' Any votes it had collected were cleared, because they were cast on the old code'}`
           + ' — reviewers have been asked to look again. Checks and the staging preview rebuild automatically; '
           + `use get_proposal to follow them.${shotOn}`;
+      const landedStep = result.targetKind === 'session'
+        ? 'The shared card now points at your new commit. Nothing is gated on it and no votes are being '
+          + `collected.${buildNote}${shotOn}`
+        : `${named} now points at your new commit.${votesStep}`;
 
       return toolResult({
         proposalId: result.proposalId,

@@ -747,6 +747,58 @@ test('an imported proposal advances the head the platform TRACKS, and pushes not
   assert.equal(log.applied[0].oldHead, NATIVE_HEAD);
 });
 
+// applyHeadChange classifies the move. An author's push that is exactly git's
+// merge of the approved head with main keeps the votes and can carry a green
+// verdict, and the report says so instead of "2 votes cleared, rebuilding".
+function forkHeadMove(applied) {
+  const session = importedSession();
+  return run(
+    {
+      session,
+      pool: fakePool([
+        ['FROM chat_sessions cs JOIN apps a', [session]],
+        ['FROM pr_votes', [{ n: 2 }]],
+      ]),
+      prImportSync: { applyHeadChange: async () => applied },
+    },
+    { branch: 'usernode/add-a-button' }
+  );
+}
+
+test('an imported fork head the classifier keeps reports the votes kept', async () => {
+  const mechanical = await forkHeadMove({
+    applied: true, kind: 'mechanical', votesKept: true, checksCarry: true, epoch: 0,
+  });
+  assert.equal(mechanical.ok, true);
+  assert.equal(mechanical.votesCleared, 0);
+  assert.equal(mechanical.votesKept, true);
+  assert.equal(mechanical.votesAtRisk, 2);
+  assert.equal(mechanical.checksRerun, false, 'the green verdict carried onto the merged commit');
+  assert.equal(mechanical.previewRebuilding, false);
+
+  // 'resolved' keeps the approvals too, but nobody has tested its tree.
+  const resolved = await forkHeadMove({
+    applied: true, kind: 'resolved', votesKept: true, checksCarry: false, epoch: 0,
+  });
+  assert.equal(resolved.votesCleared, 0);
+  assert.equal(resolved.checksRerun, true);
+  assert.equal(resolved.previewRebuilding, true);
+
+  const authored = await forkHeadMove({
+    applied: true, kind: 'authored', votesKept: false, checksCarry: false, epoch: 1,
+  });
+  assert.equal(authored.votesCleared, 2);
+  assert.equal(authored.votesKept, false);
+  assert.equal(authored.checksRerun, true);
+
+  // Another pass applied this head first, so its answer is not this call's.
+  const raced = await forkHeadMove({
+    applied: false, kind: 'mechanical', votesKept: false, checksCarry: false, epoch: null,
+  });
+  assert.equal(raced.votesCleared, 2, 'reported as it always was');
+  assert.equal(raced.checksRerun, true);
+});
+
 // #1196. The proposal the connector's mirror rung opens: imported, but its
 // head is a branch in the app repository. Before this, `branchHomeOf` sent it
 // to the fork path, which read the pull request, saw it came from
@@ -845,6 +897,7 @@ test('a re-pin the classifier calls mechanical reports the votes kept and the ve
   assert.equal(result.votesCleared, 0);
   assert.equal(result.votesClearing, 'none');
   assert.equal(result.votesAtRisk, 3);
+  assert.equal(result.votesKept, true);
   assert.equal(result.checksRerun, false);
   assert.equal(result.previewRebuilding, false);
 });
@@ -1055,7 +1108,9 @@ test('nothing here decides what the push costs the approvals', () => {
   // chat_sessions.approval_epoch. A path that classified the move or moved
   // the epoch itself could keep every existing approval on code nobody in
   // the group has read. The comment says so; this makes it true.
-  assert.doesNotMatch(CODE, /classifyHeadMove|clearApprovals|approval_epoch/);
+  assert.doesNotMatch(CODE, /classifyHeadMove|clearApprovals/);
+  // countVotes READS the epoch to count the current votes; nothing moves it.
+  assert.doesNotMatch(CODE, /approval_epoch\s*\+/);
   assert.doesNotMatch(CODE, /sync-main/);
   // And the header comment says WHY, so the next person does not add it.
   assert.match(SRC, /classifyHeadMove/, 'the omission is documented, not accidental');
@@ -1074,6 +1129,67 @@ test('the vote-clearing and check-rerunning machinery is reused, not reimplement
   // pr_votes is read, and only read.
   const votesReads = SRC.match(/FROM pr_votes/g) || [];
   assert.equal(votesReads.length, 1);
+});
+
+test('a native head move the classifier keeps reports the votes kept', async () => {
+  // reconcileNativeReviewedHead says what the move cost. Before, any settled
+  // reconcile was reported as "4 votes cleared, checks re-running", even
+  // when the push was exactly git's merge of the approved head with main.
+  const withReconcile = (answer) => run({
+    votes: { reconcileNativeReviewedHead: async () => answer },
+  });
+
+  const mechanical = await withReconcile({
+    updated: true, changed: true, kind: 'mechanical', votesKept: true, checksCarry: true,
+  });
+  assert.equal(mechanical.ok, true);
+  assert.equal(mechanical.votesCleared, 0);
+  assert.equal(mechanical.votesClearing, 'none');
+  assert.equal(mechanical.votesKept, true);
+  assert.equal(mechanical.votesAtRisk, 4);
+  assert.equal(mechanical.checksRerun, false, 'the green verdict carried onto the merged commit');
+  assert.equal(mechanical.previewRebuilding, false);
+
+  // 'resolved' keeps the approvals too, but nobody has tested its tree.
+  const resolved = await withReconcile({
+    updated: true, changed: true, kind: 'resolved', votesKept: true, checksCarry: false,
+  });
+  assert.equal(resolved.votesCleared, 0);
+  assert.equal(resolved.votesClearing, 'none');
+  assert.equal(resolved.checksRerun, true);
+
+  const authored = await withReconcile({
+    updated: true, changed: true, kind: 'authored', votesKept: false, checksCarry: false,
+  });
+  assert.equal(authored.votesCleared, 4);
+  assert.equal(authored.votesClearing, 'now');
+  assert.equal(authored.votesKept, false);
+  assert.equal(authored.checksRerun, true);
+
+  // A row with no pin yet is bound, not moved: nothing is cleared or kicked.
+  const initialized = await withReconcile({
+    updated: true, changed: false, kind: 'initialized', initialized: true,
+  });
+  assert.equal(initialized.votesCleared, 0);
+  assert.equal(initialized.votesClearing, 'none');
+  assert.equal(initialized.votesKept, false);
+  assert.equal(initialized.checksRerun, false);
+});
+
+test('only the votes counting now are counted as at risk', async () => {
+  // Rows survive an epoch bump, so a bare COUNT(*) also counted votes an
+  // earlier move had already retired.
+  const queries = [];
+  const session = nativeSession();
+  const pool = fakePool([
+    ['FROM chat_sessions cs JOIN apps a', [session]],
+    ['FROM pr_votes', [{ n: 2 }]],
+  ], queries);
+  const result = await run({ session, pool });
+  assert.equal(result.votesCleared, 2);
+  const counted = queries.find((q) => String(q.sql).includes('FROM pr_votes'));
+  assert.match(String(counted.sql), /pv\.approval_epoch = cs\.approval_epoch/);
+  assert.deepEqual(counted.params, [501]);
 });
 
 test('a reconciliation that fails after a successful push still reports the update', async () => {

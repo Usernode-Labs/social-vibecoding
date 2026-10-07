@@ -1003,8 +1003,11 @@ test('a submit says WHEN its vote-clearing happens, not just a count', () => {
   // The imported tail: 'on_sync' until something re-pinned the head, then
   // 'now', or 'none' when the re-pin kept the votes (a mechanical move).
   assert.match(pu, /let votesClearing = votesCleared > 0 \? 'on_sync' : 'none';\s*\n\s*if \(applied\) votesClearing = cleared \? 'now' : 'none';/);
-  assert.match(pu, /votesClearing: settled \? 'now' : \(votesCleared > 0 \? 'on_sync' : 'none'\)/);
+  // The native tail: the same three answers, read off the reconcile, which
+  // also says when a mechanical or resolved move kept the votes.
+  assert.match(pu, /let votesClearing = votesCleared > 0 \? 'on_sync' : 'none';\s*\n\s*if \(settled\) votesClearing = cleared \? 'now' : 'none';/);
   const eat = read('src/services/external-agent-tasks.js');
   assert.match(eat, /votesClearing: result\.votesClearing \|\|/);
   assert.match(eat, /votesAtRisk: Number\.isInteger\(result\.votesAtRisk\)/);
+  assert.match(eat, /votesKept: result\.votesKept === true/);
 });

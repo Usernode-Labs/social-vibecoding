@@ -1876,6 +1876,10 @@ async function reconcileNativeReviewedHead({
     changed: true,
     kind: move.kind,
     votesKept: keepsApprovals,
+    // The green verdict about the old head now stands for this one, so
+    // nothing rebuilds. services/proposal-update.js reports that to the
+    // author instead of a rebuild that is not happening.
+    checksCarry,
     checksDeferred: needsChecks && deferChecks,
   };
 }

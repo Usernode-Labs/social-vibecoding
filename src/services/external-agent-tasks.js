@@ -2974,6 +2974,10 @@ async function submitUpdate(deps, params, proposalId) {
     // or 'none'. Without this, a 0 on the mirror path read as "votes kept".
     votesClearing: result.votesClearing || (Number(result.votesCleared) > 0 ? 'now' : 'none'),
     votesAtRisk: Number.isInteger(result.votesAtRisk) ? result.votesAtRisk : (Number(result.votesCleared) || 0),
+    // The head moved, but services/integration.js classified the move as
+    // mechanical or resolved, so the approvals still count. A votesCleared of
+    // 0 cannot say this on its own: it is also what "nobody had voted" reads.
+    votesKept: result.votesKept === true,
     checksRerun: result.checksRerun === true,
     previewRebuilding: result.previewRebuilding === true,
     // #1071. A paused session takes the commit but deliberately does NOT
