@@ -46,7 +46,7 @@ const firstSession = require('../services/first-session');
 const managedOpenRouter = require('../services/openrouter-managed-keys');
 const { adminMiddleware, requireAdminWrite } = require('../middleware/admin');
 const { oauthSignInLimiter, otpVerifyLimiter } = require('../middleware/rate-limits');
-const { createSession, createSessionCookie, roleFields } = require('./auth');
+const { createSession, createSessionCookie, noteSignIn, roleFields } = require('./auth');
 
 const SECURE_COOKIE = process.env.NODE_ENV === 'production';
 const BINDER_COOKIE = 'hr_oauth_binder';
@@ -197,6 +197,7 @@ function signInProviderRoutes(config) {
       await afterSignIn(req, res, provider, state, result);
       if (result.next === 'signed-in') {
         createSessionCookie(res, result.session.token, result.session.expiresAt);
+        noteSignIn(pool, req, result.userId);
         log.info('sign-in-providers', 'Signed in', { provider, userId: result.userId, created: result.created });
         return goBack(res, returnTo, null);
       }
@@ -288,6 +289,7 @@ function signInProviderRoutes(config) {
       await afterSignIn(req, res, provider, state, result);
       if (result.next === 'signed-in') {
         createSessionCookie(res, result.session.token, result.session.expiresAt);
+        noteSignIn(pool, req, result.userId);
         log.info('sign-in-providers', 'Signed in from the app', { provider, userId: result.userId, created: result.created });
         return res.json({
           next: 'signed-in',
@@ -316,6 +318,7 @@ function signInProviderRoutes(config) {
       });
       clearPrivateCookie(res, SIGNUP_COOKIE);
       createSessionCookie(res, done.session.token, done.session.expiresAt);
+      noteSignIn(pool, req, done.user.id);
       return res.json({
         user: {
           id: done.user.id,

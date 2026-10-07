@@ -51,6 +51,7 @@ const { isCliSurfaceEnabled } = require('./cli-auth');
 const githubLink = require('../services/github-link');
 const emailSignup = require('../services/email-signup');
 const managedOpenRouter = require('../services/openrouter-managed-keys');
+const inviteActivity = require('../services/invite-activity');
 // The platform's own self-hosted app row. The home screen's Improve button is
 // about the PLATFORM, and the client has no other way to learn that row's slug
 // — GET /api/apps hides self-hosted rows from non-admins on purpose.
@@ -147,6 +148,15 @@ function createSessionCookie(res, token, expiresAt) {
     sameSite: 'lax',
     expires: expiresAt,
   });
+}
+
+// An invite link this browser opened before anybody was signed in here is
+// remembered, not told about (services/invite-activity.js noteOpened); now
+// that somebody is, its maker hears about it. Fire-and-forget, like
+// noteJoined: a sign-in never waits on it or fails because of it. The
+// browser cookie has path /api, so every route here carries it.
+function noteSignIn(pool, req, userId) {
+  void inviteActivity.noteSignedIn(pool, { userId, browser: inviteActivity.browserFrom(req) });
 }
 
 async function createSession(queryable, userId) {
@@ -331,6 +341,7 @@ function authRoutes(config) {
 
       const { token, expiresAt } = await createSession(pool, user.id);
       createSessionCookie(res, token, expiresAt);
+      noteSignIn(pool, req, user.id);
 
       log.info('auth', 'Login successful', { userId: user.id, username: user.username, matchedBy });
 
@@ -403,6 +414,7 @@ function authRoutes(config) {
         // shaped exactly like /api/auth/login's response.
         clearSignupCookie(res);
         createSessionCookie(res, verified.session.token, verified.session.expiresAt);
+        noteSignIn(pool, req, verified.userId);
         log.info('email-signup', 'Email code signed an existing account in', {
           userId: verified.userId,
           next: 'signed-in',
@@ -488,6 +500,7 @@ function authRoutes(config) {
       });
       clearSignupCookie(res);
       createSessionCookie(res, completed.session.token, completed.session.expiresAt);
+      noteSignIn(pool, req, completed.user.id);
       return res.json({
         user: {
           id: completed.user.id,
@@ -1536,6 +1549,7 @@ function authRoutes(config) {
 
       const { token, expiresAt } = await createSession(pool, user.id);
       createSessionCookie(res, token, expiresAt);
+      noteSignIn(pool, req, user.id);
 
       log.info('wallet-auth', 'Signature login successful', { userId: user.id, username: user.username });
       res.json({ user: { id: user.id, username: user.username, ...roleFields(user.is_admin, user.admin_readonly) } });
@@ -1646,6 +1660,7 @@ function authRoutes(config) {
       }
       const { token, expiresAt } = recovery.session;
       createSessionCookie(res, token, expiresAt);
+      noteSignIn(pool, req, user.id);
 
       log.info('wallet-auth', 'Wallet password reset successful', { userId: user.id, username: user.username });
       res.json({ user: { id: user.id, username: user.username, ...roleFields(user.is_admin, user.admin_readonly) } });
@@ -1890,6 +1905,7 @@ function authRoutes(config) {
 
       const { token, expiresAt } = await createSession(pool, userId);
       createSessionCookie(res, token, expiresAt);
+      noteSignIn(pool, req, userId);
 
       const memo = JSON.stringify({
         app: 'vibecode',
@@ -1949,6 +1965,7 @@ function authRoutes(config) {
 
       const { token, expiresAt } = await createSession(pool, user.id);
       createSessionCookie(res, token, expiresAt);
+      noteSignIn(pool, req, user.id);
 
       if (user.usernode_pubkey === pubkey.trim()) {
         log.info('wallet-auth', 'Wallet link-login (already linked)', { userId: user.id });
@@ -1992,4 +2009,4 @@ function authRoutes(config) {
 
 // Apple and Google sign-in (routes/sign-in-providers.js) mints the same
 // session, with the same cookie, and answers with the same role fields.
-module.exports = { authRoutes, DEV_FLOWS, createSession, createSessionCookie, roleFields };
+module.exports = { authRoutes, DEV_FLOWS, createSession, createSessionCookie, roleFields, noteSignIn };

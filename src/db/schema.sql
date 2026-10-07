@@ -11920,12 +11920,15 @@ END $$;
 -- their account when they were signed in, else their browser, kept as the
 -- SHA-256 of a random HttpOnly cookie (hr_iv) that names nothing and says
 -- nothing about where it is. A browser that later opens a link signed in,
--- or joins through one, is given its account, so the person stays one row.
--- `notification_id` is the open notice they are counted on. It goes NULL
--- when they join through the maker's link, whose own notice ("Joined
--- through your invite") replaces their open; the row stays, so opening the
--- link again later is still not news. staging:private: it says who looked
--- at whose link.
+-- signs in, or joins through one, is given its account, so the person stays
+-- one row. An open made signed out is remembered but not told: its row
+-- waits without a notice, and is counted on one only when that browser
+-- signs in or opens the link signed in. `notification_id` is the open
+-- notice they are counted on; NULL with no account means "not told yet",
+-- and it goes NULL when they join through the maker's link, whose own
+-- notice ("Joined through your invite") replaces their open; the row
+-- stays, so opening the link again later is still not news.
+-- staging:private: it says who looked at whose link.
 CREATE TABLE IF NOT EXISTS community_invite_opens (
   id              SERIAL PRIMARY KEY,
   maker_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

@@ -53,7 +53,7 @@ const {
   phoneOtpRequestPhoneLimiter,
   phoneVerifyLimiter,
 } = require('../middleware/rate-limits');
-const { createSession, createSessionCookie, roleFields } = require('./auth');
+const { createSession, createSessionCookie, noteSignIn, roleFields } = require('./auth');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 const SECURE_COOKIE = process.env.NODE_ENV === 'production';
@@ -194,6 +194,7 @@ function phoneAuthRoutes(config) {
         : null;
       if (named) {
         createSessionCookie(res, named.session.token, named.session.expiresAt);
+        noteSignIn(pool, req, named.user.id);
         log.info('phone-auth', 'Phone sign-up finished with a name', { userId: named.user.id });
         return res.json({
           ok: true,
@@ -210,6 +211,7 @@ function phoneAuthRoutes(config) {
 
       if (result.next === 'signed-in') {
         createSessionCookie(res, result.session.token, result.session.expiresAt);
+        noteSignIn(pool, req, result.userId);
         log.info('phone-auth', 'Phone sign-in signed an account in', {
           userId: result.userId,
           created: !!result.created,
@@ -254,6 +256,7 @@ function phoneAuthRoutes(config) {
       });
       clearPrivateCookie(res, 'hr_phone_signup');
       createSessionCookie(res, done.session.token, done.session.expiresAt);
+      noteSignIn(pool, req, done.user.id);
       log.info('phone-auth', 'Phone sign-up chose a username', { userId: done.user.id });
       return res.json({
         ok: true,

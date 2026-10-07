@@ -153,3 +153,28 @@ test('opens are counted from the page\'s own reads, once per person, never from 
   assert.match(read('src/services/ws.js'),
     /const hello = postedVia !== 'agent'\s*\? require\('\.\/invite-activity'\)\.noteFirstMessage\(pool, \{/);
 });
+
+test('a signed-out open waits for the sign-in: the service defers it, and every browser sign-in hooks it', () => {
+  const service = read('src/services/invite-activity.js');
+  assert.match(service, /async function noteSignedIn\(pool, \{ userId, browser = null \}\)/, 'the sign-in hook, on the service');
+  assert.match(service, /noteSignedIn,/, 'exported');
+  const auth = read('src/routes/auth.js');
+  assert.match(auth, /function noteSignIn\(pool, req, userId\) \{\s*void inviteActivity\.noteSignedIn\(pool, \{ userId, browser: inviteActivity\.browserFrom\(req\) \}\);\s*\}/);
+  assert.match(auth, /module\.exports = \{ authRoutes, DEV_FLOWS, createSession, createSessionCookie, roleFields, noteSignIn \};/);
+  // Every browser sign-in that mints a session cookie is followed by the
+  // hook, in all three route files (invite-activity-postgres pins what the
+  // hook does).
+  for (const [file, defines] of [
+    ['src/routes/auth.js', true],
+    ['src/routes/sign-in-providers.js', false],
+    ['src/routes/phone-auth.js', false],
+  ]) {
+    const src = read(file);
+    // Each count leaves out the file's own definition line, which matches
+    // the same shape as its call sites.
+    const cookies = (src.match(/createSessionCookie\(res,/g) || []).length - (defines ? 1 : 0);
+    const hooks = (src.match(/noteSignIn\(pool, req,/g) || []).length - (defines ? 1 : 0);
+    assert.ok(cookies > 0, `${file}: has browser sign-ins`);
+    assert.equal(hooks, cookies, `${file}: every browser sign-in tells the deferred opens`);
+  }
+});
