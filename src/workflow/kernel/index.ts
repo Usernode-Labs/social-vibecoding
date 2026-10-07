@@ -1,15 +1,16 @@
 // The workflow kernel's entry point. A process creates one runtime with the
 // machines and services it knows. Every process can append and wait; the
 // pipeline slots, timer loop and services run where `start` enables them
-// (initially the leader). Correctness never depends on which process runs
-// what: it comes from instance row locks and SKIP LOCKED claims.
+// (slots on every process, the rest on the leader). Correctness never
+// depends on which process runs what: it comes from row locks and SKIP
+// LOCKED claims.
 // docs/workflows.md explains the model and how to write a machine.
 
 import { hostname } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { processNext } from './pipeline.ts';
-import { fireDueTimers, purge } from './timers.ts';
-import { claim, execute } from './services.ts';
+import { fireDueTimers, nextDeadlineMs, purge } from './timers.ts';
+import { claim, execute, nextDueMs } from './services.ts';
 import { Signals, append, waitForOutcome } from './stream.ts';
 import type { AppendOptions } from './stream.ts';
 import { release } from './inspect.ts';
@@ -32,7 +33,9 @@ export interface RuntimeOptions {
   lockTimeoutMs?: number;
   statementTimeoutMs?: number;
   stallAfter?: number;
-  pollMs?: number;             // idle wake-up when no notification arrives
+  // Idle wake-up when no notification arrives: a fallback while listening
+  // (default 30 s), the polling interval when not (default and at most 1 s).
+  pollMs?: number;
   serviceId?: string;
 }
 
@@ -51,31 +54,41 @@ export function createRuntime(opts: RuntimeOptions) {
   const pipeline = { pool: opts.pool, machines, log, ...timeouts, stallAfter: opts.stallAfter ?? 5 };
   const service = { pool: opts.pool, handlers, log, serviceId: opts.serviceId || `${hostname()}:${process.pid}:${randomUUID().slice(0, 8)}` };
   const signals = new Signals(opts.pool, log);
-  const pollMs = opts.pollMs ?? 1000;
   const stopping = new AbortController();
   const loops: Promise<void>[] = [];
   const running = new Map<string, Set<Promise<void>>>();
   let listening = false;
-  let looping = false;
+  let slotsRunning = false;
+  let leaderLoops = false;
 
   const machineFor = (m: Machine<any, any> | string) =>
     typeof m === 'string' ? (machines.get(m) || m) : m;
 
-  async function idle(channel: string) {
-    if (!stopping.signal.aborted) await signals.sleep(channel, pollMs);
-  }
+  const idleMs = () => (signals.listening ? (opts.pollMs ?? 30000) : Math.min(opts.pollMs ?? 1000, 1000));
 
-  function loop(name: string, body: () => Promise<boolean>, channel: string) {
+  // A loop works while its body finds work, then sleeps until a
+  // notification on `channel`, the next thing it knows is due (`dueIn`), or
+  // the idle fallback, whichever comes first.
+  function loop(name: string, body: () => Promise<boolean>, channel: string, dueIn: () => Promise<number | null>) {
     loops.push((async () => {
       while (!stopping.signal.aborted) {
         let busy = false;
         try { busy = await body(); } catch (err) {
           log.error('workflow', `${name} loop failed`, { message: (err as Error).message });
         }
-        if (!busy) await idle(channel);
+        if (busy || stopping.signal.aborted) continue;
+        let ms = idleMs();
+        try {
+          const due = await dueIn();
+          if (due !== null) ms = Math.min(ms, Math.max(due, 250));
+        } catch { /* the fallback still bounds the wait */ }
+        if (!stopping.signal.aborted) await signals.sleep(channel, ms);
       }
     })());
   }
+
+  // Kinds this process has room to run.
+  const kindsWithRoom = () => [...handlers].filter(([kind, h]) => (running.get(kind)?.size ?? 0) < (h.concurrency ?? 4)).map(([k]) => k);
 
   // Claim and start what this process has room for; returns the started runs.
   async function startServices(): Promise<Promise<void>[]> {
@@ -88,7 +101,7 @@ export function createRuntime(opts: RuntimeOptions) {
       for (const w of await claim(service, kind, room)) {
         const run = execute(service, w, stopping.signal)
           .catch((err) => log.error('workflow', 'work execution failed', { kind, workId: w.id, message: err?.message }))
-          .finally(() => set.delete(run));
+          .finally(() => { set.delete(run); signals.wake('wf_work'); });
         set.add(run);
         started.push(run);
       }
@@ -108,8 +121,16 @@ export function createRuntime(opts: RuntimeOptions) {
       // Inside the caller's transaction the event is invisible until it
       // commits, so waiting there could only ever time out.
       if (o.db) throw new Error('appendAndWait cannot run inside a caller transaction; use append');
-      const id = await append(opts.pool, machineFor(machine), key, event, o);
-      return waitForOutcome(opts.pool, listening ? signals : null, id, o.waitMs ?? 3000);
+      // Watch before appending: the first read is the one after the outcome.
+      const watch = listening ? signals.watch() : null;
+      let id: number;
+      try {
+        id = await append(opts.pool, machineFor(machine), key, event, o);
+      } catch (err) {
+        watch?.close();
+        throw err;
+      }
+      return waitForOutcome(opts.pool, listening ? signals : null, id, o.waitMs ?? 3000, watch);
     },
 
     // Single steps, for tests and admin tooling.
@@ -131,20 +152,26 @@ export function createRuntime(opts: RuntimeOptions) {
     release: (machine: string, key: string, o: { mode: 'retry' | 'skip'; actor: string }) =>
       release(opts.pool, machine, key, { ...o, ...timeouts }),
 
-    // Every process starts signals (so appendAndWait wakes on outcomes);
-    // with `loops`, it also runs pipeline slots, timers and services. That
-    // is the leader for now; correctness does not depend on it. Callable
+    // Every process starts signals (so appendAndWait wakes on outcomes).
+    // With `slots`, it also runs pipeline slots: every process may, since
+    // an instance's row lock decides who applies its events. With `loops`,
+    // it runs the slots, timers and services: the leader for now. Callable
     // again later: a follower starts its loops when it is elected.
-    async start(o: { loops?: boolean } = {}) {
+    async start(o: { loops?: boolean; slots?: boolean } = {}) {
       if (!listening) {
         listening = true;
         await signals.start();
       }
-      if (!o.loops || looping) return;
-      looping = true;
-      for (let i = 0; i < (opts.slots ?? 8); i++) {
-        loop(`pipeline slot ${i}`, async () => (await processNext(pipeline)) !== null, 'wf_events');
+      if ((o.slots || o.loops) && !slotsRunning) {
+        slotsRunning = true;
+        for (let i = 0; i < (opts.slots ?? 8); i++) {
+          const idle = { retryInMs: null as number | null };
+          loop(`pipeline slot ${i}`, async () => (await processNext(pipeline, idle)) !== null, 'wf_events',
+            async () => idle.retryInMs);
+        }
       }
+      if (!o.loops || leaderLoops) return;
+      leaderLoops = true;
       let lastPurge = 0;
       loop('timer', async () => {
         if (Date.now() - lastPurge > 3600000) {
@@ -152,8 +179,10 @@ export function createRuntime(opts: RuntimeOptions) {
           await runtime.purge().catch((err) => log.warn('workflow', 'retention purge failed', { message: err.message }));
         }
         return (await fireDueTimers(opts.pool, timeouts)) > 0;
-      }, 'wf_timer');
-      if (handlers.size) loop('services', async () => (await startServices()).length > 0, 'wf_work');
+      }, 'wf_timer', async () => Math.min(await nextDeadlineMs(opts.pool) ?? Infinity, 3600000 - (Date.now() - lastPurge)));
+      if (handlers.size) {
+        loop('services', async () => (await startServices()).length > 0, 'wf_work', () => nextDueMs(opts.pool, kindsWithRoom()));
+      }
     },
 
     async stop() {

@@ -65,14 +65,35 @@ export async function readOutcome(db: Queryable, eventId: number): Promise<Event
 
 // One LISTEN connection per process wakes sleepers early. Everything also
 // works without it: every wait is bounded and re-reads the database.
+//
+// Pipeline slots sleep on `wf_events`, and each notification wakes ONE of
+// them (the others would only race it for the same instance). A
+// notification that finds no slot asleep is kept, so a slot that was busy
+// when it came does not sleep through it.
+const WAKE_ONE = new Set(['wf_events']);
+const MAX_KEPT = 64;
+
+// Outcome notifications seen since a watch began: a producer starts the
+// watch before it appends, so an outcome that lands before it starts
+// waiting is not missed, and its first read of the outcome is the one
+// after the notification.
+export interface OutcomeWatch {
+  until(eventId: number, ms: number): Promise<boolean>;   // true: notified
+  close(): void;
+}
+
 export class Signals {
   #pool: Pool;
   #log: Logger;
   #client: PoolClient | null = null;
   #sleepers = new Map<string, Set<() => void>>();
+  #kept = new Map<string, number>();
+  #watches = new Set<{ seen: Set<string>; wake: (() => void) | null }>();
   #stopped = false;
 
   constructor(pool: Pool, log: Logger) { this.#pool = pool; this.#log = log; }
+
+  get listening(): boolean { return this.#client !== null; }
 
   async start(): Promise<void> {
     if (this.#client || this.#stopped) return;
@@ -85,10 +106,10 @@ export class Signals {
         client.release(err);
         if (!this.#stopped) setTimeout(() => { this.start(); }, 1000).unref?.();
       });
-      await client.query('LISTEN wf_events');
-      await client.query('LISTEN wf_outcome');
-      await client.query('LISTEN wf_work');
+      await client.query('LISTEN wf_events; LISTEN wf_outcome; LISTEN wf_work');
       this.#client = client;
+      // Whatever was announced while nobody listened: look once.
+      this.wakeAll();
     } catch (err) {
       this.#log.warn('workflow', 'signal connection unavailable; polling only', { message: (err as Error).message });
     }
@@ -98,22 +119,42 @@ export class Signals {
     this.#stopped = true;
     const client = this.#client;
     this.#client = null;
-    for (const set of this.#sleepers.values()) for (const fn of set) fn();
+    this.wakeAll();
     if (client) {
       await client.query('UNLISTEN *').catch(() => {});
       client.release();
     }
   }
 
+  wakeAll(): void {
+    for (const set of [...this.#sleepers.values()]) for (const fn of [...set]) fn();
+    for (const w of this.#watches) w.wake?.();
+  }
+
   wake(channel: string, payload?: string): void {
+    if (channel === 'wf_outcome') {
+      for (const w of this.#watches) { w.seen.add(payload ?? ''); w.wake?.(); }
+    }
+    if (WAKE_ONE.has(channel)) {
+      const set = this.#sleepers.get(channel);
+      const first = set?.values().next().value;
+      if (first) first();
+      else this.#kept.set(channel, Math.min(MAX_KEPT, (this.#kept.get(channel) ?? 0) + 1));
+      return;
+    }
     for (const name of [channel, `${channel}:${payload ?? ''}`]) {
       const set = this.#sleepers.get(name);
-      if (set) for (const fn of set) fn();
+      if (set) for (const fn of [...set]) fn();
     }
   }
 
   // Resolves on a notification on `channel` (or `channel:payload`), or after ms.
   sleep(channel: string, ms: number): Promise<void> {
+    const kept = this.#kept.get(channel) ?? 0;
+    if (kept > 0) {
+      this.#kept.set(channel, kept - 1);
+      return Promise.resolve();
+    }
     if (this.#stopped) return new Promise((resolve) => { setTimeout(resolve, ms); });
     return new Promise((resolve) => {
       let set = this.#sleepers.get(channel);
@@ -128,21 +169,50 @@ export class Signals {
       set.add(done);
     });
   }
+
+  // Null when not listening: the caller polls instead.
+  watch(): OutcomeWatch | null {
+    if (!this.#client || this.#stopped) return null;
+    const w = { seen: new Set<string>(), wake: null as (() => void) | null };
+    this.#watches.add(w);
+    return {
+      until: (eventId, ms) => new Promise((resolve) => {
+        const id = String(eventId);
+        const check = () => {
+          if (!w.seen.delete(id)) return false;
+          clearTimeout(timer); w.wake = null; resolve(true);
+          return true;
+        };
+        const timer = setTimeout(() => { w.wake = null; resolve(false); }, ms);
+        w.wake = () => { if (!check() && this.#stopped) { clearTimeout(timer); w.wake = null; resolve(false); } };
+        check();
+      }),
+      close: () => { this.#watches.delete(w); },
+    };
+  }
 }
 
 // Wait up to waitMs for the event's outcome; 'pending' means the caller
 // answers 202 with the request key, and a retry with that key replays.
+// With a watch (started before the append), the outcome is read once its
+// notification arrives, or each second as a fallback; without one, polled.
 export async function waitForOutcome(
-  db: Queryable, signals: Signals | null, eventId: number, waitMs: number,
+  db: Queryable, signals: Signals | null, eventId: number, waitMs: number, watch: OutcomeWatch | null = null,
 ): Promise<EventOutcome> {
   const deadline = Date.now() + waitMs;
-  for (;;) {
-    const outcome = await readOutcome(db, eventId);
-    if (!outcome) throw new Error(`workflow event ${eventId} does not exist`);
-    const left = deadline - Date.now();
-    if (outcome.status !== 'pending' || left <= 0) return outcome;
-    const nap = Math.min(left, 250);
-    if (signals) await signals.sleep(`wf_outcome:${eventId}`, nap);
-    else await new Promise((r) => setTimeout(r, nap));
+  try {
+    for (;;) {
+      if (watch) await watch.until(eventId, Math.max(0, Math.min(deadline - Date.now(), 1000)));
+      const outcome = await readOutcome(db, eventId);
+      if (!outcome) throw new Error(`workflow event ${eventId} does not exist`);
+      const left = deadline - Date.now();
+      if (outcome.status !== 'pending' || left <= 0) return outcome;
+      if (watch) continue;
+      const nap = Math.min(left, 250);
+      if (signals) await signals.sleep(`wf_outcome:${eventId}`, nap);
+      else await new Promise((r) => setTimeout(r, nap));
+    }
+  } finally {
+    watch?.close();
   }
 }

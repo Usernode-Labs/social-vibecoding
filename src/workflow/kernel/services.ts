@@ -70,6 +70,16 @@ export async function claim(opts: ServiceOptions, kind: string, room: number): P
   }
 }
 
+// Milliseconds until the next item of these kinds is due (queued, or a
+// lease that runs out), or null when there is none. New work notifies.
+export async function nextDueMs(pool: Pool, kinds: string[]): Promise<number | null> {
+  if (!kinds.length) return null;
+  const { rows: [r] } = await pool.query(
+    `SELECT (EXTRACT(EPOCH FROM min(CASE WHEN status = 'queued' THEN due_at ELSE lease_until END) - now()) * 1000)::float8 AS ms
+       FROM wf_work WHERE kind = ANY($1::text[]) AND status IN ('queued', 'running')`, [kinds]);
+  return r?.ms == null ? null : Number(r.ms);
+}
+
 type Report =
   | { outcome: 'succeeded'; result: Json }
   | { outcome: 'failed' | 'exhausted'; error: { message: string; code: string | null } }

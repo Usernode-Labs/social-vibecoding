@@ -1,5 +1,11 @@
 // The transition pipeline: the only writer of machine state. One event per
 // transaction, under its instance's row lock; concurrent across instances.
+//
+// Round trips are what a waiting producer pays for, so the common path is
+// kept to a fixed few: one batch opens the transaction, one statement picks
+// and locks the event and its instance (with the receipt and the clock),
+// the machine's own queries run, and one statement records the outcome
+// before COMMIT. Failures take a slower path in a transaction of their own.
 
 import { NONE, WORK_EVENTS, assertJson, canonicalHash, isIgnored, isRejection } from './machine.ts';
 import type { Machine, WorkResultPayload } from './machine.ts';
@@ -21,15 +27,24 @@ export interface PipelineOptions {
 const RETRYABLE = new Set(['55P03', '57014', '40001', '40P01']);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const TX_CONTROL = /^\s*(begin|commit|rollback|end|abort|start|savepoint|release|prepare|set\s+(session\s+)?(transaction|session|role|local\s+app\.wf_writer|app\.wf_writer)|reset|discard)\b/i;
+// How many picked events a slot may pass over (taken by a newer version or
+// faulted between the pick and the lock) before it reports nothing ready.
+const MAX_PASSES = 16;
+
+const millis = (v: number) => {
+  const n = Math.floor(Number(v));
+  if (!Number.isFinite(n) || n < 0) throw new Error(`workflow: invalid timeout ${v}`);
+  return `'${n}ms'`;
+};
+
+// A pipeline transaction opens with the writer marker and the timeouts, in
+// one simple-protocol batch.
+const opening = (opts: Pick<PipelineOptions, 'lockTimeoutMs' | 'statementTimeoutMs'>) =>
+  `BEGIN; SET LOCAL app.wf_writer = 'transition'; SET LOCAL lock_timeout = ${millis(opts.lockTimeoutMs)};`
+  + ` SET LOCAL statement_timeout = ${millis(opts.statementTimeoutMs)}`;
 
 export async function enterPipeline(client: PoolClient, opts: Pick<PipelineOptions, 'lockTimeoutMs' | 'statementTimeoutMs'>): Promise<void> {
-  await client.query('BEGIN');
-  await client.query(
-    `SELECT set_config('app.wf_writer', 'transition', true) AS writer,
-            set_config('lock_timeout', $1, true) AS lock_timeout,
-            set_config('statement_timeout', $2, true) AS statement_timeout`,
-    [`${opts.lockTimeoutMs}ms`, `${opts.statementTimeoutMs}ms`],
-  );
+  await client.query(opening(opts));
 }
 
 // Machine code gets queries only: no transaction control, one statement per
@@ -60,147 +75,201 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
-interface Candidate { id: string; machine: string; key: string; app_id: number | null }
+// The picked event row, with its instance (null when it does not exist yet),
+// the stored receipt for its request key, and the transaction's clock.
+interface Picked {
+  id: string; machine: string; key: string; app_id: number | null; type: string; payload: any; source: any;
+  actor: string | null; request_key: string; caused_by: string | null; attempts: number;
+  now: Date;
+  instance: Instance | null;
+  receipt: { payload_hash: string; outcome: any; event_id: number } | null;
+}
+interface Instance { state: string; data: unknown; version: number; machine_version: number; app_id: number | null; flag: string | null }
 
-// Process at most one event. Returns its id, or null when nothing was ready.
-export async function processNext(opts: PipelineOptions): Promise<number | null> {
+// The oldest pending event of any instance, locked with SKIP LOCKED so a
+// slot never waits for another slot's event. Only an instance's head event
+// is ever picked, so holding it is holding the instance's turn; the instance
+// row is then locked too (it may be held for a moment by the timer loop or a
+// release, never by another slot). Both locks are rechecked against the
+// latest row versions, so an event processed meanwhile is not picked again.
+//
+// It travels in the batch that opens the transaction, so its arguments are
+// literals: machine names are kebab-case (defineMachine checks), versions
+// and event ids are integers.
+function pickSql(names: string[], versions: number[], passed: number[]): string {
+  const machines = `ARRAY[${names.map((n) => `'${n}'`).join(',')}]::text[]`;
+  const ints = (xs: number[]) => xs.map((x) => { if (!Number.isSafeInteger(x)) throw new Error(`workflow: not an integer ${x}`); return String(x); });
+  return `
+  WITH pick AS (
+    SELECT e.*
+      FROM (SELECT DISTINCT ON (machine, key) id FROM wf_events
+             WHERE status = 'pending' AND machine = ANY(${machines})
+             ORDER BY machine, key, id) h
+      JOIN wf_events e ON e.id = h.id
+      JOIN unnest(${machines}, ARRAY[${ints(versions).join(',')}]::int[]) AS m(machine, version) ON m.machine = e.machine
+      LEFT JOIN wf_instances i ON i.machine = e.machine AND i.key = e.key
+     WHERE e.status = 'pending'
+       AND (e.retry_at IS NULL OR e.retry_at <= now())
+       AND i.flag IS DISTINCT FROM 'faulted'
+       AND (i.machine_version IS NULL OR i.machine_version <= m.version)
+       AND NOT (e.id = ANY(ARRAY[${ints(passed).join(',')}]::bigint[]))
+     ORDER BY e.id
+     LIMIT 1
+     FOR UPDATE OF e SKIP LOCKED)
+  SELECT p.id, p.machine, p.key, p.app_id, p.type, p.payload, p.source, p.actor, p.request_key,
+         p.caused_by, p.attempts, now() AS now,
+         CASE WHEN i.machine IS NULL THEN NULL ELSE json_build_object(
+           'state', i.state, 'data', i.data, 'version', i.version, 'machine_version', i.machine_version,
+           'app_id', i.app_id, 'flag', i.flag) END AS instance,
+         CASE WHEN r.request_key IS NULL THEN NULL ELSE json_build_object(
+           'payload_hash', r.payload_hash, 'outcome', r.outcome, 'event_id', r.event_id) END AS receipt
+    FROM pick p
+    LEFT JOIN LATERAL (SELECT * FROM wf_instances
+                        WHERE machine = p.machine AND key = p.key FOR UPDATE) i ON TRUE
+    LEFT JOIN wf_receipts r ON r.machine = p.machine AND r.key = p.key AND r.request_key = p.request_key;
+  SELECT (EXTRACT(EPOCH FROM min(retry_at) - now()) * 1000)::float8 AS ms
+    FROM wf_events WHERE status = 'pending' AND retry_at > now() AND machine = ANY(${machines})`;
+}
+
+type Step = { kind: 'done'; id: number } | { kind: 'none'; retryInMs: number | null } | { kind: 'pass'; id: number };
+
+// Process at most one event. Returns its id, or null when nothing was ready;
+// then `idle.retryInMs` says when an event in backoff is next due (or null).
+export async function processNext(opts: PipelineOptions, idle: { retryInMs: number | null } = { retryInMs: null }): Promise<number | null> {
+  if (!opts.machines.size) return null;
   const names = [...opts.machines.keys()];
-  if (!names.length) return null;
   const versions = names.map((n) => opts.machines.get(n)!.version);
-  const { rows: candidates } = await opts.pool.query<Candidate>(
-    `WITH heads AS (
-       SELECT DISTINCT ON (e.machine, e.key) e.id, e.machine, e.key, e.app_id, e.retry_at
-         FROM wf_events e
-        WHERE e.status = 'pending' AND e.machine = ANY($1::text[])
-        ORDER BY e.machine, e.key, e.id)
-     SELECT h.id, h.machine, h.key, h.app_id
-       FROM heads h
-       JOIN unnest($1::text[], $2::int[]) AS m(machine, version) ON m.machine = h.machine
-       LEFT JOIN wf_instances i ON i.machine = h.machine AND i.key = h.key
-      WHERE (h.retry_at IS NULL OR h.retry_at <= now())
-        AND i.flag IS DISTINCT FROM 'faulted'
-        AND (i.machine_version IS NULL OR i.machine_version <= m.version)
-      ORDER BY h.id
-      LIMIT 16`,
-    [names, versions],
-  );
-  for (const candidate of candidates) {
-    const id = await tryInstance(opts, candidate);
-    if (id !== null) return id;
+  const passed: number[] = [];
+  for (let i = 0; i < MAX_PASSES; i++) {
+    const step = await processOne(opts, names, versions, passed);
+    if (step.kind === 'done') return step.id;
+    if (step.kind === 'none') { idle.retryInMs = step.retryInMs; return null; }
+    passed.push(step.id);
   }
   return null;
 }
 
-async function tryInstance(opts: PipelineOptions, c: Candidate): Promise<number | null> {
-  const machine = opts.machines.get(c.machine)!;
+async function processOne(opts: PipelineOptions, names: string[], versions: number[], passed: number[]): Promise<Step> {
   const client = await opts.pool.connect();
-  let notifications: Notification[] = [];
   let broken: Error | undefined;
+  let picked: Picked | undefined;
   try {
-    await enterPipeline(client, opts);
-    let instance;
+    // One round trip: open the transaction, pick, and when nothing is
+    // ready, when the next event in backoff is due.
+    let row: Picked | undefined;
+    let retryInMs: number | null = null;
     try {
-      await client.query(
-        `INSERT INTO wf_instances (machine, key, app_id, state, machine_version)
-         SELECT $1, $2, $3, $4, $5
-          WHERE NOT EXISTS (SELECT 1 FROM wf_instances WHERE machine = $1 AND key = $2)
-         ON CONFLICT DO NOTHING`,
-        [c.machine, c.key, c.app_id, NONE, machine.version]);
-      ({ rows: [instance] } = await client.query(
-        'SELECT * FROM wf_instances WHERE machine = $1 AND key = $2 FOR UPDATE SKIP LOCKED',
-        [c.machine, c.key]));
+      const results = await client.query(`${opening(opts)}; ${pickSql(names, versions, passed)}`) as unknown as { rows: any[] }[];
+      row = results[results.length - 2]!.rows[0];
+      const ms = results[results.length - 1]!.rows[0]?.ms;
+      retryInMs = ms == null ? null : Number(ms);
     } catch (err) {
       if (!RETRYABLE.has((err as { code?: string }).code || '')) throw err;
-      instance = undefined;  // another slot is creating it; try another instance
+      row = undefined;  // the instance row stayed locked past the lock timeout
     }
-    if (!instance || instance.flag === 'faulted' || instance.machine_version > machine.version) {
+    const machine = row && opts.machines.get(row.machine)!;
+    if (!row || !machine) {
       await client.query('ROLLBACK');
-      return null;
+      return { kind: 'none', retryInMs };
     }
-    const { rows: [row] } = await client.query(
-      `SELECT * FROM wf_events
-        WHERE machine = $1 AND key = $2 AND status = 'pending'
-        ORDER BY id LIMIT 1 FOR UPDATE`, [c.machine, c.key]);
-    if (!row || (row.retry_at && new Date(row.retry_at) > new Date())) {
+    picked = row;
+    const instance = row.instance;
+    // Faulted or written by a newer version between the pick and the lock.
+    if (instance && (instance.flag === 'faulted' || instance.machine_version > machine.version)) {
       await client.query('ROLLBACK');
-      return null;
+      return { kind: 'pass', id: Number(row.id) };
     }
-    await client.query('SAVEPOINT wf_event');
+    let notifications: Notification[];
     try {
-      notifications = await applyEvent(client, machine, instance, row);
+      notifications = await applyEvent(client, machine, row);
+      await client.query('COMMIT');
     } catch (err) {
-      await client.query('ROLLBACK TO SAVEPOINT wf_event');
+      // Nothing of the event's transaction survives, the machine's writes
+      // included; the failure is recorded in a transaction of its own.
+      await client.query('ROLLBACK').catch(() => {});
       notifications = [];
-      await recordFailure(client, opts, instance, row, err);
+      await recordFailure(client, opts, machine, row, err);
     }
-    await client.query('COMMIT');
     for (const n of notifications) {
       Promise.resolve()
         .then(() => machine.notifiers.get(n.type)!(n))
-        .catch((err) => opts.log.warn('workflow', 'notification failed', { machine: c.machine, type: n.type, message: err?.message }));
+        .catch((err) => opts.log.warn('workflow', 'notification failed', { machine: row!.machine, type: n.type, message: err?.message }));
     }
-    return Number(row.id);
+    return { kind: 'done', id: Number(row.id) };
   } catch (err) {
     broken = err as Error;
     await client.query('ROLLBACK').catch(() => {});
-    opts.log.error('workflow', 'pipeline transaction failed', { machine: c.machine, key: c.key, message: broken.message });
-    return null;
+    opts.log.error('workflow', 'pipeline transaction failed', { machine: picked?.machine, key: picked?.key, message: broken.message });
+    return { kind: 'none', retryInMs: null };
   } finally {
     // A database error leaves the connection usable; anything else may not.
     client.release(broken && !(broken as { code?: string }).code ? broken : undefined);
   }
 }
 
-async function finishEvent(client: PoolClient, eventId: number, fields: {
-  result: string; reason?: string | null; version: number; stateBefore: string; stateAfter: string;
-  versionAfter: number | null; emitted?: Json; reply?: Json | null;
-}): Promise<void> {
-  await client.query(
-    `UPDATE wf_events SET status = 'processed', result = $2, reason = $3, machine_version = $4,
-            state_before = $5, state_after = $6, version_after = $7, emitted = $8, reply = $9,
-            retry_at = NULL, processed_at = clock_timestamp()
-      WHERE id = $1`,
-    [eventId, fields.result, fields.reason ?? null, fields.version, fields.stateBefore, fields.stateAfter,
-      fields.versionAfter, fields.emitted === undefined ? null : JSON.stringify(fields.emitted),
-      fields.reply == null ? null : JSON.stringify(fields.reply)]);
-  await client.query(`SELECT pg_notify('wf_outcome', $1)`, [String(eventId)]);
+// Builds one statement from data-modifying CTEs, numbering parameters as
+// they are added.
+class Statement {
+  values: unknown[] = [];
+  parts: string[] = [];
+  p(v: unknown): string { this.values.push(v); return `$${this.values.length}`; }
+  with(name: string, sql: string): this { this.parts.push(`${name} AS (${sql})`); return this; }
+  text(main: string): string { return `${this.parts.length ? `WITH ${this.parts.join(',\n')}\n` : ''}${main}`; }
 }
 
-async function applyEvent(client: PoolClient, machine: Machine<any, any>, instance: any, row: any): Promise<Notification[]> {
+interface Fields {
+  result: 'accepted' | 'rejected' | 'replayed'; reason?: string | null; version: number; stateBefore: string;
+  stateAfter: string; versionAfter: number | null; emitted?: Json; reply?: Json | null;
+}
+
+// The event's own result and the outcome notification; `s` may already hold
+// the instance's and receipt's CTEs, which commit with it.
+async function finishEvent(client: PoolClient, s: Statement, eventId: number, f: Fields): Promise<void> {
+  const id = s.p(eventId);
+  s.with('finished', `UPDATE wf_events SET status = 'processed', result = ${s.p(f.result)}, reason = ${s.p(f.reason ?? null)},
+            machine_version = ${s.p(f.version)}, state_before = ${s.p(f.stateBefore)}, state_after = ${s.p(f.stateAfter)},
+            version_after = ${s.p(f.versionAfter)}, emitted = ${s.p(f.emitted === undefined ? null : JSON.stringify(f.emitted))},
+            reply = ${s.p(f.reply == null ? null : JSON.stringify(f.reply))}, retry_at = NULL, processed_at = clock_timestamp()
+      WHERE id = ${id} RETURNING id`);
+  await client.query({ text: s.text(`SELECT pg_notify('wf_outcome', id::text) FROM finished`), values: s.values });
+}
+
+async function applyEvent(client: PoolClient, machine: Machine<any, any>, row: Picked): Promise<Notification[]> {
   const eventId = Number(row.id);
-  const { rows: [{ now }] } = await client.query('SELECT now() AS now');
-  const isNew = instance.state === NONE;
-  const state: State = deepFreeze(isNew ? { name: NONE, data: null } : machine.decode({ state: instance.state, data: instance.data }));
-  const version = Number(instance.version);
+  const inst = row.instance;
+  // A '(none)' row is left by a creating event that timed out or faulted.
+  const isNew = !inst || inst.state === NONE;
+  const state: State = deepFreeze(isNew ? { name: NONE, data: null } : machine.decode({ state: inst!.state, data: inst!.data }));
+  const version = inst ? Number(inst.version) : 0;
   const ctx: TransitionContext = Object.freeze({
-    machine: machine.name, key: instance.key, appId: instance.app_id ?? row.app_id ?? null, version, now,
+    machine: machine.name, key: row.key, appId: inst?.app_id ?? row.app_id ?? null, version, now: new Date(row.now),
   });
   const base = { version: machine.version, stateBefore: state.name, stateAfter: state.name, versionAfter: version };
 
-  const dropPlaceholder = async () => {
-    if (isNew && version === 0) {
-      await client.query('DELETE FROM wf_instances WHERE machine = $1 AND key = $2', [machine.name, instance.key]);
-    } else if (instance.flag === 'stalled') {
-      await client.query(`UPDATE wf_instances SET flag = NULL, flag_detail = NULL WHERE machine = $1 AND key = $2`,
-        [machine.name, instance.key]);
+  // Anything but an accepted event leaves no instance behind that was not
+  // there, and clears a stall (the event got through).
+  const unchanged = () => {
+    const s = new Statement();
+    if (inst && isNew && version === 0) {
+      s.with('dropped', `DELETE FROM wf_instances WHERE machine = ${s.p(machine.name)} AND key = ${s.p(row.key)}`);
+    } else if (inst?.flag === 'stalled') {
+      s.with('unflagged', `UPDATE wf_instances SET flag = NULL, flag_detail = NULL
+        WHERE machine = ${s.p(machine.name)} AND key = ${s.p(row.key)}`);
     }
+    return s;
   };
   const rejectWith = async (reason: string) => {
-    await dropPlaceholder();
-    await finishEvent(client, eventId, { ...base, result: 'rejected', reason });
+    await finishEvent(client, unchanged(), eventId, { ...base, result: 'rejected', reason });
     return [];
   };
 
   // 1. Replay before anything else: no facts, flags, authority or guard.
   const hash = canonicalHash({ type: row.type, payload: row.payload, actor: row.actor });
-  const { rows: [receipt] } = await client.query(
-    'SELECT payload_hash, outcome, event_id FROM wf_receipts WHERE machine = $1 AND key = $2 AND request_key = $3',
-    [machine.name, instance.key, row.request_key]);
+  const receipt = row.receipt;
   if (receipt) {
     if (receipt.payload_hash !== hash) return rejectWith('request_key_conflict');
-    await settleWork(client, machine, instance.key, row);
-    await dropPlaceholder();
-    await finishEvent(client, eventId, {
+    await settleWork(client, machine, row.key, row);
+    await finishEvent(client, unchanged(), eventId, {
       ...base, result: 'replayed', stateAfter: receipt.outcome.state, versionAfter: receipt.outcome.version,
       emitted: { replayOf: Number(receipt.event_id) }, reply: receipt.outcome.reply ?? null,
     });
@@ -219,7 +288,7 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, instan
   if (WORK_EVENTS.has(event.type)) {
     const work = event.payload as WorkResultPayload;
     if (!UUID.test(work.workId)) return rejectWith('unknown_work');
-    if (!await settleWork(client, machine, instance.key, row)) return rejectWith('unknown_work');
+    if (!await settleWork(client, machine, row.key, row)) return rejectWith('unknown_work');
   }
 
   // 3. Facts, authority, guard, transition: machine code, on a guarded handle.
@@ -241,25 +310,13 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, instan
   }
   const data = outcome.next.data ?? null;
   assertJson(data);
-
-  // 4. Persist, in order.
-  const next = version + 1;
   const timer = outcome.timer;
   if (timer) assertJson(timer.event.payload ?? {});
-  await client.query(
-    `UPDATE wf_instances
-        SET state = $3, data = $4::jsonb, version = $5::bigint, machine_version = $6::int,
-            app_id = COALESCE(app_id, $7::int),
-            deadline_at = CASE WHEN $8::boolean THEN $9::timestamptz ELSE deadline_at END,
-            deadline_event = CASE WHEN $8::boolean THEN $10::jsonb ELSE deadline_event END,
-            deadline_version = CASE WHEN $8::boolean
-              THEN (CASE WHEN $9::timestamptz IS NULL THEN NULL ELSE $5::bigint END)
-              ELSE deadline_version END,
-            flag = NULL, flag_detail = NULL, updated_at = now()
-      WHERE machine = $1 AND key = $2`,
-    [machine.name, instance.key, outcome.next.name, JSON.stringify(data), next, machine.version, ctx.appId,
-      timer !== undefined, timer ? timer.at : null,
-      timer ? JSON.stringify({ type: timer.event.type, payload: timer.event.payload ?? {} }) : null]);
+
+  // 4. Persist: the machine's writes, projection and reply (which may read
+  // what the writes did), then work and messages, then the instance row,
+  // receipt and the event's result in one statement. All in one transaction.
+  const next = version + 1;
   const after = { ...ctx, version: next };
   for (const write of outcome.writes || []) {
     const handler = machine.writes.get(write.type);
@@ -267,14 +324,9 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, instan
     await handler(tx, write, after);
   }
   if (machine.project) await machine.project(tx, state, outcome.next, after);
-  const reply = (machine.reply ? await machine.reply(tx, event, outcome.next, after) : undefined) ?? null;
+  const reply = (machine.reply ? await machine.reply(tx, event, outcome.next, after, facts) : undefined) ?? null;
   if (tx.poisoned) throw tx.poisoned;
   assertJson(reply);
-  await client.query(
-    `INSERT INTO wf_receipts (machine, key, request_key, payload_hash, outcome, event_id)
-     VALUES ($1, $2, $3, $4, $5, $6)`,
-    [machine.name, instance.key, row.request_key, hash,
-      JSON.stringify({ state: outcome.next.name, version: next, reply }), eventId]);
   const work = [];
   for (const w of outcome.work || []) {
     assertJson(w.input);
@@ -286,7 +338,7 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, instan
          ON CONFLICT (machine, key, kind, work_key) DO NOTHING
          RETURNING id)
        SELECT id, pg_notify('wf_work', $3) FROM ins`,
-      [machine.name, instance.key, w.kind, w.key, JSON.stringify(w.input), w.notBefore ?? null, eventId, w.continues ?? null]);
+      [machine.name, row.key, w.kind, w.key, JSON.stringify(w.input), w.notBefore ?? null, eventId, w.continues ?? null]);
     work.push({ kind: w.kind, key: w.key, id: created?.id ?? null });
   }
   const messages = [];
@@ -298,11 +350,35 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, instan
          VALUES ($1, $2, $3, $4, $5, $6, NULL, $7, $8) RETURNING id)
        SELECT id, pg_notify('wf_events', $1) FROM ins`,
       [m.to.machine, m.to.key, m.appId ?? ctx.appId, m.event.type, JSON.stringify(m.event.payload),
-        JSON.stringify({ kind: 'message', from: { machine: machine.name, key: instance.key, eventId } }),
+        JSON.stringify({ kind: 'message', from: { machine: machine.name, key: row.key, eventId } }),
         `msg:${eventId}:${i}`, eventId]);
     messages.push({ machine: m.to.machine, key: m.to.key, type: m.event.type, eventId: Number(sent.id) });
   }
-  await finishEvent(client, eventId, {
+
+  // The instance row is inserted by its creating event (no placeholder is
+  // written first: holding the head event is holding the instance's turn).
+  const s = new Statement();
+  const setTimer = s.p(timer !== undefined);
+  const at = s.p(timer ? timer.at : null);
+  const nextVersion = s.p(next);
+  s.with('instance', `
+    INSERT INTO wf_instances AS i (machine, key, app_id, state, data, version, machine_version,
+                                   deadline_at, deadline_event, deadline_version)
+    VALUES (${s.p(machine.name)}, ${s.p(row.key)}, ${s.p(ctx.appId)}::int, ${s.p(outcome.next.name)}, ${s.p(JSON.stringify(data))}::jsonb,
+            ${nextVersion}::bigint, ${s.p(machine.version)}::int, ${at}::timestamptz,
+            ${s.p(timer ? JSON.stringify({ type: timer.event.type, payload: timer.event.payload ?? {} }) : null)}::jsonb,
+            CASE WHEN ${at}::timestamptz IS NULL THEN NULL ELSE ${nextVersion}::bigint END)
+    ON CONFLICT (machine, key) DO UPDATE
+       SET state = EXCLUDED.state, data = EXCLUDED.data, version = EXCLUDED.version,
+           machine_version = EXCLUDED.machine_version, app_id = COALESCE(i.app_id, EXCLUDED.app_id),
+           deadline_at = CASE WHEN ${setTimer}::boolean THEN EXCLUDED.deadline_at ELSE i.deadline_at END,
+           deadline_event = CASE WHEN ${setTimer}::boolean THEN EXCLUDED.deadline_event ELSE i.deadline_event END,
+           deadline_version = CASE WHEN ${setTimer}::boolean THEN EXCLUDED.deadline_version ELSE i.deadline_version END,
+           flag = NULL, flag_detail = NULL, updated_at = now()`);
+  s.with('receipt', `INSERT INTO wf_receipts (machine, key, request_key, payload_hash, outcome, event_id)
+    VALUES (${s.p(machine.name)}, ${s.p(row.key)}, ${s.p(row.request_key)}, ${s.p(hash)},
+            ${s.p(JSON.stringify({ state: outcome.next.name, version: next, reply }))}, ${s.p(eventId)})`);
+  await finishEvent(client, s, eventId, {
     ...base, result: 'accepted', stateAfter: outcome.next.name, versionAfter: next, reply,
     emitted: {
       writes: (outcome.writes || []).map((w) => w.type),
@@ -316,7 +392,7 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, instan
 
 // The pipeline settles a work item when it applies that item's result,
 // accepted or not. Returns false when the item is not this instance's.
-async function settleWork(client: PoolClient, machine: Machine<any, any>, key: string, row: any): Promise<boolean> {
+async function settleWork(client: PoolClient, machine: Machine<any, any>, key: string, row: Picked): Promise<boolean> {
   if (!WORK_EVENTS.has(row.type) || !UUID.test(String(row.payload?.workId))) return true;
   const { rowCount } = await client.query(
     `UPDATE wf_work SET status = 'settled', settled_at = COALESCE(settled_at, now())
@@ -325,42 +401,62 @@ async function settleWork(client: PoolClient, machine: Machine<any, any>, key: s
   return Boolean(rowCount);
 }
 
-async function recordFailure(client: PoolClient, opts: PipelineOptions, instance: any, row: any, err: unknown): Promise<void> {
-  const e = err;
-  const code = (e as { code?: string })?.code || null;
-  const message = String((e as Error)?.message || e).slice(0, 2000);
-  const where = [instance.machine, instance.key];
-  if (code && RETRYABLE.has(code)) {
-    const attempts = Number(row.attempts) + 1;
-    const backoffMs = Math.min(30000, 500 * 2 ** (attempts - 1));
-    await client.query(
-      `UPDATE wf_events SET attempts = $2, retry_at = now() + make_interval(secs => $3::float8 / 1000),
-              error = $4 WHERE id = $1`,
-      [row.id, attempts, backoffMs, JSON.stringify({ code, message, kind: 'timeout' })]);
-    if (attempts >= opts.stallAfter) {
-      await client.query(
-        `UPDATE wf_instances SET flag = 'stalled', flag_detail = $3
-          WHERE machine = $1 AND key = $2 AND flag IS NULL`,
-        [...where, JSON.stringify({ eventId: Number(row.id), attempts, code })]);
-    } else if (instance.state === NONE && Number(instance.version) === 0 && !instance.flag) {
-      await client.query('DELETE FROM wf_instances WHERE machine = $1 AND key = $2', where);
+// Record a failed event in a fresh transaction. The event is locked again
+// and must still be pending with the attempts this slot saw; otherwise
+// another slot has dealt with it meanwhile and there is nothing to record.
+async function recordFailure(client: PoolClient, opts: PipelineOptions, machine: Machine<any, any>, row: Picked, err: unknown): Promise<void> {
+  const code = (err as { code?: string })?.code || null;
+  const message = String((err as Error)?.message || err).slice(0, 2000);
+  const eventId = Number(row.id);
+  const where = { machine: row.machine, key: row.key, eventId };
+  await enterPipeline(client, opts);
+  try {
+    const { rows: [current] } = await client.query(
+      `SELECT e.attempts, i.state FROM wf_events e
+         LEFT JOIN wf_instances i ON i.machine = e.machine AND i.key = e.key
+        WHERE e.id = $1 AND e.status = 'pending' AND e.attempts = $2
+          FOR UPDATE OF e`, [eventId, row.attempts]);
+    if (!current) {
+      await client.query('ROLLBACK');
+      return;
     }
-    opts.log.warn('workflow', 'event timed out; retrying', { machine: instance.machine, key: instance.key, eventId: Number(row.id), attempts, code });
-    return;
+    // Flag the instance; an instance that does not exist yet gets a '(none)'
+    // row to carry the flag, deleted again when an event gets through.
+    const s = new Statement();
+    const flagInstance = (flag: string, detail: object, onlyIfUnflagged: boolean) => s.with('flagged', `
+      INSERT INTO wf_instances AS i (machine, key, app_id, state, machine_version, flag, flag_detail)
+      VALUES (${s.p(row.machine)}, ${s.p(row.key)}, ${s.p(row.instance?.app_id ?? row.app_id)}::int, ${s.p(NONE)},
+              ${s.p(machine.version)}::int, ${s.p(flag)}, ${s.p(JSON.stringify(detail))}::jsonb)
+      ON CONFLICT (machine, key) DO UPDATE SET flag = EXCLUDED.flag, flag_detail = EXCLUDED.flag_detail
+        ${onlyIfUnflagged ? 'WHERE i.flag IS NULL' : ''}`);
+    if (code && RETRYABLE.has(code)) {
+      const attempts = Number(row.attempts) + 1;
+      const backoffMs = Math.min(30000, 500 * 2 ** (attempts - 1));
+      if (attempts >= opts.stallAfter) flagInstance('stalled', { eventId, attempts, code }, true);
+      s.with('retried', `UPDATE wf_events SET attempts = ${s.p(attempts)},
+          retry_at = now() + make_interval(secs => ${s.p(backoffMs)}::float8 / 1000),
+          error = ${s.p(JSON.stringify({ code, message, kind: 'timeout' }))} WHERE id = ${s.p(eventId)}`);
+      await client.query({ text: s.text('SELECT 1'), values: s.values });
+      await client.query('COMMIT');
+      opts.log.warn('workflow', 'event timed out; retrying', { ...where, attempts, code });
+      return;
+    }
+    // A transition that throws is a bug or a broken invariant: hold this
+    // instance (and only this instance) until an admin releases it.
+    const id = s.p(eventId);
+    const stateBefore = s.p(current.state ?? NONE);
+    flagInstance('faulted', { eventId, code, message }, false);
+    s.with('faulted', `UPDATE wf_events SET status = 'processed', result = 'faulted', reason = 'transition_threw',
+            error = ${s.p(JSON.stringify({ code, message, stack: String((err as Error)?.stack || '').slice(0, 4000) }))},
+            state_before = ${stateBefore}, state_after = ${stateBefore}, processed_at = clock_timestamp()
+      WHERE id = ${id}`);
+    s.with('held', `UPDATE wf_events SET status = 'held'
+      WHERE machine = ${s.p(row.machine)} AND key = ${s.p(row.key)} AND status = 'pending' AND id > ${id}`);
+    await client.query({ text: s.text(`SELECT pg_notify('wf_outcome', ${id}::text)`), values: s.values });
+    await client.query('COMMIT');
+    opts.log.error('workflow', 'transition faulted; instance held', { ...where, message });
+  } catch (failure) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw failure;
   }
-  // A transition that throws is a bug or a broken invariant: hold this
-  // instance (and only this instance) until an admin releases it.
-  await client.query(
-    `UPDATE wf_events SET status = 'processed', result = 'faulted', reason = 'transition_threw',
-            error = $2, state_before = $3, state_after = $3, processed_at = clock_timestamp()
-      WHERE id = $1`,
-    [row.id, JSON.stringify({ code, message, stack: String((e as Error)?.stack || '').slice(0, 4000) }), instance.state]);
-  await client.query(
-    `UPDATE wf_events SET status = 'held' WHERE machine = $1 AND key = $2 AND status = 'pending' AND id > $3`,
-    [...where, row.id]);
-  await client.query(
-    `UPDATE wf_instances SET flag = 'faulted', flag_detail = $3 WHERE machine = $1 AND key = $2`,
-    [...where, JSON.stringify({ eventId: Number(row.id), code, message })]);
-  await client.query(`SELECT pg_notify('wf_outcome', $1)`, [String(row.id)]);
-  opts.log.error('workflow', 'transition faulted; instance held', { machine: instance.machine, key: instance.key, eventId: Number(row.id), message });
 }

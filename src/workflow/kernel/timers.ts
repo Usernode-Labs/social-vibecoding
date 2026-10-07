@@ -42,6 +42,16 @@ export async function fireDueTimers(pool: Pool, opts: { lockTimeoutMs: number; s
   }
 }
 
+// Milliseconds until the next deadline (negative when one is overdue), or
+// null when none is set. The timer loop sleeps until then; a deadline set
+// meanwhile is found by the loop's idle fallback.
+export async function nextDeadlineMs(pool: Pool): Promise<number | null> {
+  const { rows: [r] } = await pool.query(
+    `SELECT (EXTRACT(EPOCH FROM min(deadline_at) - now()) * 1000)::float8 AS ms
+       FROM wf_instances WHERE deadline_at IS NOT NULL AND flag IS DISTINCT FROM 'faulted'`);
+  return r?.ms == null ? null : Number(r.ms);
+}
+
 // Retention: processed events and settled work after `eventsDays` /
 // `workDays`, receipts `receiptsDays` after their instance went terminal
 // (approximated by its last update). Instances themselves are kept.

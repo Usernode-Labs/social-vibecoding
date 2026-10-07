@@ -126,8 +126,10 @@ export interface MachineDefinition<S extends State = State, F = unknown> {
   project?: (tx: Tx, before: S, after: S, ctx: TransitionContext) => Promise<void>;
   // The answer for whoever produced the event, built in its transaction after
   // the writes and the projection. It is recorded with the event and its
-  // receipt, so a replay returns the original answer, not today's.
-  reply?: (tx: Tx, event: Event<any>, after: S, ctx: TransitionContext) => Promise<Json | undefined>;
+  // receipt, so a replay returns the original answer, not today's. `facts`
+  // are the ones the transition decided on, so an answer they already hold
+  // (was this vote a retraction?) needs no query.
+  reply?: (tx: Tx, event: Event<any>, after: S, ctx: TransitionContext, facts: F) => Promise<Json | undefined>;
   notifiers?: Record<string, Notifier>;
 }
 
