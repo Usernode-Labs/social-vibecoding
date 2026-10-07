@@ -22,6 +22,7 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const express = require('express');
+const { closeConnections } = require('./lib/close-connections');
 
 const DSN = process.env.TEST_DATABASE_URL
   || process.env.DATABASE_URL
@@ -97,6 +98,9 @@ test('chat delivery against the full schema', { timeout: 120000 }, async (t) => 
 
   let viewer = { id: 7, username: 'ada' };
   const app = express();
+  // setTimeout is mocked below; see lib/close-connections.js for what that
+  // costs a fetch on a kept-alive connection under Node 22.
+  app.use(closeConnections);
   app.use(express.json());
   app.use((req, res, next) => { req.user = viewer; next(); });
   app.use(sessionRoutes({ jwtSecret: 's' }));

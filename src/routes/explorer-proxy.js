@@ -93,7 +93,12 @@ function isTraversal(subPath) {
   return candidates.some((p) => /(^|[/\\])\.\.([/\\]|$)/.test(p));
 }
 
-function explorerProxyRoutes(config = {}) {
+// The second argument lets a test pass the two windows in short, so it can
+// watch the idle timeout answer without waiting ten seconds for it. Callers
+// pass the config alone and get the constants above.
+function explorerProxyRoutes(config = {}, {
+  idleTimeoutMs = UPSTREAM_IDLE_TIMEOUT_MS, deadlineMs = UPSTREAM_DEADLINE_MS,
+} = {}) {
   const router = Router();
 
   const upstream = config.explorerUpstream
@@ -159,7 +164,7 @@ function explorerProxyRoutes(config = {}) {
           port,
           path: upstreamPath,
           method: req.method,
-          timeout: UPSTREAM_IDLE_TIMEOUT_MS,
+          timeout: idleTimeoutMs,
           headers: {
             'content-type': 'application/json',
             accept: 'application/json',
@@ -213,7 +218,7 @@ function explorerProxyRoutes(config = {}) {
       const deadline = setTimeout(() => {
         log.warn('explorer-proxy', 'upstream past deadline', { upstreamPath });
         upReq.destroy(new Error('upstream exceeded deadline'));
-      }, UPSTREAM_DEADLINE_MS);
+      }, deadlineMs);
       deadline.unref?.();
       finish = () => clearTimeout(deadline);
 

@@ -43,7 +43,19 @@ const {
   makeConsoleErrorSink,
 } = require('../capture/capture');
 
+const { inVirtualTime } = require('./lib/virtual-time');
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// The pool's behaviour is its timing: settle windows, assertion windows,
+// per-check and whole-suite deadlines, all real ones from capture.js. The
+// browser is a fake that answers at once, so those windows are the only thing
+// a test here waits for, and on the real clock the suite spent 31 seconds
+// asleep. `timed` runs a test on a mocked clock instead
+// (lib/virtual-time.js): the windows keep their sizes and their order, the
+// fake's own delays ride the same clock, and elapsed time read inside the
+// test is the time the run would have taken.
+const timed = (name, fn) => test(name, (t) => inVirtualTime(t, fn));
 
 // Fake browser. Mirrors the production shape (createBrowserContext →
 // newPage), records page open/close so concurrency is observable, counts
@@ -129,7 +141,7 @@ function collect() {
   };
 }
 
-test('every declared check gets exactly one frame', async () => {
+timed('every declared check gets exactly one frame', async () => {
   const read = collect();
   const result = await runTests(makeBrowser(), suite(25), { concurrency: 6, testTimeoutMs: 5000 });
   const { frames, done } = read();
@@ -145,7 +157,7 @@ test('every declared check gets exactly one frame', async () => {
   assert.equal(done.deadline, '0');
 });
 
-test('every group runs in its own browser context, and all of them close', async () => {
+timed('every group runs in its own browser context, and all of them close', async () => {
   // Isolation is the load-bearing property (see the header): a same-context
   // tab is a HIDDEN document — view transitions abort with a pageerror and
   // rAF-driven UI never presents — and a shared cookie jar races concurrent
@@ -160,7 +172,7 @@ test('every group runs in its own browser context, and all of them close', async
   assert.equal(browser.openContexts(), 0, 'and every context was closed');
 });
 
-test('concurrency is bounded by the pool size', async () => {
+timed('concurrency is bounded by the pool size', async () => {
   const read = collect();
   const delays = {};
   for (let i = 0; i < 20; i += 1) delays[`http://staging/p${i}`] = 25;
@@ -172,7 +184,7 @@ test('concurrency is bounded by the pool size', async () => {
   assert.ok(browser.peak() > 1, 'and it really did run in parallel, not sequentially');
 });
 
-test('a hung check fails on the per-check deadline instead of wedging a worker', async () => {
+timed('a hung check fails on the per-check deadline instead of wedging a worker', async () => {
   const read = collect();
   const browser = makeBrowser({ delays: { 'http://staging/p1': 600 } });
   const started = Date.now();
@@ -192,7 +204,7 @@ test('a hung check fails on the per-check deadline instead of wedging a worker',
   assert.equal(result.ran, 4);
 });
 
-test('a straggler cannot overwrite the verdict already recorded for it', async () => {
+timed('a straggler cannot overwrite the verdict already recorded for it', async () => {
   // The timeout frame is written while runTest is still in flight. When it
   // finally finishes it emits its own frame for the same index — first writer
   // must win, or the platform sees two contradictory verdicts for one check
@@ -207,7 +219,7 @@ test('a straggler cannot overwrite the verdict already recorded for it', async (
   assert.match(frames[0].failureReason, /did not finish within/);
 });
 
-test('the global deadline stops dispatch and says so in the sentinel', async () => {
+timed('the global deadline stops dispatch and says so in the sentinel', async () => {
   const read = collect();
   const delays = {};
   for (let i = 0; i < 40; i += 1) delays[`http://staging/p${i}`] = 40;
@@ -224,7 +236,7 @@ test('the global deadline stops dispatch and says so in the sentinel', async () 
   assert.equal(done.expected, '40', 'against the count it was asked for');
 });
 
-test('an empty suite still emits the sentinel', async () => {
+timed('an empty suite still emits the sentinel', async () => {
   const read = collect();
   const result = await runTests(makeBrowser(), [], {});
   const { done } = read();
@@ -234,7 +246,7 @@ test('an empty suite still emits the sentinel', async () => {
   assert.equal(done.deadline, '0');
 });
 
-test('checks that load cleanly pass, through the pool', async () => {
+timed('checks that load cleanly pass, through the pool', async () => {
   // The one case on the settling path, so the happy shape is covered and not
   // just the dispatch mechanics.
   const read = collect();
@@ -249,7 +261,7 @@ test('checks that load cleanly pass, through the pool', async () => {
 
 // ── URL grouping: one navigation per route, one frame per check ─────────
 
-test('checks on the same URL share one navigation but keep their own verdicts', async () => {
+timed('checks on the same URL share one navigation but keep their own verdicts', async () => {
   // The manifest clusters heavily (this repo: 234 checks over ~106 routes,
   // 46 on the dev screen alone) and navigation + settle is where the wall
   // clock goes. Grouping must not blur what each check means: same page,
@@ -287,7 +299,7 @@ test('checks on the same URL share one navigation but keep their own verdicts', 
   assert.equal(done.expected, '4');
 });
 
-test('a failed check is asked again, alone, and the retries say what they are', async () => {
+timed('a failed check is asked again, alone, and the retries say what they are', async () => {
   // The retry pass, in the container. A check that failed is re-run on its
   // own cold document — not as another assertion against a page somebody
   // already loaded, which is what grouping would otherwise make of it.
@@ -332,7 +344,7 @@ test('a failed check is asked again, alone, and the retries say what they are', 
   assert.equal(done.expected, '8');
 });
 
-test('a suite that is mostly red is the change, and nothing is asked again', async () => {
+timed('a suite that is mostly red is the change, and nothing is asked again', async () => {
   const read = collect();
   const log = [];
   const browser = makeBrowser({ log, mode: 'ok', missingSelectors: ['#gone'] });
@@ -352,7 +364,7 @@ test('a suite that is mostly red is the change, and nothing is asked again', asy
   assert.equal(log.filter((e) => e.call === 'goto').length, 3);
 });
 
-test('a failed navigation fails every check that shared the URL', async () => {
+timed('a failed navigation fails every check that shared the URL', async () => {
   const read = collect();
   const browser = makeBrowser({ mode: 'fast' }); // every goto rejects
   const tests = [
@@ -369,7 +381,7 @@ test('a failed navigation fails every check that shared the URL', async () => {
   }
 });
 
-test('a hung group fails all its unreported checks on the scaled deadline', async () => {
+timed('a hung group fails all its unreported checks on the scaled deadline', async () => {
   // The group deadline is testTimeoutMs for the checks, testTimeoutMs again
   // for the group's one navigation, and 1s per extra check (assertions are
   // cheap but not free). Two checks share the slow URL, so the budget here is
@@ -532,7 +544,7 @@ function makeEventPage({ onGoto, onHash } = {}) {
   return page;
 }
 
-test('cold checks separate document navigation from equivalent network-idle readiness', async () => {
+timed('cold checks separate document navigation from equivalent network-idle readiness', async () => {
   const read = collect();
   const calls = [];
   const page = makeEventPage();
@@ -563,7 +575,7 @@ test('cold checks separate document navigation from equivalent network-idle read
     'both phases share the existing navigation budget');
 });
 
-test('a hash cohort owns its own console errors, and load errors are shared', async () => {
+timed('a hash cohort owns its own console errors, and load errors are shared', async () => {
   const read = collect();
   const timers = [];
   const page = makeEventPage({
@@ -611,7 +623,7 @@ function errorHandleMessage(error, delayMs = 0) {
   };
 }
 
-test('an Error logged by console.error is recorded by its message and island, not as JSHandle@error', async () => {
+timed('an Error logged by console.error is recorded by its message and island, not as JSHandle@error', async () => {
   const pushed = [];
   const sink = makeConsoleErrorSink((kind, message, source) => pushed.push({ kind, message, source }));
   const prevWindow = globalThis.window;
@@ -634,7 +646,7 @@ test('an Error logged by console.error is recorded by its message and island, no
   assert.equal(typeError.source, 'http://s/shell/assets/shell.js:48');
 });
 
-test('an Error is resolved even when the console text already reads as its message', async () => {
+timed('an Error is resolved even when the console text already reads as its message', async () => {
   const pushed = [];
   const sink = makeConsoleErrorSink((kind, message) => pushed.push(message));
   const error = new RangeError('bad index');
@@ -649,7 +661,7 @@ test('an Error is resolved even when the console text already reads as its messa
   assert.match(pushed[0], /^RangeError: bad index\n\s+at /, 'the stack is kept, not just the message');
 });
 
-test('an Error that fails to resolve in the page is still recorded', async () => {
+timed('an Error that fails to resolve in the page is still recorded', async () => {
   const pushed = [];
   const sink = makeConsoleErrorSink((kind, message) => pushed.push(message));
   sink.onConsole({
@@ -662,7 +674,7 @@ test('an Error that fails to resolve in the page is still recorded', async () =>
   assert.deepEqual(pushed, ['JSHandle@error']);
 });
 
-test('an Error still resolving at a hash switch counts against the cohort it fired in', async () => {
+timed('an Error still resolving at a hash switch counts against the cohort it fired in', async () => {
   const read = collect();
   const timers = [];
   const page = makeEventPage({
@@ -691,7 +703,7 @@ test('an Error still resolving at a hash switch counts against the cohort it fir
   assert.equal(byIndex.get(2).status, 'pass', 'the slow resolution did not land in the next cohort');
 });
 
-test('a cohort that breaks does not fail the cohorts it shares a document with', async () => {
+timed('a cohort that breaks does not fail the cohorts it shares a document with', async () => {
   const read = collect();
   const timers = [];
   const page = makeEventPage({
@@ -758,7 +770,7 @@ const COLD_ONLY_GROUP = [
   { index: 1, name: 'b', path: '/dev', url: 'http://s/dev#/b', expectSelector: '#at-#/b' },
 ];
 
-test('a cohort the hash switch did not render is re-judged on a real cold load', async () => {
+timed('a cohort the hash switch did not render is re-judged on a real cold load', async () => {
   const read = collect();
   const page = makeColdOnlyPage();
   await runTestGroup({ newPage: async () => page }, COLD_ONLY_GROUP,
@@ -776,7 +788,7 @@ test('a cohort the hash switch did not render is re-judged on a real cold load',
     + 'fragment is a same-document navigation and would reload nothing');
 });
 
-test('a cohort that renders on a hash switch never pays for the fallback', async () => {
+timed('a cohort that renders on a hash switch never pays for the fallback', async () => {
   const read = collect();
   const page = makeEventPage();          // its $() matches anything
   await runTestGroup({ newPage: async () => page },
@@ -793,7 +805,7 @@ test('a cohort that renders on a hash switch never pays for the fallback', async
 });
 
 for (const lateConsoleError of [false, true]) {
-  test(`cold fallback waits for delayed selector/text${lateConsoleError ? ' and catches late console errors' : ''}`, async () => {
+  timed(`cold fallback waits for delayed selector/text${lateConsoleError ? ' and catches late console errors' : ''}`, async () => {
     const read = collect();
     let loadedHash = '';
     let readyAt = Infinity;
@@ -826,7 +838,7 @@ for (const lateConsoleError of [false, true]) {
   });
 }
 
-test('cold fallback still fails a missing selector within a bounded window', async () => {
+timed('cold fallback still fails a missing selector within a bounded window', async () => {
   const read = collect();
   const page = makeColdOnlyPage();
   const group = [COLD_ONLY_GROUP[0], { ...COLD_ONLY_GROUP[1], expectSelector: '#never' }];
@@ -839,7 +851,7 @@ test('cold fallback still fails a missing selector within a bounded window', asy
   assert.ok(Date.now() - started < 2000, 'fallback cannot wait indefinitely');
 });
 
-test('the cohort fallback can be switched off, and then the hash verdict stands', async () => {
+timed('the cohort fallback can be switched off, and then the hash verdict stands', async () => {
   const read = collect();
   const page = makeColdOnlyPage();
   await runTestGroup({ newPage: async () => page }, COLD_ONLY_GROUP,
@@ -851,7 +863,7 @@ test('the cohort fallback can be switched off, and then the hash verdict stands'
   assert.equal(page.gotos.length, 1, 'no fallback navigation');
 });
 
-test('a page that never goes quiet is cut off at the settle ceiling', async () => {
+timed('a page that never goes quiet is cut off at the settle ceiling', async () => {
   // The quiet window is what makes the common case fast; the ceiling is what
   // keeps a chatty page from holding a worker until the group deadline.
   const read = collect();
@@ -875,7 +887,7 @@ test('a page that never goes quiet is cut off at the settle ceiling', async () =
   assert.equal(frames[0].status, 'fail', 'and the errors it did see still count');
 });
 
-test('a quiet page settles well inside the ceiling', async () => {
+timed('a quiet page settles well inside the ceiling', async () => {
   // The whole point: a document with nothing left to say used to pay a flat
   // 2000ms per navigation regardless.
   const read = collect();
@@ -902,7 +914,7 @@ test('a quiet page settles well inside the ceiling', async () => {
 // assertions POLL until they hold or a bounded deadline expires, instead of
 // being evaluated once.
 
-test('an element that renders after the quiet window still passes: assertions poll', async () => {
+timed('an element that renders after the quiet window still passes: assertions poll', async () => {
   const read = collect();
   let ready = false;
   let timer = null;
@@ -924,7 +936,7 @@ test('an element that renders after the quiet window still passes: assertions po
     'a render that lands after the settle but inside the assertion deadline passes');
 });
 
-test('a hash cohort whose screen renders async still passes, selector and text', async () => {
+timed('a hash cohort whose screen renders async still passes, selector and text', async () => {
   // Cohort switches are the tighter race: a hash write costs no navigation,
   // so the quiet window can close ~quietMs after the switch while the target
   // screen is still fetching and rendering.
@@ -958,7 +970,7 @@ test('a hash cohort whose screen renders async still passes, selector and text',
     'the cohort judged after a hash switch waits for its screen too');
 });
 
-test('a selector that never appears still fails, inside the assertion ceiling', async () => {
+timed('a selector that never appears still fails, inside the assertion ceiling', async () => {
   const read = collect();
   const page = makeEventPage();
   page.$ = async () => null;
@@ -974,7 +986,7 @@ test('a selector that never appears still fails, inside the assertion ceiling', 
   assert.ok(elapsed < 1500, `polling is bounded by the ceiling, took ${elapsed}ms`);
 });
 
-test('a check still waiting on the wire gets another window, floored and capped', async () => {
+timed('a check still waiting on the wire gets another window, floored and capped', async () => {
   // The failure this exists for: the element is not missing, its data is
   // still in flight, and eight pages are contending for one preview. A
   // fixed window judges it before the fetch lands.
@@ -1006,7 +1018,7 @@ test('a check still waiting on the wire gets another window, floored and capped'
   assert.ok(elapsed > 200, `it outlived the fixed window (${elapsed}ms)`);
 });
 
-test('a silent missing element still fails on the fixed window, and console noise does not roll it', async () => {
+timed('a silent missing element still fails on the fixed window, and console noise does not roll it', async () => {
   // The discrimination the rolling window has to make: no requests means
   // nothing is coming, so the old ceiling still applies. Console errors are
   // deliberately not enough — a page spewing them is broken, not loading.
@@ -1029,7 +1041,7 @@ test('a silent missing element still fails on the fixed window, and console nois
   assert.ok(elapsed < 1500, `still bounded by the fixed window, took ${elapsed}ms`);
 });
 
-test('the rolling window never outlives the group budget, and never undercuts the fixed one', async () => {
+timed('the rolling window never outlives the group budget, and never undercuts the fixed one', async () => {
   // #1710's two self-inflicted bugs, both pinned. A page that keeps
   // fetching forever must stop at the group's ceiling (minus the reserve
   // for writing frames) rather than manufacture a "did not finish" — and a
@@ -1076,7 +1088,7 @@ test('the rolling window never outlives the group budget, and never undercuts th
   assert.ok(floored < 1500, `and did not roll past it, took ${floored}ms`);
 });
 
-test('a page that never stops fetching is cut off at a few fixed windows, not at the group ceiling', async () => {
+timed('a page that never stops fetching is cut off at a few fixed windows, not at the group ceiling', async () => {
   // A screen that polls — a live feed, a status ticker — makes a request
   // inside every window, so an element that had not rendered on it used to
   // roll all the way to the group ceiling: 111s of one lane in a logged run,
@@ -1143,7 +1155,7 @@ test('the media pass and the suite share the browser side by side', () => {
     'a media-pass failure is still surfaced, after both have settled');
 });
 
-test('the assertion deadline is shared by a cohort, not paid per failing check', async () => {
+timed('the assertion deadline is shared by a cohort, not paid per failing check', async () => {
   // Ten missing selectors on one screen must not cost ten deadlines — the
   // group budget only grows per cohort, so the poll budget has to as well.
   const read = collect();
@@ -1163,7 +1175,7 @@ test('the assertion deadline is shared by a cohort, not paid per failing check',
     `ten failing checks share one 300ms deadline, took ${elapsed}ms`);
 });
 
-test('a console error that fires while assertions poll still counts', async () => {
+timed('a console error that fires while assertions poll still counts', async () => {
   // The flat 2s settle would have heard this error; the shorter settle must
   // not let it slip past just because it fired during the poll window.
   const read = collect();

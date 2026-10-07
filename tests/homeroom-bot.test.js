@@ -482,25 +482,54 @@ test('the wake reaches the bot from every place an issue changes on the platform
 
 // ── The budget on a turn (#2737) ─────────────────────────────────────────
 
-test('runTriage: the wall clock stops a turn that never finishes, and the row says so', async () => {
-  const stopped = [];
-  const { pool, deps, calls } = triageHarness({ verdictText: 'never gets here' });
+// A turn that hangs until the bot stops it, on the 30s budget that is the
+// floor the settings clamp to. The budget timer is what is under test, so the
+// clock is mocked rather than waited for: the turn is taken to a millisecond
+// short of the limit, where nothing may have been stopped, and then over it.
+// Resolves to what runTriage returns.
+async function runToTheBudgetFloor(t, { pool, deps }, stopped) {
   deps.worker.stopTurn = async (id) => { stopped.push(id); };
+  let hanging = false;
+  let released = false;
   // A dispatch that only settles once the turn is stopped, which is what a
   // hung turn looks like from here.
   deps.sessions.runCodexAttemptLoop = async ({ dispatchOnce }) => {
     await dispatchOnce({ openrouterApiKey: 'k' });
+    hanging = true;
     await new Promise((resolve) => {
-      const wait = setInterval(() => { if (stopped.length) { clearInterval(wait); resolve(); } }, 2);
+      const wait = setInterval(() => { if (stopped.length || released) { clearInterval(wait); resolve(); } }, 2);
     });
     return { result: { lastResultText: '', inputTokens: 5000, outputTokens: 10 }, error: null, estimatedCostUsd: 0.4 };
   };
-  const out = await bot.runTriage(pool, {}, {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const running = bot.runTriage(pool, {}, {
     bot: BOT, app: APP, item: ITEM, mode: 'shadow',
-    // 30s is the floor the settings clamp to; the timer is what is under
-    // test, so it is driven from the setting rather than by waiting.
     settings: { turnSeconds: 30, turnInputTokens: 10_000_000 }, deps,
   });
+  const turn = () => new Promise((resolve) => setImmediate(resolve));
+  try {
+    for (let i = 0; i < 500 && !hanging; i += 1) await turn();
+    assert.ok(hanging, 'the dispatch is under way and waiting');
+    t.mock.timers.tick(30 * 1000 - 1);
+    await turn();
+    assert.deepEqual(stopped, [], 'nothing is stopped a millisecond short of the budget');
+    t.mock.timers.tick(1);
+    for (let i = 0; i < 500 && !stopped.length; i += 1) await turn();
+    assert.equal(stopped.length, 1, 'the budget stops the turn the moment it is spent');
+  } catch (err) {
+    // Do not leave a turn hanging into the tests that follow.
+    released = true;
+    await running.catch(() => {});
+    throw err;
+  }
+  return running;
+}
+
+test('runTriage: the wall clock stops a turn that never finishes, and the row says so', { timeout: 20000 }, async (t) => {
+  const stopped = [];
+  const harness = triageHarness({ verdictText: 'never gets here' });
+  const { calls } = harness;
+  const out = await runToTheBudgetFloor(t, harness, stopped);
   assert.deepEqual(stopped, [501], 'the turn is ended through the supported stop path');
   assert.equal(out.budget, 'wall clock');
   assert.equal(out.verdict, 'failed');
@@ -509,7 +538,7 @@ test('runTriage: the wall clock stops a turn that never finishes, and the row sa
   const requeue = calls.queries.find((q) => /SET started_at = NULL, reason = 'budget_retry'/.test(q.s));
   assert.ok(requeue, 'and it goes back once, at the bottom of the queue');
   assert.ok(!calls.queries.some((q) => /DELETE FROM homeroom_bot_queue/.test(q.s)), 'not dropped on the first stop');
-}, { timeout: 20000 });
+});
 
 // ── Only the clock stops a turn; a fresh thread per issue (#3035) ───────
 
@@ -771,25 +800,15 @@ test('the runs query filters to budget stops on one static statement', () => {
 
 // ── What the first day of budget data exposed (#2870) ────────────────────
 
-test('a turn stopped on its budget is still debited against the weekly cap', async () => {
+test('a turn stopped on its budget is still debited against the weekly cap', { timeout: 20000 }, async (t) => {
   // The three stops in the first day's ledger all recorded $0.0000, because
   // the branch that writes the stop returned above the debit. That is the
   // wrong way round: a twenty-minute turn nobody was ever going to use is
   // exactly the spend a weekly cap exists to notice.
   const stopped = [];
-  const { pool, deps, calls } = triageHarness({ verdictText: 'never gets here', sessionId: 611 });
-  deps.worker.stopTurn = async (id) => { stopped.push(id); };
-  deps.sessions.runCodexAttemptLoop = async ({ dispatchOnce }) => {
-    await dispatchOnce({ openrouterApiKey: 'k' });
-    await new Promise((resolve) => {
-      const wait = setInterval(() => { if (stopped.length) { clearInterval(wait); resolve(); } }, 2);
-    });
-    return { result: { lastResultText: '', inputTokens: 5000, outputTokens: 10 }, error: null, estimatedCostUsd: 0.4 };
-  };
-  const out = await bot.runTriage(pool, {}, {
-    bot: BOT, app: APP, item: ITEM, mode: 'shadow',
-    settings: { turnSeconds: 30, turnInputTokens: 10_000_000 }, deps,
-  });
+  const harness = triageHarness({ verdictText: 'never gets here', sessionId: 611 });
+  const { calls } = harness;
+  const out = await runToTheBudgetFloor(t, harness, stopped);
   assert.equal(out.budget, 'wall clock');
   assert.deepEqual(calls.spend, [{ userId: 77, cents: 40, opts: { byok: false } }],
     'what the killed turn spent joins the same pool a completed one does');
@@ -797,7 +816,7 @@ test('a turn stopped on its budget is still debited against the weekly cap', asy
   assert.ok(insert.params.includes(0.4), 'and the ledger row carries the cost instead of a zero');
   assert.ok(insert.params.includes(5000) && insert.params.includes(10),
     'along with whatever usage the dispatch managed to report');
-}, { timeout: 20000 });
+});
 
 test('an empty reply moments after a stop on the same session is the stop, not the issue', async () => {
   // Two of the first three budget stops wrote an `(empty reply)` row in the

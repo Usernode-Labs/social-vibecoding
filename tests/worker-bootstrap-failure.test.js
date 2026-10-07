@@ -25,6 +25,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { inVirtualTime } = require('./lib/virtual-time');
 
 process.env.WORKER_JWT_SECRET = process.env.WORKER_JWT_SECRET || 'test-worker-secret';
 
@@ -134,12 +135,19 @@ async function expectReject(fn) {
   throw new Error('expected a rejection, got none');
 }
 
+// A bootstrap that is retried waits out a real backoff between attempts
+// (half a second, then a second and a half, plus jitter): two seconds and
+// more for every test that reaches the third attempt. Docker, GitHub and the
+// log stream are all fakes here, so those waits are the only thing a retry
+// test waits for, and it takes them on a mocked clock (lib/virtual-time.js).
+const withoutWaiting = (t, fn) => inVirtualTime(t, fn);
+
 // ── 1. The reason survives all the way to the thrown Error ──────────────
 
-test('a clone failure carries git\'s own words, the phase, and the log tail', async () => {
+test('a clone failure carries git\'s own words, the phase, and the log tail', async (t) => {
   const { worker, restore } = loadWorker({ scripts: [CLONE_FAILURE] });
   try {
-    const err = await expectReject(() => worker.ensureWorker(1, ENSURE_ARGS));
+    const err = await withoutWaiting(t, () => expectReject(() => worker.ensureWorker(1, ENSURE_ARGS)));
 
     // The words a human needs. Before this change the whole message was the
     // eleven characters "clone failed".
@@ -174,10 +182,10 @@ test('the wrapper dying with no marker at all still reports the container output
   } finally { restore(); }
 });
 
-test('diagnostics are non-enumerable, so existing error logging is unchanged', async () => {
+test('diagnostics are non-enumerable, so existing error logging is unchanged', async (t) => {
   const { worker, restore } = loadWorker({ scripts: [CLONE_FAILURE] });
   try {
-    const err = await expectReject(() => worker.ensureWorker(3, ENSURE_ARGS));
+    const err = await withoutWaiting(t, () => expectReject(() => worker.ensureWorker(3, ENSURE_ARGS)));
     // `log.error('sessions', 'Chat error', { message, stack })` and
     // `send('error', { error: err.message })` must serialize exactly as they
     // did before — a bootstrap log tail in an SSE frame would be a
@@ -212,19 +220,21 @@ test('the failing container\'s logs are read before the next attempt scrubs it',
 
 // ── 3. Bounded retry of the transient, none of the deterministic ────────
 
-test('a transient clone failure is retried, three attempts total', async () => {
+test('a transient clone failure is retried, three attempts total', async (t) => {
   const { worker, restore, spawns } = loadWorker({ scripts: [CLONE_FAILURE] });
   try {
     const progress = [];
-    await expectReject(() => worker.ensureWorker(5, { ...ENSURE_ARGS, onProgress: (t) => progress.push(t) }));
+    await withoutWaiting(t, () => expectReject(
+      () => worker.ensureWorker(5, { ...ENSURE_ARGS, onProgress: (line) => progress.push(line) })
+    ));
     assert.equal(spawns(), 3, 'BOOTSTRAP_MAX_ATTEMPTS attempts, no more');
-    const retries = progress.filter((t) => t.startsWith('[retrying setup'));
+    const retries = progress.filter((line) => line.startsWith('[retrying setup'));
     assert.equal(retries.length, 2, 'one user-visible retry line per retry');
     assert.equal(retries[0], '[retrying setup (attempt 2 of 3)]');
   } finally { restore(); }
 });
 
-test('a clone that succeeds on the second attempt returns a warm container', async () => {
+test('a clone that succeeds on the second attempt returns a warm container', async (t) => {
   const { worker, restore, spawns } = loadWorker({
     scripts: [
       CLONE_FAILURE,
@@ -232,7 +242,7 @@ test('a clone that succeeds on the second attempt returns a warm container', asy
     ],
   });
   try {
-    const name = await worker.ensureWorker(6, ENSURE_ARGS);
+    const name = await withoutWaiting(t, () => worker.ensureWorker(6, ENSURE_ARGS));
     assert.equal(name, 'usernode-worker-6');
     assert.equal(spawns(), 2, 'stops retrying the moment it works');
   } finally { restore(); }
@@ -289,15 +299,17 @@ test('classification keys off the stable marker prefix, never git\'s wording', (
 
 // ── 4. Concurrent ensures still share one bootstrap ─────────────────────
 
-test('a second ensure joins the in-flight bootstrap instead of retrying alongside it', async () => {
+test('a second ensure joins the in-flight bootstrap instead of retrying alongside it', async (t) => {
   const { worker, restore, spawns } = loadWorker({ scripts: [CLONE_FAILURE] });
   try {
-    const first = worker.ensureWorker(10, ENSURE_ARGS);
-    // Let the first caller past its Docker status check, which is where the
-    // registry entry carrying the shared `bootstrap` promise is written.
-    await new Promise((r) => setTimeout(r, 20));
-    const second = worker.ensureWorker(10, ENSURE_ARGS);
-    const results = await Promise.allSettled([first, second]);
+    const results = await withoutWaiting(t, async () => {
+      const first = worker.ensureWorker(10, ENSURE_ARGS);
+      // Let the first caller past its Docker status check, which is where the
+      // registry entry carrying the shared `bootstrap` promise is written.
+      await new Promise((r) => setTimeout(r, 20));
+      const second = worker.ensureWorker(10, ENSURE_ARGS);
+      return Promise.allSettled([first, second]);
+    });
     assert.equal(results[0].status, 'rejected');
     assert.equal(results[1].status, 'rejected');
     // Three attempts for the ONE coalesced bootstrap, not six: the retries
@@ -346,13 +358,13 @@ function couldNotStart(reason) {
   return err;
 }
 
-test('a Kubernetes warm-ready timeout is retried on a fresh Pod, then succeeds', async () => {
+test('a Kubernetes warm-ready timeout is retried on a fresh Pod, then succeeds', async (t) => {
   const { worker, calls, restore } = loadKubernetesWorker([
     new Error('warm-ready timeout for sv-worker-s11'), 'ok',
   ]);
   try {
     const progress = [];
-    await worker.ensureWorker(11, { ...ENSURE_ARGS, onProgress: (t) => progress.push(t) });
+    await withoutWaiting(t, () => worker.ensureWorker(11, { ...ENSURE_ARGS, onProgress: (line) => progress.push(line) }));
     assert.equal(calls.length, 2);
     // The first attempt applies the Deployment as a first dispatch would;
     // the retry stamps its attempt so the stuck Pod is replaced.
@@ -363,10 +375,10 @@ test('a Kubernetes warm-ready timeout is retried on a fresh Pod, then succeeds',
   } finally { restore(); }
 });
 
-test('a Kubernetes warm-ready timeout gives up after three attempts', async () => {
+test('a Kubernetes warm-ready timeout gives up after three attempts', async (t) => {
   const { worker, calls, restore } = loadKubernetesWorker([new Error('warm-ready timeout for sv-worker-s12')]);
   try {
-    const err = await expectReject(() => worker.ensureWorker(12, ENSURE_ARGS));
+    const err = await withoutWaiting(t, () => expectReject(() => worker.ensureWorker(12, ENSURE_ARGS)));
     assert.equal(calls.length, 3);
     assert.equal(err.bootstrapAttempts, 3);
     assert.ok(worker.isBootstrapError(err));
