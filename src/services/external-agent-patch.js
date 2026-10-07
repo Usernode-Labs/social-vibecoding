@@ -45,6 +45,14 @@ const head = require('./external-agent-head');
 // production runs this was written for was 13.9 KB.
 const MAX_PATCH_BYTES = 256 * 1024;
 
+// A patch UPLOADED with the work order's one-time command (#4264,
+// services/external-agent-patch-upload.js) never passes through the MCP
+// transport, so the quarter-of-a-JSON-RPC-body reasoning above does not bind
+// it. It is stored in Postgres until submit_work applies it, one per open
+// task, so 1 MB keeps that small while carrying four times what an inline
+// patch can. The file-count and growth caps below apply to both alike.
+const MAX_UPLOADED_PATCH_BYTES = 1024 * 1024;
+
 // Matching services/proposal-commit-upload.js, the other route by which
 // caller-supplied content becomes a bot-authored commit.
 const MAX_PATCH_FILES = 200;
@@ -142,20 +150,32 @@ async function patchGrowthBytes(git, baseSha) {
 // removes the pushed branch and MUST be called if the caller's subsequent
 // createPR or pr-import fails.
 async function applyPatch({
-  owner, repo, patch, baseSha, userId, taskId,
+  owner, repo, patch, baseSha, userId, taskId, maxBytes,
 }) {
-  const text = String(patch || '');
+  // An uploaded patch arrives as the exact bytes the agent sent (#4264), so a
+  // file in some legacy encoding survives the trip; an inline one is the tool
+  // argument's string. Either way the same bytes are written and applied.
+  const body = Buffer.isBuffer(patch) ? patch : Buffer.from(String(patch || ''), 'utf8');
+  const text = body.toString('utf8');
   if (!text.trim()) {
     return fail('invalid_request', 'The patch is empty. Send the output of `git format-patch <baseSha>..HEAD --stdout`.');
   }
 
-  // Size FIRST, before anything is parsed or any process is spawned.
-  const bytes = Buffer.byteLength(text, 'utf8');
-  if (bytes > MAX_PATCH_BYTES) {
+  // Size FIRST, before anything is parsed or any process is spawned. Only the
+  // upload path raises the ceiling, and never past its own.
+  const uploaded = Number.isInteger(maxBytes) && maxBytes > MAX_PATCH_BYTES;
+  const limit = uploaded ? Math.min(maxBytes, MAX_UPLOADED_PATCH_BYTES) : MAX_PATCH_BYTES;
+  const bytes = body.length;
+  if (bytes > limit) {
     return fail(
       'patch_too_large',
-      `That patch is ${Math.round(bytes / 1024)} KB, over the ${Math.round(MAX_PATCH_BYTES / 1024)} KB a patch can `
-      + 'be. Push the branch to your fork instead and submit it with `branch` — there is no size limit on that route.',
+      uploaded
+        ? `That patch is ${Math.round(bytes / 1024)} KB, over the ${Math.round(limit / 1024)} KB an uploaded patch `
+          + 'can be. Push the branch to your fork instead and submit it with `branch`: there is no size limit on '
+          + 'that route.'
+        : `That patch is ${Math.round(bytes / 1024)} KB, over the ${Math.round(limit / 1024)} KB a patch can be. `
+          + `Upload it with the command in your work order (up to ${Math.round(MAX_UPLOADED_PATCH_BYTES / 1024)} KB), `
+          + 'or push the branch to your fork and submit it with `branch`: there is no size limit on that route.',
       { retryable: false }
     );
   }
@@ -189,7 +209,7 @@ async function applyPatch({
       const fs = require('fs/promises');
       const path = require('path');
       const patchFile = path.join(dir, '.usernode-submission.patch');
-      await fs.writeFile(patchFile, text, 'utf8');
+      await fs.writeFile(patchFile, body);
 
       // ── Enumerate before applying ──────────────────────────────────
       let numstat;
@@ -327,6 +347,7 @@ async function applyPatch({
 
 module.exports = {
   MAX_PATCH_BYTES,
+  MAX_UPLOADED_PATCH_BYTES,
   MAX_PATCH_FILES,
   MAX_PATCH_GROWTH_BYTES,
   isMbox,

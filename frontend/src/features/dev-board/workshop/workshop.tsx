@@ -1330,7 +1330,7 @@ function factsFor(row: QueueRow, voted: string | null): Fact[] {
   } else if (row.kind === 'vote' && row.tally) {
     // The Communities feed's rows (#3488): the counts, without a threshold
     // it has not worked out for each project. A zero says nothing.
-    if (voted) out.push({ key: 'voted', tone: 'ok', text: `You voted ${voted}` });
+    if (voted) out.push({ key: 'voted', tone: 'ok', text: youAnswered(row, voted) });
     const said = [row.tally.yes ? `${row.tally.yes} yes` : '', row.tally.no ? `${row.tally.no} no` : ''].filter(Boolean).join(' · ');
     if (said) out.push({ key: 'tally', tone: undefined, text: said });
   }
@@ -1346,7 +1346,9 @@ function factsFor(row: QueueRow, voted: string | null): Fact[] {
  * #3977: a change on a project that is just yours, whose Yes is the one it
  * needs (B7: the row's `yes.approve`, from `_cardVoteButtonSpecs`), is
  * approved rather than voted on, here as on its card: the rail, the sheet,
- * the swipe and the confirmation say Approve and Don't approve.
+ * the swipe and the confirmation say Approve and Don't approve. The
+ * Communities feed's rows carry it too (#4270: the needs feed's `approve`,
+ * features/workshop/needs-reel.tsx).
  */
 function approves(row: QueueRow): boolean {
   return row.kind === 'vote' && !!(row.yes && row.yes.approve);
@@ -2784,7 +2786,10 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
       }
       if (k === 'd' || k === 'D') { toggleSheet('description'); return; }
       if (k === 'a' || k === 'A') { toggleSheet('ask'); return; }
-      if (k === 'c' || k === 'C') { toggleSheet('comments'); return; }
+      // Claimed with preventDefault: C is also the experimental Suggest an
+      // improvement shortcut (#4289), which leaves a key alone once a screen
+      // has used it.
+      if (k === 'c' || k === 'C') { e.preventDefault(); toggleSheet('comments'); return; }
       if ((k === 't' || k === 'T') && canTry) { tryIt(); return; }
       if ((k === 'm' || k === 'M') && moreRef.current) moreRef.current.click();
     };

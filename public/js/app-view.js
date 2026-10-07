@@ -4921,15 +4921,19 @@ const AppView = {
     let body;
     if (t.kind === 'issue') {
       card = AppView._issueCardModel(item, { noNav: true });
+      const closedBand = AppView._issueClosedBandView(item);
       // #396: the issue body, then the GitHub comment thread. The thread is
       // fetched lazily (after paint) into `#dev-issue-comments`, which the
       // head renders as an empty host, so a cached (or empty) result reuses
       // what is already there across WS-driven refreshes.
       body = {
         actions: AppView._detailActionsView('issue', item),
-        // (#2431) The mirror of a proposal's issue chips: which change
-        // closed this issue, or is working on it.
-        addressedBy: AppView._issueProposalRefView(item),
+        // (#2431) The mirror of a proposal's issue chips: which change is
+        // working on this issue, or addressed it. (#4244) On a CLOSED issue
+        // the change that closed it rides in the card's status band instead,
+        // so the page says "closed" once.
+        closedBand,
+        addressedBy: closedBand && closedBand.ref ? null : AppView._issueProposalRefView(item),
         issueBodyHtml: AppView._issueBodyHtml(item),
         issueBodyEditor: {
           issue: item.number,
@@ -5037,6 +5041,28 @@ const AppView = {
       label: n ? `#${n}` : 'Change',
       title: ref.title || (n ? `Pull request #${n}` : `Change ${ref.sessionId}`),
       href: `#app/${slug}/dev/proposals/${ref.sessionId}`,
+    };
+  },
+
+  // #4244: a closed request's ONE status band, at the top of its card:
+  // "Closed · Oct 5 · by #10 <title>". Emerald when a merged change closed
+  // it (the change is the band's pill, the door to its page), zinc when a
+  // close vote or an admin did (`closed_via`, from the single-issue route).
+  // The card itself then carries no second "Closed" badge (_issueCardModel).
+  _issueClosedBandView(issue) {
+    if (!issue || issue.state !== 'closed') return null;
+    const ref = AppView._issueProposalRefView(issue);
+    const merged = !!(ref && ref.state === 'merged');
+    const stamp = issue.closedAt ? relStamp(issue.closedAt) : { text: '', title: '' };
+    const how = merged ? null
+      : issue.closed_via === 'admin' ? 'by an admin'
+        : issue.closed_via === 'vote' ? 'by vote' : null;
+    return {
+      tone: merged ? 'merged' : 'settled',
+      when: stamp.text || null,
+      whenTitle: stamp.title || null,
+      how,
+      ref: merged ? ref : null,
     };
   },
 
@@ -7122,12 +7148,11 @@ const AppView = {
     if (issueBtn) {
       issueBtn.addEventListener('click', () => {
         close();
-        // The shared feedback dialog with the open app preselected (#226):
-        // since #2707 only `target: 'app'` does that, and only where "This
-        // app" can be chosen. The same call Improve.giveFeedback() makes,
+        // The shared feedback dialog, asking where it goes with nothing
+        // chosen (#4236): no `target`, the same as Improve.giveFeedback(),
         // so the two entry points cannot drift. QA 2026-09-24: plus
         // `intent`, so the dialog is headed "File an issue".
-        App.openFeedbackModal({ fromDev: true, target: 'app', intent: 'issue' });
+        App.openFeedbackModal({ fromDev: true, intent: 'issue' });
       }, { signal });
     }
     const importPrBtn = menu.querySelector('[data-plus="import-pr"]');
@@ -14273,19 +14298,10 @@ const AppView = {
         act: () => window.open(pr.pr_url, '_blank', 'noopener'),
       });
     }
-    // B7: on a project that is just the viewer's, the vote is one-tap
-    // Approve, and its No lives here, last and red: today's No, with its
-    // line asked for as any No's is.
-    if (!ro && pr.status === 'promoted' && pr.my_vote !== 'no' && AppView._approveSolo(pr)) {
-      const epoch = Number.isFinite(parseInt(pr.approval_epoch, 10)) ? parseInt(pr.approval_epoch, 10) : null;
-      items.push({
-        label: 'Don’t approve',
-        icon: 'withdraw',
-        title: 'Say no to this change, with a line on why',
-        danger: true,
-        act: () => AppView.castVote(pr.id, 'no', ...(epoch === null ? [] : [epoch])),
-      });
-    }
+    // #4270: B7's "Don't approve" item is gone from here. Since #3977 a
+    // Just-you change's Approve opens the vote picker, whose other side is
+    // Don't approve with its line in the box; this was a second way to the
+    // same No, asking for the line by prompt instead.
     return items;
   },
 
@@ -17996,7 +18012,9 @@ const AppView = {
       : null;
 
     // ── Badges: close status + work state + at most three metadata chips ──
-    const badges = closed ? [closedBadge] : [
+    // (#4244) On its own page (noNav) the status band above the card says
+    // it, with when and by what, so the card does not say it twice.
+    const badges = closed ? (noNav ? [] : [closedBadge]) : [
       closeBadge,
       AppView._inProgressChipSpec(issue),
       ...AppView._attrChipSpecs('issue', n, issue, { omitUnset: !noNav }),

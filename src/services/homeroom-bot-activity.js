@@ -95,6 +95,10 @@ const OPENABLE_PROPOSAL = new Set(['promoted', 'merging', 'merged']);
 const OUTCOMES = Object.freeze([
   'question', 'proposed', 'live', 'closed', 'blocked', 'build_failed',
   'person', 'empty', 'failed', 'held', 'stopped', 'answer', 'revise',
+  // #4242 / #4227: built, but not offered yet (checking), offered nothing
+  // because it needs a person to look (needs_look), and merged but not
+  // live yet (going_live).
+  'checking', 'needs_look', 'going_live',
 ]);
 
 function dmModule(deps) { return deps.dm || require('./homeroom-bot-dm'); }
@@ -382,6 +386,15 @@ async function cardUnderPlan(pool, { app, issueNumber, runId, planMessageId, req
  * Pure: what one card's piece of work came to, from the first live run
  * after it began (the run_* columns of cardRows), or null while it is
  * still going: no run yet, or a build not finished.
+ *
+ * #4242: built is not yet "waiting for approval". Its requester hears it is
+ * ready to try only once its checks and its before & after shots let it
+ * (homeroom-bot-dm.js noteChangeReady), and the card used to say "Waiting
+ * for approval" long before that, with no message and no push behind it.
+ * Until the proposal's news has gone out (`told`, false: cardRows) it is
+ * `checking`; when nothing will go out without a person (`needs_look`, the
+ * "needs a look" message: dm.noteChangeStopped), it says so. A row without
+ * `told` (an older caller) reads as it always did.
  */
 function outcomeOf(row) {
   if (!row.run_id) return null;
@@ -392,12 +405,16 @@ function outcomeOf(row) {
     case 'ready':
       if (row.proposal_session_id) {
         if (row.proposal_status === 'merged') return 'live';
+        // #4227: merged, and not running in production yet (cardRows).
+        if (row.proposal_status === 'merging') return 'going_live';
         // WP1: withdrawn (a duplicate of a merged proposal, noteRequestMerged)
         // reads as closed, never as still up for a vote.
         if (row.proposal_status === 'closed' || row.proposal_status === 'archived') return 'closed';
+        if (row.told === false) return row.needs_look ? 'needs_look' : 'checking';
         return 'proposed';
       }
-      if (row.build_ok === true) return 'proposed';
+      // Built, with no proposal recorded (yet): never "waiting for approval".
+      if (row.build_ok === true) return row.needs_look ? 'needs_look' : 'checking';
       if (row.build_ok === false) {
         // A build its request was closed before (homeroom-bot.js buildOne)
         // never started: the work stopped, nothing went wrong in it.
@@ -414,7 +431,7 @@ function outcomeOf(row) {
 
 /** Pure: when a finished card's work ended, where the records say. */
 function endedAt(row, outcome) {
-  if (['proposed', 'live', 'closed'].includes(outcome)) return iso(row.proposal_at);
+  if (['proposed', 'live', 'closed', 'checking', 'needs_look', 'going_live'].includes(outcome)) return iso(row.proposal_at);
   if (['blocked', 'build_failed', 'stopped'].includes(outcome)) return null;
   return iso(row.run_at);
 }
@@ -662,7 +679,20 @@ async function cardRows(pool, userId, limit = MAX_CARDS) {
             run.live_build_waiting_at AS build_waiting_at, bs.status AS build_status,
             -- Merged but not live yet (live_at) reads as merging: going live.
             CASE WHEN cs.status = 'merged' AND cs.live_at IS NULL THEN 'merging' ELSE cs.status END AS proposal_status,
-            COALESCE(cs.promoted_at, cs.created_at) AS proposal_at
+            COALESCE(cs.promoted_at, cs.created_at) AS proposal_at,
+            -- #4242: whether the change's news went out since the card
+            -- began (a ready card, or an older "it's built"), and whether
+            -- the "needs a look" message did (dm.noteChangeStopped).
+            EXISTS (
+              SELECT 1 FROM homeroom_bot_dm_messages t
+               WHERE t.user_id = $1 AND t.app_id = c.app_id AND t.issue_number = c.issue_number
+                 AND t.kind = 'proposal' AND t.created_at >= c.began
+            ) AS told,
+            EXISTS (
+              SELECT 1 FROM homeroom_bot_dm_messages t
+               WHERE t.user_id = $1 AND t.app_id = c.app_id AND t.issue_number = c.issue_number
+                 AND t.kind = 'needs_look' AND t.created_at >= c.began
+            ) AS needs_look
        FROM cards c
        JOIN apps a ON a.id = c.app_id
        LEFT JOIN LATERAL (
@@ -721,6 +751,9 @@ const OUTCOME_LABELS = Object.freeze({
   stopped: 'Stopped before it finished',
   answer: 'Answered on the change',
   revise: 'Updated the change',
+  checking: 'Built it. Checking it before you try it',
+  needs_look: 'Built it, but it needs a look',
+  going_live: 'Built it. Going live now',
 });
 // A change waiting for approval is built, not done: "Done" over "Built it.
 // Waiting for approval" read as finished to the person still asked to
@@ -731,6 +764,7 @@ const OUTCOME_TONES = Object.freeze({
   question: 'you', blocked: 'you', empty: 'you',
   person: 'ended', held: 'ended', closed: 'ended',
   build_failed: 'trouble', failed: 'trouble', stopped: 'trouble',
+  checking: 'built', going_live: 'built', needs_look: 'you',
 });
 const TONE_WORDS = Object.freeze({ done: 'Done', built: 'Built', you: 'Needs you', ended: 'Ended', trouble: 'Didn\'t finish' });
 

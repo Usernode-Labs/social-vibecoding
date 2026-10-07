@@ -15,7 +15,7 @@
 // platform shell loads it too (frontend/src/head.html), so Homeroom's own
 // screens get the same listener rather than a copy.
 //
-// Five parts:
+// Six parts:
 //   1. the decisions: what a tap is, and what keeps the keyboard;
 //   2. the listener, executed from native.js in a sandbox against a fake
 //      page that fires events in a browser's order;
@@ -25,7 +25,11 @@
 //      composer does not fall under the finger first);
 //   5. the conventions document it, and every element in the shell that
 //      keeps its field focused through a press is one a tap keeps the
-//      keyboard for.
+//      keyboard for;
+//   6. around a frame (request #4273): with an app's field up, a tap on
+//      the shell's own chrome reaches only the shell, so the shell's
+//      listener tells the app's frame, and the kit in the frame puts its
+//      field away when its parent says so.
 //
 // What this cannot do is raise a real keyboard; it checks the blur that
 // closes one.
@@ -159,8 +163,11 @@ const KIT_LISTENER = between('  var KB_TEXT_INPUT_TYPES = {', '  // Whether the 
   + between('  var KB_DISMISS_SLOP = ', '  // Keyboard-aware reveal math')
   + between('  (function keyboardDismiss() {', '\n  })();') + '\n  })();\n';
 
-function kitPage({ platform = 'ios', touch = true } = {}) {
+// `parent`: the window that frames this page ('self' for a top-level
+// window, whose parent is itself); none, as in a sandbox, by default.
+function kitPage({ platform = 'ios', touch = true, parent = null } = {}) {
   const p = page({ touch });
+  if (parent) p.win.parent = parent === 'self' ? p.win : parent;
   vm.runInNewContext(KIT_LISTENER, { window: p.win, document: p.doc, platform });
   return p;
 }
@@ -264,7 +271,7 @@ test('only a field that raises keys, and an editable region', () => {
     ['input', {}, { type: 'text', readOnly: true }, 0],
     ['select', {}, {}, 0],
     ['button', {}, {}, 0],
-    ['iframe', {}, {}, 0], // an app's own field: its kit closes it, in its frame
+    ['iframe', {}, {}, 0], // an app's own field: its kit closes it, in its frame (part 6)
   ]) {
     const p = kitPage();
     const el = p.field(tag, attrs, extra);
@@ -421,7 +428,7 @@ test('the shell runs the kit\'s listener as is: loaded as a plain script, and ne
   for (const file of [...walk('frontend/src'), ...walk('frontend/@'), ...walk('public/js'), 'public/css/app.css']) {
     const src = read(file);
     assert.doesNotMatch(src, new RegExp(physics.KB_DISMISS_OFF_ATTR), `${file} turns the kit's listener off`);
-    assert.doesNotMatch(src, /isKeyboardDismissTap|tapKeepsKeyboard/, `${file} runs a second copy`);
+    assert.doesNotMatch(src, /isKeyboardDismissTap|tapKeepsKeyboard|__usernode_keyboard/, `${file} runs a second copy`);
   }
 });
 
@@ -490,6 +497,11 @@ test('the listener prevents nothing and writes nothing to the page but the blur'
   const src = between('  (function keyboardDismiss() {', '\n  })();');
   assert.doesNotMatch(src, /preventDefault\(|stopPropagation\(|style\.|classList|setAttribute/);
   assert.equal((src.match(/\.blur\(\)/g) || []).length, 1);
+  // And sends nothing but the one message, to a focused frame's window
+  // (part 6), never to its own parent.
+  assert.equal((src.match(/\.postMessage\(/g) || []).length, 1);
+  assert.match(src, /frame\.contentWindow\.postMessage\(keyboardDismissMessage\(\), '\*'\)/);
+  assert.doesNotMatch(src, /parent\.postMessage/);
 });
 
 test('the conventions and the kit\'s header tell an app how to keep the keyboard, or turn it off', () => {
@@ -502,6 +514,9 @@ test('the conventions and the kit\'s header tell an app how to keep the keyboard
   const header = NATIVE_JS.slice(0, NATIVE_JS.indexOf('(function (global)'));
   assert.match(header, /data-keep-keyboard/);
   assert.match(header, /data-un-keyboard-dismiss="off"/);
+  // The message a page sends a focused frame (part 6), named where every
+  // app author reads what the kit does.
+  assert.match(header, /\{ __usernode_keyboard: 'dismiss' \}/);
 });
 
 // The opening tag of the JSX element whose attributes include the text at
@@ -555,4 +570,251 @@ test('every element in the shell that keeps its field focused through a press is
     }
   }
   assert.ok(seen >= 15, `found ${seen}`);
+});
+
+// ── 6. Around a frame: the shell tells the app (request #4273) ──────────────
+//
+// With the field inside an app's frame, the shell's document.activeElement is
+// the frame, and a tap on the shell's own chrome (its header, the space
+// around a panel) reaches only the shell: the kit in the app never hears it.
+// So the shell's listener, the same kit, posts `{ __usernode_keyboard:
+// 'dismiss' }` to the focused frame, and the kit in the frame takes it from
+// its parent window only, as the bridge takes the shell's other messages.
+
+// The shell's frame for an app: an <iframe> whose window records (or
+// delivers) what is posted to it, as the shell's #app-iframe would. What
+// arrives is a structured clone, as postMessage delivers it.
+function appFrame(p, attrs = {}, deliver = null) {
+  const posted = [];
+  const contentWindow = {
+    postMessage(data, origin) {
+      const copy = structuredClone(data);
+      posted.push({ data: copy, origin });
+      if (deliver) deliver(copy, origin);
+    },
+  };
+  const el = node('iframe', attrs, p.body, { contentWindow, posted });
+  return el;
+}
+const DISMISS = { __usernode_keyboard: 'dismiss' };
+
+test('the message: one key in the bridge\'s family, and nothing else is it', () => {
+  const { keyboardDismissMessage, isKeyboardDismissMessage } = physics;
+  assert.deepEqual(keyboardDismissMessage(), DISMISS);
+  assert.notEqual(keyboardDismissMessage(), keyboardDismissMessage(), 'a fresh object each time');
+  assert.equal(isKeyboardDismissMessage(keyboardDismissMessage()), true);
+  assert.equal(isKeyboardDismissMessage({ __usernode_keyboard: 'dismiss', extra: 1 }), true);
+  for (const data of [null, undefined, '', 'dismiss', '__usernode_keyboard', 0, [],
+    { __usernode_keyboard: 'show' }, { __usernode_keyboard: true }, { __usernode_theme: 'changed' }, {}]) {
+    assert.equal(isKeyboardDismissMessage(data), false, JSON.stringify(data));
+  }
+});
+
+test('the shell, with an app\'s frame focused: a tap on its own chrome tells the frame, and blurs nothing of its own', () => {
+  const p = kitPage();
+  const frame = appFrame(p, { id: 'app-iframe', 'data-app-slug': 'notes' });
+  p.focus(frame);
+  const title = p.el('span', {}, p.el('header', { class: 'app-header' }));
+  p.tap(title);
+  assert.deepEqual(frame.posted, [{ data: DISMISS, origin: '*' }],
+    'to the frame\'s window, to any origin, as the shell\'s other messages to an app go');
+  assert.equal(p.doc.activeElement, frame, 'the shell moves no focus: the frame still has it');
+  p.tap(title);
+  assert.equal(frame.posted.length, 2, 'every such tap, whatever the frame did with the last');
+  assert.ok(p.listeners.every((l) => l.passive), 'passive: the tap and its click go on as they were');
+  // Pointer events from a finger, where a page has no touch events.
+  const q = kitPage({ touch: false });
+  const other = appFrame(q);
+  q.focus(other);
+  q.tap(q.el('p'));
+  assert.equal(other.posted.length, 1, 'a finger\'s pointer events');
+});
+
+test('a tap around the frame on something that keeps the keyboard, or that is no tap, tells it nothing', () => {
+  const p = kitPage();
+  const frame = appFrame(p, { id: 'app-iframe' });
+  p.focus(frame);
+  const header = p.el('header', { class: 'app-header' });
+  const tabs = p.el('nav', { id: 'platform-tabs' });
+  for (const [what, target] of [
+    ['Back, in the header', p.el('svg', {}, p.el('button', { 'aria-label': 'Back' }, header))],
+    ['a link', p.el('a', { href: '#home' }, header)],
+    ['a tab', p.el('span', {}, p.el('div', { role: 'tab' }, tabs))],
+    ['a pressable row', p.el('div', { class: 'un-pressable' })],
+    ['inside data-keep-keyboard', p.el('p', {}, p.el('div', { 'data-keep-keyboard': '' }))],
+    ['a shell field', p.el('input')],
+  ]) {
+    p.tap(target);
+    assert.equal(frame.posted.length, 0, what);
+  }
+  for (const [what, opts] of [
+    ['a scroll', { scroll: true }],
+    ['a drag', { to: [120, 330] }],
+    ['a long press', { ms: 800 }],
+    ['two fingers', { fingers: 2 }],
+    ['a cancelled touch', { cancel: true }],
+    ['a tap a handler cancelled', { prevented: true }],
+    ['a tap a handler stopped', { stopped: true }],
+  ]) {
+    p.tap(p.el('p', {}, header), opts);
+    assert.equal(frame.posted.length, 0, what);
+  }
+  for (const pointerType of ['mouse', 'pen']) {
+    const q = kitPage({ touch: false });
+    const f = appFrame(q);
+    q.focus(f);
+    q.tap(q.el('p'), { pointerType });
+    assert.equal(f.posted.length, 0, pointerType);
+  }
+  p.tap(p.el('p', {}, header));
+  assert.equal(frame.posted.length, 1, 'and the next real tap on the header is heard');
+});
+
+test('the shell tells a frame only while it has focus, on a phone, and not when its own page opted out', () => {
+  const p = kitPage();
+  const frame = appFrame(p);
+  p.tap(p.el('p'));
+  assert.equal(frame.posted.length, 0, 'nothing focused');
+  p.focus(frame);
+  p.html.setAttribute(physics.KB_DISMISS_OFF_ATTR, 'off');
+  p.tap(p.el('p'));
+  assert.equal(frame.posted.length, 0, 'a page that turned the listener off');
+  p.html.setAttribute(physics.KB_DISMISS_OFF_ATTR, 'on');
+  p.tap(p.el('p'));
+  assert.equal(frame.posted.length, 1);
+
+  const desk = kitPage({ platform: 'desktop' });
+  const deskFrame = appFrame(desk);
+  desk.focus(deskFrame);
+  desk.tap(desk.el('p'));
+  assert.equal(deskFrame.posted.length, 0, 'a desktop: no on-screen keyboard, no listener');
+  assert.equal(desk.listeners.length, 0);
+
+  // A frame mid-teardown (no window yet, or one that throws) is no error.
+  const q = kitPage();
+  const gone = q.el('iframe');
+  q.focus(gone);
+  assert.doesNotThrow(() => q.tap(q.el('p')));
+  const broken = node('iframe', {}, q.body, { contentWindow: { postMessage() { throw new Error('detached'); } } });
+  q.focus(broken);
+  assert.doesNotThrow(() => q.tap(q.el('p')));
+});
+
+test('in the frame, the kit puts its field away when its parent says so, and only then', () => {
+  const shell = { name: 'the shell' };
+  const app = kitPage({ parent: shell });
+  assert.equal(app.listeners.filter((l) => l.type === 'message').length, 1, 'one message listener, in a frame');
+  const field = app.field('textarea');
+  app.focus(field);
+  for (const [what, event] of [
+    ['another frame', { source: { name: 'a sibling' }, data: DISMISS }],
+    ['a frame of its own', { source: { name: 'an embed' }, data: DISMISS }],
+    ['itself', { source: app.win, data: DISMISS }],
+    ['no source', { source: null, data: DISMISS }],
+    ['another message', { source: shell, data: { __usernode_theme: 'changed', value: { theme: 'dark' } } }],
+    ['another verb', { source: shell, data: { __usernode_keyboard: 'show' } }],
+    ['a string', { source: shell, data: 'dismiss' }],
+    ['nothing', { source: shell, data: null }],
+  ]) {
+    app.fire('message', event);
+    assert.equal(field.blurs, 0, what);
+  }
+  app.fire('message', { source: shell, data: DISMISS });
+  assert.equal(field.blurs, 1, 'from its parent');
+  assert.equal(app.doc.activeElement, app.body);
+  app.fire('message', { source: shell, data: DISMISS });
+  assert.equal(field.blurs, 1, 'nothing focused, nothing to do');
+});
+
+test('in the frame, only a field that raises keys is put away, and the app\'s own opt-out holds', () => {
+  const shell = {};
+  for (const [extra, want] of [
+    [{ type: 'text' }, 1],
+    [{ type: 'checkbox' }, 0],
+    [{ type: 'text', readOnly: true }, 0],
+  ]) {
+    const app = kitPage({ parent: shell });
+    const el = app.field('input', {}, extra);
+    app.focus(el);
+    app.fire('message', { source: shell, data: DISMISS });
+    assert.equal(el.blurs, want, JSON.stringify(extra));
+  }
+  for (const where of ['html', 'body']) {
+    const app = kitPage({ parent: shell });
+    const field = app.field('textarea');
+    app.focus(field);
+    app[where].setAttribute(physics.KB_DISMISS_OFF_ATTR, 'off');
+    app.fire('message', { source: shell, data: DISMISS });
+    assert.equal(field.blurs, 0, `${where} says off`);
+    app[where].setAttribute(physics.KB_DISMISS_OFF_ATTR, 'on');
+    app.fire('message', { source: shell, data: DISMISS });
+    assert.equal(field.blurs, 1, `${where}: any other value leaves it on`);
+  }
+});
+
+test('a top-level page, or a desktop, hears no such message at all', () => {
+  assert.equal(kitPage().listeners.filter((l) => l.type === 'message').length, 0, 'no parent');
+  const top = kitPage({ parent: 'self' });
+  assert.equal(top.listeners.filter((l) => l.type === 'message').length, 0, 'a top window is its own parent');
+  assert.equal(kitPage({ platform: 'desktop', parent: {} }).listeners.length, 0, 'a framed desktop');
+  assert.equal(kitPage({ platform: 'android', parent: {} }).listeners.length, 6, 'a framed phone: the tap\'s five, and the message');
+});
+
+test('end to end: a tap on the shell\'s header closes the keyboard of the field in the app, through every frame between', () => {
+  // Messages are delivered as tasks, after the tap's own events: queued
+  // here, and run once the tap is over.
+  const tasks = [];
+  const run = () => { while (tasks.length) tasks.shift()(); };
+  const deliverTo = (page, from) => (data) => {
+    tasks.push(() => page.fire('message', { source: from, data, origin: 'https://homeroom.test' }));
+  };
+
+  // The shell around one app.
+  const shell = kitPage();
+  const app = kitPage({ parent: shell.win });
+  const frame = appFrame(shell, { id: 'app-iframe' }, deliverTo(app, shell.win));
+  const field = app.field('input', {}, { type: 'text' });
+  app.focus(field);
+  shell.focus(frame);
+  shell.tap(shell.el('div', {}, shell.el('header', { class: 'app-header' })));
+  assert.equal(field.blurs, 0, 'the tap waits on nothing: the message comes after it');
+  run();
+  assert.equal(field.blurs, 1, 'the app\'s field lets go');
+  assert.equal(app.doc.activeElement, app.body);
+
+  // A tap on a control of the shell's (Back) leaves the app's field alone.
+  app.focus(field);
+  shell.tap(shell.el('button', { 'aria-label': 'Back' }));
+  run();
+  assert.equal(field.blurs, 1);
+
+  // The platform inside a frame of its own (a preview of a change to it),
+  // around an app: the message is passed down to the frame that holds the
+  // field, and each hop is a parent speaking to its own frame.
+  const outer = kitPage();
+  const inner = kitPage({ parent: outer.win });
+  const nested = kitPage({ parent: inner.win });
+  const innerFrame = appFrame(outer, { id: 'preview' }, deliverTo(inner, outer.win));
+  const appFrameInside = appFrame(inner, { id: 'app-iframe' }, deliverTo(nested, inner.win));
+  const deep = nested.field('textarea');
+  nested.focus(deep);
+  inner.focus(appFrameInside);
+  outer.focus(innerFrame);
+  outer.tap(outer.el('p'));
+  run();
+  assert.equal(deep.blurs, 1, 'passed down to the frame that holds the field');
+  assert.deepEqual(appFrameInside.posted.map((m) => m.data), [DISMISS]);
+
+  // An app that opted out keeps its field, whatever the shell heard.
+  const shell2 = kitPage();
+  const optedOut = kitPage({ parent: shell2.win });
+  optedOut.body.setAttribute(physics.KB_DISMISS_OFF_ATTR, 'off');
+  const frame2 = appFrame(shell2, {}, deliverTo(optedOut, shell2.win));
+  const kept = optedOut.field('textarea');
+  optedOut.focus(kept);
+  shell2.focus(frame2);
+  shell2.tap(shell2.el('p'));
+  run();
+  assert.equal(frame2.posted.length, 1, 'the shell still tells it');
+  assert.equal(kept.blurs, 0, 'the app keeps its keyboard');
 });

@@ -482,6 +482,11 @@ const BOT_DM_TWO_QUESTIONS_KEY = 'staging-hrbot-two-questions';
 const BOT_DM_STUCK_KEY = 'staging-hrbot-build-failed';
 const BOT_DM_READY_KEY = 'staging-hrbot-ready';
 const BOT_DM_READY_SESSION_ID = 990901;
+// #4231: a new project's first version gone live, with Open, Open community
+// and Invite people. No project stands behind its slug: Open and Open
+// community find nothing, and the invite sheet opens but makes no link.
+const BOT_DM_FIRST_LIVE_KEY = 'staging-hrbot-first-live';
+const BOT_DM_FIRST_LIVE_SLUG = 'staging-demo-plants';
 
 async function ensureBotDmFixture(pool, user) {
   if (process.env.USERNODE_ENV !== 'staging' || !user?.id) return null;
@@ -620,6 +625,22 @@ async function ensureBotDmFixture(pool, user) {
     }, {
       metadata: {
         homeroomBot: { kind: 'build_failed', ...stuck, actions: dm.STUCK_ACTIONS.build_failed, status: 'open' },
+      },
+    });
+    const firstLive = { appName: 'Staging demo plants', issueNumber: 1, firstVersion: true };
+    await conversations.sendMessage(pool, { id: bot.id }, opened.conversationId, {
+      content: dm.mergedText({ line: dm.requestLine(firstLive), appName: firstLive.appName, live: true }),
+      idempotency_key: BOT_DM_FIRST_LIVE_KEY,
+    }, {
+      metadata: {
+        homeroomBot: {
+          kind: 'merged', appSlug: BOT_DM_FIRST_LIVE_SLUG, ...firstLive, live: true,
+          link: `#app/${BOT_DM_FIRST_LIVE_SLUG}`,
+          actions: [
+            dm.openAppAction({ slug: BOT_DM_FIRST_LIVE_SLUG, appName: firstLive.appName }),
+            ...dm.firstLiveActions({ slug: BOT_DM_FIRST_LIVE_SLUG }),
+          ],
+        },
       },
     });
     const ready = { appName: 'Staging demo app', issueNumber: 11, issueTitle: 'Staging demo, grey out finished items' };

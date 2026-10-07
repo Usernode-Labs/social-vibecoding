@@ -36,7 +36,7 @@ import { Html } from '../../../lib/html';
 import { FRESH, watch } from '../../../lib/live-reads';
 import { useStoreState } from '../../../lib/use-store-state';
 import { Button } from '@/components/ui/button';
-import { ChevronRightIcon, PencilSquareIcon, PlusIcon, SearchIcon, XIcon } from '@/components/ui/icons';
+import { CheckIcon, ChevronRightIcon, PencilSquareIcon, PlusIcon, SearchIcon, XIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { ActionBand, ActionButton, Badge, DevCard, StatusPill, TitleContent, VoteButton, isVoteSpec } from '../card/dev-card';
@@ -54,6 +54,7 @@ import type {
   NoteTone,
   RosterView,
   IssueLink,
+  IssueClosedBand,
   IssueProposalRef,
   TextRun,
   TopicBody,
@@ -763,6 +764,46 @@ function AddressedBy({ r }: { r: IssueProposalRef }): ReactNode {
         ><IssueIdentity label={r.label} title={r.title} /><RefChevron /></a>
       </div>
     </aside>
+  );
+}
+
+/**
+ * #4244 — a closed request's ONE status band, at the top of its card:
+ * "✓ Closed · Oct 5 · by #10 <title> ›". It replaced a separate "Closed by"
+ * box above the card plus a grey "Closed" badge on it, which said the same
+ * thing twice in two places. Emerald when a merged change closed it, zinc
+ * when a close vote or an admin did. The change is an inline pill drawn like
+ * the change page's "Addresses" line (`.dev-topic-issue`), and it keeps
+ * `data-addressed-by`, the hook the old box's row carried.
+ */
+function ClosedBand({ b }: { b: IssueClosedBand }): ReactNode {
+  const r = b.ref;
+  return (
+    <div className="dev-issue-closed-band" data-tone={b.tone} data-topic-part="closed-band">
+      <CheckIcon className="dev-issue-closed-band-glyph" aria-hidden="true" />
+      <span className="dev-issue-closed-band-k">Closed</span>
+      {b.when ? <>
+        <span className="dev-issue-closed-band-dot" aria-hidden="true">·</span>
+        <span title={b.whenTitle || undefined}>{b.when}</span>
+      </> : null}
+      {r ? <>
+        <span className="dev-issue-closed-band-dot" aria-hidden="true">·</span>
+        <span>by</span>
+        <a
+          href={r.href}
+          className="dev-ws-chip dev-ws-chip-info dev-topic-issue"
+          data-addressed-by={r.sessionId}
+          aria-label={`Closed by ${r.label}: ${r.title}`}
+          onClick={(event) => {
+            if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+            event.preventDefault(); call('openTopic', 'proposal', r.sessionId);
+          }}
+        ><b>{r.label}</b><span>{r.title}</span><ChevronRightIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /></a>
+      </> : b.how ? <>
+        <span className="dev-issue-closed-band-dot" aria-hidden="true">·</span>
+        <span>{b.how}</span>
+      </> : null}
+    </div>
   );
 }
 
@@ -1684,7 +1725,9 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
         <>
           <div className="dev-topic-sheet dev-topic-card" data-topic-sheet="card">
             {/* #2431: an ISSUE's page names the change on it. A CHANGE's page
-                names its issues under the summary (ChangeHero). */}
+                names its issues under the summary (ChangeHero). #4244: a
+                CLOSED issue says so once, in the band at the card's top. */}
+            {body.closedBand ? <ClosedBand b={body.closedBand} /> : null}
             {body.addressedBy ? <AddressedBy r={body.addressedBy} /> : null}
             <DevCard model={card} />
           </div>

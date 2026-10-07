@@ -208,6 +208,8 @@ function outcomeOf(row) {
     case 'ready':
       if (row.proposal_session_id) {
         if (row.proposal_status === 'merged') return 'live';
+        // #4227: merged, not running in production yet (pastRuns).
+        if (row.proposal_status === 'merging') return 'going_live';
         if (CLOSED_PROPOSAL.has(row.proposal_status)) return 'closed';
         return 'proposed';
       }
@@ -228,7 +230,7 @@ function outcomeOf(row) {
 /** Pure: when what a run came to happened: a proposal's own moments, else the run. */
 function atOf(row, outcome) {
   if (outcome === 'live') return iso(row.merged_at) || iso(row.proposal_at) || iso(row.created_at);
-  if (outcome === 'proposed' || outcome === 'closed') return iso(row.proposal_at) || iso(row.created_at);
+  if (outcome === 'proposed' || outcome === 'going_live' || outcome === 'closed') return iso(row.proposal_at) || iso(row.created_at);
   return iso(row.created_at);
 }
 
@@ -295,7 +297,7 @@ function leadOf(runs) {
     if (!since) return live;
   }
   if (outcomeOf(newest)) return newest;
-  return settled.find((row) => outcomeOf(row) === 'proposed') || newest;
+  return settled.find((row) => ['proposed', 'going_live'].includes(outcomeOf(row))) || newest;
 }
 
 /**

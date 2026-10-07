@@ -296,6 +296,43 @@ test('a failing build mark is logged and never holds the exit; no build, no writ
   }
 });
 
+test('shutdown hands its checks runs to the next harvest before closing the pool, and only on Kubernetes', async () => {
+  // 7 Oct 2026: the new leader's boot harvest ran while the rows the old
+  // Pod had been harvesting still carried its heartbeat, so it seated
+  // neither, and the stale sweep started both runs over.
+  const { server, restore } = loadServer();
+  const harvest = require('../src/services/check-harvest');
+  const checkRuns = require('../src/services/check-runs');
+  const lifecycle = require('../src/services/lifecycle');
+  const saved = { enabled: harvest.isEnabled, release: checkRuns.release, waitFor: lifecycle.waitFor };
+  const order = [];
+  lifecycle.waitFor = async () => true;
+  checkRuns.release = async (pool) => {
+    order.push('released');
+    assert.ok(pool, 'through the shutdown pool');
+    return 2;
+  };
+  try {
+    harvest.isEnabled = () => true;
+    let pool = fakePool({ endImpl: async () => { order.push('poolEnd'); } });
+    await runCleanup(server, { listener: fakeListener(), pool });
+    assert.deepEqual(order, ['released', 'poolEnd']);
+    const line = logs.find((l) => l.msg === 'Handed this process\'s checks runs to the next harvest on shutdown');
+    assert.deepEqual(line.data, { runs: 2, timedOut: false });
+
+    order.length = 0;
+    harvest.isEnabled = () => false;
+    pool = fakePool({ endImpl: async () => { order.push('poolEnd'); } });
+    await runCleanup(server, { listener: fakeListener(), pool });
+    assert.deepEqual(order, ['poolEnd'], 'no Kubernetes capture runtime, no manifests to hand over');
+  } finally {
+    harvest.isEnabled = saved.enabled;
+    checkRuns.release = saved.release;
+    lifecycle.waitFor = saved.waitFor;
+    restore();
+  }
+});
+
 test('cleanup survives a listener that throws on close', async () => {
   const { server, logs, restore } = loadServer();
   try {

@@ -39,7 +39,7 @@ test('the reading: steps against the hour and the two-minute reward, the aha, th
     join(4, [null, 5000]),
   ];
   const since = '2026-09-01T00:00:00Z';
-  const funnel = { from: '2026-09-28T00:00:00.000Z', opened: 5, signedIn: 3, joined: 2 };
+  const funnel = { from: '2026-09-28T00:00:00.000Z', opened: 5, signedIn: 3, signedInByInvite: 2, signedInAlready: 1, joined: 2 };
   const r = journey.firstSessionReading(rows, funnel, {
     week: { label: '2026-09-28', finished: true }, recordedFrom: { make: since, reward: since, opens: since, signedIn: since },
   });
@@ -198,8 +198,10 @@ test('first artefacts and the first-session reading against the full PostgreSQL 
     assert.deepEqual(r.join.steps.map((s) => [s.key, s.reached, s.medianSeconds, s.inSession]),
       [['said', 1, 60, 1], ['suggested', 1, 4000, 0]]);
     assert.equal(r.join.aha, 1);
-    assert.deepEqual(r.opens, { from: window.start.toISOString(), opened: 2, signedIn: 1, joined: 1 },
-      'two opens, ben signing in and ben joining, counted from the start of the window');
+    // Ben opened it already signed in (#4272: the sign-ins in their two ways).
+    assert.deepEqual(r.opens, {
+      from: window.start.toISOString(), opened: 2, signedIn: 1, signedInByInvite: 0, signedInAlready: 1, joined: 1,
+    }, 'two opens, ben signing in and ben joining, counted from the start of the window');
     assert.deepEqual(r.examples.map((e) => [e.path, e.name, e.slug]), [['join', 'ben', 'book-swap'], ['make', 'ana', 'book-swap']]);
     assert.ok(r.recordedFrom.make && r.recordedFrom.reward && r.recordedFrom.opens && r.recordedFrom.signedIn);
 

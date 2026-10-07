@@ -193,16 +193,24 @@ const EVENT_TYPES = Object.freeze({
   //                         maker (#4176). metadata: { inviteId, signedIn }
   //   invite_signed_in      the invite funnel's middle step: somebody signed
   //                         up or in from a live invite link (the sign-in
-  //                         carried it: communityInvites.redeemCarried), or
+  //                         carried it: communityInvites.redeemCarried, or
+  //                         dropCarried when it does not follow it), or
   //                         opened one already signed in, before joining.
   //                         Once per person per link (the unique index in
   //                         schema.sql), written by
   //                         journey-events.noteInviteSignedIn. metadata:
   //                         { inviteId, how: 'signed_up' | 'signed_in' |
-  //                         'was_signed_in' }
+  //                         'was_signed_in' }; the first two are the
+  //                         sign-ins the link brought, the last somebody
+  //                         already signed in (#4272)
   FIRST_ARTEFACT_SHOWN: 'first_artefact_shown',
   INVITE_OPENED: 'invite_opened',
   INVITE_SIGNED_IN: 'invite_signed_in',
+  // Something on the platform that should not happen, kept for admins
+  // (services/platform-incidents.js, #4210). metadata: { kind, ... } where
+  // kind names the incident ('build_interrupted': a bot build a restart or
+  // a lost worker cut short; { runId, issueNumber, why, outcome }).
+  PLATFORM_INCIDENT: 'platform_incident',
 });
 
 // Record a single analytics event. Fire-and-forget — returns a promise

@@ -109,6 +109,10 @@
  * Taps on fields, controls (buttons, links, labels, ARIA widget roles,
  * `.un-pressable`) and anything inside `[data-keep-keyboard]` keep it;
  * `data-un-keyboard-dismiss="off"` on <html> or <body> turns it off.
+ * With a frame focused (the platform shell around an app), the same tap
+ * on the page around it posts `{ __usernode_keyboard: 'dismiss' }` to the
+ * frame, and the kit in a frame blurs its own field when that message
+ * comes from its parent window (its own opt-out still holds).
  *
  * A presented sheet or side panel also carries `--un-presence` on its own
  * element: 1 at rest, 0 off-screen, and 1:1 with the finger in between,
@@ -630,6 +634,21 @@
     return false;
   }
 
+  // A focused frame holds a field this page cannot see into (an app in the
+  // platform shell; keyboardCanBeUp above), and a tap on the page around
+  // the frame (the shell's header, say) reaches only this page, never the
+  // frame (request #4273). So the listener below tells the
+  // frame, and the kit inside it puts its own field away. The message is
+  // one of the `__usernode_*` family the bridge already passes between the
+  // shell and an app (`__usernode_theme`, `__usernode_visibility`, ...),
+  // and like those a frame takes it from its parent window only.
+  function keyboardDismissMessage() {
+    return { __usernode_keyboard: 'dismiss' };
+  }
+  function isKeyboardDismissMessage(data) {
+    return !!data && typeof data === 'object' && data.__usernode_keyboard === 'dismiss';
+  }
+
   // Keyboard-aware reveal math for a focused field inside a content
   // scroller. scrollIntoView({block:'nearest'}) is blind here: keyboard
   // clearance is CONTENT PADDING on the scroller, not a smaller
@@ -965,6 +984,8 @@
     isKeyboardDismissTap: isKeyboardDismissTap,
     keepsKeyboard: keepsKeyboard,
     tapKeepsKeyboard: tapKeepsKeyboard,
+    keyboardDismissMessage: keyboardDismissMessage,
+    isKeyboardDismissMessage: isKeyboardDismissMessage,
     revealScrollDelta: revealScrollDelta,
     reorderDropIndex: reorderDropIndex,
     gridDropSide: gridDropSide,
@@ -1128,6 +1149,14 @@
    * own screens get exactly this, and lib/keyboard-open.ts reads the blur
    * as one during a press, keeping the tab bar back for the tap's click.
    *
+   * With a FRAME focused instead (the shell around an app whose field is
+   * up), the same tap posts `{ __usernode_keyboard: 'dismiss' }` to that
+   * frame (request #4273): the frame never hears a tap on the page around
+   * it. In a frame, the kit takes that message from its parent window only
+   * and, unless its own page opted out, blurs its focused text field, or
+   * passes the message on to a frame focused inside it. Posted, never
+   * waited on, so the tap's own click is no later for it.
+   *
    * Touch events where the page has them (every phone), else pointer
    * events from a finger; never a mouse or a pen. The start is heard in
    * capture, before anything can stop it; the end in the window's bubble
@@ -1143,18 +1172,37 @@
       return window.performance && typeof window.performance.now === 'function'
         ? window.performance.now() : Date.now();
     }
-    // The focused text field, through any shadow roots, or null.
-    function focusedField() {
+    // What has focus, through any shadow roots, or null.
+    function focused() {
       var el = document.activeElement;
       while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
-      if (!el || el === document.body || el === document.documentElement) return null;
-      return isTextEntryField({
+      return !el || el === document.body || el === document.documentElement ? null : el;
+    }
+    // The focused text field, or null.
+    function focusedField() {
+      var el = focused();
+      return el && isTextEntryField({
         tag: el.tagName,
         type: el.type,
         readOnly: !!el.readOnly,
         disabled: !!el.disabled,
         contentEditable: !!el.isContentEditable,
       }) ? el : null;
+    }
+    // The focused frame, or null: whatever field it holds is in there.
+    function focusedFrame() {
+      var el = focused();
+      return el && String(el.tagName || '').toLowerCase() === 'iframe' && el.contentWindow ? el : null;
+    }
+    function putAway(field) {
+      try { field.blur(); } catch (err) { /* nothing to put away */ }
+    }
+    // To any origin, as the shell's other messages to an app go: the frame
+    // is the app's origin (or none yet), and the message carries nothing.
+    function tell(frame) {
+      try {
+        frame.contentWindow.postMessage(keyboardDismissMessage(), '*');
+      } catch (err) { /* a frame mid-teardown has no keyboard */ }
     }
     function off() {
       return kbAttr(document.documentElement, KB_DISMISS_OFF_ATTR) === 'off'
@@ -1171,7 +1219,7 @@
     }
 
     function down(x, y) {
-      tap = !off() && focusedField()
+      tap = !off() && (focusedField() || focusedFrame())
         ? { x: x, y: y, at: now(), moved: 0, scrolled: false, multi: false }
         : null;
     }
@@ -1186,8 +1234,19 @@
       if (!t || e.defaultPrevented) return;
       if (!isKeyboardDismissTap({ moved: t.moved, ms: now() - t.at, scrolled: t.scrolled, multi: t.multi })) return;
       var field = focusedField();
-      if (!field || tapKeepsKeyboard(pathOf(e), field)) return;
-      try { field.blur(); } catch (err) { /* nothing to put away */ }
+      var frame = field ? null : focusedFrame();
+      if (!(field || frame) || tapKeepsKeyboard(pathOf(e), field || frame)) return;
+      if (field) putAway(field); else tell(frame);
+    }
+
+    // In a frame: the page around it heard a tap that closes the keyboard.
+    // From the parent window only, as the bridge takes the shell's other
+    // messages; a top-level page has no parent to hear it from.
+    function onMessage(e) {
+      if (!e || e.source !== window.parent || !isKeyboardDismissMessage(e.data) || off()) return;
+      var field = focusedField();
+      var frame = field ? null : focusedFrame();
+      if (field) putAway(field); else if (frame) tell(frame);
     }
 
     function first(list) { return list && list.length ? list[0] : null; }
@@ -1238,6 +1297,9 @@
     }
     // Element scrolls do not bubble, but they pass the window in capture.
     window.addEventListener('scroll', onScroll, quiet);
+    var framed = false;
+    try { framed = !!window.parent && window.parent !== window; } catch (err) { /* no parent */ }
+    if (framed) window.addEventListener('message', onMessage);
   })();
 
   /* ────────────────────────────────────────────────────────────────────

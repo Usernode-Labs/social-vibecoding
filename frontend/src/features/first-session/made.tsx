@@ -37,9 +37,10 @@
  * the joining rule is the project's business later (both taken out after
  * Evan's run-through, 5 October 2026). The link it makes works until it is
  * turned off, for anyone it reaches (WP-D): the project is the gift, so the
- * link should outlive a week. The first note shared is also the maker's
- * first message in the group's chat (the sheet says so), so the people it
- * brings find it waiting there. The note is kept per project on this device
+ * link should outlive a week. A note they wrote themselves and shared
+ * (the share sheet, not Copy link) is also the maker's first message in the
+ * group's chat (the sheet says so, #4238), so the people it brings find it
+ * waiting there. The note is kept per project on this device
  * (noteKey), else read back from the maker's own newest link.
  *
  *   sketch    A featured card of the idea (./sketch-card.tsx,
@@ -239,6 +240,18 @@ export function openingNote(slug: string, example: string | null | undefined): s
   return kept !== null ? kept : (example || NOTE_DEFAULT);
 }
 
+/**
+ * Whether a note goes in the group chat as the maker's first message
+ * (#4238): only when the share sheet took the link (a copy may never be
+ * pasted anywhere), and only a note they wrote themselves, never the
+ * untouched default or the example's preset one.
+ */
+export function notePostable(how: SentHow, note: string, example: string | null | undefined): boolean {
+  const text = note.trim();
+  if (how !== 'shared' || !text) return false;
+  return text !== NOTE_DEFAULT && text !== (example || '').trim();
+}
+
 /** The newest note on the maker's own live links (GET .../invite-links `links`), or null. */
 export function linkNote(links: unknown): string | null {
   if (!Array.isArray(links)) return null;
@@ -363,10 +376,11 @@ export function InviteSheet({ made, me, making = true, onClose, onSent }: {
     return () => window.clearTimeout(t);
   }, [copied]);
 
-  // The maker's note, as their first message in the group's chat, once.
-  const postNote = useCallback(async () => {
+  // The maker's note, as their first message in the group's chat, once,
+  // when they shared a note of their own (notePostable).
+  const postNote = useCallback(async (how: SentHow) => {
+    if (!notePostable(how, note, made.example?.note)) return;
     const text = note.trim();
-    if (!text) return;
     try { if (localStorage.getItem(postedKey(made.slug))) return; } catch { /* post it */ }
     const res = await fetch(`/api/apps/${encodeURIComponent(made.slug)}/messages`, {
       method: 'POST',
@@ -375,7 +389,7 @@ export function InviteSheet({ made, me, making = true, onClose, onSent }: {
       body: JSON.stringify({ content: text }),
     }).catch(() => null);
     if (res && res.ok) { try { localStorage.setItem(postedKey(made.slug), '1'); } catch { /* once is best effort */ } }
-  }, [note, made.slug]);
+  }, [note, made.slug, made.example?.note]);
 
   const link = useCallback(async (): Promise<string | null> => {
     if (linkRef.current) return linkRef.current;
@@ -393,12 +407,12 @@ export function InviteSheet({ made, me, making = true, onClose, onSent }: {
 
   // The link went out, shared or copied: said on the sheet, which stays
   // open; the note kept, posted once as their first message in the group
-  // chat, and the made screen told.
+  // chat when it was shared (postNote), and the made screen told.
   const sent = useCallback(async (how: SentHow) => {
     setStatus(sentStatus(how));
     setOut(true);
     keepNote(made.slug, note);
-    await postNote();
+    await postNote(how);
     onSent(how);
   }, [made.slug, note, postNote, onSent]);
 
@@ -504,7 +518,7 @@ export function InviteSheet({ made, me, making = true, onClose, onSent }: {
             />
           </div>
         </div>
-        <p className="mt-2 text-[13px] text-zinc-500 dark:text-zinc-400">Your note is also your first message in the group chat.</p>
+        <p className="mt-2 text-[13px] text-zinc-500 dark:text-zinc-400">When you share, your note also goes in the group chat as your first message.</p>
         {/* The main button, then the other way beside it (inviteActions), a
             white pill on the sheet's grey (pillRaised). Not dimmed while
             "✓ Copied" shows: busy then only holds off a second press. */}

@@ -131,6 +131,14 @@ export function useLinkCards(links: readonly HomeroomLink[]): Array<{ link: Home
   });
 }
 
+/**
+ * Whether the server has answered for `key` at all: a link with no card yet
+ * is either on its way (false) or not one this reader can see (true).
+ */
+export function linkCardAnswered(key: string): boolean {
+  return answers.has(key);
+}
+
 /** Forget every answer — for tests, and for an account change in this tab. */
 export function resetLinkCards(): void {
   answers.clear();

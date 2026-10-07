@@ -168,7 +168,9 @@ export const TOUR_STEPS: readonly TourStep[] = [
     // feedback and New change side by side, and people found both
     // confusing; the step says what the button does. B8: the request goes
     // to Homeroom bot, which builds it (or, where it does not build, it
-    // goes to the group).
+    // goes to the group). #4225: and it says so against what people expect
+    // of a feedback button elsewhere, honestly: the bot starts on it, or
+    // brings it to the group, never "it builds it" as a promise.
     //
     // NO "BUILD IT YOURSELF" SENTENCE (first-session run-through, 5 Oct
     // 2026). It said "To build it yourself with a coding agent, tap Build it
@@ -178,7 +180,7 @@ export const TOUR_STEPS: readonly TourStep[] = [
     // not have. The hub's ⋯ and a request's own page still offer it.
     id: 'menu-actions',
     title: 'Suggest an improvement',
-    body: 'Tell Homeroom bot what should change. It builds it for you, or passes it to the group as a request.',
+    body: 'Say what should change. It doesn\'t vanish into a feedback box: Homeroom bot starts building it for you, or brings it to the group as a request, and you can follow along.',
     targets: ['#improve-quick-actions', '#improve-row-feedback'],
     needsPanel: true,
   },

@@ -8,7 +8,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import {
   cardRecord, ensureBotActivity, loadBotActivity, readsAsked, useBotActivity, useBotActivitySync,
 } from './bot-activity-store';
-import { jobTitle } from './bot-shared';
+import { SPINNING_OUTCOMES, jobTitle } from './bot-shared';
 import { recordObjectOrigin } from './format';
 import type { ConversationMessage, HomeroomBotActivity, HomeroomBotActivityOutcome, HomeroomBotMeta } from './types';
 
@@ -65,6 +65,11 @@ export const ACTIVITY_OUTCOME_LABELS: Record<HomeroomBotActivityOutcome, string>
   stopped: 'Stopped before it finished',
   answer: 'Answered on the change',
   revise: 'Updated the change',
+  // #4242: not "waiting for approval" until its ready card has gone out.
+  checking: 'Built it. Checking it before you try it',
+  needs_look: 'Built it, but it needs a look',
+  // #4227: merged, not live yet.
+  going_live: 'Built it. Going live now',
 };
 
 export type ActivityTone = 'done' | 'built' | 'you' | 'ended' | 'trouble';
@@ -82,6 +87,7 @@ export const ACTIVITY_OUTCOME_TONES: Record<HomeroomBotActivityOutcome, Tone> = 
   question: 'you', blocked: 'you', empty: 'you',
   person: 'ended', held: 'ended', closed: 'ended',
   build_failed: 'trouble', failed: 'trouble', stopped: 'trouble',
+  checking: 'built', going_live: 'built', needs_look: 'you',
 };
 
 export const TONE_WORDS: Record<Tone, string> = {
@@ -304,7 +310,9 @@ export function BotActivityCardView({ meta, card, loaded = false, failed = false
       </>
     );
   } else if (card && tone && card.outcome) {
-    lead = <ActivityLead tone={tone} />;
+    // #4227: an ending that is still moving (checked before it is offered,
+    // going live) spins, as working does.
+    lead = SPINNING_OUTCOMES.has(card.outcome) ? <ActivityLead working /> : <ActivityLead tone={tone} />;
     eyebrow = TONE_WORDS[tone];
     const took = card.endedAt ? spanText(clockFrom(card), new Date(card.endedAt)) : null;
     const waited = waitedText(card);
@@ -338,6 +346,7 @@ export function BotActivityCardView({ meta, card, loaded = false, failed = false
       aria-label={`Homeroom bot activity: ${title}`}
       data-bot-activity={card ? card.state : 'pending'}
       {...(card?.outcome ? { 'data-bot-activity-outcome': card.outcome } : {})}
+      data-bot-activity-request={meta.appSlug && meta.issueNumber && !meta.firstVersion ? `${meta.appSlug}#${meta.issueNumber}` : undefined}
     >
       <div className="flex items-center gap-3">
         {lead}

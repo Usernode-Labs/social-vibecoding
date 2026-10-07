@@ -1033,7 +1033,18 @@ const GroupChat = {
         ? (([sessionId, prNumber]) => ({ sessionId, prNumber }))(GroupChat._voteRef(msg))
         : null,
       specShare: isSpecShare ? GroupChat._specShareView(meta.specShare, msg) : null,
+      // #4238: Homeroom bot's "I've made the first version" line in the
+      // channel carries its Open button (ws.sendFirstVersionMessage). Only
+      // that metadata, which a person's post cannot set.
+      openApp: GroupChat._openAppView(kind === 'message' && !deleted && !threadType ? meta : null),
     };
+  },
+
+  _openAppView(meta) {
+    if (!meta || meta.kind !== 'first_version' || !Array.isArray(meta.actions)) return null;
+    const open = meta.actions.find((a) => a && a.type === 'open' && typeof a.target === 'string'
+      && a.target.startsWith('#app/') && typeof a.label === 'string' && a.label);
+    return open ? { label: open.label, target: open.target } : null;
   },
 
   // The React bridge, or null before the bundle has evaluated. Reached by name

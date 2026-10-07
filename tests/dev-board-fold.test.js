@@ -1519,9 +1519,20 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // reader any change's chat gets; and the retired /dev/sessions/new
   // address's, which opens an agent session. 732 leaves 148 slots.
   //
+  // 732 → 733: +1 (#4269): the capture tiles, which #3976 retired with
+  // 990412's Changes-ready card, are read again where they still render for
+  // everyone: a proposal page's hero, on the promoted staging proposal whose
+  // seeded captures cover each state (#app/staging-demo-app/dev/proposals/
+  // 900001). Its three old checks (the routes behind "All N screens", the
+  // phone outline, the empty tile) are ONE now, folded with :has(); no other
+  // check is on that route. The agent session's hand-off walkthrough and its
+  // out-of-credits card stay unchecked: both open only after a tap (the
+  // composer's Build with, a refused send), and no route reaches them
+  // without a screenshot-only parameter. 733 leaves 147 slots.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 732);
+  checkCap.assertPinned(DAPP.tests.length, 733);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

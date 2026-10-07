@@ -5723,25 +5723,22 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // once and cached, so the 3s status poll costs nothing.
   //
   // #1378: the set became a Map because `stoppable` is now part of the
-  // payload and the fixtures have to be able to show BOTH answers. A seeded
-  // fixture has no in-memory stop handle and no durable active_turn, so it
-  // would compute stoppable:false for all of them — regressing the two
-  // estimator fixtures to the "Finishing up…" spinner and breaking the
-  // checks that assert their cohort note. The '-unstoppable' fixture is the
-  // one that deliberately keeps the false answer.
+  // payload. A seeded fixture has no in-memory stop handle and no durable
+  // active_turn, so it would compute stoppable:false — regressing the
+  // estimator fixtures to the "Finishing up…" spinner — so each one declares
+  // itself stoppable. (A '-unstoppable' fixture kept the false answer until
+  // #4268 removed it: its screen was the composer's, which a read-only
+  // classic session no longer draws.)
   let stagingCohortFixtureIds = null;
   async function stagingCohortFixtureSessions() {
     if (process.env.USERNODE_ENV !== 'staging') return null;
     if (stagingCohortFixtureIds) return stagingCohortFixtureIds;
     try {
       const { rows } = await pool.query(
-        `SELECT id, branch_name FROM chat_sessions
+        `SELECT id FROM chat_sessions
           WHERE branch_name LIKE 'staging-fixture/cc-cohort-%'`
       );
-      stagingCohortFixtureIds = new Map(rows.map((r) => [
-        r.id,
-        { stoppable: !String(r.branch_name || '').endsWith('-unstoppable') },
-      ]));
+      stagingCohortFixtureIds = new Map(rows.map((r) => [r.id, { stoppable: true }]));
     } catch {
       stagingCohortFixtureIds = new Map();
     }

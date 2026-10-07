@@ -11,7 +11,8 @@
 //   * The verdict is the process EXIT CODE, so failureDetail only has to
 //     explain, never to judge — but what it extracts must distinguish
 //     "tests failed" (not ok lines), "suite setup failed" (no setup
-//     sentinel: clone/npm ci died before npm test), and "timed out".
+//     sentinel and no test reported: clone/npm ci died before npm test),
+//     and "timed out".
 //   * extraRows reach the LEGACY classify shape too. An app with no
 //     declared dapp.json checks still gets its unit-suite row, and an
 //     advisory (ungraduated) failure shows without flipping the state to
@@ -269,6 +270,133 @@ test('the non-TAP tail leaves the script\'s own marker lines out', () => {
   const stdout = [`${unitSuite.ROOT_SENTINEL}=${WS}`, unitSuite.CLONED_SENTINEL, 'npm error code E404'].join('\n');
   const d = unitSuite.failureDetail(stdout, '');
   assert.equal(d, 'Suite setup failed (clone / npm ci), so the tests never ran. | npm error code E404');
+});
+
+// ── A red suite is never filed as a setup failure (#4265) ──────────────
+//
+// PR #4217's first verdict read "Suite setup failed (clone / npm ci), so the
+// tests never ran. | # suites 0 | # pass 21713 | # fail 18 | …" while 18 real
+// failures stood in tests/mayor-turn-golden.test.js. The log the check read
+// had lost its start, the setup sentinel with it, and the sentinel was all
+// that was asked. Whether any test reported is what says the tests ran; the
+// Job's own failure ("BackoffLimitExceeded", which is how Kubernetes words
+// any non-zero exit of a Job that is not retried) changes nothing.
+
+const JOB_FAILED = 'BackoffLimitExceeded: Error';
+// The end of a long run's log that lost its start: no workspace line, no
+// sentinels, TAP from somewhere in the middle on.
+const tailOnly = (blocks, fail) => [
+  ...blocks,
+  `# tests ${21713 + 17 + fail}`, '# suites 0', '# pass 21713', `# fail ${fail}`,
+  '# cancelled 0', '# skipped 17', '# todo 0', '# duration_ms 132759.676918',
+].join('\n');
+
+test('#4265: named failures without the sentinel read as test failures, Job failure or not', () => {
+  const d = unitSuite.failureDetail(tailOnly([
+    tapFail(1, 'replays the recorded turn', 'tests/mayor-turn-golden.test.js'),
+    tapFail(2, 'keeps the tool order', 'tests/mayor-turn-golden.test.js'),
+  ], 2), JOB_FAILED);
+  assert.doesNotMatch(d, /setup failed|never ran/i);
+  // The workspace line went with the start of the log, so the path stays
+  // absolute: still the right file.
+  assert.equal(d, `${WS}/tests/mayor-turn-golden.test.js (2): replays the recorded turn; keeps the tool order`
+    + ' | # tests 21732 | # pass 21713 | # fail 2 | # cancelled 0');
+});
+
+test('#4265: PR #4217\'s shape, failures counted but not named, says so instead of "never ran"', () => {
+  assert.equal(unitSuite.failureDetail(tailOnly([], 18), JOB_FAILED),
+    '18 tests failed, but the saved output does not name them. | # suites 0 | # pass 21713 | # fail 18'
+    + ' | # cancelled 0 | # skipped 17 | # todo 0 | # duration_ms 132759.676918 | BackoffLimitExceeded: Error');
+  assert.match(unitSuite.failureDetail(tailOnly([], 1), JOB_FAILED), /^1 test failed, but the saved output does not name it\. \| /);
+});
+
+test('#4265: a test line alone is enough to say the tests ran', () => {
+  const d = unitSuite.failureDetail('ok 1 - fine\nok 2 - fine too\nnpm error code 1', JOB_FAILED);
+  assert.doesNotMatch(d, /setup failed/i);
+  assert.equal(d, 'ok 1 - fine | ok 2 - fine too | npm error code 1 | BackoffLimitExceeded: Error');
+});
+
+test('#4265: no test reported, Job failure or a zero summary, is still a setup failure', () => {
+  assert.equal(unitSuite.failureDetail('npm error code E404', JOB_FAILED),
+    'Suite setup failed (clone / npm ci), so the tests never ran. | npm error code E404 | BackoffLimitExceeded: Error');
+  assert.match(unitSuite.failureDetail('# tests 0\n# pass 0\n# fail 0', JOB_FAILED),
+    /^Suite setup failed \(clone \/ npm ci\), so the tests never ran\. \| # tests 0 \| /);
+});
+
+test('#4265: the Kubernetes path records the counted failures as a red suite with its summary', async (t) => {
+  const github = require('../src/services/github');
+  const kubernetes = require('../src/services/kubernetes');
+  const history = require('../src/services/check-history');
+  t.mock.method(github, 'isEnabled', () => true);
+  t.mock.method(github, 'getFileContent', async () => '{"scripts":{"test":"node --test"}}');
+  t.mock.method(github, 'getCloneUrl', async () => 'https://example.test/repo');
+  t.mock.method(history, 'loadGraduated', async () => new Set());
+  t.mock.method(kubernetes, 'runUnitSuiteJob', async () => {
+    throw Object.assign(new Error('unit-suite Job failed'), { stdout: tailOnly([], 18), stderr: JOB_FAILED, code: 1 });
+  });
+  const out = await unitSuite.maybeRunUnitSuite({ config: { workerRuntime: 'kubernetes' }, pool: { query: async () => ({ rows: [] }) }, appId: 10, sessionId: 4217, repoOwner: 'example', repoName: 'repo', ref: 'a'.repeat(40) });
+  assert.equal(out.row.status, 'fail');
+  assert.equal(out.row.summary.fail, 18);
+  assert.match(out.row.failureReason, /^18 tests failed, but the saved output does not name them\. \| /);
+});
+
+// ── unitSuiteFailures: what a stored row says failed (#4265) ───────────
+
+const storedUnitRow = (over = {}) => ({
+  index: unitSuite.UNIT_CHECK_INDEX, name: unitSuite.UNIT_CHECK_NAME, path: unitSuite.UNIT_CHECK_PATH,
+  status: 'fail', advisory: false, consoleErrors: [], ...over,
+});
+
+test('unitSuiteFailures: the summary\'s count and the first tests by their excerpts', () => {
+  const rows = [
+    { name: 'Board loads', path: '/', status: 'fail', failureReason: 'Page failed to load' },
+    storedUnitRow({
+      failureReason: 'tests/mayor-turn-golden.test.js (18): replays the recorded turn; keeps the tool order… | # fail 18',
+      summary: { tests: 21748, pass: 21713, fail: 18 },
+      failureDetails: [
+        { file: 'tests/mayor-turn-golden.test.js', test: 'replays the recorded turn', excerpt: 'a' },
+        { file: 'tests/mayor-turn-golden.test.js', test: 'keeps the tool order', excerpt: 'b' },
+        { file: 'tests/mayor-turn-golden.test.js', test: 'a third', excerpt: 'c' },
+      ],
+    }),
+  ];
+  assert.deepEqual(unitSuiteRow.unitSuiteFailures(rows), {
+    count: 18,
+    first: [
+      { file: 'tests/mayor-turn-golden.test.js', test: 'replays the recorded turn' },
+      { file: 'tests/mayor-turn-golden.test.js', test: 'keeps the tool order' },
+    ],
+  });
+  assert.equal(unitSuiteRow.unitSuiteFailures(JSON.stringify(rows), { max: 1 }).first.length, 1, 'a stored JSON string reads the same');
+});
+
+test('unitSuiteFailures: without excerpts or a summary, the grouped reason counts and names', () => {
+  const rows = [storedUnitRow({
+    failureReason: 'tests/a.test.js (2): first; second | (file not reported) (1): loose | tests/c.test.js (4) | # fail 7',
+  })];
+  assert.deepEqual(unitSuiteRow.unitSuiteFailures(rows, { max: 3 }), {
+    count: 7,
+    first: [{ file: 'tests/a.test.js', test: 'first' }, { file: null, test: 'loose' }],
+  });
+  // PR #4217's first verdict: counted, not named.
+  assert.deepEqual(unitSuiteRow.unitSuiteFailures([storedUnitRow({
+    failureReason: '18 tests failed, but the saved output does not name them. | # fail 18',
+    summary: { tests: 21748, pass: 21713, fail: 18 },
+  })]), { count: 18, first: [] });
+});
+
+test('unitSuiteFailures: nothing failed by name or count is null', () => {
+  assert.equal(unitSuiteRow.unitSuiteFailures(null), null);
+  assert.equal(unitSuiteRow.unitSuiteFailures('not json'), null);
+  assert.equal(unitSuiteRow.unitSuiteFailures([{ name: 'Board loads', status: 'fail', failureReason: 'x (2): y' }]), null,
+    'a browser check is not the unit suite');
+  assert.equal(unitSuiteRow.unitSuiteFailures([storedUnitRow({ status: 'pass', summary: { fail: 0 } })]), null);
+  assert.equal(unitSuiteRow.unitSuiteFailures([storedUnitRow({
+    failureReason: 'Suite setup failed (clone / npm ci), so the tests never ran. | npm error code E404 | BackoffLimitExceeded: Error',
+  })]), null);
+  assert.equal(unitSuiteRow.unitSuiteFailures([storedUnitRow({
+    failureReason: 'Suite run exceeded 600s and was killed. | partial output', summary: { tests: 0, fail: 0 },
+  })]), null);
 });
 
 // ── kill switch ────────────────────────────────────────────────────────

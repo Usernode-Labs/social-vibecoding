@@ -151,6 +151,9 @@ const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 //                            the whole group reads
 //   prepare_work           — claims the request on the app's board; mints a
 //                            work order that dangles if it is never used
+//   close_work_order       — puts one of the user's own unsubmitted work
+//                            orders away, so an agent holding it can no
+//                            longer submit it (#4266)
 //   start_platform_build   — spends the user's daily Homeroom credits
 //   submit_platform_build  — puts that build to a group vote
 //   update_proposal_issues — changes which requests an existing proposal
@@ -191,6 +194,9 @@ const ACTING_TOOLS = Object.freeze([
   'post_message',
   'propose_close_request',
   'prepare_work',
+  // #4266: the other half of list_my_work_orders. It touches only the
+  // caller's own reservation, but it ends one an agent may still be using.
+  'close_work_order',
   'start_platform_build',
   'submit_platform_build',
   'update_proposal_issues',
@@ -861,6 +867,28 @@ function isoOrNull(value) {
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
 
+// One work order as list_my_work_orders returns it (#4266), from a row of
+// external-agent-tasks.listHeldWorkOrders. The app's name and the order's
+// title (a request's title, or the first line of somebody's brief) are other
+// people's writing, so both keep the envelope.
+function shapeWorkOrder(w) {
+  return {
+    taskId: Number(w.taskId),
+    appSlug: String(w.appSlug || ''),
+    appName: untrusted(w.appName, MAX_TITLE_CHARS),
+    title: untrusted(w.title, MAX_TITLE_CHARS),
+    requestNumbers: Array.isArray(w.requestNumbers) ? w.requestNumbers.map(Number) : [],
+    createdAt: isoOrNull(w.createdAt),
+    lastActivityAt: isoOrNull(w.lastActivityAt) || isoOrNull(w.createdAt),
+    expiresAt: isoOrNull(w.expiresAt),
+    branch: w.branch ? String(w.branch) : null,
+    agent: w.agent || 'external',
+    revisesProposal: Number(w.revisesProposalId) > 0
+      ? { proposalId: Number(w.revisesProposalId), prNumber: Number(w.revisesPrNumber) > 0 ? Number(w.revisesPrNumber) : null }
+      : null,
+  };
+}
+
 // How much of a build failure to quote. The summarizer upstream
 // (services/deploy-failure.js) already produces a short string; this only
 // bounds a pathological one.
@@ -1195,12 +1223,46 @@ function deferredNextStep(session, checks, branch) {
     + 'checks then run against the synced head. Do not open a second proposal.';
 }
 
+// #4262. A dev session that is not up for a vote yet: a CLI hand-off made by
+// proposal_start, a card shared with submit_work `share: true`, or a
+// work-order continuation, active or paused. It used to fall into the
+// closed-status sentence ("PR #4258 is paused, so its code is frozen ...
+// anything further is a new change through prepare_work"), which sent an
+// agent to open a second change for work that one call puts up for the vote.
+// Paused is bookkeeping, and the promote route takes a paused session
+// straight to review, so the call named here is the same in both states.
+//
+// `viewerId` is the caller when known: only a session's owner can propose
+// it, so anybody else (an admin reading it) is not handed a call the route
+// would refuse.
+function underwayNextStep(session, branch, viewerId) {
+  const named = proposalRefSentence(session.id, session.pr_number);
+  const where = session.status === 'paused'
+    ? 'it is paused, which only releases its worker: its branch, preview and checks are kept'
+    : 'it is still underway';
+  const owner = Number(session.user_id);
+  if (viewerId != null && Number.isSafeInteger(owner) && owner > 0 && owner !== Number(viewerId)) {
+    return `${named} is a dev session that is not up for a vote yet (${where}). Only the person who started it `
+      + 'can put it up for the vote.';
+  }
+  const push = branch.youCanPush
+    ? `push to ${branch.name || 'its branch'} in your fork`
+    : 'push to a branch in your own fork';
+  return `${named} is a dev session that is not up for a vote yet (${where}). When the user has asked for it `
+    + `to go to the group's vote, call submit_work with proposalId ${session.id} and propose: true and NO branch: `
+    + 'it goes up for the vote as it stands, on the commit it already has, the same act as its "Propose to '
+    + 'group" button, with nothing to push. If Homeroom refuses, for example because nothing has been '
+    + 'submitted to it yet or an agent turn is still moving its branch, it says why. To change its code first, '
+    + `${push} and call submit_work with proposalId ${session.id} and that branch, adding propose: true when the `
+    + 'user wants the vote.';
+}
+
 // What the agent that wrote this code should do about it right now. Branches
 // on the BRANCH HOME, because the same failing check has two different fixes
 // and the platform is the only party that knows which (#1054): a fork-home
 // proposal follows the author's own push, and a bot-owned one moves only when
 // submit_work is called with its id.
-function shapeNextStep(session, checks) {
+function shapeNextStep(session, checks, viewerId = null) {
   const branch = shapeBranch(session);
   // #2136: every sentence below that names this proposal names it by its
   // pull request number first — see proposalRef. The `proposalId N` clauses
@@ -1220,6 +1282,9 @@ function shapeNextStep(session, checks) {
     || (checks.failing && checks.failing.length > 0);
   const isOpen = session.status === 'promoted';
   if (!isOpen) {
+    if (session.status === 'active' || session.status === 'paused') {
+      return underwayNextStep(session, branch, viewerId);
+    }
     return `${proposalRefSentence(session.id, session.pr_number)} is ${session.status || 'no longer open'}, so its `
       + 'code is frozen — anything further is a new change through prepare_work.';
   }
@@ -1247,10 +1312,18 @@ function shapeNextStep(session, checks) {
   }
   // A red run that overlapped a platform rollout is recorded as an error the
   // platform runs again on its own (visuals.js settleCaptureRun). Its failing
-  // rows are the rollout's, not the diff's, so there is nothing to fix yet.
+  // rows are the rollout's, not the diff's, so there is nothing to fix yet,
+  // unless its unit suite failed tests: the rerun is still said, and those
+  // are named beside it (#4265).
   if (rolloutRetry(session)) {
-    return `Checks on ${ref} ran while Homeroom was updating, so they will run again on their own. There is nothing `
-      + 'to fix yet and nothing to push: poll get_proposal for the new verdict.';
+    const rerun = `Checks on ${ref} ran while Homeroom was updating, so they will run again on their own.`;
+    const unit = rolloutUnitFailures(session);
+    if (!unit) return `${rerun} There is nothing to fix yet and nothing to push: poll get_proposal for the new verdict.`;
+    return `${rerun} ${unit} checks.failures has their errors and get_check_output the full output. If they fail `
+      + 'locally too, fix them, push to '
+      + `${branch.youCanPush ? (branch.name || 'this proposal\'s branch') + ' in your own fork' : 'a branch in your OWN fork'}`
+      + ` and call submit_work with proposalId ${session.id} and that branch; otherwise poll get_proposal for the `
+      + 'new verdict. Do not open a second proposal.';
   }
   // An errored run is a failure with no test to point at: the build or the
   // preview broke before the suite could report. Naming that is the difference
@@ -1282,6 +1355,21 @@ function rolloutRetry(session) {
     && session.check_error_detail === require('./staging-recovery').ROLLOUT_RETRY_DETAIL;
 }
 
+// The unit suite's own failing tests on such a run, as the sentence both
+// nextSteps add after the rerun note, or null when it recorded none (#4265).
+// The update explains a slow page load; it does not fix a test the code
+// fails, so "nothing to fix yet" would be wrong while these stand.
+function rolloutUnitFailures(session) {
+  const unit = unitSuiteRow.unitSuiteFailures(session.test_results);
+  if (!unit) return null;
+  const first = unit.first
+    .map((f) => untrusted(f.file ? `${f.file}: ${f.test}` : f.test, MAX_TITLE_CHARS))
+    .filter(Boolean);
+  return `That run's unit suite (npm test) also reported ${unit.count} failing test${unit.count === 1 ? '' : 's'}`
+    + `${first.length ? `, including ${first.join('; ')}` : ''}. A rerun will not fix a test the code itself fails, `
+    + 'so look at them now.';
+}
+
 // Why a plain push does not move this proposal, in one clause, for the two
 // reasons it can be true (#1196). Naming the wrong one is how an agent ends
 // up pushing to a branch that does not exist: the mirrored head reported
@@ -1300,7 +1388,9 @@ function whyYouCannotPush(branch) {
 // put in a tool response.
 const MAX_CAPTURE_PATHS_REPORTED = 10;
 
-function shapeProposal(session, origin) {
+// `viewerId`, when given, is the caller (#4262): it decides whether an
+// underway session's nextStep names the promote call or says it is not theirs.
+function shapeProposal(session, origin, viewerId = null) {
   const detail = (session.capture_detail && typeof session.capture_detail === 'object')
     ? session.capture_detail : {};
   const capturedPaths = Array.isArray(detail.paths)
@@ -1333,7 +1423,7 @@ function shapeProposal(session, origin) {
     // Where the head lives and who may move it. Everything an agent needs to
     // revise this proposal without guessing.
     branch: shapeBranch(session),
-    nextStep: shapeNextStep(session, checks),
+    nextStep: shapeNextStep(session, checks, viewerId),
     // A true value says capture used the app root because neither an explicit
     // route nor a matching named scenario supplied something more specific.
     captureDefaultedToRoot: detail.media !== false
@@ -1503,8 +1593,10 @@ function changeNextStep(session, checks, live, kind = 'agent_mayor') {
       : `Checks are running on ${ref}'s current commit. Call get_change again for the verdict.${paused}`;
   }
   if (rolloutRetry(session)) {
+    const unit = rolloutUnitFailures(session);
     return `Checks on ${ref} ran while Homeroom was updating, so they will run again on their own. `
-      + `Nothing to fix yet; call get_change again for the new verdict.${paused}`;
+      + (unit ? `${unit} ${words.fixTests}${paused}`
+        : `Nothing to fix yet; call get_change again for the new verdict.${paused}`);
   }
   if (failing) {
     return checks.state === 'error' && !(checks.failing && checks.failing.length)
@@ -3634,7 +3726,7 @@ function registerTools(server, ctx) {
         + 'other — list_my_proposals reports both for each of the user\'s open proposals.'
       );
     }
-    return readResult('get_proposal', shapeProposal(session, origin));
+    return readResult('get_proposal', shapeProposal(session, origin, user && user.id));
   });
 
   // ── get_check_output ─────────────────────────────────────────────────
@@ -4599,8 +4691,22 @@ function registerTools(server, ctx) {
       origin,
       restart: restart === true,
       targetProposal,
+      // #4264: a one-time upload command in the work order, for a patch too
+      // big to retype into submit_work. New work only; the service decides.
+      patchUpload: true,
       specs: requestSpecsToBuild,
     });
+    // #4266: at the work-order cap, name the two tools that let the caller see
+    // the work orders holding its slots and put one away, rather than leaving
+    // it to stop and ask the user to free one somewhere it cannot name.
+    // Appended here, not written into the shared refusal, because the
+    // browser walkthrough shows that sentence too.
+    if (!result.ok && result.code === 'at_capacity') {
+      return serviceError({
+        ...result,
+        message: `${result.message} ${connectorLimits.OPEN_WORK_ORDERS_CONNECTOR_HINT}`,
+      });
+    }
     if (!result.ok) return serviceError(result);
 
     // Mark the request as being worked on (#1225). An in-platform session
@@ -4750,7 +4856,7 @@ function registerTools(server, ctx) {
   // ── submit_work ──────────────────────────────────────────────────────
   server.registerTool('submit_work', {
     title: 'Submit finished work — a pushed branch, a patch, or an open PR',
-    description: "Turn finished work into a Homeroom proposal: opens the pull request, builds a staging preview, runs the app's checks and puts it to the group's vote. FOUR SHAPES, each complete as written — (1) `taskId` plus `patch`, the default for new work: Homeroom applies the patch at the recorded base commit in the app's own repository and opens the pull request itself, so NO GitHub write access is needed; (2) `taskId` plus the `branch` you actually pushed, any name, if the patch is over about 250 KB or you already push to your fork (your call between (1) and (2), never the user's); (3) `slug` plus `prNumber` for a pull request that is already open; (4) `proposalId` plus `branch` to UPDATE a proposal of the user's that is already up for a vote — for fixing a failing check or acting on review comments — which advances that same proposal onto your new commit instead of opening a second one, and clears the votes it has collected. Shape (4) needs no `slug`: naming the proposal names the app. When shape (4)'s target is a dev SESSION (a work-order continuation that is not yet up for a vote), it also takes `propose: true`: once the update lands, Homeroom promotes the session (see `propose`), so pass it only when the user has asked for the change to go to the vote; landing quietly stays the default. TWO DESTINATIONS: by default work goes up for a VOTE; `share: true` on shape (2) lands it in the app's IN-PROGRESS area instead \u2014 a shared session with a preview, no PR, no vote; the charter has the rule. A task belongs to the USER'S USERNODE ACCOUNT, not to one chat — any session connected as that account, including a coding agent's own connector, can submit it, and doing so is the expected path. Only work from the user's own GitHub account is submitted under their name.",
+    description: "Turn finished work into a Homeroom proposal: opens the pull request, builds a staging preview, runs the app's checks and puts it to the group's vote. FOUR SHAPES, each complete as written — (1) `taskId` plus `patch`, the default for new work: Homeroom applies the patch at the recorded base commit in the app's own repository and opens the pull request itself, so NO GitHub write access is needed; (2) `taskId` plus the `branch` you actually pushed, any name, if the patch is over about 250 KB or you already push to your fork (your call between (1) and (2), never the user's); (3) `slug` plus `prNumber` for a pull request that is already open; (4) `proposalId` plus `branch` to UPDATE a proposal of the user's that is already up for a vote — for fixing a failing check or acting on review comments — which advances that same proposal onto your new commit instead of opening a second one, and clears the votes it has collected. Shape (4) needs no `slug`: naming the proposal names the app. When shape (4)'s target is a dev SESSION not yet up for a vote, it also takes `propose: true` (see `propose`): Homeroom promotes the session once the update lands, or as it stands with NO `branch` and nothing pushed; pass it only when the user has asked for the vote. TWO DESTINATIONS: by default work goes up for a VOTE; `share: true` on shape (2) lands it in the app's IN-PROGRESS area instead \u2014 a shared session with a preview, no PR, no vote; the charter has the rule. A task belongs to the USER'S USERNODE ACCOUNT, not to one chat — any session connected as that account, including a coding agent's own connector, can submit it, and doing so is the expected path. Only work from the user's own GitHub account is submitted under their name.",
     inputSchema: {
       taskId: z.number().int().positive().optional()
         .describe('The task id from prepare_work — or printed in the work order text you were handed, which is the usual source when you are the coding agent. It belongs to the user’s Homeroom account, not to the chat that gave it to you, so you can submit it yourself.'),
@@ -4765,6 +4871,8 @@ function registerTools(server, ctx) {
         .describe('The name of the fork you pushed to, if you forked under a name other than the app repository’s. The owner is always the user’s linked GitHub account and is never taken from here.'),
       patch: z.string().optional()
         .describe('The change as a patch, the default way to submit new work — the output of `git format-patch <baseSha>..HEAD --stdout`, or a plain `git diff`. Homeroom applies it at the task’s recorded base commit, commits it in the app’s own repository and opens the pull request, so you need no GitHub write access at all. Requires taskId. Roughly 250 KB max; push a branch for anything larger, or when you already push to your fork. Patch or branch is your decision: never ask the user to choose.'),
+      patchUploadId: z.number().int().positive().optional()
+        .describe('Instead of `patch`: the `uploadId` printed by the upload command in your work order, which sends `git format-patch` output straight to Homeroom so a large patch is never retyped into this call (#4264). Requires taskId. Homeroom applies the uploaded bytes exactly as it applies `patch`: same base commit, same pull request. Uploads may be up to 1 MB. Refused if that upload was made for another task, or was replaced by a newer upload (submit the newest uploadId). The upload command needs a sandbox that can reach Homeroom; if yours cannot, send `patch` inline.'),
       source: z.enum(['work_order', 'assistant']).optional()
         .describe('Set to "work_order" when you are the coding agent submitting your own finished work, "assistant" when a human relayed it to you. Advisory only.'),
       title: z.string().optional().describe('A short title for the proposal. Defaults to the task description. On a SESSION update (shape 4 targeting a work-order continuation) it is stored and names the pull request created when the session is proposed — with or without propose: true — instead of the "<user>\'s changes" placeholder. On a target that already has a PR it RENAMES it (panel and GitHub; votes untouched) — a same-commit resubmit with just a title is the fix for a wrong auto-generated name, and it works on a fork-tracked proposal too. The answer reports `titleUpdated`, and `titleRejected` when the rename was refused: `imported_pr` means the pull request was opened by a different GitHub account and keeps its own author\'s title.'),
@@ -4785,9 +4893,9 @@ function registerTools(server, ctx) {
       recheck: z.boolean().optional()
         .describe('Only with proposalId, on the commit already there: re-run the automated checks and legacy capture pipeline. The before/after shots have their own take-again action. No code moves and NO votes are cleared. Use it when the checks verdict is stale for a reason outside this proposal instead of pushing a commit to provoke a run.'),
       share: z.boolean().optional()
-        .describe('Land this work in the app\u2019s IN-PROGRESS area instead of putting it up for a vote (#1347). Homeroom creates a shared dev session on the branch you pushed, builds it a staging preview and shows it on the Dev board beside everyone else\u2019s work underway \u2014 no pull request, no checks gate, no votes cast. Use it while the work is still moving and worth others seeing: a long change, a second opinion, or "here is where I got to". The work order stays OPEN, so keep committing; passing `share: true` again pushes the new commits onto the SAME card rather than making a second one. When it is ready for the group, call submit_work again with proposalId set to the sessionId this returned, the branch, and propose: true. Requires taskId + branch: a patch or an open pull request is a submission for review by construction, and both are refused here, as is `proposalId` \u2014 to push new commits onto a card that already exists, call submit_work with proposalId + branch and no `share`, which is the same operation. Bounded by the same per-user active-session cap the browser\u2019s own "start a session" button obeys, because the preview behind the card is a real container.'),
+        .describe('Land this work in the app\u2019s IN-PROGRESS area instead of putting it up for a vote (#1347). Homeroom creates a shared dev session on the branch you pushed, builds it a staging preview and shows it on the Dev board beside everyone else\u2019s work underway \u2014 no pull request, no checks gate, no votes cast. Use it while the work is still moving and worth others seeing: a long change, a second opinion, or "here is where I got to". The work order stays OPEN, so keep committing; passing `share: true` again pushes the new commits onto the SAME card rather than making a second one. When it is ready for the group, call submit_work again with proposalId set to the sessionId this returned, the branch, and propose: true; if the card already has your last commit, proposalId and propose: true alone promote it, with no push. Requires taskId + branch: a patch or an open pull request is a submission for review by construction, and both are refused here, as is `proposalId` \u2014 to push new commits onto a card that already exists, call submit_work with proposalId + branch and no `share`, which is the same operation. Bounded by the same per-user active-session cap the browser\u2019s own "start a session" button obeys, because the preview behind the card is a real container.'),
       propose: z.boolean().optional()
-        .describe('Only with proposalId, when its target is a dev SESSION (a work-order continuation that is not yet up for a vote): after the update lands, promote the session to a group vote — the same act as the owner\'s "Propose to group" button, reopening the session first when it is paused. Pass it only when the user asked for this change to go to the vote; landing quietly stays the default, because the session is their workspace and they may want more turns on it. Ignored on a proposal that is already up for a vote.'),
+        .describe('Only with proposalId, when its target is one of the user\'s own dev SESSIONS that is not yet up for a vote (a CLI hand-off, a shared in-progress card, a work-order continuation): promote it to a group vote, the same act as the owner\'s "Propose to group" button. With `branch`, it runs once the update lands, reopening the session first when it is paused. With NO `branch`, nothing is pushed and nothing else is written: the session goes up for the vote as it stands, on the commit it already has, paused or not. Use that when its code is already final, instead of pushing the same commit to a fork; only proposalId and propose are sent. Refused, with the reason, when it is not the user\'s session, is already up for a vote, merged or closed, or the platform\'s own promote checks say it is not ready (for example nothing submitted yet, or a turn still moving its branch). Pass it only when the user asked for this change to go to the vote; landing quietly stays the default, because the session is their workspace and they may want more turns on it. Ignored on an update to a proposal that is already up for a vote.'),
       agent: z.enum(['claude-code', 'codex', 'external']).optional()
         .describe('Which coding agent wrote it. Inferred from the connected chat product when omitted.'),
     },
@@ -4853,7 +4961,7 @@ function registerTools(server, ctx) {
   }, async ({
     taskId, slug, prNumber, proposalId, branch, forkRepo, patch, source, title, description, summary, agent,
     testingPaths, testingSteps, visibleChanges, visualEvidence,
-    expectedHeadSha, propose, recheck, share,
+    expectedHeadSha, propose, recheck, share, patchUploadId,
   }) => {
     const guard = scopeGuard(WRITE_SCOPE);
     if (guard) return guard;
@@ -4889,12 +4997,125 @@ function registerTools(server, ctx) {
         + 'rebuilds the card\'s preview. To create one, call it with taskId + branch + share.'
       );
     }
+    // #4262. Shape (4) with `propose: true` and NO branch: put the user's own
+    // dev session up for the vote as it stands. Before this, promoting a
+    // session whose code was already final (PR #4258, a paused CLI hand-off
+    // with passing checks) took a push of the SAME commit to a fork branch and
+    // an update that moved nothing, only so `propose: true` had an update to
+    // ride on, and cloud coding sessions often refuse that push.
+    //
+    // It is the owner's "Propose to group" button and nothing more: the same
+    // POST /api/sessions/:id/promote the propose-after-update below runs,
+    // under this caller's own token, so the route applies every gate
+    // (ownership, open status, the CLI hand-off's nothing-submitted /
+    // turn-still-running / branch-moved preflight, the promoted-session cap,
+    // a pull request with commits on it). No reopen first: the route takes a
+    // paused session straight to review, as the button does, and a reopen
+    // would spend one of the owner's active slots and can start a sync that
+    // moves the branch under the commit being proposed. Nothing else is
+    // written, so a field only an update applies is refused, not dropped.
+    if (updating && !branch && propose === true) {
+      const updateOnly = Object.entries({
+        patch, prNumber, forkRepo, expectedHeadSha, recheck, title, description, summary,
+        testingPaths, testingSteps, visibleChanges: declared,
+      }).filter(([, v]) => v !== undefined && v !== null && v !== false && v !== '').map(([k]) => k);
+      if (updateOnly.length) {
+        return toolError(
+          'invalid_request',
+          `propose: true with no branch puts the session up for the vote as it stands and writes nothing else, so it `
+          + `does not take ${updateOnly.join(', ')}. Send proposalId and propose: true alone, or send those with an `
+          + 'update that carries the branch they belong to.'
+        );
+      }
+      const attempt = await callPlatform(baseUrl, accessToken, 'POST', `/api/sessions/${proposalId}/promote`, {});
+      // Read AFTER the route has decided, never instead of it: the row only
+      // words the answer (which app, which pull request, why it was refused).
+      const read = await callPlatform(baseUrl, accessToken, 'GET', `/api/sessions/${proposalId}`);
+      const row = read.ok && read.body && read.body.session ? read.body.session : null;
+      const named = proposalRefSentence(proposalId, row && row.pr_number);
+      if (!attempt.ok) {
+        if (attempt.networkError) return platformError(attempt);
+        // The session route answers only for the owner (or an admin), so a 404
+        // there, or a row that names somebody else, is the same refusal.
+        if (read.status === 404 || (row && row.user_id != null && Number(row.user_id) !== Number(user.id))) {
+          return toolError('not_your_session',
+            `Proposal ${proposalId} is not a dev session of yours, so it cannot be put up for the vote from here: `
+            + 'only the person who started a session can propose it. Check the id with get_proposal.');
+        }
+        const status = row && row.status;
+        if (status === 'promoted' || status === 'merging') {
+          return toolError('already_proposed', status === 'merging'
+            ? `${named} has already won its vote and is merging, so there is nothing to promote.`
+            : `${named} is already up for the group's vote, so there is nothing to promote. Follow it with get_proposal.`);
+        }
+        if (status === 'merged') {
+          return toolError('already_merged',
+            `${named} has already merged, so there is nothing to put up for a vote. Anything further is a new `
+            + 'change through prepare_work.');
+        }
+        if (status && status !== 'active' && status !== 'paused') {
+          return toolError('session_closed',
+            `${named} is ${status}, so it cannot go up for a vote. Anything further is a new change through `
+            + 'prepare_work.');
+        }
+        // Open and the caller's own: the route's refusal, in its own words
+        // (nothing submitted yet, a turn still running, the promoted cap, no
+        // commits on its branch).
+        return changeRouteError(attempt);
+      }
+      // The same bookkeeping the propose-after-update does: a share's work
+      // order is finished once its card is in front of the group. Advisory.
+      await externalAgentTasks.closeTaskForSession(pool, user.id, proposalId, {
+        source,
+        clientId: clientId || null,
+      });
+      const promotedBody = attempt.body || {};
+      const promotedPr = Number(promotedBody.prNumber) > 0 ? Number(promotedBody.prNumber)
+        : (row && Number(row.pr_number) > 0 ? Number(row.pr_number) : null);
+      const promotedSlug = (row && row.app_slug) || '';
+      return toolResult({
+        proposalId,
+        appSlug: promotedSlug,
+        prNumber: promotedPr,
+        prUrl: typeof promotedBody.prUrl === 'string' ? promotedBody.prUrl : ((row && row.pr_url) || null),
+        externalAgent: externalAgentTasks.normalizeAgent(agent, clientName),
+        headSha: null,
+        votesCleared: null,
+        submittedVia: null,
+        testingPaths: null,
+        testingPathsRejected: null,
+        testingUpdated: null,
+        captureRerun: null,
+        shotsState: null,
+        visibleChangesAccepted: null,
+        visibleChangesRejected: null,
+        shotsRequired: null,
+        shotsNextStep: null,
+        proposed: true,
+        proposeError: null,
+        shared: null,
+        sessionId: null,
+        webPath: promotedSlug ? changeWebPath(origin, promotedSlug, proposalId) : origin,
+        nextStep: `${proposalRefSentence(proposalId, promotedPr)} is now UP FOR THE GROUP'S VOTE as it stood: `
+          + 'nothing was pushed and no code moved. Checks and the staging preview build automatically where '
+          + 'they are not already done; follow them with get_proposal. It ships only if the group votes it in.',
+      });
+    }
     if (updating && !branch) {
       return toolError(
         'invalid_request',
         'An update needs `branch` too: the branch in the user\'s own fork that carries the new commits. Homeroom '
-        + 'reads it from GitHub, so it has to be pushed first.'
+        + 'reads it from GitHub, so it has to be pushed first. To put a dev session up for the vote as it stands, '
+        + 'with nothing new to push, pass propose: true and no branch instead.'
       );
+    }
+    // #4264: an uploaded patch is named by the upload's id, and belongs to the
+    // one task whose work order printed the command.
+    if (patchUploadId !== undefined && !taskId) {
+      return toolError('invalid_request', 'patchUploadId needs the taskId from the work order: an upload belongs to one task.');
+    }
+    if (patchUploadId !== undefined && patch) {
+      return toolError('invalid_request', 'Send the patch inline as `patch` or name the one you uploaded with `patchUploadId`, not both.');
     }
     // Enumerate every accepted shape rather than naming one. An agent that
     // hits this error should learn the surface — the run that produced this
@@ -5015,6 +5236,8 @@ function registerTools(server, ctx) {
       forkRepo,
       expectedHeadSha,
       patch,
+      // #4264: the uploaded patch's id, resolved by the service under the task lock.
+      ...(patchUploadId !== undefined ? { patchUploadId } : {}),
       source,
       agent,
       title,
@@ -5141,7 +5364,7 @@ function registerTools(server, ctx) {
       const proposeNote = proposed === true
         ? ` And it is now UP FOR THE GROUP'S VOTE${result.prNumber ? ` as ${proposalRef(result.proposalId, result.prNumber)}` : ''} — checks and the staging preview build automatically; follow them with get_proposal.`
         : proposed === false
-          ? ` The update landed, but putting it up for the vote did not: ${proposeError} The commit is safe on the session — fix the cause and call submit_work again with propose: true (the same commit is fine), or propose it from the session page.`
+          ? ` The update landed, but putting it up for the vote did not: ${proposeError} The commit is safe on the session — fix the cause and call submit_work again with proposalId ${proposalId} and propose: true and no branch (nothing needs pushing again), or propose it from the session page.`
           : (propose === true ? ' propose: true had nothing to do — this target is already up for the group\'s vote.' : '');
       // Only worth a line when a vote is NOT already reporting the name: a
       // proposed session's PR carries the title, and the note above names it.
@@ -5301,7 +5524,8 @@ function registerTools(server, ctx) {
           + 'Nothing is gated on it and no votes are being collected. Keep committing and call submit_work with '
           + '`share: true` again to push more commits onto this same card. When it is ready for the group, call '
           + `submit_work with proposalId ${result.sessionId}, the branch, and propose: true — that puts THIS card `
-          + 'up for the vote instead of opening a second proposal for the same branch.',
+          + 'up for the vote instead of opening a second proposal for the same branch. If the card already has '
+          + 'your last commit, proposalId and propose: true alone do it, with nothing to push.',
       });
     }
 
@@ -5384,6 +5608,165 @@ function registerTools(server, ctx) {
         + 'Checks and the staging preview build automatically — use get_proposal to follow it. It merges when the group approves it.'
         + testingRouteNote(testing, false)
         + await unlinkedRequestsNote(result),
+    });
+  });
+
+  // ── list_my_work_orders / close_work_order (#4266) ───────────────────
+  //
+  // prepare_work's `at_capacity` used to be a dead end: the cap counts work
+  // orders held open across every app and every session, and nothing here
+  // could say which ones or put one away. One session found all ten slots held
+  // by older work orders from other sessions and had to stop and ask the user.
+  // The list is exactly the set the cap counts (listHeldWorkOrders shares its
+  // WHERE clause), and the close is the same `abandoned` ending prepare_work's
+  // `restart` writes. No expiry is added: a work order still stops counting
+  // after its fourteen days, as before, and otherwise lasts until it is
+  // submitted or put away.
+  const revisedProposalSchema = () => z.object({
+    proposalId: z.number(),
+    prNumber: z.number().nullable(),
+  }).nullable()
+    .describe('The proposal this work order REVISES, for one prepared with proposalId: name it as "PR #2151 (proposal 4223)". Null for a work order that opens a new proposal.');
+
+  server.registerTool('list_my_work_orders', {
+    title: 'List your unsubmitted work orders',
+    description: `List the user's own work orders that were prepared and not yet submitted: exactly the ones that count toward the limit of ${connectorLimits.LIMITS.openTasks} that prepare_work holds open at once, across every app and every chat. Read it when prepare_work answers at_capacity, or before starting more work. Each row has its taskId, the app, the requests it implements, the proposal it revises if it updates one, when it was created, its last activity and when it stops counting by itself, most recently active first. A work order shared as an in-progress card holds no slot and is not listed. A slot comes back when a work order is submitted with submit_work, or put away with close_work_order; check with the user before closing one, since a coding agent may still be building it. Read-only.`,
+    inputSchema: {},
+    outputSchema: {
+      workOrders: z.array(z.object({
+        taskId: z.number()
+          .describe('What close_work_order and submit_work take, and what the work order text prints.'),
+        appSlug: z.string(),
+        appName: z.string(),
+        title: z.string(),
+        requestNumbers: z.array(z.number())
+          .describe('The requests it implements. Empty for a brief with no request behind it.'),
+        createdAt: z.string().nullable(),
+        lastActivityAt: z.string().nullable()
+          .describe('The latest of when it was prepared and when the user last claimed one of its requests: prepare_work asked for it again, claim_request, or a progress note. Nothing else is recorded against a work order, so an agent can be building one without moving this.'),
+        expiresAt: z.string().nullable()
+          .describe('When it stops counting toward the limit by itself if nobody submits or closes it.'),
+        branch: z.string().nullable(),
+        agent: z.enum(['claude-code', 'codex', 'external']),
+        revisesProposal: revisedProposalSchema(),
+      })),
+      count: z.number().describe('How many slots are in use: the number the limit is checked against.'),
+      limit: z.number(),
+      atCapacity: z.boolean().describe('True when prepare_work would refuse new work until one is freed.'),
+      truncated: z.boolean(),
+      nextStep: z.string(),
+    },
+    annotations: readAnnotations,
+  }, async () => {
+    const guard = scopeGuard(READ_SCOPE);
+    if (guard) return guard;
+    let held;
+    try {
+      held = await externalAgentTasks.listHeldWorkOrders(pool, user.id);
+    } catch (err) {
+      log.warn('mcp-tools', 'list_my_work_orders failed', { err: err.message });
+      return toolError('platform_unavailable', 'Homeroom could not read your work orders just now. Try again shortly.', { retryable: true });
+    }
+    const limit = connectorLimits.LIMITS.openTasks;
+    const count = held.length;
+    const atCapacity = count >= limit;
+    return readResult('list_my_work_orders', {
+      workOrders: held.slice(0, MAX_LIST_ITEMS).map(shapeWorkOrder),
+      count,
+      limit,
+      atCapacity,
+      truncated: count > MAX_LIST_ITEMS,
+      nextStep: count === 0
+        ? `The user holds no unsubmitted work orders, so all ${limit} slots are free.`
+        : `${count} of ${limit} work-order slots are in use${atCapacity
+          ? ', which is the limit, so prepare_work refuses new work until one is freed'
+          : ''}. A slot comes back when its work order is submitted with submit_work, or put away with `
+          + 'close_work_order and its taskId. Check with the user before closing one: a coding agent may still '
+          + 'be building it, and once closed it can no longer be submitted. The least recently active are last.',
+    });
+  });
+
+  server.registerTool('close_work_order', {
+    title: 'Close one of your unsubmitted work orders',
+    description: `Put away ONE of the user's own unsubmitted work orders by its taskId, from list_my_work_orders, which frees the slot it holds toward prepare_work's limit of ${connectorLimits.LIMITS.openTasks} straight away. It is the same close prepare_work's restart makes, and it cannot be undone: a coding agent still building that work order can no longer submit it. So check with the user which one to close, unless they already named it. Nothing else changes: no branch, fork or pull request is touched, a proposal it was revising stays up for its vote, and its requests stay claimed by the user (release_request clears a claim). Refused with already_submitted for work already handed in, already_closed for one closed before, already_shared for one shared as an in-progress card, which holds no slot, and unknown_task for an id that is not the user's. To build the same request again later, call prepare_work.`,
+    inputSchema: {
+      taskId: z.number().int().positive()
+        .describe('The work order\'s taskId, as list_my_work_orders and prepare_work report it.'),
+    },
+    outputSchema: {
+      closed: z.boolean(),
+      taskId: z.number(),
+      appSlug: z.string(),
+      appName: z.string(),
+      title: z.string(),
+      requestNumbers: z.array(z.number()),
+      revisesProposal: revisedProposalSchema(),
+      freedSlot: z.boolean()
+        .describe('False only for a work order already past its expiry, which had stopped counting before it was closed.'),
+      openWorkOrders: z.number().nullable()
+        .describe('How many slots the user holds now. Null if the count could not be read after the close.'),
+      limit: z.number(),
+      nextStep: z.string(),
+    },
+    annotations: writeAnnotations,
+  }, async ({ taskId }) => {
+    const guard = scopeGuard(WRITE_SCOPE);
+    if (guard) return guard;
+    if (!Number.isSafeInteger(taskId) || taskId <= 0) {
+      return toolError('invalid_request', 'taskId must be the id of one of your work orders, as list_my_work_orders reports it.');
+    }
+    let result;
+    try {
+      result = await externalAgentTasks.closeWorkOrder(pool, user.id, taskId);
+    } catch (err) {
+      log.warn('mcp-tools', 'close_work_order failed', { taskId, err: err.message });
+      return toolError('platform_unavailable', 'Homeroom could not close that work order just now. Try again shortly.', { retryable: true });
+    }
+    if (!result.ok) {
+      return toolError(result.code, result.message, {
+        ...(result.retryable ? { retryable: true } : {}),
+        ...(result.proposalId ? { proposalId: result.proposalId } : {}),
+        ...(result.sessionId ? { sessionId: result.sessionId } : {}),
+      });
+    }
+
+    // What the caller holds now, from the same list the cap counts. Advisory:
+    // the close has happened, so a failed count is reported as unknown.
+    let openWorkOrders = null;
+    try {
+      openWorkOrders = (await externalAgentTasks.listHeldWorkOrders(pool, user.id)).length;
+    } catch (err) {
+      log.warn('mcp-tools', 'close_work_order recount failed (continuing)', { err: err.message });
+    }
+    const limit = connectorLimits.LIMITS.openTasks;
+    const shaped = shapeWorkOrder(result);
+    const requests = shaped.requestNumbers;
+    const refs = requests.map((n) => `#${n}`).join(', ');
+    const proposal = shaped.revisesProposal;
+    return toolResult({
+      closed: true,
+      taskId: shaped.taskId,
+      appSlug: shaped.appSlug,
+      appName: shaped.appName,
+      title: shaped.title,
+      requestNumbers: requests,
+      revisesProposal: proposal,
+      freedSlot: result.freedSlot === true,
+      openWorkOrders,
+      limit,
+      nextStep: `Work order ${shaped.taskId} is closed`
+        + (result.freedSlot === true
+          ? `, and its slot is free${openWorkOrders === null ? '' : `: the user now holds ${openWorkOrders} of ${limit}`}. `
+          : '. It had already stopped counting toward the limit. ')
+        + (requests.length
+          ? `The user may still be marked as working on request${requests.length === 1 ? '' : 's'} ${refs}; `
+            + 'if they have stopped, release_request clears that. '
+          : '')
+        + (proposal
+          ? `${proposalRefSentence(proposal.proposalId, proposal.prNumber)}, which it was revising, is unchanged and still up for its vote. `
+          : '')
+        + 'Nothing on GitHub was touched. To build the same request again, call prepare_work: it starts from the '
+        + 'app\'s current code.',
     });
   });
 
@@ -7783,6 +8166,7 @@ module.exports = {
   pageRequests,
   shapeProposal,
   shapeChange,
+  shapeWorkOrder,
   changeNextStep,
   proposalRef,
   shapeChecks,

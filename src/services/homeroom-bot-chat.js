@@ -461,7 +461,8 @@ function stageOf(row, { activity = null } = {}) {
   switch (outcome) {
     case 'question': return row.queued ? 'reading' : 'question';
     case 'held': return 'waiting';
-    case 'proposed': case 'answer': case 'revise': return 'checking';
+    // #4242: built and not offered yet reads as it did, being checked.
+    case 'proposed': case 'answer': case 'revise': case 'checking': case 'needs_look': case 'going_live': return 'checking';
     case 'person': return row.queued ? 'reading' : 'person';
     default: return row.queued ? 'reading' : 'stopped';
   }

@@ -140,6 +140,7 @@ test('singleton background work lives in becomeLeader(), not start()', () => {
     'resumeRunningCampaigns(config',
     "require('./src/services/main-drift-poller').start(config)",
     "require('./src/services/app-heal').start(config)",
+    "require('./src/services/check-retention').start(config)",
     'mobilePush.start()',
   ]) {
     assert.ok(becomeLeaderBody.includes(singleton), `becomeLeader() must own: ${singleton}`);

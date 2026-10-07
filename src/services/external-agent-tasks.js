@@ -61,6 +61,9 @@ const githubService = require('./github');
 const githubBudget = require('./github-budget');
 const externalAgentHead = require('./external-agent-head');
 const externalAgentPatch = require('./external-agent-patch');
+// #4264: the work order's one-time upload command, and the stored upload
+// submit_work can name instead of an inline patch.
+const patchUploads = require('./external-agent-patch-upload');
 // Only `branchHomeOf` is used from here, and only as a definition: one
 // function decides where a proposal's head lives, so a work order and the
 // submission that follows it can never disagree about it. The update path
@@ -560,6 +563,7 @@ function buildWorkOrder({
   appName, appSlug, upstreamUrl, upstreamSlug, forkUrl, forkCloneUrl, forkRepo,
   forkPageUrl, forkStatus, branch, baseSha, issueNumber, issueNumbers, brief, webPath,
   taskId, agentLabelText, platformRules, targetProposal, startedFromWalkthrough, specs = [],
+  patchUpload = null,
 }) {
   // Where the connector is added, for the agent that finds it has none. The
   // page carries the connector URL and the click-by-click steps for both
@@ -1092,6 +1096,19 @@ function buildWorkOrder({
   // the web asked the user "patch or branch?", which a non-developer cannot
   // answer and should never be asked.
   const patchFirst = hasTask && !update;
+  // #4264: the one-time upload command, when prepare_work minted one for this
+  // task. Inline stays the way in for a small patch and for a sandbox that
+  // cannot reach Homeroom; the upload is for the patch too big to retype
+  // safely; the branch is the last resort. The token is printed here, in the
+  // work order its owner asked for, and nowhere else.
+  const upload = patchFirst && patchUpload && patchUpload.token && patchUpload.url ? patchUpload : null;
+  const uploadExpiry = upload && upload.expiresAt instanceof Date && !Number.isNaN(upload.expiresAt.getTime())
+    ? `${upload.expiresAt.toISOString().slice(0, 16).replace('T', ' ')} UTC`
+    : 'it expires';
+  const uploadBytes = (upload && Number(upload.maxBytes)) || patchUploads.MAX_UPLOADED_PATCH_BYTES;
+  const uploadLimit = uploadBytes % (1024 * 1024) === 0
+    ? `${uploadBytes / (1024 * 1024)} MB`
+    : `${Math.round(uploadBytes / 1024)} KB`;
   lines.push('', 'WHEN YOU ARE DONE', '');
   if (patchFirst) {
     lines.push(
@@ -1099,8 +1116,26 @@ function buildWorkOrder({
       '   hand the change in: you do NOT need GitHub write access, a fork or a',
       '   push for it.',
       `${CMD}git format-patch ${baseSha}..HEAD --stdout`,
-      '   Patches over about 250 KB are refused. For a change that large, or when',
-      '   you already push to your fork, push a branch instead (any branch name):',
+      ...(upload
+        ? [
+          '   For a patch over a few KB, UPLOAD it instead of copying it into the',
+          '   tool call: nothing gets retyped. It needs your sandbox to reach',
+          '   Homeroom (an agent on the user\'s own machine usually can, a hosted',
+          '   sandbox usually cannot), so try it once, from your checkout:',
+          `${CMD}git format-patch ${baseSha}..HEAD --stdout | curl -sS --max-time 120 -X PUT \\`,
+          `${CMD}  -H 'Authorization: Bearer ${upload.token}' \\`,
+          `${CMD}  --data-binary @- ${upload.url}`,
+          `   Its token works only for this task's patch, until ${uploadExpiry}:`,
+          '   never print, commit or share it. If it answers "ok":true, pass its',
+          '   `uploadId` as `patchUploadId` in step 2 instead of `patch`; otherwise',
+          `   send the patch inline. Uploads take up to ${uploadLimit}, inline patches`,
+          '   about 250 KB. For a change larger still, or when you already push to',
+          '   your fork, push a branch instead (any branch name):',
+        ]
+        : [
+          '   Patches over about 250 KB are refused. For a change that large, or when',
+          '   you already push to your fork, push a branch instead (any branch name):',
+        ]),
       `${CMD}git push -u origin HEAD`,
       `${CMD}git rev-parse --abbrev-ref HEAD`,
       '   The second command prints the branch name you just pushed. You need it.',
@@ -1256,8 +1291,16 @@ function buildWorkOrder({
     lines.push(
       '',
       '2. SUBMIT IT YOURSELF, through the Homeroom connector. Call `submit_work`',
-      `   with taskId ${taskRef} and the patch text from step 1 as \`patch\` (or, if`,
-      '   you pushed instead, `branch` set to the name you actually pushed),',
+      ...(upload
+        ? [
+          `   with taskId ${taskRef} and the patch text from step 1 as \`patch\` (or the`,
+          '   `patchUploadId` its upload printed, or, if you pushed instead, `branch`',
+          '   set to the name you actually pushed),',
+        ]
+        : [
+          `   with taskId ${taskRef} and the patch text from step 1 as \`patch\` (or, if`,
+          '   you pushed instead, `branch` set to the name you actually pushed),',
+        ]),
       `   agent "${agentValue}", source "work_order", and a short title, plus`,
       '   BOTH pieces of prose described next. Homeroom applies a patch at that',
       '   exact commit in the app\'s own repository and opens the pull request',
@@ -1338,9 +1381,18 @@ function buildWorkOrder({
       '   number, call `submit_work`',
       `   again with slug "${appSlug}" and prNumber set to it.`,
       '',
-      '4. IF THE PATCH IS REFUSED as too large, push a branch as in step 1 and',
-      `   call \`submit_work\` with taskId ${taskRef} and that \`branch\` instead. If`,
-      '   that push is refused, the remedy above is the fix.',
+      ...(upload
+        ? [
+          '4. IF THE PATCH IS REFUSED as too large, upload it as in step 1. If the',
+          '   upload cannot reach Homeroom or is too large as well, push a branch as',
+          `   in step 1 and call \`submit_work\` with taskId ${taskRef} and that`,
+          '   `branch` instead. If that push is refused, the remedy above is the fix.',
+        ]
+        : [
+          '4. IF THE PATCH IS REFUSED as too large, push a branch as in step 1 and',
+          `   call \`submit_work\` with taskId ${taskRef} and that \`branch\` instead. If`,
+          '   that push is refused, the remedy above is the fix.',
+        ]),
       '',
       '5. ON A CONNECTOR ERROR, relay it plainly rather than giving up:',
       '   `insufficient_scope` — ask the user to reconnect Homeroom and approve',
@@ -1707,6 +1759,25 @@ async function prepareWork(deps, params) {
     ? []
     : await findOpenProposalsForRequest(pool, app.id, issues, user.id);
 
+  // #4264: the work order's one-time upload command, minted for the task it
+  // is about to render, so a reused job's re-rendered order carries a working
+  // one too (the earlier one keeps working until it expires). Only when the
+  // caller asked (the connector does; the browser walkthrough does not), and
+  // only for NEW work: an update submits a branch on this base. Advisory, like
+  // the claim: a credential that cannot be minted costs the command, and the
+  // work order still offers the inline patch and the branch.
+  const uploadFor = async (task) => {
+    if (params.patchUpload !== true || update || !task) return null;
+    try {
+      return await patchUploads.issueUploadCredential(pool, { taskId: task.id, userId: user.id, origin });
+    } catch (err) {
+      log.warn('external-agent-tasks', 'patch upload command not issued (continuing)', {
+        taskId: task.id, err: err.message,
+      });
+      return null;
+    }
+  };
+
   // ── Look before minting ──────────────────────────────────────────────
   //
   // BEFORE the open-work-order check, deliberately: re-rendering a work
@@ -1728,6 +1799,7 @@ async function prepareWork(deps, params) {
         specs: Array.isArray(params.specs) ? params.specs : [],
         task: existing, app, owner, repo, origin, clientId, clientName,
         prompts, agent, reused: true, targetProposal: update, openProposals,
+        patchUpload: await uploadFor(existing),
       });
     }
   } else {
@@ -1885,6 +1957,7 @@ async function prepareWork(deps, params) {
         specs: Array.isArray(params.specs) ? params.specs : [],
         task: raced, app, owner, repo, origin, clientId, clientName,
         prompts, agent, reused: true, targetProposal: update, openProposals,
+        patchUpload: await uploadFor(raced),
       });
     }
 
@@ -1932,6 +2005,7 @@ async function prepareWork(deps, params) {
     },
     app, owner, repo, origin, clientId, clientName, prompts, agent,
     forkStatus, reused: false, targetProposal: update, openProposals,
+    patchUpload: await uploadFor(row),
   });
 }
 
@@ -2099,6 +2173,7 @@ async function findOpenProposalsForRequest(pool, appId, issueNumbers, viewerId) 
 function renderPreparedTask({
   task, app, owner, repo, origin, clientId, clientName, prompts,
   forkStatus, reused, agent: requestedAgent, targetProposal, openProposals, specs = [],
+  patchUpload = null,
 }) {
   const forkOwner = task.fork_owner;
   const forkRepo = task.fork_repo;
@@ -2156,6 +2231,8 @@ function renderPreparedTask({
     // (routes/dev-flow.js); everything else is a chat assistant's connector.
     startedFromWalkthrough: String(task.client_id || '').startsWith('usernode-web'),
     specs,
+    // #4264: minted by prepareWork for this rendering only, never stored.
+    patchUpload,
   });
 
   return {
@@ -2390,6 +2467,157 @@ async function discardTask(pool, userId, appId, taskId) {
     [id, userId, appId]
   );
   return rows[0] ? Number(rows[0].id) : null;
+}
+
+// ── The work orders that hold the caller's slots (#4266) ──────────────
+//
+// prepare_work refuses with `at_capacity` once ten work orders are held open,
+// and until this existed nothing on the connector could say WHICH ten. One
+// session found every slot held by work orders started from other sessions,
+// with no way to list them or put one away, so it had to stop and ask the user
+// to free a slot somewhere it could not name.
+//
+// The WHERE clause is connector-limits.checkOpenWorkOrders' own, clause for
+// clause: this list is the explanation of that refusal, so it has to be exactly
+// the set the cap counts. That is why it is not listOpenWorkOrders, which feeds
+// the Improve panel and also drops a row whose request has since closed
+// (#1948). A row like that still holds a slot, and it is the likeliest one to
+// close.
+//
+// `last_activity_at` is derived, not stored: nothing is written to a work order
+// after it is minted. It is the latest of when the order was prepared and when
+// the caller last claimed one of the requests it implements, which prepare_work
+// does on every call (asking again for the same order included) and
+// claim_request does on every renewal and progress note. An order with no
+// request behind it has only its creation time.
+//
+// A database failure throws: the caller is a read that answers "could not
+// check", which is not the same answer as "you hold none".
+async function listHeldWorkOrders(pool, userId) {
+  const id = Number(userId);
+  if (!Number.isSafeInteger(id) || id <= 0) return [];
+  const { rows } = await pool.query(
+    `SELECT t.id, t.issue_number, t.linked_issues, t.brief, t.branch_name,
+            t.client_id, t.target_session_id, t.created_at, t.expires_at,
+            GREATEST(t.created_at, (
+              SELECT MAX(c.claimed_at) FROM issue_claims c
+               WHERE c.app_id = t.app_id AND c.user_id = t.user_id
+                 AND (c.github_issue_number = t.issue_number
+                      OR c.github_issue_number = ANY(t.linked_issues))
+            )) AS last_activity_at,
+            a.slug AS app_slug, a.name AS app_name,
+            s.pr_number AS target_pr_number
+       FROM external_agent_tasks t
+       JOIN apps a ON a.id = t.app_id
+       LEFT JOIN chat_sessions s ON s.id = t.target_session_id
+      WHERE t.user_id = $1 AND t.status = 'open' AND t.expires_at > NOW()
+        AND t.session_id IS NULL
+      ORDER BY last_activity_at DESC, t.id DESC`,
+    [id]
+  );
+  return rows.map((r) => ({
+    taskId: Number(r.id),
+    appSlug: r.app_slug,
+    appName: r.app_name,
+    title: workOrderTitle(r.brief, r.issue_number),
+    requestNumbers: linkedIssuesFor(r),
+    createdAt: r.created_at,
+    lastActivityAt: r.last_activity_at || r.created_at,
+    expiresAt: r.expires_at,
+    branch: r.branch_name,
+    agent: normalizeAgent(r.client_id, r.client_id),
+    // The proposal an UPDATE work order revises (#1054), with its pull request
+    // number when it has one.
+    revisesProposalId: r.target_session_id == null ? null : Number(r.target_session_id),
+    revisesPrNumber: Number(r.target_pr_number) > 0 ? Number(r.target_pr_number) : null,
+  }));
+}
+
+// Put ONE of the caller's work orders away by its id, from anywhere (#4266).
+//
+// The ending prepare_work's `restart` writes, and the walkthrough's "Start
+// over": `abandoned`. So nothing downstream learns a new state. A later
+// submit_work for the id is refused as closed, and prepare_work for the same
+// request mints a fresh order at the app's current head. Unlike discardTask it
+// is not scoped to one app, because whoever reads list_my_work_orders is
+// looking at every app at once.
+//
+// What it will not close, each with its own answer, because "nothing matched"
+// is four different situations to the person asking:
+//   * somebody else's, or one that does not exist: `unknown_task`, in the same
+//     words for both, so a task id cannot probe another account;
+//   * one already submitted: `already_submitted`. That work is a proposal now,
+//     and closing its paperwork would not take the proposal down, nor should it;
+//   * one already closed: `already_closed`;
+//   * one shared as an in-progress card: `already_shared`. It holds no slot
+//     (the cap leaves those out), and its open row is what lets the agent keep
+//     pushing onto that card.
+//
+// Under the submit lock, so a close racing the coding agent's own submit_work
+// waits for it and then answers `already_submitted`, rather than abandoning
+// the row a proposal was opened from a moment earlier.
+//
+// It leaves the request's claim alone, as `restart` does: the claim says the
+// person is on the request, which closing one attempt at it does not settle.
+// release_request is the deliberate way to say so.
+async function closeWorkOrder(pool, userId, taskId) {
+  const id = Number(taskId);
+  if (!Number.isSafeInteger(id) || id <= 0) {
+    return fail('invalid_request', 'taskId must be the id of one of your work orders.');
+  }
+  return withTaskLock(pool, id, async () => {
+    const { rows } = await pool.query(
+      `UPDATE external_agent_tasks t
+          SET status = 'abandoned'
+         FROM apps a
+        WHERE t.id = $1 AND t.user_id = $2 AND t.status = 'open'
+          AND t.session_id IS NULL AND a.id = t.app_id
+        RETURNING t.id, t.issue_number, t.linked_issues, t.brief,
+                  t.target_session_id, (t.expires_at > NOW()) AS held_slot,
+                  (SELECT s.pr_number FROM chat_sessions s
+                    WHERE s.id = t.target_session_id) AS target_pr_number,
+                  a.slug AS app_slug, a.name AS app_name`,
+      [id, userId]
+    );
+    const row = rows[0];
+    if (row) {
+      return {
+        ok: true,
+        taskId: Number(row.id),
+        appSlug: row.app_slug,
+        appName: row.app_name,
+        title: workOrderTitle(row.brief, row.issue_number),
+        requestNumbers: linkedIssuesFor(row),
+        revisesProposalId: row.target_session_id == null ? null : Number(row.target_session_id),
+        revisesPrNumber: Number(row.target_pr_number) > 0 ? Number(row.target_pr_number) : null,
+        // False only for an order past its 14-day expiry, which had already
+        // stopped counting. Closing it is still the honest bookkeeping.
+        freedSlot: row.held_slot === true,
+      };
+    }
+
+    const any = await loadAnyTask(pool, userId, id);
+    if (!any) {
+      return fail('unknown_task', 'That is not one of your work orders. A work order belongs to the Homeroom '
+        + 'account that prepared it; list_my_work_orders lists yours.');
+    }
+    if (any.status === 'submitted') {
+      const proposalId = Number(any.session_id || any.proposal_id) || null;
+      return fail('already_submitted', 'That work order was already submitted, so it holds no slot. The '
+        + 'proposal it became stays up for the group\'s vote; closing a work order never takes a proposal down.',
+      { proposalId });
+    }
+    if (any.status === 'abandoned') {
+      return fail('already_closed', 'That work order is already closed, so it holds no slot.');
+    }
+    if (any.session_id) {
+      return fail('already_shared', `That work is shared as in-progress session ${Number(any.session_id)}, `
+        + 'so it holds no work-order slot. It stays open so the coding agent can keep pushing onto that card.',
+      { sessionId: Number(any.session_id) });
+    }
+    return fail('platform_unavailable', 'Homeroom could not close that work order just now. Try again shortly.',
+      { retryable: true });
+  });
 }
 
 // Close out the EXPIRED open rows sitting on one request key.
@@ -3077,8 +3305,50 @@ async function submitUpdate(deps, params, proposalId) {
 // Serialized per task: see withTaskLock above for why one piece of work can
 // now have two callers racing on it.
 async function submitWork(deps, params) {
-  if (!params || !params.taskId) return submitWorkLocked(deps, params);
-  return withTaskLock(deps.pool, params.taskId, () => submitWorkLocked(deps, params));
+  // `uploadedPatch` is this file's own marker for a patch it read from the
+  // upload store (#4264), and it raises the size ceiling: it is never taken
+  // from a caller.
+  const clean = params ? { ...params, uploadedPatch: undefined } : params;
+  if (!clean || !clean.taskId) {
+    if (clean && clean.patchUploadId != null) {
+      return fail('invalid_request', 'patchUploadId needs the taskId from the work order: an upload belongs to one task.');
+    }
+    return submitWorkLocked(deps, clean);
+  }
+  return withTaskLock(deps.pool, clean.taskId, () => submitWithUploadedPatch(deps, clean));
+}
+
+// #4264. `patchUploadId` names a patch the agent uploaded with its work
+// order's one-time command instead of pasting it into `patch`. It is read
+// here, under the task lock, and from then on it IS the inline patch: the
+// same submitWorkLocked, the same apply at the recorded base, the same pull
+// request. Only the size ceiling differs (applyPatch's, raised for uploads).
+async function submitWithUploadedPatch(deps, params) {
+  if (params.patchUploadId == null) return submitWorkLocked(deps, params);
+  if (params.patch) {
+    return fail('invalid_request', 'Send the patch inline as `patch` or name the one you uploaded with `patchUploadId`, not both.');
+  }
+  // A task that is no longer open has nothing left to apply: submitWorkLocked
+  // answers it (already submitted, or not yours) exactly as it would for any
+  // other submission, and a used upload is gone by then anyway.
+  const open = await loadOpenTask(deps.pool, params.user.id, params.taskId);
+  if (!open) return submitWorkLocked(deps, { ...params, patchUploadId: undefined });
+  const upload = await patchUploads.loadUploadForSubmit(deps.pool, {
+    userId: params.user.id, taskId: Number(open.id), uploadId: params.patchUploadId,
+  });
+  if (!upload.ok) return upload;
+  const result = await submitWorkLocked(deps, {
+    ...params,
+    patch: upload.patch,
+    uploadedPatch: { uploadId: upload.uploadId, bytes: upload.bytes },
+  });
+  if (result && result.ok && !result.alreadySubmitted) {
+    await patchUploads.consumeUploads(deps.pool, Number(open.id));
+    log.info('external-agent-tasks', 'uploaded patch submitted', {
+      taskId: Number(open.id), uploadId: upload.uploadId, bytes: upload.bytes,
+    });
+  }
+  return result;
 }
 
 // #1405 path A. Tell the OWNER that their agent put work somewhere.
@@ -3168,7 +3438,9 @@ async function submitWorkLocked(deps, params) {
       };
     }
     if (any && any.status === 'abandoned') {
-      return fail('unknown_task', 'That piece of work was closed out and restarted. Ask for the current work order.');
+      // Started over, or put away with close_work_order (#4266): one state.
+      return fail('unknown_task', 'That piece of work was closed without being submitted: it was started over '
+        + 'or put away. Ask for the current work order, or call prepare_work to start it again.');
     }
     return fail(
       'unknown_task',
@@ -3477,6 +3749,8 @@ async function submitWorkLocked(deps, params) {
       baseSha: task.base_sha,
       userId: user.id,
       taskId: task.id,
+      // #4264: an uploaded patch is bounded by the upload's own ceiling.
+      ...(params.uploadedPatch ? { maxBytes: externalAgentPatch.MAX_UPLOADED_PATCH_BYTES } : {}),
     });
     if (!applied.ok) return applied;
     platformOwnedHead = applied;
@@ -3981,6 +4255,11 @@ module.exports = {
   // away without submitting it, and the reason a stale one stops being
   // permanent.
   discardTask,
+  // Its connector counterpart (#4266): the work orders holding the caller's
+  // slots, exactly as the cap counts them, and putting one away by its id
+  // from any app.
+  listHeldWorkOrders,
+  closeWorkOrder,
   abandonExpiredRequest,
   // The walkthrough's own lookup (per session), and the adoption behind it.
   loadOpenTaskForSession,

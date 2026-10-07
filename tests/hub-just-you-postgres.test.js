@@ -163,6 +163,26 @@ test('a just-you project\'s hub: what it is, and where its first version stands'
     assert.equal((await get()).description, 'Plan hikes around Geneva with friends');
   });
 
+  await t.test('its card\'s tagline stands in before the first sentence, and dapp.json\'s line still wins (#4235)', async () => {
+    await pool.query(
+      `INSERT INTO app_sketches (app_id, user_id, status) VALUES ($1, $2, 'pending')`,
+      [app.id, evan.id],
+    );
+    assert.equal((await get()).description, 'Plan hikes around Geneva with friends', 'a card still being drawn says nothing');
+    await pool.query(
+      `UPDATE app_sketches SET status = 'ready', design = $2::jsonb, ready_at = NOW() WHERE app_id = $1`,
+      [app.id, JSON.stringify({ kind: 'card', emoji: '🥾', tagline: 'Group hikes around Geneva', points: [] })],
+    );
+    assert.equal((await get()).description, 'Group hikes around Geneva');
+    await pool.query(
+      `UPDATE apps SET manifest_snapshot = $2 WHERE id = $1`,
+      [app.id, JSON.stringify({ description: 'Group hikes around Lake Geneva', secrets: [] })],
+    );
+    assert.equal((await get()).description, 'Group hikes around Lake Geneva');
+    await pool.query('UPDATE apps SET manifest_snapshot = NULL WHERE id = $1', [app.id]);
+    await pool.query('DELETE FROM app_sketches WHERE app_id = $1', [app.id]);
+  });
+
   let run;
   await t.test('its plan waits on its maker: step 3, and what it waits on, for them alone', async () => {
     await pool.query(`UPDATE apps SET status = 'running' WHERE id = $1`, [app.id]);
