@@ -293,6 +293,16 @@ declare global {
         string,
         { isOpen(): boolean; open(payload?: unknown): void; close(): void } | undefined
       >;
+      /**
+       * features/first-session: the first session's screens, and the one
+       * front door for a new project. `create` opens "What do you want to
+       * make?" from the Create button, or its import form (`import`); false
+       * when another of its screens holds the view.
+       */
+      firstSession?: {
+        create?(opts?: { import?: boolean }): boolean;
+        [key: string]: unknown;
+      };
       messages?: {
         open(conversationId?: number | null): void;
         route(conversationId?: number | null): void;

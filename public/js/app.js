@@ -4001,12 +4001,9 @@ const App = {
     // hydration has adopted #header-menu-panel, which is earlier than this.
     App._wirePullToRefresh();
     // The create dialog bound its cancel, backdrop, submit, mode-pill and
-    // visibility-pill listeners here, and finished by calling
-    // setCreateVisibility('collab', 'public') to put the pills in their
-    // default state. It is a React island now
-    // (frontend/src/features/dialogs/create-app.tsx): the listeners are JSX
-    // props, the default state is the component's initial state, and the
-    // backdrop rule — ghost-click guard included — comes from `useDialog`.
+    // visibility-pill listeners here. It became a React island (#1078 chunk
+    // I) and is retired now: Create opens "What do you want to make?"
+    // (frontend/src/features/first-session/make.tsx).
 
     // The members & visibility modal bound its close button and backdrop
     // here. Its island (frontend/src/features/dialogs/members.tsx) owns both
@@ -4761,9 +4758,10 @@ const App = {
 
       const parts = hash.split('/');
       if (parts[0] === 'create') {
-        // #create — deep link that opens the create-app modal over the
-        // home feed. Doubles as the addressable route the dapp.json
-        // regression test for the mode toggle uses (#748).
+        // #create — deep link that opens "What do you want to make?" over
+        // the home feed, as the Create button does; #create/import opens it
+        // on importing a GitHub repo. Both are addressable routes the
+        // dapp.json checks use (#748).
         App.setChromeless(false);
         // The same list as the `!hash` branch above (QA 2026-09-24 Q1).
         if (App.currentApp || App._inLeaderboard || App._inProfile
@@ -4777,7 +4775,7 @@ const App = {
           App.setHeaderTitle('Homeroom');
           Home.load();
         }
-        App.showCreateModal();
+        App.showCreateModal({ import: parts[1] === 'import' });
         return;
       }
       if (parts[0] === 'leaderboard') {
@@ -7598,16 +7596,19 @@ const App = {
     }
   },
 
-  // ── Create-app dialog ─────────────────────────────────────────────
-  // #1078 chunk I moved the whole thing — mode, visibility, the import
-  // pre-flight sub-state machine and the POST — into
-  // frontend/src/features/dialogs/create-app.tsx, where seven functions that
-  // read each other's state out of the document became four useState calls.
-  // This entry point stays because the home screen's empty-state and "+"
-  // buttons (frontend/src/features/home/home.js) and the #create deep link
-  // call `App.showCreateModal()` by name.
-  showCreateModal() {
-    window.UsernodeReact?.dialogs?.create?.open();
+  // ── Create a project ──────────────────────────────────────────────
+  // Every Create button (the launcher's tile, the Workshop, the community
+  // switcher, the account panel, a notification) and the #create deep link
+  // call `App.showCreateModal()` by name. It opens the one front door for a
+  // new project, "What do you want to make?"
+  // (frontend/src/features/first-session/make.tsx), the screen the first
+  // session asks with, so a second project starts the way the first did;
+  // `{ import: true }` opens it on importing a GitHub repo. The New project
+  // dialog it used to open is retired. Answers whether it opened: another
+  // of the island's screens (the first session's) keeps the view.
+  showCreateModal(opts) {
+    const front = window.UsernodeReact?.firstSession;
+    return !!(front && typeof front.create === 'function' && front.create(opts));
   },
 
   // ── Homescreen zoom transition ─────────────────────────────────────
