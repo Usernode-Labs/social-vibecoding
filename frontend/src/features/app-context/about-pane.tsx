@@ -573,19 +573,18 @@ export function AboutPane({ label }: { label: string }): ReactNode {
 
       {(isApp || platform) && note ? (
         <p id="app-about-note" className="px-5 pt-1 pb-1 text-[0.8125rem] leading-relaxed text-zinc-600 dark:text-zinc-300">
-          {note}
+          {/* The space rides inside the note's own string: a bare {' '}
+              child is a hydration hazard (tests/shell-build.test.js). */}
+          {workshopSlug ? `${note} ` : note}
           {workshopSlug ? (
-            <>
-              {' '}
-              <a
-                id="app-about-how"
-                href={`#app/${encodeURIComponent(workshopSlug)}/workshop`}
-                className="font-semibold text-violet-700 dark:text-violet-300 hover:underline underline-offset-2"
-                onClick={(e) => openWorkshop(e, workshopSlug)}
-              >
-                How changes work
-              </a>
-            </>
+            <a
+              id="app-about-how"
+              href={`#app/${encodeURIComponent(workshopSlug)}/workshop`}
+              className="font-semibold text-violet-700 dark:text-violet-300 hover:underline underline-offset-2"
+              onClick={(e) => openWorkshop(e, workshopSlug)}
+            >
+              How changes work
+            </a>
           ) : null}
         </p>
       ) : null}
