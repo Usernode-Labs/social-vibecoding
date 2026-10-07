@@ -650,6 +650,15 @@ export function init() {
     const screenshotLabel = screenshotBtn.querySelector('[data-screenshot-label]');
     const screenshotPickerBtn = document.getElementById('feedback-screenshot-picker-btn');
     const screenshotInput = document.getElementById('feedback-screenshot-input');
+    // The attachment popup: one paperclip entry point for the Photo and
+    // Video rows the form used to carry as two buttons. The rows keep their
+    // ids, so their handlers, the hidden inputs behind them and everything
+    // downstream are unchanged; only the way in moved. `paintScreenshotActions`
+    // reveals the entry point on open and hides the Photo row at
+    // MAX_SCREENSHOTS; the rows carry their own state, so opening the popup
+    // is independent of slots.
+    const attachBtn = document.getElementById('feedback-attach-btn');
+    const attachPop = document.getElementById('feedback-attach-pop');
     // The thumbnail list. feedback.tsx renders it empty; the items inside are
     // this module's, like every other node inside the card.
     const screenshotPreview = document.getElementById('feedback-screenshot-preview');
@@ -843,6 +852,10 @@ export function init() {
         : (count ? 'Attach another' : 'Attach screenshot');
       screenshotBtn.classList.toggle('hidden', full || !canCapture);
       screenshotPickerBtn.classList.toggle('hidden', full);
+      // The paperclip entry point: revealed on open, never hidden again —
+      // the Video row stays live at MAX_SCREENSHOTS, so the menu always has
+      // something to offer.
+      attachBtn.classList.remove('hidden');
       // #3027: say how many fit, so the second picture is not a guess.
       if (screenshotCount) {
         screenshotCount.textContent = count === 0
@@ -865,6 +878,9 @@ export function init() {
     const setScreenshotActionsDisabled = (disabled) => {
       screenshotBtn.disabled = disabled;
       screenshotPickerBtn.disabled = disabled;
+      // The entry point locks with the rows, so an upload or capture in
+      // flight cannot open the popup and start a second one.
+      attachBtn.disabled = disabled;
     };
 
     // Forget one attachment client-side. An already uploaded (now orphaned)
@@ -1134,10 +1150,89 @@ export function init() {
       { nativeAttempt });
     });
 
+    // ── the attachment popup ──────────────────────────────────────
+    // One paperclip opens a small anchored menu with the two choices, in
+    // the vote picker's shape. Opening is independent of slots; the rows
+    // carry their own state. Choosing a row closes the popup and then does
+    // exactly what that choice's button did. The popup also closes on a tap
+    // outside it (a document-level capture-phase listener, so it sees the
+    // tap before anything the tap would otherwise reach) and on Escape —
+    // and never closes the dialog itself.
+    //
+    // ESCAPE, while the menu is up, is about the menu, not the dialog. The
+    // kit's modal shell answers Escape from a WINDOW capture listener —
+    // ahead of anything this module can add — and it stands aside only for
+    // its own popover singleton (native.js: "A popover open above a modal
+    // owns Escape"). So opening the menu also presents, through
+    // PlatformUI.popover, an anchorless card with no rows and hides it at
+    // once: not a surface, the registration that makes the kit's arbiter
+    // hold the dialog's dismissal while the menu is up. The card is inert
+    // (no rows, no anchor); its own dismissal — outside tap, Escape, a
+    // scroll that moves the anchor, a resize — routes through onDismiss
+    // into this module's close, so every way the kit ends a popover ends
+    // the menu too. The pointerdown guard keeps a tap on the menu or the
+    // paperclip from counting as outside (the click that carries the
+    // choice must still arrive). Without the kit the dialog is not a kit
+    // modal and these listeners do the whole job.
+    let popupOpen = false;
+    let escapeOwner = null;
+    const closeAttachPopup = () => {
+      if (!popupOpen) return;
+      popupOpen = false;
+      attachPop.classList.add('hidden');
+      attachBtn.setAttribute('aria-expanded', 'false');
+      document.removeEventListener('click', onDocClickWhilePopupOpen, true);
+      document.removeEventListener('keydown', onKeydownWhilePopupOpen, true);
+      document.removeEventListener('pointerdown', onDocPointerDownWhilePopupOpen, true);
+      if (escapeOwner) {
+        const owner = escapeOwner;
+        escapeOwner = null;
+        owner.dismiss();
+      }
+    };
+    const onDocClickWhilePopupOpen = (event) => {
+      const target = event.target;
+      if (target && (attachBtn.contains(target) || attachPop.contains(target))) return;
+      closeAttachPopup();
+    };
+    const onKeydownWhilePopupOpen = (event) => {
+      if (event.key !== 'Escape') return;
+      closeAttachPopup();
+    };
+    const onDocPointerDownWhilePopupOpen = (event) => {
+      const target = event.target;
+      if (target && (attachBtn.contains(target) || attachPop.contains(target))) {
+        event.stopImmediatePropagation();
+      }
+    };
+    attachBtn.addEventListener('click', () => {
+      if (attachBtn.disabled) return;
+      if (popupOpen) { closeAttachPopup(); return; }
+      popupOpen = true;
+      attachPop.classList.remove('hidden');
+      attachBtn.setAttribute('aria-expanded', 'true');
+      document.addEventListener('click', onDocClickWhilePopupOpen, true);
+      document.addEventListener('keydown', onKeydownWhilePopupOpen, true);
+      document.addEventListener('pointerdown', onDocPointerDownWhilePopupOpen, true);
+      const ui = window.PlatformUI;
+      if (ui && typeof ui.popover === 'function') {
+        const owner = ui.popover({ contentEl: document.createElement('div'), onDismiss: closeAttachPopup });
+        if (owner && owner.el) {
+          owner.el.style.display = 'none'; // not a surface; the menu above is
+          escapeOwner = owner;
+          // The kit focuses its new card before handing it back; the card is
+          // hidden, so take focus back onto the paperclip in the same tick.
+          attachBtn.focus({ preventScroll: true });
+        }
+      }
+    });
+
     screenshotPickerBtn.addEventListener('click', () => {
       if (screenshotPickerBtn.disabled || screenshots.length >= MAX_SCREENSHOTS) return;
-      // An image instead of the share the browser has not answered: that
-      // attempt is over (see pendingCapture).
+      // Choosing Photo closes the popup, then does everything the picker
+      // button did: an image instead of the share the browser has not
+      // answered means that attempt is over (see pendingCapture).
+      closeAttachPopup();
       abandonPendingCapture();
       // #1284: the camera roll is a full-screen native surface and this tab
       // can be evicted behind it. Nothing suspends the dialog here, so there
@@ -1407,6 +1502,8 @@ export function init() {
 
     videoBtn.addEventListener('click', () => {
       if (videoBtn.disabled) return;
+      // Choosing Video closes the popup, then does what the button did.
+      closeAttachPopup();
       // Same page-death insurance as the Photos picker above: the file
       // picker is a native surface and the tab can be evicted behind it.
       // Cleared again by the change handler below.
@@ -2181,6 +2278,10 @@ export function init() {
     // line belongs to useStaticModal.
     Feedback._reset = () => {
       presentation += 1;
+      // A reopened dialog never inherits an open popup — and a close that
+      // lands during a capture suspension (the stale teardown above) cannot
+      // leave one behind either, so this runs unconditionally.
+      closeAttachPopup();
       clearTimeout(closeTimer);
       firstFeedback = null;
       firstSuccess?.classList.add('hidden');

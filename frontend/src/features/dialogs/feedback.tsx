@@ -29,7 +29,7 @@
 
 import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
-import { CameraIcon, PhotoIcon, VideoCameraIcon } from '@/components/ui/icons';
+import { CameraIcon, PaperclipIcon, PhotoIcon, VideoCameraIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -257,14 +257,57 @@ export function FeedbackDialog() {
               <CameraIcon className="w-3.5 h-3.5" />
               <span data-screenshot-label="">Attach screenshot</span>
             </button>
-            <button
-              id="feedback-screenshot-picker-btn"
-              type="button"
-              className="hidden inline-flex min-h-[48px] items-center gap-1.5 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
-            >
-              <PhotoIcon className="w-3.5 h-3.5" />
-              Choose from Photos
-            </button>
+            {/*
+                One attachment entry point: the paperclip stands in for the
+                two buttons this row used to carry ("Choose from Photos",
+                "Add video"), so the attachment area is one line again.
+                Tapping it opens the small anchored menu below — the vote
+                picker's shape (.dev-vote-pop), hanging from the button that
+                opened it. The menu's two rows KEEP those buttons' ids
+                (#feedback-screenshot-picker-btn, #feedback-video-btn), so
+                the controller's handlers, the hidden inputs behind them and
+                everything downstream are unchanged; only the entry point
+                moved. It ships `hidden` (the hydration rule: the initial
+                render is exactly the empty state), with the proven
+                `hidden` + `flex flex-col` pair from ANCHORED_PANEL_CLASS —
+                `hidden` wins while both are on, and dropping it reveals the
+                panel as a column. Rows are 44px-minimum tap targets with
+                literal class strings, so Tailwind compiles them.
+            */}
+            <span className="relative inline-flex">
+              <button
+                id="feedback-attach-btn"
+                type="button"
+                title="Attach a photo or video"
+                aria-label="Attach a photo or video"
+                aria-expanded="false"
+                aria-controls="feedback-attach-pop"
+                className="hidden inline-flex min-h-[48px] w-12 items-center justify-center rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-900 dark:text-zinc-100 transition-colors"
+              >
+                <PaperclipIcon className="w-4 h-4" />
+              </button>
+              <div
+                id="feedback-attach-pop"
+                className="absolute right-0 top-full mt-1 z-20 w-52 hidden flex flex-col rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-2xl p-1.5"
+              >
+                <button
+                  id="feedback-screenshot-picker-btn"
+                  type="button"
+                  className="hidden flex min-h-[44px] w-full items-center gap-2 rounded-md px-3 text-sm font-medium text-zinc-900 dark:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+                >
+                  <PhotoIcon className="w-3.5 h-3.5" />
+                  Photo
+                </button>
+                <button
+                  id="feedback-video-btn"
+                  type="button"
+                  className="hidden flex min-h-[44px] w-full items-center gap-2 rounded-md px-3 text-sm font-medium text-zinc-900 dark:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+                >
+                  <VideoCameraIcon className="w-3.5 h-3.5" />
+                  <span data-video-label="">Video</span>
+                </button>
+              </div>
+            </span>
             <input
               id="feedback-screenshot-input"
               type="file"
@@ -281,21 +324,14 @@ export function FeedbackDialog() {
           </div>
           {/*
             #3940: video clips. One clip per issue, chosen alongside the
-            images above: #feedback-video-btn picks an MP4/WebM/MOV file
-            (never `multiple`), #feedback-video-preview renders its
-            thumbnail row (first-frame preview, upload state, its own 48px
-            remove button) — both filled by the controller on open, hidden
-            for the same hydration reason as the screenshot controls.
+            images above: the popup's Video row (#feedback-video-btn, in the
+            paperclip's menu above) picks an MP4/WebM/MOV file (never
+            `multiple`), #feedback-video-preview renders its thumbnail row
+            (first-frame preview, upload state, its own 48px remove button) —
+            filled by the controller on open, hidden for the same hydration
+            reason as the screenshot controls.
           */}
           <div className="mt-2 flex flex-wrap items-center gap-2">
-            <button
-              id="feedback-video-btn"
-              type="button"
-              className="hidden inline-flex min-h-[48px] items-center gap-1.5 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
-            >
-              <VideoCameraIcon className="w-3.5 h-3.5" />
-              <span data-video-label="">Add video</span>
-            </button>
             <input
               id="feedback-video-input"
               type="file"
