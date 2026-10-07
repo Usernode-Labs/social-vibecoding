@@ -4819,9 +4819,9 @@
       "expectSelector": "body:has(#messages-screen.hidden) #app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"][data-ws-slug=\"staging-demo-app\"] section.dev-ws-discussion[data-discussion-app=\"staging-demo-app\"] > .dev-ws-discussion-host #gc-messages"
     },
     {
-      "name": "#2387: an app channel's messages carry the same hover bar, a threaded one its reply count, a deleted one its placeholder",
+      "name": "#2387: an app channel's messages carry the same hover bar, a threaded one its reply count, a deleted one its placeholder; #4238: Homeroom bot's first-version line carries its Open button",
       "path": "/?demo=1#messages/app/staging-demo-app",
-      "expectSelector": "#gc-messages:has([data-msg-id=\"9902000\"] .gc-msg-deleted-text) [data-msg-id=\"9902003\"]:has(.msgx-thread-chip) .gc-msg-actions.msgx-bar > [aria-label=\"Add reaction\"] ~ .gc-msg-more-action[aria-haspopup=\"menu\"]",
+      "expectSelector": "#gc-messages:has([data-msg-id=\"9902000\"] .gc-msg-deleted-text):has([data-gc-open-app]) [data-msg-id=\"9902003\"]:has(.msgx-thread-chip) .gc-msg-actions.msgx-bar > [aria-label=\"Add reaction\"] ~ .gc-msg-more-action[aria-haspopup=\"menu\"]",
       "expectText": "3 replies"
     },
     {

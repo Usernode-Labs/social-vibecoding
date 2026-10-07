@@ -202,6 +202,31 @@ function stagingMockGeneralStream(appId) {
   return [...rows.slice(0, at + 1), ...replies, ...rows.slice(at + 1)];
 }
 
+// #4238: Homeroom bot's "I've made the first version" line, as a new
+// project's channel has it (ws.sendFirstVersionMessage), at the end of the
+// general mock, for the app it is read on, so a preview shows the line and
+// its Open button. The newest row (id order is time order), and only in the
+// first page the route answers: the Messages list's preview and a mock
+// permalink read the mock without it.
+const DEMO_FIRST_VERSION_ID = 9902009;
+function stagingMockFirstVersion(appId, app) {
+  if (!app || !app.slug) return null;
+  const dm = require('../services/homeroom-bot-dm');
+  const appName = app.name || app.slug;
+  const open = dm.openAppAction({ slug: app.slug, appName });
+  return {
+    id: DEMO_FIRST_VERSION_ID, user_id: 0, username: dm.BOT_USERNAME,
+    content: `[Mock] ${dm.firstVersionText({ appName, live: true })}`,
+    msg_type: 'message',
+    metadata: { kind: 'first_version', appSlug: app.slug, ...(open ? { actions: [open] } : {}) },
+    thread_type: null, thread_ref: null,
+    created_at: new Date(Date.now() - 30 * 1000).toISOString(),
+    edited_at: null, reactions: [], bookmarked: false,
+    has_unread_notification: false, app_id: appId, posted_via: null,
+    deleted: false, thread: null,
+  };
+}
+
 // The demo topics whose mock transcript IS the fixture: the declared checks
 // read these rows (#1926's folded conflict notices, #2236's via-agent chip on
 // issue 900008's Discussion), so they must not depend on nobody having typed
@@ -222,7 +247,7 @@ function isPinnedDemoThread(thread) {
 
 // What a staging `?demo=1` first page answers with, or null to serve the real
 // rows unchanged. `realRows` is the page the SELECT returned, oldest first.
-function stagingDemoTranscript(appId, thread, realRows) {
+function stagingDemoTranscript(appId, thread, realRows, app = null) {
   // A real message's reply thread is never padded: the one mock reply
   // thread is answered by stagingMockReplyThread before the database is
   // read, and fixture replies under somebody's real message would be a lie.
@@ -235,7 +260,9 @@ function stagingDemoTranscript(appId, thread, realRows) {
     return [...mock, ...realRows.filter((m) => !mockIds.has(m.id))];
   }
   if (realRows.length) return null;
-  return thread ? stagingMockGroupChat(appId, thread) : stagingMockGeneralStream(appId);
+  if (thread) return stagingMockGroupChat(appId, thread);
+  const firstVersion = stagingMockFirstVersion(appId, app);
+  return [...stagingMockGeneralStream(appId), ...(firstVersion ? [firstVersion] : [])];
 }
 
 // #2387: the mock reply thread, as `thread_type=message&thread_ref=<root>`
@@ -500,7 +527,7 @@ function chatRoutes(config) {
       // has, and answering that with the same rows again would loop the
       // transcript.
       if (demo && before == null && after == null && around == null) {
-        const mock = stagingDemoTranscript(appId, thread, messages);
+        const mock = stagingDemoTranscript(appId, thread, messages, app);
         if (mock) {
           return res.json({ messages: mock, has_more_before: false, has_more_after: false });
         }
