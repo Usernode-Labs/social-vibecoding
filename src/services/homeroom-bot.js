@@ -2940,8 +2940,8 @@ async function runTriage(pool, config, {
   }
   const promptInput = {
     seed, issueNumber, firstVersion: !!requester?.firstVersion, decider,
-    ...(triageGuidance ? { guidance: triageGuidance } : {}),
     ...(members ? { members } : {}),
+    ...(triageGuidance ? { guidance: triageGuidance } : {}),
     ...(planChange ? { planChange: { ...planChange, requester: requester.username } } : {}),
   };
   // The prompt as it stands before the turn resolves its model. The one sent
@@ -4398,10 +4398,13 @@ async function finishInterruptedReviews(pool, config = {}, deps = {}) {
     return 0;
   }
   let finished = 0;
+  // The turn a restart cut short was the build's own (a fix turn of the
+  // review), which completeRecoveredLive proposes from what it committed.
+  const mode = 'build';
   for (const run of rows) {
     pendingLive.set(Number(run.build_session_id), {
       runId: Number(run.id), appId: Number(run.app_id), issueNumber: Number(run.issue_number),
-      mode: 'build', lost: true, why: 'the platform restarted during its review', result: {},
+      mode, lost: true, why: 'the platform restarted during its review', result: {},
     });
     // eslint-disable-next-line no-await-in-loop
     const acted = await completeRecoveredLive({ pool, config, sessionId: run.build_session_id, deps });
