@@ -12373,7 +12373,8 @@ CREATE INDEX IF NOT EXISTS small_change_tags_created_idx
 COMMENT ON TABLE small_change_tags IS 'staging:private';
 
 -- Homeroom bot CONFIGURATIONS (services/bot-configs.js): how the bot builds a
--- project's FIRST VERSION, as versioned recipes. A recipe names the model of
+-- project's FIRST VERSION, and (scope `later`, below) every later change, as
+-- versioned recipes. A recipe names the model of
 -- each stage (triage, spec, build), an optional REVIEWER (a model that looks
 -- at the build's screenshots and asks for fixes, up to maxRounds rounds
 -- within budgetMinutes) and an optional App bench context pack. Each row is
@@ -12382,8 +12383,9 @@ COMMENT ON TABLE small_change_tags IS 'staging:private';
 -- version does now: `current` builds every live first version (exactly one
 -- at a time, the partial unique index), `side` is built silently beside each
 -- live first version on the App bench lane for comparison, and `retired` is
--- neither. Everything else the bot builds keeps the per-stage settings
--- (homeroom-bot.js stageModel). `seed_key` makes the deploy's seed idempotent.
+-- neither. A later change follows the `later` scope's current version, or
+-- the per-stage settings (homeroom-bot.js stageModel) when it has none.
+-- `seed_key` makes the deploy's seed idempotent.
 -- Not private: admin-written recipes, nothing about anybody's app, and the
 -- bot's runs (a public table) name the version that built them.
 CREATE TABLE IF NOT EXISTS bot_config_versions (
@@ -12403,8 +12405,22 @@ CREATE TABLE IF NOT EXISTS bot_config_versions (
   CONSTRAINT bot_config_versions_version_check CHECK (version > 0),
   UNIQUE (key, version)
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_bot_config_versions_one_current
-  ON bot_config_versions ((TRUE)) WHERE role = 'current';
+-- A configuration's SCOPE: `first_version` (how a project's first version
+-- is built, every row before scopes) or `later` (every other build the bot
+-- makes, live or shadow: its spec and build models). Each scope has exactly
+-- one current version, so the one-current index is per scope; it replaces
+-- the single one, which a second scope's current would break. A key
+-- belongs to one scope.
+ALTER TABLE bot_config_versions ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'first_version';
+DO $$
+BEGIN
+  ALTER TABLE bot_config_versions DROP CONSTRAINT IF EXISTS bot_config_versions_scope_check;
+  ALTER TABLE bot_config_versions ADD CONSTRAINT bot_config_versions_scope_check
+    CHECK (scope IN ('first_version', 'later'));
+END $$;
+DROP INDEX IF EXISTS idx_bot_config_versions_one_current;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bot_config_versions_one_current_per_scope
+  ON bot_config_versions (scope) WHERE role = 'current';
 CREATE UNIQUE INDEX IF NOT EXISTS idx_bot_config_versions_seed
   ON bot_config_versions (seed_key) WHERE seed_key IS NOT NULL;
 
@@ -12449,6 +12465,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_bench_trials_side_build
 -- triage, which every configuration shares. `capture` is the screenshot
 -- step's summary; its artifact ids name rows in bot_capture_artifacts or
 -- bench_trial_artifacts. Private: it describes builds of private projects.
+-- A LATER change's (its version's scope) are its own build, live or shadow
+-- (source 'live'; the run's mode says which), and each side version's
+-- trial ('trial'): no review, so no round-0 result and no capture.
 CREATE TABLE IF NOT EXISTS bot_config_results (
   id                 SERIAL PRIMARY KEY,
   bot_run_id         INTEGER NOT NULL REFERENCES homeroom_bot_runs(id) ON DELETE CASCADE,
