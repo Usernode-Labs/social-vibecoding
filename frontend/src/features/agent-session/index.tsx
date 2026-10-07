@@ -35,6 +35,7 @@ import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import type { AiBudgetState } from '../header/ai-budget';
 import { aiBudgetStore } from '../header/ai-budget-store.js';
 import { Attached } from '../dev-chat/transcript';
+import { DropOverlay, useFileDrag } from '../attachments/file-drag';
 import { PendingStrip } from '../attachments/pending-strip';
 import { nowStore, type TranscriptRow } from '../dev-chat/transcript-store';
 import type { AgentChange, AgentSession, SavedDraft } from './api';
@@ -1889,7 +1890,7 @@ function Composer({ id }: { id: string }) {
   }
 
   // Pasted or dropped files join the tray (a pasted screenshot gets a name).
-  const takeFiles = (list: FileList | null | undefined) => {
+  const takeFiles = (list: FileList | File[] | null | undefined) => {
     const picked = Array.from(list || []);
     if (!picked.length) return false;
     addAttachments(picked.map((file, index) => (
@@ -1911,12 +1912,14 @@ function Composer({ id }: { id: string }) {
     input.current?.focus();
   };
 
+  const drop = useFileDrag({ disabled: archived, onFiles: (dropped) => { takeFiles(dropped); } });
+
   const kind = saving ? 'save' : running ? 'stop' : 'send';
   return (
     // `platform-safe-bar` on the outer box: its padding clears the tab bar
     // (a phone keeps it up on this screen) and the home-indicator strip, so
     // the bordered field above it never sits under either.
-    <div className="platform-safe-bar shrink-0 px-3 pt-1">
+    <div className="platform-safe-bar shrink-0 px-3 pt-1" {...drop.handlers}>
     {archived ? (
       <p className="mb-2 flex flex-wrap items-center gap-2 rounded-2xl bg-zinc-100 px-3 py-2 text-sm text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200" data-agent-session-archived>
         <span className="min-w-0 flex-1">This session is archived. Unarchive it to keep going.</span>
@@ -1928,13 +1931,11 @@ function Composer({ id }: { id: string }) {
     <form
       className="agent-session-composer flex flex-col gap-2 rounded-[1.75rem] border border-zinc-200 bg-white px-3 pb-2.5 pt-3 shadow-sm dark:border-zinc-700 dark:bg-zinc-800"
       onSubmit={submit}
-      onDragOver={(event) => { if (event.dataTransfer?.types?.includes('Files')) event.preventDefault(); }}
-      onDrop={(event) => {
-        if (archived || !event.dataTransfer?.files?.length) return;
-        event.preventDefault();
-        takeFiles(event.dataTransfer.files);
-      }}
     >
+      {/* #4065: the drop zone, over the card while a file is held anywhere
+          on the bar around it (the drop is the bar's, a little wider than
+          the card, so a near miss still attaches). */}
+      {drop.dragging ? <DropOverlay /> : null}
       {files.length ? (
         <PendingStrip
           id={`${id}-attachments`}

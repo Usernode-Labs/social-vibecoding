@@ -34,6 +34,7 @@ import { useRef, useSyncExternalStore } from 'react';
 
 import { hasPlatformViewer, whenPlatformViewer } from '../../lib/platform-viewer';
 import * as api from './api';
+import { refusalSummary } from '../attachments/refusal-summary';
 import { acceptFiles, pickedKind, type PendingFile } from './attachments';
 import type {
   AgentAction,
@@ -1180,8 +1181,8 @@ async function uploadPending(id: number, key: string): Promise<boolean> {
 /** Put picked, pasted or dropped files in the tray; the first refusal is said once. */
 export function addAttachments(files: Array<{ name: string; size: number; type?: string } & Blob>) {
   if (state.session?.status === 'archived') return;
-  const { accepted, error } = acceptFiles(state.attachments.length, files);
-  if (error) toast(error);
+  const { accepted, error, refusedCount } = acceptFiles(state.attachments.length, files);
+  if (error) toast(refusalSummary(error, refusedCount - 1));
   if (!accepted.length) return;
   const id = state.id;
   const added: PendingFile[] = accepted.map((file) => {

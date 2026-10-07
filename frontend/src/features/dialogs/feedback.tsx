@@ -34,6 +34,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 
+import { HostDropOverlay } from '../attachments/file-drag';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { returnKeyHandler } from '../../lib/return-to-next';
 import { Feedback, init as initFeedback } from './feedback-controller';
@@ -53,6 +54,17 @@ interface OpenOptions {
    */
   target?: 'app';
   firstFeedback?: { userId: number; appSlug: string | null; issueNumber: number; canFix: boolean };
+}
+
+/** The form the drop zone listens on; the controller's node, found by id. */
+function feedbackForm(): HTMLElement | null {
+  return typeof document !== 'undefined' ? document.getElementById('feedback-form') : null;
+}
+
+/** The controller locks the description while a post or an upload runs. */
+function feedbackLocked(): boolean {
+  const text = typeof document !== 'undefined' ? document.getElementById('feedback-text') as HTMLTextAreaElement | null : null;
+  return !!text?.readOnly;
 }
 
 export function FeedbackDialog() {
@@ -80,6 +92,12 @@ export function FeedbackDialog() {
             markup: nothing here is written, so the controller still owns
             every node inside. ⌘/Ctrl+Enter still posts, from the controller. */}
         <div id="feedback-form" onKeyDown={returnKeyHandler()}>
+        {/* #4065: the drop zone while a file is held over the form. The
+            controller's own `drop` listener attaches the files (images to the
+            screenshot row, a clip to the video slot); this draws the outline
+            only, and nothing in the controller writes this node. Off while
+            the form is locked for a submit or an upload, as its drop is. */}
+        <HostDropOverlay host={feedbackForm} label="Drop images or a clip to attach" isDisabled={feedbackLocked} />
         {/* SUGGEST AN IMPROVEMENT, from every way in. It was "Send
             feedback", then "Ask for a change" from the hub's ⋯ (QA
             2026-09-24) and from every way in (UI overhaul); people read

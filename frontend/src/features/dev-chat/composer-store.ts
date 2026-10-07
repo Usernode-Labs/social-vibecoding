@@ -127,6 +127,12 @@ export interface ComposerState {
   drafts: { rows: SavedDraftView[]; busy: boolean };
   /** The line under the pending strip. Null when there is nothing wrong. */
   attachError: string | null;
+  /**
+   * #4065: a file is held over the chat or the card, so the card shows its
+   * drop zone. Only true where a drop would be taken (`_dropDisabled`).
+   * Optional so a model built without it reads as not dragging.
+   */
+  dragging?: boolean;
   /** The field's placeholder — the busy copy while a turn runs. */
   placeholder: string;
   send: SendButtonView;
