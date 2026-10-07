@@ -1918,6 +1918,7 @@ async function recoverStuckMerges(config, { attemptedOnly = false } = {}) {
               `UPDATE chat_sessions
                   SET status = 'merged',
                       merged_at = COALESCE(merged_at, $2, NOW()),
+                      live_at = COALESCE(live_at, NOW()),
                       merge_commit_sha = COALESCE(merge_commit_sha, $3)
                 WHERE id = $1 AND status IN ('promoted', 'merging')`,
               [row.id, pr.merged_at || null, pr.merge_commit_sha || null]

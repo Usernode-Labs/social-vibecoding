@@ -12756,6 +12756,11 @@ CREATE TRIGGER wf_events_writer
 -- from its flag). A machine rolled out behind a flag owns a row from the
 -- moment it enrolls it; the legacy writers keep the rows it has not, and
 -- every row again while the flag is off.
+--
+-- A first argument '@enabled=<machine>' guards every row the trigger's WHEN
+-- clause selects, but only while the machine is switched on: for a change
+-- only the machine may make, whether or not the row is enrolled yet (the
+-- move of a proposal into 'merged' is what enrolls it).
 CREATE OR REPLACE FUNCTION wf_guard_owned_columns() RETURNS TRIGGER AS $$
 DECLARE
   owned TEXT;
@@ -12771,7 +12776,12 @@ BEGIN
   END IF;
   before := to_jsonb(OLD);
   after := to_jsonb(NEW);
-  IF TG_ARGV[0] LIKE '@enrolled=%' THEN
+  IF TG_ARGV[0] LIKE '@enabled=%' THEN
+    IF NOT EXISTS (SELECT 1 FROM wf_settings
+                    WHERE key = 'enabled:' || substr(TG_ARGV[0], length('@enabled=') + 1)) THEN
+      RETURN NEW;
+    END IF;
+  ELSIF TG_ARGV[0] LIKE '@enrolled=%' THEN
     enrolled := substr(TG_ARGV[0], length('@enrolled=') + 1);
     IF NOT EXISTS (SELECT 1 FROM wf_settings WHERE key = 'enabled:' || split_part(enrolled, '/', 1)) THEN
       RETURN NEW;
@@ -12814,3 +12824,56 @@ CREATE TRIGGER issues_wf_governance_owned
   WHEN (OLD.kind IN ('secret_change', 'rename', 'close_issue', 'maintenance_campaign', 'featured_illustration'))
   EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=governance-proposal/issue:', 'status',
     'payload.appliedAt', 'payload.appliedBy', 'payload.withdrawnAt', 'payload.supersededAt');
+
+-- merge-followups (src/workflow/merge-followups/): what a merged pull
+-- request still has to do once GitHub has merged it (deliver it, tear down
+-- its preview, close its requests, include the changes it carried, tell
+-- people). One instance per merged proposal, created by the merge.
+--
+-- live_at: when production first ran a revision containing this change.
+-- NULL while it is merged but not live yet ("going live"), or when its
+-- deploy failed. The machine sets it; with its flag off the legacy merge
+-- paths set it with the status, since there merged has always meant live.
+-- The backfill gives rows merged before the column the same reading, and
+-- leaves alone any row the machine holds.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS live_at TIMESTAMPTZ;
+UPDATE chat_sessions cs SET live_at = COALESCE(cs.merged_at, cs.created_at, NOW())
+ WHERE cs.status = 'merged' AND cs.live_at IS NULL
+   AND NOT EXISTS (SELECT 1 FROM wf_instances w
+                    WHERE w.machine = 'merge-followups' AND w.key = 'session:' || cs.id);
+
+-- A row INSERTED as merged (seeds, fixtures, imports of history) reads as
+-- [main] always read it: live. Only the machine makes a merged row that is
+-- not live yet, and it does that with an UPDATE.
+CREATE OR REPLACE FUNCTION chat_sessions_inserted_merged_live() RETURNS TRIGGER AS $$
+BEGIN
+  NEW.live_at := COALESCE(NEW.merged_at, NOW());
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS chat_sessions_inserted_merged_live ON chat_sessions;
+CREATE TRIGGER chat_sessions_inserted_merged_live
+  BEFORE INSERT ON chat_sessions
+  FOR EACH ROW
+  WHEN (NEW.status = 'merged' AND NEW.live_at IS NULL)
+  EXECUTE FUNCTION chat_sessions_inserted_merged_live();
+
+-- While the machine is on, only it moves a proposal into 'merged' (the
+-- merge appends an event; recovery appends the same one), and once it holds
+-- a row it owns the merge's columns.
+DROP TRIGGER IF EXISTS chat_sessions_wf_merged ON chat_sessions;
+CREATE TRIGGER chat_sessions_wf_merged
+  BEFORE UPDATE ON chat_sessions
+  FOR EACH ROW
+  WHEN (OLD.status IS DISTINCT FROM 'merged' AND NEW.status = 'merged')
+  EXECUTE FUNCTION wf_guard_owned_columns('@enabled=merge-followups', 'status');
+DROP TRIGGER IF EXISTS chat_sessions_wf_merge_owned ON chat_sessions;
+CREATE TRIGGER chat_sessions_wf_merge_owned
+  BEFORE UPDATE ON chat_sessions
+  FOR EACH ROW
+  WHEN (OLD.merged_at IS DISTINCT FROM NEW.merged_at
+        OR OLD.merge_commit_sha IS DISTINCT FROM NEW.merge_commit_sha
+        OR OLD.included_in_session_id IS DISTINCT FROM NEW.included_in_session_id
+        OR OLD.live_at IS DISTINCT FROM NEW.live_at)
+  EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=merge-followups/session:',
+    'merged_at', 'merge_commit_sha', 'included_in_session_id', 'live_at');

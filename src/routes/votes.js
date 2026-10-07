@@ -5509,7 +5509,7 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
     // keeps any earlier snapshot (defensive; the promoted→merging claim
     // already guarantees a single merge transition).
     await pool.query(
-      `UPDATE chat_sessions SET status = 'merged', merged_at = NOW(),
+      `UPDATE chat_sessions SET status = 'merged', merged_at = NOW(), live_at = NOW(),
                                 merge_commit_sha = COALESCE($2, merge_commit_sha),
                                 votes_required = COALESCE(votes_required, $3),
                                 active_users_at_merge = COALESCE(active_users_at_merge, $4)
@@ -7000,6 +7000,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
         `UPDATE chat_sessions
             SET status = 'merged',
                 merged_at = COALESCE(merged_at, NOW()),
+                live_at = COALESCE(live_at, NOW()),
                 merge_commit_sha = COALESCE(merge_commit_sha, $2),
                 votes_required = COALESCE(votes_required, $3),
                 active_users_at_merge = COALESCE(active_users_at_merge, $4)

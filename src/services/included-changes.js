@@ -109,6 +109,7 @@ const CANDIDATES_SQL = `SELECT cs.id, cs.source, cs.reviewed_head_sha, cs.import
 const MARK_SQL = `UPDATE chat_sessions c
     SET status = 'merged',
         merged_at = COALESCE(m.merged_at, NOW()),
+        live_at = COALESCE(m.live_at, NOW()),
         merge_commit_sha = m.merge_commit_sha,
         included_in_session_id = m.id
    FROM chat_sessions m
