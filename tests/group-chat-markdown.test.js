@@ -225,7 +225,7 @@ test('decorateMentionsAndRefs chips mentions/refs in ordinary text nodes', () =>
   const p = el(document, 'p', 'hey @bob check PR#7');
   decorateMentionsAndRefs(p);
   const html = p.innerHTML;
-  assert.match(html, /<span class="gc-mention">@bob<\/span>/);
+  assert.match(html, /<a class="gc-mention" href="#leaderboard\/users\/bob" data-mention="bob">@bob<\/a>/);
   assert.match(html, /<span class="gc-ref gc-ref-pr" data-ref-type="pr" data-ref-number="7"/);
 });
 
@@ -252,7 +252,7 @@ test('decorateMentionsAndRefs does NOT chip inside <code>, <pre> or <a>', () => 
   assert.match(html, /<pre><code>@carol PR#9<\/code><\/pre>/);
   assert.match(html, /<a>@dave #1<\/a>/);
   // the plain text run outside those got decorated
-  assert.match(html, /<span class="gc-mention">@eve<\/span>/);
+  assert.match(html, /<a class="gc-mention" href="#leaderboard\/users\/eve" data-mention="eve">@eve<\/a>/);
   assert.match(html, /data-ref-number="2"/);
 });
 
@@ -265,7 +265,7 @@ test('decorateMentionsAndRefs never reintroduces raw HTML from a text node', () 
   const html = p.innerHTML;
   assert.doesNotMatch(html, /<script>/, 'angle brackets stay escaped');
   assert.match(html, /&lt;script&gt;/);
-  assert.match(html, /<span class="gc-mention">@bob<\/span>/, 'mention still chipped');
+  assert.match(html, /<a class="gc-mention" href="#leaderboard\/users\/bob" data-mention="bob">@bob<\/a>/, 'mention still chipped');
   assert.match(html, /data-ref-number="5"/, 'ref still chipped');
 });
 
@@ -292,7 +292,26 @@ test('renderMessageBody uses DevChat.renderMarkdown when available', () => {
   const out = renderMessageBody('**bold** @bob');
   assert.equal(receivedOpts && receivedOpts.breaks, true, 'breaks:true passed through');
   assert.match(out, /<strong>bold<\/strong>/, 'markdown formatting preserved');
-  assert.match(out, /<span class="gc-mention">@bob<\/span>/, 'mention decorated atop markdown');
+  assert.match(out, /<a class="gc-mention" href="#leaderboard\/users\/bob" data-mention="bob">@bob<\/a>/, 'mention decorated atop markdown');
+});
+
+// ─── (A4) #4029: a mention is a link to the person's page ──────────────────
+
+test('a person\'s mention links to their page on the fallback path; the viewer\'s own keeps -self', () => {
+  const { renderWithMentions } = loadGroupChat();
+  const out = renderWithMentions('hi @bob and @alice');
+  assert.match(out, /<a class="gc-mention" href="#leaderboard\/users\/bob" data-mention="bob">@bob<\/a>/);
+  assert.match(out, /<a class="gc-mention gc-mention-self" href="#leaderboard\/users\/alice" data-mention="alice">@alice<\/a>/);
+});
+
+test('Homeroom bot\'s mention stays text (no person page) on both paths', () => {
+  const { renderWithMentions, decorateMentionsAndRefs, document } = loadGroupChat();
+  for (const out of [renderWithMentions('ask @Homeroom bot and @homeroom_bot'),
+    (() => { const p = el(document, 'p', 'ask @Homeroom bot and @homeroom_bot'); decorateMentionsAndRefs(p); return p.innerHTML; })()]) {
+    assert.match(out, /<span class="gc-mention">@Homeroom bot<\/span>/);
+    assert.match(out, /<span class="gc-mention">@homeroom_bot<\/span>/);
+    assert.doesNotMatch(out, /leaderboard\/users/, 'the bot is never a link');
+  }
 });
 
 test('GC_MAX_MESSAGE_LEN is 8000', () => {
