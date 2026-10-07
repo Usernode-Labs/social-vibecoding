@@ -2654,6 +2654,12 @@ async function captureForSession(config, session, app, commitHash, stagingResult
           build: buildProgressFromTimings(stagingResult && stagingResult.timings),
         },
       });
+      // This run is now the one the session waits on. The Jobs of its runs
+      // for another commit, still going on the cluster, are read by nobody:
+      // stop them before this run's own Jobs ask for the same capacity.
+      await require('./check-harvest').stopSupersededRuns(config, operation?.cleanupPool || pool, {
+        sessionId: session.id, runId, commitSha: commitHash || null,
+      });
     }
 
     // Repo unit suite (aggregate `npm test` check). Launched BEFORE the
@@ -3610,6 +3616,13 @@ function notifyVisualsReady(sessionId, visuals, send) {
 // the same lines as they stream past, so "checks running" can say how far
 // along it is. Dedup is by index, exactly as parseTests does, so a retried
 // frame counts once. Nothing here can change a verdict.
+//
+// #4287: a frame from the capture's retry pass is not counted. It is a
+// second opinion on a check that has already run, under its own index from
+// CAPTURE_RETRY_INDEX_BASE up, and counting it took a 732-check run to
+// "744 of 732". The container's own done line counts declared checks only,
+// for the same reason.
+const CAPTURE_RETRY_INDEX_BASE = 1000000; // capture/capture.js RETRY_INDEX_BASE
 function makeChecksProgressTracker(expected) {
   const byIndex = new Map();
   let done = false;
@@ -3624,6 +3637,7 @@ function makeChecksProgressTracker(expected) {
         const st = /\bstatus=(pass|fail)\b/.exec(l);
         if (!m) return false;
         const index = parseInt(m[1], 10);
+        if (index >= CAPTURE_RETRY_INDEX_BASE) return false;
         const status = st && st[1] === 'pass' ? 'pass' : 'fail';
         const before = byIndex.get(index);
         byIndex.set(index, status);
@@ -3968,6 +3982,7 @@ module.exports = {
   DEFAULT_CHECKS_SKIPPED_REASON,
   setChecksPending,
   notifyChecksPending, makeChecksProgressTracker, makeChecksProgressState, setChecksProgress, notifyChecksProgress,
+  CAPTURE_RETRY_INDEX_BASE,
   setChecksBuildProgress, notifyChecksBuildProgress, buildProgressFromTimings, BUILD_STEP_KEYS,
   reportPrepareChecks, finishPrepareChecks,
   checksAlreadyDecided,

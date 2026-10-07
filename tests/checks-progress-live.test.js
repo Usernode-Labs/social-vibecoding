@@ -123,6 +123,25 @@ test('the tracker dedupes by index, counts pass/fail, and reads the done sentine
   assert.ok(typeof s.updatedAt === 'string');
 });
 
+test('#4287: a retry-pass frame is a second opinion, not another check, so ran never passes expected', () => {
+  // The issue's shape: every declared check ran, four failed, and the
+  // capture asked each of them three more times. Counting those twelve
+  // retry frames read "744 of 732".
+  const t = visuals.makeChecksProgressTracker(732);
+  for (let i = 0; i < 732; i += 1) t.feed(`__USERNODE_TEST__ index=${i} status=${i < 4 ? 'fail' : 'pass'} loadStatus=200`);
+  const base = visuals.CAPTURE_RETRY_INDEX_BASE;
+  for (let i = 0; i < 12; i += 1) {
+    assert.equal(t.feed(`__USERNODE_TEST__ index=${base + i} status=pass loadStatus=200`), false,
+      'a retry frame does not move the bar');
+  }
+  t.feed('__USERNODE_TESTS_DONE__ ran=732 expected=732 deadline=0');
+  const s = t.snapshot();
+  assert.deepEqual([s.ran, s.passed, s.failed, s.expected, s.done], [732, 728, 4, 732, true]);
+  assert.equal(s.reportedRan, undefined, 'the container\'s own count agrees with the bar');
+  // The base is the container's: a retry index starts there and nowhere else.
+  assert.match(read('capture/capture.js'), new RegExp(`const RETRY_INDEX_BASE = ${base};`));
+});
+
 test('setChecksProgress writes only while this run is the pending one', async () => {
   const queries = [];
   const pool = { query: async (sql, params) => { queries.push({ sql, params }); return { rows: [], rowCount: 1 }; } };
