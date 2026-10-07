@@ -65,6 +65,21 @@ test('Kubernetes platform image builds and contains the generated shell assets',
   assert.doesNotMatch(runtime, /^COPY .*docs/m);
 });
 
+test('Kubernetes platform image keeps the npm download cache out of both dependency layers', () => {
+  // `npm ci` keeps a copy of every tarball it fetched. Left in /root/.npm it
+  // was half of each dependency layer (38 MB and 50 MB compressed, 19 MB and
+  // 25 MB without it), restored by every build and pulled by every pod, and
+  // read by nothing.
+  const instructions = read('Dockerfile.kubernetes').replace(/\\\n/g, ' ').split('\n');
+  const installs = instructions.filter((line) => /^RUN .*\bnpm ci\b/.test(line));
+  assert.equal(installs.length, 2, 'the asset-deps install and the runtime install');
+  for (const run of installs) {
+    const cache = (run.match(/\bnpm ci\b[^&;|]* --cache (\/\S+)/) || [])[1];
+    assert.ok(cache, `${run}: must name its cache directory rather than leave it at the default`);
+    assert.ok(run.includes(`&& rm -rf ${cache}`), `${run}: must remove ${cache} in the same layer`);
+  }
+});
+
 test('Docker keeps boot migrations while Kubernetes can delegate them to a Job', () => {
   const source = read('server.js');
   assert.match(source, /RUN_MIGRATIONS_ON_STARTUP !== 'false'/);
