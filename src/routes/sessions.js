@@ -405,6 +405,8 @@ const {
   sanitizeQuickReplies,
   resolveQuickReplies,
   shouldFallbackQuickReplies,
+  stripInlineSuggestTags,
+  mergeInlineSuggestTags,
 } = require('../services/mayor/tools');
 const {
   QR_ENFORCE,
@@ -6873,7 +6875,7 @@ async function checkpointHeadlessWrapUp(pool, sessionId, outcome) {
 // CLONE path is where the assistant authors pills from the run's actual
 // output (see the clone follow-up). Pill-free when answer chips are present —
 // chips win over the above-box row everywhere.
-function headlessWrapUpMeta(outcome, { suggestions = null } = {}) {
+function headlessWrapUpMeta(outcome, { suggestions = null, quickReplies = null } = {}) {
   if (Array.isArray(suggestions) && suggestions.length) return { suggestions };
   const kind = outcome === 'spec'
     ? 'spec_done'
@@ -6881,6 +6883,13 @@ function headlessWrapUpMeta(outcome, { suggestions = null } = {}) {
       ? 'code_done'
       : outcome === 'question' ? null : 'turn_failed';
   if (!kind) return {};
+  // #4125: a set parsed out of inline <suggest_replies> markup is the
+  // model's own wording for this turn, so it beats the fixed recovery list
+  // — the same rule the live pill ladder applies (its rung 4 keeps a
+  // model-authored set over the static one even when boilerplate).
+  if (Array.isArray(quickReplies) && quickReplies.length) {
+    return { quickReplies, quickRepliesSource: 'model' };
+  }
   const replies = buildRecoveryQuickReplies(kind);
   if (!replies) return {};
   return { quickReplies: replies, quickRepliesSource: 'static', quickRepliesKind: kind };
@@ -7259,10 +7268,26 @@ async function runHeadlessSession({
     }
 
     let mayorText1 = stripFakeCompletionMarker(mayor1.text, { sessionId: session.id });
+    // Inline suggestion pseudo-tags (#4125): same scrub as the interactive
+    // route — strip the literal <suggest_replies>/<suggest_answers> markup
+    // out of the reply text, and keep the parsed labels for the merges
+    // below. An emptied text stays empty: the silent-turn guard below
+    // salvages its line, anchored by the parsed labels.
+    const scrubbedInline1 = stripInlineSuggestTags(mayorText1, { sessionId: session.id });
+    if (scrubbedInline1.text !== mayorText1) {
+      mayorText1 = scrubbedInline1.text;
+    }
     // Q/A mode (#32): same suggestion handling as the interactive route —
     // persisted on the assistant row so the cloned session a human picks
     // up renders the answer chips. Dropped if a dispatch co-occurred.
-    const { suggestions: headlessSuggestions } = resolveSuggestedAnswers(mayor1.toolUses);
+    // #4125: the inline markup only fills a gap — a real suggest_answers
+    // call wins, and it does not fill in when the clarity gate dropped
+    // that call for a dispatch either.
+    const { suggestions: toolSuggestions, droppedForDispatch } = resolveSuggestedAnswers(mayor1.toolUses);
+    const { suggestions: headlessSuggestions } = mergeInlineSuggestTags(
+      { suggestions: toolSuggestions, droppedForDispatch },
+      scrubbedInline1,
+    );
     // Silent-turn guard (mirrors the interactive handler): a lone
     // suggest_answers with no text block must still leave the run a
     // visible question — both for the cloned session and for the
@@ -7437,7 +7462,15 @@ async function runHeadlessSession({
         const servedModel2 = mayor2.servedModel || selectedModel;
         const buildCall = mayor2.toolUses.find((t) => t.name === 'dispatch_claude_code');
         const strayCalls = mayor2.toolUses.filter((t) => t.name !== 'dispatch_claude_code');
-        const mayorText2 = stripFakeCompletionMarker(mayor2.text, { sessionId: session.id });
+        let mayorText2 = stripFakeCompletionMarker(mayor2.text, { sessionId: session.id });
+        // #4125: strip inline suggestion markup out of the decision text;
+        // the parsed pills win over the static recovery set in the
+        // metadata below. The decision turn exposes only DISPATCH_TOOL, so
+        // there are no chips to interact with.
+        const scrubbedInline2 = stripInlineSuggestTags(mayorText2, { sessionId: session.id });
+        if (scrubbedInline2.text !== mayorText2) {
+          mayorText2 = scrubbedInline2.text;
+        }
         const costCents2 = mayor2.usage
           ? llm.estimateCostCents(mayor2.usage, servedModel2)
           : 0;
@@ -7466,7 +7499,7 @@ async function runHeadlessSession({
             model: servedModel2,
             usage: mayor2.usage,
             costCents: costCents2,
-            metadata: headlessWrapUpMeta(outcome),
+            metadata: headlessWrapUpMeta(outcome, { quickReplies: scrubbedInline2.replies }),
           });
           if (messageApplied) send('mayor_reasoning', { text: finalText });
           await settleHeadlessMayorUsage({
@@ -7624,12 +7657,20 @@ async function runHeadlessSession({
           const mayor3 = phase3Effect.response;
           if (phase3Effect.disposition === 'executed') await noteModelFallback(mayor3);
           let mayorText3 = stripFakeCompletionMarker(mayor3.text, { sessionId: session.id });
+          // #4125: strip inline suggestion markup out of the wrap-up text;
+          // the scrubbed text is what questionTextToPost carries to GitHub.
+          const scrubbedInline3 = stripInlineSuggestTags(mayorText3, { sessionId: session.id });
+          if (scrubbedInline3.text !== mayorText3) {
+            mayorText3 = scrubbedInline3.text;
+          }
           // #32: persist suggestions only on the question outcome — that's
           // the row a cloned session forwards onto its follow-up to render
           // the answer chips. Non-question wrap-ups carry no metadata.
-          const { suggestions: decisionSuggestions } = outcome === 'question'
-            ? resolveSuggestedAnswers(mayor3.toolUses)
-            : { suggestions: null };
+          // #4125: the inline markup only fills a gap — a real
+          // suggest_answers call wins.
+          const decisionSuggestions = outcome === 'question'
+            ? mergeInlineSuggestTags(resolveSuggestedAnswers(mayor3.toolUses), scrubbedInline3).suggestions
+            : null;
           // #178: on the rejected-build path the wrap-up text IS the
           // reporter-facing questions; blank text posts nothing (the spec
           // carries the questions for the human reviewer).
@@ -7653,7 +7694,10 @@ async function runHeadlessSession({
             model: servedModel3,
             usage: mayor3.usage,
             costCents: costCents3,
-            metadata: headlessWrapUpMeta(outcome, { suggestions: decisionSuggestions }),
+            metadata: headlessWrapUpMeta(outcome, {
+              suggestions: decisionSuggestions,
+              quickReplies: scrubbedInline3.replies,
+            }),
           });
           if (messageApplied) send('mayor_reasoning', { text: mayorText3 });
           await settleHeadlessMayorUsage({
@@ -7694,6 +7738,12 @@ async function runHeadlessSession({
         if (directEffect.disposition === 'executed') await noteModelFallback(mayor2);
 
         let mayorText2 = stripFakeCompletionMarker(mayor2.text, { sessionId: session.id });
+        // #4125: strip inline suggestion markup; the parsed pills win over
+        // the static recovery set in the metadata below.
+        const scrubbedInlineDirect = stripInlineSuggestTags(mayorText2, { sessionId: session.id });
+        if (scrubbedInlineDirect.text !== mayorText2) {
+          mayorText2 = scrubbedInlineDirect.text;
+        }
         if (!mayorText2.trim()) {
           mayorText2 = toolResult.isError
             ? "_The auto session's dispatch didn't finish successfully. See the status above._"
@@ -7711,7 +7761,9 @@ async function runHeadlessSession({
           model: servedModelW,
           usage: mayor2.usage,
           costCents: costCents2,
-          metadata: headlessWrapUpMeta(toolResult.isError ? 'failed' : outcome),
+          metadata: headlessWrapUpMeta(toolResult.isError ? 'failed' : outcome, {
+            quickReplies: scrubbedInlineDirect.replies,
+          }),
         });
         if (messageApplied) send('mayor_reasoning', { text: mayorText2 });
         await settleHeadlessMayorUsage({
@@ -8117,8 +8169,14 @@ async function runRecoveredWrapUp({
       mayor = await invokeMayor();
     }
 
-    const text = stripFakeCompletionMarker((mayor.text || '').trim(), { sessionId })
-      || fallbackText;
+    // #4125: same post-hoc scrub as the live wrap-up — strip the inline
+    // suggestion markup out of the recovered text and keep any parsed pills
+    // for the ladder below.
+    const scrubbedInline = stripInlineSuggestTags(
+      stripFakeCompletionMarker((mayor.text || '').trim(), { sessionId }),
+      { sessionId },
+    );
+    const text = scrubbedInline.text || fallbackText;
     const servedModel = mayor.servedModel || selectedModel;
     const costCents = mayor.usage ? llm.estimateCostCents(mayor.usage, servedModel) : 0;
 
@@ -8153,7 +8211,7 @@ async function runRecoveredWrapUp({
         userId: session.user_id,
         apiKey: userApiKey,
         model: servedModel,
-        modelPills: resolveQuickReplies(mayor.toolUses),
+        modelPills: resolveQuickReplies(mayor.toolUses) || scrubbedInline.replies,
         outcome: outcome === 'spec' ? 'spec_done' : (outcome === 'code' ? 'build_done' : 'failed'),
         hasPr: session.pr_number != null,
         hasSpec: !!(currentSpec || '').trim(),
@@ -13494,4 +13552,4 @@ const MAYOR_TURN_DEPS = Object.freeze({
   switchSessionAgent,
 });
 
-module.exports = { requestSessionStop, MAYOR_TURN_DEPS, canViewSession, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, captureSpecOutput, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifySessionStalled, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, OPENROUTER_PLATFORM_ISSUE_GUIDANCE, DISPATCHED_TURN_INSTRUCTIONS, DEV_CHAT_SUMMARY_RULE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
+module.exports = { requestSessionStop, MAYOR_TURN_DEPS, canViewSession, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, captureSpecOutput, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifySessionStalled, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, stripInlineSuggestTags, mergeInlineSuggestTags, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, OPENROUTER_PLATFORM_ISSUE_GUIDANCE, DISPATCHED_TURN_INSTRUCTIONS, DEV_CHAT_SUMMARY_RULE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };

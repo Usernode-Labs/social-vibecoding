@@ -10,6 +10,7 @@
 // import it from here; routes/sessions.js re-exports it for existing callers.
 
 const issueDraft = require('../issue-draft');
+const log = require('../logger');
 const { QUICK_REPLY_RULES_TEXT } = require('../recovery-pills');
 
 // Tools the Mayor can call. Each user message produces at most one
@@ -524,6 +525,96 @@ function shouldFallbackQuickReplies(quickReplies, suggestions, toolUses) {
   return !hasDispatch;
 }
 
+// Inline suggestion pseudo-tags (#4125): some models write the
+// suggest_replies / suggest_answers tool call into the reply TEXT as literal
+// markup — `<suggest_replies> ["…"] </suggest_replies>` — instead of (or
+// alongside) calling the tool, and nothing stripped it, so the raw tag
+// shipped inside the chat bubble (reported in #4125 with a screenshot).
+// stripInlineSuggestTags removes every such span, plus a dangling unclosed
+// opener for a turn cut mid-tag, and — when a block's inner text parses as
+// the same shape the tool would have received — hands the labels to the
+// existing sanitizers so the turn's pill/chip resolution can still use them.
+// Pure and trimming, like stripFakeCompletionMarker beside whose call sites
+// this runs; pass sessionId to have the (rare) regression logged.
+const INLINE_SUGGEST_TAG_RE = /<\/?\s*(?:suggest_replies|suggest_answers)\s*>/i;
+
+const INLINE_SUGGEST_PAIR_RE = /<\s*(suggest_replies|suggest_answers)\s*>([\s\S]*?)<\s*\/\s*\1\s*>/gi;
+
+// A turn cut mid-tag leaves an opener with no closer: stripped through the
+// end of the text.
+const INLINE_SUGGEST_DANGLING_RE = /<\s*(?:suggest_replies|suggest_answers)\s*>[\s\S]*$/gi;
+
+function parseInlineQuickReplies(inner) {
+  let parsed;
+  try {
+    parsed = JSON.parse(inner.trim());
+  } catch (_) {
+    return null;
+  }
+  if (!Array.isArray(parsed)) return null;
+  return sanitizeQuickReplies({ replies: parsed });
+}
+
+function parseInlineSuggestedAnswers(inner) {
+  let parsed;
+  try {
+    parsed = JSON.parse(inner.trim());
+  } catch (_) {
+    return null;
+  }
+  // The tool input wraps its entries in { questions: [...] }; a bare array
+  // written inline means the same thing.
+  return sanitizeSuggestedAnswers(Array.isArray(parsed) ? { questions: parsed } : parsed);
+}
+
+function stripInlineSuggestTags(text, { sessionId } = {}) {
+  if (typeof text !== 'string') return { text: '', replies: null, suggestions: null };
+  // Fast path: most Mayor turns never contain the markup, so bail early and
+  // return the input byte-identical.
+  if (!INLINE_SUGGEST_TAG_RE.test(text)) return { text, replies: null, suggestions: null };
+  if (sessionId) {
+    log.warn('sessions', 'Mayor wrote inline <suggest_replies>/<suggest_answers> markup into its reply — stripping', {
+      sessionId, preview: text.substring(0, 300),
+    });
+  }
+  let replies = null;
+  let suggestions = null;
+  let sawReplies = false;
+  let sawSuggestions = false;
+  let stripped = text.replace(INLINE_SUGGEST_PAIR_RE, (match, tag, inner) => {
+    if (tag.toLowerCase() === 'suggest_replies') {
+      if (!sawReplies) {
+        sawReplies = true;
+        replies = parseInlineQuickReplies(inner);
+      }
+    } else if (!sawSuggestions) {
+      sawSuggestions = true;
+      suggestions = parseInlineSuggestedAnswers(inner);
+    }
+    return '';
+  });
+  stripped = stripped.replace(INLINE_SUGGEST_DANGLING_RE, '');
+  // Collapse the blank lines a removed block leaves behind and trim the ends.
+  stripped = stripped.replace(/\n{3,}/g, '\n\n').trim();
+  return { text: stripped, replies, suggestions };
+}
+
+// Merge rule for a turn's resolved pill/chip values with the sets parsed out
+// of inline markup (#4125). A real tool call wins everywhere: the inline
+// sets only fill a gap. The inline answer chips do not fill in when the
+// clarity gate dropped the real call (a dispatch co-occurred — asking and
+// dispatching in one turn is forbidden either way), and the parsed pills
+// never fill in when the chips own the turn — the same precedence
+// resolveQuickReplies and classifyMissingPills enforce. Pure over the turn's
+// resolved values so the call-site order is unit-testable. Exported for tests.
+function mergeInlineSuggestTags(resolved, scrubbed) {
+  const suggestions = resolved.suggestions
+    || (resolved.droppedForDispatch ? null : scrubbed.suggestions);
+  const quickReplies = resolved.quickReplies
+    || (suggestions ? null : scrubbed.replies);
+  return { suggestions, quickReplies };
+}
+
 module.exports = {
   DISPATCH_TOOL,
   DISPATCH_SCOUT_TOOL,
@@ -545,4 +636,6 @@ module.exports = {
   sanitizeQuickReplies,
   resolveQuickReplies,
   shouldFallbackQuickReplies,
+  stripInlineSuggestTags,
+  mergeInlineSuggestTags,
 };

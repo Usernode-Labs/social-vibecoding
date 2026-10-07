@@ -77,8 +77,10 @@ const {
   SUGGEST_ANSWERS_TOOL,
   SUGGEST_REPLIES_TOOL,
   WEB_FETCH_TOOL,
+  mergeInlineSuggestTags,
   resolveQuickReplies,
   resolveSuggestedAnswers,
+  stripInlineSuggestTags,
 } = require('./tools');
 
 // #3181: did this turn stop before finishing? Only when it persisted a
@@ -1127,11 +1129,22 @@ async function runMayorTurn(ctx, deps) {
       }
     }
 
+    // Inline suggestion pseudo-tags (#4125): some models write the pill /
+    // chip tool call into the reply TEXT as literal markup instead of
+    // calling the tool. Strip the markup (same post-hoc posture as the
+    // marker scrub above) and keep the parsed labels for the merge below.
+    // Unlike the marker scrub, an emptied text stays empty: the silent-turn
+    // guard below supplies its usual line, anchored by the parsed labels.
+    const scrubbedInline1 = stripInlineSuggestTags(mayorText1, { sessionId: session.id });
+    if (scrubbedInline1.text !== mayorText1) {
+      mayorText1 = scrubbedInline1.text;
+    }
+
     // Q/A mode (#32): suggested answers for clarifying questions.
     // Dropped when a dispatch tool co-occurred (clarity gate forbids
     // ask+dispatch — dispatch wins); skipped entirely when there is
     // no assistant text to attach them to.
-    const { suggestions, droppedForDispatch } = resolveSuggestedAnswers(mayor1.toolUses);
+    const { suggestions: toolSuggestions, droppedForDispatch } = resolveSuggestedAnswers(mayor1.toolUses);
     if (droppedForDispatch) {
       log.warn('sessions', 'Mayor emitted suggest_answers alongside a dispatch tool — dropping suggestions', {
         sessionId: session.id,
@@ -1142,7 +1155,14 @@ async function runMayorTurn(ctx, deps) {
     // the preamble row keeps the Mayor's own pills and the newer
     // phase-2 row supersedes them by recency, so a turn that dies
     // mid-dispatch still leaves conversation-specific pills behind.
-    const quickReplies = resolveQuickReplies(mayor1.toolUses, { allowWithDispatch: true });
+    const toolQuickReplies = resolveQuickReplies(mayor1.toolUses, { allowWithDispatch: true });
+    // Merge the sets parsed out of inline markup (#4125): a real tool call
+    // wins, and the parsed pills never fill in when the answer chips own
+    // the turn (chipsOwnTurn below reads the merged suggestions).
+    const { suggestions, quickReplies } = mergeInlineSuggestTags(
+      { suggestions: toolSuggestions, droppedForDispatch, quickReplies: toolQuickReplies },
+      scrubbedInline1,
+    );
 
     // Data-informed silent turn (session 2426): the model serviced one
     // or more data tools this turn (e.g. get_prod_status), then ended
@@ -1775,12 +1795,18 @@ async function runMayorTurn(ctx, deps) {
     }
     if (mayor2Disposition === 'executed') await noteModelFallback(mayor2);
 
+    let mayorText2 = stripFakeCompletionMarker(mayor2.text, { sessionId: session.id });
+    // Inline suggestion pseudo-tags (#4125): same scrub as phase 1. Phase 2
+    // exposes no suggest_answers, so there is no chip interaction — the
+    // parsed labels only stand in for a missing suggest_replies call.
+    const scrubbedInline2 = stripInlineSuggestTags(mayorText2, { sessionId: session.id });
+    if (scrubbedInline2.text !== mayorText2) {
+      mayorText2 = scrubbedInline2.text;
+    }
     // Quick-reply pills (#285): the wrap-up reflects the final post-build
     // state, so this is where dispatch turns get their pills. The
     // tool_use is terminal (end of turn) — no tool_result round-trip.
-    const quickReplies2 = resolveQuickReplies(mayor2.toolUses);
-
-    let mayorText2 = stripFakeCompletionMarker(mayor2.text, { sessionId: session.id });
+    const quickReplies2 = resolveQuickReplies(mayor2.toolUses) || scrubbedInline2.replies;
     log.info('sessions', 'Mayor phase-2 response', {
       sessionId: session.id,
       textLen: mayorText2.length,
