@@ -715,6 +715,31 @@ function parseTestsDone(stdout) {
   return found;
 }
 
+// What the capture container wrote down about itself while it ran
+// (capture.js emitDiag), one line each:
+//   __USERNODE_DIAG__ kind=<kind> <base64 JSON>
+// Today one kind: 'network-changed', the pod's network state when a cold load
+// was cancelled by a network change and its group started over. Logged, not
+// stored: it is for finding out what changes the network, not a verdict.
+const MAX_DIAGNOSTICS = 5;
+
+function parseDiagnostics(stdout) {
+  const out = [];
+  for (const line of String(stdout || '').split('\n')) {
+    if (!line.startsWith('__USERNODE_DIAG__ ')) continue;
+    const m = line.match(/^__USERNODE_DIAG__ kind=([\w-]+) (\S+)$/);
+    if (!m) continue;
+    let data = {};
+    try {
+      const parsed = JSON.parse(Buffer.from(m[2], 'base64').toString('utf8'));
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) data = parsed;
+    } catch { /* malformed: the kind alone still says something happened */ }
+    out.push({ kind: m[1], data });
+    if (out.length >= MAX_DIAGNOSTICS) break;
+  }
+  return out;
+}
+
 // A suite-level failure happens outside any individual declared check, so
 // there is no __USERNODE_TEST__ payload to carry its explanation. The
 // capture process writes those failures as `capture: fatal ...` on stderr;
@@ -3108,6 +3133,14 @@ async function settleCaptureRun(config, pool, run) {
     return { traceStatus, result: { state: 'pending', deferred: true } };
   }
 
+  for (const diag of parseDiagnostics(stdout)) {
+    log.warn('visuals', diag.kind === 'network-changed'
+      ? 'Checks browser saw its network change; the group started over'
+      : 'Checks container diagnostic', {
+      sessionId: session.id, commitHash: commitHash || null, kind: diag.kind, ...diag.data,
+    });
+  }
+
   const parsedTests = parseTests(stdout);
   const checksResult = classifyTests(parsedTests, testsCount, dispatched
     ? { dispatched, sentinel: parseTestsDone(stdout), extraRows }
@@ -3906,6 +3939,7 @@ module.exports = {
   storeConsoleCheck,
   parseTests,
   parseTestsDone,
+  parseDiagnostics,
   captureFailureDetail,
   classifyTests,
   unreachableOriginDetail,
