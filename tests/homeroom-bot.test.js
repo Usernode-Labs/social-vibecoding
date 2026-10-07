@@ -732,6 +732,20 @@ test('relaySpend: no finished request means no figure at all', () => {
   );
 });
 
+test('relaySpend: the relay\'s cache reads and writes are priced as the ledger prices them', () => {
+  const cachePriced = {
+    ...PRICING, cacheReadPricePerMillion: 0.0075, cacheWritePricePerMillion: 0.09375,
+  };
+  const usage = { requests: 3, inputTokens: 1_000_000, cachedInputTokens: 900_000, cacheWriteInputTokens: 50_000, outputTokens: 0 };
+  const spend = bot.relaySpend(usage, cachePriced, { estimateRequestedModelCost: realEstimator });
+  assert.equal(spend.costUsd, realEstimator(usage, cachePriced).estimatedCostUsd);
+  // 50K uncached at $0.075/M + 900K reads at $0.0075/M + 50K writes at $0.09375/M.
+  assert.equal(spend.costUsd, 0.0151875);
+  assert.equal(spend.inputTokens, 1_000_000, 'the tokens it reports are unchanged');
+  // Without cache prices, the old prompt-rate figure.
+  assert.equal(bot.relaySpend(usage, PRICING, { estimateRequestedModelCost: realEstimator }).costUsd, 0.075);
+});
+
 test('the stopped-run detail says its cost is a floor', () => {
   const ui = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
   assert.match(ui, /Its cost counts the model requests that finished before the stop\./);
