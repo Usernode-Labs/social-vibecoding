@@ -391,7 +391,7 @@ const REPO = { owner: 'o', repo: 'ear' };
 const USER = { id: 501, username: 'homeroom_bench' };
 const TRIAL = { id: 44, run_id: 3, attempt: 1 };
 
-function harness({ verdict = 'ready', pushed = true, captureOut = null } = {}) {
+function harness({ verdict = 'ready', pushed = true, captureOut = null, takesImages = undefined } = {}) {
   const calls = { prompts: [], modes: [], ensured: [], scaffold: [], pinned: [], deleted: [], capture: [] };
   let nextSession = 7000;
   const pool = {
@@ -441,7 +441,15 @@ function harness({ verdict = 'ready', pushed = true, captureOut = null } = {}) {
       },
       async persistScoutPublication() { return { specVersion: 1 }; },
     },
-    agentTurn: { async resolveCodexRuntimeContext({ session }) { return { agentModel: session.agent_model }; } },
+    agentTurn: {
+      async resolveCodexRuntimeContext({ session }) {
+        // What OpenRouter's catalog says the model takes in, when a test says.
+        return {
+          agentModel: session.agent_model,
+          ...(typeof takesImages === 'boolean' ? { agentModelMetadata: { supportsImages: takesImages } } : {}),
+        };
+      },
+    },
     activeWorkers: new Set(),
     // The first session's card, as creation would make it.
     makeSketch: async () => ({ design: CARD, model: 'fallback', readyAt: '2026-10-06T00:00:00.000Z' }),
@@ -718,6 +726,43 @@ test('restart recovery follows every turn of a first version and reads what it p
   assert.equal(late.keep.build.ok, false);
   assert.match(late.keep.build.error, /ran past its time limit \(finished after a restart\)/);
   assert.equal(runner.recoverFirstVersionTurn({ checkpoint: cp, session, activeTurn: { mode: 'shots' } }), null);
+});
+
+test('a build records whether it could see its own screens: what its prompt told it, and what its model was handed', async (t) => {
+  spySideEffects(t);
+  const realSees = live.buildSeesImages;
+  t.after(() => { live.buildSeesImages = realSees; });
+  const buildPromptOf = (h) => h.calls.prompts[h.calls.modes.lastIndexOf('build')];
+
+  live.buildSeesImages = async () => true;
+  const seeing = harness({ takesImages: true });
+  const a = await runner.runStage(ctx(seeing, 'first_version', FIRST));
+  assert.equal(a.status, 'ok', a.error);
+  assert.deepEqual(a.parsed.sight, { told: true, passed: true });
+  assert.ok(buildPromptOf(seeing).includes('take screenshots (`browser_take_screenshot`)'), 'the prompt asks for screenshots');
+
+  live.buildSeesImages = async () => false;
+  const blind = harness({ takesImages: false });
+  const b = await runner.runStage(ctx(blind, 'first_version', FIRST));
+  assert.deepEqual(b.parsed.sight, { told: false, passed: false });
+  assert.ok(buildPromptOf(blind).includes('you read text, not images'), 'the prompt asks for the text snapshot');
+
+  // Told it reads text while its model is handed images: the mismatch shows.
+  const mixed = harness({ takesImages: true });
+  const c = await runner.runStage(ctx(mixed, 'first_version', FIRST));
+  assert.deepEqual(c.parsed.sight, { told: false, passed: true });
+
+  // A build kept through a restart keeps what it could see.
+  const parts = [];
+  live.buildSeesImages = async () => true;
+  const kept = harness({ takesImages: true });
+  await runner.runStage(ctx(kept, 'first_version', FIRST, { onCheckpoint: async (p) => { parts.push(p); } }));
+  const checkpoint = Object.assign({}, ...parts);
+  assert.deepEqual(checkpoint.build.sight, { told: true, passed: true });
+  const resumed = harness();
+  const d = await runner.runStage(ctx(resumed, 'first_version', FIRST, { checkpoint: { ...checkpoint, build: { ...checkpoint.build, sessionId: 6007 } } }));
+  assert.deepEqual(resumed.calls.modes, [], 'no turn');
+  assert.deepEqual(d.parsed.sight, { told: true, passed: true });
 });
 
 test('a capture trial checks the app out at its commit in a sealed worker and only takes the screenshots: no model turn', async (t) => {

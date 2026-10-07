@@ -548,14 +548,26 @@ async function buildStage(ctx) {
       return { branchName: branch, created: true };
     },
   };
+  // Whether the build could look at its own screens, recorded on the trial
+  // (`parsed.sight`): `told` is what its prompt said (the design self-check
+  // asks for screenshots or for the page's text snapshot), decided here the
+  // way buildAndPropose decides it and handed to it, so the two cannot
+  // differ; `passed` is what the runtime of its turns said the model takes
+  // in, which is what makes the worker hand it an image or a note in its
+  // place (AGENT_MODEL_SUPPORTS_IMAGES). The lane adds the looks it took.
+  const sight = { told: await live.buildSeesImages({ pool, config, userId: user.id, model }), passed: null };
+  const agentTurn = observedRuntime(deps.agentTurn, (runtime) => {
+    const takesImages = runtime?.agentModelMetadata?.supportsImages;
+    if (typeof takesImages === 'boolean') sight.passed = takesImages;
+  });
   const built = await live.buildAndPropose({
     pool, config, bot: user, app, repo, issueNumber: snapshot.issueNumber,
     issue: { title: snapshot.thread?.issue?.title || `Issue #${snapshot.issueNumber}` },
     seed: snapshot.texts.seed, buildNote: snapshot.texts.build_note || '',
     turnBudgetMs: budgets.buildMs, specBudgetMs: budgets.specMs, model,
     deps: {
-      worker: deps.worker, sessions: deps.sessions, agentTurn: deps.agentTurn,
-      activeWorkers: deps.activeWorkers, sessionLifecycle,
+      worker: deps.worker, sessions: deps.sessions, agentTurn,
+      activeWorkers: deps.activeWorkers, sessionLifecycle, seesImages: sight.told,
     },
     // Never proposed, never posted: no ceiling, no votes router, and no
     // onSpec but a first version's, which keeps the spec on its trial for a
@@ -581,9 +593,33 @@ async function buildStage(ctx) {
     ...(ctx.skipCheck ? { skipCheck: ctx.skipCheck } : {}),
   });
   if (ctx.onBuilt) {
-    try { await ctx.onBuilt(built); } catch { /* a checkpoint never stops a trial */ }
+    try { await ctx.onBuilt({ ...built, sight }); } catch { /* a checkpoint never stops a trial */ }
   }
-  return buildResult({ built, base, branch, sessionId, deps, repo, task, trial });
+  const out = await buildResult({ built, base, branch, sessionId, deps, repo, task, trial });
+  return { ...out, parsed: { ...(out.parsed || {}), sight } };
+}
+
+/**
+ * The agent-turn module a build is handed, the same but for
+ * resolveCodexRuntimeContext, whose runtime is shown to `onRuntime` (the
+ * last one a build resolves is its build turn's) and then returned as it
+ * is. A watcher that throws never stops the turn.
+ */
+function observedRuntime(agentTurn, onRuntime) {
+  if (!agentTurn) return agentTurn;
+  return new Proxy(agentTurn, {
+    get(target, prop) {
+      if (prop === 'resolveCodexRuntimeContext') {
+        return async (...args) => {
+          const runtime = await target.resolveCodexRuntimeContext(...args);
+          try { onRuntime(runtime); } catch { /* a watcher never stops a turn */ }
+          return runtime;
+        };
+      }
+      const value = target[prop];
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
 }
 
 /** A follow-up's prompt and mode, rebuilt from its snapshot. */
@@ -854,6 +890,7 @@ async function firstVersionStage(ctx) {
       ok: false, sessionId: done.spec.sessionId, blocked: done.spec.blocked, error: done.spec.error || null, specMd: null,
     };
     built = await buildResult({ built: was, base, branch, sessionId: was.sessionId, deps, repo, task: ctx.task, trial });
+    if (was.sight) built.parsed = { ...(built.parsed || {}), sight: was.sight };
   } else {
     if (!done.spec) step('spec');
     built = await buildStage({
@@ -912,6 +949,7 @@ function keptBuild(b) {
     ok: !!b.ok, sessionId: b.sessionId ? Number(b.sessionId) : null, sha: b.sha || null,
     commits: Number.isFinite(b.commits) ? b.commits : null, specMd: b.specMd || null, specNote: b.specNote || null,
     error: b.error || null, ...(b.blocked ? { blocked: b.blocked } : {}),
+    ...(b.sight ? { sight: b.sight } : {}),
   };
 }
 
