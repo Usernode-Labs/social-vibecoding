@@ -40,19 +40,21 @@ test('About never opens empty', () => {
   // it may never have deployed, a home screen the device may not have — and
   // all of them are absent at once often enough that a pane without an
   // unconditional line would regularly open blank. A row that sometimes leads
-  // nowhere is the one thing a menu row must not be. The address stands in
-  // the tagline's place when there is no tagline.
+  // nowhere is the one thing a menu row must not be. The name is that line:
+  // with no description the pane shows the name alone, and no address stands
+  // in the tagline's place.
   const bare = render({ target: 'app', name: 'Notes', slug: 'notes-ab12', repoUrl: null, canShare: false, version: null });
   assert.match(bare, /id="app-about-identity"/);
   assert.match(bare, />Notes</, 'the app is named');
-  assert.match(bare, /\/app\/notes-ab12/, 'and addressed');
+  assert.doesNotMatch(bare, /<p[^>]*>[^<]*\/app\/notes-ab12/, 'no address line where the tagline was');
 });
 
 test('each fact appears only when there is one', () => {
   const bare = render({ target: 'app', name: 'Notes', slug: 'notes-ab12', repoUrl: null, canShare: false, version: null });
   assert.doesNotMatch(bare, /improve-row-github/, 'no repository, no row');
   assert.doesNotMatch(bare, /improve-row-share/, 'no share, no row');
-  assert.doesNotMatch(bare, /app-about-version/, 'no version, no pill');
+  assert.doesNotMatch(bare, /app-about-version/, 'no version, no row');
+  assert.doesNotMatch(bare, /app-about-members/, 'no member count, no line');
 
   const full = render({
     target: 'app', name: 'Notes', slug: 'notes-ab12',
@@ -66,11 +68,14 @@ test('each fact appears only when there is one', () => {
     'Code, with Public on GitHub muted at the end of the row');
   assert.doesNotMatch(full, /View on GitHub/);
   assert.match(full, /id="improve-row-share"/);
-  // The design draws the version as a PILL beside the builders' avatars —
-  // "v41 · 2h ago" — and it is still not a row: there is nowhere for it to
-  // go. The platform names a version by its commit, so the pill does too.
-  assert.match(full, /id="app-about-pills"[\s\S]*?id="app-about-version"[^>]*>14</,
-    'the version is a pill in the identity block, not a row');
+  // The version moved out of the identity block, where the commit pill used
+  // to lead with it, to a plain row at the end of More: information, not an
+  // action, so a div — a button that does nothing is a dead control.
+  assert.ok(full.indexOf('id="app-about-more"') < full.indexOf('id="improve-row-share"')
+    && full.indexOf('id="improve-row-share"') < full.indexOf('id="app-about-version"'),
+    'the version is a row under More, after Share');
+  assert.match(full, /id="app-about-version"[^>]*>[\s\S]*?App version[\s\S]*?>14</);
+  assert.doesNotMatch(full, /id="app-about-pills"/, 'and the identity block holds no pill any more');
   // The design's MORE order: Share, Add to home screen, then the source
   // (the Code row is its "Source code"), then Fork.
   assert.ok(full.indexOf('improve-row-share') < full.indexOf('improve-row-github'),
@@ -85,6 +90,11 @@ test('two panes of ONE sheet, not two sheets', () => {
   assert.match(SHEET, /view === 'about' \? <AboutPane label=\{appLabel\} \/> : view === 'invite' \? \(\s*<InvitePane slug=\{slug \|\| null\} label=\{appLabel\} \/>\s*\) : \(/,
     'the pane replaces the rows inside the same scroller');
   assert.match(SHEET, /id="app-about-back"/, 'and the label row becomes the way back');
+  // The way back is the Workshop page's own back disc, drawn at 36 points in
+  // the header's brand ink with a 44-point hit box from .un-touch-target —
+  // the platform's back button, not a text-sized chevron.
+  assert.match(SHEET, /id="app-about-back"[\s\S]{0,200}dev-ws-page-back un-touch-target/);
+  assert.match(SHEET, /id="app-about-back"[\s\S]{0,300}dev-ws-page-back-glyph/);
   // The label row's own text is the pane switch's other half: the menu names
   // the app, a second pane's back arrow (About's, Invite's) names it again
   // beside a chevron.

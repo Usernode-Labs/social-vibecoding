@@ -2,109 +2,40 @@
  * What the About pane SAYS — pure, so the wording is pinned by tests with
  * plain objects rather than by a browser.
  *
- * ── The build-by-vote note has to be true for THIS app ──────────────────
+ * ── The note is one sentence, about WHO builds it ──────────────────────
  *
- * The design's line is "Anyone can propose; a proposal merges when a majority
- * of active members vote yes and checks pass." That is one of three regimes
- * the platform actually runs, per app, from dapp.json's `governance` block
- * (services/governance.js, apps.approver_policy / apps.approvals_required):
- *
- *   the default    every eligible vote counts, over a dynamic time-and-
- *                  majority gate among the app's active members — a clear
- *                  majority merges fast, thin unopposed support after a
- *                  window, and No votes raise the bar;
- *   'invited'      the same gate, but only the app's invited approvers'
- *                  votes count;
- *   at least N     a fixed number of yes votes (approvers' only, when the
- *                  policy is 'invited') and no clock at all.
- *
- * Two more facts hold whatever the regime: a LOCKED app also needs an admin's
- * yes (services/admin-approval.js), and nothing merges until its checks pass.
- * And "anyone can propose" is only true where anyone can build: an
- * invite-only-build app (collab_visibility 'private') takes proposals from
- * its members.
- *
- * So the sentence is assembled from the row the pane already has — both
- * GET /api/apps and GET /api/apps/:slug carry all four columns — and a row
- * that lacks them reads as the default, which is what an absent column means
- * on the server too. It is deliberately a SUMMARY: the Workshop's "How voting
- * works" popover (../dev-board/voting-help.tsx) is where the clocks are
- * spelled out.
+ * "Supply Line’s community builds it together." The pane's job with a
+ * newcomer is to say what an app is and who makes it; how the group's
+ * approvals, votes and checks work is the Workshop's "How voting works"
+ * popover (../dev-board/voting-help.tsx), a tap away for anyone who wants
+ * them. The sentence is the same for every approval regime and for a viewer
+ * who cannot propose, because it no longer describes the rules — so it takes
+ * the app's NAME and nothing else from the row.
  */
 
 export type AppRow = Record<string, any>;
 
-/** "a, b and c" — the list a sentence can carry. */
-export function joinClauses(parts: Array<string | null | undefined | false>): string {
-  const list = parts.filter((p): p is string => typeof p === 'string' && p.length > 0);
-  if (list.length <= 1) return list[0] || '';
-  if (list.length === 2) return `${list[0]} and ${list[1]}`;
-  return `${list.slice(0, -1).join(', ')}, and ${list[list.length - 1]}`;
+/** The note under an app's actions: the community builds it together. */
+export function appNote(name: string): string {
+  return `${name}’s community builds it together.`;
 }
 
-function approvalsRequired(row: AppRow | null | undefined): number | null {
-  const raw = row ? row.approvals_required : null;
+/** The platform's note: the same sentence, about Homeroom itself. */
+export function platformNote(name: string): string {
+  return `${name}’s community builds it together.`;
+}
+
+/**
+ * "14 members" beside the builders' avatars — the count the apps list
+ * already carries for every row (GET /api/apps: member_count). Null when the
+ * count is not a positive integer: no members yet, or the row has not landed
+ * (a cold tab reads the list a moment later, and the line appears then).
+ */
+export function membersText(row: AppRow | null | undefined): string | null {
+  const raw = row ? row.member_count : null;
   const n = typeof raw === 'number' ? raw : parseInt(String(raw ?? ''), 10);
-  return Number.isInteger(n) && n >= 1 ? n : null;
-}
-
-/**
- * The vote half of "a proposal merges once …", for `who` ("the app’s",
- * "the platform’s").
- */
-export function voteClause(row: AppRow | null | undefined, who: string): string {
-  const invited = !!row && row.approver_policy === 'invited';
-  const n = approvalsRequired(row);
-  if (n != null) {
-    if (invited) {
-      return n === 1
-        ? `one of ${who} invited approvers votes yes`
-        : `${n} of ${who} invited approvers vote yes`;
-    }
-    return n === 1 ? 'it has a yes vote' : `it has ${n} yes votes`;
-  }
-  return invited
-    ? `${who} invited approvers back it in a vote`
-    : `${who} active members back it in a vote`;
-}
-
-/** Everything a proposal waits on, in the order it reads. */
-export function mergeConditions(row: AppRow | null | undefined, who: string): string {
-  return joinClauses([
-    voteClause(row, who),
-    row && row.locked ? 'an admin votes yes' : null,
-    'its checks pass',
-  ]);
-}
-
-/** The build-by-vote note under an app's actions. */
-export function appNote(row: AppRow | null | undefined): string {
-  const proposers = row && row.collab_visibility === 'private'
-    ? 'Its members can suggest a change'
-    : 'Anyone can suggest a change';
-  return 'Built by the group, one approved change at a time. '
-    + `${proposers}; it goes live once ${mergeConditions(row, 'the app’s')}.`;
-}
-
-/**
- * The platform's note. `row` is the self-hosted row when this viewer is
- * served it; `restricted` when they are not, in which case they cannot
- * propose to it either, and the sentence says how it is built without
- * inviting them to do something the platform will refuse.
- */
-export function platformNote(row: AppRow | null | undefined, restricted: boolean): string {
-  const tail = ' This menu is the same one every app has.';
-  if (restricted) {
-    return 'The platform is built the same way as the apps on it: every change to the tabs, '
-      + 'the bell or the workshop is suggested, approved, and goes live once its checks pass. '
-      + 'On this server its workshop is open to admins only.' + tail;
-  }
-  const proposers = row && row.collab_visibility === 'private'
-    ? 'its members can suggest'
-    : 'anyone can suggest';
-  return `The platform is built the same way as the apps on it: ${proposers} a change to the `
-    + `tabs, the bell or the workshop, and it goes live once ${mergeConditions(row, 'the platform’s')}.`
-    + tail;
+  if (!Number.isInteger(n) || n < 1) return null;
+  return n === 1 ? '1 member' : `${n.toLocaleString()} members`;
 }
 
 /** The app's tagline: its manifest's one-line description (HomePanels.appBlurb's rule). */
@@ -123,22 +54,6 @@ export function shortVersionOf(row: AppRow | null | undefined): string | null {
     return String(row.version.shortSha);
   }
   return row.main_sha ? String(row.main_sha).slice(0, 7) : null;
-}
-
-/**
- * The pill beside the avatars: "<version> · <updated>".
- *
- * The design writes "v41 · 2h ago". The platform has no version NUMBER — what
- * an app is running is named by its commit, which is what every other
- * version surface here prints — so the pill reads "a1b2c3d · 2h ago". With
- * only one of the two it says that one, and with neither there is no pill:
- * "version —" is worse than silence.
- */
-export function versionPillText(version: string | null, updated: string | null): string | null {
-  if (version && updated) return `${version} · ${updated}`;
-  if (version) return version;
-  if (updated) return `Updated ${updated}`;
-  return null;
 }
 
 export interface StatCard { key: 'apps' | 'members' | 'merged'; value: string; label: string }

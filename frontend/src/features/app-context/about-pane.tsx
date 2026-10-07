@@ -6,17 +6,19 @@
  * ── What it says, in the design's order ────────────────────────────────
  *
  *   1. WHO IT IS. A large tile, the name, the tagline, the builders' avatars
- *      and a "<version> · <updated>" pill.
+ *      and how many members.
  *   2. WHAT YOU CAN DO WITH IT (an app): Open — Resume for the app you
  *      parked, and nothing at all for the app already running — and Add to
  *      your apps. HOW BIG IT IS (the platform): apps, members, merged.
- *   3. HOW IT IS BUILT. One sentence, true for THIS app's approval rules
- *      (./about-model.ts says why it is assembled rather than fixed).
+ *   3. HOW IT IS BUILT. One sentence: the community builds it together.
+ *      (./about-model.ts; the mechanics live in the Workshop's "How voting
+ *      works".)
  *   4. WHO BUILDS IT. Contributors, each with what they have merged, each
  *      opening that person's page.
  *   5. MORE. Share, Add to home screen, Code (public on GitHub), Remix
- *      (a fork, to the code; "Remix" to people). A remix also says what
- *      it was remixed from, under its description.
+ *      (a fork, to the code; "Remix" to people), App version (the commit
+ *      that is live). A remix also says what it was remixed from, under
+ *      its description.
  *
  * ── It is still a PANE, not a sheet ────────────────────────────────────
  *
@@ -85,12 +87,12 @@ import { AppContext } from './app-context-controller.js';
 import {
   appNote,
   contributorView,
+  membersText,
   openLabel,
   platformNote,
   shortVersionOf,
   statCards,
   taglineOf,
-  versionPillText,
   type AppRow,
 } from './about-model';
 import {
@@ -111,13 +113,15 @@ const SECTION = 'px-5 pt-4 pb-1 text-[0.7rem] font-semibold uppercase tracking-w
 const NOTE = 'px-5 py-2 text-sm text-zinc-500 dark:text-zinc-400';
 
 /**
- * The two glyphs the icon set has no name for, drawn on its grid through its
- * escape hatch: the design's fork, and its "add to home screen" plus-in-a-
- * phone. A table because that is what `Glyph` is for.
+ * The three glyphs the icon set has no name for, drawn on its grid through
+ * its escape hatch: the design's fork, its "add to home screen" plus-in-a-
+ * phone, and the commit mark the App version row leads with. A table because
+ * that is what `Glyph` is for.
  */
 const GLYPHS = {
   fork: 'M6 7a2 2 0 100-4 2 2 0 000 4zm12 0a2 2 0 100-4 2 2 0 000 4zm-6 14a2 2 0 100-4 2 2 0 000 4zM6 7v1a4 4 0 004 4h4a4 4 0 004-4V7m-6 5v5',
   homeScreen: 'M7 3h10a3 3 0 013 3v12a3 3 0 01-3 3H7a3 3 0 01-3-3V6a3 3 0 013-3zm5 5v8m-4-4h8',
+  version: 'M12 15a3 3 0 100-6 3 3 0 000 6zM3 12h6m6 0h6',
 } as const;
 
 /** How many contributors show before "Show all" — Discover's own fold. */
@@ -324,9 +328,11 @@ export function AboutPane({ label }: { label: string }): ReactNode {
     ? (about?.updatedAt || row?.last_deploy_at || null)
     : (row?.last_deploy_at || row?.created_at || null);
   const updated = updatedAt ? agoStamp(updatedAt) : null;
-  const pill = deploying && !platform
-    ? 'Deploying…'
-    : versionPillText(shortSha || null, updated?.text || null);
+  // What the version row under More says: "Deploying…" while a new version
+  // is going live, else the commit that is running, else no row at all. The
+  // "when" that used to sit in the pill stays as the row's hover text.
+  const versionText = deploying && !platform ? 'Deploying…' : (shortSha || null);
+  const members = isApp ? membersText(row) : null;
   const ready = contributors.state === 'ready' ? contributors.items : [];
   const stack = ready.slice(0, 4).map(contributorView);
   const record = {
@@ -354,22 +360,19 @@ export function AboutPane({ label }: { label: string }): ReactNode {
   const showFork = isApp && !!forkItem;
   const lineage = isApp ? lineageOf(row) : null;
 
-  // The platform's rules are its row's, which a cold tab may still be loading
-  // (./about-data.ts asks Home for the list): no sentence until they are here,
-  // rather than the default rules for a moment and then the platform's own.
-  const note = platform
-    ? (restricted || row ? platformNote(row, !!restricted) : null)
-    : appNote(row);
+  // The note no longer restates the approval rules (./about-model.ts), so it
+  // reads the same the moment the pane opens, row or no row.
+  const note = platform ? platformNote(label) : appNote(label);
   const people = ready.map(contributorView);
 
   return (
     <div id="app-about-pane" className="pb-1">
       {/*
           WHO IT IS. The name is always here, so the pane never opens empty
-          whatever else is missing: an app with no manifest description shows
-          its ADDRESS in the tagline's place — what a URL says, what a support
-          conversation quotes, and the only name two apps called the same thing
-          do not share.
+          whatever else is missing. A real description shows under it; an app
+          with none shows only its name — a newcomer is not here for an
+          address, and the app's own screens carry the slug wherever it is
+          needed.
       */}
       <div id="app-about-identity" className="flex items-start gap-3.5 px-5 pt-2 pb-3">
         {platform ? (
@@ -407,11 +410,7 @@ export function AboutPane({ label }: { label: string }): ReactNode {
             <p id="app-about-tagline" className="mt-0.5 line-clamp-3 text-[0.8125rem] leading-snug text-zinc-500 dark:text-zinc-400">
               {tagline}
             </p>
-          ) : (!platform && slug ? (
-            <p className="mt-0.5 text-[0.8125rem] text-zinc-500 dark:text-zinc-400 truncate">
-              {`/app/${slug}`}
-            </p>
-          ) : null)}
+          ) : null}
           {/* A remix says what it was remixed from, under its description:
               the line Discover's page draws under its version, in the same
               amber, opening the original the way a contributor row opens a
@@ -432,21 +431,21 @@ export function AboutPane({ label }: { label: string }): ReactNode {
               )}
             </p>
           ) : null}
-          {stack.length || pill ? (
+          {stack.length || members ? (
             <div id="app-about-pills" className="mt-2 flex flex-wrap items-center gap-2">
               {stack.length ? (
                 <span className="flex -space-x-1.5" aria-hidden="true">
                   {stack.map((c) => <Avatar key={c.who} who={c.who} size="xs" />)}
                 </span>
               ) : null}
-              {pill ? (
-                <span
-                  id="app-about-version"
-                  title={[shortSha ? `Version ${shortSha}` : null, updated?.title ? `live since ${updated.title}` : null]
-                    .filter(Boolean).join(', ') || undefined}
-                  className="inline-flex items-center rounded-full bg-zinc-100 dark:bg-zinc-800 px-2 py-0.5 text-xs font-medium text-zinc-500 dark:text-zinc-400 whitespace-nowrap"
-                >
-                  {pill}
+              {/* How many people are in the community — the words the
+                  community card already uses, in this block's own small grey
+                  text. No pill and no fill: a settled fact gets none (the
+                  shell's type and colour rules). About Homeroom gets no line:
+                  its "members" figure card is right below. */}
+              {members ? (
+                <span id="app-about-members" className="text-[0.8125rem] text-zinc-500 dark:text-zinc-400 whitespace-nowrap">
+                  {members}
                 </span>
               ) : null}
             </div>
@@ -572,7 +571,7 @@ export function AboutPane({ label }: { label: string }): ReactNode {
         </section>
       ) : null}
 
-      {showShare || showHomeScreen || repo || showFork ? (
+      {showShare || showHomeScreen || repo || showFork || versionText ? (
         <section id="app-about-more" aria-label="More">
           <h4 className={SECTION}>More</h4>
           {showShare ? (
@@ -637,6 +636,26 @@ export function AboutPane({ label }: { label: string }): ReactNode {
               sub="Make your own copy"
               onClick={() => afterDismiss(() => forkItem.run())}
             />
+          ) : null}
+          {/*
+              APP VERSION, the More section's last row — the commit the pill
+              under the avatars used to lead with, where anyone who needs it
+              can still find it without it being the first thing a newcomer
+              reads. A DIV, not an ActionRow: it is information, and a button
+              that does nothing is a dead control. Same anatomy as the Code
+              row; the hover background ROW carries is harmless on it, and
+              the "when" stays as its hover text.
+          */}
+          {versionText ? (
+            <div
+              id="app-about-version"
+              className={ROW}
+              title={updated?.title && shortSha ? `Version ${shortSha}, live since ${updated.title}` : undefined}
+            >
+              <Icon><Glyph d={GLYPHS.version} /></Icon>
+              <span className="flex-1 min-w-0 truncate font-medium">App version</span>
+              <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">{versionText}</span>
+            </div>
           ) : null}
         </section>
       ) : null}

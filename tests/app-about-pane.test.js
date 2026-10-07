@@ -7,13 +7,14 @@
 // ── What is pinned ────────────────────────────────────────────────────
 //
 //   1. THE WORDING (./frontend/src/features/app-context/about-model.ts).
-//      The design's build-by-vote line is one of three regimes the platform
-//      runs per app, so the sentence is assembled from the app's own
-//      approval rules and must stay true for each of them.
-//   2. THE PANE, rendered: an app's (tile, name, tagline, pill, Open/Resume,
-//      Add, note, Contributors, More), Homeroom's (the three figures instead
-//      of the actions), and Homeroom's for a viewer not served its row (no
-//      roster the API would refuse).
+//      The build-by-vote note is one sentence about who builds it, the same
+//      for every approval regime; the mechanics live in the Workshop. The
+//      member line reads the apps list's own count.
+//   2. THE PANE, rendered: an app's (tile, name, tagline, avatars and member
+//      line, Open/Resume, Add, note, Contributors, More with the version
+//      row), Homeroom's (the three figures instead of the actions), and
+//      Homeroom's for a viewer not served its row (no roster the API would
+//      refuse).
 //   3. THE RESOLVER (./frontend/src/features/app-context/platform-target.js):
 //      it finds the platform on its own, never probes a row the viewer would
 //      be refused (a 404 is a console error), and hands its answer back to
@@ -38,40 +39,28 @@ const ui = loadTsx('tests/fixtures/about-pane-api.ts');
 
 // ── 1. The wording ───────────────────────────────────────────────────
 
-test('the note is true for each of the three approval regimes', () => {
-  const lead = 'Built by the group, one approved change at a time. ';
-  assert.equal(model.appNote({}),
-    `${lead}Anyone can suggest a change; it goes live once the app’s active members back it in a vote and its checks pass.`,
-    'the default: the time-and-majority gate among active members');
-  assert.equal(model.appNote({ approver_policy: 'invited' }),
-    `${lead}Anyone can suggest a change; it goes live once the app’s invited approvers back it in a vote and its checks pass.`,
-    'invited approvers: the same gate, only their votes count');
-  assert.equal(model.appNote({ approvals_required: 3 }),
-    `${lead}Anyone can suggest a change; it goes live once it has 3 yes votes and its checks pass.`,
-    'at least N, anyone voting');
-  assert.equal(model.appNote({ approver_policy: 'invited', approvals_required: 1 }),
-    `${lead}Anyone can suggest a change; it goes live once one of the app’s invited approvers votes yes and its checks pass.`);
-  assert.equal(model.appNote({ approver_policy: 'invited', approvals_required: '2', locked: true, collab_visibility: 'private' }),
-    `${lead}Its members can suggest a change; it goes live once 2 of the app’s invited approvers vote yes, an admin votes yes, and its checks pass.`,
-    'an invite-only build takes proposals from its members; a locked app needs an admin\'s yes');
-  assert.equal(model.appNote(null), model.appNote({}), 'no row reads as the default, as on the server');
+test('the note says who builds it, the same one sentence for every regime', () => {
+  // The mechanics — who votes, how many, whether checks pass — moved to the
+  // Workshop's "How voting works". The About note names the community and
+  // stops, so it is the same sentence whatever the app's approval rules and
+  // for a viewer who cannot propose.
+  assert.equal(model.appNote('Supply Line'), 'Supply Line’s community builds it together.');
+  assert.equal(model.platformNote('Homeroom'), 'Homeroom’s community builds it together.');
+  for (const note of [model.appNote('Supply Line'), model.platformNote('Homeroom')]) {
+    assert.doesNotMatch(note, /checks|vote|admin/i, 'no mechanics in it');
+  }
 });
 
-test('the platform\'s note: its own rules, or how it is built for a viewer who cannot propose', () => {
-  assert.equal(model.platformNote({ approver_policy: 'invited', approvals_required: 1 }, false),
-    'The platform is built the same way as the apps on it: anyone can suggest a change to the tabs, '
-    + 'the bell or the workshop, and it goes live once one of the platform’s invited approvers votes yes '
-    + 'and its checks pass. This menu is the same one every app has.');
-  const restricted = model.platformNote(null, true);
-  assert.doesNotMatch(restricted, /anyone can suggest/, 'not an invitation the platform would refuse');
-  assert.match(restricted, /open to admins only/);
-  assert.match(restricted, /This menu is the same one every app has\.$/);
-});
-
-test('the pill, the cards, the rows and the Open button say what the design says', () => {
-  assert.equal(model.versionPillText('a1b2c3d', '2h ago'), 'a1b2c3d · 2h ago');
-  assert.equal(model.versionPillText(null, '2h ago'), 'Updated 2h ago');
-  assert.equal(model.versionPillText(null, null), null, 'no pill rather than "version —"');
+test('the member line, the cards, the rows and the Open button say what the design says', () => {
+  // The apps list already carries each app's community member count
+  // (src/routes/apps.js: COALESCE(cmc.cnt, 0) AS member_count).
+  assert.equal(model.membersText({ member_count: 14 }), '14 members');
+  assert.equal(model.membersText({ member_count: 1 }), '1 member');
+  assert.equal(model.membersText({ member_count: 1200 }), '1,200 members');
+  assert.equal(model.membersText({ member_count: 0 }), null, 'zero says nothing');
+  assert.equal(model.membersText({}), null, 'a row without the count says nothing');
+  assert.equal(model.membersText({ member_count: 'x' }), null);
+  assert.equal(model.membersText(null), null);
   assert.equal(model.shortVersionOf({ version: { shortSha: 'abc1234' } }), 'abc1234');
   assert.equal(model.shortVersionOf({ main_sha: 'abc1234def' }), 'abc1234');
   assert.deepEqual(model.statCards({ apps: 1, members: 2, merged: 0 }).map((c) => [c.key, c.value, c.label]),
@@ -83,7 +72,6 @@ test('the pill, the cards, the rows and the Open button say what the design says
   assert.deepEqual(model.openLabel('running', true), { label: 'Resume', canOpen: true });
   assert.deepEqual(model.openLabel('creating', false), { label: 'Spinning up…', canOpen: false });
   assert.deepEqual(model.openLabel('error', true), { label: 'Not running', canOpen: false });
-  assert.equal(model.joinClauses(['a', null, 'b', 'c']), 'a, b, and c');
 });
 
 // ── 2. The pane, rendered ─────────────────────────────────────────────
@@ -93,6 +81,7 @@ const ROW = {
   manifest_snapshot: { description: 'Shared notes for the group.' },
   version: { shortSha: 'a1b2c3d' }, last_deploy_at: new Date(Date.now() - 2 * 3600e3).toISOString(),
   approver_policy: 'anyone', approvals_required: null, repo_url: 'https://github.com/example/notes',
+  member_count: 14,
 };
 
 function render(patch, { apps = [ROW], parked = null, items = null } = {}) {
@@ -126,9 +115,9 @@ function render(patch, { apps = [ROW], parked = null, items = null } = {}) {
 test('an app\'s About, in the design\'s order', () => {
   const html = render({ target: 'app', slug: 'notes-ab12', name: 'Notes', tab: 'dev', canShare: true,
     repoUrl: ROW.repo_url });
-  const order = ['app-about-identity', 'app-about-tagline', 'app-about-version', 'app-about-actions',
+  const order = ['app-about-identity', 'app-about-tagline', 'app-about-members', 'app-about-actions',
     'app-about-open', 'app-about-add', 'app-about-note', 'app-about-contributors', 'app-about-more',
-    'improve-row-share', 'app-about-a2hs', 'improve-row-github', 'app-about-fork'];
+    'improve-row-share', 'app-about-a2hs', 'improve-row-github', 'app-about-fork', 'app-about-version'];
   let at = -1;
   for (const id of order) {
     const i = html.indexOf(`id="${id}"`);
@@ -136,12 +125,19 @@ test('an app\'s About, in the design\'s order', () => {
     at = i;
   }
   assert.match(html, /Shared notes for the group\./, 'the tagline is the manifest\'s description');
-  assert.match(html, /id="app-about-version"[^>]*>a1b2c3d · 2h ago</);
+  // The member line beside the avatars, where the commit pill used to be —
+  // a settled fact, so no pill and no fill.
+  assert.match(html, /id="app-about-members"[^>]*>14 members</);
+  // The version moved under More, its last row: a label at the left, the
+  // short commit at the end, the "2h ago" as hover text only.
+  assert.match(html, /id="app-about-version"[\s\S]*?App version[\s\S]*?a1b2c3d/);
+  assert.doesNotMatch(html, /· 2h ago/, 'the "when" is not printed beside the commit any more');
   assert.match(html, /id="app-about-open"[^>]*href="\/app\/notes-ab12"[^>]*>Open</,
     'Open is an address, so a modified click still opens a tab');
   assert.match(html, /id="app-about-add"[^>]*data-added="false"[^>]*>(?:<[^>]+>)*Add to My apps/);
   assert.match(html, /Loading contributors…/, 'the roster loads after the pane opens, never in a render');
-  assert.match(html, /Anyone can suggest a change; it goes live once/);
+  assert.match(html, /Notes’s community builds it together\./,
+    'the note says who builds it, not the rules');
 });
 
 test('Open says Resume for the parked app, and is gone for the app already running', () => {
@@ -200,7 +196,10 @@ test('About Homeroom: the three figures instead of the actions, the platform\'s 
   for (const key of ['apps', 'members', 'merged']) {
     assert.match(html, new RegExp(`data-stat="${key}"`), `the ${key} card`);
   }
-  assert.match(html, /The platform is built the same way as the apps on it: anyone can suggest/);
+  assert.match(html, /Homeroom’s community builds it together\./,
+    'the platform\'s note says who builds it');
+  // No member line: the "members" figure card is right below it.
+  assert.doesNotMatch(html, /app-about-members/);
   assert.match(html, /id="app-about-contributors"/);
   assert.match(html, /id="improve-row-share"/, 'Homeroom always has an address to share');
   assert.doesNotMatch(html, /app-about-fork/);
@@ -211,7 +210,11 @@ test('About Homeroom for a viewer not served its row: no roster the API would re
     { apps: [] });
   assert.match(html, /id="app-about-stats"/);
   assert.doesNotMatch(html, /app-about-contributors/);
-  assert.match(html, /open to admins only/);
+  // The note no longer describes the rules, so the restricted viewer reads
+  // the same one sentence as anybody.
+  assert.match(html, /Homeroom’s community builds it together\./);
+  assert.doesNotMatch(html, /anyone can suggest|open to admins only/,
+    'and no invitation the platform would refuse to serve');
   assert.match(html, /id="improve-row-share"/);
 });
 

@@ -662,24 +662,28 @@ export function AppsSwitcherSheet(): ReactNode {
             the class string cannot be. */}
         <div className="flex items-center gap-3 px-5 pt-4 pb-1 shrink-0">
           {/*
-              THE BACK ARROW IS THE SECOND PANES' (About, Invite), and it
-              replaces the label
-              rather than sitting beside it: About is one level inside this
-              sheet, so the row that names the level has to be the row that
-              leaves it. On the menu it is the "Apps" label it has always
-              been.
+              THE BACK DISC IS THE SECOND PANES' (About, Invite) way back —
+              the Workshop page's round back button, at its 44-point tap size
+              (frontend/src/features/dev-board/workshop/page-back.tsx draws
+              the same markup), with the app's name beside it as the label.
+              About is one level inside this sheet; on the menu it is the
+              "Apps" label it has always been.
           */}
           {view !== 'menu' ? (
-            <button
-              id="app-about-back"
-              type="button"
-              className={'flex-1 min-w-0 flex items-center gap-1.5 text-left un-touch-target '
-                + SECTION_TYPE}
-              onClick={() => AppContext.showMenu()}
-            >
-              <ChevronLeftIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
-              <span className="min-w-0 truncate">{appLabel}</span>
-            </button>
+            <>
+              <button
+                id="app-about-back"
+                type="button"
+                className="dev-ws-page-back un-touch-target"
+                aria-label="Back"
+                onClick={() => AppContext.showMenu()}
+              >
+                <ChevronLeftIcon className="dev-ws-page-back-glyph" aria-hidden="true" />
+              </button>
+              <span className={'flex-1 min-w-0 block truncate ' + SECTION_TYPE}>
+                {appLabel}
+              </span>
+            </>
           ) : (
             /*
                 IT SAID "Apps" while a strip of every app sat under it. With
