@@ -266,6 +266,20 @@ test('no dim at sm+, and an outside click still lands', () => {
   assert.doesNotMatch(ISLAND, /preventDefault|stopPropagation/,
     'the click is not swallowed');
 
+  // A click into the app frame never reaches the parent document — its own
+  // document takes it — so the island also listens for the window `blur`
+  // that click causes: a tick later, activeElement being an IFRAME element
+  // means the focus went into an embedded app, and the menu closes, the
+  // click having landed in the app. A blur to another browser window or to
+  // dev tools leaves activeElement alone, so the menu stays open.
+  assert.match(ISLAND, /window\.addEventListener\('blur', onBlur\)/);
+  assert.match(ISLAND, /window\.removeEventListener\('blur', onBlur\)/,
+    'the blur listener is removed with the rest of the effect');
+  assert.match(ISLAND, /document\.activeElement\?\.tagName !== 'IFRAME'/,
+    'the menu closes only when focus moved into an embedded frame');
+  assert.match(ISLAND, /const onBlur = \(\) => \{[\s\S]{0,400}?!tour\.classList\.contains\('hidden'\)/,
+    'the welcome tour decides when the menu closes in the blur path too');
+
   // Below `sm` the backdrop still catches the dismissing tap.
   assert.match(rule('#apps-switcher-overlay[data-open]'), /pointer-events:\s*auto/);
   assert.match(SHEET, /id="apps-switcher-overlay"[\s\S]{0,400}?onClick=\{close\}/,
