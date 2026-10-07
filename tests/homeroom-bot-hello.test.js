@@ -197,15 +197,6 @@ test('B5: its name and its one hello, against the full PostgreSQL schema', { tim
     const { rows: [hello] } = await pool.query('SELECT kind, message_id FROM homeroom_bot_hellos WHERE user_id = $1', [maya.id]);
     assert.deepEqual(hello, { kind: 'maker', message_id: msg.id });
 
-    // Her second project: no second hello.
-    await dm.startFirstVersion(pool, {}, { app: herbs, user: { ...maya, hasPlatformAccess: true }, brief: 'A herb garden planner for my balcony.' });
-    const { rows: [second] } = await pool.query(
-      `SELECT content, metadata FROM conversation_messages WHERE conversation_id = $1 AND sender_id = $2 ORDER BY id DESC LIMIT 1`,
-      [first.conversationId, bot.id],
-    );
-    assert.match(second.content, /^\*\*Herbs\*\*\n\nThanks! I'm setting up Herbs now\./);
-    assert.equal(second.metadata.homeroomBot.actions, undefined);
-
     // She taps one: her words, and the buttons give way everywhere.
     const tapped = await conversations.sendMessage(pool, maya, first.conversationId, { content: 'What can I ask for?' });
     assert.equal(await dm.settlePrompt(pool, { botId: bot.id, userId: maya.id, conversationId: first.conversationId, content: tapped.message.content }), true);
@@ -214,6 +205,16 @@ test('B5: its name and its one hello, against the full PostgreSQL schema', { tim
       ['answered', 'What can I ask for?', 'ask-2']);
     assert.equal(await dm.settlePrompt(pool, { botId: bot.id, userId: maya.id, conversationId: first.conversationId, content: 'What can I ask for?' }), false,
       'settled once');
+
+    // Her second project: no second hello. (#4097 follow-up: tapped first,
+    // since the bot's next message retires suggestions it has moved on from.)
+    await dm.startFirstVersion(pool, {}, { app: herbs, user: { ...maya, hasPlatformAccess: true }, brief: 'A herb garden planner for my balcony.' });
+    const { rows: [second] } = await pool.query(
+      `SELECT content, metadata FROM conversation_messages WHERE conversation_id = $1 AND sender_id = $2 ORDER BY id DESC LIMIT 1`,
+      [first.conversationId, bot.id],
+    );
+    assert.match(second.content, /^\*\*Herbs\*\*\n\nThanks! I'm setting up Herbs now\./);
+    assert.equal(second.metadata.homeroomBot.actions, undefined);
   });
 
   await t.test('somebody else hears hello above their first request\'s card, once', async () => {

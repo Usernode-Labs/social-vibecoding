@@ -177,6 +177,8 @@ async function migrate(config) {
   await require('../services/bench/demo').seedStagingBench(pool);
   // #3737: and its taste eval, with screenshots to look at.
   await require('../services/bench/demo').seedStagingTaste(pool);
+  // And the App bench studio's gallery, with builds side by side.
+  await require('../services/bench/demo').seedStagingStudio(pool);
   // After the proposal seeds above: the platform-env fixture stamps a
   // failing verdict onto an existing staging proposal.
   await seedStagingPlatformEnv(pool, config);

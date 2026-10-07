@@ -328,5 +328,5 @@ test('a chat reply carries a card for each request its words name that its tools
   assert.deepEqual(mayor.namedCards('Proposal #6011 is up.', ctx), { cards: [], project: null }, 'a proposal’s number is no request');
   mayor.noteRequests(ctx, { project: 'seed-swap', number: 14 });
   assert.deepEqual(mayor.namedCards('#14 is building.', ctx).cards, [], 'a number on two projects is no one card');
-  assert.match(read('src/services/homeroom-bot-mayor.js'), /metadata: \{ kind: 'chat', \.\.\.\(named\.project \? \{ appSlug: named\.project \} : \{\}\) \}/);
+  assert.match(read('src/services/homeroom-bot-mayor.js'), /kind: 'chat', \.\.\.\(named\.project \? \{ appSlug: named\.project \} : \{\}\),/);
 });

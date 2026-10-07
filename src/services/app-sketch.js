@@ -536,7 +536,15 @@ async function saveCard(pool, { app, card, model, error, deps }) {
   await saveIcon(pool, app, card.emoji, deps);
 }
 
-async function generate(pool, { app, user, brief, audience, timeZone, deps }) {
+/**
+ * The card itself, from a name and a description: the model's, within
+ * MODEL_WAIT_MS, else fallbackCard's. What it cost is recorded against
+ * `user`. Saves nothing: generate() below stores it on a project, and the
+ * App bench studio (services/bench/scaffold.js) puts it in a benchmark
+ * trial's first commit, from the same call. `maker` is who the card is for,
+ * as makerOf reads it (null: nobody named). Resolves { card, model, error }.
+ */
+async function makeCard(pool, { name, brief, audience = null, timeZone = null, user, maker = null, appId = null, deps = {} }) {
   const llm = deps.llm || require('./llm');
   const limits = deps.limits || require('./limits');
   const now = deps.now ? deps.now() : new Date();
@@ -545,22 +553,22 @@ async function generate(pool, { app, user, brief, audience, timeZone, deps }) {
   let model = SKETCH_MODEL;
   let error = null;
   const recordSpend = async (reply) => {
-    if (!reply || !reply.usage) return;
+    if (!reply || !reply.usage || !user) return;
     try {
       await limits.recordSpend(pool, user.id, llm.estimateCostCents(reply.usage, reply.model || SKETCH_MODEL), { byok: false });
     } catch (err) {
-      log.warn('app-sketch', 'Spend not recorded', { appId: app.id, err: err.message });
+      log.warn('app-sketch', 'Spend not recorded', { appId, err: err.message });
     }
   };
   try {
-    const maker = await makerOf(pool, user);
+    if (deps.noModel || (typeof llm.isEnabled === 'function' && !llm.isEnabled())) throw new Error('LLM not initialized');
     const call = llm.generateAppSketch({
       system: SKETCH_SYSTEM,
-      user: sketchUserPrompt({ name: app.name, brief, audience, today: now, zone: timeZone, maker }),
+      user: sketchUserPrompt({ name, brief, audience, today: now, zone: timeZone, maker }),
       model: SKETCH_MODEL,
       schema: CARD_SCHEMA,
       maxTokens: CARD_MAX_TOKENS,
-      telemetryContext: { pool, appId: app.id },
+      telemetryContext: { pool, appId },
     });
     const reply = await within(call, deps.modelWaitMs ?? MODEL_WAIT_MS);
     if (reply === TIMED_OUT) {
@@ -570,17 +578,25 @@ async function generate(pool, { app, user, brief, audience, timeZone, deps }) {
     } else {
       await recordSpend(reply);
       model = reply.model || SKETCH_MODEL;
-      card = parseCardReply(reply.text, { name: app.name, brief, today });
+      card = parseCardReply(reply.text, { name, brief, today });
       if (!card) error = 'unusable_reply';
     }
   } catch (err) {
     error = String(err && err.message || 'failed').slice(0, 200);
   }
   if (!card) {
-    card = fallbackCard({ name: app.name, brief, today });
+    card = fallbackCard({ name, brief, today });
     model = 'fallback';
-    log.warn('app-sketch', 'Card made without the model', { appId: app.id, error });
+    log.warn('app-sketch', 'Card made without the model', { appId, error });
   }
+  return { card, model, error };
+}
+
+async function generate(pool, { app, user, brief, audience, timeZone, deps }) {
+  const maker = await makerOf(pool, user).catch(() => null);
+  const { card, model, error } = await makeCard(pool, {
+    name: app.name, brief, audience, timeZone, user, maker, appId: app.id, deps,
+  });
   await saveCard(pool, { app, card, model, error, deps });
   log.info('app-sketch', 'Card ready', { appId: app.id, source: card.source });
   return readSketch(pool, app.id);
@@ -717,6 +733,7 @@ module.exports = {
   readSketch,
   sketchStatus,
   saveIcon,
+  makeCard,
   startSketch,
   whenReady,
   designFiles,
