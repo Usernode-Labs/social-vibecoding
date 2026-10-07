@@ -235,28 +235,33 @@ test('B6: the plan card, drawn in every state', () => {
   assert.match(open, /How should it remind you\?/);
   // #4046: one quiet single choice, the suggested answer already picked, and
   // no "suggested" chip beside it.
-  assert.match(open, /role="radiogroup" aria-labelledby="([^"]+)"/);
+  assert.match(open, /role="radiogroup" aria-labelledby="[^"]+" class="mt-1 flex flex-col">/, 'no box behind the answers (owner, 7 October)');
+  assert.match(open, /<label class="flex min-h-\[44px\] cursor-pointer items-center gap-2\.5 py-2 [^"]*" data-bot-answer="default">/, '44px rows with no side padding');
   assert.match(open, /data-bot-answer="default"><input type="radio" class="sr-only" name="[^"]+" checked="" value="In the app"\/>/);
   assert.match(open, /data-bot-answer="other"><input type="radio" class="sr-only" name="[^"]+" value="Phone alert"\/>/);
   assert.match(open, /<span class="font-semibold">In the app<\/span>/);
   assert.doesNotMatch(open, /suggested|aria-pressed/);
   // Build it is the one strong action, the width of the card; Change
   // something is a quiet link under it.
-  assert.match(open, /<button type="button" class="mt-3\.5 h-\[50px\] w-full rounded-full bg-\[color:var\(--accent\)\][^"]*" data-bot-plan-build="">Build it<\/button>/);
+  assert.match(open, /<button type="button" class="mt-3 h-\[50px\] w-full rounded-full bg-\[color:var\(--accent\)\][^"]*" data-bot-plan-build="">Build it<\/button>/);
   assert.match(open, /<button type="button" class="[^"]*text-violet-700[^"]*" data-bot-plan-change="">Change something<\/button>/);
   assert.doesNotMatch(open, /messages-bot-primary|messages-bot-secondary|data-bot-plan-progress/, 'no step without its host\'s progress');
-  // #4046: in the chat, the step at its top and a thin bar: the one place a step count shows.
+  // #4046: in the chat, the one place a step count shows: in words, under the
+  // title, with no bar (owner, 7 October: a calmer hierarchy).
   const waiting = draw({ progress: { line: 'Step 3 of 7', step: 3, of: 7 } });
-  assert.match(waiting, /data-bot-plan-progress=""><span class="[^"]*" role="status" data-bot-plan-progress-line="">Step 3 of 7<\/span><span class="[^"]*" role="progressbar" aria-label="Step 3 of 7" aria-valuemin="0" aria-valuemax="7" aria-valuenow="3"><span class="[^"]*" style="width:42\.9%"><\/span><\/span><\/div>/);
+  assert.match(waiting, /My plan for Plant Pal<\/div><div class="mt-0\.5 flex min-w-0" data-bot-plan-progress=""><span class="[^"]*\btext-zinc-500\b[^"]*" role="status" data-bot-plan-progress-line="">Step 3 of 7<\/span><\/div>/,
+    'the title first, the step line just under it');
+  assert.doesNotMatch(waiting, /role="progressbar"/, 'no bar');
   const built = draw({ state: 'built', choices: ['Phone alert'] });
   assert.ok(!/Build it<\/button>/.test(built));
-  assert.match(built, /<ul class="[^"]*" data-bot-plan-chosen=""><li>Phone alert<\/li><\/ul>/, 'the answer it went with, under its title');
+  assert.match(built, /<ul class="mt-2 flex flex-col text-\[0\.9375rem\] leading-5 text-zinc-900 dark:text-zinc-100" data-bot-plan-chosen=""><li>Phone alert<\/li><\/ul>/,
+    'the answer it went with, under its title, in normal ink');
   assert.ok(!/A list of your plants/.test(built), 'built, it folds to its title and its answers');
   assert.match(built, /You chose Build it/, 'with no step to say, it says what was chosen');
   const building = draw({ state: 'built', choices: ['Phone alert'], progress: { line: 'Step 4 of 7 · Build it · 10 to 25 min', step: 4, of: 7 } });
   assert.match(building, /<span class="[^"]*\btruncate\b[^"]*" role="status" data-bot-plan-progress-line="">Step 4 of 7 · Build it · 10 to 25 min<\/span>/,
     'the step line stays on one line, an ellipsis as the last resort');
-  assert.match(building, /style="width:57\.1%"/);
+  assert.match(building, /<\/div><div class="mt-0\.5[^"]*" data-bot-plan-progress="">.*<\/div><ul class="mt-2[^"]*" data-bot-plan-chosen="">/, 'title, step line, then the answers');
   assert.doesNotMatch(building, /You chose Build it/, 'the step says it: nothing said twice');
   const replaced = draw({ state: 'replaced' });
   assert.match(replaced, /Replaced by a newer plan/);

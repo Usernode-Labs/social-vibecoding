@@ -22,9 +22,11 @@ import type { HomeroomBotPlan } from './types';
  * chat to do the same.
  *
  * #4046: IN THE CHAT IT IS THE ONE PLACE A STEP COUNT SHOWS. Its host passes
- * `progress`: "Step 3 of 7" over a thin bar while the plan waits, then
- * "Step 4 of 7 · Build it · 10 to 25 min" once Build it is
- * pressed, when the card folds to its title and the answers it went with.
+ * `progress`, drawn as one quiet line under the title: "Step 3 of 7" while
+ * the plan waits, then "Step 4 of 7 · Build it · 10 to 25 min" once Build it
+ * is pressed, when the card folds to its title and the answers it went with.
+ * A calm hierarchy (owner, 7 October): the title first, the step in words
+ * with no bar, the answers as plain rows with no box behind them.
  * The request's activity card is not drawn beside it (./bot-plan.tsx
  * planLayout), so nothing is said twice.
  *
@@ -47,8 +49,8 @@ export const PLAN_STATE_LINES: Record<Exclude<PlanCardState, 'open' | 'replaced'
 };
 
 /**
- * #4046: how far along the plan's request is, at the top of the card: its
- * line, and the step it is at of how many, for the bar (null: no bar).
+ * #4046: how far along the plan's request is, under the card's title: its
+ * line, and the step it is at of how many (null when it cannot be counted).
  */
 export interface PlanProgress {
   line: string;
@@ -81,10 +83,11 @@ const SURFACES = {
   app: 'flex w-full max-w-sm flex-col rounded-[20px] bg-[color:var(--dc-sheet-solid)] px-4 pb-3 pt-4 text-left shadow-[inset_0_0_0_1px_var(--app-sheet-line)]',
 } as const;
 
-// One answer of a choice, picked or not.
+// One answer of a choice, picked or not: a 44px row with no side padding, so
+// its radio lines up with the card's text, and a hairline between rows.
 const ANSWER_ROW = {
-  first: 'flex min-h-[40px] cursor-pointer items-center gap-2.5 px-3 py-2 text-[0.9375rem] leading-5 text-zinc-900 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-inset has-[:focus-visible]:ring-[color:var(--accent)] dark:text-zinc-100',
-  next: 'flex min-h-[40px] cursor-pointer items-center gap-2.5 px-3 py-2 text-[0.9375rem] leading-5 text-zinc-900 shadow-[inset_0_1px_0_var(--app-sheet-line)] has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-inset has-[:focus-visible]:ring-[color:var(--accent)] dark:text-zinc-100',
+  first: 'flex min-h-[44px] cursor-pointer items-center gap-2.5 py-2 text-[0.9375rem] leading-5 text-zinc-900 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-inset has-[:focus-visible]:ring-[color:var(--accent)] dark:text-zinc-100',
+  next: 'flex min-h-[44px] cursor-pointer items-center gap-2.5 py-2 text-[0.9375rem] leading-5 text-zinc-900 shadow-[inset_0_1px_0_var(--app-sheet-line)] has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-inset has-[:focus-visible]:ring-[color:var(--accent)] dark:text-zinc-100',
 } as const;
 
 export function PlanCardView({
@@ -101,7 +104,6 @@ export function PlanCardView({
     : shown === 'built' ? choices : [];
   // The App tab's card keeps its words until it goes (#4053).
   const title = surface === 'app' ? `Here’s my plan for ${appName}:` : `My plan for ${appName}`;
-  const stepped = progress && progress.step && progress.of ? { step: progress.step, of: progress.of } : null;
 
   function choose(index: number, answer: string) {
     setPicked((current) => current.map((value, i) => (i === index ? answer : value)));
@@ -109,35 +111,21 @@ export function PlanCardView({
 
   return (
     <div className={SURFACES[surface]} role="group" aria-label={`Plan for ${appName}`} data-bot-plan={shown}>
-      {progress ? (
-        <div className="mb-3.5 flex flex-col gap-1.5" data-bot-plan-progress="">
-          {/* One line, whatever the width: an ellipsis is the last resort (owner, 7 October). */}
-          <span className="min-w-0 truncate text-[0.8125rem] leading-4 text-zinc-500 dark:text-zinc-400" role="status" data-bot-plan-progress-line="">{progress.line}</span>
-          {stepped ? (
-            <span
-              className="block h-1 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-700"
-              role="progressbar"
-              aria-label={`Step ${stepped.step} of ${stepped.of}`}
-              aria-valuemin={0}
-              aria-valuemax={stepped.of}
-              aria-valuenow={stepped.step}
-            >
-              <span
-                className="block h-full rounded-full bg-[color:var(--accent)]"
-                style={{ width: `${Math.round((Math.min(stepped.step, stepped.of) / stepped.of) * 1000) / 10}%` }}
-              />
-            </span>
-          ) : null}
-        </div>
-      ) : null}
       <div className={`text-[1.0625rem] font-bold leading-[1.375rem] ${shown === 'replaced' ? 'text-zinc-500 dark:text-zinc-400' : 'text-zinc-900 dark:text-zinc-100'}`}>
         {title}
       </div>
+      {progress ? (
+        // The step, in words, under the title: one line whatever the width,
+        // an ellipsis the last resort (owner, 7 October).
+        <div className="mt-0.5 flex min-w-0" data-bot-plan-progress="">
+          <span className="min-w-0 truncate text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400" role="status" data-bot-plan-progress-line="">{progress.line}</span>
+        </div>
+      ) : null}
       {shown === 'replaced' ? (
         <p className="messages-bot-answered">Replaced by a newer plan</p>
       ) : shown === 'built' ? (
         chosen.some(Boolean) ? (
-          <ul className="mt-1 flex flex-col text-sm leading-5 text-zinc-500 dark:text-zinc-400" data-bot-plan-chosen="">
+          <ul className="mt-2 flex flex-col text-[0.9375rem] leading-5 text-zinc-900 dark:text-zinc-100" data-bot-plan-chosen="">
             {chosen.map((answer, i) => (answer ? <li key={plan.questions[i]?.question || i}>{answer}</li> : null))}
           </ul>
         ) : null
@@ -154,7 +142,7 @@ export function PlanCardView({
       {open ? plan.questions.map((q, index) => (
         <div key={q.question} className={index === 0 ? 'mt-3.5 pt-3 shadow-[inset_0_1px_0_var(--app-sheet-line)]' : 'mt-3'}>
           <p id={`${uid}-q${index}`} className="text-[0.9375rem] font-[650] leading-5 text-zinc-900 dark:text-zinc-100">{q.question}</p>
-          <div role="radiogroup" aria-labelledby={`${uid}-q${index}`} className="mt-2 flex flex-col overflow-hidden rounded-[14px] bg-zinc-50 dark:bg-white/[0.06]">
+          <div role="radiogroup" aria-labelledby={`${uid}-q${index}`} className="mt-1 flex flex-col">
             {q.answers.map((answer, j) => {
               const on = (picked[index] || q.answers[0]) === answer;
               return (
@@ -185,7 +173,7 @@ export function PlanCardView({
         <>
           <button
             type="button"
-            className="mt-3.5 h-[50px] w-full rounded-full bg-[color:var(--accent)] text-[1.0625rem] font-semibold text-[color:var(--accent-ink)] hover:bg-[color:var(--accent-light)]"
+            className="mt-3 h-[50px] w-full rounded-full bg-[color:var(--accent)] text-[1.0625rem] font-semibold text-[color:var(--accent-ink)] hover:bg-[color:var(--accent-light)]"
             data-bot-plan-build=""
             onClick={() => onBuild?.(picked)}
           >Build it</button>
