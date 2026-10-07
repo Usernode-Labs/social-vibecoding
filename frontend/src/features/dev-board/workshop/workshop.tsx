@@ -1330,7 +1330,7 @@ function factsFor(row: QueueRow, voted: string | null): Fact[] {
   } else if (row.kind === 'vote' && row.tally) {
     // The Communities feed's rows (#3488): the counts, without a threshold
     // it has not worked out for each project. A zero says nothing.
-    if (voted) out.push({ key: 'voted', tone: 'ok', text: `You voted ${voted}` });
+    if (voted) out.push({ key: 'voted', tone: 'ok', text: youAnswered(row, voted) });
     const said = [row.tally.yes ? `${row.tally.yes} yes` : '', row.tally.no ? `${row.tally.no} no` : ''].filter(Boolean).join(' · ');
     if (said) out.push({ key: 'tally', tone: undefined, text: said });
   }
@@ -1346,7 +1346,9 @@ function factsFor(row: QueueRow, voted: string | null): Fact[] {
  * #3977: a change on a project that is just yours, whose Yes is the one it
  * needs (B7: the row's `yes.approve`, from `_cardVoteButtonSpecs`), is
  * approved rather than voted on, here as on its card: the rail, the sheet,
- * the swipe and the confirmation say Approve and Don't approve.
+ * the swipe and the confirmation say Approve and Don't approve. The
+ * Communities feed's rows carry it too (#4270: the needs feed's `approve`,
+ * features/workshop/needs-reel.tsx).
  */
 function approves(row: QueueRow): boolean {
   return row.kind === 'vote' && !!(row.yes && row.yes.approve);

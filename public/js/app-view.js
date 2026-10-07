@@ -14267,19 +14267,10 @@ const AppView = {
         act: () => window.open(pr.pr_url, '_blank', 'noopener'),
       });
     }
-    // B7: on a project that is just the viewer's, the vote is one-tap
-    // Approve, and its No lives here, last and red: today's No, with its
-    // line asked for as any No's is.
-    if (!ro && pr.status === 'promoted' && pr.my_vote !== 'no' && AppView._approveSolo(pr)) {
-      const epoch = Number.isFinite(parseInt(pr.approval_epoch, 10)) ? parseInt(pr.approval_epoch, 10) : null;
-      items.push({
-        label: 'Don’t approve',
-        icon: 'withdraw',
-        title: 'Say no to this change, with a line on why',
-        danger: true,
-        act: () => AppView.castVote(pr.id, 'no', ...(epoch === null ? [] : [epoch])),
-      });
-    }
+    // #4270: B7's "Don't approve" item is gone from here. Since #3977 a
+    // Just-you change's Approve opens the vote picker, whose other side is
+    // Don't approve with its line in the box; this was a second way to the
+    // same No, asking for the line by prompt instead.
     return items;
   },
 

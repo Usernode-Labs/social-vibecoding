@@ -74,6 +74,7 @@ const log = require('../services/logger');
 const { currentVotePredicateSql, countedVotePredicateSql } = require('../services/pr-vote-revision');
 const { governanceKindsSql } = require('../services/governance-kinds');
 const communities = require('../services/communities');
+const governance = require('../services/governance');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
@@ -290,7 +291,7 @@ const ITEMS_SQL = `
 // GET /api/workshop/needs-feed (#3270)
 //      → { items: FeedItem[] }
 //   FeedItem = { kind: 'proposal'|'governance', id, title, summary, author,
-//                number, epoch, at, yes, no,
+//                number, epoch, at, yes, no, approve?,
 //                app: { slug, name, icon_url, icon_emoji } }
 //
 // The Communities screen's Needs you tab as ONE FEED: every decision owed by
@@ -306,6 +307,13 @@ const ITEMS_SQL = `
 // proposal's summary, or a group decision's description), who asked, the
 // tally so far, and the approval epoch a vote must carry (#2038). Bounded to
 // NEEDS_FEED_MAX; the tab says so when it stops there.
+//
+// And whether it is approved rather than voted on (#4270, B7): `approve` on a
+// change on a project that is just the viewer's whose Yes is the one it
+// needs, so the feed says Approve / Don't approve where its card does. The
+// query says which rows are on such a project (`solo`: the audience is
+// 'solo' and the viewer's vote counts there); withVotesRequired works out
+// how many Yes votes those need; approvedAlone decides.
 //
 // The words are the Description sheet's as well since #3488 (the feed is a
 // project's own NeedsFeed now, which renders them in full there), so they
@@ -341,9 +349,12 @@ const NEEDS_FEED_SQL = `
       LEFT JOIN users u ON u.id = i.created_by
      WHERE ${OWED_GOVERNANCE_WHERE}
   )
-  SELECT a.slug, a.name, a.icon_image_id, a.icon_emoji,
+  SELECT a.id AS app_id, a.slug, a.name, a.icon_image_id, a.icon_emoji,
          o.kind, o.id, o.title, o.summary, o.author, o.number, o.epoch,
-         o.at, o.yes, o.no
+         o.at, o.yes, o.no,
+         (o.kind = 'proposal'
+           AND (${communities.audienceSql('a', '(SELECT COUNT(*) FROM community_members m WHERE m.community_id = a.community_id)')}) = 'solo'
+           AND counts_toward_outcome($1, a.id)) AS solo
     FROM owed o
     JOIN apps a ON a.id = o.app_id
     LEFT JOIN app_collaborators me
@@ -419,6 +430,47 @@ async function owedByCommunity(pool, userId, { showSelfHosted = false, isAdmin =
   }));
 }
 
+/**
+ * #4270: how many Yes votes each of NEEDS_FEED_SQL's `solo` rows needs, as
+ * `votes_required` on the row, worked out as GET /api/apps/:slug/promoted
+ * works it out for the change's card: the project's governance and
+ * electorate, then the merge gate over the counted votes. One read per
+ * project, and only for those rows; a project whose read fails is left
+ * without one. Resolves the rows. Exported for tests.
+ */
+async function withVotesRequired(pool, rows) {
+  const byApp = new Map();
+  for (const row of rows) {
+    if (row.solo !== true) continue;
+    if (!byApp.has(row.app_id)) byApp.set(row.app_id, []);
+    byApp.get(row.app_id).push(row);
+  }
+  await Promise.all([...byApp].map(async ([appId, list]) => {
+    try {
+      const gov = await governance.getGovernance(pool, appId);
+      const electorate = await governance.getElectorate(pool, appId, gov);
+      for (const row of list) {
+        row.votes_required = governance.computeGate(gov, electorate.active, row.yes, row.no, row.at, null).required;
+      }
+    } catch (err) {
+      log.warn('workshop-overview', 'Could not work out the votes a solo project needs', { appId, message: err.message });
+    }
+  }));
+  return rows;
+}
+
+/**
+ * B7 for one of the feed's rows, the rule AppView._approveSolo applies to a
+ * card: a change on a project that is just the viewer's, whose vote counts,
+ * and whose Yes is the one it needs. A row with no count worked out needs
+ * one, as a card without votes_required does.
+ */
+function approvedAlone(row) {
+  if (row.solo !== true) return false;
+  const needed = parseInt(row.votes_required, 10);
+  return !Number.isFinite(needed) || needed <= 1;
+}
+
 /** Shape NEEDS_FEED_SQL's rows for the client. Exported for tests. */
 function shapeNeedsFeed(rows) {
   return rows.map((row) => ({
@@ -432,6 +484,7 @@ function shapeNeedsFeed(rows) {
     at: row.at instanceof Date ? row.at.toISOString() : (row.at || null),
     yes: row.yes == null ? null : Number(row.yes),
     no: row.no == null ? null : Number(row.no),
+    ...(approvedAlone(row) ? { approve: true } : {}),
     app: {
       slug: row.slug,
       name: row.name || row.slug,
@@ -599,7 +652,7 @@ function workshopOverviewRoutes(config) {
       const { rows } = await pool.query(NEEDS_FEED_SQL, [
         req.user.id, showSelfHosted, !!req.user.isAdmin, NEEDS_FEED_MAX,
       ]);
-      const items = shapeNeedsFeed(rows);
+      const items = shapeNeedsFeed(await withVotesRequired(pool, rows));
       if (IS_STAGING && req.query.demo === '1') {
         return res.json({ items: withDemoNeedsFeed(items), max: NEEDS_FEED_MAX });
       }
@@ -616,7 +669,7 @@ function workshopOverviewRoutes(config) {
 module.exports = {
   workshopOverviewRoutes, withDemoCounts, DEMO_COUNTS, COUNTS_SQL,
   withDemoItems, DEMO_ITEMS, ITEMS_SQL, ITEMS_PER_APP, ITEMS_TOTAL, groupItems,
-  NEEDS_FEED_SQL, NEEDS_FEED_MAX, shapeNeedsFeed, DEMO_NEEDS_FEED, withDemoNeedsFeed,
+  NEEDS_FEED_SQL, NEEDS_FEED_MAX, shapeNeedsFeed, withVotesRequired, DEMO_NEEDS_FEED, withDemoNeedsFeed,
   OWED_BY_COMMUNITY_SQL, owedByCommunity,
   MY_SESSIONS_WHERE, MY_PROPOSALS_WHERE,
 };
