@@ -160,6 +160,13 @@ function failingTests(lines) {
 const EXCERPT_KEYS = new Set(['failureType', 'error', 'code', 'name', 'expected', 'actual', 'operator', 'cause', 'stack']);
 const EXCERPT_STACK_LINES = 8;
 const EXCERPT_OUTPUT_LINES = 10;
+// The proposal's own tests write this output, so its size and shape are the
+// author's to choose. Every walk below is bounded: only the output's tail is
+// read, one YAML block is read for at most this many lines, and at most this
+// many nested failures are kept per test.
+const EXCERPT_INPUT_MAX = 2 * 1024 * 1024;
+const EXCERPT_YAML_LINES_MAX = 200;
+const EXCERPT_NESTED_MAX = 5;
 
 // The kept keys of the YAML block under the `not ok` line at `at`, dedented,
 // and the failureType it reported. A key's multi-line value (`error: |-`,
@@ -173,7 +180,8 @@ function yamlExcerpt(lines, at) {
   let keep = false;
   let cont = 0;
   let contMax = Infinity;
-  for (let j = at + 2; j < lines.length; j += 1) {
+  const end = Math.min(lines.length, at + 2 + EXCERPT_YAML_LINES_MAX);
+  for (let j = at + 2; j < end; j += 1) {
     const l = lines[j];
     const lead = /^\s*/.exec(l)[0].length;
     if (l.trim() === '...' && lead <= keyIndent) break;
@@ -208,8 +216,12 @@ function clipExcerpt(text, max) {
 // (services/unit-suite-row.js); a test that no longer fits is left out
 // rather than cut to nothing. Empty when the output is not TAP.
 function failureExcerpts(stdout, stderr) {
-  const lines = `${String(stdout || '')}\n${String(stderr || '')}`.split('\n');
-  const root = workspaceRoot(lines);
+  let all = `${String(stdout || '')}\n${String(stderr || '')}`;
+  // The root sentinel is printed first; keep it when the tail is taken.
+  const rootLine = workspaceRoot(all.slice(0, 4096).split('\n'));
+  if (all.length > EXCERPT_INPUT_MAX) all = all.slice(-EXCERPT_INPUT_MAX);
+  const lines = all.split('\n');
+  const root = rootLine || workspaceRoot(lines);
   const failures = failingTests(lines);
   const out = [];
   let used = 0;
@@ -217,16 +229,20 @@ function failureExcerpts(stdout, stderr) {
   // after it: its own subtests and the output it printed.
   const topLevel = [];
   for (let i = 0; i < lines.length; i += 1) if (/^(not ok|ok)\b/.test(lines[i])) topLevel.push(i);
+  let t = -1;
   for (const f of failures) {
     if (out.length >= FAILURE_EXCERPT_TESTS_MAX) break;
-    const prev = topLevel.filter((i) => i < f.at).pop();
-    const start = prev == null ? 0 : prev + 1;
+    while (t + 1 < topLevel.length && topLevel[t + 1] < f.at) t += 1;
+    const start = t < 0 ? 0 : topLevel[t] + 1;
+    let nestedCount = 0;
     const output = [];
     const nested = [];
     for (let i = start; i < f.at; i += 1) {
       const l = lines[i];
       const nm = /^\s+not ok\b\s*\d*\s*(?:-\s*)?(.*)$/.exec(l);
       if (nm && !/\s#\s*(SKIP|TODO)\b/i.test(` ${nm[1]}`)) {
+        if (nestedCount >= EXCERPT_NESTED_MAX) continue;
+        nestedCount += 1;
         const y = yamlExcerpt(lines, i);
         if (y.failureType !== 'subtestsFailed') nested.push(`▸ ${nm[1].trim()}`, ...y.text.map((t) => `  ${t}`));
         continue;

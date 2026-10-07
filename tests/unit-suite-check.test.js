@@ -506,3 +506,21 @@ test('non-TAP output has no excerpts; the row carries them only on failure', asy
   const passed = await unitSuite.outcomeFromLog({ pool: { query: async () => ({ rows: [] }) }, appId: 10, sessionId: 7, succeeded: true, stdout: 'ok 1 - a\n' });
   assert.equal('failureDetails' in passed.row, false);
 });
+
+// #3978: the proposal's own tests write the output these excerpts read, so a
+// crafted or runaway output must not make the parse quadratic or unbounded.
+test('failure excerpts stay bounded on huge or crafted test output', () => {
+  const { failureExcerpts } = require('../src/services/unit-suite');
+  const nested = [];
+  for (let i = 0; i < 20000; i += 1) {
+    nested.push(`    not ok ${i} - nested ${i}`, '      ---', '      error: boom', ...Array(50).fill('        deep'));
+  }
+  const tops = [];
+  for (let i = 0; i < 2000; i += 1) tops.push(`not ok ${i} - top ${i}`, '  ---', '  error: top failed', '  ...');
+  const out = [...nested, ...tops].join('\n');
+  const started = Date.now();
+  const details = failureExcerpts(out, '');
+  assert.ok(Date.now() - started < 5000, `parsed in ${Date.now() - started} ms`);
+  assert.ok(details.length <= 10);
+  for (const d of details) assert.ok(d.excerpt.length <= 1500);
+});
