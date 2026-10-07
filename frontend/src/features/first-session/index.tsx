@@ -59,6 +59,7 @@ import { Wordmark } from '@/components/ui/wordmark';
 
 import { pushDismissible, type Release } from '../../lib/back-stack';
 import { invalidateAppAllowance } from '../dialogs/app-allowance-store.js';
+import { cardPosition } from './card-placement';
 import { joinPicture, JoinedPicture } from './joined-picture';
 import { type Made, type MakeEntry, MakeScreen } from './make';
 import { MadeScreen, madeAppOf, madeAppUrl } from './made';
@@ -360,20 +361,15 @@ function boxKey(b: Box | null | undefined): string {
   return b ? `${Math.round(b.left)},${Math.round(b.top)},${Math.round(b.width)},${Math.round(b.height)}` : '';
 }
 
-/** The coach card's position for a target box, as inline style. */
+/** The coach card's position for a target box, as inline style (./card-placement.ts). */
 export function cardPlacement(box: Box | null, step: TourStep, viewport: { width: number; height: number }): React.CSSProperties {
-  const H = viewport.height;
   const tabs = document.getElementById('platform-tabs');
-  const tabsTop = tabs && tabs.getBoundingClientRect().height ? tabs.getBoundingClientRect().top : H;
-  if (!box) return { bottom: H - tabsTop + 16 };
-  if (step.place && typeof step.place === 'object') {
-    const above = document.querySelector(step.place.above);
-    if (above) return { bottom: H - above.getBoundingClientRect().top + 12 };
-  }
-  if (step.place === 'bottom') return { bottom: H - tabsTop + 16 };
-  if (box.height > H * 0.45) return { bottom: Math.max(16, H - (box.top + box.height) + 20) };
-  if (box.top + box.height / 2 > H / 2) return { bottom: H - box.top + PAD + 12 };
-  return { top: box.top + box.height + PAD + 12 };
+  const above = step.place && typeof step.place === 'object' ? document.querySelector(step.place.above) : null;
+  return cardPosition(box, step.place, viewport, {
+    bar: tabs ? tabs.getBoundingClientRect() : null,
+    aboveTop: above ? above.getBoundingClientRect().top : null,
+    pad: PAD,
+  });
 }
 
 /** The tour over the live shell (see the header); exported so a test can draw its card. */
