@@ -93,6 +93,16 @@ export function AppContextIsland() {
   // to the step that asks for it again ("Next on step 4 goes back to step
   // 3"). While the tour is up it decides when the menu closes: its
   // `closesPanel` steps shut it through AppContext.close().
+  //
+  // A CLICK INSIDE THE APP'S FRAME NEVER REACHES THE CLICK LISTENER. It
+  // happens in the frame's own document (#4260); the shell only sees its
+  // window lose focus, with the frame element left holding
+  // document.activeElement. So beside the click listener the effect binds
+  // `blur` on window and closes through the same AppContext.close() — but
+  // only when an IFRAME holds focus, so another browser window or dev tools
+  // does not close the menu, and with the tour and mid-adoption guards the
+  // click path has. The listener comes and goes with the menu, exactly as
+  // the click one does.
   useEffect(() => {
     if (!open || adopted) return undefined;
     const onDoc = (event: Event) => {
@@ -105,7 +115,18 @@ export function AppContextIsland() {
       void AppContext.close();
     };
     document.addEventListener('click', onDoc, true);
-    return () => document.removeEventListener('click', onDoc, true);
+    const onBlur = () => {
+      if (document.activeElement?.tagName !== 'IFRAME') return;
+      const tour = document.getElementById(TOUR_ID);
+      if (tour && !tour.classList.contains('hidden')) return;
+      if (AppContext._sheet) return;
+      void AppContext.close();
+    };
+    window.addEventListener('blur', onBlur);
+    return () => {
+      document.removeEventListener('click', onDoc, true);
+      window.removeEventListener('blur', onBlur);
+    };
   }, [open, adopted]);
 
   // `?shot=app-about`: the menu open on its About pane, for the declared

@@ -272,6 +272,43 @@ test('no dim at sm+, and an outside click still lands', () => {
     'clicking it closes the sheet');
 });
 
+// ── A click inside the app's frame dismisses it too (#4260) ───────────
+
+test('a click that lands in an app frame closes the menu through window blur', () => {
+  // A click inside the app's <iframe> happens in the frame's own document and
+  // never reaches the capture-phase click listener above: the shell only sees
+  // its window lose focus, with the frame element left holding
+  // document.activeElement. So the dismissal effect binds a second listener —
+  // blur on window — beside the click one, and closes through the same
+  // AppContext.close() the click path and Escape use.
+  const at = ISLAND.indexOf('const onDoc');
+  assert.ok(at > 0, 'the dismissal effect binds its click listener');
+  const effect = ISLAND.slice(at, ISLAND.indexOf('}, [open, adopted]);', at));
+
+  assert.match(effect, /window\.addEventListener\('blur', onBlur\)/,
+    'blur on window is bound inside the dismissal effect, beside the click');
+  assert.match(effect, /document\.removeEventListener\('click', onDoc, true\)/);
+  assert.match(effect, /window\.removeEventListener\('blur', onBlur\)/,
+    'and both listeners come away with the menu');
+
+  // THE CLOSE IS GATED ON THE FRAME. Another browser window, or dev tools,
+  // blurs the shell's window too, but neither leaves an IFRAME holding
+  // document.activeElement — those must not close the menu.
+  assert.match(effect, /document\.activeElement\?\.tagName !== 'IFRAME'/,
+    'the close fires only when an IFRAME element holds focus');
+
+  // The click path's guards carry over. While the welcome tour is up it
+  // decides when the menu closes (its root is always in the document and
+  // carries `hidden` while it is not running), and a sheet mid adoption into
+  // the touch kit is spared, exactly as for clicks.
+  assert.match(effect, /if \(tour && !tour\.classList\.contains\('hidden'\)\) return;/,
+    'the tour decides while it is up, as for clicks');
+  assert.match(effect, /if \(AppContext\._sheet\) return;/,
+    'a sheet mid adoption is spared, as for clicks');
+  assert.match(effect, /void AppContext\.close\(\);/,
+    'the close is the one the click path uses');
+});
+
 // ── The other two presentations are untouched ──────────────────────────
 
 test('below sm it is still a bottom sheet, dim and all', () => {
