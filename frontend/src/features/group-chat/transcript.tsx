@@ -73,6 +73,7 @@ import { EventRow } from './proposal-event';
 import { QuietCard } from './quiet-card';
 import { swatchFor } from './swatch';
 import { LinkEmbeds } from '../messages/link-cards';
+import { openAppTarget } from '../messages/bot-shared';
 import { setUserBlocked } from '../messages/store';
 import { firstUnreadId, transcriptRow } from '../messages/unread-anchor';
 import { MessageActionBar, MessageMenu, placementFor, type MenuItem } from '../message-actions/action-bar';
@@ -787,6 +788,19 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
               data-pr-number={msg.voteRef.prNumber}
             />
           ) : null}
+          {/* #4238: Homeroom bot's first-version line opens the app. */}
+          {msg.openApp ? (
+            <Button
+              type="button"
+              data-gc-open-app=""
+              onClick={() => openAppTarget(msg.openApp?.target)}
+              variant="pillAccent"
+              size="sm"
+              className="mt-2 font-semibold"
+            >
+              {msg.openApp.label}
+            </Button>
+          ) : null}
           {grouped && msg.editedTitle ? (
             <span className="gc-msg-edited" title={msg.editedTitle}>edited</span>
           ) : null}
@@ -1006,7 +1020,7 @@ export function TranscriptRows({ view, source }: {
   // every render would redraw its memo()'d row every time.
   const folded = useMemo(() => foldRepeats(view.messages), [view.messages]);
   const rows = folded.filter((m) => !main || drawnInGeneralChat(m));
-  const quiet = (main || chat) && view.lead.quiet && !view.messages.some((m) => m.kind === 'message')
+  const quiet = (main || chat) && view.lead.quiet && !view.messages.some((m) => m.kind === 'message' && !m.openApp)
     ? view.lead.quiet
     : null;
   // The general chat's "New" line: above the first message after where

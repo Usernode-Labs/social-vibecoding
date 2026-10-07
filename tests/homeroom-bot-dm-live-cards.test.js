@@ -519,3 +519,32 @@ test('Page Turners, read as it stands: the ready card after each Yes and after t
         ['done', 'checking', at('11:10'), at('11:56'), at('12:20'), 'first_version'], '#4242: no ready card has gone out to her yet');
     });
   });
+
+// ── #4238: a new project's first version, said in its channel ──
+
+test('#4238: a first version is announced once in the project\'s channel, by the bot, with its Open button', async () => {
+  assert.equal(dm.firstVersionText({ appName: 'Page Turners', live: true }),
+    'I\'ve made the first version of Page Turners! Let me know if you need anything else.');
+  assert.equal(dm.firstVersionText({ appName: 'Page Turners', live: false }),
+    'I\'ve made the first version of Page Turners! It will be ready to open in a few minutes. Let me know if you need anything else.');
+  const sent = [];
+  const ws = { async sendFirstVersionMessage(_pool, appId, msg) { sent.push([appId, msg]); return { id: 1 }; } };
+  const bot = { id: 42, username: 'homeroom_bot' };
+  const run = { app_id: 7, slug: 'page-turners', name: 'Page Turners' };
+  assert.deepEqual(await dm.announceFirstVersion({}, run, { live: true, deps: { ws, bot } }), { id: 1 });
+  assert.deepEqual(sent, [[7, {
+    user: bot,
+    content: 'I\'ve made the first version of Page Turners! Let me know if you need anything else.',
+    metadata: { appSlug: 'page-turners', actions: [dm.openAppAction({ slug: 'page-turners', appName: 'Page Turners' })] },
+  }]]);
+  // It never stops the DM: a failure is logged and answered with null.
+  const broken = { async sendFirstVersionMessage() { throw new Error('db down'); } };
+  assert.equal(await dm.announceFirstVersion({}, run, { deps: { ws: broken, bot } }), null);
+
+  // Only a first version, and never the platform's own app.
+  const merged = read('src/services/homeroom-bot-dm.js');
+  const fn = merged.slice(merged.indexOf('async function noteProposalMerged('), merged.indexOf('// ── A person writing to the bot'));
+  assert.match(fn, /if \(requester\?\.firstVersion && !platform\) await announceFirstVersion\(pool, run, \{ live, deps \}\);/);
+  assert.ok(fn.indexOf('announceFirstVersion(') < fn.indexOf('if (!requester || !hasBot(settings, requester)) return null;'),
+    'said in the channel whether or not the maker gets the DM');
+});
