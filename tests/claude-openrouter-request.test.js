@@ -17,7 +17,7 @@ const http = require('node:http');
 const { spawn } = require('node:child_process');
 
 const {
-  startMessagesAdapter, applyTurnPolicy, makeRedactor, claudeChildEnv,
+  startMessagesAdapter, applyTurnPolicy, makeRedactor, claudeChildEnv, PROVIDER_PREFERENCES,
 } = require('../worker/claude-openrouter-request');
 
 const ROOT = path.join(__dirname, '..');
@@ -28,7 +28,7 @@ test('every request is pinned to the session model and capped at its output limi
   assert.deepEqual(
     applyTurnPolicy({ model: 'claude-haiku-4-5', max_tokens: 200_000, messages: [] },
       { model: GLM, maxOutputTokens: 64_000, countTokens: false }),
-    { model: GLM, max_tokens: 64_000, messages: [] },
+    { model: GLM, max_tokens: 64_000, messages: [], provider: PROVIDER_PREFERENCES },
   );
   // A smaller ask is kept; a missing or invalid one gets the cap.
   assert.equal(applyTurnPolicy({ max_tokens: 4096 }, { model: GLM, maxOutputTokens: 64_000 }).max_tokens, 4096);
@@ -53,6 +53,26 @@ test('every request is pinned to the session model and capped at its output limi
     applyTurnPolicy({ model: 'x', messages: [] }, { model: GLM, maxOutputTokens: 10, countTokens: true }),
     { model: GLM, messages: [] },
   );
+});
+
+test('every model request prefers hosts that answer promptly, without excluding any or overriding a preference sent', () => {
+  // A GLM build on 2026-10-06 sat on a host averaging 44 s a request until
+  // its clock ran out. OpenRouter moves a host that misses these to the end
+  // of its list; it never drops one, and price still decides among the rest.
+  assert.deepEqual(PROVIDER_PREFERENCES, {
+    preferred_max_latency: { p90: 15 },
+    preferred_min_throughput: { p50: 30 },
+  });
+  assert.equal(Object.isFrozen(PROVIDER_PREFERENCES), true);
+  const body = applyTurnPolicy({ max_tokens: 10, messages: [] }, { model: GLM, maxOutputTokens: 64_000 });
+  assert.deepEqual(body.provider, PROVIDER_PREFERENCES);
+  assert.equal(body.provider.sort, undefined, 'no sort or order: OpenRouter keeps balancing by price');
+  assert.equal(body.provider.order, undefined);
+  const asked = applyTurnPolicy({ max_tokens: 10, provider: { preferred_max_latency: 5, zdr: true } }, { model: GLM, maxOutputTokens: 64_000 });
+  assert.deepEqual(asked.provider, { preferred_max_latency: 5, preferred_min_throughput: { p50: 30 }, zdr: true });
+  assert.equal(applyTurnPolicy({ messages: [] }, { model: GLM, countTokens: true }).provider, undefined, 'counting tokens is not routed');
+  // The Codex listener asks for the same.
+  assert.deepEqual(require('../worker/codex-openrouter-request').PROVIDER_PREFERENCES, PROVIDER_PREFERENCES);
 });
 
 test('the thinking level is sent as output_config.effort, which OpenRouter maps for every model', () => {

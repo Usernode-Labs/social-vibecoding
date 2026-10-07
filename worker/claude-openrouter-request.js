@@ -263,8 +263,24 @@ function openRouterWebSearch(tool) {
   return { type: 'openrouter:web_search', parameters };
 }
 
-// Pin the model, cap the reply, keep the input text, set the thinking level
-// and route web search to OpenRouter. Exported for tests: this is the policy.
+// Which of a model's hosts OpenRouter tries first (provider routing). Left
+// to itself it balances by price, and its prompt-cache stickiness then keeps
+// a turn on whichever host the turn's first request landed on. A GLM build on
+// 2026-10-06 landed on a host averaging 44 s a request, against 7 s on the
+// host that served the same build again, and ran out its 40 minutes before
+// it ever opened the in-loop browser. These preferences only reorder: a host
+// whose time to first token is over 15 s at p90, or whose median output is
+// under 30 tokens a second, over OpenRouter's last few minutes, is tried after
+// the hosts that meet them, never excluded, and price still decides among
+// the rest. Kept in step with the other OpenRouter listener (tests pin it).
+const PROVIDER_PREFERENCES = Object.freeze({
+  preferred_max_latency: Object.freeze({ p90: 15 }),
+  preferred_min_throughput: Object.freeze({ p50: 30 }),
+});
+
+// Pin the model, cap the reply, keep the input text, set the thinking level,
+// prefer hosts that answer promptly, and route web search to OpenRouter.
+// Exported for tests: this is the policy.
 function applyTurnPolicy(body, {
   model, maxOutputTokens, countTokens, reasoningEffort = null, imageInput = false, documentInput = false,
 }) {
@@ -278,6 +294,9 @@ function applyTurnPolicy(body, {
       : message));
   }
   if (countTokens) return body;
+  // Any preference the request already carries is kept.
+  const asked = body.provider && typeof body.provider === 'object' && !Array.isArray(body.provider) ? body.provider : {};
+  body.provider = { ...PROVIDER_PREFERENCES, ...asked };
   if (Array.isArray(body.tools)) {
     body.tools = body.tools.map((tool) => (tool && typeof tool.type === 'string' && ANTHROPIC_WEB_SEARCH.test(tool.type)
       ? openRouterWebSearch(tool)
@@ -589,5 +608,5 @@ if (require.main === module) {
 }
 
 module.exports = {
-  startMessagesAdapter, applyTurnPolicy, makeRedactor, claudeChildEnv, runClaude, replyFields,
+  startMessagesAdapter, applyTurnPolicy, makeRedactor, claudeChildEnv, runClaude, replyFields, PROVIDER_PREFERENCES,
 };
