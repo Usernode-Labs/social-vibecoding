@@ -72,7 +72,7 @@ test('the invite\'s Join sheet starts with a phone number when the server offers
   assert.match(phone, />Text me a code</);
   assert.match(phone, /Already on Homeroom\? <a href="#login" data-sign-in-sheet-other-ways=""[^>]*>Sign in another way<\/a>/);
   // Google's notice, for the badge the sheet hides, is in the fine print.
-  assert.match(phone, /data-terms-notice="recaptcha"[^>]*>By continuing, you agree to Homeroom&#x27;s (<!-- -->)?terms(<!-- -->)? and Google&#x27;s (<!-- -->)?<a href="https:\/\/policies\.google\.com\/privacy"[^>]*>privacy policy<\/a>(<!-- -->)? and (<!-- -->)?<a href="https:\/\/policies\.google\.com\/terms"[^>]*>terms<\/a>(<!-- -->)? \(reCAPTCHA\)(<!-- -->)?\.<\/p>/);
+  assert.match(phone, /data-terms-notice="recaptcha"[^>]*>By continuing, you agree to Homeroom&#x27;s (<!-- -->)?terms(<!-- -->)? and Google&#x27;s (<!-- -->)?<a href="https:\/\/policies\.google\.com\/privacy"[^>]*>Privacy Policy<\/a>(<!-- -->)? and (<!-- -->)?<a href="https:\/\/policies\.google\.com\/terms"[^>]*>Terms of Service<\/a>(<!-- -->)? \(reCAPTCHA\)(<!-- -->)?\.<\/p>/);
   assert.doesNotMatch(phone, /Continue with Apple|Sign in with a password|This makes your account/, 'the other ways are one tap away, not first');
   assert.doesNotMatch(phone, /—/);
   // Without the offer it is the sheet it was.
