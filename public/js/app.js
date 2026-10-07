@@ -4953,6 +4953,7 @@ const App = {
         // `#app/<slug>/dev/sessions/<id>`): no history entry of its own, so
         // Back from the chat still lands on the inbox it was opened from.
         const agent = App._messagesAgentThread(parts);
+        if (agent && agent.kind === 'agent') App._takeAgentFlow(hash, fragQuery);
         if (agent) {
           if (!window.matchMedia('(min-width: 768px)').matches) {
             if (agent.kind === 'session' && typeof Improve !== 'undefined') {
@@ -5024,6 +5025,7 @@ const App = {
         // A serial id, so the same signed-int32 bound as a conversation's;
         // `#agent/new` is one not sent yet, created by its first message.
         App.setChromeless(false);
+        App._takeAgentFlow(hash, fragQuery);
         if (parts[1] === 'new') {
           App.navigateToAgentSession('new');
           return;
@@ -7296,6 +7298,36 @@ const App = {
       return id != null && id <= 2147483647 ? { kind: 'session', slug, id } : null;
     }
     return null;
+  },
+
+  // #4312: a shared link's `?flow=claude-code|codex` on an agent session
+  // address, in the fragment's own query (#messages/agent/new?flow=codex) or
+  // the page's (/?flow=codex#messages/agent/new). The conversation opens with
+  // its "Build with" sheet on that agent's tab, as the model pill and the
+  // credits card open it (features/agent-session/store.ts prepareHandoff).
+  // The value is taken out of the address once handed over, so a reload,
+  // Back, or the first message giving an unsent conversation its own address
+  // does not open the sheet again. Any other value is ignored.
+  _takeAgentFlow(hash, fragQuery) {
+    const read = (query) => {
+      try { return new URLSearchParams(query || '').get('flow'); } catch (_) { return null; }
+    };
+    const known = (value) => value === 'claude-code' || value === 'codex';
+    const flow = [read(fragQuery), read(location.search)].find(known);
+    if (!flow) return;
+    window.UsernodeReact?.agentSession?.prepareHandoff?.(flow);
+    const without = (query) => {
+      try {
+        const params = new URLSearchParams(query || '');
+        if (known(params.get('flow'))) params.delete('flow');
+        const rest = params.toString();
+        return rest ? `?${rest}` : '';
+      } catch (_) { return ''; }
+    };
+    try {
+      history.replaceState(history.state, '',
+        `${location.pathname}${without(location.search)}#${hash}${without(fragQuery)}`);
+    } catch (_) {}
   },
 
   // State-only teardown; the incoming transition hides the root.

@@ -4797,6 +4797,12 @@
       "expectText": "Also keep the choice when I switch devices."
     },
     {
+      "name": "#4312: a shared ?flow=claude-code link on an agent session opens its Build with sheet on the Claude Code tab, at the walkthrough's first step",
+      "path": "/#messages/agent/990801?flow=claude-code",
+      "expectSelector": "[data-agent-session-handoff=\"claude-code\"] [data-agent-session-handoff-steps] > [data-agent-session-handoff-step=\"github\"]:first-child [data-agent-session-handoff-action]",
+      "expectText": "Link GitHub"
+    },
+    {
       "name": "#3976: an agent session draws a coding run as the dev chat's run card: its head with the chevron, the agent named under it, then its chips",
       "path": "/#messages/agent/990801",
       "expectSelector": "[data-agent-session-thread=\"990801\"] [data-agent-session-run] > details.dc-cc-attached > .dc-cc-attached-summary > .dc-cc-head:has(> .dc-cc-attached-chevron) + .dc-status-venue + .dc-cc-chips"
