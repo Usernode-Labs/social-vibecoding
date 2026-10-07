@@ -49,7 +49,9 @@ test('B4: the card leads with their words, and the project moves to the status l
   };
   const html = renderToHtml(createElement(BotActivityCardView, { meta, card, loaded: true, now }));
   assert.match(html, /class="line-clamp-2 [^"]*" data-bot-activity-asked="">You asked: Add a weekly reminder on Sunday mornings</);
-  assert.match(html, /<span>Plant Pal · <\/span><span role="status">Building it<\/span><span> · 4m so far<\/span>/);
+  // The card's spinning mark sits after the project's name, before what it
+  // is doing (the "spinner on cards the bot is working on" change).
+  assert.match(html, /<span>Plant Pal · <\/span><svg [^>]*data-bot-activity-spinner="">[\s\S]*<\/svg><span role="status">Building it<\/span><span> · 4m so far<\/span>/);
   // A card from before, with no words of theirs, keeps the request's name.
   const before = renderToHtml(createElement(BotActivityCardView, { meta: { ...meta, askedText: undefined }, card, loaded: true, now }));
   assert.match(before, /class="truncate [^"]*">Plant Pal #4: Weekly reminder</);
