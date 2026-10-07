@@ -40,6 +40,10 @@ interface VsCurrent {
   excluded: number;
   didntBoot: number;
   didntBuild: number;
+  // Left out with nothing captured (a restart proposed its review as it
+  // stood), and the same commit on both sides (the review changed nothing).
+  noScreenshots?: number;
+  identical?: number;
   waiting: number;
 }
 
@@ -110,6 +114,8 @@ export function leftOutText(v: VsCurrent | null | undefined): string {
   const parts = [];
   if (v.didntBuild) parts.push(`${v.didntBuild} didn't build`);
   if (v.didntBoot) parts.push(`${v.didntBoot} didn't boot`);
+  if (v.noScreenshots) parts.push(`${v.noScreenshots} without screenshots`);
+  if (v.identical) parts.push(`${v.identical} identical (the review changed nothing)`);
   return parts.join(', ');
 }
 
@@ -117,7 +123,7 @@ export function budgetLine(b: BotConfigsPayload['sideBuilds'] | undefined): stri
   if (!b) return '';
   return `Side builds in the last 7 days: ${usd(b.spentUsd) || '$0.00'} of ${usd(b.limitUsd)} spent`
     + `${b.pendingUsd > 0 ? `, about ${usd(b.pendingUsd)} more under way` : ''}`
-    + `${b.skipped ? `. ${b.skipped} side build${b.skipped === 1 ? ' was' : 's were'} skipped for the budget or a missing snapshot` : ''}.`;
+    + `${b.skipped ? `. ${b.skipped} side build${b.skipped === 1 ? ' was' : 's were'} skipped for the budget, a missing snapshot, a platform failure or a first version given up` : ''}.`;
 }
 
 /** The actions a row offers a full admin: never one that leaves no current version. */

@@ -117,6 +117,12 @@ function guardedGithub(github) {
       await github.ensureBranchAtSha(owner, repo, branch, sha);
       return sha;
     },
+    // A first version's review put back on the last commit that booted
+    // (homeroom-bot-live.js rollbackReviewBranch): the trial's own branch.
+    resetBenchBranch(owner, repo, branch, sha) {
+      assertBenchBranch(branch);
+      return github.forceBranchToSha(owner, repo, branch, sha);
+    },
   };
   return new Proxy({}, {
     get(_target, prop) {
@@ -617,9 +623,9 @@ async function buildStage(ctx) {
   };
 }
 
-/** What a review's reviewer calls cost, together. Pure. */
+/** What a review's reviewer calls cost, together (bot-review.js reviewerCost). Pure. */
 function reviewerCost(review) {
-  return (review?.rounds || []).reduce((sum, r) => sum + (Number.isFinite(Number(r?.reviewerCostUsd)) ? Number(r.reviewerCostUsd) : 0), 0);
+  return require('../bot-review').reviewerCost(review);
 }
 
 /**
@@ -640,6 +646,8 @@ async function sideBuildStage(ctx) {
   const models = firstVersionModels(ctx);
   const step = (name) => { try { ctx.onStep?.(name); } catch { /* a watcher never stops a trial */ } };
   step('spec');
+  // A reviewed build's final state, as its review captured it.
+  let reviewedCapture = null;
   const built = await buildStage({
     ...ctx,
     model: models.build,
@@ -647,9 +655,17 @@ async function sideBuildStage(ctx) {
     snapshot: { ...snapshot, extra: { ...(snapshot.extra || {}), firstVersion: true } },
     // A first version's own clocks (homeroom-bot buildBudgets, firstVersion).
     budgets: ctx.budgets.firstVersion || ctx.budgets,
+    onBuilt: async (b) => {
+      reviewedCapture = b?.review?.finalCapture || null;
+      if (ctx.onBuilt) await ctx.onBuilt(b);
+    },
   });
   const out = { ...built, parsed: { ...(built.parsed || {}), models, side: { botRunId: ctx.sideBuild?.botRunId || null } } };
   if (built.status !== 'ok' || !built.parsed?.built || !built.session_id) return out;
+  // Its review captured the final state already, and when a fix broke the
+  // app that is the commit the branch went back to, which the worker's own
+  // checkout no longer is: taken as it is, not captured again.
+  if (reviewedCapture) return { ...out, capture: reviewedCapture };
   step('capture');
   const shot = await screenshotStep(ctx, built.session_id);
   if (!shot.ok) return { ...out, status: 'infra_fail', error: shot.error };

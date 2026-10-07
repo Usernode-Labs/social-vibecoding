@@ -1159,11 +1159,14 @@ async function advanceBranchToSha(owner, repo, branchName, sha) {
 // Move a branch to an exact commit whether or not that is a fast-forward.
 //
 // This is deliberately not the module's general ref-update path. It exists
-// for exactly one caller, demo mode's reset (routes/demo-mode.js),
-// which puts a demo app's main back to where it stood before a recorded
-// take. That app is in demo mode, its creator asked, and the commits being
-// discarded are the partner's own demo proposals — the one situation where
-// rewinding main is the point rather than an accident.
+// for two callers. Demo mode's reset (routes/demo-mode.js) puts a demo
+// app's main back to where it stood before a recorded take. That app is in
+// demo mode, its creator asked, and the commits being discarded are the
+// partner's own demo proposals — the one situation where rewinding main is
+// the point rather than an accident. And the Homeroom bot's first-version
+// review (homeroom-bot-live.js rollbackReviewBranch) puts the bot's own
+// session branch, never a default branch, back on the last commit that
+// booted when a review fix broke the app, before anything is proposed.
 async function forceBranchToSha(owner, repo, branchName, sha) {
   const octokit = await getOctokit(owner);
   const { data: ref } = await octokit.request(

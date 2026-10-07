@@ -164,6 +164,13 @@ test('loading, empty and error states', () => {
   assert.equal(usd(0.004), '<$0.01');
   assert.equal(winRateText(null, 'side'), 'No picks yet');
   assert.equal(winRateText({ n: 0 }, 'side'), 'No picks yet');
+  // What was left out, each kind in its own words: a side with nothing
+  // captured is not one that failed to boot, and an identical pair (the
+  // review changed nothing) is never a tie.
+  const { leftOutText } = loadSection();
+  assert.equal(leftOutText({ didntBuild: 1, didntBoot: 2, noScreenshots: 1, identical: 3 }),
+    '1 didn\'t build, 2 didn\'t boot, 1 without screenshots, 3 identical (the review changed nothing)');
+  assert.equal(leftOutText({ didntBuild: 0, didntBoot: 0 }), '');
 });
 
 test('the routes behind it: any admin reads, a full admin changes a role; the connector\'s doors are full-admin gated first', () => {

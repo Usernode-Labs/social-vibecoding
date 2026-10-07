@@ -82,6 +82,10 @@ test('a live first version is built by the current configuration, its side build
   assert.deepEqual(args.review.owner, { botRunId: 900 });
   assert.equal(typeof args.review.onState, 'function');
   assert.equal(await args.review.budgetCheck(), null, 'the bot\'s budget, read from its limits');
+  // With what this build has spent so far, which is debited only once it is over.
+  liveArgs.deps.limits.checkBudget = async () => ({ ok: true, weeklyRemaining: 100 });
+  assert.match(await args.review.budgetCheck({ spentUsd: 1.5 }), /^weekly_limit: this build has spent \$1\.50, and \$1\.00 of the week was left/);
+  assert.equal(await args.review.budgetCheck({ spentUsd: 0.5 }), null);
   assert.equal(args.firstVersion, true);
   assert.equal(args.specGuidance, null, 'no pack: the platform\'s own first-version guidance');
   assert.deepEqual(seen.spawned[0].current, VERSION);
@@ -145,7 +149,7 @@ test('a first version\'s triage reads the current configuration\'s model and pac
   const src = require('node:fs').readFileSync(require.resolve('../src/services/homeroom-bot'), 'utf8');
   const triage = src.slice(src.indexOf('async function runTriage('), src.indexOf('async function actOnVerdict('));
   assert.match(triage, /if \(liveMode && requester\?\.firstVersion\) \{\n\s+const version = await botConfigs\(\)\.currentVersion\(pool\);/);
-  assert.match(triage, /model = version\.recipe\.models\.triage;\n\s+triageHarness = live\.recipeHarness\(model\);/);
+  assert.match(triage, /model = version\.recipe\.models\.triage;\n\s+triageHarness = live\.recipeHarness\(model, config\);/);
   assert.match(triage, /harness: triageHarness,/);
 });
 
@@ -251,6 +255,22 @@ test('a side build with a reviewer is reviewed in its trial, its reviewer calls 
   assert.ok(Math.abs(out.review_cost_usd - 0.41) < 1e-9);
   assert.equal(out.parsed.review.stop, 'ship');
   assert.equal(runner.reviewerCost(null), 0);
+
+  // Its review captured the final state (the commit a broken fix was rolled
+  // back to, say): that is its capture, not the worker's checkout again.
+  const finalCapture = { booted: true, shots: [{ id: 'phone-light-populated', artifactId: 'a'.repeat(32) }] };
+  live.buildAndPropose = async () => ({ ok: true, sessionId: 7002, sha: 'e'.repeat(40), commits: 1, costUsd: 0.5, review: { stop: 'regressed', rounds: [], round0: null, finalCapture } });
+  const h2 = sideHarness();
+  const out2 = await runner.runStage({
+    pool: h2.pool, config: {}, stage: 'first_version', task: { id: 5, stage: 'first_version', reference: {} },
+    snapshot: { id: 1, stage: 'build', issueNumber: 1, baseSha: BASE, texts: { seed: 's', build_note: 'n' }, extra: {} },
+    model: GLM, user: { id: 501 }, app: { id: 9 }, repo: { owner: 'o', repo: 'r' }, trial: { id: 47, run_id: 3, attempt: 1 }, deps: h2.deps,
+    budgets: { turnMs: 1, buildMs: 1, specMs: 1 }, stageModels: { triage: GLM, spec: OPUS, build: GLM }, sideBuild: { botRunId: 900, versionId: 13 },
+    reviewer: { model: OPUS, maxRounds: 2, budgetMinutes: 20 }, harnessOf: live.recipeHarness,
+  });
+  assert.equal(out2.status, 'ok', out2.error);
+  assert.deepEqual(out2.capture, finalCapture);
+  assert.equal(h2.calls.captured, 0, 'the screenshot step is not run again');
 });
 
 test('a restart runs a side build again rather than following one of its turns; the judge never sees it', async () => {
@@ -278,7 +298,7 @@ test('a restart runs a side build again rather than following one of its turns; 
   assert.match(writes[0][0], /UPDATE bench_trials SET deterministic/);
 });
 
-test('a studio arm may name a configuration version, and "today" is the current configuration', () => {
+test('a studio arm may name a configuration version, and "today" is the live bot\'s per-stage models, as before', async () => {
   const studio = require('../src/services/bench/studio');
   const ok = studio.validateLaunch({ models: ['today', 'config:12', GLM], capUsd: 5 });
   assert.equal(ok.ok, true, ok.error);
@@ -286,4 +306,35 @@ test('a studio arm may name a configuration version, and "today" is the current 
   const bad = studio.validateLaunch({ models: ['config:abc'], capUsd: 5 });
   assert.equal(bad.ok, false);
   assert.match(bad.error, /config:<version id>/);
+
+  const lanes = require('../src/services/bench/lane');
+  const asked = [];
+  const pool = { async query(sql) { asked.push(String(sql)); return { rows: [] }; } };
+  const settings = { models: { triage: 'stage/triage', spec: 'stage/spec', build: 'stage/build' } };
+  const today = await lanes.studioContext(pool, {}, { model: 'today', context_pack_id: null, bot_config_version_id: null }, settings);
+  assert.deepEqual(today.stageModels, { triage: 'stage/triage', spec: 'stage/spec', build: 'stage/build' });
+  assert.equal(today.reviewer, undefined, 'no reviewer: the live bot\'s stages have none');
+  assert.equal(today.harnessOf, undefined);
+  assert.ok(!asked.some((q) => /bot_config_versions/.test(q)), 'the current configuration is not read for it');
+  // A configuration is its own arm.
+  const realById = configs.versionById;
+  configs.versionById = async (_p, id) => (id === 11 ? VERSION : null);
+  try {
+    const arm = await lanes.studioContext(pool, {}, { model: 'config:11', context_pack_id: null, bot_config_version_id: null }, settings);
+    assert.deepEqual(arm.stageModels, VERSION.recipe.models);
+    assert.deepEqual(arm.reviewer, VERSION.recipe.reviewer);
+    await assert.rejects(lanes.studioContext(pool, {}, { model: 'config:12', context_pack_id: null, bot_config_version_id: null }, settings), /configuration version is gone/);
+  } finally {
+    configs.versionById = realById;
+  }
+});
+
+test('a bench trial may move only its own branch back, for a review\'s rollback', async () => {
+  const moved = [];
+  const g = runner.guardedGithub({ async forceBranchToSha(...a) { moved.push(a); return { updated: true }; } });
+  await g.resetBenchBranch('o', 'r', 'bench/r3-t44', BASE);
+  assert.deepEqual(moved, [['o', 'r', 'bench/r3-t44', BASE]]);
+  assert.throws(() => g.resetBenchBranch('o', 'r', 'main', BASE), /may not touch the branch main/);
+  assert.throws(() => g.resetBenchBranch('o', 'r', 'dev/homeroom_bot-1', BASE), /may not touch/);
+  assert.throws(() => g.forceBranchToSha('o', 'r', 'bench/r3-t44', BASE), /benchmark trials may not call github\.forceBranchToSha/, 'never the raw call');
 });

@@ -1638,10 +1638,27 @@ async function stampSessionModel(pool, session, model) {
  * OpenRouter's Anthropic-compatible endpoint (#3296's `claude` harness):
  * the platform's per-model map (config.openrouterModelHarnesses) lists only
  * GLM and DeepSeek, so under 'auto' Opus would run in Codex. Every other
- * model keeps the platform's own choice. Pure.
+ * model keeps the platform's own choice, and so does every model when the
+ * operator has Claude Code off for OpenRouter (OPENROUTER_MODEL_HARNESSES
+ * =none, or a map that sends no model there): the switch wins over a
+ * recipe. Pure.
  */
-function recipeHarness(model) {
+function recipeHarness(model, config = null) {
+  const map = config?.openrouterModelHarnesses;
+  if (map && typeof map === 'object' && !Object.values(map).includes('claude')) return 'auto';
   return /^anthropic\//i.test(String(model || '')) ? 'claude' : 'auto';
+}
+
+// The reasoning effort a configuration's spec turn runs at when its model
+// is an Anthropic one (Opus 5.5 writes the first version's spec): above the
+// session's own (`low`, config.openrouterDefaultCodexReasoning), since the
+// spec is the one turn of a first version that is all thinking. Any other
+// spec model keeps the session's.
+const RECIPE_SPEC_EFFORT = 'medium';
+
+/** The effort a configuration's spec turn on `model` runs at, or null for the session's own. Pure. */
+function recipeSpecEffort(model) {
+  return /^anthropic\//i.test(String(model || '')) ? RECIPE_SPEC_EFFORT : null;
 }
 
 /**
@@ -1687,8 +1704,9 @@ async function draftSpec({
   // The studio's pack guidance and a trial's watch (services/bench/studio.js).
   guidance = null, onProgress = null,
   // Which CLI runs the turn: the platform's per-model choice ('auto'), or
-  // a configuration's (recipeHarness).
-  harness = 'auto',
+  // a configuration's (recipeHarness); and its reasoning effort, when not
+  // the session's own (recipeSpecEffort).
+  harness = 'auto', reasoningEffort = null,
 }) {
   const { worker, sessions, agentTurn, activeWorkers } = deps;
   const budgetMs = Math.min(turnBudgetMs, specBudgetMs);
@@ -1718,6 +1736,7 @@ async function draftSpec({
         // makes it (#3296): GLM runs in Claude Code. A configuration's
         // Anthropic model runs there too (recipeHarness).
         harness,
+        ...(reasoningEffort ? { reasoningEffort } : {}),
       }),
       dispatchOnce: (ctx) => worker.execInWorker(session.id, {
         mode: 'scout',
@@ -1934,7 +1953,10 @@ async function buildAndPropose({
       pool, config, bot, session, containerName, seed, buildNote, turnBudgetMs,
       model: specModel || model, deps, specBudgetMs, firstVersion, guidance: specGuidance, onProgress,
       ...(telemetry ? { telemetryComponent: telemetry } : {}),
-      ...(harnessOf ? { harness: harnessOf(specModel || model) } : {}),
+      ...(harnessOf ? {
+        harness: harnessOf(specModel || model, config),
+        reasoningEffort: recipeSpecEffort(specModel || model),
+      } : {}),
     });
   // The build turn runs the build's model again.
   await stampSessionModel(pool, session, model);
@@ -1986,11 +2008,11 @@ async function buildAndPropose({
     : await buildSeesImages({ pool, config, userId: bot.id, model });
 
   if (onStage) { try { await onStage('build'); } catch { /* a watcher never stops a build */ } }
-  const buildHarness = harnessOf ? harnessOf(model) : 'auto';
+  const buildHarness = harnessOf ? harnessOf(model, config) : 'auto';
   // One build-mode turn in this session: the build itself, and each review
-  // round's fix (bot-review.js), which continues the build's conversation
-  // when the runtime can resume it. The same wall clock a triage turn has,
-  // ended the same way.
+  // round's fix (bot-review.js), which starts a fresh thread with a prompt
+  // that stands alone. The same wall clock a triage turn has, ended the
+  // same way.
   const runBuildTurn = async ({
     prompt: turnPrompt, budgetMs, resumeThreadId = null, commitMsg, progress: turnProgress,
   }) => {
@@ -2098,7 +2120,7 @@ async function buildAndPropose({
       pool, config, bot, app, repo, session, branchName, seed, spec: spec.ok ? spec.specMd : null,
       review, deps, runBuildTurn, turnBudgetMs, readsImages, platformRepo, skipNow, onProgress,
       start: {
-        sha: landedSha, commits: landedCommits, threadId: result.agentThreadId || null,
+        sha: landedSha, commits: landedCommits,
         costUsd, activeMs: Date.now() - buildStartedMs, buildText: result.lastResultText || null,
       },
     });
@@ -2151,12 +2173,30 @@ async function buildAndPropose({
 }
 
 /**
+ * Put a review's branch back on the last commit a capture saw boot
+ * (bot-review.js runReviewLoop's `rollback`), through the GitHub API: the
+ * build's own session branch, or a bench trial's through its guarded client
+ * (bench/runner.js resetBenchBranch). Never a default branch. Throws when it
+ * cannot.
+ */
+async function rollbackReviewBranch({ github, repo, branchName, sha }) {
+  if (!github) throw new Error('no GitHub client');
+  if (!repo || !branchName || /^(main|master)$/.test(branchName)) throw new Error(`will not move the branch ${branchName || '(none)'}`);
+  if (typeof sha !== 'string' || !/^\S+$/.test(sha)) throw new Error('no commit to go back to');
+  if (/^bench\//.test(branchName)) return github.resetBenchBranch(repo.owner, repo.repo, branchName, sha);
+  return github.forceBranchToSha(repo.owner, repo.repo, branchName, sha);
+}
+
+/**
  * The review of a first version that landed (services/bot-review.js
  * runReviewLoop), wired to this build: captures in the build's own worker,
  * stored as the run's or the trial's round screenshots; the reviewer called
  * with the key of the user the build runs as; fixes as build-mode turns of
- * the same session. Resolves the loop's final state, or null when it could
- * not start; never throws.
+ * the same session, each on a fresh thread (fixPrompt stands alone: the
+ * build's conversation carries every screenshot its look-and-fix loop took,
+ * and resending it made each fix turn cost what the build did); a fix that
+ * broke the app rolled back on the branch (rollbackReviewBranch). Resolves
+ * the loop's final state, or null when it could not start; never throws.
  */
 async function reviewLanded({
   pool, config, bot, app, repo, session, branchName, seed, spec, review, deps, runBuildTurn,
@@ -2166,7 +2206,6 @@ async function reviewLanded({
   const { worker } = deps;
   const reviewer = review.reviewer;
   const owner = review.owner || {};
-  let threadId = start.threadId || null;
   const capture = async (index) => {
     const t0 = Date.now();
     let containerName;
@@ -2193,7 +2232,7 @@ async function reviewLanded({
         seed, spec, issues, round, maxRounds: reviewer.maxRounds, readsImages, platformRepo,
       }),
       budgetMs: Math.max(1000, Math.min(budgetMs, turnBudgetMs)),
-      resumeThreadId: threadId,
+      resumeThreadId: null,
       commitMsg: `Homeroom bot: review fixes, round ${round}`,
       progress: lastActivity(),
     });
@@ -2204,7 +2243,6 @@ async function reviewLanded({
     if (turn.routed?.error) return { ok: false, error: `the fix turn failed (${turn.routed.error})`, costUsd, ms };
     const failed = failedClaudeTurn(r);
     if (failed) return { ok: false, error: `the fix turn failed (${failed})`, costUsd, ms };
-    if (r.agentThreadId) threadId = r.agentThreadId;
     return {
       ok: true, sha: r.pushOk ? (r.sha || null) : null, commits: Number(r.ahead) > 0 ? Number(r.ahead) : null, costUsd, ms,
     };
@@ -2214,12 +2252,15 @@ async function reviewLanded({
       reviewer,
       start,
       capture,
-      review: ({ round, capture: shot, previousIssues }) => botReview.reviewCapture({
+      review: ({ round, capture: shot, previousIssues, timeoutMs }) => botReview.reviewCapture({
         pool, config, userId: bot.id, model: reviewer.model, seed, spec, capture: shot, previousIssues,
-        round, maxRounds: reviewer.maxRounds, appId: app.id, sessionId: session.id, deps: deps.reviewDeps || {},
+        round, maxRounds: reviewer.maxRounds, appId: app.id, sessionId: session.id, timeoutMs, deps: deps.reviewDeps || {},
       }),
       fix,
-      budgetCheck: review.budgetCheck || null,
+      rollback: ({ sha }) => rollbackReviewBranch({ github: deps.github, repo, branchName, sha }),
+      // The bot's allowance is debited once the build is over, so a round
+      // is weighed against what this build has spent so far as well.
+      budgetCheck: review.budgetCheck ? (spent) => review.budgetCheck({ spentUsd: (Number(start.costUsd) || 0) + (Number(spent?.spentUsd) || 0) }) : null,
       skipCheck: skipNow,
       onState: review.onState || null,
       onProgress,
@@ -2283,7 +2324,10 @@ module.exports = {
   screenshotNote,
   buildAndPropose,
   reviewLanded,
+  rollbackReviewBranch,
   recipeHarness,
+  recipeSpecEffort,
+  RECIPE_SPEC_EFFORT,
   browserLines,
   failedClaudeTurn,
   stampSessionModel,
