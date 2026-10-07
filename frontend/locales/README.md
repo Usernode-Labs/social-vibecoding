@@ -70,7 +70,9 @@ what each language is missing and why.
   `PlatformI18n.htmlText(key, values)` when building an HTML string: it
   escapes the whole result, parameters included. Translate at render time, not
   at module initialization, and repaint from existing state on
-  `homeroom:language-changed`.
+  `homeroom:language-changed`. It fires when the language switches, and again
+  when the pack for a namespace arrives after a screen first read it
+  (`detail.namespace` names it): that first read was English.
 
 Use complete message ids in code. Do not build one by joining strings.
 
@@ -88,7 +90,8 @@ Use complete message ids in code. Do not build one by joining strings.
   otherwise the first of the device's languages it ships, otherwise English.
   Signed in, the preference is `users.locale` (Settings → Language). A change
   loads the packs, then saves, then switches, so a failed save leaves the
-  screen as it was.
+  screen as it was. The screen follows the last choice that was saved: when a
+  newer choice fails after an older one was saved, the older one is shown.
 - The first time the language was picked from the device rather than chosen,
   a notice above the tab bar says so once ("Showing Homeroom in Español")
   with a "Switch to English" button. There is no language picker on the

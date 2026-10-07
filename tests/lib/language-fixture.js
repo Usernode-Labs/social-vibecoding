@@ -65,7 +65,7 @@ function browser(t, { root, deviceLanguages = ['en-US'], storage = new Map() } =
     saved[name] = Object.getOwnPropertyDescriptor(globalThis, name);
   }
   const define = (name, value) => Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
-  const state = { requests: [], events: [], tamper: null, storage };
+  const state = { requests: [], events: [], tamper: null, unavailable: null, storage };
   define('localStorage', {
     getItem: (key) => (storage.has(key) ? storage.get(key) : null),
     setItem: (key, value) => { storage.set(key, String(value)); },
@@ -78,6 +78,7 @@ function browser(t, { root, deviceLanguages = ['en-US'], storage = new Map() } =
   });
   define('fetch', async (url) => {
     state.requests.push(url);
+    if (state.unavailable && state.unavailable(url)) return new Response('', { status: 503 });
     const bytes = fs.readFileSync(path.join(root, 'public', url));
     return new Response(state.tamper ? state.tamper(bytes) : bytes);
   });
@@ -94,4 +95,13 @@ function runtimeFor(catalogs) {
   return loadTsx('frontend/src/lib/i18n/core.ts').createLanguageRuntime(catalogs);
 }
 
-module.exports = { ENGLISH, SPANISH, browser, catalogFixture, from, runtimeFor, says };
+/** Resolves once `ready()` is truthy: a pack arrived, a save began. */
+async function until(ready, what = 'the awaited state') {
+  for (let i = 0; i < 200; i += 1) {
+    if (ready()) return;
+    await new Promise((resolve) => { setTimeout(resolve, 5); });
+  }
+  throw new Error(`Timed out waiting for ${what}`);
+}
+
+module.exports = { ENGLISH, SPANISH, browser, catalogFixture, from, runtimeFor, says, until };

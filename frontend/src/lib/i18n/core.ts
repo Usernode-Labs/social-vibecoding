@@ -17,6 +17,8 @@ import { resolveLanguage, type Catalogs } from './locale';
 /** The notice shown once when the language was picked automatically. */
 export type LanguageNotice = { language: string; name: string };
 type Save = (value: string | null) => Promise<void>;
+/** A choice that has been saved and is owed to the screen. */
+type Commit = { id: number; language: string; value: string | null; auto: boolean };
 
 // A choice made on this device while signed out ("Switch to English").
 const DEVICE_KEY = 'homeroom:language:device';
@@ -62,8 +64,22 @@ export function createLanguageRuntime(catalogs: Catalogs) {
   let preference: string | null = null;
   let signedIn = false;
   let notice: LanguageNotice | null = null;
+  // How a choice reaches the screen, and what keeps the two from parting:
+  //   switchId   the newest attempt. An older one that has not saved yet
+  //              gives way to it.
+  //   committed  the newest choice that WAS saved and is not on screen yet.
+  //   inFlight   attempts that have not finished. While one is, it may still
+  //              replace `committed`; once none is, settle() shows it.
+  //   shownId    the attempt whose choice is on screen.
+  //   epoch      moves on when the person does (sign-out, another account), so
+  //              a choice still being saved for the last one is not shown here.
   let switchId = 0;
-  let saveQueue: Promise<void> = Promise.resolve();
+  let committed: Commit | null = null;
+  let inFlight = 0;
+  let shownId = 0;
+  let epoch = 0;
+  let account: string | null = null;
+  let saveQueue: Promise<unknown> = Promise.resolve();
 
   function languageName(language: string): string {
     if (catalogs.languages[language]) return catalogs.languages[language];
@@ -77,8 +93,8 @@ export function createLanguageRuntime(catalogs: Catalogs) {
     const entry = catalogs.manifest[language]?.[namespace];
     if (!entry) throw new Error('Unknown language pack');
     const key = `${language}:${namespace}`;
-    const inFlight = requests.get(key);
-    if (inFlight) return inFlight;
+    const requested = requests.get(key);
+    if (requested) return requested;
     const request = (async () => {
       const controller = new AbortController();
       const deadline = setTimeout(() => controller.abort(), PACK_TIMEOUT_MS);
@@ -102,11 +118,25 @@ export function createLanguageRuntime(catalogs: Catalogs) {
             || Object.values(messages).some((value) => typeof value !== 'string')) {
           throw new Error('Invalid language pack');
         }
-        i18n.addResourceBundle(language, namespace, messages, true, true, { silent: language !== activeLanguage });
+        const showing = language === activeLanguage;
+        i18n.addResourceBundle(language, namespace, messages, true, true, { silent: !showing });
+        // React readers hear the store. A legacy reader repaints on this
+        // event, and its first read of this namespace was English: tell it the
+        // text for the language on screen is here. A pack loaded ahead of a
+        // switch is announced by the switch itself (activate), once.
+        if (showing) announce(namespace);
       } finally { clearTimeout(deadline); }
     })();
     requests.set(key, request);
     try { await request; } finally { requests.delete(key); }
+  }
+
+  /** What legacy modules repaint on: the language switched, or its text arrived. */
+  function announce(namespace?: string): void {
+    if (typeof document === 'undefined') return;
+    document.dispatchEvent(new CustomEvent('homeroom:language-changed', {
+      detail: { language: activeLanguage, preference, ...(namespace ? { namespace } : {}) },
+    }));
   }
 
   async function ensureNamespace(namespace: string): Promise<void> {
@@ -170,12 +200,10 @@ export function createLanguageRuntime(catalogs: Catalogs) {
     activeLanguage = language;
     preference = value;
     await i18n.changeLanguage(language);
-    if (typeof document !== 'undefined') {
-      if (document.documentElement.lang !== language) document.documentElement.lang = language;
-      if (changed) {
-        document.dispatchEvent(new CustomEvent('homeroom:language-changed', { detail: { language, preference: value } }));
-      }
+    if (typeof document !== 'undefined' && document.documentElement.lang !== language) {
+      document.documentElement.lang = language;
     }
+    if (changed) announce();
     // Once per device, the first time the language was picked for the person
     // rather than by them. Shown, it is spent, whatever they do with it.
     if (auto && language !== 'en') {
@@ -189,42 +217,85 @@ export function createLanguageRuntime(catalogs: Catalogs) {
   }
 
   /**
-   * Load first, save next, activate last. A failed load or save rejects and
-   * leaves the screen as it was. Resolves false when a newer change replaced
-   * this one.
+   * The screen follows the last choice that was saved. An attempt that ends,
+   * whether it saved, lost or failed, calls this: while a newer attempt is
+   * still on its way that one decides, and once none is, whatever was saved
+   * last goes on screen. So a newer choice that fails after an older one was
+   * saved cannot leave the screen showing something the account does not hold.
+   */
+  async function settle(): Promise<void> {
+    inFlight -= 1;
+    if (inFlight > 0 || !committed) return;
+    const next = committed;
+    committed = null;
+    shownId = next.id;
+    await activate(next.language, next.value, next.auto);
+  }
+
+  /**
+   * Load first, save next, activate last. A failed load or save rejects, and
+   * the screen is left as it was or, if an earlier choice had been saved
+   * meanwhile, on that one. Resolves true when this choice is what the screen
+   * shows; false when a newer attempt took over.
    */
   async function changeLanguage(value: string | null, save?: Save): Promise<boolean> {
     const id = ++switchId;
-    const { language, auto } = await prepareLanguage(value);
-    if (id !== switchId) return false;
-    if (save) {
-      // Serialize writes as well as guarding activation: a slow old save
-      // must not overwrite the newest account preference on the server.
-      const operation = saveQueue.catch(() => {}).then(async () => {
-        if (id === switchId) await save(value);
-      });
-      saveQueue = operation;
-      await operation;
+    const startedIn = epoch;
+    inFlight += 1;
+    try {
+      const { language, auto } = await prepareLanguage(value);
+      if (id !== switchId) return false;
+      if (save) {
+        // Writes are serialized, so a slow old save can never overwrite the
+        // newest account preference, and one that is no longer the newest
+        // when its turn comes is not sent at all.
+        const operation = saveQueue.catch(() => {}).then(async () => {
+          if (id !== switchId) return false;
+          await save(value);
+          return true;
+        });
+        saveQueue = operation;
+        if (!(await operation)) return false;
+      }
+      // Saved for someone who has since signed out or changed account.
+      if (startedIn !== epoch) return false;
+      // An account choice replaces one made on this device while signed out.
+      writeStored(DEVICE_KEY, save ? null : value);
+      committed = { id, language, value, auto };
+    } finally {
+      await settle();
     }
-    if (id !== switchId) return false;
-    // An account choice replaces one made on this device while signed out.
-    writeStored(DEVICE_KEY, save ? null : value);
-    await activate(language, value, auto);
-    return true;
+    return shownId === id;
   }
 
   /** The session resolved: `user` signed in, or null for the sign-in screens. */
-  async function applySessionLanguage(user: { locale?: string | null } | null): Promise<void> {
+  async function applySessionLanguage(user: { id?: string | number; locale?: string | null } | null): Promise<void> {
+    const next = user ? String(user.id ?? '') : null;
+    if (next !== account) {
+      account = next;
+      epoch += 1;
+      committed = null;
+    }
     signedIn = !!user;
     const value = user?.locale || readStored(DEVICE_KEY);
     const id = ++switchId;
+    inFlight += 1;
     try {
-      const { language, auto } = await prepareLanguage(value);
-      if (id === switchId) await activate(language, value, auto);
-    } catch {
-      // English is always available. A pack that cannot be loaded never
-      // leaves sign-in or the shell without text.
-      if (id === switchId) await activate('en', value, false);
+      let resolved: { language: string; auto: boolean };
+      try {
+        resolved = await prepareLanguage(value);
+      } catch {
+        // English is always available. A pack that cannot be loaded never
+        // leaves sign-in or the shell without text.
+        resolved = { language: 'en', auto: false };
+      }
+      if (id === switchId) {
+        shownId = id;
+        await activate(resolved.language, value, resolved.auto);
+      }
+    } finally {
+      // A choice saved while this was loading is newer than what it read.
+      await settle();
     }
   }
 

@@ -11,7 +11,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
-const { browser, catalogFixture, runtimeFor } = require('./lib/language-fixture');
+const {
+  SPANISH, browser, catalogFixture, from, runtimeFor, says, until,
+} = require('./lib/language-fixture');
 
 const ROOT = path.join(__dirname, '..');
 const read = (file) => fs.readFileSync(path.join(ROOT, file), 'utf8');
@@ -104,6 +106,107 @@ test('a change loads, then saves, then switches; a failed save leaves the screen
   const fast = runtime.changeLanguage(null, async (value) => { saved.push(value); });
   assert.deepEqual(await Promise.all([slow, fast]), [false, true]);
   assert.deepEqual(saved, [null]);
+});
+
+test('a legacy screen is told when the text for the language showing arrives', async (t) => {
+  // A legacy module repaints on `homeroom:language-changed`. Its first read of
+  // a namespace nobody had opened is English and starts the download; without
+  // word of the arrival it would stay "Save" after "Guardar" had loaded.
+  const fixture = catalogFixture(t);
+  fixture.put('en/settings.json', { save: says('Save') });
+  fixture.put('es/settings.json', { save: from('Save', 'Guardar') });
+  const { catalogs } = fixture.build();
+  const page = browser(t, { root: fixture.root });
+  const runtime = runtimeFor(catalogs);
+  await runtime.changeLanguage('es');
+  assert.deepEqual(page.events.map((event) => [event.type, event.detail.language, event.detail.namespace]),
+    [['homeroom:language-changed', 'es', undefined]], 'the switch itself, once');
+  page.events.length = 0;
+
+  assert.equal(runtime.t('settings:save'), 'Save');
+  await until(() => page.events.length > 0, 'the settings pack');
+  assert.deepEqual(page.events.map((event) => [event.type, event.detail.language, event.detail.namespace]),
+    [['homeroom:language-changed', 'es', 'settings']]);
+  assert.equal(runtime.t('settings:save'), 'Guardar');
+
+  // Packs loaded ahead of a switch are announced by the switch, not one by one.
+  const fresh = runtimeFor(catalogs);
+  assert.equal(fresh.t('settings:save'), 'Save');
+  page.events.length = 0;
+  await fresh.changeLanguage('es');
+  assert.equal(page.events.length, 1);
+  assert.equal(fresh.t('settings:save'), 'Guardar');
+});
+
+test('the screen follows the last choice that was saved when a newer one fails to load', async (t) => {
+  const fixture = catalogFixture(t, {
+    languages: { en: 'English', es: 'Español', fr: 'Français' },
+    translations: { es: SPANISH, fr: { bye: from('Goodbye', 'Au revoir') } },
+  });
+  const { catalogs } = fixture.build();
+  const page = browser(t, { root: fixture.root });
+  page.unavailable = (url) => url.startsWith('/locales/fr.');
+  const runtime = runtimeFor(catalogs);
+  await runtime.applySessionLanguage({ id: 7, locale: null });
+  const saved = [];
+  let finishSave = null;
+  const spanish = runtime.changeLanguage('es', (value) => new Promise((resolve) => {
+    finishSave = () => { saved.push(value); resolve(); };
+  }));
+  await until(() => finishSave, 'the Spanish save to begin');
+  // French is chosen while Spanish is still being saved, and cannot load.
+  await assert.rejects(runtime.changeLanguage('fr', async (value) => { saved.push(value); }), /Language pack unavailable/);
+  assert.equal(runtime.getLanguage(), 'en', 'nothing is saved yet, so nothing has changed');
+  finishSave();
+  assert.equal(await spanish, true, 'Spanish is what was saved, and it is what shows');
+  assert.deepEqual(saved, ['es']);
+  assert.equal(runtime.getLanguage(), 'es');
+  assert.equal(runtime.getPreference(), 'es');
+  assert.equal(runtime.t('hello', { name: 'Ana' }), 'Hola Ana');
+});
+
+test('the screen follows the last choice that was saved when a newer save fails', async (t) => {
+  // The same with the two choices Settings offers today.
+  const { runtime } = setup(t, { deviceLanguages: ['en-US'] });
+  await runtime.applySessionLanguage({ id: 7, locale: 'es' });
+  assert.equal(runtime.getLanguage(), 'es');
+  let finishSave = null;
+  const english = runtime.changeLanguage('en', () => new Promise((resolve) => { finishSave = resolve; }));
+  await until(() => finishSave, 'the English save to begin');
+  const auto = runtime.changeLanguage(null, async () => { throw new Error('Failed to save.'); });
+  finishSave();
+  assert.equal(await english, false, 'a newer choice was on its way when English was saved');
+  await assert.rejects(auto, /Failed to save\./);
+  assert.equal(runtime.getPreference(), 'en', 'the account holds English, and so does the runtime');
+  assert.equal(runtime.getLanguage(), 'en');
+});
+
+test('a choice still being saved follows its own account, not the next session', async (t) => {
+  const { runtime, page } = setup(t, { deviceLanguages: ['en-US'] });
+  await runtime.applySessionLanguage({ id: 7, locale: null });
+  let finishSave = null;
+  const slow = () => new Promise((resolve) => { finishSave = resolve; });
+
+  // The same person's session is confirmed while the save is in flight (the
+  // verified boot answer, read before the save): the saved choice still wins.
+  const spanish = runtime.changeLanguage('es', slow);
+  await until(() => finishSave, 'the Spanish save to begin');
+  await runtime.applySessionLanguage({ id: 7, locale: null });
+  assert.equal(runtime.getLanguage(), 'en');
+  finishSave();
+  assert.equal(await spanish, true);
+  assert.equal(runtime.getLanguage(), 'es');
+
+  // Signed out before the save lands: that choice belonged to the account.
+  finishSave = null;
+  const english = runtime.changeLanguage('en', slow);
+  await until(() => finishSave, 'the English save to begin');
+  await runtime.applySessionLanguage(null);
+  const signedOut = [runtime.getLanguage(), runtime.getPreference()];
+  finishSave();
+  assert.equal(await english, false);
+  assert.deepEqual([runtime.getLanguage(), runtime.getPreference()], signedOut);
+  assert.equal(page.storage.has(DEVICE_KEY), false, 'and it is not kept as a device choice');
 });
 
 test('the notice shows once per device, the first time the language was picked automatically', async (t) => {
