@@ -15,6 +15,8 @@ const gh = {
   isEnabled: () => gh.enabled,
   closeIssue: async (o, r, n) => { calls.push(['close', n]); if (gh.closeFails) throw gh.closeFails; },
   createIssueComment: async (o, r, n, body) => { calls.push(['comment', n, body]); },
+  thread: { comments: [] },
+  fetchIssueComments: async (o, r, n) => { calls.push(['read-comments', n]); return gh.thread; },
   getIssue: async (o, r, n) => { calls.push(['get', n]); if (n === 404) throw Object.assign(new Error('nf'), { status: 404 }); return { state: n === 1 ? 'open' : 'closed' }; },
   noteIssuesClosed: () => calls.push(['note']),
   invalidateIssuesCache: () => calls.push(['bust']),
@@ -32,12 +34,36 @@ function ctx(input, resumeFrom = null) {
   return { saved, ctx: { input, resumeFrom, checkpoint: async (v) => { saved.push(v); }, signal: new AbortController().signal } };
 }
 
-test('github.closeIssue closes, checkpoints, comments, and busts the cache', async () => {
+const MARKER = 'homeroom-governance:issue:5:close';
+
+test('github.closeIssue closes, checkpoints, comments with its marker, and busts the cache', async () => {
   calls.length = 0;
-  const { saved, ctx: c } = ctx({ owner: 'a', repo: 'b', number: 7, comment: 'Closed.', bustCache: true, appId: 1, appSlug: 's' });
+  const { saved, ctx: c } = ctx({ owner: 'a', repo: 'b', number: 7, comment: 'Closed.', marker: MARKER, bustCache: true, appId: 1, appSlug: 's' });
   assert.deepEqual(await services['github.closeIssue'].run(c), { closed: true });
-  assert.deepEqual(calls, [['close', 7], ['comment', 7, 'Closed.'], ['note'], ['bust'], ['push', 'github_synced']]);
-  assert.deepEqual(saved, [{ closed: true }, { closed: true, commented: true }]);
+  assert.deepEqual(calls, [['close', 7], ['comment', 7, `Closed.\n\n<!-- ${MARKER} -->`], ['note'], ['bust'], ['push', 'github_synced']]);
+  assert.deepEqual(saved, [{ closed: true }, { closed: true, commenting: true }, { closed: true, commented: true }]);
+});
+
+test('a retry after a lost comment reply finds the comment instead of posting it again', async () => {
+  const input = { owner: 'a', repo: 'b', number: 7, comment: 'Closed.', marker: MARKER };
+  // GitHub created the comment, but the reply never arrived.
+  calls.length = 0;
+  gh.thread = { comments: [{ body: `Closed.\n\n<!-- ${MARKER} -->` }] };
+  const found = ctx(input, { closed: true, commenting: true });
+  await services['github.closeIssue'].run(found.ctx);
+  assert.deepEqual(calls, [['read-comments', 7]], 'no second comment');
+  assert.deepEqual(found.saved, [{ closed: true, commented: true }]);
+  // The attempt failed before GitHub saw it: the comment is posted.
+  calls.length = 0;
+  gh.thread = { comments: [{ body: 'someone else' }] };
+  await services['github.closeIssue'].run(ctx(input, { closed: true, commenting: true }).ctx);
+  assert.deepEqual(calls.map((c) => c[0]), ['read-comments', 'comment']);
+  // The thread cannot be read: retry later rather than risk a duplicate.
+  calls.length = 0;
+  gh.thread = { comments: [], note: 'rate limited' };
+  await assert.rejects(services['github.closeIssue'].run(ctx(input, { closed: true, commenting: true }).ctx), /rate limited/);
+  assert.deepEqual(calls, [['read-comments', 7]]);
+  gh.thread = { comments: [] };
 });
 
 test('a retry resumes after the checkpoint: no second close, no second comment', async () => {

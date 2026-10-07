@@ -166,6 +166,7 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
     const close = await issue(a, author, 'close_issue', { issueNumber: 42, issueTitle: 'Old', reason: 'Done elsewhere' });
     await file(close);
     await vote(close, voter, 'up');
+    await settle(); // the target check answers first
     assert.equal((await inst(close)).state, 'applied');
     assert.equal((await row(twin)).status, 'closed');
     assert.equal((await pool.query('SELECT status FROM issue_bounties WHERE app_id = $1', [a.id])).rows[0].status, 'voided');
@@ -379,6 +380,52 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
     delete work.result['governance.checkTarget'];
   });
 
+  await t.test('G11 a close proposal applies only after a target check finds the issue open', async () => {
+    const voter = await user();
+    const a = await app({ members: [voter] });
+    // A dotted repository name is a repository like any other.
+    await pool.query(`UPDATE apps SET repo_url = 'https://github.com/acme/my.app' WHERE id = $1`, [a.id]);
+    const author = await user();
+    const checks = () => work.calls.filter((c) => c.kind === 'governance.checkTarget').length;
+
+    // Closed on GitHub before the deciding vote: superseded, never applied.
+    const gone = await issue(a, author, 'close_issue', { issueNumber: 61, issueTitle: 'gone' });
+    await file(gone);
+    await settle();
+    work.result['governance.checkTarget'] = { open: false };
+    const before = checks();
+    await vote(gone, voter, 'up');
+    let s = await inst(gone);
+    assert.deepEqual([s.state, s.data.applyAfterCheck], ['open', { admin: null }], 'the vote waits for the check');
+    await settle();
+    s = await inst(gone);
+    assert.deepEqual([s.state, s.data.audit.supersededBy], ['superseded', 'github-close']);
+    assert.equal(checks(), before + 1, 'a fresh check, started once the gate passed');
+    assert.ok(!work.calls.some((c) => c.kind === 'github.closeIssue' && c.input.number === 61), 'nothing closed on GitHub');
+
+    // Still open: applied, and the GitHub close names the dotted repository.
+    work.result['governance.checkTarget'] = { open: true };
+    const open = await issue(a, author, 'close_issue', { issueNumber: 62, issueTitle: 'open' });
+    await file(open);
+    await settle();
+    await vote(open, voter, 'up');
+    await settle();
+    assert.equal((await inst(open)).state, 'applied');
+    const close = work.calls.find((c) => c.kind === 'github.closeIssue' && c.input.number === 62);
+    assert.deepEqual([close.input.owner, close.input.repo], ['acme', 'my.app']);
+
+    // GitHub cannot say: applied anyway, as [main]'s degraded read did.
+    work.fail.add('governance.checkTarget');
+    const unknown = await issue(a, author, 'close_issue', { issueNumber: 63, issueTitle: 'unknown' });
+    await file(unknown);
+    await settle();
+    await vote(unknown, voter, 'up');
+    await settle();
+    assert.equal((await inst(unknown)).state, 'applied');
+    work.fail.delete('governance.checkTarget');
+    delete work.result['governance.checkTarget'];
+  });
+
   await t.test('G12 admin force skips the gate and the lock, is recorded as admin, and never renames', async () => {
     const a = await app({ approvals: 9, locked: true });
     const [author, adminUser] = [await user(), await user({ admin: true })];
@@ -391,7 +438,7 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
     const forced = await force(c);
     const notRename = await force(r);
     const notAdmin = await send(c, 'AdminApply', { userId: adminUser.id, username: adminUser.username }, { actor: `user:${adminUser.id}` });
-    await rt.drain();
+    await settle(); // a close proposal applies once its target check answers
     assert.equal((await event(forced)).result, 'accepted');
     assert.equal((await row(c)).payload.appliedBy, `admin:${adminUser.username}`);
     assert.equal((await event(notRename)).reason, 'not_admin_appliable');

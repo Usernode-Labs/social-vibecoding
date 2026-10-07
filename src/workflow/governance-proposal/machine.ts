@@ -27,6 +27,9 @@ interface OpenData {
   evaluation: Evaluation | null;
   targetCheck: string | null;        // work key of the close-issue target check in flight
   targetCheckedAt: string | null;
+  // The gate passed (or an admin applied) and the target check decides:
+  // admin null is the group vote.
+  applyAfterCheck?: { admin: string | null } | null;
 }
 interface ClosedData {
   issueId: number;
@@ -196,7 +199,8 @@ function apply(
       const reason = typeof p.reason === 'string' ? p.reason.trim() : '';
       if (reason) comment += `\n\n${issue.authorName || 'The proposer'}'s reason: ${reason}`;
       work.push({ kind: 'github.closeIssue', key: 'target',
-        input: { ...issue.app.repo, number: n, comment, bustCache: true, appId: issue.appId, appSlug: issue.app.slug } });
+        input: { ...issue.app.repo, number: n, comment, marker: `homeroom-governance:${issueKey(issue.id)}:close`,
+          bustCache: true, appId: issue.appId, appSlug: issue.app.slug } });
     }
   } else if (issue.kind === 'secret_change' && !issue.app.selfHosted) {
     work.push({ kind: 'app.rebuildProduction', key: 'rebuild', input: { appId: issue.appId } });
@@ -213,26 +217,53 @@ function apply(
   return close('applied', issue, event, ctx, audit, { writes, work, notify });
 }
 
+type Timing = Required<Pick<MachineDeps, 'backstopMs' | 'targetCheckMs'>>;
+
+// A close proposal applies only once a target check finds the issue still
+// open on GitHub: an issue closed there by hand is announced by nothing
+// else. [main] read its cached open-issue list at apply time and applied
+// anyway when that read failed; a failed check here does the same.
+const checksTarget = (issue: Issue) =>
+  issue.kind === 'close_issue' && !!issue.app.repo && Number(issue.payload.issueNumber) > 0;
+
+// Start a target check, unless one is in flight (its result decides too).
+function targetCheckWork(data: OpenData, issue: Issue, ctx: TransitionContext): WorkRequest[] {
+  if (data.targetCheck) return [];
+  data.targetCheck = `target-check:${ctx.version + 1}`;
+  return [{ kind: 'governance.checkTarget', key: data.targetCheck,
+    input: { ...issue.app.repo!, number: Number(issue.payload.issueNumber) } }];
+}
+
+// Stay open until the target check answers, then apply as `by` says.
+function awaitTarget(
+  s: { data: OpenData }, issue: Issue, e: Evaluation, ctx: TransitionContext, timing: Timing,
+  by: { admin: string | null }, extra: Extra = {},
+): Outcome<GovState> {
+  const data: OpenData = { ...s.data, evaluation: e, applyAfterCheck: by };
+  return withChat({
+    next: { name: 'open', data }, writes: extra.writes, notify: extra.notify, work: targetCheckWork(data, issue, ctx),
+    timer: { at: new Date(ctx.now.getTime() + timing.backstopMs), event: { type: 'Evaluate' } },
+  });
+}
+
 // Evaluate the gate (with this event's vote folded in, if any) and either
-// apply or stay open with the next check armed.
+// apply or stay open with the next check armed. `confirmed`: a target check
+// has just answered.
 function decide(
   s: { name: 'open'; data: OpenData }, event: Event<any>, f: Facts, ctx: TransitionContext,
-  deps: Required<Pick<MachineDeps, 'backstopMs' | 'targetCheckMs'>>, gate = f.gate!, extra: Extra = {},
+  timing: Timing, gate = f.gate!, extra: Extra = {}, confirmed = false,
 ): Outcome<GovState> {
   const issue = f.issue!;
   const e = evaluate(gate, ctx.now);
-  if (e.mergeable) return apply(issue, event, ctx, e, f.refusal, null, extra);
-  const data: OpenData = { ...s.data, evaluation: e };
-  const work: WorkRequest[] = [];
-  const stale = !data.targetCheckedAt || ctx.now.getTime() - Date.parse(data.targetCheckedAt) >= deps.targetCheckMs;
-  if (issue.kind === 'close_issue' && issue.app.repo && !data.targetCheck && stale && Number(issue.payload.issueNumber) > 0) {
-    data.targetCheck = `target-check:${ctx.version + 1}`;
-    work.push({ kind: 'governance.checkTarget', key: data.targetCheck,
-      input: { ...issue.app.repo, number: Number(issue.payload.issueNumber) } });
-  }
+  const admin = s.data.applyAfterCheck?.admin ? s.data.applyAfterCheck : null;
+  if (e.mergeable && (confirmed || !checksTarget(issue))) return apply(issue, event, ctx, e, f.refusal, null, extra);
+  if (e.mergeable || admin) return awaitTarget(s, issue, e, ctx, timing, admin || { admin: null }, extra);
+  const data: OpenData = { ...s.data, evaluation: e, applyAfterCheck: null };
+  const stale = !data.targetCheckedAt || ctx.now.getTime() - Date.parse(data.targetCheckedAt) >= timing.targetCheckMs;
+  const work = checksTarget(issue) && stale ? targetCheckWork(data, issue, ctx) : [];
   return withChat({
     next: { name: 'open', data }, writes: extra.writes, notify: extra.notify, work,
-    timer: { at: nextCheck(e, ctx.now, deps.backstopMs), event: { type: 'Evaluate' } },
+    timer: { at: nextCheck(e, ctx.now, timing.backstopMs), event: { type: 'Evaluate' } },
   });
 }
 
@@ -315,7 +346,12 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
     to: (s: any, e: Event<WorkResultPayload>, f: Facts, ctx: TransitionContext): Outcome<GovState> => {
       const result = e.payload.result as { open?: boolean } | undefined;
       if (status === 'done' && result?.open === false && f.issue) return supersede(f.issue, e, ctx, { kind: 'github-close' });
-      return { next: { name: 'open', data: { ...s.data, targetCheck: null, targetCheckedAt: ctx.now.toISOString() } } };
+      const checked = { name: 'open' as const, data: { ...s.data, targetCheck: null, targetCheckedAt: ctx.now.toISOString() } };
+      const pending = (s.data as OpenData).applyAfterCheck;
+      if (!pending) return { next: checked };
+      // Still open (or GitHub could not say): apply as the gate or the admin decided.
+      if (pending.admin) return apply(f.issue!, e, ctx, evaluate(f.gate!, ctx.now), f.refusal, { admin: pending.admin }, {});
+      return decide(checked, e, f, ctx, timing, f.gate!, {}, true);
     },
   });
 
@@ -346,7 +382,7 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
             : !GOVERNANCE_KINDS.has(f.issue.kind) ? reject('not_governance')
               : f.issue.status !== 'open' ? reject('not_open') : ok()),
           to: (s, e, f, ctx) => decide(
-            { name: 'open', data: { issueId: f.issue!.id, kind: f.issue!.kind, evaluation: null, targetCheck: null, targetCheckedAt: null } },
+            { name: 'open', data: { issueId: f.issue!.id, kind: f.issue!.kind, evaluation: null, targetCheck: null, targetCheckedAt: null, applyAfterCheck: null } },
             e, f, ctx, timing),
         },
       },
@@ -372,7 +408,9 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
         Evaluate: watchingOutside({ to: (s, e, f, ctx) => decide(s as any, e, f, ctx, timing) }),
         AdminApply: watchingOutside({
           guard: (s, e, f) => (f.issue!.kind === 'rename' ? reject('not_admin_appliable') : ok()),
-          to: (s, e, f, ctx) => apply(f.issue!, e, ctx, evaluate(f.gate!, ctx.now), f.refusal, { admin: e.payload.username }, {}),
+          to: (s, e, f, ctx) => (checksTarget(f.issue!)
+            ? awaitTarget(s, f.issue!, evaluate(f.gate!, ctx.now), ctx, timing, { admin: e.payload.username })
+            : apply(f.issue!, e, ctx, evaluate(f.gate!, ctx.now), f.refusal, { admin: e.payload.username }, {})),
         }),
         Withdraw: watchingOutside({
           to: (s, e, f, ctx) => close('withdrawn', f.issue!, e, ctx,
@@ -452,7 +490,8 @@ async function kindResult(tx: Tx, issueId: number, after: GovState): Promise<Jso
   if (after.name === 'refused') return { applied: false, refused: true, error: String(p.appliedBy || '').replace(/^refused:/, '') };
   const e: Partial<Evaluation> = (after.name === 'open' && after.data.evaluation) || {};
   return { applied: false, awaitingAdmin: e.waiting === 'awaiting_admin', upCount: e.yes, required: e.required,
-    active: e.active, windowEndsAt: e.windowEndsAt, waitingForWindow: e.waiting === 'waiting_for_window' } as Json;
+    active: e.active, windowEndsAt: e.windowEndsAt, waitingForWindow: e.waiting === 'waiting_for_window',
+    checkingTarget: after.name === 'open' && !!after.data.applyAfterCheck } as Json;
 }
 
 async function writeVote(tx: Tx, w: any) {

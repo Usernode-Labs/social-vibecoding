@@ -31,9 +31,9 @@ export interface Facts {
   refusal: string | null;      // why applying now would fail
 }
 
+// The platform's own parser: https, ssh, a .git suffix, and dotted names.
 function parseRepo(url: string | null): Issue['app']['repo'] {
-  const m = /github\.com[/:]([^/]+)\/([^/.]+?)(?:\.git)?\/?$/.exec(url || '');
-  return m ? { owner: m[1]!, repo: m[2]! } : null;
+  return legacy('services/github').parseGithubUrl(url || '');
 }
 
 // The row is locked: anything else that decides it ([main]'s apply, while

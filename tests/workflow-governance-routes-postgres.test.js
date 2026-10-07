@@ -74,6 +74,7 @@ test('governance routes through the workflow machine', { timeout: 120000 }, asyn
     fetchPublicIssues: async () => ({ issues: [{ number: 5, title: 'Stale bug' }] }),
     noteIssuesClosed: () => {}, invalidateIssuesCache: () => {},
     closeIssue: async () => ({}), createIssueComment: async () => ({}),
+    getIssue: async () => ({ state: 'open' }),
   });
   const config = {
     databaseUrl: String(url), dataEncryptionKey: 'synthetic-key', wfGovernanceEnabled: true,
@@ -157,7 +158,9 @@ test('governance routes through the workflow machine', { timeout: 120000 }, asyn
     const adminUser = { ...(await user({ admin: true })), canAdminWrite: true };
     const forced = await call(adminApply, { params: { id: String(a.id) }, user: adminUser });
     assert.equal(forced.status, 200, JSON.stringify(forced.body));
-    assert.equal(forced.body.applied.applied, true);
+    assert.deepEqual([forced.body.applied.applied, forced.body.applied.checkingTarget], [false, true],
+      'a close proposal applies once its target check answers');
+    await until(async () => (await instance(a)).state === 'applied', 'applied after the check');
     assert.equal((await status(a)).payload.appliedBy, `admin:${adminUser.username}`);
   });
 
@@ -204,7 +207,8 @@ test('governance routes through the workflow machine', { timeout: 120000 }, asyn
       { user: viewOnly, query: { machine: 'governance-proposal', key: `issue:${i.id}` } });
     assert.equal(detail.status, 200);
     assert.equal(detail.body.instance.state, 'open');
-    assert.deepEqual(detail.body.events.map((e) => [e.type, e.result]), [['Filed', 'accepted']]);
+    // The timeline holds the filing (and, by now, possibly the hourly target check's result).
+    assert.ok(detail.body.events.some((e) => e.type === 'Filed' && e.result === 'accepted'));
 
     const evaluate = handlerFor(adminRouter, 'post', '/api/admin/workflow/event');
     const recheck = await call(evaluate, { user: adminUser, body: { machine: 'governance-proposal', key: `issue:${i.id}`, type: 'Evaluate' } });
@@ -213,6 +217,7 @@ test('governance routes through the workflow machine', { timeout: 120000 }, asyn
     assert.equal(bad.status, 400);
     const applied = await call(evaluate, { user: adminUser, body: { machine: 'governance-proposal', key: `issue:${i.id}`, type: 'AdminApply' } });
     assert.equal(applied.body.status, 'accepted');
+    await until(async () => (await instance(i)).state === 'applied', 'applied after the check');
     assert.equal((await status(i)).payload.appliedBy, `admin:${adminUser.username}`);
 
     // A faulted instance is listed first and released by retrying its event.
@@ -235,7 +240,8 @@ test('governance routes through the workflow machine', { timeout: 120000 }, asyn
     const a = await issue('close_issue', { issueNumber: 31, issueTitle: 'k' });
     const first = await call(adminApply, { params: { id: String(a.id) }, user: adminUser, get: keyed('apply-once') });
     assert.equal(first.status, 200, JSON.stringify(first.body));
-    assert.equal(first.body.applied.applied, true);
+    assert.equal(first.body.applied.checkingTarget, true);
+    await until(async () => (await instance(a)).state === 'applied', 'applied after the check');
     const retry = await call(adminApply, { params: { id: String(a.id) }, user: adminUser, get: keyed('apply-once') });
     assert.deepEqual([retry.status, retry.body], [200, first.body], 'the original answer, not 409');
     const other = await call(adminApply, { params: { id: String(a.id) }, user: adminUser, get: keyed('apply-twice') });
@@ -273,6 +279,7 @@ test('governance routes through the workflow machine', { timeout: 120000 }, asyn
     await pool.query('UPDATE apps SET approvals_required = 1 WHERE id = $1', [app.id]);
     const r = await call(vote, { params: { id: String(i.id) }, body: { vote: 'up' }, user: await user() });
     assert.equal(r.status, 200, JSON.stringify(r.body));
-    assert.equal(r.body.issueClosed.applied, true);
+    assert.equal(r.body.issueClosed.checkingTarget, true);
+    await until(async () => (await instance(i)).state === 'applied', 'applied after the check');
   });
 });

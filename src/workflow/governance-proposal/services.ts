@@ -13,15 +13,17 @@ const backoff = (attempt: number) => Math.min(30 * 60 * 1000, 30 * 1000 * 2 ** (
 export function governanceServices({ config, pool }: Deps): Record<string, WorkHandler> {
   const github = () => legacy('services/github');
   return {
-    // Close a GitHub issue, then comment on it. The close is checkpointed
-    // first, so a retry after a lost reply never comments twice for one close.
+    // Close a GitHub issue, then comment on it. Each step is checkpointed. A
+    // reply GitHub never delivered can still hide a comment it created, so
+    // the comment carries a marker, and a retry that may have posted it
+    // looks for the marker before posting again.
     'github.closeIssue': {
       maxAttempts: 6,
       backoffMs: backoff,
       async run({ input, resumeFrom, checkpoint }): Promise<Json> {
         const gh = github();
         if (!gh.isEnabled()) throw permanent('GitHub is not configured');
-        const done = (resumeFrom || {}) as { closed?: boolean; commented?: boolean };
+        const done = (resumeFrom || {}) as { closed?: boolean; commenting?: boolean; commented?: boolean };
         if (!done.closed) {
           try { await gh.closeIssue(input.owner, input.repo, input.number); } catch (err) {
             if (gone(err)) return { gone: true };
@@ -30,7 +32,18 @@ export function governanceServices({ config, pool }: Deps): Record<string, WorkH
           await checkpoint({ closed: true });
         }
         if (input.comment && !done.commented) {
-          await gh.createIssueComment(input.owner, input.repo, input.number, input.comment);
+          const marker = input.marker ? `<!-- ${input.marker} -->` : null;
+          let posted = false;
+          if (done.commenting && marker) {
+            const thread = await gh.fetchIssueComments(input.owner, input.repo, input.number);
+            if (thread.note) throw new Error(`Could not read the issue's comments: ${thread.note}`);
+            posted = thread.comments.some((c: { body?: string }) => String(c.body || '').includes(marker));
+          }
+          if (!posted) {
+            await checkpoint({ closed: true, commenting: true });
+            await gh.createIssueComment(input.owner, input.repo, input.number,
+              marker ? `${input.comment}\n\n${marker}` : input.comment);
+          }
           await checkpoint({ closed: true, commented: true });
         }
         if (input.bustCache) {
